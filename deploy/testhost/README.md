@@ -218,17 +218,12 @@ $ hciconfig hci0
 hci0: ... UP RUNNING
 ```
 
-**Das ist kein dauerhafter Zustand** — der Soft-Block liegt im Kernel-Speicher, nicht
-in einer Konfigurationsdatei, die dieser Befehl anlegt.
-
-**Nachtrag 2026-09-01, durch einen echten Reboot geprüft:** die Sperre kam **nicht**
-zurück. Nach dem Neustart meldete `rfkill list bluetooth` weiterhin `Soft blocked: no`,
-und `hci0` war ohne Zutun `UP RUNNING`. Der Unblock ist also eine Einmal-Maßnahme, keine
-nach jedem Reboot fällige. Die frühere Vermutung des Gegenteils war falsch. (Nicht
-getestet ist weiterhin, ob ein Reboot Teil dieser Task
-war) und der Befehl muss erneut laufen — das gehört vor jeden `docker compose up -d`
-in die Startroutine, bis das dauerhaft gelöst ist (z. B. über eine udev-Regel oder
-`systemd-rfkill`, die außerhalb des No-sudo-Rahmens dieser Task lag).
+Der Soft-Block war ein einmaliger Werkszustand, kein wiederkehrender: Am 2026-09-01
+wurde das mit einem echten Reboot geprüft. Nach dem Neustart meldete
+`rfkill list bluetooth` weiterhin `Soft blocked: no`, und `hci0` war ohne Zutun
+`UP RUNNING` — der Unblock hält über Reboots hinweg. Dieser Schritt gehört also nur in
+die Ersteinrichtung, nicht vor jeden `docker compose up -d`; ob er nötig ist, zeigt
+`rfkill list bluetooth` (siehe Schritt 2 oben).
 
 ## start-stop-daemon haengt auf dem Pi-Kernel (neu gegenüber der VM)
 
@@ -360,8 +355,8 @@ tatsächlich per BLE, nicht nur über das Thread-Netz.
   `matter-server` läuft mit `network_mode: host` daneben und erreicht die Geräte über
   die Route dorthin. Erst Matter-über-WLAN-Geräte bräuchten globales IPv6 im LAN.
 - Der `start-stop-daemon`-Workaround (siehe oben) ist
-  **nicht persistent** — nach einem Neustart des Pi bzw. des `otbr`-Containers müssen
-  sie erneut angewendet werden. Für eine Testumgebung akzeptabel, für Phase 6 nicht.
+  **nicht persistent** — nach einem Neustart des Pi bzw. des `otbr`-Containers muss
+  er erneut angewendet werden. Für eine Testumgebung akzeptabel, für Phase 6 nicht.
 
 ## Historie: die VM
 
