@@ -576,11 +576,14 @@ Die einzige Stelle mit I/O. Bewusst dünn: sie holt Node-Rohdaten und macht
 - Produces:
   - `class BridgeMatterClient` mit `async def connect(self) -> None`, `async def disconnect(self) -> None`, `async def snapshots(self) -> list[NodeSnapshot]`, `async def snapshot(self, node_id: int) -> NodeSnapshot`
   - `MatterUnavailableError(RuntimeError)` — geworfen, wenn keine Verbindung besteht
-  - Konstruktor: `BridgeMatterClient(url: str, session_factory: Callable[[], Any] | None = None)`
+  - Konstruktor: `BridgeMatterClient(url: str, session_factory: Callable[[Any], Any] | None = None, http_session_factory: Callable[[], Any] | None = None)` — `http_session_factory` baut die aiohttp-`ClientSession`, `session_factory` bekommt diese Session und baut daraus den Upstream-`MatterClient`. `BridgeMatterClient` erzeugt die Session selbst und schließt sie auch selbst wieder (in `disconnect()` und bei einem gescheiterten `connect()`) — `MatterClientConnection.disconnect()` aus python-matter-server schließt nur das Websocket, nicht die ihr übergebene Session.
 
 - [ ] **Step 1: Write the failing test**
 
-Die Tests fahren gegen eine Attrappe des Upstream-Clients — kein Netz, kein Server.
+Die Tests fahren gegen Attrappen des Upstream-Clients und der aiohttp-Session
+— kein Netz, kein Server. Die Attrappe der Session zählt ihre `close()`-Aufrufe,
+damit die Tests das Leck aus der Praxis (Session wird nie geschlossen) auch
+wirklich erkennen.
 
 `tests/matter/test_client.py`:
 
@@ -599,12 +602,15 @@ class FakeNode:
 class FakeUpstream:
     """Steht für matter_server.client.MatterClient."""
 
-    def __init__(self, nodes: list[FakeNode]):
+    def __init__(self, nodes: list[FakeNode], fail_connect: bool = False):
         self._nodes = nodes
         self.connected = False
         self.disconnect_calls = 0
+        self._fail_connect = fail_connect
 
     async def connect(self) -> None:
+        if self._fail_connect:
+            raise RuntimeError("Verbindung fehlgeschlagen")
         self.connected = True
 
     async def disconnect(self) -> None:
@@ -615,15 +621,39 @@ class FakeUpstream:
         return self._nodes
 
 
+class FakeSession:
+    """Steht für aiohttp.ClientSession — zählt, wie oft close() lief."""
+
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+def make_client(
+    nodes: list[FakeNode] | None = None, *, fail_connect: bool = False
+) -> tuple[BridgeMatterClient, FakeSession]:
+    """Baut einen BridgeMatterClient mit Attrappen für HTTP-Session und Upstream."""
+    session = FakeSession()
+    upstream = FakeUpstream(nodes or [], fail_connect=fail_connect)
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: session,
+    )
+    return bridge, session
+
+
 @pytest.fixture
 def client() -> BridgeMatterClient:
-    upstream = FakeUpstream(
+    bridge, _ = make_client(
         [
             FakeNode(12, {"0/40/1": "IKEA of Sweden", "1/6/0": True}),
             FakeNode(13, {"0/40/1": "IKEA of Sweden", "1/1026/0": 2150}),
         ]
     )
-    return BridgeMatterClient(url="ws://test/ws", session_factory=lambda: upstream)
+    return bridge
 
 
 async def test_snapshots_requires_a_connection(client):
@@ -656,6 +686,59 @@ async def test_disconnect_is_idempotent(client):
     await client.disconnect()
     with pytest.raises(MatterUnavailableError):
         await client.snapshots()
+
+
+async def test_connect_disconnect_closes_session_exactly_once():
+    """BridgeMatterClient erzeugt die Session selbst und muss sie wieder schließen."""
+    bridge, session = make_client([FakeNode(1, {})])
+    await bridge.connect()
+    assert session.close_calls == 0
+    await bridge.disconnect()
+    assert session.close_calls == 1
+
+
+async def test_disconnect_twice_closes_session_once_and_does_not_raise():
+    bridge, session = make_client([FakeNode(1, {})])
+    await bridge.connect()
+    await bridge.disconnect()
+    await bridge.disconnect()
+    assert session.close_calls == 1
+
+
+async def test_failed_connect_closes_session_and_allows_retry():
+    """Ein scheiternder connect() darf die Session nicht leaken und muss einen
+    späteren, erfolgreichen connect() zulassen."""
+    sessions: list[FakeSession] = []
+
+    def http_session_factory() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    attempts = {"n": 0}
+
+    def session_factory(_session: FakeSession) -> FakeUpstream:
+        attempts["n"] += 1
+        return FakeUpstream([FakeNode(1, {})], fail_connect=attempts["n"] == 1)
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=session_factory,
+        http_session_factory=http_session_factory,
+    )
+
+    with pytest.raises(RuntimeError, match="Verbindung fehlgeschlagen"):
+        await bridge.connect()
+
+    assert len(sessions) == 1
+    assert sessions[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
+        await bridge.snapshots()
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+    assert [s.node_id for s in snapshots] == [1]
+    assert sessions[1].close_calls == 0
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -672,6 +755,13 @@ Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.matter.clien
 
 Bewusst dünn gehalten: holt Rohdaten und macht NodeSnapshots daraus. Die
 Zerlegung in Signale passiert in discovery.py und ist dort ohne Netz getestet.
+
+BridgeMatterClient erzeugt die aiohttp-ClientSession selbst und bleibt damit
+ihr alleiniger Besitzer: MatterClientConnection.disconnect() aus
+python-matter-server schließt nur das Websocket, nicht die Session, die ihr
+übergeben wurde — laut aiohttp-Konvention muss das tun, wer die Session
+erzeugt hat. Deshalb hält diese Klasse die Session-Referenz selbst und
+schließt sie in disconnect() bzw. bei einem gescheiterten connect().
 """
 
 from __future__ import annotations
@@ -686,25 +776,41 @@ class MatterUnavailableError(RuntimeError):
     """matter-server ist nicht verbunden oder kennt den gefragten Node nicht."""
 
 
-def _default_session_factory(url: str) -> Callable[[], Any]:
-    def factory() -> Any:
-        import aiohttp
+class BridgeMatterClient:
+    def __init__(
+        self,
+        url: str,
+        session_factory: Callable[[Any], Any] | None = None,
+        http_session_factory: Callable[[], Any] | None = None,
+    ) -> None:
+        self._url = url
+        self._session_factory = session_factory or self._default_session_factory
+        self._http_session_factory = http_session_factory or self._default_http_session_factory
+        self._upstream: Any | None = None
+        self._http_session: Any | None = None
+
+    def _default_session_factory(self, session: Any) -> Any:
+        # Lazy importiert, damit Tests matter_server nie laden müssen.
         from matter_server.client.client import MatterClient
 
-        return MatterClient(url, aiohttp.ClientSession())
+        return MatterClient(self._url, session)
 
-    return factory
+    @staticmethod
+    def _default_http_session_factory() -> Any:
+        # Lazy importiert, damit Tests aiohttp nie laden müssen.
+        import aiohttp
 
-
-class BridgeMatterClient:
-    def __init__(self, url: str, session_factory: Callable[[], Any] | None = None) -> None:
-        self._url = url
-        self._session_factory = session_factory or _default_session_factory(url)
-        self._upstream: Any | None = None
+        return aiohttp.ClientSession()
 
     async def connect(self) -> None:
-        upstream = self._session_factory()
-        await upstream.connect()
+        http_session = self._http_session_factory()
+        try:
+            upstream = self._session_factory(http_session)
+            await upstream.connect()
+        except Exception:
+            await http_session.close()
+            raise
+        self._http_session = http_session
         self._upstream = upstream
 
     async def disconnect(self) -> None:
@@ -712,6 +818,9 @@ class BridgeMatterClient:
             return
         await self._upstream.disconnect()
         self._upstream = None
+        assert self._http_session is not None
+        await self._http_session.close()
+        self._http_session = None
 
     def _require_upstream(self) -> Any:
         if self._upstream is None:
@@ -735,7 +844,7 @@ class BridgeMatterClient:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_client.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 8 Tests
 
 - [ ] **Step 5: Commit**
 

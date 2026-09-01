@@ -2,6 +2,13 @@
 
 Bewusst dünn gehalten: holt Rohdaten und macht NodeSnapshots daraus. Die
 Zerlegung in Signale passiert in discovery.py und ist dort ohne Netz getestet.
+
+BridgeMatterClient erzeugt die aiohttp-ClientSession selbst und bleibt damit
+ihr alleiniger Besitzer: MatterClientConnection.disconnect() aus
+python-matter-server schließt nur das Websocket, nicht die Session, die ihr
+übergeben wurde — laut aiohttp-Konvention muss das tun, wer die Session
+erzeugt hat. Deshalb hält diese Klasse die Session-Referenz selbst und
+schließt sie in disconnect() bzw. bei einem gescheiterten connect().
 """
 
 from __future__ import annotations
@@ -16,25 +23,41 @@ class MatterUnavailableError(RuntimeError):
     """matter-server ist nicht verbunden oder kennt den gefragten Node nicht."""
 
 
-def _default_session_factory(url: str) -> Callable[[], Any]:
-    def factory() -> Any:
-        import aiohttp
+class BridgeMatterClient:
+    def __init__(
+        self,
+        url: str,
+        session_factory: Callable[[Any], Any] | None = None,
+        http_session_factory: Callable[[], Any] | None = None,
+    ) -> None:
+        self._url = url
+        self._session_factory = session_factory or self._default_session_factory
+        self._http_session_factory = http_session_factory or self._default_http_session_factory
+        self._upstream: Any | None = None
+        self._http_session: Any | None = None
+
+    def _default_session_factory(self, session: Any) -> Any:
+        # Lazy importiert, damit Tests matter_server nie laden müssen.
         from matter_server.client.client import MatterClient
 
-        return MatterClient(url, aiohttp.ClientSession())
+        return MatterClient(self._url, session)
 
-    return factory
+    @staticmethod
+    def _default_http_session_factory() -> Any:
+        # Lazy importiert, damit Tests aiohttp nie laden müssen.
+        import aiohttp
 
-
-class BridgeMatterClient:
-    def __init__(self, url: str, session_factory: Callable[[], Any] | None = None) -> None:
-        self._url = url
-        self._session_factory = session_factory or _default_session_factory(url)
-        self._upstream: Any | None = None
+        return aiohttp.ClientSession()
 
     async def connect(self) -> None:
-        upstream = self._session_factory()
-        await upstream.connect()
+        http_session = self._http_session_factory()
+        try:
+            upstream = self._session_factory(http_session)
+            await upstream.connect()
+        except Exception:
+            await http_session.close()
+            raise
+        self._http_session = http_session
         self._upstream = upstream
 
     async def disconnect(self) -> None:
@@ -42,6 +65,9 @@ class BridgeMatterClient:
             return
         await self._upstream.disconnect()
         self._upstream = None
+        assert self._http_session is not None
+        await self._http_session.close()
+        self._http_session = None
 
     def _require_upstream(self) -> Any:
         if self._upstream is None:
