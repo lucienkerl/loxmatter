@@ -63,9 +63,11 @@ cp .env.example .env      # RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_AD
 mkdir -p data
 ```
 
-**Schritt 2 — Bluetooth entsperren.** `hci0` ist rfkill-soft-blockiert; ohne diesen
-Schritt startet `matter-server` ohne funktionsfähiges BLE (**nicht persistent** —
-nach jedem Reboot erneut nötig, siehe "Bluetooth-Adapter ist rfkill-soft-blocked"):
+**Schritt 2 — Bluetooth entsperren.** Nur bei der Ersteinrichtung nötig: `hci0` war
+werksseitig rfkill-soft-blockiert, und ohne diesen Schritt startet `matter-server` ohne
+funktionsfähiges BLE. **Der Unblock hält über Reboots hinweg** — am 2026-09-01 durch
+einen echten Reboot geprüft (siehe "Bluetooth-Adapter ist rfkill-soft-blocked"). Prüfe
+mit `rfkill list bluetooth`; steht dort `Soft blocked: no`, überspring diesen Schritt:
 
 ```bash
 docker run --rm --privileged -v /sys:/sys alpine \
@@ -217,8 +219,13 @@ hci0: ... UP RUNNING
 ```
 
 **Das ist kein dauerhafter Zustand** — der Soft-Block liegt im Kernel-Speicher, nicht
-in einer Konfigurationsdatei, die dieser Befehl anlegt. Nach einem Reboot des Pi ist
-`hci0` vermutlich wieder blockiert (nicht getestet, da kein Reboot Teil dieser Task
+in einer Konfigurationsdatei, die dieser Befehl anlegt.
+
+**Nachtrag 2026-09-01, durch einen echten Reboot geprüft:** die Sperre kam **nicht**
+zurück. Nach dem Neustart meldete `rfkill list bluetooth` weiterhin `Soft blocked: no`,
+und `hci0` war ohne Zutun `UP RUNNING`. Der Unblock ist also eine Einmal-Maßnahme, keine
+nach jedem Reboot fällige. Die frühere Vermutung des Gegenteils war falsch. (Nicht
+getestet ist weiterhin, ob ein Reboot Teil dieser Task
 war) und der Befehl muss erneut laufen — das gehört vor jeden `docker compose up -d`
 in die Startroutine, bis das dauerhaft gelöst ist (z. B. über eine udev-Regel oder
 `systemd-rfkill`, die außerhalb des No-sudo-Rahmens dieser Task lag).
@@ -261,11 +268,30 @@ docker exec -d otbr /usr/sbin/otbr-web -I wpan0 -d7 -a 127.0.0.1 -p 80
 ```
 
 Danach verbindet sich `ot-ctl` normal, das Thread-Netz lässt sich wie gewohnt bilden.
+
+**Nach einem Reboot des Pi ist die Wiederherstellung länger — vier Schritte statt zwei.**
+Am 2026-09-01 gemessen: der Container startet automatisch wieder, aber `otbr-agent` läuft
+darin gar nicht, und es gibt nichts zu killen — nur verwaiste PID-Dateien von vor dem
+Reboot. Der Thread-Datensatz selbst überlebt (Ext PAN ID unverändert), muss also nicht neu
+angelegt werden. Die Schnittstelle ist aber `detached` und muss neu gestartet werden:
+
+```bash
+docker exec otbr sh -c 'rm -f /var/run/otbr-agent.pid /var/run/otbr-web.pid'
+docker exec -d otbr /usr/sbin/otbr-agent -I wpan0 -B wlan0 -d7 \
+  --rest-listen-address 127.0.0.1 \
+  spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800
+docker exec otbr ot-ctl ifconfig up
+docker exec otbr ot-ctl thread start
+```
+
+Der Zustand geht danach von `detached` nach `leader`, gemessen nach rund 15 Sekunden.
+`docker exec otbr ot-ctl state` erst danach prüfen, sonst sieht man `detached` und hält
+es für einen Fehler.
 `otbr-web` (REST-API auf Port 80, intern) wird von `matter-server`/`ot-ctl` nicht
 gebraucht — es läuft nur der Vollständigkeit halber mit, falls es später zum
 Debuggen nützlich ist.
 
-**Das ist wie der rfkill-Fix kein dauerhafter Zustand** — er muss nach jedem
+**Anders als der rfkill-Fix ist das kein dauerhafter Zustand** — er muss nach jedem
 `docker compose up`/Neustart des `otbr`-Containers erneut angewendet werden, bis das
 Image selbst ersetzt wird (z. B. durch die neuere s6-overlay-"border-router"-Variante,
 die keinen sysvinit/`start-stop-daemon`-Unterbau hat — siehe Historie unten,
@@ -333,7 +359,7 @@ tatsächlich per BLE, nicht nur über das Thread-Netz.
   schon auf der VM: OTBR spannt auf `wpan0` ein eigenes ULA-Präfix auf, und
   `matter-server` läuft mit `network_mode: host` daneben und erreicht die Geräte über
   die Route dorthin. Erst Matter-über-WLAN-Geräte bräuchten globales IPv6 im LAN.
-- Der rfkill-Unblock und der `start-stop-daemon`-Workaround (siehe oben) sind beide
+- Der `start-stop-daemon`-Workaround (siehe oben) ist
   **nicht persistent** — nach einem Neustart des Pi bzw. des `otbr`-Containers müssen
   sie erneut angewendet werden. Für eine Testumgebung akzeptabel, für Phase 6 nicht.
 
