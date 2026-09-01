@@ -36,6 +36,22 @@ Dongle, dieselbe Firmware, dasselbe Image.
 
 ## Deployment
 
+Der komplette Ablauf, von oben nach unten durchlaufbar. Kein `-it` verwenden — es
+gibt kein interaktives TTY über SSH `BatchMode=yes`, `docker exec` reicht. **Kein
+`sudo`** — der Pi verlangt dafür ein Passwort, das nie angefordert oder eingegeben
+wird; alles unten ist als `pi`-User machbar.
+
+**Zwei zusätzliche manuelle Schritte sind auf dem Pi nötig, die auf der VM nicht
+nötig waren.** Sie stehen unten bereits an der richtigen Stelle in der Reihenfolge
+(Begründung und Details in "Bluetooth-Adapter ist rfkill-soft-blocked" und
+"start-stop-daemon haengt auf dem Pi-Kernel" weiter unten):
+
+1. `hci0` per rfkill entsperren, **bevor** `matter-server` gestartet wird (Schritt 2).
+2. `otbr-agent`/`otbr-web` nach `docker compose up -d` manuell nachstarten, weil
+   `start-stop-daemon` im OTBR-Image auf diesem Kernel nie fertig wird (Schritt 4).
+
+**Schritt 1 — Dateien kopieren und Konfiguration anlegen:**
+
 ```bash
 # auf dem Mac, im Repo:
 scp deploy/testhost/docker-compose.yml deploy/testhost/.env.example \
@@ -43,27 +59,40 @@ scp deploy/testhost/docker-compose.yml deploy/testhost/.env.example \
 
 # auf dem Pi:
 cd ~/loxmatter-testhost
-cp .env.example .env      # RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF ggf. anpassen
+cp .env.example .env      # RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_ADAPTER ggf. anpassen
 mkdir -p data
+```
+
+**Schritt 2 — Bluetooth entsperren.** `hci0` ist rfkill-soft-blockiert; ohne diesen
+Schritt startet `matter-server` ohne funktionsfähiges BLE (**nicht persistent** —
+nach jedem Reboot erneut nötig, siehe "Bluetooth-Adapter ist rfkill-soft-blocked"):
+
+```bash
+docker run --rm --privileged -v /sys:/sys alpine \
+  sh -c 'echo 0 > /sys/class/rfkill/rfkill0/soft'
+```
+
+**Schritt 3 — Stack starten:**
+
+```bash
 docker compose up -d
 ```
 
-Kein `-it` verwenden — es gibt kein interaktives TTY über SSH `BatchMode=yes`,
-`docker exec` reicht. **Kein `sudo`** — der Pi verlangt dafür ein Passwort, das nie
-angefordert oder eingegeben wird; alles unten ist als `pi`-User machbar (siehe
-"Kein Bluetooth ohne rfkill-Unblock" für den einen Fall, der Root-Rechte gebraucht
-hätte, und wie er ohne `sudo` gelöst wurde).
+**Schritt 4 — OTBR-Wrapper killen und Binaries direkt starten.** Der
+`start-stop-daemon` im OTBR-Image hängt auf diesem Kernel endlos, `otbr-agent`/
+`otbr-web` kommen nie hoch (**nicht persistent** — nach jedem Neustart des
+`otbr`-Containers erneut nötig, siehe "start-stop-daemon haengt auf dem
+Pi-Kernel"):
 
-**Zwei zusätzliche manuelle Schritte sind auf dem Pi nötig, die auf der VM nicht
-nötig waren** — beide unten im Detail:
+```bash
+docker exec otbr sh -c 'kill -9 $(cat /var/run/otbr-agent.pid) $(cat /var/run/otbr-web.pid)'
+docker exec -d otbr /usr/sbin/otbr-agent -I wpan0 -B wlan0 -d7 \
+  --rest-listen-address 127.0.0.1 \
+  spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800
+docker exec -d otbr /usr/sbin/otbr-web -I wpan0 -d7 -a 127.0.0.1 -p 80
+```
 
-1. `hci0` per rfkill entsperren, bevor `matter-server` gestartet wird (siehe
-   "Bluetooth-Adapter ist rfkill-soft-blocked").
-2. `otbr-agent`/`otbr-web` nach `docker compose up -d` manuell nachstarten, weil
-   `start-stop-daemon` im OTBR-Image auf diesem Kernel nie fertig wird (siehe
-   "start-stop-daemon haengt auf dem Pi-Kernel").
-
-Danach Thread-Netz einmalig bilden:
+**Schritt 5 — Thread-Netz einmalig bilden:**
 
 ```bash
 docker exec otbr ot-ctl dataset init new
@@ -92,7 +121,11 @@ $ docker run --rm ghcr.io/home-assistant-libs/python-matter-server:stable --help
 `CMD` ist `--storage-path /data --paa-root-cert-dir /data/credentials` (per `docker
 inspect --format '{{.Config.Cmd}}'` geprüft); `command:` in Compose überschreibt das
 CMD vollständig, deshalb übernimmt die Compose-Datei diese beiden Argumente und ergänzt
-`--bluetooth-adapter 0`.
+`--bluetooth-adapter ${BLUETOOTH_ADAPTER}`. Die Adapter-ID ist wie `RADIO_DEVICE`,
+`RADIO_BAUDRATE` und `BACKBONE_IF` über `.env` konfigurierbar (`BLUETOOTH_ADAPTER`,
+Default `0` in `docker-compose.yml` falls `.env` die Variable nicht setzt) statt im
+Compose-File hartkodiert — auf einem anderen Host mit mehreren Adaptern kann `hci0`
+eine andere ID haben.
 
 **Verifikation, dass der Adapter tatsächlich ankommt — nicht optional:** Ein Stack
 ohne BLE sieht in den Logs und im WebSocket-Verhalten identisch aus wie einer mit BLE,

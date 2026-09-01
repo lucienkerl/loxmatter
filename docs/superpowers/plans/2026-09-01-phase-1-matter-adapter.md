@@ -1289,7 +1289,7 @@ die vier zusätzlichen Tests spiegeln bereits diesen Stand.
 
 ---
 
-### Task 6: matter-server und OTBR auf der Test-VM
+### Task 6: matter-server und OTBR auf dem Test-Host (Raspberry Pi)
 
 Diese Task stand ursprünglich in Phase 6. Sie musste vorgezogen werden, weil Task 7
 ohne laufenden Controller nicht ausführbar ist — die Annahme aus Spec 3.5 lässt sich
@@ -1299,29 +1299,39 @@ Ziel ist ausdrücklich **nicht** der fertige Produktions-Stack aus Spec 4.1. Es 
 Testumgebung, die Phase 1 abschließen kann. Phase 6 baut darauf auf.
 
 **Files:**
-- Create: `deploy/testvm/docker-compose.yml` (später umbenannt zu `deploy/testhost/docker-compose.yml`
-  — Umzug auf den Raspberry Pi, siehe README dort)
-- Create: `deploy/testvm/.env.example` (später `deploy/testhost/.env.example`)
-- Create: `deploy/testvm/README.md` (später `deploy/testhost/README.md`)
+- Create: `deploy/testhost/docker-compose.yml`
+- Create: `deploy/testhost/.env.example`
+- Create: `deploy/testhost/README.md`
 
 **Interfaces:**
 - Consumes: nichts aus früheren Tasks
-- Produces: eine erreichbare WebSocket-URL `ws://10.0.1.215:5580/ws`, die Task 7 als `--url` benutzt
-  (nach dem Umzug auf den Raspberry Pi: `ws://10.0.1.56:5580/ws`, siehe `deploy/testhost/README.md`)
+- Produces: eine erreichbare WebSocket-URL `ws://10.0.1.56:5580/ws`, die Task 7 als `--url` benutzt
+  (siehe `deploy/testhost/README.md`)
 
 #### Die Umgebung, bereits erhoben
 
-Nicht erneut ermitteln — diese Werte sind auf der VM nachgesehen:
+Nicht erneut ermitteln — diese Werte sind auf dem Pi nachgesehen:
 
 | | Wert |
 |---|---|
-| Host | `lucienkerl@10.0.1.215`, SSH-Key eingerichtet |
-| OS | Ubuntu 26.04 LTS, x86_64, 4 Kerne, 5,3 GB RAM |
-| Backbone-Interface | `ens18` |
+| Host | `pi@10.0.1.56`, SSH-Key eingerichtet |
+| OS | Debian 13 "trixie" (Raspberry Pi OS), aarch64 |
+| Modell | Raspberry Pi 4 Model B Rev 1.5, 8 GB RAM |
+| Backbone-Interface | `wlan0` (kein Ethernet-Kabel gesteckt) |
 | Funkmodul | SONOFF Dongle Plus MG24 (Silicon Labs CP210x), Thread-Firmware bereits aufgespielt |
 | Geräteknoten | `/dev/ttyUSB0`, Gruppe `dialout` |
-| IPv6 | nur link-local (`fe80::be24:11ff:fe23:ed85`), `accept_ra=0`, `forwarding=0` |
+| Bluetooth | eingebauter Adapter `hci0` |
+| IPv6 | nur link-local, `forwarding=0` |
 | Docker | nicht installiert |
+
+**Warum ein Pi und keine VM:** Diese Umgebung lief zuerst auf einer Ubuntu-VM
+(`lucienkerl@10.0.1.215`, Backbone-Interface `ens18`). Sie musste auf den Pi umziehen,
+weil die VM **keinen Bluetooth-Adapter hatte** — Matter-Commissioning läuft über BLE,
+und ohne Adapter kann kein Gerät je eingelernt werden. Der Pi hat mit `hci0` einen
+eingebauten Adapter. Alle sonstigen Funde von der VM (Baudrate, OTBR-Image-Variante,
+NAT64/Firewall-Workaround) gelten unverändert für den Pi — derselbe Dongle, dieselbe
+Firmware, dasselbe Image — und sind in `deploy/testhost/README.md` unter "Historie:
+die VM" festgehalten.
 
 **Zum fehlenden globalen IPv6:** für Thread-Geräte unkritisch. Der OTBR spannt auf
 `wpan0` ein eigenes ULA-Präfix auf, und matter-server läuft mit `network_mode: host`
@@ -1330,7 +1340,7 @@ globales IPv6 im LAN. Notwendig ist lediglich `forwarding=1`.
 
 #### Schritt 0: Root-Schritte (vom Menschen auszuführen)
 
-`sudo` verlangt auf dieser VM ein Passwort, das der Agent weder erfragen noch benutzen
+`sudo` verlangt auf diesem Pi ein Passwort, das der Agent weder erfragen noch benutzen
 darf. Diese Befehle führt der Betreiber selbst aus, danach übernimmt der Agent:
 
 ```bash
@@ -1345,7 +1355,7 @@ Danach **neu anmelden** (Gruppenmitgliedschaften greifen erst in einer neuen Sit
 - [ ] **Step 1: Voraussetzungen bestätigen**
 
 ```bash
-ssh lucienkerl@10.0.1.215 'id -nG; docker ps >/dev/null && echo docker-ok; ls -l /dev/ttyUSB0; sysctl net.ipv6.conf.all.forwarding'
+ssh pi@10.0.1.56 'id -nG; docker ps >/dev/null && echo docker-ok; ls -l /dev/ttyUSB0; sysctl net.ipv6.conf.all.forwarding'
 ```
 
 Erwartet: `docker` und `dialout` in den Gruppen, `docker-ok`, `forwarding = 1`.
@@ -1353,15 +1363,15 @@ Fehlt etwas, ist Schritt 0 unvollständig — melde das, statt es mit `sudo` zu 
 
 - [ ] **Step 2: Compose-Dateien schreiben**
 
-`deploy/testvm/.env.example`:
+`deploy/testhost/.env.example`:
 
 ```
 RADIO_DEVICE=/dev/ttyUSB0
 RADIO_BAUDRATE=460800
-BACKBONE_IF=ens18
+BACKBONE_IF=wlan0
 ```
 
-`deploy/testvm/docker-compose.yml`:
+`deploy/testhost/docker-compose.yml`:
 
 ```yaml
 # Testumgebung fuer Phase 1 - NICHT der Produktions-Stack aus Spec 4.1.
@@ -1392,7 +1402,7 @@ services:
       - otbr
 ```
 
-Kopiere `.env.example` auf der VM nach `.env`. Die Compose-Syntax von
+Kopiere `.env.example` auf dem Pi nach `.env`. Die Compose-Syntax von
 `openthread/otbr` ändert sich zwischen Versionen — prüfe sie gegen die Dokumentation
 des Images, bevor du Fehler suchst, die keine sind, und trage Abweichungen im README ein.
 
@@ -1403,7 +1413,7 @@ danach lies die Firmware-Dokumentation des Dongles.
 - [ ] **Step 3: Starten und Thread-Netz bilden**
 
 ```bash
-cd ~/loxmatter-testvm && docker compose up -d
+cd ~/loxmatter-testhost && docker compose up -d
 docker compose logs -f otbr        # bis der RCP verbunden ist
 ```
 
@@ -1424,7 +1434,7 @@ gebraucht. **Nicht ins Repository committen**, er ist ein Netzwerk-Credential.
 Auf dem Mac, im Projektverzeichnis:
 
 ```bash
-uv run loxmatter inspect --node 1 --url ws://10.0.1.215:5580/ws
+uv run loxmatter inspect --node 1 --url ws://10.0.1.56:5580/ws
 ```
 
 Erwartet: ein Bericht oder `unbekannter Node 1`. Beides beweist, dass die Verbindung
@@ -1433,7 +1443,7 @@ Firewall und `network_mode: host` prüfen.
 
 - [ ] **Step 5: README schreiben**
 
-`deploy/testvm/README.md` hält fest, was tatsächlich funktionierte: die konkrete
+`deploy/testhost/README.md` hält fest, was tatsächlich funktionierte: die konkrete
 Baudrate, jede Abweichung von Step 2, den Befehl zum Sichern des Fabric-Volumes unter
 `./data`, und den Hinweis, dass der Thread-Datensatz nicht ins Repository gehört.
 Dieses Dokument ist der Rohstoff für den Deployment-Guide in Phase 6 — schreib auf,
@@ -1442,7 +1452,7 @@ was schiefging, nicht nur was am Ende lief.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add deploy/testvm
+git add deploy/testhost
 git commit -m "feat(deploy): Testumgebung mit matter-server und OTBR"
 ```
 

@@ -10,7 +10,8 @@
 #     --backbone-interface als Kommandozeilenargument, genau wie unten
 #     konfiguriert.
 #   - ghcr.io/home-assistant-libs/python-matter-server:stable -> mit
-#     --bluetooth-adapter 0 fuer BLE-Commissioning ueber hci0 (siehe README).
+#     --bluetooth-adapter ${BLUETOOTH_ADAPTER} fuer BLE-Commissioning ueber hci0
+#     (siehe README).
 services:
   otbr:
     image: openthread/otbr:latest
@@ -45,14 +46,15 @@ services:
       - /run/dbus:/run/dbus:ro
     # command ueberschreibt das Image-Default-CMD vollstaendig - die ersten
     # vier Argumente sind aus dem Default uebernommen (storage-path,
-    # paa-root-cert-dir), --bluetooth-adapter 0 ist neu und aktiviert
-    # BLE-Commissioning ueber hci0 (siehe README, "BLE aktivieren").
+    # paa-root-cert-dir), --bluetooth-adapter ist neu und aktiviert
+    # BLE-Commissioning ueber den in BLUETOOTH_ADAPTER benannten Adapter
+    # (siehe README, "BLE aktivieren").
     command:
       - --storage-path
       - /data
       - --paa-root-cert-dir
       - /data/credentials
       - --bluetooth-adapter
-      - "0"
+      - "${BLUETOOTH_ADAPTER:-0}"
     depends_on:
       - otbr
