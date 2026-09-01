@@ -368,11 +368,23 @@ Funktion ist der eigentliche Prüfstein für Spec 3.5.
 - Test: `tests/matter/test_discovery.py`
 
 **Interfaces:**
-- Consumes: `parse_attribute_path`, `GLOBAL_ATTRIBUTE_IDS`, `EVENT_LIST_ID`, `ATTRIBUTE_LIST_ID` aus Task 1; `SignalRef`, `SignalKind`, `NodeSnapshot` aus Task 2
+- Consumes: `parse_attribute_path`, `GLOBAL_ATTRIBUTE_IDS`, `EVENT_LIST_ID`, `ATTRIBUTE_LIST_ID`, `FEATURE_MAP_ID` aus Task 1; `SignalRef`, `SignalKind`, `NodeSnapshot` aus Task 2
 - Produces:
   - `extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]` — sortiert, Attribute und Events
   - `find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]` — Attribute, die das Gerät in seiner `AttributeList` nennt, für die aber kein Wert vorliegt
   - `find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]` — Pfade, an denen das Parsen scheiterte
+  - `FEATURE_MAP_EVENTS: dict[int, tuple[_FeatureEventRule, ...]]` — Cluster-spezifisches Wissen, welche Events eine FeatureMap impliziert
+
+> **Nachtrag, siehe Task 7:** Der Code unten zeigt bereits den korrigierten Stand.
+> Task 3 wurde ursprünglich ohne `FEATURE_MAP_EVENTS` umgesetzt — reine
+> EventList-Ableitung, 10 Tests. Die Validierung an echten Geräten in Task 7
+> (2026-09-01) zeigte, dass keins der beiden geprüften IKEA-Geräte die
+> EventList führt; ein Taster, der nachweislich Tastendrücke sendet, lieferte
+> darüber null Events. Die Korrektur — eine zweite, FeatureMap-basierte
+> Event-Quelle — landete deshalb erst nachträglich in `discovery.py` (Commit
+> `6af2de7`, siehe Task 7 und Spec 3.5/6.3). Diese Sektion wurde im Nachhinein
+> auf den gelieferten Stand aktualisiert, damit sie nicht die längst überholte
+> EventList-only-Fassung als aktuell ausgibt.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -450,6 +462,83 @@ def test_unparsable_paths_are_collected_not_raised():
     snap = snapshot({"kaputt": 1, "1/6/0": True})
     assert find_unparsable_paths(snap) == ["kaputt"]
     assert extract_signals(snap) == [SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)]
+
+
+# Zweite Event-Quelle: FeatureMap des Switch-Clusters (0x003B / 59).
+#
+# EventList (65530) ist optional und laut Validierung an echten IKEA-Geräten
+# (siehe tests/matter/test_real_devices.py) in der Praxis nicht implementiert —
+# ein Taster ohne diese Ableitung liefert null Event-Signale. Die Bedingungen
+# unten sind aus data_model/1.4/clusters/Switch.xml (project-chip/connectedhomeip,
+# maschinenlesbare Transkription der Matter Application Cluster Specification)
+# übernommen: je Event ein mandatoryConform über Feature-Bits.
+
+
+def test_feature_map_ms_only_yields_initial_press_only():
+    # MS (Bit 1) = 0b10 = 2
+    signals = extract_signals(snapshot({"1/59/65532": 2}))
+    assert signals == [SignalRef(1, 59, 1, SignalKind.EVENT)]  # InitialPress
+
+
+def test_feature_map_ms_msr_yields_initial_press_and_short_release():
+    # MS + MSR = 0b110 = 6
+    signals = extract_signals(snapshot({"1/59/65532": 6}))
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),  # InitialPress
+        SignalRef(1, 59, 3, SignalKind.EVENT),  # ShortRelease
+    ]
+
+
+def test_feature_map_ls_only_yields_switch_latched_only():
+    # LS (Bit 0) = 1
+    signals = extract_signals(snapshot({"1/59/65532": 1}))
+    assert signals == [SignalRef(1, 59, 0, SignalKind.EVENT)]  # SwitchLatched
+
+
+def test_feature_map_30_matches_ikea_bilresa_button():
+    # MS + MSR + MSL + MSM = 2 + 4 + 8 + 16 = 30, das reale FeatureMap des
+    # IKEA BILRESA-Tasters (node 4, Endpoints 1 und 2). AS ist nicht gesetzt,
+    # also feuert MultiPressOngoing zusätzlich zu MultiPressComplete; LS ist
+    # nicht gesetzt, SwitchLatched fehlt entsprechend.
+    signals = extract_signals(snapshot({"1/59/65532": 30}))
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),  # InitialPress
+        SignalRef(1, 59, 2, SignalKind.EVENT),  # LongPress
+        SignalRef(1, 59, 3, SignalKind.EVENT),  # ShortRelease
+        SignalRef(1, 59, 4, SignalKind.EVENT),  # LongRelease
+        SignalRef(1, 59, 5, SignalKind.EVENT),  # MultiPressOngoing
+        SignalRef(1, 59, 6, SignalKind.EVENT),  # MultiPressComplete
+    ]
+
+
+def test_feature_map_msm_with_action_switch_excludes_multi_press_ongoing():
+    # MSM + AS = 16 + 32 = 48. MultiPressOngoing verlangt MSM UND NICHT AS.
+    signals = extract_signals(snapshot({"1/59/65532": 48}))
+    assert signals == [SignalRef(1, 59, 6, SignalKind.EVENT)]  # MultiPressComplete
+
+
+def test_feature_map_zero_yields_no_events():
+    assert extract_signals(snapshot({"1/59/65532": 0})) == []
+
+
+def test_feature_map_is_ignored_for_clusters_without_a_table_entry():
+    """Die FeatureMap-Ableitung ist Cluster-spezifisches Wissen — für Cluster
+    ohne Eintrag in FEATURE_MAP_EVENTS darf sie nichts erfinden."""
+    assert extract_signals(snapshot({"1/6/65532": 30})) == []
+
+
+def test_event_list_and_feature_map_are_unioned_and_deduplicated():
+    signals = extract_signals(snapshot({"1/59/65530": [1, 3], "1/59/65532": 6}))
+    # EventList nennt {1, 3}, FeatureMap (MS+MSR) auch {1, 3} — kein Duplikat.
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),
+        SignalRef(1, 59, 3, SignalKind.EVENT),
+    ]
+
+
+def test_feature_map_attribute_itself_is_not_an_attribute_signal():
+    signals = extract_signals(snapshot({"1/59/65532": 30}))
+    assert all(s.kind is SignalKind.EVENT for s in signals)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -467,22 +556,94 @@ Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.matter.disco
 Rein funktional und ohne I/O — arbeitet auf einem NodeSnapshot und ist damit
 gegen eingecheckte Fixtures echter Geräte testbar.
 
-Grundsatz aus Spec 3.5: hier wird nichts verworfen. Unbekannte Cluster werden
-genauso zu Signalen wie bekannte; die Anreicherung um Namen und Skalierung
-passiert später in profiles/.
+Grundsatz aus Spec 3.5: bei Attributen wird nichts verworfen. Unbekannte
+Cluster werden genauso zu Signalen wie bekannte; die Anreicherung um Namen
+und Skalierung passiert später in profiles/.
+
+Für Events gilt dieser Grundsatz **nicht mehr uneingeschränkt** — das ist die
+Korrektur aus der Validierung an echten Geräten (Phase 1, 2026-09-01, siehe
+Spec 3.5 und 6.3). Die EventList (0xFFFA) ist im Matter-Standard optional und
+in der Praxis bei den geprüften IKEA-Geräten nicht implementiert: ein Taster,
+der nachweislich Tastendrücke sendet, lieferte über die EventList null
+Events. Als zweite, cluster-spezifische Quelle wird deshalb aus der FeatureMap
+(0xFFFC) abgeleitet, welche Events ein Cluster laut Matter-Spezifikation
+generieren *kann* — das Gerät muss die Events dafür nicht selbst auflisten.
+Dieses Wissen steht in `FEATURE_MAP_EVENTS`, einer Tabelle, nicht in
+verzweigendem Code, damit weitere Cluster ergänzbar sind, ohne den Algorithmus
+hier anzufassen. Beide Quellen werden vereinigt und dedupliziert (SignalRef
+ist hashable, das Ergebnis-Set übernimmt das automatisch).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.matter.paths import (
     ATTRIBUTE_LIST_ID,
     EVENT_LIST_ID,
+    FEATURE_MAP_ID,
     GLOBAL_ATTRIBUTE_IDS,
     parse_attribute_path,
 )
+
+# Switch-Cluster (0x003B / 59) — Feature-Bits der FeatureMap nach Matter
+# Application Cluster Specification.
+_SWITCH_CLUSTER_ID = 59
+_LATCHING_SWITCH = 0x01
+_MOMENTARY_SWITCH = 0x02
+_MOMENTARY_SWITCH_RELEASE = 0x04
+_MOMENTARY_SWITCH_LONG_PRESS = 0x08
+_MOMENTARY_SWITCH_MULTI_PRESS = 0x10
+_ACTION_SWITCH = 0x20
+
+
+@dataclass(frozen=True)
+class _FeatureEventRule:
+    """Ein Event, das ein Cluster generiert, wenn bestimmte FeatureMap-Bits
+    gesetzt und andere nicht gesetzt sind."""
+
+    event_id: int
+    requires: int
+    excludes: int = 0
+
+    def applies(self, feature_map: int) -> bool:
+        return (feature_map & self.requires) == self.requires and (feature_map & self.excludes) == 0
+
+
+# Welche Events ein Cluster laut Spezifikation abhängig von seiner FeatureMap
+# generieren kann. Quelle geprüft gegen
+# data_model/1.4/clusters/Switch.xml aus project-chip/connectedhomeip
+# (maschinenlesbare Transkription der Matter Application Cluster
+# Specification) — je Event ein mandatoryConform über Feature-Bits:
+#
+#   SwitchLatched (0)        ← LS
+#   InitialPress (1)         ← MS
+#   LongPress (2)            ← MSL
+#   ShortRelease (3)         ← MSR
+#   LongRelease (4)          ← MSL
+#   MultiPressOngoing (5)    ← MSM UND NICHT AS
+#   MultiPressComplete (6)   ← MSM
+#
+# Weitere Cluster mit Events ohne EventList-Unterstützung kommen hier als
+# weitere Einträge dazu — der Algorithmus in extract_signals ändert sich
+# dafür nicht.
+FEATURE_MAP_EVENTS: dict[int, tuple[_FeatureEventRule, ...]] = {
+    _SWITCH_CLUSTER_ID: (
+        _FeatureEventRule(event_id=0, requires=_LATCHING_SWITCH),
+        _FeatureEventRule(event_id=1, requires=_MOMENTARY_SWITCH),
+        _FeatureEventRule(event_id=2, requires=_MOMENTARY_SWITCH_LONG_PRESS),
+        _FeatureEventRule(event_id=3, requires=_MOMENTARY_SWITCH_RELEASE),
+        _FeatureEventRule(event_id=4, requires=_MOMENTARY_SWITCH_LONG_PRESS),
+        _FeatureEventRule(
+            event_id=5,
+            requires=_MOMENTARY_SWITCH_MULTI_PRESS,
+            excludes=_ACTION_SWITCH,
+        ),
+        _FeatureEventRule(event_id=6, requires=_MOMENTARY_SWITCH_MULTI_PRESS),
+    ),
+}
 
 
 def _parsed_paths(snapshot: NodeSnapshot) -> Iterable[tuple[int, int, int, object]]:
@@ -500,13 +661,32 @@ def _as_id_list(value: object) -> list[int]:
     return [int(item) for item in value if isinstance(item, (int, float))]
 
 
+def _feature_map_event_ids(cluster_id: int, value: object) -> list[int]:
+    """Event-IDs, die laut FEATURE_MAP_EVENTS aus der FeatureMap eines Clusters folgen.
+
+    Leer für Cluster ohne Tabelleneintrag oder eine FeatureMap, die keine der
+    dort hinterlegten Bit-Bedingungen erfüllt.
+    """
+    rules = FEATURE_MAP_EVENTS.get(cluster_id)
+    if not rules or not isinstance(value, (int, float)):
+        return []
+    feature_map = int(value)
+    return [rule.event_id for rule in rules if rule.applies(feature_map)]
+
+
 def extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
-    """Jedes nicht-globale Attribut und jedes gelistete Event wird ein Signal."""
+    """Jedes nicht-globale Attribut wird ein Signal. Events kommen aus zwei
+    vereinigten Quellen: der EventList (falls das Gerät sie führt) und, für
+    Cluster mit Eintrag in FEATURE_MAP_EVENTS, aus der FeatureMap."""
     signals: set[SignalRef] = set()
 
     for endpoint, cluster_id, attribute_id, value in _parsed_paths(snapshot):
         if attribute_id == EVENT_LIST_ID:
             for event_id in _as_id_list(value):
+                signals.add(SignalRef(endpoint, cluster_id, event_id, SignalKind.EVENT))
+            continue
+        if attribute_id == FEATURE_MAP_ID:
+            for event_id in _feature_map_event_ids(cluster_id, value):
                 signals.add(SignalRef(endpoint, cluster_id, event_id, SignalKind.EVENT))
             continue
         if attribute_id in GLOBAL_ATTRIBUTE_IDS:
@@ -552,7 +732,7 @@ def find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_discovery.py -v`
-Expected: PASS, 10 Tests
+Expected: PASS, 19 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -560,6 +740,12 @@ Expected: PASS, 10 Tests
 git add src/loxmatter/matter/discovery.py tests/matter/test_discovery.py
 git commit -m "feat(matter): generische Zerlegung eines Node-Abbilds in Signale"
 ```
+
+Task 3 wurde ursprünglich mit reiner EventList-Ableitung committet (10 Tests, kein
+`FEATURE_MAP_EVENTS`). Die Validierung an echten Geräten in Task 7 zeigte, dass diese
+Ableitung für Events nicht trägt — siehe die Nachtrags-Box am Anfang dieses Tasks und
+Task 7 für den vollständigen Befund. Der Code und die 19 Tests oben spiegeln bereits
+den korrigierten Stand aus Commit `6af2de7`.
 
 ---
 
