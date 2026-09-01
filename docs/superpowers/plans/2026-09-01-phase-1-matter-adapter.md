@@ -1077,8 +1077,7 @@ def test_device_yields_at_least_one_signal(path):
 def test_at_least_one_fixture_carries_events():
     """Taster sind der Sonderfall aus Spec 6.3 — ohne sie ist die Annahme halb geprüft."""
     with_events = [
-        p for p in REAL_DEVICES
-        if any(s.kind is SignalKind.EVENT for s in extract_signals(load(p)))
+        p for p in REAL_DEVICES if any(s.kind is SignalKind.EVENT for s in extract_signals(load(p)))
     ]
     assert with_events, "kein aufgenommenes Gerät liefert Events — Taster fehlt"
 
@@ -1086,8 +1085,7 @@ def test_at_least_one_fixture_carries_events():
 def test_at_least_one_fixture_carries_energy_measurement():
     """Spec 7.3: messende Steckdose, Cluster 144 ElectricalPowerMeasurement."""
     with_energy = [
-        p for p in REAL_DEVICES
-        if any(s.cluster_id == 144 for s in extract_signals(load(p)))
+        p for p in REAL_DEVICES if any(s.cluster_id == 144 for s in extract_signals(load(p)))
     ]
     assert with_energy, "kein aufgenommenes Gerät misst Leistung"
 ```
