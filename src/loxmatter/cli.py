@@ -13,6 +13,7 @@ from matter_server.client.exceptions import CannotConnect
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.discovery import (
     extract_signals,
+    find_clusters_with_undiscoverable_events,
     find_unparsable_paths,
     find_unreported_attributes,
 )
@@ -58,6 +59,15 @@ def render_report(snapshot: NodeSnapshot) -> str:
     broken = find_unparsable_paths(snapshot)
     if broken:
         lines += ["", f"NICHT LESBAR ({len(broken)}):"] + [f"  {p}" for p in broken]
+
+    undiscoverable = find_clusters_with_undiscoverable_events(snapshot)
+    if undiscoverable:
+        header = (
+            f"NICHT ABLEITBAR ({len(undiscoverable)}) \u2014 weder EventList noch "
+            "FeatureMap-Tabelleneintrag, ob dieser Cluster Events hat, ist unbekannt:"
+        )
+        lines += ["", header]
+        lines += [f"  {endpoint}/{cluster_id}" for endpoint, cluster_id in undiscoverable]
 
     return "\n".join(lines)
 

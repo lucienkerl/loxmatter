@@ -50,6 +50,28 @@ def test_cli_reads_a_fixture_without_network():
     assert "TRADFRI bulb" in result.stdout
 
 
+def test_report_flags_unparsable_paths():
+    snap = NodeSnapshot.from_raw(1, {"attributes": {"kaputt": 1, "1/6/0": True}})
+    report = render_report(snap)
+    assert "NICHT LESBAR" in report
+    assert "kaputt" in report
+
+
+def test_report_flags_clusters_with_undiscoverable_events():
+    # Cluster 42 (OTA Requestor) hat mandatorische Events, aber weder eine
+    # EventList noch einen Eintrag in FEATURE_MAP_EVENTS.
+    snap = NodeSnapshot.from_raw(1, {"attributes": {"0/42/0": 1}})
+    report = render_report(snap)
+    assert "NICHT ABLEITBAR" in report
+    assert "0/42" in report
+
+
+def test_report_omits_undiscoverable_events_section_when_empty():
+    # Switch (59) steht in FEATURE_MAP_EVENTS — nichts Unableitbares hier.
+    snap = NodeSnapshot.from_raw(1, {"attributes": {"1/59/0": True}})
+    assert "NICHT ABLEITBAR" not in render_report(snap)
+
+
 class _FakeUpstream:
     """Attrappe für matter_server.client.MatterClient — offline, kein Socket.
 

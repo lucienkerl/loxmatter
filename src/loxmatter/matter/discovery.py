@@ -166,7 +166,11 @@ def find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]:
 
 
 def find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]:
-    """Pfade, die nicht dem erwarteten Format entsprachen. Sollte leer sein."""
+    """Pfade, die nicht dem erwarteten Format entsprachen. Sollte leer sein.
+
+    Läuft absichtlich noch einmal eigenständig über alle Pfade, statt
+    `_parsed_paths` wiederzuverwenden — das misst gerade, was dort verworfen wird.
+    """
     broken: list[str] = []
     for path in snapshot.attributes:
         try:
@@ -174,3 +178,36 @@ def find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]:
         except ValueError:
             broken.append(path)
     return sorted(broken)
+
+
+def find_clusters_with_undiscoverable_events(snapshot: NodeSnapshot) -> list[tuple[int, int]]:
+    """Cluster, für die weder eine EventList vorliegt noch ein Eintrag in
+    FEATURE_MAP_EVENTS existiert.
+
+    Das sind die Cluster, bei denen dieses Werkzeug schlicht nicht sagen kann,
+    ob es Events gibt: Die EventList wurde nicht geliefert (das Gerät führt sie
+    entweder nicht, oder sie ist leer — beides sieht hier gleich aus) und die
+    FeatureMap-Tabelle kennt den Cluster nicht, kann also auch nichts ableiten.
+    "Events (0)" im Bericht ist für so einen Cluster keine Aussage über das
+    Gerät, sondern über die Wissenslücke dieses Werkzeugs.
+
+    Absichtlich ohne Sonderfall für Endpoint 0: Cluster 0/42 (OTA Software
+    Update Requestor) ist genau das Beispiel, das diese Funktion motiviert hat
+    — seine Events (StateTransition, VersionApplied, DownloadError) sind
+    mandatorisch, aber ohne EventList nicht nachweisbar. Eine pauschale
+    Ausnahme für administrative Endpoint-0-Cluster würde also den Fall
+    verstecken, den dieses Instrument gerade aufdecken soll.
+    """
+    clusters: set[tuple[int, int]] = set()
+    with_event_list: set[tuple[int, int]] = set()
+
+    for endpoint, cluster_id, attribute_id, _value in _parsed_paths(snapshot):
+        clusters.add((endpoint, cluster_id))
+        if attribute_id == EVENT_LIST_ID:
+            with_event_list.add((endpoint, cluster_id))
+
+    return sorted(
+        (endpoint, cluster_id)
+        for endpoint, cluster_id in clusters
+        if (endpoint, cluster_id) not in with_event_list and cluster_id not in FEATURE_MAP_EVENTS
+    )

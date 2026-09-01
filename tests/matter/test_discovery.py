@@ -1,5 +1,6 @@
 from loxmatter.matter.discovery import (
     extract_signals,
+    find_clusters_with_undiscoverable_events,
     find_unparsable_paths,
     find_unreported_attributes,
 )
@@ -146,3 +147,38 @@ def test_event_list_and_feature_map_are_unioned_and_deduplicated():
 def test_feature_map_attribute_itself_is_not_an_attribute_signal():
     signals = extract_signals(snapshot({"1/59/65532": 30}))
     assert all(s.kind is SignalKind.EVENT for s in signals)
+
+
+# Drittes Instrument: Cluster, für die weder eine EventList vorliegt noch ein
+# Eintrag in FEATURE_MAP_EVENTS existiert. Hier kann das Werkzeug nicht sagen,
+# ob es Events gibt — anders als bei "0 Events", wo es das (über EventList
+# oder FeatureMap-Tabelle) tatsächlich geprüft hat.
+
+
+def test_flags_clusters_without_event_list_and_without_feature_map_table_entry():
+    # Cluster 42 (OTA Requestor) und 145 (ElectricalEnergyMeasurement) haben
+    # beide mandatorische Events laut Spec, aber keine EventList und keinen
+    # Eintrag in FEATURE_MAP_EVENTS — genau der blinde Fleck.
+    snap = snapshot({"0/42/0": 1, "2/145/65532": 5})
+    assert find_clusters_with_undiscoverable_events(snap) == [(0, 42), (2, 145)]
+
+
+def test_cluster_with_event_list_is_not_flagged():
+    snap = snapshot({"1/42/65530": [0, 1]})
+    assert find_clusters_with_undiscoverable_events(snap) == []
+
+
+def test_cluster_with_feature_map_table_entry_is_not_flagged_even_without_event_list():
+    # Switch (59) steht in FEATURE_MAP_EVENTS — auch ohne EventList weiß das
+    # Werkzeug hier, wonach es suchen muss.
+    snap = snapshot({"1/59/0": True})
+    assert find_clusters_with_undiscoverable_events(snap) == []
+
+
+def test_undiscoverable_events_result_is_deduplicated_and_sorted():
+    snap = snapshot({"2/99/0": 1, "0/42/1": 2, "0/42/2": 3, "1/50/0": 1})
+    assert find_clusters_with_undiscoverable_events(snap) == [(0, 42), (1, 50), (2, 99)]
+
+
+def test_no_clusters_flagged_when_snapshot_is_empty():
+    assert find_clusters_with_undiscoverable_events(snapshot({})) == []
