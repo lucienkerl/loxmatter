@@ -590,43 +590,72 @@ wirklich erkennen.
 
 ```python
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
+from loxmatter.matter import client as client_module
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 
 
 class FakeNode:
+    """Steht für matter_server.client.models.node.MatterNode.
+
+    Die echte MatterNode trägt ihre Rohattribute nicht direkt, sondern unter
+    node_data.attributes — node_id bleibt aber ein Attribut direkt am Node
+    (dort eine Property auf node_data.node_id). Diese Attrappe bildet genau
+    diese Form nach, statt sie der Einfachheit halber abzuflachen.
+    """
+
     def __init__(self, node_id: int, attributes: dict[str, object]):
         self.node_id = node_id
-        self.attributes = attributes
+        self.node_data = SimpleNamespace(attributes=attributes)
 
 
 class FakeUpstream:
-    """Steht für matter_server.client.MatterClient."""
+    """Steht für matter_server.client.MatterClient.
+
+    start_listening() bildet den echten Vertrag nach: Sie füllt den
+    Node-Cache, setzt (sofern gewünscht) init_ready und blockiert danach,
+    bis sie abgebrochen wird — genau wie MatterClient.start_listening().
+    get_nodes() liefert bewusst erst etwas zurück, nachdem start_listening()
+    gelaufen ist: Ein Test, der den Listener nie startet, muss den
+    ursprünglichen Fehler (leerer Node-Cache) reproduzieren können.
+    """
 
     def __init__(
         self,
-        nodes: list[FakeNode],
+        nodes: list[FakeNode] | None = None,
         fail_connect: bool = False,
         fail_disconnect: bool = False,
+        signal_ready: bool = True,
     ):
-        self._nodes = nodes
-        self.connected = False
+        self._configured_nodes = nodes or []
+        self._nodes: list[FakeNode] = []
         self.disconnect_calls = 0
+        self.start_listening_calls = 0
+        self.cancelled = False
         self._fail_connect = fail_connect
         self._fail_disconnect = fail_disconnect
+        self._signal_ready = signal_ready
 
-    async def connect(self) -> None:
+    async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
+        self.start_listening_calls += 1
         if self._fail_connect:
             raise RuntimeError("Verbindung fehlgeschlagen")
-        self.connected = True
+        self._nodes = self._configured_nodes
+        if self._signal_ready and init_ready is not None:
+            init_ready.set()
+        try:
+            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
 
     async def disconnect(self) -> None:
         self.disconnect_calls += 1
         if self._fail_disconnect:
             raise RuntimeError("Trennung fehlgeschlagen")
-        self.connected = False
 
     def get_nodes(self) -> list[FakeNode]:
         return self._nodes
@@ -647,10 +676,16 @@ def make_client(
     *,
     fail_connect: bool = False,
     fail_disconnect: bool = False,
+    signal_ready: bool = True,
 ) -> tuple[BridgeMatterClient, FakeSession]:
     """Baut einen BridgeMatterClient mit Attrappen für HTTP-Session und Upstream."""
     session = FakeSession()
-    upstream = FakeUpstream(nodes or [], fail_connect=fail_connect, fail_disconnect=fail_disconnect)
+    upstream = FakeUpstream(
+        nodes or [],
+        fail_connect=fail_connect,
+        fail_disconnect=fail_disconnect,
+        signal_ready=signal_ready,
+    )
     bridge = BridgeMatterClient(
         url="ws://test/ws",
         session_factory=lambda _session: upstream,
@@ -806,7 +841,7 @@ async def test_connect_cancelled_closes_session_and_propagates_cancellation():
     session = FakeSession()
 
     class CancellingUpstream:
-        async def connect(self) -> None:
+        async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
             raise asyncio.CancelledError()
 
     bridge = BridgeMatterClient(
@@ -819,6 +854,96 @@ async def test_connect_cancelled_closes_session_and_propagates_cancellation():
         await bridge.connect()
 
     assert session.close_calls == 1
+
+
+async def test_connect_times_out_when_listener_never_signals_readiness(monkeypatch):
+    """Der Defekt, den dieser Test verhindert: Ohne Zeitlimit würde connect()
+    entweder ewig auf ein Event warten, das nie kommt, oder — schlimmer — sich
+    fälschlich als verbunden melden, ohne dass der Node-Cache je gefüllt
+    wurde. Ein Listener, der init_ready nie setzt, muss connect() innerhalb
+    des Zeitlimits scheitern lassen."""
+    monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    bridge, _session = make_client([FakeNode(1, {})], signal_ready=False)
+
+    with pytest.raises(MatterUnavailableError, match="keine Bereitschaft"):
+        await bridge.connect()
+
+
+async def test_connect_timeout_closes_session_and_allows_a_later_successful_connect(
+    monkeypatch,
+):
+    """Nach einer Bereitschafts-Zeitüberschreitung muss die eigene Session
+    geschlossen sein, der Client als nicht verbunden gelten, und ein
+    späterer connect() mit einem funktionierenden Upstream muss trotzdem
+    gelingen."""
+    monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    sessions: list[FakeSession] = []
+
+    def http_session_factory() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    attempts = {"n": 0}
+
+    def session_factory(_session: FakeSession) -> FakeUpstream:
+        attempts["n"] += 1
+        return FakeUpstream([FakeNode(1, {})], signal_ready=attempts["n"] != 1)
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=session_factory,
+        http_session_factory=http_session_factory,
+    )
+
+    with pytest.raises(MatterUnavailableError, match="keine Bereitschaft"):
+        await bridge.connect()
+
+    assert len(sessions) == 1
+    assert sessions[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
+        await bridge.snapshots()
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+    assert [s.node_id for s in snapshots] == [1]
+    assert sessions[1].close_calls == 0
+
+
+async def test_disconnect_cancels_the_listener_task():
+    """disconnect() muss den Listener-Task abbrechen, statt ihn einfach
+    herumlaufen zu lassen — sonst bleibt eine Coroutine aktiv, die auf eine
+    inzwischen geschlossene Verbindung wartet."""
+    session = FakeSession()
+    upstream = FakeUpstream([FakeNode(1, {})])
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: session,
+    )
+    await bridge.connect()
+    assert upstream.cancelled is False
+
+    await bridge.disconnect()
+
+    assert upstream.cancelled is True
+
+
+async def test_snapshots_reflect_nodes_populated_by_the_listener():
+    """Regressionstest für den eigentlichen Defekt: Der alte connect() rief
+    upstream.start_listening() nie auf, wodurch der Node-Cache des Upstreams
+    für immer leer blieb — jedes reale Gerät erschien als unbekannt, egal wie
+    viele kommissioniert waren. get_nodes() liefert hier — wie beim echten
+    MatterClient — bewusst erst etwas zurück, nachdem start_listening()
+    gelaufen ist; gegen den alten Code (kein Aufruf von start_listening())
+    schlägt dieser Test fehl."""
+    bridge, _session = make_client([FakeNode(3, {"0/40/1": "Aqara", "1/6/0": True})])
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+
+    assert [s.node_id for s in snapshots] == [3]
+    assert snapshots[0].vendor_name == "Aqara"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -842,18 +967,49 @@ python-matter-server schließt nur das Websocket, nicht die Session, die ihr
 übergeben wurde — laut aiohttp-Konvention muss das tun, wer die Session
 erzeugt hat. Deshalb hält diese Klasse die Session-Referenz selbst und
 schließt sie in disconnect() bzw. bei einem gescheiterten connect().
+
+Der Upstream-`MatterClient` füllt seinen Node-Cache ausschließlich in
+`start_listening()` — eine langlaufende Coroutine, die den initialen
+Node-Dump holt, ein `init_ready`-Event setzt und danach weiterläuft, um
+Push-Updates zu empfangen. `connect()` startet sie deshalb als Hintergrund-
+Task und wartet auf das Bereitschafts-Event, bevor der Client sich als
+verbunden meldet; `disconnect()` bricht diesen Task wieder ab, bevor die
+Verbindung geschlossen wird.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Final
 
 from loxmatter.matter.models import NodeSnapshot
+
+# Wie lange connect() auf das Bereitschafts-Event des Listeners wartet, bevor
+# es aufgibt. matter-server schickt den initialen Node-Dump normalerweise
+# binnen weniger Sekunden; das Vielfache dient als Sicherheitsmarge gegen
+# einen langsamen oder hängenden Server.
+LISTENER_READY_TIMEOUT_SECONDS: Final = 10.0
 
 
 class MatterUnavailableError(RuntimeError):
     """matter-server ist nicht verbunden oder kennt den gefragten Node nicht."""
+
+
+async def _cancel_and_await(task: asyncio.Task[Any]) -> None:
+    """Bricht einen Task ab und wartet sein Ende ab.
+
+    Rein für Aufräumzwecke gedacht: Ausnahmen aus dem abgebrochenen Task
+    (typischerweise CancelledError, aber auch andere, falls der Task schon
+    vorher mit einem Fehler geendet hat) werden hier verschluckt, damit sie
+    nicht den eigentlichen, bereits laufenden Fehlerpfad überdecken — der
+    Aufrufer hat die relevante Ausnahme an der eigentlichen Fehlerquelle
+    bereits gesehen oder sieht sie dort noch.
+    """
+    task.cancel()
+    with contextlib.suppress(BaseException):
+        await task
 
 
 class BridgeMatterClient:
@@ -868,6 +1024,7 @@ class BridgeMatterClient:
         self._http_session_factory = http_session_factory or self._default_http_session_factory
         self._upstream: Any | None = None
         self._http_session: Any | None = None
+        self._listener_task: asyncio.Task[Any] | None = None
 
     def _default_session_factory(self, session: Any) -> Any:
         # Lazy importiert, damit Tests matter_server nie laden müssen.
@@ -882,6 +1039,46 @@ class BridgeMatterClient:
 
         return aiohttp.ClientSession()
 
+    async def _start_listener(self, upstream: Any) -> asyncio.Task[Any]:
+        """Startet upstream.start_listening() als Hintergrund-Task und
+        wartet, bis er den Node-Cache gefüllt und Bereitschaft signalisiert
+        hat. Scheitert der Listener oder meldet er sich nicht rechtzeitig,
+        räumt diese Methode den Task vollständig ab und wirft, statt einen
+        halb verbundenen Task zurückzugeben."""
+        ready = asyncio.Event()
+        listener_task: asyncio.Task[Any] = asyncio.ensure_future(upstream.start_listening(ready))
+        ready_task = asyncio.ensure_future(ready.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                {listener_task, ready_task},
+                timeout=LISTENER_READY_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if ready_task in done:
+                # Bereitschaft gemeldet — der Listener läuft jetzt im
+                # Hintergrund weiter, um Push-Updates zu empfangen.
+                return listener_task
+
+            await _cancel_and_await(ready_task)
+
+            if listener_task in done:
+                # Der Listener ist beendet, bevor er Bereitschaft gemeldet
+                # hat. .result() wirft seine ursprüngliche Ausnahme
+                # unverändert weiter (z. B. CannotConnect) — Aufrufer wie
+                # die CLI können sie damit weiterhin gezielt behandeln.
+                listener_task.result()
+                msg = "Listener wurde beendet, bevor er Bereitschaft meldete"
+                raise MatterUnavailableError(msg)
+
+            msg = (
+                f"matter-server hat nach {LISTENER_READY_TIMEOUT_SECONDS:.0f}s "
+                "keine Bereitschaft gemeldet"
+            )
+            raise MatterUnavailableError(msg)
+        except BaseException:
+            await _cancel_and_await(listener_task)
+            raise
+
     async def connect(self) -> None:
         # Ein bereits verbundener Client wird bei erneutem connect() sauber
         # getrennt, bevor neu verbunden wird — sonst würde die alte, noch
@@ -892,7 +1089,7 @@ class BridgeMatterClient:
         http_session = self._http_session_factory()
         try:
             upstream = self._session_factory(http_session)
-            await upstream.connect()
+            listener_task = await self._start_listener(upstream)
         except BaseException:
             # BaseException statt Exception: asyncio.CancelledError erbt von
             # BaseException, nicht von Exception. Ein während des Verbindungs-
@@ -902,18 +1099,21 @@ class BridgeMatterClient:
             raise
         self._http_session = http_session
         self._upstream = upstream
+        self._listener_task = listener_task
 
     async def disconnect(self) -> None:
         if self._upstream is None:
             return
         upstream = self._upstream
         http_session = self._http_session
+        listener_task = self._listener_task
         # Felder vor dem await auf None setzen: so ist der Client sofort als
-        # nicht verbunden erkennbar, auch wenn upstream.disconnect() unten
-        # eine Ausnahme wirft — disconnect() bleibt idempotent und der
+        # nicht verbunden erkennbar, auch wenn einer der Schritte unten eine
+        # Ausnahme wirft — disconnect() bleibt idempotent und der
         # Objektzustand sauber, ganz gleich, wie die Trennung ausgeht.
         self._upstream = None
         self._http_session = None
+        self._listener_task = None
         if http_session is None:
             # Invariante: Ist _upstream gesetzt, ist auch _http_session gesetzt
             # (beide werden nur gemeinsam in connect() gesetzt). Als expliziter
@@ -922,9 +1122,13 @@ class BridgeMatterClient:
             msg = "interner Fehler: _http_session fehlt trotz aktivem _upstream"
             raise RuntimeError(msg)
         try:
-            await upstream.disconnect()
+            if listener_task is not None:
+                await _cancel_and_await(listener_task)
         finally:
-            await http_session.close()
+            try:
+                await upstream.disconnect()
+            finally:
+                await http_session.close()
 
     def _require_upstream(self) -> Any:
         if self._upstream is None:
@@ -934,7 +1138,11 @@ class BridgeMatterClient:
     async def snapshots(self) -> list[NodeSnapshot]:
         upstream = self._require_upstream()
         return [
-            NodeSnapshot.from_raw(node.node_id, {"attributes": node.attributes})
+            # Die Rohattribute liegen bei matter_server.MatterNode nicht
+            # direkt auf dem Node, sondern auf node.node_data.attributes —
+            # war bislang unbeobachtbar, weil der Node-Cache vor der
+            # Listener-Anbindung immer leer war (siehe Modul-Docstring).
+            NodeSnapshot.from_raw(node.node_id, {"attributes": node.node_data.attributes})
             for node in upstream.get_nodes()
         ]
 
@@ -948,7 +1156,7 @@ class BridgeMatterClient:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_client.py -v`
-Expected: PASS, 11 Tests
+Expected: PASS, 15 Tests
 
 - [ ] **Step 5: Commit**
 

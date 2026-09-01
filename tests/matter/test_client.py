@@ -1,41 +1,70 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
+from loxmatter.matter import client as client_module
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 
 
 class FakeNode:
+    """Steht für matter_server.client.models.node.MatterNode.
+
+    Die echte MatterNode trägt ihre Rohattribute nicht direkt, sondern unter
+    node_data.attributes — node_id bleibt aber ein Attribut direkt am Node
+    (dort eine Property auf node_data.node_id). Diese Attrappe bildet genau
+    diese Form nach, statt sie der Einfachheit halber abzuflachen.
+    """
+
     def __init__(self, node_id: int, attributes: dict[str, object]):
         self.node_id = node_id
-        self.attributes = attributes
+        self.node_data = SimpleNamespace(attributes=attributes)
 
 
 class FakeUpstream:
-    """Steht für matter_server.client.MatterClient."""
+    """Steht für matter_server.client.MatterClient.
+
+    start_listening() bildet den echten Vertrag nach: Sie füllt den
+    Node-Cache, setzt (sofern gewünscht) init_ready und blockiert danach,
+    bis sie abgebrochen wird — genau wie MatterClient.start_listening().
+    get_nodes() liefert bewusst erst etwas zurück, nachdem start_listening()
+    gelaufen ist: Ein Test, der den Listener nie startet, muss den
+    ursprünglichen Fehler (leerer Node-Cache) reproduzieren können.
+    """
 
     def __init__(
         self,
-        nodes: list[FakeNode],
+        nodes: list[FakeNode] | None = None,
         fail_connect: bool = False,
         fail_disconnect: bool = False,
+        signal_ready: bool = True,
     ):
-        self._nodes = nodes
-        self.connected = False
+        self._configured_nodes = nodes or []
+        self._nodes: list[FakeNode] = []
         self.disconnect_calls = 0
+        self.start_listening_calls = 0
+        self.cancelled = False
         self._fail_connect = fail_connect
         self._fail_disconnect = fail_disconnect
+        self._signal_ready = signal_ready
 
-    async def connect(self) -> None:
+    async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
+        self.start_listening_calls += 1
         if self._fail_connect:
             raise RuntimeError("Verbindung fehlgeschlagen")
-        self.connected = True
+        self._nodes = self._configured_nodes
+        if self._signal_ready and init_ready is not None:
+            init_ready.set()
+        try:
+            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
 
     async def disconnect(self) -> None:
         self.disconnect_calls += 1
         if self._fail_disconnect:
             raise RuntimeError("Trennung fehlgeschlagen")
-        self.connected = False
 
     def get_nodes(self) -> list[FakeNode]:
         return self._nodes
@@ -56,10 +85,16 @@ def make_client(
     *,
     fail_connect: bool = False,
     fail_disconnect: bool = False,
+    signal_ready: bool = True,
 ) -> tuple[BridgeMatterClient, FakeSession]:
     """Baut einen BridgeMatterClient mit Attrappen für HTTP-Session und Upstream."""
     session = FakeSession()
-    upstream = FakeUpstream(nodes or [], fail_connect=fail_connect, fail_disconnect=fail_disconnect)
+    upstream = FakeUpstream(
+        nodes or [],
+        fail_connect=fail_connect,
+        fail_disconnect=fail_disconnect,
+        signal_ready=signal_ready,
+    )
     bridge = BridgeMatterClient(
         url="ws://test/ws",
         session_factory=lambda _session: upstream,
@@ -215,7 +250,7 @@ async def test_connect_cancelled_closes_session_and_propagates_cancellation():
     session = FakeSession()
 
     class CancellingUpstream:
-        async def connect(self) -> None:
+        async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
             raise asyncio.CancelledError()
 
     bridge = BridgeMatterClient(
@@ -228,3 +263,93 @@ async def test_connect_cancelled_closes_session_and_propagates_cancellation():
         await bridge.connect()
 
     assert session.close_calls == 1
+
+
+async def test_connect_times_out_when_listener_never_signals_readiness(monkeypatch):
+    """Der Defekt, den dieser Test verhindert: Ohne Zeitlimit würde connect()
+    entweder ewig auf ein Event warten, das nie kommt, oder — schlimmer — sich
+    fälschlich als verbunden melden, ohne dass der Node-Cache je gefüllt
+    wurde. Ein Listener, der init_ready nie setzt, muss connect() innerhalb
+    des Zeitlimits scheitern lassen."""
+    monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    bridge, _session = make_client([FakeNode(1, {})], signal_ready=False)
+
+    with pytest.raises(MatterUnavailableError, match="keine Bereitschaft"):
+        await bridge.connect()
+
+
+async def test_connect_timeout_closes_session_and_allows_a_later_successful_connect(
+    monkeypatch,
+):
+    """Nach einer Bereitschafts-Zeitüberschreitung muss die eigene Session
+    geschlossen sein, der Client als nicht verbunden gelten, und ein
+    späterer connect() mit einem funktionierenden Upstream muss trotzdem
+    gelingen."""
+    monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    sessions: list[FakeSession] = []
+
+    def http_session_factory() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    attempts = {"n": 0}
+
+    def session_factory(_session: FakeSession) -> FakeUpstream:
+        attempts["n"] += 1
+        return FakeUpstream([FakeNode(1, {})], signal_ready=attempts["n"] != 1)
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=session_factory,
+        http_session_factory=http_session_factory,
+    )
+
+    with pytest.raises(MatterUnavailableError, match="keine Bereitschaft"):
+        await bridge.connect()
+
+    assert len(sessions) == 1
+    assert sessions[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
+        await bridge.snapshots()
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+    assert [s.node_id for s in snapshots] == [1]
+    assert sessions[1].close_calls == 0
+
+
+async def test_disconnect_cancels_the_listener_task():
+    """disconnect() muss den Listener-Task abbrechen, statt ihn einfach
+    herumlaufen zu lassen — sonst bleibt eine Coroutine aktiv, die auf eine
+    inzwischen geschlossene Verbindung wartet."""
+    session = FakeSession()
+    upstream = FakeUpstream([FakeNode(1, {})])
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: session,
+    )
+    await bridge.connect()
+    assert upstream.cancelled is False
+
+    await bridge.disconnect()
+
+    assert upstream.cancelled is True
+
+
+async def test_snapshots_reflect_nodes_populated_by_the_listener():
+    """Regressionstest für den eigentlichen Defekt: Der alte connect() rief
+    upstream.start_listening() nie auf, wodurch der Node-Cache des Upstreams
+    für immer leer blieb — jedes reale Gerät erschien als unbekannt, egal wie
+    viele kommissioniert waren. get_nodes() liefert hier — wie beim echten
+    MatterClient — bewusst erst etwas zurück, nachdem start_listening()
+    gelaufen ist; gegen den alten Code (kein Aufruf von start_listening())
+    schlägt dieser Test fehl."""
+    bridge, _session = make_client([FakeNode(3, {"0/40/1": "Aqara", "1/6/0": True})])
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+
+    assert [s.node_id for s in snapshots] == [3]
+    assert snapshots[0].vendor_name == "Aqara"

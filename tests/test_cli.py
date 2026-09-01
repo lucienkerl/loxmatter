@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,12 @@ def test_cli_reads_a_fixture_without_network():
 
 
 class _FakeUpstream:
-    """Attrappe für matter_server.client.MatterClient — offline, kein Socket."""
+    """Attrappe für matter_server.client.MatterClient — offline, kein Socket.
+
+    start_listening() bildet den echten Vertrag nach: Sie füllt den
+    Node-Cache, meldet Bereitschaft über init_ready und blockiert danach, bis
+    sie abgebrochen wird — siehe BridgeMatterClient.connect().
+    """
 
     def __init__(
         self,
@@ -60,9 +66,15 @@ class _FakeUpstream:
         self._nodes = nodes or []
         self._connect_error = connect_error
 
-    async def connect(self) -> None:
+    async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
         if self._connect_error is not None:
             raise self._connect_error
+        if init_ready is not None:
+            init_ready.set()
+        try:
+            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+        except asyncio.CancelledError:
+            pass
 
     async def disconnect(self) -> None:
         pass
