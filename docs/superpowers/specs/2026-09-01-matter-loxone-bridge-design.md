@@ -108,6 +108,10 @@ docker compose
 │                   Volume: Fabric-Credentials
 └── loxmatter       FastAPI + WebUI + SQLite
                     Bridge-Networking, Port 8080/tcp
+
+Profil "dev" ergänzt (siehe 10.2)
+├── virtual-devices  CHIP-Beispielgeräte, echt einlernbar
+└── fake-miniserver  UDP-Mitschnitt + Kommando-Sender statt Loxone
 ```
 
 Nur `otbr` und `matter-server` benötigen Host-Networking. `loxmatter` spricht
@@ -431,7 +435,9 @@ Pfad, kein Polling.
 
 ---
 
-## 10. Testing
+## 10. Testen
+
+### 10.1 Automatisierte Tests
 
 - **Exporter — Golden-File-Tests.** Roundtrip: XML erzeugen → in Loxone Config
   importieren → dort wieder als Vorlage speichern → diffen. Die einzige Methode, die das
@@ -448,6 +454,62 @@ Pfad, kein Polling.
   der prüft, dass WebUI-Route und Loxone-HTTP-Route für dieselbe Eingabe dasselbe
   Matter-Kommando erzeugen. Das ist die Regression, die das Modul überhaupt
   rechtfertigt.
+
+Die gesamte Suite läuft **ohne Hardware und ohne Netzwerkzugriff**. Das ist eine
+Anforderung, keine Beobachtung: sobald ein Test ein echtes Gerät braucht, wird er
+übersprungen und verrottet.
+
+### 10.2 Von Hand testen ohne Hardware
+
+`docker compose --profile dev up` startet zusätzlich zum normalen Stack zwei
+Hilfscontainer. Damit ist die komplette Strecke ohne Miniserver, ohne Thread-Dongle
+und ohne ein einziges echtes Matter-Gerät durchspielbar:
+
+**`virtual-devices`** — mehrere Instanzen der CHIP-Beispielanwendungen
+(`chip-all-clusters-app`, `chip-lighting-app`) als echte Matter-Geräte über WiFi. Sie
+werden mit den Standard-Pairing-Codes ganz normal über die WebUI eingelernt — es ist
+derselbe Codepfad wie bei echter Hardware, nicht ein Mock daneben. `all-clusters-app`
+ist dabei besonders wertvoll, weil sie absichtlich exotische Cluster mitbringt und damit
+den generischen Export unter Last setzt.
+
+**`fake-miniserver`** — ersetzt den Loxone Miniserver in beide Richtungen:
+- lauscht auf UDP 7000 und zeigt jedes Datagramm mit Zeitstempel in einer kleinen
+  Weboberfläche. Damit sieht man unmittelbar, was der Miniserver bekommen *würde*.
+- kann HTTP-GETs an die Bridge abfeuern wie ein virtueller Ausgang, inklusive
+  `<v>`-Ersetzung. Damit ist die Kommandorichtung ohne Loxone testbar.
+- kann eine erzeugte `VIU_*.xml` einlesen und daraus die erwarteten Keys ableiten, um
+  zu melden, welche exportierten Signale **nie** ein Datagramm gesehen haben. Das findet
+  Mapping-Fehler, die sonst erst in Loxone auffallen.
+
+Thread ist der einzige Teil, der echte Hardware braucht. Der OTBR liegt deshalb in
+einem eigenen Compose-Profil — ohne Dongle startet der Stack trotzdem, nur eben ohne
+Thread.
+
+### 10.3 Der Durchstich von null
+
+Der Weg, der nach jeder Änderung in wenigen Minuten läuft und dokumentiert wird:
+
+1. `docker compose --profile dev up`
+2. WebUI öffnen, virtuelles Gerät mit dem angezeigten Pairing-Code einlernen
+3. Signale sehen, Gerät in der WebUI schalten — bestätigt Matter-Richtung
+4. Vorlagen erzeugen, `fake-miniserver` zeigt die Datagramme — bestätigt Loxone-Richtung
+5. Im `fake-miniserver` einen Befehl abfeuern — bestätigt Kommando-Richtung
+
+Erst wenn das durchläuft, lohnt sich der Test an echter Hardware.
+
+### 10.4 Eingebaute Diagnose
+
+Diese vier Dinge sind zum Entwickeln gebaut, aber im Betrieb genauso nützlich — sie
+sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar wird:
+
+- **UDP-Mitschnitt** in der WebUI: die letzten N gesendeten Datagramme mit Zeitstempel,
+  filterbar pro Gerät. Beantwortet „sendet die Bridge überhaupt etwas?" ohne Wireshark.
+- **Kommando-Log**: eingehende HTTP-Aufrufe vom Miniserver mit Ergebnis. Beantwortet
+  die Gegenrichtung.
+- **Vorlagen-Vorschau**: vor dem Download zeigt die WebUI, welche Objekte und Befehle
+  entstehen und wie viele.
+- **Systemcheck**: IPv6 vorhanden, mDNS erreichbar, Dongle da, matter-server verbunden,
+  Miniserver erreichbar. Jede Zeile grün oder rot mit konkretem Hinweis.
 
 ---
 
