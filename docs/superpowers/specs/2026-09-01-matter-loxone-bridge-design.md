@@ -338,10 +338,25 @@ Beispiele aus der `profiles/`-Tabelle:
 |---|---|---|---|
 | TemperatureMeasurement | MeasuredValue | 0,01 °C | ÷100, `°C` |
 | RelativeHumidityMeasurement | MeasuredValue | 0,01 % | ÷100, `%` |
-| ElectricalPowerMeasurement | ActivePower | mW | ÷1000, `W` |
+| ElectricalPowerMeasurement | ActivePower | mW | ÷1 000 000, `kW` |
+| ElectricalPowerMeasurement | RMSVoltage | mV | ÷1000, `V` |
+| ElectricalPowerMeasurement | RMSCurrent | mA | ÷1000, `A` |
 | ElectricalEnergyMeasurement | CumulativeEnergyImported | mWh | ÷1 000 000, `kWh` |
 | LevelControl | CurrentLevel | 0–254 | ×100/254, `%` |
 | OnOff | OnOff | bool | digital |
+
+**Zieleinheiten richten sich nach Loxone, nicht nach SI.** Loxone rechnet Leistung
+durchgängig in **kW** — der Energiemanager, die Zähler- und Verbrauchsbausteine erwarten
+kW am Eingang. Wir liefern deshalb kW, nicht W. Dieselbe Regel gilt für jeden künftigen
+Eintrag in der Profiltabelle: maßgeblich ist die Einheit, die der Loxone-Baustein
+erwartet, nicht die naheliegende SI-Einheit.
+
+**Folge für die Zahlenformatierung.** Von mW nach kW sind sechs Größenordnungen. Ein
+Standby-Verbraucher mit 300 mW wird zu `0.0003` kW. Der UDP-Sender darf Werte deshalb
+**nicht auf zwei Nachkommastellen runden** — sonst verschwindet alles unter 10 W in der
+Null, und genau diese kleinen Dauerverbraucher will man in Loxone ja sehen. Festlegung:
+Ausgabe mit bis zu **6 Nachkommastellen**, nachlaufende Nullen abgeschnitten. Das ist
+ein eigener Testfall in der Skalierungs-Testsuite.
 
 Farbe: Loxone liefert in Lumitech- bzw. RGB-Notation, Matter erwartet Hue/Saturation
 oder CIE xy. Die Umrechnung liegt in `commands/` und ist beidseitig zu testen.
@@ -427,7 +442,8 @@ Pfad, kein Polling.
 - **UDP** — Fake-Miniserver (Socket-Listener), der Datagramme mitschreibt; prüft
   Entprellung, Impulslänge, Rate-Limit und Full-Resend.
 - **Skalierung** — Tabellentests pro Cluster-Eintrag, inklusive Farbraum-Umrechnung
-  in beide Richtungen.
+  in beide Richtungen. Eigener Fall für kleine Leistungswerte: 300 mW muss als
+  `0.0003` ankommen, nicht als `0`.
 - **`commands/`** — dieselbe Testsuite deckt beide Aufrufer ab. Zusätzlich ein Test,
   der prüft, dass WebUI-Route und Loxone-HTTP-Route für dieselbe Eingabe dasselbe
   Matter-Kommando erzeugen. Das ist die Regression, die das Modul überhaupt
