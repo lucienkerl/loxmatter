@@ -1000,10 +1000,14 @@ netzfrei benutzbar.
 ```python
 import json
 from pathlib import Path
+from typing import Any
 
+from matter_server.client.exceptions import CannotConnect
 from typer.testing import CliRunner
 
+from loxmatter import cli
 from loxmatter.cli import app, render_report
+from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.matter.models import NodeSnapshot
 
 FIXTURE = Path(__file__).parent / "fixtures" / "nodes" / "example_light.json"
@@ -1043,6 +1047,92 @@ def test_cli_reads_a_fixture_without_network():
     result = CliRunner().invoke(app, ["inspect", "--fixture", str(FIXTURE)])
     assert result.exit_code == 0
     assert "TRADFRI bulb" in result.stdout
+
+
+class _FakeUpstream:
+    """Attrappe für matter_server.client.MatterClient — offline, kein Socket."""
+
+    def __init__(
+        self,
+        nodes: list[Any] | None = None,
+        connect_error: BaseException | None = None,
+    ) -> None:
+        self._nodes = nodes or []
+        self._connect_error = connect_error
+
+    async def connect(self) -> None:
+        if self._connect_error is not None:
+            raise self._connect_error
+
+    async def disconnect(self) -> None:
+        pass
+
+    def get_nodes(self) -> list[Any]:
+        return self._nodes
+
+
+class _FakeHttpSession:
+    async def close(self) -> None:
+        pass
+
+
+def _fake_client(
+    *,
+    nodes: list[Any] | None = None,
+    connect_error: BaseException | None = None,
+) -> BridgeMatterClient:
+    upstream = _FakeUpstream(nodes=nodes, connect_error=connect_error)
+    return BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=_FakeHttpSession,
+    )
+
+
+def test_cli_reports_malformed_fixture_missing_node_id(tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps({"attributes": {}}), encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["inspect", "--fixture", str(broken)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "node_id" in result.stderr
+
+
+def test_cli_reports_fixture_that_is_not_valid_json(tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not valid json", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["inspect", "--fixture", str(broken)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "JSON" in result.stderr
+
+
+def test_cli_reports_node_not_found(monkeypatch):
+    monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(nodes=[]))
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://test/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "1" in result.stderr
+
+
+def test_cli_reports_unreachable_server(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "_build_client",
+        lambda url: _fake_client(connect_error=CannotConnect("boom")),
+    )
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://10.0.1.215:5580/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "nicht erreichbar" in result.stderr
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -1062,10 +1152,12 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import typer
+from matter_server.client.exceptions import CannotConnect
 
-from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.discovery import (
     extract_signals,
     find_unparsable_paths,
@@ -1117,28 +1209,63 @@ def render_report(snapshot: NodeSnapshot) -> str:
     return "\n".join(lines)
 
 
+def _fail(message: str) -> NoReturn:
+    """Meldet einen erwarteten CLI-Fehler: eine Zeile auf stderr, danach
+    Programmende mit Exit-Code ≠ 0 — statt eines Tracebacks."""
+    typer.echo(message, err=True)
+    raise typer.Exit(code=1)
+
+
+def _load_fixture(path: Path) -> NodeSnapshot:
+    """Lädt eine Fixture-Datei; meldet kaputten Inhalt als CLI-Fehler statt
+    mit einem rohen KeyError/JSONDecodeError abzubrechen."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        _fail(f"Fixture {path} enthält kein gültiges JSON: {exc}")
+    try:
+        node_id = raw["node_id"]
+    except (KeyError, TypeError):
+        _fail(f"Fixture {path} hat kein Feld 'node_id'.")
+    return NodeSnapshot.from_raw(node_id, raw)
+
+
+def _build_client(url: str) -> BridgeMatterClient:
+    """Eigener Konstruktions-Schritt, damit Tests den Client per Monkeypatch
+    durch eine mit Fake-Factories bestückte Instanz ersetzen können — ohne
+    Netzwerk zu berühren (siehe BridgeMatterClient.session_factory)."""
+    return BridgeMatterClient(url)
+
+
 @app.command()
 def inspect(
     node: int | None = typer.Option(None, help="Node-ID am laufenden matter-server"),
-    fixture: Path | None = typer.Option(None, help="Statt matter-server ein gespeichertes Abbild"),
+    fixture: Path | None = typer.Option(  # noqa: B008 — typer-Idiom, `Path` gilt Ruff nicht als unveränderlich
+        None, help="Statt matter-server ein gespeichertes Abbild"
+    ),
     url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
 ) -> None:
     """Listet alle Attribute und Events eines Geräts auf."""
     if fixture is not None:
-        raw = json.loads(fixture.read_text(encoding="utf-8"))
-        typer.echo(render_report(NodeSnapshot.from_raw(raw["node_id"], raw)))
+        typer.echo(render_report(_load_fixture(fixture)))
         return
 
     if node is None:
         raise typer.BadParameter("entweder --node oder --fixture angeben")
 
     async def run() -> str:
-        client = BridgeMatterClient(url)
-        await client.connect()
+        client = _build_client(url)
         try:
-            return render_report(await client.snapshot(node))
+            await client.connect()
+        except CannotConnect:
+            _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+        try:
+            snapshot = await client.snapshot(node)
+        except MatterUnavailableError:
+            _fail(f"Node {node} ist am matter-server ({url}) nicht bekannt — kommissioniert?")
         finally:
             await client.disconnect()
+        return render_report(snapshot)
 
     typer.echo(asyncio.run(run()))
 ```
@@ -1146,7 +1273,7 @@ def inspect(
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_cli.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 9 Tests
 
 - [ ] **Step 6: Commit**
 
@@ -1154,6 +1281,11 @@ Expected: PASS, 5 Tests
 git add src/loxmatter/cli.py tests/test_cli.py tests/fixtures/nodes/example_light.json
 git commit -m "feat(cli): loxmatter inspect listet Signale eines Geräts"
 ```
+
+Eine spätere Fehlerbehebung ergänzte drei Fehlerpfade — kaputte Fixture (ungültiges
+JSON oder fehlendes `node_id`), unbekannter Node, unerreichbarer matter-server —, die
+zuvor rohe Tracebacks statt sauberer deutscher Meldungen erzeugten. Der obige Code und
+die vier zusätzlichen Tests spiegeln bereits diesen Stand.
 
 ---
 

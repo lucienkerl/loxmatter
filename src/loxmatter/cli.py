@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import typer
+from matter_server.client.exceptions import CannotConnect
 
-from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.discovery import (
     extract_signals,
     find_unparsable_paths,
@@ -60,6 +62,34 @@ def render_report(snapshot: NodeSnapshot) -> str:
     return "\n".join(lines)
 
 
+def _fail(message: str) -> NoReturn:
+    """Meldet einen erwarteten CLI-Fehler: eine Zeile auf stderr, danach
+    Programmende mit Exit-Code ≠ 0 — statt eines Tracebacks."""
+    typer.echo(message, err=True)
+    raise typer.Exit(code=1)
+
+
+def _load_fixture(path: Path) -> NodeSnapshot:
+    """Lädt eine Fixture-Datei; meldet kaputten Inhalt als CLI-Fehler statt
+    mit einem rohen KeyError/JSONDecodeError abzubrechen."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        _fail(f"Fixture {path} enthält kein gültiges JSON: {exc}")
+    try:
+        node_id = raw["node_id"]
+    except (KeyError, TypeError):
+        _fail(f"Fixture {path} hat kein Feld 'node_id'.")
+    return NodeSnapshot.from_raw(node_id, raw)
+
+
+def _build_client(url: str) -> BridgeMatterClient:
+    """Eigener Konstruktions-Schritt, damit Tests den Client per Monkeypatch
+    durch eine mit Fake-Factories bestückte Instanz ersetzen können — ohne
+    Netzwerk zu berühren (siehe BridgeMatterClient.session_factory)."""
+    return BridgeMatterClient(url)
+
+
 @app.command()
 def inspect(
     node: int | None = typer.Option(None, help="Node-ID am laufenden matter-server"),
@@ -70,19 +100,24 @@ def inspect(
 ) -> None:
     """Listet alle Attribute und Events eines Geräts auf."""
     if fixture is not None:
-        raw = json.loads(fixture.read_text(encoding="utf-8"))
-        typer.echo(render_report(NodeSnapshot.from_raw(raw["node_id"], raw)))
+        typer.echo(render_report(_load_fixture(fixture)))
         return
 
     if node is None:
         raise typer.BadParameter("entweder --node oder --fixture angeben")
 
     async def run() -> str:
-        client = BridgeMatterClient(url)
-        await client.connect()
+        client = _build_client(url)
         try:
-            return render_report(await client.snapshot(node))
+            await client.connect()
+        except CannotConnect:
+            _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+        try:
+            snapshot = await client.snapshot(node)
+        except MatterUnavailableError:
+            _fail(f"Node {node} ist am matter-server ({url}) nicht bekannt — kommissioniert?")
         finally:
             await client.disconnect()
+        return render_report(snapshot)
 
     typer.echo(asyncio.run(run()))
