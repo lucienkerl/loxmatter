@@ -497,7 +497,21 @@ Der Weg, der nach jeder Änderung in wenigen Minuten läuft und dokumentiert wir
 
 Erst wenn das durchläuft, lohnt sich der Test an echter Hardware.
 
-### 10.4 Eingebaute Diagnose
+### 10.4 Entwicklungsumgebung
+
+Miniserver, Thread-Dongle und echte Matter-Geräte (IKEA) stehen zur Verfügung. Zwei
+Konsequenzen für die Planung:
+
+- Die **Golden-File-Referenzen für den Exporter können von Anfang an aus echtem Loxone
+  Config kommen** statt aus Vermutungen. Das nimmt dem riskantesten Modul das Risiko.
+- Der **generische Export wird früh an echten Cluster-Bäumen validiert**. Reale Geräte
+  weichen erfahrungsgemäß von den CHIP-Beispielapps ab — genau dort entstehen die
+  Lücken, die eine rein virtuelle Entwicklung übersieht.
+
+Das dev-Profil aus 10.2 bleibt trotzdem Pflicht: es ist die Grundlage für CI und für
+Beiträge von außen, wo diese Hardware nicht vorhanden ist.
+
+### 10.5 Eingebaute Diagnose
 
 Diese vier Dinge sind zum Entwickeln gebaut, aber im Betrieb genauso nützlich — sie
 sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar wird:
