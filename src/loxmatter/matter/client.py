@@ -50,11 +50,21 @@ class BridgeMatterClient:
         return aiohttp.ClientSession()
 
     async def connect(self) -> None:
+        # Ein bereits verbundener Client wird bei erneutem connect() sauber
+        # getrennt, bevor neu verbunden wird — sonst würde die alte, noch
+        # offene Session beim Überschreiben von self._upstream/self._http_session
+        # unerreichbar und nie geschlossen.
+        if self._upstream is not None:
+            await self.disconnect()
         http_session = self._http_session_factory()
         try:
             upstream = self._session_factory(http_session)
             await upstream.connect()
-        except Exception:
+        except BaseException:
+            # BaseException statt Exception: asyncio.CancelledError erbt von
+            # BaseException, nicht von Exception. Ein während des Verbindungs-
+            # aufbaus abgebrochenes connect() (z. B. durch asyncio.wait_for)
+            # muss die Session trotzdem schließen und den Abbruch weiterreichen.
             await http_session.close()
             raise
         self._http_session = http_session
@@ -63,11 +73,25 @@ class BridgeMatterClient:
     async def disconnect(self) -> None:
         if self._upstream is None:
             return
-        await self._upstream.disconnect()
+        upstream = self._upstream
+        http_session = self._http_session
+        # Felder vor dem await auf None setzen: so ist der Client sofort als
+        # nicht verbunden erkennbar, auch wenn upstream.disconnect() unten
+        # eine Ausnahme wirft — disconnect() bleibt idempotent und der
+        # Objektzustand sauber, ganz gleich, wie die Trennung ausgeht.
         self._upstream = None
-        assert self._http_session is not None
-        await self._http_session.close()
         self._http_session = None
+        if http_session is None:
+            # Invariante: Ist _upstream gesetzt, ist auch _http_session gesetzt
+            # (beide werden nur gemeinsam in connect() gesetzt). Als expliziter
+            # Fehler statt assert, damit die Prüfung auch unter `python -O`
+            # greift.
+            msg = "interner Fehler: _http_session fehlt trotz aktivem _upstream"
+            raise RuntimeError(msg)
+        try:
+            await upstream.disconnect()
+        finally:
+            await http_session.close()
 
     def _require_upstream(self) -> Any:
         if self._upstream is None:
