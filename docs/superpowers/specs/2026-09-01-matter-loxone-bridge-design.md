@@ -254,9 +254,11 @@ eigenen `Check`-Muster ab; ein gemeinsamer Port erzeugt kein Übersprechen. Defa
 Verbrauch: genau ein Port, unabhängig von der Gerätezahl.
 Quelle: <https://www.loxone.com/enen/kb/communication-with-udp/>
 
-Der Port ist trotzdem **pro Gerät konfigurierbar**. Falls sich am realen Miniserver
-zeigt, dass mehrere Objekte auf einem Port kollidieren, ist der Ausweg ohne
-Umbau vorhanden — bis zu 50 Geräte auf eigenen Ports (siehe offener Punkt 2).
+Dass mehrere `VirtualInUdp`-Objekte denselben Port teilen können, ist **am realen
+Miniserver bestätigt** (2026-09-01). Die Grenze von 50 Ports gilt zudem auf allen
+Miniserver-Generationen gleichermaßen. Der Port bleibt dennoch pro Gerät
+konfigurierbar — für getrennte Netzsegmente oder mehrere Bridges an einem
+Miniserver.
 
 **Keys sind opak und unveränderlich.** Format `d<device_id>_<endpoint>_<slug>`, z. B.
 `d12_1_temp`. Vergeben beim Einlernen, danach eingefroren. Lesbare Namen leben
@@ -392,19 +394,10 @@ Vier Ansichten, bewusst knapp gehalten:
 | Verlust der Fabric-Credentials | mittel, katastrophal | Backup-Export in der WebUI, Warnung im Guide |
 | Vorlagen-Schema ändert sich mit Config-Version | niedrig | Golden-File-Tests, Schema versioniert |
 | Multi-Admin-Einlernen verwirrt Nutzer | hoch | Inline-Anleitung je Ökosystem in der WebUI |
-| Mehrere `VirtualInUdp` auf einem Port kollidieren doch | niedrig, aber teuer | Port pro Gerät konfigurierbar; Ausweichpfad bis 50 Geräte vorhanden |
-| Miniserver-Limit an virtuellen Eingängen insgesamt | unbekannt | **Offen — vor Implementierung klären** |
 | UDP-Last bei Full-Resend vieler Signale | mittel | Rate-Limit, konfigurierbares Intervall |
 
 ---
 
 ## 12. Offene Punkte
 
-1. Obergrenze virtueller Eingänge pro Miniserver-Generation — bestimmt, ob ein
-   „Signal-Budget"-Warnhinweis in der WebUI nötig ist.
-2. Verhalten mehrerer `VirtualInUdp`-Objekte auf **demselben** Port. Die Doku begrenzt
-   auf 50 verschiedene *Ports*, sagt aber nichts über mehrere Objekte je Port. Der
-   Entwurf setzt auf gemeinsamen Port; **am realen Miniserver zu verifizieren, bevor
-   der Exporter finalisiert wird**. Fällt es negativ aus, greift die
-   Pro-Gerät-Portvergabe (max. 50 Geräte).
-3. Konkretes Funkmodul für die Referenz-Compose-Datei.
+1. Konkretes Funkmodul für die Referenz-Compose-Datei.
