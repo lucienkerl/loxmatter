@@ -69,3 +69,80 @@ def test_unparsable_paths_are_collected_not_raised():
     snap = snapshot({"kaputt": 1, "1/6/0": True})
     assert find_unparsable_paths(snap) == ["kaputt"]
     assert extract_signals(snap) == [SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)]
+
+
+# Zweite Event-Quelle: FeatureMap des Switch-Clusters (0x003B / 59).
+#
+# EventList (65530) ist optional und laut Validierung an echten IKEA-Geräten
+# (siehe tests/matter/test_real_devices.py) in der Praxis nicht implementiert —
+# ein Taster ohne diese Ableitung liefert null Event-Signale. Die Bedingungen
+# unten sind aus data_model/1.4/clusters/Switch.xml (project-chip/connectedhomeip,
+# maschinenlesbare Transkription der Matter Application Cluster Specification)
+# übernommen: je Event ein mandatoryConform über Feature-Bits.
+
+
+def test_feature_map_ms_only_yields_initial_press_only():
+    # MS (Bit 1) = 0b10 = 2
+    signals = extract_signals(snapshot({"1/59/65532": 2}))
+    assert signals == [SignalRef(1, 59, 1, SignalKind.EVENT)]  # InitialPress
+
+
+def test_feature_map_ms_msr_yields_initial_press_and_short_release():
+    # MS + MSR = 0b110 = 6
+    signals = extract_signals(snapshot({"1/59/65532": 6}))
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),  # InitialPress
+        SignalRef(1, 59, 3, SignalKind.EVENT),  # ShortRelease
+    ]
+
+
+def test_feature_map_ls_only_yields_switch_latched_only():
+    # LS (Bit 0) = 1
+    signals = extract_signals(snapshot({"1/59/65532": 1}))
+    assert signals == [SignalRef(1, 59, 0, SignalKind.EVENT)]  # SwitchLatched
+
+
+def test_feature_map_30_matches_ikea_bilresa_button():
+    # MS + MSR + MSL + MSM = 2 + 4 + 8 + 16 = 30, das reale FeatureMap des
+    # IKEA BILRESA-Tasters (node 4, Endpoints 1 und 2). AS ist nicht gesetzt,
+    # also feuert MultiPressOngoing zusätzlich zu MultiPressComplete; LS ist
+    # nicht gesetzt, SwitchLatched fehlt entsprechend.
+    signals = extract_signals(snapshot({"1/59/65532": 30}))
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),  # InitialPress
+        SignalRef(1, 59, 2, SignalKind.EVENT),  # LongPress
+        SignalRef(1, 59, 3, SignalKind.EVENT),  # ShortRelease
+        SignalRef(1, 59, 4, SignalKind.EVENT),  # LongRelease
+        SignalRef(1, 59, 5, SignalKind.EVENT),  # MultiPressOngoing
+        SignalRef(1, 59, 6, SignalKind.EVENT),  # MultiPressComplete
+    ]
+
+
+def test_feature_map_msm_with_action_switch_excludes_multi_press_ongoing():
+    # MSM + AS = 16 + 32 = 48. MultiPressOngoing verlangt MSM UND NICHT AS.
+    signals = extract_signals(snapshot({"1/59/65532": 48}))
+    assert signals == [SignalRef(1, 59, 6, SignalKind.EVENT)]  # MultiPressComplete
+
+
+def test_feature_map_zero_yields_no_events():
+    assert extract_signals(snapshot({"1/59/65532": 0})) == []
+
+
+def test_feature_map_is_ignored_for_clusters_without_a_table_entry():
+    """Die FeatureMap-Ableitung ist Cluster-spezifisches Wissen — für Cluster
+    ohne Eintrag in FEATURE_MAP_EVENTS darf sie nichts erfinden."""
+    assert extract_signals(snapshot({"1/6/65532": 30})) == []
+
+
+def test_event_list_and_feature_map_are_unioned_and_deduplicated():
+    signals = extract_signals(snapshot({"1/59/65530": [1, 3], "1/59/65532": 6}))
+    # EventList nennt {1, 3}, FeatureMap (MS+MSR) auch {1, 3} — kein Duplikat.
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),
+        SignalRef(1, 59, 3, SignalKind.EVENT),
+    ]
+
+
+def test_feature_map_attribute_itself_is_not_an_attribute_signal():
+    signals = extract_signals(snapshot({"1/59/65532": 30}))
+    assert all(s.kind is SignalKind.EVENT for s in signals)
