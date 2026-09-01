@@ -118,7 +118,7 @@ def test_cli_reports_node_not_found(monkeypatch):
 
     assert result.exit_code != 0
     assert "Traceback" not in result.output
-    assert "1" in result.stderr
+    assert "nicht bekannt" in result.stderr
 
 
 def test_cli_reports_unreachable_server(monkeypatch):

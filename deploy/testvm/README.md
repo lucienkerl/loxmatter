@@ -15,8 +15,11 @@ das, was von den erhobenen Werten abwich oder sich erst beim Betrieb zeigte.
   `SL-OPENTHREAD/2.4.4.0_GitHub-7074a43e4; EFR32; Sep 3 2025 11:42:40`)
 - `matter-server` lauscht auf `0.0.0.0:5580` und `[::]:5580`
 - Von einem Mac im selben LAN: `uv run loxmatter inspect --node 1 --url ws://10.0.1.215:5580/ws`
-  verbindet sich und liefert `MatterUnavailableError: unbekannter Node 1` — laut
-  Definition of Done der Beweis, dass die Verbindung steht (kein commissioniertes
+  verbindet sich und liefert auf stderr:
+  ```
+  Node 1 ist am matter-server (ws://10.0.1.215:5580/ws) nicht bekannt — kommissioniert?
+  ```
+  — laut Definition of Done der Beweis, dass die Verbindung steht (kein commissioniertes
   Geraet vorhanden, das ist Aufgabe von Task 7).
 
 ## Deployment
@@ -33,6 +36,10 @@ mkdir -p data
 docker compose up -d
 docker compose logs -f otbr    # bis "Starting thread border agent otbr-agent ... done."
 ```
+
+Hinweis: `docker compose up -d` garantiert nur die Container-Startreihenfolge, nicht dass der
+OTBR vor `matter-server` betriebsbereit ist — fuer eine Testumgebung ohne Healthchecks
+akzeptabel.
 
 Thread-Netz einmalig bilden:
 
