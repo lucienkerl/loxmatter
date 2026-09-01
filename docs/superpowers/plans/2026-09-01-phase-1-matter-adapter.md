@@ -1164,53 +1164,68 @@ ohne laufenden Controller nicht ausführbar ist — die Annahme aus Spec 3.5 lä
 nur an echten Geräten prüfen, und an echte Geräte kommt man nur über einen Controller.
 
 Ziel ist ausdrücklich **nicht** der fertige Produktions-Stack aus Spec 4.1. Es ist die
-Testumgebung, die Phase 1 abschließen kann. Der Produktions-Stack bleibt Phase 6 und
-wird auf dieser Erfahrung aufbauen.
-
-**Umgebung:** eigene Linux-VM (Debian/Ubuntu), Thread-Dongle per USB durchgereicht,
-Zugriff per SSH. Nicht der Entwicklungs-Mac — Docker Desktop unter macOS kann kein
-echtes Host-Networking, und Matter braucht IPv6 und mDNS auf dem Host.
+Testumgebung, die Phase 1 abschließen kann. Phase 6 baut darauf auf.
 
 **Files:**
 - Create: `deploy/testvm/docker-compose.yml`
+- Create: `deploy/testvm/.env.example`
 - Create: `deploy/testvm/README.md`
 
 **Interfaces:**
 - Consumes: nichts aus früheren Tasks
-- Produces: eine erreichbare WebSocket-URL `ws://<vm>:5580/ws`, die Task 7 als `--url` benutzt
+- Produces: eine erreichbare WebSocket-URL `ws://10.0.1.215:5580/ws`, die Task 7 als `--url` benutzt
 
-- [ ] **Step 1: Voraussetzungen auf der VM prüfen**
+#### Die Umgebung, bereits erhoben
+
+Nicht erneut ermitteln — diese Werte sind auf der VM nachgesehen:
+
+| | Wert |
+|---|---|
+| Host | `lucienkerl@10.0.1.215`, SSH-Key eingerichtet |
+| OS | Ubuntu 26.04 LTS, x86_64, 4 Kerne, 5,3 GB RAM |
+| Backbone-Interface | `ens18` |
+| Funkmodul | SONOFF Dongle Plus MG24 (Silicon Labs CP210x), Thread-Firmware bereits aufgespielt |
+| Geräteknoten | `/dev/ttyUSB0`, Gruppe `dialout` |
+| IPv6 | nur link-local (`fe80::be24:11ff:fe23:ed85`), `accept_ra=0`, `forwarding=0` |
+| Docker | nicht installiert |
+
+**Zum fehlenden globalen IPv6:** für Thread-Geräte unkritisch. Der OTBR spannt auf
+`wpan0` ein eigenes ULA-Präfix auf, und matter-server läuft mit `network_mode: host`
+daneben und erreicht die Geräte über die Route dorthin. Erst Matter-über-WLAN bräuchte
+globales IPv6 im LAN. Notwendig ist lediglich `forwarding=1`.
+
+#### Schritt 0: Root-Schritte (vom Menschen auszuführen)
+
+`sudo` verlangt auf dieser VM ein Passwort, das der Agent weder erfragen noch benutzen
+darf. Diese Befehle führt der Betreiber selbst aus, danach übernimmt der Agent:
 
 ```bash
-ip -6 addr show                 # IPv6 muss vorhanden sein, nicht nur ::1
-lsusb                           # Dongle sichtbar?
-ls -l /dev/ttyACM* /dev/ttyUSB* # Geräteknoten merken — wird unten gebraucht
-```
-
-Notiere den tatsächlichen Geräteknoten. Er ist bei ZBT-1 und nRF52840 meist
-`/dev/ttyACM0`, aber das ist keine Garantie.
-
-**Firmware-Falle:** ZBT-1 und SkyConnect werden mit **Zigbee**-Firmware ausgeliefert.
-Für Thread brauchen sie **OpenThread-RCP**-Firmware. Ohne Flashen findet der OTBR das
-Modul und scheitert trotzdem, mit einer Meldung, die nicht nach Firmware aussieht.
-Prüfe das zuerst — es ist der teuerste Fehler in diesem Schritt.
-
-- [ ] **Step 2: Docker und IPv6-Forwarding einrichten**
-
-```bash
-sudo apt update && sudo apt install -y docker.io docker-compose-plugin
-sudo usermod -aG docker "$USER"   # danach neu anmelden
-```
-
-IPv6-Weiterleitung dauerhaft aktivieren:
-
-```bash
-echo 'net.ipv6.conf.all.forwarding=1' | sudo tee /etc/sysctl.d/99-matter.conf
-echo 'net.ipv4.ip_forward=1'          | sudo tee -a /etc/sysctl.d/99-matter.conf
+sudo apt update && sudo apt install -y docker.io docker-compose-v2
+sudo usermod -aG docker,dialout "$USER"
+printf 'net.ipv6.conf.all.forwarding=1\nnet.ipv4.ip_forward=1\n' | sudo tee /etc/sysctl.d/99-matter.conf
 sudo sysctl --system
 ```
 
-- [ ] **Step 3: Compose-Datei schreiben**
+Danach **neu anmelden** (Gruppenmitgliedschaften greifen erst in einer neuen Sitzung).
+
+- [ ] **Step 1: Voraussetzungen bestätigen**
+
+```bash
+ssh lucienkerl@10.0.1.215 'id -nG; docker ps >/dev/null && echo docker-ok; ls -l /dev/ttyUSB0; sysctl net.ipv6.conf.all.forwarding'
+```
+
+Erwartet: `docker` und `dialout` in den Gruppen, `docker-ok`, `forwarding = 1`.
+Fehlt etwas, ist Schritt 0 unvollständig — melde das, statt es mit `sudo` zu umgehen.
+
+- [ ] **Step 2: Compose-Dateien schreiben**
+
+`deploy/testvm/.env.example`:
+
+```
+RADIO_DEVICE=/dev/ttyUSB0
+RADIO_BAUDRATE=460800
+BACKBONE_IF=ens18
+```
 
 `deploy/testvm/docker-compose.yml`:
 
@@ -1224,10 +1239,10 @@ services:
     privileged: true
     restart: unless-stopped
     devices:
-      - ${RADIO_DEVICE:-/dev/ttyACM0}:/dev/ttyACM0
+      - ${RADIO_DEVICE}:${RADIO_DEVICE}
     environment:
-      RADIO_URL: spinel+hdlc+uart:///dev/ttyACM0?uart-baudrate=460800
-    command: --backbone-interface ${BACKBONE_IF:-eth0}
+      RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}
+    command: --backbone-interface ${BACKBONE_IF}
 
   matter-server:
     image: ghcr.io/home-assistant-libs/python-matter-server:stable
@@ -1243,54 +1258,54 @@ services:
       - otbr
 ```
 
-`RADIO_DEVICE` und `BACKBONE_IF` kommen aus einer `.env` neben der Compose-Datei und
-tragen die Werte aus Step 1.
+Kopiere `.env.example` auf der VM nach `.env`. Die Compose-Syntax von
+`openthread/otbr` ändert sich zwischen Versionen — prüfe sie gegen die Dokumentation
+des Images, bevor du Fehler suchst, die keine sind, und trage Abweichungen im README ein.
 
-**Diese Datei ist ein Ausgangspunkt, keine verifizierte Wahrheit.** Die Aufrufsyntax von
-`openthread/otbr` ändert sich zwischen Versionen. Prüfe sie gegen die Dokumentation des
-Images, bevor du Fehler suchst, die keine sind — und trage Abweichungen hier ein.
+**Baudrate:** 460800 ist der wahrscheinlichste Wert für den SONOFF MG24. Verbindet
+sich der RCP nicht, ist 115200 der nächste Kandidat. Rate nicht mehr als zweimal —
+danach lies die Firmware-Dokumentation des Dongles.
 
-- [ ] **Step 4: Starten und Thread-Netz bilden**
+- [ ] **Step 3: Starten und Thread-Netz bilden**
 
 ```bash
-cd deploy/testvm && docker compose up -d
+cd ~/loxmatter-testvm && docker compose up -d
 docker compose logs -f otbr        # bis der RCP verbunden ist
 ```
-
-Thread-Netz anlegen:
 
 ```bash
 docker exec -it otbr ot-ctl dataset init new
 docker exec -it otbr ot-ctl dataset commit active
 docker exec -it otbr ot-ctl ifconfig up
 docker exec -it otbr ot-ctl thread start
-docker exec -it otbr ot-ctl state      # erwartet: leader
-docker exec -it otbr ot-ctl dataset active -x   # Datensatz notieren
+docker exec -it otbr ot-ctl state          # erwartet: leader
+docker exec -it otbr ot-ctl dataset active -x
 ```
 
-Der aktive Datensatz wird beim Einlernen von Thread-Geräten gebraucht. Sichere ihn.
+Den ausgegebenen aktiven Datensatz sichern — er wird zum Einlernen von Thread-Geräten
+gebraucht. **Nicht ins Repository committen**, er ist ein Netzwerk-Credential.
 
-- [ ] **Step 5: Erreichbarkeit vom Entwicklungsrechner prüfen**
+- [ ] **Step 4: Erreichbarkeit vom Entwicklungsrechner prüfen**
 
 Auf dem Mac, im Projektverzeichnis:
 
 ```bash
-uv run loxmatter inspect --node 1 --url ws://<vm-adresse>:5580/ws
+uv run loxmatter inspect --node 1 --url ws://10.0.1.215:5580/ws
 ```
 
-Erwartet: entweder ein Bericht, oder `unbekannter Node 1` — beides beweist, dass die
-Verbindung steht. Ein Verbindungsfehler dagegen bedeutet, dass Port 5580 nicht
-erreichbar ist; dann Firewall und `network_mode: host` prüfen.
+Erwartet: ein Bericht oder `unbekannter Node 1`. Beides beweist, dass die Verbindung
+steht. Ein Verbindungsfehler bedeutet, dass Port 5580 nicht erreichbar ist — dann
+Firewall und `network_mode: host` prüfen.
 
-- [ ] **Step 6: README schreiben**
+- [ ] **Step 5: README schreiben**
 
-`deploy/testvm/README.md` hält fest, was tatsächlich funktioniert hat: die konkrete
-Distribution und Version, den Geräteknoten, die Firmware des Dongles, jede Abweichung
-von Step 3, und den Befehl zum Sichern des Fabric-Volumes. Dieses Dokument ist der
-Rohstoff für den Deployment-Guide in Phase 6 — schreib auf, was schiefging, nicht nur
-was am Ende lief.
+`deploy/testvm/README.md` hält fest, was tatsächlich funktionierte: die konkrete
+Baudrate, jede Abweichung von Step 2, den Befehl zum Sichern des Fabric-Volumes unter
+`./data`, und den Hinweis, dass der Thread-Datensatz nicht ins Repository gehört.
+Dieses Dokument ist der Rohstoff für den Deployment-Guide in Phase 6 — schreib auf,
+was schiefging, nicht nur was am Ende lief.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add deploy/testvm
