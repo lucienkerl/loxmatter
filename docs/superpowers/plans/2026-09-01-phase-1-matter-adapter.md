@@ -32,6 +32,7 @@ Aus der Spec, gelten für jede Task:
 | `src/loxmatter/cli.py` | `loxmatter inspect` |
 | `scripts/record_node.py` | Node-Abbild von echter Hardware als Fixture speichern |
 | `tests/fixtures/nodes/*.json` | Eingecheckte Abbilder echter Geräte |
+| `deploy/testvm/` | Compose-Datei und Protokoll der Testumgebung (Task 6) |
 
 ---
 
@@ -1156,7 +1157,149 @@ git commit -m "feat(cli): loxmatter inspect listet Signale eines Geräts"
 
 ---
 
-### Task 6: Fixtures echter Geräte aufnehmen und Annahme prüfen
+### Task 6: matter-server und OTBR auf der Test-VM
+
+Diese Task stand ursprünglich in Phase 6. Sie musste vorgezogen werden, weil Task 7
+ohne laufenden Controller nicht ausführbar ist — die Annahme aus Spec 3.5 lässt sich
+nur an echten Geräten prüfen, und an echte Geräte kommt man nur über einen Controller.
+
+Ziel ist ausdrücklich **nicht** der fertige Produktions-Stack aus Spec 4.1. Es ist die
+Testumgebung, die Phase 1 abschließen kann. Der Produktions-Stack bleibt Phase 6 und
+wird auf dieser Erfahrung aufbauen.
+
+**Umgebung:** eigene Linux-VM (Debian/Ubuntu), Thread-Dongle per USB durchgereicht,
+Zugriff per SSH. Nicht der Entwicklungs-Mac — Docker Desktop unter macOS kann kein
+echtes Host-Networking, und Matter braucht IPv6 und mDNS auf dem Host.
+
+**Files:**
+- Create: `deploy/testvm/docker-compose.yml`
+- Create: `deploy/testvm/README.md`
+
+**Interfaces:**
+- Consumes: nichts aus früheren Tasks
+- Produces: eine erreichbare WebSocket-URL `ws://<vm>:5580/ws`, die Task 7 als `--url` benutzt
+
+- [ ] **Step 1: Voraussetzungen auf der VM prüfen**
+
+```bash
+ip -6 addr show                 # IPv6 muss vorhanden sein, nicht nur ::1
+lsusb                           # Dongle sichtbar?
+ls -l /dev/ttyACM* /dev/ttyUSB* # Geräteknoten merken — wird unten gebraucht
+```
+
+Notiere den tatsächlichen Geräteknoten. Er ist bei ZBT-1 und nRF52840 meist
+`/dev/ttyACM0`, aber das ist keine Garantie.
+
+**Firmware-Falle:** ZBT-1 und SkyConnect werden mit **Zigbee**-Firmware ausgeliefert.
+Für Thread brauchen sie **OpenThread-RCP**-Firmware. Ohne Flashen findet der OTBR das
+Modul und scheitert trotzdem, mit einer Meldung, die nicht nach Firmware aussieht.
+Prüfe das zuerst — es ist der teuerste Fehler in diesem Schritt.
+
+- [ ] **Step 2: Docker und IPv6-Forwarding einrichten**
+
+```bash
+sudo apt update && sudo apt install -y docker.io docker-compose-plugin
+sudo usermod -aG docker "$USER"   # danach neu anmelden
+```
+
+IPv6-Weiterleitung dauerhaft aktivieren:
+
+```bash
+echo 'net.ipv6.conf.all.forwarding=1' | sudo tee /etc/sysctl.d/99-matter.conf
+echo 'net.ipv4.ip_forward=1'          | sudo tee -a /etc/sysctl.d/99-matter.conf
+sudo sysctl --system
+```
+
+- [ ] **Step 3: Compose-Datei schreiben**
+
+`deploy/testvm/docker-compose.yml`:
+
+```yaml
+# Testumgebung fuer Phase 1 - NICHT der Produktions-Stack aus Spec 4.1.
+services:
+  otbr:
+    image: openthread/otbr:latest
+    container_name: otbr
+    network_mode: host
+    privileged: true
+    restart: unless-stopped
+    devices:
+      - ${RADIO_DEVICE:-/dev/ttyACM0}:/dev/ttyACM0
+    environment:
+      RADIO_URL: spinel+hdlc+uart:///dev/ttyACM0?uart-baudrate=460800
+    command: --backbone-interface ${BACKBONE_IF:-eth0}
+
+  matter-server:
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    container_name: matter-server
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - ./data:/data
+      - /run/dbus:/run/dbus:ro
+    depends_on:
+      - otbr
+```
+
+`RADIO_DEVICE` und `BACKBONE_IF` kommen aus einer `.env` neben der Compose-Datei und
+tragen die Werte aus Step 1.
+
+**Diese Datei ist ein Ausgangspunkt, keine verifizierte Wahrheit.** Die Aufrufsyntax von
+`openthread/otbr` ändert sich zwischen Versionen. Prüfe sie gegen die Dokumentation des
+Images, bevor du Fehler suchst, die keine sind — und trage Abweichungen hier ein.
+
+- [ ] **Step 4: Starten und Thread-Netz bilden**
+
+```bash
+cd deploy/testvm && docker compose up -d
+docker compose logs -f otbr        # bis der RCP verbunden ist
+```
+
+Thread-Netz anlegen:
+
+```bash
+docker exec -it otbr ot-ctl dataset init new
+docker exec -it otbr ot-ctl dataset commit active
+docker exec -it otbr ot-ctl ifconfig up
+docker exec -it otbr ot-ctl thread start
+docker exec -it otbr ot-ctl state      # erwartet: leader
+docker exec -it otbr ot-ctl dataset active -x   # Datensatz notieren
+```
+
+Der aktive Datensatz wird beim Einlernen von Thread-Geräten gebraucht. Sichere ihn.
+
+- [ ] **Step 5: Erreichbarkeit vom Entwicklungsrechner prüfen**
+
+Auf dem Mac, im Projektverzeichnis:
+
+```bash
+uv run loxmatter inspect --node 1 --url ws://<vm-adresse>:5580/ws
+```
+
+Erwartet: entweder ein Bericht, oder `unbekannter Node 1` — beides beweist, dass die
+Verbindung steht. Ein Verbindungsfehler dagegen bedeutet, dass Port 5580 nicht
+erreichbar ist; dann Firewall und `network_mode: host` prüfen.
+
+- [ ] **Step 6: README schreiben**
+
+`deploy/testvm/README.md` hält fest, was tatsächlich funktioniert hat: die konkrete
+Distribution und Version, den Geräteknoten, die Firmware des Dongles, jede Abweichung
+von Step 3, und den Befehl zum Sichern des Fabric-Volumes. Dieses Dokument ist der
+Rohstoff für den Deployment-Guide in Phase 6 — schreib auf, was schiefging, nicht nur
+was am Ende lief.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add deploy/testvm
+git commit -m "feat(deploy): Testumgebung mit matter-server und OTBR"
+```
+
+---
+
+### Task 7: Fixtures echter Geräte aufnehmen und Annahme prüfen
 
 Der Zweck der ganzen Phase. Hier wird Spec 3.5 belegt oder widerlegt.
 
@@ -1340,7 +1483,7 @@ git commit -m "test(matter): Spec 3.5 an echten IKEA-Geräten validiert"
 
 ---
 
-### Task 7: CI und Qualitätsschranke
+### Task 8: CI und Qualitätsschranke
 
 **Files:**
 - Create: `.github/workflows/ci.yml`
