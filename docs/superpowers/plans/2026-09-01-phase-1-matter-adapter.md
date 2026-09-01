@@ -6,7 +6,7 @@
 
 **Architecture:** Ein Paket `loxmatter.matter` mit vier Modulen ohne gegenseitige Zyklen: `paths` (Pfad-Parsing, reine Funktionen), `models` (unveränderliche Datenklassen), `discovery` (Zerlegung eines Node-Abbilds in Signale, rein), `client` (der einzige Teil mit I/O, dünne Hülle um `matter_server.client.MatterClient`). Die Zerlegung ist bewusst von der Verbindung getrennt: sie arbeitet auf einem JSON-Abbild und ist damit gegen eingecheckte Fixtures echter Geräte testbar, ohne Hardware und ohne Netz.
 
-**Tech Stack:** Python 3.12, `uv` als Paketmanager, `python-matter-server[client]`, `pytest`, `pytest-asyncio`, `ruff`, `mypy`, `typer` für die CLI.
+**Tech Stack:** Python 3.12, `uv` als Paketmanager, `python-matter-server>=8.1.2`, `pytest`, `pytest-asyncio`, `ruff`, `mypy`, `typer` für die CLI.
 
 ## Global Constraints
 
@@ -63,7 +63,7 @@ name = "loxmatter"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "python-matter-server[client]>=7.0.0",
+    "python-matter-server>=8.1.2",
     "typer>=0.12",
 ]
 

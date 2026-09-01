@@ -509,7 +509,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "python-matter-server", extras = ["client"], specifier = ">=7.0.0" },
+    { name = "python-matter-server", specifier = ">=8.1.2" },
     { name = "typer", specifier = ">=0.12" },
 ]
 
