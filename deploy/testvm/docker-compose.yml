@@ -1,0 +1,44 @@
+# Testumgebung fuer Phase 1 - NICHT der Produktions-Stack aus Spec 4.1.
+#
+# Verifiziert gegen die auf der Test-VM tatsaechlich gezogenen Images
+# (siehe README.md fuer Details und Abweichungen vom urspruenglichen Entwurf):
+#   - openthread/otbr:latest       -> Digest sha256:ebebd9f6..., Entrypoint
+#     /app/etc/docker/test/docker_entrypoint.sh (die "test"-Variante des
+#     Images, nicht die neuere s6-overlay/"border-router"-Variante). Diese
+#     Variante liest RADIO_URL als Umgebungsvariable und akzeptiert
+#     --backbone-interface als Kommandozeilenargument, genau wie unten
+#     konfiguriert.
+#   - ghcr.io/home-assistant-libs/python-matter-server:stable
+services:
+  otbr:
+    image: openthread/otbr:latest
+    container_name: otbr
+    network_mode: host
+    privileged: true
+    restart: unless-stopped
+    devices:
+      - ${RADIO_DEVICE}:${RADIO_DEVICE}
+    environment:
+      RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}
+      # Der VM-Kernel stellt die legacy iptables-Tabellen (mangle/nat/filter)
+      # nicht bereit und das Image hat kein modprobe, um sie nachzuladen -
+      # NAT64/NAT44 und die legacy-Firewall-Regeln (fuer beide ist iptables
+      # noetig) schlagen deshalb fehl und lassen den Container abstuerzen.
+      # Fuer die Testumgebung unkritisch (siehe README): kein globales IPv6,
+      # kein Bedarf, aus dem Thread-Netz heraus IPv4-Hosts zu erreichen.
+      NAT64: "0"
+      FIREWALL: "0"
+    command: --backbone-interface ${BACKBONE_IF}
+
+  matter-server:
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    container_name: matter-server
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - ./data:/data
+      - /run/dbus:/run/dbus:ro
+    depends_on:
+      - otbr

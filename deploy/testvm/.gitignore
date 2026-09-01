@@ -1,0 +1,5 @@
+# Lokale Deployment-Konfiguration und Laufzeitdaten - nicht Teil des Repos.
+.env
+data/
+*.dataset
+thread-dataset*
