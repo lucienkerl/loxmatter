@@ -32,7 +32,7 @@ Aus der Spec, gelten für jede Task:
 | `src/loxmatter/cli.py` | `loxmatter inspect` |
 | `scripts/record_node.py` | Node-Abbild von echter Hardware als Fixture speichern |
 | `tests/fixtures/nodes/*.json` | Eingecheckte Abbilder echter Geräte |
-| `deploy/testvm/` | Compose-Datei und Protokoll der Testumgebung (Task 6) |
+| `deploy/testhost/` | Compose-Datei und Protokoll der Testumgebung (Task 6, ursprünglich `deploy/testvm/` — Umzug auf den Raspberry Pi wegen fehlendem Bluetooth auf der VM, siehe README dort) |
 
 ---
 
@@ -1299,13 +1299,15 @@ Ziel ist ausdrücklich **nicht** der fertige Produktions-Stack aus Spec 4.1. Es 
 Testumgebung, die Phase 1 abschließen kann. Phase 6 baut darauf auf.
 
 **Files:**
-- Create: `deploy/testvm/docker-compose.yml`
-- Create: `deploy/testvm/.env.example`
-- Create: `deploy/testvm/README.md`
+- Create: `deploy/testvm/docker-compose.yml` (später umbenannt zu `deploy/testhost/docker-compose.yml`
+  — Umzug auf den Raspberry Pi, siehe README dort)
+- Create: `deploy/testvm/.env.example` (später `deploy/testhost/.env.example`)
+- Create: `deploy/testvm/README.md` (später `deploy/testhost/README.md`)
 
 **Interfaces:**
 - Consumes: nichts aus früheren Tasks
 - Produces: eine erreichbare WebSocket-URL `ws://10.0.1.215:5580/ws`, die Task 7 als `--url` benutzt
+  (nach dem Umzug auf den Raspberry Pi: `ws://10.0.1.56:5580/ws`, siehe `deploy/testhost/README.md`)
 
 #### Die Umgebung, bereits erhoben
 
