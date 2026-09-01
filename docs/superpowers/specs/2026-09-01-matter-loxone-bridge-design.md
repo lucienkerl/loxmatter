@@ -23,6 +23,7 @@ Generation, Loxone-Config-Version oder Gerätebestand getroffen werden.
 - Mehrere Miniserver an einer Bridge
 - Richtung Loxone → Matter für Szenen/Gruppen (nur Einzelgeräte-Kommandos)
 - Loxone als Matter-Gerät exponieren
+- Szenen, Zeitpläne oder Automatisierung in der WebUI (siehe 8.2)
 
 ---
 
@@ -124,9 +125,14 @@ Deployment-Guide und in der WebUI prominent stehen; die WebUI bietet einen Backu
 | `model/` | SQLite: Geräte, Signale, Mappings, Export-Zustand | — |
 | `profiles/` | YAML-Tabellen: Cluster/Attribut → Kurzname, Skalierung, Einheit, Loxone-Typ | — |
 | `loxone/out` | UDP-Sender: Entprellung, Impulse, Full-Resend, Rate-Limit | model, profiles |
-| `loxone/in` | HTTP-Endpoints für virtuelle Ausgänge → Matter-Kommandos | matter, model |
+| `commands/` | Übersetzt „gewünschter Zustand → Matter-Kommando": Level-Skalierung, Farbraum, Cover-Position, Setpoints. **Von `loxone/in` und `web/` gemeinsam genutzt** | matter, model, profiles |
+| `loxone/in` | HTTP-Endpoints für virtuelle Ausgänge; delegiert an `commands/` | commands |
 | `export/` | Generiert `VIU_*.xml` und `VO_*.xml` | model, profiles |
 | `web/` | SPA, spricht ausschließlich REST gegen das Backend | — |
+
+`commands/` existiert genau deshalb als eigenes Modul: Loxone-HTTP-Ausgang und WebUI-Bedienung
+sind zwei Aufrufer derselben Logik. Läge sie in `loxone/in`, gäbe es die Farbraum- und
+Level-Umrechnung zweimal — mit garantiert divergierendem Verhalten.
 
 Jedes Modul ist ohne die anderen testbar. `matter/` und `loxone/*` sind die einzigen
 Module mit I/O nach außen.
@@ -338,23 +344,62 @@ Beispiele aus der `profiles/`-Tabelle:
 | OnOff | OnOff | bool | digital |
 
 Farbe: Loxone liefert in Lumitech- bzw. RGB-Notation, Matter erwartet Hue/Saturation
-oder CIE xy. Die Umrechnung liegt in `loxone/in` und ist beidseitig zu testen.
+oder CIE xy. Die Umrechnung liegt in `commands/` und ist beidseitig zu testen.
 
 ---
 
 ## 8. WebUI
 
-Vier Ansichten, bewusst knapp gehalten:
+Vier Ansichten, bewusst knapp gehalten.
 
-1. **Geräte** — Liste mit Online-Status, Einlernen per Code/QR, Umbenennen, Entfernen.
-2. **Signale** — pro Gerät alle Attribute und Events mit Live-Wert, Checkbox „nach Loxone
-   exportieren", editierbarer Titel. Der Key wird angezeigt, ist aber nicht editierbar.
-3. **Export** — Miniserver-IP und UDP-Port eintragen. Vorlagen pro Gerät herunterladen,
-   einzeln oder als ZIP; Filter „nur noch nicht exportierte Geräte". Pro Gerät ist
-   sichtbar, wann zuletzt exportiert wurde und ob sich seither Signale geändert haben.
-   Enthält die Kurzanleitung und die einmaligen Systemvorlagen.
-4. **System** — Status von matter-server und OTBR, Thread-Netz, Logs, Backup der
-   Fabric-Credentials.
+**1. Geräte** — Liste mit Online-Status, Einlernen per Code/QR, Umbenennen, Entfernen.
+Pro Gerät die wichtigsten Live-Werte und **direkte Bedienelemente** für die
+naheliegenden Aktionen:
+
+| Gerätetyp | Bedienung in der WebUI |
+|---|---|
+| Licht | Toggle, Helligkeitsregler, Farbtemperatur/Farbe |
+| Steckdose | Toggle, daneben aktuelle Leistung |
+| Rollo | Auf / Ab / Stopp, Positionsregler |
+| Thermostat | Sollwert, Betriebsart |
+| Sensor, Taster | nur Anzeige — nichts zu bedienen |
+
+**2. Signale** — pro Gerät der vollständige Attribut- und Event-Baum mit Live-Wert.
+Checkbox „nach Loxone exportieren", editierbarer Titel, Key sichtbar aber nicht
+editierbar. Schreibbare Attribute lassen sich hier **roh setzen** — für alles, wofür
+Ansicht 1 keinen Regler hat, und für unbekannte Cluster.
+
+**3. Export** — Miniserver-IP und UDP-Port eintragen. Vorlagen pro Gerät herunterladen,
+einzeln oder als ZIP; Filter „nur noch nicht exportierte Geräte". Pro Gerät ist
+sichtbar, wann zuletzt exportiert wurde und ob sich seither Signale geändert haben.
+Enthält die Kurzanleitung und die einmaligen Systemvorlagen.
+
+**4. System** — Status von matter-server und OTBR, Thread-Netz, Logs, Backup der
+Fabric-Credentials.
+
+### 8.1 Warum die Bedienung mehr ist als Komfort
+
+Ansicht 1 ist das **Diagnosewerkzeug** des Projekts. Schaltet eine Lampe über Loxone
+nicht, trennt ein Klick in der WebUI die beiden möglichen Ursachen sauber: reagiert das
+Gerät hier, liegt der Fehler in der Loxone-Verdrahtung oder im Vorlagen-Export;
+reagiert es nicht, in Matter, Thread oder am Gerät. Ohne das ist jede Fehlersuche
+Raten — und bei einem Tool für fremde Installationen ist das der Unterschied zwischen
+einem beantwortbaren und einem unbeantwortbaren Bug-Report.
+
+Deshalb gehört die Bedienung in v1 und nicht in eine spätere Ausbaustufe.
+
+### 8.2 Abgrenzung
+
+Die WebUI ist ein **Inbetriebnahme- und Diagnosewerkzeug, keine Smart-Home-Oberfläche.**
+Nicht enthalten und auch nicht geplant: Szenen, Zeitpläne, Automatisierungen,
+Favoritenseiten, Räume, Nutzerverwaltung, App. Das ist alles Aufgabe von Loxone — die
+Bridge dupliziert es nicht.
+
+### 8.3 Live-Aktualisierung
+
+Ein WebSocket vom Backend zur SPA schiebt Attribut- und Event-Änderungen sowie
+Online-Status durch. Dieselbe Subscription, die den UDP-Sender speist — kein zweiter
+Pfad, kein Polling.
 
 ---
 
@@ -383,6 +428,10 @@ Vier Ansichten, bewusst knapp gehalten:
   Entprellung, Impulslänge, Rate-Limit und Full-Resend.
 - **Skalierung** — Tabellentests pro Cluster-Eintrag, inklusive Farbraum-Umrechnung
   in beide Richtungen.
+- **`commands/`** — dieselbe Testsuite deckt beide Aufrufer ab. Zusätzlich ein Test,
+  der prüft, dass WebUI-Route und Loxone-HTTP-Route für dieselbe Eingabe dasselbe
+  Matter-Kommando erzeugen. Das ist die Regression, die das Modul überhaupt
+  rechtfertigt.
 
 ---
 
