@@ -1763,6 +1763,9 @@ Fehlt etwas, ist Schritt 0 unvollständig — melde das, statt es mit `sudo` zu 
 RADIO_DEVICE=/dev/ttyUSB0
 RADIO_BAUDRATE=460800
 BACKBONE_IF=wlan0
+# id des Bluetooth-Adapters (aus `hci0` -> 0) fuer BLE-Commissioning durch
+# matter-server. Der Pi hat nur hci0, daher 0; siehe README "BLE aktivieren".
+BLUETOOTH_ADAPTER=0
 ```
 
 `deploy/testhost/docker-compose.yml`:
@@ -1780,6 +1783,11 @@ services:
       - ${RADIO_DEVICE}:${RADIO_DEVICE}
     environment:
       RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}
+      # Ohne modprobe im Image sind legacy-iptables-Tabellen nicht ladbar —
+      # NAT64/NAT44 und die legacy-Firewall wuerden den Container abstuerzen
+      # lassen. Fuer die Testumgebung unkritisch (kein globales IPv6 noetig).
+      NAT64: "0"
+      FIREWALL: "0"
     command: --backbone-interface ${BACKBONE_IF}
 
   matter-server:
@@ -1792,6 +1800,16 @@ services:
     volumes:
       - ./data:/data
       - /run/dbus:/run/dbus:ro
+    # --bluetooth-adapter aktiviert BLE-Commissioning ueber den in
+    # BLUETOOTH_ADAPTER benannten Adapter — der Grund, warum diese
+    # Testumgebung ueberhaupt auf den Pi umgezogen ist (siehe oben).
+    command:
+      - --storage-path
+      - /data
+      - --paa-root-cert-dir
+      - /data/credentials
+      - --bluetooth-adapter
+      - "${BLUETOOTH_ADAPTER:-0}"
     depends_on:
       - otbr
 ```
@@ -1874,31 +1892,44 @@ Der Zweck der ganzen Phase. Hier wird Spec 3.5 belegt oder widerlegt.
 """Speichert das Abbild eines echten Geräts als Fixture.
 
 Aufruf: uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb.json
+Mit abweichendem matter-server:
+       uv run python scripts/record_node.py 3 tests/fixtures/nodes/ikea_plug.json \\
+           --url ws://10.0.1.56:5580/ws
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
-import sys
 from pathlib import Path
 
 from loxmatter.matter.client import BridgeMatterClient
 
 
-async def main() -> None:
-    if len(sys.argv) != 3:
-        raise SystemExit("Aufruf: record_node.py <node_id> <zieldatei>")
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("node_id", type=int, help="Node-ID am matter-server")
+    parser.add_argument("target", type=Path, help="Zieldatei für die Fixture")
+    parser.add_argument(
+        "--url",
+        default="ws://localhost:5580/ws",
+        help="Adresse von matter-server (Default: ws://localhost:5580/ws)",
+    )
+    return parser.parse_args()
 
-    node_id, target = int(sys.argv[1]), Path(sys.argv[2])
-    client = BridgeMatterClient("ws://localhost:5580/ws")
+
+async def main() -> None:
+    args = _parse_args()
+
+    client = BridgeMatterClient(args.url)
     await client.connect()
     try:
-        snapshot = await client.snapshot(node_id)
+        snapshot = await client.snapshot(args.node_id)
     finally:
         await client.disconnect()
 
-    target.write_text(
+    args.target.write_text(
         json.dumps(
             {"node_id": snapshot.node_id, "attributes": dict(snapshot.attributes)},
             indent=2,
@@ -1908,21 +1939,27 @@ async def main() -> None:
         + "\n",
         encoding="utf-8",
     )
-    print(f"{target} geschrieben, {len(snapshot.attributes)} Attribute")
+    print(f"{args.target} geschrieben, {len(snapshot.attributes)} Attribute")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
+
+`--url` statt eines zweiten `sys.argv`-Felds, weil der Test-Host (`deploy/testhost/`,
+Task 6) unter einer festen IP im LAN läuft, nicht auf localhost — siehe Aufrufbeispiel
+oben.
 
 - [ ] **Step 2: Echte Geräte aufnehmen**
 
 Mit laufendem matter-server und eingelernten IKEA-Geräten je Gerät einmal ausführen.
-Mindestens ein Gerät pro Klasse aus Spec 3.5, sonst prüft die Phase nur die halbe Annahme.
+Ziel: mindestens ein Gerät pro Klasse aus Spec 3.5, sonst prüft die Phase nur die halbe
+Annahme.
 
 **Die Node-IDs unten sind Platzhalter** — die echten stehen in der matter-server-Oberfläche
-oder kommen aus `uv run loxmatter inspect --node <id>`, bis eine passt. Die Dateinamen
-dagegen bitte genau so, `test_real_devices.py` findet Fixtures über `*.json` und schließt
-nur `example_*` aus:
+oder kommen aus `uv run loxmatter inspect --node <id>`, bis eine passt. Bei den
+Dateinamen zählt nur, dass `test_real_devices.py` sie über `*.json` findet und
+`example_*` ausschließt — nicht ihr genauer Wortlaut:
 
 ```bash
 uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb_color.json
@@ -1930,6 +1967,14 @@ uv run python scripts/record_node.py 13 tests/fixtures/nodes/ikea_plug_energy.js
 uv run python scripts/record_node.py 14 tests/fixtures/nodes/ikea_button.json
 uv run python scripts/record_node.py 15 tests/fixtures/nodes/ikea_sensor.json
 ```
+
+**Ergebnis:** Verfügbar waren nur zwei IKEA-Geräte, keine vier — Bulb (mit
+ColorControl) und Sensor fehlten schlicht in der Wohnung. Aufgenommen wurden
+`tests/fixtures/nodes/ikea_grillplats_plug.json` (Node 3, messende Steckdose) und
+`tests/fixtures/nodes/ikea_bilresa_button.json` (Node 4, zweikanaliger Taster) — Namen
+nach Gerätemodell statt nach Geräteklasse, aus demselben Grund wie oben: der genaue
+Wortlaut war nie die Anforderung. Was das für die Abdeckung der Annahme heißt, steht
+im Befund am Ende dieses Tasks.
 
 - [ ] **Step 3: Write the failing test**
 
@@ -1964,7 +2009,7 @@ def load(path: Path) -> NodeSnapshot:
 
 
 def test_real_device_fixtures_exist():
-    assert REAL_DEVICES, "Task 6 Schritt 2 wurde nicht ausgeführt — keine echten Abbilder da"
+    assert REAL_DEVICES, "Task 7 Schritt 2 wurde nicht ausgeführt — keine echten Abbilder da"
 
 
 @pytest.mark.parametrize("path", REAL_DEVICES, ids=lambda p: p.stem)
@@ -2026,6 +2071,16 @@ fehlten, Events über die EventList auffindbar. Die generische Zerlegung trägt.
 ```
 
 Bei negativem Befund stattdessen beschreiben, was nicht trägt und wie 3.5 sich ändert.
+
+**Nachtrag zur Abdeckungs-Latte aus Step 2:** "mindestens ein Gerät pro Klasse, sonst
+prüft die Phase nur die halbe Annahme" wurde **nicht erreicht**. Verfügbar und geprüft
+waren nur zwei Klassen — messende Steckdose (`ikea_grillplats_plug.json`) und Taster
+(`ikea_bilresa_button.json`). Eine Lampe mit ColorControl-Cluster und ein Sensor waren
+nicht vorhanden und blieben ungeprüft. Die Spec ist an der Stelle ehrlich (n=2), aber
+sie hat bislang nicht festgehalten, dass die Latte selbst gerissen wurde. Konsequenz:
+ColorControl geht ungeprüft in Phase 4, wo die Farbraum-Umrechnung liegt — dort muss
+das nachgeholt werden, bevor die generische Zerlegung für diesen Cluster als belegt
+gilt.
 
 - [ ] **Step 6: Commit**
 

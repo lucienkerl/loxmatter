@@ -27,4 +27,4 @@ line-length = 100
 
 [tool.mypy]
 strict = true
-files = ["src"]
+files = ["src", "scripts"]

@@ -166,7 +166,9 @@ def test_cli_reports_unreachable_server(monkeypatch):
         lambda url: _fake_client(connect_error=CannotConnect("boom")),
     )
 
-    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://10.0.1.215:5580/ws"])
+    result = CliRunner().invoke(
+        app, ["inspect", "--node", "1", "--url", "ws://testhost.invalid:5580/ws"]
+    )
 
     assert result.exit_code != 0
     assert "Traceback" not in result.output

@@ -124,10 +124,10 @@ Zweiter Befund derselben Aufnahme: **45 der 159 extrahierten Attributsignale
 der Steckdose sind nicht skalar** — Listen, Structs oder Strings, z. B.
 `0/29/1 = [29, 31, 40, ...]`, `0/31/0 = [{...}]`, `0/40/1 = 'IKEA of Sweden'`.
 Die generische Zerlegung übersieht davon nichts — sie liefert alle 159 als
-Signal —, aber rund ein Viertel des Gefundenen lässt sich nicht 1:1 auf einen
-virtuellen UDP-Eingang abbilden, der nur Zahlen und digitale Werte kennt (für
-Strings gibt es immerhin einen virtuellen Text-Eingang; für Listen und
-Structs nichts). Konsequenz für den Exporter (6.6) und die WebUI (8).
+Signal —, aber gut ein Viertel des Gefundenen (28,3 %) lässt sich nicht 1:1
+auf einen virtuellen UDP-Eingang abbilden, der nur Zahlen und digitale Werte
+kennt (für Strings gibt es immerhin einen virtuellen Text-Eingang; für Listen
+und Structs nichts). Konsequenz für den Exporter (6.6) und die WebUI (8).
 
 ---
 
@@ -369,10 +369,10 @@ bis das nächste Update eintrifft — bei einem Temperatursensor potenziell Stun
 
 ### 6.6 Nicht exportierbare Werte
 
-**Befund (Phase 1, 2026-09-01).** Rund ein Viertel der generisch extrahierten
+**Befund (Phase 1, 2026-09-01).** Gut ein Viertel der generisch extrahierten
 Attributsignale ist nicht exportierbar, weil ein virtueller UDP-Eingang nur
 Zahlen und digitale Werte annimmt (siehe 3.5): bei der geprüften Steckdose 45
-von 159. Strings lassen sich noch über einen virtuellen Text-Eingang
+von 159 (28,3 %). Strings lassen sich noch über einen virtuellen Text-Eingang
 ausgeben; für Listen und Structs (`0/29/1 = [29, 31, 40, ...]`,
 `0/31/0 = [{...}]`) gibt es in Loxone **keine** Entsprechung.
 
@@ -383,6 +383,12 @@ den numerischen `VirtualInUdpCmd`. Die generische Zerlegung selbst ändert
 sich dadurch nicht — sie liefert weiterhin alles, was das Gerät anbietet; die
 Auswahl „exportierbar oder nicht" entsteht erst beim Export, nicht bei der
 Extraktion. Siehe 8 für die Konsequenz in der WebUI.
+
+Eine vierte, stille Kategorie kommt dazu: bei der Steckdose tragen 5 der 159
+Attributsignale den Wert `null` (z. B. `0/49/7`) — weder unreportiert (der
+Pfad ist da), noch unparsebar, noch nicht-skalar im Sinne von oben, aber
+genauso wenig ein Zahlen- oder Digitalwert; der Exporter muss auch für `null`
+eine explizite Entscheidung treffen.
 
 ---
 
