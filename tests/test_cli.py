@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from loxmatter import cli
 from loxmatter.cli import app, render_report
+from loxmatter.matter import client as matter_client
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.matter.models import NodeSnapshot
 
@@ -84,14 +85,16 @@ class _FakeUpstream:
         self,
         nodes: list[Any] | None = None,
         connect_error: BaseException | None = None,
+        never_ready: bool = False,
     ) -> None:
         self._nodes = nodes or []
         self._connect_error = connect_error
+        self._never_ready = never_ready
 
     async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
         if self._connect_error is not None:
             raise self._connect_error
-        if init_ready is not None:
+        if init_ready is not None and not self._never_ready:
             init_ready.set()
         try:
             await asyncio.Event().wait()  # blockiert, bis abgebrochen
@@ -114,8 +117,9 @@ def _fake_client(
     *,
     nodes: list[Any] | None = None,
     connect_error: BaseException | None = None,
+    never_ready: bool = False,
 ) -> BridgeMatterClient:
-    upstream = _FakeUpstream(nodes=nodes, connect_error=connect_error)
+    upstream = _FakeUpstream(nodes=nodes, connect_error=connect_error, never_ready=never_ready)
     return BridgeMatterClient(
         url="ws://test/ws",
         session_factory=lambda _session: upstream,
@@ -167,3 +171,20 @@ def test_cli_reports_unreachable_server(monkeypatch):
     assert result.exit_code != 0
     assert "Traceback" not in result.output
     assert "nicht erreichbar" in result.stderr
+
+
+def test_cli_reports_connect_timeout_without_traceback(monkeypatch):
+    # Der Server nimmt das Websocket an, meldet aber nie Bereitschaft — genau
+    # der Fall, für den LISTENER_READY_TIMEOUT_SECONDS existiert. Klein
+    # gepatcht, damit der Test nicht wirklich zehn Sekunden wartet.
+    monkeypatch.setattr(matter_client, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(never_ready=True))
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://test/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "keine Bereitschaft" in result.stderr
+    # Von den beiden anderen Fehlerpfaden unterscheidbar:
+    assert "nicht erreichbar" not in result.stderr
+    assert "nicht bekannt" not in result.stderr

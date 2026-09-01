@@ -122,6 +122,11 @@ def inspect(
             await client.connect()
         except CannotConnect:
             _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+        except MatterUnavailableError as exc:
+            _fail(
+                f"matter-server unter {url} hat sich verbunden, aber keine "
+                f"Bereitschaft gemeldet: {exc}"
+            )
         try:
             snapshot = await client.snapshot(node)
         except MatterUnavailableError:
