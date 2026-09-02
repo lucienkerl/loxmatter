@@ -390,6 +390,23 @@ Pfad ist da), noch unparsebar, noch nicht-skalar im Sinne von oben, aber
 genauso wenig ein Zahlen- oder Digitalwert; der Exporter muss auch für `null`
 eine explizite Entscheidung treffen.
 
+**Die Zahl, mit der der Exporter rechnet, ist deshalb nicht 45, sondern 50.**
+Die 45 sind die nicht-skalaren Signale; nicht auf einen `VirtualInUdpCmd`
+abbildbar sind darüber hinaus auch die Nullwerte. Aufschlüsselung der 159
+Attributsignale der Steckdose, gemessen am 2026-09-01:
+
+| Kategorie | Anzahl | exportierbar |
+|---|---|---|
+| Zahlen (analog) | 102 | ja |
+| Wahrheitswerte (digital) | 7 | ja |
+| Texte | 13 | nur über einen virtuellen Text-Eingang |
+| Listen und Structs | 32 | nein |
+| `null` | 5 | nein |
+| **auf `VirtualInUdpCmd` abbildbar** | **109** | |
+
+Wer die 45 als „nicht exportierbar" liest, verzählt sich um die fünf
+Nullwerte.
+
 ---
 
 ## 7. Matter-Integration
