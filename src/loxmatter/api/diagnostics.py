@@ -1,0 +1,405 @@
+"""Diagnose einer fremden Installation (Spec 10.5).
+
+Vier Werkzeuge, ein gemeinsamer Zweck: eine Person meldet "es geht nicht",
+und jemand anderes - ein Mitentwickler, ein Ersthelfer im Forum - muss ohne
+Zugriff auf das Haus herausfinden, warum. Ohne diese Seite bleibt nur "es
+geht nicht" als gesamte Fehlerbeschreibung.
+
+**Der Mitschnitt gesendeter Datagramme haengt in `UdpSender`, nicht daneben.**
+Ein Mitschnitt, der VOR dem Senden ansetzt (z. B. in `Runtime.on_attribute`),
+zeigt, was gesendet werden SOLLTE. Ein Mitschnitt in `UdpSender.send` selbst
+zeigt, was tatsaechlich ueber den Draht ging - nach Entprellung, nach
+Rate-Limit, nach jedem stillen "wurde uebersprungen, weil unveraendert".
+Genau die Faelle, in denen Absicht und Wirklichkeit auseinanderlaufen, sind
+die interessanten fuer eine Diagnose - ein Mitschnitt daneben wuerde sie
+verstecken, nicht zeigen. Deshalb importiert `loxone.sender` `RingBuffer`
+von hier (siehe dort) statt umgekehrt: dieses Modul ist der im Interface-
+Vertrag benannte Ort fuer den generischen, laufzeitunabhaengigen Ringpuffer,
+den sowohl der Datagramm- als auch der Kommando-Mitschnitt (server.py)
+brauchen - eine Umkehrung der sonst ueblichen Richtung "api haengt von
+loxone ab" (siehe z. B. api/live.py, das `Runtime` importiert), hier bewusst
+in Kauf genommen, weil `RingBuffer` selbst keinerlei API-spezifisches
+Wissen traegt (kein FastAPI-Import auf Modulebene bevor jede der beiden
+Nutzstellen ihn braucht) und die Alternative - ein drittes, eigenes Modul
+nur fuer eine 15-zeilige Klasse - mehr Indirektion gekostet haette, als sie
+eingespart haette.
+
+**Jede rote Zeile im Systemcheck traegt einen konkreten Hinweis.** Ein roter
+Punkt ohne Erklaerung verschiebt das Raetsel nur von "es geht nicht" zu "der
+Systemcheck sagt rot, aber nicht wieso" - dieselbe Sackgasse, nur eine Ebene
+tiefer. `_run_check` unten fasst deshalb JEDE Pruefung zusaetzlich in ein
+eigenes try/except: eine Pruefung, die selbst einen Programmfehler enthaelt
+(nicht nur einen erwarteten Fehlerfall wie "Miniserver nicht erreichbar"),
+wird zu genau einer roten Zeile mit Hinweis auf das Server-Log - nicht zu
+einem 500 fuer den gesamten Systemcheck. Eine Diagnose, die an ihrer eigenen
+Pruefung scheitert, waere schlimmer als gar keine (siehe
+`test_a_check_that_raises_unexpectedly_fails_gracefully`).
+
+**Die Sicherung ist kein Nebenpunkt.** Spec 4.1 nennt das matter-server-
+Datenverzeichnis (darin: die Fabric-Credentials) den einzigen unersetzlichen
+Zustand des ganzen Systems - geht es verloren, muss jedes Geraet neu
+eingelernt werden, bei Thread-Geraeten heisst das: zuruecksetzen, aus dem
+alten Netz werfen, neu koppeln. `GET /api/diagnostics/fabric-backup`
+liefert den Inhalt dieses Verzeichnisses als ZIP.
+
+Diese Datei ist Schluesselmaterial, kein Protokoll - wer sie besitzt, kann
+die Fabric uebernehmen. Zwei Konsequenzen, beide unten an der Route
+dokumentiert:
+
+- **Noch nicht geschuetzt.** Das Token aus Task 8 existiert hier noch nicht.
+  Die Route ist bewusst so gebaut, dass die Absicherung dort eine einzeilige
+  Ergaenzung wird: ein zusaetzlicher `Depends(...)`-Parameter auf der
+  Funktion `fabric_backup` unten, mehr nicht. Bis dahin kann JEDER, der den
+  Port dieses Dienstes erreicht, die Fabric-Credentials herunterladen -
+  siehe Docstring der Route.
+- **Nichts davon wird geloggt** - weder der aufgeloeste Pfad noch die darin
+  enthaltenen Dateinamen. Ein Server-Log ist kein Ort fuer Hinweise auf
+  Schluesselmaterial, selbst nicht auf `debug`-Ebene.
+
+Aus demselben Grund - ein Kommando-Log, das fuer jeden mitliest, der die
+Diagnoseseite oeffnen kann - traegt `GET /api/diagnostics/commands` bewusst
+NIE eine Query-Zeichenkette, nur den Pfad. Ein `/cmd/{key}/{value}`-Aufruf
+legt seinen Wert absichtlich offen im Pfad ab (das ist der Zweck dieses
+Logs: zu sehen, welcher Wert ankam) - eine Query-Zeichenkette dagegen ist
+fuer keine der heutigen Routen vorgesehen und faehrt deshalb ausschliesslich
+als potenzielles Zukunftsrisiko mit: sollte Task 8s Token je als
+Query-Parameter statt als Header umgesetzt werden, darf es nicht in diesem
+fuer jeden Diagnose-Betrachter lesbaren Log landen. Aus demselben,
+eher praktischen Grund (ein knapper Ringpuffer, den ein pollender
+Diagnose-Tab nicht mit sich selbst fluten soll) nimmt `server.py` Aufrufe
+von `/api/diagnostics/*` selbst gar nicht erst in den Kommando-Log auf -
+siehe dort.
+"""
+
+from __future__ import annotations
+
+import collections
+import io
+import logging
+import socket
+import sqlite3
+import zipfile
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
+from pydantic import BaseModel, ConfigDict
+
+from loxmatter.model.store import Store
+
+if TYPE_CHECKING:
+    # Ausschliesslich fuer Typannotationen - siehe Moduldocstring, warum
+    # `loxone.sender` NICHT auf Modulebene importiert wird (das waere ein
+    # echter Ringimport: sender.py importiert `RingBuffer` von HIER). Dank
+    # `from __future__ import annotations` wertet Python Annotationen ohnehin
+    # nur als Zeichenketten aus - dieser Block existiert einzig fuer mypy.
+    from loxmatter.loxone.sender import UdpSender
+    from loxmatter.matter.client import BridgeMatterClient
+
+logger = logging.getLogger(__name__)
+
+
+class RingBuffer[T]:
+    """Haelt die letzten N Eintraege, aeltere fallen heraus.
+
+    Eine Bruecke laeuft monatelang. Ein Mitschnitt, der mitwaechst, ist
+    irgendwann das groesste Objekt im Prozess - und der interessante Teil
+    ist ohnehin nur die letzten Minuten/Stunden. `collections.deque(maxlen=
+    ...)` erledigt das Verwerfen der aeltesten Eintraege bereits nativ in
+    O(1); diese Klasse fuegt nur die schmale, absichtlich MINIMALE
+    Oberflaeche hinzu, die die Diagnose-Routen unten brauchen (anhaengen,
+    iterieren, zaehlen) - kein `clear()`, kein Indexzugriff, nichts, das ein
+    Aufrufer nutzen koennte, um Eintraege nachtraeglich zu manipulieren."""
+
+    def __init__(self, maxlen: int = 500) -> None:
+        self._items: collections.deque[T] = collections.deque(maxlen=maxlen)
+
+    def append(self, item: T) -> None:
+        self._items.append(item)
+
+    def __iter__(self) -> Iterator[T]:
+        return iter(self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
+@dataclass(frozen=True)
+class DatagramLogEntry:
+    """Ein tatsaechlich ueber den UDP-Socket verschicktes Datagramm - siehe
+    `UdpSender.send` (Moduldocstring dort) fuer die genaue Aufzeichnungsstelle.
+
+    `value` ist bereits die fertige Textform (siehe `loxone.values.
+    format_value`), nicht der rohe `float | bool`-Wert - dieselbe Form, die
+    auch tatsaechlich auf der Leitung stand."""
+
+    key: str
+    value: str
+    timestamp: str
+
+
+@dataclass(frozen=True)
+class CommandLogEntry:
+    """Ein eingehender HTTP-Aufruf mit seinem Ergebnis - siehe `server.py`,
+    Middleware `_record_command`."""
+
+    method: str
+    path: str
+    status: int
+    timestamp: str
+
+
+class DatagramLogEntryOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    value: str
+    timestamp: str
+
+
+class CommandLogEntryOut(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    method: str
+    path: str
+    status: int
+    timestamp: str
+
+
+class SystemCheckOut(BaseModel):
+    """Eine Zeile im Systemcheck - IMMER mit `detail`, ob gruen oder rot.
+    Siehe Moduldocstring, "Jede rote Zeile...", und `test_system_check_
+    reports_each_line_with_a_verdict`, das `detail` fuer JEDE Zeile prueft,
+    nicht nur fuer fehlgeschlagene."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    ok: bool
+    detail: str
+
+
+_CheckFn = Callable[[], tuple[bool, str]]
+
+
+def _run_check(name: str, check: _CheckFn) -> SystemCheckOut:
+    """Fuehrt eine einzelne Pruefung aus und wandelt JEDE Ausnahme - nicht
+    nur die von der jeweiligen Pruefung selbst schon abgefangenen - in eine
+    rote Zeile um, statt den kompletten `GET /api/diagnostics/system`-Aufruf
+    mit 500 abbrechen zu lassen. Siehe Moduldocstring."""
+    try:
+        ok, detail = check()
+    except Exception as exc:
+        logger.exception("Systemcheck %r ist an einem unerwarteten Fehler gescheitert", name)
+        return SystemCheckOut(
+            name=name,
+            ok=False,
+            detail=(
+                f"Diese Pruefung selbst ist fehlgeschlagen ({exc}) - das ist ein Fehler in "
+                "der Pruefung, nicht zwangslaeufig im gepruerften System. Der volle "
+                "Traceback steht im Server-Log."
+            ),
+        )
+    return SystemCheckOut(name=name, ok=ok, detail=detail)
+
+
+def _check_matter_server(client: BridgeMatterClient | None) -> tuple[bool, str]:
+    if client is None:
+        return False, (
+            "Kein matter-server-Client konfiguriert - die Bruecke laeuft ohne Matter-"
+            "Anbindung. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, "
+            "wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+        )
+    if not client.connected:
+        return False, (
+            "Keine aktive Verbindung zu matter-server. Laeuft der Dienst "
+            "(z. B. `docker compose ps matter-server`)? Ist die --url-Adresse aus "
+            "`loxmatter run` noch erreichbar?"
+        )
+    return True, "Verbunden."
+
+
+def _check_store(store: Store) -> tuple[bool, str]:
+    # sqlite3.Error, nicht blind `Exception` - eine unerwartete Fehlerart
+    # (ein echter Bug statt einer nicht beschreibbaren Datenbank) faellt
+    # bewusst durch bis zum Sicherheitsnetz in `_run_check`, das dann seine
+    # eigene, generischere rote Zeile erzeugt (siehe Moduldocstring).
+    try:
+        store.check_writable()
+    except sqlite3.Error as exc:
+        return False, (
+            f"Die Signalschluessel-Datenbank ist nicht beschreibbar ({exc}). Pruefen Sie "
+            "Speicherplatz und Dateirechte des eingehaengten Datenvolumes - ohne "
+            "Schreibzugriff kann kein neues Geraet eingelernt und kein Export vermerkt "
+            "werden."
+        )
+    return True, "Beschreibbar."
+
+
+def _check_ipv6() -> tuple[bool, str]:
+    """Matter/Thread braucht IPv6 - ein Host ohne globalen IPv6-Pfad kann kein
+    Thread-Geraet erreichen, selbst wenn der Border Router laeuft.
+
+    Verbindet sich dabei nirgendwohin: `2001:db8::1` ist die von RFC 3849
+    fuer genau diesen Zweck reservierte, garantiert nie geroutete
+    Dokumentations-Adresse, und `connect()` auf einem UDP-Socket sendet
+    ohnehin kein einziges Paket - er traegt nur die lokale Routing-
+    Entscheidung des Kernels ein (welche eigene Adresse waere die Quelle,
+    gaebe es ein Ziel dort). Kein Netzwerkkontakt, keine Wartezeit."""
+    if not socket.has_ipv6:
+        return False, "Diese Python-Installation wurde ohne IPv6-Unterstuetzung gebaut."
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
+            probe.connect(("2001:db8::1", 80))
+            local_address = probe.getsockname()[0]
+    except OSError as exc:
+        return False, (
+            f"Kein lokaler IPv6-Pfad gefunden ({exc}). Matter/Thread-Geraete sind ohne "
+            "IPv6 nicht erreichbar - pruefen Sie die Netzwerkkonfiguration dieses Hosts "
+            "(z. B. `ip -6 route`) und den Thread-Border-Router."
+        )
+    if local_address in ("::1",) or local_address.startswith("fe80"):
+        return False, (
+            f"Nur eine link-lokale/Loopback-IPv6-Adresse gefunden ({local_address}). "
+            "Matter/Thread braucht eine geroutete IPv6-Adresse - pruefen Sie den Thread-"
+            "Border-Router bzw. die Netzwerkkonfiguration dieses Hosts."
+        )
+    return True, f"Lokale, geroutete IPv6-Adresse gefunden: {local_address}."
+
+
+def _check_miniserver(sender: UdpSender | None) -> tuple[bool, str]:
+    """Der Miniserver wertet UDP-Antworten nicht aus (Spec 6.1, siehe
+    server.py-Moduldocstring: "er schickt und vergisst") - eine echte
+    Erreichbarkeitspruefung gibt es fuer ein Fire-and-Forget-Protokoll ohne
+    ICMP-Auswertung (Root-Rechte, hier bewusst vermieden) nicht. Diese
+    Pruefung bestaetigt deshalb nur: es gibt einen lokalen Routing-Pfad zum
+    konfigurierten Ziel (dieselbe verbindungslose, netzwerkfreie Technik wie
+    `_check_ipv6` oben, nur mit dem tatsaechlichen Ziel statt einer
+    Dokumentations-Adresse) - keine Zustellung."""
+    if sender is None:
+        return False, (
+            "Kein UDP-Sender konfiguriert - die Bruecke sendet keine Werte an den "
+            "Miniserver. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, wurde "
+            "dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+        )
+    host, port = sender.target
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect((host, port))
+    except OSError as exc:
+        return False, (
+            f"Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver "
+            "eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port aus "
+            "`loxmatter run --miniserver`/`--port`?"
+        )
+    return True, (
+        f"Ein Netzwerkpfad zu {host}:{port} existiert. Das bestaetigt nur Routing, keine "
+        "tatsaechliche Zustellung - der Miniserver wertet UDP-Antworten nicht aus."
+    )
+
+
+def build_diagnostics_router(
+    store: Store,
+    command_log: RingBuffer[CommandLogEntry],
+    client: BridgeMatterClient | None,
+    sender: UdpSender | None,
+    matter_data_dir: Path | None,
+) -> APIRouter:
+    """Baut den `APIRouter` fuer `/api/diagnostics/*` (Spec 10.5).
+
+    `client`, `sender` und `matter_data_dir` duerfen `None` sein - `build_app`
+    gibt fuer `client`/`sender` bereits `None` als Default vor (aus demselben
+    Grund, den `loxone.server` dort dokumentiert: bestehende Aufrufer sollen
+    unveraendert weiterlaufen). `None` bedeutet hier jeweils "dieser Teil der
+    Diagnose ist fuer diesen Lauf nicht verfuegbar", nicht "die Diagnose
+    insgesamt fehlt" - `/datagrams` liefert dann eine leere Liste, `/system`
+    eine rote Zeile mit Hinweis, `/fabric-backup` einen 503 statt eines
+    500/leeren ZIPs."""
+    router = APIRouter(prefix="/api/diagnostics")
+
+    @router.get("/datagrams")
+    async def datagrams(
+        device_id: int | None = Query(
+            None, description="Nur Datagramme dieses Geraets (Schluessel-Praefix d<id>_)"
+        ),
+    ) -> list[DatagramLogEntryOut]:
+        if sender is None:
+            return []
+        prefix = f"d{device_id}_" if device_id is not None else None
+        return [
+            DatagramLogEntryOut(key=entry.key, value=entry.value, timestamp=entry.timestamp)
+            for entry in sender.datagram_log
+            if prefix is None or entry.key.startswith(prefix)
+        ]
+
+    @router.get("/commands")
+    async def commands() -> list[CommandLogEntryOut]:
+        return [
+            CommandLogEntryOut(
+                method=entry.method, path=entry.path, status=entry.status, timestamp=entry.timestamp
+            )
+            for entry in command_log
+        ]
+
+    @router.get("/system")
+    async def system() -> list[SystemCheckOut]:
+        return [
+            _run_check("matter-server", lambda: _check_matter_server(client)),
+            _run_check("store", lambda: _check_store(store)),
+            _run_check("ipv6", _check_ipv6),
+            _run_check("miniserver", lambda: _check_miniserver(sender)),
+        ]
+
+    @router.get("/fabric-backup")
+    async def fabric_backup() -> Response:
+        """Sicherung des matter-server-Datenverzeichnisses (Spec 4.1, 8) -
+        siehe Moduldocstring, Abschnitt "Die Sicherung ist kein Nebenpunkt".
+
+        **NOCH NICHT durch das Token aus Task 8 geschuetzt.** Wer den Port
+        dieses Dienstes erreicht, kann diese Route heute ungehindert
+        aufrufen und damit die komplette Fabric uebernehmen. Sobald Task 8
+        einen Token-Schutz einfuehrt, wird dessen Pruefung hier als
+        zusaetzlicher `Depends(...)`-Parameter dieser Funktion ergaenzt -
+        eine einzeilige Aenderung, keine Umstrukturierung dieser Route.
+
+        Loggt bewusst NICHTS - weder den aufgeloesten Pfad noch die
+        enthaltenen Dateinamen (siehe Moduldocstring)."""
+        # Absichtlich kein `logger`-Aufruf in dieser ganzen Funktion, auch
+        # nicht in den beiden Fehlerzweigen unten: schon der konfigurierte
+        # PFAD ist ein Hinweis auf das Speicherlayout der Fabric-Credentials
+        # (siehe Moduldocstring) - selbst ein scheiternder Aufruf soll ihn
+        # nicht ins Log schreiben.
+        if matter_data_dir is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Das matter-server-Datenverzeichnis ist fuer diesen Dienst nicht "
+                    "eingehaengt - eine Sicherung kann deshalb nicht erstellt werden. "
+                    "Siehe die Bereitstellung (docker-compose.yml, --matter-data-dir)."
+                ),
+            )
+        if not matter_data_dir.is_dir():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Das konfigurierte matter-server-Datenverzeichnis existiert nicht "
+                    "oder ist kein Verzeichnis. Pruefen Sie die Einhaengung."
+                ),
+            )
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in sorted(matter_data_dir.rglob("*")):
+                if path.is_file():
+                    archive.write(path, arcname=str(path.relative_to(matter_data_dir)))
+
+        return Response(
+            content=buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="matter-fabric-backup.zip"'},
+        )
+
+    return router

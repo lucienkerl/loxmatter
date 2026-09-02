@@ -16,21 +16,61 @@ Phase-4-Aufrufe von `build_app(store, invoke, runtime)` unveraendert
 weiterlaufen. `None` bedeutet nicht "WebUI fehlt"; es bedeutet "die Bruecke
 laeuft ohne Matter-Verbindung" - `build_device_router` beantwortet die beiden
 Routen, die `client` brauchen (Einlernen, Entfernen), dann mit 503 statt mit
-einer `AttributeError` auf `None` (siehe dort)."""
+einer `AttributeError` auf `None` (siehe dort).
+
+`sender` und `matter_data_dir` sind neu in Task 6 (Diagnose, Spec 10.5),
+aus demselben Grund optional mit Default `None`: die Diagnose-Routen
+brauchen sie (Mitschnitt gesendeter Datagramme, Sicherung der Fabric-
+Credentials), die uebrigen Routen dieser Datei nicht. `cli.py`s `_run`
+reicht beide inzwischen durch; jeder aeltere Aufruf ohne sie laeuft
+unveraendert weiter, nur eben ohne diese beiden Diagnose-Faehigkeiten
+(siehe `api.diagnostics.build_diagnostics_router`, dort auch, was `None`
+fuer jeden der beiden Faelle konkret bedeutet).
+
+**Kommando-Log (Spec 10.5).** Die Middleware `_record_command` unten
+zeichnet JEDEN eingehenden HTTP-Aufruf auf dieser App auf - Methode, Pfad,
+Statuscode, Zeitstempel - fuer `GET /api/diagnostics/commands`. Zwei
+bewusste Einschraenkungen, beide in `api.diagnostics`s Moduldocstring
+ausfuehrlicher begruendet:
+
+- Aufrufe unter `/api/diagnostics/*` selbst werden NICHT mitgeschnitten -
+  sonst wuerde ein offen gelassener, pollender Diagnose-Tab den knappen
+  Ringpuffer mit sich selbst fluten statt mit den eigentlich interessanten
+  `/cmd`-Aufrufen.
+- Es wird ausschliesslich `request.url.path` aufgezeichnet, NIE die
+  Query-Zeichenkette - ein `/cmd/{key}/{value}`-Aufruf legt seinen Wert
+  absichtlich im Pfad ab (das ist der Zweck dieses Logs), eine
+  Query-Zeichenkette dagegen ist fuer keine heutige Route vorgesehen und
+  faehrt nur als Vorsichtsmassnahme gegen ein kuenftiges, als
+  Query-Parameter uebergebenes Token (Task 8) mit.
+
+Die Middleware haengt ihren eigenen try/except um das Anhaengen an den
+Ringpuffer (nicht um `call_next` selbst!) - ein Fehler beim Mitschreiben
+darf niemals die eigentliche Antwort verhindern, dieselbe Regel wie beim
+Datagramm-Mitschnitt in `loxone.sender.UdpSender._record_sent`."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from starlette.responses import Response as StarletteResponse
 
 from loxmatter.api.control import build_control_router
 from loxmatter.api.devices import build_device_router
+from loxmatter.api.diagnostics import (
+    CommandLogEntry,
+    RingBuffer,
+    build_diagnostics_router,
+)
 from loxmatter.api.export import build_export_router
 from loxmatter.api.live import build_live_router
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.loxone.runtime import Runtime
+from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
 
@@ -38,14 +78,55 @@ Invoker = Callable[[MatterCall], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
+COMMAND_LOG_SIZE = 500
+
+# Aufrufe unter diesem Praefix werden nicht in den Kommando-Log
+# aufgenommen - siehe Moduldocstring.
+_DIAGNOSTICS_PREFIX = "/api/diagnostics"
+
+
+def _now_iso() -> str:
+    """ISO-8601-Zeitstempel in UTC, mit Mikrosekunden - wie `model.store.
+    Store._now`/`loxone.sender._now_iso`, hier bewusst ein drittes Mal
+    unabhaengig dupliziert statt geteilt (siehe Begruendung dort)."""
+    return datetime.now(UTC).isoformat(timespec="microseconds")
+
 
 def build_app(
     store: Store,
     invoke: Invoker,
     runtime: Runtime,
     client: BridgeMatterClient | None = None,
+    sender: UdpSender | None = None,
+    matter_data_dir: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
+    command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
+
+    @app.middleware("http")
+    async def _record_command(
+        request: Request, call_next: Callable[[Request], Awaitable[StarletteResponse]]
+    ) -> StarletteResponse:
+        response = await call_next(request)
+        if not request.url.path.startswith(_DIAGNOSTICS_PREFIX):
+            try:
+                command_log.append(
+                    CommandLogEntry(
+                        method=request.method,
+                        path=request.url.path,
+                        status=response.status_code,
+                        timestamp=_now_iso(),
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Kommando-Mitschnitt fuer %s %s fehlgeschlagen - Antwort wird trotzdem "
+                    "ausgeliefert",
+                    request.method,
+                    request.url.path,
+                )
+        return response
+
     app.include_router(build_device_router(store, client, runtime))
     app.include_router(build_export_router(store))
     app.include_router(build_live_router(runtime))
@@ -53,6 +134,9 @@ def build_app(
     # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst
     # driften sie (Spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
     app.include_router(build_control_router(store, invoke))
+    app.include_router(
+        build_diagnostics_router(store, command_log, client, sender, matter_data_dir)
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:

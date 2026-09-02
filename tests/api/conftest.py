@@ -141,6 +141,12 @@ class FakeMatterClient:
         self.fail_commission_with: Exception | None = None
         self.fail_remove_with: Exception | None = None
         self._next_node_id = 100
+        # Fuer den Systemcheck der Diagnose (Task 6, Phase 5) - spiegelt
+        # `BridgeMatterClient.connected`. Ein Test, der eine getrennte
+        # Verbindung simulieren will, setzt es einfach auf `False`, ganz
+        # ohne diese Datei anzufassen (siehe conftest-Moduldocstring,
+        # "Erweiterung fuer spaetere Tasks").
+        self.connected = True
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
         if self.fail_commission_with is not None:

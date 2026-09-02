@@ -81,6 +81,16 @@ services:
     network_mode: host
     volumes:
       - loxmatter-store:/data
+      # Read-only Einblick in matter-server's eigenes Datenverzeichnis (Bind-
+      # Mount desselben Host-Pfads wie oben bei matter-server: ./data) -
+      # Grundlage fuer `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6,
+      # Phase 5). Ohne diese Zeile bekaeme loxmatter nie Sicht auf die
+      # Fabric-Credentials: matter-server und loxmatter sind zwei getrennte
+      # Container, `./data` und `loxmatter-store` zwei getrennte Volumes,
+      # die zufaellig beide unter /data haengen. `:ro`, weil dieser Dienst
+      # das Verzeichnis ausschliesslich liest (ZIP-Archiv im Speicher) -
+      # ein Schreibzugriff von hier aus waere ohnehin nie beabsichtigt.
+      - ./data:/matter-data:ro
     environment:
       # Eigener, fester Ort statt des Nutzer-Home-Defaults (siehe
       # `_resolve_store_path` in src/loxmatter/cli.py) - das eingehaengte
@@ -95,6 +105,8 @@ services:
       - ${MINISERVER_IP}
       - --listen
       - "8080"
+      - --matter-data-dir
+      - /matter-data
     depends_on:
       - matter-server
 

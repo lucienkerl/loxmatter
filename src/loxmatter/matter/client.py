@@ -298,6 +298,17 @@ class BridgeMatterClient:
             finally:
                 await http_session.close()
 
+    @property
+    def connected(self) -> bool:
+        """Ob `connect()` erfolgreich lief und `disconnect()` seither nicht
+        aufgerufen wurde - fuer den Systemcheck der Diagnose (Spec 10.5,
+        Task 6, Phase 5; siehe `api.diagnostics._check_matter_server`), der
+        einzige bisherige Aufrufer. Spiegelt exakt dieselbe Bedingung wie
+        `_require_upstream` unten (`self._upstream is not None`), nur ohne
+        zu werfen - eine Pruefung soll einen fehlenden Zustand melden
+        koennen, nicht ihn signalisieren muessen."""
+        return self._upstream is not None
+
     def _require_upstream(self) -> Any:
         if self._upstream is None:
             raise MatterUnavailableError("nicht verbunden mit matter-server")

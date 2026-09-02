@@ -387,6 +387,15 @@ def run(
     store_path: Path | None = typer.Option(  # noqa: B008
         None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
     ),
+    matter_data_dir: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--matter-data-dir",
+        help="matter-server-Datenverzeichnis (storage-path), read-only in diesen "
+        "Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` "
+        "(Spec 4.1, Task 6, Phase 5). Ohne Angabe antwortet die Route mit 503 "
+        "statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die "
+        "dazugehörige Volume-Einhängung.",
+    ),
 ) -> None:
     """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein.
 
@@ -414,10 +423,17 @@ def run(
     except (OSError, sqlite3.Error) as exc:
         _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
 
-    asyncio.run(_run(store, url, miniserver, port, listen))
+    asyncio.run(_run(store, url, miniserver, port, listen, matter_data_dir))
 
 
-async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) -> None:
+async def _run(
+    store: Store,
+    url: str,
+    miniserver: str,
+    port: int,
+    listen: int,
+    matter_data_dir: Path | None = None,
+) -> None:
     """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
 
     `store` kommt bereits geöffnet herein (siehe `run` oben). `UdpSender`,
@@ -473,7 +489,14 @@ async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) 
         await runtime.resend_all()
 
         config = uvicorn.Config(
-            build_app(store, invoke, runtime, client=client),
+            build_app(
+                store,
+                invoke,
+                runtime,
+                client=client,
+                sender=sender,
+                matter_data_dir=matter_data_dir,
+            ),
             host="0.0.0.0",
             port=listen,
             log_level="info",

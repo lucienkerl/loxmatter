@@ -302,6 +302,19 @@ class Store:
     def close(self) -> None:
         self._db.close()
 
+    def check_writable(self) -> None:
+        """Prueft, ob die Datenbank JETZT tatsaechlich beschreibbar ist -
+        nicht nur laut Dateisystem-Bits, sondern durch einen echten,
+        sofort zurueckgerollten Schreibversuch. Wirft (typischerweise
+        `sqlite3.OperationalError`) bei einer schreibgeschuetzten Ablage,
+        einer vollen Platte oder einer exklusiv durch einen anderen Prozess
+        gesperrten Datenbank; aendert bei Erfolg nichts an den Daten.
+
+        Fuer den Systemcheck der Diagnose (Spec 10.5, siehe
+        `api.diagnostics._check_store`) - der einzige Aufrufer bislang."""
+        self._db.execute("BEGIN IMMEDIATE")
+        self._db.rollback()
+
     @staticmethod
     def _now() -> str:
         """ISO-8601-Zeitstempel in UTC, mit Mikrosekunden (Task 5, Phase 5).
