@@ -17,6 +17,8 @@ import httpx2 as httpx
 import pytest
 from conftest import load_snapshot
 
+from loxmatter.api.diagnostics import FABRIC_BACKUP_NAME
+from loxmatter.api.export import ARCHIVE_NAME
 from loxmatter.api.live import BEARER_SUBPROTOCOL
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
@@ -122,6 +124,18 @@ async def test_the_token_never_travels_in_a_url(api):
     assert "Authorization" in script
     for forbidden in ("?token=", "&token=", "?api_token=", "&api_token="):
         assert forbidden not in script
+
+
+async def test_the_browser_and_the_server_agree_on_the_download_filenames(api):
+    """Seit die beiden Downloads ueber `fetch` statt ueber einen Link laufen,
+    vergibt der Browser den Dateinamen selbst - der Server schickt seinen
+    trotzdem weiter mit. Zwei Namen fuer dieselbe Datei an zwei Orten waeren
+    fuer sich genommen beide plausibel; ein Auseinanderlaufen faellt erst
+    dem Anwender auf, der die falsch benannte Datei in der Hand haelt."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert f'"{ARCHIVE_NAME}"' in script
+    assert f'"{FABRIC_BACKUP_NAME}"' in script
 
 
 async def test_the_browser_and_the_server_agree_on_the_websocket_bearer_marker(api):

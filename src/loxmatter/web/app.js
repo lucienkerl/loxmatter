@@ -198,8 +198,13 @@ async function requestDownload(path, filename) {
   link.click();
   // Ohne dieses Freigeben haelt der Browser den kompletten Blob bis zum
   // Verlassen der Seite im Speicher - bei einer Fabric-Sicherung oder einem
-  // Export-ZIP ist das kein Kleingeld.
-  URL.revokeObjectURL(objectUrl);
+  // Export-ZIP ist das kein Kleingeld. Aber NICHT sofort: manche Browser
+  // starten den Download eines Objekt-URLs erst nach dem laufenden
+  // Aufrufstapel, und ein bereits freigegebener URL laesst den Download
+  // dann stillschweigend ausfallen. Das `setTimeout` gibt ihn eine
+  // Runde spaeter frei - fuer Chrome unnoetig, fuer Firefox nicht
+  // (Review-Fix Minor #3, 2026-09-03).
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
 function app() {
@@ -797,9 +802,27 @@ function app() {
       // (siehe `loxone.server.build_api_guard` und `api.live`). Ohne Token
       // wie bisher ganz ohne zweites Argument.
       const token = readStoredToken();
-      const socket = token
-        ? new WebSocket(url, [WEBSOCKET_BEARER_MARKER, token])
-        : new WebSocket(url);
+      let socket;
+      try {
+        socket = token
+          ? new WebSocket(url, [WEBSOCKET_BEARER_MARKER, token])
+          : new WebSocket(url);
+      } catch {
+        // Der Konstruktor wirft SYNCHRON, wenn ein Subprotokoll-Wert kein
+        // gueltiges HTTP-Token ist - ein Token mit Leerzeichen, Komma oder
+        // Nicht-ASCII also. Ohne dieses `catch` risse der Fehler `init()`
+        // mitten heraus: die Statusanzeige bliebe fuer immer bei
+        // "Verbinde...", und der Grund stuende nur in der
+        // Entwicklerkonsole. Genau der Satz, den `.env.example` und beide
+        // READMEs zum Zeichensatz sagen, gehoert stattdessen in die
+        // Oberflaeche (Review-Fix Minor #1, 2026-09-03).
+        this.authError =
+          "Dieses Token lässt sich nicht über eine WebSocket-Verbindung übertragen – " +
+          "es darf nur Zeichen ohne Leerzeichen, Komma und Umlaute enthalten. " +
+          "Empfohlen: `openssl rand -hex 32`.";
+        this.tokenEditing = true;
+        return;
+      }
 
       socket.addEventListener("open", () => {
         this.socketConnected = true;

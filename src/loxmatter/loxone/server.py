@@ -220,10 +220,17 @@ def build_api_guard(token: str | None) -> Callable[..., Awaitable[None]]:
     ist das Einlernen, das Entfernen und der Download der
     Fabric-Sicherung - also alles, was den Bestand veraendert (Spec 9).
 
-    **`Authorization: Bearer <Token>` ist der Hauptweg.** Zusaetzlich - und
-    ausschliesslich als Ausnahme fuer den Browser-WebSocket - wird das Token
-    aus dem Handshake-Header `Sec-WebSocket-Protocol` gelesen, in der Form
-    `bearer, <Token>` (siehe `_token_from_websocket_subprotocol`). Grund:
+    **`Authorization: Bearer <Token>` ist der Hauptweg** und wird immer
+    zuerst gelesen. Zusaetzlich wird das Token aus dem Handshake-Header
+    `Sec-WebSocket-Protocol` akzeptiert, in der Form `bearer, <Token>`
+    (siehe `_token_from_websocket_subprotocol`). Gedacht ist dieser zweite
+    Weg allein fuer den Browser-WebSocket; technisch liegt er, weil dieser
+    eine Wächter alle `/api`-Router bedient, auch auf den gewoehnlichen
+    HTTP-Routen. Das ist harmlos und bewusst nicht ausgeschlossen: `Sec-`
+    ist ein verbotener Kopfzeilenname, kein Browser-Skript kann ihn setzen,
+    und ein zweiter, nach Router getrennter Wächter waere genau die Art
+    Verdopplung, aus der spaeter ein ungeschuetzter Router entsteht
+    (Review-Fix Minor #2, 2026-09-03). Grund fuer den Weg ueberhaupt:
     die Browser-`WebSocket`-API kennt keinen Parameter fuer eigene Header,
     `Authorization` ist dort schlicht unmoeglich. Der einzige vom Browser
     beeinflussbare Kanal im Handshake ist das Subprotokoll-Argument

@@ -96,7 +96,10 @@ _UNEXPORTABLE = (Exportability.NONE, Exportability.TEXT)
 
 _DEFAULT_LISTEN_PORT = 8080
 
-_ARCHIVE_NAME = "loxmatter-export.zip"
+# Oeffentlich, weil die Oberflaeche denselben Dateinamen vergeben muss:
+# seit die Downloads ueber `fetch` statt ueber einen Link laufen, benennt
+# der Browser die Datei selbst (siehe `web/app.js`, `download`).
+ARCHIVE_NAME = "loxmatter-export.zip"
 _README_NAME = "Import-Anleitung.txt"
 
 _README_TEXT = (
@@ -274,7 +277,7 @@ def build_export_router(store: Store) -> APIRouter:
         return Response(
             content=buffer.getvalue(),
             media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{_ARCHIVE_NAME}"'},
+            headers={"Content-Disposition": f'attachment; filename="{ARCHIVE_NAME}"'},
         )
 
     @router.get("/status")

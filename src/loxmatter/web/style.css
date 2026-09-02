@@ -232,8 +232,7 @@ input[type="range"] {
   width: 140px;
 }
 
-button,
-.button-like {
+button {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -246,8 +245,7 @@ button,
   line-height: 1.3;
 }
 
-button.primary,
-.button-like.primary {
+button.primary {
   background: var(--accent);
   color: var(--accent-contrast);
   border-color: var(--accent);

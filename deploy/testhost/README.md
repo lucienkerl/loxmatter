@@ -63,8 +63,12 @@ cp .env.example .env      # RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_AD
 mkdir -p data
 
 # MINISERVER_IP und LOXMATTER_API_TOKEN in .env setzen - beide sind leer
-# ausgeliefert und beide muessen gesetzt werden:
-echo "LOXMATTER_API_TOKEN=$(openssl rand -hex 32)" >> .env
+# ausgeliefert und beide muessen gesetzt werden. Die vorhandenen Zeilen
+# ERSETZEN, nicht anhaengen: eine zweite Definition derselben Variablen
+# waere zwar wirksam (Compose nimmt die letzte), aber wer die Datei spaeter
+# bearbeitet, aendert dann die falsche Zeile.
+sed -i "s|^LOXMATTER_API_TOKEN=.*|LOXMATTER_API_TOKEN=$(openssl rand -hex 32)|" .env
+sed -i "s|^MINISERVER_IP=.*|MINISERVER_IP=10.0.1.99|" .env   # eigene Adresse einsetzen
 ```
 
 **Zum Token, weil es leicht übersehen wird:** dieser Stack läuft mit

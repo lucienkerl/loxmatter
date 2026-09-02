@@ -120,6 +120,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Oeffentlich, weil die Oberflaeche denselben Dateinamen vergeben muss:
+# seit die Downloads ueber `fetch` statt ueber einen Link laufen, benennt
+# der Browser die Datei selbst (siehe `web/app.js`, `download`).
+FABRIC_BACKUP_NAME = "matter-fabric-backup.zip"
+
 
 class RingBuffer[T]:
     """Haelt die letzten N Eintraege, aeltere fallen heraus.
@@ -439,9 +444,9 @@ def build_diagnostics_router(
             raise HTTPException(
                 status_code=403,
                 detail=(
-                    "Dieser Dienst laeuft ohne API-Token - die Fabric-Sicherung wird "
-                    "deshalb nicht ausgeliefert. Sie enthaelt die Zugangsdaten der "
-                    "Matter-Fabric; wer sie herunterlaedt, kann die Fabric uebernehmen. "
+                    "Dieser Dienst läuft ohne API-Token – die Fabric-Sicherung wird "
+                    "deshalb nicht ausgeliefert. Sie enthält die Zugangsdaten der "
+                    "Matter-Fabric; wer sie herunterlädt, kann die Fabric übernehmen. "
                     "Setze LOXMATTER_API_TOKEN bzw. --api-token (z. B. mit "
                     "`openssl rand -hex 32` erzeugt), starte den Dienst neu und rufe "
                     "diese Route dann mit `Authorization: Bearer <Token>` auf."
@@ -474,7 +479,7 @@ def build_diagnostics_router(
         return Response(
             content=buffer.getvalue(),
             media_type="application/zip",
-            headers={"Content-Disposition": 'attachment; filename="matter-fabric-backup.zip"'},
+            headers={"Content-Disposition": f'attachment; filename="{FABRIC_BACKUP_NAME}"'},
         )
 
     return router
