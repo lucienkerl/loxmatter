@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS signal (
     title         TEXT NOT NULL,
     unit          TEXT NOT NULL,
     exportability TEXT NOT NULL,
+    exported      INTEGER NOT NULL DEFAULT 1,
     UNIQUE (device_id, endpoint, cluster_id, element_id, kind)
 );
 CREATE TABLE IF NOT EXISTS command (
@@ -80,6 +81,24 @@ class StoredSignal:
     title: str
     unit: str
     exportability: Exportability
+    # Beide Felder unten sind bereits Spalten der `signal`-Tabelle - kein
+    # Bruch der Schluessel-Opazitaet aus Spec 6.2 (der Schluessel selbst
+    # bleibt unangetastet), sondern nur ihre Offenlegung im Dataclass.
+    #
+    # device_id (Task 2, Phase 5): die Geraete-API loest ein Signal ueber
+    # `signal_by_key` OHNE Geraete-Kontext im Pfad auf (`PATCH
+    # /api/signals/{key}`) und braucht trotzdem die zugehoerige device_id,
+    # um z. B. einen Live-Wert nachzuschlagen. Den device_id aus dem
+    # Schluessel-String zu parsen waere ein Bruch von "Keys sind opak"
+    # (Spec 6.2) durch die Hintertuer - store.py kennt die device_id ohnehin
+    # aus der Zeile, sie muss nur mitgegeben werden.
+    device_id: int
+    # exported (Spec 5, Datenmodell): ob dieses Signal in den naechsten
+    # Export einfliessen soll - vom Nutzer umschaltbar (`PATCH
+    # /api/signals/{key}`), unabhaengig von `exportability`. Ein technisch
+    # nicht abbildbares Signal (siehe Spec 6.6) hat hier nie eine editierbare
+    # Checkbox, siehe `exportable` in `api.models.SignalOut`.
+    exported: bool
 
 
 @dataclass(frozen=True)
@@ -93,6 +112,23 @@ class StoredCommand:
     takes_value: bool
 
 
+@dataclass(frozen=True)
+class StoredDevice:
+    """Eine Zeile aus `device` (Spec 5) - fuer die Geraete-API (Task 2, Phase 5).
+
+    Traegt bewusst keinen `online`-Status: Erreichbarkeit ist Laufzeit-
+    Zustand (`Runtime`, gespeist aus Matter-Subscriptions), keine
+    gespeicherte Eigenschaft. Ein hier eingefrorenes `online`-Feld koennte
+    beim Neustart der Bruecke veraltet sein, bis die naechste Subscription
+    eintrifft.
+    """
+
+    id: int
+    node_id: int
+    unique_id: str
+    label: str
+
+
 class UnknownCommandError(KeyError):
     """`KeyError.__str__` haengt die Nachricht in `repr()` ein, wodurch
     `str(exc)` zusaetzliche Anfuehrungszeichen um den ganzen deutschen Text
@@ -100,6 +136,16 @@ class UnknownCommandError(KeyError):
     nicht anzusehen sein soll. Die Unterklasse gibt die Nachricht
     unveraendert zurueck; `pytest.raises(KeyError, ...)` faengt sie weiterhin,
     da sie von `KeyError` erbt."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+class UnknownDeviceError(KeyError):
+    """Wie `UnknownCommandError`, fuer ein unbekanntes oder bereits
+    entferntes (`forget_device`) Geraet - dieselbe Begruendung: die
+    Geraete-API (Task 2) macht daraus einen HTTP-404-Koerper, der die
+    `repr()`-Anfuehrungszeichen von `KeyError.__str__` nicht tragen soll."""
 
     def __str__(self) -> str:
         return str(self.args[0])
@@ -147,6 +193,42 @@ class Store:
         if row is None:
             raise KeyError(f"unbekanntes Geraet {device_id}")
         return int(row["udp_port"])
+
+    @staticmethod
+    def _as_device(row: sqlite3.Row) -> StoredDevice:
+        return StoredDevice(
+            id=int(row["id"]),
+            node_id=int(row["node_id"]),
+            unique_id=str(row["unique_id"]),
+            label=str(row["label"]),
+        )
+
+    def devices(self) -> list[StoredDevice]:
+        """Alle aktiven Geraete (Task 2, Phase 5) - fuer `GET /api/devices`.
+
+        Ein entferntes Geraet (`forget_device`) taucht hier nicht mehr auf,
+        genau wie bei `device_id_for_node`."""
+        rows = self._db.execute("SELECT * FROM device WHERE active = 1 ORDER BY id").fetchall()
+        return [self._as_device(r) for r in rows]
+
+    def device(self, device_id: int) -> StoredDevice:
+        """Ein einzelnes aktives Geraet - `UnknownDeviceError`, wenn es nie
+        registriert wurde oder inzwischen entfernt ist."""
+        row = self._db.execute(
+            "SELECT * FROM device WHERE id = ? AND active = 1", (device_id,)
+        ).fetchone()
+        if row is None:
+            raise UnknownDeviceError(f"unbekanntes Geraet {device_id}")
+        return self._as_device(row)
+
+    def rename_device(self, device_id: int, label: str) -> None:
+        """Setzt das Label eines Geraets (`PATCH /api/devices/{device_id}`).
+
+        Wie `set_title` ohne vorherige Existenzpruefung - der Aufrufer (die
+        API-Route) prueft ueber `device()` selbst und meldet ein unbekanntes
+        Geraet als 404, bevor diese Methode ueberhaupt aufgerufen wird."""
+        self._db.execute("UPDATE device SET label = ? WHERE id = ?", (label, device_id))
+        self._db.commit()
 
     def device_id_for_node(self, node_id: int) -> int | None:
         """Bildet eine Matter-Node-ID auf die zugehoerige, stabile `device_id` ab.
@@ -231,10 +313,20 @@ class Store:
 
                 key = self._assign_key(device_id, ref, profile.slug, taken)
                 taken.add(key)
+                # exported startet gleich `exportable` (Task 2, Phase 5): ein
+                # frisch entdecktes Signal, das ueberhaupt auf einen
+                # Loxone-Eingang passt, soll ohne einen manuellen Zwischen-
+                # schritt in der WebUI auch tatsaechlich exportiert werden -
+                # das entspricht dem bisherigen Verhalten von `loxmatter
+                # export`, das jedes exportierbare Signal ungefragt mitnahm.
+                # Einmal gesetzt, bleibt der Wert wie `title` Nutzereigentum:
+                # der UPDATE-Zweig oben (bereits bekanntes Signal) fasst
+                # `exported` bewusst nicht an.
+                exported = profile.exportability is not Exportability.NONE
                 self._db.execute(
                     "INSERT INTO signal "
                     "(device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"
-                    " exportability) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " exportability, exported) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         device_id,
                         ref.endpoint,
@@ -245,6 +337,7 @@ class Store:
                         profile.slug,
                         profile.unit,
                         profile.exportability.value,
+                        int(exported),
                     ),
                 )
         except (ValueError, sqlite3.Error):
@@ -257,24 +350,42 @@ class Store:
         self._db.execute("UPDATE signal SET title = ? WHERE key = ?", (title, key))
         self._db.commit()
 
+    def set_exported(self, key: str, exported: bool) -> None:
+        """Setzt das Export-Flag eines Signals (`PATCH /api/signals/{key}`,
+        Task 2). Wie `set_title` ohne Existenzpruefung - siehe dort."""
+        self._db.execute("UPDATE signal SET exported = ? WHERE key = ?", (int(exported), key))
+        self._db.commit()
+
+    @staticmethod
+    def _as_signal(row: sqlite3.Row) -> StoredSignal:
+        return StoredSignal(
+            key=row["key"],
+            ref=SignalRef(
+                row["endpoint"], row["cluster_id"], row["element_id"], SignalKind(row["kind"])
+            ),
+            title=row["title"],
+            unit=row["unit"],
+            exportability=Exportability(row["exportability"]),
+            device_id=int(row["device_id"]),
+            exported=bool(row["exported"]),
+        )
+
     def signals(self, device_id: int) -> list[StoredSignal]:
         rows = self._db.execute(
             "SELECT * FROM signal WHERE device_id = ?"
             " ORDER BY endpoint, cluster_id, element_id, kind",
             (device_id,),
         ).fetchall()
-        return [
-            StoredSignal(
-                key=r["key"],
-                ref=SignalRef(
-                    r["endpoint"], r["cluster_id"], r["element_id"], SignalKind(r["kind"])
-                ),
-                title=r["title"],
-                unit=r["unit"],
-                exportability=Exportability(r["exportability"]),
-            )
-            for r in rows
-        ]
+        return [self._as_signal(r) for r in rows]
+
+    def signal_by_key(self, key: str) -> StoredSignal | None:
+        """Ein einzelnes Signal ueber seinen Schluessel - fuer `PATCH
+        /api/signals/{key}` (Task 2), die keinen Geraete-Pfadparameter hat
+        und deshalb nicht ueber `signals(device_id)` gehen kann. `None` statt
+        einer Ausnahme, analog zu `device_id_for_node` - der Aufrufer
+        entscheidet, ob das ein 404 ist."""
+        row = self._db.execute("SELECT * FROM signal WHERE key = ?", (key,)).fetchone()
+        return self._as_signal(row) if row is not None else None
 
     def _existing_command_keys(self, device_id: int) -> set[str]:
         rows = self._db.execute(

@@ -459,7 +459,10 @@ async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) 
         await runtime.resend_all()
 
         config = uvicorn.Config(
-            build_app(store, invoke, runtime), host="0.0.0.0", port=listen, log_level="info"
+            build_app(store, invoke, runtime, client=client),
+            host="0.0.0.0",
+            port=listen,
+            log_level="info",
         )
         await uvicorn.Server(config).serve()
     finally:

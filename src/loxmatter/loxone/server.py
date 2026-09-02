@@ -1,12 +1,22 @@
-"""Nimmt die HTTP-Aufrufe der virtuellen Ausgaenge entgegen.
+"""Nimmt die HTTP-Aufrufe der virtuellen Ausgaenge entgegen - und, seit Task 2
+(Phase 5), auch die der WebUI.
 
 Der Miniserver wertet die Antwort eines virtuellen Ausgangs nicht aus - er
-schickt und vergisst. Die Statuscodes hier sind also nicht fuer Loxone da,
-sondern fuer den Menschen, der im Log nachsieht, warum ein Baustein nichts
-bewirkt. Entsprechend muessen sie unterscheidbar sein: 404 fuer einen
-unbekannten Schluessel, 400 fuer einen unpassenden Wert, 502 fuer ein Geraet,
-das nicht antwortet.
-"""
+schickt und vergisst. Die Statuscodes der Loxone-Routen unten sind also nicht
+fuer Loxone da, sondern fuer den Menschen, der im Log nachsieht, warum ein
+Baustein nichts bewirkt. Entsprechend muessen sie unterscheidbar sein: 404
+fuer einen unbekannten Schluessel, 400 fuer einen unpassenden Wert, 502 fuer
+ein Geraet, das nicht antwortet.
+
+`client` ist neu gegenueber Phase 4: die WebUI-Routen unter `/api` brauchen
+`BridgeMatterClient` zum Einlernen und Entfernen von Geraeten (Task 1), die
+Loxone-Routen hier brauchen ihn nicht. Der Parameter ist deshalb optional
+und defaultet auf `None` - genau dafuer, dass die drei bestehenden
+Phase-4-Aufrufe von `build_app(store, invoke, runtime)` unveraendert
+weiterlaufen. `None` bedeutet nicht "WebUI fehlt"; es bedeutet "die Bruecke
+laeuft ohne Matter-Verbindung" - `build_device_router` beantwortet die beiden
+Routen, die `client` brauchen (Einlernen, Entfernen), dann mit 503 statt mit
+einer `AttributeError` auf `None` (siehe dort)."""
 
 from __future__ import annotations
 
@@ -15,8 +25,10 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, HTTPException
 
+from loxmatter.api.devices import build_device_router
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.loxone.runtime import Runtime
+from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
 
 Invoker = Callable[[MatterCall], Awaitable[None]]
@@ -24,8 +36,14 @@ Invoker = Callable[[MatterCall], Awaitable[None]]
 logger = logging.getLogger(__name__)
 
 
-def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
+def build_app(
+    store: Store,
+    invoke: Invoker,
+    runtime: Runtime,
+    client: BridgeMatterClient | None = None,
+) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
+    app.include_router(build_device_router(store, client, runtime))
 
     @app.get("/health")
     async def health() -> dict[str, str]:

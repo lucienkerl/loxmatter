@@ -6,13 +6,22 @@ from loxmatter.model.store import StoredSignal
 from loxmatter.profiles.table import Exportability
 
 
-def signal(key, kind=SignalKind.ATTRIBUTE, exportability=Exportability.ANALOG, unit=""):
+def signal(
+    key,
+    kind=SignalKind.ATTRIBUTE,
+    exportability=Exportability.ANALOG,
+    unit="",
+    device_id=1,
+    exported=True,
+):
     return StoredSignal(
         key=key,
         ref=SignalRef(1, 6, 0, kind),
         title=key,
         unit=unit,
         exportability=exportability,
+        device_id=device_id,
+        exported=exported,
     )
 
 

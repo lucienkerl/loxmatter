@@ -252,6 +252,30 @@ class Runtime:
         self._cache_online(device_id, online)
         await self._sender.send(self._online_key(device_id), online)
 
+    def last_values_for(self, device_id: int) -> dict[str, float | bool]:
+        """Alle zuletzt bekannten Werte eines Geraets, indiziert nach
+        Signal-Schluessel - fuer die Geraete- und Signal-API (Task 2, Phase
+        5), die pro Signal einen Live-Wert anzeigen will, ohne selbst eine
+        zweite Subscription zu fuehren.
+
+        Reine Lesehilfe ueber `_last_values`: liefert nur, was schon einmal
+        durch eine Subscription oder `seed_from_snapshot` hier ankam. Ein
+        Signal, das die Bruecke noch nie gemeldet bekommen hat, taucht hier
+        nicht auf - der Aufrufer behandelt das als "noch kein Wert bekannt"
+        (`None`), nicht als Fehler. Textwerte tauchen hier grundsaetzlich nie
+        auf: `_cache_attribute` speichert nur, was `to_loxone_value` liefert,
+        und das ist fuer `Exportability.TEXT` immer `None` (siehe dort) - ein
+        virtueller UDP-Eingang kennt keinen Text.
+
+        Der Praefix-Vergleich ist sicher vor einer Verwechslung zwischen
+        Geraeten mit Ziffern-Praefix eines anderen (z. B. Geraet 1 vs. Geraet
+        12): der Schluessel traegt zwingend einen Unterstrich direkt nach der
+        device_id (`d1_...` vs. `d12_...`), `"d12_1_temp".startswith("d1_")`
+        ist deshalb `False`.
+        """
+        prefix = f"d{device_id}_"
+        return {k: v for k, v in self._last_values.items() if k.startswith(prefix)}
+
     async def resend_all(self) -> int:
         """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei.
 

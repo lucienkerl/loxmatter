@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
-from loxmatter.model.store import Store
+from loxmatter.model.store import Store, UnknownDeviceError
 from loxmatter.profiles.table import Exportability, Profile, lookup
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
@@ -248,6 +248,90 @@ def test_device_id_for_node_ignores_a_forgotten_device(store):
     device_id = store.register_device(snap)
     store.forget_device(device_id)
     assert store.device_id_for_node(snap.node_id) is None
+
+
+def test_devices_lists_only_active_devices(store):
+    plug_id = store.register_device(load("ikea_grillplats_plug.json"))
+    button_id = store.register_device(load("ikea_bilresa_button.json"))
+    store.forget_device(button_id)
+    assert [d.id for d in store.devices()] == [plug_id]
+
+
+def test_device_returns_the_stored_row(store):
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    device = store.device(device_id)
+    assert device.id == device_id
+    assert device.node_id == snap.node_id
+    assert "GRILLPLATS" in device.label
+
+
+def test_device_raises_for_an_unknown_id(store):
+    with pytest.raises(UnknownDeviceError):
+        store.device(999)
+
+
+def test_device_raises_for_a_forgotten_device(store):
+    device_id = store.register_device(load("ikea_grillplats_plug.json"))
+    store.forget_device(device_id)
+    with pytest.raises(UnknownDeviceError):
+        store.device(device_id)
+
+
+def test_rename_device_changes_the_label(store):
+    device_id = store.register_device(load("ikea_grillplats_plug.json"))
+    store.rename_device(device_id, "Grillplatz Steckdose")
+    assert store.device(device_id).label == "Grillplatz Steckdose"
+
+
+def test_signal_by_key_finds_a_registered_signal(store):
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    target = signals[0]
+    found = store.signal_by_key(target.key)
+    assert found is not None
+    assert found.key == target.key
+    assert found.device_id == device_id
+
+
+def test_signal_by_key_is_none_for_an_unknown_key(store):
+    assert store.signal_by_key("d1_1_gibtsnicht") is None
+
+
+def test_new_signal_is_exported_exactly_when_it_is_exportable(store):
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    for signal in signals:
+        expected = signal.exportability is not Exportability.NONE
+        assert signal.exported is expected
+
+
+def test_set_exported_toggles_the_flag_without_touching_the_key(store):
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    target = next(s for s in signals if s.exported)
+
+    store.set_exported(target.key, False)
+    after = next(s for s in store.signals(device_id) if s.key == target.key)
+    assert after.exported is False
+    assert after.key == target.key
+
+
+def test_exported_flag_survives_reregistration(store):
+    """Wie `title`: einmal vom Nutzer gesetzt, darf ein erneutes
+    `register_signals` das Export-Flag nicht zuruecksetzen."""
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    target = next(s for s in signals if s.exported)
+
+    store.set_exported(target.key, False)
+    again = store.register_signals(device_id, snap)
+    after = next(s for s in again if s.key == target.key)
+    assert after.exported is False
 
 
 def test_store_survives_reopening(tmp_path):
