@@ -59,8 +59,10 @@ ausfuehrlicher begruendet:
   Query-Zeichenkette - ein `/cmd/{key}/{value}`-Aufruf legt seinen Wert
   absichtlich im Pfad ab (das ist der Zweck dieses Logs), eine
   Query-Zeichenkette dagegen ist fuer keine heutige Route vorgesehen und
-  faehrt nur als Vorsichtsmassnahme gegen ein kuenftiges, als
-  Query-Parameter uebergebenes Token (Task 8) mit.
+  faehrt nur als Vorsichtsmassnahme mit: Task 8s Token laeuft ausdruecklich
+  NICHT als Query-Parameter, sondern als `Authorization`-Header bzw. (fuer
+  den Browser-WebSocket) als Subprotokoll - genau damit es nicht in diesem
+  Log landet (siehe `build_api_guard`).
 
 Die Middleware haengt ein eigenes try/except um das Anhaengen an den
 Ringpuffer selbst (`_append_command_log`) - ein Fehler beim Mitschreiben
@@ -78,6 +80,7 @@ dort, wo ein Diagnostiker ihn am dringendsten braucht."""
 from __future__ import annotations
 
 import logging
+import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -94,7 +97,7 @@ from loxmatter.api.diagnostics import (
     build_diagnostics_router,
 )
 from loxmatter.api.export import build_export_router
-from loxmatter.api.live import build_live_router
+from loxmatter.api.live import BEARER_SUBPROTOCOL, build_live_router
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
@@ -129,6 +132,84 @@ _CRASHED_STATUS = 0
 _WEB_DIR = Path(__file__).parents[1] / "web"
 
 
+def normalize_api_token(token: str | None) -> str | None:
+    """Die EINE Stelle, an der entschieden wird, ob ein Token gesetzt ist
+    (Review-Fix Fix 2, 2026-09-03).
+
+    Waechter (`build_api_guard`) und Startwarnung
+    (`cli._warn_if_missing_api_token`) fragen beide hier - sonst koennten sie
+    auseinanderlaufen, und genau das war der gemeldete Fehler: ein Token, das
+    nur aus Leerraum besteht (ein abgeschnittener Zeilenumbruch aus einer
+    kopierten `.env`, `--api-token " "`), galt dem Waechter als echtes
+    Geheimnis, war aber ueber einen HTTP-Header gar nicht korrekt sendbar -
+    HTTP-Headerwerte enthalten keine Zeilenumbrueche, und fuehrender/
+    abschliessender Leerraum wird beim Parsen ohnehin verworfen (RFC 9110).
+    Der Dienst war damit dauerhaft gesperrt, und die Warnung, die genau
+    diesen Zustand haette melden sollen, blieb aus, weil das Token ja "nicht
+    None" war.
+
+    Deshalb zwei Schritte, beide hier und nirgends sonst:
+
+    - Aeusserer Leerraum wird abgeschnitten. Ein `LOXMATTER_API_TOKEN` mit
+      angehaengtem Zeilenumbruch soll das Geheimnis sein, das ohne den
+      Zeilenumbruch dasteht - alles andere waere ein Geheimnis, das niemand
+      je uebertragen kann.
+    - Bleibt nichts uebrig, ist das Ergebnis `None` - also exakt derselbe
+      Fall wie "kein Token gesetzt", mit derselben Warnung im Log und
+      denselben Folgen (`/api` offen, Fabric-Sicherung gesperrt, siehe
+      `api.diagnostics`). Ein offener Dienst MIT Warnung ist besser als ein
+      dauerhaft gesperrter ohne jede Diagnose."""
+    if token is None:
+        return None
+    stripped = token.strip()
+    return stripped or None
+
+
+def _token_from_authorization(header: str | None) -> str | None:
+    """Zieht das Token aus `Authorization: Bearer <Token>` - der Hauptweg."""
+    if header is None:
+        return None
+    prefix = "Bearer "
+    if not header.startswith(prefix):
+        return None
+    return header[len(prefix) :]
+
+
+def _token_from_websocket_subprotocol(header: str | None) -> str | None:
+    """Zieht das Token aus `Sec-WebSocket-Protocol: bearer, <Token>` - der
+    Ausnahmeweg fuer den Browser-WebSocket (siehe `build_api_guard`).
+
+    Akzeptiert ausschliesslich genau zwei Werte, deren erster
+    `api.live.BEARER_SUBPROTOCOL` ist - dieselbe Konstante, die `api.live`
+    im Accept zurueckgibt, damit Lese- und Antwortseite nicht
+    auseinanderlaufen koennen. Alles andere - ein einzelner Wert, drei
+    Werte, ein anderer Marker - ergibt `None` und damit eine Ablehnung:
+    diese Form ist die einzige, die `app.js` sendet, und eine grosszuegigere
+    Auslegung wuerde nur zusaetzliche, ungetestete Wege in den Waechter
+    lassen."""
+    if header is None:
+        return None
+    values = [value.strip() for value in header.split(",")]
+    if len(values) != 2 or values[0] != BEARER_SUBPROTOCOL:
+        return None
+    return values[1] or None
+
+
+def _tokens_match(presented: str, expected: str) -> bool:
+    """Zeitkonstanter Vergleich (Review-Fix Fix 2, 2026-09-03).
+
+    Vergleicht die UTF-8-Bytes, nicht die `str`-Objekte: `compare_digest`
+    wirft bei `str`-Argumenten `TypeError`, sobald auch nur eines davon ein
+    Zeichen ausserhalb von ASCII enthaelt. Ein Angreifer koennte damit sonst
+    mit einem einzigen Umlaut im Header einen 500er statt eines 401 ausloesen -
+    ein selbst gebautes Orakel ("hier laeuft ein Vergleich") und ein
+    unnoetiger Traceback im Log. Auf `bytes` kennt `compare_digest` diese
+    Einschraenkung nicht und vergleicht jede Byte-Folge zeitkonstant, also
+    faellt der Sonderfall ersatzlos weg, statt mit einem try/except behandelt
+    zu werden."""
+    return secrets.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))
+
+
 def build_api_guard(token: str | None) -> Callable[..., Awaitable[None]]:
     """Schuetzt die `/api`-Routen, nicht die des Miniservers (Task 8, Phase 5).
 
@@ -139,8 +220,31 @@ def build_api_guard(token: str | None) -> Callable[..., Awaitable[None]]:
     ist das Einlernen, das Entfernen und der Download der
     Fabric-Sicherung - also alles, was den Bestand veraendert (Spec 9).
 
-    `token is None` (kein `--api-token`/`LOXMATTER_API_TOKEN` gesetzt) laesst
-    den Wächter unveraendert durch - derselbe Zustand wie vor Task 8. Das ist
+    **`Authorization: Bearer <Token>` ist der Hauptweg.** Zusaetzlich - und
+    ausschliesslich als Ausnahme fuer den Browser-WebSocket - wird das Token
+    aus dem Handshake-Header `Sec-WebSocket-Protocol` gelesen, in der Form
+    `bearer, <Token>` (siehe `_token_from_websocket_subprotocol`). Grund:
+    die Browser-`WebSocket`-API kennt keinen Parameter fuer eigene Header,
+    `Authorization` ist dort schlicht unmoeglich. Der einzige vom Browser
+    beeinflussbare Kanal im Handshake ist das Subprotokoll-Argument
+    (`new WebSocket(url, ["bearer", token])`). Das ist einem Query-Parameter
+    vorzuziehen, weil ein Query-Parameter in Server-Logs, Proxy-Logs und der
+    Browser-History landet, ein Header nicht (dieselbe Ueberlegung, aus der
+    `api.diagnostics` die Query-Zeichenkette bewusst NICHT ins Kommando-Log
+    schreibt). Folge fuer das Token selbst: es muss als HTTP-Token
+    uebertragbar sein - keine Leerzeichen, kein Komma, ASCII. Das von
+    `.env.example` und README empfohlene `openssl rand -hex 32` liefert nur
+    `[0-9a-f]` und erfuellt das von sich aus.
+
+    Die Route `/api/live` muss das gewaehlte Subprotokoll im Accept
+    zurueckgeben, sonst bricht der Browser den Handshake nach RFC 6455 ab -
+    das erledigt `api.live` (siehe dort; zurueckgegeben wird `"bearer"`,
+    niemals das Token).
+
+    Kein Token gesetzt - `token is None` oder ein Token aus reinem Leerraum,
+    beides entscheidet `normalize_api_token` (siehe dort) - laesst den
+    Wächter unveraendert durch, derselbe Zustand wie vor Task 8, mit der
+    einen Ausnahme der Fabric-Sicherung (siehe `api.diagnostics`). Das ist
     der einzig sinnvolle Standard: der Miniserver-Pfad braucht ohnehin kein
     Token, und ein Dienst, der ohne explizit gesetztes Token nicht mehr
     starten wuerde, waere fuer eine Testumgebung oder ein Erstinbetriebnahme-
@@ -155,11 +259,21 @@ def build_api_guard(token: str | None) -> Callable[..., Awaitable[None]]:
     einer WebSocket-Abhaengigkeit ueber die ASGI-„Denial Response"-Erweiterung
     ab (HTTP-Statuscode vor dem Accept), statt die Verbindung erst anzunehmen
     und dann zu schliessen (verifiziert in `tests/api/test_security.py`)."""
+    # Einmal beim Bauen normalisiert, nicht bei jeder Anfrage: `None` und ein
+    # reines Leerraum-Token sind derselbe Fall, und zwar genau derselbe, den
+    # `cli._warn_if_missing_api_token` meldet - siehe `normalize_api_token`.
+    expected = normalize_api_token(token)
 
-    async def guard(authorization: str | None = Header(default=None)) -> None:
-        if token is None:
+    async def guard(
+        authorization: str | None = Header(default=None),
+        sec_websocket_protocol: str | None = Header(default=None),
+    ) -> None:
+        if expected is None:
             return
-        if authorization != f"Bearer {token}":
+        presented = _token_from_authorization(authorization)
+        if presented is None:
+            presented = _token_from_websocket_subprotocol(sec_websocket_protocol)
+        if presented is None or not _tokens_match(presented, expected):
             raise HTTPException(status_code=401, detail="Ungültiges oder fehlendes Token")
 
     return guard
@@ -247,7 +361,22 @@ def build_app(
     # driften sie (Spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
     app.include_router(build_control_router(store, invoke), dependencies=api_guard)
     app.include_router(
-        build_diagnostics_router(store, command_log, client, sender, matter_data_dir),
+        build_diagnostics_router(
+            store,
+            command_log,
+            client,
+            sender,
+            matter_data_dir,
+            # Bewusst nur "ist eins gesetzt?", nicht das Token selbst: der
+            # Diagnose-Router muss das Geheimnis nicht kennen, um die
+            # Fabric-Sicherung ohne Token zu verweigern (Review-Fix Fix 3,
+            # 2026-09-03) - und was er nicht kennt, kann er auch nicht
+            # versehentlich in eine Antwort oder ins Log schreiben.
+            # Dieselbe Normalisierung wie im Waechter, damit ein
+            # Leerraum-Token hier nicht als gesetzt gilt, waehrend der
+            # Waechter es durchlaesst.
+            api_token_configured=normalize_api_token(api_token) is not None,
+        ),
         dependencies=api_guard,
     )
 

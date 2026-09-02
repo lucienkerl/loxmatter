@@ -53,10 +53,12 @@ pytest` ohne Filter fuehrt ihn immer mit aus."""
 from __future__ import annotations
 
 import base64
+import contextlib
 import os
 import socket
 import threading
 import time
+from collections.abc import Iterator
 
 import pytest
 import uvicorn
@@ -80,13 +82,22 @@ class _NullSender:
         return None
 
 
-def _perform_raw_handshake(host: str, port: int, path: str, *, timeout: float) -> str:
+def _perform_raw_handshake_response(
+    host: str, port: int, path: str, *, timeout: float, subprotocols: str | None = None
+) -> str:
     """Fuehrt den WebSocket-Handshake (RFC 6455) selbst aus, ueber ein rohes
     TCP-Socket - siehe Modul-Docstring fuer den Grund, warum kein
-    WebSocket-Client hier zum Einsatz kommt. Liefert die Statuszeile der
-    Antwort zurueck (z. B. "HTTP/1.1 101 Switching Protocols" im Erfolgsfall,
-    "HTTP/1.1 404 Not Found" beim genau hier untersuchten Regressionsfall)."""
+    WebSocket-Client hier zum Einsatz kommt. Liefert die VOLLSTAENDIGE
+    Antwort (Statuszeile und Kopfzeilen) zurueck.
+
+    `subprotocols` setzt den `Sec-WebSocket-Protocol`-Header - genau das,
+    was ein Browser aus `new WebSocket(url, ["bearer", token])` macht und
+    was `loxone.server.build_api_guard` als zweiten Uebertragungsweg fuer
+    das Token liest (Review-Fix Fix 1c, 2026-09-03)."""
     key = base64.b64encode(os.urandom(16)).decode("ascii")
+    protocol_header = (
+        f"Sec-WebSocket-Protocol: {subprotocols}\r\n" if subprotocols is not None else ""
+    )
     request = (
         f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}:{port}\r\n"
@@ -94,12 +105,52 @@ def _perform_raw_handshake(host: str, port: int, path: str, *, timeout: float) -
         "Connection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {key}\r\n"
         "Sec-WebSocket-Version: 13\r\n"
+        f"{protocol_header}"
         "\r\n"
     ).encode("ascii")
     with socket.create_connection((host, port), timeout=timeout) as sock:
         sock.sendall(request)
         response = sock.recv(4096)
-    return response.decode("iso-8859-1").split("\r\n", 1)[0]
+    return response.decode("iso-8859-1")
+
+
+def _perform_raw_handshake(host: str, port: int, path: str, *, timeout: float) -> str:
+    """Nur die Statuszeile der Antwort (z. B. "HTTP/1.1 101 Switching
+    Protocols" im Erfolgsfall, "HTTP/1.1 404 Not Found" beim hier
+    untersuchten Regressionsfall)."""
+    response = _perform_raw_handshake_response(host, port, path, timeout=timeout)
+    return response.split("\r\n", 1)[0]
+
+
+@contextlib.contextmanager
+def _running_server(app: object) -> Iterator[int]:
+    """Startet einen echten `uvicorn` auf `127.0.0.1` mit einem vom
+    Betriebssystem zugeteilten Port und liefert diesen Port - siehe
+    Modul-Docstring zu beidem. Als Kontextmanager, seit ein zweiter Test
+    (der Token-Handshake unten) denselben Aufbau braucht: zwei Kopien
+    dieses Auf- und Abbaus wuerden frueher oder spaeter auseinanderlaufen."""
+    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
+    server = uvicorn.Server(config)
+    # `bind_socket()` bindet bereits (mit vom Betriebssystem zugeteiltem
+    # Port, da `port=0`) - der tatsaechliche Port steht danach in
+    # `sock.getsockname()`, lange bevor `server.run()` ueberhaupt startet.
+    sock = config.bind_socket()
+    port: int = sock.getsockname()[1]
+
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + STARTUP_TIMEOUT_S
+        while not server.started:
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"uvicorn ist nicht innerhalb von {STARTUP_TIMEOUT_S}s gestartet"
+                )
+            time.sleep(0.01)
+        yield port
+    finally:
+        server.should_exit = True
+        thread.join(timeout=SHUTDOWN_TIMEOUT_S)
 
 
 @pytest.mark.slow
@@ -118,29 +169,50 @@ def test_a_real_uvicorn_upgrades_api_live_to_a_websocket(plug_store, no_invoke):
     runtime = Runtime(store, _NullSender())
     app = build_app(store, no_invoke, runtime)
 
-    config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
-    server = uvicorn.Server(config)
-    # `bind_socket()` bindet bereits (mit vom Betriebssystem zugeteiltem
-    # Port, da `port=0`) - der tatsaechliche Port steht danach in
-    # `sock.getsockname()`, lange bevor `server.run()` ueberhaupt startet.
-    sock = config.bind_socket()
-    port = sock.getsockname()[1]
-
-    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
-    thread.start()
-    try:
-        deadline = time.monotonic() + STARTUP_TIMEOUT_S
-        while not server.started:
-            if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"uvicorn ist nicht innerhalb von {STARTUP_TIMEOUT_S}s gestartet"
-                )
-            time.sleep(0.01)
-
+    with _running_server(app) as port:
         status_line = _perform_raw_handshake(
             "127.0.0.1", port, "/api/live", timeout=STARTUP_TIMEOUT_S
         )
         assert "101" in status_line, f"WebSocket-Upgrade fehlgeschlagen: {status_line!r}"
-    finally:
-        server.should_exit = True
-        thread.join(timeout=SHUTDOWN_TIMEOUT_S)
+
+
+@pytest.mark.slow
+def test_a_real_uvicorn_accepts_the_token_from_the_websocket_subprotocol(plug_store, no_invoke):
+    """Der Weg, den die Browser-Oberflaeche bei gesetztem Token geht - hier
+    einmal gegen einen ECHTEN Server statt gegen die ASGI-App direkt
+    (Review-Fix Fix 1c, 2026-09-03).
+
+    Der In-Prozess-Test in `tests/api/test_security.py` fuellt das
+    Scope-Feld `subprotocols` von Hand; nur hier leitet es tatsaechlich
+    `uvicorn` aus dem `Sec-WebSocket-Protocol`-Header ab, und nur hier
+    zeigt sich, ob die Antwort das gewaehlte Subprotokoll enthaelt - ohne
+    das bricht ein Browser den Handshake nach RFC 6455 ab, und die
+    Testsuite haette es (wie schon einmal beim 404 oben) nicht bemerkt."""
+    store, _device_id = plug_store
+    runtime = Runtime(store, _NullSender())
+    app = build_app(store, no_invoke, runtime, api_token="secret")
+
+    with _running_server(app) as port:
+        accepted = _perform_raw_handshake_response(
+            "127.0.0.1",
+            port,
+            "/api/live",
+            timeout=STARTUP_TIMEOUT_S,
+            subprotocols="bearer, secret",
+        )
+        rejected = _perform_raw_handshake_response(
+            "127.0.0.1",
+            port,
+            "/api/live",
+            timeout=STARTUP_TIMEOUT_S,
+            subprotocols="bearer, falsch",
+        )
+
+    status_line = accepted.split("\r\n", 1)[0]
+    assert "101" in status_line, f"Handshake mit Token fehlgeschlagen: {status_line!r}"
+    # Der Marker muss zurueckkommen, das Token darf NIRGENDS in der Antwort
+    # stehen - weder im Subprotokoll-Header noch sonstwo.
+    assert "sec-websocket-protocol: bearer" in accepted.lower(), accepted
+    assert "secret" not in accepted
+
+    assert "401" in rejected.split("\r\n", 1)[0], rejected

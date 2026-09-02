@@ -57,6 +57,15 @@ return_when=FIRST_COMPLETED)` laesst die Route reagieren, sobald einer der
 beiden Teil-Tasks endet - Trennung ODER ein Sendefehler -, und raeumt den
 jeweils anderen sauber ab.
 
+**Das Token reist hier im Subprotokoll, nicht im Header (Review-Fix Fix 1c,
+2026-09-03).** Die Browser-`WebSocket`-API kennt keinen Parameter fuer eigene
+Header - `Authorization` ist bei dieser einen Route also unmoeglich. `app.js`
+verbindet sich deshalb mit `new WebSocket(url, ["bearer", token])`, was der
+Browser als `Sec-WebSocket-Protocol: bearer, <Token>` sendet;
+`loxone.server.build_api_guard` liest das Token dort aus, und `live()` unten
+gibt den Marker `bearer` im Accept zurueck (nie das Token selbst), weil der
+Browser den Handshake nach RFC 6455 sonst abbricht.
+
 Ein `WebSocketDisconnect` ist der Normalfall - ein Browser-Tab, der
 geschlossen oder neu geladen wird - kein Fehler, und schreibt deshalb
 nichts ins Log. **Ein blosses `WebSocketDisconnect` reicht aber nicht
@@ -82,6 +91,18 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 logger = logging.getLogger(__name__)
 
 Observer = Callable[[str, object], None]
+
+BEARER_SUBPROTOCOL = "bearer"
+"""Der Marker, mit dem ein Browser-WebSocket sein Token im Handshake
+mitschickt (`new WebSocket(url, ["bearer", token])`).
+
+Die EINE Definition dieses Wertes auf der Serverseite: `loxone.server`
+importiert ihn von hier fuer das Auslesen (`build_api_guard`), `live()`
+unten benutzt ihn fuer die Antwortseite - das gewaehlte Subprotokoll muss
+im Accept zurueckkommen. Zwei eigene Konstanten in zwei Modulen koennten
+auseinanderlaufen, ohne dass eine davon fuer sich falsch aussaehe.
+Oeffentlich (ohne Unterstrich), weil `loxone.server` und
+`tests/api/test_web.py` ihn tatsaechlich von aussen brauchen."""
 
 QUEUE_MAXSIZE = 512
 """Obergrenze der Warteschlange je WebSocket-Verbindung (Review-Fix
@@ -181,7 +202,26 @@ def build_live_router(runtime: ObservableRuntime) -> APIRouter:
 
     @router.websocket("/live")
     async def live(websocket: WebSocket) -> None:
-        await websocket.accept()
+        # Das gewaehlte Subprotokoll MUSS im Accept zurueckkommen, sonst
+        # bricht der Browser den Handshake nach RFC 6455 ab (Review-Fix
+        # Fix 1c, 2026-09-03). `app.js` verbindet sich mit
+        # `new WebSocket(url, ["bearer", token])`, wenn ein Token gesetzt
+        # ist - das ist der einzige Kanal, ueber den ein Browser-WebSocket
+        # ein Geheimnis in den Handshake bekommt (siehe
+        # `loxone.server.build_api_guard`, der es dort ausliest). Echoed wird
+        # ausschliesslich der Marker `bearer`, NIE der zweite Wert: der ist
+        # das Token, und ein Server, der es im Accept-Header zurueckspiegelt,
+        # schriebe es in jedes Proxy- und Browser-Protokoll auf dem Weg.
+        #
+        # Nur echoen, wenn der Client den Marker auch angeboten hat: ein
+        # Subprotokoll, das der Client nicht in seiner Liste hatte, ist nach
+        # RFC 6455 ebenso ein Handshake-Fehler - eine Verbindung ohne Token
+        # (kein Token gesetzt, oder ein anderer Client wie `websockets` mit
+        # echtem `Authorization`-Header) muss deshalb weiterhin ohne
+        # Subprotokoll angenommen werden.
+        offered: list[str] = websocket.scope.get("subprotocols", [])
+        subprotocol = BEARER_SUBPROTOCOL if BEARER_SUBPROTOCOL in offered else None
+        await websocket.accept(subprotocol=subprotocol)
         queue = _BoundedQueue(QUEUE_MAXSIZE, connection_label=str(websocket.client))
 
         def observer(key: str, value: object) -> None:

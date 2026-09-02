@@ -100,12 +100,16 @@ services:
       # (Spec 4.1) fuer jeden im selben Netz erreichbar, nicht nur
       # theoretisch moeglich. Task 8 liefert jetzt `build_api_guard` (siehe
       # `src/loxmatter/loxone/server.py`) UND setzt unten `LOXMATTER_API_TOKEN`
-      # - beides zusammen macht diese Einhaengung vertretbar. Diese Zeile
-      # OHNE ein gesetztes Token wieder auszukommentieren waere sinnlos (die
-      # Route liefert dann ohnehin nur 503, siehe --matter-data-dir unten) -
-      # ABER `LOXMATTER_API_TOKEN` unten zu entfernen, WAEHREND diese Zeile
-      # aktiv bleibt, stellt exakt den vor Task 8 gefaehrlichen Zustand
-      # wieder her. Beide Zeilen gehoeren zusammen, nicht nur die des Volumes.
+      # - beides zusammen macht diese Einhaengung vertretbar.
+      #
+      # Seit der Nachbesserung vom 2026-09-03 kann diese Kombination auch
+      # nicht mehr still auseinanderfallen: `GET
+      # /api/diagnostics/fabric-backup` verweigert ohne gesetztes Token die
+      # Auslieferung (403, siehe `api/diagnostics.py`). Wer
+      # `LOXMATTER_API_TOKEN` unten entfernt, waehrend diese Zeile aktiv
+      # bleibt, stellt also nicht mehr den vor Task 8 gefaehrlichen Zustand
+      # her - er verliert nur die Sicherung. Beide Zeilen gehoeren
+      # trotzdem zusammen: OHNE Token ist die Einhaengung wirkungslos.
       - ./data:/matter-data:ro
     environment:
       # Eigener, fester Ort statt des Nutzer-Home-Defaults (siehe
@@ -124,8 +128,11 @@ services:
       # Umgebungsvariable wie eine fehlende (verifiziert: `api_token` wird
       # dann `None`, nicht `""`), `loxmatter run` startet also unveraendert
       # OHNE Token-Schutz, mit der deutlichen Warnung "Kein API-Token
-      # gesetzt" im Log. PRUEFEN Sie nach dem ersten Start trotzdem das Log,
-      # falls `.env` das Token versehentlich vergessen haben sollte.
+      # gesetzt" im Log - und `GET /api/diagnostics/fabric-backup` liefert
+      # dann nichts mehr aus (403, siehe `api/diagnostics.py`), damit die
+      # oben eingehaengten Fabric-Credentials nicht ungeschuetzt im LAN
+      # stehen. PRUEFEN Sie nach dem ersten Start trotzdem das Log, falls
+      # `.env` das Token versehentlich vergessen haben sollte.
       LOXMATTER_API_TOKEN: ${LOXMATTER_API_TOKEN}
     command:
       - run

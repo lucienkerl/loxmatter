@@ -66,21 +66,38 @@ herunterladen. Ohne gesetztes Token startet der Dienst trotzdem — mit einer
 deutlichen Warnung im Log. Details und Begründung: [Spec, Abschnitt
 9](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#9-fehlerbehandlung).
 
-**Achtung, bevor Sie ein Token setzen:** die mitgelieferte Browser-Oberfläche
-selbst (`app.js`) schickt heute keinen `Authorization`-Header mit — es gibt
-weder ein Eingabefeld noch eine Speicherung dafür. Ein gesetztes Token
-schützt den `/api`-Zugriff aus dem Netz, sperrt dabei aber auch die eigene
-Oberfläche aus: jeder Klick, der `/api/*` aufruft, bekommt dieselbe
-401-Antwort wie ein Angreifer ohne Header. Die Live-Werte-Route
-(`/api/live`) lässt sich damit über einen Browser ohnehin nicht absichern,
-weil dessen `WebSocket`-API gar keine eigenen Header unterstützt. Details
-und der offene Punkt dazu: [Spec, Abschnitt
-12](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#12-offene-punkte),
-Punkt 8. Setzen Sie das Token also nur, wenn Ihnen die Fabric-Sicherung
-wichtiger ist als der Browser-Zugriff auf die Oberfläche — beides
-gleichzeitig geht heute nicht.
+**So bedienen Sie das Token.** Die mitgelieferte Browser-Oberfläche kann es
+mitschicken: oben rechts steht ein Feld dafür (Typ `password`, damit es
+nicht über der Schulter mitlesbar ist). Eingetragen wird es im
+`localStorage` des Browsers gehalten und bei jedem Aufruf als
+`Authorization: Bearer <Token>` an denselben Ursprung geschickt, von dem die
+Seite geladen wurde — nie in einer URL, nie als Query-Parameter (der stünde
+in Server-Logs, Proxy-Logs und der Browser-History). Angezeigt wird es nach
+dem Speichern nicht mehr, nur noch „Token gesetzt" mit einem Knopf zum
+Ersetzen und einem zum Löschen. Antwortet ein Aufruf mit 401, sagt die
+Oberfläche das im Klartext und klappt das Feld auf, statt einen rohen
+Fehlertext zu zeigen.
+
+Die Live-Werte-Route `/api/live` ist ein Sonderfall: ein Browser-`WebSocket`
+kann keine eigenen Kopfzeilen setzen. Die Oberfläche schickt das Token dort
+deshalb als Subprotokoll (`new WebSocket(url, ["bearer", token])`), was der
+Browser als `Sec-WebSocket-Protocol: bearer, <Token>` überträgt; der
+`Authorization`-Header bleibt der Hauptweg für alles andere. Daraus folgt
+eine Anforderung an das Token selbst: **es muss in einem HTTP-Header und in
+einem Subprotokoll übertragbar sein — keine Leerzeichen, kein Komma, kein
+Nicht-ASCII.** `openssl rand -hex 32` liefert nur `[0-9a-f]` und ist der
+empfohlene Weg zu einem Token. Ein Token, das nur aus Leerraum besteht (ein
+versehentlicher Zeilenumbruch in einer `.env`), gilt als „nicht gesetzt".
+
+**Ohne Token wird die Fabric-Sicherung nicht ausgeliefert.** `GET
+/api/diagnostics/fabric-backup` antwortet dann mit 403 statt mit den
+Fabric-Zugangsdaten — sie sind der einzige unersetzliche Zustand der
+Installation, und wer sie herunterlädt, kann die Matter-Fabric übernehmen.
+Alle übrigen `/api`-Routen bleiben ohne Token unverändert offen. Das ist
+kein Ersatz für ein Token, sondern die Absicherung des einen Falls, dessen
+Schaden nicht rückgängig zu machen ist.
 
 Ein lauffähiges Beispiel steht in
-[`deploy/testhost/docker-compose.yml`](deploy/testhost/docker-compose.yml):
-`LOXMATTER_API_TOKEN` in `.env` bleibt dort standardmäßig leer (Oberfläche
-bleibt nutzbar), lässt sich aber bei Bedarf setzen.
+[`deploy/testhost/docker-compose.yml`](deploy/testhost/docker-compose.yml);
+`deploy/testhost/README.md` führt `LOXMATTER_API_TOKEN` unter den Variablen
+auf, die beim Einrichten gesetzt werden.

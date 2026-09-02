@@ -52,12 +52,22 @@ dokumentiert:
   `build_diagnostics_router(...)` (wie alle fuenf `/api`-Router) ueber
   `app.include_router(..., dependencies=[Depends(guard)])` ein, `guard` aus
   `build_api_guard` (siehe dort). Das schuetzt jede Route dieses Routers
-  gleich, ohne Sonderfall fuer `fabric_backup` unten - und ohne das Risiko,
-  eine kuenftige sechste Diagnose-Route versehentlich ungeschuetzt zu
-  lassen, wie es ein Parameter je Funktion haette zulassen koennen. Ohne
-  gesetztes `--api-token`/`LOXMATTER_API_TOKEN` bleibt diese Route (wie
-  jede andere unter `/api`) unveraendert offen - mit einer deutlichen
-  Warnung im Log beim Start (siehe `cli._warn_if_missing_api_token`).
+  gleich - und ohne das Risiko, eine kuenftige sechste Diagnose-Route
+  versehentlich ungeschuetzt zu lassen, wie es ein Parameter je Funktion
+  haette zulassen koennen.
+- **Ohne gesetztes Token wird sie gar nicht erst ausgeliefert (Review-Fix
+  Fix 3, 2026-09-03).** Jede andere `/api`-Route bleibt ohne Token so offen
+  wie vor Task 8 - diese eine nicht. Der Grund ist der Unterschied im
+  Schaden: eine ungeschuetzte Geraeteliste ist peinlich, eine ungeschuetzte
+  Fabric-Sicherung ist die Uebernahme der Fabric, unwiderruflich. Die
+  Referenz-Installation (`deploy/testhost/`) haengt das
+  matter-server-Datenverzeichnis ein und laeuft mit `network_mode: host`,
+  waehrend `.env.example` `LOXMATTER_API_TOKEN` leer ausliefert - ein
+  Standard, der auf Disziplin beim Lesen der README angewiesen ist, statt
+  von sich aus sicher zu sein. Deshalb entscheidet nicht mehr die
+  Sorgfalt des Betreibers, sondern die Route selbst: kein Token, keine
+  Sicherung (siehe `fabric_backup` unten fuer den Statuscode und seine
+  Begruendung).
 - **Nichts davon wird geloggt** - weder der aufgeloeste Pfad noch die darin
   enthaltenen Dateinamen. Ein Server-Log ist kein Ort fuer Hinweise auf
   Schluesselmaterial, selbst nicht auf `debug`-Ebene.
@@ -68,9 +78,12 @@ NIE eine Query-Zeichenkette, nur den Pfad. Ein `/cmd/{key}/{value}`-Aufruf
 legt seinen Wert absichtlich offen im Pfad ab (das ist der Zweck dieses
 Logs: zu sehen, welcher Wert ankam) - eine Query-Zeichenkette dagegen ist
 fuer keine der heutigen Routen vorgesehen und faehrt deshalb ausschliesslich
-als potenzielles Zukunftsrisiko mit: sollte Task 8s Token je als
-Query-Parameter statt als Header umgesetzt werden, darf es nicht in diesem
-fuer jeden Diagnose-Betrachter lesbaren Log landen. Aus demselben,
+als Vorsichtsmassnahme mit: Task 8s Token laeuft ausdruecklich NICHT als
+Query-Parameter, sondern als `Authorization`-Header bzw. - beim
+Browser-WebSocket, der keine eigenen Kopfzeilen setzen kann - als
+Subprotokoll `bearer, <Token>` (siehe `loxone.server.build_api_guard`),
+und zwar genau deshalb: in diesem fuer jeden Diagnose-Betrachter lesbaren
+Log hat ein Geheimnis nichts zu suchen. Aus demselben,
 eher praktischen Grund (ein knapper Ringpuffer, den ein pollender
 Diagnose-Tab nicht mit sich selbst fluten soll) nimmt `server.py` Aufrufe
 von `/api/diagnostics/*` selbst gar nicht erst in den Kommando-Log auf -
@@ -313,6 +326,7 @@ def build_diagnostics_router(
     client: BridgeMatterClient | None,
     sender: UdpSender | None,
     matter_data_dir: Path | None,
+    api_token_configured: bool = False,
 ) -> APIRouter:
     """Baut den `APIRouter` fuer `/api/diagnostics/*` (Spec 10.5).
 
@@ -323,7 +337,17 @@ def build_diagnostics_router(
     Diagnose ist fuer diesen Lauf nicht verfuegbar", nicht "die Diagnose
     insgesamt fehlt" - `/datagrams` liefert dann eine leere Liste, `/system`
     eine rote Zeile mit Hinweis, `/fabric-backup` einen 503 statt eines
-    500/leeren ZIPs."""
+    500/leeren ZIPs.
+
+    `api_token_configured` sagt, ob dieser Dienst mit einem API-Token
+    laeuft (`loxone.server.build_app` reicht das aus seinem `api_token`
+    durch, normalisiert ueber `normalize_api_token` - bewusst nur als
+    Ja/Nein, nicht als Geheimnis, siehe dort). Nur `fabric_backup` unten
+    wertet es aus. Der Default ist `False` und damit die verschlossene
+    Variante: ein Aufrufer, der die Frage nicht beantwortet, bekommt keine
+    Fabric-Sicherung ausgeliefert - bei einer Route, deren Inhalt die
+    Uebernahme der Fabric erlaubt, ist das die einzig vertretbare
+    Richtung fuer einen Default."""
     router = APIRouter(prefix="/api/diagnostics")
 
     @router.get("/datagrams")
@@ -361,23 +385,39 @@ def build_diagnostics_router(
 
     @router.get("/fabric-backup")
     async def fabric_backup() -> Response:
-        """**GESCHUETZT DURCH DAS API-TOKEN, WENN EINS GESETZT IST - SONST
-        KANN WER DIESEN PORT ERREICHT, DIE FABRIC UEBERNEHMEN.** Das ist der
-        erste Satz dieses Docstrings mit Absicht, nicht nur eine
-        Randbemerkung weiter unten: diese Route braucht seit Task 8 (Phase 5,
-        Spec 9) `Authorization: Bearer <Token>`, SOBALD `--api-token`/
-        `LOXMATTER_API_TOKEN` gesetzt ist - der Schutz sitzt nicht an dieser
-        Funktion, sondern einheitlich am gesamten Router (siehe
-        Moduldocstring, Abschnitt "Die Sicherung ist kein Nebenpunkt", und
-        `loxone.server.build_api_guard`). Ist KEIN Token konfiguriert, bleibt
-        diese Route weiterhin ungeschuetzt erreichbar - dieselbe Konsequenz
-        wie vor Task 8 (Spec 4.1: der einzige unersetzliche Zustand des
-        Systems), nur eben als bewusste Betreiber-Entscheidung statt als
-        fehlende Fähigkeit, mit einer deutlichen Warnung im Log beim Start
-        (siehe `cli._warn_if_missing_api_token`). Die Volume-Einhaengung, die
-        diese Route ueberhaupt erst mit echten Daten fuettert, ist deshalb
-        seit Task 8 in `deploy/testhost/docker-compose.yml` wieder aktiv -
-        zusammen mit einem gesetzten `LOXMATTER_API_TOKEN` (siehe dort).
+        """**OHNE GESETZTES API-TOKEN LIEFERT DIESE ROUTE NICHTS AUS - WER
+        SIE ABRUFEN KANN, KANN DIE FABRIC UEBERNEHMEN.** Das ist der erste
+        Satz dieses Docstrings mit Absicht, nicht nur eine Randbemerkung
+        weiter unten.
+
+        Zwei getrennte Bedingungen, die zusammen erst den Download ergeben:
+
+        1. **Ist ein Token gesetzt**, verlangt diese Route - wie jede Route
+           unter `/api` - `Authorization: Bearer <Token>` (Task 8, Phase 5,
+           Spec 9). Der Schutz sitzt nicht an dieser Funktion, sondern
+           einheitlich am gesamten Router (siehe Moduldocstring, Abschnitt
+           "Die Sicherung ist kein Nebenpunkt", und
+           `loxone.server.build_api_guard`); ohne gueltigen Header endet der
+           Aufruf mit 401, bevor diese Funktion ueberhaupt laeuft.
+        2. **Ist KEIN Token gesetzt**, antwortet sie mit **403** und ohne
+           jede Datei (Review-Fix Fix 3, 2026-09-03). Alle uebrigen
+           `/api`-Routen bleiben in diesem Fall unveraendert offen - diese
+           eine nicht, weil hier nicht Bequemlichkeit gegen Sicherheit
+           steht, sondern eine peinliche Geraeteliste gegen die
+           unwiderrufliche Uebernahme der Fabric (Spec 4.1: der einzige
+           unersetzliche Zustand des Systems).
+
+        **Warum 403 und nicht 401 oder 503:** 401 hiesse "authentifiziere
+        dich, dann wieder her damit" - es gibt hier aber gar nichts, womit
+        sich jemand authentifizieren KOENNTE, solange der Dienst ohne Token
+        laeuft; eine Wiederholung mit Zugangsdaten kann nicht helfen, und
+        genau das unterscheidet 403 von 401 (RFC 9110). 503 ist bereits
+        vergeben fuer "das Datenverzeichnis ist nicht eingehaengt bzw.
+        existiert nicht" (unten) - eine Konfigurationsluecke, die diese
+        Faehigkeit ueberhaupt erst herstellen wuerde, waehrend es hier um
+        eine bewusste Verweigerung geht. Drei Ursachen, drei
+        unterscheidbare Codes: 401 = falsches/fehlendes Token, 403 = gar
+        kein Token konfiguriert, 503 = kein Datenverzeichnis.
 
         Sicherung des matter-server-Datenverzeichnisses (Spec 4.1, 8) als
         Download.
@@ -389,6 +429,24 @@ def build_diagnostics_router(
         # PFAD ist ein Hinweis auf das Speicherlayout der Fabric-Credentials
         # (siehe Moduldocstring) - selbst ein scheiternder Aufruf soll ihn
         # nicht ins Log schreiben.
+        #
+        # Diese Pruefung steht VOR jeder anderen: ob ein Datenverzeichnis
+        # eingehaengt ist, geht einen Aufrufer ohne Token nichts an - die
+        # 503-Meldungen unten nennen die Einhaengung und waeren fuer
+        # jemanden, der hier gar nichts erfahren soll, bereits eine
+        # Auskunft ueber den Aufbau dieser Installation.
+        if not api_token_configured:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Dieser Dienst laeuft ohne API-Token - die Fabric-Sicherung wird "
+                    "deshalb nicht ausgeliefert. Sie enthaelt die Zugangsdaten der "
+                    "Matter-Fabric; wer sie herunterlaedt, kann die Fabric uebernehmen. "
+                    "Setze LOXMATTER_API_TOKEN bzw. --api-token (z. B. mit "
+                    "`openssl rand -hex 32` erzeugt), starte den Dienst neu und rufe "
+                    "diese Route dann mit `Authorization: Bearer <Token>` auf."
+                ),
+            )
         if matter_data_dir is None:
             raise HTTPException(
                 status_code=503,

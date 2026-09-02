@@ -754,6 +754,47 @@ der Fabric-Sicherung.
 Miniserver den Dienst erreichen muss — das Token ändert daran nichts, es schützt nur,
 was hinter `/api` erreichbar ist, nicht die Erreichbarkeit selbst.
 
+**Zwei Übertragungswege für das Token, und warum es zwei sein müssen** (Nachbesserung
+nach Review, 2026-09-03). `Authorization: Bearer <Token>` ist der Hauptweg und gilt für
+jede REST-Route. Für die WebSocket-Route `/api/live` ist er strukturell unmöglich: die
+Browser-`WebSocket`-API (`new WebSocket(url, protocols)`) kennt überhaupt keinen
+Parameter für eigene Kopfzeilen. Der einzige vom Browser beeinflussbare Kanal im
+Handshake ist das Subprotokoll-Argument, das als `Sec-WebSocket-Protocol` auf die
+Leitung geht. Die Oberfläche verbindet sich deshalb mit `new WebSocket(url, ["bearer",
+token])`, und `build_api_guard` akzeptiert das Token zusätzlich aus diesem einen Header,
+ausschließlich in der Form `bearer, <Token>`. Ein Query-Parameter wäre die naheliegende
+Alternative und ist bewusst NICHT gewählt: er landet in Server-Logs, Proxy-Logs und der
+Browser-History, ein Header nicht — dieselbe Überlegung, aus der `api/diagnostics.py`
+das Kommando-Log ohne Query-Zeichenkette führt (10.5). `api/live.py` gibt im Accept den
+Marker `bearer` zurück (nie das Token), weil der Browser den Handshake nach RFC 6455
+sonst abbricht.
+
+**Daraus folgt eine Anforderung an das Token selbst:** es muss als HTTP-Token
+übertragbar sein — keine Leerzeichen, kein Komma, kein Nicht-ASCII. `openssl rand -hex
+32`, der in `.env.example` und README empfohlene Weg, liefert nur `[0-9a-f]` und
+erfüllt das von sich aus; die Anforderung steht dort ausdrücklich, statt eine
+stillschweigende Annahme zu bleiben. Ein Token, das nur aus Leerraum besteht (ein
+abgeschnittener Zeilenumbruch aus einer kopierten `.env`), gilt als „nicht gesetzt" —
+`normalize_api_token` entscheidet das für Wächter UND Startwarnung gemeinsam, sonst
+wäre der Dienst gesperrt, ohne dass die Warnung darauf hinwiese. Der Vergleich selbst
+läuft über `secrets.compare_digest` auf UTF-8-Bytes, nicht über `!=` und nicht über
+`str` (bei `str` wirft `compare_digest` `TypeError`, sobald Nicht-ASCII im Spiel ist —
+ein Nicht-ASCII-Token im Header darf keinen 500er auslösen).
+
+**Die eine Ausnahme von „ohne Token bleibt `/api` offen": die Fabric-Sicherung.** `GET
+/api/diagnostics/fabric-backup` wird ohne konfiguriertes Token gar nicht erst
+ausgeliefert (HTTP 403, mit einer Erklärung im `detail`). Alle übrigen Routen bleiben
+unverändert offen. Der Grund ist der Unterschied im Schaden, nicht im Prinzip: eine
+ungeschützte Geräteliste ist peinlich, eine ungeschützte Fabric-Sicherung ist die
+irreversible Übernahme der Fabric (4.1). Die Referenz-Installation
+(`deploy/testhost/`) hängt das matter-server-Datenverzeichnis ein und läuft mit
+`network_mode: host` — ein Standard, der von Disziplin beim Lesen der README abhinge,
+wäre für genau diese eine Route nicht vertretbar. 403 und nicht 401, weil es ohne
+konfiguriertes Token gar nichts gibt, womit sich jemand authentifizieren KÖNNTE: eine
+Wiederholung mit Zugangsdaten kann nicht helfen, und genau das unterscheidet 403 von
+401 (RFC 9110). 503 bleibt dem bereits vorhandenen Fall „kein Datenverzeichnis
+eingehängt" vorbehalten — drei Ursachen, drei unterscheidbare Codes.
+
 ---
 
 ## 10. Testen
@@ -1003,44 +1044,25 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    beim Import das anzeigt. Keiner der beiden Wege ist in dieser Phase umgesetzt;
    festgehalten, weil die heutige Erlaubnisliste eine bewusste, aber nicht die
    einzig mögliche Antwort auf 8.4s Befund ist.
-8. **Ein gesetztes API-Token macht die Browser-WebUI selbst unbenutzbar - die
-   Oberfläche kann den Header, den sie braucht, heute nicht mitschicken** (Task 8,
-   2026-09-02; Selbstprüfung nach dem Bau von `build_api_guard`). `build_api_guard`
-   (9.1) verlangt `Authorization: Bearer <Token>` für jede `/api`-Route, sobald ein
-   Token konfiguriert ist. `src/loxmatter/web/app.js`s `requestJson` — der einzige
-   Ort, an dem die Oberfläche `fetch()` aufruft — setzt aber nirgends einen
-   `Authorization`-Header; kein Login-Bildschirm, kein Eingabefeld, keine
-   Speicherung eines Tokens im Browser existiert. Ein Betreiber, der ein Token
-   setzt, sperrt sich damit selbst aus der eigenen Oberfläche aus: JEDER Klick, der
-   `/api/*` aufruft, endet in genau der 401-Antwort, die `tests/api/test_security.py`
-   für einen Angreifer ohne Header vorsieht — die Oberfläche unterscheidet beide
-   Fälle nicht.
+8. **Die Oberfläche schickt das Token mit — offen bleibt nur, dass es keine Rolle
+   für „nur ansehen" gibt** (Task 8, 2026-09-02; nachgebessert 2026-09-03). Der
+   ursprüngliche Punkt hier — ein gesetztes Token sperrte den Betreiber aus seiner
+   eigenen Oberfläche aus, weil `app.js` nirgends einen `Authorization`-Header setzte
+   und es kein Feld für ein Token gab — ist **erledigt**: `requestJson` und
+   `requestDownload` setzen den Header (das Token liegt im `localStorage` des
+   Browsers, siehe README), die Kopfzeile trägt ein Passwortfeld zum Eintragen,
+   Ersetzen und Löschen, eine 401 führt mit einem verständlichen Hinweis dorthin, und
+   `/api/live` überträgt das Token als Subprotokoll `bearer, <Token>` (9.1). Die
+   beiden Downloads (Export-ZIP, Fabric-Sicherung) laufen aus demselben Grund nicht
+   mehr über ein `<a href>` — ein Link kann keinen Header tragen.
 
-   Die WebSocket-Route `/api/live` ist dabei nicht nur ebenso betroffen, sondern
-   *strukturell unlösbar* mit demselben Mechanismus: die Browser-`WebSocket`-API
-   (`new WebSocket(url, protocols)`) kennt keinen Parameter für eigene Header
-   überhaupt — anders als bei `fetch()` ließe sich das also nicht einmal durch eine
-   Änderung an `app.js` allein beheben. Ein Fix bräuchte einen zweiten
-   Übertragungsweg für das Token bei dieser einen Route (z. B. ein
-   Sec-WebSocket-Protocol-Header, den Browser-`WebSocket`-Clients sehr wohl setzen
-   können, oder ein kurzlebiges, separat angefordertes Ticket als Query-Parameter,
-   siehe `api/diagnostics.py`s Begründung, warum ein *dauerhaftes* Token nie als
-   Query-Parameter laufen sollte) — nicht einfach denselben `Authorization`-Header
-   wie bei den REST-Routen.
-
-   Task 8 setzt das Token trotzdem um, weil die Alternative — den Fabric-Sicherung-
-   Download und das Einlernen/Entfernen ganz ungeschützt zu lassen — das tatsächlich
-   dringendere Risiko ist (siehe 9.1): ein gestohlener Fabric-Export ist
-   katastrophal und irreversibel, eine vorübergehend nicht nutzbare Browser-
-   Oberfläche ist es nicht. Deshalb bleibt `LOXMATTER_API_TOKEN` in
-   `deploy/testhost/.env.example` bewusst LEER als Standard — ein Betreiber, der es
-   setzt, tut das als informierte Entscheidung, nicht weil die Vorlage es
-   vorschreibt, und weiß (README.md hält das fest), dass er die Browser-Oberfläche
-   damit vorübergehend gegen sich selbst absperrt, bis eine spätere Ausbaustufe der
-   Oberfläche eine Möglichkeit gibt, das Token einzugeben und zu speichern (z. B. in
-   `localStorage`, mit demselben Header-Zusatz in `requestJson` und einer eigenen
-   Lösung für `/api/live`). Nicht in dieser Phase umgesetzt - festgehalten, damit
-   "das Token schützt die Oberfläche" nicht mehr verspricht, als es heute tatsächlich
-   tut: es schützt den *Netzwerkzugriff* auf `/api`, nicht den *Zugriff über die
-   mitgelieferte Oberfläche selbst*, solange die dafür nötige Gegenseite in
-   `app.js` fehlt.
+   Was tatsächlich offen bleibt: **das Token kennt nur „alles oder nichts".** Wer es
+   hat, kann ansehen, schalten, einlernen, entfernen und die Fabric-Sicherung
+   herunterladen; wer es nicht hat, sieht von `/api` nichts. Es gibt keine
+   Nur-Lese-Rolle für jemanden, der bloß den Zustand betrachten soll, und kein
+   zweites, eingeschränktes Token. Für die anvisierte Nutzung (ein Haushalt, eine
+   Person, die die Brücke betreibt) ist das angemessen — für eine Installation, in der
+   mehrere Personen unterschiedlich weit dürfen sollen, wäre es zu grob. Ebenfalls
+   offen und bewusst nicht in dieser Phase gebaut: das Token ist ein statisches,
+   dauerhaftes Geheimnis ohne Ablauf, ohne Rotation und ohne Widerruf einzelner
+   Browser — ein Wechsel bedeutet, es überall neu einzutragen.

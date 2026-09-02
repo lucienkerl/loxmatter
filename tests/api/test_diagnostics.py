@@ -17,6 +17,15 @@ nicht ausloesen.
 `api_without_matter` - `client=None`, wie in server.py dokumentiert bedeutet
 das "die Bruecke laeuft ohne Matter-Verbindung" - fuer den Test, dass eine
 rote Zeile im Systemcheck einen brauchbaren Hinweis traegt.
+
+`api_with_token` - wie `api`, aber mit gesetztem API-Token. Seit Review-Fix
+Fix 3 (2026-09-03) liefert `GET /api/diagnostics/fabric-backup` OHNE
+gesetztes Token gar nichts mehr aus (403, siehe api/diagnostics.py) - jeder
+Test, der die Sicherung selbst betrachtet, braucht deshalb einen Dienst mit
+Token und schickt den passenden Header mit. Die uebrigen Fixtures bleiben
+absichtlich ohne Token: alle anderen Diagnose-Routen sind davon unberuehrt,
+und das soll hier weiterhin so gepruft werden, wie ein Betrieb ohne Token
+sie tatsaechlich sieht.
 """
 
 from __future__ import annotations
@@ -45,6 +54,10 @@ def _matter_data_dir(tmp_path: Path) -> Path:
     directory.mkdir()
     (directory / "credentials.json").write_text('{"fixture": "keine echten Schluessel"}')
     return directory
+
+
+_BACKUP_TOKEN = "test-token"
+_BACKUP_HEADERS = {"Authorization": f"Bearer {_BACKUP_TOKEN}"}
 
 
 @pytest.fixture
@@ -101,6 +114,29 @@ async def api_with_sender(tmp_path, no_invoke, fake_runtime, fake_client, receiv
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client, sender, device_id
     await sender.close()
+    store.close()
+
+
+@pytest.fixture
+async def api_with_token(tmp_path, no_invoke, fake_runtime, fake_client):
+    """Wie `api`, aber mit gesetztem `api_token` - siehe Moduldocstring."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        matter_data_dir=_matter_data_dir(tmp_path),
+        api_token=_BACKUP_TOKEN,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, store, device_id
     store.close()
 
 
@@ -170,10 +206,10 @@ async def test_system_check_reports_each_line_with_a_verdict(api):
         assert check["detail"]
 
 
-async def test_fabric_backup_is_a_real_archive(api):
+async def test_fabric_backup_is_a_real_archive(api_with_token):
     """Spec 4.1: das einzige unersetzliche Datum des Systems."""
-    client, _, _ = api
-    response = await client.get("/api/diagnostics/fabric-backup")
+    client, _, _ = api_with_token
+    response = await client.get("/api/diagnostics/fabric-backup", headers=_BACKUP_HEADERS)
     assert response.status_code == 200
     assert response.headers["content-type"] in ("application/zip", "application/gzip")
     assert len(response.content) > 0
@@ -188,10 +224,12 @@ async def test_fabric_backup_is_503_without_a_configured_directory(
     deploy/testhost/docker-compose.yml, dort bewusst auskommentiert, bis
     Task 8 den Token-Schutz liefert)."""
     store = Store(tmp_path / "t.sqlite")
-    app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
+    app = build_app(
+        store, no_invoke, fake_runtime(store), client=fake_client, api_token=_BACKUP_TOKEN
+    )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/diagnostics/fabric-backup")
+        response = await client.get("/api/diagnostics/fabric-backup", headers=_BACKUP_HEADERS)
     store.close()
 
     assert response.status_code == 503
@@ -207,11 +245,16 @@ async def test_fabric_backup_is_503_when_the_configured_directory_is_missing(
     store = Store(tmp_path / "t.sqlite")
     missing = tmp_path / "existiert-nicht"
     app = build_app(
-        store, no_invoke, fake_runtime(store), client=fake_client, matter_data_dir=missing
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        matter_data_dir=missing,
+        api_token=_BACKUP_TOKEN,
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/diagnostics/fabric-backup")
+        response = await client.get("/api/diagnostics/fabric-backup", headers=_BACKUP_HEADERS)
     store.close()
 
     assert response.status_code == 503
@@ -227,11 +270,16 @@ async def test_fabric_backup_is_503_when_the_configured_path_is_a_file(
     not_a_directory = tmp_path / "matter-data-ist-eine-datei"
     not_a_directory.write_text("keine Fabric-Sicherung, nur eine gewoehnliche Datei")
     app = build_app(
-        store, no_invoke, fake_runtime(store), client=fake_client, matter_data_dir=not_a_directory
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        matter_data_dir=not_a_directory,
+        api_token=_BACKUP_TOKEN,
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.get("/api/diagnostics/fabric-backup")
+        response = await client.get("/api/diagnostics/fabric-backup", headers=_BACKUP_HEADERS)
     store.close()
 
     assert response.status_code == 503

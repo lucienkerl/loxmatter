@@ -17,6 +17,7 @@ import httpx2 as httpx
 import pytest
 from conftest import load_snapshot
 
+from loxmatter.api.live import BEARER_SUBPROTOCOL
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
@@ -81,3 +82,53 @@ async def test_static_files_do_not_escape_their_directory(api):
     client, _, _ = api
     response = await client.get("/static/../../../etc/passwd")
     assert response.status_code in (404, 400)
+
+
+# ---------------------------------------------------------------------------
+# Das API-Token in der Oberflaeche (Review-Fix Fix 1, 2026-09-03). Ohne
+# Browser laesst sich hier nicht klicken - pruefbar ist aber, dass die
+# ausgelieferten Dateien die Eigenschaften tragen, ohne die die Bedienung
+# nachweislich nicht funktionieren KANN.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_interface_offers_a_field_to_enter_the_token(api):
+    """Ohne Eingabemoeglichkeit sperrt ein gesetztes Token den Betreiber aus
+    seiner eigenen Oberflaeche aus - genau der gemeldete Fehler. Typ
+    `password`, damit es nicht ueber der Schulter mitlesbar ist."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert 'type="password"' in page
+    assert "Token" in page
+
+
+async def test_no_plain_link_points_at_a_token_protected_route(api):
+    """Ein `<a href>` kann keinen `Authorization`-Header tragen: bei
+    gesetztem Token wuerde ein Klick darauf die Seite durch die rohe
+    401-Antwort ersetzen. Jeder Download unter `/api` muss deshalb ueber
+    `fetch()` laufen (siehe `requestDownload` in app.js)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert 'href="/api' not in page
+
+
+async def test_the_token_never_travels_in_a_url(api):
+    """Ein Token als Query-Parameter landet in Server-Logs, Proxy-Logs und
+    der Browser-History - deshalb Header bzw. WebSocket-Subprotokoll (siehe
+    `loxone.server.build_api_guard` und `api.diagnostics`s Moduldocstring
+    zur selben Ueberlegung beim Kommando-Log)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "Authorization" in script
+    for forbidden in ("?token=", "&token=", "?api_token=", "&api_token="):
+        assert forbidden not in script
+
+
+async def test_the_browser_and_the_server_agree_on_the_websocket_bearer_marker(api):
+    """Die beiden Seiten des Subprotokoll-Wegs stehen in verschiedenen
+    Dateien und verschiedenen Sprachen - waere der Marker auf einer Seite
+    ein anderer, schluege der Handshake bei gesetztem Token fehl, und keine
+    der beiden Dateien saehe fuer sich genommen falsch aus."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert f'"{BEARER_SUBPROTOCOL}"' in script

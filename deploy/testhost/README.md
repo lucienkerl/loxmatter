@@ -61,7 +61,26 @@ scp deploy/testhost/docker-compose.yml deploy/testhost/.env.example \
 cd ~/loxmatter-testhost
 cp .env.example .env      # RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_ADAPTER ggf. anpassen
 mkdir -p data
+
+# MINISERVER_IP und LOXMATTER_API_TOKEN in .env setzen - beide sind leer
+# ausgeliefert und beide muessen gesetzt werden:
+echo "LOXMATTER_API_TOKEN=$(openssl rand -hex 32)" >> .env
 ```
+
+**Zum Token, weil es leicht übersehen wird:** dieser Stack läuft mit
+`network_mode: host` und hängt das matter-server-Datenverzeichnis in den
+loxmatter-Dienst ein. Ohne gesetztes `LOXMATTER_API_TOKEN` liefert
+`GET /api/diagnostics/fabric-backup` deshalb **gar nichts** mehr aus (HTTP
+403) — sonst könnte jeder im selben Netz die Fabric-Zugangsdaten
+herunterladen und damit die Matter-Fabric übernehmen. Die übrigen
+`/api`-Routen (Geräte ansehen, einlernen, entfernen) bleiben ohne Token
+offen erreichbar; im Log steht dann eine deutliche Warnung. `openssl rand
+-hex 32` ist der empfohlene Weg zu einem Token — es muss in einem
+HTTP-Header und in einem WebSocket-Subprotokoll übertragbar sein, also
+keine Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` liefert nur
+`[0-9a-f]`. Das gesetzte Token danach in der Browser-Oberfläche oben rechts
+unter „Token" eintragen — sie schickt es bei jedem Aufruf mit und bleibt
+damit uneingeschränkt nutzbar.
 
 **Schritt 2 — Bluetooth entsperren.** Nur bei der Ersteinrichtung nötig: `hci0` war
 werksseitig rfkill-soft-blockiert, und ohne diesen Schritt startet `matter-server` ohne

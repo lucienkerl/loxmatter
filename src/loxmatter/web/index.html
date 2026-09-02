@@ -24,11 +24,46 @@
   <body x-data="app()" x-init="init()">
     <header class="app-header">
       <h1>loxmatter</h1>
-      <div class="connection-status">
-        <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
-        <span x-text="connectionStatusText()"></span>
+      <div class="header-right">
+        <!--
+          Zugang: ein Feld fuer das API-Token, kein Login-Bildschirm und keine
+          Sitzungsverwaltung (Review-Fix Fix 1b, 2026-09-03). Steht in der
+          Kopfzeile, weil eine 401 in jeder der vier Ansichten auftreten kann
+          und der Hinweis darauf hierher fuehrt. Das gespeicherte Token wird
+          nie wieder angezeigt - nur „gesetzt" oder „kein Token".
+        -->
+        <div class="token-box">
+          <span class="badge" :class="tokenIsSet ? 'ok' : 'warn'" x-text="tokenStatusText()"></span>
+          <template x-if="!tokenEditing">
+            <span class="row">
+              <button @click="startTokenEdit()" x-text="tokenIsSet ? 'Ersetzen' : 'Token eingeben'">
+              </button>
+              <button class="danger" x-show="tokenIsSet" @click="clearToken()">Löschen</button>
+            </span>
+          </template>
+          <template x-if="tokenEditing">
+            <span class="row">
+              <input
+                type="password"
+                class="token-input"
+                placeholder="API-Token"
+                autocomplete="off"
+                x-model="tokenDraft"
+                @keydown.enter="saveToken()"
+              />
+              <button class="primary" @click="saveToken()">Speichern</button>
+              <button @click="cancelTokenEdit()">Abbrechen</button>
+            </span>
+          </template>
+        </div>
+        <div class="connection-status">
+          <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
+          <span x-text="connectionStatusText()"></span>
+        </div>
       </div>
     </header>
+
+    <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
 
     <div class="banner danger" x-show="!socketConnected && socketEverConnected" x-cloak>
       Die Live-Verbindung wurde unterbrochen. Angezeigte Werte können inzwischen veraltet sein,
@@ -270,9 +305,13 @@
             <button class="primary" @click="previewExport()" :disabled="exportBusy">
               Vorschau ansehen
             </button>
-            <a class="button-like primary" :href="downloadUrl()" @click="onDownloadClick($event)"
-              >ZIP herunterladen</a
-            >
+            <!--
+              Ein `<a href>` kann keinen `Authorization`-Header tragen und
+              wuerde bei gesetztem Token die Seite durch die rohe
+              401-Antwort ersetzen - deshalb ein Knopf, der die Datei ueber
+              `fetch()` holt (siehe `downloadExport` in app.js).
+            -->
+            <button class="primary" @click="downloadExport()">ZIP herunterladen</button>
           </div>
           <p x-show="exportError" x-cloak class="banner danger" x-text="exportError"></p>
         </div>
@@ -367,7 +406,12 @@
             der einzige unersetzliche Zustand dieser Installation. Geht er verloren, muss jedes
             Gerät neu eingelernt werden.
           </p>
-          <a class="button-like" href="/api/diagnostics/fabric-backup">Sicherung herunterladen</a>
+          <p class="hint">
+            Setzt ein API-Token voraus: läuft die Brücke ohne Token, wird die Sicherung gar nicht
+            erst ausgeliefert – wer sie herunterladen kann, kann die Matter-Fabric übernehmen.
+          </p>
+          <button @click="downloadFabricBackup()">Sicherung herunterladen</button>
+          <p x-show="backupError" x-cloak class="banner danger" x-text="backupError"></p>
         </div>
       </section>
     </main>

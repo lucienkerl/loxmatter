@@ -28,7 +28,7 @@ from loxmatter.export.documents import (
 from loxmatter.export.signals import to_inputs
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
-from loxmatter.loxone.server import build_app
+from loxmatter.loxone.server import build_app, normalize_api_token
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.discovery import (
     extract_signals,
@@ -390,12 +390,22 @@ def _warn_if_missing_api_token(api_token: str | None) -> None:
     Aufgerufen aus `run` (synchron, vor `asyncio.run`), nicht aus `_run`
     selbst: so erscheint die Warnung garantiert genau einmal beim Start,
     bevor irgendein `await` die Kontrolle abgibt, unabhängig davon, wie
-    `_run` seinen Ablauf künftig ändert."""
-    if api_token is None:
+    `_run` seinen Ablauf künftig ändert.
+
+    Die Entscheidung „gesetzt oder nicht" trifft `normalize_api_token`
+    (`loxone.server`) — dieselbe Funktion, die auch `build_api_guard`
+    benutzt, damit Warnung und Wächter nicht auseinanderlaufen können
+    (Review-Fix Fix 2, 2026-09-03). Ein Token aus reinem Leerraum galt dem
+    Wächter vorher als echtes Geheimnis, während diese Warnung ausblieb:
+    der Dienst war gesperrt und sagte nichts dazu."""
+    if normalize_api_token(api_token) is None:
         logger.warning(
             "Kein API-Token gesetzt — die Oberfläche ist für jeden erreichbar, "
             "der den Port erreicht, einschließlich Einlernen und Entfernen von "
-            "Geräten. Setze LOXMATTER_API_TOKEN oder --api-token."
+            "Geräten, und die Fabric-Sicherung "
+            "(GET /api/diagnostics/fabric-backup) wird deshalb gar nicht erst "
+            "ausgeliefert. Setze LOXMATTER_API_TOKEN oder --api-token, z. B. "
+            "mit `openssl rand -hex 32` erzeugt."
         )
 
 
@@ -419,8 +429,11 @@ def run(
         "Fabric-Sicherung) mit `Authorization: Bearer <Token>`. `/cmd` und "
         "/resync` bleiben immer offen — der Miniserver kann keinen Header "
         "mitschicken (Spec 9, Task 8). Ohne Token erscheint beim Start eine "
-        "Warnung im Log. Alternative über die Umgebungsvariable "
-        "LOXMATTER_API_TOKEN.",
+        "Warnung im Log, und `GET /api/diagnostics/fabric-backup` wird gar "
+        "nicht erst ausgeliefert (403). Nur Zeichen verwenden, die in einem "
+        "HTTP-Header stehen dürfen — keine Leerzeichen, kein Komma, ASCII; "
+        "`openssl rand -hex 32` erfüllt das. Alternative über die "
+        "Umgebungsvariable LOXMATTER_API_TOKEN.",
     ),
     store_path: Path | None = typer.Option(  # noqa: B008
         None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."

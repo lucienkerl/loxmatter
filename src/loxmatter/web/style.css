@@ -306,6 +306,32 @@ button:disabled {
   border: 1px solid var(--ok);
 }
 
+/* Kopfzeile rechts: Zugang (Token) und Live-Status nebeneinander, bei
+ * schmalem Fenster untereinander - `flex-wrap`, damit der Token-Kasten den
+ * Verbindungsstatus nicht aus der Kopfzeile draengt (Review-Fix Fix 1b,
+ * 2026-09-03). */
+.header-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: flex-end;
+}
+
+.token-box {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* `input[type="text"]` bekommt weiter oben `flex: 1 1 auto` und eine
+ * Mindestbreite - das ist fuer ein Feld in einer Karte richtig, wuerde die
+ * Kopfzeile aber sprengen. Das Tokenfeld bekommt deshalb eine eigene, feste
+ * Breite. */
+.token-input {
+  width: 11rem;
+}
+
 .connection-status {
   display: flex;
   align-items: center;

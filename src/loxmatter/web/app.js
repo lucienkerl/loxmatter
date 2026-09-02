@@ -30,6 +30,80 @@ const RECONNECT_DELAY_MAX_MS = 15000;
 // bereits einen roten Banner und "Verbindung verloren" bekommt.
 const INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3;
 
+// Schluessel, unter dem das API-Token im `localStorage` des Browsers liegt
+// (Review-Fix Fix 1a, 2026-09-03).
+//
+// Warum `localStorage` und nicht etwas anderes: das Token muss einen
+// Seitenwechsel und einen Neustart des Browsers ueberleben, sonst muesste es
+// bei jedem Aufruf neu getippt werden - eine Diagnoseoberflaeche, die das
+// verlangt, benutzt am Ende niemand, und ein Betreiber, der sie deshalb
+// ohne Token betreibt, hat einen ungeschuetzten Dienst statt eines
+// unbequemen. Das Token verlaesst den Browser ausschliesslich als
+// `Authorization`-Header (bzw. als WebSocket-Subprotokoll, siehe
+// `connectLive`) an DENSELBEN Ursprung, von dem diese Seite geladen wurde -
+// es geht an keine dritte Stelle, in keine URL, in keinen Query-Parameter
+// (der stuende in Server-Logs, Proxy-Logs und der Browser-History).
+//
+// Die bekannte Schwaeche von `localStorage` ist ein XSS: fremdes Skript im
+// Ursprung dieser Seite koennte den Wert lesen. Das ist hier vertretbar,
+// weil die Oberflaeche NIRGENDS Fremdinhalt als HTML rendert - jede
+// Ausgabe laeuft ueber Alpines `x-text` (setzt `textContent`, nie
+// `innerHTML`), es gibt kein `x-html`, kein `eval`, keinen `innerHTML`-
+// Zuweisung und keine eingebundene Fremdressource (Alpine liegt vendort
+// unter `/static/vendor/`, siehe Kopfkommentar von index.html). Wer Skript
+// in diesen Ursprung einschleusen koennte, haette ohnehin schon Zugriff auf
+// die ausgelieferten Dateien selbst - und damit ein groesseres Problem als
+// das Token.
+const TOKEN_STORAGE_KEY = "loxmatter_token";
+
+// Erster Wert der WebSocket-Subprotokoll-Liste, an dem der Server erkennt,
+// dass der zweite Wert das Token ist (siehe `connectLive` und
+// `loxone.server.build_api_guard`).
+const WEBSOCKET_BEARER_MARKER = "bearer";
+
+/**
+ * Liest das gespeicherte Token - `null`, wenn keins gesetzt ist.
+ *
+ * Bei jedem Aufruf frisch aus dem `localStorage` statt aus einer Kopie im
+ * Zustand: so kann es keine zwei Wahrheiten geben, wenn das Token in einem
+ * zweiten Tab geaendert wird. `localStorage` kann werfen (Browser mit
+ * blockierten Website-Daten, privates Fenster in manchen Browsern) - dann
+ * gilt "kein Token", und die Oberflaeche verhaelt sich wie ohne.
+ */
+function readStoredToken() {
+  try {
+    const token = window.localStorage.getItem(TOKEN_STORAGE_KEY);
+    return token ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Die Kopfzeilen fuer einen Aufruf an `/api` - mit Token genau EIN
+ * zusaetzlicher Header, ohne Token gar keiner (nicht `Bearer ` mit leerem
+ * Wert, das waere ein Token "" und damit eine sinnlose 401).
+ */
+function authHeaders() {
+  const token = readStoredToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * Fehler eines Aufrufs, dem das Token fehlt oder dessen Token falsch ist -
+ * eigene Klasse, damit die Oberflaeche diesen Fall von jedem anderen
+ * Fehlschlag unterscheiden kann, ohne auf einen Meldungstext zu pruefen.
+ */
+class UnauthorizedError extends Error {
+  constructor() {
+    super(
+      "Für diesen Zugriff wird ein gültiges API-Token benötigt – " +
+        "oben rechts unter „Token“ eintragen.",
+    );
+    this.name = "UnauthorizedError";
+  }
+}
+
 /**
  * Liest den Fehlertext aus einer FastAPI-Fehlerantwort (`{"detail": "..."}"`)
  * - oder liefert einen generischen Text, falls die Antwort kein JSON war
@@ -59,7 +133,10 @@ async function requestJson(method, path, body) {
   try {
     response = await fetch(path, {
       method,
-      headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      headers: {
+        ...authHeaders(),
+        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -74,6 +151,14 @@ async function requestJson(method, path, body) {
     // 2026-09-02.
     throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
   }
+  if (response.status === 401) {
+    // Nicht der rohe Servertext ("Ungültiges oder fehlendes Token"): der
+    // sagt zwar, WAS falsch ist, aber nicht, was jetzt zu tun ist. Wer das
+    // Token gerade falsch abgetippt hat, muss das hier erkennen koennen -
+    // deshalb eine eigene Fehlerklasse, die die Oberflaeche zum Eingabefeld
+    // fuehrt (siehe `request` unten).
+    throw new UnauthorizedError();
+  }
   if (!response.ok) {
     throw new Error(await readErrorDetail(response));
   }
@@ -83,10 +168,54 @@ async function requestJson(method, path, body) {
   return response.json();
 }
 
+/**
+ * Laedt eine Datei von `/api` herunter - mit demselben Token-Header wie
+ * `requestJson`, weil ein gewoehnlicher `<a href>` keinen Header tragen
+ * kann und bei gesetztem Token nur die rohe 401-Antwort anzeigen wuerde.
+ *
+ * Die zweite (und letzte) `fetch()`-Stelle der Oberflaeche. Sie holt sich
+ * ihre Kopfzeilen aus derselben `authHeaders()`-Funktion wie `requestJson`,
+ * damit es fuer das Token weiterhin genau EINEN Ort gibt.
+ */
+async function requestDownload(path, filename) {
+  let response;
+  try {
+    response = await fetch(path, { headers: authHeaders() });
+  } catch {
+    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+  }
+  if (response.status === 401) {
+    throw new UnauthorizedError();
+  }
+  if (!response.ok) {
+    throw new Error(await readErrorDetail(response));
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  link.click();
+  // Ohne dieses Freigeben haelt der Browser den kompletten Blob bis zum
+  // Verlassen der Seite im Speicher - bei einer Fabric-Sicherung oder einem
+  // Export-ZIP ist das kein Kleingeld.
+  URL.revokeObjectURL(objectUrl);
+}
+
 function app() {
   return {
     // --- Ansicht ---------------------------------------------------------
     view: "devices",
+
+    // --- Zugang (Review-Fix Fix 1b, 2026-09-03) --------------------------
+    // Kein Login, keine Sitzung: ein Feld fuer das API-Token, mehr nicht.
+    // `tokenIsSet` haelt nur, OB eins gespeichert ist - der Wert selbst wird
+    // nach dem Speichern nirgends mehr angezeigt (`tokenDraft` wird geleert),
+    // damit er nicht ueber der Schulter mitlesbar auf dem Bildschirm steht.
+    tokenIsSet: readStoredToken() !== null,
+    tokenEditing: false,
+    tokenDraft: "",
+    authError: null,
 
     // --- Geraete -----------------------------------------------------------
     devices: [],
@@ -133,6 +262,7 @@ function app() {
     datagrams: [],
     commandLog: [],
     diagnosticsBusy: false,
+    backupError: null,
 
     // --- Live-Verbindung (Spec 8.3) --------------------------------------
     liveValues: {},
@@ -149,6 +279,112 @@ function app() {
     async init() {
       await this.loadDevices();
       this.connectLive();
+    },
+
+    // ---------------------------------------------------------------------
+    // Zugang: das API-Token (Review-Fix Fix 1b, 2026-09-03)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Der einzige Weg dieser Oberflaeche zu `/api`. Reicht `requestJson`
+     * unveraendert durch und merkt sich unterwegs nur den einen Fall, den
+     * jeder Aufrufer sonst einzeln behandeln muesste: eine 401. Dann setzt
+     * er den Hinweis oben und klappt das Eingabefeld auf, statt den
+     * Anwender mit fuenfzehn verschiedenen Fehlermeldungen zu belegen, die
+     * alle dasselbe bedeuten.
+     */
+    async request(method, path, body) {
+      try {
+        return await requestJson(method, path, body);
+      } catch (error) {
+        this.noteAuthError(error);
+        throw error;
+      }
+    },
+
+    /** Wie `request`, aber fuer die beiden Datei-Downloads. */
+    async download(path, filename) {
+      try {
+        await requestDownload(path, filename);
+      } catch (error) {
+        this.noteAuthError(error);
+        throw error;
+      }
+    },
+
+    noteAuthError(error) {
+      if (error instanceof UnauthorizedError) {
+        this.authError = error.message;
+        this.tokenEditing = true;
+      }
+    },
+
+    tokenStatusText() {
+      return this.tokenIsSet ? "Token gesetzt" : "kein Token";
+    },
+
+    startTokenEdit() {
+      // Absichtlich leer statt mit dem gespeicherten Token vorbelegt: ein
+      // gespeichertes Geheimnis wird nie wieder angezeigt, auch nicht in
+      // einem Passwortfeld, aus dem es sich mit zwei Handgriffen auslesen
+      // liesse. Wer es ersetzen will, tippt es neu.
+      this.tokenDraft = "";
+      this.tokenEditing = true;
+    },
+
+    cancelTokenEdit() {
+      this.tokenDraft = "";
+      this.tokenEditing = false;
+    },
+
+    async saveToken() {
+      const token = this.tokenDraft.trim();
+      if (!token) {
+        return;
+      }
+      try {
+        window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+      } catch {
+        this.authError =
+          "Das Token konnte nicht gespeichert werden – dieser Browser erlaubt keine " +
+          "Website-Daten (privates Fenster oder blockierte Speicherung?).";
+        return;
+      }
+      this.tokenIsSet = true;
+      this.tokenDraft = "";
+      this.tokenEditing = false;
+      this.authError = null;
+      await this.reloadAfterTokenChange();
+    },
+
+    async clearToken() {
+      try {
+        window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+      } catch {
+        // Konnte nicht gespeichert werden, kann auch nicht geloescht
+        // werden - dann war ohnehin nie etwas gespeichert.
+      }
+      this.tokenIsSet = false;
+      this.tokenDraft = "";
+      this.tokenEditing = false;
+      this.authError = null;
+      await this.reloadAfterTokenChange();
+    },
+
+    /**
+     * Nach einem Wechsel des Tokens ist jeder bisher geladene Stand
+     * fragwuerdig (er kann aus einer 401 stammen) und die Live-Verbindung
+     * traegt noch das alte - oder gar kein - Token im Handshake. Deshalb
+     * beides neu: die aktuelle Ansicht und der WebSocket.
+     */
+    async reloadAfterTokenChange() {
+      // Auch die beiden Download-Fehler: eine Meldung "Token nötig", die
+      // nach dem Eintragen des Tokens stehen bliebe, waere schlicht falsch.
+      this.backupError = null;
+      this.exportError = null;
+      this.restartLive();
+      await this.loadDevices();
+      await this.selectView(this.view);
     },
 
     // ---------------------------------------------------------------------
@@ -181,7 +417,7 @@ function app() {
     async loadDevices() {
       this.devicesError = null;
       try {
-        this.devices = await requestJson("GET", "/api/devices");
+        this.devices = await this.request("GET", "/api/devices");
       } catch (error) {
         this.devicesError = `Geraeteliste konnte nicht geladen werden: ${error.message}`;
       }
@@ -212,7 +448,7 @@ function app() {
 
     async loadControls(deviceId) {
       try {
-        this.controlsByDevice[deviceId] = await requestJson(
+        this.controlsByDevice[deviceId] = await this.request(
           "GET",
           `/api/devices/${deviceId}/controls`,
         );
@@ -280,7 +516,7 @@ function app() {
       }
       this.deviceActionError = null;
       try {
-        const updated = await requestJson("PATCH", `/api/devices/${device.id}`, { label });
+        const updated = await this.request("PATCH", `/api/devices/${device.id}`, { label });
         Object.assign(device, updated);
       } catch (error) {
         this.deviceActionError = `Name konnte nicht gespeichert werden: ${error.message}`;
@@ -297,7 +533,7 @@ function app() {
       }
       this.deviceActionError = null;
       try {
-        await requestJson("DELETE", `/api/devices/${device.id}`);
+        await this.request("DELETE", `/api/devices/${device.id}`);
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
@@ -314,7 +550,7 @@ function app() {
       this.commandBusyKey = command.key;
       const value = command.takes_value ? this.commandValueDrafts[command.key] ?? "" : "1";
       try {
-        await requestJson("POST", `/api/commands/${command.key}`, { value: String(value) });
+        await this.request("POST", `/api/commands/${command.key}`, { value: String(value) });
         this.commandMessage = `"${command.slug}" wurde an ${device.label} gesendet.`;
         this.commandMessageIsError = false;
       } catch (error) {
@@ -338,7 +574,7 @@ function app() {
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }
-        const device = await requestJson("POST", "/api/devices/commission", body);
+        const device = await this.request("POST", "/api/devices/commission", body);
         this.devices.push(device);
         this.commissionMessage = `${device.label} wurde eingelernt.`;
         this.commissionMessageIsError = false;
@@ -359,7 +595,7 @@ function app() {
     async loadSignals(deviceId) {
       this.signalsError = null;
       try {
-        this.signalsByDevice[deviceId] = await requestJson(
+        this.signalsByDevice[deviceId] = await this.request(
           "GET",
           `/api/devices/${deviceId}/signals`,
         );
@@ -374,7 +610,7 @@ function app() {
         return;
       }
       try {
-        const updated = await requestJson("PATCH", `/api/signals/${signal.key}`, { title });
+        const updated = await this.request("PATCH", `/api/signals/${signal.key}`, { title });
         Object.assign(signal, updated);
       } catch (error) {
         this.signalsError = `Titel konnte nicht gespeichert werden: ${error.message}`;
@@ -383,7 +619,7 @@ function app() {
 
     async toggleExported(signal) {
       try {
-        const updated = await requestJson("PATCH", `/api/signals/${signal.key}`, {
+        const updated = await this.request("PATCH", `/api/signals/${signal.key}`, {
           exported: !signal.exported,
         });
         Object.assign(signal, updated);
@@ -399,7 +635,7 @@ function app() {
       }
       this.rawWriteBusyKey = signal.key;
       try {
-        await requestJson("POST", `/api/signals/${signal.key}/write`, { value: String(value) });
+        await this.request("POST", `/api/signals/${signal.key}/write`, { value: String(value) });
         this.rawWriteMessages[signal.key] = { text: "Geschrieben.", isError: false };
       } catch (error) {
         this.rawWriteMessages[signal.key] = { text: error.message, isError: true };
@@ -420,7 +656,7 @@ function app() {
     async loadExportStatus() {
       this.exportError = null;
       try {
-        const rows = await requestJson("GET", "/api/export/status");
+        const rows = await this.request("GET", "/api/export/status");
         const byDevice = {};
         for (const row of rows) {
           byDevice[row.device_id] = row;
@@ -447,7 +683,7 @@ function app() {
           bridge_ip: this.exportBridgeIp.trim(),
           system: String(this.exportIncludeSystem),
         });
-        this.exportPreview = await requestJson("GET", `/api/export/preview?${params}`);
+        this.exportPreview = await this.request("GET", `/api/export/preview?${params}`);
         await this.loadExportStatus();
       } catch (error) {
         this.exportError = `Vorschau fehlgeschlagen: ${error.message}`;
@@ -479,17 +715,29 @@ function app() {
       return `/api/export/download?${params}`;
     },
 
-    // Ohne diese Pruefung wuerde ein Klick auf "ZIP herunterladen" bei
-    // leerer Miniserver-IP die ganze Seite durch die rohe 422-Fehlerantwort
-    // des Backends ersetzen (Pflichtparameter `bridge_ip`, siehe
+    // Frueher ein gewoehnlicher `<a href>`: der kann keinen
+    // `Authorization`-Header tragen und wuerde bei gesetztem Token die
+    // ganze Seite durch die rohe 401-Antwort ersetzen (Review-Fix Fix 1a,
+    // 2026-09-03). Deshalb ueber `download()`, das denselben Header setzt
+    // wie jeder andere Aufruf.
+    //
+    // Die IP-Pruefung stand vorher aus demselben Grund hier: ohne sie
+    // ersetzte ein Klick bei leerer Miniserver-IP die Seite durch die rohe
+    // 422-Fehlerantwort des Backends (Pflichtparameter `bridge_ip`, siehe
     // `api/export.py`) - fuer ein Diagnosewerkzeug, das gerade in
-    // schwierigen Momenten benutzt wird, ist das eine schlechtere Antwort
-    // als eine Fehlermeldung an derselben Stelle, an der schon die
-    // Vorschau ihre Fehler zeigt.
-    onDownloadClick(event) {
+    // schwierigen Momenten benutzt wird, ist eine Fehlermeldung an
+    // derselben Stelle, an der schon die Vorschau ihre Fehler zeigt, die
+    // bessere Antwort.
+    async downloadExport() {
+      this.exportError = null;
       if (!this.exportBridgeIp.trim()) {
-        event.preventDefault();
         this.exportError = "Bitte zuerst die IP der Bruecke (aus Sicht des Miniservers) eingeben.";
+        return;
+      }
+      try {
+        await this.download(this.downloadUrl(), "loxmatter-export.zip");
+      } catch (error) {
+        this.exportError = `Download fehlgeschlagen: ${error.message}`;
       }
     },
 
@@ -502,9 +750,9 @@ function app() {
       this.diagnosticsBusy = true;
       try {
         const [checks, datagrams, commandLog] = await Promise.all([
-          requestJson("GET", "/api/diagnostics/system"),
-          requestJson("GET", "/api/diagnostics/datagrams"),
-          requestJson("GET", "/api/diagnostics/commands"),
+          this.request("GET", "/api/diagnostics/system"),
+          this.request("GET", "/api/diagnostics/datagrams"),
+          this.request("GET", "/api/diagnostics/commands"),
         ]);
         this.systemChecks = checks;
         this.datagrams = datagrams;
@@ -516,13 +764,42 @@ function app() {
       }
     },
 
+    // Ebenfalls kein `<a href>` mehr (siehe `downloadExport`). Zusaetzlich
+    // faellt hier seit Review-Fix Fix 3 (2026-09-03) ein zweiter Fall an:
+    // laeuft der Dienst ganz OHNE Token, verweigert er diese eine Route mit
+    // 403 und einer Erklaerung im `detail` - die soll der Anwender lesen
+    // koennen, statt eine heruntergeladene Datei zu bekommen, die in
+    // Wahrheit eine Fehlermeldung ist.
+    async downloadFabricBackup() {
+      this.backupError = null;
+      try {
+        await this.download("/api/diagnostics/fabric-backup", "matter-fabric-backup.zip");
+      } catch (error) {
+        this.backupError = `Sicherung nicht möglich: ${error.message}`;
+      }
+    },
+
     // ---------------------------------------------------------------------
     // Live-Verbindung (Spec 8.3)
     // ---------------------------------------------------------------------
 
     connectLive() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(`${protocol}//${window.location.host}/api/live`);
+      const url = `${protocol}//${window.location.host}/api/live`;
+      // Ein Browser-`WebSocket` kann keine eigenen Kopfzeilen tragen -
+      // `Authorization` ist hier unmoeglich (Review-Fix Fix 1c,
+      // 2026-09-03). Der einzige vom Browser beeinflussbare Kanal im
+      // Handshake ist die Subprotokoll-Liste, die als
+      // `Sec-WebSocket-Protocol: bearer, <Token>` auf die Leitung geht -
+      // einem Query-Parameter vorzuziehen, weil der in Server-Logs,
+      // Proxy-Logs und der Browser-History landet, ein Header nicht. Der
+      // Server liest das Token dort aus und gibt NUR den Marker zurueck
+      // (siehe `loxone.server.build_api_guard` und `api.live`). Ohne Token
+      // wie bisher ganz ohne zweites Argument.
+      const token = readStoredToken();
+      const socket = token
+        ? new WebSocket(url, [WEBSOCKET_BEARER_MARKER, token])
+        : new WebSocket(url);
 
       socket.addEventListener("open", () => {
         this.socketConnected = true;
@@ -539,10 +816,38 @@ function app() {
       // sollen dieselbe Wiederverbindung ausloesen - eine Oberflaeche, die
       // eingefrorene Werte weiter als aktuell zeigt, ist schlimmer als
       // eine, die zugibt, dass sie die Verbindung verloren hat.
-      socket.addEventListener("close", () => this.scheduleReconnect());
+      // Die Pruefung `this.socket === socket` gehoert zu `restartLive()`
+      // unten: eine bewusst verworfene Verbindung (Tokenwechsel) darf keine
+      // Wiederverbindung planen, sonst laufen nach dem Neustart zwei
+      // Verbindungen nebeneinander.
+      socket.addEventListener("close", () => {
+        if (this.socket === socket) {
+          this.scheduleReconnect();
+        }
+      });
       socket.addEventListener("error", () => socket.close());
 
       this.socket = socket;
+    },
+
+    /**
+     * Verwirft die laufende Live-Verbindung und baut sie sofort neu auf -
+     * gebraucht nach einem Tokenwechsel, weil das Token im Handshake steckt
+     * und eine bestehende Verbindung es nicht nachtraeglich aendern kann.
+     */
+    restartLive() {
+      if (this.reconnectTimer !== null) {
+        window.clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.reconnectDelayMs = RECONNECT_DELAY_INITIAL_MS;
+      const previous = this.socket;
+      this.socket = null;
+      this.socketConnected = false;
+      if (previous) {
+        previous.close();
+      }
+      this.connectLive();
     },
 
     scheduleReconnect() {

@@ -20,7 +20,15 @@ Drei Gruppen:
 - `test_websocket_*` - `/api/live` ist keine gewoehnliche Route: die
   Ablehnung passiert VOR `websocket.accept()`, ueber die ASGI-„Denial
   Response"-Erweiterung (siehe `_websocket_handshake_status` unten und
-  `build_api_guard`s Docstring in `loxone/server.py`).
+  `build_api_guard`s Docstring in `loxone/server.py`). Seit Review-Fix
+  Fix 1c (2026-09-03) kommt hier der zweite Uebertragungsweg dazu: ein
+  Browser-`WebSocket` kann keinen `Authorization`-Header setzen und schickt
+  das Token deshalb als Subprotokoll `bearer, <Token>` mit.
+- `test_normalize_api_token_*` / `test_whitespace_*` - ein Token aus reinem
+  Leerraum ist kein Token (Review-Fix Fix 2, 2026-09-03).
+- `test_fabric_backup_without_a_token_*` - ohne konfiguriertes Token wird die
+  Fabric-Sicherung gar nicht erst ausgeliefert (Review-Fix Fix 3,
+  2026-09-03), waehrend jede andere `/api`-Route offen bleibt.
 - `test_warn_if_missing_api_token_*` - die Warnung aus `cli.py`, die einen
   Betrieb ohne Token trotzdem sichtbar machen soll.
 """
@@ -41,7 +49,7 @@ from fastapi import HTTPException
 from loxmatter.cli import _warn_if_missing_api_token
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
-from loxmatter.loxone.server import build_api_guard, build_app
+from loxmatter.loxone.server import build_api_guard, build_app, normalize_api_token
 from loxmatter.model.store import Store
 
 
@@ -119,29 +127,146 @@ async def open_client(tmp_path, no_invoke):
 # ---------------------------------------------------------------------------
 
 
+async def _call_guard(
+    guard: Any, *, authorization: str | None = None, subprotocol: str | None = None
+) -> None:
+    """Ruft den Waechter direkt auf - mit BEIDEN Headerparametern, immer.
+
+    Ein weggelassener Parameter bekaeme sonst FastAPIs `Header(...)`-Objekt
+    als Wert (der Default der Signatur), nicht `None`: ausserhalb einer
+    laufenden App loest niemand die Abhaengigkeit auf. Dieser Helfer haelt
+    diese Falle an genau einer Stelle statt in jedem Test."""
+    await guard(authorization=authorization, sec_websocket_protocol=subprotocol)
+
+
 async def test_guard_lets_everything_through_when_no_token_is_configured():
     guard = build_api_guard(None)
-    await guard(authorization=None)  # wirft nicht
-    await guard(authorization="Bearer irgendwas")  # wirft auch dann nicht
+    await _call_guard(guard)  # wirft nicht
+    await _call_guard(guard, authorization="Bearer irgendwas")  # wirft auch dann nicht
 
 
 async def test_guard_rejects_a_missing_header_when_a_token_is_configured():
     guard = build_api_guard("secret")
     with pytest.raises(HTTPException) as excinfo:
-        await guard(authorization=None)
+        await _call_guard(guard)
     assert excinfo.value.status_code == 401
 
 
 async def test_guard_rejects_a_wrong_token():
     guard = build_api_guard("secret")
     with pytest.raises(HTTPException) as excinfo:
-        await guard(authorization="Bearer falsch")
+        await _call_guard(guard, authorization="Bearer falsch")
     assert excinfo.value.status_code == 401
 
 
 async def test_guard_accepts_the_exact_bearer_token():
     guard = build_api_guard("secret")
-    await guard(authorization="Bearer secret")  # wirft nicht
+    await _call_guard(guard, authorization="Bearer secret")  # wirft nicht
+
+
+async def test_guard_rejects_a_non_ascii_token_with_401_not_a_crash():
+    """`secrets.compare_digest` wirft bei `str`-Argumenten `TypeError`, sobald
+    eines davon Nicht-ASCII enthaelt (Review-Fix Fix 2). Ein Angreifer koennte
+    damit sonst mit einem einzigen Umlaut im Header einen 500er statt eines
+    401 ausloesen - der Waechter vergleicht deshalb UTF-8-Bytes."""
+    guard = build_api_guard("secret")
+    with pytest.raises(HTTPException) as excinfo:
+        await _call_guard(guard, authorization="Bearer gehe\u00dfimnis")
+    assert excinfo.value.status_code == 401
+
+
+async def test_guard_accepts_a_non_ascii_token_that_actually_matches():
+    """Die Kehrseite des Tests darueber: ein Nicht-ASCII-Token wird nicht
+    pauschal abgelehnt, es wird nur nicht mehr zum Absturz."""
+    guard = build_api_guard("gehe\u00dfimnis")
+    await _call_guard(guard, authorization="Bearer gehe\u00dfimnis")  # wirft nicht
+
+
+# ---------------------------------------------------------------------------
+# Der zweite Uebertragungsweg: Sec-WebSocket-Protocol (Review-Fix Fix 1c).
+# Ein Browser-`WebSocket` kann keinen `Authorization`-Header setzen.
+# ---------------------------------------------------------------------------
+
+
+async def test_guard_accepts_the_token_from_the_websocket_subprotocol():
+    guard = build_api_guard("secret")
+    await _call_guard(guard, subprotocol="bearer, secret")  # wirft nicht
+
+
+async def test_guard_rejects_a_wrong_token_in_the_websocket_subprotocol():
+    guard = build_api_guard("secret")
+    with pytest.raises(HTTPException) as excinfo:
+        await _call_guard(guard, subprotocol="bearer, falsch")
+    assert excinfo.value.status_code == 401
+
+
+async def test_guard_rejects_a_subprotocol_without_the_bearer_marker():
+    """Nur die Form `bearer, <Token>` gilt - ein einzelner Wert ist kein
+    Token, auch wenn er zufaellig dem Geheimnis gleicht."""
+    guard = build_api_guard("secret")
+    with pytest.raises(HTTPException) as excinfo:
+        await _call_guard(guard, subprotocol="secret")
+    assert excinfo.value.status_code == 401
+
+
+async def test_guard_rejects_a_subprotocol_with_more_than_two_values():
+    guard = build_api_guard("secret")
+    with pytest.raises(HTTPException) as excinfo:
+        await _call_guard(guard, subprotocol="bearer, secret, extra")
+    assert excinfo.value.status_code == 401
+
+
+async def test_an_authorization_header_still_wins_over_a_wrong_subprotocol():
+    """Der `Authorization`-Header bleibt der Hauptweg: ist er korrekt, kommt
+    der Aufruf durch, gleich was im Subprotokoll steht."""
+    guard = build_api_guard("secret")
+    await _call_guard(guard, authorization="Bearer secret", subprotocol="bearer, falsch")
+
+
+# ---------------------------------------------------------------------------
+# Ein Token aus reinem Leerraum ist kein Token (Review-Fix Fix 2).
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_api_token_treats_whitespace_only_as_no_token():
+    assert normalize_api_token(None) is None
+    assert normalize_api_token("") is None
+    assert normalize_api_token("   ") is None
+    assert normalize_api_token("\n") is None
+
+
+def test_normalize_api_token_strips_the_outer_whitespace_of_a_real_token():
+    """Ein `LOXMATTER_API_TOKEN` mit angehaengtem Zeilenumbruch soll das
+    Geheimnis ohne den Zeilenumbruch sein - ein Geheimnis, das sich nicht in
+    einem HTTP-Header uebertragen laesst, waere keins."""
+    assert normalize_api_token("  secret\n") == "secret"
+
+
+async def test_a_whitespace_only_token_leaves_the_api_open():
+    """Der gemeldete Fehler: der Waechter hielt Leerraum fuer ein echtes
+    Geheimnis und sperrte den Dienst dauerhaft - ohne dass die Startwarnung
+    darauf hingewiesen haette. Offen MIT Warnung ist besser als gesperrt
+    ohne jede Diagnose."""
+    guard = build_api_guard("   ")
+    await _call_guard(guard)  # wirft nicht
+
+
+def test_a_whitespace_only_token_triggers_the_startup_warning(caplog):
+    """Waechter und Warnung duerfen nicht auseinanderlaufen - beide fragen
+    `normalize_api_token`."""
+    with caplog.at_level(logging.WARNING):
+        _warn_if_missing_api_token("   ")
+    assert len(caplog.records) == 1
+    assert "Kein API-Token gesetzt" in caplog.records[0].message
+
+
+async def test_a_token_with_a_trailing_newline_is_usable_over_http(tmp_path, no_invoke):
+    """Der Fall aus der kopierten `.env`: das Token traegt einen
+    Zeilenumbruch, der Browser kann ihn nicht mitschicken. Nach der
+    Normalisierung passt das abgeschnittene Geheimnis."""
+    async for client, _, _ in _build_client(tmp_path, no_invoke, api_token="secret\n"):
+        response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
+        assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -173,10 +298,48 @@ async def test_without_token_diagnostics_commands_is_open(open_client):
     assert response.status_code == 200
 
 
-async def test_without_token_fabric_backup_is_open(open_client):
+async def test_fabric_backup_without_a_token_is_refused_with_403(open_client):
+    """Die einzige Ausnahme von "ohne Token bleibt `/api` offen" (Review-Fix
+    Fix 3, 2026-09-03): `matter_data_dir` ist in dieser Fixture gesetzt, die
+    Route KOENNTE also echte Fabric-Zugangsdaten ausliefern. Genau das darf
+    ohne konfiguriertes Token nicht passieren - 403, weil eine Wiederholung
+    mit Zugangsdaten nicht helfen kann (es gibt keine)."""
     client, _, _ = open_client
     response = await client.get("/api/diagnostics/fabric-backup")
-    assert response.status_code == 200
+    assert response.status_code == 403
+
+
+async def test_fabric_backup_without_a_token_returns_no_data(open_client):
+    """Nicht nur ein anderer Statuscode - kein ZIP, keine Datei, nichts."""
+    client, _, _ = open_client
+    response = await client.get("/api/diagnostics/fabric-backup")
+    assert response.headers["content-type"].startswith("application/json")
+    assert "content-disposition" not in response.headers
+    assert "LOXMATTER_API_TOKEN" in response.json()["detail"]
+
+
+async def test_fabric_backup_with_a_whitespace_only_token_is_refused_too(tmp_path, no_invoke):
+    """Ein Leerraum-Token gilt als "kein Token" - auch hier, sonst haetten
+    Waechter und Sicherung zwei verschiedene Vorstellungen davon, was
+    "gesetzt" heisst."""
+    async for client, _, _ in _build_client(tmp_path, no_invoke, api_token="  "):
+        response = await client.get("/api/diagnostics/fabric-backup")
+        assert response.status_code == 403
+
+
+async def test_the_other_api_routes_stay_open_without_a_token(open_client):
+    """Die Gegenprobe zu den drei Tests darueber: NUR die Fabric-Sicherung
+    wird ohne Token verweigert, alles andere bleibt so offen wie vorher."""
+    client, _, device_id = open_client
+    for path in (
+        "/api/devices",
+        "/api/export/status",
+        f"/api/devices/{device_id}/controls",
+        "/api/diagnostics/commands",
+        "/api/diagnostics/system",
+        "/api/diagnostics/datagrams",
+    ):
+        assert (await client.get(path)).status_code == 200, path
 
 
 # ---------------------------------------------------------------------------
@@ -296,12 +459,21 @@ async def test_with_token_health_route_stays_open(secured_client):
 # ---------------------------------------------------------------------------
 
 
-async def _websocket_handshake_status(
-    app: Any, path: str, headers: list[tuple[bytes, bytes]]
-) -> int | None:
-    """Fuehrt nur den WebSocket-Handshake gegen `app` aus und meldet
-    zurueck, ob der Server ihn angenommen hat (`None`) oder ueber die
-    ASGI-„Denial Response"-Erweiterung abgelehnt hat (der Statuscode).
+async def _websocket_handshake(
+    app: Any,
+    path: str,
+    headers: list[tuple[bytes, bytes]],
+    subprotocols: list[str] | None = None,
+) -> dict[str, Any]:
+    """Fuehrt nur den WebSocket-Handshake gegen `app` aus und liefert die
+    ERSTE Nachricht zurueck, die die App sendet - entweder ein
+    `websocket.accept` (mit dem gewaehlten Subprotokoll darin) oder ein
+    `websocket.http.response.start` der ASGI-„Denial Response"-Erweiterung.
+
+    `subprotocols` fuellt das gleichnamige Scope-Feld, das ein echter Server
+    aus dem `Sec-WebSocket-Protocol`-Header ableitet; der Header selbst muss
+    zusaetzlich in `headers` stehen, weil der Waechter ihn dort liest (genau
+    wie bei einem echten Browser-Handshake).
 
     Kein Text-/JSON-Versand, kein Ping/Pong: mehr als den Handshake selbst
     braucht kein Test dieser Datei - Live-Werte NACH einem Accept prueft
@@ -326,7 +498,7 @@ async def _websocket_handshake_status(
         "headers": headers,
         "client": ("testclient", 123),
         "server": ("testserver", 80),
-        "subprotocols": [],
+        "subprotocols": subprotocols or [],
         "state": {},
         "extensions": {"websocket.http.response": {}},
     }
@@ -337,13 +509,37 @@ async def _websocket_handshake_status(
     if message["type"] == "websocket.accept":
         await to_app.put({"type": "websocket.disconnect", "code": 1000})
         await asyncio.wait_for(task, timeout=2)
-        return None
+        return message
 
     assert message["type"] == "websocket.http.response.start", message
-    status = message["status"]
     await from_app.get()  # websocket.http.response.body - Rumpf abholen, Task sauber beenden
     await asyncio.wait_for(task, timeout=2)
+    return message
+
+
+async def _websocket_handshake_status(
+    app: Any,
+    path: str,
+    headers: list[tuple[bytes, bytes]],
+    subprotocols: list[str] | None = None,
+) -> int | None:
+    """Wie `_websocket_handshake`, aber nur die Frage "angenommen?" -
+    `None` heisst angenommen, sonst der abweisende Statuscode."""
+    message = await _websocket_handshake(app, path, headers, subprotocols)
+    if message["type"] == "websocket.accept":
+        return None
+    status: int = message["status"]
     return status
+
+
+def _bearer_subprotocol_handshake(
+    token: str,
+) -> tuple[list[tuple[bytes, bytes]], list[str]]:
+    """Baut Header UND Scope-Feld so, wie ein Browser sie fuer
+    `new WebSocket(url, ["bearer", token])` erzeugt - beides aus einer
+    Quelle, damit die beiden nicht auseinanderlaufen koennen."""
+    values = ["bearer", token]
+    return [(b"sec-websocket-protocol", ", ".join(values).encode())], values
 
 
 async def test_websocket_live_is_rejected_with_401_without_a_header(secured_client):
@@ -366,6 +562,46 @@ async def test_websocket_live_is_accepted_without_a_header_when_no_token_is_conf
     _, app, _ = open_client
     status = await _websocket_handshake_status(app, "/api/live", headers=[])
     assert status is None
+
+
+async def test_websocket_live_is_accepted_with_the_token_in_the_subprotocol(secured_client):
+    """Der Weg, den die Oberflaeche tatsaechlich geht: ein Browser kann bei
+    `new WebSocket(...)` keinen `Authorization`-Header setzen (Review-Fix
+    Fix 1c, 2026-09-03)."""
+    _, app, _ = secured_client
+    headers, subprotocols = _bearer_subprotocol_handshake("secret")
+    status = await _websocket_handshake_status(app, "/api/live", headers, subprotocols)
+    assert status is None
+
+
+async def test_websocket_live_is_rejected_with_a_wrong_token_in_the_subprotocol(secured_client):
+    _, app, _ = secured_client
+    headers, subprotocols = _bearer_subprotocol_handshake("falsch")
+    status = await _websocket_handshake_status(app, "/api/live", headers, subprotocols)
+    assert status == 401
+
+
+async def test_websocket_live_echoes_the_bearer_marker_never_the_token(secured_client):
+    """RFC 6455: der Browser bricht den Handshake ab, wenn der Server das
+    angebotene Subprotokoll nicht zurueckgibt. Zurueck darf aber
+    ausschliesslich der Marker - das Token wuerde sonst in jedem Proxy- und
+    Browser-Protokoll auf dem Weg landen."""
+    _, app, _ = secured_client
+    headers, subprotocols = _bearer_subprotocol_handshake("secret")
+    message = await _websocket_handshake(app, "/api/live", headers, subprotocols)
+    assert message["type"] == "websocket.accept"
+    assert message["subprotocol"] == "bearer"
+
+
+async def test_websocket_live_answers_without_a_subprotocol_when_none_was_offered(open_client):
+    """Die Gegenprobe: ein Client ohne Subprotokoll-Angebot (kein Token
+    gesetzt, oder ein Nicht-Browser-Client mit echtem `Authorization`-Header)
+    darf keins zurueckbekommen - ein nicht angebotenes Subprotokoll ist nach
+    RFC 6455 ebenso ein Handshake-Fehler."""
+    _, app, _ = open_client
+    message = await _websocket_handshake(app, "/api/live", headers=[])
+    assert message["type"] == "websocket.accept"
+    assert message["subprotocol"] is None
 
 
 # ---------------------------------------------------------------------------
