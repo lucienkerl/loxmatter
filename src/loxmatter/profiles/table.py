@@ -136,6 +136,19 @@ ADMINISTRATIVE_CLUSTERS: frozenset[int] = frozenset(
 )
 
 
+def scale_factor(ref: SignalRef) -> float:
+    """Faktor, mit dem ein roher Matter-Wert in die Loxone-Einheit uebergeht.
+
+    1.0, wenn die Tabelle nichts sagt - unbekannte Cluster werden roh
+    durchgereicht, nicht verworfen (Spec 3.5).
+    """
+    cluster = _table().get(ref.cluster_id, {})
+    entry = (cluster.get("attributes") or {}).get(ref.element_id)
+    if not entry:
+        return 1.0
+    return float(entry.get("scale", 1.0))
+
+
 def command_slug(cluster_id: int, command_id: int) -> str | None:
     """Name eines Kommandos, oder None wenn es nicht in der Tabelle steht."""
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)

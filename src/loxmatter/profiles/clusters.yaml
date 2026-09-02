@@ -17,29 +17,30 @@ clusters:
   8:
     name: level
     attributes:
-      0: {slug: level, unit: "%"}
+      # 0-254 auf 0-100 %: 100/254
+      0: {slug: level, unit: "%", scale: 0.39370078740157477}
     commands:
       0: {slug: level, takes_value: true}
       4: {slug: level_onoff, takes_value: true}
   1026:
     name: temperature
     attributes:
-      0: {slug: temp, unit: "°C"}
+      0: {slug: temp, unit: "°C", scale: 0.01}
   1029:
     name: humidity
     attributes:
-      0: {slug: humidity, unit: "%"}
+      0: {slug: humidity, unit: "%", scale: 0.01}
   144:
     name: power
     attributes:
-      4: {slug: voltage, unit: "V"}
-      5: {slug: current, unit: "A"}
-      8: {slug: power, unit: "kW"}
+      4: {slug: voltage, unit: "V", scale: 0.001}
+      5: {slug: current, unit: "A", scale: 0.001}
+      8: {slug: power, unit: "kW", scale: 0.000001}
   145:
     name: energy
     attributes:
-      1: {slug: energy_imported, unit: "kWh"}
-      2: {slug: energy_exported, unit: "kWh"}
+      1: {slug: energy_imported, unit: "kWh", scale: 0.000001}
+      2: {slug: energy_exported, unit: "kWh", scale: 0.000001}
   59:
     name: switch
     attributes:
