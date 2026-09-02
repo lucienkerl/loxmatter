@@ -235,3 +235,87 @@ async def test_invalidate_index_lets_a_newly_registered_signal_through(environme
     runtime.invalidate_index(device_id)
     await runtime.on_attribute(device_id, "9/1234/5", 1)
     assert sender.keys() == [key]
+
+
+def _plug_snapshot() -> NodeSnapshot:
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    return NodeSnapshot.from_raw(raw["node_id"], raw)
+
+
+async def test_seed_from_snapshot_populates_cache_without_sending(environment):
+    """Live-Lauf vom 2026-09-02 (Spec 6.4): `resend_all()` schickt beim Start
+    nichts, weil `_last_values` leer ist - ein Wert landet dort sonst nur
+    ueber eine Subscription, die *sich aendernde* Werte meldet. Ein Stecker
+    ohne Last meldet z. B. nie eine sich aendernde Spannung. Das Saeen fuellt
+    den Cache direkt aus dem aktuellen Geraetezustand, sendet dabei aber
+    selbst nichts - siehe Docstring von `seed_from_snapshot`."""
+    runtime, sender, _, _, _ = environment
+
+    seeded = await runtime.seed_from_snapshot([_plug_snapshot()])
+
+    assert seeded == 109
+    assert len(runtime._last_values) == 109
+    assert sender.sent == []
+
+
+async def test_resend_after_seeding_sends_every_seeded_value(environment):
+    runtime, sender, _, _, _ = environment
+    await runtime.seed_from_snapshot([_plug_snapshot()])
+
+    count = await runtime.resend_all()
+
+    assert count == 109
+    assert len(sender.sent) == 109
+    assert all(force for _, _, force in sender.sent)
+
+
+async def test_seed_from_snapshot_skips_attribute_without_a_stored_signal(environment):
+    """Ein Snapshot kann Attribute enthalten, die beim Export nicht dabei
+    waren (z. B. ein neuer Cluster nach einem Firmware-Update, der noch nicht
+    exportiert wurde) - das darf das Saeen nicht mit einem Fehler abbrechen,
+    sondern wird genau wie bei `on_attribute` uebersprungen."""
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    raw = dict(raw)
+    attributes = dict(raw["attributes"])
+    attributes["9/9999/9"] = 42
+    raw["attributes"] = attributes
+    plug_snap = NodeSnapshot.from_raw(raw["node_id"], raw)
+    runtime, _, _, device_id, _ = environment
+
+    seeded = await runtime.seed_from_snapshot([plug_snap])
+
+    assert seeded == 109
+    assert f"d{device_id}_9_c9999_a9" not in runtime._last_values
+
+
+async def test_seeding_twice_does_not_double_anything(environment):
+    runtime, sender, _, _, _ = environment
+    snap = _plug_snapshot()
+
+    await runtime.seed_from_snapshot([snap])
+    await runtime.seed_from_snapshot([snap])
+
+    assert len(runtime._last_values) == 109
+    count = await runtime.resend_all()
+    assert count == 109
+    assert len(sender.sent) == 109
+
+
+async def test_seed_from_snapshot_skips_an_unknown_node_without_aborting(environment):
+    """Ein Snapshot kann einen Node melden, den `Store` (noch) nicht kennt -
+    etwa ein Geraet, das noch nie exportiert wurde. Das darf den Start nicht
+    abbrechen; nur dieser Node wird uebersprungen, alle anderen werden trotzdem
+    gesaet."""
+    runtime, sender, _, _, _ = environment
+    unknown = NodeSnapshot(
+        node_id=999_999,
+        vendor_name="",
+        product_name="",
+        unique_id="",
+        attributes={"2/144/4": 230000},
+    )
+
+    seeded = await runtime.seed_from_snapshot([unknown, _plug_snapshot()])
+
+    assert seeded == 109
+    assert sender.sent == []

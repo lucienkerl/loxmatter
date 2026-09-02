@@ -436,6 +436,12 @@ async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) 
             )
         await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
+        # Startwerte aus dem aktuellen Geraetezustand laden, BEVOR der Resend
+        # unten sie verschickt (Spec 6.4, Live-Lauf vom 2026-09-02): ohne das
+        # faende `resend_all()` einen leeren Cache vor, weil ein Wert dort nur
+        # ueber eine sich aendernde Subscription landet - siehe
+        # `Runtime.seed_from_snapshot`.
+        await runtime.seed_from_snapshot(await client.snapshots())
         # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
 

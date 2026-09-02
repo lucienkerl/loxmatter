@@ -389,6 +389,20 @@ bis das nächste Update eintrifft — bei einem Temperatursensor potenziell Stun
 - **`/resync`-Endpoint**, als fertiger `VirtualOutCmd` mitexportiert. Im Config-Projekt
   an den Systemstart-Baustein gehängt, sind nach jedem Neustart sofort alle Werte da.
 
+**Befund (Phase 4, Live-Lauf 2026-09-02).** Ein Resend kann nur Werte verschicken, die
+die Bridge schon selbst hält — er iteriert den zuletzt gesendeten Wert je Signal, nicht
+den Gerätezustand. Dieser Cache entsteht ausschließlich über Subscriptions, die sich
+*ändernde* Werte melden, und ist beim Start leer. Ein Live-Lauf mit einer
+Matter-Steckdose ohne Last bestätigte das: über 40 s kamen genau drei Datagramme an
+(Heartbeat, ein per HTTP ausgelöster Schaltbefehl), aber keines der 109 exportierbaren
+Attributsignale — der Full-Resend beim Start lief leer, weil noch nichts im Cache stand,
+und ohne eine sich ändernde Last hätte sich das auf unabsehbare Zeit nicht geändert.
+Genau in diesem Moment — direkt nach einem Neustart der Bridge — ist der Mechanismus
+also leer, obwohl er hier am nötigsten wäre. Die Bridge muss sich deshalb beim Start
+selbst aus dem aktuellen Gerätezustand säen (`Runtime.seed_from_snapshot`, gefüttert aus
+`BridgeMatterClient.snapshots()` — demselben Bild, aus dem auch `loxmatter export`
+liest), bevor der erste Full-Resend läuft.
+
 ### 6.5 Zusätzliche Signale
 
 - `d<id>_online` — digital, pro Gerät: erreichbar ja/nein.

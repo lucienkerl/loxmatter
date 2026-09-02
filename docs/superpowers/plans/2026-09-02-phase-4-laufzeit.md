@@ -930,6 +930,12 @@ Zustands-Wiederherstellung.
   - `async def on_event(self, device_id: int, path: str) -> None`
   - `async def set_online(self, device_id: int, online: bool) -> None`
   - `async def resend_all(self) -> int` — Anzahl gesendeter Datagramme
+  - `async def seed_from_snapshot(self, snapshots: Sequence[NodeSnapshot]) -> int` — **Nachtrag,
+    Live-Lauf 2026-09-02:** füllt `_last_values` aus dem aktuellen Gerätezustand
+    (`BridgeMatterClient.snapshots()`), ohne selbst zu senden — ein Resend direkt nach dem
+    Start (siehe Task 8) hätte sonst nichts zu verschicken, weil `_last_values` beim Start
+    leer ist und ein Wert dort sonst nur über eine sich ändernde Subscription landet. Siehe
+    Spec 6.4 und den entsprechenden Report.
   - `async def start(self) -> None`, `async def stop(self) -> None`
   - `PULSE_MILLISECONDS: int`
 
@@ -1413,6 +1419,12 @@ class Runtime:
 
 Run: `uv run pytest tests/loxone/test_runtime.py -v`
 Expected: PASS, 14 Tests
+
+**Nachtrag, Live-Lauf 2026-09-02:** 5 weitere Tests für `seed_from_snapshot` kamen
+hinzu (Cache füllen ohne zu senden, Resend danach schickt sie, ein Attribut ohne
+gespeichertes Signal wird übersprungen, zweimaliges Säen verdoppelt nichts, ein Node
+ohne bekanntes Gerät bricht das Säen nicht ab) — macht 19 Tests in
+`tests/loxone/test_runtime.py`. Siehe Task 8 für die zugehörige Änderung in `_run()`.
 
 - [ ] **Step 5: Commit**
 
@@ -2372,6 +2384,10 @@ async def _run(url: str, miniserver: str, port: int, listen: int, store_path: Pa
         # device_id ab, an der die Schlüssel hängen.
         await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
+        # Nachtrag, Live-Lauf 2026-09-02 (Spec 6.4): erst aus dem aktuellen
+        # Geraetezustand saeen, DANN erst der Full-Resend - sonst faende der
+        # einen leeren Cache vor und schickte nichts. Siehe Runtime.seed_from_snapshot.
+        await runtime.seed_from_snapshot(await client.snapshots())
         # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
 
@@ -2409,6 +2425,10 @@ gegen einen echten matter-server.
 Run: `uv run pytest tests/test_cli.py -v`
 Expected: PASS, 6 Tests für `_run()`s Aufbau/Abbau (davon 1 für den Abbruch während des
 Starts, vor `serve()`).
+
+**Nachtrag, Live-Lauf 2026-09-02:** ein siebter Test kam hinzu, der prüft, dass `_run()`
+`runtime.seed_from_snapshot(...)` mit den aktuellen Snapshots aufruft, und zwar VOR dem
+ersten `resend_all()` — macht 7 Tests für `_run()`s Aufbau/Abbau in `tests/test_cli.py`.
 
 Dazu das Kommando für das Testdoppel:
 
@@ -2448,6 +2468,16 @@ uv run loxmatter run --url ws://10.0.1.56:5580/ws --miniserver 127.0.0.1 --port 
 Erwartet: Datagramme der Steckdose erscheinen; ein Druck auf den Taster erzeugt Impuls
 und Zähler; `bridge_alive` toggelt. Am Ende nennt der `fake-miniserver` die stummen
 Signale — bei einer Steckdose ohne Last sind das viele, das ist kein Fehler.
+
+**Korrektur, Live-Lauf 2026-09-02:** der Satz oben galt für Signale, die sich während
+des Laufs nie ändern — nicht dafür, dass sie beim Start überhaupt nie ankommen. Der
+erste Lauf zeigte genau diese Verwechslung: über 40 s kamen nur drei Datagramme an
+(Heartbeat, ein HTTP-ausgelöster Schaltbefehl), keines der 109 exportierbaren
+Attributsignale, weil `resend_all()` beim Start einen leeren Cache vorfand (siehe Spec
+6.4 und Task 4). Nach dem Fix hier erscheinen alle 109 Signale der Steckdose direkt nach
+dem Verbindungsaufbau, unabhängig davon, ob sich danach je etwas ändert — „stumm" darf
+sich ab jetzt nur noch auf Signale beziehen, die nach dem Start nie ein zweites Mal
+gesendet werden, nicht auf ein komplett fehlendes erstes Mal.
 
 - [ ] **Step 7: Durchstich mit echtem Miniserver**
 

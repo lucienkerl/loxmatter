@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Protocol
 
 from loxmatter.loxone.values import to_loxone_value
-from loxmatter.matter.models import SignalKind
+from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store, StoredSignal
 
 PULSE_MILLISECONDS = 200
@@ -122,15 +123,74 @@ class Runtime:
         for cache_key in [k for k in self._signals if k[0] == device_id]:
             del self._signals[cache_key]
 
-    async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
+    def _cache_attribute(self, device_id: int, path: str, raw: object) -> str | None:
+        """Wandelt einen rohen Matter-Wert in den Cache um und liefert den
+        dabei benutzten Schluessel zurueck - oder `None`, wenn der Store kein
+        Signal fuer diesen Pfad kennt oder der Wert nicht exportierbar ist
+        (Liste, Struktur, Text; siehe `to_loxone_value`).
+
+        Diese eine Stelle entscheidet, was aus einem rohen Matter-Wert wird -
+        sowohl fuer eine echte Aktualisierung (`on_attribute`) als auch fuers
+        Saeen aus dem aktuellen Geraetezustand (`seed_from_snapshot`). Eine
+        zweite Stelle, die dieselbe Umrechnung noch einmal nachbaut, wuerde
+        ueber kurz oder lang von dieser hier abweichen."""
         signal = self._signal_for(device_id, path, SignalKind.ATTRIBUTE)
         if signal is None:
-            return
+            return None
         value = to_loxone_value(signal.ref, raw)
         if value is None:
-            return
+            return None
         self._last_values[signal.key] = value
-        await self._sender.send(signal.key, value)
+        return signal.key
+
+    async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
+        key = self._cache_attribute(device_id, path, raw)
+        if key is None:
+            return
+        await self._sender.send(key, self._last_values[key])
+
+    async def seed_from_snapshot(self, snapshots: Sequence[NodeSnapshot]) -> int:
+        """Fuellt den Cache aus dem aktuellen Geraetezustand (Spec 6.4).
+
+        Ein Live-Lauf am 2026-09-02 zeigte die Luecke: `resend_all()` iteriert
+        `_last_values`, und das ist beim Start leer - ein Wert landet dort nur
+        ueber eine Subscription, die sich *aendernde* Werte meldet. Ein
+        Stecker ohne Last meldet z. B. nie eine sich aendernde Spannung, also
+        blieb der Cache nach dem Start leer und der erste Resend schickte
+        nichts, obwohl genau er nach einem Neustart der Bruecke die Rolle von
+        `/resync` uebernehmen soll. Diese Methode holt die fehlenden
+        Startwerte aus `BridgeMatterClient.snapshots()` - demselben Bild, aus
+        dem auch `loxmatter export` liest.
+
+        Sendet dabei bewusst nichts selbst: sie fuellt nur `_last_values`
+        ueber `_cache_attribute` (denselben Weg, den auch `on_attribute`
+        nimmt), und der eine `resend_all()`-Aufruf direkt nach dem Saeen
+        (siehe `_run`) verschickt dann alles zusammen mit `force=True`. Wuerde
+        das Saeen selbst schon senden, entstuende bei jedem Start ein Doppel-
+        Versand fuer jedes Signal - einmal hier, einmal durch den Resend
+        gleich danach - unabhaengig davon, ob die Entprellung des Senders
+        gerade leer ist oder nicht.
+
+        Ein Node, den `Store` nicht kennt (noch nie exportiert, oder
+        inzwischen entfernt), bricht das Saeen nicht ab - er wird
+        uebersprungen, alle anderen Nodes werden trotzdem gesaet. Ein
+        Attribut, fuer das der Store kein Signal kennt, wird - wie bei jeder
+        Aktualisierung zur Laufzeit auch - stillschweigend verworfen.
+
+        Liefert die Anzahl gesaeter Signale zurueck (fuers Log in `_run`)."""
+        count = 0
+        for snapshot in snapshots:
+            device_id = self._store.device_id_for_node(snapshot.node_id)
+            if device_id is None:
+                logger.info(
+                    "Kein bekanntes Geraet fuer Node %s - Snapshot wird beim Saeen uebersprungen",
+                    snapshot.node_id,
+                )
+                continue
+            for path, raw in snapshot.attributes.items():
+                if self._cache_attribute(device_id, path, raw) is not None:
+                    count += 1
+        return count
 
     async def on_event(self, device_id: int, path: str) -> None:
         signal = self._signal_for(device_id, path, SignalKind.EVENT)

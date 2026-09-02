@@ -242,6 +242,12 @@ class _SpyRuntime:
         self.started = False
         self.stop_calls = 0
         self.resend_calls = 0
+        self.seed_calls = 0
+        # Reihenfolge der beiden Aufrufe, damit ein Test pruefen kann, dass
+        # das Saeen VOR dem ersten Resend passiert (siehe _run-Docstring):
+        # ein Resend nach dem Saeen ist der ganze Witz von Spec 6.4, ein
+        # Resend davor faende einen noch leeren Cache vor.
+        self.call_order: list[str] = []
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
         pass
@@ -258,8 +264,14 @@ class _SpyRuntime:
     async def stop(self) -> None:
         self.stop_calls += 1
 
+    async def seed_from_snapshot(self, snapshots: list[NodeSnapshot]) -> int:
+        self.seed_calls += 1
+        self.call_order.append("seed")
+        return 0
+
     async def resend_all(self) -> int:
         self.resend_calls += 1
+        self.call_order.append("resend")
         return 0
 
 
@@ -345,6 +357,20 @@ async def test_run_stops_everything_after_a_clean_shutdown(monkeypatch, tmp_path
     with pytest.raises(MatterUnavailableError):
         await clients[0].snapshots()
     _assert_store_is_closed(store)
+
+
+async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_path):
+    """Live-Lauf vom 2026-09-02 (Spec 6.4): ohne ein Saeen aus dem aktuellen
+    Geraetezustand VOR dem ersten `resend_all()` findet dieser Resend einen
+    leeren Cache vor und sendet nichts."""
+    _, runtimes, _ = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert runtimes[0].seed_calls == 1
+    assert runtimes[0].call_order == ["seed", "resend"]
 
 
 async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_path):
