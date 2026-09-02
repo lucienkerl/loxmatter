@@ -64,6 +64,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response as StarletteResponse
 
 from loxmatter.api.control import build_control_router
@@ -98,6 +100,15 @@ _DIAGNOSTICS_PREFIX = "/api/diagnostics"
 # diesem Code geantwortet zu haben. Unterscheidbar von jedem echten
 # Statuscode, siehe `_record_command` (Review-Fix Important, 2026-09-02).
 _CRASHED_STATUS = 0
+
+# Task 7, Phase 5: die Oberflaeche liegt als statisches Verzeichnis neben
+# diesem Modul, nicht in einem eigenen Paket - `src/loxmatter/web/`, eine
+# Ebene ueber `loxone/` (daher `.parents[1]`). Kein Build-Schritt, kein
+# Bundler: `index.html`, `app.js`, `style.css` und das vendorte Alpine.js
+# unter `web/vendor/` werden unveraendert ausgeliefert (siehe dort, warum
+# Alpine vendort statt von einem CDN eingebunden ist - `web/index.html`s
+# Kopfkommentar).
+_WEB_DIR = Path(__file__).parents[1] / "web"
 
 
 def build_app(
@@ -177,6 +188,18 @@ def build_app(
     app.include_router(
         build_diagnostics_router(store, command_log, client, sender, matter_data_dir)
     )
+
+    # Task 7, Phase 5: die WebUI selbst. `StaticFiles` weist einen Zugriff,
+    # der ueber `_WEB_DIR` hinaus will (z. B. `/static/../../../etc/passwd`),
+    # bereits selbst mit 404 zurueck - ein eigener Schutz waere hier nur eine
+    # zweite, driftende Kopie derselben Pruefung
+    # (test_static_files_do_not_escape_their_directory).
+    app.mount("/static", StaticFiles(directory=_WEB_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        """Liefert die Oberflaeche aus. Kein Build-Schritt, keine CDN-Abhaengigkeit."""
+        return FileResponse(_WEB_DIR / "index.html")
 
     @app.get("/health")
     async def health() -> dict[str, str]:
