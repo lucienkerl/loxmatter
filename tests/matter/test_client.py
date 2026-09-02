@@ -185,6 +185,18 @@ async def test_snapshots_maps_every_node(client):
     assert [s.node_id for s in snapshots] == [12, 13]
     assert snapshots[0].vendor_name == "IKEA of Sweden"
     assert snapshots[1].attributes["1/1026/0"] == 2150
+    assert snapshots[0].available is True
+
+
+async def test_snapshots_reflect_node_availability():
+    """Review-Fix C1, 2026-09-02: `Runtime.seed_from_snapshot` braucht
+    `node.available` in jedem Snapshot, um ein Geraet beim Bruecken-Start
+    korrekt als on-/offline zu saeen - siehe Modul-Docstring, warum
+    NODE_ADDED/NODE_UPDATED dafuer nicht verlaesslich feuern."""
+    bridge, _ = make_client([FakeNode(1, {"0/40/1": "Aqara"}, available=False)])
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+    assert snapshots[0].available is False
 
 
 async def test_snapshot_selects_by_node_id(client):

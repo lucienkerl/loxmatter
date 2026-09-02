@@ -43,6 +43,13 @@ class NodeSnapshot:
     product_name: str
     unique_id: str
     attributes: Mapping[str, Any] = field(default_factory=dict)
+    # Erreichbarkeit des Nodes bei matter-server (`MatterNode.available`).
+    # Default `True`: eine Fixture-Datei (siehe `_load_fixture` in cli.py)
+    # traegt dieses Feld nicht, und ein aus einer Aufzeichnung geladenes
+    # Geraet soll nicht faelschlich als unerreichbar gelten (Review-Fix C1,
+    # 2026-09-02 - siehe `BridgeMatterClient.snapshots` und
+    # `Runtime.seed_from_snapshot`).
+    available: bool = True
 
     @classmethod
     def from_raw(cls, node_id: int, raw: Mapping[str, Any]) -> NodeSnapshot:
@@ -58,4 +65,5 @@ class NodeSnapshot:
             product_name=text(_PRODUCT_NAME_PATH),
             unique_id=text(_UNIQUE_ID_PATH),
             attributes=dict(attributes),
+            available=bool(raw.get("available", True)),
         )

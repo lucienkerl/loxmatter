@@ -177,6 +177,19 @@ class Runtime:
         Attribut, fuer das der Store kein Signal kennt, wird - wie bei jeder
         Aktualisierung zur Laufzeit auch - stillschweigend verworfen.
 
+        Saeet dabei auch `d<id>_online` aus `snapshot.available` (Review-Fix
+        C1, 2026-09-02): der einzige Schreiber von `d<id>_online` ist sonst
+        `set_online`, aufgerufen aus `BridgeMatterClient._dispatch_loop` bei
+        NODE_ADDED/NODE_UPDATED/NODE_REMOVED - aber `start_listening()`
+        fuellt den initialen Node-Cache OHNE NODE_ADDED zu feuern, und
+        NODE_UPDATED kommt nur bei einer Node-Daten-Nachricht, nicht bei
+        einer reinen Attribut-Aktualisierung. Ohne dieses Saeen bliebe
+        `d<id>_online` nach jedem Bruecken-Start auf seinem `DefVal="0"` -
+        also dauerhaft "nicht erreichbar" fuer ein Geraet, das einfach nur
+        still ist, und `/resync` koennte das nicht heilen, weil der
+        Schluessel nie in `_last_values` landet. Genau dieselbe Fehlerklasse,
+        die Spec 6.4 fuer Attribute bereits verhindert.
+
         Liefert die Anzahl gesaeter Signale zurueck (fuers Log in `_run`)."""
         count = 0
         for snapshot in snapshots:
@@ -187,6 +200,8 @@ class Runtime:
                     snapshot.node_id,
                 )
                 continue
+            self._cache_online(device_id, snapshot.available)
+            count += 1
             for path, raw in snapshot.attributes.items():
                 if self._cache_attribute(device_id, path, raw) is not None:
                     count += 1
@@ -215,10 +230,27 @@ class Runtime:
         await self._sender.send(key, False)
         self._pulses_high.discard(key)
 
+    @staticmethod
+    def _online_key(device_id: int) -> str:
+        return f"d{device_id}_online"
+
+    def _cache_online(self, device_id: int, online: bool) -> None:
+        """Traegt die Erreichbarkeit eines Geraets in den Cache ein, ohne zu senden.
+
+        Eigener Schritt, herausgezogen aus `set_online` (Review-Fix C1,
+        2026-09-02): `seed_from_snapshot` braucht denselben Schluessel und
+        denselben Cache-Eintrag, den ein spaeteres `set_online` ueber ein
+        NODE_ADDED/NODE_UPDATED-Ereignis erzeugen wuerde - aber, wie bei
+        jedem anderen gesaeten Signal auch, OHNE selbst zu senden. Der
+        anschliessende `resend_all()` in `_run` verschickt alles gesaete
+        gebuendelt mit `force=True`; wuerde das Saeen hier schon senden,
+        entstuende fuer `d<id>_online` ein Doppel-Versand bei jedem Start
+        (siehe Docstring von `seed_from_snapshot`)."""
+        self._last_values[self._online_key(device_id)] = online
+
     async def set_online(self, device_id: int, online: bool) -> None:
-        key = f"d{device_id}_online"
-        self._last_values[key] = online
-        await self._sender.send(key, online)
+        self._cache_online(device_id, online)
+        await self._sender.send(self._online_key(device_id), online)
 
     async def resend_all(self) -> int:
         """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei."""

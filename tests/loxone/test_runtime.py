@@ -248,25 +248,48 @@ async def test_seed_from_snapshot_populates_cache_without_sending(environment):
     ueber eine Subscription, die *sich aendernde* Werte meldet. Ein Stecker
     ohne Last meldet z. B. nie eine sich aendernde Spannung. Das Saeen fuellt
     den Cache direkt aus dem aktuellen Geraetezustand, sendet dabei aber
-    selbst nichts - siehe Docstring von `seed_from_snapshot`."""
-    runtime, sender, _, _, _ = environment
+    selbst nichts - siehe Docstring von `seed_from_snapshot`. 109 Attribut-
+    signale plus 1 Online-Signal (Review-Fix C1, 2026-09-02)."""
+    runtime, sender, _, device_id, _ = environment
 
     seeded = await runtime.seed_from_snapshot([_plug_snapshot()])
 
-    assert seeded == 109
-    assert len(runtime._last_values) == 109
+    assert seeded == 110
+    assert len(runtime._last_values) == 110
+    assert runtime._last_values[f"d{device_id}_online"] is True
+    assert sender.sent == []
+
+
+async def test_seed_from_snapshot_seeds_an_unavailable_node_as_offline(environment):
+    """Review-Fix C1, 2026-09-02: der Kern des Fehlers. `start_listening()`
+    fuellt den initialen Node-Cache OHNE NODE_ADDED zu feuern, und
+    NODE_UPDATED kommt nur bei einer Node-Daten-Nachricht - der einzige
+    Schreiber von `d<id>_online` (`set_online`) liefe also nach einem
+    Bruecken-Start nie, und der Schluessel bliebe auf seinem `DefVal="0"`
+    haengen (liest sich in Loxone als "nicht erreichbar"). Das Saeen muss die
+    Erreichbarkeit deshalb selbst aus dem Snapshot uebernehmen."""
+    runtime, sender, _, device_id, _ = environment
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    raw = dict(raw)
+    raw["available"] = False
+    offline_snap = NodeSnapshot.from_raw(raw["node_id"], raw)
+
+    await runtime.seed_from_snapshot([offline_snap])
+
+    assert runtime._last_values[f"d{device_id}_online"] is False
     assert sender.sent == []
 
 
 async def test_resend_after_seeding_sends_every_seeded_value(environment):
-    runtime, sender, _, _, _ = environment
+    runtime, sender, _, device_id, _ = environment
     await runtime.seed_from_snapshot([_plug_snapshot()])
 
     count = await runtime.resend_all()
 
-    assert count == 109
-    assert len(sender.sent) == 109
+    assert count == 110
+    assert len(sender.sent) == 110
     assert all(force for _, _, force in sender.sent)
+    assert (f"d{device_id}_online", True, True) in sender.sent
 
 
 async def test_seed_from_snapshot_skips_attribute_without_a_stored_signal(environment):
@@ -284,7 +307,7 @@ async def test_seed_from_snapshot_skips_attribute_without_a_stored_signal(enviro
 
     seeded = await runtime.seed_from_snapshot([plug_snap])
 
-    assert seeded == 109
+    assert seeded == 110
     assert f"d{device_id}_9_c9999_a9" not in runtime._last_values
 
 
@@ -295,10 +318,10 @@ async def test_seeding_twice_does_not_double_anything(environment):
     await runtime.seed_from_snapshot([snap])
     await runtime.seed_from_snapshot([snap])
 
-    assert len(runtime._last_values) == 109
+    assert len(runtime._last_values) == 110
     count = await runtime.resend_all()
-    assert count == 109
-    assert len(sender.sent) == 109
+    assert count == 110
+    assert len(sender.sent) == 110
 
 
 async def test_seed_from_snapshot_skips_an_unknown_node_without_aborting(environment):
@@ -317,5 +340,5 @@ async def test_seed_from_snapshot_skips_an_unknown_node_without_aborting(environ
 
     seeded = await runtime.seed_from_snapshot([unknown, _plug_snapshot()])
 
-    assert seeded == 109
+    assert seeded == 110
     assert sender.sent == []

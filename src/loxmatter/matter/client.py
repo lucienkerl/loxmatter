@@ -272,7 +272,14 @@ class BridgeMatterClient:
             # direkt auf dem Node, sondern auf node.node_data.attributes —
             # war bislang unbeobachtbar, weil der Node-Cache vor der
             # Listener-Anbindung immer leer war (siehe Modul-Docstring).
-            NodeSnapshot.from_raw(node.node_id, {"attributes": node.node_data.attributes})
+            # `available` kommt bewusst mit hinein (Review-Fix C1,
+            # 2026-09-02): `Runtime.seed_from_snapshot` braucht sie, um ein
+            # Geraet beim Start korrekt als on-/offline zu saeen, statt es
+            # bis zum naechsten NODE_ADDED/NODE_UPDATED unbestimmt zu lassen.
+            NodeSnapshot.from_raw(
+                node.node_id,
+                {"attributes": node.node_data.attributes, "available": node.available},
+            )
             for node in upstream.get_nodes()
         ]
 
