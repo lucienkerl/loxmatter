@@ -255,6 +255,28 @@ async def test_stop_lowers_an_in_flight_pulse(environment):
     assert values[-1] is False
 
 
+async def test_stop_completes_even_if_lowering_a_pulse_fails(environment):
+    """Review-Fix M11, 2026-09-02: die Schleife, die jeden gerade high
+    stehenden Impuls senkt, lief vor dem Fix ungeschuetzt vor dem
+    Task-Abbruch. Scheiterte ein Sendeversuch dort (z. B. ein bereits
+    geschlossener `UdpSender`), brach die ganze Methode dort ab - JEDES
+    `task.cancel()` und beide `.clear()`-Aufrufe wurden uebersprungen.
+    `stop()` ist selbst der Aufraeum-Pfad; ein fehlgeschlagener Sendeversuch
+    darf ihn nicht mitreissen."""
+    runtime, _, _, _, button_device_id = environment
+    await runtime.on_event(button_device_id, "1/59/1")
+    assert runtime._pulses_high  # der Impuls steht noch auf True
+
+    runtime._sender = FlakySender(fail_on_call=1)  # der naechste send() scheitert
+    await runtime.start()
+
+    await runtime.stop()  # darf nicht am fehlschlagenden Sender scheitern
+
+    assert runtime._pulses_high == set()
+    assert runtime._tasks == []
+    assert runtime._pulse_tasks == set()
+
+
 async def test_invalidate_index_lets_a_newly_registered_signal_through(environment, monkeypatch):
     """Review-Fix Important #3: `Store.register_signals` kann jederzeit ein
     neues Signal zu einem schon indizierten Geraet hinzufuegen (z. B. nach

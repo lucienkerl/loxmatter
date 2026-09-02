@@ -293,9 +293,28 @@ class Runtime:
         # Tasks abgebrochen werden - sonst ueberspringt die Cancellation den
         # `send(key, False)` in `_release_pulse` und das Signal bleibt bis
         # zum naechsten Ereignis auf 1 haengen (Review-Fix Important #2).
-        for key in list(self._pulses_high):
-            await self._sender.send(key, False)
-        self._pulses_high.clear()
+        #
+        # In eigenem try/finally (Review-Fix M11, 2026-09-02): ein bereits
+        # toter Sender (z. B. ein `UdpSender`, dessen Socket schon zu ist -
+        # siehe `test_a_failing_resend_yields_502...` in test_server.py fuer
+        # denselben Fall bei `/resync`) liess diese Schleife ohne den Fix
+        # unbedingt aufbrechen - und damit UEBERSPRANG SIE JEDES
+        # `task.cancel()` unten und beide `.clear()`-Aufrufe. `stop()` ist
+        # der Aufraeum-Pfad selbst; ein fehlgeschlagener Sendeversuch darf
+        # nicht dazu fuehren, dass Hintergrund-Tasks weiterlaufen und die
+        # beiden Mengen nie geleert werden.
+        try:
+            for key in list(self._pulses_high):
+                await self._sender.send(key, False)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Ein Impuls konnte beim Beenden nicht gesenkt werden - "
+                "Aufraeumen laeuft trotzdem weiter"
+            )
+        finally:
+            self._pulses_high.clear()
 
         tasks: list[asyncio.Task[None]] = [*self._tasks, *self._pulse_tasks]
         for task in tasks:
