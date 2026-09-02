@@ -207,7 +207,17 @@ In `src/loxmatter/matter/client.py` ergänzen:
 
 ```python
 class CommissioningError(RuntimeError):
-    """Das Einlernen eines Geraets ist fehlgeschlagen."""
+    """Das Einlernen eines Geraets ist am Geraet selbst gescheitert (z. B.
+    falscher Code, Geraet haengt schon in einem anderen Oekosystem, Timeout
+    beim Interview).
+
+    Ein Verbindungsverlust zu matter-server WAEHREND des Einlernens ist
+    davon ausdruecklich abgegrenzt: commission_with_code() faengt
+    `NotConnected`/`ConnectionClosed`/`CannotConnect` gesondert ab und wirft
+    dafuer `MatterUnavailableError`, denn nur so laesst sich unterscheiden,
+    ob das Geraet abgelehnt hat oder matter-server nicht erreichbar war
+    (Spec 8.1/9). Die urspruengliche Ausnahme bleibt ueber `__cause__`
+    erhalten."""
 
 
 async def commission_with_code(self, code: str) -> NodeSnapshot:
@@ -219,8 +229,20 @@ async def commission_with_code(self, code: str) -> NodeSnapshot:
     es von dort einen Multi-Admin-Code (Spec 7.1).
     """
     upstream = self._require_upstream()
+
+    # Lazy importiert wie _default_session_factory: Tests mit einem
+    # Fake-Upstream sollen matter_server nie laden müssen.
+    from matter_server.client.exceptions import CannotConnect, ConnectionClosed, NotConnected
+
     try:
         node = await upstream.commission_with_code(code)
+    except (NotConnected, ConnectionClosed, CannotConnect) as exc:
+        # Verbindungsverlust zu matter-server ist keine Ablehnung durch das
+        # Geraet — muss VOR dem generischen except Exception unten stehen,
+        # sonst würde er dort mitgefangen und als CommissioningError
+        # gemeldet (Spec 8.1/9 verlangt die Unterscheidung).
+        msg = f"matter-server nicht erreichbar: {exc}"
+        raise MatterUnavailableError(msg) from exc
     except Exception as exc:
         raise CommissioningError(f"Einlernen fehlgeschlagen: {exc}") from exc
     return NodeSnapshot.from_raw(node.node_id, {"attributes": node.node_data.attributes})
@@ -244,7 +266,7 @@ async def set_thread_dataset(self, dataset: str) -> None:
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_client_commissioning.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 8 Tests
 
 - [ ] **Step 6: Commit**
 

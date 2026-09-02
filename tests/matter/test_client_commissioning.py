@@ -1,6 +1,10 @@
-import pytest
+import asyncio
 
-from loxmatter.matter.client import BridgeMatterClient, CommissioningError
+import pytest
+from matter_server.client.exceptions import NotConnected
+from matter_server.common.errors import NodeCommissionFailed
+
+from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
 
 
 class FakeNodeData:
@@ -90,6 +94,42 @@ async def test_a_failed_commissioning_says_so_in_german(client):
     upstream.fail_with = RuntimeError("device not found")
     await bridge.connect()
     with pytest.raises(CommissioningError, match="Einlernen fehlgeschlagen"):
+        await bridge.commission_with_code("MT:ABC123")
+    await bridge.disconnect()
+
+
+async def test_a_connection_loss_during_commissioning_says_so_in_german(client):
+    """NotConnected & Co. betreffen die Verbindung zu matter-server, nicht das
+    Geraet - sie muessen als MatterUnavailableError ankommen, nicht als
+    CommissioningError, sonst sucht der Bedienende den Fehler faelschlich am
+    Geraet statt an matter-server (siehe Spec 8.1/9)."""
+    bridge, upstream = client
+    upstream.fail_with = NotConnected("nicht mehr verbunden")
+    await bridge.connect()
+    with pytest.raises(MatterUnavailableError, match="matter-server"):
+        await bridge.commission_with_code("MT:ABC123")
+    await bridge.disconnect()
+
+
+async def test_a_device_side_commissioning_failure_stays_a_commissioning_error(client):
+    """Eine Ablehnung durch das Geraet selbst (z. B. falscher Code) bleibt
+    ein CommissioningError - nur der Verbindungsverlust zu matter-server
+    wird umgeleitet."""
+    bridge, upstream = client
+    upstream.fail_with = NodeCommissionFailed("Timeout during commissioning")
+    await bridge.connect()
+    with pytest.raises(CommissioningError, match="Einlernen fehlgeschlagen"):
+        await bridge.commission_with_code("MT:ABC123")
+    await bridge.disconnect()
+
+
+async def test_cancellation_during_commissioning_propagates_unwrapped(client):
+    """asyncio.CancelledError ist eine BaseException, keine Exception - weder
+    der Geraete- noch der Verbindungsverlust-Zweig duerfen sie abfangen."""
+    bridge, upstream = client
+    upstream.fail_with = asyncio.CancelledError()
+    await bridge.connect()
+    with pytest.raises(asyncio.CancelledError):
         await bridge.commission_with_code("MT:ABC123")
     await bridge.disconnect()
 

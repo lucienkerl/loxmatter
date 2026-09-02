@@ -102,15 +102,17 @@ class MatterUnavailableError(RuntimeError):
 
 
 class CommissioningError(RuntimeError):
-    """Das Einlernen eines Geraets ist fehlgeschlagen.
+    """Das Einlernen eines Geraets ist am Geraet selbst gescheitert (z. B.
+    falscher Code, Geraet haengt schon in einem anderen Oekosystem, Timeout
+    beim Interview).
 
-    Fasst sowohl eine Ablehnung durch das Geraet (z. B. falscher Code, schon
-    in einem anderen Oekosystem) als auch einen Verbindungsabbruch zu
-    matter-server waehrend des Einlernens zusammen — beides erreicht diese
-    Klasse ueber `except Exception` in commission_with_code(). Die
-    urspruengliche Ausnahme bleibt ueber `__cause__` erhalten; ein Aufrufer,
-    der zwischen "Geraet hat abgelehnt" und "Verbindung verloren"
-    unterscheiden will, muss dort nachsehen (siehe Task-1-Report)."""
+    Ein Verbindungsverlust zu matter-server WAEHREND des Einlernens ist
+    davon ausdruecklich abgegrenzt: commission_with_code() faengt
+    `NotConnected`/`ConnectionClosed`/`CannotConnect` gesondert ab und wirft
+    dafuer `MatterUnavailableError`, denn nur so laesst sich unterscheiden,
+    ob das Geraet abgelehnt hat oder matter-server nicht erreichbar war
+    (Spec 8.1/9, Review-Fix Task 1). Die urspruengliche Ausnahme bleibt ueber
+    `__cause__` erhalten."""
 
 
 class RuntimeEventHandler(Protocol):
@@ -341,8 +343,21 @@ class BridgeMatterClient:
         wurde.
         """
         upstream = self._require_upstream()
+
+        # Lazy importiert wie _default_session_factory: Tests mit einem
+        # Fake-Upstream sollen matter_server nie laden müssen.
+        from matter_server.client.exceptions import CannotConnect, ConnectionClosed, NotConnected
+
         try:
             node = await upstream.commission_with_code(code)
+        except (NotConnected, ConnectionClosed, CannotConnect) as exc:
+            # Verbindungsverlust zu matter-server ist keine Ablehnung durch
+            # das Geraet — beides landete zuvor ununterscheidbar in
+            # CommissioningError (Review-Fix, siehe Task-1-Report). Fängt
+            # diesen Zweig VOR dem generischen except Exception unten ab,
+            # sonst würde er dort mitgefangen.
+            msg = f"matter-server nicht erreichbar: {exc}"
+            raise MatterUnavailableError(msg) from exc
         except Exception as exc:
             raise CommissioningError(f"Einlernen fehlgeschlagen: {exc}") from exc
         return NodeSnapshot.from_raw(
