@@ -6,7 +6,7 @@
 
 **Architecture:** Ein Paket `loxmatter.matter` mit vier Modulen ohne gegenseitige Zyklen: `paths` (Pfad-Parsing, reine Funktionen), `models` (unveränderliche Datenklassen), `discovery` (Zerlegung eines Node-Abbilds in Signale, rein), `client` (der einzige Teil mit I/O, dünne Hülle um `matter_server.client.MatterClient`). Die Zerlegung ist bewusst von der Verbindung getrennt: sie arbeitet auf einem JSON-Abbild und ist damit gegen eingecheckte Fixtures echter Geräte testbar, ohne Hardware und ohne Netz.
 
-**Tech Stack:** Python 3.12, `uv` als Paketmanager, `python-matter-server[client]`, `pytest`, `pytest-asyncio`, `ruff`, `mypy`, `typer` für die CLI.
+**Tech Stack:** Python 3.12, `uv` als Paketmanager, `python-matter-server>=8.1.2`, `pytest`, `pytest-asyncio`, `ruff`, `mypy`, `typer` für die CLI.
 
 ## Global Constraints
 
@@ -32,6 +32,7 @@ Aus der Spec, gelten für jede Task:
 | `src/loxmatter/cli.py` | `loxmatter inspect` |
 | `scripts/record_node.py` | Node-Abbild von echter Hardware als Fixture speichern |
 | `tests/fixtures/nodes/*.json` | Eingecheckte Abbilder echter Geräte |
+| `deploy/testhost/` | Compose-Datei und Protokoll der Testumgebung (Task 6, ursprünglich `deploy/testvm/` — Umzug auf den Raspberry Pi wegen fehlendem Bluetooth auf der VM, siehe README dort) |
 
 ---
 
@@ -63,7 +64,7 @@ name = "loxmatter"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "python-matter-server[client]>=7.0.0",
+    "python-matter-server>=8.1.2",
     "typer>=0.12",
 ]
 
@@ -367,11 +368,23 @@ Funktion ist der eigentliche Prüfstein für Spec 3.5.
 - Test: `tests/matter/test_discovery.py`
 
 **Interfaces:**
-- Consumes: `parse_attribute_path`, `GLOBAL_ATTRIBUTE_IDS`, `EVENT_LIST_ID`, `ATTRIBUTE_LIST_ID` aus Task 1; `SignalRef`, `SignalKind`, `NodeSnapshot` aus Task 2
+- Consumes: `parse_attribute_path`, `GLOBAL_ATTRIBUTE_IDS`, `EVENT_LIST_ID`, `ATTRIBUTE_LIST_ID`, `FEATURE_MAP_ID` aus Task 1; `SignalRef`, `SignalKind`, `NodeSnapshot` aus Task 2
 - Produces:
   - `extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]` — sortiert, Attribute und Events
   - `find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]` — Attribute, die das Gerät in seiner `AttributeList` nennt, für die aber kein Wert vorliegt
   - `find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]` — Pfade, an denen das Parsen scheiterte
+  - `FEATURE_MAP_EVENTS: dict[int, tuple[_FeatureEventRule, ...]]` — Cluster-spezifisches Wissen, welche Events eine FeatureMap impliziert
+
+> **Nachtrag, siehe Task 7:** Der Code unten zeigt bereits den korrigierten Stand.
+> Task 3 wurde ursprünglich ohne `FEATURE_MAP_EVENTS` umgesetzt — reine
+> EventList-Ableitung, 10 Tests. Die Validierung an echten Geräten in Task 7
+> (2026-09-01) zeigte, dass keins der beiden geprüften IKEA-Geräte die
+> EventList führt; ein Taster, der nachweislich Tastendrücke sendet, lieferte
+> darüber null Events. Die Korrektur — eine zweite, FeatureMap-basierte
+> Event-Quelle — landete deshalb erst nachträglich in `discovery.py` (Commit
+> `6af2de7`, siehe Task 7 und Spec 3.5/6.3). Diese Sektion wurde im Nachhinein
+> auf den gelieferten Stand aktualisiert, damit sie nicht die längst überholte
+> EventList-only-Fassung als aktuell ausgibt.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -449,6 +462,83 @@ def test_unparsable_paths_are_collected_not_raised():
     snap = snapshot({"kaputt": 1, "1/6/0": True})
     assert find_unparsable_paths(snap) == ["kaputt"]
     assert extract_signals(snap) == [SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)]
+
+
+# Zweite Event-Quelle: FeatureMap des Switch-Clusters (0x003B / 59).
+#
+# EventList (65530) ist optional und laut Validierung an echten IKEA-Geräten
+# (siehe tests/matter/test_real_devices.py) in der Praxis nicht implementiert —
+# ein Taster ohne diese Ableitung liefert null Event-Signale. Die Bedingungen
+# unten sind aus data_model/1.4/clusters/Switch.xml (project-chip/connectedhomeip,
+# maschinenlesbare Transkription der Matter Application Cluster Specification)
+# übernommen: je Event ein mandatoryConform über Feature-Bits.
+
+
+def test_feature_map_ms_only_yields_initial_press_only():
+    # MS (Bit 1) = 0b10 = 2
+    signals = extract_signals(snapshot({"1/59/65532": 2}))
+    assert signals == [SignalRef(1, 59, 1, SignalKind.EVENT)]  # InitialPress
+
+
+def test_feature_map_ms_msr_yields_initial_press_and_short_release():
+    # MS + MSR = 0b110 = 6
+    signals = extract_signals(snapshot({"1/59/65532": 6}))
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),  # InitialPress
+        SignalRef(1, 59, 3, SignalKind.EVENT),  # ShortRelease
+    ]
+
+
+def test_feature_map_ls_only_yields_switch_latched_only():
+    # LS (Bit 0) = 1
+    signals = extract_signals(snapshot({"1/59/65532": 1}))
+    assert signals == [SignalRef(1, 59, 0, SignalKind.EVENT)]  # SwitchLatched
+
+
+def test_feature_map_30_matches_ikea_bilresa_button():
+    # MS + MSR + MSL + MSM = 2 + 4 + 8 + 16 = 30, das reale FeatureMap des
+    # IKEA BILRESA-Tasters (node 4, Endpoints 1 und 2). AS ist nicht gesetzt,
+    # also feuert MultiPressOngoing zusätzlich zu MultiPressComplete; LS ist
+    # nicht gesetzt, SwitchLatched fehlt entsprechend.
+    signals = extract_signals(snapshot({"1/59/65532": 30}))
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),  # InitialPress
+        SignalRef(1, 59, 2, SignalKind.EVENT),  # LongPress
+        SignalRef(1, 59, 3, SignalKind.EVENT),  # ShortRelease
+        SignalRef(1, 59, 4, SignalKind.EVENT),  # LongRelease
+        SignalRef(1, 59, 5, SignalKind.EVENT),  # MultiPressOngoing
+        SignalRef(1, 59, 6, SignalKind.EVENT),  # MultiPressComplete
+    ]
+
+
+def test_feature_map_msm_with_action_switch_excludes_multi_press_ongoing():
+    # MSM + AS = 16 + 32 = 48. MultiPressOngoing verlangt MSM UND NICHT AS.
+    signals = extract_signals(snapshot({"1/59/65532": 48}))
+    assert signals == [SignalRef(1, 59, 6, SignalKind.EVENT)]  # MultiPressComplete
+
+
+def test_feature_map_zero_yields_no_events():
+    assert extract_signals(snapshot({"1/59/65532": 0})) == []
+
+
+def test_feature_map_is_ignored_for_clusters_without_a_table_entry():
+    """Die FeatureMap-Ableitung ist Cluster-spezifisches Wissen — für Cluster
+    ohne Eintrag in FEATURE_MAP_EVENTS darf sie nichts erfinden."""
+    assert extract_signals(snapshot({"1/6/65532": 30})) == []
+
+
+def test_event_list_and_feature_map_are_unioned_and_deduplicated():
+    signals = extract_signals(snapshot({"1/59/65530": [1, 3], "1/59/65532": 6}))
+    # EventList nennt {1, 3}, FeatureMap (MS+MSR) auch {1, 3} — kein Duplikat.
+    assert signals == [
+        SignalRef(1, 59, 1, SignalKind.EVENT),
+        SignalRef(1, 59, 3, SignalKind.EVENT),
+    ]
+
+
+def test_feature_map_attribute_itself_is_not_an_attribute_signal():
+    signals = extract_signals(snapshot({"1/59/65532": 30}))
+    assert all(s.kind is SignalKind.EVENT for s in signals)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -466,22 +556,94 @@ Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.matter.disco
 Rein funktional und ohne I/O — arbeitet auf einem NodeSnapshot und ist damit
 gegen eingecheckte Fixtures echter Geräte testbar.
 
-Grundsatz aus Spec 3.5: hier wird nichts verworfen. Unbekannte Cluster werden
-genauso zu Signalen wie bekannte; die Anreicherung um Namen und Skalierung
-passiert später in profiles/.
+Grundsatz aus Spec 3.5: bei Attributen wird nichts verworfen. Unbekannte
+Cluster werden genauso zu Signalen wie bekannte; die Anreicherung um Namen
+und Skalierung passiert später in profiles/.
+
+Für Events gilt dieser Grundsatz **nicht mehr uneingeschränkt** — das ist die
+Korrektur aus der Validierung an echten Geräten (Phase 1, 2026-09-01, siehe
+Spec 3.5 und 6.3). Die EventList (0xFFFA) ist im Matter-Standard optional und
+in der Praxis bei den geprüften IKEA-Geräten nicht implementiert: ein Taster,
+der nachweislich Tastendrücke sendet, lieferte über die EventList null
+Events. Als zweite, cluster-spezifische Quelle wird deshalb aus der FeatureMap
+(0xFFFC) abgeleitet, welche Events ein Cluster laut Matter-Spezifikation
+generieren *kann* — das Gerät muss die Events dafür nicht selbst auflisten.
+Dieses Wissen steht in `FEATURE_MAP_EVENTS`, einer Tabelle, nicht in
+verzweigendem Code, damit weitere Cluster ergänzbar sind, ohne den Algorithmus
+hier anzufassen. Beide Quellen werden vereinigt und dedupliziert (SignalRef
+ist hashable, das Ergebnis-Set übernimmt das automatisch).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.matter.paths import (
     ATTRIBUTE_LIST_ID,
     EVENT_LIST_ID,
+    FEATURE_MAP_ID,
     GLOBAL_ATTRIBUTE_IDS,
     parse_attribute_path,
 )
+
+# Switch-Cluster (0x003B / 59) — Feature-Bits der FeatureMap nach Matter
+# Application Cluster Specification.
+_SWITCH_CLUSTER_ID = 59
+_LATCHING_SWITCH = 0x01
+_MOMENTARY_SWITCH = 0x02
+_MOMENTARY_SWITCH_RELEASE = 0x04
+_MOMENTARY_SWITCH_LONG_PRESS = 0x08
+_MOMENTARY_SWITCH_MULTI_PRESS = 0x10
+_ACTION_SWITCH = 0x20
+
+
+@dataclass(frozen=True)
+class _FeatureEventRule:
+    """Ein Event, das ein Cluster generiert, wenn bestimmte FeatureMap-Bits
+    gesetzt und andere nicht gesetzt sind."""
+
+    event_id: int
+    requires: int
+    excludes: int = 0
+
+    def applies(self, feature_map: int) -> bool:
+        return (feature_map & self.requires) == self.requires and (feature_map & self.excludes) == 0
+
+
+# Welche Events ein Cluster laut Spezifikation abhängig von seiner FeatureMap
+# generieren kann. Quelle geprüft gegen
+# data_model/1.4/clusters/Switch.xml aus project-chip/connectedhomeip
+# (maschinenlesbare Transkription der Matter Application Cluster
+# Specification) — je Event ein mandatoryConform über Feature-Bits:
+#
+#   SwitchLatched (0)        ← LS
+#   InitialPress (1)         ← MS
+#   LongPress (2)            ← MSL
+#   ShortRelease (3)         ← MSR
+#   LongRelease (4)          ← MSL
+#   MultiPressOngoing (5)    ← MSM UND NICHT AS
+#   MultiPressComplete (6)   ← MSM
+#
+# Weitere Cluster mit Events ohne EventList-Unterstützung kommen hier als
+# weitere Einträge dazu — der Algorithmus in extract_signals ändert sich
+# dafür nicht.
+FEATURE_MAP_EVENTS: dict[int, tuple[_FeatureEventRule, ...]] = {
+    _SWITCH_CLUSTER_ID: (
+        _FeatureEventRule(event_id=0, requires=_LATCHING_SWITCH),
+        _FeatureEventRule(event_id=1, requires=_MOMENTARY_SWITCH),
+        _FeatureEventRule(event_id=2, requires=_MOMENTARY_SWITCH_LONG_PRESS),
+        _FeatureEventRule(event_id=3, requires=_MOMENTARY_SWITCH_RELEASE),
+        _FeatureEventRule(event_id=4, requires=_MOMENTARY_SWITCH_LONG_PRESS),
+        _FeatureEventRule(
+            event_id=5,
+            requires=_MOMENTARY_SWITCH_MULTI_PRESS,
+            excludes=_ACTION_SWITCH,
+        ),
+        _FeatureEventRule(event_id=6, requires=_MOMENTARY_SWITCH_MULTI_PRESS),
+    ),
+}
 
 
 def _parsed_paths(snapshot: NodeSnapshot) -> Iterable[tuple[int, int, int, object]]:
@@ -499,13 +661,32 @@ def _as_id_list(value: object) -> list[int]:
     return [int(item) for item in value if isinstance(item, (int, float))]
 
 
+def _feature_map_event_ids(cluster_id: int, value: object) -> list[int]:
+    """Event-IDs, die laut FEATURE_MAP_EVENTS aus der FeatureMap eines Clusters folgen.
+
+    Leer für Cluster ohne Tabelleneintrag oder eine FeatureMap, die keine der
+    dort hinterlegten Bit-Bedingungen erfüllt.
+    """
+    rules = FEATURE_MAP_EVENTS.get(cluster_id)
+    if not rules or not isinstance(value, (int, float)):
+        return []
+    feature_map = int(value)
+    return [rule.event_id for rule in rules if rule.applies(feature_map)]
+
+
 def extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
-    """Jedes nicht-globale Attribut und jedes gelistete Event wird ein Signal."""
+    """Jedes nicht-globale Attribut wird ein Signal. Events kommen aus zwei
+    vereinigten Quellen: der EventList (falls das Gerät sie führt) und, für
+    Cluster mit Eintrag in FEATURE_MAP_EVENTS, aus der FeatureMap."""
     signals: set[SignalRef] = set()
 
     for endpoint, cluster_id, attribute_id, value in _parsed_paths(snapshot):
         if attribute_id == EVENT_LIST_ID:
             for event_id in _as_id_list(value):
+                signals.add(SignalRef(endpoint, cluster_id, event_id, SignalKind.EVENT))
+            continue
+        if attribute_id == FEATURE_MAP_ID:
+            for event_id in _feature_map_event_ids(cluster_id, value):
                 signals.add(SignalRef(endpoint, cluster_id, event_id, SignalKind.EVENT))
             continue
         if attribute_id in GLOBAL_ATTRIBUTE_IDS:
@@ -551,7 +732,7 @@ def find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_discovery.py -v`
-Expected: PASS, 10 Tests
+Expected: PASS, 19 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -559,6 +740,12 @@ Expected: PASS, 10 Tests
 git add src/loxmatter/matter/discovery.py tests/matter/test_discovery.py
 git commit -m "feat(matter): generische Zerlegung eines Node-Abbilds in Signale"
 ```
+
+Task 3 wurde ursprünglich mit reiner EventList-Ableitung committet (10 Tests, kein
+`FEATURE_MAP_EVENTS`). Die Validierung an echten Geräten in Task 7 zeigte, dass diese
+Ableitung für Events nicht trägt — siehe die Nachtrags-Box am Anfang dieses Tasks und
+Task 7 für den vollständigen Befund. Der Code und die 19 Tests oben spiegeln bereits
+den korrigierten Stand aus Commit `6af2de7`.
 
 ---
 
@@ -576,54 +763,132 @@ Die einzige Stelle mit I/O. Bewusst dünn: sie holt Node-Rohdaten und macht
 - Produces:
   - `class BridgeMatterClient` mit `async def connect(self) -> None`, `async def disconnect(self) -> None`, `async def snapshots(self) -> list[NodeSnapshot]`, `async def snapshot(self, node_id: int) -> NodeSnapshot`
   - `MatterUnavailableError(RuntimeError)` — geworfen, wenn keine Verbindung besteht
-  - Konstruktor: `BridgeMatterClient(url: str, session_factory: Callable[[], Any] | None = None)`
+  - Konstruktor: `BridgeMatterClient(url: str, session_factory: Callable[[Any], Any] | None = None, http_session_factory: Callable[[], Any] | None = None)` — `http_session_factory` baut die aiohttp-`ClientSession`, `session_factory` bekommt diese Session und baut daraus den Upstream-`MatterClient`. `BridgeMatterClient` erzeugt die Session selbst und schließt sie auch selbst wieder (in `disconnect()` und bei einem gescheiterten `connect()`) — `MatterClientConnection.disconnect()` aus python-matter-server schließt nur das Websocket, nicht die ihr übergebene Session.
 
 - [ ] **Step 1: Write the failing test**
 
-Die Tests fahren gegen eine Attrappe des Upstream-Clients — kein Netz, kein Server.
+Die Tests fahren gegen Attrappen des Upstream-Clients und der aiohttp-Session
+— kein Netz, kein Server. Die Attrappe der Session zählt ihre `close()`-Aufrufe,
+damit die Tests das Leck aus der Praxis (Session wird nie geschlossen) auch
+wirklich erkennen.
 
 `tests/matter/test_client.py`:
 
 ```python
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
+from loxmatter.matter import client as client_module
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 
 
 class FakeNode:
+    """Steht für matter_server.client.models.node.MatterNode.
+
+    Die echte MatterNode trägt ihre Rohattribute nicht direkt, sondern unter
+    node_data.attributes — node_id bleibt aber ein Attribut direkt am Node
+    (dort eine Property auf node_data.node_id). Diese Attrappe bildet genau
+    diese Form nach, statt sie der Einfachheit halber abzuflachen.
+    """
+
     def __init__(self, node_id: int, attributes: dict[str, object]):
         self.node_id = node_id
-        self.attributes = attributes
+        self.node_data = SimpleNamespace(attributes=attributes)
 
 
 class FakeUpstream:
-    """Steht für matter_server.client.MatterClient."""
+    """Steht für matter_server.client.MatterClient.
 
-    def __init__(self, nodes: list[FakeNode]):
-        self._nodes = nodes
-        self.connected = False
+    start_listening() bildet den echten Vertrag nach: Sie füllt den
+    Node-Cache, setzt (sofern gewünscht) init_ready und blockiert danach,
+    bis sie abgebrochen wird — genau wie MatterClient.start_listening().
+    get_nodes() liefert bewusst erst etwas zurück, nachdem start_listening()
+    gelaufen ist: Ein Test, der den Listener nie startet, muss den
+    ursprünglichen Fehler (leerer Node-Cache) reproduzieren können.
+    """
+
+    def __init__(
+        self,
+        nodes: list[FakeNode] | None = None,
+        fail_connect: bool = False,
+        fail_disconnect: bool = False,
+        signal_ready: bool = True,
+    ):
+        self._configured_nodes = nodes or []
+        self._nodes: list[FakeNode] = []
         self.disconnect_calls = 0
+        self.start_listening_calls = 0
+        self.cancelled = False
+        self._fail_connect = fail_connect
+        self._fail_disconnect = fail_disconnect
+        self._signal_ready = signal_ready
 
-    async def connect(self) -> None:
-        self.connected = True
+    async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
+        self.start_listening_calls += 1
+        if self._fail_connect:
+            raise RuntimeError("Verbindung fehlgeschlagen")
+        self._nodes = self._configured_nodes
+        if self._signal_ready and init_ready is not None:
+            init_ready.set()
+        try:
+            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
 
     async def disconnect(self) -> None:
-        self.connected = False
         self.disconnect_calls += 1
+        if self._fail_disconnect:
+            raise RuntimeError("Trennung fehlgeschlagen")
 
     def get_nodes(self) -> list[FakeNode]:
         return self._nodes
 
 
+class FakeSession:
+    """Steht für aiohttp.ClientSession — zählt, wie oft close() lief."""
+
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+def make_client(
+    nodes: list[FakeNode] | None = None,
+    *,
+    fail_connect: bool = False,
+    fail_disconnect: bool = False,
+    signal_ready: bool = True,
+) -> tuple[BridgeMatterClient, FakeSession]:
+    """Baut einen BridgeMatterClient mit Attrappen für HTTP-Session und Upstream."""
+    session = FakeSession()
+    upstream = FakeUpstream(
+        nodes or [],
+        fail_connect=fail_connect,
+        fail_disconnect=fail_disconnect,
+        signal_ready=signal_ready,
+    )
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: session,
+    )
+    return bridge, session
+
+
 @pytest.fixture
 def client() -> BridgeMatterClient:
-    upstream = FakeUpstream(
+    bridge, _ = make_client(
         [
             FakeNode(12, {"0/40/1": "IKEA of Sweden", "1/6/0": True}),
             FakeNode(13, {"0/40/1": "IKEA of Sweden", "1/1026/0": 2150}),
         ]
     )
-    return BridgeMatterClient(url="ws://test/ws", session_factory=lambda: upstream)
+    return bridge
 
 
 async def test_snapshots_requires_a_connection(client):
@@ -656,6 +921,215 @@ async def test_disconnect_is_idempotent(client):
     await client.disconnect()
     with pytest.raises(MatterUnavailableError):
         await client.snapshots()
+
+
+async def test_connect_disconnect_closes_session_exactly_once():
+    """BridgeMatterClient erzeugt die Session selbst und muss sie wieder schließen."""
+    bridge, session = make_client([FakeNode(1, {})])
+    await bridge.connect()
+    assert session.close_calls == 0
+    await bridge.disconnect()
+    assert session.close_calls == 1
+
+
+async def test_disconnect_twice_closes_session_once_and_does_not_raise():
+    bridge, session = make_client([FakeNode(1, {})])
+    await bridge.connect()
+    await bridge.disconnect()
+    await bridge.disconnect()
+    assert session.close_calls == 1
+
+
+async def test_failed_connect_closes_session_and_allows_retry():
+    """Ein scheiternder connect() darf die Session nicht leaken und muss einen
+    späteren, erfolgreichen connect() zulassen."""
+    sessions: list[FakeSession] = []
+
+    def http_session_factory() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    attempts = {"n": 0}
+
+    def session_factory(_session: FakeSession) -> FakeUpstream:
+        attempts["n"] += 1
+        return FakeUpstream([FakeNode(1, {})], fail_connect=attempts["n"] == 1)
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=session_factory,
+        http_session_factory=http_session_factory,
+    )
+
+    with pytest.raises(RuntimeError, match="Verbindung fehlgeschlagen"):
+        await bridge.connect()
+
+    assert len(sessions) == 1
+    assert sessions[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
+        await bridge.snapshots()
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+    assert [s.node_id for s in snapshots] == [1]
+    assert sessions[1].close_calls == 0
+
+
+async def test_connect_twice_closes_previous_session_and_does_not_leak():
+    """Ein zweiter connect() ohne dazwischenliegendes disconnect() darf die
+    erste Session nicht unerreichbar hinterlassen — sie muss geschlossen
+    werden, bevor die zweite Session entsteht."""
+    sessions: list[FakeSession] = []
+
+    def http_session_factory() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    def session_factory(_session: FakeSession) -> FakeUpstream:
+        return FakeUpstream([FakeNode(1, {})])
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=session_factory,
+        http_session_factory=http_session_factory,
+    )
+
+    await bridge.connect()
+    await bridge.connect()
+
+    assert len(sessions) == 2
+    assert sessions[0].close_calls == 1
+    assert sessions[1].close_calls == 0
+    snapshots = await bridge.snapshots()
+    assert [s.node_id for s in snapshots] == [1]
+
+
+async def test_disconnect_closes_session_even_if_upstream_disconnect_raises():
+    """Wirft der Upstream in disconnect(), muss die Session trotzdem
+    geschlossen und der Client danach als nicht verbunden erkennbar sein."""
+    bridge, session = make_client([FakeNode(1, {})], fail_disconnect=True)
+    await bridge.connect()
+
+    with pytest.raises(RuntimeError, match="Trennung fehlgeschlagen"):
+        await bridge.disconnect()
+
+    assert session.close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
+        await bridge.snapshots()
+
+
+async def test_connect_cancelled_closes_session_and_propagates_cancellation():
+    """asyncio.CancelledError erbt von BaseException, nicht Exception — ein
+    während des Verbindungsaufbaus abgebrochener connect() darf die Session
+    trotzdem nicht leaken und muss den Abbruch weiterreichen."""
+    session = FakeSession()
+
+    class CancellingUpstream:
+        async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
+            raise asyncio.CancelledError()
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: CancellingUpstream(),
+        http_session_factory=lambda: session,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await bridge.connect()
+
+    assert session.close_calls == 1
+
+
+async def test_connect_times_out_when_listener_never_signals_readiness(monkeypatch):
+    """Der Defekt, den dieser Test verhindert: Ohne Zeitlimit würde connect()
+    entweder ewig auf ein Event warten, das nie kommt, oder — schlimmer — sich
+    fälschlich als verbunden melden, ohne dass der Node-Cache je gefüllt
+    wurde. Ein Listener, der init_ready nie setzt, muss connect() innerhalb
+    des Zeitlimits scheitern lassen."""
+    monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    bridge, _session = make_client([FakeNode(1, {})], signal_ready=False)
+
+    with pytest.raises(MatterUnavailableError, match="keine Bereitschaft"):
+        await bridge.connect()
+
+
+async def test_connect_timeout_closes_session_and_allows_a_later_successful_connect(
+    monkeypatch,
+):
+    """Nach einer Bereitschafts-Zeitüberschreitung muss die eigene Session
+    geschlossen sein, der Client als nicht verbunden gelten, und ein
+    späterer connect() mit einem funktionierenden Upstream muss trotzdem
+    gelingen."""
+    monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    sessions: list[FakeSession] = []
+
+    def http_session_factory() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    attempts = {"n": 0}
+
+    def session_factory(_session: FakeSession) -> FakeUpstream:
+        attempts["n"] += 1
+        return FakeUpstream([FakeNode(1, {})], signal_ready=attempts["n"] != 1)
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=session_factory,
+        http_session_factory=http_session_factory,
+    )
+
+    with pytest.raises(MatterUnavailableError, match="keine Bereitschaft"):
+        await bridge.connect()
+
+    assert len(sessions) == 1
+    assert sessions[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
+        await bridge.snapshots()
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+    assert [s.node_id for s in snapshots] == [1]
+    assert sessions[1].close_calls == 0
+
+
+async def test_disconnect_cancels_the_listener_task():
+    """disconnect() muss den Listener-Task abbrechen, statt ihn einfach
+    herumlaufen zu lassen — sonst bleibt eine Coroutine aktiv, die auf eine
+    inzwischen geschlossene Verbindung wartet."""
+    session = FakeSession()
+    upstream = FakeUpstream([FakeNode(1, {})])
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: session,
+    )
+    await bridge.connect()
+    assert upstream.cancelled is False
+
+    await bridge.disconnect()
+
+    assert upstream.cancelled is True
+
+
+async def test_snapshots_reflect_nodes_populated_by_the_listener():
+    """Regressionstest für den eigentlichen Defekt: Der alte connect() rief
+    upstream.start_listening() nie auf, wodurch der Node-Cache des Upstreams
+    für immer leer blieb — jedes reale Gerät erschien als unbekannt, egal wie
+    viele kommissioniert waren. get_nodes() liefert hier — wie beim echten
+    MatterClient — bewusst erst etwas zurück, nachdem start_listening()
+    gelaufen ist; gegen den alten Code (kein Aufruf von start_listening())
+    schlägt dieser Test fehl."""
+    bridge, _session = make_client([FakeNode(3, {"0/40/1": "Aqara", "1/6/0": True})])
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+
+    assert [s.node_id for s in snapshots] == [3]
+    assert snapshots[0].vendor_name == "Aqara"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -672,46 +1146,175 @@ Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.matter.clien
 
 Bewusst dünn gehalten: holt Rohdaten und macht NodeSnapshots daraus. Die
 Zerlegung in Signale passiert in discovery.py und ist dort ohne Netz getestet.
+
+BridgeMatterClient erzeugt die aiohttp-ClientSession selbst und bleibt damit
+ihr alleiniger Besitzer: MatterClientConnection.disconnect() aus
+python-matter-server schließt nur das Websocket, nicht die Session, die ihr
+übergeben wurde — laut aiohttp-Konvention muss das tun, wer die Session
+erzeugt hat. Deshalb hält diese Klasse die Session-Referenz selbst und
+schließt sie in disconnect() bzw. bei einem gescheiterten connect().
+
+Der Upstream-`MatterClient` füllt seinen Node-Cache ausschließlich in
+`start_listening()` — eine langlaufende Coroutine, die den initialen
+Node-Dump holt, ein `init_ready`-Event setzt und danach weiterläuft, um
+Push-Updates zu empfangen. `connect()` startet sie deshalb als Hintergrund-
+Task und wartet auf das Bereitschafts-Event, bevor der Client sich als
+verbunden meldet; `disconnect()` bricht diesen Task wieder ab, bevor die
+Verbindung geschlossen wird.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Final
 
 from loxmatter.matter.models import NodeSnapshot
+
+# Wie lange connect() auf das Bereitschafts-Event des Listeners wartet, bevor
+# es aufgibt. matter-server schickt den initialen Node-Dump normalerweise
+# binnen weniger Sekunden; das Vielfache dient als Sicherheitsmarge gegen
+# einen langsamen oder hängenden Server.
+LISTENER_READY_TIMEOUT_SECONDS: Final = 10.0
 
 
 class MatterUnavailableError(RuntimeError):
     """matter-server ist nicht verbunden oder kennt den gefragten Node nicht."""
 
 
-def _default_session_factory(url: str) -> Callable[[], Any]:
-    def factory() -> Any:
-        import aiohttp
-        from matter_server.client.client import MatterClient
+async def _cancel_and_await(task: asyncio.Task[Any]) -> None:
+    """Bricht einen Task ab und wartet sein Ende ab.
 
-        return MatterClient(url, aiohttp.ClientSession())
-
-    return factory
+    Rein für Aufräumzwecke gedacht: Ausnahmen aus dem abgebrochenen Task
+    (typischerweise CancelledError, aber auch andere, falls der Task schon
+    vorher mit einem Fehler geendet hat) werden hier verschluckt, damit sie
+    nicht den eigentlichen, bereits laufenden Fehlerpfad überdecken — der
+    Aufrufer hat die relevante Ausnahme an der eigentlichen Fehlerquelle
+    bereits gesehen oder sieht sie dort noch.
+    """
+    task.cancel()
+    with contextlib.suppress(BaseException):
+        await task
 
 
 class BridgeMatterClient:
-    def __init__(self, url: str, session_factory: Callable[[], Any] | None = None) -> None:
+    def __init__(
+        self,
+        url: str,
+        session_factory: Callable[[Any], Any] | None = None,
+        http_session_factory: Callable[[], Any] | None = None,
+    ) -> None:
         self._url = url
-        self._session_factory = session_factory or _default_session_factory(url)
+        self._session_factory = session_factory or self._default_session_factory
+        self._http_session_factory = http_session_factory or self._default_http_session_factory
         self._upstream: Any | None = None
+        self._http_session: Any | None = None
+        self._listener_task: asyncio.Task[Any] | None = None
+
+    def _default_session_factory(self, session: Any) -> Any:
+        # Lazy importiert, damit Tests matter_server nie laden müssen.
+        from matter_server.client.client import MatterClient
+
+        return MatterClient(self._url, session)
+
+    @staticmethod
+    def _default_http_session_factory() -> Any:
+        # Lazy importiert, damit Tests aiohttp nie laden müssen.
+        import aiohttp
+
+        return aiohttp.ClientSession()
+
+    async def _start_listener(self, upstream: Any) -> asyncio.Task[Any]:
+        """Startet upstream.start_listening() als Hintergrund-Task und
+        wartet, bis er den Node-Cache gefüllt und Bereitschaft signalisiert
+        hat. Scheitert der Listener oder meldet er sich nicht rechtzeitig,
+        räumt diese Methode den Task vollständig ab und wirft, statt einen
+        halb verbundenen Task zurückzugeben."""
+        ready = asyncio.Event()
+        listener_task: asyncio.Task[Any] = asyncio.ensure_future(upstream.start_listening(ready))
+        ready_task = asyncio.ensure_future(ready.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                {listener_task, ready_task},
+                timeout=LISTENER_READY_TIMEOUT_SECONDS,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if ready_task in done:
+                # Bereitschaft gemeldet — der Listener läuft jetzt im
+                # Hintergrund weiter, um Push-Updates zu empfangen.
+                return listener_task
+
+            await _cancel_and_await(ready_task)
+
+            if listener_task in done:
+                # Der Listener ist beendet, bevor er Bereitschaft gemeldet
+                # hat. .result() wirft seine ursprüngliche Ausnahme
+                # unverändert weiter (z. B. CannotConnect) — Aufrufer wie
+                # die CLI können sie damit weiterhin gezielt behandeln.
+                listener_task.result()
+                msg = "Listener wurde beendet, bevor er Bereitschaft meldete"
+                raise MatterUnavailableError(msg)
+
+            msg = (
+                f"matter-server hat nach {LISTENER_READY_TIMEOUT_SECONDS:.0f}s "
+                "keine Bereitschaft gemeldet"
+            )
+            raise MatterUnavailableError(msg)
+        except BaseException:
+            await _cancel_and_await(listener_task)
+            raise
 
     async def connect(self) -> None:
-        upstream = self._session_factory()
-        await upstream.connect()
+        # Ein bereits verbundener Client wird bei erneutem connect() sauber
+        # getrennt, bevor neu verbunden wird — sonst würde die alte, noch
+        # offene Session beim Überschreiben von self._upstream/self._http_session
+        # unerreichbar und nie geschlossen.
+        if self._upstream is not None:
+            await self.disconnect()
+        http_session = self._http_session_factory()
+        try:
+            upstream = self._session_factory(http_session)
+            listener_task = await self._start_listener(upstream)
+        except BaseException:
+            # BaseException statt Exception: asyncio.CancelledError erbt von
+            # BaseException, nicht von Exception. Ein während des Verbindungs-
+            # aufbaus abgebrochenes connect() (z. B. durch asyncio.wait_for)
+            # muss die Session trotzdem schließen und den Abbruch weiterreichen.
+            await http_session.close()
+            raise
+        self._http_session = http_session
         self._upstream = upstream
+        self._listener_task = listener_task
 
     async def disconnect(self) -> None:
         if self._upstream is None:
             return
-        await self._upstream.disconnect()
+        upstream = self._upstream
+        http_session = self._http_session
+        listener_task = self._listener_task
+        # Felder vor dem await auf None setzen: so ist der Client sofort als
+        # nicht verbunden erkennbar, auch wenn einer der Schritte unten eine
+        # Ausnahme wirft — disconnect() bleibt idempotent und der
+        # Objektzustand sauber, ganz gleich, wie die Trennung ausgeht.
         self._upstream = None
+        self._http_session = None
+        self._listener_task = None
+        if http_session is None:
+            # Invariante: Ist _upstream gesetzt, ist auch _http_session gesetzt
+            # (beide werden nur gemeinsam in connect() gesetzt). Als expliziter
+            # Fehler statt assert, damit die Prüfung auch unter `python -O`
+            # greift.
+            msg = "interner Fehler: _http_session fehlt trotz aktivem _upstream"
+            raise RuntimeError(msg)
+        try:
+            if listener_task is not None:
+                await _cancel_and_await(listener_task)
+        finally:
+            try:
+                await upstream.disconnect()
+            finally:
+                await http_session.close()
 
     def _require_upstream(self) -> Any:
         if self._upstream is None:
@@ -721,7 +1324,11 @@ class BridgeMatterClient:
     async def snapshots(self) -> list[NodeSnapshot]:
         upstream = self._require_upstream()
         return [
-            NodeSnapshot.from_raw(node.node_id, {"attributes": node.attributes})
+            # Die Rohattribute liegen bei matter_server.MatterNode nicht
+            # direkt auf dem Node, sondern auf node.node_data.attributes —
+            # war bislang unbeobachtbar, weil der Node-Cache vor der
+            # Listener-Anbindung immer leer war (siehe Modul-Docstring).
+            NodeSnapshot.from_raw(node.node_id, {"attributes": node.node_data.attributes})
             for node in upstream.get_nodes()
         ]
 
@@ -735,7 +1342,7 @@ class BridgeMatterClient:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_client.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 15 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -787,10 +1394,14 @@ netzfrei benutzbar.
 ```python
 import json
 from pathlib import Path
+from typing import Any
 
+from matter_server.client.exceptions import CannotConnect
 from typer.testing import CliRunner
 
+from loxmatter import cli
 from loxmatter.cli import app, render_report
+from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.matter.models import NodeSnapshot
 
 FIXTURE = Path(__file__).parent / "fixtures" / "nodes" / "example_light.json"
@@ -830,6 +1441,92 @@ def test_cli_reads_a_fixture_without_network():
     result = CliRunner().invoke(app, ["inspect", "--fixture", str(FIXTURE)])
     assert result.exit_code == 0
     assert "TRADFRI bulb" in result.stdout
+
+
+class _FakeUpstream:
+    """Attrappe für matter_server.client.MatterClient — offline, kein Socket."""
+
+    def __init__(
+        self,
+        nodes: list[Any] | None = None,
+        connect_error: BaseException | None = None,
+    ) -> None:
+        self._nodes = nodes or []
+        self._connect_error = connect_error
+
+    async def connect(self) -> None:
+        if self._connect_error is not None:
+            raise self._connect_error
+
+    async def disconnect(self) -> None:
+        pass
+
+    def get_nodes(self) -> list[Any]:
+        return self._nodes
+
+
+class _FakeHttpSession:
+    async def close(self) -> None:
+        pass
+
+
+def _fake_client(
+    *,
+    nodes: list[Any] | None = None,
+    connect_error: BaseException | None = None,
+) -> BridgeMatterClient:
+    upstream = _FakeUpstream(nodes=nodes, connect_error=connect_error)
+    return BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=_FakeHttpSession,
+    )
+
+
+def test_cli_reports_malformed_fixture_missing_node_id(tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps({"attributes": {}}), encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["inspect", "--fixture", str(broken)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "node_id" in result.stderr
+
+
+def test_cli_reports_fixture_that_is_not_valid_json(tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not valid json", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["inspect", "--fixture", str(broken)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "JSON" in result.stderr
+
+
+def test_cli_reports_node_not_found(monkeypatch):
+    monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(nodes=[]))
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://test/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "1" in result.stderr
+
+
+def test_cli_reports_unreachable_server(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "_build_client",
+        lambda url: _fake_client(connect_error=CannotConnect("boom")),
+    )
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://10.0.1.215:5580/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "nicht erreichbar" in result.stderr
 ```
 
 - [ ] **Step 3: Run test to verify it fails**
@@ -849,10 +1546,12 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import typer
+from matter_server.client.exceptions import CannotConnect
 
-from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.discovery import (
     extract_signals,
     find_unparsable_paths,
@@ -904,28 +1603,63 @@ def render_report(snapshot: NodeSnapshot) -> str:
     return "\n".join(lines)
 
 
+def _fail(message: str) -> NoReturn:
+    """Meldet einen erwarteten CLI-Fehler: eine Zeile auf stderr, danach
+    Programmende mit Exit-Code ≠ 0 — statt eines Tracebacks."""
+    typer.echo(message, err=True)
+    raise typer.Exit(code=1)
+
+
+def _load_fixture(path: Path) -> NodeSnapshot:
+    """Lädt eine Fixture-Datei; meldet kaputten Inhalt als CLI-Fehler statt
+    mit einem rohen KeyError/JSONDecodeError abzubrechen."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        _fail(f"Fixture {path} enthält kein gültiges JSON: {exc}")
+    try:
+        node_id = raw["node_id"]
+    except (KeyError, TypeError):
+        _fail(f"Fixture {path} hat kein Feld 'node_id'.")
+    return NodeSnapshot.from_raw(node_id, raw)
+
+
+def _build_client(url: str) -> BridgeMatterClient:
+    """Eigener Konstruktions-Schritt, damit Tests den Client per Monkeypatch
+    durch eine mit Fake-Factories bestückte Instanz ersetzen können — ohne
+    Netzwerk zu berühren (siehe BridgeMatterClient.session_factory)."""
+    return BridgeMatterClient(url)
+
+
 @app.command()
 def inspect(
     node: int | None = typer.Option(None, help="Node-ID am laufenden matter-server"),
-    fixture: Path | None = typer.Option(None, help="Statt matter-server ein gespeichertes Abbild"),
+    fixture: Path | None = typer.Option(  # noqa: B008 — typer-Idiom, `Path` gilt Ruff nicht als unveränderlich
+        None, help="Statt matter-server ein gespeichertes Abbild"
+    ),
     url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
 ) -> None:
     """Listet alle Attribute und Events eines Geräts auf."""
     if fixture is not None:
-        raw = json.loads(fixture.read_text(encoding="utf-8"))
-        typer.echo(render_report(NodeSnapshot.from_raw(raw["node_id"], raw)))
+        typer.echo(render_report(_load_fixture(fixture)))
         return
 
     if node is None:
         raise typer.BadParameter("entweder --node oder --fixture angeben")
 
     async def run() -> str:
-        client = BridgeMatterClient(url)
-        await client.connect()
+        client = _build_client(url)
         try:
-            return render_report(await client.snapshot(node))
+            await client.connect()
+        except CannotConnect:
+            _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+        try:
+            snapshot = await client.snapshot(node)
+        except MatterUnavailableError:
+            _fail(f"Node {node} ist am matter-server ({url}) nicht bekannt — kommissioniert?")
         finally:
             await client.disconnect()
+        return render_report(snapshot)
 
     typer.echo(asyncio.run(run()))
 ```
@@ -933,7 +1667,7 @@ def inspect(
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_cli.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 9 Tests
 
 - [ ] **Step 6: Commit**
 
@@ -942,9 +1676,201 @@ git add src/loxmatter/cli.py tests/test_cli.py tests/fixtures/nodes/example_ligh
 git commit -m "feat(cli): loxmatter inspect listet Signale eines Geräts"
 ```
 
+Eine spätere Fehlerbehebung ergänzte drei Fehlerpfade — kaputte Fixture (ungültiges
+JSON oder fehlendes `node_id`), unbekannter Node, unerreichbarer matter-server —, die
+zuvor rohe Tracebacks statt sauberer deutscher Meldungen erzeugten. Der obige Code und
+die vier zusätzlichen Tests spiegeln bereits diesen Stand.
+
 ---
 
-### Task 6: Fixtures echter Geräte aufnehmen und Annahme prüfen
+### Task 6: matter-server und OTBR auf dem Test-Host (Raspberry Pi)
+
+Diese Task stand ursprünglich in Phase 6. Sie musste vorgezogen werden, weil Task 7
+ohne laufenden Controller nicht ausführbar ist — die Annahme aus Spec 3.5 lässt sich
+nur an echten Geräten prüfen, und an echte Geräte kommt man nur über einen Controller.
+
+Ziel ist ausdrücklich **nicht** der fertige Produktions-Stack aus Spec 4.1. Es ist die
+Testumgebung, die Phase 1 abschließen kann. Phase 6 baut darauf auf.
+
+**Files:**
+- Create: `deploy/testhost/docker-compose.yml`
+- Create: `deploy/testhost/.env.example`
+- Create: `deploy/testhost/README.md`
+
+**Interfaces:**
+- Consumes: nichts aus früheren Tasks
+- Produces: eine erreichbare WebSocket-URL `ws://10.0.1.56:5580/ws`, die Task 7 als `--url` benutzt
+  (siehe `deploy/testhost/README.md`)
+
+#### Die Umgebung, bereits erhoben
+
+Nicht erneut ermitteln — diese Werte sind auf dem Pi nachgesehen:
+
+| | Wert |
+|---|---|
+| Host | `pi@10.0.1.56`, SSH-Key eingerichtet |
+| OS | Debian 13 "trixie" (Raspberry Pi OS), aarch64 |
+| Modell | Raspberry Pi 4 Model B Rev 1.5, 8 GB RAM |
+| Backbone-Interface | `wlan0` (kein Ethernet-Kabel gesteckt) |
+| Funkmodul | SONOFF Dongle Plus MG24 (Silicon Labs CP210x), Thread-Firmware bereits aufgespielt |
+| Geräteknoten | `/dev/ttyUSB0`, Gruppe `dialout` |
+| Bluetooth | eingebauter Adapter `hci0` |
+| IPv6 | nur link-local, `forwarding=0` |
+| Docker | nicht installiert |
+
+**Warum ein Pi und keine VM:** Diese Umgebung lief zuerst auf einer Ubuntu-VM
+(`lucienkerl@10.0.1.215`, Backbone-Interface `ens18`). Sie musste auf den Pi umziehen,
+weil die VM **keinen Bluetooth-Adapter hatte** — Matter-Commissioning läuft über BLE,
+und ohne Adapter kann kein Gerät je eingelernt werden. Der Pi hat mit `hci0` einen
+eingebauten Adapter. Alle sonstigen Funde von der VM (Baudrate, OTBR-Image-Variante,
+NAT64/Firewall-Workaround) gelten unverändert für den Pi — derselbe Dongle, dieselbe
+Firmware, dasselbe Image — und sind in `deploy/testhost/README.md` unter "Historie:
+die VM" festgehalten.
+
+**Zum fehlenden globalen IPv6:** für Thread-Geräte unkritisch. Der OTBR spannt auf
+`wpan0` ein eigenes ULA-Präfix auf, und matter-server läuft mit `network_mode: host`
+daneben und erreicht die Geräte über die Route dorthin. Erst Matter-über-WLAN bräuchte
+globales IPv6 im LAN. Notwendig ist lediglich `forwarding=1`.
+
+#### Schritt 0: Root-Schritte (vom Menschen auszuführen)
+
+`sudo` verlangt auf diesem Pi ein Passwort, das der Agent weder erfragen noch benutzen
+darf. Diese Befehle führt der Betreiber selbst aus, danach übernimmt der Agent:
+
+```bash
+sudo apt update && sudo apt install -y docker.io docker-compose-v2
+sudo usermod -aG docker,dialout "$USER"
+printf 'net.ipv6.conf.all.forwarding=1\nnet.ipv4.ip_forward=1\n' | sudo tee /etc/sysctl.d/99-matter.conf
+sudo sysctl --system
+```
+
+Danach **neu anmelden** (Gruppenmitgliedschaften greifen erst in einer neuen Sitzung).
+
+- [ ] **Step 1: Voraussetzungen bestätigen**
+
+```bash
+ssh pi@10.0.1.56 'id -nG; docker ps >/dev/null && echo docker-ok; ls -l /dev/ttyUSB0; sysctl net.ipv6.conf.all.forwarding'
+```
+
+Erwartet: `docker` und `dialout` in den Gruppen, `docker-ok`, `forwarding = 1`.
+Fehlt etwas, ist Schritt 0 unvollständig — melde das, statt es mit `sudo` zu umgehen.
+
+- [ ] **Step 2: Compose-Dateien schreiben**
+
+`deploy/testhost/.env.example`:
+
+```
+RADIO_DEVICE=/dev/ttyUSB0
+RADIO_BAUDRATE=460800
+BACKBONE_IF=wlan0
+# id des Bluetooth-Adapters (aus `hci0` -> 0) fuer BLE-Commissioning durch
+# matter-server. Der Pi hat nur hci0, daher 0; siehe README "BLE aktivieren".
+BLUETOOTH_ADAPTER=0
+```
+
+`deploy/testhost/docker-compose.yml`:
+
+```yaml
+# Testumgebung fuer Phase 1 - NICHT der Produktions-Stack aus Spec 4.1.
+services:
+  otbr:
+    image: openthread/otbr:latest
+    container_name: otbr
+    network_mode: host
+    privileged: true
+    restart: unless-stopped
+    devices:
+      - ${RADIO_DEVICE}:${RADIO_DEVICE}
+    environment:
+      RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}
+      # Ohne modprobe im Image sind legacy-iptables-Tabellen nicht ladbar —
+      # NAT64/NAT44 und die legacy-Firewall wuerden den Container abstuerzen
+      # lassen. Fuer die Testumgebung unkritisch (kein globales IPv6 noetig).
+      NAT64: "0"
+      FIREWALL: "0"
+    command: --backbone-interface ${BACKBONE_IF}
+
+  matter-server:
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    container_name: matter-server
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - apparmor=unconfined
+    volumes:
+      - ./data:/data
+      - /run/dbus:/run/dbus:ro
+    # --bluetooth-adapter aktiviert BLE-Commissioning ueber den in
+    # BLUETOOTH_ADAPTER benannten Adapter — der Grund, warum diese
+    # Testumgebung ueberhaupt auf den Pi umgezogen ist (siehe oben).
+    command:
+      - --storage-path
+      - /data
+      - --paa-root-cert-dir
+      - /data/credentials
+      - --bluetooth-adapter
+      - "${BLUETOOTH_ADAPTER:-0}"
+    depends_on:
+      - otbr
+```
+
+Kopiere `.env.example` auf dem Pi nach `.env`. Die Compose-Syntax von
+`openthread/otbr` ändert sich zwischen Versionen — prüfe sie gegen die Dokumentation
+des Images, bevor du Fehler suchst, die keine sind, und trage Abweichungen im README ein.
+
+**Baudrate:** 460800 ist der wahrscheinlichste Wert für den SONOFF MG24. Verbindet
+sich der RCP nicht, ist 115200 der nächste Kandidat. Rate nicht mehr als zweimal —
+danach lies die Firmware-Dokumentation des Dongles.
+
+- [ ] **Step 3: Starten und Thread-Netz bilden**
+
+```bash
+cd ~/loxmatter-testhost && docker compose up -d
+docker compose logs -f otbr        # bis der RCP verbunden ist
+```
+
+```bash
+docker exec -it otbr ot-ctl dataset init new
+docker exec -it otbr ot-ctl dataset commit active
+docker exec -it otbr ot-ctl ifconfig up
+docker exec -it otbr ot-ctl thread start
+docker exec -it otbr ot-ctl state          # erwartet: leader
+docker exec -it otbr ot-ctl dataset active -x
+```
+
+Den ausgegebenen aktiven Datensatz sichern — er wird zum Einlernen von Thread-Geräten
+gebraucht. **Nicht ins Repository committen**, er ist ein Netzwerk-Credential.
+
+- [ ] **Step 4: Erreichbarkeit vom Entwicklungsrechner prüfen**
+
+Auf dem Mac, im Projektverzeichnis:
+
+```bash
+uv run loxmatter inspect --node 1 --url ws://10.0.1.56:5580/ws
+```
+
+Erwartet: ein Bericht oder `unbekannter Node 1`. Beides beweist, dass die Verbindung
+steht. Ein Verbindungsfehler bedeutet, dass Port 5580 nicht erreichbar ist — dann
+Firewall und `network_mode: host` prüfen.
+
+- [ ] **Step 5: README schreiben**
+
+`deploy/testhost/README.md` hält fest, was tatsächlich funktionierte: die konkrete
+Baudrate, jede Abweichung von Step 2, den Befehl zum Sichern des Fabric-Volumes unter
+`./data`, und den Hinweis, dass der Thread-Datensatz nicht ins Repository gehört.
+Dieses Dokument ist der Rohstoff für den Deployment-Guide in Phase 6 — schreib auf,
+was schiefging, nicht nur was am Ende lief.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add deploy/testhost
+git commit -m "feat(deploy): Testumgebung mit matter-server und OTBR"
+```
+
+---
+
+### Task 7: Fixtures echter Geräte aufnehmen und Annahme prüfen
 
 Der Zweck der ganzen Phase. Hier wird Spec 3.5 belegt oder widerlegt.
 
@@ -966,31 +1892,44 @@ Der Zweck der ganzen Phase. Hier wird Spec 3.5 belegt oder widerlegt.
 """Speichert das Abbild eines echten Geräts als Fixture.
 
 Aufruf: uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb.json
+Mit abweichendem matter-server:
+       uv run python scripts/record_node.py 3 tests/fixtures/nodes/ikea_plug.json \\
+           --url ws://10.0.1.56:5580/ws
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
-import sys
 from pathlib import Path
 
 from loxmatter.matter.client import BridgeMatterClient
 
 
-async def main() -> None:
-    if len(sys.argv) != 3:
-        raise SystemExit("Aufruf: record_node.py <node_id> <zieldatei>")
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("node_id", type=int, help="Node-ID am matter-server")
+    parser.add_argument("target", type=Path, help="Zieldatei für die Fixture")
+    parser.add_argument(
+        "--url",
+        default="ws://localhost:5580/ws",
+        help="Adresse von matter-server (Default: ws://localhost:5580/ws)",
+    )
+    return parser.parse_args()
 
-    node_id, target = int(sys.argv[1]), Path(sys.argv[2])
-    client = BridgeMatterClient("ws://localhost:5580/ws")
+
+async def main() -> None:
+    args = _parse_args()
+
+    client = BridgeMatterClient(args.url)
     await client.connect()
     try:
-        snapshot = await client.snapshot(node_id)
+        snapshot = await client.snapshot(args.node_id)
     finally:
         await client.disconnect()
 
-    target.write_text(
+    args.target.write_text(
         json.dumps(
             {"node_id": snapshot.node_id, "attributes": dict(snapshot.attributes)},
             indent=2,
@@ -1000,21 +1939,27 @@ async def main() -> None:
         + "\n",
         encoding="utf-8",
     )
-    print(f"{target} geschrieben, {len(snapshot.attributes)} Attribute")
+    print(f"{args.target} geschrieben, {len(snapshot.attributes)} Attribute")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
+
+`--url` statt eines zweiten `sys.argv`-Felds, weil der Test-Host (`deploy/testhost/`,
+Task 6) unter einer festen IP im LAN läuft, nicht auf localhost — siehe Aufrufbeispiel
+oben.
 
 - [ ] **Step 2: Echte Geräte aufnehmen**
 
 Mit laufendem matter-server und eingelernten IKEA-Geräten je Gerät einmal ausführen.
-Mindestens ein Gerät pro Klasse aus Spec 3.5, sonst prüft die Phase nur die halbe Annahme.
+Ziel: mindestens ein Gerät pro Klasse aus Spec 3.5, sonst prüft die Phase nur die halbe
+Annahme.
 
 **Die Node-IDs unten sind Platzhalter** — die echten stehen in der matter-server-Oberfläche
-oder kommen aus `uv run loxmatter inspect --node <id>`, bis eine passt. Die Dateinamen
-dagegen bitte genau so, `test_real_devices.py` findet Fixtures über `*.json` und schließt
-nur `example_*` aus:
+oder kommen aus `uv run loxmatter inspect --node <id>`, bis eine passt. Bei den
+Dateinamen zählt nur, dass `test_real_devices.py` sie über `*.json` findet und
+`example_*` ausschließt — nicht ihr genauer Wortlaut:
 
 ```bash
 uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb_color.json
@@ -1022,6 +1967,14 @@ uv run python scripts/record_node.py 13 tests/fixtures/nodes/ikea_plug_energy.js
 uv run python scripts/record_node.py 14 tests/fixtures/nodes/ikea_button.json
 uv run python scripts/record_node.py 15 tests/fixtures/nodes/ikea_sensor.json
 ```
+
+**Ergebnis:** Verfügbar waren nur zwei IKEA-Geräte, keine vier — Bulb (mit
+ColorControl) und Sensor fehlten schlicht in der Wohnung. Aufgenommen wurden
+`tests/fixtures/nodes/ikea_grillplats_plug.json` (Node 3, messende Steckdose) und
+`tests/fixtures/nodes/ikea_bilresa_button.json` (Node 4, zweikanaliger Taster) — Namen
+nach Gerätemodell statt nach Geräteklasse, aus demselben Grund wie oben: der genaue
+Wortlaut war nie die Anforderung. Was das für die Abdeckung der Annahme heißt, steht
+im Befund am Ende dieses Tasks.
 
 - [ ] **Step 3: Write the failing test**
 
@@ -1056,7 +2009,7 @@ def load(path: Path) -> NodeSnapshot:
 
 
 def test_real_device_fixtures_exist():
-    assert REAL_DEVICES, "Task 6 Schritt 2 wurde nicht ausgeführt — keine echten Abbilder da"
+    assert REAL_DEVICES, "Task 7 Schritt 2 wurde nicht ausgeführt — keine echten Abbilder da"
 
 
 @pytest.mark.parametrize("path", REAL_DEVICES, ids=lambda p: p.stem)
@@ -1077,8 +2030,7 @@ def test_device_yields_at_least_one_signal(path):
 def test_at_least_one_fixture_carries_events():
     """Taster sind der Sonderfall aus Spec 6.3 — ohne sie ist die Annahme halb geprüft."""
     with_events = [
-        p for p in REAL_DEVICES
-        if any(s.kind is SignalKind.EVENT for s in extract_signals(load(p)))
+        p for p in REAL_DEVICES if any(s.kind is SignalKind.EVENT for s in extract_signals(load(p)))
     ]
     assert with_events, "kein aufgenommenes Gerät liefert Events — Taster fehlt"
 
@@ -1086,8 +2038,7 @@ def test_at_least_one_fixture_carries_events():
 def test_at_least_one_fixture_carries_energy_measurement():
     """Spec 7.3: messende Steckdose, Cluster 144 ElectricalPowerMeasurement."""
     with_energy = [
-        p for p in REAL_DEVICES
-        if any(s.cluster_id == 144 for s in extract_signals(load(p)))
+        p for p in REAL_DEVICES if any(s.cluster_id == 144 for s in extract_signals(load(p)))
     ]
     assert with_energy, "kein aufgenommenes Gerät misst Leistung"
 ```
@@ -1121,6 +2072,16 @@ fehlten, Events über die EventList auffindbar. Die generische Zerlegung trägt.
 
 Bei negativem Befund stattdessen beschreiben, was nicht trägt und wie 3.5 sich ändert.
 
+**Nachtrag zur Abdeckungs-Latte aus Step 2:** "mindestens ein Gerät pro Klasse, sonst
+prüft die Phase nur die halbe Annahme" wurde **nicht erreicht**. Verfügbar und geprüft
+waren nur zwei Klassen — messende Steckdose (`ikea_grillplats_plug.json`) und Taster
+(`ikea_bilresa_button.json`). Eine Lampe mit ColorControl-Cluster und ein Sensor waren
+nicht vorhanden und blieben ungeprüft. Die Spec ist an der Stelle ehrlich (n=2), aber
+sie hat bislang nicht festgehalten, dass die Latte selbst gerissen wurde. Konsequenz:
+ColorControl geht ungeprüft in Phase 4, wo die Farbraum-Umrechnung liegt — dort muss
+das nachgeholt werden, bevor die generische Zerlegung für diesen Cluster als belegt
+gilt.
+
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -1130,7 +2091,7 @@ git commit -m "test(matter): Spec 3.5 an echten IKEA-Geräten validiert"
 
 ---
 
-### Task 7: CI und Qualitätsschranke
+### Task 8: CI und Qualitätsschranke
 
 **Files:**
 - Create: `.github/workflows/ci.yml`

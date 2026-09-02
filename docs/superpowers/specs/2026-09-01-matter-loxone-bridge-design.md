@@ -93,6 +93,42 @@ unbekannte Cluster werden trotzdem roh exportiert.
 Konsequenz: neue Geräte funktionieren am Tag null, nur mit hässlicheren Namen. Die
 Tabelle ist eine Anreicherungsschicht, kein Gatekeeper.
 
+**Validierung (Phase 1, 2026-09-01).** Geprüft an 2 realen IKEA-Geräten am
+laufenden matter-server (`ws://10.0.1.56:5580/ws`): Node 3 „IKEA of Sweden
+GRILLPLATS Plug" (messende Steckdose, Cluster 144 ElectricalPowerMeasurement,
+145 ElectricalEnergyMeasurement) und Node 4 „IKEA of Sweden BILRESA dual
+button" (zweikanaliger Taster, Switch-Cluster 59 auf Endpoint 1 und 2).
+Aufgenommene Abbilder liegen unter `tests/fixtures/nodes/`.
+
+Was trägt: Bei beiden Geräten war jeder Attributpfad parsebar
+(`find_unparsable_paths` leer), und kein vom Gerät in seiner `AttributeList`
+gelistetes Attribut fehlte im gelieferten Snapshot (`find_unreported_attributes`
+leer). Unbekannte Cluster wurden unverändert mitextrahiert. Für Attribute trägt
+die generische Zerlegung damit uneingeschränkt.
+
+Was nicht trägt, und warum das ein echter Befund ist statt einer Randnotiz:
+**keins der beiden Geräte führt die `EventList` (0xFFFA)**. Beim Taster fehlt
+sie schlicht in der `AttributeList` des Switch-Clusters (`1/59/65531` =
+`[0, 1, 2, 65528, 65529, 65531, 65532, 65533]` — 65530 ist nicht dabei); das
+globale Attribut ist im Matter-Standard optional, und IKEA implementiert es
+nicht. Ein Gerät, das nachweislich Tastendrücke sendet, lieferte über die
+reine EventList-Ableitung **null** Events. Attribut-Zerlegung bleibt
+generisch — sie braucht kein Cluster-Wissen und übersieht nichts.
+**Event-Zerlegung kann das nicht mehr uneingeschränkt sein**: welche Events
+ein Cluster erzeugt, muss aus der FeatureMap abgeleitet werden, und diese
+Ableitung ist zwangsläufig Cluster-spezifisches Wissen (Korrektur in 6.3,
+umgesetzt in `discovery.FEATURE_MAP_EVENTS`). Das ist eine Grenze der
+Aussage „generisch statt kuratiert" oben, kein Detail am Rand.
+
+Zweiter Befund derselben Aufnahme: **45 der 159 extrahierten Attributsignale
+der Steckdose sind nicht skalar** — Listen, Structs oder Strings, z. B.
+`0/29/1 = [29, 31, 40, ...]`, `0/31/0 = [{...}]`, `0/40/1 = 'IKEA of Sweden'`.
+Die generische Zerlegung übersieht davon nichts — sie liefert alle 159 als
+Signal —, aber gut ein Viertel des Gefundenen (28,3 %) lässt sich nicht 1:1
+auf einen virtuellen UDP-Eingang abbilden, der nur Zahlen und digitale Werte
+kennt (für Strings gibt es immerhin einen virtuellen Text-Eingang; für Listen
+und Structs nichts). Konsequenz für den Exporter (6.6) und die WebUI (8).
+
 ---
 
 ## 4. Systemarchitektur
@@ -285,6 +321,24 @@ normalisiertem Gerätelabel.
 
 ### 6.3 Events
 
+**Event-Erkennung (korrigiert, Phase 1, 2026-09-01).** Ursprünglich war hier
+angenommen, dass sich Events wie Attribute generisch aus der `EventList`
+(0xFFFA) jedes Clusters lesen lassen. Die Validierung in 3.5 hat das
+widerlegt: keins der geprüften Geräte führt dieses global optionale Attribut.
+Event-Erkennung ist deshalb **FeatureMap-basiert** und cluster-spezifisch:
+für den Switch-Cluster (59) steht in `discovery.FEATURE_MAP_EVENTS`, welches
+Event welche FeatureMap-Bits voraussetzt — `SwitchLatched` ← LS, `InitialPress`
+← MS, `LongPress`/`LongRelease` ← MSL, `ShortRelease` ← MSR,
+`MultiPressOngoing` ← MSM ∧ ¬AS, `MultiPressComplete` ← MSM. Geprüft gegen
+`data_model/1.4/clusters/Switch.xml` aus `project-chip/connectedhomeip`, der
+maschinenlesbaren Transkription der Matter Application Cluster Specification
+(`mandatoryConform`-Bedingung je Event). Die `EventList` bleibt als
+**zusätzliche** Quelle bestehen — sie kostet nichts, und einzelne Geräte
+implementieren sie durchaus —, ihre Treffer werden mit denen aus der
+FeatureMap vereinigt und dedupliziert. Weitere Cluster mit Events kommen als
+weitere Tabelleneinträge dazu, ohne den Algorithmus in `extract_signals`
+anzufassen.
+
 Der Matter-`Switch`-Cluster liefert `InitialPress`, `ShortRelease`, `LongPress`,
 `MultiPressComplete`. Ein virtueller UDP-Eingang kennt nur Werte, kein Event-Konzept.
 
@@ -313,6 +367,29 @@ bis das nächste Update eintrifft — bei einem Temperatursensor potenziell Stun
 - `bridge_alive` — global, toggelt alle 30 s. Als Watchdog in Loxone; deckt „Container
   tot" und „Netz weg" gleichermaßen ab.
 
+### 6.6 Nicht exportierbare Werte
+
+**Befund (Phase 1, 2026-09-01).** Gut ein Viertel der generisch extrahierten
+Attributsignale ist nicht exportierbar, weil ein virtueller UDP-Eingang nur
+Zahlen und digitale Werte annimmt (siehe 3.5): bei der geprüften Steckdose 45
+von 159 (28,3 %). Strings lassen sich noch über einen virtuellen Text-Eingang
+ausgeben; für Listen und Structs (`0/29/1 = [29, 31, 40, ...]`,
+`0/31/0 = [{...}]`) gibt es in Loxone **keine** Entsprechung.
+
+Der Exporter (Phase 3) braucht dafür eine explizite Regel statt eines
+impliziten Verhaltens: Signale mit Listen- oder Struct-Werten werden beim
+Export ausgelassen, Strings gehen an einen virtuellen Text-Eingang statt an
+den numerischen `VirtualInUdpCmd`. Die generische Zerlegung selbst ändert
+sich dadurch nicht — sie liefert weiterhin alles, was das Gerät anbietet; die
+Auswahl „exportierbar oder nicht" entsteht erst beim Export, nicht bei der
+Extraktion. Siehe 8 für die Konsequenz in der WebUI.
+
+Eine vierte, stille Kategorie kommt dazu: bei der Steckdose tragen 5 der 159
+Attributsignale den Wert `null` (z. B. `0/49/7`) — weder unreportiert (der
+Pfad ist da), noch unparsebar, noch nicht-skalar im Sinne von oben, aber
+genauso wenig ein Zahlen- oder Digitalwert; der Exporter muss auch für `null`
+eine explizite Entscheidung treffen.
+
 ---
 
 ## 7. Matter-Integration
@@ -333,6 +410,15 @@ Eine IKEA DIRIGERA oder vergleichbare Matter-Bridge erscheint als *ein* Node mit
 Endpoints. Die WebUI muss Endpoints darum als eigenständige, benennbare Einheiten
 darstellen, nicht als Unterpunkte eines Geräts. Das Datenmodell trägt das bereits
 (`Signal.endpoint`).
+
+**Fehlende UniqueID (Phase 1, 2026-09-01).** Der IKEA BILRESA-Taster (node 4)
+liefert kein `UniqueID` (BasicInformation, `0/40/18`) — das Attribut fehlt
+komplett, nicht nur der Wert ist leer. `NodeSnapshot.from_raw` liest es
+bereits tolerant (leerer String statt Fehler), `loxmatter inspect` zeigt
+entsprechend `Unique ID: —`. Das Datenmodell stützt sich in 5 auf `unique_id`,
+weil sie eine Neuvergabe der Node-ID überlebt — für Geräte ohne UniqueID gilt
+das nicht, dort bleibt `device_id` die einzig stabile Kennung. Kein
+Randfall: Hersteller lassen dieses optionale Attribut real aus.
 
 ### 7.3 Werte und Skalierung
 
@@ -386,7 +472,10 @@ naheliegenden Aktionen:
 **2. Signale** — pro Gerät der vollständige Attribut- und Event-Baum mit Live-Wert.
 Checkbox „nach Loxone exportieren", editierbarer Titel, Key sichtbar aber nicht
 editierbar. Schreibbare Attribute lassen sich hier **roh setzen** — für alles, wofür
-Ansicht 1 keinen Regler hat, und für unbekannte Cluster.
+Ansicht 1 keinen Regler hat, und für unbekannte Cluster. Nicht-exportierbare Werte
+(Listen und Structs, siehe 6.6) werden trotzdem angezeigt, mit einem Hinweis statt
+der Export-Checkbox — gerade zur Diagnose sind sie nützlich, auch wenn sie nie ein
+UDP-Datagramm werden.
 
 **3. Export** — Miniserver-IP und UDP-Port eintragen. Vorlagen pro Gerät herunterladen,
 einzeln oder als ZIP; Filter „nur noch nicht exportierte Geräte". Pro Gerät ist

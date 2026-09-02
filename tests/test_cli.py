@@ -1,0 +1,192 @@
+import asyncio
+import json
+from pathlib import Path
+from typing import Any
+
+from matter_server.client.exceptions import CannotConnect
+from typer.testing import CliRunner
+
+from loxmatter import cli
+from loxmatter.cli import app, render_report
+from loxmatter.matter import client as matter_client
+from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.matter.models import NodeSnapshot
+
+FIXTURE = Path(__file__).parent / "fixtures" / "nodes" / "example_light.json"
+
+
+def load() -> NodeSnapshot:
+    raw = json.loads(FIXTURE.read_text())
+    return NodeSnapshot.from_raw(raw["node_id"], raw)
+
+
+def test_report_names_the_device():
+    report = render_report(load())
+    assert "IKEA of Sweden" in report
+    assert "TRADFRI bulb" in report
+
+
+def test_report_lists_attribute_and_event_signals():
+    report = render_report(load())
+    assert "1/6/0" in report
+    assert "1/8/0" in report
+    assert "1/59/0" in report  # Event aus der EventList
+    assert "1/59/1" in report
+
+
+def test_report_hides_global_attributes():
+    assert "65531" not in render_report(load())
+
+
+def test_report_flags_attributes_the_device_claimed_but_did_not_report():
+    # AttributeList nennt 0 und 16, geliefert wurde nur 0.
+    report = render_report(load())
+    assert "NICHT GELIEFERT" in report
+    assert "1/6/16" in report
+
+
+def test_cli_reads_a_fixture_without_network():
+    result = CliRunner().invoke(app, ["inspect", "--fixture", str(FIXTURE)])
+    assert result.exit_code == 0
+    assert "TRADFRI bulb" in result.stdout
+
+
+def test_report_flags_unparsable_paths():
+    snap = NodeSnapshot.from_raw(1, {"attributes": {"kaputt": 1, "1/6/0": True}})
+    report = render_report(snap)
+    assert "NICHT LESBAR" in report
+    assert "kaputt" in report
+
+
+def test_report_flags_clusters_with_undiscoverable_events():
+    # Cluster 42 (OTA Requestor) hat mandatorische Events, aber weder eine
+    # EventList noch einen Eintrag in FEATURE_MAP_EVENTS.
+    snap = NodeSnapshot.from_raw(1, {"attributes": {"0/42/0": 1}})
+    report = render_report(snap)
+    assert "NICHT ABLEITBAR" in report
+    assert "0/42" in report
+
+
+def test_report_omits_undiscoverable_events_section_when_empty():
+    # Switch (59) steht in FEATURE_MAP_EVENTS — nichts Unableitbares hier.
+    snap = NodeSnapshot.from_raw(1, {"attributes": {"1/59/0": True}})
+    assert "NICHT ABLEITBAR" not in render_report(snap)
+
+
+class _FakeUpstream:
+    """Attrappe für matter_server.client.MatterClient — offline, kein Socket.
+
+    start_listening() bildet den echten Vertrag nach: Sie füllt den
+    Node-Cache, meldet Bereitschaft über init_ready und blockiert danach, bis
+    sie abgebrochen wird — siehe BridgeMatterClient.connect().
+    """
+
+    def __init__(
+        self,
+        nodes: list[Any] | None = None,
+        connect_error: BaseException | None = None,
+        never_ready: bool = False,
+    ) -> None:
+        self._nodes = nodes or []
+        self._connect_error = connect_error
+        self._never_ready = never_ready
+
+    async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
+        if self._connect_error is not None:
+            raise self._connect_error
+        if init_ready is not None and not self._never_ready:
+            init_ready.set()
+        try:
+            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+        except asyncio.CancelledError:
+            pass
+
+    async def disconnect(self) -> None:
+        pass
+
+    def get_nodes(self) -> list[Any]:
+        return self._nodes
+
+
+class _FakeHttpSession:
+    async def close(self) -> None:
+        pass
+
+
+def _fake_client(
+    *,
+    nodes: list[Any] | None = None,
+    connect_error: BaseException | None = None,
+    never_ready: bool = False,
+) -> BridgeMatterClient:
+    upstream = _FakeUpstream(nodes=nodes, connect_error=connect_error, never_ready=never_ready)
+    return BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=_FakeHttpSession,
+    )
+
+
+def test_cli_reports_malformed_fixture_missing_node_id(tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text(json.dumps({"attributes": {}}), encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["inspect", "--fixture", str(broken)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "node_id" in result.stderr
+
+
+def test_cli_reports_fixture_that_is_not_valid_json(tmp_path):
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not valid json", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["inspect", "--fixture", str(broken)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "JSON" in result.stderr
+
+
+def test_cli_reports_node_not_found(monkeypatch):
+    monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(nodes=[]))
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://test/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "nicht bekannt" in result.stderr
+
+
+def test_cli_reports_unreachable_server(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "_build_client",
+        lambda url: _fake_client(connect_error=CannotConnect("boom")),
+    )
+
+    result = CliRunner().invoke(
+        app, ["inspect", "--node", "1", "--url", "ws://testhost.invalid:5580/ws"]
+    )
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "nicht erreichbar" in result.stderr
+
+
+def test_cli_reports_connect_timeout_without_traceback(monkeypatch):
+    # Der Server nimmt das Websocket an, meldet aber nie Bereitschaft — genau
+    # der Fall, für den LISTENER_READY_TIMEOUT_SECONDS existiert. Klein
+    # gepatcht, damit der Test nicht wirklich zehn Sekunden wartet.
+    monkeypatch.setattr(matter_client, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(never_ready=True))
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://test/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "keine Bereitschaft" in result.stderr
+    # Von den beiden anderen Fehlerpfaden unterscheidbar:
+    assert "nicht erreichbar" not in result.stderr
+    assert "nicht bekannt" not in result.stderr

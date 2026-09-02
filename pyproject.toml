@@ -1,0 +1,30 @@
+[project]
+name = "loxmatter"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.9",
+    "python-matter-server>=8.1.2",
+    "typer>=0.12",
+]
+
+[project.scripts]
+loxmatter = "loxmatter.cli:app"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "mypy>=1.11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+strict = true
+files = ["src", "scripts"]
