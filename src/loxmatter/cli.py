@@ -16,6 +16,7 @@ from loxmatter.export.commands import extract_commands
 from loxmatter.export.documents import (
     LoxoneCommand,
     filename_for,
+    render_system_templates,
     render_virtual_in_udp,
     render_virtual_out,
 )
@@ -216,6 +217,12 @@ def export(
         help="Auch Kommandos unbekannter Cluster exportieren. "
         "Verwaltungscluster bleiben in jedem Fall gesperrt.",
     ),
+    system: bool = typer.Option(
+        False,
+        "--system",
+        help="Erzeugt zusätzlich die geräteunabhängigen Vorlagen "
+        "(bridge_alive, /resync). Einmalig zu importieren.",
+    ),
 ) -> None:
     """Erzeugt die Loxone-Vorlagen für ein Gerät.
 
@@ -224,7 +231,26 @@ def export(
     `--store-path`. Der verwendete Pfad wird ausgegeben, damit ein Nutzer,
     der versehentlich zwei Datenbanken erzeugt hat, das an der Ausgabe sieht
     statt es aus toten Bausteinen in Loxone zu erschließen.
+
+    `bridge_alive` und `/resync` gehören zu keinem Gerät (Spec 6.2, 6.4, 6.5)
+    — deshalb prüft `--system` hier zuerst, vor dem Laden des Abbilds: sonst
+    verlangte der Aufbau des Kommandos immer `--node` oder `--fixture`, auch
+    wenn nur die Systemvorlagen gebraucht werden.
     """
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(
+            f"Zielverzeichnis {out} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
+        )
+    if system:
+        viu_sys, vo_sys = render_system_templates(bridge_ip, port)
+        (out / "VIU_Matter_System.xml").write_bytes(viu_sys)
+        (out / "VO_Matter_System.xml").write_bytes(vo_sys)
+        typer.echo("VIU_Matter_System.xml, VO_Matter_System.xml: Heartbeat und /resync")
+        if fixture is None and node is None:
+            return
+
     snapshot = _load_snapshot(fixture, node, url)
 
     resolved_store_path = _resolve_store_path(store_path)
@@ -267,13 +293,6 @@ def export(
         )
         for c in stored_commands
     ]
-
-    try:
-        out.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        _fail(
-            f"Zielverzeichnis {out} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
-        )
 
     viu = out / filename_for("VIU", device_id, label)
     vo = out / filename_for("VO", device_id, label)
