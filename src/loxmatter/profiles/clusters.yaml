@@ -18,7 +18,7 @@ clusters:
     name: level
     attributes:
       # 0-254 auf 0-100 %: 100/254
-      0: {slug: level, unit: "%", scale: 0.39370078740157477}
+      0: {slug: level, unit: "%", scale: 0.3937007874015748}
     commands:
       0: {slug: level, takes_value: true}
       4: {slug: level_onoff, takes_value: true}
