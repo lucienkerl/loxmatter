@@ -34,7 +34,20 @@ def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
     @app.get("/resync")
     async def resync() -> dict[str, int]:
         """Spec 6.4: haengt im Config-Projekt am Systemstart-Baustein."""
-        return {"gesendet": await runtime.resend_all()}
+        try:
+            count = await runtime.resend_all()
+        except Exception as exc:  # z. B. UdpSender, dessen Socket schon zu ist
+            # logger.exception schreibt den vollen Traceback ins Server-Log,
+            # NICHT in die HTTP-Antwort - dieselbe Begruendung wie bei
+            # /cmd oben: der Unterschied zwischen einem toten Sender und
+            # einem Programmfehler in resend_all soll im Log erhalten
+            # bleiben, auch wenn beides fuer den Aufrufer nur noch
+            # "Full-Resend fehlgeschlagen: <Meldung>" ohne Traceback ist.
+            logger.exception("Full-Resend ueber /resync fehlgeschlagen")
+            raise HTTPException(
+                status_code=502, detail=f"Full-Resend fehlgeschlagen: {exc}"
+            ) from exc
+        return {"gesendet": count}
 
     @app.get("/cmd/{key}/{value}")
     async def command(key: str, value: str) -> dict[str, str]:

@@ -16,6 +16,10 @@ Attribute) — in dem Fall haengt ``_assign_key`` die Element-ID an
 (``d12_1_temp_5``), um die von der Tabelle ``signal.key`` erzwungene
 Eindeutigkeit zu erhalten, ohne den Schluessel eines schon vergebenen
 Signals zu aendern.
+
+Eine Store-Instanz gehoert genau einem Thread und genau einer Event-Loop -
+`sqlite3.Connection` ist ohne `check_same_thread=False` an ihren Erzeuger-
+Thread gebunden, und dieses Modul weicht davon bewusst nicht ab.
 """
 
 from __future__ import annotations
@@ -103,14 +107,7 @@ class UnknownCommandError(KeyError):
 
 class Store:
     def __init__(self, path: Path | str) -> None:
-        # check_same_thread=False: Task 6 haengt die Store hinter FastAPI.
-        # Starlettes TestClient (und je nach Deployment auch ein echter
-        # ASGI-Server) fuehrt die Anfrage-Behandlung nicht zwingend im
-        # Thread aus, der dieses Objekt erzeugt hat - ohne das Flag meldet
-        # sqlite3 dann "objects created in a thread can only be used in
-        # that same thread", obwohl die Zugriffe wegen der einen
-        # Event-Loop ohnehin seriell bleiben.
-        self._db = sqlite3.connect(str(path), check_same_thread=False)
+        self._db = sqlite3.connect(str(path))
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
         self._db.commit()
