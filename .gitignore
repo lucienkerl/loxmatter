@@ -8,3 +8,7 @@ __pycache__/
 # bereinigt abgeleitet, nicht die Originale.
 tests/fixtures/VirtualIn/
 tests/fixtures/VirtualOut/
+
+# Lokale Datenbank des Exporters
+*.sqlite
+*.sqlite3
