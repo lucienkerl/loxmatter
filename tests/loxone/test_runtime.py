@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,27 @@ class FakeSender:
 
     def keys(self) -> list[str]:
         return [k for k, _, _ in self.sent]
+
+
+class MutatingSender(FakeSender):
+    """Wie FakeSender, ruft aber beim ersten Aufruf MIT `force=True` einmalig
+    `mutate` auf - steht fuer eine gleichzeitige Aktualisierung, die waehrend
+    eines laufenden `resend_all()` eintrifft (Review-Fix I4). Reagiert
+    bewusst nur auf `force=True`: nur `resend_all()` setzt das, ein
+    regulaerer `on_attribute()`-Aufruf beim Testaufbau (der ebenfalls
+    `send()` ruft) soll die Mutation nicht vorzeitig - und damit an der
+    falschen Stelle - ausloesen."""
+
+    def __init__(self, mutate: Callable[[], None]) -> None:
+        super().__init__()
+        self._mutate = mutate
+        self._mutated = False
+
+    async def send(self, key: str, value: object, *, force: bool = False) -> bool:
+        if force and not self._mutated:
+            self._mutated = True
+            self._mutate()
+        return await super().send(key, value, force=force)
 
 
 class FlakySender(FakeSender):
@@ -133,6 +155,34 @@ async def test_resend_forces_every_known_value(environment):
     count = await runtime.resend_all()
     assert count == 1
     assert sender.sent[0][2] is True
+
+
+async def test_resend_sends_the_freshest_value_not_a_stale_snapshot(environment):
+    """Review-Fix I4, 2026-09-02: `resend_all()` erfasste Schluessel UND Wert
+    gemeinsam als Momentaufnahme und wartete danach - durch die Entprellung
+    im echten `UdpSender` ausgebremst - je Schluessel. Eine Aktualisierung,
+    die waehrend dieser Wartezeit fuer einen ANDEREN, noch nicht abgearbeiteten
+    Schluessel eintraf, wurde vom verspaeteten Resend anschliessend mit ihrem
+    laengst veralteten Wert wieder ueberschrieben. Dieser Test simuliert das:
+    `MutatingSender` schreibt beim ersten `send()` (fuer `voltage_key`) einen
+    neuen Wert fuer `current_key` - einen Schluessel, den `resend_all()` noch
+    vor sich hat."""
+    _, _, store, device_id, _ = environment
+    current_key = f"d{device_id}_2_current"
+
+    def mutate() -> None:
+        runtime._last_values[current_key] = 555.0
+
+    sender = MutatingSender(mutate)
+    runtime = Runtime(store, sender)
+    await runtime.on_attribute(device_id, "2/144/4", 230000)  # fuellt voltage_key
+    await runtime.on_attribute(device_id, "2/144/5", 100)  # fuellt current_key, danach im Dict
+    sender.sent.clear()
+
+    await runtime.resend_all()
+
+    sent_currents = [v for k, v, _ in sender.sent if k == current_key]
+    assert sent_currents[-1] == 555.0
 
 
 async def test_resend_of_an_empty_runtime_sends_nothing(environment):

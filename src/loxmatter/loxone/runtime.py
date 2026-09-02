@@ -253,9 +253,33 @@ class Runtime:
         await self._sender.send(self._online_key(device_id), online)
 
     async def resend_all(self) -> int:
-        """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei."""
+        """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei.
+
+        Iteriert nur die Schluessel als Momentaufnahme, liest den Wert aber
+        JE SCHLUESSEL erst unmittelbar vor dem Senden aus `_last_values`
+        nach (Review-Fix I4, 2026-09-02). Der alte Code erfasste `(key,
+        value)`-Paare gemeinsam als eine Momentaufnahme und wartete dann -
+        durch die Entprellung im `UdpSender` - bis zu ein paar Sekunden fuer
+        rund 110 Signale. Eine gleichzeitige Aktualisierung waehrend dieser
+        Zeit schrieb ihren neuen Wert schon in `_last_values` und schickte
+        ihn selbst sofort, aber der lang laufende Resend traf mit seiner
+        laengst veralteten Momentaufnahme danach noch einmal ein und
+        ueberschrieb den frischen Wert in Loxone wieder mit dem alten. Der
+        Fehler heilt sich erst beim naechsten echten Update selbst - aber
+        der Ausloeser hier ist `/resync`, verdrahtet an den
+        Systemstart-Baustein, und feuert also genau dann, wenn jemand
+        zusieht.
+        """
         count = 0
-        for key, value in list(self._last_values.items()):
+        for key in list(self._last_values):
+            value = self._last_values.get(key)
+            if value is None:
+                # Zwischen der Momentaufnahme der Schluessel oben und diesem
+                # Zugriff kann ein Schluessel theoretisch verschwunden sein -
+                # praktisch nie, aber `_last_values` kennt kein Loeschen, nur
+                # Ueberschreiben. Sicherer Ueberspringen statt eines
+                # `None`-Werts auf der Leitung.
+                continue
             await self._sender.send(key, value, force=True)
             count += 1
         return count
