@@ -355,15 +355,24 @@ def build_diagnostics_router(
 
     @router.get("/fabric-backup")
     async def fabric_backup() -> Response:
-        """Sicherung des matter-server-Datenverzeichnisses (Spec 4.1, 8) -
-        siehe Moduldocstring, Abschnitt "Die Sicherung ist kein Nebenpunkt".
+        """**UNGESCHUETZT. WER DIESEN PORT ERREICHT, KANN DIE FABRIC
+        UEBERNEHMEN.** Das ist der erste Satz dieses Docstrings mit Absicht,
+        nicht nur eine Randbemerkung weiter unten: diese Route braucht
+        heute weder Token noch sonst eine Authentifizierung. Jeder, der den
+        Port dieses Dienstes erreicht, kann sie ungehindert aufrufen und
+        damit die kompletten Fabric-Credentials herunterladen - siehe
+        Moduldocstring, Abschnitt "Die Sicherung ist kein Nebenpunkt", fuer
+        die Konsequenz daraus (Spec 4.1: der einzige unersetzliche Zustand
+        des Systems). Deshalb bleibt die Volume-Einhaengung, die diese Route
+        ueberhaupt erst mit echten Daten fuettert, in
+        `deploy/testhost/docker-compose.yml` bewusst auskommentiert, bis
+        Task 8 den Token-Schutz liefert (siehe dort).
 
-        **NOCH NICHT durch das Token aus Task 8 geschuetzt.** Wer den Port
-        dieses Dienstes erreicht, kann diese Route heute ungehindert
-        aufrufen und damit die komplette Fabric uebernehmen. Sobald Task 8
-        einen Token-Schutz einfuehrt, wird dessen Pruefung hier als
-        zusaetzlicher `Depends(...)`-Parameter dieser Funktion ergaenzt -
-        eine einzeilige Aenderung, keine Umstrukturierung dieser Route.
+        Sicherung des matter-server-Datenverzeichnisses (Spec 4.1, 8) als
+        Download. Sobald Task 8 einen Token-Schutz einfuehrt, wird dessen
+        Pruefung hier als zusaetzlicher `Depends(...)`-Parameter dieser
+        Funktion ergaenzt - eine einzeilige Aenderung, keine Umstrukturierung
+        dieser Route.
 
         Loggt bewusst NICHTS - weder den aufgeloesten Pfad noch die
         enthaltenen Dateinamen (siehe Moduldocstring)."""

@@ -81,16 +81,21 @@ services:
     network_mode: host
     volumes:
       - loxmatter-store:/data
-      # Read-only Einblick in matter-server's eigenes Datenverzeichnis (Bind-
-      # Mount desselben Host-Pfads wie oben bei matter-server: ./data) -
-      # Grundlage fuer `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6,
-      # Phase 5). Ohne diese Zeile bekaeme loxmatter nie Sicht auf die
-      # Fabric-Credentials: matter-server und loxmatter sind zwei getrennte
-      # Container, `./data` und `loxmatter-store` zwei getrennte Volumes,
-      # die zufaellig beide unter /data haengen. `:ro`, weil dieser Dienst
-      # das Verzeichnis ausschliesslich liest (ZIP-Archiv im Speicher) -
-      # ein Schreibzugriff von hier aus waere ohnehin nie beabsichtigt.
-      - ./data:/matter-data:ro
+      # ACHTUNG (Review-Fix Critical, 2026-09-02): der Read-only-Einblick in
+      # matter-server's eigenes Datenverzeichnis - Grundlage fuer `GET
+      # /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5) - ist
+      # HIER BEWUSST AUSKOMMENTIERT und bleibt es, bis Task 8 den
+      # Token-Schutz fuer die `/api`-Routen liefert. Dieser Dienst laeuft
+      # mit `network_mode: host` (siehe oben, Begruendung), das Netz also
+      # erreicht ihn genauso wie den Miniserver. Ohne Token ist
+      # `/api/diagnostics/fabric-backup` vollkommen ungeschuetzt (siehe deren
+      # Docstring in `src/loxmatter/api/diagnostics.py`) - mit dieser Zeile
+      # eingehaengt waere der Download der kompletten, unersetzlichen
+      # Fabric-Credentials (Spec 4.1) fuer jeden im selben Netz erreichbar,
+      # nicht nur theoretisch moeglich. Erst wenn Task 8s Token die Route
+      # absichert, darf diese Zeile (und `--matter-data-dir` im `command`
+      # unten) wieder aktiv werden - siehe dortigen Plan-Schritt.
+      # - ./data:/matter-data:ro
     environment:
       # Eigener, fester Ort statt des Nutzer-Home-Defaults (siehe
       # `_resolve_store_path` in src/loxmatter/cli.py) - das eingehaengte
@@ -105,8 +110,11 @@ services:
       - ${MINISERVER_IP}
       - --listen
       - "8080"
-      - --matter-data-dir
-      - /matter-data
+      # --matter-data-dir und /matter-data: siehe Kommentar bei der
+      # auskommentierten Volume-Zeile oben - beide gehoeren zusammen und
+      # bleiben deaktiviert, bis Task 8 den Token-Schutz liefert.
+      # - --matter-data-dir
+      # - /matter-data
     depends_on:
       - matter-server
 
