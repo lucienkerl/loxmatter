@@ -183,6 +183,12 @@ class StoredCommand:
     cluster_id: int
     command_id: int
     takes_value: bool
+    # device_id (Review-Fix Important #1, 2026-09-02): dieselbe Begruendung
+    # wie bei `StoredSignal.device_id` oben - `resolve_command` loest einen
+    # Kommando-Schluessel OHNE Geraete-Kontext im Pfad auf (`POST
+    # /api/commands/{key}`), und die aufrufende Route braucht trotzdem die
+    # device_id, um zu pruefen, ob das zugehoerige Geraet noch aktiv ist.
+    device_id: int
 
 
 @dataclass(frozen=True)
@@ -580,4 +586,5 @@ class Store:
             cluster_id=int(row["cluster_id"]),
             command_id=int(row["command_id"]),
             takes_value=bool(row["takes_value"]),
+            device_id=int(row["device_id"]),
         )

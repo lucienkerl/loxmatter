@@ -82,6 +82,25 @@ class CommandOut(BaseModel):
     takes_value: bool
 
 
+class ControlsOut(BaseModel):
+    """Antwort von `GET /api/devices/{device_id}/controls` (Task 4).
+
+    `hidden_raw_commands` (Review-Fix Minor #4, 2026-09-02): wie viele
+    Kommandos des Geraets herausgefiltert wurden, weil `profiles.table.
+    command_slug` sie nicht kennt (siehe `CommandOut` oben und der
+    Docstring der Route). Der Filter selbst bleibt richtig - ein Knopf ohne
+    erkennbare Bedeutung waere nutzlos -, aber ohne diese Zahl verschwindet
+    ein unbekanntes Kommando fuer eine Person, die ein fremdes Geraet
+    diagnostiziert, spurlos. Mit ihr laesst sich die Oberflaeche schreiben:
+    "N weitere Kommandos vorhanden, aber nicht benannt" statt stillschweigend
+    nichts zu zeigen."""
+
+    model_config = ConfigDict(frozen=True)
+
+    commands: list[CommandOut]
+    hidden_raw_commands: int
+
+
 class ValueIn(BaseModel):
     """Rumpf von `POST /api/commands/{key}` und `POST /api/signals/{key}/write`
     (Task 4) - derselbe String-Wert, den `/cmd/{key}/{value}` (Phase 4) als

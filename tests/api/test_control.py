@@ -12,6 +12,7 @@ from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+from loxmatter.profiles.table import command_slug
 
 
 @pytest.fixture
@@ -87,17 +88,58 @@ async def api_failing_invoke(
     store.close()
 
 
+@pytest.fixture
+async def api_raw_commands(
+    tmp_path, no_invoke, fake_runtime, fake_client
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
+    """Wie `api`, aber mit zusaetzlich rohen (unbenannten) Kommandos - fuer
+    `test_hidden_raw_commands_are_counted` (Review-Fix Minor #4,
+    2026-09-02). `extract_commands(snapshot, raw=True)` liefert fuer diese
+    Vorlage nachweislich mehr Kommandos als der Normalmodus (siehe
+    `tests/export/test_commands.py::test_raw_mode_adds_unknown_clusters_
+    but_not_administrative_ones`) - der Unterschied sind genau die
+    Kommandos, die `GET /api/devices/{device_id}/controls` herausfiltert."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot, raw=True), snapshot.node_id)
+
+    app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, store, device_id
+    store.close()
+
+
 async def test_plug_offers_exactly_its_three_commands(api):
     """Spec 6.7: Ausgangsbefehle stammen aus AcceptedCommandList, nicht aus Attributen."""
     client, _, device_id = api
     controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
-    assert sorted(c["slug"] for c in controls) == ["off", "on", "toggle"]
+    assert sorted(c["slug"] for c in controls["commands"]) == ["off", "on", "toggle"]
+    assert controls["hidden_raw_commands"] == 0
 
 
 async def test_button_offers_no_controls(api_button):
     """Ein Taster ist ein Eingabegeraet."""
     client, _, device_id = api_button
-    assert (await client.get(f"/api/devices/{device_id}/controls")).json() == []
+    controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
+    assert controls["commands"] == []
+    assert controls["hidden_raw_commands"] == 0
+
+
+async def test_hidden_raw_commands_are_counted(api_raw_commands):
+    """Ein unbenanntes Kommando bleibt gefiltert, aber nicht spurlos
+    (Review-Fix Minor #4, 2026-09-02)."""
+    client, store, device_id = api_raw_commands
+    stored = store.commands(device_id)
+    named = sum(1 for c in stored if command_slug(c.cluster_id, c.command_id) is not None)
+    assert named < len(stored)  # sonst waere dieser Test nicht aussagekraeftig
+
+    controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
+    assert len(controls["commands"]) == named
+    assert controls["hidden_raw_commands"] == len(stored) - named
+    assert controls["hidden_raw_commands"] > 0
 
 
 async def test_executing_a_command_reaches_matter(api):
@@ -136,3 +178,14 @@ async def test_raw_write_of_a_non_writable_attribute_is_refused(api):
     key = next(s.key for s in store.signals(device_id) if s.ref.cluster_id == 40)
     response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
     assert response.status_code == 400
+
+
+async def test_command_at_a_removed_device_is_refused(api):
+    """RED-Reproduktion: dieselbe Luecke wie bei Signalen (Task 2), jetzt fuer
+    Kommandos (Review-Fix Important #1, 2026-09-02)."""
+    client, store, device_id = api
+    key = f"d{device_id}_1_on"
+    store.forget_device(device_id)
+    response = await client.post(f"/api/commands/{key}", json={"value": "1"})
+    assert response.status_code == 404
+    assert "entfernt" in response.json()["detail"]

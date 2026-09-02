@@ -634,11 +634,13 @@ Ein WebSocket vom Backend zur SPA schiebt Attribut- und Event-Änderungen sowie
 Online-Status durch. Dieselbe Subscription, die den UDP-Sender speist — kein zweiter
 Pfad, kein Polling.
 
-### 8.4 Rohes Attributschreiben: Erlaubnisliste (Task 4, 2026-09-02)
+### 8.4 Rohes Attributschreiben: Erlaubnisliste (Task 4, 2026-09-02; Befund berichtigt,
+Review-Fix Important #2, 2026-09-02)
 
-**Befund: python-matter-server macht die Schreibbarkeit eines Attributs nirgends
-zugänglich.** Geprüft gegen die installierten Pakete (python-matter-server==8.1.2),
-nicht vermutet:
+**Befund: die Schreibbarkeit eines Attributs steht in einer Tabelle, die diese
+Installation nicht laden kann und die python-matter-server nirgends benutzt — nicht,
+wie hier zuerst behauptet, in gar keiner Tabelle.** Geprüft gegen die installierten
+Pakete (python-matter-server==8.1.2), nicht vermutet:
 
 - `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` — die Basisklasse jeder
   generierten Attribut-Klasse (z. B. `BasicInformation.Attributes.NodeLabel`) — trägt
@@ -649,8 +651,29 @@ nicht vermutet:
 - `matter_server.client.client.MatterClient.write_attribute(node_id, attribute_path,
   value)` prüft vorher nichts — der Aufruf geht ungeprüft an den Controller; eine
   Ablehnung käme, wenn überhaupt, als Fehler vom Gerät selbst zurück.
-- Eine Volltextsuche nach „writable“/„Writable“ über beide installierten Pakete
-  (`chip`, `matter_server`) ergab keinen einzigen Treffer.
+- **Eine Volltextsuche nach „writable“ ergab sehr wohl Treffer — hier stand vorher
+  fälschlich das Gegenteil.** `chip/clusters/CHIPClusters.py`, Teil des installierten
+  `chip`-Pakets, trägt eine eigene, von `ClusterObjects` unabhängige Tabelle mit genau
+  dieser Information: `grep -c '"writable": True'
+  .venv/lib/python3.12/site-packages/chip/clusters/CHIPClusters.py` liefert **250**
+  Treffer, und für `BasicInformation` (Cluster 0x28 = 40) sind darin exakt die drei
+  Attribut-IDs 5 (`NodeLabel`), 6 (`Location`) und 16 (`LocalConfigDisabled`) mit
+  `"writable": True` markiert — genau die drei, auf die die Erlaubnisliste unten
+  unabhängig davon schon gegen ein echtes Gerät kam.
+- **Dieses Modul ist trotzdem nicht importierbar, und python-matter-server benutzt es
+  nirgends.** `from chip.clusters.CHIPClusters import ChipClusters` scheitert in
+  dieser Distribution mit `ImportError: cannot import name 'exceptions' from 'chip'`
+  — das Paket `home_assistant_chip_clusters`, das hier `chip.clusters.CHIPClusters`
+  bereitstellt, liefert die Datei ohne das dazugehörige `chip/exceptions.py`, das sie
+  beim Laden voraussetzt. Eine Suche nach `CHIPClusters` im installierten
+  `matter_server`-Paket ergibt außerdem keinen einzigen Treffer.
+
+Die praktische Konsequenz ist dieselbe wie vorher — die Erlaubnisliste bleibt für
+heute richtig —, nur ihre Begründung ist jetzt eine andere: nicht „die Information
+existiert nicht“, sondern „die Information existiert in einer Tabelle, die diese
+Installation nicht laden kann und die python-matter-server selbst nicht liest“. Das
+ist ein Unterschied mit Konsequenz: die zweite Situation hat einen offensichtlichen
+Weg in die Zukunft, den die erste nicht hätte — siehe Offene Punkte, Punkt 7.
 
 **Konsequenz: dieselbe Asymmetrie wie bei Kommandos (6.7), diesmal für Attribute.**
 `POST /api/signals/{key}/write` (`api/control.py`) lehnt jeden Schreibversuch auf ein
@@ -905,3 +928,27 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    `invoke` für Kommandos. Nicht in dieser Phase umgesetzt — hier festgehalten, damit
    Ansicht 2 (8, „Schreibbare Attribute lassen sich hier roh setzen") nicht mehr
    verspricht, als die WebUI heute tatsächlich kann.
+7. **Die von Hand gepflegte Erlaubnisliste (8.4) skaliert nicht über eine Handvoll
+   Geräte hinaus — und es gibt inzwischen einen belegten Weg, sie durch eine Tabelle
+   zu ersetzen** (Review-Fix Important #2, 2026-09-02). `_WRITABLE_ATTRIBUTES`
+   (`api/control.py`) braucht heute für jedes Attribut, das irgendjemand jemals
+   beschreiben möchte, einen eigenen, gegen ein echtes Gerät oder die
+   Matter-Spezifikation belegten Eintrag — bei einer Installation mit mehr als einer
+   Handvoll unterschiedlicher Gerätetypen wird das schnell zur Wartungslast, die
+   keiner mehr pflegt, und eine ungepflegte Erlaubnisliste ist entweder zu eng
+   (fehlende Bedienmöglichkeiten) oder, schlimmer, wird aus Bequemlichkeit durch eine
+   Sperrliste ersetzt (siehe 8.4, wieso das die falsche Asymmetrie wäre). Wie 8.4 jetzt
+   festhält, existiert die Schreibbarkeits-Information tatsächlich, in
+   `chip/clusters/CHIPClusters.py`, nur ist das Modul in dieser Distribution nicht
+   importierbar (`ImportError: cannot import name 'exceptions' from 'chip'`) und
+   python-matter-server liest es nicht. Zwei Wege könnten das ändern: (a) eine
+   spätere Version von `home_assistant_chip_clusters`/`chip` liefert das fehlende
+   `chip/exceptions.py` mit, wodurch `ChipClusters.py` importierbar würde und seine
+   `"writable"`-Flags zur Laufzeit abfragbar wären, oder (b) die Datei wird nicht
+   importiert, sondern als reine Textdaten geparst (sie ist ein großes, aber
+   syntaktisch reguläres Python-Literal) — ein Weg mit eigenem Risiko, weil er ein
+   internes, nicht als Schnittstelle gedachtes Format einer Fremdbibliothek
+   nachbildet und bei einer künftigen Version brechen kann, ohne dass ein Fehlschlag
+   beim Import das anzeigt. Keiner der beiden Wege ist in dieser Phase umgesetzt;
+   festgehalten, weil die heutige Erlaubnisliste eine bewusste, aber nicht die
+   einzig mögliche Antwort auf 8.4s Befund ist.

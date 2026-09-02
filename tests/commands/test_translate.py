@@ -19,6 +19,7 @@ def cmd(cluster: int, command: int, takes_value: bool = False) -> StoredCommand:
         command_id=command,
         takes_value=takes_value,
         slug="test",
+        device_id=1,
     )
 
 

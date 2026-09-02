@@ -842,6 +842,56 @@ git add src/loxmatter/api/control.py tests/api/test_control.py
 git commit -m "feat(api): Geraete aus der Oberflaeche bedienen"
 ```
 
+**Review-Fix (2026-09-02), zwei Important- und zwei Minor-Befunde:**
+
+1. **Important — `POST /api/commands/{key}` prüfte nie, ob das Gerät des Kommandos
+   noch aktiv ist.** `Store.resolve_command` löst den Schlüssel allein über die
+   `command`-Tabelle auf, und `forget_device` löscht dort keine Zeile — es setzt nur
+   `device.active = 0`. Ein Kommando gegen ein bereits entferntes Gerät ließ sich
+   dadurch weiterhin auslösen, während `GET /api/devices/{id}/controls` für dasselbe
+   Gerät korrekt 404 meldete. Behoben nach demselben Muster wie `write_signal` (dort
+   schon vorhanden) und `PATCH /api/signals/{key}` (`api/devices.py`, Review-Fix
+   Important #4 aus Task 2): `StoredCommand` trägt jetzt `device_id`, und
+   `execute_command` prüft `store.device(stored.device_id)`, bevor es übersetzt und
+   auslöst — ein entferntes Gerät liefert 404 mit deutscher Meldung. Neuer Test:
+   `test_command_at_a_removed_device_is_refused`. `GET /api/devices/{id}/controls`
+   und `POST /api/signals/{key}/write` wurden dabei erneut geprüft — beide waren
+   bereits abgesichert (`_require_device` bzw. die vorhandene Prüfung in
+   `write_signal`), keine Änderung nötig.
+2. **Important — Spec 8.4 und der Moduldocstring behaupteten fälschlich, eine
+   Volltextsuche nach „writable“ habe keinen Treffer ergeben.** Tatsächlich trägt
+   `chip/clusters/CHIPClusters.py` (Teil des installierten `chip`-Pakets) 250
+   Vorkommen von `"writable": True`, darunter für `BasicInformation` exakt die drei
+   Attribute, auf die die Erlaubnisliste unabhängig davon schon kam. Die Information
+   existiert also — sie steht nur in einem Modul, das in dieser Distribution nicht
+   importierbar ist (`ImportError: cannot import name 'exceptions' from 'chip'`, weil
+   `home_assistant_chip_clusters` `CHIPClusters.py` ohne das dazugehörige
+   `chip/exceptions.py` ausliefert) und das python-matter-server nirgends benutzt. Die
+   praktische Konsequenz (Erlaubnisliste bleibt richtig) ändert sich dadurch nicht,
+   aber die Begründung wurde in Spec 8.4 und im Moduldocstring korrigiert. Spec 12
+   bekommt dazu einen neuen Punkt 7: die von Hand gepflegte Erlaubnisliste skaliert
+   nicht über eine Handvoll Geräte hinaus und könnte ersetzt werden, sobald dieses
+   Modul importierbar wird oder sich das Parsen als Daten als vertretbar erweist.
+3. **Minor — die 400/501-Antworten von `POST /api/signals/{key}/write` verwiesen auf
+   „den Moduldocstring von api/control.py“**, brauchbar in einem Log, aber nichtssagend
+   für die Oberfläche. Beide Meldungen sagen jetzt selbst auf Deutsch, was los ist und
+   was sich tun lässt, ohne auf eine Datei zu verweisen.
+4. **Minor — `GET /api/devices/{id}/controls` zeigte gefilterte rohe Kommandos gar
+   nicht an**, was korrekt ist (Spec 6.7), aber eine Person, die ein unbekanntes Gerät
+   diagnostiziert, verlor dabei die Information, dass es sie überhaupt gibt. Die Route
+   liefert jetzt `{"commands": [...], "hidden_raw_commands": N}` statt einer nackten
+   Liste (neues Modell `ControlsOut`). Neuer Test:
+   `test_hidden_raw_commands_are_counted`.
+
+Zwei neue Tests (`test_command_at_a_removed_device_is_refused`,
+`test_hidden_raw_commands_are_counted`) zu den ursprünglichen sieben — **Expected:
+PASS, 9 Tests** in `tests/api/test_control.py`.
+
+```bash
+git add src tests docs
+git commit -m "fix(api): Kommandos an entfernte Geraete abweisen"
+```
+
 ---
 
 ### Task 5: Export über die API

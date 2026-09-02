@@ -27,13 +27,34 @@ Pakete, nicht geraten:
   attribute_path, value)` fragt vorher nichts ab - der Aufruf geht
   ungeprueft an den Controller; eine Ablehnung kaeme, wenn ueberhaupt, als
   Fehler vom echten Geraet zurueck, nicht von matter-server selbst.
-- Eine Volltextsuche nach "writable"/"Writable" ueber beide installierten
-  Pakete (`chip`, `matter_server`, python-matter-server==8.1.2) traf auf
-  keinen einzigen Fund.
+- **Berichtigung (Review-Fix Important #2, 2026-09-02): eine Volltextsuche
+  nach "writable" traf sehr wohl Treffer - vorher stand hier faelschlich das
+  Gegenteil.** `chip/clusters/CHIPClusters.py` (Teil des installierten
+  `chip`-Pakets) traegt eine eigene, von `ClusterObjects` unabhaengige
+  Tabelle mit genau diesen Zugriffsrechten: `grep -c '"writable": True'
+  chip/clusters/CHIPClusters.py` liefert 250 Treffer, und fuer
+  `BasicInformation` (Cluster 0x28 = 40) sind darin exakt die drei
+  Attribut-IDs 5 (NodeLabel), 6 (Location) und 16 (LocalConfigDisabled) mit
+  `"writable": True` markiert - genau die drei, auf die `_WRITABLE_
+  ATTRIBUTES` unten unabhaengig davon schon gegen ein echtes Geraet kam.
+  Die Information existiert also, nur nicht dort, wo zuerst gesucht wurde
+  (`ClusterAttributeDescriptor`).
+- **Dieses Modul ist trotzdem nicht importierbar, und nichts in
+  python-matter-server benutzt es.** `from chip.clusters.CHIPClusters
+  import ChipClusters` scheitert in dieser Distribution mit `ImportError:
+  cannot import name 'exceptions' from 'chip'` - das Paket
+  `home_assistant_chip_clusters`, das hier `chip.clusters.CHIPClusters`
+  bereitstellt, liefert `CHIPClusters.py` ohne das dazugehoerige
+  `chip/exceptions.py`, das die Datei beim Laden voraussetzt. Eine
+  Volltextsuche nach `CHIPClusters` im installierten `matter_server`-Paket
+  ergibt ausserdem keinen einzigen Treffer - python-matter-server liest
+  diese Tabelle nirgends.
 
-Damit ist belegt, nicht vermutet: **weder python-matter-server noch die
-zugrunde liegende chip-SDK machen die Schreibbarkeit eines Attributs
-zugaenglich.** Ein roher Schreibversuch gegen ein nur lesbares Attribut faellt
+Praktisch bleibt die Schlussfolgerung deshalb unveraendert, nur ihre
+Begruendung ist jetzt eine andere: **nicht, weil die Schreibbarkeit
+nirgends steht, sondern weil sie in einer Tabelle steht, die diese
+Installation nicht laden kann und die python-matter-server selbst nicht
+benutzt.** Ein roher Schreibversuch gegen ein nur lesbares Attribut faellt
 folglich nicht hier auf, sondern - wenn ueberhaupt - erst am Geraet, in einer
 Form, die diese Bruecke nicht zuverlaessig von einem Verbindungsfehler
 unterscheiden koennte. Genau das darf bei einem Diagnosewerkzeug nicht
@@ -51,6 +72,15 @@ beruhen, ohne dass ein passendes Geraet zum Gegenpruefen vorlag - dieselbe
 Zurueckhaltung wie bei `commands/color.py`. Ein zu Unrecht gesperrtes
 Attribut kostet eine fehlende Bedienmoeglichkeit; ein zu Unrecht
 freigegebenes kann ein Geraet fehlkonfigurieren.
+
+**Weiterer offener Punkt (siehe Spec, Abschnitt 12, Punkt 7):** die von Hand
+gepflegte Erlaubnisliste skaliert nicht ueber eine Handvoll Geraete hinaus -
+jedes zusaetzliche schreibbare Attribut braucht einen eigenen, gegen ein
+echtes Geraet oder die Spezifikation belegten Eintrag. Sobald
+`chip.clusters.CHIPClusters` in einer spaeteren Version importierbar wird
+(oder sich das Parsen der Datei als Daten ohne Import als vertretbar
+erweist), koennte diese Liste durch das Auslesen der oben gefundenen
+`"writable"`-Tabelle ersetzt werden - siehe Spec.
 
 **Offener Punkt, hier bewusst nicht geloest (siehe Spec, Abschnitt 12):**
 selbst ein Attribut auf der Erlaubnisliste laesst sich mit dem heutigen
@@ -73,7 +103,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException
 
-from loxmatter.api.models import CommandOut, ValueIn
+from loxmatter.api.models import CommandOut, ControlsOut, ValueIn
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
 from loxmatter.profiles.table import command_slug
@@ -112,7 +142,7 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get("/devices/{device_id}/controls")
-    async def controls(device_id: int) -> list[CommandOut]:
+    async def controls(device_id: int) -> ControlsOut:
         """Nur benannte Kommandos werden zu einem Bedienelement (Spec 6.7:
         Ausgangsbefehle stammen aus AcceptedCommandList, nicht aus
         Attributen).
@@ -132,13 +162,24 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
         gefilterter Rohbefehl war ohnehin nie ausfuehrbar, sondern haette
         sofort mit 400 quittiert. Diese Route zeigt deshalb nur, was ein
         Klick tatsaechlich ausloesen kann.
+
+        Der Filter bleibt trotzdem nicht spurlos (Review-Fix Minor #4,
+        2026-09-02): `hidden_raw_commands` zaehlt, wie viele Kommandos des
+        Geraets herausgefiltert wurden. Ohne diese Zahl saehe ein
+        unbenanntes Geraet in der Oberflaeche genauso aus wie eines ganz
+        ohne Ausgangsbefehle (Spec 8.1 - genau der Fall, den `test_button_
+        offers_no_controls` prueft) - eine Person, die ein fremdes Geraet
+        diagnostiziert, verlaeuft sich dann daran, statt zu sehen: da waeren
+        noch Kommandos, nur unbenannt.
         """
         _require_device(device_id)
-        return [
+        stored = store.commands(device_id)
+        named = [
             CommandOut(key=command.key, slug=command.slug, takes_value=command.takes_value)
-            for command in store.commands(device_id)
+            for command in stored
             if command_slug(command.cluster_id, command.command_id) is not None
         ]
+        return ControlsOut(commands=named, hidden_raw_commands=len(stored) - len(named))
 
     @router.post("/commands/{key}")
     async def execute_command(key: str, body: ValueIn) -> dict[str, str]:
@@ -146,6 +187,24 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
             stored = store.resolve_command(key)
         except UnknownCommandError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        try:
+            # Dieselbe Pruefung, aus demselben Grund, wie bei `write_signal`
+            # unten und `PATCH /api/signals/{key}` (api/devices.py) - beide
+            # tragen den Namen Review-Fix Important #4 aus Task 2, dort noch
+            # ausschliesslich fuer Signale geschlossen: `resolve_command`
+            # sucht das `command`-Tabelle allein, ohne den Status des
+            # zugehoerigen Geraets zu pruefen, und `forget_device` loescht
+            # dort keine Zeile, sondern setzt nur `device.active = 0`. Ein
+            # Kommando eines entfernten Geraets blieb deshalb ueber seinen
+            # Schluessel weiterhin ausloesbar - dieselbe Luecke, jetzt fuer
+            # Kommandos geschlossen (Review-Fix Important #1, 2026-09-02).
+            store.device(stored.device_id)
+        except UnknownDeviceError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Kommando {key!r} gehoert zu Geraet {stored.device_id}, das entfernt wurde",
+            ) from exc
 
         try:
             call = to_matter_call(stored, body.value)
@@ -184,11 +243,18 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
             ) from exc
 
         if not _is_writable(stored.ref.cluster_id, stored.ref.element_id):
+            # Review-Fix Minor #3, 2026-09-02: vorher verwies diese Meldung
+            # auf den Moduldocstring - hilfreich in einem Server-Log, aber
+            # nichtssagend fuer eine Person, die nur auf die Oberflaeche
+            # schaut. Die Meldung sagt jetzt selbst, was los ist und was
+            # sich tun laesst.
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Attribut {key!r} steht nicht auf der Erlaubnisliste beschreibbarer "
-                    "Attribute - siehe Moduldocstring von api/control.py"
+                    f"Die Beschreibbarkeit von Attribut {key!r} laesst sich nicht "
+                    "bestaetigen, es steht deshalb nicht auf der Erlaubnisliste "
+                    "beschreibbarer Attribute. Ist es tatsaechlich beschreibbar, kann "
+                    "es dort ergaenzt werden."
                 ),
             )
 
@@ -196,12 +262,13 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
         # "Offener Punkt". Eine 200-Antwort waere hier schlimmer als dieser
         # ehrliche Fehler: sie taeuschte eine Wirkung vor, die nicht
         # eintritt, und genau das soll dieses Werkzeug sichtbar machen, nicht
-        # verstecken.
+        # verstecken. Wortlaut ebenfalls Review-Fix Minor #3: kein Verweis
+        # mehr auf den Moduldocstring.
         raise HTTPException(
             status_code=501,
             detail=(
-                f"Attribut {key!r} ist beschreibbar, aber das rohe Schreiben ist noch nicht "
-                "an matter-server angebunden - siehe Moduldocstring von api/control.py"
+                f"Attribut {key!r} ist beschreibbar, aber das rohe Schreiben ist noch "
+                "nicht an matter-server angebunden."
             ),
         )
 
