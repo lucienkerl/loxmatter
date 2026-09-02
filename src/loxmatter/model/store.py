@@ -184,7 +184,8 @@ class Store:
 
     def signals(self, device_id: int) -> list[StoredSignal]:
         rows = self._db.execute(
-            "SELECT * FROM signal WHERE device_id = ? ORDER BY endpoint, cluster_id, element_id",
+            "SELECT * FROM signal WHERE device_id = ?"
+            " ORDER BY endpoint, cluster_id, element_id, kind",
             (device_id,),
         ).fetchall()
         return [
