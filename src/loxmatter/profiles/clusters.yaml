@@ -8,10 +8,19 @@ clusters:
     name: onoff
     attributes:
       0: {slug: onoff, unit: ""}
+    commands:
+      # "off"/"on" muessen in Anfuehrungszeichen stehen: YAML 1.1 liest sie
+      # sonst als Booleans, nicht als Strings (PyYAML-Falle).
+      0: {slug: "off", takes_value: false}
+      1: {slug: "on", takes_value: false}
+      2: {slug: toggle, takes_value: false}
   8:
     name: level
     attributes:
       0: {slug: level, unit: "%"}
+    commands:
+      0: {slug: level, takes_value: true}
+      4: {slug: level_onoff, takes_value: true}
   1026:
     name: temperature
     attributes:

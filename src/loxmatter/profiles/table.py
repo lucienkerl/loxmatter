@@ -105,3 +105,24 @@ def unit_format(unit: str) -> str:
         return ""
     separator = "" if unit in _UNITS_WITHOUT_LEADING_SPACE else " "
     return f"<v.{decimals}>{separator}{unit}"
+
+
+# Cluster, deren Kommandos nie als Loxone-Ausgang erscheinen duerfen. 0/62 enthaelt
+# RemoveFabric, 0/48 und 0/49 die Kommissionierung, 0/51 den TestEventTrigger. Ein
+# Loxone-Baustein, der eines davon ausloest, kann das Geraet unbrauchbar machen.
+# Diese Liste gilt auch im Rohmodus.
+ADMINISTRATIVE_CLUSTERS: frozenset[int] = frozenset(
+    {42, 48, 49, 51, 52, 53, 54, 55, 60, 62, 63, 70}
+)
+
+
+def command_slug(cluster_id: int, command_id: int) -> str | None:
+    """Name eines Kommandos, oder None wenn es nicht in der Tabelle steht."""
+    entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
+    return entry["slug"] if entry else None
+
+
+def command_takes_value(cluster_id: int, command_id: int) -> bool:
+    """Ob das Kommando einen Wert erwartet (z.B. MoveToLevel), oder keinen (z.B. Off)."""
+    entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
+    return bool(entry and entry.get("takes_value"))
