@@ -148,6 +148,23 @@ class Store:
             raise KeyError(f"unbekanntes Geraet {device_id}")
         return int(row["udp_port"])
 
+    def device_id_for_node(self, node_id: int) -> int | None:
+        """Bildet eine Matter-Node-ID auf die zugehoerige, stabile `device_id` ab.
+
+        Fuer die Laufzeit (Task 8): eine eingehende Subscription von
+        matter-server traegt nur die Node-ID, aber die Signalschluessel
+        haengen an der `device_id` (siehe Modul-Docstring - eine Node-ID kann
+        sich aendern, die `device_id` nie). `None`, wenn kein aktives Geraet
+        mit dieser Node-ID bekannt ist, etwa weil es noch nie exportiert oder
+        inzwischen entfernt (`forget_device`) wurde - eine Node-ID eines
+        entfernten Geraets darf nicht auf dessen alte, inaktive `device_id`
+        zeigen.
+        """
+        row = self._db.execute(
+            "SELECT id FROM device WHERE node_id = ? AND active = 1", (node_id,)
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
+
     def _existing_keys(self, device_id: int) -> set[str]:
         rows = self._db.execute(
             "SELECT key FROM signal WHERE device_id = ?", (device_id,)

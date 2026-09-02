@@ -38,3 +38,10 @@ line-length = 100
 [tool.mypy]
 strict = true
 files = ["src", "scripts"]
+
+[[tool.mypy.overrides]]
+# chip (Teil des CHIP-SDK, das python-matter-server fuer Cluster-Kommandos
+# nutzt) liefert keine py.typed-Markierung/Stubs - siehe
+# BridgeMatterClient.send_command in matter/client.py.
+module = "chip.*"
+ignore_missing_imports = true

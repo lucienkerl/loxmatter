@@ -1,8 +1,11 @@
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+from matter_server.common.models import EventType, MatterNodeEvent
 
+from loxmatter.commands.translate import MatterCall
 from loxmatter.matter import client as client_module
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 
@@ -13,12 +16,14 @@ class FakeNode:
     Die echte MatterNode trägt ihre Rohattribute nicht direkt, sondern unter
     node_data.attributes — node_id bleibt aber ein Attribut direkt am Node
     (dort eine Property auf node_data.node_id). Diese Attrappe bildet genau
-    diese Form nach, statt sie der Einfachheit halber abzuflachen.
+    diese Form nach, statt sie der Einfachheit halber abzuflachen. `available`
+    steht in Wirklichkeit ebenfalls auf node_data (Property `MatterNode.available`).
     """
 
-    def __init__(self, node_id: int, attributes: dict[str, object]):
+    def __init__(self, node_id: int, attributes: dict[str, object], *, available: bool = True):
         self.node_id = node_id
-        self.node_data = SimpleNamespace(attributes=attributes)
+        self.available = available
+        self.node_data = SimpleNamespace(attributes=attributes, available=available)
 
 
 class FakeUpstream:
@@ -47,6 +52,8 @@ class FakeUpstream:
         self._fail_connect = fail_connect
         self._fail_disconnect = fail_disconnect
         self._signal_ready = signal_ready
+        self._subscribers: dict[str, list[Any]] = {}
+        self.sent_commands: list[tuple[int, int, Any]] = []
 
     async def start_listening(self, init_ready: asyncio.Event | None = None) -> None:
         self.start_listening_calls += 1
@@ -68,6 +75,59 @@ class FakeUpstream:
 
     def get_nodes(self) -> list[FakeNode]:
         return self._nodes
+
+    # --- ab hier: Nachbildung von MatterClient.subscribe_events()/
+    # send_device_command() fuer Task 8. subscribe_events() bildet das reale
+    # Schluessel-Matching aus MatterClient._signal_event() nach — inklusive
+    # der Eigenschaft, die BridgeMatterClient.subscribe() erst noetig macht:
+    # der Callback bekommt nur (event, data), NIE node_id/attribute_path.
+
+    def subscribe_events(
+        self,
+        callback: Any,
+        event_filter: EventType | None = None,
+        node_filter: int | None = None,
+        attr_path_filter: str | None = None,
+    ) -> Any:
+        key = (
+            f"{event_filter.value if event_filter is not None else '*'}/"
+            f"{node_filter if node_filter is not None else '*'}/"
+            f"{attr_path_filter if attr_path_filter is not None else '*'}"
+        )
+        self._subscribers.setdefault(key, []).append(callback)
+
+        def unsubscribe() -> None:
+            self._subscribers[key].remove(callback)
+
+        return unsubscribe
+
+    def emit(
+        self,
+        event: EventType,
+        data: Any,
+        node_id: int | None = None,
+        attribute_path: str | None = None,
+    ) -> None:
+        """Simuliert eine eingehende Server-Nachricht wie
+        MatterClient._signal_event() — inklusive Wildcard-Matching."""
+        for evt_key in (event.value, "*"):
+            for node_key in [node_id, "*"] if node_id is not None else ["*"]:
+                for attr_key in [attribute_path, "*"] if attribute_path is not None else ["*"]:
+                    key = f"{evt_key}/{node_key}/{attr_key}"
+                    for cb in self._subscribers.get(key, []):
+                        cb(event, data)
+
+    async def send_device_command(
+        self,
+        node_id: int,
+        endpoint_id: int,
+        command: Any,
+        response_type: Any = None,
+        timed_request_timeout_ms: int | None = None,
+        interaction_timeout_ms: int | None = None,
+    ) -> Any:
+        self.sent_commands.append((node_id, endpoint_id, command))
+        return None
 
 
 class FakeSession:
@@ -353,3 +413,220 @@ async def test_snapshots_reflect_nodes_populated_by_the_listener():
 
     assert [s.node_id for s in snapshots] == [3]
     assert snapshots[0].vendor_name == "Aqara"
+
+
+class FakeHandler:
+    """Steht für Runtime (on_attribute/on_event/set_online) — Runtime erfüllt
+    dasselbe Protokoll unverändert, siehe RuntimeEventHandler."""
+
+    def __init__(self) -> None:
+        self.attribute_calls: list[tuple[int, str, object]] = []
+        self.event_calls: list[tuple[int, str]] = []
+        self.availability_calls: list[tuple[int, bool]] = []
+
+    async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
+        self.attribute_calls.append((device_id, path, raw))
+
+    async def on_event(self, device_id: int, path: str) -> None:
+        self.event_calls.append((device_id, path))
+
+    async def set_online(self, device_id: int, online: bool) -> None:
+        self.availability_calls.append((device_id, online))
+
+
+def make_connected_pair(
+    nodes: list[FakeNode] | None = None,
+) -> tuple[BridgeMatterClient, FakeUpstream]:
+    """Wie make_client(), gibt aber zusätzlich die Upstream-Attrappe zurück —
+    send_command()/subscribe() werten deren sent_commands/subscribe_events()
+    aus, was über den Rückgabewert von make_client() nicht erreichbar ist."""
+    upstream = FakeUpstream(nodes or [])
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: FakeSession(),
+    )
+    return bridge, upstream
+
+
+async def _settle() -> None:
+    """Lässt den Dispatch-Task von subscribe() der Queue hinterherlaufen —
+    put_nowait() aus einem synchronen Callback und dessen Verarbeitung im
+    Hintergrund-Task liegen sonst in verschiedenen Event-Loop-Durchläufen."""
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+
+# --- send_command() ---------------------------------------------------
+
+
+async def test_send_command_requires_a_connection():
+    bridge, _upstream = make_connected_pair()
+    call = MatterCall(node_id=12, endpoint=1, cluster_id=6, command_id=1, payload={})
+    with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
+        await bridge.send_command(call)
+
+
+async def test_send_command_builds_the_real_cluster_command_from_cluster_and_command_id():
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+
+    call = MatterCall(node_id=12, endpoint=1, cluster_id=6, command_id=1, payload={})
+    await bridge.send_command(call)
+
+    assert len(upstream.sent_commands) == 1
+    node_id, endpoint_id, command = upstream.sent_commands[0]
+    assert (node_id, endpoint_id) == (12, 1)
+    # chip.clusters.Objects.OnOff.Commands.On — command_id 1 im OnOff-Cluster (6).
+    assert command.__class__.__name__ == "On"
+    assert command.cluster_id == 6
+
+
+async def test_send_command_passes_the_payload_as_command_fields():
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+
+    # LevelControl (8) MoveToLevelWithOnOff (4) — dieselben Feldnamen, die
+    # commands/translate.py._payload_level baut.
+    call = MatterCall(
+        node_id=12,
+        endpoint=1,
+        cluster_id=8,
+        command_id=4,
+        payload={"level": 128, "transitionTime": 0},
+    )
+    await bridge.send_command(call)
+
+    _node_id, _endpoint_id, command = upstream.sent_commands[0]
+    assert command.__class__.__name__ == "MoveToLevelWithOnOff"
+    assert command.level == 128
+    assert command.transitionTime == 0
+
+
+async def test_send_command_raises_for_a_cluster_command_the_sdk_does_not_know():
+    bridge, _upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+
+    call = MatterCall(node_id=12, endpoint=1, cluster_id=9999, command_id=1, payload={})
+    with pytest.raises(MatterUnavailableError, match="9999"):
+        await bridge.send_command(call)
+
+
+# --- subscribe() --------------------------------------------------------
+
+
+async def test_subscribe_requires_a_connection():
+    bridge, _upstream = make_connected_pair()
+    with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
+        await bridge.subscribe(lambda _node_id: 1, FakeHandler())
+
+
+async def test_subscribe_twice_raises():
+    bridge, _upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    await bridge.subscribe(lambda _node_id: 5, FakeHandler())
+    with pytest.raises(MatterUnavailableError, match="bereits"):
+        await bridge.subscribe(lambda _node_id: 5, FakeHandler())
+
+
+async def test_subscribe_maps_an_attribute_update_to_the_resolved_device_id():
+    bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
+    await bridge.connect()
+    handler = FakeHandler()
+
+    await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
+    upstream.emit(EventType.ATTRIBUTE_UPDATED, False, node_id=12, attribute_path="1/6/0")
+    await _settle()
+
+    assert handler.attribute_calls == [(5, "1/6/0", False)]
+
+
+async def test_subscribe_drops_an_update_for_a_node_the_resolver_does_not_know():
+    """Ein noch nicht exportiertes oder entferntes Gerät liefert `None` —
+    das Update wird verworfen, nicht mit einer falschen device_id zugestellt."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
+    await bridge.connect()
+    handler = FakeHandler()
+
+    await bridge.subscribe(lambda _node_id: None, handler)
+    upstream.emit(EventType.ATTRIBUTE_UPDATED, True, node_id=12, attribute_path="1/6/0")
+    await _settle()
+
+    assert handler.attribute_calls == []
+
+
+async def test_subscribe_only_delivers_updates_for_the_exact_path_subscribed():
+    """Ein Attribut-Update auf einem anderen Pfad desselben Geräts darf nicht
+    zugestellt werden — subscribe() registriert je (Node, Pfad) eine eigene
+    Subscription, siehe Modul-Docstring von client.py."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
+    await bridge.connect()
+    handler = FakeHandler()
+
+    await bridge.subscribe(lambda _node_id: 5, handler)
+    upstream.emit(EventType.ATTRIBUTE_UPDATED, 21.5, node_id=12, attribute_path="1/1026/0")
+    await _settle()
+
+    assert handler.attribute_calls == []
+
+
+async def test_subscribe_maps_a_node_event_to_the_resolved_device_id():
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+
+    await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
+    node_event = MatterNodeEvent(
+        node_id=12,
+        endpoint_id=1,
+        cluster_id=59,
+        event_id=0,
+        event_number=1,
+        priority=0,
+        timestamp=0,
+        timestamp_type=0,
+        data=None,
+    )
+    upstream.emit(EventType.NODE_EVENT, node_event)
+    await _settle()
+
+    assert handler.event_calls == [(5, "1/59/0")]
+
+
+async def test_subscribe_maps_node_updated_availability_to_the_resolved_device_id():
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+
+    await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
+    upstream.emit(EventType.NODE_UPDATED, FakeNode(12, {}, available=False))
+    await _settle()
+
+    assert handler.availability_calls == [(5, False)]
+
+
+async def test_subscribe_treats_node_removed_as_offline():
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+
+    await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
+    # MatterClient._handle_event_message liefert bei NODE_REMOVED die blanke
+    # Node-ID als data, kein Node-Objekt.
+    upstream.emit(EventType.NODE_REMOVED, 12)
+    await _settle()
+
+    assert handler.availability_calls == [(5, False)]
+
+
+async def test_disconnect_stops_delivering_updates():
+    bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda _node_id: 5, handler)
+
+    await bridge.disconnect()
+    upstream.emit(EventType.ATTRIBUTE_UPDATED, True, node_id=12, attribute_path="1/6/0")
+    await _settle()
+
+    assert handler.attribute_calls == []

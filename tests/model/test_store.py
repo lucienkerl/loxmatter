@@ -231,6 +231,25 @@ def test_all_devices_share_the_default_udp_port(store):
     assert store.udp_port(plug) == store.udp_port(button) == 7000
 
 
+def test_device_id_for_node_resolves_a_registered_device(store):
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    assert store.device_id_for_node(snap.node_id) == device_id
+
+
+def test_device_id_for_node_is_none_for_an_unknown_node(store):
+    assert store.device_id_for_node(999) is None
+
+
+def test_device_id_for_node_ignores_a_forgotten_device(store):
+    """Ein entferntes Geraet darf ueber seine alte Node-ID nicht mehr auffindbar sein -
+    sonst wuerde eine Laufzeit-Subscription Werte einem inaktiven Geraet zuordnen."""
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    store.forget_device(device_id)
+    assert store.device_id_for_node(snap.node_id) is None
+
+
 def test_store_survives_reopening(tmp_path):
     path = tmp_path / "persist.sqlite"
     snap = load("ikea_grillplats_plug.json")
