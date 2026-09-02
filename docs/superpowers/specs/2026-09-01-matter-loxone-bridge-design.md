@@ -236,43 +236,70 @@ werden und wirkt sich nur auf den nächsten Export aus.
 
 ### 6.1 Verifiziertes Vorlagen-Schema
 
-Bestätigt gegen die Referenzimplementierung des LoxBerry-Template-Builders
-(<https://github.com/mschlenstedt/Loxberry/blob/master/libs/phplib/loxberry_loxonetemplatebuilder.php>):
+Gemessen an 26 Vorlagen aus einer echten Loxone-Config-Installation — bereinigte Auszüge
+liegen unter `tests/fixtures/loxone/VIU_Referenz.xml` und `VO_Referenz.xml`,
+`loxmatter.export.documents` baut dieses Schema nach:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
-<VirtualInUdp Title="Matter — Wohnzimmerlampe" Comment="Node 12" Address="192.168.1.50" Port="7000">
-  <VirtualInUdpCmd Title="Wohnzimmer Temperatur" Comment="d12/ep1/TemperatureMeasurement"
-    Address="" Check="d12_1_temp:\v"
-    Signed="true" Analog="true"
-    SourceValLow="0" DestValLow="0" SourceValHigh="100" DestValHigh="100"
-    DefVal="0" MinVal="-2147483647" MaxVal="2147483647"/>
+<VirtualInUdp Title="Matter — Wohnzimmerlampe" Comment="erzeugt von loxmatter" Address="192.168.1.50" Port="7000">
+	<Info templateType="1" minVersion="14040925"/>
+	<VirtualInUdpCmd Title="Wohnzimmer Temperatur" Comment="Wohnzimmerlampe · 1/1026/0" Address="" Check="d12_1_temp:\v" Signed="true" Analog="true" SourceValLow="0" DestValLow="0" SourceValHigh="100" DestValHigh="100" DefVal="0" MinVal="-2147483647" MaxVal="2147483647" Unit="&lt;v.1&gt; °C" HintText=""/>
 </VirtualInUdp>
 ```
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
-<VirtualOut Title="Matter — Wohnzimmerlampe" Comment="Node 12" Address="http://192.168.1.50:8080"
-            CmdInit="" CloseAfterSend="true" CmdSep="">
-  <VirtualOutCmd ID="0" Title="Wohnzimmer Licht Helligkeit" Comment=""
-    CmdOnMethod="GET" CmdOn="/cmd/d12_1_level/<v>" CmdOnHTTP="" CmdOnPost=""
-    CmdOffMethod="GET" CmdOff="" CmdOffHTTP="" CmdOffPost=""
-    Analog="true" Repeat="0" RepeatRate="0"/>
+<VirtualOut Title="Matter — Wohnzimmerlampe" Comment="erzeugt von loxmatter" Address="http://192.168.1.50:8080" CmdInit="" HintText="" CloseAfterSend="true" CmdSep="">
+	<Info templateType="3" minVersion="14040925"/>
+	<VirtualOutCmd Title="Wohnzimmer Licht Helligkeit" Comment="d12_1_level" CmdOnMethod="GET" CmdOffMethod="GET" CmdOn="/cmd/d12_1_level/&lt;v&gt;" CmdOnHTTP="" CmdOnPost="" CmdOff="" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" HintText="" Analog="true" Repeat="0" RepeatRate="0"/>
 </VirtualOut>
 ```
 
 **Achtung Escaping:** Der Loxone-Wertplatzhalter `<v>` in `CmdOn` steht in einem
-XML-Attribut und muss als `&lt;v&gt;` geschrieben werden. Die Referenzimplementierung
-tut das über `htmlspecialchars(..., ENT_XML1)`. Ein unescaptes `<v>` macht die Datei
-unlesbar für Loxone Config. Der Platzhalter `\v` in `Check` ist davon nicht betroffen.
+XML-Attribut und muss als `&lt;v&gt;` geschrieben werden. Ein unescaptes `<v>` macht die
+Datei unlesbar für Loxone Config. Der Platzhalter `\v` in `Check` ist davon nicht betroffen.
 
 **Bedeutung von `Address`:** Im `VirtualInUdp` ist `Address` der *Absender-Filter* —
 die IP der Bridge, von der Datagramme akzeptiert werden. `Port` ist der Port, auf dem
 der Miniserver lauscht. Im `VirtualOut` ist `Address` dagegen die Ziel-Basis-URL der
 Bridge.
 
+**Herkunft und Korrekturhistorie.** Der erste Entwurf dieses Abschnitts übernahm das
+Schema aus der Referenzimplementierung des LoxBerry-Template-Builders
+(<https://github.com/mschlenstedt/Loxberry/blob/master/libs/phplib/loxberry_loxonetemplatebuilder.php>).
+Am 2026-09-02, belegt an den 26 Vorlagen aus einer echten Installation
+(91 `VirtualInUdpCmd`, 19 `VirtualOutCmd`), stellte sich heraus, dass dieses Schema in
+vier Punkten von dem abwich, was Loxone Config tatsächlich schreibt. Die Blöcke oben
+zeigen bereits die korrigierte, gemessene Form; die vier Korrekturen zur
+Nachvollziehbarkeit:
+
+1. **Jede Vorlage trägt ein `<Info>`-Element als erstes Kind** — in allen 26 Dateien,
+   ohne Ausnahme:
+   `<Info templateType="1" minVersion="14040925"/>`
+   `templateType` ist **1** für `VirtualInUdp`, **2** für `VirtualInHttp`, **3** für
+   `VirtualOut`. `minVersion` ist eine Loxone-Config-Version im Format `JJMMTTHH`.
+2. **`VirtualInUdpCmd` hat 15 Attribute**, nicht 13 — es fehlten `Unit` und `HintText`:
+   `Title, Comment, Address, Check, Signed, Analog, SourceValLow, DestValLow,
+   SourceValHigh, DestValHigh, DefVal, MinVal, MaxVal, Unit, HintText`
+3. **`VirtualOut` hat `HintText`** zwischen `CmdInit` und `CloseAfterSend`.
+4. **`VirtualOutCmd` hat 15 Attribute und kein `ID`**, und die beiden Methodenfelder
+   stehen zusammen statt verteilt:
+   `Title, Comment, CmdOnMethod, CmdOffMethod, CmdOn, CmdOnHTTP, CmdOnPost, CmdOff,
+   CmdOffHTTP, CmdOffPost, CmdAnswer, HintText, Analog, Repeat, RepeatRate`
+
+Bestätigt haben sich dagegen von Anfang an: UTF-8 mit BOM (26 von 26), reines CRLF
+(26 von 26) und die XML-Deklaration wörtlich (26 von 26).
+
 Dateiformat: **UTF-8 mit BOM, CRLF-Zeilenenden.**
-Dateinamen: `VIU_<name>.xml` und `VO_<name>.xml`.
+Dateinamen: `VIU_d<device_id>_<label>.xml` und `VO_d<device_id>_<label>.xml`, mit auf ASCII
+normalisiertem Gerätelabel. Die `device_id` ist nicht Dekoration: die Normalisierung ist
+verlustbehaftet und bildet unterschiedliche Labels auf denselben oder einen leeren String
+ab — `"Lampe 1"`, `"Lampe-1"` und `"Lampe_1"` etwa alle auf `Lampe_1`, ein Label ohne
+ASCII-Zeichen auf `""`. Trüge der Dateiname nur das Label, würden zwei Geräte mit
+kollidierendem Label sich beim Export gegenseitig überschreiben, und ein Nutzer importierte
+eine Vorlage im Glauben, es seien zwei. `device_id` vergibt `Store` unveränderlich und nie
+doppelt (6.2), das macht den Namen tatsächlich eindeutig.
 Ablage: `Dokumente\Loxone\Loxone Config\Templates\VirtualIn\` bzw. `...\VirtualOut\`.
 Import in Config: Peripherie → Virtuelle Eingänge → Virtueller UDP-Eingang → Vorlage
 importieren.
@@ -314,10 +341,11 @@ bleiben, wenn ein Gerät entfernt und neu eingelernt wird — `device_id` wird d
 wiederverwendet.
 
 **Systemsignale** (`bridge_alive`, `/resync`, siehe 6.4 und 6.5) liegen in einem eigenen
-Paar `VIU_Matter_System.xml` / `VO_Matter_System.xml`, das einmalig importiert wird.
+Paar `VIU_Matter_System.xml` / `VO_Matter_System.xml`, das einmalig importiert wird — ein
+fester Name, weil es kein Gerät und damit keine `device_id` gibt, die ihn eindeutig machen
+müsste.
 
-Dateinamen: `VIU_Matter_<label>.xml` und `VO_Matter_<label>.xml`, mit auf ASCII
-normalisiertem Gerätelabel.
+Dateinamen der Gerätevorlagen: siehe 6.1.
 
 ### 6.3 Events
 
@@ -430,7 +458,7 @@ für Geräte, deren Cluster die Tabelle noch nicht kennt.
 die sich abschalten lässt:
 
 ```
-42, 48, 49, 51, 52, 53, 54, 55, 60, 62, 63, 70
+31, 41, 42, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 62, 63, 70
 ```
 
 Die Asymmetrie ist beabsichtigt. Ein unbekanntes Attribut zu viel zu exportieren kostet
@@ -487,6 +515,17 @@ durchgängig in **kW** — der Energiemanager, die Zähler- und Verbrauchsbauste
 kW am Eingang. Wir liefern deshalb kW, nicht W. Dieselbe Regel gilt für jeden künftigen
 Eintrag in der Profiltabelle: maßgeblich ist die Einheit, die der Loxone-Baustein
 erwartet, nicht die naheliegende SI-Einheit.
+
+**`Unit` ist ein Formatstring, kein Einheitentext.** Loxone schreibt dort Muster wie
+`<v.3> kW`, `<v.1> °C` oder `<v>%`: die Ziffer hinter dem Punkt ist die Zahl der
+angezeigten Nachkommastellen. Gemessen an 26 realen Vorlagen ist `<v.3> kW` mit
+Abstand die häufigste Form für Leistung.
+
+**Das hebelt die Regel unten auf der Anzeigeebene aus.** Ein Wert von 0,0003 kW kommt
+mit `<v.3> kW` als `0.000` auf der Oberfläche an — der Wert im Miniserver stimmt, aber
+niemand sieht ihn. Der Exporter muss für Leistung deshalb **`<v.6> kW`** schreiben, nicht
+das übliche `<v.3>`. Dasselbe gilt für jede Größe, deren interessanter Bereich mehrere
+Größenordnungen umfasst.
 
 **Folge für die Zahlenformatierung.** Von mW nach kW sind sechs Größenordnungen. Ein
 Standby-Verbraucher mit 300 mW wird zu `0.0003` kW. Der UDP-Sender darf Werte deshalb

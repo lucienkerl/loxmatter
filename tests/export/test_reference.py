@@ -1,0 +1,119 @@
+"""Prueft die Ausgabeform gegen echte Loxone-Vorlagen.
+
+Die Referenzdateien unter ``tests/fixtures/loxone/`` sind bereinigte
+Ableitungen aus einer echten Loxone-Config-Installation (siehe
+``tests/fixtures/VirtualIn/`` und ``VirtualOut/``, die deshalb .gitignored
+bleiben). Der erste Block prueft nur die Dateiform, nicht den Inhalt: BOM,
+Zeilenenden und die erste Zeile muessen zu dem passen, was
+``loxmatter.export.xml`` erzeugt.
+
+Der zweite Block (Review-Fix Important #1) geht weiter: er pinnt das
+tatsaechlich exportierte Attributset jedes der vier Elementtypen —
+Name *und* Reihenfolge *und* Anzahl — gegen dieselben Referenzdateien. Ohne
+das wuerde eine vertauschte, fehlende oder zusaetzliche Attribut-Spalte in
+``documents.py`` von keinem der bisherigen 168 Tests bemerkt, obwohl genau
+das die Abweichungsklasse ist, die diese Phase verhindern soll (siehe
+Korrektur 2026-09-02 in Spec 6.1).
+"""
+
+import re
+from pathlib import Path
+
+import pytest
+
+from loxmatter.export.documents import LoxoneCommand, render_virtual_in_udp, render_virtual_out
+from loxmatter.export.signals import LoxoneInput
+from loxmatter.export.xml import DECLARATION
+
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "loxone"
+FIXTURE_FILES = sorted(FIXTURES.glob("*.xml"))
+
+
+def test_fixture_directory_is_not_empty():
+    """Waechter: eine leer geraeumte Vorlagenmappe darf die Tests unten nicht
+    stillschweigend bestehen lassen."""
+    assert FIXTURE_FILES, f"Keine *.xml-Vorlagen gefunden unter {FIXTURES}"
+
+
+@pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)
+def test_reference_file_starts_with_utf8_bom(path: Path):
+    assert path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+@pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)
+def test_reference_file_uses_pure_crlf_line_endings(path: Path):
+    raw = path.read_bytes()
+    assert b"\r\n" in raw
+    assert b"\n" not in raw.replace(b"\r\n", b"")
+
+
+@pytest.mark.parametrize("path", FIXTURE_FILES, ids=lambda p: p.name)
+def test_reference_file_first_line_is_the_declaration(path: Path):
+    text = path.read_bytes().decode("utf-8-sig")
+    assert text.splitlines()[0] == DECLARATION
+
+
+# -- Attributset und Reihenfolge (Review-Fix Important #1) -----------------
+
+
+def _attr_names(line: str) -> tuple[str, ...]:
+    """Extrahiert die Attributnamen einer XML-Zeile in Dokumentreihenfolge."""
+    return tuple(re.findall(r'(\w+)="', line))
+
+
+def _lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8-sig").splitlines()
+
+
+def _first_matching(lines: list[str], prefix: str) -> str:
+    return next(line.strip() for line in lines if line.strip().startswith(prefix))
+
+
+def _rendered_viu_lines() -> list[str]:
+    inputs = [LoxoneInput("d1_1_temp", "Temperatur", "Wohnzimmer · 1/1026/0", True, "<v.1> °C")]
+    raw = render_virtual_in_udp("Wohnzimmerlampe", "192.168.1.50", 7000, inputs)
+    return raw.decode("utf-8-sig").splitlines()
+
+
+def _rendered_vo_lines() -> list[str]:
+    commands = [LoxoneCommand("d1_1_onoff", "Schalten", "/cmd/d1_1_onoff/1", False)]
+    raw = render_virtual_out("Wohnzimmerlampe", "http://192.168.1.50:8080", commands)
+    return raw.decode("utf-8-sig").splitlines()
+
+
+def test_virtual_in_udp_root_attribute_set_and_order_matches_the_reference():
+    reference = _first_matching(_lines(FIXTURES / "VIU_Referenz.xml"), "<VirtualInUdp ")
+    rendered = _first_matching(_rendered_viu_lines(), "<VirtualInUdp ")
+    assert _attr_names(rendered) == _attr_names(reference)
+
+
+def test_virtual_in_udp_cmd_attribute_set_and_order_matches_the_reference():
+    reference = _first_matching(_lines(FIXTURES / "VIU_Referenz.xml"), "<VirtualInUdpCmd ")
+    rendered = _first_matching(_rendered_viu_lines(), "<VirtualInUdpCmd ")
+    assert _attr_names(rendered) == _attr_names(reference)
+
+
+def test_virtual_out_root_attribute_set_and_order_matches_the_reference():
+    reference = _first_matching(_lines(FIXTURES / "VO_Referenz.xml"), "<VirtualOut ")
+    rendered = _first_matching(_rendered_vo_lines(), "<VirtualOut ")
+    assert _attr_names(rendered) == _attr_names(reference)
+
+
+def test_virtual_out_cmd_attribute_set_and_order_matches_the_reference():
+    reference = _first_matching(_lines(FIXTURES / "VO_Referenz.xml"), "<VirtualOutCmd ")
+    rendered = _first_matching(_rendered_vo_lines(), "<VirtualOutCmd ")
+    assert _attr_names(rendered) == _attr_names(reference)
+
+
+def test_info_element_is_the_first_child_in_the_virtual_in_udp_reference_and_output():
+    reference_children = [line.strip() for line in _lines(FIXTURES / "VIU_Referenz.xml")[2:-1]]
+    rendered_children = [line.strip() for line in _rendered_viu_lines()[2:-1]]
+    assert reference_children[0].startswith("<Info ")
+    assert rendered_children[0].startswith("<Info ")
+
+
+def test_info_element_is_the_first_child_in_the_virtual_out_reference_and_output():
+    reference_children = [line.strip() for line in _lines(FIXTURES / "VO_Referenz.xml")[2:-1]]
+    rendered_children = [line.strip() for line in _rendered_vo_lines()[2:-1]]
+    assert reference_children[0].startswith("<Info ")
+    assert rendered_children[0].startswith("<Info ")

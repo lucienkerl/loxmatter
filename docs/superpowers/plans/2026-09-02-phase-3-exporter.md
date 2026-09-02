@@ -15,11 +15,12 @@ Aus Spec und Plan, gelten für jede Task:
 - **Tests laufen ohne Hardware und ohne Netzwerkzugriff.** Ein Test, der ein echtes Gerät braucht, wird übersprungen und verrottet (Spec 10.1).
 - **Deutsch in Prosa, Kommentaren, Docstrings und Fehlermeldungen**, Englisch in Bezeichnern und Commit-Präfixen.
 - **Alle Datenklassen unveränderlich** (`frozen=True`), solange kein Grund dagegen spricht.
-- **Dateiformat der Vorlagen: UTF-8 mit BOM, CRLF-Zeilenenden.** Dateinamen `VIU_<name>.xml` und `VO_<name>.xml` (Spec 6.1).
+- **Dateiformat der Vorlagen: UTF-8 mit BOM, CRLF-Zeilenenden.** Dateinamen `VIU_d<device_id>_<label>.xml` und `VO_d<device_id>_<label>.xml`, mit auf ASCII normalisiertem Gerätelabel — die `device_id` ist nicht Dekoration, sondern der einzige Teil des Namens, der Eindeutigkeit garantiert, weil die Normalisierung verlustbehaftet ist (Spec 6.1).
 - **Der Loxone-Platzhalter `<v>` steht in einem XML-Attribut und muss als `&lt;v&gt;` geschrieben werden.** Ein unescaptes `<v>` macht die Datei für Loxone Config unlesbar. Der Platzhalter `\v` in `Check` ist davon nicht betroffen (Spec 6.1).
 - **Schlüssel sind opak und unveränderlich**, Format `d<device_id>_<endpoint>_<slug>`. Lesbare Namen leben ausschließlich in `Title` und `Comment`. `device_id` wird nie wiederverwendet (Spec 6.2).
 - **Eine Vorlagendatei pro Gerät**, alle Geräte teilen sich einen UDP-Port, Default 7000. Der Port ist pro Gerät konfigurierbar. Grenze des Miniservers: 50 verschiedene Eingangs-Ports (Spec 6.2).
 - **Zieleinheit ist die des Loxone-Bausteins, nicht die SI-Einheit.** Leistung in kW. Ausgabe mit bis zu 6 Nachkommastellen, nachlaufende Nullen abgeschnitten — 300 mW muss als `0.0003` ankommen, nicht als `0` (Spec 7.3). **Die Umrechnung selbst gehört zum UDP-Sender in Phase 4**; hier wird nur festgelegt und exportiert, welche Einheit ein Signal trägt.
+- **`Unit` in der Vorlage ist ein Formatstring, kein Einheitentext** (Spec 7.3): `<v.N> Einheit`, wobei `N` die Zahl der auf der Loxone-Oberfläche angezeigten Nachkommastellen ist. Für Leistung schreiben wir `<v.6> kW`, nicht das sonst übliche `<v.3>` — mit drei Nachkommastellen zeigt ein 300-mW-Standby-Verbraucher `0.000` an. Die Zuordnung Einheit → Formatstring steht als Datentabelle in `profiles/table.py` (Task 2), nicht als Verzweigung im Exporter.
 - `uv run ruff check .`, `uv run ruff format --check .` und `uv run mypy` müssen sauber bleiben. ruff formatiert auch Python-Blöcke in Markdown.
 
 ---
@@ -248,6 +249,20 @@ git add src/loxmatter/export tests/export tests/fixtures/loxone
 git commit -m "feat(export): XML-Grundlage, gegen echte Loxone-Vorlagen belegt"
 ```
 
+**Nachtrag (2026-09-02) — diese Task ist bereits implementiert und committet, die
+Codeblöcke oben bleiben unverändert. Zwei Dinge, die seither gelernt wurden:**
+
+- **`xml.sax.saxutils.quoteattr` wurde in der Umsetzung ersetzt.** Es wechselt bei
+  einem `"` im Wert die Anführungszeichen-Art (liefert dann ein mit `'` umschlossenes
+  Attribut) statt zu escapen — für Loxone Config, das durchgängig `"`-Attribute
+  erwartet, unbrauchbar.
+- **Die Referenzvorlagen sind da.** Schritt 5–7 dieser Task sind erledigt: Zwei
+  sanitisierte Ableitungen aus echten Vorlagen liegen unter
+  `tests/fixtures/loxone/VIU_Referenz.xml` und `tests/fixtures/loxone/VO_Referenz.xml`.
+  Der volle Fundus aus einer echten Installation (91 `VirtualInUdpCmd`,
+  19 `VirtualOutCmd` über 26 Dateien) hat die vier Abweichungen in Spec 6.1,
+  „Korrektur 2026-09-02" belegt, die die folgenden Tasks nachziehen.
+
 ---
 
 ### Task 2: Profiltabelle und Exportierbarkeit
@@ -269,6 +284,8 @@ Loxone-Eingang abbildbar sind. Diese Task baut die Regel dafür.
   - `classify(value: object) -> Exportability` — allein aus dem Wert
   - `class Profile` — frozen: `slug: str`, `unit: str`, `exportability: Exportability`
   - `lookup(ref: SignalRef, value: object) -> Profile` — Tabelle mit Fallback
+  - `unit_format(unit: str) -> str` — Loxone-Formatstring für eine Einheit (Spec 7.3),
+    z. B. `"kW"` → `"<v.6> kW"`; leere Einheit → `""`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -276,7 +293,7 @@ Loxone-Eingang abbildbar sind. Diese Task baut die Regel dafür.
 
 ```python
 from loxmatter.matter.models import SignalKind, SignalRef
-from loxmatter.profiles.table import Exportability, classify, lookup
+from loxmatter.profiles.table import Exportability, classify, lookup, unit_format
 
 
 def test_bool_is_digital():
@@ -339,12 +356,30 @@ def test_events_are_digital_regardless_of_value():
     """Spec 6.3: ein Event wird zum Impuls, es hat keinen Wert."""
     ref = SignalRef(1, 59, 1, SignalKind.EVENT)
     assert lookup(ref, None).exportability is Exportability.DIGITAL
+
+
+def test_unit_format_widens_power_to_six_decimals():
+    """Spec 7.3: mit <v.3> zeigt ein 300-mW-Standby-Verbraucher 0.000 an."""
+    assert unit_format("kW") == "<v.6> kW"
+    assert unit_format("kWh") == "<v.6> kWh"
+
+
+def test_unit_format_uses_one_decimal_for_the_common_units():
+    assert unit_format("°C") == "<v.1> °C"
+    assert unit_format("%") == "<v.1>%"
+    assert unit_format("V") == "<v.1> V"
+    assert unit_format("A") == "<v.1> A"
+
+
+def test_unit_format_for_empty_unit_is_empty():
+    assert unit_format("") == ""
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/profiles/test_table.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.profiles'`
+(bzw. `ImportError`, sobald `table.py` existiert, aber `unit_format` noch fehlt)
 
 - [ ] **Step 3: Abhängigkeit ergänzen**
 
@@ -415,6 +450,10 @@ exportiert, sofern sein Wert ueberhaupt auf einen Loxone-Eingang passt.
 
 Spec 6.6: Listen, Strukturen und Nullwerte passen nicht. Sie bleiben Signale
 und sind in der Oberflaeche sichtbar, werden aber nie zu Loxone-Objekten.
+
+Spec 7.3: `Unit` in der Vorlage ist ein Formatstring fuer die Loxone-Oberflaeche
+(`<v.N> Einheit`), keine Einheitenbezeichnung. `unit_format` traegt diese
+Abbildung als Datentabelle, nicht als Verzweigung im Exporter.
 """
 
 from __future__ import annotations
@@ -482,12 +521,40 @@ def lookup(ref: SignalRef, value: object) -> Profile:
         unit="",
         exportability=classify(value),
     )
+
+
+# Nachkommastellen je Einheit fuer den Loxone-Formatstring (Spec 7.3). Leistung
+# steht bewusst nicht bei den uebrigen physikalischen Groessen mit 1 Dezimale:
+# von mW nach kW sind sechs Groessenordnungen, und mit <v.3> verschwindet ein
+# 300-mW-Standby-Verbraucher als 0.000 auf der Oberflaeche.
+_UNIT_DECIMALS: dict[str, int] = {
+    "kW": 6,
+    "kWh": 6,
+    "°C": 1,
+    "%": 1,
+    "V": 1,
+    "A": 1,
+}
+
+# Loxone schreibt vor Prozent keine Leerstelle (`<v>%`), vor jeder anderen
+# Einheit dagegen schon (`<v.3> kW`, `<v.1> °C`) — belegt an den 26 realen
+# Vorlagen aus Spec 6.1.
+_UNITS_WITHOUT_LEADING_SPACE: frozenset[str] = frozenset({"%"})
+
+
+def unit_format(unit: str) -> str:
+    """Loxone-Formatstring fuer eine Einheit, oder "" wenn keine bekannt ist."""
+    decimals = _UNIT_DECIMALS.get(unit)
+    if decimals is None:
+        return ""
+    separator = "" if unit in _UNITS_WITHOUT_LEADING_SPACE else " "
+    return f"<v.{decimals}>{separator}{unit}"
 ```
 
 - [ ] **Step 6: Run test to verify it passes**
 
 Run: `uv run pytest tests/profiles/test_table.py -v`
-Expected: PASS, 10 Tests
+Expected: PASS, 13 Tests
 
 - [ ] **Step 7: Gegen die echten Fixtures halten**
 
@@ -860,16 +927,18 @@ einem monotonen Zähler. Spec 6.5: pro Gerät kommt ein `_online`-Signal dazu.
 - Create: `tests/export/test_signals.py`
 
 **Interfaces:**
-- Consumes: `StoredSignal`, `Exportability`
+- Consumes: `StoredSignal`, `Exportability`; `unit_format` aus `profiles.table`
 - Produces:
-  - `class LoxoneInput` — frozen: `key: str`, `title: str`, `comment: str`, `analog: bool`
-  - `to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[LoxoneInput]`
+  - `class LoxoneInput` — frozen: `key: str`, `title: str`, `comment: str`, `analog: bool`, `unit_format: str`
+  - `to_inputs(signals: Sequence[StoredSignal], device_id: int, device_label: str) -> list[LoxoneInput]`
 
 - [ ] **Step 1: Write the failing test**
 
 `tests/export/test_signals.py`:
 
 ```python
+import pytest
+
 from loxmatter.export.signals import to_inputs
 from loxmatter.matter.models import SignalKind, SignalRef
 from loxmatter.model.store import StoredSignal
@@ -887,20 +956,23 @@ def signal(key, kind=SignalKind.ATTRIBUTE, exportability=Exportability.ANALOG, u
 
 
 def test_analog_attribute_becomes_one_analog_input():
-    inputs = to_inputs([signal("d1_1_temp", unit="°C")], "Wohnzimmer")
+    inputs = to_inputs([signal("d1_1_temp", unit="°C")], 1, "Wohnzimmer")
     assert [i.key for i in inputs] == ["d1_1_temp", "d1_online"]
     assert inputs[0].analog is True
+    assert inputs[0].unit_format == "<v.1> °C"
 
 
 def test_digital_attribute_becomes_one_digital_input():
-    inputs = to_inputs([signal("d1_1_onoff", exportability=Exportability.DIGITAL)], "Steckdose")
+    inputs = to_inputs([signal("d1_1_onoff", exportability=Exportability.DIGITAL)], 1, "Steckdose")
     assert inputs[0].analog is False
+    assert inputs[0].unit_format == ""
 
 
 def test_event_becomes_a_pulse_and_a_counter():
     """Spec 6.3: der Impuls erzeugt die Flanke, der Zaehler ueberlebt ein verlorenes Paket."""
     inputs = to_inputs(
         [signal("d1_1_press", kind=SignalKind.EVENT, exportability=Exportability.DIGITAL)],
+        1,
         "Taster",
     )
     keys = [i.key for i in inputs]
@@ -910,35 +982,67 @@ def test_event_becomes_a_pulse_and_a_counter():
     counter = next(i for i in inputs if i.key == "d1_1_press_n")
     assert pulse.analog is False
     assert counter.analog is True
+    assert pulse.unit_format == ""
+    assert counter.unit_format == ""
 
 
 def test_non_exportable_signals_are_skipped():
     """Spec 6.6: Listen und Strukturen werden nie zu Loxone-Objekten."""
-    inputs = to_inputs([signal("d1_1_parts", exportability=Exportability.NONE)], "X")
+    inputs = to_inputs([signal("d1_1_parts", exportability=Exportability.NONE)], 1, "X")
     assert [i.key for i in inputs] == ["d1_online"]
 
 
 def test_text_signals_are_skipped_for_now():
     """Der virtuelle Texteingang ist ein eigener Vorlagentyp — spaetere Ausbaustufe."""
-    inputs = to_inputs([signal("d1_1_vendor", exportability=Exportability.TEXT)], "X")
+    inputs = to_inputs([signal("d1_1_vendor", exportability=Exportability.TEXT)], 1, "X")
     assert [i.key for i in inputs] == ["d1_online"]
 
 
 def test_online_signal_is_added_once_per_device():
     """Spec 6.5: kostet nichts und beantwortet die haeufigste Frage."""
-    inputs = to_inputs([signal("d1_1_a"), signal("d1_1_b")], "Geraet")
+    inputs = to_inputs([signal("d1_1_a"), signal("d1_1_b")], 1, "Geraet")
     assert [i.key for i in inputs].count("d1_online") == 1
     online = next(i for i in inputs if i.key == "d1_online")
     assert online.analog is False
 
 
-def test_unit_lands_in_the_comment():
-    inputs = to_inputs([signal("d1_1_power", unit="kW")], "Steckdose")
-    assert "kW" in inputs[0].comment
+def test_unit_no_longer_lands_in_the_comment():
+    """Die Einheit stand frueher im Kommentar; jetzt traegt sie unit_format (Spec 7.3)."""
+    inputs = to_inputs([signal("d1_1_power", unit="kW")], 1, "Steckdose")
+    power = next(i for i in inputs if i.key == "d1_1_power")
+    assert "kW" not in power.comment
+    assert power.unit_format
+
+
+def test_power_unit_gets_the_widened_six_decimal_format():
+    """Spec 7.3: mit dem sonst ueblichen <v.3> zeigt ein 300-mW-Standby-
+    Verbraucher 0.000 an — deshalb <v.6> fuer Leistung."""
+    inputs = to_inputs([signal("d1_1_power", unit="kW")], 1, "Steckdose")
+    power = next(i for i in inputs if i.key == "d1_1_power")
+    assert power.unit_format == "<v.6> kW"
 
 
 def test_empty_signal_list_still_yields_the_online_input():
-    assert [i.key for i in to_inputs([], "Leer")] == ["d1_online"]
+    assert [i.key for i in to_inputs([], 7, "Leer")] == ["d7_online"]
+
+
+def test_event_counter_key_colliding_with_another_signal_raises():
+    """Regression: die `_n`-Endung ist nirgends reserviert. Ein `clusters.yaml`-
+    Slug kann zufaellig genau auf den Zaehler-Schluessel eines Events treffen —
+    das darf nie still zwei identische `LoxoneInput`s erzeugen (siehe Review)."""
+    event = signal("d3_1_press", kind=SignalKind.EVENT, exportability=Exportability.DIGITAL)
+    collider = signal("d3_1_press_n")
+    with pytest.raises(ValueError, match="d3_1_press_n"):
+        to_inputs([event, collider], 3, "Taster")
+
+
+def test_signal_from_a_different_device_raises():
+    """Regression: der Praefix wurde frueher aus den Daten geraten und ist
+    jetzt ein expliziter Parameter — ein falsch zugeordnetes Signal muss laut
+    scheitern statt ein Geraet stillschweigend falsch zu beschriften."""
+    foreign = signal("d9_1_temp")
+    with pytest.raises(ValueError, match="d9_1_temp"):
+        to_inputs([foreign], 3, "Taster")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -963,19 +1067,29 @@ verlorenes UDP-Paket ueberlebt, weil er dann nur springt statt zu verschlucken.
 Spec 6.6 — Listen, Strukturen, Nullwerte und Texte werden hier verworfen. Sie
 bleiben in der Ablage und in der Oberflaeche sichtbar, aber sie koennen kein
 Loxone-Objekt werden.
+
+Spec 7.3 — die Einheit eines Signals wandert nicht mehr in den Kommentar,
+sondern wird ueber `profiles.table.unit_format` in einen Loxone-Formatstring
+uebersetzt (`unit_format`-Feld). Digitale Eingaenge und Events tragen dort
+immer `""`: ein Formatstring mit Nachkommastellen ergibt fuer einen Impuls
+oder einen Zaehler keinen Sinn.
+
+Spec 6.2 — der Geraete-Praefix ``d<device_id>`` kommt hier nicht aus einer
+Vermutung ueber die Signalliste, sondern vom Aufrufer, der ihn von `Store`
+kennt. Und weil der Zaehler-Schluessel eines Events (`<key>_n`) frei erfunden
+und nirgends reserviert ist, prueft `to_inputs` vor der Rueckgabe, dass kein
+Schluessel doppelt vergeben wird — sonst haetten zwei Loxone-Objekte densel-
+ben UDP-Namen und Loxone Config wuerde das nicht melden.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from loxmatter.matter.models import SignalKind
 from loxmatter.model.store import StoredSignal
-from loxmatter.profiles.table import Exportability
-
-_DEVICE_PREFIX = re.compile(r"^(d\d+)_")
+from loxmatter.profiles.table import Exportability, unit_format
 
 
 @dataclass(frozen=True)
@@ -984,42 +1098,78 @@ class LoxoneInput:
     title: str
     comment: str
     analog: bool
+    unit_format: str
 
 
-def _device_prefix(signals: Sequence[StoredSignal]) -> str:
-    for signal in signals:
-        match = _DEVICE_PREFIX.match(signal.key)
-        if match:
-            return match.group(1)
-    return "d1"
+def to_inputs(
+    signals: Sequence[StoredSignal], device_id: int, device_label: str
+) -> list[LoxoneInput]:
+    """Erzeugt die Eingangsobjekte eines Geraets, inklusive Online-Signal.
 
+    Bricht laut ab, statt falsch verdrahtete Vorlagen zu erzeugen:
 
-def to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[LoxoneInput]:
-    """Erzeugt die Eingangsobjekte eines Geraets, inklusive Online-Signal."""
+    - jedes Signal muss zu ``device_id`` gehoeren (Praefix ``d<device_id>_``).
+      Ein Signal eines anderen Geraets in dieser Liste ist ein Aufrufer-Fehler
+      und darf nicht stillschweigend ein falsch beschriftetes Geraet ergeben.
+    - kein Schluessel darf zweimal vergeben werden. Der Zaehler-Schluessel
+      eines Events (``<key>_n``) wird hier frei erfunden und ist in `Store`
+      nirgends reserviert — trifft ihn ein spaeterer `clusters.yaml`-Slug
+      zufaellig, waeren das zwei `LoxoneInput`s mit identischem Schluessel,
+      also zwei Loxone-Objekte, die denselben UDP-Namen abhoeren.
+    """
+    prefix = f"d{device_id}_"
     inputs: list[LoxoneInput] = []
+    # Schluessel -> deutschsprachige Herkunftsbeschreibung, fuer die Meldung
+    # bei einer Kollision.
+    origins: dict[str, str] = {}
+
+    def emit(entry: LoxoneInput, origin: str) -> None:
+        if entry.key in origins:
+            raise ValueError(
+                f"Schluessel-Kollision beim Export: {entry.key!r} wird sowohl von "
+                f"{origins[entry.key]} als auch von {origin} erzeugt — das ergaebe "
+                f"zwei Loxone-Objekte fuer denselben UDP-Namen."
+            )
+        origins[entry.key] = origin
+        inputs.append(entry)
 
     for signal in signals:
+        if not signal.key.startswith(prefix):
+            raise ValueError(
+                f"Signal {signal.key!r} gehoert nicht zu Geraet {device_id} "
+                f"(erwartetes Praefix {prefix!r})."
+            )
+
         comment = f"{device_label} · {signal.ref.path}"
-        if signal.unit:
-            comment = f"{comment} · {signal.unit}"
 
         if signal.ref.kind is SignalKind.EVENT:
-            inputs.append(LoxoneInput(signal.key, signal.title, f"{comment} · Impuls", False))
-            inputs.append(
+            emit(
+                LoxoneInput(signal.key, signal.title, f"{comment} · Impuls", False, ""),
+                f"dem Impuls von {signal.key!r}",
+            )
+            emit(
                 LoxoneInput(
-                    f"{signal.key}_n", f"{signal.title} Zähler", f"{comment} · Zähler", True
-                )
+                    f"{signal.key}_n", f"{signal.title} Zähler", f"{comment} · Zähler", True, ""
+                ),
+                f"dem Zaehler von {signal.key!r}",
             )
             continue
 
         if signal.exportability is Exportability.ANALOG:
-            inputs.append(LoxoneInput(signal.key, signal.title, comment, True))
+            emit(
+                LoxoneInput(signal.key, signal.title, comment, True, unit_format(signal.unit)),
+                f"dem Signal {signal.key!r}",
+            )
         elif signal.exportability is Exportability.DIGITAL:
-            inputs.append(LoxoneInput(signal.key, signal.title, comment, False))
+            emit(
+                LoxoneInput(signal.key, signal.title, comment, False, ""),
+                f"dem Signal {signal.key!r}",
+            )
 
-    prefix = _device_prefix(signals)
-    inputs.append(
-        LoxoneInput(f"{prefix}_online", f"{device_label} erreichbar", device_label, False)
+    online_key = f"d{device_id}_online"
+    emit(
+        LoxoneInput(online_key, f"{device_label} erreichbar", device_label, False, ""),
+        "dem Online-Signal",
     )
     return inputs
 ```
@@ -1027,7 +1177,7 @@ def to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[Loxone
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_signals.py -v`
-Expected: PASS, 8 Tests
+Expected: PASS, 11 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -1048,9 +1198,16 @@ git commit -m "feat(export): Events zu Impuls und Zaehler, Online-Signal je Gera
 - Consumes: `render_document` aus `export.xml`, `LoxoneInput` aus `export.signals`
 - Produces:
   - `render_virtual_in_udp(device_label: str, bridge_ip: str, port: int, inputs: Sequence[LoxoneInput]) -> bytes`
+    — schreibt vor den `VirtualInUdpCmd`-Kindern ein `<Info templateType="1" minVersion="14040925"/>`
   - `render_virtual_out(device_label: str, base_url: str, commands: Sequence[LoxoneCommand]) -> bytes`
+    — schreibt vor den `VirtualOutCmd`-Kindern ein `<Info templateType="3" minVersion="14040925"/>`
   - `class LoxoneCommand` — frozen: `key: str`, `title: str`, `path: str`, `analog: bool`
-  - `filename_for(prefix: str, device_label: str) -> str`
+  - `filename_for(prefix: str, device_id: int, device_label: str) -> str`
+
+`minVersion="14040925"` ist für beide Vorlagentypen der niedrigste an den 26 realen
+Vorlagen beobachtete Wert (Spec 6.1, „Korrektur 2026-09-02") — er gate also die
+wenigsten Config-Versionen aus. Ob Loxone Config diesen Wert tatsächlich akzeptiert,
+prüft nicht diese Task, sondern der Import-Beleg in Task 7 Schritt 6.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1068,8 +1225,8 @@ from loxmatter.export.signals import LoxoneInput
 
 def inputs():
     return [
-        LoxoneInput("d1_1_temp", "Temperatur", "Wohnzimmer · 1/1026/0 · °C", True),
-        LoxoneInput("d1_online", "erreichbar", "Wohnzimmer", False),
+        LoxoneInput("d1_1_temp", "Temperatur", "Wohnzimmer · 1/1026/0", True, "<v.1> °C"),
+        LoxoneInput("d1_online", "erreichbar", "Wohnzimmer", False, ""),
     ]
 
 
@@ -1101,8 +1258,30 @@ def test_analog_flag_follows_the_input():
 
 def test_defaults_from_the_verified_schema_are_present():
     out = text_of(render_virtual_in_udp("L", "192.168.1.50", 7000, inputs()))
-    for attr in ("Signed=", "SourceValLow=", "DestValHigh=", "DefVal=", "MinVal=", "MaxVal="):
+    for attr in (
+        "Signed=",
+        "SourceValLow=",
+        "DestValHigh=",
+        "DefVal=",
+        "MinVal=",
+        "MaxVal=",
+        "Unit=",
+        "HintText=",
+    ):
         assert attr in out
+
+
+def test_unit_format_is_escaped_into_the_unit_attribute():
+    """Spec 6.1, Korrektur 2026-09-02: VirtualInUdpCmd hat 15 Attribute, u. a. Unit."""
+    out = text_of(render_virtual_in_udp("L", "192.168.1.50", 7000, inputs()))
+    assert 'Unit="&lt;v.1&gt; °C"' in out
+
+
+def test_info_element_is_the_first_child_of_virtual_in_udp():
+    """Spec 6.1, Korrektur 2026-09-02: jede Vorlage traegt ein Info-Element als erstes Kind."""
+    out = text_of(render_virtual_in_udp("L", "192.168.1.50", 7000, inputs()))
+    body_after_root = out.split(">", 1)[1]
+    assert body_after_root.lstrip().startswith('<Info templateType="1" minVersion="14040925"/>')
 
 
 def test_virtual_out_escapes_the_value_placeholder():
@@ -1127,17 +1306,71 @@ def test_virtual_out_carries_method_and_address():
     )
     assert 'Address="http://192.168.1.50:8080"' in out
     assert 'CmdOnMethod="GET"' in out
+    assert 'CmdOffMethod="GET"' in out
+
+
+def test_virtual_out_cmd_has_no_id_attribute():
+    """Spec 6.1, Korrektur 2026-09-02: VirtualOutCmd hat 15 Attribute und kein ID."""
+    out = text_of(
+        render_virtual_out(
+            "Lampe",
+            "http://192.168.1.50:8080",
+            [LoxoneCommand("d1_1_onoff", "Schalten", "/cmd/d1_1_onoff/1", False)],
+        )
+    )
+    assert 'ID="' not in out
+
+
+def test_info_element_is_the_first_child_of_virtual_out():
+    out = text_of(
+        render_virtual_out(
+            "Lampe",
+            "http://192.168.1.50:8080",
+            [LoxoneCommand("d1_1_onoff", "Schalten", "/cmd/d1_1_onoff/1", False)],
+        )
+    )
+    body_after_root = out.split(">", 1)[1]
+    assert body_after_root.lstrip().startswith('<Info templateType="3" minVersion="14040925"/>')
 
 
 def test_filenames_follow_the_spec_prefixes():
-    assert filename_for("VIU", "Wohnzimmer Lampe") == "VIU_Wohnzimmer_Lampe.xml"
-    assert filename_for("VO", "Küche/Steckdose") == "VO_Kueche_Steckdose.xml"
+    assert filename_for("VIU", 12, "Wohnzimmer Lampe") == "VIU_d12_Wohnzimmer_Lampe.xml"
+    assert filename_for("VO", 7, "Küche/Steckdose") == "VO_d7_Kueche_Steckdose.xml"
 
 
 def test_filename_is_ascii_only():
-    name = filename_for("VIU", "Büro Ölheizung —Süd")
+    name = filename_for("VIU", 3, "Büro Ölheizung —Süd")
     assert name.isascii()
     assert name.startswith("VIU_") and name.endswith(".xml")
+
+
+def test_filenames_of_labels_differing_only_by_separator_do_not_collide():
+    """ "Lampe 1", "Lampe_1" und "Lampe-1" normalisieren alle auf dasselbe
+    Label-Segment — auf verschiedenen Geraeten muss die ID sie trotzdem
+    trennen."""
+    space = filename_for("VIU", 1, "Lampe 1")
+    underscore = filename_for("VIU", 2, "Lampe_1")
+    hyphen = filename_for("VIU", 3, "Lampe-1")
+    assert len({space, underscore, hyphen}) == 3
+
+
+def test_filename_with_empty_label_has_no_trailing_separator_or_empty_segment():
+    """Ein Label, das komplett wegnormalisiert (nicht-ASCII, leer, nur
+    Sonderzeichen), darf weder mit "_" enden noch ein leeres "__"-Segment
+    hinterlassen — die Datei bleibt trotzdem eindeutig ueber die ID."""
+    for label in ("厨房", "", "!!!"):
+        name = filename_for("VIU", 12, label)
+        assert name == "VIU_d12.xml"
+        assert not name.endswith("_.xml")
+        assert "__" not in name
+
+
+def test_same_label_on_different_device_ids_never_collides():
+    first = filename_for("VIU", 1, "Wohnzimmerlampe")
+    second = filename_for("VIU", 2, "Wohnzimmerlampe")
+    assert first != second
+    assert first == "VIU_d1_Wohnzimmerlampe.xml"
+    assert second == "VIU_d2_Wohnzimmerlampe.xml"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1158,6 +1391,23 @@ Eingaengen in einem Objekt waere die Config nicht mehr navigierbar (Spec 6.2).
 
 Die Attributnamen und ihre Defaults stammen aus dem verifizierten Schema in
 Spec 6.1. Sie sind nicht frei waehlbar.
+
+Spec 6.1, „Korrektur 2026-09-02": das Schema stammte urspruenglich aus einer
+fremden Referenzimplementierung und wich in vier Punkten von dem ab, was
+Loxone Config an 26 realen Vorlagen tatsaechlich schreibt — belegt, nicht
+vermutet. Diese Task zieht die vier Korrekturen nach:
+
+1. Jede Vorlage traegt ein `<Info>` als erstes Kind. `templateType` ist `1`
+   fuer `VirtualInUdp`, `3` fuer `VirtualOut`. `minVersion="14040925"` ist fuer
+   beide der niedrigste an den 26 Vorlagen beobachtete Wert — er gate also die
+   wenigsten Config-Versionen. Ob Loxone Config diesen Wert wirklich
+   akzeptiert, entscheidet nicht dieser Code, sondern der Import-Beleg in
+   Task 7 Schritt 6.
+2. `VirtualInUdpCmd` hat 15 Attribute, u. a. `Unit` (Formatstring, Spec 7.3)
+   und `HintText`.
+3. `VirtualOut` traegt `HintText` zwischen `CmdInit` und `CloseAfterSend`.
+4. `VirtualOutCmd` hat 15 Attribute, kein `ID`, und `CmdOnMethod`/`CmdOffMethod`
+   stehen zusammen statt verteilt.
 """
 
 from __future__ import annotations
@@ -1170,6 +1420,11 @@ from loxmatter.export.signals import LoxoneInput
 from loxmatter.export.xml import render_document
 
 _UMLAUTS = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"}
+
+# Niedrigster an den 26 realen Vorlagen (Spec 6.1) beobachteter Wert je
+# Vorlagentyp — gate damit die wenigsten Config-Versionen aus. Der eigentliche
+# Beleg, dass Loxone Config diesen Wert akzeptiert, ist der Import in Task 7.
+_MIN_VERSION = "14040925"
 
 
 @dataclass(frozen=True)
@@ -1190,6 +1445,7 @@ def render_virtual_in_udp(
     port: int,
     inputs: Sequence[LoxoneInput],
 ) -> bytes:
+    info = ("Info", [("templateType", "1"), ("minVersion", _MIN_VERSION)])
     children = [
         (
             "VirtualInUdpCmd",
@@ -1207,6 +1463,8 @@ def render_virtual_in_udp(
                 ("DefVal", "0"),
                 ("MinVal", "-2147483647"),
                 ("MaxVal", "2147483647"),
+                ("Unit", entry.unit_format),
+                ("HintText", ""),
             ],
         )
         for entry in inputs
@@ -1219,7 +1477,7 @@ def render_virtual_in_udp(
             ("Address", bridge_ip),
             ("Port", str(port)),
         ],
-        children,
+        [info, *children],
     )
 
 
@@ -1228,27 +1486,29 @@ def render_virtual_out(
     base_url: str,
     commands: Sequence[LoxoneCommand],
 ) -> bytes:
+    info = ("Info", [("templateType", "3"), ("minVersion", _MIN_VERSION)])
     children = [
         (
             "VirtualOutCmd",
             [
-                ("ID", str(index)),
                 ("Title", command.title),
                 ("Comment", command.key),
                 ("CmdOnMethod", "GET"),
+                ("CmdOffMethod", "GET"),
                 ("CmdOn", command.path),
                 ("CmdOnHTTP", ""),
                 ("CmdOnPost", ""),
-                ("CmdOffMethod", "GET"),
                 ("CmdOff", ""),
                 ("CmdOffHTTP", ""),
                 ("CmdOffPost", ""),
+                ("CmdAnswer", ""),
+                ("HintText", ""),
                 ("Analog", _flag(command.analog)),
                 ("Repeat", "0"),
                 ("RepeatRate", "0"),
             ],
         )
-        for index, command in enumerate(commands)
+        for command in commands
     ]
     return render_document(
         "VirtualOut",
@@ -1257,27 +1517,47 @@ def render_virtual_out(
             ("Comment", "erzeugt von loxmatter"),
             ("Address", base_url),
             ("CmdInit", ""),
+            ("HintText", ""),
             ("CloseAfterSend", "true"),
             ("CmdSep", ""),
         ],
-        children,
+        [info, *children],
     )
 
 
-def filename_for(prefix: str, device_label: str) -> str:
-    """Dateiname nach Spec 6.1, auf ASCII normalisiert."""
+def filename_for(prefix: str, device_id: int, device_label: str) -> str:
+    """Dateiname nach Spec 6.1, auf ASCII normalisiert.
+
+    `device_id` ist nicht Dekoration — er ist der einzige Teil des Namens,
+    der Eindeutigkeit garantiert. `Store` vergibt ihn unveraenderlich und
+    verwendet ihn nirgends doppelt (siehe `export.signals`); die Normalisierung
+    unten dagegen ist verlustbehaftet und bildet absichtlich viele
+    unterschiedliche Labels ("Lampe 1", "Lampe_1", "Lampe-1", "厨房", "")
+    auf denselben oder einen leeren String ab. Ohne die Geraete-ID wuerden
+    zwei Geraete mit kollidierendem Label sich beim Export gegenseitig
+    ueberschreiben — der Nutzer importiert dann eine Vorlage im Glauben, es
+    seien zwei. Also: die ID hier NICHT entfernen, auch wenn sie im Namen
+    redundant zum Label aussieht.
+
+    Das Label bleibt trotzdem im Namen — es macht die Datei fuer einen
+    Menschen wiedererkennbar, waehrend die ID sie eindeutig macht.
+    """
     text = "".join(_UMLAUTS.get(char, char) for char in device_label)
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     safe = "".join(char if char.isalnum() else "_" for char in text)
     while "__" in safe:
         safe = safe.replace("__", "_")
-    return f"{prefix}_{safe.strip('_')}.xml"
+    safe = safe.strip("_")
+    stem = f"{prefix}_d{device_id}"
+    if safe:
+        stem = f"{stem}_{safe}"
+    return f"{stem}.xml"
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_documents.py -v`
-Expected: PASS, 8 Tests
+Expected: PASS, 15 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -1539,6 +1819,11 @@ git commit -m "feat(export): Ausgangsbefehle aus AcceptedCommandList mit Erlaubn
 **Files:**
 - Modify: `src/loxmatter/cli.py`
 - Create: `tests/test_export_cli.py`
+- Create: `tests/conftest.py` (autouse-Fixture, isoliert `--store-path` von der echten
+  Home-Datenbank in der gesamten Testsuite)
+- Create: `tests/test_store_path.py` (Rangfolge `--store-path` / `LOXMATTER_STORE` /
+  Standard, sowie der Beleg für stabile Schlüssel über zwei Exporte durch dieselbe
+  Datenbank)
 
 **Interfaces:**
 - Consumes: alles aus Task 1–5
@@ -1685,7 +1970,91 @@ def test_export_reports_what_it_skipped(tmp_path):
     )
     assert "50" in result.stdout
     assert "nicht exportierbar" in result.stdout
+
+
+def test_export_fails_cleanly_when_the_second_file_cannot_be_written(tmp_path, monkeypatch):
+    """Ein OSError beim zweiten write_bytes darf keinen Traceback zeigen, sondern muss
+    ueber _fail() laufen — und dabei sagen, welche Datei bereits geschrieben wurde und
+    welche fehlt."""
+    original_write_bytes = Path.write_bytes
+
+    def flaky_write_bytes(self: Path, data: bytes) -> int:
+        if self.name.startswith("VO_"):
+            raise OSError("Kein Speicherplatz mehr auf dem Geraet")
+        return original_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", flaky_write_bytes)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    written = sorted(p.name for p in tmp_path.glob("*.xml"))
+    assert len(written) == 1
+    assert written[0].startswith("VIU_")
+    assert "VO_" in result.stderr
+    assert "VIU_" in result.stderr
+
+
+def test_export_requires_node_or_fixture(tmp_path):
+    """export teilt sich _load_snapshot mit inspect — dessen Fehlerpfade sind sonst nur
+    ueber inspect getestet, nicht ueber export selbst."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "entweder --node oder --fixture angeben" in result.output
+
+
+def test_export_reports_malformed_fixture_missing_node_id(tmp_path):
+    """Dieselbe deutsche Meldung wie bei inspect (test_cli.py), hier ueber den
+    export-Einstiegspunkt ausgeloest."""
+    broken = tmp_path / "broken.json"
+    broken.write_text('{"attributes": {}}', encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(broken),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "node_id" in result.stderr
 ```
+
+`tests/conftest.py` (autouse für die gesamte Suite, siehe unten warum) und
+`tests/test_store_path.py` (Rangfolge `--store-path` / `LOXMATTER_STORE` / Standard,
+plus der Beleg für stabile Schlüssel über zwei Exporte durch dieselbe Datenbank sowie
+unterschiedliche `device_id`s durch zwei getrennte Datenbanken) — beide sind Teil
+dieses Tasks; ihr Inhalt steht bei der Implementierung von `--store-path` unten.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1707,8 +2076,16 @@ def export(
     bridge_ip: str = typer.Option(..., help="IP dieser Bridge, aus Sicht des Miniservers"),
     port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
     out: Path = typer.Option(Path("."), help="Zielverzeichnis für die Vorlagen"),  # noqa: B008
-    store_path: Path = typer.Option(  # noqa: B008
-        Path("loxmatter.sqlite"), help="Datenbank mit den Signalschlüsseln"
+    store_path: Path | None = typer.Option(  # noqa: B008
+        None,
+        help="Datenbank mit den Signalschlüsseln. Standard: "
+        "~/.loxmatter/loxmatter.sqlite — bewusst unabhängig vom "
+        "Arbeitsverzeichnis. Die Schlüssel darin sind die Verdrahtung in "
+        "Loxone; ein relativer Pfad würde bei einem Aufruf aus einem anderen "
+        "Verzeichnis die Datenbank verfehlen, dem Gerät eine neue device_id "
+        "zuweisen und damit jede bestehende Verdrahtung stillschweigend "
+        "zerstören. Alternative über die Umgebungsvariable LOXMATTER_STORE, "
+        "etwa für ein eingehängtes Volume im Container.",
     ),
     raw_commands: bool = typer.Option(
         False,
@@ -1717,10 +2094,20 @@ def export(
         "Verwaltungscluster bleiben in jedem Fall gesperrt.",
     ),
 ) -> None:
-    """Erzeugt die Loxone-Vorlagen für ein Gerät."""
+    """Erzeugt die Loxone-Vorlagen für ein Gerät.
+
+    Der Ort der Signalschlüssel-Datenbank entscheidet über die Schlüsselstabilität —
+    siehe `_resolve_store_path` und die Hilfe zu `--store-path`. Der verwendete Pfad
+    wird ausgegeben, damit ein Nutzer, der versehentlich zwei Datenbanken erzeugt hat,
+    das an der Ausgabe sieht statt es aus toten Bausteinen in Loxone zu erschließen.
+    """
     snapshot = _load_snapshot(fixture, node, url)
 
-    store = Store(store_path)
+    resolved_store_path = _resolve_store_path(store_path)
+    typer.echo(f"Datenbank: {resolved_store_path}")
+    resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
+
+    store = Store(resolved_store_path)
     try:
         device_id = store.register_device(snapshot)
         stored = store.register_signals(device_id, snapshot)
@@ -1728,7 +2115,7 @@ def export(
         store.close()
 
     label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or f"Node {snapshot.node_id}"
-    inputs = to_inputs(stored, label)
+    inputs = to_inputs(stored, device_id, label)
     # Ausgangsbefehle kommen aus AcceptedCommandList, nicht aus den Attributen:
     # Matter-Attribute sind fast alle nur lesbar (Task 6).
     device_commands = extract_commands(snapshot, raw=raw_commands)
@@ -1743,15 +2130,25 @@ def export(
     ]
 
     out.mkdir(parents=True, exist_ok=True)
-    viu = out / filename_for("VIU", label)
-    vo = out / filename_for("VO", label)
-    viu.write_bytes(render_virtual_in_udp(label, bridge_ip, port, inputs))
-    vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:8080", commands))
+    viu = out / filename_for("VIU", device_id, label)
+    vo = out / filename_for("VO", device_id, label)
+
+    try:
+        viu.write_bytes(render_virtual_in_udp(label, bridge_ip, port, inputs))
+    except OSError as exc:
+        _fail(f"{viu} konnte nicht geschrieben werden: {exc}. Es wurde noch keine Datei angelegt.")
+    try:
+        vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:8080", commands))
+    except OSError as exc:
+        _fail(
+            f"{vo} konnte nicht geschrieben werden: {exc}. "
+            f"Geschrieben wurde bereits {viu}, es fehlt {vo.name}."
+        )
 
     # Text zaehlt mit: der virtuelle Texteingang ist ein eigener Vorlagentyp
     # und kommt in einer spaeteren Ausbaustufe (Spec 6.6).
-    nicht_abbildbar = (Exportability.NONE, Exportability.TEXT)
-    skipped = sum(1 for s in stored if s.exportability in nicht_abbildbar)
+    unexportable = (Exportability.NONE, Exportability.TEXT)
+    skipped = sum(1 for s in stored if s.exportability in unexportable)
     typer.echo(f"{viu.name}: {len(inputs)} Eingänge")
     typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
     typer.echo(f"{skipped} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)")
@@ -1788,9 +2185,45 @@ def _load_snapshot(fixture: Path | None, node: int | None, url: str) -> NodeSnap
     return asyncio.run(run())
 ```
 
+Dazu die Auflösung des Store-Pfads — **niemals** wieder auf einen relativen Standard
+vereinfachen, siehe Docstring:
+
+```python
+def _resolve_store_path(explicit: Path | None) -> Path:
+    """Ermittelt den Pfad der Signalschlüssel-Datenbank.
+
+    Rangfolge: `--store-path` schlägt die Umgebungsvariable `LOXMATTER_STORE`,
+    die wiederum den Standard `~/.loxmatter/loxmatter.sqlite` schlägt.
+
+    Der Standard ist absichtlich vom Arbeitsverzeichnis unabhängig. Die Datenbank hält
+    die Signalschlüssel — und die Schlüssel *sind* die Verdrahtung in Loxone
+    (Spec 6.2): sobald ein Nutzer einen exportierten Eingang auf einen
+    Funktionsbaustein gezogen hat, verbindet nur noch der Schlüsseltext den Baustein
+    mit der Bridge. Läge der Standard relativ zum Arbeitsverzeichnis (z. B.
+    `loxmatter.sqlite`), würde ein Export aus einem anderen Verzeichnis — heute
+    `~/exports`, morgen der Desktop, oder ein Cron-Job mit eigenem Arbeitsverzeichnis —
+    die vorhandene Datenbank verfehlen. Das Werkzeug hielte das Gerät dann für neu,
+    vergäbe eine neue `device_id` und damit einen komplett neuen Satz Schlüssel. Der
+    Nutzer importiert die neue Vorlage, und jeder bisher verdrahtete Baustein wird
+    stillschweigend tot — ohne Fehlermeldung. NICHT wieder auf einen relativen Pfad
+    vereinfachen.
+
+    `LOXMATTER_STORE` erlaubt einen abweichenden, festen Ort — etwa ein eingehängtes
+    Volume in einer Container-Bereitstellung.
+    """
+    if explicit is not None:
+        return explicit
+    override = os.environ.get("LOXMATTER_STORE")
+    if override:
+        return Path(override)
+    return Path.home() / ".loxmatter" / "loxmatter.sqlite"
+```
+
 Die Importe, die `export` zusätzlich braucht:
 
 ```python
+import os
+
 from loxmatter.export.documents import (
     LoxoneCommand,
     filename_for,
@@ -1806,10 +2239,20 @@ from loxmatter.profiles.table import Exportability
 Baue `inspect` so um, dass es `_load_snapshot` benutzt, statt seine eigene Kopie zu
 behalten. Alle bestehenden CLI-Tests müssen unverändert weiterlaufen.
 
+`tests/conftest.py` bekommt außerdem ein autouse-Fixture, das `Path.home()` und
+`LOXMATTER_STORE` für **jeden** Test auf ein Verzeichnis unter `tmp_path` legt — sonst
+würde jeder Test, der `export` über die CLI aufruft und `--store-path` nicht selbst
+setzt, den neuen Standard `~/.loxmatter/loxmatter.sqlite` treffen und in die echte
+Home-Datenbank schreiben. `tests/test_store_path.py` prüft `_resolve_store_path`
+gezielt mit eigenem `monkeypatch`: `--store-path` schlägt `LOXMATTER_STORE`, das
+wiederum den Standard schlägt; außerdem, dass ein Gerät über zwei Exporte durch
+dieselbe Datenbank dieselben Schlüssel behält, während zwei getrennte Datenbanken
+unterschiedliche `device_id`s vergeben.
+
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `uv run pytest tests/test_export_cli.py -v`
-Expected: PASS, 5 Tests
+Run: `uv run pytest tests/test_export_cli.py tests/test_store_path.py -v`
+Expected: PASS, 10 Tests in `test_export_cli.py`, 6 Tests in `test_store_path.py`
 
 - [ ] **Step 5: Vollständige Prüfung**
 
@@ -1834,6 +2277,12 @@ Virtueller UDP-Eingang → Vorlage importieren.
 Erwartet: das Objekt erscheint mit allen Befehlen, Titel und Kommentare lesbar,
 Analog-Flags richtig. Danach dasselbe für den Taster (Node 4) und prüfen, dass
 Impuls und Zähler getrennt auftauchen.
+
+Dieser Import ist auch der eigentliche Beleg für `minVersion="14040925"`
+(Task 5): Lehnt Config die Vorlage deswegen ab, war der beobachtete Minimalwert
+zu niedrig — dann in Spec 6.1 nachtragen und den Wert in `documents.py`
+anheben. Kein Testfall kann das vorwegnehmen, weil er dieselbe Annahme prüfen
+würde, die er belegen soll.
 
 Was dabei abweicht, geht in Spec 6.1 — **nicht** in eine Anpassung der Tests.
 

@@ -1,0 +1,54 @@
+# Anreicherung fuer bekannte Cluster. Unbekanntes wird nicht verworfen, sondern
+# bekommt einen generischen Namen (Spec 3.5).
+#
+# Zieleinheit ist die, die der Loxone-Baustein erwartet, nicht die SI-Einheit
+# (Spec 7.3). Die Umrechnung selbst macht der UDP-Sender in Phase 4.
+clusters:
+  6:
+    name: onoff
+    attributes:
+      0: {slug: onoff, unit: ""}
+    commands:
+      # "off"/"on" muessen in Anfuehrungszeichen stehen: YAML 1.1 liest sie
+      # sonst als Booleans, nicht als Strings (PyYAML-Falle).
+      0: {slug: "off", takes_value: false}
+      1: {slug: "on", takes_value: false}
+      2: {slug: toggle, takes_value: false}
+  8:
+    name: level
+    attributes:
+      0: {slug: level, unit: "%"}
+    commands:
+      0: {slug: level, takes_value: true}
+      4: {slug: level_onoff, takes_value: true}
+  1026:
+    name: temperature
+    attributes:
+      0: {slug: temp, unit: "°C"}
+  1029:
+    name: humidity
+    attributes:
+      0: {slug: humidity, unit: "%"}
+  144:
+    name: power
+    attributes:
+      4: {slug: voltage, unit: "V"}
+      5: {slug: current, unit: "A"}
+      8: {slug: power, unit: "kW"}
+  145:
+    name: energy
+    attributes:
+      1: {slug: energy_imported, unit: "kWh"}
+      2: {slug: energy_exported, unit: "kWh"}
+  59:
+    name: switch
+    attributes:
+      0: {slug: positions, unit: ""}
+      1: {slug: position, unit: ""}
+    events:
+      1: {slug: press}
+      2: {slug: longpress}
+      3: {slug: shortrelease}
+      4: {slug: longrelease}
+      5: {slug: multipress_ongoing}
+      6: {slug: multipress}
