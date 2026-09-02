@@ -41,11 +41,13 @@ class SignalPatch(BaseModel):
     Spec 6.2: der Schluessel ist die Verdrahtung in Loxone. Waere er hier
     aenderbar, koennte ein Klick in der Oberflaeche einen Baustein im Haus
     still totlegen - deshalb kennt dieses Modell gar kein `key`-Feld. Ein
-    mitgeschicktes `key` landet bei Pydantic (ohne `extra="allow"`, dem
-    Default) niemals auf dem Objekt und wird von `devices.rename_signal`
-    entsprechend nie gelesen, geschweige denn angewendet - das ist keine
-    Frage der Sorgfalt im Handler, sondern eine, die dieses Modell strukturell
-    unmoeglich macht.
+    mitgeschicktes `key` landet bei Pydantic niemals auf dem Objekt und wird
+    von `devices.rename_signal` entsprechend nie gelesen, geschweige denn
+    angewendet - das ist keine Frage der Sorgfalt im Handler, sondern eine,
+    die dieses Modell strukturell unmoeglich macht. Grund ist Pydantic v2s
+    eigener Default fuer unbekannte Felder, `extra="ignore"` (Berichtigung
+    M1, Review 2026-09-02: hier stand faelschlich `extra="allow"` als
+    Default - das Gegenteil, es wuerde unbekannte Felder gerade behalten).
     """
 
     model_config = ConfigDict(frozen=True)
