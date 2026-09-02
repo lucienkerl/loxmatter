@@ -284,13 +284,55 @@ git commit -m "feat(matter): Geraete einlernen und entfernen"
 - Create: `src/loxmatter/api/models.py`
 - Create: `src/loxmatter/api/devices.py`
 - Create: `tests/api/test_devices.py`
-- Modify: `src/loxmatter/model/store.py` (Abfragen, die die API braucht)
+- Modify: `src/loxmatter/model/store.py` (Abfragen, die die API braucht; **neue Spalte
+  `signal.exported` — siehe "Schema-Migration" unten, NICHT einfach an `_SCHEMA`
+  anhängen)
+- Create: `tests/model/test_store_migration.py`
 
 **Interfaces:**
 - Consumes: `Store`, `StoredSignal`, `BridgeMatterClient`, `Runtime`
 - Produces:
   - `DeviceOut`, `SignalOut` — frozen Pydantic-Modelle
   - `build_device_router(store, client, runtime) -> APIRouter` mit Präfix `/api`
+
+**Schema-Migration (Review-Fix Important #1, 2026-09-02 — hier ergänzt, weil eine
+frühere Fassung dieses Plans eine neue Spalte lehrte, ohne eine Migration dafür
+vorzusehen):**
+
+`_SCHEMA` verwendet `CREATE TABLE IF NOT EXISTS` — das erreicht eine bereits
+bestehende Tabelle nie mit einer neuen Spalte. Die Spalte `signal.exported` diesem
+String einfach hinzuzufügen reicht deshalb NICHT: gegen eine Datenbank, die vor
+diesem Task angelegt wurde (`loxmatter export`/`loxmatter run` aus Phase 4 oder
+früheren Läufen dieser Phase), bleibt sie unsichtbar, und `Store.signals()`
+scheitert mit `IndexError: No item with that key`. Weil die Datenbank die
+Signalschlüssel trägt — die Verdrahtung in Loxone, siehe Modul-Docstring von
+`store.py` — ist die einzige Abhilfe ohne Migration das Löschen der gesamten
+Datenbank, was jeden Schlüssel und jede bestehende Verdrahtung im Haus zerstört.
+
+Die Migration verwaltet `PRAGMA user_version` als Schema-Version:
+
+- Version 0 ist "vor dieser Migrationslogik" — jede Datenbank, bei der
+  `user_version` noch nie gesetzt wurde, sowohl eine echte Alt-Datenbank als auch
+  (bevor der erste `Store(...)`-Aufruf sie stempelt) eine frisch angelegte.
+- Version 1 fügt `signal.exported` hinzu (`ALTER TABLE ... ADD COLUMN`) und
+  befüllt bestehende Zeilen zurückwirkend — **nicht** pauschal mit dem
+  Spalten-Default, sondern nach derselben Regel wie ein frisch registriertes
+  Signal: exportierbar (ANALOG/DIGITAL) → `True`, sonst (TEXT, NONE) → `False`
+  (siehe `is_exportable` unten).
+- Läuft in einer Transaktion: `ALTER TABLE ADD COLUMN` ist in SQLite vollständig
+  transaktional, ein `db.rollback()` im Fehlerfall macht auch schon ausgeführte
+  Schritte dieses Laufs wieder rückgängig, `PRAGMA user_version` wird nur bei
+  vollständigem Erfolg erhöht.
+- Auf dem neuesten Stand: kein Schreibzugriff, echtes No-op — jeder Start außer
+  dem allerersten nach einer Schema-Änderung.
+
+Tests dafür (`tests/model/test_store_migration.py`) bauen die Alt-Datenbank direkt
+per `sqlite3` mit dem Schema-Stand VOR `exported` auf (nicht über `Store`, die legt
+die Spalte ja längst an), fügen ein Gerät und mehrere Signale mit unterschiedlicher
+`exportability` ein und öffnen sie dann mit dem aktuellen `Store`: gelesen wird
+korrekt, der Backfill stimmt, die Version steht danach auf 1, und ein erneutes
+Öffnen ist ein No-op (ein zwischenzeitlich vom Nutzer gesetztes `exported` bleibt
+erhalten statt vom Backfill überschrieben zu werden).
 
 **Achtung, Signaturänderung:** `build_app` aus Phase 4 nimmt heute
 `(store, invoke, runtime)`. Für das Einlernen braucht es zusätzlich den Matter-Client:
@@ -488,10 +530,32 @@ async def rename_signal(key: str, patch: SignalPatch) -> SignalOut:
 
 `SignalPatch` trägt ausschließlich `title: str | None` und `exported: bool | None`.
 
+`rename_signal` muss — wie jede geräte-gebundene Route dieses Routers — erst
+prüfen, ob das Gerät hinter `signal_by_key(key).device_id` noch aktiv ist, bevor
+es etwas ändert (Review-Fix Important #4, 2026-09-02): sonst bleibt die Zeile
+eines per `DELETE /api/devices/{id}` entfernten Geräts über ihren Schlüssel
+weiterhin lesbar und mutierbar, obwohl `GET /api/devices/{id}` für dasselbe Gerät
+längst 404 meldet. 404 mit einer deutschen Meldung, die sagt, dass das Gerät
+entfernt wurde — nicht die generische "unbekanntes Geräte-ID"-Meldung von
+`_require_device`, die zwischen "nie existiert" und "entfernt" nicht
+unterscheidet.
+
+`register_signals` in `store.py` setzt das Default von `exported` beim ersten
+Registrieren eines Signals auf `is_exportable(profile.exportability)` — dieselbe
+Funktion, die `_signal_out`/`_device_out` unten für `exportable`/
+`exportable_count` aufrufen (`profiles.table.is_exportable`, exportierbar genau
+für ANALOG/DIGITAL). Eine zweite, unabhängig hingeschriebene Fassung derselben
+Regel (etwa `exportability is not Exportability.NONE`, was TEXT fälschlich
+mit einschlösse) ist genau das, was Review-Fix Important #2 (2026-09-02) beheben
+musste — beide Stellen dieses Tasks müssen dieselbe Funktion aufrufen, nicht
+eigenständig dieselbe Idee nachbilden.
+
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/ -v`
-Expected: PASS, 7 Tests
+Expected: PASS, 22 Tests (7 aus diesem Plan-Entwurf plus 15, die im Zuge dieses
+Tasks tatsächlich dazukamen: Einlernen, Entfernen, das Export-Flag, und der
+Review-Fix zu einem Signal-Zugriff auf ein bereits entferntes Gerät)
 
 - [ ] **Step 6: Commit**
 
