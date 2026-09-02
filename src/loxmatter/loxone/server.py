@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException
 
 from loxmatter.api.control import build_control_router
 from loxmatter.api.devices import build_device_router
+from loxmatter.api.export import build_export_router
 from loxmatter.api.live import build_live_router
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.loxone.runtime import Runtime
@@ -46,6 +47,7 @@ def build_app(
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     app.include_router(build_device_router(store, client, runtime))
+    app.include_router(build_export_router(store))
     app.include_router(build_live_router(runtime))
     # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
     # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst

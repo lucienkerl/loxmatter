@@ -126,3 +126,55 @@ class CommissionRequest(BaseModel):
 
     code: str
     thread_dataset: str | None = None
+
+
+class ExportDeviceOut(BaseModel):
+    """Ein Geraet in der Antwort von `GET /api/export/preview` (Task 5).
+
+    Spiegelt die Ausgabe von `loxmatter export` auf der Kommandozeile
+    (`cli.py`) als Zahlen statt als Terminalzeilen: `inputs` und `commands`
+    sind die Anzahl der Objekte, die in den beiden Vorlagendateien
+    entstuenden, `skipped` die Signale, die keinen Loxone-Eingang ergeben
+    (Listen, Strukturen, Texte, Nullwerte - Spec 6.6), unabhaengig vom
+    `exported`-Flag. `viu_filename`/`vo_filename` sind dieselben Namen, die
+    auch im ZIP von `GET /api/export/download` landen (`filename_for`) - so
+    kann die Oberflaeche vor dem Herunterladen bereits zeigen, welche
+    Dateien entstehen."""
+
+    model_config = ConfigDict(frozen=True)
+
+    device_id: int
+    label: str
+    viu_filename: str
+    vo_filename: str
+    inputs: int
+    commands: int
+    skipped: int
+
+
+class ExportPreviewOut(BaseModel):
+    """Antwort von `GET /api/export/preview` (Task 5) - reine Vorschau, kein
+    Schreibzugriff (siehe `api.export.preview`)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    devices: list[ExportDeviceOut]
+    system_files: list[str]
+
+
+class ExportStatusOut(BaseModel):
+    """Ein Geraet in der Antwort von `GET /api/export/status` (Task 5).
+
+    `exported_at` ist `None`, solange ein Geraet noch nie ueber `GET
+    /api/export/download` (API) oder `loxmatter export` (CLI) exportiert
+    wurde - beide schreiben denselben Zeitstempel in dieselbe Datenbank
+    (siehe `model.store.Store.mark_exported`). `changed_since_export` ist in
+    diesem Fall ebenfalls `True`: ohne einen vorherigen Export gibt es nichts,
+    wogegen der aktuelle Stand unveraendert sein koennte."""
+
+    model_config = ConfigDict(frozen=True)
+
+    device_id: int
+    label: str
+    exported_at: str | None
+    changed_since_export: bool

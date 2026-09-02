@@ -3,6 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from loxmatter.cli import app
+from loxmatter.model.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures" / "nodes"
 
@@ -328,3 +329,33 @@ def test_export_reports_malformed_fixture_missing_node_id(tmp_path):
     assert result.exit_code == 1
     assert "Traceback" not in result.output
     assert "node_id" in result.stderr
+
+
+def test_export_marks_the_device_as_exported(tmp_path):
+    """Task 5, Phase 5: `GET /api/export/status` der WebUI soll "wann
+    zuletzt exportiert" unabhaengig davon beantworten, ob der letzte Export
+    per CLI oder per API lief - beide schreiben dieselbe Datenbank (siehe
+    `Store.mark_exported` und `api/export.py`)."""
+    db_path = tmp_path / "store.sqlite"
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path / "out"),
+            "--store-path",
+            str(db_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    store = Store(db_path)
+    try:
+        (device,) = store.devices()
+        assert device.exported_at is not None
+    finally:
+        store.close()

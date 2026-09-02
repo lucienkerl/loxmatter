@@ -363,6 +363,20 @@ def export(
     typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
     typer.echo(f"{skipped} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)")
 
+    # exported_at (Task 5, Phase 5): `GET /api/export/status` der WebUI muss
+    # "wann zuletzt exportiert" unabhaengig davon beantworten, ob der letzte
+    # Export per CLI oder per API lief - beide schreiben dieselbe Datenbank
+    # (siehe Store.mark_exported). Oben bereits geschlossen, hier bewusst
+    # erst NACH beiden erfolgreichen write_bytes-Aufrufen wieder geoeffnet:
+    # ein fehlgeschlagener Schreibvorgang (siehe die beiden _fail-Aufrufe
+    # oben, die das Kommando vorher beenden) darf das Geraet nicht
+    # faelschlich als exportiert markieren.
+    store = Store(resolved_store_path)
+    try:
+        store.mark_exported(device_id)
+    finally:
+        store.close()
+
 
 @app.command()
 def run(

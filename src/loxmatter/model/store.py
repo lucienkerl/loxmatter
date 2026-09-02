@@ -27,6 +27,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loxmatter.export.commands import DeviceCommand
@@ -43,17 +44,21 @@ DEFAULT_UDP_PORT = 7000
 # diese Spalte, und `Store.signals()` scheiterte mit `IndexError`. Version 0 ist
 # "vor dieser Migrationslogik" (jede bestehende Datenbank, `PRAGMA user_version`
 # noch nie gesetzt); Version 1 fuegt `signal.exported` hinzu und befuellt
-# Bestandszeilen zurueckwirkend, siehe `_migrate_to_v1`.
-_SCHEMA_VERSION = 1
+# Bestandszeilen zurueckwirkend, siehe `_migrate_to_v1`. Version 2 (Task 5,
+# Phase 5) fuegt `device.exported_at` und `device.updated_at` hinzu, siehe
+# `_migrate_to_v2`.
+_SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    unique_id  TEXT NOT NULL,
-    node_id    INTEGER NOT NULL,
-    label      TEXT NOT NULL,
-    udp_port   INTEGER NOT NULL,
-    active     INTEGER NOT NULL DEFAULT 1
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    unique_id   TEXT NOT NULL,
+    node_id     INTEGER NOT NULL,
+    label       TEXT NOT NULL,
+    udp_port    INTEGER NOT NULL,
+    active      INTEGER NOT NULL DEFAULT 1,
+    exported_at TEXT,
+    updated_at  TEXT
 );
 CREATE TABLE IF NOT EXISTS signal (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,10 +114,38 @@ def _migrate_to_v1(db: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v2(db: sqlite3.Connection) -> None:
+    """Fuegt `device.exported_at` und `device.updated_at` hinzu (Task 5,
+    Phase 5) - Grundlage fuer `GET /api/export/status`: wann ein Geraet
+    zuletzt exportiert wurde, und ob sich seither etwas geaendert hat.
+
+    Beide Spalten bleiben bei einer bereits bestehenden Zeile NULL statt
+    rueckwirkend befuellt zu werden - anders als bei `_migrate_to_v1` gibt es
+    hier keinen Bestandswert, aus dem sich ein sinnvoller Zeitpunkt ableiten
+    liesse. `NULL` bedeutet fuer `exported_at` "noch nie exportiert" (dieselbe
+    Bedeutung wie bei einem frisch registrierten Geraet) und fuer
+    `updated_at` "unbekannt" - `api.export._status_for` behandelt ein
+    unbekanntes `updated_at` als "seither geaendert", die vorsichtigere der
+    beiden moeglichen Annahmen.
+
+    Derselbe Spaltencheck wie in `_migrate_to_v1`, aus demselben Grund: eine
+    frisch angelegte Datenbank hat die Spalten durch `_SCHEMA` bereits, `ALTER
+    TABLE` waere dort ein Fehler statt eines No-ops.
+    """
+    columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(device)")}
+    if "exported_at" not in columns:
+        db.execute("ALTER TABLE device ADD COLUMN exported_at TEXT")
+    if "updated_at" not in columns:
+        db.execute("ALTER TABLE device ADD COLUMN updated_at TEXT")
+
+
 # Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
 # Erweiterung fuer eine spaetere Schema-Aenderung: einfach anhaengen, mit der
 # naechsten Versionsnummer als Schluessel.
-_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _migrate_to_v1}
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migrate_to_v1,
+    2: _migrate_to_v2,
+}
 
 
 def _migrate(db: sqlite3.Connection) -> None:
@@ -206,6 +239,16 @@ class StoredDevice:
     node_id: int
     unique_id: str
     label: str
+    # exported_at/updated_at (Task 5, Phase 5) - Grundlage fuer `GET
+    # /api/export/status`. Beide sind ISO-8601-Zeitstempel als Text, `None`
+    # bedeutet "noch nie exportiert" bzw. "seit der Registrierung nicht mehr
+    # angefasst" (siehe `_migrate_to_v2` fuer den Fall einer Alt-Datenbank).
+    # `updated_at` ist absichtlich grob: es unterscheidet nicht, WAS sich am
+    # Geraet geaendert hat (Label, ein Signaltitel, eine neu entdeckte
+    # Signal-Liste, ...), nur DASS sich seit dem letzten Export etwas
+    # geaendert haben koennte - fuer "seither geaendert: ja/nein" reicht das.
+    exported_at: str | None
+    updated_at: str | None
 
 
 class UnknownCommandError(KeyError):
@@ -241,6 +284,19 @@ class Store:
     def close(self) -> None:
         self._db.close()
 
+    @staticmethod
+    def _now() -> str:
+        """ISO-8601-Zeitstempel in UTC, mit Mikrosekunden (Task 5, Phase 5).
+
+        Fest mit `timespec="microseconds"`, damit zwei kurz aufeinander
+        folgende Zeitstempel (z. B. Export, dann sofort eine Umbenennung)
+        als Text zuverlaessig in derselben Reihenfolge vergleichbar bleiben
+        wie chronologisch - ohne das liesse `datetime.isoformat()` die
+        Sekundenbruchteile bei einem zufaelligen exakten Sekundenwert weg,
+        was zwei Zeitstempel unterschiedlicher Laenge ergeben koennte.
+        """
+        return datetime.now(UTC).isoformat(timespec="microseconds")
+
     def _device_identity(self, snapshot: NodeSnapshot) -> str:
         """Faellt auf die Node-ID zurueck: manche Geraete melden keine UniqueID (Spec 7.2)."""
         return snapshot.unique_id or f"node:{snapshot.node_id}"
@@ -255,8 +311,9 @@ class Store:
 
         label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or identity
         cur = self._db.execute(
-            "INSERT INTO device (unique_id, node_id, label, udp_port) VALUES (?, ?, ?, ?)",
-            (identity, snapshot.node_id, label, DEFAULT_UDP_PORT),
+            "INSERT INTO device (unique_id, node_id, label, udp_port, updated_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (identity, snapshot.node_id, label, DEFAULT_UDP_PORT, self._now()),
         )
         self._db.commit()
         device_id = cur.lastrowid
@@ -281,6 +338,8 @@ class Store:
             node_id=int(row["node_id"]),
             unique_id=str(row["unique_id"]),
             label=str(row["label"]),
+            exported_at=row["exported_at"],
+            updated_at=row["updated_at"],
         )
 
     def devices(self) -> list[StoredDevice]:
@@ -306,8 +365,29 @@ class Store:
 
         Wie `set_title` ohne vorherige Existenzpruefung - der Aufrufer (die
         API-Route) prueft ueber `device()` selbst und meldet ein unbekanntes
-        Geraet als 404, bevor diese Methode ueberhaupt aufgerufen wird."""
-        self._db.execute("UPDATE device SET label = ? WHERE id = ?", (label, device_id))
+        Geraet als 404, bevor diese Methode ueberhaupt aufgerufen wird.
+
+        Setzt `updated_at` (Task 5, Phase 5): eine Umbenennung landet im
+        naechsten Export als neuer `Title` in der Vorlage - `GET
+        /api/export/status` soll das Geraet danach als "seither geaendert"
+        fuehren, auch wenn kein Signal betroffen ist."""
+        self._db.execute(
+            "UPDATE device SET label = ?, updated_at = ? WHERE id = ?",
+            (label, self._now(), device_id),
+        )
+        self._db.commit()
+
+    def mark_exported(self, device_id: int) -> None:
+        """Setzt `exported_at` auf jetzt (Task 5, Phase 5).
+
+        Aufgerufen sowohl von `api.export.download` als auch von `cli.py`s
+        `export`-Kommando - beide schreiben in dieselbe Datenbank (siehe
+        Modul-Docstring von `api/export.py`), und `GET /api/export/status`
+        soll "wann zuletzt exportiert" unabhaengig davon beantworten, ueber
+        welchen der beiden Wege der letzte Export lief. Ohne diesen Aufruf
+        im CLI-Kommando zeigte die WebUI nach einem `loxmatter export`
+        weiterhin "nie exportiert" an."""
+        self._db.execute("UPDATE device SET exported_at = ? WHERE id = ?", (self._now(), device_id))
         self._db.commit()
 
     def device_id_for_node(self, node_id: int) -> int | None:
@@ -427,6 +507,14 @@ class Store:
                         int(exported),
                     ),
                 )
+            # Geraet als "seither geaendert" markieren (Task 5, Phase 5): ein
+            # neu entdecktes oder in `unit`/`exportability` korrigiertes
+            # Signal soll `GET /api/export/status` erreichen, auch wenn
+            # `register_signals` selbst keinen einzigen neuen Schluessel
+            # vergeben hat (reines Refresh eines schon bekannten Geraets).
+            self._db.execute(
+                "UPDATE device SET updated_at = ? WHERE id = ?", (self._now(), device_id)
+            )
         except (ValueError, sqlite3.Error):
             self._db.rollback()
             raise
@@ -434,14 +522,30 @@ class Store:
         return self.signals(device_id)
 
     def set_title(self, key: str, title: str) -> None:
+        self._touch_owning_device(key)
         self._db.execute("UPDATE signal SET title = ? WHERE key = ?", (title, key))
         self._db.commit()
 
     def set_exported(self, key: str, exported: bool) -> None:
         """Setzt das Export-Flag eines Signals (`PATCH /api/signals/{key}`,
         Task 2). Wie `set_title` ohne Existenzpruefung - siehe dort."""
+        self._touch_owning_device(key)
         self._db.execute("UPDATE signal SET exported = ? WHERE key = ?", (int(exported), key))
         self._db.commit()
+
+    def _touch_owning_device(self, signal_key: str) -> None:
+        """Setzt `updated_at` des Geraets, zu dem `signal_key` gehoert (Task
+        5, Phase 5) - `set_title`/`set_exported` bekommen keine `device_id`
+        (siehe deren Docstrings), deshalb die Unterabfrage. Ein unbekannter
+        Schluessel trifft keine Zeile und bleibt ein stilles No-op, genau wie
+        das anschliessende `UPDATE signal` in beiden Aufrufern - der Aufrufer
+        (die API-Route) prueft Existenz bereits vorher (siehe
+        `api.devices.rename_signal`)."""
+        self._db.execute(
+            "UPDATE device SET updated_at = ?"
+            " WHERE id = (SELECT device_id FROM signal WHERE key = ?)",
+            (self._now(), signal_key),
+        )
 
     @staticmethod
     def _as_signal(row: sqlite3.Row) -> StoredSignal:
@@ -557,6 +661,13 @@ class Store:
                         int(command.takes_value),
                     ),
                 )
+            # Wie am Ende von `register_signals` (Task 5, Phase 5): auch ein
+            # reines Refresh ohne neuen Schluessel zaehlt als "seither
+            # geaendert", z. B. wenn `clusters.yaml` einem Kommando
+            # nachtraeglich `takes_value` zuweist.
+            self._db.execute(
+                "UPDATE device SET updated_at = ? WHERE id = ?", (self._now(), device_id)
+            )
         except (ValueError, sqlite3.Error):
             self._db.rollback()
             raise

@@ -145,7 +145,7 @@ def test_migrating_an_old_database_sets_the_schema_version(tmp_path):
     store = Store(path)
     store.close()
 
-    assert user_version(path) == 1
+    assert user_version(path) == 2
 
 
 def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
@@ -159,7 +159,7 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
     first = Store(path)
     first.set_exported("d1_1_power", False)
     first.close()
-    assert user_version(path) == 1
+    assert user_version(path) == 2
 
     second = Store(path)
     try:
@@ -168,14 +168,14 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
         second.close()
 
     assert power.exported is False
-    assert user_version(path) == 1
+    assert user_version(path) == 2
 
 
 def test_a_fresh_database_is_already_at_the_latest_version(tmp_path):
     path = tmp_path / "fresh.sqlite"
     store = Store(path)
     store.close()
-    assert user_version(path) == 1
+    assert user_version(path) == 2
 
 
 def test_migration_failure_leaves_the_database_unchanged(tmp_path, monkeypatch):
@@ -200,3 +200,21 @@ def test_migration_failure_leaves_the_database_unchanged(tmp_path, monkeypatch):
     finally:
         db.close()
     assert "exported" not in columns
+
+
+def test_migrating_an_old_database_adds_exported_at_and_updated_at_as_null(tmp_path):
+    """Migration v2 (Task 5, Phase 5) - siehe `model.store._migrate_to_v2`.
+    Eine Alt-Datenbank kennt keinen Exportzeitpunkt; `None` statt eines
+    erratenen Werts ist hier die einzig ehrliche Antwort."""
+    path = tmp_path / "old.sqlite"
+    build_old_database(path)
+
+    store = Store(path)
+    try:
+        (device,) = store.devices()
+    finally:
+        store.close()
+
+    assert device.exported_at is None
+    assert device.updated_at is None
+    assert user_version(path) == 2
