@@ -15,7 +15,7 @@ Aus Spec und Plan, gelten für jede Task:
 - **Tests laufen ohne Hardware und ohne Netzwerkzugriff.** Ein Test, der ein echtes Gerät braucht, wird übersprungen und verrottet (Spec 10.1).
 - **Deutsch in Prosa, Kommentaren, Docstrings und Fehlermeldungen**, Englisch in Bezeichnern und Commit-Präfixen.
 - **Alle Datenklassen unveränderlich** (`frozen=True`), solange kein Grund dagegen spricht.
-- **Dateiformat der Vorlagen: UTF-8 mit BOM, CRLF-Zeilenenden.** Dateinamen `VIU_<name>.xml` und `VO_<name>.xml` (Spec 6.1).
+- **Dateiformat der Vorlagen: UTF-8 mit BOM, CRLF-Zeilenenden.** Dateinamen `VIU_d<device_id>_<label>.xml` und `VO_d<device_id>_<label>.xml`, mit auf ASCII normalisiertem Gerätelabel — die `device_id` ist nicht Dekoration, sondern der einzige Teil des Namens, der Eindeutigkeit garantiert, weil die Normalisierung verlustbehaftet ist (Spec 6.1).
 - **Der Loxone-Platzhalter `<v>` steht in einem XML-Attribut und muss als `&lt;v&gt;` geschrieben werden.** Ein unescaptes `<v>` macht die Datei für Loxone Config unlesbar. Der Platzhalter `\v` in `Check` ist davon nicht betroffen (Spec 6.1).
 - **Schlüssel sind opak und unveränderlich**, Format `d<device_id>_<endpoint>_<slug>`. Lesbare Namen leben ausschließlich in `Title` und `Comment`. `device_id` wird nie wiederverwendet (Spec 6.2).
 - **Eine Vorlagendatei pro Gerät**, alle Geräte teilen sich einen UDP-Port, Default 7000. Der Port ist pro Gerät konfigurierbar. Grenze des Miniservers: 50 verschiedene Eingangs-Ports (Spec 6.2).
