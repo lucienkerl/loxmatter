@@ -12,6 +12,10 @@
 #   - ghcr.io/home-assistant-libs/python-matter-server:stable -> mit
 #     --bluetooth-adapter ${BLUETOOTH_ADAPTER} fuer BLE-Commissioning ueber hci0
 #     (siehe README).
+#   - loxmatter (Phase 4, Review-Fix I5, 2026-09-02) -> aus diesem Repository
+#     selbst gebaut (siehe ../../Dockerfile, dort auch der Hinweis, dass das
+#     Image noch ungeprueft ist - kein Docker/Netz in der Umgebung, die
+#     diesen Dienst hinzugefuegt hat). Braucht MINISERVER_IP in .env.
 services:
   otbr:
     image: openthread/otbr:latest
@@ -58,3 +62,44 @@ services:
       - "${BLUETOOTH_ADAPTER:-0}"
     depends_on:
       - otbr
+
+  loxmatter:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: loxmatter
+    restart: unless-stopped
+    # Wie otbr/matter-server: network_mode host statt einer expliziten
+    # `ports:`-Liste, aus zwei Gruenden, nicht nur Konsistenz. Erstens
+    # erreicht `--url` (Default ws://localhost:5580/ws) matter-server nur
+    # ueber 127.0.0.1 - matter-server laeuft selbst mit network_mode: host
+    # und ist deshalb im Compose-eigenen Bridge-Netz kein aufloesbarer
+    # Servicename. Zweitens macht das den HTTP-Port fuer die Loxone-
+    # Ausgangsbefehle (--listen, Default 8080) ohne weitere Portfreigabe vom
+    # Miniserver aus erreichbar - das ist der hier geforderte
+    # "veroeffentlichte" HTTP-Port.
+    network_mode: host
+    volumes:
+      - loxmatter-store:/data
+    environment:
+      # Eigener, fester Ort statt des Nutzer-Home-Defaults (siehe
+      # `_resolve_store_path` in src/loxmatter/cli.py) - das eingehaengte
+      # Volume ueberlebt ein `docker compose down`/`up`, ein Nutzer-Home im
+      # Container tut das nicht.
+      LOXMATTER_STORE: /data/loxmatter.sqlite
+    command:
+      - run
+      - --url
+      - ws://127.0.0.1:5580/ws
+      - --miniserver
+      - ${MINISERVER_IP}
+      - --listen
+      - "8080"
+    depends_on:
+      - matter-server
+
+volumes:
+  # Named Volume statt Bind-Mount (anders als matter-server oben): die
+  # Signalschluessel-Datenbank gehoert nicht in den Projekt-Checkout auf dem
+  # Host, sondern lebt unabhaengig davon (siehe LOXMATTER_STORE oben).
+  loxmatter-store:
