@@ -6,7 +6,8 @@ import pytest
 
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
-from loxmatter.matter.models import NodeSnapshot
+from loxmatter.matter.discovery import extract_signals
+from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
@@ -27,6 +28,22 @@ class FakeSender:
 
     def keys(self) -> list[str]:
         return [k for k, _, _ in self.gesendet]
+
+
+class FlakySender(FakeSender):
+    """Wie FakeSender, wirft aber beim n-ten Aufruf einen RuntimeError - fuer
+    Tests, die einen fehlgeschlagenen Sendeversuch nachstellen wollen."""
+
+    def __init__(self, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_on_call = fail_on_call
+        self._calls = 0
+
+    async def send(self, key: str, value: object, *, force: bool = False) -> bool:
+        self._calls += 1
+        if self._calls == self._fail_on_call:
+            raise RuntimeError("Sender kaputt")
+        return await super().send(key, value, force=force)
 
 
 @pytest.fixture
@@ -133,3 +150,88 @@ async def test_heartbeat_toggles(umgebung):
     werte = [v for k, v, _ in sender.gesendet if k == "bridge_alive"]
     assert len(werte) >= 2
     assert werte[0] != werte[1]
+
+
+async def test_heartbeat_survives_a_failed_send(umgebung):
+    """Review-Fix Important #1: der Heartbeat deckt laut Modul-Docstring
+    "Container tot" und "Netz weg" gleichermassen ab - ein einzelner
+    fehlgeschlagener Sendeversuch darf die Watchdog-Schleife deshalb nicht
+    beenden, sonst friert der Loxone-Watchdog auf dem letzten Wert ein,
+    waehrend die Bruecke laengst schweigt."""
+    _, _, store, _, _ = umgebung
+    sender = FlakySender(fail_on_call=2)
+    runtime = Runtime(store, sender, heartbeat_seconds=0.05)
+    await runtime.start()
+    await asyncio.sleep(0.22)
+    await runtime.stop()
+    values = [v for k, v, _ in sender.gesendet if k == "bridge_alive"]
+    # Der zweite Aufruf schlaegt fehl (siehe FlakySender) - ohne den Fix
+    # stuerbe die Schleife dort und es kaemen nie weitere Werte an.
+    assert len(values) >= 3
+
+
+async def test_stop_completes_even_if_a_task_already_died(umgebung):
+    """Review-Fix Important #1, Begleitfehler: contextlib.suppress(CancelledError)
+    unterdrueckt nur eine Cancellation, keine andere Exception, an der ein
+    Task schon vor `stop()` gestorben ist. Die alte Implementierung liess
+    `stop()` mit genau dieser Exception abbrechen und ueberspringt dabei das
+    Leeren der Task-Liste."""
+    runtime, _, _, _, _ = umgebung
+
+    async def boom() -> None:
+        raise RuntimeError("Task ist schon vor stop() gestorben")
+
+    dead_task = asyncio.create_task(boom())
+    await asyncio.sleep(0)  # den Task tatsaechlich sterben lassen
+    assert dead_task.done()
+    runtime._aufgaben.append(dead_task)
+
+    await runtime.start()
+    await runtime.stop()  # darf nicht an der bereits toten Task scheitern
+
+    assert runtime._aufgaben == []
+    assert runtime._impuls_aufgaben == set()
+
+
+async def test_stop_lowers_an_in_flight_pulse(umgebung):
+    """Review-Fix Important #2: eine Cancellation waehrend des Impuls-Schlafs
+    ueberspringt sonst den `send(key, False)` - das digitale Signal bliebe
+    bis zum naechsten Ereignis auf diesem Schluessel auf 1 haengen."""
+    runtime, sender, _, _, button_device_id = umgebung
+    await runtime.on_event(button_device_id, "1/59/1")
+    await runtime.stop()
+    key = f"d{button_device_id}_1_press"
+    values = [v for k, v, _ in sender.gesendet if k == key]
+    assert values[-1] is False
+
+
+async def test_invalidate_index_lets_a_newly_registered_signal_through(umgebung, monkeypatch):
+    """Review-Fix Important #3: `Store.register_signals` kann jederzeit ein
+    neues Signal zu einem schon indizierten Geraet hinzufuegen (z. B. nach
+    einem Firmware-Update). Ohne `invalidate_index` bleibt dieses Signal fuer
+    die Laufzeit unsichtbar, weil `_signal_fuer` nur einmal pro Geraet aus der
+    Datenbank liest."""
+    runtime, sender, store, device_id, _ = umgebung
+    plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
+
+    new_ref = SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)
+    key = f"d{device_id}_9_c1234_a5"
+
+    def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
+        return [*extract_signals(snapshot), new_ref]
+
+    # Erstmaliges Indizieren durch die Laufzeit - der Pfad existiert noch nicht.
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.gesendet == []
+
+    monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
+    store.register_signals(device_id, plug_snap)
+
+    # Der Cache der Laufzeit weiss noch nichts vom neuen Signal.
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.gesendet == []
+
+    runtime.invalidate_index(device_id)
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.keys() == [key]
