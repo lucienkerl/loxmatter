@@ -21,9 +21,11 @@ Signals zu aendern.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.profiles.table import Exportability, lookup
@@ -52,6 +54,17 @@ CREATE TABLE IF NOT EXISTS signal (
     exportability TEXT NOT NULL,
     UNIQUE (device_id, endpoint, cluster_id, element_id, kind)
 );
+CREATE TABLE IF NOT EXISTS command (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id   INTEGER NOT NULL REFERENCES device(id),
+    node_id     INTEGER NOT NULL,
+    endpoint    INTEGER NOT NULL,
+    cluster_id  INTEGER NOT NULL,
+    command_id  INTEGER NOT NULL,
+    key         TEXT NOT NULL UNIQUE,
+    takes_value INTEGER NOT NULL,
+    UNIQUE (device_id, endpoint, cluster_id, command_id)
+);
 """
 
 
@@ -62,6 +75,16 @@ class StoredSignal:
     title: str
     unit: str
     exportability: Exportability
+
+
+@dataclass(frozen=True)
+class StoredCommand:
+    key: str
+    node_id: int
+    endpoint: int
+    cluster_id: int
+    command_id: int
+    takes_value: bool
 
 
 class Store:
@@ -217,3 +240,57 @@ class Store:
             )
             for r in rows
         ]
+
+    def register_commands(
+        self, device_id: int, commands: Sequence[DeviceCommand], node_id: int
+    ) -> list[StoredCommand]:
+        """Macht die exportierten Kommando-Schluessel zur Laufzeit aufloesbar.
+
+        Ohne das schreibt der Exporter Schluessel in die Vorlage, die spaeter
+        niemand zurueck auf ein Matter-Kommando abbilden kann. Der Schluessel
+        wird ausschliesslich hier zusammengesetzt — der Exporter (cli.py)
+        uebernimmt das Ergebnis, statt ihn ein zweites Mal selbst zu bauen.
+        Zwei Stellen, die denselben Schluessel unabhaengig zusammensetzen,
+        wuerden sonst auseinanderdriften, ohne dass ein Fehler es meldet.
+        """
+        for command in commands:
+            self._db.execute(
+                "INSERT OR IGNORE INTO command "
+                "(device_id, node_id, endpoint, cluster_id, command_id, key, takes_value) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    device_id,
+                    node_id,
+                    command.endpoint,
+                    command.cluster_id,
+                    command.command_id,
+                    f"d{device_id}_{command.endpoint}_{command.slug}",
+                    int(command.takes_value),
+                ),
+            )
+        self._db.commit()
+        return self.commands(device_id)
+
+    def commands(self, device_id: int) -> list[StoredCommand]:
+        rows = self._db.execute(
+            "SELECT * FROM command WHERE device_id = ? ORDER BY endpoint, cluster_id, command_id",
+            (device_id,),
+        ).fetchall()
+        return [self._as_command(r) for r in rows]
+
+    def resolve_command(self, key: str) -> StoredCommand:
+        row = self._db.execute("SELECT * FROM command WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            raise KeyError(f"unbekannter Kommando-Schluessel {key!r}")
+        return self._as_command(row)
+
+    @staticmethod
+    def _as_command(row: sqlite3.Row) -> StoredCommand:
+        return StoredCommand(
+            key=row["key"],
+            node_id=int(row["node_id"]),
+            endpoint=int(row["endpoint"]),
+            cluster_id=int(row["cluster_id"]),
+            command_id=int(row["command_id"]),
+            takes_value=bool(row["takes_value"]),
+        )

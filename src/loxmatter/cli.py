@@ -244,22 +244,32 @@ def export(
     try:
         device_id = store.register_device(snapshot)
         stored = store.register_signals(device_id, snapshot)
+        # Ausgangsbefehle kommen aus AcceptedCommandList, nicht aus den Attributen:
+        # Matter-Attribute sind fast alle nur lesbar (Task 6).
+        stored_commands = store.register_commands(
+            device_id, extract_commands(snapshot, raw=raw_commands), snapshot.node_id
+        )
     finally:
         store.close()
 
     label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or f"Node {snapshot.node_id}"
     inputs = to_inputs(stored, device_id, label)
-    # Ausgangsbefehle kommen aus AcceptedCommandList, nicht aus den Attributen:
-    # Matter-Attribute sind fast alle nur lesbar (Task 6).
-    device_commands = extract_commands(snapshot, raw=raw_commands)
+    # Der Schluessel kommt ausschliesslich vom Store (siehe register_commands):
+    # so stammen der Schluessel in der Vorlage und der in der Datenbank aus
+    # einer Quelle statt aus zwei unabhaengigen Zusammensetzungen, die
+    # auseinanderdriften koennten, ohne dass ein Fehler es meldet.
     commands = [
         LoxoneCommand(
-            key=f"d{device_id}_{c.endpoint}_{c.slug}",
-            title=c.slug,
-            path=f"/cmd/d{device_id}_{c.endpoint}_{c.slug}/" + ("<v>" if c.takes_value else "1"),
+            key=c.key,
+            # Schluesselform d<device_id>_<endpoint>_<slug> (siehe
+            # Store.register_commands): device_id und endpoint sind Zahlen
+            # ohne "_", der Rest nach dem zweiten Unterstrich ist der Slug —
+            # auch wenn der selbst welche enthaelt (z. B. "level_onoff").
+            title=c.key.split("_", 2)[-1],
+            path=f"/cmd/{c.key}/" + ("<v>" if c.takes_value else "1"),
             analog=c.takes_value,
         )
-        for c in device_commands
+        for c in stored_commands
     ]
 
     try:
