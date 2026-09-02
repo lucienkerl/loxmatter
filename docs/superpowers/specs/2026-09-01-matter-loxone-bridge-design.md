@@ -802,3 +802,49 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    den vollen Node-Cache, danach einmalig `subscribe()`, keine Laufzeit-
    Rekommissionierung) ist die Lücke hinnehmbar; sie ist aber ein offener Punkt, keine
    erledigte Aufgabe.
+4. **Event-Zähler (`<key>_n`) sind prozesslokal und überleben einen Bruecken-Neustart
+   nicht** (`Runtime`, `loxone/runtime.py`; Review-Fix I7, 2026-09-02). Spec 6.3 verkauft
+   diesen Zähler als monotonen Wert, dessen Vorzug ist, dass ein verlorenes UDP-Datagramm
+   ihn nur *springen* lässt, statt den Tastendruck zu verschlucken — Loxone-Logik soll auf
+   ihn achten können, ohne je einen Druck zu verpassen. `Runtime.__init__` setzt
+   `self._counters: dict[str, int] = {}` aber ohne jede Seedung, und der Zähler existiert
+   nirgends außerhalb dieses Prozessspeichers — kein Store-Feld, kein `seed_from_snapshot`,
+   kein `/resync`-Pfad. Ein Neustart der Bridge (Deployment, Absturz, Container-Neustart)
+   setzt ihn deshalb auf 0 zurück, und der nächste Tastendruck sendet wieder `1`. Das ist
+   nicht dieselbe Fehlerklasse, die 6.3 adressiert: ein VERLORENES Paket lässt den Zähler
+   *steigen* (springt von z. B. 4 auf 6, immer noch erkennbar als "es gab einen Druck"), ein
+   NEUSTART lässt ihn *fallen* (von 47 zurück auf 1) — eine Loxone-Logik, die auf "Zähler hat
+   sich erhöht" wartet, verpasst diesen einen Druck nach jedem Neustart der Bridge
+   vollständig, das genaue Gegenteil dessen, wofür der Zähler eingeführt wurde. Ein Fix
+   bräuchte eines von zwei Dingen: entweder der Zähler wird persistiert (z. B. im `Store`,
+   analog zu den Signalschlüsseln selbst, mit derselben Sorgfalt bei nebenläufigem Zugriff)
+   und beim Start aus der Datenbank statt bei 0 wieder aufgenommen, oder die Loxone-seitige
+   Logik überwacht den Zähler auf *Änderung* statt auf *Erhöhung* — Letzteres ist die
+   einfachere Änderung, verlangt aber, dass jedes Config-Projekt, das diesen Zähler nutzt,
+   das auch tatsächlich so verdrahtet. Weder das eine noch das andere ist in dieser Phase
+   umgesetzt; unangetastet gelassen, weil das Verhalten nicht ungefragt geändert werden
+   sollte, aber hier festgehalten, weil 6.3 sonst mehr verspricht, als die Implementierung
+   hält.
+5. **`MultiPressComplete` liefert nur die zwei Basissignale, nicht die in 6.3 versprochenen
+   `_press2`/`_press3`/`_presscount`** (`export/signals.py`, `discovery.py`; Review-Fix
+   I6/M13, 2026-09-02). Spec 6.3 verspricht wörtlich: „Bei `MultiPressComplete` zusätzlich
+   `_press2`, `_press3` als eigene Impulse sowie `_presscount`." Tatsächlich exportiert
+   `export/signals.py`s `to_inputs` für JEDES Event — `MultiPressComplete` eingeschlossen —
+   ausschließlich die beiden generischen Signale, die auch jedes andere Event bekommt:
+   `<key>` (digitaler Impuls) und `<key>_n` (monotoner Zähler, siehe Punkt 4 oben zu dessen
+   eigener Lücke). Es gibt weder eine Sonderbehandlung für den Switch-Cluster-Event Nr. 6
+   (`MultiPressComplete`, siehe `discovery.FEATURE_MAP_EVENTS`) noch einen Weg, aus dem
+   rohen `MultiPressComplete`-Ereignis (das laut Matter-Spezifikation die Anzahl der
+   erkannten Presses als Nutzdaten trägt) eine Presszahl herauszulesen und in eigene
+   Impulse/einen `_presscount`-Wert zu übersetzen — `matter/paths.py`s Event-Erkennung
+   liefert ohnehin nur den Pfad (`endpoint/cluster/event`), keine Nutzdaten, und
+   `Runtime.on_event` kennt entsprechend keinen Parameter dafür. Ein Gerät mit
+   Mehrfachdruck-Erkennung (z. B. IKEA-Taster mit Doppel-/Dreifachklick) liefert also
+   `MultiPressComplete` als denselben einzelnen Impuls wie `InitialPress` — ein Doppelklick
+   sieht in Loxone genauso aus wie ein einzelner Druck, nur der `_n`-Zähler zählt weiter.
+   Ein Fix bräuchte: (a) das rohe `MultiPressComplete`-Ereignis mit seinen Nutzdaten statt
+   nur seinem Pfad an `Runtime.on_event` durchzureichen, (b) eine Interpretation dieser
+   Nutzdaten als Presszahl, und (c) eine Erweiterung von `export/signals.py`, die für dieses
+   eine Event drei zusätzliche `LoxoneInput`s erzeugt statt der generischen zwei. Nicht in
+   dieser Phase umgesetzt — hier festgehalten, damit 6.3 nicht mehr verspricht, als
+   `export/signals.py` tatsächlich liefert.
