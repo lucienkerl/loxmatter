@@ -20,6 +20,7 @@ Aus Spec und Plan, gelten für jede Task:
 - **Schlüssel sind opak und unveränderlich**, Format `d<device_id>_<endpoint>_<slug>`. Lesbare Namen leben ausschließlich in `Title` und `Comment`. `device_id` wird nie wiederverwendet (Spec 6.2).
 - **Eine Vorlagendatei pro Gerät**, alle Geräte teilen sich einen UDP-Port, Default 7000. Der Port ist pro Gerät konfigurierbar. Grenze des Miniservers: 50 verschiedene Eingangs-Ports (Spec 6.2).
 - **Zieleinheit ist die des Loxone-Bausteins, nicht die SI-Einheit.** Leistung in kW. Ausgabe mit bis zu 6 Nachkommastellen, nachlaufende Nullen abgeschnitten — 300 mW muss als `0.0003` ankommen, nicht als `0` (Spec 7.3). **Die Umrechnung selbst gehört zum UDP-Sender in Phase 4**; hier wird nur festgelegt und exportiert, welche Einheit ein Signal trägt.
+- **`Unit` in der Vorlage ist ein Formatstring, kein Einheitentext** (Spec 7.3): `<v.N> Einheit`, wobei `N` die Zahl der auf der Loxone-Oberfläche angezeigten Nachkommastellen ist. Für Leistung schreiben wir `<v.6> kW`, nicht das sonst übliche `<v.3>` — mit drei Nachkommastellen zeigt ein 300-mW-Standby-Verbraucher `0.000` an. Die Zuordnung Einheit → Formatstring steht als Datentabelle in `profiles/table.py` (Task 2), nicht als Verzweigung im Exporter.
 - `uv run ruff check .`, `uv run ruff format --check .` und `uv run mypy` müssen sauber bleiben. ruff formatiert auch Python-Blöcke in Markdown.
 
 ---
@@ -248,6 +249,20 @@ git add src/loxmatter/export tests/export tests/fixtures/loxone
 git commit -m "feat(export): XML-Grundlage, gegen echte Loxone-Vorlagen belegt"
 ```
 
+**Nachtrag (2026-09-02) — diese Task ist bereits implementiert und committet, die
+Codeblöcke oben bleiben unverändert. Zwei Dinge, die seither gelernt wurden:**
+
+- **`xml.sax.saxutils.quoteattr` wurde in der Umsetzung ersetzt.** Es wechselt bei
+  einem `"` im Wert die Anführungszeichen-Art (liefert dann ein mit `'` umschlossenes
+  Attribut) statt zu escapen — für Loxone Config, das durchgängig `"`-Attribute
+  erwartet, unbrauchbar.
+- **Die Referenzvorlagen sind da.** Schritt 5–7 dieser Task sind erledigt: Zwei
+  sanitisierte Ableitungen aus echten Vorlagen liegen unter
+  `tests/fixtures/loxone/VIU_Referenz.xml` und `tests/fixtures/loxone/VO_Referenz.xml`.
+  Der volle Fundus aus einer echten Installation (91 `VirtualInUdpCmd`,
+  19 `VirtualOutCmd` über 26 Dateien) hat die vier Abweichungen in Spec 6.1,
+  „Korrektur 2026-09-02" belegt, die die folgenden Tasks nachziehen.
+
 ---
 
 ### Task 2: Profiltabelle und Exportierbarkeit
@@ -269,6 +284,8 @@ Loxone-Eingang abbildbar sind. Diese Task baut die Regel dafür.
   - `classify(value: object) -> Exportability` — allein aus dem Wert
   - `class Profile` — frozen: `slug: str`, `unit: str`, `exportability: Exportability`
   - `lookup(ref: SignalRef, value: object) -> Profile` — Tabelle mit Fallback
+  - `unit_format(unit: str) -> str` — Loxone-Formatstring für eine Einheit (Spec 7.3),
+    z. B. `"kW"` → `"<v.6> kW"`; leere Einheit → `""`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -276,7 +293,7 @@ Loxone-Eingang abbildbar sind. Diese Task baut die Regel dafür.
 
 ```python
 from loxmatter.matter.models import SignalKind, SignalRef
-from loxmatter.profiles.table import Exportability, classify, lookup
+from loxmatter.profiles.table import Exportability, classify, lookup, unit_format
 
 
 def test_bool_is_digital():
@@ -339,12 +356,30 @@ def test_events_are_digital_regardless_of_value():
     """Spec 6.3: ein Event wird zum Impuls, es hat keinen Wert."""
     ref = SignalRef(1, 59, 1, SignalKind.EVENT)
     assert lookup(ref, None).exportability is Exportability.DIGITAL
+
+
+def test_unit_format_widens_power_to_six_decimals():
+    """Spec 7.3: mit <v.3> zeigt ein 300-mW-Standby-Verbraucher 0.000 an."""
+    assert unit_format("kW") == "<v.6> kW"
+    assert unit_format("kWh") == "<v.6> kWh"
+
+
+def test_unit_format_uses_one_decimal_for_the_common_units():
+    assert unit_format("°C") == "<v.1> °C"
+    assert unit_format("%") == "<v.1>%"
+    assert unit_format("V") == "<v.1> V"
+    assert unit_format("A") == "<v.1> A"
+
+
+def test_unit_format_for_empty_unit_is_empty():
+    assert unit_format("") == ""
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/profiles/test_table.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.profiles'`
+(bzw. `ImportError`, sobald `table.py` existiert, aber `unit_format` noch fehlt)
 
 - [ ] **Step 3: Abhängigkeit ergänzen**
 
@@ -415,6 +450,10 @@ exportiert, sofern sein Wert ueberhaupt auf einen Loxone-Eingang passt.
 
 Spec 6.6: Listen, Strukturen und Nullwerte passen nicht. Sie bleiben Signale
 und sind in der Oberflaeche sichtbar, werden aber nie zu Loxone-Objekten.
+
+Spec 7.3: `Unit` in der Vorlage ist ein Formatstring fuer die Loxone-Oberflaeche
+(`<v.N> Einheit`), keine Einheitenbezeichnung. `unit_format` traegt diese
+Abbildung als Datentabelle, nicht als Verzweigung im Exporter.
 """
 
 from __future__ import annotations
@@ -482,12 +521,40 @@ def lookup(ref: SignalRef, value: object) -> Profile:
         unit="",
         exportability=classify(value),
     )
+
+
+# Nachkommastellen je Einheit fuer den Loxone-Formatstring (Spec 7.3). Leistung
+# steht bewusst nicht bei den uebrigen physikalischen Groessen mit 1 Dezimale:
+# von mW nach kW sind sechs Groessenordnungen, und mit <v.3> verschwindet ein
+# 300-mW-Standby-Verbraucher als 0.000 auf der Oberflaeche.
+_UNIT_DECIMALS: dict[str, int] = {
+    "kW": 6,
+    "kWh": 6,
+    "°C": 1,
+    "%": 1,
+    "V": 1,
+    "A": 1,
+}
+
+# Loxone schreibt vor Prozent keine Leerstelle (`<v>%`), vor jeder anderen
+# Einheit dagegen schon (`<v.3> kW`, `<v.1> °C`) — belegt an den 26 realen
+# Vorlagen aus Spec 6.1.
+_UNITS_WITHOUT_LEADING_SPACE: frozenset[str] = frozenset({"%"})
+
+
+def unit_format(unit: str) -> str:
+    """Loxone-Formatstring fuer eine Einheit, oder "" wenn keine bekannt ist."""
+    decimals = _UNIT_DECIMALS.get(unit)
+    if decimals is None:
+        return ""
+    separator = "" if unit in _UNITS_WITHOUT_LEADING_SPACE else " "
+    return f"<v.{decimals}>{separator}{unit}"
 ```
 
 - [ ] **Step 6: Run test to verify it passes**
 
 Run: `uv run pytest tests/profiles/test_table.py -v`
-Expected: PASS, 10 Tests
+Expected: PASS, 13 Tests
 
 - [ ] **Step 7: Gegen die echten Fixtures halten**
 
@@ -860,9 +927,9 @@ einem monotonen Zähler. Spec 6.5: pro Gerät kommt ein `_online`-Signal dazu.
 - Create: `tests/export/test_signals.py`
 
 **Interfaces:**
-- Consumes: `StoredSignal`, `Exportability`
+- Consumes: `StoredSignal`, `Exportability`; `unit_format` aus `profiles.table`
 - Produces:
-  - `class LoxoneInput` — frozen: `key: str`, `title: str`, `comment: str`, `analog: bool`
+  - `class LoxoneInput` — frozen: `key: str`, `title: str`, `comment: str`, `analog: bool`, `unit_format: str`
   - `to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[LoxoneInput]`
 
 - [ ] **Step 1: Write the failing test**
@@ -890,11 +957,13 @@ def test_analog_attribute_becomes_one_analog_input():
     inputs = to_inputs([signal("d1_1_temp", unit="°C")], "Wohnzimmer")
     assert [i.key for i in inputs] == ["d1_1_temp", "d1_online"]
     assert inputs[0].analog is True
+    assert inputs[0].unit_format == "<v.1> °C"
 
 
 def test_digital_attribute_becomes_one_digital_input():
     inputs = to_inputs([signal("d1_1_onoff", exportability=Exportability.DIGITAL)], "Steckdose")
     assert inputs[0].analog is False
+    assert inputs[0].unit_format == ""
 
 
 def test_event_becomes_a_pulse_and_a_counter():
@@ -910,6 +979,8 @@ def test_event_becomes_a_pulse_and_a_counter():
     counter = next(i for i in inputs if i.key == "d1_1_press_n")
     assert pulse.analog is False
     assert counter.analog is True
+    assert pulse.unit_format == ""
+    assert counter.unit_format == ""
 
 
 def test_non_exportable_signals_are_skipped():
@@ -932,9 +1003,20 @@ def test_online_signal_is_added_once_per_device():
     assert online.analog is False
 
 
-def test_unit_lands_in_the_comment():
+def test_unit_no_longer_lands_in_the_comment():
+    """Die Einheit stand frueher im Kommentar; jetzt traegt sie unit_format (Spec 7.3)."""
     inputs = to_inputs([signal("d1_1_power", unit="kW")], "Steckdose")
-    assert "kW" in inputs[0].comment
+    power = next(i for i in inputs if i.key == "d1_1_power")
+    assert "kW" not in power.comment
+    assert power.unit_format
+
+
+def test_power_unit_gets_the_widened_six_decimal_format():
+    """Spec 7.3: mit dem sonst ueblichen <v.3> zeigt ein 300-mW-Standby-
+    Verbraucher 0.000 an — deshalb <v.6> fuer Leistung."""
+    inputs = to_inputs([signal("d1_1_power", unit="kW")], "Steckdose")
+    power = next(i for i in inputs if i.key == "d1_1_power")
+    assert power.unit_format == "<v.6> kW"
 
 
 def test_empty_signal_list_still_yields_the_online_input():
@@ -963,6 +1045,12 @@ verlorenes UDP-Paket ueberlebt, weil er dann nur springt statt zu verschlucken.
 Spec 6.6 — Listen, Strukturen, Nullwerte und Texte werden hier verworfen. Sie
 bleiben in der Ablage und in der Oberflaeche sichtbar, aber sie koennen kein
 Loxone-Objekt werden.
+
+Spec 7.3 — die Einheit eines Signals wandert nicht mehr in den Kommentar,
+sondern wird ueber `profiles.table.unit_format` in einen Loxone-Formatstring
+uebersetzt (`unit_format`-Feld). Digitale Eingaenge und Events tragen dort
+immer `""`: ein Formatstring mit Nachkommastellen ergibt fuer einen Impuls
+oder einen Zaehler keinen Sinn.
 """
 
 from __future__ import annotations
@@ -973,7 +1061,7 @@ from dataclasses import dataclass
 
 from loxmatter.matter.models import SignalKind
 from loxmatter.model.store import StoredSignal
-from loxmatter.profiles.table import Exportability
+from loxmatter.profiles.table import Exportability, unit_format
 
 _DEVICE_PREFIX = re.compile(r"^(d\d+)_")
 
@@ -984,6 +1072,7 @@ class LoxoneInput:
     title: str
     comment: str
     analog: bool
+    unit_format: str
 
 
 def _device_prefix(signals: Sequence[StoredSignal]) -> str:
@@ -1000,26 +1089,26 @@ def to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[Loxone
 
     for signal in signals:
         comment = f"{device_label} · {signal.ref.path}"
-        if signal.unit:
-            comment = f"{comment} · {signal.unit}"
 
         if signal.ref.kind is SignalKind.EVENT:
-            inputs.append(LoxoneInput(signal.key, signal.title, f"{comment} · Impuls", False))
+            inputs.append(LoxoneInput(signal.key, signal.title, f"{comment} · Impuls", False, ""))
             inputs.append(
                 LoxoneInput(
-                    f"{signal.key}_n", f"{signal.title} Zähler", f"{comment} · Zähler", True
+                    f"{signal.key}_n", f"{signal.title} Zähler", f"{comment} · Zähler", True, ""
                 )
             )
             continue
 
         if signal.exportability is Exportability.ANALOG:
-            inputs.append(LoxoneInput(signal.key, signal.title, comment, True))
+            inputs.append(
+                LoxoneInput(signal.key, signal.title, comment, True, unit_format(signal.unit))
+            )
         elif signal.exportability is Exportability.DIGITAL:
-            inputs.append(LoxoneInput(signal.key, signal.title, comment, False))
+            inputs.append(LoxoneInput(signal.key, signal.title, comment, False, ""))
 
     prefix = _device_prefix(signals)
     inputs.append(
-        LoxoneInput(f"{prefix}_online", f"{device_label} erreichbar", device_label, False)
+        LoxoneInput(f"{prefix}_online", f"{device_label} erreichbar", device_label, False, "")
     )
     return inputs
 ```
@@ -1027,7 +1116,7 @@ def to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[Loxone
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_signals.py -v`
-Expected: PASS, 8 Tests
+Expected: PASS, 9 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -1048,9 +1137,16 @@ git commit -m "feat(export): Events zu Impuls und Zaehler, Online-Signal je Gera
 - Consumes: `render_document` aus `export.xml`, `LoxoneInput` aus `export.signals`
 - Produces:
   - `render_virtual_in_udp(device_label: str, bridge_ip: str, port: int, inputs: Sequence[LoxoneInput]) -> bytes`
+    — schreibt vor den `VirtualInUdpCmd`-Kindern ein `<Info templateType="1" minVersion="14040925"/>`
   - `render_virtual_out(device_label: str, base_url: str, commands: Sequence[LoxoneCommand]) -> bytes`
+    — schreibt vor den `VirtualOutCmd`-Kindern ein `<Info templateType="3" minVersion="14040925"/>`
   - `class LoxoneCommand` — frozen: `key: str`, `title: str`, `path: str`, `analog: bool`
   - `filename_for(prefix: str, device_label: str) -> str`
+
+`minVersion="14040925"` ist für beide Vorlagentypen der niedrigste an den 26 realen
+Vorlagen beobachtete Wert (Spec 6.1, „Korrektur 2026-09-02") — er gate also die
+wenigsten Config-Versionen aus. Ob Loxone Config diesen Wert tatsächlich akzeptiert,
+prüft nicht diese Task, sondern der Import-Beleg in Task 7 Schritt 6.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1068,8 +1164,8 @@ from loxmatter.export.signals import LoxoneInput
 
 def inputs():
     return [
-        LoxoneInput("d1_1_temp", "Temperatur", "Wohnzimmer · 1/1026/0 · °C", True),
-        LoxoneInput("d1_online", "erreichbar", "Wohnzimmer", False),
+        LoxoneInput("d1_1_temp", "Temperatur", "Wohnzimmer · 1/1026/0", True, "<v.1> °C"),
+        LoxoneInput("d1_online", "erreichbar", "Wohnzimmer", False, ""),
     ]
 
 
@@ -1101,8 +1197,30 @@ def test_analog_flag_follows_the_input():
 
 def test_defaults_from_the_verified_schema_are_present():
     out = text_of(render_virtual_in_udp("L", "192.168.1.50", 7000, inputs()))
-    for attr in ("Signed=", "SourceValLow=", "DestValHigh=", "DefVal=", "MinVal=", "MaxVal="):
+    for attr in (
+        "Signed=",
+        "SourceValLow=",
+        "DestValHigh=",
+        "DefVal=",
+        "MinVal=",
+        "MaxVal=",
+        "Unit=",
+        "HintText=",
+    ):
         assert attr in out
+
+
+def test_unit_format_is_escaped_into_the_unit_attribute():
+    """Spec 6.1, Korrektur 2026-09-02: VirtualInUdpCmd hat 15 Attribute, u. a. Unit."""
+    out = text_of(render_virtual_in_udp("L", "192.168.1.50", 7000, inputs()))
+    assert 'Unit="&lt;v.1&gt; °C"' in out
+
+
+def test_info_element_is_the_first_child_of_virtual_in_udp():
+    """Spec 6.1, Korrektur 2026-09-02: jede Vorlage traegt ein Info-Element als erstes Kind."""
+    out = text_of(render_virtual_in_udp("L", "192.168.1.50", 7000, inputs()))
+    body_after_root = out.split(">", 1)[1]
+    assert body_after_root.lstrip().startswith('<Info templateType="1" minVersion="14040925"/>')
 
 
 def test_virtual_out_escapes_the_value_placeholder():
@@ -1127,6 +1245,31 @@ def test_virtual_out_carries_method_and_address():
     )
     assert 'Address="http://192.168.1.50:8080"' in out
     assert 'CmdOnMethod="GET"' in out
+    assert 'CmdOffMethod="GET"' in out
+
+
+def test_virtual_out_cmd_has_no_id_attribute():
+    """Spec 6.1, Korrektur 2026-09-02: VirtualOutCmd hat 15 Attribute und kein ID."""
+    out = text_of(
+        render_virtual_out(
+            "Lampe",
+            "http://192.168.1.50:8080",
+            [LoxoneCommand("d1_1_onoff", "Schalten", "/cmd/d1_1_onoff/1", False)],
+        )
+    )
+    assert 'ID="' not in out
+
+
+def test_info_element_is_the_first_child_of_virtual_out():
+    out = text_of(
+        render_virtual_out(
+            "Lampe",
+            "http://192.168.1.50:8080",
+            [LoxoneCommand("d1_1_onoff", "Schalten", "/cmd/d1_1_onoff/1", False)],
+        )
+    )
+    body_after_root = out.split(">", 1)[1]
+    assert body_after_root.lstrip().startswith('<Info templateType="3" minVersion="14040925"/>')
 
 
 def test_filenames_follow_the_spec_prefixes():
@@ -1158,6 +1301,23 @@ Eingaengen in einem Objekt waere die Config nicht mehr navigierbar (Spec 6.2).
 
 Die Attributnamen und ihre Defaults stammen aus dem verifizierten Schema in
 Spec 6.1. Sie sind nicht frei waehlbar.
+
+Spec 6.1, „Korrektur 2026-09-02": das Schema stammte urspruenglich aus einer
+fremden Referenzimplementierung und wich in vier Punkten von dem ab, was
+Loxone Config an 26 realen Vorlagen tatsaechlich schreibt — belegt, nicht
+vermutet. Diese Task zieht die vier Korrekturen nach:
+
+1. Jede Vorlage traegt ein `<Info>` als erstes Kind. `templateType` ist `1`
+   fuer `VirtualInUdp`, `3` fuer `VirtualOut`. `minVersion="14040925"` ist fuer
+   beide der niedrigste an den 26 Vorlagen beobachtete Wert — er gate also die
+   wenigsten Config-Versionen. Ob Loxone Config diesen Wert wirklich
+   akzeptiert, entscheidet nicht dieser Code, sondern der Import-Beleg in
+   Task 7 Schritt 6.
+2. `VirtualInUdpCmd` hat 15 Attribute, u. a. `Unit` (Formatstring, Spec 7.3)
+   und `HintText`.
+3. `VirtualOut` traegt `HintText` zwischen `CmdInit` und `CloseAfterSend`.
+4. `VirtualOutCmd` hat 15 Attribute, kein `ID`, und `CmdOnMethod`/`CmdOffMethod`
+   stehen zusammen statt verteilt.
 """
 
 from __future__ import annotations
@@ -1170,6 +1330,11 @@ from loxmatter.export.signals import LoxoneInput
 from loxmatter.export.xml import render_document
 
 _UMLAUTS = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"}
+
+# Niedrigster an den 26 realen Vorlagen (Spec 6.1) beobachteter Wert je
+# Vorlagentyp — gate damit die wenigsten Config-Versionen aus. Der eigentliche
+# Beleg, dass Loxone Config diesen Wert akzeptiert, ist der Import in Task 7.
+_MIN_VERSION = "14040925"
 
 
 @dataclass(frozen=True)
@@ -1190,6 +1355,7 @@ def render_virtual_in_udp(
     port: int,
     inputs: Sequence[LoxoneInput],
 ) -> bytes:
+    info = ("Info", [("templateType", "1"), ("minVersion", _MIN_VERSION)])
     children = [
         (
             "VirtualInUdpCmd",
@@ -1207,6 +1373,8 @@ def render_virtual_in_udp(
                 ("DefVal", "0"),
                 ("MinVal", "-2147483647"),
                 ("MaxVal", "2147483647"),
+                ("Unit", entry.unit_format),
+                ("HintText", ""),
             ],
         )
         for entry in inputs
@@ -1219,7 +1387,7 @@ def render_virtual_in_udp(
             ("Address", bridge_ip),
             ("Port", str(port)),
         ],
-        children,
+        [info, *children],
     )
 
 
@@ -1228,27 +1396,29 @@ def render_virtual_out(
     base_url: str,
     commands: Sequence[LoxoneCommand],
 ) -> bytes:
+    info = ("Info", [("templateType", "3"), ("minVersion", _MIN_VERSION)])
     children = [
         (
             "VirtualOutCmd",
             [
-                ("ID", str(index)),
                 ("Title", command.title),
                 ("Comment", command.key),
                 ("CmdOnMethod", "GET"),
+                ("CmdOffMethod", "GET"),
                 ("CmdOn", command.path),
                 ("CmdOnHTTP", ""),
                 ("CmdOnPost", ""),
-                ("CmdOffMethod", "GET"),
                 ("CmdOff", ""),
                 ("CmdOffHTTP", ""),
                 ("CmdOffPost", ""),
+                ("CmdAnswer", ""),
+                ("HintText", ""),
                 ("Analog", _flag(command.analog)),
                 ("Repeat", "0"),
                 ("RepeatRate", "0"),
             ],
         )
-        for index, command in enumerate(commands)
+        for command in commands
     ]
     return render_document(
         "VirtualOut",
@@ -1257,10 +1427,11 @@ def render_virtual_out(
             ("Comment", "erzeugt von loxmatter"),
             ("Address", base_url),
             ("CmdInit", ""),
+            ("HintText", ""),
             ("CloseAfterSend", "true"),
             ("CmdSep", ""),
         ],
-        children,
+        [info, *children],
     )
 
 
@@ -1277,7 +1448,7 @@ def filename_for(prefix: str, device_label: str) -> str:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_documents.py -v`
-Expected: PASS, 8 Tests
+Expected: PASS, 12 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -1834,6 +2005,12 @@ Virtueller UDP-Eingang → Vorlage importieren.
 Erwartet: das Objekt erscheint mit allen Befehlen, Titel und Kommentare lesbar,
 Analog-Flags richtig. Danach dasselbe für den Taster (Node 4) und prüfen, dass
 Impuls und Zähler getrennt auftauchen.
+
+Dieser Import ist auch der eigentliche Beleg für `minVersion="14040925"`
+(Task 5): Lehnt Config die Vorlage deswegen ab, war der beobachtete Minimalwert
+zu niedrig — dann in Spec 6.1 nachtragen und den Wert in `documents.py`
+anheben. Kein Testfall kann das vorwegnehmen, weil er dieselbe Annahme prüfen
+würde, die er belegen soll.
 
 Was dabei abweicht, geht in Spec 6.1 — **nicht** in eine Anpassung der Tests.
 
