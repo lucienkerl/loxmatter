@@ -4,7 +4,7 @@ from pathlib import Path
 
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
 
-REFERENZ = Path(__file__).parents[1] / "fixtures" / "loxone" / "VIU_Referenz.xml"
+REFERENCE = Path(__file__).parents[1] / "fixtures" / "loxone" / "VIU_Referenz.xml"
 
 
 async def test_records_incoming_datagrams():
@@ -37,16 +37,37 @@ async def test_silent_keys_names_signals_that_never_arrived():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.sendto(b"d1_1_beispiel:1", ("127.0.0.1", fake.port))
     await asyncio.sleep(0.1)
-    stumm = fake.silent_keys(REFERENZ)
+    silent = fake.silent_keys(REFERENCE)
     await fake.stop()
     sock.close()
-    assert "d1_1_beispiel" not in stumm
-    assert stumm  # die Referenz traegt mehr als einen Befehl
+    assert "d1_1_beispiel" not in silent
+    assert silent  # die Referenz traegt mehr als einen Befehl
 
 
 def test_silent_keys_reads_the_check_attribute():
     fake = FakeMiniserver(port=0)
-    assert all(not k.endswith(":\\v") for k in fake.silent_keys(REFERENZ))
+    assert all(not k.endswith(":\\v") for k in fake.silent_keys(REFERENCE))
+
+
+def test_announced_keys_lists_every_check_attribute_of_the_template():
+    fake = FakeMiniserver(port=0)
+    assert fake.announced_keys(REFERENCE) == {"d1_1_beispiel1", "d1_1_beispiel2"}
+
+
+def test_announced_keys_is_empty_for_a_template_without_check_attributes(tmp_path):
+    """Eine VO_-Vorlage oder eine leere Vorlage traegt kein Check-Attribut - das
+    ist etwas anderes als eine Vorlage, deren Signale alle gesehen wurden
+    (siehe cli._silent_keys_report)."""
+    empty = tmp_path / "VO_ohne_check.xml"
+    empty.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<VirtualOut Title="Ohne Check" Comment="" Address="" Port="80">\n'
+        "</VirtualOut>\n",
+        encoding="utf-8",
+    )
+    fake = FakeMiniserver(port=0)
+    assert fake.announced_keys(empty) == set()
+    assert fake.silent_keys(empty) == []
 
 
 async def test_on_received_callback_fires_for_well_formed_datagrams():

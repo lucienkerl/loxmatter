@@ -78,8 +78,18 @@ class FakeMiniserver:
             self._transport.close()
             self._transport = None
 
+    def announced_keys(self, template: Path) -> set[str]:
+        """Signale, die die Vorlage per `Check`-Attribut ankuendigt.
+
+        Getrennt von `silent_keys` gehalten, damit ein Aufrufer (siehe
+        `loxmatter fake-miniserver`) unterscheiden kann, ob eine Vorlage
+        schlicht KEIN Check-Attribut traegt (z. B. eine VO_-Datei oder eine
+        leere Vorlage) - dann gibt es nichts zu pruefen - statt das mit dem
+        Fall zu verwechseln, dass alle angekuendigten Signale gesehen wurden.
+        """
+        return set(_CHECK.findall(template.read_text(encoding="utf-8-sig")))
+
     def silent_keys(self, template: Path) -> list[str]:
         """Signale, die die Vorlage ankuendigt, die aber nie ein Datagramm schickten."""
-        announced = set(_CHECK.findall(template.read_text(encoding="utf-8-sig")))
         seen = {key for key, _ in self.received}
-        return sorted(announced - seen)
+        return sorted(self.announced_keys(template) - seen)

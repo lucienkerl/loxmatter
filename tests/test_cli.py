@@ -432,3 +432,80 @@ async def test_run_continues_cleanup_when_one_step_fails(monkeypatch, tmp_path):
     with pytest.raises(MatterUnavailableError):
         await clients[0].snapshots()
     _assert_store_is_closed(store)
+
+
+async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path):
+    """Bricht waehrend `resend_all()` ab - also VOR `serve()`, im Unterschied zu
+    `test_run_cleans_up_on_cancellation` oben, das immer erst `serve()` erreicht
+    (dessen 0.05s-Schlaf reicht laengst, bis connect()/subscribe()/start()/
+    resend_all() der Attrappen durchgelaufen sind). Von den vier Schritten vor
+    `serve()` ist `resend_all()` gezielt gewaehlt: es ist der einzige mit einem
+    eigenen inneren `await` (hier bewusst auf ein nie gesetztes Event), an dem
+    eine Cancellation ueberhaupt landen kann - die drei anderen Fake-Aufrufe
+    kehren synchron zurueck und boeten keinen Interrupt-Punkt."""
+    senders, runtimes, clients = _install_run_spies(monkeypatch)
+
+    def make_slow_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender)
+
+        async def resend_all_blocks_until_cancelled() -> int:
+            runtime.resend_calls += 1
+            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+            return 0  # pragma: no cover - wird nie erreicht
+
+        runtime.resend_all = resend_all_blocks_until_cancelled  # type: ignore[method-assign]
+        runtimes.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(cli, "Runtime", make_slow_runtime)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # started() und der eine resend_all()-Aufruf sind gelaufen - serve() nie:
+    # sonst wuerde dies nur test_run_cleans_up_on_cancellation wiederholen.
+    assert runtimes[0].started is True
+    assert runtimes[0].resend_calls == 1
+    assert runtimes[0].stop_calls == 1
+    assert senders[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError):
+        await clients[0].snapshots()
+    _assert_store_is_closed(store)
+
+
+# --- fake-miniserver: --template ----------------------------------------
+
+
+def test_fake_miniserver_rejects_a_missing_template_before_listening(tmp_path):
+    """Ein falscher --template-Pfad soll sofort scheitern, statt erst nach dem
+    Warten auf Strg-C (Review-Fix Minor #5) - `CliRunner.invoke` haengt hier
+    deshalb nicht: die Pruefung sitzt vor `asyncio.run(_fake_miniserver(...))`."""
+    missing = tmp_path / "nicht_da.xml"
+
+    result = CliRunner().invoke(app, ["fake-miniserver", "--template", str(missing)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "wurde nicht gefunden" in result.stderr
+
+
+def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen():
+    """Review-Fix Minor #4: eine Vorlage ohne Check-Attribute (z. B. eine
+    VO_-Datei) hat nichts zu pruefen - das darf nicht wie "alles gesehen"
+    aussehen, sonst liest es sich wie eine bestandene statt einer
+    ausgebliebenen Pruefung."""
+    nothing_to_check = cli._silent_keys_report("VO_x.xml", announced=set(), silent=[])
+    assert "nichts zu prüfen" in nothing_to_check
+    assert "Alle" not in nothing_to_check
+
+    all_seen = cli._silent_keys_report("VIU_x.xml", announced={"a", "b"}, silent=[])
+    assert "Alle 2 Signale" in all_seen
+
+    some_silent = cli._silent_keys_report("VIU_x.xml", announced={"a", "b"}, silent=["b"])
+    assert "1 Signale aus VIU_x.xml nie gesehen" in some_silent
+    assert "  b" in some_silent

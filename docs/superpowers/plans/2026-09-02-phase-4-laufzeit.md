@@ -2365,6 +2365,12 @@ async def _run(url: str, miniserver: str, port: int, listen: int, store_path: Pa
 
     try:
         await client.connect()
+        # Ohne diesen Aufruf verbindet sich die Bridge, hört aber nie auf
+        # etwas: subscribe() ist es, was Attribut-/Event-Änderungen und
+        # Erreichbarkeit überhaupt erst an `runtime` weiterreicht (siehe
+        # unten). resolve_device_id bildet die Node-ID auf die stabile
+        # device_id ab, an der die Schlüssel hängen.
+        await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
         # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
@@ -2393,6 +2399,16 @@ gehört zu dieser Task:
 
 Schreibe für beide Tests gegen die vorhandene Fake-Upstream-Attrappe in
 `tests/matter/test_client.py`, nicht gegen einen echten Server.
+
+`_run()`s eigenes Aufbau/Abbau-Verhalten (Verbindung, Subscription, Start, Full-Resend,
+HTTP-Server, und der Abbau in jedem Fehlerfall — inklusive eines Abbruchs mitten im
+Start, VOR `serve()`, denn genau der Aufruf von `subscribe()` oben steht dort mit an)
+gehört in eigene Tests gegen eine `_FakeUpstream`-Attrappe in `tests/test_cli.py`, nicht
+gegen einen echten matter-server.
+
+Run: `uv run pytest tests/test_cli.py -v`
+Expected: PASS, 6 Tests für `_run()`s Aufbau/Abbau (davon 1 für den Abbruch während des
+Starts, vor `serve()`).
 
 Dazu das Kommando für das Testdoppel:
 

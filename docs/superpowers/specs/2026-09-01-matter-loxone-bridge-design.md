@@ -749,3 +749,42 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    erwartet deshalb für Farbtemperatur bereits einen entpackten Kelvin-Wert statt der
    rohen Loxone-Zahl. Vor Task 6 (HTTP-Endpoint) klären, sonst kann dieser die rohe
    Zahl nicht zuverlässig entpacken. Die RGB-Codierung ist dagegen belegt (7.3).
+3. **`subscribe()` abonniert Attribute nur statisch — und das kompoundiert mit
+   `Runtime.invalidate_index()` zu einer stillen Sackgasse** (Task 8, 2026-09-02).
+   `BridgeMatterClient.subscribe()` (`matter/client.py`) registriert beim Aufruf genau
+   eine Upstream-Subscription je (Node, Attributpfad)-Paar, das zu diesem Zeitpunkt
+   bekannt ist — begründet im Moduldocstring dort: `attr_path_filter` steuert nur, OB
+   ein registrierter Callback feuert, nicht WAS ihm übergeben wird, und für
+   `EventType.ATTRIBUTE_UPDATED` ist die gelieferte `data` einzig der neue Wert, ohne
+   Node-ID oder Pfad — eine einzelne Wildcard-Subscription könnte ein solches Update
+   deshalb keinem Gerät zuordnen. Ein Attributpfad, den ein Gerät ERST NACH diesem
+   Aufruf neu meldet — nach einem Firmware-Update, das einen Cluster freischaltet, oder
+   weil ein Gerät nachträglich kommissioniert wird — bekommt dadurch nie eine
+   Subscription und liefert folglich nie ein Update.
+
+   Das verzahnt sich mit einer zweiten, für sich genommen unabhängig wirkenden Grenze:
+   `Runtime.invalidate_index()` (`loxone/runtime.py`) existiert genau für den Fall, dass
+   jemand `Store.register_signals()` erneut für ein bereits laufendes Gerät aufruft, um
+   ein neu hinzugekommenes Signal bekannt zu machen. Sie verwirft dabei aber nur
+   `Runtime`s eigenen Cache bereits ABONNIERTER Pfade (`_signal_for`s
+   `_signals`/`_indexed`) — sie registriert keine neue Upstream-Subscription und kann es
+   auch nicht, sie kennt `BridgeMatterClient` gar nicht. Hat `subscribe()` den Pfad nie
+   kennengelernt, erzeugt matter-server dafür überhaupt kein Event; es gibt für
+   `invalidate_index()` folglich nichts zu verpassen. Auch `_signal_for`s eigenes
+   Debug-Log (das bei einem unbekannten Signal feuert) sieht diesen Fall nie, weil
+   `on_attribute`/`on_event` für einen nie abonnierten Pfad schlicht nie aufgerufen
+   werden — nicht einmal auf Debug-Ebene steht dazu etwas im Log.
+
+   Wer also "ein Signal zur Laufzeit an ein laufendes Gerät anhängen" allein mit
+   `Store.register_signals()` gefolgt von `Runtime.invalidate_index(device_id)` bauen
+   will, landet in genau dieser stillen Sackgasse: der Aufruf läuft fehlerfrei durch,
+   der Cache wird sauber neu aufgebaut — aber es kommt nie ein Wert an, weil die
+   eigentliche Lücke eine Ebene tiefer liegt, bei `subscribe()`, nicht bei
+   `invalidate_index()`. Ein korrekter Fix braucht deshalb beides: nach
+   `Store.register_signals()` muss NEBEN `Runtime.invalidate_index(device_id)` auch
+   `BridgeMatterClient.subscribe()` für den betroffenen Node erneut laufen (oder gezielt
+   um den neuen Pfad erweitert werden) — sich auf die Cache-Invalidierung allein zu
+   verlassen reicht nicht. Für die anvisierte Nutzung dieser Phase (`connect()` liest
+   den vollen Node-Cache, danach einmalig `subscribe()`, keine Laufzeit-
+   Rekommissionierung) ist die Lücke hinnehmbar; sie ist aber ein offener Punkt, keine
+   erledigte Aufgabe.

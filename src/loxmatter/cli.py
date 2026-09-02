@@ -474,8 +474,37 @@ def fake_miniserver_cmd(
         None, help="Erzeugte VIU_-Vorlage: nennt am Ende die Signale, die nie feuerten"
     ),
 ) -> None:
-    """Ersetzt den Miniserver: schreibt jedes Datagramm mit."""
+    """Ersetzt den Miniserver: schreibt jedes Datagramm mit.
+
+    `--template` wird bereits hier geprueft, statt den Nutzer erst nach dem
+    Warten auf Strg-C (der Pfad wird erst im `finally` von `_fake_miniserver`
+    gelesen) mit einem Fehler zu ueberraschen — wie bei den uebrigen Kommandos
+    dieses Moduls soll ein falscher Pfad sofort als CLI-Fehler enden (Review-Fix
+    Minor #5).
+    """
+    if template is not None and not template.is_file():
+        _fail(f"Vorlage {template} wurde nicht gefunden.")
     asyncio.run(_fake_miniserver(port, template))
+
+
+def _silent_keys_report(template_name: str, announced: set[str], silent: list[str]) -> str:
+    """Formuliert die Abschlussmeldung von `fake-miniserver --template`.
+
+    Drei zu unterscheidende Faelle: `announced` leer heisst, die Vorlage traegt
+    gar kein `Check`-Attribut (z. B. eine VO_-Datei oder eine leere Vorlage) —
+    dann gibt es nichts zu pruefen, und das ist etwas anderes als "alles wurde
+    gesehen". Nur wenn `announced` nicht leer und `silent` leer ist, war die
+    Pruefung tatsaechlich erfolgreich (Review-Fix Minor #4).
+    """
+    if not announced:
+        return f"{template_name} enthält keine Check-Signale — nichts zu prüfen."
+    if not silent:
+        return (
+            f"Alle {len(announced)} Signale aus {template_name} wurden mindestens einmal gesehen."
+        )
+    lines = [f"{len(silent)} Signale aus {template_name} nie gesehen:"]
+    lines += [f"  {key}" for key in silent]
+    return "\n".join(lines)
 
 
 async def _fake_miniserver(port: int, template: Path | None) -> None:
@@ -499,10 +528,6 @@ async def _fake_miniserver(port: int, template: Path | None) -> None:
     finally:
         await fake.stop()
         if template is not None:
+            announced = fake.announced_keys(template)
             silent = fake.silent_keys(template)
-            if silent:
-                typer.echo(f"\n{len(silent)} Signale aus {template.name} nie gesehen:")
-                for key in silent:
-                    typer.echo(f"  {key}")
-            else:
-                typer.echo(f"\nAlle Signale aus {template.name} wurden mindestens einmal gesehen.")
+            typer.echo(f"\n{_silent_keys_report(template.name, announced, silent)}")
