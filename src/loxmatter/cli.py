@@ -378,12 +378,50 @@ def export(
         store.close()
 
 
+def _warn_if_missing_api_token(api_token: str | None) -> None:
+    """Warnt beim Start deutlich, wenn kein API-Token gesetzt ist (Task 8,
+    Phase 5, Spec 9).
+
+    Eigene Funktion statt einer Zeile inline in `run`/`_run`, damit ein Test
+    sie ohne laufenden Server aufrufen kann (`asyncio.run(_run(...))` startet
+    `uvicorn.Server.serve()`, das in einer Testsuite ohne Netzwerkzugriff
+    nicht laufen soll — siehe `tests/api/test_security.py`).
+
+    Aufgerufen aus `run` (synchron, vor `asyncio.run`), nicht aus `_run`
+    selbst: so erscheint die Warnung garantiert genau einmal beim Start,
+    bevor irgendein `await` die Kontrolle abgibt, unabhängig davon, wie
+    `_run` seinen Ablauf künftig ändert."""
+    if api_token is None:
+        logger.warning(
+            "Kein API-Token gesetzt — die Oberfläche ist für jeden erreichbar, "
+            "der den Port erreicht, einschließlich Einlernen und Entfernen von "
+            "Geräten. Setze LOXMATTER_API_TOKEN oder --api-token."
+        )
+
+
 @app.command()
 def run(
     url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
     miniserver: str = typer.Option(..., help="IP des Miniservers"),
     port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
     listen: int = typer.Option(8080, help="Port für die HTTP-Kommandos aus Loxone"),
+    host: str = typer.Option(
+        "0.0.0.0",
+        help="Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der "
+        "Miniserver den Dienst erreichen muss — siehe --api-token für die "
+        "dazugehörige Absicherung der `/api`-Routen (Spec 9, Task 8).",
+    ),
+    api_token: str | None = typer.Option(
+        None,
+        "--api-token",
+        envvar="LOXMATTER_API_TOKEN",
+        help="Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, "
+        "Fabric-Sicherung) mit `Authorization: Bearer <Token>`. `/cmd` und "
+        "/resync` bleiben immer offen — der Miniserver kann keinen Header "
+        "mitschicken (Spec 9, Task 8). Ohne Token erscheint beim Start eine "
+        "Warnung im Log. Alternative über die Umgebungsvariable "
+        "LOXMATTER_API_TOKEN.",
+    ),
     store_path: Path | None = typer.Option(  # noqa: B008
         None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
     ),
@@ -423,7 +461,8 @@ def run(
     except (OSError, sqlite3.Error) as exc:
         _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
 
-    asyncio.run(_run(store, url, miniserver, port, listen, matter_data_dir))
+    _warn_if_missing_api_token(api_token)
+    asyncio.run(_run(store, url, miniserver, port, listen, matter_data_dir, host, api_token))
 
 
 async def _run(
@@ -433,6 +472,8 @@ async def _run(
     port: int,
     listen: int,
     matter_data_dir: Path | None = None,
+    host: str = "0.0.0.0",  # Standard wie in `run` — der Miniserver muss den Dienst erreichen
+    api_token: str | None = None,
 ) -> None:
     """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
 
@@ -496,8 +537,9 @@ async def _run(
                 client=client,
                 sender=sender,
                 matter_data_dir=matter_data_dir,
+                api_token=api_token,
             ),
-            host="0.0.0.0",
+            host=host,
             port=listen,
             log_level="info",
         )

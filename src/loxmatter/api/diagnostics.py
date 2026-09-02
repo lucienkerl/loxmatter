@@ -46,12 +46,18 @@ Diese Datei ist Schluesselmaterial, kein Protokoll - wer sie besitzt, kann
 die Fabric uebernehmen. Zwei Konsequenzen, beide unten an der Route
 dokumentiert:
 
-- **Noch nicht geschuetzt.** Das Token aus Task 8 existiert hier noch nicht.
-  Die Route ist bewusst so gebaut, dass die Absicherung dort eine einzeilige
-  Ergaenzung wird: ein zusaetzlicher `Depends(...)`-Parameter auf der
-  Funktion `fabric_backup` unten, mehr nicht. Bis dahin kann JEDER, der den
-  Port dieses Dienstes erreicht, die Fabric-Credentials herunterladen -
-  siehe Docstring der Route.
+- **Geschuetzt seit Task 8 (Phase 5, Spec 9).** Nicht ueber einen
+  zusaetzlichen `Depends(...)`-Parameter an dieser Funktion selbst, sondern
+  einheitlich fuer den gesamten Router: `loxone.server.build_app` bindet
+  `build_diagnostics_router(...)` (wie alle fuenf `/api`-Router) ueber
+  `app.include_router(..., dependencies=[Depends(guard)])` ein, `guard` aus
+  `build_api_guard` (siehe dort). Das schuetzt jede Route dieses Routers
+  gleich, ohne Sonderfall fuer `fabric_backup` unten - und ohne das Risiko,
+  eine kuenftige sechste Diagnose-Route versehentlich ungeschuetzt zu
+  lassen, wie es ein Parameter je Funktion haette zulassen koennen. Ohne
+  gesetztes `--api-token`/`LOXMATTER_API_TOKEN` bleibt diese Route (wie
+  jede andere unter `/api`) unveraendert offen - mit einer deutlichen
+  Warnung im Log beim Start (siehe `cli._warn_if_missing_api_token`).
 - **Nichts davon wird geloggt** - weder der aufgeloeste Pfad noch die darin
   enthaltenen Dateinamen. Ein Server-Log ist kein Ort fuer Hinweise auf
   Schluesselmaterial, selbst nicht auf `debug`-Ebene.
@@ -355,24 +361,26 @@ def build_diagnostics_router(
 
     @router.get("/fabric-backup")
     async def fabric_backup() -> Response:
-        """**UNGESCHUETZT. WER DIESEN PORT ERREICHT, KANN DIE FABRIC
-        UEBERNEHMEN.** Das ist der erste Satz dieses Docstrings mit Absicht,
-        nicht nur eine Randbemerkung weiter unten: diese Route braucht
-        heute weder Token noch sonst eine Authentifizierung. Jeder, der den
-        Port dieses Dienstes erreicht, kann sie ungehindert aufrufen und
-        damit die kompletten Fabric-Credentials herunterladen - siehe
-        Moduldocstring, Abschnitt "Die Sicherung ist kein Nebenpunkt", fuer
-        die Konsequenz daraus (Spec 4.1: der einzige unersetzliche Zustand
-        des Systems). Deshalb bleibt die Volume-Einhaengung, die diese Route
-        ueberhaupt erst mit echten Daten fuettert, in
-        `deploy/testhost/docker-compose.yml` bewusst auskommentiert, bis
-        Task 8 den Token-Schutz liefert (siehe dort).
+        """**GESCHUETZT DURCH DAS API-TOKEN, WENN EINS GESETZT IST - SONST
+        KANN WER DIESEN PORT ERREICHT, DIE FABRIC UEBERNEHMEN.** Das ist der
+        erste Satz dieses Docstrings mit Absicht, nicht nur eine
+        Randbemerkung weiter unten: diese Route braucht seit Task 8 (Phase 5,
+        Spec 9) `Authorization: Bearer <Token>`, SOBALD `--api-token`/
+        `LOXMATTER_API_TOKEN` gesetzt ist - der Schutz sitzt nicht an dieser
+        Funktion, sondern einheitlich am gesamten Router (siehe
+        Moduldocstring, Abschnitt "Die Sicherung ist kein Nebenpunkt", und
+        `loxone.server.build_api_guard`). Ist KEIN Token konfiguriert, bleibt
+        diese Route weiterhin ungeschuetzt erreichbar - dieselbe Konsequenz
+        wie vor Task 8 (Spec 4.1: der einzige unersetzliche Zustand des
+        Systems), nur eben als bewusste Betreiber-Entscheidung statt als
+        fehlende Fähigkeit, mit einer deutlichen Warnung im Log beim Start
+        (siehe `cli._warn_if_missing_api_token`). Die Volume-Einhaengung, die
+        diese Route ueberhaupt erst mit echten Daten fuettert, ist deshalb
+        seit Task 8 in `deploy/testhost/docker-compose.yml` wieder aktiv -
+        zusammen mit einem gesetzten `LOXMATTER_API_TOKEN` (siehe dort).
 
         Sicherung des matter-server-Datenverzeichnisses (Spec 4.1, 8) als
-        Download. Sobald Task 8 einen Token-Schutz einfuehrt, wird dessen
-        Pruefung hier als zusaetzlicher `Depends(...)`-Parameter dieser
-        Funktion ergaenzt - eine einzeilige Aenderung, keine Umstrukturierung
-        dieser Route.
+        Download.
 
         Loggt bewusst NICHTS - weder den aufgeloesten Pfad noch die
         enthaltenen Dateinamen (siehe Moduldocstring)."""

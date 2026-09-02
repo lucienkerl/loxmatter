@@ -27,6 +27,24 @@ unveraendert weiter, nur eben ohne diese beiden Diagnose-Faehigkeiten
 (siehe `api.diagnostics.build_diagnostics_router`, dort auch, was `None`
 fuer jeden der beiden Faelle konkret bedeutet).
 
+**`api_token` ist neu in Task 8 (Absicherung, Spec 9).** Bis hierher bot
+dieser Dienst nur `/cmd` und `/resync` - erreichbar zu sein bedeutete
+hoechstens, ein Geraet schalten zu koennen. Seit Task 1 (Einlernen) und
+Task 2 (Entfernen) bedeutet es mehr: wer den Port erreicht, kann ein Geraet
+aus der Fabric werfen, und seit Task 6 kann er zusaetzlich die komplette
+Fabric-Sicherung herunterladen (`GET /api/diagnostics/fabric-backup`,
+Spec 4.1). `build_api_guard` (siehe dort) schuetzt deshalb ab hier jede
+Route unter `/api` - lesend UND schreibend, denn eine reine
+Schreibsperre haette den Lesezugriff auf Signalwerte und die
+Fabric-Sicherung selbst offen gelassen, und genau die ist das eigentliche
+Risiko. `/cmd` und `/resync` bleiben bewusst aussen vor: der Miniserver
+ruft virtuelle Ausgaenge ohne Header auf, ein Token dort wuerde die
+Loxone-Integration schlicht abschalten. `api_token` ist deshalb optional
+mit Default `None` - derselbe Grund wie bei `client`/`sender` oben: jeder
+bisherige Aufruf ohne das Argument laeuft unveraendert weiter, nur eben
+ohne Token-Schutz (mit einer Warnung im Log dafuer, siehe
+`cli._warn_if_missing_api_token`).
+
 **Kommando-Log (Spec 10.5).** Die Middleware `_record_command` unten
 zeichnet JEDEN eingehenden HTTP-Aufruf auf dieser App auf - Methode, Pfad,
 Statuscode, Zeitstempel - fuer `GET /api/diagnostics/commands`. Zwei
@@ -63,7 +81,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response as StarletteResponse
@@ -111,6 +129,42 @@ _CRASHED_STATUS = 0
 _WEB_DIR = Path(__file__).parents[1] / "web"
 
 
+def build_api_guard(token: str | None) -> Callable[..., Awaitable[None]]:
+    """Schuetzt die `/api`-Routen, nicht die des Miniservers (Task 8, Phase 5).
+
+    Der Miniserver ruft virtuelle Ausgaenge ohne Header auf - er kann kein
+    Token mitschicken. `/cmd` und `/resync` muessen deshalb offen bleiben, und
+    das ist eine bewusste Grenze, keine Nachlaessigkeit: wer den Port
+    erreicht, kann weiterhin Geraete schalten. Was das Token verhindert,
+    ist das Einlernen, das Entfernen und der Download der
+    Fabric-Sicherung - also alles, was den Bestand veraendert (Spec 9).
+
+    `token is None` (kein `--api-token`/`LOXMATTER_API_TOKEN` gesetzt) laesst
+    den Wächter unveraendert durch - derselbe Zustand wie vor Task 8. Das ist
+    der einzig sinnvolle Standard: der Miniserver-Pfad braucht ohnehin kein
+    Token, und ein Dienst, der ohne explizit gesetztes Token nicht mehr
+    starten wuerde, waere fuer eine Testumgebung oder ein Erstinbetriebnahme-
+    ohne-Anleitung schlicht unbenutzbar. Die Warnung, die dafuer beim Start
+    im Log erscheint (siehe `cli._warn_if_missing_api_token`), ist der
+    Ausgleich dafuer.
+
+    Gilt fuer HTTP-Routen UND fuer die WebSocket-Route `/api/live` gleichermassen:
+    `app.include_router(..., dependencies=[Depends(guard)])` loest diese
+    Abhaengigkeit vor JEDER Route des jeweiligen Routers auf, auch vor einem
+    WebSocket-Handshake - FastAPI/uvicorn lehnen eine `HTTPException` aus
+    einer WebSocket-Abhaengigkeit ueber die ASGI-„Denial Response"-Erweiterung
+    ab (HTTP-Statuscode vor dem Accept), statt die Verbindung erst anzunehmen
+    und dann zu schliessen (verifiziert in `tests/api/test_security.py`)."""
+
+    async def guard(authorization: str | None = Header(default=None)) -> None:
+        if token is None:
+            return
+        if authorization != f"Bearer {token}":
+            raise HTTPException(status_code=401, detail="Ungültiges oder fehlendes Token")
+
+    return guard
+
+
 def build_app(
     store: Store,
     invoke: Invoker,
@@ -118,9 +172,11 @@ def build_app(
     client: BridgeMatterClient | None = None,
     sender: UdpSender | None = None,
     matter_data_dir: Path | None = None,
+    api_token: str | None = None,
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
+    api_guard = [Depends(build_api_guard(api_token))]
 
     def _append_command_log(*, method: str, path: str, status: int) -> None:
         """Haengt einen Eintrag an - in ein eigenes try/except gekapselt, ein
@@ -178,15 +234,21 @@ def build_app(
             )
         return response
 
-    app.include_router(build_device_router(store, client, runtime))
-    app.include_router(build_export_router(store))
-    app.include_router(build_live_router(runtime))
+    # `dependencies=api_guard` auf jedem der fuenf `/api`-Router (Task 8,
+    # Phase 5, siehe `build_api_guard` oben): das schuetzt ausnahmslos jede
+    # Route dieser fuenf Router, inklusive der WebSocket-Route `/api/live" -
+    # und ausdruecklich NICHT `/cmd`, `/resync`, `/health`, `/` und
+    # `/static`, die weiter unten ohne `dependencies` eingehaengt werden.
+    app.include_router(build_device_router(store, client, runtime), dependencies=api_guard)
+    app.include_router(build_export_router(store), dependencies=api_guard)
+    app.include_router(build_live_router(runtime), dependencies=api_guard)
     # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
     # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst
     # driften sie (Spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
-    app.include_router(build_control_router(store, invoke))
+    app.include_router(build_control_router(store, invoke), dependencies=api_guard)
     app.include_router(
-        build_diagnostics_router(store, command_log, client, sender, matter_data_dir)
+        build_diagnostics_router(store, command_log, client, sender, matter_data_dir),
+        dependencies=api_guard,
     )
 
     # Task 7, Phase 5: die WebUI selbst. `StaticFiles` weist einen Zugriff,

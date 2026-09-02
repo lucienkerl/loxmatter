@@ -157,17 +157,19 @@ WebSocket nach innen, UDP und HTTP nach Loxone.
 unersetzliche Zustand. Verlust bedeutet, alle Geräte neu einlernen zu müssen. Muss im
 Deployment-Guide und in der WebUI prominent stehen; die WebUI bietet einen Backup-Export.
 
-**Sicherheitsstatus dieses Backup-Exports (Review-Fix Critical, 2026-09-02, festgehalten
-statt nur impliziert):** `GET /api/diagnostics/fabric-backup` (10.5) ist **heute
-ungeschützt** — ohne den Token-Schutz aus Task 8 kann jeder, der den Port dieses Dienstes
-erreicht, die kompletten Fabric-Credentials herunterladen. `loxmatter` läuft mit
-`network_mode: host` (siehe oben), damit der Miniserver ihn erreicht — dieselbe
-Erreichbarkeit gilt fürs gesamte LAN. Deshalb bleibt der Read-only-Mount des
-matter-server-Datenverzeichnisses (`./data:/matter-data:ro`) und die zugehörige
-`--matter-data-dir`-Option in `deploy/testhost/docker-compose.yml` **absichtlich
-auskommentiert**, bis Task 8 den Token-Schutz liefert — ohne diese Einhängung liefert die
-Route nur einen 503, statt echte Schlüssel auszuliefern. Task 8 kommentiert beide Zeilen
-wieder ein, sobald `build_api_guard` steht.
+**Sicherheitsstatus dieses Backup-Exports (geschützt seit Task 8, 2026-09-02 — siehe
+9.1 für die vollständige Entscheidung):** `GET /api/diagnostics/fabric-backup` (10.5)
+verlangt seit Task 8 `Authorization: Bearer <Token>`, sobald `--api-token`/
+`LOXMATTER_API_TOKEN` gesetzt ist (`loxone.server.build_api_guard`). `loxmatter` läuft
+mit `network_mode: host` (siehe oben), damit der Miniserver ihn erreicht — dieselbe
+Erreichbarkeit gilt fürs gesamte LAN, deshalb ist ein gesetztes Token hier keine
+Option, sondern die Voraussetzung für einen sicheren Betrieb: ohne Token bleibt die
+Route unverändert offen (mit einer Warnung im Log beim Start). Der Read-only-Mount
+des matter-server-Datenverzeichnisses (`./data:/matter-data:ro`) und die zugehörige
+`--matter-data-dir`-Option in `deploy/testhost/docker-compose.yml` sind seit Task 8
+wieder aktiv, zusammen mit einem in `.env` gesetzten `LOXMATTER_API_TOKEN` — ohne
+diese Einhängung lieferte die Route ohnehin nur einen 503, statt echte Schlüssel
+auszuliefern.
 
 ### 4.2 Module in `loxmatter`
 
@@ -719,6 +721,39 @@ statt mit einem Erfolg, der nichts bewirkt — siehe Offene Punkte, Punkt 6.
 | Unbekanntes Cluster | Roh-Export ohne Skalierung, Warnung in der WebUI |
 | Gerät entfernt und neu eingelernt | Neue `device_id`, neue Keys. Die alten Loxone-Objekte werden verwaist — die WebUI weist darauf hin und benennt die zu löschenden Objekte |
 
+### 9.1 Absicherung der `/api`-Routen (Task 8, 2026-09-02)
+
+Bis Phase 4 bot dieser Dienst zwei Endpunkte für den Miniserver: `/cmd` und
+`/resync`. Wer den Port erreichte, konnte damit höchstens ein Gerät schalten. Seit
+Phase 5 (Task 1: Einlernen, Task 2: Entfernen, Task 6: Fabric-Sicherung als Download)
+ist das Gewicht ein anderes: wer den Port erreicht, kann Geräte aus der Fabric werfen
+oder die kompletten, unersetzlichen Fabric-Credentials herunterladen (siehe 4.1). Das
+ist eine Änderung der Art des Risikos, nicht nur seines Grads.
+
+**Die Entscheidung:** ein optionales Bearer-Token (`--api-token`/
+`LOXMATTER_API_TOKEN`, siehe `loxone.server.build_api_guard`) schützt ab hier
+ausnahmslos jede Route unter `/api` — lesend und schreibend, alle fünf Router
+(Geräte, Steuerung, Export, Live-Werte inklusive der WebSocket-Route `/api/live`,
+Diagnose inklusive der Fabric-Sicherung). Ist kein Token konfiguriert, bleiben diese
+Routen unverändert offen — mit einer deutlichen Warnung im Log beim Start
+(`cli._warn_if_missing_api_token`). Ein Dienst, der ohne Token gar nicht erst startet,
+wäre für eine Testumgebung oder eine Erstinbetriebnahme ohne vorbereitetes Geheimnis
+unbenutzbar; die Warnung ist der bewusst gewählte Ausgleich dafür.
+
+**Warum `/cmd` und `/resync` bewusst ausgenommen bleiben:** der Miniserver ruft
+virtuelle Ausgänge als einfachen HTTP-GET auf, ohne die Möglichkeit, einen Header
+mitzuschicken — das ist eine Eigenschaft des Loxone-Vorlagenformats (6.1), keine
+Wahl dieses Projekts. Ein Token auf diesem Pfad würde die Loxone-Integration schlicht
+abschalten, nicht absichern. Das ist eine reale, dauerhafte Grenze und wird hier als
+solche festgehalten, nicht als Unzulänglichkeit: **auch mit gesetztem Token kann jeder
+im selben Netz weiterhin Geräte über `/cmd` schalten.** Was das Token verhindert, ist
+ausschließlich die Veränderung des Bestands — Einlernen, Entfernen und der Download
+der Fabric-Sicherung.
+
+`--host` (Standard `0.0.0.0`) bindet weiterhin an alle Schnittstellen, weil der
+Miniserver den Dienst erreichen muss — das Token ändert daran nichts, es schützt nur,
+was hinter `/api` erreichbar ist, nicht die Erreichbarkeit selbst.
+
 ---
 
 ## 10. Testen
@@ -811,8 +846,9 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
 - **Systemcheck**: IPv6 vorhanden, mDNS erreichbar, Dongle da, matter-server verbunden,
   Miniserver erreichbar. Jede Zeile grün oder rot mit konkretem Hinweis.
 - **Fabric-Sicherung** (`GET /api/diagnostics/fabric-backup`, siehe 4.1): Download des
-  matter-server-Datenverzeichnisses als Archiv. **Bis Task 8 ohne Token-Schutz** — siehe
-  4.1 und den Docstring der Route selbst, der das an erster Stelle festhält.
+  matter-server-Datenverzeichnisses als Archiv. **Geschützt durch das Token seit
+  Task 8** (siehe 4.1, 9.1 und den Docstring der Route selbst) — ohne gesetztes Token
+  bleibt sie wie jede andere `/api`-Route offen, mit Warnung im Log beim Start.
 
 ---
 
@@ -967,3 +1003,44 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    beim Import das anzeigt. Keiner der beiden Wege ist in dieser Phase umgesetzt;
    festgehalten, weil die heutige Erlaubnisliste eine bewusste, aber nicht die
    einzig mögliche Antwort auf 8.4s Befund ist.
+8. **Ein gesetztes API-Token macht die Browser-WebUI selbst unbenutzbar - die
+   Oberfläche kann den Header, den sie braucht, heute nicht mitschicken** (Task 8,
+   2026-09-02; Selbstprüfung nach dem Bau von `build_api_guard`). `build_api_guard`
+   (9.1) verlangt `Authorization: Bearer <Token>` für jede `/api`-Route, sobald ein
+   Token konfiguriert ist. `src/loxmatter/web/app.js`s `requestJson` — der einzige
+   Ort, an dem die Oberfläche `fetch()` aufruft — setzt aber nirgends einen
+   `Authorization`-Header; kein Login-Bildschirm, kein Eingabefeld, keine
+   Speicherung eines Tokens im Browser existiert. Ein Betreiber, der ein Token
+   setzt, sperrt sich damit selbst aus der eigenen Oberfläche aus: JEDER Klick, der
+   `/api/*` aufruft, endet in genau der 401-Antwort, die `tests/api/test_security.py`
+   für einen Angreifer ohne Header vorsieht — die Oberfläche unterscheidet beide
+   Fälle nicht.
+
+   Die WebSocket-Route `/api/live` ist dabei nicht nur ebenso betroffen, sondern
+   *strukturell unlösbar* mit demselben Mechanismus: die Browser-`WebSocket`-API
+   (`new WebSocket(url, protocols)`) kennt keinen Parameter für eigene Header
+   überhaupt — anders als bei `fetch()` ließe sich das also nicht einmal durch eine
+   Änderung an `app.js` allein beheben. Ein Fix bräuchte einen zweiten
+   Übertragungsweg für das Token bei dieser einen Route (z. B. ein
+   Sec-WebSocket-Protocol-Header, den Browser-`WebSocket`-Clients sehr wohl setzen
+   können, oder ein kurzlebiges, separat angefordertes Ticket als Query-Parameter,
+   siehe `api/diagnostics.py`s Begründung, warum ein *dauerhaftes* Token nie als
+   Query-Parameter laufen sollte) — nicht einfach denselben `Authorization`-Header
+   wie bei den REST-Routen.
+
+   Task 8 setzt das Token trotzdem um, weil die Alternative — den Fabric-Sicherung-
+   Download und das Einlernen/Entfernen ganz ungeschützt zu lassen — das tatsächlich
+   dringendere Risiko ist (siehe 9.1): ein gestohlener Fabric-Export ist
+   katastrophal und irreversibel, eine vorübergehend nicht nutzbare Browser-
+   Oberfläche ist es nicht. Deshalb bleibt `LOXMATTER_API_TOKEN` in
+   `deploy/testhost/.env.example` bewusst LEER als Standard — ein Betreiber, der es
+   setzt, tut das als informierte Entscheidung, nicht weil die Vorlage es
+   vorschreibt, und weiß (README.md hält das fest), dass er die Browser-Oberfläche
+   damit vorübergehend gegen sich selbst absperrt, bis eine spätere Ausbaustufe der
+   Oberfläche eine Möglichkeit gibt, das Token einzugeben und zu speichern (z. B. in
+   `localStorage`, mit demselben Header-Zusatz in `requestJson` und einer eigenen
+   Lösung für `/api/live`). Nicht in dieser Phase umgesetzt - festgehalten, damit
+   "das Token schützt die Oberfläche" nicht mehr verspricht, als es heute tatsächlich
+   tut: es schützt den *Netzwerkzugriff* auf `/api`, nicht den *Zugriff über die
+   mitgelieferte Oberfläche selbst*, solange die dafür nötige Gegenseite in
+   `app.js` fehlt.
