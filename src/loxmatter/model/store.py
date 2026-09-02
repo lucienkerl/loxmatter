@@ -103,7 +103,14 @@ class UnknownCommandError(KeyError):
 
 class Store:
     def __init__(self, path: Path | str) -> None:
-        self._db = sqlite3.connect(str(path))
+        # check_same_thread=False: Task 6 haengt die Store hinter FastAPI.
+        # Starlettes TestClient (und je nach Deployment auch ein echter
+        # ASGI-Server) fuehrt die Anfrage-Behandlung nicht zwingend im
+        # Thread aus, der dieses Objekt erzeugt hat - ohne das Flag meldet
+        # sqlite3 dann "objects created in a thread can only be used in
+        # that same thread", obwohl die Zugriffe wegen der einen
+        # Event-Loop ohnehin seriell bleiben.
+        self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
         self._db.commit()

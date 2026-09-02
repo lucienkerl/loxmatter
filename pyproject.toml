@@ -4,16 +4,25 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.9",
+    "fastapi>=0.115",
     "python-matter-server>=8.1.2",
     "pyyaml>=6.0",
     "typer>=0.12",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
 loxmatter = "loxmatter.cli:app"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "mypy>=1.11", "types-PyYAML>=6.0"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
+    "httpx2>=2.0",
+]
 
 [build-system]
 requires = ["hatchling"]
