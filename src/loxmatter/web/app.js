@@ -281,6 +281,14 @@ function app() {
     reconnectDelayMs: RECONNECT_DELAY_INITIAL_MS,
     reconnectTimer: null,
 
+    // Ruft Alpine von sich aus genau EINMAL auf, sobald `x-data="app()"`
+    // ausgewertet ist. `index.html` traegt deshalb bewusst kein
+    // `x-init="init()"` (Review-Fix Fix 2, 2026-09-03) - das rief die
+    // Methode ein zweites Mal auf, und mit ihr `connectLive()`: jeder
+    // offene Tab hielt zwei Live-Verbindungen, von denen nur die zuletzt
+    // geoeffnete in `this.socket` landete. Die andere war damit auch fuer
+    // `restartLive()` nicht mehr erreichbar (das schliesst `this.socket`)
+    // und lief bis zum Schliessen des Tabs weiter.
     async init() {
       await this.loadDevices();
       this.connectLive();
@@ -488,23 +496,35 @@ function app() {
 
     // Kurzliste fuer die Geraete-Ansicht: nur, was nach Loxone exportiert
     // werden koennte, und davon nur die ersten paar - der vollstaendige
-    // Baum steht in der Signale-Ansicht. Ohne diese Deckelung waere die
-    // "wichtigste Werte"-Liste bei einem Geraet mit hundert exportierbaren
-    // Signalen (kein Einzelfall, siehe IKEA-GRILLPLATS-Testvorlage) keine
-    // Kurzliste mehr, sondern derselbe volle Baum ein zweites Mal.
-    KEY_SIGNAL_LIMIT: 6,
+    // Baum steht in der Signale-Ansicht. Ohne diese Deckelung waere sie bei
+    // einem Geraet mit hundert exportierbaren Signalen (kein Einzelfall,
+    // siehe IKEA-GRILLPLATS-Testvorlage) keine Kurzliste mehr, sondern
+    // derselbe volle Baum ein zweites Mal.
+    //
+    // Frueher hiessen diese drei Helfer `KEY_SIGNAL_LIMIT`/`keySignalsFor`/
+    // `remainingKeySignalCount` und die Ueberschrift daneben "Wichtigste
+    // Werte" (Review-Fix Fix 9, 2026-09-03). Beides versprach eine
+    // Rangfolge, die es nicht gibt: `GET /api/devices/{id}/signals` liefert
+    // die Zeilen in `Store.signals`-Reihenfolge (ORDER BY endpoint,
+    // cluster_id, element_id, kind), ein `slice(0, 6)` darauf ergibt "die
+    // sechs mit der kleinsten Cluster-Nummer" - fuer die Steckdose aus der
+    // Testvorlage NetworkCommissioning und BasicInformation, nicht Ein/Aus
+    // und nicht die Leistung. Eine echte Rangfolge braeuchte eine
+    // Bewertung je Cluster, also eine weitere Tabelle; die gibt es nicht,
+    // und sie zu erfinden waere schlechter als ein ehrlicher Name.
+    SIGNAL_PREVIEW_LIMIT: 6,
 
     exportableSignalsFor(deviceId) {
       const signals = this.signalsByDevice[deviceId];
       return signals ? signals.filter((signal) => signal.exportable) : [];
     },
 
-    keySignalsFor(deviceId) {
-      return this.exportableSignalsFor(deviceId).slice(0, this.KEY_SIGNAL_LIMIT);
+    firstSignalsFor(deviceId) {
+      return this.exportableSignalsFor(deviceId).slice(0, this.SIGNAL_PREVIEW_LIMIT);
     },
 
-    remainingKeySignalCount(deviceId) {
-      return Math.max(0, this.exportableSignalsFor(deviceId).length - this.KEY_SIGNAL_LIMIT);
+    remainingSignalCount(deviceId) {
+      return Math.max(0, this.exportableSignalsFor(deviceId).length - this.SIGNAL_PREVIEW_LIMIT);
     },
 
     liveValueOf(signal) {
@@ -528,10 +548,24 @@ function app() {
       }
     },
 
+    // Die Rueckfrage benennt die Objekte, die verwaisen (Spec 9, Zeile
+    // "Geraet entfernt und neu eingelernt"; Review-Fix Fix 10,
+    // 2026-09-03). Genannt werden der Schluesselpraefix und die beiden
+    // Vorlagendateien - und zwar nur bis zur Geraete-ID (`VIU_d12_….xml`),
+    // nicht der vollstaendige Dateiname: dessen zweite Haelfte entsteht aus
+    // `export.documents.filename_for`, das das Label auf ASCII normalisiert
+    // (Umlaute, Sonderzeichen, Mehrfach-Unterstriche). Diese Regel hier in
+    // JavaScript nachzubilden hiesse, sie ein zweites Mal zu pflegen - genau
+    // die Verdopplung, die Fix 8 an anderer Stelle gerade beseitigt hat.
+    // Der Praefix mit der Geraete-ID ist eindeutig (siehe `filename_for`)
+    // und reicht, um die Datei in Loxone Config wiederzufinden.
     async removeDevice(device) {
       const confirmed = window.confirm(
-        `Gerät "${device.label}" wirklich entfernen? Das kann nicht rückgängig gemacht werden - ` +
-          "bereits exportierte Loxone-Objekte bleiben dann verwaist.",
+        `Gerät "${device.label}" wirklich entfernen? Das kann nicht rückgängig gemacht werden.\n\n` +
+          "In Loxone bleiben danach verwaist:\n" +
+          `• alle virtuellen Ein- und Ausgänge mit dem Schlüssel-Präfix "d${device.id}_"\n` +
+          `• die importierten Vorlagen "VIU_d${device.id}_….xml" und "VO_d${device.id}_….xml"\n\n` +
+          "Diese in Loxone Config von Hand löschen.",
       );
       if (!confirmed) {
         return;
@@ -581,7 +615,20 @@ function app() {
         }
         const device = await this.request("POST", "/api/devices/commission", body);
         this.devices.push(device);
-        this.commissionMessage = `${device.label} wurde eingelernt.`;
+        // Der Satz zur Subscription ist kein Schmuck (Review-Fix Fix 3,
+        // 2026-09-03, siehe Spec 12.3): `BridgeMatterClient.subscribe()`
+        // laeuft genau einmal beim Start der Bruecke und meldet nur die
+        // damals bekannten (Node, Pfad)-Paare an. Ein gerade eingelerntes
+        // Geraet geht ueber das NODE_ADDED-Ereignis sofort auf "online"
+        // und erscheint gruen - bekommt aber bis zum naechsten Neustart
+        // keinen einzigen Attributwert. Ohne diesen Hinweis sieht der
+        // Anwender ein gruenes Geraet, dessen Signale alle auf "-" stehen,
+        // und sucht den Fehler bei sich.
+        this.commissionMessage =
+          `${device.label} wurde eingelernt. Live-Werte erscheinen erst nach einem ` +
+          "Neustart der Brücke – bis dahin zeigt das Gerät zwar „online“, aber jedes " +
+          "Signal „-“ (bekannte Grenze, Spec 12.3). Der Export der Vorlagen " +
+          "funktioniert davon unabhängig schon jetzt.";
         this.commissionMessageIsError = false;
         this.commissionCode = "";
         this.commissionThreadDataset = "";
@@ -710,12 +757,21 @@ function app() {
       });
     },
 
+    // `only_pending` geht mit auf die Leitung (Review-Fix Fix 4,
+    // 2026-09-03). Vorher galt der Filter nur fuer die Tabelle darueber,
+    // waehrend der Download ausnahmslos alle Geraete lieferte UND alle als
+    // exportiert markierte - wer gefiltert hat, ein ausstehendes Geraet sah
+    // und herunterlud, bekam alles und hatte den Filter danach fuer immer
+    // leer. Jetzt entscheidet dasselbe Kaestchen ueber beides, und
+    // `/api/export/download` markiert nur, was es tatsaechlich ausgeliefert
+    // hat (siehe `api/export.py`).
     downloadUrl() {
       const params = new URLSearchParams({
         bridge_ip: this.exportBridgeIp.trim(),
         port: String(this.exportPort),
         listen: String(this.exportListenPort),
         system: String(this.exportIncludeSystem),
+        only_pending: String(this.exportOnlyPending),
       });
       return `/api/export/download?${params}`;
     },
@@ -727,7 +783,7 @@ function app() {
     // wie jeder andere Aufruf.
     //
     // Die IP-Pruefung stand vorher aus demselben Grund hier: ohne sie
-    // ersetzte ein Klick bei leerer Miniserver-IP die Seite durch die rohe
+    // ersetzte ein Klick bei leerem IP-Feld die Seite durch die rohe
     // 422-Fehlerantwort des Backends (Pflichtparameter `bridge_ip`, siehe
     // `api/export.py`) - fuer ein Diagnosewerkzeug, das gerade in
     // schwierigen Momenten benutzt wird, ist eine Fehlermeldung an
@@ -743,7 +799,15 @@ function app() {
         await this.download(this.downloadUrl(), "loxmatter-export.zip");
       } catch (error) {
         this.exportError = `Download fehlgeschlagen: ${error.message}`;
+        return;
       }
+      // Ein Download IST ein Export (siehe `api/export.py`, Entscheidung 1):
+      // er schreibt `exported_at` fuer jedes ausgelieferte Geraet. Ohne
+      // dieses Nachladen zeigte die Spalte "Zuletzt exportiert" weiter den
+      // Stand von vorhin und der Filter "nur noch nicht exportierte" die
+      // gerade exportierten Geraete - bis irgendwann jemand die Vorschau neu
+      // lud (Review-Fix Fix 12, 2026-09-03).
+      await this.loadExportStatus();
     },
 
     // ---------------------------------------------------------------------

@@ -62,7 +62,11 @@ Umgebungsvariable `LOXMATTER_API_TOKEN` absicherbar**
 unberührt — der Miniserver kann keinen Header mitschicken, das ist eine
 bewusste Grenze: wer den Port erreicht, kann ein Gerät weiterhin schalten,
 aber nicht mehr einlernen, entfernen oder die Fabric-Sicherung
-herunterladen. Ohne gesetztes Token startet der Dienst trotzdem — mit einer
+herunterladen. „Wer den Port erreicht" ist dabei weiter zu verstehen, als es
+klingt: `/cmd/{key}/{value}` ist ein GET ohne Ursprungsprüfung, den auch eine
+beliebige Webseite auslösen kann, die jemand aus diesem Netz im Browser
+öffnet (`<img src="http://…/cmd/…">`) — ein Fuß im LAN ist dafür nicht
+nötig. Ohne gesetztes Token startet der Dienst trotzdem — mit einer
 deutlichen Warnung im Log. Details und Begründung: [Spec, Abschnitt
 9](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#9-fehlerbehandlung).
 

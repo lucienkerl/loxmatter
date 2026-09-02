@@ -1384,8 +1384,12 @@ angezeigt, aber nicht editierbar** — mit einem kurzen Hinweis, warum: er ist d
 Verdrahtung in Loxone. Nicht exportierbare Werte bekommen statt der Checkbox den Grund
 angezeigt (Spec 6.6).
 
-**Ansicht Export.** Miniserver-IP und Port eintragen, Vorschau ansehen, ZIP herunterladen.
-Pro Gerät sichtbar, wann zuletzt exportiert wurde.
+**Ansicht Export.** Die IP **dieser Brücke** (aus Sicht des Miniservers, also der Wert,
+der zur `Address` des virtuellen UDP-Eingangs wird) und die Ports eintragen, Vorschau
+ansehen, ZIP herunterladen. Pro Gerät sichtbar, wann zuletzt exportiert wurde.
+
+> Diese Zeile sagte bis zum 2026-09-03 „Miniserver-IP", und die Oberfläche übernahm die
+> Beschriftung; korrigiert in Fix 1 der Nachbesserung (siehe Spec 8, Ansicht 3).
 
 **Ansicht System.** Der Systemcheck als Liste grüner und roter Zeilen, darunter der
 UDP-Mitschnitt und das Kommando-Log.
@@ -1572,6 +1576,15 @@ uv run pytest -v && uv run ruff check . && uv run ruff format --check . && uv ru
 Mit laufendem matter-server:
 
 1. Ein Gerät über die Oberfläche **einlernen** — Pairing-Code eingeben, Gerät erscheint.
+
+   **Erwartet, kein Fehler: das frisch eingelernte Gerät zeigt „online" und grün, aber
+   bei jedem Signal einen Strich** (Spec 12.3, ergänzt 2026-09-03).
+   `BridgeMatterClient.subscribe()` läuft genau einmal beim Start der Brücke und meldet
+   nur die damals bekannten (Node, Pfad)-Paare an; der Online-Status dagegen kommt aus
+   dem NODE_ADDED-Ereignis und ist sofort da. Für Schritt 2 deshalb **die Brücke einmal
+   neu starten** — danach kennt `subscribe()` den neuen Node und die Werte laufen ein.
+   Die Erfolgsmeldung in der Oberfläche sagt dasselbe. Das ist ein bekannter offener
+   Punkt, keine Abweichung, die in die Spec nachgetragen werden müsste.
 2. In der Signalansicht die Live-Werte sehen und einen Titel ändern; prüfen, dass der
    Schlüssel unverändert bleibt.
 3. Das Gerät über die Oberfläche **schalten** und die Reaktion am Gerät beobachten.

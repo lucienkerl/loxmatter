@@ -264,3 +264,95 @@ async def test_api_export_writes_the_same_database_as_the_cli(tmp_path, no_invok
     # dieselbe Datenbank lesen.
     assert api_viu == cli_viu
     assert api_vo == cli_vo
+
+
+# ---------------------------------------------------------------------------
+# Der Filter "nur noch nicht exportierte Geraete" (Review-Fix Fix 4,
+# 2026-09-03). Er galt vorher nur fuer die Vorschautabelle in der
+# Oberflaeche; `/api/export/download` kannte ihn gar nicht, lieferte immer
+# alle Geraete und markierte auch alle als exportiert. Wer filterte, ein
+# ausstehendes Geraet sah und herunterlud, bekam alles - und der Filter war
+# danach dauerhaft leer.
+# ---------------------------------------------------------------------------
+
+
+def _second_device(store: Store) -> int:
+    """Ein zweites Geraet im selben Store - die Fixture oben baut nur eines,
+    und ein Filter laesst sich an einem einzigen Geraet nicht zeigen."""
+    snapshot = load_snapshot("example_light.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    return device_id
+
+
+async def test_a_filtered_download_contains_exactly_the_devices_the_preview_shows(api):
+    """Vorschau und Download muessen dieselbe Auswahl treffen. Die
+    Oberflaeche filtert ihre Tabelle nach `changed_since_export` aus
+    `GET /api/export/status`; genau diese Bedingung entscheidet hier auch
+    ueber den Inhalt des Archivs."""
+    client, store, first_id = api
+    second_id = _second_device(store)
+
+    # Beide exportieren, danach nur das erste Geraet wieder aendern.
+    await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    assert (
+        await client.patch(f"/api/devices/{first_id}", json={"label": "Neu"})
+    ).status_code == 200
+
+    status = (await client.get("/api/export/status")).json()
+    pending = {s["device_id"] for s in status if s["changed_since_export"]}
+    assert pending == {first_id}
+
+    response = await client.get("/api/export/download?bridge_ip=192.168.1.50&only_pending=true")
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    assert any(n.startswith(f"VIU_d{first_id}_") for n in names)
+    assert not any(n.startswith(f"VIU_d{second_id}_") for n in names)
+
+
+async def test_a_filtered_download_marks_only_what_it_delivered(api):
+    """Der eigentliche Schaden der alten Fassung war nicht das zu grosse
+    ZIP, sondern das `mark_exported` fuer Geraete, deren Vorlage nie im
+    Archiv lag: danach galt alles als exportiert und der Filter blieb fuer
+    immer leer."""
+    client, store, first_id = api
+    second_id = _second_device(store)
+
+    await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    await client.patch(f"/api/devices/{first_id}", json={"label": "Neu"})
+    second_exported_at = store.device(second_id).exported_at
+
+    await client.get("/api/export/download?bridge_ip=192.168.1.50&only_pending=true")
+
+    assert store.device(second_id).exported_at == second_exported_at
+    status = (await client.get("/api/export/status")).json()
+    assert {s["device_id"]: s["changed_since_export"] for s in status} == {
+        first_id: False,
+        second_id: False,
+    }
+
+
+async def test_an_unfiltered_download_still_contains_every_device(api):
+    """Die Voreinstellung bleibt "alles": `only_pending` ist ein Filter, den
+    jemand ausdruecklich setzt, kein neues Standardverhalten."""
+    client, store, first_id = api
+    second_id = _second_device(store)
+
+    await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    for device_id in (first_id, second_id):
+        assert any(n.startswith(f"VIU_d{device_id}_") for n in names)
+
+
+async def test_the_interface_asks_for_the_filter_it_shows(api):
+    """Die beiden Haelften des Filters stehen in verschiedenen Dateien und
+    verschiedenen Sprachen: das Kaestchen in `index.html`/`app.js`, die
+    Auswertung in `api/export.py`. Genau dieses Auseinanderlaufen war der
+    Fehler - die Oberflaeche filterte die Tabelle und schickte den Filter
+    nie mit. Belegt wird hier nur, dass die Download-URL den Parameter
+    traegt; ob das Kaestchen im Browser richtig verdrahtet ist, kann ohne
+    Browser-Engine kein Test dieser Suite sagen."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "only_pending" in script

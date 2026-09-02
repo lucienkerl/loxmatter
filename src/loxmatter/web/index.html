@@ -1,3 +1,4 @@
+<!doctype html>
 <!--
   loxmatter - Inbetriebnahme- und Diagnosewerkzeug fuer die Matter-Loxone-
   Bruecke (Spec 8). Vier Ansichten, umgeschaltet ueber Alpine.js, ohne
@@ -21,7 +22,20 @@
     <title>loxmatter</title>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
-  <body x-data="app()" x-init="init()">
+  <!--
+    Hier steht mit Absicht KEIN `x-init="init()"` (Review-Fix Fix 2,
+    2026-09-03). Alpine 3 ruft die Methode `init()` eines mit `x-data`
+    erzeugten Datenobjekts von sich aus genau einmal auf. Ein zusaetzliches
+    `x-init="init()"` ruft sie ein zweites Mal - und `init()` oeffnet den
+    Live-WebSocket. Jeder offene Tab hielt dadurch ZWEI Verbindungen, von
+    denen nur die zuletzt geoeffnete in `this.socket` steht. Die andere
+    bekommt trotzdem jeden Wert, belegt im Backend eine Queue samt zwei
+    asyncio-Tasks und einen Beobachter und ist fuer `restartLive()`
+    unsichtbar (das schliesst nur `this.socket`) - sie stirbt erst mit dem
+    Tab. Wer hier ein `x-init` ergaenzen moechte: dafuer gibt es keinen
+    Grund, `init()` laeuft bereits.
+  -->
+  <body x-data="app()">
     <header class="app-header">
       <h1>loxmatter</h1>
       <div class="header-right">
@@ -183,8 +197,16 @@
                 weitere Kommandos vorhanden, aber nicht benannt.
               </p>
 
-              <h3>Wichtigste Werte</h3>
-              <template x-for="signal in keySignalsFor(device.id)" :key="signal.key">
+              <h3>Signale (Anfang der Liste)</h3>
+              <p class="hint">
+                Keine Rangfolge: die ersten
+                <span x-text="SIGNAL_PREVIEW_LIMIT"></span> exportierbaren Signale in
+                derselben Reihenfolge wie in der Ansicht „Signale“ (Endpunkt, dann
+                Cluster-Nummer). Das ist nicht dasselbe wie „die wichtigsten“ – bei einer
+                Steckdose stehen hier eher Netzwerk- und Geräteangaben als Ein/Aus und
+                Leistung.
+              </p>
+              <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
                 <div class="signal-row">
                   <span x-text="signal.title"></span>
                   <span class="key" x-text="signal.key"></span>
@@ -195,8 +217,8 @@
                   <span></span>
                 </div>
               </template>
-              <p class="hint" x-show="remainingKeySignalCount(device.id) > 0">
-                <span x-text="remainingKeySignalCount(device.id)"></span>
+              <p class="hint" x-show="remainingSignalCount(device.id) > 0">
+                <span x-text="remainingSignalCount(device.id)"></span>
                 weitere in der Ansicht „Signale“.
               </p>
             </div>
@@ -285,8 +307,8 @@
           <h2>Vorlagen exportieren</h2>
           <div class="row">
             <label
-              >Miniserver-IP
-              <input type="text" x-model="exportBridgeIp" placeholder="z. B. 192.168.1.10"
+              >IP dieser Brücke
+              <input type="text" x-model="exportBridgeIp" placeholder="z. B. 192.168.1.20"
             /></label>
             <label>UDP-Port <input type="number" x-model.number="exportPort" /></label>
             <label>
@@ -294,13 +316,26 @@
               <input type="number" x-model.number="exportListenPort" />
             </label>
           </div>
+          <p class="hint">
+            Gemeint ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der
+            Miniserver ihn sieht. <strong>Nicht</strong> die Adresse des Miniservers. Der
+            virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die
+            Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span>
+            auf. Steht hier die Miniserver-IP, sehen die Vorlagen richtig aus, bleiben aber
+            stumm – ohne jede Fehlermeldung.
+          </p>
           <div class="row">
             <label><input type="checkbox" x-model="exportIncludeSystem" /> Systemvorlagen einschließen</label>
             <label
               ><input type="checkbox" x-model="exportOnlyPending" /> nur noch nicht exportierte
-              Geräte anzeigen</label
+              Geräte</label
             >
           </div>
+          <p class="hint">
+            Der Filter gilt für die Vorschau <strong>und</strong> für das ZIP: ist er gesetzt,
+            enthält der Download nur die Geräte aus der Tabelle unten, und nur diese gelten
+            danach als exportiert.
+          </p>
           <div class="row">
             <button class="primary" @click="previewExport()" :disabled="exportBusy">
               Vorschau ansehen

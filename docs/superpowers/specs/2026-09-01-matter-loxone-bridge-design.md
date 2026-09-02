@@ -143,15 +143,24 @@ docker compose
 │                   network_mode: host (mDNS + IPv6 zwingend)
 │                   Volume: Fabric-Credentials
 └── loxmatter       FastAPI + WebUI + SQLite
-                    Bridge-Networking, Port 8080/tcp
+                    network_mode: host, Port 8080/tcp
 
 Profil "dev" ergänzt (siehe 10.2)
 ├── virtual-devices  CHIP-Beispielgeräte, echt einlernbar
 └── fake-miniserver  UDP-Mitschnitt + Kommando-Sender statt Loxone
 ```
 
-Nur `otbr` und `matter-server` benötigen Host-Networking. `loxmatter` spricht
-WebSocket nach innen, UDP und HTTP nach Loxone.
+`otbr` und `matter-server` benötigen Host-Networking zwingend (mDNS, IPv6).
+`loxmatter` spricht WebSocket nach innen sowie UDP und HTTP nach Loxone und käme
+technisch auch mit Bridge-Networking aus, läuft in der Referenz-Installation
+(`deploy/testhost/docker-compose.yml`) aber ebenfalls mit `network_mode: host` — aus
+zwei dort ausführlich begründeten Gründen: `--url` (Default
+`ws://localhost:5580/ws`) erreicht den ebenfalls host-vernetzten `matter-server` nur
+über `127.0.0.1` (im Compose-Bridge-Netz ist er kein auflösbarer Servicename), und der
+HTTP-Port für die Loxone-Ausgangsbefehle (`--listen`) ist damit ohne eigene Portfreigabe
+vom Miniserver aus erreichbar. Diagramm und Fließtext sagten dazu bis zum 2026-09-03
+Gegenteiliges („Bridge-Networking" oben, `network_mode: host` unten, mit einem „siehe
+oben" auf das Diagramm); maßgeblich ist und war die Compose-Datei.
 
 **Kritisch:** Das Volume mit den Fabric-Credentials von `matter-server` ist der einzige
 unersetzliche Zustand. Verlust bedeutet, alle Geräte neu einlernen zu müssen. Muss im
@@ -163,9 +172,12 @@ verlangt seit Task 8 `Authorization: Bearer <Token>`, sobald `--api-token`/
 `LOXMATTER_API_TOKEN` gesetzt ist (`loxone.server.build_api_guard`). `loxmatter` läuft
 mit `network_mode: host` (siehe oben), damit der Miniserver ihn erreicht — dieselbe
 Erreichbarkeit gilt fürs gesamte LAN, deshalb ist ein gesetztes Token hier keine
-Option, sondern die Voraussetzung für einen sicheren Betrieb: ohne Token bleibt die
-Route unverändert offen (mit einer Warnung im Log beim Start). Der Read-only-Mount
-des matter-server-Datenverzeichnisses (`./data:/matter-data:ro`) und die zugehörige
+Option, sondern die Voraussetzung für einen sicheren Betrieb: **ohne konfiguriertes
+Token liefert diese Route gar nichts aus** (HTTP 403 mit Begründung im `detail`) — sie
+ist die einzige Ausnahme von der Regel, dass `/api` ohne Token offen bleibt (9.1;
+Fassung vom 2026-09-03, dieser Absatz sagte bis dahin noch das Gegenteil). Der
+Read-only-Mount des matter-server-Datenverzeichnisses (`./data:/matter-data:ro`)
+und die zugehörige
 `--matter-data-dir`-Option in `deploy/testhost/docker-compose.yml` sind seit Task 8
 wieder aktiv, zusammen mit einem in `.env` gesetzten `LOXMATTER_API_TOKEN` — ohne
 diese Einhängung lieferte die Route ohnehin nur einen 503, statt echte Schlüssel
@@ -182,7 +194,7 @@ auszuliefern.
 | `commands/` | Übersetzt „gewünschter Zustand → Matter-Kommando": Level-Skalierung, Farbraum, Cover-Position, Setpoints. **Von `loxone/in` und `web/` gemeinsam genutzt** | matter, model, profiles |
 | `loxone/in` | HTTP-Endpoints für virtuelle Ausgänge; delegiert an `commands/` | commands |
 | `export/` | Generiert `VIU_*.xml` und `VO_*.xml` | model, profiles |
-| `web/` | SPA, spricht ausschließlich REST gegen das Backend | — |
+| `web/` | SPA. REST gegen das Backend für alles, was sie tut; dazu **eine** WebSocket-Verbindung `/api/live`, die nur Live-Werte empfängt und nie sendet (8.3 verlangt sie) | — |
 
 `commands/` existiert genau deshalb als eigenes Modul: Loxone-HTTP-Ausgang und WebUI-Bedienung
 sind zwei Aufrufer derselben Logik. Läge sie in `loxone/in`, gäbe es die Farbraum- und
@@ -616,13 +628,23 @@ Ansicht 1 keinen Regler hat, und für unbekannte Cluster. Nicht-exportierbare We
 der Export-Checkbox — gerade zur Diagnose sind sie nützlich, auch wenn sie nie ein
 UDP-Datagramm werden.
 
-**3. Export** — Miniserver-IP und UDP-Port eintragen. Vorlagen pro Gerät herunterladen,
-einzeln oder als ZIP; Filter „nur noch nicht exportierte Geräte". Pro Gerät ist
-sichtbar, wann zuletzt exportiert wurde und ob sich seither Signale geändert haben.
-Enthält die Kurzanleitung und die einmaligen Systemvorlagen.
+**3. Export** — die IP **dieser Brücke** (aus Sicht des Miniservers) und den UDP-Port
+eintragen. Nicht die Adresse des Miniservers: der Wert wird zur `Address` des virtuellen
+UDP-Eingangs — die Absenderadresse, von der der Miniserver Datagramme überhaupt annimmt
+— und zum Rumpf der Kommando-URLs `http://<ip>:<listen>` im virtuellen Ausgang (6.1).
+Diese Zeile sagte bis zum 2026-09-03 „Miniserver-IP", und die Oberfläche beschriftete
+das Feld entsprechend; eine damit erzeugte Vorlage sieht korrekt aus und bleibt stumm.
+Vorlagen pro Gerät herunterladen, einzeln oder als ZIP; Filter „nur noch nicht
+exportierte Geräte", der für die Vorschau **und** für das ZIP gilt (er entscheidet auch,
+welche Geräte danach als exportiert vermerkt sind). Pro Gerät ist sichtbar, wann zuletzt
+exportiert wurde und ob sich seither Signale geändert haben. Enthält die Kurzanleitung
+und die einmaligen Systemvorlagen.
 
-**4. System** — Status von matter-server und OTBR, Thread-Netz, Logs, Backup der
-Fabric-Credentials.
+**4. System** — Systemcheck, Logs (UDP-Mitschnitt und Kommando-Log), Backup der
+Fabric-Credentials. Der Systemcheck prüft vier Dinge: matter-server, die
+Signalschlüssel-Datenbank, den lokalen IPv6-Pfad und den Routing-Pfad zum Miniserver
+(10.5). **OTBR und Thread-Netz prüft er nicht** — festgehalten als offener Punkt 9 in
+Abschnitt 12, nicht als stille Auslassung.
 
 ### 8.1 Warum die Bedienung mehr ist als Komfort
 
@@ -749,6 +771,22 @@ solche festgehalten, nicht als Unzulänglichkeit: **auch mit gesetztem Token kan
 im selben Netz weiterhin Geräte über `/cmd` schalten.** Was das Token verhindert, ist
 ausschließlich die Veränderung des Bestands — Einlernen, Entfernen und der Download
 der Fabric-Sicherung.
+
+**Wie weit „wer den Port erreicht" bei `/cmd` wirklich reicht** (ergänzt 2026-09-03).
+`/cmd/{key}/{value}` ist ein unauthentifizierter **GET** ohne jede Prüfung des
+Ursprungs. Ein GET braucht kein Skript und keinen Fuß im LAN: jede beliebige Webseite,
+die jemand aus diesem Netz im Browser öffnet, kann mit einem einzigen
+`<img src="http://<bruecke>:8080/cmd/d12_1_onoff/1">` ein Gerät schalten — der Browser
+schickt die Anfrage aus dem LAN heraus, ohne dass der Angreifer je selbst im Netz war,
+und braucht die Antwort nicht zu sehen. Weder eine `Origin`-Prüfung noch ein
+CSRF-Token noch eine Beschränkung auf POST hülfe hier, ohne genau das kaputtzumachen,
+wofür die Route existiert: der Miniserver schickt einen schlichten GET ohne Header und
+ohne Zustand. Das Risiko ist damit nicht anders geartet als oben beschrieben, aber
+deutlich größer als „wer den Port erreicht" nahelegt, und wird hier in seiner
+tatsächlichen Reichweite festgehalten, statt in einer Formulierung zu verschwinden, die
+einen Angreifer im selben Netz voraussetzt. Was es begrenzt, ist ausschließlich der
+Schaden: über `/cmd` lässt sich schalten, nichts einlernen, nichts entfernen und nichts
+herunterladen.
 
 `--host` (Standard `0.0.0.0`) bindet weiterhin an alle Schnittstellen, weil der
 Miniserver den Dienst erreichen muss — das Token ändert daran nichts, es schützt nur,
@@ -884,12 +922,22 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
   die Gegenrichtung.
 - **Vorlagen-Vorschau**: vor dem Download zeigt die WebUI, welche Objekte und Befehle
   entstehen und wie viele.
-- **Systemcheck**: IPv6 vorhanden, mDNS erreichbar, Dongle da, matter-server verbunden,
-  Miniserver erreichbar. Jede Zeile grün oder rot mit konkretem Hinweis.
+- **Systemcheck** (`GET /api/diagnostics/system`): vier Zeilen, jede grün oder rot mit
+  konkretem Hinweis — `matter-server` (besteht eine Verbindung?), `store` (ist die
+  Signalschlüssel-Datenbank beschreibbar? ohne das kein Einlernen und kein
+  Export-Vermerk), `ipv6` (gibt es lokal eine geroutete IPv6-Adresse? Matter und Thread
+  brauchen sie) und `miniserver` (existiert ein Routing-Pfad zum konfigurierten Ziel?
+  mehr ist bei Fire-and-Forget-UDP ohne ICMP-Auswertung nicht feststellbar). Diese Liste
+  hieß bis zum 2026-09-03 „IPv6 vorhanden, mDNS erreichbar, Dongle da, matter-server
+  verbunden, Miniserver erreichbar" — mDNS und Dongle sind nicht umgesetzt, `store`
+  stand in keiner Spec. Siehe offener Punkt 9 in Abschnitt 12.
 - **Fabric-Sicherung** (`GET /api/diagnostics/fabric-backup`, siehe 4.1): Download des
   matter-server-Datenverzeichnisses als Archiv. **Geschützt durch das Token seit
-  Task 8** (siehe 4.1, 9.1 und den Docstring der Route selbst) — ohne gesetztes Token
-  bleibt sie wie jede andere `/api`-Route offen, mit Warnung im Log beim Start.
+  Task 8** (siehe 4.1, 9.1 und den Docstring der Route selbst) — und als einzige
+  `/api`-Route **ohne konfiguriertes Token gar nicht erst ausgeliefert** (HTTP 403 mit
+  Begründung im `detail`). Die Startwarnung erscheint weiterhin, sie tritt hier aber
+  nicht an die Stelle einer Sperre. Diese Zeile sagte bis zum 2026-09-03 noch, die Route
+  bleibe ohne Token offen.
 
 ---
 
@@ -954,6 +1002,21 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    den vollen Node-Cache, danach einmalig `subscribe()`, keine Laufzeit-
    Rekommissionierung) ist die Lücke hinnehmbar; sie ist aber ein offener Punkt, keine
    erledigte Aufgabe.
+
+   **Was ein Anwender davon sieht** (ergänzt 2026-09-03, nachdem Phase 5 das Einlernen
+   in die WebUI geholt hat). Bis dahin beschrieb dieser Punkt nur die Ursache; die
+   Auswirkung ist unangenehmer, als sie klingt. Ein über Ansicht 1 frisch eingelerntes
+   Gerät bekommt vom NODE_ADDED-Ereignis sofort `d<id>_online = 1` und erscheint in der
+   Liste **online und grün** — `subscribe()` lief aber beim Start der Brücke und kennt
+   diesen Node nicht, also bleibt `Runtime.last_values_for()` für ihn leer und jedes
+   Signal steht in Ansicht 1 und 2 dauerhaft auf „-". Grün und ohne einen einzigen Wert
+   ist von außen nicht von einem kaputten Gerät zu unterscheiden, und es ist genau die
+   Reihenfolge, in der ein Erstbetrieb abläuft: einlernen, dann Werte ansehen.
+   Abhilfe bis zu einem echten Fix ist ein Neustart der Brücke — danach kennt
+   `subscribe()` den Node. Die Erfolgsmeldung nach dem Einlernen sagt das in einem Satz
+   (`web/app.js`, `commissionDevice`), damit niemand diesen bekannten Grenzfall für
+   einen Fehler seiner Installation hält. Der Export der Vorlagen ist davon nicht
+   betroffen: er liest den `Store`, nicht die Live-Werte.
 4. **Event-Zähler (`<key>_n`) sind prozesslokal und überleben einen Bruecken-Neustart
    nicht** (`Runtime`, `loxone/runtime.py`; Review-Fix I7, 2026-09-02). Spec 6.3 verkauft
    diesen Zähler als monotonen Wert, dessen Vorzug ist, dass ein verlorenes UDP-Datagramm
@@ -1066,3 +1129,28 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    offen und bewusst nicht in dieser Phase gebaut: das Token ist ein statisches,
    dauerhaftes Geheimnis ohne Ablauf, ohne Rotation und ohne Widerruf einzelner
    Browser — ein Wechsel bedeutet, es überall neu einzutragen.
+9. **Der Systemcheck prüft mDNS, den Funk-Dongle, OTBR und das Thread-Netz nicht**
+   (Review-Fix Fix 6, 2026-09-03). 10.5 und Abschnitt 8, Ansicht 4, versprachen bis
+   dahin „mDNS erreichbar, Dongle da" sowie „Status von matter-server und OTBR,
+   Thread-Netz". Umgesetzt sind vier Prüfungen: `matter-server`, `store`, `ipv6`,
+   `miniserver` (`api/diagnostics.py`, `build_diagnostics_router`s `/system`). Beide
+   Spec-Stellen sind auf das gebracht, was läuft; die Lücke steht hier, statt sie
+   stillschweigend aus der Spec zu streichen. Was fehlt und was es kostet:
+
+   - **mDNS erreichbar** — Matter-Geräte im WLAN/Ethernet werden über mDNS gefunden.
+     Scheitert das, schlägt das Einlernen fehl, ohne dass eine Diagnosezeile darauf
+     zeigt; heute meldet nur `matter-server` „verbunden", was die Frage nicht berührt.
+   - **Dongle da** — der USB-Funkstick des Border Routers. Fehlt er, ist kein
+     Thread-Gerät erreichbar. Prüfbar wäre er nur im OTBR-Container, nicht in diesem
+     Prozess: `loxmatter` sieht das USB-Gerät nicht.
+   - **OTBR und Thread-Netz** — Status des Border Routers und ob überhaupt ein
+     Thread-Netz gebildet ist. Beides steht hinter der REST-Schnittstelle von OTBR, zu
+     der dieser Dienst heute keine Verbindung hat.
+
+   Bewusst NICHT in dieser Nachbesserung nachgebaut: die drei Prüfungen brauchen
+   Zugriff auf Dinge außerhalb dieses Prozesses (mDNS-Auflösung im Hostnetz, USB, eine
+   zweite HTTP-Schnittstelle) und damit je eine eigene Entscheidung darüber, was ein
+   Fehlschlag bedeuten soll — eine rote Zeile, die in einer korrekt laufenden
+   Installation aus einem Umgebungsgrund rot ist, macht die Diagnoseseite wertlos.
+   `store` wiederum ist eine sinnvolle, in keiner Spec-Fassung vorgesehene Ergänzung
+   und steht deshalb ab jetzt in 10.5.

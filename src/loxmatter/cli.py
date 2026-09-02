@@ -38,7 +38,7 @@ from loxmatter.matter.discovery import (
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store
-from loxmatter.profiles.table import Exportability
+from loxmatter.profiles.table import is_exportable
 
 logger = logging.getLogger(__name__)
 
@@ -356,9 +356,13 @@ def export(
         )
 
     # Text zaehlt mit: der virtuelle Texteingang ist ein eigener Vorlagentyp
-    # und kommt in einer spaeteren Ausbaustufe (Spec 6.6).
-    unexportable = (Exportability.NONE, Exportability.TEXT)
-    skipped = sum(1 for s in stored if s.exportability in unexportable)
+    # und kommt in einer spaeteren Ausbaustufe (Spec 6.6). Die Entscheidung
+    # faellt `profiles.table.is_exportable` und sonst niemand (Review-Fix
+    # Fix 8, 2026-09-03) - vorher stand hier eine von Hand kopierte
+    # Umkehrung `(Exportability.NONE, Exportability.TEXT)`, eine zweite in
+    # `api/export.py`, und beide neben genau dem Helfer, der diese
+    # Verdopplung schon einmal beenden sollte.
+    skipped = sum(1 for s in stored if not is_exportable(s.exportability))
     typer.echo(f"{viu.name}: {len(inputs)} Eingänge")
     typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
     typer.echo(f"{skipped} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)")

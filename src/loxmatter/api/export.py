@@ -87,12 +87,7 @@ from loxmatter.export.documents import (
 )
 from loxmatter.export.signals import to_inputs
 from loxmatter.model.store import DEFAULT_UDP_PORT, Store, StoredCommand, StoredDevice
-from loxmatter.profiles.table import Exportability
-
-# Wie in cli.py: Text und Nullwerte/Listen/Strukturen ergeben keinen
-# Loxone-Eingang (Spec 6.6) - unabhaengig vom `exported`-Flag, das ein
-# technisch exportierbares Signal nur an- oder abschaltet.
-_UNEXPORTABLE = (Exportability.NONE, Exportability.TEXT)
+from loxmatter.profiles.table import is_exportable
 
 _DEFAULT_LISTEN_PORT = 8080
 
@@ -148,7 +143,16 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
     signals = store.signals(device.id)
     commands = store.commands(device.id)
     inputs = to_inputs(signals, device.id, device.label)
-    skipped = sum(1 for s in signals if s.exportability in _UNEXPORTABLE)
+    # `is_exportable` statt einer hier notierten Umkehrung (Review-Fix
+    # Fix 8, 2026-09-03): bis dahin stand die Regel "Text, Listen,
+    # Strukturen und Nullwerte ergeben keinen Loxone-Eingang" (Spec 6.6)
+    # als `(Exportability.NONE, Exportability.TEXT)` sowohl hier als auch
+    # in `cli.py` - zwei von Hand kopierte Umkehrungen genau des Helfers,
+    # den es dafuer schon gab. Waere die Aufzaehlung um einen kuenftigen
+    # `Exportability`-Wert erweitert worden, haetten CLI und API
+    # unterschiedlich viele "uebersprungene" Signale gemeldet, ohne dass
+    # ein Test das bemerkt.
+    skipped = sum(1 for s in signals if not is_exportable(s.exportability))
     return ExportDeviceOut(
         device_id=device.id,
         label=device.label,
@@ -160,15 +164,27 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
     )
 
 
-def _status_for(device: StoredDevice) -> ExportStatusOut:
-    # Ein unbekanntes `updated_at` (Alt-Datenbank vor `_migrate_to_v2`, siehe
-    # dort) gilt als "geaendert" - die vorsichtigere der beiden moeglichen
-    # Annahmen, siehe StoredDevice.updated_at.
-    changed = (
+def _changed_since_export(device: StoredDevice) -> bool:
+    """Ob sich das Geraet seit seinem letzten Export geaendert hat.
+
+    Ein unbekanntes `updated_at` (Alt-Datenbank vor `_migrate_to_v2`, siehe
+    dort) gilt als "geaendert" - die vorsichtigere der beiden moeglichen
+    Annahmen, siehe `StoredDevice.updated_at`.
+
+    Eigene Funktion, seit `download?only_pending=true` dieselbe Frage
+    beantwortet bekommen muss wie `GET /api/export/status` (Review-Fix
+    Fix 4, 2026-09-03). Zwei Fassungen dieser Bedingung waeren genau der
+    Fehler, den die Oberflaeche vorher hatte: die Tabelle zeigte eine
+    Auswahl, das ZIP enthielt eine andere."""
+    return (
         device.exported_at is None
         or device.updated_at is None
         or device.updated_at > device.exported_at
     )
+
+
+def _status_for(device: StoredDevice) -> ExportStatusOut:
+    changed = _changed_since_export(device)
     return ExportStatusOut(
         device_id=device.id,
         label=device.label,
@@ -217,6 +233,12 @@ def build_export_router(store: Store) -> APIRouter:
         system: bool = Query(
             False, description="Auch die geraeteunabhaengigen Systemvorlagen einschliessen."
         ),
+        only_pending: bool = Query(
+            False,
+            description="Nur Geraete, die seit ihrem letzten Export geaendert wurden"
+            " (dieselbe Bedingung wie `changed_since_export` in /status). Die uebrigen"
+            " kommen weder ins Archiv noch bekommen sie ein neues `exported_at`.",
+        ),
     ) -> Response:
         """Baut das ZIP im Speicher - keine temporaere Datei, kein
         Zwischenzustand auf der Platte.
@@ -239,7 +261,22 @@ def build_export_router(store: Store) -> APIRouter:
         unabhaengig von `system` und selbst dann, wenn kein einziges Geraet
         registriert ist - eine leere Installation liefert so ein gueltiges,
         nicht-leeres ZIP statt eines leeren Archivs oder eines
-        Serverfehlers."""
+        Serverfehlers.
+
+        **`only_pending` (Review-Fix Fix 4, 2026-09-03).** Der Filter „nur
+        noch nicht exportierte Geraete" der Oberflaeche galt vorher nur
+        fuer die Vorschautabelle; dieser Endpunkt kannte ihn gar nicht und
+        lieferte immer alle Geraete - und markierte auch alle als
+        exportiert. Wer filterte, ein ausstehendes Geraet sah und
+        herunterlud, bekam damit das volle Archiv und einen Filter, der
+        danach dauerhaft leer blieb. Jetzt entscheidet derselbe Parameter
+        ueber beides. Weil `mark_exported` unten nur ueber
+        `exported_device_ids` laeuft - also ueber die tatsaechlich
+        geschriebenen Geraete -, bekommt ein uebersprungenes Geraet auch
+        keinen neuen Zeitstempel und bleibt in `GET /api/export/status`
+        korrekt als ausstehend stehen. Die Systemvorlagen haengen weiterhin
+        allein an `system`: sie gehoeren zu keinem Geraet und koennen
+        deshalb auch nicht "seit dem letzten Export unveraendert" sein."""
         buffer = io.BytesIO()
         # Gesammelt statt sofort vermerkt (siehe oben) - erst nach dem
         # vollstaendigen Aufbau des Archivs unten abgearbeitet.
@@ -251,6 +288,8 @@ def build_export_router(store: Store) -> APIRouter:
                 archive.writestr("VO_Matter_System.xml", vo_system)
 
             for device in store.devices():
+                if only_pending and not _changed_since_export(device):
+                    continue
                 signals = store.signals(device.id)
                 commands = _loxone_commands(store.commands(device.id))
                 inputs = to_inputs(signals, device.id, device.label)

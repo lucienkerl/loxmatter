@@ -124,7 +124,12 @@ def _migrate_to_v1(db: sqlite3.Connection) -> None:
     """
     if not _add_column_if_missing(db, "signal", "exported", "INTEGER NOT NULL DEFAULT 1"):
         return
-    exportable_values = tuple(e.value for e in (Exportability.ANALOG, Exportability.DIGITAL))
+    # Aus `is_exportable` abgeleitet statt hier ein drittes Mal von Hand
+    # aufgezaehlt (Review-Fix Fix 8, 2026-09-03, zusammen mit den beiden
+    # Kopien in `cli.py` und `api/export.py`): eine SQL-Abfrage braucht
+    # die Werte als Liste, nicht die Funktion - die Liste selbst kommt
+    # jetzt trotzdem aus derselben einen Quelle.
+    exportable_values = tuple(e.value for e in Exportability if is_exportable(e))
     placeholders = ", ".join("?" for _ in exportable_values)
     db.execute(
         f"UPDATE signal SET exported = CASE WHEN exportability IN ({placeholders})"
