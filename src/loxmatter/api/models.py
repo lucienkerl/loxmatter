@@ -67,6 +67,31 @@ class DeviceRename(BaseModel):
     label: str
 
 
+class CommandOut(BaseModel):
+    """Ein Bedienelement fuer `GET /api/devices/{device_id}/controls` (Task 4).
+
+    Traegt bewusst nur, was ein Klick braucht - der Schluessel zum Ausloesen
+    und der Slug als Beschriftung. `takes_value` sagt der Oberflaeche, ob ein
+    einfacher Knopf reicht (z. B. `on`) oder ein Regler noetig ist (z. B.
+    `level`)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    slug: str
+    takes_value: bool
+
+
+class ValueIn(BaseModel):
+    """Rumpf von `POST /api/commands/{key}` und `POST /api/signals/{key}/write`
+    (Task 4) - derselbe String-Wert, den `/cmd/{key}/{value}` (Phase 4) als
+    Pfad-Segment entgegennimmt. Ein Wert, ein Typ, an beiden Stellen (Spec 4.2)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: str
+
+
 class CommissionRequest(BaseModel):
     """`POST /api/devices/commission` - der Pairing-Code vom Geraet oder
     seiner Verpackung (11-stellig oder der 21-stellige `MT:`-Code, Spec 7.1).

@@ -25,6 +25,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, HTTPException
 
+from loxmatter.api.control import build_control_router
 from loxmatter.api.devices import build_device_router
 from loxmatter.api.live import build_live_router
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
@@ -46,6 +47,10 @@ def build_app(
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     app.include_router(build_device_router(store, client, runtime))
     app.include_router(build_live_router(runtime))
+    # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
+    # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst
+    # driften sie (Spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
+    app.include_router(build_control_router(store, invoke))
 
     @app.get("/health")
     async def health() -> dict[str, str]:

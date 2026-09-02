@@ -634,6 +634,43 @@ Ein WebSocket vom Backend zur SPA schiebt Attribut- und Event-Änderungen sowie
 Online-Status durch. Dieselbe Subscription, die den UDP-Sender speist — kein zweiter
 Pfad, kein Polling.
 
+### 8.4 Rohes Attributschreiben: Erlaubnisliste (Task 4, 2026-09-02)
+
+**Befund: python-matter-server macht die Schreibbarkeit eines Attributs nirgends
+zugänglich.** Geprüft gegen die installierten Pakete (python-matter-server==8.1.2),
+nicht vermutet:
+
+- `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` — die Basisklasse jeder
+  generierten Attribut-Klasse (z. B. `BasicInformation.Attributes.NodeLabel`) — trägt
+  `cluster_id`, `attribute_id`, `attribute_type`, `must_use_timed_write`. Keine
+  dieser Eigenschaften unterscheidet Lese- von Schreibzugriff;
+  `must_use_timed_write` regelt nur, ob ein *erlaubter* Schreibzugriff einen
+  Timed-Write-Envelope braucht.
+- `matter_server.client.client.MatterClient.write_attribute(node_id, attribute_path,
+  value)` prüft vorher nichts — der Aufruf geht ungeprüft an den Controller; eine
+  Ablehnung käme, wenn überhaupt, als Fehler vom Gerät selbst zurück.
+- Eine Volltextsuche nach „writable“/„Writable“ über beide installierten Pakete
+  (`chip`, `matter_server`) ergab keinen einzigen Treffer.
+
+**Konsequenz: dieselbe Asymmetrie wie bei Kommandos (6.7), diesmal für Attribute.**
+`POST /api/signals/{key}/write` (`api/control.py`) lehnt jeden Schreibversuch auf ein
+Attribut ab, das nicht auf einer expliziten Erlaubnisliste steht — eine großzügige
+Durchreiche wie beim *Export* (3.5) wäre hier falsch: ein zu Unrecht exportiertes
+Attribut kostet einen ungenutzten Eingang, ein zu Unrecht freigegebener Schreibzugriff
+kann ein Gerät fehlkonfigurieren. Die Liste ist bewusst klein und enthält nur
+`BasicInformation.NodeLabel` (0/40/5), `.Location` (0/40/6) und
+`.LocalConfigDisabled` (0/40/16) — alle drei belegt gegen die eingecheckte
+IKEA-GRILLPLATS-Vorlage (`tests/fixtures/nodes/ikea_grillplats_plug.json`), nicht nur
+laut Spezifikation vermutet.
+
+**Offener Punkt: selbst ein erlaubtes Attribut lässt sich heute noch nicht tatsächlich
+schreiben.** `BridgeMatterClient` (`matter/client.py`) hat kein `write_attribute`, und
+`build_control_router(store, invoke)` nimmt dafür auch keinen zweiten Aufrufer entgegen
+— `invoke` ist ausschließlich für Kommandos typisiert
+(`Callable[[MatterCall], Awaitable[None]]`), ein Attribut-Schreibzugriff ist keins.
+`POST /api/signals/{key}/write` antwortet für ein erlaubtes Attribut deshalb mit 501
+statt mit einem Erfolg, der nichts bewirkt — siehe Offene Punkte, Punkt 6.
+
 ---
 
 ## 9. Fehlerbehandlung
@@ -848,3 +885,23 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    eine Event drei zusätzliche `LoxoneInput`s erzeugt statt der generischen zwei. Nicht in
    dieser Phase umgesetzt — hier festgehalten, damit 6.3 nicht mehr verspricht, als
    `export/signals.py` tatsächlich liefert.
+6. **Rohes Attributschreiben ist bis zur Erlaubnisliste abgesichert, aber nicht an
+   matter-server angebunden** (Task 4, 2026-09-02; siehe 8.4). `POST
+   /api/signals/{key}/write` (`api/control.py`) lehnt jedes Attribut ab, das nicht auf
+   der (bewusst kleinen, gegen ein echtes Gerät belegten) Erlaubnisliste
+   `_WRITABLE_ATTRIBUTES` steht — das ist getestet
+   (`test_raw_write_of_a_non_writable_attribute_is_refused`). Für ein *erlaubtes*
+   Attribut gibt es aber noch keinen Weg zum Gerät: `BridgeMatterClient` hat kein
+   `write_attribute` (anders als `send_command`, das über `matter_server.client.client.
+   MatterClient.send_device_command` läuft), und `build_control_router(store, invoke)`
+   nimmt dafür auch keinen zweiten Aufrufer entgegen — `invoke` ist per Typ
+   (`Callable[[MatterCall], Awaitable[None]]`) auf Kommandos beschränkt, ein
+   Attribut-Schreibzugriff ist keins. Die Route antwortet für ein erlaubtes Attribut
+   deshalb ehrlich mit 501, statt einen Erfolg vorzutäuschen, der nichts bewirkt. Ein
+   Fix bräuchte: (a) `BridgeMatterClient.write_attribute(node_id, attribute_path,
+   value)` als dünnen Wrapper um `MatterClient.write_attribute` — nach demselben Muster
+   wie `remove_node`/`set_thread_dataset` (Task 1) —, und (b) eine zweite,
+   attributförmige Aufrufer-Schnittstelle für `build_control_router`, analog zu
+   `invoke` für Kommandos. Nicht in dieser Phase umgesetzt — hier festgehalten, damit
+   Ansicht 2 (8, „Schreibbare Attribute lassen sich hier roh setzen") nicht mehr
+   verspricht, als die WebUI heute tatsächlich kann.
