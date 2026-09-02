@@ -25,16 +25,26 @@ Thread gebunden, und dieses Modul weicht davon bewusst nicht ab.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
-from loxmatter.profiles.table import Exportability, lookup
+from loxmatter.profiles.table import Exportability, is_exportable, lookup
 
 DEFAULT_UDP_PORT = 7000
+
+# Schema-Version dieses Moduls, verwaltet ueber `PRAGMA user_version` (Review-Fix
+# Important #1, 2026-09-02). `CREATE TABLE IF NOT EXISTS` allein erreicht eine
+# bereits bestehende Tabelle nie mit einer neuen Spalte - eine Datenbank, die vor
+# dem `exported`-Feld angelegt wurde, blieb bislang ohne Migration dauerhaft ohne
+# diese Spalte, und `Store.signals()` scheiterte mit `IndexError`. Version 0 ist
+# "vor dieser Migrationslogik" (jede bestehende Datenbank, `PRAGMA user_version`
+# noch nie gesetzt); Version 1 fuegt `signal.exported` hinzu und befuellt
+# Bestandszeilen zurueckwirkend, siehe `_migrate_to_v1`.
+_SCHEMA_VERSION = 1
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
@@ -72,6 +82,69 @@ CREATE TABLE IF NOT EXISTS command (
     UNIQUE (device_id, endpoint, cluster_id, command_id)
 );
 """
+
+
+def _migrate_to_v1(db: sqlite3.Connection) -> None:
+    """Fuegt `signal.exported` hinzu und befuellt bestehende Zeilen anhand
+    ihrer `exportability` (Review-Fix Important #1 und #2, 2026-09-02) -
+    dieselbe Regel wie bei einem frisch registrierten Signal, siehe
+    `profiles.table.is_exportable`.
+
+    Laeuft sowohl gegen eine echte Alt-Datenbank (die Spalte fehlt noch) als
+    auch gegen eine frisch angelegte (``_SCHEMA`` hat sie mit `CREATE TABLE`
+    bereits angelegt, `PRAGMA user_version` steht bei einer neuen Datenbank
+    aber ebenfalls auf 0) - im zweiten Fall ist `ALTER TABLE` falsch und
+    wuerde mit "duplicate column" scheitern, deshalb der Spaltencheck vorweg.
+    """
+    columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(signal)")}
+    if "exported" in columns:
+        return
+    db.execute("ALTER TABLE signal ADD COLUMN exported INTEGER NOT NULL DEFAULT 1")
+    exportable_values = tuple(e.value for e in (Exportability.ANALOG, Exportability.DIGITAL))
+    placeholders = ", ".join("?" for _ in exportable_values)
+    db.execute(
+        f"UPDATE signal SET exported = CASE WHEN exportability IN ({placeholders})"
+        " THEN 1 ELSE 0 END",
+        exportable_values,
+    )
+
+
+# Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
+# Erweiterung fuer eine spaetere Schema-Aenderung: einfach anhaengen, mit der
+# naechsten Versionsnummer als Schluessel.
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {1: _migrate_to_v1}
+
+
+def _migrate(db: sqlite3.Connection) -> None:
+    """Bringt eine geoeffnete Datenbank auf `_SCHEMA_VERSION`.
+
+    Laeuft in einer Transaktion: scheitert eine Migration, bleibt die
+    Datenbank unveraendert (Review-Fix Important #1) - `ALTER TABLE ADD
+    COLUMN` ist in SQLite vollstaendig transaktional, weshalb ein expliziter
+    Rollback die schon ausgefuehrten Schritte dieses Laufs wieder rueckgaengig
+    macht. `PRAGMA user_version` selbst ist ebenfalls Teil dieser Transaktion
+    und wird deshalb nur bei vollstaendigem Erfolg auf `_SCHEMA_VERSION`
+    gesetzt - ein Absturz mitten in einer Migration hinterlaesst also nicht
+    eine halb angewandte Aenderung unter einer bereits erhoehten Version, die
+    ein spaeterer Start faelschlich fuer erledigt haelt.
+
+    Bereits auf dem neuesten Stand (der Normalfall bei jedem Start ausser dem
+    allerersten nach einer Schema-Aenderung): kein Schreibzugriff, echtes
+    No-op.
+    """
+    version = int(db.execute("PRAGMA user_version").fetchone()[0])
+    if version >= _SCHEMA_VERSION:
+        return
+    db.execute("BEGIN")
+    try:
+        for target_version in range(version + 1, _SCHEMA_VERSION + 1):
+            _MIGRATIONS[target_version](db)
+        db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+    except BaseException:
+        db.rollback()
+        raise
+    else:
+        db.commit()
 
 
 @dataclass(frozen=True)
@@ -157,6 +230,7 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
         self._db.commit()
+        _migrate(self._db)
 
     def close(self) -> None:
         self._db.close()
@@ -322,7 +396,14 @@ class Store:
                 # Einmal gesetzt, bleibt der Wert wie `title` Nutzereigentum:
                 # der UPDATE-Zweig oben (bereits bekanntes Signal) fasst
                 # `exported` bewusst nicht an.
-                exported = profile.exportability is not Exportability.NONE
+                #
+                # `is_exportable` statt der frueheren, hier direkt notierten
+                # ``is not Exportability.NONE`` (Review-Fix Important #2,
+                # 2026-09-02): das schloss TEXT faelschlich als "exported"
+                # ein, obwohl `api.devices` TEXT unabhaengig davon schon
+                # immer als nicht exportierbar fuehrte - siehe
+                # `profiles.table.is_exportable`.
+                exported = is_exportable(profile.exportability)
                 self._db.execute(
                     "INSERT INTO signal "
                     "(device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"

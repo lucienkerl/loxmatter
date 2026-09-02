@@ -300,11 +300,21 @@ def test_signal_by_key_is_none_for_an_unknown_key(store):
 
 
 def test_new_signal_is_exported_exactly_when_it_is_exportable(store):
+    """Review-Fix Important #2: `expected` unten wird bewusst NICHT ueber
+    `profiles.table.is_exportable` berechnet, das ist genau die Funktion,
+    die `register_signals` selbst fuer das Default von `exported` aufruft -
+    ein Test, der dieselbe Funktion wie die Produktion aufruft, kann einen
+    Fehler in genau dieser Funktion nie auffangen. Die Bedingung hier ist die
+    unabhaengig ausformulierte Regel aus Spec 6.6 (nur ANALOG/DIGITAL passen
+    auf einen Loxone-Eingang) - vorher stand hier faelschlich
+    ``exportability is not Exportability.NONE``, was TEXT als "exported"
+    durchgehen liess, obwohl `api.devices` TEXT unabhaengig davon nie als
+    exportierbar fuehrte."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
     for signal in signals:
-        expected = signal.exportability is not Exportability.NONE
+        expected = signal.exportability in (Exportability.ANALOG, Exportability.DIGITAL)
         assert signal.exported is expected
 
 
