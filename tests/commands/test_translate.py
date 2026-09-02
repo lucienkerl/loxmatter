@@ -41,6 +41,15 @@ def test_non_numeric_value_raises_in_german():
         to_matter_call(cmd(8, 4, takes_value=True), "hell")
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
+def test_non_finite_value_raises_in_german(value: str):
+    """`float()` akzeptiert "nan"/"inf" anstandslos - das darf nicht bis zu
+    `round()` durchrutschen, wo es als englischer `ValueError` explodiert,
+    statt als `UnsupportedValueError` mit deutscher Meldung."""
+    with pytest.raises(UnsupportedValueError, match="keine Zahl"):
+        to_matter_call(cmd(8, 4, takes_value=True), value)
+
+
 def test_color_temperature_converts_kelvin_to_mireds():
     call = to_matter_call(cmd(768, 10, takes_value=True), "2700")
     assert call.payload["colorTemperatureMireds"] == 370
@@ -60,3 +69,23 @@ def test_known_cluster_with_unknown_command_raises():
     Kommando."""
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(768, 6, takes_value=True), "255,0,0")
+
+
+def test_onoff_cluster_with_unknown_command_raises():
+    """Cluster 6 (OnOff) ist bekannt, aber nur Kommando 0/1/2 sind es. Der
+    Dispatch darf nicht schon beim Cluster stehen bleiben - sonst bekaeme ein
+    unbekanntes OnOff-Kommando eine erfundene leere Nutzlast statt eines
+    Fehlers."""
+    with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
+        to_matter_call(cmd(6, 99, takes_value=True), "1")
+
+
+def test_level_cluster_with_unknown_command_raises():
+    """Cluster 8 (LevelControl) ist bekannt, aber nur Kommando 0/4 sind es hier
+    bedient. Move/Step/Stop (u. a. Kommando-IDs 1, 2, 3, 5, 6, 7) sind reale
+    LevelControl-Kommandos, die z. B. bei Rohexport (`raw`) ohne Eintrag in
+    `clusters.yaml` auftauchen koennen - ihnen faelschlich eine
+    MoveToLevelWithOnOff-Nutzlast (level/transitionTime) unterzuschieben waere
+    genau der Fehler, den dieses Modul verhindern soll."""
+    with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
+        to_matter_call(cmd(8, 1, takes_value=True), "50")

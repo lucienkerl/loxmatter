@@ -55,10 +55,12 @@ import colorsys
 def kelvin_to_mireds(kelvin: float) -> int:
     """Matter misst Farbtemperatur in Mired, dem Kehrwert von Kelvin.
 
-    Abgeschnitten statt gerundet: die in Zigbee/Matter gebraeuchlichen
-    Referenzwerte (z. B. 153 Mired fuer 6500 K) entstehen durch Abschneiden
-    der Nachkommastellen, nicht durch kaufmaennisches Runden - gerundet waere
-    6500 K faelschlich 154 Mired.
+    Abgeschnitten statt gerundet: nur so trifft diese Funktion die von den
+    Tests gepinnten Referenzwerte (z. B. 153 Mired fuer 6500 K) - gerundet
+    waere 6500 K faelschlich 154 Mired. Dass Abschneiden auch allgemein die
+    in Zigbee/Matter uebliche Konvention ist, ist hier anders als bei der
+    RGB-Codierung oben nicht mit einer Quelle belegt; belegt ist nur die
+    Uebereinstimmung mit den zitierten Referenzwerten.
     """
     if kelvin <= 0:
         raise ValueError(f"Kelvin muss groesser als 0 sein, war {kelvin}")

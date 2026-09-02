@@ -1527,6 +1527,26 @@ def test_unknown_cluster_command_raises_rather_than_guessing():
     """Lieber ein klarer Fehler als ein Kommando mit erfundener Nutzlast."""
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(64999, 3, takes_value=True), "1")
+
+
+def test_onoff_cluster_with_unknown_command_raises():
+    """Cluster 6 (OnOff) ist bekannt, aber nur Kommando 0/1/2 sind es. Der
+    Dispatch darf nicht schon beim Cluster stehen bleiben - sonst bekaeme ein
+    unbekanntes OnOff-Kommando eine erfundene leere Nutzlast statt eines
+    Fehlers."""
+    with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
+        to_matter_call(cmd(6, 99, takes_value=True), "1")
+
+
+def test_level_cluster_with_unknown_command_raises():
+    """Cluster 8 (LevelControl) ist bekannt, aber nur Kommando 0/4 sind es hier
+    bedient. Move/Step/Stop (Kommando-IDs u. a. 1, 2, 3, 5, 6, 7) sind reale
+    LevelControl-Kommandos, die z. B. bei Rohexport (`raw`) ohne Eintrag in
+    `clusters.yaml` auftauchen koennen - ihnen faelschlich eine
+    MoveToLevelWithOnOff-Nutzlast unterzuschieben waere genau der Fehler, den
+    dieses Modul verhindern soll."""
+    with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
+        to_matter_call(cmd(8, 1, takes_value=True), "50")
 ```
 
 `tests/commands/test_color.py`:
@@ -1621,12 +1641,24 @@ ein echtes Geraet zu schicken ist schlechter als ein klarer Fehler.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from loxmatter.commands.color import kelvin_to_mireds
 from loxmatter.model.store import StoredCommand
 
 LEVEL_MAX = 254
+
+_CLUSTER_ONOFF = 6
+_CLUSTER_LEVEL = 8
+_CLUSTER_COLOR = 768
+
+_COMMAND_OFF = 0
+_COMMAND_ON = 1
+_COMMAND_TOGGLE = 2
+_COMMAND_MOVE_TO_LEVEL = 0
+_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF = 4
+_COMMAND_COLOR_TEMPERATURE = 10
 
 
 class UnsupportedValueError(ValueError):
@@ -1654,34 +1686,53 @@ def _level(value: str) -> int:
     return max(0, min(LEVEL_MAX, round(prozent * LEVEL_MAX / 100)))
 
 
+def _keine_nutzlast(_value: str) -> dict[str, object]:
+    return {}
+
+
+def _stufe_nutzlast(value: str) -> dict[str, object]:
+    return {"level": _level(value), "transitionTime": 0}
+
+
+def _farbtemperatur_nutzlast(value: str) -> dict[str, object]:
+    return {"colorTemperatureMireds": kelvin_to_mireds(_als_zahl(value))}
+
+
+# Dispatch auf das Paar (Cluster-ID, Kommando-ID), nicht nur auf die
+# Cluster-ID - sonst bekaeme z. B. LevelControl-Stop (Kommando 3) faelschlich
+# eine MoveToLevelWithOnOff-Nutzlast, nur weil Cluster 8 bekannt ist.
+_NUTZLAST_BAUER: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
+    (_CLUSTER_ONOFF, _COMMAND_OFF): _keine_nutzlast,
+    (_CLUSTER_ONOFF, _COMMAND_ON): _keine_nutzlast,
+    (_CLUSTER_ONOFF, _COMMAND_TOGGLE): _keine_nutzlast,
+    (_CLUSTER_LEVEL, _COMMAND_MOVE_TO_LEVEL): _stufe_nutzlast,
+    (_CLUSTER_LEVEL, _COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF): _stufe_nutzlast,
+    (_CLUSTER_COLOR, _COMMAND_COLOR_TEMPERATURE): _farbtemperatur_nutzlast,
+}
+
+
 def to_matter_call(command: StoredCommand, value: str) -> MatterCall:
     """Baut den Matter-Aufruf zu einem exportierten Kommando-Schluessel."""
 
-    def bauen(payload: dict[str, object]) -> MatterCall:
-        return MatterCall(
-            node_id=command.node_id,
-            endpoint=command.endpoint,
-            cluster_id=command.cluster_id,
-            command_id=command.command_id,
-            payload=payload,
+    nutzlast_bauen = _NUTZLAST_BAUER.get((command.cluster_id, command.command_id))
+    if nutzlast_bauen is None:
+        raise UnsupportedValueError(
+            f"Cluster {command.cluster_id} Kommando {command.command_id} wird nicht unterstuetzt"
         )
 
-    if command.cluster_id == 6:
-        return bauen({})
-    if command.cluster_id == 8:
-        return bauen({"level": _level(value), "transitionTime": 0})
-    if command.cluster_id == 768 and command.command_id == 10:
-        return bauen({"colorTemperatureMireds": kelvin_to_mireds(_als_zahl(value))})
-
-    raise UnsupportedValueError(
-        f"Cluster {command.cluster_id} Kommando {command.command_id} wird nicht unterstuetzt"
+    return MatterCall(
+        node_id=command.node_id,
+        endpoint=command.endpoint,
+        cluster_id=command.cluster_id,
+        command_id=command.command_id,
+        payload=nutzlast_bauen(value),
     )
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/commands -v`
-Expected: PASS, 13 Tests
+Expected: PASS, 15 Tests
 
 - [ ] **Step 6: Befund zur Farbcodierung eintragen**
 
