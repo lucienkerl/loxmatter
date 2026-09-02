@@ -407,6 +407,36 @@ Attributsignale der Steckdose, gemessen am 2026-09-01:
 Wer die 45 als „nicht exportierbar" liest, verzählt sich um die fünf
 Nullwerte.
 
+### 6.7 Ausgangsbefehle: Erlaubnisliste
+
+**Quelle ist `AcceptedCommandList` (0xFFF9), nicht die Attributliste.** Matter-Attribute
+sind ganz überwiegend nur lesbar; ein Ausgangsbefehl je lesbarem Attribut wäre zu
+über neunzig Prozent wirkungslos. An den Geräten aus Phase 1 gemessen (2026-09-01):
+die Steckdose ist über `1/6` OnOff steuerbar, der Taster über gar nichts — er ist ein
+Eingabegerät.
+
+**Bei Kommandos gilt eine Erlaubnisliste, nicht die großzügige Durchreiche aus 3.5.**
+Zu den akzeptierten Kommandos gehören Verwaltungscluster: `0/62` OperationalCredentials
+enthält `RemoveFabric`, `0/48` GeneralCommissioning und `0/49` NetworkCommissioning die
+Kommissionierung, `0/51` GeneralDiagnostics den `TestEventTrigger`. Ein Exporter, der
+alles ausgibt, legt einem Loxone-Nutzer Befehle auf den Baustein, mit denen sich das
+Gerät aus der Fabric werfen oder unbrauchbar machen lässt.
+
+Nur Cluster mit einem `commands`-Eintrag in der Profiltabelle erzeugen Ausgangsbefehle.
+Ein ausdrücklich einzuschaltender **Rohmodus** erweitert das auf unbekannte Cluster —
+für Geräte, deren Cluster die Tabelle noch nicht kennt.
+
+**Verwaltungscluster bleiben auch im Rohmodus gesperrt.** Das ist keine Vorsichtsmaßnahme,
+die sich abschalten lässt:
+
+```
+42, 48, 49, 51, 52, 53, 54, 55, 60, 62, 63, 70
+```
+
+Die Asymmetrie ist beabsichtigt. Ein unbekanntes Attribut zu viel zu exportieren kostet
+einen ungenutzten Eingang. Ein unbekanntes Kommando zu viel zu exportieren kann ein
+Gerät aus dem Netz werfen.
+
 ---
 
 ## 7. Matter-Integration

@@ -1288,7 +1288,253 @@ git commit -m "feat(export): Vorlagendokumente pro Geraet nach Spec 6.1"
 
 ---
 
-### Task 6: `loxmatter export` und der Beleg an echten Geräten
+### Task 6: Kommando-Erlaubnisliste
+
+**Der Plan hätte hier ursprünglich für jedes lesbare Attribut einen Ausgangsbefehl
+erzeugt — rund 109 bei der Steckdose, von denen fast keiner etwas bewirkt.**
+Matter-Attribute sind ganz überwiegend nur lesbar. Die richtige Quelle ist
+`AcceptedCommandList` (0xFFF9): sie sagt pro Cluster, welche Kommandos ein Gerät
+annimmt. An den Fixtures gemessen:
+
+| Gerät | steuerbar |
+|---|---|
+| GRILLPLATS Plug | `1/6` OnOff, Kommandos 0 (Aus), 1 (Ein), 2 (Umschalten), 64–66 |
+| BILRESA Taster | nichts Nutzbares — nur Identify und Verwaltungscluster |
+
+**Sicherheitsregel: Erlaubnisliste, nicht Sperrliste.** Zu den akzeptierten Kommandos
+gehören Verwaltungscluster — `0/62` OperationalCredentials enthält `RemoveFabric`,
+`0/48` GeneralCommissioning, `0/49` NetworkCommissioning, `0/51` GeneralDiagnostics
+enthält `TestEventTrigger`. Ein Exporter, der stumpf alles ausgibt, legt einem
+Loxone-Nutzer Befehle auf den Baustein, mit denen sich das Gerät aus der Fabric werfen
+lässt. Bei Attributen wird Unbekanntes großzügig durchgereicht; bei Kommandos ist das
+genau falsch herum.
+
+Verwaltungscluster bleiben **auch im Rohmodus** draußen. Das ist keine Vorsichtsmaßnahme,
+die man abschalten kann.
+
+**Files:**
+- Create: `src/loxmatter/export/commands.py`
+- Modify: `src/loxmatter/profiles/clusters.yaml` (Abschnitt `commands`)
+- Modify: `src/loxmatter/profiles/table.py`
+- Create: `tests/export/test_commands.py`
+
+**Interfaces:**
+- Consumes: `NodeSnapshot`, `parse_attribute_path`, `ACCEPTED_COMMAND_LIST_ID` aus `matter.paths`
+- Produces:
+  - `ADMINISTRATIVE_CLUSTERS: frozenset[int]` in `profiles.table`
+  - `command_slug(cluster_id: int, command_id: int) -> str | None` in `profiles.table` — `None`, wenn nicht in der Tabelle
+  - `class DeviceCommand` — frozen: `endpoint: int`, `cluster_id: int`, `command_id: int`, `slug: str`, `takes_value: bool`
+  - `extract_commands(snapshot: NodeSnapshot, *, raw: bool = False) -> list[DeviceCommand]`
+
+- [ ] **Step 1: Tabelle um Kommandos erweitern**
+
+In `src/loxmatter/profiles/clusters.yaml` beim Cluster 6 ergänzen:
+
+```yaml
+  6:
+    name: onoff
+    attributes:
+      0: {slug: onoff, unit: ""}
+    commands:
+      0: {slug: off, takes_value: false}
+      1: {slug: on, takes_value: false}
+      2: {slug: toggle, takes_value: false}
+```
+
+Und beim Cluster 8 (LevelControl) ergänzen:
+
+```yaml
+    commands:
+      0: {slug: level, takes_value: true}
+      4: {slug: level_onoff, takes_value: true}
+```
+
+- [ ] **Step 2: Write the failing test**
+
+`tests/export/test_commands.py`:
+
+```python
+import json
+from pathlib import Path
+
+from loxmatter.export.commands import extract_commands
+from loxmatter.matter.models import NodeSnapshot
+from loxmatter.profiles.table import ADMINISTRATIVE_CLUSTERS, command_slug
+
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
+
+
+def load(name: str) -> NodeSnapshot:
+    raw = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    return NodeSnapshot.from_raw(raw["node_id"], raw)
+
+
+def test_administrative_clusters_are_named():
+    """Diese Cluster duerfen nie als Loxone-Ausgang erscheinen."""
+    for cluster in (42, 48, 49, 51, 60, 62, 63):
+        assert cluster in ADMINISTRATIVE_CLUSTERS
+
+
+def test_known_command_has_a_slug():
+    assert command_slug(6, 0) == "off"
+    assert command_slug(6, 1) == "on"
+    assert command_slug(6, 2) == "toggle"
+
+
+def test_unknown_command_has_none():
+    assert command_slug(6, 99) is None
+    assert command_slug(64999, 0) is None
+
+
+def test_plug_yields_only_the_onoff_commands():
+    commands = extract_commands(load("ikea_grillplats_plug.json"))
+    assert {(c.cluster_id, c.command_id) for c in commands} == {(6, 0), (6, 1), (6, 2)}
+    assert all(c.endpoint == 1 for c in commands)
+
+
+def test_button_yields_no_commands():
+    """Ein Taster ist ein Eingabegeraet."""
+    assert extract_commands(load("ikea_bilresa_button.json")) == []
+
+
+def test_administrative_commands_never_appear():
+    commands = extract_commands(load("ikea_grillplats_plug.json"))
+    assert not any(c.cluster_id in ADMINISTRATIVE_CLUSTERS for c in commands)
+
+
+def test_raw_mode_adds_unknown_clusters_but_not_administrative_ones():
+    """Der Rohmodus erweitert die Erlaubnisliste - er hebt die Sicherheitsregel nicht auf."""
+    plug = load("ikea_grillplats_plug.json")
+    roh = extract_commands(plug, raw=True)
+    assert not any(c.cluster_id in ADMINISTRATIVE_CLUSTERS for c in roh)
+    assert len(roh) > len(extract_commands(plug))
+    assert any(c.cluster_id == 4 for c in roh)  # Groups, unbekannt aber harmlos
+
+
+def test_raw_mode_names_unknown_commands_generically():
+    roh = extract_commands(load("ikea_grillplats_plug.json"), raw=True)
+    unbekannt = next(c for c in roh if c.cluster_id == 4)
+    assert unbekannt.slug.startswith("c4_cmd")
+```
+
+- [ ] **Step 3: Run test to verify it fails**
+
+Run: `uv run pytest tests/export/test_commands.py -v`
+Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.export.commands'`
+
+- [ ] **Step 4: `profiles/table.py` erweitern**
+
+```python
+# Cluster, deren Kommandos nie als Loxone-Ausgang erscheinen duerfen. 0/62 enthaelt
+# RemoveFabric, 0/48 und 0/49 die Kommissionierung, 0/51 den TestEventTrigger. Ein
+# Loxone-Baustein, der eines davon ausloest, kann das Geraet unbrauchbar machen.
+# Diese Liste gilt auch im Rohmodus.
+ADMINISTRATIVE_CLUSTERS: frozenset[int] = frozenset(
+    {42, 48, 49, 51, 52, 53, 54, 55, 60, 62, 63, 70}
+)
+
+
+def command_slug(cluster_id: int, command_id: int) -> str | None:
+    """Name eines Kommandos, oder None wenn es nicht in der Tabelle steht."""
+    entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
+    return entry["slug"] if entry else None
+
+
+def command_takes_value(cluster_id: int, command_id: int) -> bool:
+    entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
+    return bool(entry and entry.get("takes_value"))
+```
+
+- [ ] **Step 5: `export/commands.py` schreiben**
+
+```python
+"""Leitet aus AcceptedCommandList ab, was Loxone einem Geraet sagen darf.
+
+Nicht aus den Attributen: Matter-Attribute sind ganz ueberwiegend nur lesbar,
+und ein Ausgangsbefehl je lesbarem Attribut waere zu 95 Prozent wirkungslos.
+
+Erlaubnisliste statt Sperrliste. Bei Attributen wird Unbekanntes grosszuegig
+durchgereicht; bei Kommandos waere das falsch herum, weil zu den akzeptierten
+Kommandos die Verwaltungscluster gehoeren - RemoveFabric, Kommissionierung,
+TestEventTrigger. ADMINISTRATIVE_CLUSTERS bleibt auch im Rohmodus gesperrt.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from loxmatter.matter.models import NodeSnapshot
+from loxmatter.matter.paths import ACCEPTED_COMMAND_LIST_ID, parse_attribute_path
+from loxmatter.profiles.table import (
+    ADMINISTRATIVE_CLUSTERS,
+    command_slug,
+    command_takes_value,
+)
+
+
+@dataclass(frozen=True, order=True)
+class DeviceCommand:
+    endpoint: int
+    cluster_id: int
+    command_id: int
+    slug: str
+    takes_value: bool
+
+
+def extract_commands(snapshot: NodeSnapshot, *, raw: bool = False) -> list[DeviceCommand]:
+    """Alle Kommandos, die als Loxone-Ausgang erscheinen duerfen."""
+    commands: list[DeviceCommand] = []
+
+    for path, value in snapshot.attributes.items():
+        try:
+            endpoint, cluster_id, attribute_id = parse_attribute_path(path)
+        except ValueError:
+            continue
+        if attribute_id != ACCEPTED_COMMAND_LIST_ID:
+            continue
+        if cluster_id in ADMINISTRATIVE_CLUSTERS:
+            continue
+        if not isinstance(value, (list, tuple)):
+            continue
+
+        for command_id in (int(c) for c in value if isinstance(c, (int, float))):
+            slug = command_slug(cluster_id, command_id)
+            if slug is None:
+                if not raw:
+                    continue
+                slug = f"c{cluster_id}_cmd{command_id}"
+            commands.append(
+                DeviceCommand(
+                    endpoint=endpoint,
+                    cluster_id=cluster_id,
+                    command_id=command_id,
+                    slug=slug,
+                    takes_value=command_takes_value(cluster_id, command_id),
+                )
+            )
+
+    return sorted(commands)
+```
+
+- [ ] **Step 6: Run test to verify it passes**
+
+Run: `uv run pytest tests/export/test_commands.py -v`
+Expected: PASS, 8 Tests
+
+Schlägt `test_plug_yields_only_the_onoff_commands` mit zusätzlichen Treffern fehl,
+steht ein Cluster in der Tabelle, der dort nicht hingehört — **nicht** den Test
+anpassen, sondern die Tabelle prüfen.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/loxmatter/export/commands.py src/loxmatter/profiles tests/export/test_commands.py
+git commit -m "feat(export): Ausgangsbefehle aus AcceptedCommandList mit Erlaubnisliste"
+```
+
+---
+
+### Task 7: `loxmatter export` und der Beleg an echten Geräten
 
 **Files:**
 - Modify: `src/loxmatter/cli.py`
@@ -1388,6 +1634,42 @@ def test_non_exportable_attributes_do_not_appear(tmp_path):
     assert commands == 109 + 1  # abbildbare Attribute plus Online-Signal
 
 
+def test_plug_gets_only_the_onoff_commands(tmp_path):
+    """Task 6: Ausgangsbefehle stammen aus AcceptedCommandList, nicht aus Attributen."""
+    CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    text = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
+    assert text.count("<VirtualOutCmd ") == 3
+
+
+def test_button_gets_no_output_commands(tmp_path):
+    """Ein Taster ist ein Eingabegeraet - die VO_-Datei bleibt leer."""
+    CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_bilresa_button.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    text = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
+    assert text.count("<VirtualOutCmd ") == 0
+
+
 def test_export_reports_what_it_skipped(tmp_path):
     result = CliRunner().invoke(
         app,
@@ -1428,6 +1710,12 @@ def export(
     store_path: Path = typer.Option(  # noqa: B008
         Path("loxmatter.sqlite"), help="Datenbank mit den Signalschlüsseln"
     ),
+    raw_commands: bool = typer.Option(
+        False,
+        "--raw-commands",
+        help="Auch Kommandos unbekannter Cluster exportieren. "
+        "Verwaltungscluster bleiben in jedem Fall gesperrt.",
+    ),
 ) -> None:
     """Erzeugt die Loxone-Vorlagen für ein Gerät."""
     snapshot = _load_snapshot(fixture, node, url)
@@ -1441,11 +1729,17 @@ def export(
 
     label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or f"Node {snapshot.node_id}"
     inputs = to_inputs(stored, label)
+    # Ausgangsbefehle kommen aus AcceptedCommandList, nicht aus den Attributen:
+    # Matter-Attribute sind fast alle nur lesbar (Task 6).
+    device_commands = extract_commands(snapshot, raw=raw_commands)
     commands = [
-        LoxoneCommand(s.key, s.title, f"/cmd/{s.key}/<v>", s.exportability is Exportability.ANALOG)
-        for s in stored
-        if s.exportability in (Exportability.ANALOG, Exportability.DIGITAL)
-        and s.ref.kind is SignalKind.ATTRIBUTE
+        LoxoneCommand(
+            key=f"d{device_id}_{c.endpoint}_{c.slug}",
+            title=c.slug,
+            path=f"/cmd/d{device_id}_{c.endpoint}_{c.slug}/" + ("<v>" if c.takes_value else "1"),
+            analog=c.takes_value,
+        )
+        for c in device_commands
     ]
 
     out.mkdir(parents=True, exist_ok=True)
@@ -1503,8 +1797,8 @@ from loxmatter.export.documents import (
     render_virtual_in_udp,
     render_virtual_out,
 )
+from loxmatter.export.commands import extract_commands
 from loxmatter.export.signals import to_inputs
-from loxmatter.matter.models import SignalKind
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import Exportability
 ```
@@ -1560,7 +1854,9 @@ Die Phase ist fertig, wenn:
 2. beide echten Geräte exportiert und die Dateien **in echtem Loxone Config importiert**
    wurden,
 3. ein zweiter Export desselben Geräts dieselben Schlüssel erzeugt,
-4. Abweichungen vom erwarteten Format in Spec 6.1 stehen.
+4. die `VO_`-Datei der Steckdose genau die OnOff-Befehle trägt und die des Tasters
+   leer ist — kein Verwaltungscluster taucht in einer der beiden auf,
+5. Abweichungen vom erwarteten Format in Spec 6.1 stehen.
 
 Nicht Teil dieser Phase: das Senden der Werte (Phase 4), die Einheitenumrechnung
 (Phase 4), der virtuelle Texteingang für String-Attribute, und die Systemvorlage mit
