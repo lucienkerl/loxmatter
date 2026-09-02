@@ -1,7 +1,13 @@
 import pytest
 
-from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
+from loxmatter.commands.translate import (
+    _PAYLOAD_BUILDERS,
+    MatterCall,
+    UnsupportedValueError,
+    to_matter_call,
+)
 from loxmatter.model.store import StoredCommand
+from loxmatter.profiles.table import known_command_pairs
 
 
 def cmd(cluster: int, command: int, takes_value: bool = False) -> StoredCommand:
@@ -78,6 +84,18 @@ def test_onoff_cluster_with_unknown_command_raises():
     Fehlers."""
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(6, 99, takes_value=True), "1")
+
+
+def test_payload_builders_match_clusters_yaml_commands():
+    """Review-Fix C2, 2026-09-02: `_PAYLOAD_BUILDERS` und `clusters.yaml`
+    sind zwei unabhaengig gepflegte Erlaubnislisten fuer dasselbe - ein
+    Kommando, das die eine bedient, muss die andere kennen, sonst driften
+    sie auseinander (wie hier: (768, 10) stand in `_PAYLOAD_BUILDERS`, fehlte
+    aber in `clusters.yaml`, wodurch der Rohexport ein digitales `c768_cmd10`
+    baute, dessen Builder in Wirklichkeit einen Wert erwartete - siehe
+    Cluster-768-Eintrag in `clusters.yaml`). Dieser Test ist der Punkt: ohne
+    ihn kehrt genau diese Drift unbemerkt zurueck."""
+    assert set(_PAYLOAD_BUILDERS) == known_command_pairs()
 
 
 def test_level_cluster_with_unknown_command_raises():

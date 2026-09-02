@@ -22,6 +22,24 @@ clusters:
     commands:
       0: {slug: level, takes_value: true}
       4: {slug: level_onoff, takes_value: true}
+  768:
+    name: colorcontrol
+    commands:
+      # MoveToColorTemperature - der einzige ColorControl-Befehl, den
+      # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS und
+      # dessen Docstring: Hue/Saturation, Kommando 6, bleibt bewusst aussen
+      # vor, weil die Loxone-seitige RGB-Zahl nicht verlaesslich belegt ist).
+      # Review-Fix C2, 2026-09-02: dieser Eintrag fehlte, obwohl
+      # _PAYLOAD_BUILDERS das Paar (768, 10) schon bediente - im Rohexport
+      # (`raw`) wurde das Kommando dadurch als generisches, digitales
+      # `c768_cmd10` exportiert (takes_value=False laut command_takes_value),
+      # und ein Tastendruck schickte den woertlichen Text "1" in
+      # _payload_color_temperature, das daraus 1_000_000 mireds baute - eine
+      # erfundene Farbtemperatur an ein echtes Geraet. takes_value: true
+      # macht daraus einen analogen Ausgang UND exportiert das Kommando ab
+      # sofort auch im normalen (nicht-rohen) Modus, was fuer ein bedientes
+      # Kommando ohnehin richtig ist.
+      10: {slug: colortemp, takes_value: true}
   1026:
     name: temperature
     attributes:
