@@ -49,7 +49,7 @@ Beim Entwurf dieser Phase gefunden, nicht vorher bekannt:
 | `src/loxmatter/commands/color.py` | Farbraum-Umrechnung |
 | `src/loxmatter/loxone/server.py` | HTTP-Endpoint für virtuelle Ausgänge und `/resync` |
 | `src/loxmatter/cli.py` | zusätzlich `loxmatter run` |
-| `deploy/fake-miniserver/` | Testdoppel für beide Richtungen |
+| `src/loxmatter/devtools/` | Testdoppel für beide Richtungen (`FakeMiniserver`) |
 
 ---
 
@@ -70,7 +70,7 @@ Beim Entwurf dieser Phase gefunden, nicht vorher bekannt:
   - `format_value(value: float | bool) -> str` in `loxone.values`
   - `datagram(key: str, value: float | bool) -> bytes` in `loxone.values`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/loxone/test_values.py`:
 
@@ -170,12 +170,12 @@ def test_format_never_renders_scientific_notation_for_negative_values():
     assert "e" not in format_value(-1234567.89).lower()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_values.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone'`
 
-- [ ] **Step 3: Skalierungsfaktoren in die Tabelle**
+- [x] **Step 3: Skalierungsfaktoren in die Tabelle**
 
 In `src/loxmatter/profiles/clusters.yaml` bei den Attributen jeweils `scale` ergänzen.
 Die Faktoren stammen aus Spec 7.3:
@@ -204,7 +204,7 @@ Die Faktoren stammen aus Spec 7.3:
 
 Achte auf die YAML-Falle aus Phase 3: Slugs wie `on` und `off` müssen quotiert bleiben.
 
-- [ ] **Step 4: `scale_factor` in `profiles/table.py`**
+- [x] **Step 4: `scale_factor` in `profiles/table.py`**
 
 ```python
 def scale_factor(ref: SignalRef) -> float:
@@ -220,7 +220,7 @@ def scale_factor(ref: SignalRef) -> float:
     return float(entry.get("scale", 1.0))
 ```
 
-- [ ] **Step 5: `loxone/values.py`**
+- [x] **Step 5: `loxone/values.py`**
 
 ```python
 """Rechnet rohe Matter-Werte in das um, was der Miniserver erwartet.
@@ -276,12 +276,12 @@ def datagram(key: str, value: float | bool) -> bytes:
     return f"{key}:{format_value(value)}".encode()
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_values.py -v`
 Expected: PASS, 15 Tests
 
-- [ ] **Step 7: Gegen das echte Gerät halten**
+- [x] **Step 7: Gegen das echte Gerät halten**
 
 `tests/loxone/test_values_real_device.py`:
 
@@ -328,7 +328,7 @@ def test_no_value_formats_to_scientific_notation():
             assert "e" not in format_value(wert).lower()
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/loxmatter/loxone src/loxmatter/profiles tests/loxone
@@ -360,7 +360,7 @@ aber nichts kann diesen Schlüssel später zurück auf ein Matter-Kommando abbil
     deutscher Meldung
   - `Store.commands(device_id: int) -> list[StoredCommand]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/model/test_store_commands.py`:
 
@@ -494,12 +494,12 @@ def test_takes_value_change_is_picked_up_on_reregistration(store):
     assert on_after.key == on_before.key
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/model/test_store_commands.py -v`
 Expected: FAIL mit `AttributeError: 'Store' object has no attribute 'register_commands'`
 
-- [ ] **Step 3: Schema und Methoden ergänzen**
+- [x] **Step 3: Schema und Methoden ergänzen**
 
 In `_SCHEMA` von `src/loxmatter/model/store.py` ergänzen:
 
@@ -648,7 +648,7 @@ def _as_command(row: sqlite3.Row) -> StoredCommand:
     )
 ```
 
-- [ ] **Step 4: Der Export persistiert die Kommandos**
+- [x] **Step 4: Der Export persistiert die Kommandos**
 
 In `src/loxmatter/cli.py` im `export`-Kommando, direkt nach `store.register_signals(...)`
 und innerhalb desselben `try`, ergänzen:
@@ -668,13 +668,13 @@ ihn aus dem Schlüssel zurueckzuparsen (`c.key.split("_", 2)[-1]`). Zwei Stellen
 dieselbe Zusammensetzung getrennt kennen muessen, sind derselbe Auseinanderdrift-Fehler
 wie oben, nur eine Ebene tiefer.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `uv run pytest tests/model tests/test_export_cli.py -v`
 Expected: PASS, 8 Tests in `test_store_commands.py`; die bestehenden Export-Tests müssen
 unverändert durchlaufen.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/loxmatter/model src/loxmatter/cli.py tests/model
@@ -697,7 +697,7 @@ git commit -m "feat(model): exportierte Kommandos sind zur Laufzeit aufloesbar"
   - `async def close(self) -> None`
   - `RATE_LIMIT_PER_SECOND: float`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/loxone/test_sender.py`:
 
@@ -818,12 +818,12 @@ async def test_close_is_idempotent():
     await sender.close()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_sender.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.sender'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/loxone/sender.py`:
 
@@ -898,12 +898,12 @@ class UdpSender:
                 self._socket = None
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_sender.py -v`
 Expected: PASS, 8 Tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/loxone/sender.py tests/loxone/test_sender.py
@@ -939,7 +939,7 @@ Zustands-Wiederherstellung.
   - `async def start(self) -> None`, `async def stop(self) -> None`
   - `PULSE_MILLISECONDS: int`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/loxone/test_runtime.py`:
 
@@ -1183,12 +1183,12 @@ async def test_invalidate_index_lets_a_newly_registered_signal_through(environme
     assert sender.keys() == [key]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.runtime'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/loxone/runtime.py`:
 
@@ -1415,7 +1415,7 @@ class Runtime:
                 logger.exception("Full-Resend fehlgeschlagen - Schleife laeuft weiter")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -v`
 Expected: PASS, 14 Tests
@@ -1426,7 +1426,7 @@ gespeichertes Signal wird übersprungen, zweimaliges Säen verdoppelt nichts, ei
 ohne bekanntes Gerät bricht das Säen nicht ab) — macht 19 Tests in
 `tests/loxone/test_runtime.py`. Siehe Task 8 für die zugehörige Änderung in `_run()`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/loxone/runtime.py tests/loxone/test_runtime.py
@@ -1452,7 +1452,7 @@ git commit -m "feat(loxone): Laufzeit mit Impulsen, Zaehlern, Online und Full-Re
   - `UnsupportedValueError(ValueError)` — deutscher Text
   - in `color.py`: `kelvin_to_mireds(kelvin: float) -> int`, `rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]`
 
-- [ ] **Step 1: Die Loxone-Farbcodierung klären, bevor Code entsteht**
+- [x] **Step 1: Die Loxone-Farbcodierung klären, bevor Code entsteht**
 
 **Dieser Schritt braucht Recherche, keine Vermutung.** Für OnOff und LevelControl ist die
 Abbildung eindeutig. Für Farbe ist sie es nicht: Loxone überträgt Farbe als **eine Zahl**,
@@ -1483,7 +1483,7 @@ Die Matter-Seite ist dagegen belegt und nicht zu recherchieren:
 
 Mireds sind `1_000_000 / Kelvin`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/commands/test_translate.py`:
 
@@ -1596,12 +1596,12 @@ def test_primary_colours_map_to_known_hues(rgb, hue, saturation):
     assert s == pytest.approx(saturation, abs=1)
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/commands -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.commands'`
 
-- [ ] **Step 4: Write minimal implementation**
+- [x] **Step 4: Write minimal implementation**
 
 `src/loxmatter/commands/color.py`:
 
@@ -1741,18 +1741,18 @@ def to_matter_call(command: StoredCommand, value: str) -> MatterCall:
     )
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/commands -v`
 Expected: PASS, 15 Tests
 
-- [ ] **Step 6: Befund zur Farbcodierung eintragen**
+- [x] **Step 6: Befund zur Farbcodierung eintragen**
 
 Trage das Ergebnis aus Schritt 1 in Spec 7.3 ein: welche Loxone-Codierung du gefunden
 hast und aus welcher Quelle, oder dass keine belastbare Quelle auffindbar war. Vermerke
 dort ebenfalls, dass die Umrechnung mangels Leuchte nicht an Hardware geprüft ist.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/loxmatter/commands tests/commands docs/
@@ -1774,14 +1774,14 @@ git commit -m "feat(commands): Wunschzustand in Matter-Kommando uebersetzen"
   - `build_app(store: Store, invoke: Callable[[MatterCall], Awaitable[None]], runtime: Runtime) -> FastAPI`
   - Routen: `GET /cmd/{key}/{value}`, `GET /resync`, `GET /health`
 
-- [ ] **Step 1: Abhängigkeiten ergänzen**
+- [x] **Step 1: Abhängigkeiten ergänzen**
 
 In `pyproject.toml` unter `dependencies`: `"fastapi>=0.115"`, `"uvicorn>=0.30"`. Dann
 `uv sync`. FastAPI kommt jetzt schon dazu, weil Spec 3.3 es für die WebUI in Phase 5
 vorsieht — ein Zwischenschritt über einen anderen Server wäre Arbeit, die wieder
 wegfällt.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/loxone/test_server.py`:
 
@@ -1937,12 +1937,12 @@ async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
     store.close()
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_server.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.server'`
 
-- [ ] **Step 4: Write minimal implementation**
+- [x] **Step 4: Write minimal implementation**
 
 `src/loxmatter/loxone/server.py`:
 
@@ -2014,12 +2014,12 @@ def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
     return app
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_server.py -v`
 Expected: PASS, 7 Tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/loxmatter/loxone/server.py tests/loxone/test_server.py pyproject.toml uv.lock
@@ -2041,7 +2041,7 @@ Vorlagenpaar (Spec 6.2, 6.4, 6.5).
 **Interfaces:**
 - Produces: `render_system_templates(bridge_ip: str, port: int) -> tuple[bytes, bytes]`, plus CLI-Flag `--system`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/export/test_system_template.py`:
 
@@ -2082,12 +2082,12 @@ def test_system_templates_carry_no_device_prefix():
     assert "d1_" not in text(vo)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/export/test_system_template.py -v`
 Expected: FAIL mit `ImportError: cannot import name 'render_system_templates'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/loxmatter/export/documents.py` ergänzen:
 
@@ -2184,7 +2184,7 @@ der Parametervalidierung in `_load_snapshot`, bevor irgendein Verzeichnis entste
 
 Damit sind drei Aufrufe möglich: nur ein Gerät, nur die Systemvorlagen, oder beides.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_system_template.py -v`
 Expected: PASS, 5 Tests
@@ -2196,7 +2196,7 @@ gegen die Referenzdateien in `test_reference.py` (2 Tests) und der Schutz der be
 Run: `uv run pytest tests/export/test_reference.py tests/test_export_cli.py -v`
 Expected: PASS, 15 Tests in `test_reference.py`, 13 Tests in `test_export_cli.py`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/export/documents.py src/loxmatter/cli.py tests/export/test_system_template.py
@@ -2216,9 +2216,20 @@ git commit -m "feat(export): Systemvorlage mit Heartbeat und resync"
 
 **Interfaces:**
 - Produces: CLI-Kommandos `loxmatter run` und `loxmatter fake-miniserver`
-- `class FakeMiniserver` mit `async def start()`, `async def stop()`, `received: list[tuple[str, str]]`, `def silent_keys(template: Path) -> list[str]`
+- `class FakeMiniserver` mit `async def start()`, `async def stop()`,
+  `received: list[tuple[str, str]]`, `malformed: list[bytes]`,
+  `port: int` (Property — bei `port=0` der tatsächlich gebundene Port),
+  `on_received: Callable[[str, str], None] | None`,
+  `on_malformed: Callable[[bytes], None] | None` (beide Konstruktor-Kwargs, für
+  `loxmatter fake-miniserver`s Echtzeit-Ausgabe mit Zeitstempel — siehe
+  `_fake_miniserver` in `cli.py`), `announced_keys(template: Path) -> set[str]`,
+  `silent_keys(template: Path) -> list[str]`
+  **(Korrektur, Review-Fix I6, 2026-09-02: gegenüber dem ursprünglichen
+  Entwurf unten um `malformed`, `on_received`, `on_malformed` und
+  `announced_keys` erweitert — `port` ist eine Property, kein Attribut,
+  siehe Step 3/6.)**
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/devtools/test_fake_miniserver.py`:
 
@@ -2276,12 +2287,12 @@ def test_silent_keys_reads_the_check_attribute():
     assert all(not k.endswith(":\\v") for k in fake.silent_keys(REFERENZ))
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/devtools -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.devtools'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/devtools/fake_miniserver.py`:
 
@@ -2349,7 +2360,107 @@ class FakeMiniserver:
         return sorted(angekuendigt - gesehen)
 ```
 
-- [ ] **Step 4: `loxmatter run` schreiben**
+**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben ist der urspruengliche Stand vor der Umsetzung, hier zur Nachvollziehbarkeit des Plans stehengelassen, aber nicht mehr verbindlich. Tatsaechlich ausgeliefert wurde eine erweiterte Fassung — `on_received`/`on_malformed` als optionale Konstruktor-Callbacks (fuer `loxmatter fake-miniserver`s Echtzeit-Ausgabe, siehe `_fake_miniserver` unten), `announced_keys()` getrennt von `silent_keys()` ausgelagert (fuer `_silent_keys_report`s Unterscheidung "nichts zu pruefen" vs. "alles gesehen", siehe Step 4/6) und `_DatagramProtocol` statt `_Protokoll` benannt. Der tatsaechliche Quelltext steht in `src/loxmatter/devtools/fake_miniserver.py`:
+
+```python
+"""Ersetzt den Loxone Miniserver beim Entwickeln.
+
+Der dritte Punkt unten ist der eigentliche Gewinn: er vergleicht, welche
+Signale eine erzeugte Vorlage ankuendigt, mit denen, die tatsaechlich ein
+Datagramm geschickt haben. Ein exportiertes Signal, das nie feuert, ist ein
+Mapping-Fehler - und ohne diesen Abgleich faellt er erst in Loxone auf, wo er
+wie ein Geraetefehler aussieht.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from collections.abc import Callable
+from pathlib import Path
+
+# Liest genau das Attribut, das render_virtual_in_udp schreibt (siehe
+# export/documents.py): Check="<schluessel>:\v".
+_CHECK = re.compile(r'Check="([^:"]+):\\v"')
+
+
+class _DatagramProtocol(asyncio.DatagramProtocol):
+    def __init__(self, server: FakeMiniserver) -> None:
+        self._server = server
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        text = data.decode(errors="replace")
+        key, sep, value = text.partition(":")
+        if not sep:
+            self._server.malformed.append(data)
+            if self._server.on_malformed is not None:
+                self._server.on_malformed(data)
+            return
+        self._server.received.append((key, value))
+        if self._server.on_received is not None:
+            self._server.on_received(key, value)
+
+
+class FakeMiniserver:
+    """Nimmt UDP-Datagramme entgegen wie der echte Miniserver - ohne ihn.
+
+    `on_received`/`on_malformed` sind fuer `loxmatter fake-miniserver`
+    gedacht (Echtzeit-Ausgabe mit Zeitstempel) - `received`/`malformed`
+    bleiben die primaere, im Test abgefragte Quelle und wachsen immer,
+    unabhaengig davon, ob ein Callback gesetzt ist.
+    """
+
+    def __init__(
+        self,
+        port: int = 7000,
+        host: str = "127.0.0.1",
+        *,
+        on_received: Callable[[str, str], None] | None = None,
+        on_malformed: Callable[[bytes], None] | None = None,
+    ) -> None:
+        self._host, self._port = host, port
+        self.received: list[tuple[str, str]] = []
+        self.malformed: list[bytes] = []
+        self.on_received = on_received
+        self.on_malformed = on_malformed
+        self._transport: asyncio.DatagramTransport | None = None
+
+    @property
+    def port(self) -> int:
+        if self._transport is None:
+            return self._port
+        return int(self._transport.get_extra_info("sockname")[1])
+
+    async def start(self) -> None:
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: _DatagramProtocol(self), local_addr=(self._host, self._port)
+        )
+        self._transport = transport
+
+    async def stop(self) -> None:
+        if self._transport is not None:
+            self._transport.close()
+            self._transport = None
+
+    def announced_keys(self, template: Path) -> set[str]:
+        """Signale, die die Vorlage per `Check`-Attribut ankuendigt.
+
+        Getrennt von `silent_keys` gehalten, damit ein Aufrufer (siehe
+        `loxmatter fake-miniserver`) unterscheiden kann, ob eine Vorlage
+        schlicht KEIN Check-Attribut traegt (z. B. eine VO_-Datei oder eine
+        leere Vorlage) - dann gibt es nichts zu pruefen - statt das mit dem
+        Fall zu verwechseln, dass alle angekuendigten Signale gesehen wurden.
+        """
+        return set(_CHECK.findall(template.read_text(encoding="utf-8-sig")))
+
+    def silent_keys(self, template: Path) -> list[str]:
+        """Signale, die die Vorlage ankuendigt, die aber nie ein Datagramm schickten."""
+        seen = {key for key, _ in self.received}
+        return sorted(self.announced_keys(template) - seen)
+```
+
+- [x] **Step 4: `loxmatter run` schreiben**
 
 In `src/loxmatter/cli.py`:
 
@@ -2402,6 +2513,132 @@ async def _run(url: str, miniserver: str, port: int, listen: int, store_path: Pa
         store.close()
 ```
 
+**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben ist der urspruengliche Stand vor der Umsetzung, hier zur Nachvollziehbarkeit des Plans stehengelassen, aber nicht mehr verbindlich. Tatsaechlich ausgeliefert wurde eine deutlich erweiterte Fassung — `run` loest den Store-Pfad selbst auf, gibt ihn aus (Review-Fix M10, 2026-09-02) und oeffnet die Datenbank SYNCHRON vor `asyncio.run(...)`, damit ein unbeschreibbarer Pfad als klarer CLI-Fehler endet statt als Traceback aus dem Inneren von `asyncio.run`; `_run` nimmt den bereits geoeffneten `store` deshalb als ersten Parameter entgegen (nicht `store_path`) und raeumt jede der vier Ressourcen (Laufzeit, Sender, matter-Client, Datenbank) im `finally` in einem EIGENEN try/except auf, damit ein Fehler beim Aufraeumen einer Ressource die uebrigen nicht mitreisst. Der tatsaechliche Quelltext steht in `src/loxmatter/cli.py`:
+
+```python
+@app.command()
+def run(
+    url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
+    miniserver: str = typer.Option(..., help="IP des Miniservers"),
+    port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
+    listen: int = typer.Option(8080, help="Port für die HTTP-Kommandos aus Loxone"),
+    store_path: Path | None = typer.Option(  # noqa: B008
+        None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
+    ),
+) -> None:
+    """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein.
+
+    Öffnet die Datenbank schon hier, synchron — ein unbeschreibbarer Pfad
+    soll als klarer CLI-Fehler enden (wie bei `export`), nicht als
+    Traceback aus dem Inneren von `asyncio.run`.
+    """
+    resolved_store_path = _resolve_store_path(store_path)
+    # Wie bei `export` ausgegeben (Review-Fix M10, 2026-09-02): die
+    # wahrscheinlichste Fehlkonfiguration ist eine `export`- und eine
+    # `run`-Datenbank, die auseinanderlaufen — exportiert mit
+    # `--store-path`, gestartet ohne (oder umgekehrt). Ohne diese Zeile
+    # zeigt sich das erst als 404 in einem Log, das niemand liest, weil
+    # `run` den verwendeten Pfad bislang nie nannte.
+    typer.echo(f"Datenbank: {resolved_store_path.resolve()}")
+    try:
+        resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(
+            f"Verzeichnis {resolved_store_path.parent} konnte nicht angelegt werden: {exc}. "
+            "Ist der Pfad beschreibbar?"
+        )
+    try:
+        store = Store(resolved_store_path)
+    except (OSError, sqlite3.Error) as exc:
+        _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
+
+    asyncio.run(_run(store, url, miniserver, port, listen))
+```
+
+```python
+async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) -> None:
+    """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
+
+    `store` kommt bereits geöffnet herein (siehe `run` oben). `UdpSender`,
+    `Runtime` und `_build_client` führen in ihren Konstruktoren keine E/A
+    aus, die scheitern könnte — anders als `Store(...)` selbst. Ab hier sind
+    also garantiert alle vier Ressourcen vorhanden, wenn `finally` sie
+    schließt: kein Leck durch einen fehlgeschlagenen Konstruktor irgendwo
+    zwischen `try` und dem ersten `await`.
+
+    Jeder Aufräumschritt in `finally` steht in seinem eigenen `try`/`except`:
+    scheitert einer (z. B. `runtime.stop()`, weil der letzte Full-Resend
+    mitten in einem Sendefehler steckte), dürfen die folgenden trotzdem
+    laufen — sonst bliebe je nach Fehlerort der UDP-Socket offen oder die
+    matter-server-Verbindung hängen. `asyncio.CancelledError` fließt an all
+    dem vorbei ungefangen durch: ein Strg-C soll den Abbruch weiterreichen,
+    nicht als Aufräumfehler verschluckt werden.
+
+    Zum eigentlichen Abbruchverhalten: `uvicorn.Server.serve()` fängt
+    SIGINT/SIGTERM selbst ab (`Server.capture_signals`) und kehrt bei einem
+    ersten Strg-C geordnet zurück, statt eine Ausnahme zu werfen — der
+    `finally`-Block unten läuft in diesem Fall wie bei jedem anderen reguären
+    Ende auch. `asyncio.run()` selbst installiert seit Python 3.11 zusätzlich
+    einen eigenen SIGINT-Handler, der bei einem Strg-C außerhalb von
+    `serve()` (z. B. während `client.connect()`) den gesamten `_run`-Task
+    abbricht — auch das erreicht `finally` als normale Abbruch-Ausnahme.
+    """
+    sender = UdpSender(miniserver, port)
+    runtime = Runtime(store, sender)
+    client = _build_client(url)
+
+    async def invoke(call: MatterCall) -> None:
+        await client.send_command(call)
+
+    try:
+        try:
+            await client.connect()
+        except CannotConnect:
+            _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+        except MatterUnavailableError as exc:
+            _fail(
+                f"matter-server unter {url} hat sich verbunden, aber keine "
+                f"Bereitschaft gemeldet: {exc}"
+            )
+        await client.subscribe(store.device_id_for_node, runtime)
+        await runtime.start()
+        # Startwerte aus dem aktuellen Geraetezustand laden, BEVOR der Resend
+        # unten sie verschickt (Spec 6.4, Live-Lauf vom 2026-09-02): ohne das
+        # faende `resend_all()` einen leeren Cache vor, weil ein Wert dort nur
+        # ueber eine sich aendernde Subscription landet - siehe
+        # `Runtime.seed_from_snapshot`.
+        await runtime.seed_from_snapshot(await client.snapshots())
+        # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
+        await runtime.resend_all()
+
+        config = uvicorn.Config(
+            build_app(store, invoke, runtime), host="0.0.0.0", port=listen, log_level="info"
+        )
+        await uvicorn.Server(config).serve()
+    finally:
+        try:
+            await runtime.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Laufzeit konnte beim Beenden nicht sauber gestoppt werden")
+        try:
+            await sender.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("UDP-Sender konnte beim Beenden nicht sauber geschlossen werden")
+        try:
+            await client.disconnect()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Verbindung zu matter-server konnte beim Beenden nicht sauber getrennt werden"
+            )
+        store.close()
+```
+
 Die Anbindung an matter-server fehlt in `BridgeMatterClient` noch in zwei Punkten und
 gehört zu dieser Task:
 
@@ -2447,13 +2684,84 @@ def fake_miniserver_cmd(
 Es druckt jedes Datagramm mit Zeitstempel und bei Strg-C, sofern `--template` gesetzt
 ist, die stummen Signale.
 
-- [ ] **Step 5: Vollständige Prüfung**
+**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben fehlten zwei Dinge, die tatsaechlich ausgeliefert wurden. Erstens prueft `fake_miniserver_cmd` `--template` schon VOR `asyncio.run(_fake_miniserver(...))`, nicht erst danach — der Pfad wird sonst erst im `finally` von `_fake_miniserver` gelesen, also erst NACH dem Warten auf Strg-C, und ein falscher Pfad wuerde den Nutzer erst nach dem Abbruch ueberraschen (Review-Fix Minor #5). Zweitens gibt es `_silent_keys_report` — eine eigene Funktion fuer die Abschlussmeldung, die DREI Faelle unterscheidet, nicht zwei: `announced` leer (die Vorlage traegt gar kein `Check`-Attribut, z. B. eine VO_-Datei — nichts zu pruefen), `announced` nicht leer und `silent` leer (tatsaechlich alles gesehen) und `announced`/`silent` beide nicht leer (Review-Fix Minor #4). Der tatsaechliche Quelltext steht in `src/loxmatter/cli.py`:
+
+```python
+@app.command(name="fake-miniserver")
+def fake_miniserver_cmd(
+    port: int = typer.Option(7000, help="UDP-Port, auf dem gelauscht wird"),
+    template: Path | None = typer.Option(  # noqa: B008
+        None, help="Erzeugte VIU_-Vorlage: nennt am Ende die Signale, die nie feuerten"
+    ),
+) -> None:
+    """Ersetzt den Miniserver: schreibt jedes Datagramm mit.
+
+    `--template` wird bereits hier geprueft, statt den Nutzer erst nach dem
+    Warten auf Strg-C (der Pfad wird erst im `finally` von `_fake_miniserver`
+    gelesen) mit einem Fehler zu ueberraschen — wie bei den uebrigen Kommandos
+    dieses Moduls soll ein falscher Pfad sofort als CLI-Fehler enden (Review-Fix
+    Minor #5).
+    """
+    if template is not None and not template.is_file():
+        _fail(f"Vorlage {template} wurde nicht gefunden.")
+    asyncio.run(_fake_miniserver(port, template))
+
+
+def _silent_keys_report(template_name: str, announced: set[str], silent: list[str]) -> str:
+    """Formuliert die Abschlussmeldung von `fake-miniserver --template`.
+
+    Drei zu unterscheidende Faelle: `announced` leer heisst, die Vorlage traegt
+    gar kein `Check`-Attribut (z. B. eine VO_-Datei oder eine leere Vorlage) —
+    dann gibt es nichts zu pruefen, und das ist etwas anderes als "alles wurde
+    gesehen". Nur wenn `announced` nicht leer und `silent` leer ist, war die
+    Pruefung tatsaechlich erfolgreich (Review-Fix Minor #4).
+    """
+    if not announced:
+        return f"{template_name} enthält keine Check-Signale — nichts zu prüfen."
+    if not silent:
+        return (
+            f"Alle {len(announced)} Signale aus {template_name} wurden mindestens einmal gesehen."
+        )
+    lines = [f"{len(silent)} Signale aus {template_name} nie gesehen:"]
+    lines += [f"  {key}" for key in silent]
+    return "\n".join(lines)
+
+
+async def _fake_miniserver(port: int, template: Path | None) -> None:
+    # datetime.now() ohne tz ist hier Absicht: das ist die Ortszeit fuer einen
+    # Menschen, der dem Terminal beim Draufschauen zusieht - keine
+    # gespeicherte oder verglichene Zeit.
+    def announce(key: str, value: str) -> None:
+        typer.echo(f"{datetime.now():%H:%M:%S} {key} = {value}")  # noqa: DTZ005
+
+    def announce_malformed(data: bytes) -> None:
+        typer.echo(
+            f"{datetime.now():%H:%M:%S} KAPUTT (kein Doppelpunkt): {data!r}",  # noqa: DTZ005
+            err=True,
+        )
+
+    fake = FakeMiniserver(port=port, on_received=announce, on_malformed=announce_malformed)
+    await fake.start()
+    typer.echo(f"fake-miniserver lauscht auf UDP-Port {fake.port} — Strg-C zum Beenden")
+    try:
+        await asyncio.Event().wait()  # blockiert, bis Strg-C den Task abbricht
+    finally:
+        await fake.stop()
+        if template is not None:
+            announced = fake.announced_keys(template)
+            silent = fake.silent_keys(template)
+            typer.echo(f"\n{_silent_keys_report(template.name, announced, silent)}")
+```
+
+
+
+- [x] **Step 5: Vollständige Prüfung**
 
 ```bash
 uv run pytest -v && uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
-- [ ] **Step 6: Durchstich ohne Miniserver**
+- [x] **Step 6: Durchstich ohne Miniserver**
 
 ```bash
 uv run loxmatter fake-miniserver --port 7000 --template ./export/VIU_d1_*.xml
@@ -2479,7 +2787,14 @@ dem Verbindungsaufbau, unabhängig davon, ob sich danach je etwas ändert — �
 sich ab jetzt nur noch auf Signale beziehen, die nach dem Start nie ein zweites Mal
 gesendet werden, nicht auf ein komplett fehlendes erstes Mal.
 
-- [ ] **Step 7: Durchstich mit echtem Miniserver**
+- [ ] **Step 7: Durchstich mit echtem Miniserver — 🔴 EINZIGER NOCH OFFENER SCHRITT DER GESAMTEN PHASE (Review-Fix I6, 2026-09-02)**
+
+> **Alles andere in diesem Plan ist erledigt und abgehakt.** Dies ist die letzte
+> unangekreuzte Checkbox unter allen ~50 in diesem Dokument. Sie kann nicht von einem
+> Agenten erledigt werden — sie braucht einen Menschen mit Zugriff auf Loxone Config und
+> den echten Miniserver (siehe "Dieser Schritt braucht einen Menschen..." unten). Bevor
+> diese Phase als abgeschlossen gilt, muss genau dieser Schritt nachgeholt werden — siehe
+> auch "Abschluss der Phase" ganz unten in diesem Dokument.
 
 **Dieser Schritt braucht einen Menschen mit Loxone Config.** Er ist der Zweck der Phase.
 
@@ -2496,7 +2811,7 @@ Miniserver-IP starten, und in der Loxone-Visualisierung prüfen:
 
 Was abweicht, geht in die Spec — **nicht** in eine Anpassung der Tests.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/loxmatter/devtools src/loxmatter/cli.py tests/devtools deploy/
@@ -2509,10 +2824,11 @@ git commit -m "feat(cli): loxmatter run und fake-miniserver"
 
 Die Phase ist fertig, wenn:
 
-1. `uv run pytest` ohne Hardware und ohne Netz durchläuft,
-2. der Durchstich ohne Miniserver (Task 8 Schritt 6) läuft,
-3. **die fünf Punkte aus Task 8 Schritt 7 an echter Hardware bestätigt sind**,
-4. Abweichungen in der Spec stehen.
+1. [x] `uv run pytest` ohne Hardware und ohne Netz durchläuft,
+2. [x] der Durchstich ohne Miniserver (Task 8 Schritt 6) läuft,
+3. [ ] **die fünf Punkte aus Task 8 Schritt 7 an echter Hardware bestätigt sind —
+   EINZIGER OFFENER PUNKT (Review-Fix I6, 2026-09-02), siehe dort**,
+4. [x] Abweichungen in der Spec stehen.
 
 **Bleibt offen:** die Farbraum-Umrechnung ist gegen Referenzwerte geprüft, aber nicht
 gegen eine Leuchte. Das ist der einzige Teil, den diese Phase nicht abschließen kann,
