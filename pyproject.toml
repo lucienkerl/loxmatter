@@ -9,6 +9,16 @@ dependencies = [
     "pyyaml>=6.0",
     "typer>=0.12",
     "uvicorn>=0.30",
+    # Task 7, Phase 5: `uvicorn` allein (ohne das "standard"-Extra) bringt
+    # keine WebSocket-Implementierung mit - `GET /api/live` (Spec 8.3,
+    # api/live.py) antwortet ohne dieses Paket mit 404 "Unsupported upgrade
+    # request", geprueft gegen einen echten `uvicorn.run` dieses Dienstes,
+    # nicht nur vermutet: die bisherige Testsuite lief ausschliesslich ueber
+    # den In-Prozess-ASGI-Pfad (tests/api/conftest.py, `_InProcessWebSocket`)
+    # und damit nie durch uvicorns eigene HTTP/WebSocket-Weiche. Ohne diese
+    # Zeile funktioniert die Live-Aktualisierung der WebUI in keiner
+    # Installation, die genau diese Abhaengigkeitsliste installiert.
+    "websockets>=12",
 ]
 
 [project.scripts]
