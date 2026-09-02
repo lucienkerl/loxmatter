@@ -930,13 +930,15 @@ einem monotonen Zähler. Spec 6.5: pro Gerät kommt ein `_online`-Signal dazu.
 - Consumes: `StoredSignal`, `Exportability`; `unit_format` aus `profiles.table`
 - Produces:
   - `class LoxoneInput` — frozen: `key: str`, `title: str`, `comment: str`, `analog: bool`, `unit_format: str`
-  - `to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[LoxoneInput]`
+  - `to_inputs(signals: Sequence[StoredSignal], device_id: int, device_label: str) -> list[LoxoneInput]`
 
 - [ ] **Step 1: Write the failing test**
 
 `tests/export/test_signals.py`:
 
 ```python
+import pytest
+
 from loxmatter.export.signals import to_inputs
 from loxmatter.matter.models import SignalKind, SignalRef
 from loxmatter.model.store import StoredSignal
@@ -954,14 +956,14 @@ def signal(key, kind=SignalKind.ATTRIBUTE, exportability=Exportability.ANALOG, u
 
 
 def test_analog_attribute_becomes_one_analog_input():
-    inputs = to_inputs([signal("d1_1_temp", unit="°C")], "Wohnzimmer")
+    inputs = to_inputs([signal("d1_1_temp", unit="°C")], 1, "Wohnzimmer")
     assert [i.key for i in inputs] == ["d1_1_temp", "d1_online"]
     assert inputs[0].analog is True
     assert inputs[0].unit_format == "<v.1> °C"
 
 
 def test_digital_attribute_becomes_one_digital_input():
-    inputs = to_inputs([signal("d1_1_onoff", exportability=Exportability.DIGITAL)], "Steckdose")
+    inputs = to_inputs([signal("d1_1_onoff", exportability=Exportability.DIGITAL)], 1, "Steckdose")
     assert inputs[0].analog is False
     assert inputs[0].unit_format == ""
 
@@ -970,6 +972,7 @@ def test_event_becomes_a_pulse_and_a_counter():
     """Spec 6.3: der Impuls erzeugt die Flanke, der Zaehler ueberlebt ein verlorenes Paket."""
     inputs = to_inputs(
         [signal("d1_1_press", kind=SignalKind.EVENT, exportability=Exportability.DIGITAL)],
+        1,
         "Taster",
     )
     keys = [i.key for i in inputs]
@@ -985,19 +988,19 @@ def test_event_becomes_a_pulse_and_a_counter():
 
 def test_non_exportable_signals_are_skipped():
     """Spec 6.6: Listen und Strukturen werden nie zu Loxone-Objekten."""
-    inputs = to_inputs([signal("d1_1_parts", exportability=Exportability.NONE)], "X")
+    inputs = to_inputs([signal("d1_1_parts", exportability=Exportability.NONE)], 1, "X")
     assert [i.key for i in inputs] == ["d1_online"]
 
 
 def test_text_signals_are_skipped_for_now():
     """Der virtuelle Texteingang ist ein eigener Vorlagentyp — spaetere Ausbaustufe."""
-    inputs = to_inputs([signal("d1_1_vendor", exportability=Exportability.TEXT)], "X")
+    inputs = to_inputs([signal("d1_1_vendor", exportability=Exportability.TEXT)], 1, "X")
     assert [i.key for i in inputs] == ["d1_online"]
 
 
 def test_online_signal_is_added_once_per_device():
     """Spec 6.5: kostet nichts und beantwortet die haeufigste Frage."""
-    inputs = to_inputs([signal("d1_1_a"), signal("d1_1_b")], "Geraet")
+    inputs = to_inputs([signal("d1_1_a"), signal("d1_1_b")], 1, "Geraet")
     assert [i.key for i in inputs].count("d1_online") == 1
     online = next(i for i in inputs if i.key == "d1_online")
     assert online.analog is False
@@ -1005,7 +1008,7 @@ def test_online_signal_is_added_once_per_device():
 
 def test_unit_no_longer_lands_in_the_comment():
     """Die Einheit stand frueher im Kommentar; jetzt traegt sie unit_format (Spec 7.3)."""
-    inputs = to_inputs([signal("d1_1_power", unit="kW")], "Steckdose")
+    inputs = to_inputs([signal("d1_1_power", unit="kW")], 1, "Steckdose")
     power = next(i for i in inputs if i.key == "d1_1_power")
     assert "kW" not in power.comment
     assert power.unit_format
@@ -1014,13 +1017,32 @@ def test_unit_no_longer_lands_in_the_comment():
 def test_power_unit_gets_the_widened_six_decimal_format():
     """Spec 7.3: mit dem sonst ueblichen <v.3> zeigt ein 300-mW-Standby-
     Verbraucher 0.000 an — deshalb <v.6> fuer Leistung."""
-    inputs = to_inputs([signal("d1_1_power", unit="kW")], "Steckdose")
+    inputs = to_inputs([signal("d1_1_power", unit="kW")], 1, "Steckdose")
     power = next(i for i in inputs if i.key == "d1_1_power")
     assert power.unit_format == "<v.6> kW"
 
 
 def test_empty_signal_list_still_yields_the_online_input():
-    assert [i.key for i in to_inputs([], "Leer")] == ["d1_online"]
+    assert [i.key for i in to_inputs([], 7, "Leer")] == ["d7_online"]
+
+
+def test_event_counter_key_colliding_with_another_signal_raises():
+    """Regression: die `_n`-Endung ist nirgends reserviert. Ein `clusters.yaml`-
+    Slug kann zufaellig genau auf den Zaehler-Schluessel eines Events treffen —
+    das darf nie still zwei identische `LoxoneInput`s erzeugen (siehe Review)."""
+    event = signal("d3_1_press", kind=SignalKind.EVENT, exportability=Exportability.DIGITAL)
+    collider = signal("d3_1_press_n")
+    with pytest.raises(ValueError, match="d3_1_press_n"):
+        to_inputs([event, collider], 3, "Taster")
+
+
+def test_signal_from_a_different_device_raises():
+    """Regression: der Praefix wurde frueher aus den Daten geraten und ist
+    jetzt ein expliziter Parameter — ein falsch zugeordnetes Signal muss laut
+    scheitern statt ein Geraet stillschweigend falsch zu beschriften."""
+    foreign = signal("d9_1_temp")
+    with pytest.raises(ValueError, match="d9_1_temp"):
+        to_inputs([foreign], 3, "Taster")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1051,19 +1073,23 @@ sondern wird ueber `profiles.table.unit_format` in einen Loxone-Formatstring
 uebersetzt (`unit_format`-Feld). Digitale Eingaenge und Events tragen dort
 immer `""`: ein Formatstring mit Nachkommastellen ergibt fuer einen Impuls
 oder einen Zaehler keinen Sinn.
+
+Spec 6.2 — der Geraete-Praefix ``d<device_id>`` kommt hier nicht aus einer
+Vermutung ueber die Signalliste, sondern vom Aufrufer, der ihn von `Store`
+kennt. Und weil der Zaehler-Schluessel eines Events (`<key>_n`) frei erfunden
+und nirgends reserviert ist, prueft `to_inputs` vor der Rueckgabe, dass kein
+Schluessel doppelt vergeben wird — sonst haetten zwei Loxone-Objekte densel-
+ben UDP-Namen und Loxone Config wuerde das nicht melden.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from loxmatter.matter.models import SignalKind
 from loxmatter.model.store import StoredSignal
 from loxmatter.profiles.table import Exportability, unit_format
-
-_DEVICE_PREFIX = re.compile(r"^(d\d+)_")
 
 
 @dataclass(frozen=True)
@@ -1075,40 +1101,75 @@ class LoxoneInput:
     unit_format: str
 
 
-def _device_prefix(signals: Sequence[StoredSignal]) -> str:
-    for signal in signals:
-        match = _DEVICE_PREFIX.match(signal.key)
-        if match:
-            return match.group(1)
-    return "d1"
+def to_inputs(
+    signals: Sequence[StoredSignal], device_id: int, device_label: str
+) -> list[LoxoneInput]:
+    """Erzeugt die Eingangsobjekte eines Geraets, inklusive Online-Signal.
 
+    Bricht laut ab, statt falsch verdrahtete Vorlagen zu erzeugen:
 
-def to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[LoxoneInput]:
-    """Erzeugt die Eingangsobjekte eines Geraets, inklusive Online-Signal."""
+    - jedes Signal muss zu ``device_id`` gehoeren (Praefix ``d<device_id>_``).
+      Ein Signal eines anderen Geraets in dieser Liste ist ein Aufrufer-Fehler
+      und darf nicht stillschweigend ein falsch beschriftetes Geraet ergeben.
+    - kein Schluessel darf zweimal vergeben werden. Der Zaehler-Schluessel
+      eines Events (``<key>_n``) wird hier frei erfunden und ist in `Store`
+      nirgends reserviert — trifft ihn ein spaeterer `clusters.yaml`-Slug
+      zufaellig, waeren das zwei `LoxoneInput`s mit identischem Schluessel,
+      also zwei Loxone-Objekte, die denselben UDP-Namen abhoeren.
+    """
+    prefix = f"d{device_id}_"
     inputs: list[LoxoneInput] = []
+    # Schluessel -> deutschsprachige Herkunftsbeschreibung, fuer die Meldung
+    # bei einer Kollision.
+    origins: dict[str, str] = {}
+
+    def emit(entry: LoxoneInput, origin: str) -> None:
+        if entry.key in origins:
+            raise ValueError(
+                f"Schluessel-Kollision beim Export: {entry.key!r} wird sowohl von "
+                f"{origins[entry.key]} als auch von {origin} erzeugt — das ergaebe "
+                f"zwei Loxone-Objekte fuer denselben UDP-Namen."
+            )
+        origins[entry.key] = origin
+        inputs.append(entry)
 
     for signal in signals:
+        if not signal.key.startswith(prefix):
+            raise ValueError(
+                f"Signal {signal.key!r} gehoert nicht zu Geraet {device_id} "
+                f"(erwartetes Praefix {prefix!r})."
+            )
+
         comment = f"{device_label} · {signal.ref.path}"
 
         if signal.ref.kind is SignalKind.EVENT:
-            inputs.append(LoxoneInput(signal.key, signal.title, f"{comment} · Impuls", False, ""))
-            inputs.append(
+            emit(
+                LoxoneInput(signal.key, signal.title, f"{comment} · Impuls", False, ""),
+                f"dem Impuls von {signal.key!r}",
+            )
+            emit(
                 LoxoneInput(
                     f"{signal.key}_n", f"{signal.title} Zähler", f"{comment} · Zähler", True, ""
-                )
+                ),
+                f"dem Zaehler von {signal.key!r}",
             )
             continue
 
         if signal.exportability is Exportability.ANALOG:
-            inputs.append(
-                LoxoneInput(signal.key, signal.title, comment, True, unit_format(signal.unit))
+            emit(
+                LoxoneInput(signal.key, signal.title, comment, True, unit_format(signal.unit)),
+                f"dem Signal {signal.key!r}",
             )
         elif signal.exportability is Exportability.DIGITAL:
-            inputs.append(LoxoneInput(signal.key, signal.title, comment, False, ""))
+            emit(
+                LoxoneInput(signal.key, signal.title, comment, False, ""),
+                f"dem Signal {signal.key!r}",
+            )
 
-    prefix = _device_prefix(signals)
-    inputs.append(
-        LoxoneInput(f"{prefix}_online", f"{device_label} erreichbar", device_label, False, "")
+    online_key = f"d{device_id}_online"
+    emit(
+        LoxoneInput(online_key, f"{device_label} erreichbar", device_label, False, ""),
+        "dem Online-Signal",
     )
     return inputs
 ```
@@ -1116,7 +1177,7 @@ def to_inputs(signals: Sequence[StoredSignal], device_label: str) -> list[Loxone
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_signals.py -v`
-Expected: PASS, 9 Tests
+Expected: PASS, 11 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -1899,7 +1960,7 @@ def export(
         store.close()
 
     label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or f"Node {snapshot.node_id}"
-    inputs = to_inputs(stored, label)
+    inputs = to_inputs(stored, device_id, label)
     # Ausgangsbefehle kommen aus AcceptedCommandList, nicht aus den Attributen:
     # Matter-Attribute sind fast alle nur lesbar (Task 6).
     device_commands = extract_commands(snapshot, raw=raw_commands)
