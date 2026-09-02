@@ -946,7 +946,8 @@ import pytest
 
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
-from loxmatter.matter.models import NodeSnapshot
+from loxmatter.matter.discovery import extract_signals
+from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
@@ -956,109 +957,224 @@ class FakeSender:
     """Merkt sich, was gesendet wurde, statt es zu verschicken."""
 
     def __init__(self) -> None:
-        self.gesendet: list[tuple[str, object, bool]] = []
+        self.sent: list[tuple[str, object, bool]] = []
 
     async def send(self, key: str, value: object, *, force: bool = False) -> bool:
-        self.gesendet.append((key, value, force))
+        self.sent.append((key, value, force))
         return True
 
     async def close(self) -> None:
         return None
 
     def keys(self) -> list[str]:
-        return [k for k, _, _ in self.gesendet]
+        return [k for k, _, _ in self.sent]
+
+
+class FlakySender(FakeSender):
+    """Wie FakeSender, wirft aber beim n-ten Aufruf einen RuntimeError - fuer
+    Tests, die einen fehlgeschlagenen Sendeversuch nachstellen wollen."""
+
+    def __init__(self, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_on_call = fail_on_call
+        self._calls = 0
+
+    async def send(self, key: str, value: object, *, force: bool = False) -> bool:
+        self._calls += 1
+        if self._calls == self._fail_on_call:
+            raise RuntimeError("Sender kaputt")
+        return await super().send(key, value, force=force)
 
 
 @pytest.fixture
-def umgebung(tmp_path):
-    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
-    snap = NodeSnapshot.from_raw(raw["node_id"], raw)
+def environment(tmp_path):
+    """Zwei Geraete in einem Store: die Steckdose liefert das Attribut fuer
+    die Skalierungs-Tests (2/144/4), der Taster liefert das Event fuer die
+    Impuls-Tests (1/59/1) — die Steckdose hat keinen Switch-Cluster und kann
+    kein Event liefern."""
     store = Store(tmp_path / "t.sqlite")
-    device_id = store.register_device(snap)
-    store.register_signals(device_id, snap)
-    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+
+    plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
+    device_id = store.register_device(plug_snap)
+    store.register_signals(device_id, plug_snap)
+    store.register_commands(device_id, extract_commands(plug_snap), plug_snap.node_id)
+
+    button_raw = json.loads((FIXTURES / "ikea_bilresa_button.json").read_text(encoding="utf-8"))
+    button_snap = NodeSnapshot.from_raw(button_raw["node_id"], button_raw)
+    button_device_id = store.register_device(button_snap)
+    store.register_signals(button_device_id, button_snap)
+
     sender = FakeSender()
     runtime = Runtime(store, sender)
-    yield runtime, sender, store, device_id, snap
+    yield runtime, sender, store, device_id, button_device_id
     store.close()
 
 
-async def test_attribute_change_becomes_a_scaled_datagram(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
+async def test_attribute_change_becomes_a_scaled_datagram(environment):
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
-    assert sender.gesendet == [(f"d{device_id}_2_voltage", pytest.approx(230.0), False)]
+    assert sender.sent == [(f"d{device_id}_2_voltage", pytest.approx(230.0), False)]
 
 
-async def test_unmappable_attribute_is_not_sent(umgebung):
+async def test_unmappable_attribute_is_not_sent(environment):
     """Spec 6.6: Listen werden nie zu einem Datagramm."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "0/29/1", [29, 31, 40])
-    assert sender.gesendet == []
+    assert sender.sent == []
 
 
-async def test_unknown_path_is_ignored_not_raised(umgebung):
+async def test_unknown_path_is_ignored_not_raised(environment):
     """Ein Gerät kann Attribute melden, die beim Export nicht dabei waren."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "9/9999/9", 1)
-    assert sender.gesendet == []
+    assert sender.sent == []
 
 
-async def test_event_sends_a_pulse_and_a_counter(umgebung):
+async def test_event_sends_a_pulse_and_a_counter(environment):
     """Spec 6.3: der Impuls erzeugt die Flanke, der Zaehler ueberlebt ein verlorenes Paket."""
-    runtime, sender, _, device_id, _ = umgebung
-    await runtime.on_event(device_id, "1/59/1")
+    runtime, sender, _, _, button_device_id = environment
+    await runtime.on_event(button_device_id, "1/59/1")
     keys = sender.keys()
-    assert f"d{device_id}_1_press" in keys
-    assert f"d{device_id}_1_press_n" in keys
+    assert f"d{button_device_id}_1_press" in keys
+    assert f"d{button_device_id}_1_press_n" in keys
 
 
-async def test_pulse_falls_back_to_zero(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
-    await runtime.on_event(device_id, "1/59/1")
+async def test_pulse_falls_back_to_zero(environment):
+    runtime, sender, _, _, button_device_id = environment
+    await runtime.on_event(button_device_id, "1/59/1")
     await asyncio.sleep(Runtime.PULSE_MILLISECONDS / 1000 + 0.1)
-    impulse = [(k, v) for k, v, _ in sender.gesendet if k == f"d{device_id}_1_press"]
-    assert impulse == [(f"d{device_id}_1_press", True), (f"d{device_id}_1_press", False)]
+    pulses = [(k, v) for k, v, _ in sender.sent if k == f"d{button_device_id}_1_press"]
+    assert pulses == [
+        (f"d{button_device_id}_1_press", True),
+        (f"d{button_device_id}_1_press", False),
+    ]
 
 
-async def test_counter_increases_monotonically(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
+async def test_counter_increases_monotonically(environment):
+    runtime, sender, _, _, button_device_id = environment
     for _ in range(3):
-        await runtime.on_event(device_id, "1/59/1")
-    zaehler = [v for k, v, _ in sender.gesendet if k == f"d{device_id}_1_press_n"]
-    assert zaehler == [1, 2, 3]
+        await runtime.on_event(button_device_id, "1/59/1")
+    counters = [v for k, v, _ in sender.sent if k == f"d{button_device_id}_1_press_n"]
+    assert counters == [1, 2, 3]
 
 
-async def test_online_signal_is_sent(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
+async def test_online_signal_is_sent(environment):
+    runtime, sender, _, device_id, _ = environment
     await runtime.set_online(device_id, False)
-    assert (f"d{device_id}_online", False, False) in sender.gesendet
+    assert (f"d{device_id}_online", False, False) in sender.sent
 
 
-async def test_resend_forces_every_known_value(umgebung):
+async def test_resend_forces_every_known_value(environment):
     """Spec 6.4: nach einem Miniserver-Neustart muss die Entprellung umgangen werden."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
-    sender.gesendet.clear()
-    anzahl = await runtime.resend_all()
-    assert anzahl == 1
-    assert sender.gesendet[0][2] is True
+    sender.sent.clear()
+    count = await runtime.resend_all()
+    assert count == 1
+    assert sender.sent[0][2] is True
 
 
-async def test_resend_of_an_empty_runtime_sends_nothing(umgebung):
-    runtime, _, _, _, _ = umgebung
+async def test_resend_of_an_empty_runtime_sends_nothing(environment):
+    runtime, _, _, _, _ = environment
     assert await runtime.resend_all() == 0
 
 
-async def test_heartbeat_toggles(umgebung):
+async def test_heartbeat_toggles(environment):
     """Spec 6.5: bridge_alive deckt "Container tot" und "Netz weg" gleichermassen ab."""
-    _, sender, store, _, _ = umgebung
+    _, sender, store, _, _ = environment
     runtime = Runtime(store, sender, heartbeat_seconds=0.05)
     await runtime.start()
     await asyncio.sleep(0.16)
     await runtime.stop()
-    werte = [v for k, v, _ in sender.gesendet if k == "bridge_alive"]
-    assert len(werte) >= 2
-    assert werte[0] != werte[1]
+    values = [v for k, v, _ in sender.sent if k == "bridge_alive"]
+    assert len(values) >= 2
+    assert values[0] != values[1]
+
+
+async def test_heartbeat_survives_a_failed_send(environment):
+    """Review-Fix Important #1: der Heartbeat deckt laut Modul-Docstring
+    "Container tot" und "Netz weg" gleichermassen ab - ein einzelner
+    fehlgeschlagener Sendeversuch darf die Watchdog-Schleife deshalb nicht
+    beenden, sonst friert der Loxone-Watchdog auf dem letzten Wert ein,
+    waehrend die Bruecke laengst schweigt."""
+    _, _, store, _, _ = environment
+    sender = FlakySender(fail_on_call=2)
+    runtime = Runtime(store, sender, heartbeat_seconds=0.05)
+    await runtime.start()
+    await asyncio.sleep(0.22)
+    await runtime.stop()
+    values = [v for k, v, _ in sender.sent if k == "bridge_alive"]
+    # Der zweite Aufruf schlaegt fehl (siehe FlakySender) - ohne den Fix
+    # stuerbe die Schleife dort und es kaemen nie weitere Werte an.
+    assert len(values) >= 3
+
+
+async def test_stop_completes_even_if_a_task_already_died(environment):
+    """Review-Fix Important #1, Begleitfehler: contextlib.suppress(CancelledError)
+    unterdrueckt nur eine Cancellation, keine andere Exception, an der ein
+    Task schon vor `stop()` gestorben ist. Die alte Implementierung liess
+    `stop()` mit genau dieser Exception abbrechen und ueberspringt dabei das
+    Leeren der Task-Liste."""
+    runtime, _, _, _, _ = environment
+
+    async def boom() -> None:
+        raise RuntimeError("Task ist schon vor stop() gestorben")
+
+    dead_task = asyncio.create_task(boom())
+    await asyncio.sleep(0)  # den Task tatsaechlich sterben lassen
+    assert dead_task.done()
+    runtime._tasks.append(dead_task)
+
+    await runtime.start()
+    await runtime.stop()  # darf nicht an der bereits toten Task scheitern
+
+    assert runtime._tasks == []
+    assert runtime._pulse_tasks == set()
+
+
+async def test_stop_lowers_an_in_flight_pulse(environment):
+    """Review-Fix Important #2: eine Cancellation waehrend des Impuls-Schlafs
+    ueberspringt sonst den `send(key, False)` - das digitale Signal bliebe
+    bis zum naechsten Ereignis auf diesem Schluessel auf 1 haengen."""
+    runtime, sender, _, _, button_device_id = environment
+    await runtime.on_event(button_device_id, "1/59/1")
+    await runtime.stop()
+    key = f"d{button_device_id}_1_press"
+    values = [v for k, v, _ in sender.sent if k == key]
+    assert values[-1] is False
+
+
+async def test_invalidate_index_lets_a_newly_registered_signal_through(environment, monkeypatch):
+    """Review-Fix Important #3: `Store.register_signals` kann jederzeit ein
+    neues Signal zu einem schon indizierten Geraet hinzufuegen (z. B. nach
+    einem Firmware-Update). Ohne `invalidate_index` bleibt dieses Signal fuer
+    die Laufzeit unsichtbar, weil `_signal_for` nur einmal pro Geraet aus der
+    Datenbank liest."""
+    runtime, sender, store, device_id, _ = environment
+    plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
+
+    new_ref = SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)
+    key = f"d{device_id}_9_c1234_a5"
+
+    def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
+        return [*extract_signals(snapshot), new_ref]
+
+    # Erstmaliges Indizieren durch die Laufzeit - der Pfad existiert noch nicht.
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.sent == []
+
+    monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
+    store.register_signals(device_id, plug_snap)
+
+    # Der Cache der Laufzeit weiss noch nichts vom neuen Signal.
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.sent == []
+
+    runtime.invalidate_index(device_id)
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.keys() == [key]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1082,7 +1198,8 @@ Zaehler, der ein verlorenes UDP-Paket ueberlebt.
 
 Erreichbarkeit (Spec 6.5) - je Geraet ein digitales Signal, dazu ein globaler
 Heartbeat, der in Loxone als Watchdog dient und "Container tot" wie "Netz weg"
-gleichermassen abdeckt.
+gleichermassen abdeckt. Ein Heartbeat, der beim ersten Sendefehler stirbt,
+waere fuer genau diesen Zweck nutzlos - siehe `_heartbeat_loop`.
 
 Zustands-Wiederherstellung (Spec 6.4) - UDP ist zustandslos. Nach einem
 Neustart des Miniservers stehen alle Eingaenge auf ihrem Defaultwert, bis das
@@ -1092,16 +1209,17 @@ naechste Update kommt; bei einem Temperatursensor koennen das Stunden sein.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-
+import logging
 from typing import Protocol
 
 from loxmatter.loxone.values import to_loxone_value
 from loxmatter.matter.models import SignalKind
-from loxmatter.model.store import Store
+from loxmatter.model.store import Store, StoredSignal
 
 PULSE_MILLISECONDS = 200
 HEARTBEAT_KEY = "bridge_alive"
+
+logger = logging.getLogger(__name__)
 
 
 class Sender(Protocol):
@@ -1127,90 +1245,174 @@ class Runtime:
         self._sender = sender
         self._heartbeat_seconds = heartbeat_seconds
         self._resend_seconds = resend_seconds
-        self._letzte_werte: dict[str, float | bool] = {}
-        self._zaehler: dict[str, int] = {}
-        self._heartbeat_an = False
-        self._aufgaben: list[asyncio.Task[None]] = []
-        self._signale: dict[tuple[int, str, str], str] = {}
+        self._last_values: dict[str, float | bool] = {}
+        self._counters: dict[str, int] = {}
+        self._heartbeat_on = False
+        # Dauerhafte Hintergrund-Tasks (Heartbeat- und Resend-Schleife).
+        self._tasks: list[asyncio.Task[None]] = []
+        # Kurzlebige Impuls-Tasks, je einer pro `on_event`-Aufruf. Ein
+        # done_callback wirft jeden fertigen Task sofort wieder raus, sonst
+        # waechst die Menge mit jedem Event unbegrenzt weiter (Review-Fix
+        # Minor #1) - nur `stop()` haette sie sonst je geleert.
+        self._pulse_tasks: set[asyncio.Task[None]] = set()
+        # Schluessel, deren Impuls gerade auf True steht. `stop()` senkt sie
+        # explizit, denn eine Cancellation waehrend des Impuls-Schlafs
+        # ueberspringt sonst den `send(key, False)` in `_release_pulse` und
+        # das digitale Signal bleibt bis zum naechsten Ereignis auf diesem
+        # Schluessel haengen (Review-Fix Important #2).
+        self._pulses_high: set[str] = set()
+        # Index (device_id, path, kind) -> StoredSignal, pro Geraet einmalig
+        # aus der Datenbank geladen. `on_attribute` und `on_event` laufen bei
+        # jedem gemeldeten Wert eines Geraets - ohne diesen Cache waere das
+        # eine frische Abfrage ueber ~160 Zeilen pro Aufruf, und der
+        # Ur-Entwurf fragte sogar zweimal: einmal fuer den Schluessel, ein
+        # zweites Mal fuer den SignalRef. Hier wird pro Geraet genau einmal
+        # gelesen; jeder weitere Pfad desselben Geraets ist ein Dict-Zugriff.
+        # Wer nach dem ersten Indizieren erneut `Store.register_signals` fuer
+        # dasselbe Geraet aufruft, muss danach `invalidate_index` aufrufen -
+        # sonst bleibt ein neu hinzugekommenes Signal fuer diese Laufzeit
+        # unsichtbar (Review-Fix Important #3).
+        self._signals: dict[tuple[int, str, str], StoredSignal] = {}
+        self._indexed: set[int] = set()
 
-    def _schluessel(self, device_id: int, path: str, kind: SignalKind) -> str | None:
-        """Findet den unveraenderlichen Schluessel zu einem Matter-Pfad."""
-        cache_key = (device_id, path, kind.value)
-        if cache_key not in self._signale:
-            treffer = [
-                s
-                for s in self._store.signals(device_id)
-                if s.ref.path == path and s.ref.kind is kind
-            ]
-            self._signale[cache_key] = treffer[0].key if treffer else ""
-        return self._signale[cache_key] or None
+    def _signal_for(self, device_id: int, path: str, kind: SignalKind) -> StoredSignal | None:
+        """Findet das gespeicherte Signal zu einem Matter-Pfad, ohne bei
+        jedem Aufruf erneut die Datenbank zu befragen."""
+        if device_id not in self._indexed:
+            for stored in self._store.signals(device_id):
+                self._signals[(device_id, stored.ref.path, stored.ref.kind.value)] = stored
+            self._indexed.add(device_id)
+        signal = self._signals.get((device_id, path, kind.value))
+        if signal is None:
+            logger.debug(
+                "Kein Signal fuer Geraet %s, Pfad %s, Art %s - Update wird verworfen",
+                device_id,
+                path,
+                kind.value,
+            )
+        return signal
+
+    def invalidate_index(self, device_id: int | None = None) -> None:
+        """Verwirft den Signal-Cache eines Geraets, oder - ohne Angabe - aller Geraete.
+
+        Wer zur Laufzeit erneut `Store.register_signals` fuer ein bereits
+        laufendes Geraet aufruft (z. B. nach einem Firmware-Update, das einen
+        neuen Cluster freischaltet), MUSS diese Methode danach fuer das
+        betroffene Geraet aufrufen. Ohne das bleibt `_signal_for` bei seinem
+        einmal geladenen Stand: das neue Signal existiert in der Datenbank,
+        aber Updates dazu laufen fuer den Rest des Prozesses ins Leere - ohne
+        Fehler, ohne Log-Eintrag ausser dem `debug`-Eintrag in `_signal_for`.
+        """
+        if device_id is None:
+            self._signals.clear()
+            self._indexed.clear()
+            return
+        self._indexed.discard(device_id)
+        for cache_key in [k for k in self._signals if k[0] == device_id]:
+            del self._signals[cache_key]
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
-        key = self._schluessel(device_id, path, SignalKind.ATTRIBUTE)
-        if key is None:
+        signal = self._signal_for(device_id, path, SignalKind.ATTRIBUTE)
+        if signal is None:
             return
-        treffer = [s for s in self._store.signals(device_id) if s.key == key]
-        wert = to_loxone_value(treffer[0].ref, raw)
-        if wert is None:
+        value = to_loxone_value(signal.ref, raw)
+        if value is None:
             return
-        self._letzte_werte[key] = wert
-        await self._sender.send(key, wert)
+        self._last_values[signal.key] = value
+        await self._sender.send(signal.key, value)
 
     async def on_event(self, device_id: int, path: str) -> None:
-        key = self._schluessel(device_id, path, SignalKind.EVENT)
-        if key is None:
+        signal = self._signal_for(device_id, path, SignalKind.EVENT)
+        if signal is None:
             return
-        self._zaehler[key] = self._zaehler.get(key, 0) + 1
+        key = signal.key
+        # Der Zaehler dient dem Erkennen von Paketverlust, nicht einem
+        # exakten Protokoll - er zaehlt deshalb bewusst hoch, bevor gesendet
+        # wird. Ein Zaehler, der bei einem fehlgeschlagenen send() haengen
+        # bliebe, waere fuer diesen Zweck kein Gewinn (Review-Fix Minor #2).
+        self._counters[key] = self._counters.get(key, 0) + 1
         await self._sender.send(key, True)
-        await self._sender.send(f"{key}_n", self._zaehler[key])
-        self._letzte_werte[f"{key}_n"] = self._zaehler[key]
-        self._aufgaben.append(asyncio.create_task(self._impuls_zuruecknehmen(key)))
+        self._pulses_high.add(key)
+        await self._sender.send(f"{key}_n", self._counters[key])
+        self._last_values[f"{key}_n"] = self._counters[key]
+        task = asyncio.create_task(self._release_pulse(key))
+        task.add_done_callback(self._pulse_tasks.discard)
+        self._pulse_tasks.add(task)
 
-    async def _impuls_zuruecknehmen(self, key: str) -> None:
+    async def _release_pulse(self, key: str) -> None:
         await asyncio.sleep(PULSE_MILLISECONDS / 1000)
         await self._sender.send(key, False)
+        self._pulses_high.discard(key)
 
     async def set_online(self, device_id: int, online: bool) -> None:
         key = f"d{device_id}_online"
-        self._letzte_werte[key] = online
+        self._last_values[key] = online
         await self._sender.send(key, online)
 
     async def resend_all(self) -> int:
         """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei."""
-        anzahl = 0
-        for key, wert in list(self._letzte_werte.items()):
-            await self._sender.send(key, wert, force=True)
-            anzahl += 1
-        return anzahl
+        count = 0
+        for key, value in list(self._last_values.items()):
+            await self._sender.send(key, value, force=True)
+            count += 1
+        return count
 
     async def start(self) -> None:
-        self._aufgaben.append(asyncio.create_task(self._heartbeat_schleife()))
-        self._aufgaben.append(asyncio.create_task(self._resend_schleife()))
+        self._tasks.append(asyncio.create_task(self._heartbeat_loop()))
+        self._tasks.append(asyncio.create_task(self._resend_loop()))
 
     async def stop(self) -> None:
-        for aufgabe in self._aufgaben:
-            aufgabe.cancel()
-        for aufgabe in self._aufgaben:
-            with contextlib.suppress(asyncio.CancelledError):
-                await aufgabe
-        self._aufgaben.clear()
+        # Jeden gerade high stehenden Impuls senken, BEVOR die dazugehoerigen
+        # Tasks abgebrochen werden - sonst ueberspringt die Cancellation den
+        # `send(key, False)` in `_release_pulse` und das Signal bleibt bis
+        # zum naechsten Ereignis auf 1 haengen (Review-Fix Important #2).
+        for key in list(self._pulses_high):
+            await self._sender.send(key, False)
+        self._pulses_high.clear()
 
-    async def _heartbeat_schleife(self) -> None:
+        tasks: list[asyncio.Task[None]] = [*self._tasks, *self._pulse_tasks]
+        for task in tasks:
+            task.cancel()
+        # gather(..., return_exceptions=True) statt eines
+        # contextlib.suppress(CancelledError) je Task: Letzteres unterdrueckt
+        # nur eine Cancellation, keine Exception, an der ein Task schon vor
+        # `stop()` gestorben ist - die wuerde erneut ausgeloest, die Schleife
+        # ueber die Tasks abbrechen und `clear()` ueberspringen (Review-Fix
+        # Important #1, Begleitfehler).
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._pulse_tasks.clear()
+
+    async def _heartbeat_loop(self) -> None:
         while True:
-            self._heartbeat_an = not self._heartbeat_an
-            await self._sender.send(HEARTBEAT_KEY, self._heartbeat_an, force=True)
+            try:
+                self._heartbeat_on = not self._heartbeat_on
+                await self._sender.send(HEARTBEAT_KEY, self._heartbeat_on, force=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Genau der Fehlerfall, den der Heartbeat melden soll, darf
+                # ihn nicht zum Schweigen bringen - sonst friert der
+                # Loxone-Watchdog auf dem letzten Wert ein, waehrend nichts
+                # mehr laeuft (Review-Fix Important #1).
+                logger.exception("Heartbeat konnte nicht gesendet werden - Schleife laeuft weiter")
             await asyncio.sleep(self._heartbeat_seconds)
 
-    async def _resend_schleife(self) -> None:
+    async def _resend_loop(self) -> None:
         while True:
             await asyncio.sleep(self._resend_seconds)
-            await self.resend_all()
+            try:
+                await self.resend_all()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Full-Resend fehlgeschlagen - Schleife laeuft weiter")
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -v`
-Expected: PASS, 10 Tests
+Expected: PASS, 14 Tests
 
 - [ ] **Step 5: Commit**
 

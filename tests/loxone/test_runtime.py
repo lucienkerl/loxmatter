@@ -17,17 +17,17 @@ class FakeSender:
     """Merkt sich, was gesendet wurde, statt es zu verschicken."""
 
     def __init__(self) -> None:
-        self.gesendet: list[tuple[str, object, bool]] = []
+        self.sent: list[tuple[str, object, bool]] = []
 
     async def send(self, key: str, value: object, *, force: bool = False) -> bool:
-        self.gesendet.append((key, value, force))
+        self.sent.append((key, value, force))
         return True
 
     async def close(self) -> None:
         return None
 
     def keys(self) -> list[str]:
-        return [k for k, _, _ in self.gesendet]
+        return [k for k, _, _ in self.sent]
 
 
 class FlakySender(FakeSender):
@@ -47,7 +47,7 @@ class FlakySender(FakeSender):
 
 
 @pytest.fixture
-def umgebung(tmp_path):
+def environment(tmp_path):
     """Zwei Geraete in einem Store: die Steckdose liefert das Attribut fuer
     die Skalierungs-Tests (2/144/4), der Taster liefert das Event fuer die
     Impuls-Tests (1/59/1) — die Steckdose hat keinen Switch-Cluster und kann
@@ -71,112 +71,112 @@ def umgebung(tmp_path):
     store.close()
 
 
-async def test_attribute_change_becomes_a_scaled_datagram(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
+async def test_attribute_change_becomes_a_scaled_datagram(environment):
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
-    assert sender.gesendet == [(f"d{device_id}_2_voltage", pytest.approx(230.0), False)]
+    assert sender.sent == [(f"d{device_id}_2_voltage", pytest.approx(230.0), False)]
 
 
-async def test_unmappable_attribute_is_not_sent(umgebung):
+async def test_unmappable_attribute_is_not_sent(environment):
     """Spec 6.6: Listen werden nie zu einem Datagramm."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "0/29/1", [29, 31, 40])
-    assert sender.gesendet == []
+    assert sender.sent == []
 
 
-async def test_unknown_path_is_ignored_not_raised(umgebung):
+async def test_unknown_path_is_ignored_not_raised(environment):
     """Ein Gerät kann Attribute melden, die beim Export nicht dabei waren."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "9/9999/9", 1)
-    assert sender.gesendet == []
+    assert sender.sent == []
 
 
-async def test_event_sends_a_pulse_and_a_counter(umgebung):
+async def test_event_sends_a_pulse_and_a_counter(environment):
     """Spec 6.3: der Impuls erzeugt die Flanke, der Zaehler ueberlebt ein verlorenes Paket."""
-    runtime, sender, _, _, button_device_id = umgebung
+    runtime, sender, _, _, button_device_id = environment
     await runtime.on_event(button_device_id, "1/59/1")
     keys = sender.keys()
     assert f"d{button_device_id}_1_press" in keys
     assert f"d{button_device_id}_1_press_n" in keys
 
 
-async def test_pulse_falls_back_to_zero(umgebung):
-    runtime, sender, _, _, button_device_id = umgebung
+async def test_pulse_falls_back_to_zero(environment):
+    runtime, sender, _, _, button_device_id = environment
     await runtime.on_event(button_device_id, "1/59/1")
     await asyncio.sleep(Runtime.PULSE_MILLISECONDS / 1000 + 0.1)
-    impulse = [(k, v) for k, v, _ in sender.gesendet if k == f"d{button_device_id}_1_press"]
-    assert impulse == [
+    pulses = [(k, v) for k, v, _ in sender.sent if k == f"d{button_device_id}_1_press"]
+    assert pulses == [
         (f"d{button_device_id}_1_press", True),
         (f"d{button_device_id}_1_press", False),
     ]
 
 
-async def test_counter_increases_monotonically(umgebung):
-    runtime, sender, _, _, button_device_id = umgebung
+async def test_counter_increases_monotonically(environment):
+    runtime, sender, _, _, button_device_id = environment
     for _ in range(3):
         await runtime.on_event(button_device_id, "1/59/1")
-    zaehler = [v for k, v, _ in sender.gesendet if k == f"d{button_device_id}_1_press_n"]
-    assert zaehler == [1, 2, 3]
+    counters = [v for k, v, _ in sender.sent if k == f"d{button_device_id}_1_press_n"]
+    assert counters == [1, 2, 3]
 
 
-async def test_online_signal_is_sent(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
+async def test_online_signal_is_sent(environment):
+    runtime, sender, _, device_id, _ = environment
     await runtime.set_online(device_id, False)
-    assert (f"d{device_id}_online", False, False) in sender.gesendet
+    assert (f"d{device_id}_online", False, False) in sender.sent
 
 
-async def test_resend_forces_every_known_value(umgebung):
+async def test_resend_forces_every_known_value(environment):
     """Spec 6.4: nach einem Miniserver-Neustart muss die Entprellung umgangen werden."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
-    sender.gesendet.clear()
-    anzahl = await runtime.resend_all()
-    assert anzahl == 1
-    assert sender.gesendet[0][2] is True
+    sender.sent.clear()
+    count = await runtime.resend_all()
+    assert count == 1
+    assert sender.sent[0][2] is True
 
 
-async def test_resend_of_an_empty_runtime_sends_nothing(umgebung):
-    runtime, _, _, _, _ = umgebung
+async def test_resend_of_an_empty_runtime_sends_nothing(environment):
+    runtime, _, _, _, _ = environment
     assert await runtime.resend_all() == 0
 
 
-async def test_heartbeat_toggles(umgebung):
+async def test_heartbeat_toggles(environment):
     """Spec 6.5: bridge_alive deckt "Container tot" und "Netz weg" gleichermassen ab."""
-    _, sender, store, _, _ = umgebung
+    _, sender, store, _, _ = environment
     runtime = Runtime(store, sender, heartbeat_seconds=0.05)
     await runtime.start()
     await asyncio.sleep(0.16)
     await runtime.stop()
-    werte = [v for k, v, _ in sender.gesendet if k == "bridge_alive"]
-    assert len(werte) >= 2
-    assert werte[0] != werte[1]
+    values = [v for k, v, _ in sender.sent if k == "bridge_alive"]
+    assert len(values) >= 2
+    assert values[0] != values[1]
 
 
-async def test_heartbeat_survives_a_failed_send(umgebung):
+async def test_heartbeat_survives_a_failed_send(environment):
     """Review-Fix Important #1: der Heartbeat deckt laut Modul-Docstring
     "Container tot" und "Netz weg" gleichermassen ab - ein einzelner
     fehlgeschlagener Sendeversuch darf die Watchdog-Schleife deshalb nicht
     beenden, sonst friert der Loxone-Watchdog auf dem letzten Wert ein,
     waehrend die Bruecke laengst schweigt."""
-    _, _, store, _, _ = umgebung
+    _, _, store, _, _ = environment
     sender = FlakySender(fail_on_call=2)
     runtime = Runtime(store, sender, heartbeat_seconds=0.05)
     await runtime.start()
     await asyncio.sleep(0.22)
     await runtime.stop()
-    values = [v for k, v, _ in sender.gesendet if k == "bridge_alive"]
+    values = [v for k, v, _ in sender.sent if k == "bridge_alive"]
     # Der zweite Aufruf schlaegt fehl (siehe FlakySender) - ohne den Fix
     # stuerbe die Schleife dort und es kaemen nie weitere Werte an.
     assert len(values) >= 3
 
 
-async def test_stop_completes_even_if_a_task_already_died(umgebung):
+async def test_stop_completes_even_if_a_task_already_died(environment):
     """Review-Fix Important #1, Begleitfehler: contextlib.suppress(CancelledError)
     unterdrueckt nur eine Cancellation, keine andere Exception, an der ein
     Task schon vor `stop()` gestorben ist. Die alte Implementierung liess
     `stop()` mit genau dieser Exception abbrechen und ueberspringt dabei das
     Leeren der Task-Liste."""
-    runtime, _, _, _, _ = umgebung
+    runtime, _, _, _, _ = environment
 
     async def boom() -> None:
         raise RuntimeError("Task ist schon vor stop() gestorben")
@@ -184,34 +184,34 @@ async def test_stop_completes_even_if_a_task_already_died(umgebung):
     dead_task = asyncio.create_task(boom())
     await asyncio.sleep(0)  # den Task tatsaechlich sterben lassen
     assert dead_task.done()
-    runtime._aufgaben.append(dead_task)
+    runtime._tasks.append(dead_task)
 
     await runtime.start()
     await runtime.stop()  # darf nicht an der bereits toten Task scheitern
 
-    assert runtime._aufgaben == []
-    assert runtime._impuls_aufgaben == set()
+    assert runtime._tasks == []
+    assert runtime._pulse_tasks == set()
 
 
-async def test_stop_lowers_an_in_flight_pulse(umgebung):
+async def test_stop_lowers_an_in_flight_pulse(environment):
     """Review-Fix Important #2: eine Cancellation waehrend des Impuls-Schlafs
     ueberspringt sonst den `send(key, False)` - das digitale Signal bliebe
     bis zum naechsten Ereignis auf diesem Schluessel auf 1 haengen."""
-    runtime, sender, _, _, button_device_id = umgebung
+    runtime, sender, _, _, button_device_id = environment
     await runtime.on_event(button_device_id, "1/59/1")
     await runtime.stop()
     key = f"d{button_device_id}_1_press"
-    values = [v for k, v, _ in sender.gesendet if k == key]
+    values = [v for k, v, _ in sender.sent if k == key]
     assert values[-1] is False
 
 
-async def test_invalidate_index_lets_a_newly_registered_signal_through(umgebung, monkeypatch):
+async def test_invalidate_index_lets_a_newly_registered_signal_through(environment, monkeypatch):
     """Review-Fix Important #3: `Store.register_signals` kann jederzeit ein
     neues Signal zu einem schon indizierten Geraet hinzufuegen (z. B. nach
     einem Firmware-Update). Ohne `invalidate_index` bleibt dieses Signal fuer
-    die Laufzeit unsichtbar, weil `_signal_fuer` nur einmal pro Geraet aus der
+    die Laufzeit unsichtbar, weil `_signal_for` nur einmal pro Geraet aus der
     Datenbank liest."""
-    runtime, sender, store, device_id, _ = umgebung
+    runtime, sender, store, device_id, _ = environment
     plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
 
@@ -223,14 +223,14 @@ async def test_invalidate_index_lets_a_newly_registered_signal_through(umgebung,
 
     # Erstmaliges Indizieren durch die Laufzeit - der Pfad existiert noch nicht.
     await runtime.on_attribute(device_id, "9/1234/5", 1)
-    assert sender.gesendet == []
+    assert sender.sent == []
 
     monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
     store.register_signals(device_id, plug_snap)
 
     # Der Cache der Laufzeit weiss noch nichts vom neuen Signal.
     await runtime.on_attribute(device_id, "9/1234/5", 1)
-    assert sender.gesendet == []
+    assert sender.sent == []
 
     runtime.invalidate_index(device_id)
     await runtime.on_attribute(device_id, "9/1234/5", 1)
