@@ -17,29 +17,48 @@ clusters:
   8:
     name: level
     attributes:
-      0: {slug: level, unit: "%"}
+      # 0-254 auf 0-100 %: 100/254
+      0: {slug: level, unit: "%", scale: 0.3937007874015748}
     commands:
       0: {slug: level, takes_value: true}
       4: {slug: level_onoff, takes_value: true}
+  768:
+    name: colorcontrol
+    commands:
+      # MoveToColorTemperature - der einzige ColorControl-Befehl, den
+      # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS und
+      # dessen Docstring: Hue/Saturation, Kommando 6, bleibt bewusst aussen
+      # vor, weil die Loxone-seitige RGB-Zahl nicht verlaesslich belegt ist).
+      # Review-Fix C2, 2026-09-02: dieser Eintrag fehlte, obwohl
+      # _PAYLOAD_BUILDERS das Paar (768, 10) schon bediente - im Rohexport
+      # (`raw`) wurde das Kommando dadurch als generisches, digitales
+      # `c768_cmd10` exportiert (takes_value=False laut command_takes_value),
+      # und ein Tastendruck schickte den woertlichen Text "1" in
+      # _payload_color_temperature, das daraus 1_000_000 mireds baute - eine
+      # erfundene Farbtemperatur an ein echtes Geraet. takes_value: true
+      # macht daraus einen analogen Ausgang UND exportiert das Kommando ab
+      # sofort auch im normalen (nicht-rohen) Modus, was fuer ein bedientes
+      # Kommando ohnehin richtig ist.
+      10: {slug: colortemp, takes_value: true}
   1026:
     name: temperature
     attributes:
-      0: {slug: temp, unit: "°C"}
+      0: {slug: temp, unit: "°C", scale: 0.01}
   1029:
     name: humidity
     attributes:
-      0: {slug: humidity, unit: "%"}
+      0: {slug: humidity, unit: "%", scale: 0.01}
   144:
     name: power
     attributes:
-      4: {slug: voltage, unit: "V"}
-      5: {slug: current, unit: "A"}
-      8: {slug: power, unit: "kW"}
+      4: {slug: voltage, unit: "V", scale: 0.001}
+      5: {slug: current, unit: "A", scale: 0.001}
+      8: {slug: power, unit: "kW", scale: 0.000001}
   145:
     name: energy
     attributes:
-      1: {slug: energy_imported, unit: "kWh"}
-      2: {slug: energy_exported, unit: "kWh"}
+      1: {slug: energy_imported, unit: "kWh", scale: 0.000001}
+      2: {slug: energy_exported, unit: "kWh", scale: 0.000001}
   59:
     name: switch
     attributes:

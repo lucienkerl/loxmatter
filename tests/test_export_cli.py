@@ -100,6 +100,30 @@ def test_plug_gets_only_the_onoff_commands(tmp_path):
     assert text.count("<VirtualOutCmd ") == 3
 
 
+def test_listen_option_reaches_the_command_url(tmp_path):
+    """Review-Fix I3, 2026-09-02: `export` hatte den HTTP-Port der Kommando-URL
+    fest auf 8080 verdrahtet, unabhaengig von `run --listen`. Ohne `--listen`
+    bleibt der Default 8080 (Rueckwaertskompatibilitaet), mit einem
+    abweichenden Wert muss er in der VO-Vorlage ankommen."""
+    CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--listen",
+            "9090",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    text = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
+    assert 'Address="http://192.168.1.50:9090"' in text
+    assert "8080" not in text
+
+
 def test_button_gets_no_output_commands(tmp_path):
     """Ein Taster ist ein Eingabegeraet - die VO_-Datei bleibt leer."""
     CliRunner().invoke(
@@ -171,6 +195,43 @@ def test_export_fails_cleanly_when_the_second_file_cannot_be_written(tmp_path, m
     assert "VIU_" in result.stderr
 
 
+def test_export_fails_cleanly_when_a_system_file_cannot_be_written(tmp_path, monkeypatch):
+    """Review-Fix Important #1 (2026-09-02): die beiden Systemvorlagen-Schreibvorgaenge
+    waren bare `write_bytes`-Aufrufe ohne try/except — anders als die drei
+    Geraetevorlagen-Schreibvorgaenge, die laengst ueber `_fail()` laufen. Ein
+    OSError beim Schreiben von VO_Matter_System.xml (Platte voll, schreibgeschuetztes
+    Volume — beides realistisch fuer die kommende Container-Bereitstellung) durfte
+    keinen Traceback zeigen."""
+    original_write_bytes = Path.write_bytes
+
+    def flaky_write_bytes(self: Path, data: bytes) -> int:
+        if self.name.startswith("VO_Matter_System"):
+            raise OSError("Kein Speicherplatz mehr auf dem Geraet")
+        return original_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", flaky_write_bytes)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--system",
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    written = sorted(p.name for p in tmp_path.glob("*.xml"))
+    assert written == ["VIU_Matter_System.xml"]
+    # Die Meldung nennt die fehlgeschlagene Datei und sagt, was bereits da ist.
+    assert "VO_Matter_System" in result.stderr
+    assert "VIU_Matter_System" in result.stderr
+
+
 def test_export_fails_cleanly_when_the_output_directory_cannot_be_created(tmp_path, monkeypatch):
     """Review-Fix Important #3: `out.mkdir` war einer von drei ungeschuetzten
     Fehlerpunkten neben den beiden `write_bytes`-Aufrufen — ein `--out` unter
@@ -202,6 +263,27 @@ def test_export_fails_cleanly_when_the_output_directory_cannot_be_created(tmp_pa
     assert result.exit_code == 1
     assert "Traceback" not in result.output
     assert "gesperrt" in result.stderr
+
+
+def test_export_creates_no_directory_when_neither_system_nor_source_is_given(tmp_path):
+    """Review-Fix Minor #3 (2026-09-02): `out.mkdir` lief frueher vor der
+    Parametervalidierung — ein Aufruf ohne --system, --node oder --fixture legte
+    das Zielverzeichnis trotzdem an, bevor der Nutzungsfehler geworfen wurde."""
+    out = tmp_path / "wuerde_sonst_entstehen"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(out),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert not out.exists()
 
 
 def test_export_requires_node_or_fixture(tmp_path):

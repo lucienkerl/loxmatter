@@ -136,6 +136,19 @@ ADMINISTRATIVE_CLUSTERS: frozenset[int] = frozenset(
 )
 
 
+def scale_factor(ref: SignalRef) -> float:
+    """Faktor, mit dem ein roher Matter-Wert in die Loxone-Einheit uebergeht.
+
+    1.0, wenn die Tabelle nichts sagt - unbekannte Cluster werden roh
+    durchgereicht, nicht verworfen (Spec 3.5).
+    """
+    cluster = _table().get(ref.cluster_id, {})
+    entry = (cluster.get("attributes") or {}).get(ref.element_id)
+    if not entry:
+        return 1.0
+    return float(entry.get("scale", 1.0))
+
+
 def command_slug(cluster_id: int, command_id: int) -> str | None:
     """Name eines Kommandos, oder None wenn es nicht in der Tabelle steht."""
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
@@ -146,3 +159,21 @@ def command_takes_value(cluster_id: int, command_id: int) -> bool:
     """Ob das Kommando einen Wert erwartet (z.B. MoveToLevel), oder keinen (z.B. Off)."""
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
     return bool(entry and entry.get("takes_value"))
+
+
+def known_command_pairs() -> set[tuple[int, int]]:
+    """Alle (Cluster-ID, Kommando-ID)-Paare, die `clusters.yaml` unter
+    `commands` fuehrt.
+
+    Existiert einzig fuer den Konsistenz-Test gegen
+    `commands.translate._PAYLOAD_BUILDERS` (siehe dort) - haelt beide
+    Tabellen synchron, statt sie stillschweigend auseinanderlaufen zu lassen.
+    Genau das ist Review-Fix C2 (2026-09-02) passiert: Cluster 768 Kommando
+    10 stand in `_PAYLOAD_BUILDERS`, fehlte aber hier - der Rohexport baute
+    daraus ein digitales Kommando, dessen Payload-Builder in Wirklichkeit
+    einen Wert erwartete."""
+    return {
+        (cluster_id, command_id)
+        for cluster_id, cluster in _table().items()
+        for command_id in (cluster.get("commands") or {})
+    }

@@ -49,7 +49,7 @@ Beim Entwurf dieser Phase gefunden, nicht vorher bekannt:
 | `src/loxmatter/commands/color.py` | Farbraum-Umrechnung |
 | `src/loxmatter/loxone/server.py` | HTTP-Endpoint für virtuelle Ausgänge und `/resync` |
 | `src/loxmatter/cli.py` | zusätzlich `loxmatter run` |
-| `deploy/fake-miniserver/` | Testdoppel für beide Richtungen |
+| `src/loxmatter/devtools/` | Testdoppel für beide Richtungen (`FakeMiniserver`) |
 
 ---
 
@@ -70,7 +70,7 @@ Beim Entwurf dieser Phase gefunden, nicht vorher bekannt:
   - `format_value(value: float | bool) -> str` in `loxone.values`
   - `datagram(key: str, value: float | bool) -> bytes` in `loxone.values`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/loxone/test_values.py`:
 
@@ -141,14 +141,41 @@ def test_format_renders_booleans_as_one_and_zero():
 def test_datagram_matches_the_exported_check_pattern():
     """Die Vorlage erkennt "<key>:\\v" - das Datagramm muss dazu passen (Spec 6.1)."""
     assert datagram("d1_2_power", 0.0003) == b"d1_2_power:0.0003"
+
+
+def test_format_keeps_negative_values_intact():
+    """Ein negatives Vorzeichen ist kein Rundungsfehler und darf nicht verschwinden."""
+    assert format_value(-21.5) == "-21.5"
+    assert format_value(-0.5) == "-0.5"
+    assert format_value(-1234567.89) == "-1234567.89"
+
+
+def test_format_rounds_negative_near_zero_to_plain_zero():
+    """ "-0" ist in einer Loxone-Visualisierung schlicht falsch - egal wie es entsteht."""
+    assert format_value(-1e-07) == "0"
+    assert format_value(-0.0) == "0"
+
+
+def test_negative_temperature_end_to_end():
+    """TemperatureMeasurement in Hundertstelgrad unter Null - der Alltagsfall im Winter."""
+    ref = attr(1026, 0)
+    value = to_loxone_value(ref, -1270)
+    assert value == pytest.approx(-12.7)
+    assert format_value(value) == "-12.7"
+
+
+def test_format_never_renders_scientific_notation_for_negative_values():
+    """Gegenstueck zu test_no_value_formats_to_scientific_notation, mit negativem Vorzeichen."""
+    assert "e" not in format_value(-0.000001).lower()
+    assert "e" not in format_value(-1234567.89).lower()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_values.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone'`
 
-- [ ] **Step 3: Skalierungsfaktoren in die Tabelle**
+- [x] **Step 3: Skalierungsfaktoren in die Tabelle**
 
 In `src/loxmatter/profiles/clusters.yaml` bei den Attributen jeweils `scale` ergänzen.
 Die Faktoren stammen aus Spec 7.3:
@@ -177,7 +204,7 @@ Die Faktoren stammen aus Spec 7.3:
 
 Achte auf die YAML-Falle aus Phase 3: Slugs wie `on` und `off` müssen quotiert bleiben.
 
-- [ ] **Step 4: `scale_factor` in `profiles/table.py`**
+- [x] **Step 4: `scale_factor` in `profiles/table.py`**
 
 ```python
 def scale_factor(ref: SignalRef) -> float:
@@ -193,7 +220,7 @@ def scale_factor(ref: SignalRef) -> float:
     return float(entry.get("scale", 1.0))
 ```
 
-- [ ] **Step 5: `loxone/values.py`**
+- [x] **Step 5: `loxone/values.py`**
 
 ```python
 """Rechnet rohe Matter-Werte in das um, was der Miniserver erwartet.
@@ -230,11 +257,18 @@ def to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None:
 
 
 def format_value(value: float | bool) -> str:
-    """Textform fuer das Datagramm: bis zu sechs Nachkommastellen, ohne Nullen am Ende."""
+    """Textform fuer das Datagramm: bis zu sechs Nachkommastellen, ohne Nullen am Ende.
+
+    Ein Wert, der auf null rundet, wird immer als "0" ausgegeben - unabhaengig vom
+    Vorzeichen. Sonst liesse ein negativer Rundungsrest wie -1e-07 ein "-0" durch,
+    das in der Loxone-Visualisierung schlicht falsch waere.
+    """
     if isinstance(value, bool):
         return "1" if value else "0"
     text = f"{value:.{MAX_DECIMALS}f}".rstrip("0").rstrip(".")
-    return text or "0"
+    if text in ("", "-0"):
+        return "0"
+    return text
 
 
 def datagram(key: str, value: float | bool) -> bytes:
@@ -242,12 +276,12 @@ def datagram(key: str, value: float | bool) -> bytes:
     return f"{key}:{format_value(value)}".encode()
 ```
 
-- [ ] **Step 6: Run test to verify it passes**
+- [x] **Step 6: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_values.py -v`
-Expected: PASS, 11 Tests
+Expected: PASS, 15 Tests
 
-- [ ] **Step 7: Gegen das echte Gerät halten**
+- [x] **Step 7: Gegen das echte Gerät halten**
 
 `tests/loxone/test_values_real_device.py`:
 
@@ -294,7 +328,7 @@ def test_no_value_formats_to_scientific_notation():
             assert "e" not in format_value(wert).lower()
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/loxmatter/loxone src/loxmatter/profiles tests/loxone
@@ -316,12 +350,17 @@ aber nichts kann diesen Schlüssel später zurück auf ein Matter-Kommando abbil
 **Interfaces:**
 - Consumes: `DeviceCommand` aus `export.commands`, `NodeSnapshot`
 - Produces:
-  - `class StoredCommand` — frozen: `key`, `node_id`, `endpoint`, `cluster_id`, `command_id`, `takes_value`
+  - `class StoredCommand` — frozen: `key`, `slug`, `node_id`, `endpoint`, `cluster_id`, `command_id`, `takes_value`
+  - `class UnknownCommandError(KeyError)` — eigenes `__str__`, damit `str(exc)` keine
+    `repr()`-Anfuehrungszeichen um die Meldung legt (Task 6 macht daraus einen HTTP-Body)
   - `Store.register_commands(device_id: int, commands: Sequence[DeviceCommand], node_id: int) -> list[StoredCommand]`
-  - `Store.resolve_command(key: str) -> StoredCommand` — wirft `KeyError` mit deutscher Meldung
+    — meldet eine echte Schluessel-Kollision statt sie stillschweigend zu verwerfen, und
+    aktualisiert `takes_value`/`slug` eines schon bekannten Kommandos bei jedem Aufruf
+  - `Store.resolve_command(key: str) -> StoredCommand` — wirft `UnknownCommandError` mit
+    deutscher Meldung
   - `Store.commands(device_id: int) -> list[StoredCommand]`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/model/test_store_commands.py`:
 
@@ -331,9 +370,10 @@ from pathlib import Path
 
 import pytest
 
-from loxmatter.export.commands import extract_commands
+from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
+from loxmatter.profiles import table
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -369,8 +409,11 @@ def test_plug_commands_are_resolvable_by_their_exported_key(store):
 
 def test_unknown_key_raises_with_a_german_message(store):
     registered(store, "ikea_grillplats_plug.json")
-    with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel"):
+    with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel") as excinfo:
         store.resolve_command("d1_1_gibtsnicht")
+    # str(KeyError(...)) haengt sonst repr()-Anfuehrungszeichen um die ganze
+    # Nachricht — UnknownCommandError gibt sie unveraendert zurueck.
+    assert str(excinfo.value) == "unbekannter Kommando-Schluessel 'd1_1_gibtsnicht'"
 
 
 def test_button_registers_no_commands(store):
@@ -396,14 +439,67 @@ def test_command_keys_match_the_exported_scheme(store):
 def test_node_id_is_stored_so_the_runtime_can_address_the_device(store):
     _, snap, commands = registered(store, "ikea_grillplats_plug.json")
     assert {c.node_id for c in commands} == {snap.node_id}
+
+
+def test_command_key_collision_raises_instead_of_dropping_silently(store, monkeypatch):
+    """Zwei Kommandos verschiedener Cluster auf demselben Endpoint koennen
+    denselben Slug bekommen — ein zukuenftiger Eintrag in `clusters.yaml` fuer
+    einen zweiten Cluster auf einem Endpoint, der sich schon einen Slug mit
+    `onoff`/`level` teilt, ist eine ganz gewoehnliche Matter-Anordnung.
+    `command_slug` wird hier gezielt auf einen festen Wert gezwungen, um genau
+    das nachzustellen. Das darf `register_commands` nicht mit `INSERT OR
+    IGNORE` stillschweigend loesen — es muss laut scheitern, und das Geraet
+    darf danach keine Kommandos aus diesem gescheiterten Aufruf enthalten."""
+    real_command_slug = table.command_slug
+
+    def fake_command_slug(cluster_id: int, command_id: int) -> str | None:
+        if cluster_id == 3 and command_id == 0:
+            return "on"
+        return real_command_slug(cluster_id, command_id)
+
+    monkeypatch.setattr("loxmatter.export.commands.command_slug", fake_command_slug)
+
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    commands = extract_commands(snap)
+
+    with pytest.raises(ValueError, match="Schluessel-Kollision"):
+        store.register_commands(device_id, commands, snap.node_id)
+
+    assert store.commands(device_id) == []
+
+
+def test_takes_value_change_is_picked_up_on_reregistration(store):
+    """Anders als bei Signalen fror `register_commands` `takes_value` beim
+    ersten Einlernen fuer immer ein. Eine Korrektur in `clusters.yaml` muss
+    ein schon gespeichertes Kommando erreichen, ohne seinen Schluessel zu
+    aendern (Spec 6.2)."""
+    device_id, snap, first = registered(store, "ikea_grillplats_plug.json")
+    on_before = next(c for c in first if c.slug == "on")
+    assert on_before.takes_value is False
+
+    updated = [
+        DeviceCommand(
+            endpoint=on_before.endpoint,
+            cluster_id=on_before.cluster_id,
+            command_id=on_before.command_id,
+            slug=on_before.slug,
+            takes_value=True,
+        )
+    ]
+    again = store.register_commands(device_id, updated, snap.node_id)
+
+    on_after = next(c for c in again if c.key == on_before.key)
+    assert on_after.takes_value is True
+    assert on_after.key == on_before.key
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/model/test_store_commands.py -v`
 Expected: FAIL mit `AttributeError: 'Store' object has no attribute 'register_commands'`
 
-- [ ] **Step 3: Schema und Methoden ergänzen**
+- [x] **Step 3: Schema und Methoden ergänzen**
 
 In `_SCHEMA` von `src/loxmatter/model/store.py` ergänzen:
 
@@ -416,22 +512,40 @@ CREATE TABLE IF NOT EXISTS command (
     cluster_id  INTEGER NOT NULL,
     command_id  INTEGER NOT NULL,
     key         TEXT NOT NULL UNIQUE,
+    slug        TEXT NOT NULL,
     takes_value INTEGER NOT NULL,
     UNIQUE (device_id, endpoint, cluster_id, command_id)
 );
 ```
 
-Dazu die Datenklasse und die drei Methoden:
+Dazu die Datenklasse, `UnknownCommandError` und die Methoden:
 
 ```python
 @dataclass(frozen=True)
 class StoredCommand:
     key: str
+    slug: str
     node_id: int
     endpoint: int
     cluster_id: int
     command_id: int
     takes_value: bool
+
+
+class UnknownCommandError(KeyError):
+    """`KeyError.__str__` haengt die Nachricht in `repr()` ein, wodurch
+    `str(exc)` zusaetzliche Anfuehrungszeichen um den deutschen Text legt —
+    Task 6 macht daraus einen HTTP-Fehlerkoerper. Die Unterklasse gibt die
+    Nachricht unveraendert zurueck; `pytest.raises(KeyError, ...)` faengt sie
+    weiterhin, da sie von `KeyError` erbt."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+def _existing_command_keys(self, device_id: int) -> set[str]:
+    rows = self._db.execute("SELECT key FROM command WHERE device_id = ?", (device_id,)).fetchall()
+    return {str(r["key"]) for r in rows}
 
 
 def register_commands(
@@ -441,22 +555,67 @@ def register_commands(
 
     Ohne das schreibt der Exporter Schluessel in die Vorlage, die spaeter
     niemand zurueck auf ein Matter-Kommando abbilden kann.
+
+    Ein schon bekanntes Kommando (gleiches device_id/endpoint/cluster_id/
+    command_id) behaelt seinen Schluessel, aber `takes_value` und `slug`
+    werden bei jedem Aufruf neu uebernommen — genau wie `register_signals`
+    `unit` und `exportability` neu bestimmt, statt sie beim ersten Einlernen
+    fuer immer einzufrieren.
+
+    Laeuft als eine Transaktion mit Rollback bei Fehlschlag. Absichtlich kein
+    `INSERT OR IGNORE` — das wuerde eine echte Schluessel-Kollision nicht
+    melden, sondern das zweite Kommando stillschweigend verwerfen (siehe
+    `register_signals`). Anders als bei Signalen gibt es hier keine
+    Ausweichstrategie: zwei Kommandos verschiedener Cluster auf demselben
+    Endpoint mit gleichem Slug sind ein Fehler in `clusters.yaml`.
     """
-    for command in commands:
-        self._db.execute(
-            "INSERT OR IGNORE INTO command "
-            "(device_id, node_id, endpoint, cluster_id, command_id, key, takes_value) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                device_id,
-                node_id,
-                command.endpoint,
-                command.cluster_id,
-                command.command_id,
-                f"d{device_id}_{command.endpoint}_{command.slug}",
-                int(command.takes_value),
-            ),
-        )
+    taken = self._existing_command_keys(device_id)
+    try:
+        for command in commands:
+            existing = self._db.execute(
+                "SELECT key FROM command WHERE device_id = ? AND endpoint = ?"
+                " AND cluster_id = ? AND command_id = ?",
+                (device_id, command.endpoint, command.cluster_id, command.command_id),
+            ).fetchone()
+            if existing is not None:
+                self._db.execute(
+                    "UPDATE command SET takes_value = ?, slug = ? WHERE key = ?",
+                    (int(command.takes_value), command.slug, existing["key"]),
+                )
+                continue
+
+            key = f"d{device_id}_{command.endpoint}_{command.slug}"
+            if key in taken:
+                collision = self._db.execute(
+                    "SELECT cluster_id, command_id FROM command WHERE device_id = ? AND key = ?",
+                    (device_id, key),
+                ).fetchone()
+                raise ValueError(
+                    f"Schluessel-Kollision fuer Geraet {device_id}: Kommando "
+                    f"(cluster_id={command.cluster_id}, command_id={command.command_id}) "
+                    f"und (cluster_id={collision['cluster_id']}, "
+                    f"command_id={collision['command_id']}) teilen sich den "
+                    f"Schluessel {key!r}"
+                )
+            taken.add(key)
+            self._db.execute(
+                "INSERT INTO command "
+                "(device_id, node_id, endpoint, cluster_id, command_id, key, slug,"
+                " takes_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    device_id,
+                    node_id,
+                    command.endpoint,
+                    command.cluster_id,
+                    command.command_id,
+                    key,
+                    command.slug,
+                    int(command.takes_value),
+                ),
+            )
+    except (ValueError, sqlite3.Error):
+        self._db.rollback()
+        raise
     self._db.commit()
     return self.commands(device_id)
 
@@ -472,7 +631,7 @@ def commands(self, device_id: int) -> list[StoredCommand]:
 def resolve_command(self, key: str) -> StoredCommand:
     row = self._db.execute("SELECT * FROM command WHERE key = ?", (key,)).fetchone()
     if row is None:
-        raise KeyError(f"unbekannter Kommando-Schluessel {key!r}")
+        raise UnknownCommandError(f"unbekannter Kommando-Schluessel {key!r}")
     return self._as_command(row)
 
 
@@ -480,6 +639,7 @@ def resolve_command(self, key: str) -> StoredCommand:
 def _as_command(row: sqlite3.Row) -> StoredCommand:
     return StoredCommand(
         key=row["key"],
+        slug=row["slug"],
         node_id=int(row["node_id"]),
         endpoint=int(row["endpoint"]),
         cluster_id=int(row["cluster_id"]),
@@ -488,7 +648,7 @@ def _as_command(row: sqlite3.Row) -> StoredCommand:
     )
 ```
 
-- [ ] **Step 4: Der Export persistiert die Kommandos**
+- [x] **Step 4: Der Export persistiert die Kommandos**
 
 In `src/loxmatter/cli.py` im `export`-Kommando, direkt nach `store.register_signals(...)`
 und innerhalb desselben `try`, ergänzen:
@@ -502,14 +662,19 @@ und innerhalb desselben `try`, ergänzen:
 Und die `LoxoneCommand`-Liste aus `stored_commands` statt aus `device_commands` bauen,
 damit der Schlüssel in der Vorlage und der Schlüssel in der Datenbank aus **einer**
 Quelle stammen. Zwei Stellen, die denselben Schlüssel unabhängig zusammensetzen, driften
-auseinander — und das fiele erst auf, wenn ein Loxone-Baustein nichts mehr tut.
+auseinander — und das fiele erst auf, wenn ein Loxone-Baustein nichts mehr tut. Der Titel
+kommt aus `c.slug` — `StoredCommand` traegt den Slug jetzt in einer eigenen Spalte, statt
+ihn aus dem Schlüssel zurueckzuparsen (`c.key.split("_", 2)[-1]`). Zwei Stellen, die
+dieselbe Zusammensetzung getrennt kennen muessen, sind derselbe Auseinanderdrift-Fehler
+wie oben, nur eine Ebene tiefer.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `uv run pytest tests/model tests/test_export_cli.py -v`
-Expected: PASS; die bestehenden Export-Tests müssen unverändert durchlaufen.
+Expected: PASS, 8 Tests in `test_store_commands.py`; die bestehenden Export-Tests müssen
+unverändert durchlaufen.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/loxmatter/model src/loxmatter/cli.py tests/model
@@ -532,7 +697,7 @@ git commit -m "feat(model): exportierte Kommandos sind zur Laufzeit aufloesbar"
   - `async def close(self) -> None`
   - `RATE_LIMIT_PER_SECOND: float`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/loxone/test_sender.py`:
 
@@ -546,7 +711,7 @@ from loxmatter.loxone.sender import UdpSender
 
 
 @pytest.fixture
-def empfaenger():
+def receiver():
     """Ein UDP-Socket auf 127.0.0.1 - verlaesst die Maschine nicht."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
@@ -555,63 +720,63 @@ def empfaenger():
     sock.close()
 
 
-def empfangen(sock: socket.socket) -> list[bytes]:
-    pakete = []
+def received(sock: socket.socket) -> list[bytes]:
+    packets = []
     while True:
         try:
-            pakete.append(sock.recv(4096))
+            packets.append(sock.recv(4096))
         except BlockingIOError:
-            return pakete
+            return packets
 
 
-async def test_sends_the_expected_datagram(empfaenger):
-    host, port = empfaenger.getsockname()
+async def test_sends_the_expected_datagram(receiver):
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     await sender.send("d1_2_power", 0.0003)
     await asyncio.sleep(0.05)
-    assert empfangen(empfaenger) == [b"d1_2_power:0.0003"]
+    assert received(receiver) == [b"d1_2_power:0.0003"]
     await sender.close()
 
 
-async def test_unchanged_value_is_not_resent(empfaenger):
+async def test_unchanged_value_is_not_resent(receiver):
     """Entprellung: ein Sensor, der jede Sekunde denselben Wert meldet, flutet nicht."""
-    host, port = empfaenger.getsockname()
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     assert await sender.send("d1_1_temp", 21.5) is True
     assert await sender.send("d1_1_temp", 21.5) is False
     await asyncio.sleep(0.05)
-    assert len(empfangen(empfaenger)) == 1
+    assert len(received(receiver)) == 1
     await sender.close()
 
 
-async def test_changed_value_is_sent(empfaenger):
-    host, port = empfaenger.getsockname()
+async def test_changed_value_is_sent(receiver):
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     await sender.send("d1_1_temp", 21.5)
     assert await sender.send("d1_1_temp", 21.6) is True
     await asyncio.sleep(0.05)
-    assert len(empfangen(empfaenger)) == 2
+    assert len(received(receiver)) == 2
     await sender.close()
 
 
-async def test_force_resends_an_unchanged_value(empfaenger):
+async def test_force_resends_an_unchanged_value(receiver):
     """Der Full-Resend nach einem Miniserver-Neustart muss die Entprellung umgehen."""
-    host, port = empfaenger.getsockname()
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     await sender.send("d1_1_temp", 21.5)
     assert await sender.send("d1_1_temp", 21.5, force=True) is True
     await sender.close()
 
 
-async def test_rate_limit_staggers_a_burst(empfaenger):
+async def test_rate_limit_staggers_a_burst(receiver):
     """Spec 6.4: gestaffelt auf etwa 50 Datagramme pro Sekunde."""
-    host, port = empfaenger.getsockname()
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port, rate_limit=100.0)
     start = asyncio.get_running_loop().time()
     for i in range(10):
         await sender.send(f"d1_1_a{i}", i)
-    dauer = asyncio.get_running_loop().time() - start
-    assert dauer >= 0.09
+    duration = asyncio.get_running_loop().time() - start
+    assert duration >= 0.09
     await sender.close()
 
 
@@ -620,14 +785,45 @@ async def test_send_after_close_raises():
     await sender.close()
     with pytest.raises(RuntimeError, match="geschlossen"):
         await sender.send("d1_1_temp", 21.5)
+
+
+async def test_close_during_in_flight_send_does_not_crash(receiver):
+    """Ein close() waehrend eines im Rate-Limit-Schlaf parkierten Sendevorgangs
+    darf niemals einen AttributeError durch einen bereits geschlossenen Socket
+    ausloesen - entweder schliesst der Sendevorgang sauber ab, oder er sieht das
+    dokumentierte RuntimeError."""
+    host, port = receiver.getsockname()
+    sender = UdpSender(host, port, rate_limit=10.0)
+    await sender.send("d1_1_a", 1)
+
+    async def delayed_send() -> bool | RuntimeError:
+        try:
+            return await sender.send("d1_1_b", 2)
+        except RuntimeError as error:
+            return error
+
+    send_task = asyncio.create_task(delayed_send())
+    await asyncio.sleep(0.02)
+    close_task = asyncio.create_task(sender.close())
+
+    result = await send_task
+    await close_task
+
+    assert result is True or isinstance(result, RuntimeError)
+
+
+async def test_close_is_idempotent():
+    sender = UdpSender("127.0.0.1", 7000)
+    await sender.close()
+    await sender.close()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_sender.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.sender'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/loxone/sender.py`:
 
@@ -659,47 +855,55 @@ RATE_LIMIT_PER_SECOND = 50.0
 
 class UdpSender:
     def __init__(self, host: str, port: int, *, rate_limit: float = RATE_LIMIT_PER_SECOND) -> None:
+        """Baut den UDP-Socket auf. Ein rate_limit von 0 oder darunter bedeutet: kein Rate-Limit."""
         self._target = (host, port)
         self._interval = 1.0 / rate_limit if rate_limit > 0 else 0.0
         self._socket: socket.socket | None = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.setblocking(False)
-        self._letzte: dict[str, str] = {}
-        self._naechster_sendezeitpunkt = 0.0
-        self._sperre = asyncio.Lock()
+        self._last_sent: dict[str, str] = {}
+        self._next_send_time = 0.0
+        self._lock = asyncio.Lock()
 
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
         """Sendet, wenn sich der Wert geaendert hat oder force gesetzt ist."""
         if self._socket is None:
             raise RuntimeError("UdpSender ist geschlossen")
 
-        paket = datagram(key, value)
-        text = paket.decode()
-        if not force and self._letzte.get(key) == text:
+        packet = datagram(key, value)
+        text = packet.decode()
+        if not force and self._last_sent.get(key) == text:
             return False
 
-        async with self._sperre:
+        async with self._lock:
+            if self._socket is None:
+                raise RuntimeError("UdpSender ist geschlossen")
             loop = asyncio.get_running_loop()
-            wartezeit = self._naechster_sendezeitpunkt - loop.time()
-            if wartezeit > 0:
-                await asyncio.sleep(wartezeit)
-            self._socket.sendto(paket, self._target)
-            self._naechster_sendezeitpunkt = loop.time() + self._interval
+            wait_time = self._next_send_time - loop.time()
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
+            self._socket.sendto(packet, self._target)
+            self._next_send_time = loop.time() + self._interval
 
-        self._letzte[key] = text
+        self._last_sent[key] = text
         return True
 
     async def close(self) -> None:
-        if self._socket is not None:
-            self._socket.close()
-            self._socket = None
+        """Schliesst den Socket. Nimmt dieselbe Sperre wie send(), damit ein
+        Sendevorgang, der gerade im Rate-Limit-Schlaf steckt, nicht auf einen
+        bereits geschlossenen Socket trifft. Mehrfacher Aufruf bleibt unschaedlich.
+        """
+        async with self._lock:
+            if self._socket is not None:
+                self._socket.close()
+                self._socket = None
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_sender.py -v`
-Expected: PASS, 6 Tests
+Expected: PASS, 8 Tests
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/loxone/sender.py tests/loxone/test_sender.py
@@ -726,10 +930,16 @@ Zustands-Wiederherstellung.
   - `async def on_event(self, device_id: int, path: str) -> None`
   - `async def set_online(self, device_id: int, online: bool) -> None`
   - `async def resend_all(self) -> int` — Anzahl gesendeter Datagramme
+  - `async def seed_from_snapshot(self, snapshots: Sequence[NodeSnapshot]) -> int` — **Nachtrag,
+    Live-Lauf 2026-09-02:** füllt `_last_values` aus dem aktuellen Gerätezustand
+    (`BridgeMatterClient.snapshots()`), ohne selbst zu senden — ein Resend direkt nach dem
+    Start (siehe Task 8) hätte sonst nichts zu verschicken, weil `_last_values` beim Start
+    leer ist und ein Wert dort sonst nur über eine sich ändernde Subscription landet. Siehe
+    Spec 6.4 und den entsprechenden Report.
   - `async def start(self) -> None`, `async def stop(self) -> None`
   - `PULSE_MILLISECONDS: int`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/loxone/test_runtime.py`:
 
@@ -742,7 +952,8 @@ import pytest
 
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
-from loxmatter.matter.models import NodeSnapshot
+from loxmatter.matter.discovery import extract_signals
+from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
@@ -752,117 +963,232 @@ class FakeSender:
     """Merkt sich, was gesendet wurde, statt es zu verschicken."""
 
     def __init__(self) -> None:
-        self.gesendet: list[tuple[str, object, bool]] = []
+        self.sent: list[tuple[str, object, bool]] = []
 
     async def send(self, key: str, value: object, *, force: bool = False) -> bool:
-        self.gesendet.append((key, value, force))
+        self.sent.append((key, value, force))
         return True
 
     async def close(self) -> None:
         return None
 
     def keys(self) -> list[str]:
-        return [k for k, _, _ in self.gesendet]
+        return [k for k, _, _ in self.sent]
+
+
+class FlakySender(FakeSender):
+    """Wie FakeSender, wirft aber beim n-ten Aufruf einen RuntimeError - fuer
+    Tests, die einen fehlgeschlagenen Sendeversuch nachstellen wollen."""
+
+    def __init__(self, fail_on_call: int) -> None:
+        super().__init__()
+        self._fail_on_call = fail_on_call
+        self._calls = 0
+
+    async def send(self, key: str, value: object, *, force: bool = False) -> bool:
+        self._calls += 1
+        if self._calls == self._fail_on_call:
+            raise RuntimeError("Sender kaputt")
+        return await super().send(key, value, force=force)
 
 
 @pytest.fixture
-def umgebung(tmp_path):
-    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
-    snap = NodeSnapshot.from_raw(raw["node_id"], raw)
+def environment(tmp_path):
+    """Zwei Geraete in einem Store: die Steckdose liefert das Attribut fuer
+    die Skalierungs-Tests (2/144/4), der Taster liefert das Event fuer die
+    Impuls-Tests (1/59/1) — die Steckdose hat keinen Switch-Cluster und kann
+    kein Event liefern."""
     store = Store(tmp_path / "t.sqlite")
-    device_id = store.register_device(snap)
-    store.register_signals(device_id, snap)
-    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+
+    plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
+    device_id = store.register_device(plug_snap)
+    store.register_signals(device_id, plug_snap)
+    store.register_commands(device_id, extract_commands(plug_snap), plug_snap.node_id)
+
+    button_raw = json.loads((FIXTURES / "ikea_bilresa_button.json").read_text(encoding="utf-8"))
+    button_snap = NodeSnapshot.from_raw(button_raw["node_id"], button_raw)
+    button_device_id = store.register_device(button_snap)
+    store.register_signals(button_device_id, button_snap)
+
     sender = FakeSender()
     runtime = Runtime(store, sender)
-    yield runtime, sender, store, device_id, snap
+    yield runtime, sender, store, device_id, button_device_id
     store.close()
 
 
-async def test_attribute_change_becomes_a_scaled_datagram(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
+async def test_attribute_change_becomes_a_scaled_datagram(environment):
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
-    assert sender.gesendet == [(f"d{device_id}_2_voltage", pytest.approx(230.0), False)]
+    assert sender.sent == [(f"d{device_id}_2_voltage", pytest.approx(230.0), False)]
 
 
-async def test_unmappable_attribute_is_not_sent(umgebung):
+async def test_unmappable_attribute_is_not_sent(environment):
     """Spec 6.6: Listen werden nie zu einem Datagramm."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "0/29/1", [29, 31, 40])
-    assert sender.gesendet == []
+    assert sender.sent == []
 
 
-async def test_unknown_path_is_ignored_not_raised(umgebung):
+async def test_unknown_path_is_ignored_not_raised(environment):
     """Ein Gerät kann Attribute melden, die beim Export nicht dabei waren."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "9/9999/9", 1)
-    assert sender.gesendet == []
+    assert sender.sent == []
 
 
-async def test_event_sends_a_pulse_and_a_counter(umgebung):
+async def test_event_sends_a_pulse_and_a_counter(environment):
     """Spec 6.3: der Impuls erzeugt die Flanke, der Zaehler ueberlebt ein verlorenes Paket."""
-    runtime, sender, _, device_id, _ = umgebung
-    await runtime.on_event(device_id, "1/59/1")
+    runtime, sender, _, _, button_device_id = environment
+    await runtime.on_event(button_device_id, "1/59/1")
     keys = sender.keys()
-    assert f"d{device_id}_1_press" in keys
-    assert f"d{device_id}_1_press_n" in keys
+    assert f"d{button_device_id}_1_press" in keys
+    assert f"d{button_device_id}_1_press_n" in keys
 
 
-async def test_pulse_falls_back_to_zero(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
-    await runtime.on_event(device_id, "1/59/1")
+async def test_pulse_falls_back_to_zero(environment):
+    runtime, sender, _, _, button_device_id = environment
+    await runtime.on_event(button_device_id, "1/59/1")
     await asyncio.sleep(Runtime.PULSE_MILLISECONDS / 1000 + 0.1)
-    impulse = [(k, v) for k, v, _ in sender.gesendet if k == f"d{device_id}_1_press"]
-    assert impulse == [(f"d{device_id}_1_press", True), (f"d{device_id}_1_press", False)]
+    pulses = [(k, v) for k, v, _ in sender.sent if k == f"d{button_device_id}_1_press"]
+    assert pulses == [
+        (f"d{button_device_id}_1_press", True),
+        (f"d{button_device_id}_1_press", False),
+    ]
 
 
-async def test_counter_increases_monotonically(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
+async def test_counter_increases_monotonically(environment):
+    runtime, sender, _, _, button_device_id = environment
     for _ in range(3):
-        await runtime.on_event(device_id, "1/59/1")
-    zaehler = [v for k, v, _ in sender.gesendet if k == f"d{device_id}_1_press_n"]
-    assert zaehler == [1, 2, 3]
+        await runtime.on_event(button_device_id, "1/59/1")
+    counters = [v for k, v, _ in sender.sent if k == f"d{button_device_id}_1_press_n"]
+    assert counters == [1, 2, 3]
 
 
-async def test_online_signal_is_sent(umgebung):
-    runtime, sender, _, device_id, _ = umgebung
+async def test_online_signal_is_sent(environment):
+    runtime, sender, _, device_id, _ = environment
     await runtime.set_online(device_id, False)
-    assert (f"d{device_id}_online", False, False) in sender.gesendet
+    assert (f"d{device_id}_online", False, False) in sender.sent
 
 
-async def test_resend_forces_every_known_value(umgebung):
+async def test_resend_forces_every_known_value(environment):
     """Spec 6.4: nach einem Miniserver-Neustart muss die Entprellung umgangen werden."""
-    runtime, sender, _, device_id, _ = umgebung
+    runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
-    sender.gesendet.clear()
-    anzahl = await runtime.resend_all()
-    assert anzahl == 1
-    assert sender.gesendet[0][2] is True
+    sender.sent.clear()
+    count = await runtime.resend_all()
+    assert count == 1
+    assert sender.sent[0][2] is True
 
 
-async def test_resend_of_an_empty_runtime_sends_nothing(umgebung):
-    runtime, _, _, _, _ = umgebung
+async def test_resend_of_an_empty_runtime_sends_nothing(environment):
+    runtime, _, _, _, _ = environment
     assert await runtime.resend_all() == 0
 
 
-async def test_heartbeat_toggles(umgebung):
+async def test_heartbeat_toggles(environment):
     """Spec 6.5: bridge_alive deckt "Container tot" und "Netz weg" gleichermassen ab."""
-    _, sender, store, _, _ = umgebung
+    _, sender, store, _, _ = environment
     runtime = Runtime(store, sender, heartbeat_seconds=0.05)
     await runtime.start()
     await asyncio.sleep(0.16)
     await runtime.stop()
-    werte = [v for k, v, _ in sender.gesendet if k == "bridge_alive"]
-    assert len(werte) >= 2
-    assert werte[0] != werte[1]
+    values = [v for k, v, _ in sender.sent if k == "bridge_alive"]
+    assert len(values) >= 2
+    assert values[0] != values[1]
+
+
+async def test_heartbeat_survives_a_failed_send(environment):
+    """Review-Fix Important #1: der Heartbeat deckt laut Modul-Docstring
+    "Container tot" und "Netz weg" gleichermassen ab - ein einzelner
+    fehlgeschlagener Sendeversuch darf die Watchdog-Schleife deshalb nicht
+    beenden, sonst friert der Loxone-Watchdog auf dem letzten Wert ein,
+    waehrend die Bruecke laengst schweigt."""
+    _, _, store, _, _ = environment
+    sender = FlakySender(fail_on_call=2)
+    runtime = Runtime(store, sender, heartbeat_seconds=0.05)
+    await runtime.start()
+    await asyncio.sleep(0.22)
+    await runtime.stop()
+    values = [v for k, v, _ in sender.sent if k == "bridge_alive"]
+    # Der zweite Aufruf schlaegt fehl (siehe FlakySender) - ohne den Fix
+    # stuerbe die Schleife dort und es kaemen nie weitere Werte an.
+    assert len(values) >= 3
+
+
+async def test_stop_completes_even_if_a_task_already_died(environment):
+    """Review-Fix Important #1, Begleitfehler: contextlib.suppress(CancelledError)
+    unterdrueckt nur eine Cancellation, keine andere Exception, an der ein
+    Task schon vor `stop()` gestorben ist. Die alte Implementierung liess
+    `stop()` mit genau dieser Exception abbrechen und ueberspringt dabei das
+    Leeren der Task-Liste."""
+    runtime, _, _, _, _ = environment
+
+    async def boom() -> None:
+        raise RuntimeError("Task ist schon vor stop() gestorben")
+
+    dead_task = asyncio.create_task(boom())
+    await asyncio.sleep(0)  # den Task tatsaechlich sterben lassen
+    assert dead_task.done()
+    runtime._tasks.append(dead_task)
+
+    await runtime.start()
+    await runtime.stop()  # darf nicht an der bereits toten Task scheitern
+
+    assert runtime._tasks == []
+    assert runtime._pulse_tasks == set()
+
+
+async def test_stop_lowers_an_in_flight_pulse(environment):
+    """Review-Fix Important #2: eine Cancellation waehrend des Impuls-Schlafs
+    ueberspringt sonst den `send(key, False)` - das digitale Signal bliebe
+    bis zum naechsten Ereignis auf diesem Schluessel auf 1 haengen."""
+    runtime, sender, _, _, button_device_id = environment
+    await runtime.on_event(button_device_id, "1/59/1")
+    await runtime.stop()
+    key = f"d{button_device_id}_1_press"
+    values = [v for k, v, _ in sender.sent if k == key]
+    assert values[-1] is False
+
+
+async def test_invalidate_index_lets_a_newly_registered_signal_through(environment, monkeypatch):
+    """Review-Fix Important #3: `Store.register_signals` kann jederzeit ein
+    neues Signal zu einem schon indizierten Geraet hinzufuegen (z. B. nach
+    einem Firmware-Update). Ohne `invalidate_index` bleibt dieses Signal fuer
+    die Laufzeit unsichtbar, weil `_signal_for` nur einmal pro Geraet aus der
+    Datenbank liest."""
+    runtime, sender, store, device_id, _ = environment
+    plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
+
+    new_ref = SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)
+    key = f"d{device_id}_9_c1234_a5"
+
+    def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
+        return [*extract_signals(snapshot), new_ref]
+
+    # Erstmaliges Indizieren durch die Laufzeit - der Pfad existiert noch nicht.
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.sent == []
+
+    monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
+    store.register_signals(device_id, plug_snap)
+
+    # Der Cache der Laufzeit weiss noch nichts vom neuen Signal.
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.sent == []
+
+    runtime.invalidate_index(device_id)
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.keys() == [key]
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.runtime'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/loxone/runtime.py`:
 
@@ -878,7 +1204,8 @@ Zaehler, der ein verlorenes UDP-Paket ueberlebt.
 
 Erreichbarkeit (Spec 6.5) - je Geraet ein digitales Signal, dazu ein globaler
 Heartbeat, der in Loxone als Watchdog dient und "Container tot" wie "Netz weg"
-gleichermassen abdeckt.
+gleichermassen abdeckt. Ein Heartbeat, der beim ersten Sendefehler stirbt,
+waere fuer genau diesen Zweck nutzlos - siehe `_heartbeat_loop`.
 
 Zustands-Wiederherstellung (Spec 6.4) - UDP ist zustandslos. Nach einem
 Neustart des Miniservers stehen alle Eingaenge auf ihrem Defaultwert, bis das
@@ -888,16 +1215,17 @@ naechste Update kommt; bei einem Temperatursensor koennen das Stunden sein.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-
+import logging
 from typing import Protocol
 
 from loxmatter.loxone.values import to_loxone_value
 from loxmatter.matter.models import SignalKind
-from loxmatter.model.store import Store
+from loxmatter.model.store import Store, StoredSignal
 
 PULSE_MILLISECONDS = 200
 HEARTBEAT_KEY = "bridge_alive"
+
+logger = logging.getLogger(__name__)
 
 
 class Sender(Protocol):
@@ -923,92 +1251,182 @@ class Runtime:
         self._sender = sender
         self._heartbeat_seconds = heartbeat_seconds
         self._resend_seconds = resend_seconds
-        self._letzte_werte: dict[str, float | bool] = {}
-        self._zaehler: dict[str, int] = {}
-        self._heartbeat_an = False
-        self._aufgaben: list[asyncio.Task[None]] = []
-        self._signale: dict[tuple[int, str, str], str] = {}
+        self._last_values: dict[str, float | bool] = {}
+        self._counters: dict[str, int] = {}
+        self._heartbeat_on = False
+        # Dauerhafte Hintergrund-Tasks (Heartbeat- und Resend-Schleife).
+        self._tasks: list[asyncio.Task[None]] = []
+        # Kurzlebige Impuls-Tasks, je einer pro `on_event`-Aufruf. Ein
+        # done_callback wirft jeden fertigen Task sofort wieder raus, sonst
+        # waechst die Menge mit jedem Event unbegrenzt weiter (Review-Fix
+        # Minor #1) - nur `stop()` haette sie sonst je geleert.
+        self._pulse_tasks: set[asyncio.Task[None]] = set()
+        # Schluessel, deren Impuls gerade auf True steht. `stop()` senkt sie
+        # explizit, denn eine Cancellation waehrend des Impuls-Schlafs
+        # ueberspringt sonst den `send(key, False)` in `_release_pulse` und
+        # das digitale Signal bleibt bis zum naechsten Ereignis auf diesem
+        # Schluessel haengen (Review-Fix Important #2).
+        self._pulses_high: set[str] = set()
+        # Index (device_id, path, kind) -> StoredSignal, pro Geraet einmalig
+        # aus der Datenbank geladen. `on_attribute` und `on_event` laufen bei
+        # jedem gemeldeten Wert eines Geraets - ohne diesen Cache waere das
+        # eine frische Abfrage ueber ~160 Zeilen pro Aufruf, und der
+        # Ur-Entwurf fragte sogar zweimal: einmal fuer den Schluessel, ein
+        # zweites Mal fuer den SignalRef. Hier wird pro Geraet genau einmal
+        # gelesen; jeder weitere Pfad desselben Geraets ist ein Dict-Zugriff.
+        # Wer nach dem ersten Indizieren erneut `Store.register_signals` fuer
+        # dasselbe Geraet aufruft, muss danach `invalidate_index` aufrufen -
+        # sonst bleibt ein neu hinzugekommenes Signal fuer diese Laufzeit
+        # unsichtbar (Review-Fix Important #3).
+        self._signals: dict[tuple[int, str, str], StoredSignal] = {}
+        self._indexed: set[int] = set()
 
-    def _schluessel(self, device_id: int, path: str, kind: SignalKind) -> str | None:
-        """Findet den unveraenderlichen Schluessel zu einem Matter-Pfad."""
-        cache_key = (device_id, path, kind.value)
-        if cache_key not in self._signale:
-            treffer = [
-                s
-                for s in self._store.signals(device_id)
-                if s.ref.path == path and s.ref.kind is kind
-            ]
-            self._signale[cache_key] = treffer[0].key if treffer else ""
-        return self._signale[cache_key] or None
+    def _signal_for(self, device_id: int, path: str, kind: SignalKind) -> StoredSignal | None:
+        """Findet das gespeicherte Signal zu einem Matter-Pfad, ohne bei
+        jedem Aufruf erneut die Datenbank zu befragen."""
+        if device_id not in self._indexed:
+            for stored in self._store.signals(device_id):
+                self._signals[(device_id, stored.ref.path, stored.ref.kind.value)] = stored
+            self._indexed.add(device_id)
+        signal = self._signals.get((device_id, path, kind.value))
+        if signal is None:
+            logger.debug(
+                "Kein Signal fuer Geraet %s, Pfad %s, Art %s - Update wird verworfen",
+                device_id,
+                path,
+                kind.value,
+            )
+        return signal
+
+    def invalidate_index(self, device_id: int | None = None) -> None:
+        """Verwirft den Signal-Cache eines Geraets, oder - ohne Angabe - aller Geraete.
+
+        Wer zur Laufzeit erneut `Store.register_signals` fuer ein bereits
+        laufendes Geraet aufruft (z. B. nach einem Firmware-Update, das einen
+        neuen Cluster freischaltet), MUSS diese Methode danach fuer das
+        betroffene Geraet aufrufen. Ohne das bleibt `_signal_for` bei seinem
+        einmal geladenen Stand: das neue Signal existiert in der Datenbank,
+        aber Updates dazu laufen fuer den Rest des Prozesses ins Leere - ohne
+        Fehler, ohne Log-Eintrag ausser dem `debug`-Eintrag in `_signal_for`.
+        """
+        if device_id is None:
+            self._signals.clear()
+            self._indexed.clear()
+            return
+        self._indexed.discard(device_id)
+        for cache_key in [k for k in self._signals if k[0] == device_id]:
+            del self._signals[cache_key]
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
-        key = self._schluessel(device_id, path, SignalKind.ATTRIBUTE)
-        if key is None:
+        signal = self._signal_for(device_id, path, SignalKind.ATTRIBUTE)
+        if signal is None:
             return
-        treffer = [s for s in self._store.signals(device_id) if s.key == key]
-        wert = to_loxone_value(treffer[0].ref, raw)
-        if wert is None:
+        value = to_loxone_value(signal.ref, raw)
+        if value is None:
             return
-        self._letzte_werte[key] = wert
-        await self._sender.send(key, wert)
+        self._last_values[signal.key] = value
+        await self._sender.send(signal.key, value)
 
     async def on_event(self, device_id: int, path: str) -> None:
-        key = self._schluessel(device_id, path, SignalKind.EVENT)
-        if key is None:
+        signal = self._signal_for(device_id, path, SignalKind.EVENT)
+        if signal is None:
             return
-        self._zaehler[key] = self._zaehler.get(key, 0) + 1
+        key = signal.key
+        # Der Zaehler dient dem Erkennen von Paketverlust, nicht einem
+        # exakten Protokoll - er zaehlt deshalb bewusst hoch, bevor gesendet
+        # wird. Ein Zaehler, der bei einem fehlgeschlagenen send() haengen
+        # bliebe, waere fuer diesen Zweck kein Gewinn (Review-Fix Minor #2).
+        self._counters[key] = self._counters.get(key, 0) + 1
         await self._sender.send(key, True)
-        await self._sender.send(f"{key}_n", self._zaehler[key])
-        self._letzte_werte[f"{key}_n"] = self._zaehler[key]
-        self._aufgaben.append(asyncio.create_task(self._impuls_zuruecknehmen(key)))
+        self._pulses_high.add(key)
+        await self._sender.send(f"{key}_n", self._counters[key])
+        self._last_values[f"{key}_n"] = self._counters[key]
+        task = asyncio.create_task(self._release_pulse(key))
+        task.add_done_callback(self._pulse_tasks.discard)
+        self._pulse_tasks.add(task)
 
-    async def _impuls_zuruecknehmen(self, key: str) -> None:
+    async def _release_pulse(self, key: str) -> None:
         await asyncio.sleep(PULSE_MILLISECONDS / 1000)
         await self._sender.send(key, False)
+        self._pulses_high.discard(key)
 
     async def set_online(self, device_id: int, online: bool) -> None:
         key = f"d{device_id}_online"
-        self._letzte_werte[key] = online
+        self._last_values[key] = online
         await self._sender.send(key, online)
 
     async def resend_all(self) -> int:
         """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei."""
-        anzahl = 0
-        for key, wert in list(self._letzte_werte.items()):
-            await self._sender.send(key, wert, force=True)
-            anzahl += 1
-        return anzahl
+        count = 0
+        for key, value in list(self._last_values.items()):
+            await self._sender.send(key, value, force=True)
+            count += 1
+        return count
 
     async def start(self) -> None:
-        self._aufgaben.append(asyncio.create_task(self._heartbeat_schleife()))
-        self._aufgaben.append(asyncio.create_task(self._resend_schleife()))
+        self._tasks.append(asyncio.create_task(self._heartbeat_loop()))
+        self._tasks.append(asyncio.create_task(self._resend_loop()))
 
     async def stop(self) -> None:
-        for aufgabe in self._aufgaben:
-            aufgabe.cancel()
-        for aufgabe in self._aufgaben:
-            with contextlib.suppress(asyncio.CancelledError):
-                await aufgabe
-        self._aufgaben.clear()
+        # Jeden gerade high stehenden Impuls senken, BEVOR die dazugehoerigen
+        # Tasks abgebrochen werden - sonst ueberspringt die Cancellation den
+        # `send(key, False)` in `_release_pulse` und das Signal bleibt bis
+        # zum naechsten Ereignis auf 1 haengen (Review-Fix Important #2).
+        for key in list(self._pulses_high):
+            await self._sender.send(key, False)
+        self._pulses_high.clear()
 
-    async def _heartbeat_schleife(self) -> None:
+        tasks: list[asyncio.Task[None]] = [*self._tasks, *self._pulse_tasks]
+        for task in tasks:
+            task.cancel()
+        # gather(..., return_exceptions=True) statt eines
+        # contextlib.suppress(CancelledError) je Task: Letzteres unterdrueckt
+        # nur eine Cancellation, keine Exception, an der ein Task schon vor
+        # `stop()` gestorben ist - die wuerde erneut ausgeloest, die Schleife
+        # ueber die Tasks abbrechen und `clear()` ueberspringen (Review-Fix
+        # Important #1, Begleitfehler).
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._tasks.clear()
+        self._pulse_tasks.clear()
+
+    async def _heartbeat_loop(self) -> None:
         while True:
-            self._heartbeat_an = not self._heartbeat_an
-            await self._sender.send(HEARTBEAT_KEY, self._heartbeat_an, force=True)
+            try:
+                self._heartbeat_on = not self._heartbeat_on
+                await self._sender.send(HEARTBEAT_KEY, self._heartbeat_on, force=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Genau der Fehlerfall, den der Heartbeat melden soll, darf
+                # ihn nicht zum Schweigen bringen - sonst friert der
+                # Loxone-Watchdog auf dem letzten Wert ein, waehrend nichts
+                # mehr laeuft (Review-Fix Important #1).
+                logger.exception("Heartbeat konnte nicht gesendet werden - Schleife laeuft weiter")
             await asyncio.sleep(self._heartbeat_seconds)
 
-    async def _resend_schleife(self) -> None:
+    async def _resend_loop(self) -> None:
         while True:
             await asyncio.sleep(self._resend_seconds)
-            await self.resend_all()
+            try:
+                await self.resend_all()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Full-Resend fehlgeschlagen - Schleife laeuft weiter")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -v`
-Expected: PASS, 10 Tests
+Expected: PASS, 14 Tests
 
-- [ ] **Step 5: Commit**
+**Nachtrag, Live-Lauf 2026-09-02:** 5 weitere Tests für `seed_from_snapshot` kamen
+hinzu (Cache füllen ohne zu senden, Resend danach schickt sie, ein Attribut ohne
+gespeichertes Signal wird übersprungen, zweimaliges Säen verdoppelt nichts, ein Node
+ohne bekanntes Gerät bricht das Säen nicht ab) — macht 19 Tests in
+`tests/loxone/test_runtime.py`. Siehe Task 8 für die zugehörige Änderung in `_run()`.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/loxone/runtime.py tests/loxone/test_runtime.py
@@ -1034,7 +1452,7 @@ git commit -m "feat(loxone): Laufzeit mit Impulsen, Zaehlern, Online und Full-Re
   - `UnsupportedValueError(ValueError)` — deutscher Text
   - in `color.py`: `kelvin_to_mireds(kelvin: float) -> int`, `rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]`
 
-- [ ] **Step 1: Die Loxone-Farbcodierung klären, bevor Code entsteht**
+- [x] **Step 1: Die Loxone-Farbcodierung klären, bevor Code entsteht**
 
 **Dieser Schritt braucht Recherche, keine Vermutung.** Für OnOff und LevelControl ist die
 Abbildung eindeutig. Für Farbe ist sie es nicht: Loxone überträgt Farbe als **eine Zahl**,
@@ -1065,7 +1483,7 @@ Die Matter-Seite ist dagegen belegt und nicht zu recherchieren:
 
 Mireds sind `1_000_000 / Kelvin`.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/commands/test_translate.py`:
 
@@ -1121,6 +1539,26 @@ def test_unknown_cluster_command_raises_rather_than_guessing():
     """Lieber ein klarer Fehler als ein Kommando mit erfundener Nutzlast."""
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(64999, 3, takes_value=True), "1")
+
+
+def test_onoff_cluster_with_unknown_command_raises():
+    """Cluster 6 (OnOff) ist bekannt, aber nur Kommando 0/1/2 sind es. Der
+    Dispatch darf nicht schon beim Cluster stehen bleiben - sonst bekaeme ein
+    unbekanntes OnOff-Kommando eine erfundene leere Nutzlast statt eines
+    Fehlers."""
+    with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
+        to_matter_call(cmd(6, 99, takes_value=True), "1")
+
+
+def test_level_cluster_with_unknown_command_raises():
+    """Cluster 8 (LevelControl) ist bekannt, aber nur Kommando 0/4 sind es hier
+    bedient. Move/Step/Stop (Kommando-IDs u. a. 1, 2, 3, 5, 6, 7) sind reale
+    LevelControl-Kommandos, die z. B. bei Rohexport (`raw`) ohne Eintrag in
+    `clusters.yaml` auftauchen koennen - ihnen faelschlich eine
+    MoveToLevelWithOnOff-Nutzlast unterzuschieben waere genau der Fehler, den
+    dieses Modul verhindern soll."""
+    with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
+        to_matter_call(cmd(8, 1, takes_value=True), "50")
 ```
 
 `tests/commands/test_color.py`:
@@ -1158,12 +1596,12 @@ def test_primary_colours_map_to_known_hues(rgb, hue, saturation):
     assert s == pytest.approx(saturation, abs=1)
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/commands -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.commands'`
 
-- [ ] **Step 4: Write minimal implementation**
+- [x] **Step 4: Write minimal implementation**
 
 `src/loxmatter/commands/color.py`:
 
@@ -1215,12 +1653,24 @@ ein echtes Geraet zu schicken ist schlechter als ein klarer Fehler.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from loxmatter.commands.color import kelvin_to_mireds
 from loxmatter.model.store import StoredCommand
 
 LEVEL_MAX = 254
+
+_CLUSTER_ONOFF = 6
+_CLUSTER_LEVEL = 8
+_CLUSTER_COLOR = 768
+
+_COMMAND_OFF = 0
+_COMMAND_ON = 1
+_COMMAND_TOGGLE = 2
+_COMMAND_MOVE_TO_LEVEL = 0
+_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF = 4
+_COMMAND_COLOR_TEMPERATURE = 10
 
 
 class UnsupportedValueError(ValueError):
@@ -1248,42 +1698,61 @@ def _level(value: str) -> int:
     return max(0, min(LEVEL_MAX, round(prozent * LEVEL_MAX / 100)))
 
 
+def _keine_nutzlast(_value: str) -> dict[str, object]:
+    return {}
+
+
+def _stufe_nutzlast(value: str) -> dict[str, object]:
+    return {"level": _level(value), "transitionTime": 0}
+
+
+def _farbtemperatur_nutzlast(value: str) -> dict[str, object]:
+    return {"colorTemperatureMireds": kelvin_to_mireds(_als_zahl(value))}
+
+
+# Dispatch auf das Paar (Cluster-ID, Kommando-ID), nicht nur auf die
+# Cluster-ID - sonst bekaeme z. B. LevelControl-Stop (Kommando 3) faelschlich
+# eine MoveToLevelWithOnOff-Nutzlast, nur weil Cluster 8 bekannt ist.
+_NUTZLAST_BAUER: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
+    (_CLUSTER_ONOFF, _COMMAND_OFF): _keine_nutzlast,
+    (_CLUSTER_ONOFF, _COMMAND_ON): _keine_nutzlast,
+    (_CLUSTER_ONOFF, _COMMAND_TOGGLE): _keine_nutzlast,
+    (_CLUSTER_LEVEL, _COMMAND_MOVE_TO_LEVEL): _stufe_nutzlast,
+    (_CLUSTER_LEVEL, _COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF): _stufe_nutzlast,
+    (_CLUSTER_COLOR, _COMMAND_COLOR_TEMPERATURE): _farbtemperatur_nutzlast,
+}
+
+
 def to_matter_call(command: StoredCommand, value: str) -> MatterCall:
     """Baut den Matter-Aufruf zu einem exportierten Kommando-Schluessel."""
 
-    def bauen(payload: dict[str, object]) -> MatterCall:
-        return MatterCall(
-            node_id=command.node_id,
-            endpoint=command.endpoint,
-            cluster_id=command.cluster_id,
-            command_id=command.command_id,
-            payload=payload,
+    nutzlast_bauen = _NUTZLAST_BAUER.get((command.cluster_id, command.command_id))
+    if nutzlast_bauen is None:
+        raise UnsupportedValueError(
+            f"Cluster {command.cluster_id} Kommando {command.command_id} wird nicht unterstuetzt"
         )
 
-    if command.cluster_id == 6:
-        return bauen({})
-    if command.cluster_id == 8:
-        return bauen({"level": _level(value), "transitionTime": 0})
-    if command.cluster_id == 768 and command.command_id == 10:
-        return bauen({"colorTemperatureMireds": kelvin_to_mireds(_als_zahl(value))})
-
-    raise UnsupportedValueError(
-        f"Cluster {command.cluster_id} Kommando {command.command_id} wird nicht unterstuetzt"
+    return MatterCall(
+        node_id=command.node_id,
+        endpoint=command.endpoint,
+        cluster_id=command.cluster_id,
+        command_id=command.command_id,
+        payload=nutzlast_bauen(value),
     )
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/commands -v`
-Expected: PASS, 13 Tests
+Expected: PASS, 15 Tests
 
-- [ ] **Step 6: Befund zur Farbcodierung eintragen**
+- [x] **Step 6: Befund zur Farbcodierung eintragen**
 
 Trage das Ergebnis aus Schritt 1 in Spec 7.3 ein: welche Loxone-Codierung du gefunden
 hast und aus welcher Quelle, oder dass keine belastbare Quelle auffindbar war. Vermerke
 dort ebenfalls, dass die Umrechnung mangels Leuchte nicht an Hardware geprüft ist.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/loxmatter/commands tests/commands docs/
@@ -1305,14 +1774,14 @@ git commit -m "feat(commands): Wunschzustand in Matter-Kommando uebersetzen"
   - `build_app(store: Store, invoke: Callable[[MatterCall], Awaitable[None]], runtime: Runtime) -> FastAPI`
   - Routen: `GET /cmd/{key}/{value}`, `GET /resync`, `GET /health`
 
-- [ ] **Step 1: Abhängigkeiten ergänzen**
+- [x] **Step 1: Abhängigkeiten ergänzen**
 
 In `pyproject.toml` unter `dependencies`: `"fastapi>=0.115"`, `"uvicorn>=0.30"`. Dann
 `uv sync`. FastAPI kommt jetzt schon dazu, weil Spec 3.3 es für die WebUI in Phase 5
 vorsieht — ein Zwischenschritt über einen anderen Server wäre Arbeit, die wieder
 wegfällt.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `tests/loxone/test_server.py`:
 
@@ -1320,8 +1789,8 @@ wegfällt.
 import json
 from pathlib import Path
 
+import httpx2
 import pytest
-from fastapi.testclient import TestClient
 
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
@@ -1334,18 +1803,27 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
 class FakeSender:
     def __init__(self) -> None:
-        self.gesendet: list[tuple[str, object, bool]] = []
+        self.sent: list[tuple[str, object, bool]] = []
 
     async def send(self, key, value, *, force: bool = False) -> bool:
-        self.gesendet.append((key, value, force))
+        self.sent.append((key, value, force))
         return True
 
     async def close(self) -> None:
         return None
 
 
+class BrokenResendSender(FakeSender):
+    """Sendet normale Updates anstandslos, verweigert aber jeden Aufruf -
+    simuliert einen `UdpSender`, dessen Socket bereits geschlossen ist
+    (siehe `UdpSender.send`, das dann unbedingt `RuntimeError` wirft)."""
+
+    async def send(self, key, value, *, force: bool = False) -> bool:
+        raise RuntimeError("UdpSender ist geschlossen")
+
+
 @pytest.fixture
-def client(tmp_path):
+async def client(tmp_path):
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -1353,54 +1831,61 @@ def client(tmp_path):
     store.register_signals(device_id, snap)
     store.register_commands(device_id, extract_commands(snap), snap.node_id)
 
-    aufrufe = []
+    calls = []
 
     async def invoke(call):
-        aufrufe.append(call)
+        calls.append(call)
 
     runtime = Runtime(store, FakeSender())
     app = build_app(store, invoke, runtime)
-    with TestClient(app) as c:
-        yield c, aufrufe, device_id
+    # httpx2.AsyncClient statt Starlettes TestClient: TestClient fuehrt die
+    # Anfrage in einem anyio-Portal-Thread aus, der nicht der Thread ist, in
+    # dem dieses Fixture die Store erzeugt hat - sqlite3-Verbindungen sind
+    # aber an ihren Erzeuger-Thread gebunden (siehe store.py). AsyncClient
+    # mit ASGITransport ruft die App direkt in der Event-Loop dieses Tests
+    # auf, ohne einen zweiten Thread zu eroeffnen.
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c, calls, device_id
     store.close()
 
 
-def test_command_reaches_matter(client):
-    c, aufrufe, device_id = client
-    antwort = c.get(f"/cmd/d{device_id}_1_on/1")
-    assert antwort.status_code == 200
-    assert len(aufrufe) == 1
-    assert aufrufe[0].cluster_id == 6
-    assert aufrufe[0].command_id == 1
+async def test_command_reaches_matter(client):
+    c, calls, device_id = client
+    response = await c.get(f"/cmd/d{device_id}_1_on/1")
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0].cluster_id == 6
+    assert calls[0].command_id == 1
 
 
-def test_unknown_key_yields_404_not_500(client):
-    c, aufrufe, _ = client
-    antwort = c.get("/cmd/d1_1_gibtsnicht/1")
-    assert antwort.status_code == 404
-    assert aufrufe == []
+async def test_unknown_key_yields_404_not_500(client):
+    c, calls, _ = client
+    response = await c.get("/cmd/d1_1_gibtsnicht/1")
+    assert response.status_code == 404
+    assert calls == []
 
 
-def test_unsupported_value_yields_400(client):
+async def test_unsupported_value_yields_400(client):
     c, _, device_id = client
-    antwort = c.get(f"/cmd/d{device_id}_1_on/../etc/passwd")
-    assert antwort.status_code in (400, 404)
+    response = await c.get(f"/cmd/d{device_id}_1_on/../etc/passwd")
+    assert response.status_code in (400, 404)
 
 
-def test_resync_forces_a_full_resend(client):
+async def test_resync_forces_a_full_resend(client):
     c, _, _ = client
-    antwort = c.get("/resync")
-    assert antwort.status_code == 200
-    assert "gesendet" in antwort.text.lower() or antwort.json()["gesendet"] >= 0
+    response = await c.get("/resync")
+    assert response.status_code == 200
+    assert "gesendet" in response.text.lower() or response.json()["gesendet"] >= 0
 
 
-def test_health_answers_without_touching_matter(client):
-    c, aufrufe, _ = client
-    assert c.get("/health").status_code == 200
-    assert aufrufe == []
+async def test_health_answers_without_touching_matter(client):
+    c, calls, _ = client
+    assert (await c.get("/health")).status_code == 200
+    assert calls == []
 
 
-def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
+async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
     """Ein Geraet, das gerade nicht antwortet, darf keinen Traceback erzeugen."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
@@ -1413,19 +1898,51 @@ def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
         raise TimeoutError("Geraet antwortet nicht")
 
     app = build_app(store, invoke, Runtime(store, FakeSender()))
-    with TestClient(app) as c:
-        antwort = c.get(f"/cmd/d{device_id}_1_on/1")
-    assert antwort.status_code == 502
-    assert "Traceback" not in antwort.text
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
+        response = await c.get(f"/cmd/d{device_id}_1_on/1")
+    assert response.status_code == 502
+    assert "Traceback" not in response.text
+    store.close()
+
+
+async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
+    """Review-Fix Minor #3: /resync darf einen kaputten Sender (z. B. einen
+    schon geschlossenen UdpSender) nicht als nackten 500 durchreichen -
+    dieselbe Absicherung wie bei einem fehlschlagenden /cmd."""
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    snap = NodeSnapshot.from_raw(raw["node_id"], raw)
+    store = Store(tmp_path / "t.sqlite")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+
+    runtime = Runtime(store, BrokenResendSender())
+    # `on_attribute` traegt den Wert in `_last_values` ein, BEVOR es den
+    # Sender aufruft (siehe runtime.py) - der erste Aufruf scheitert also
+    # am Senden, hinterlaesst `_last_values` aber wie gewuenscht befuellt,
+    # damit `resend_all` unten ueberhaupt etwas zu senden versucht.
+    with pytest.raises(RuntimeError):
+        await runtime.on_attribute(device_id, "2/144/4", 230000)
+
+    async def invoke(call):
+        return None
+
+    app = build_app(store, invoke, runtime)
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
+        response = await c.get("/resync")
+    assert response.status_code == 502
+    assert "Traceback" not in response.text
     store.close()
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_server.py -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.server'`
 
-- [ ] **Step 4: Write minimal implementation**
+- [x] **Step 4: Write minimal implementation**
 
 `src/loxmatter/loxone/server.py`:
 
@@ -1442,6 +1959,7 @@ das nicht antwortet.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, HTTPException
@@ -1451,6 +1969,8 @@ from loxmatter.loxone.runtime import Runtime
 from loxmatter.model.store import Store
 
 Invoker = Callable[[MatterCall], Awaitable[None]]
+
+logger = logging.getLogger(__name__)
 
 
 def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
@@ -1463,7 +1983,14 @@ def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
     @app.get("/resync")
     async def resync() -> dict[str, int]:
         """Spec 6.4: haengt im Config-Projekt am Systemstart-Baustein."""
-        return {"gesendet": await runtime.resend_all()}
+        try:
+            count = await runtime.resend_all()
+        except Exception as exc:  # z. B. UdpSender, dessen Socket schon zu ist
+            logger.exception("Full-Resend ueber /resync fehlgeschlagen")
+            raise HTTPException(
+                status_code=502, detail=f"Full-Resend fehlgeschlagen: {exc}"
+            ) from exc
+        return {"gesendet": count}
 
     @app.get("/cmd/{key}/{value}")
     async def command(key: str, value: str) -> dict[str, str]:
@@ -1487,12 +2014,12 @@ def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
     return app
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_server.py -v`
-Expected: PASS, 6 Tests
+Expected: PASS, 7 Tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/loxmatter/loxone/server.py tests/loxone/test_server.py pyproject.toml uv.lock
@@ -1514,7 +2041,7 @@ Vorlagenpaar (Spec 6.2, 6.4, 6.5).
 **Interfaces:**
 - Produces: `render_system_templates(bridge_ip: str, port: int) -> tuple[bytes, bytes]`, plus CLI-Flag `--system`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/export/test_system_template.py`:
 
@@ -1555,12 +2082,12 @@ def test_system_templates_carry_no_device_prefix():
     assert "d1_" not in text(vo)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/export/test_system_template.py -v`
 Expected: FAIL mit `ImportError: cannot import name 'render_system_templates'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `src/loxmatter/export/documents.py` ergänzen:
 
@@ -1620,14 +2147,36 @@ system: bool = (
 )
 ```
 
-Und im Rumpf, **vor** dem Laden des Snapshots:
+Und im Rumpf, **vor** dem Laden des Snapshots. Beide `write_bytes`-Aufrufe stehen in
+try/except wie die drei Gerätevorlagen-Schreibvorgänge weiter unten — ein OSError hier
+(volle Platte, schreibgeschütztes Volume in der künftigen Container-Bereitstellung) darf
+ebenso wenig einen Traceback zeigen wie dort (Review-Fix Important #1, 2026-09-02).
+`out.mkdir` läuft dabei nicht mehr unbedingt ganz am Anfang, sondern erst hier und noch
+einmal vor den Gerätevorlagen (`_ensure_out_dir`, `mkdir(exist_ok=True)` verträgt den
+zweiten Aufruf) — ein Aufruf ganz ohne `--system`, `--node` oder `--fixture` scheitert an
+der Parametervalidierung in `_load_snapshot`, bevor irgendein Verzeichnis entsteht
+(Review-Fix Minor #3, 2026-09-02):
 
 ```python
-    out.mkdir(parents=True, exist_ok=True)
     if system:
+        _ensure_out_dir(out)
         viu_sys, vo_sys = render_system_templates(bridge_ip, port)
-        (out / "VIU_Matter_System.xml").write_bytes(viu_sys)
-        (out / "VO_Matter_System.xml").write_bytes(vo_sys)
+        viu_sys_path = out / "VIU_Matter_System.xml"
+        vo_sys_path = out / "VO_Matter_System.xml"
+        try:
+            viu_sys_path.write_bytes(viu_sys)
+        except OSError as exc:
+            _fail(
+                f"{viu_sys_path} konnte nicht geschrieben werden: {exc}. "
+                "Es wurde noch keine Datei angelegt."
+            )
+        try:
+            vo_sys_path.write_bytes(vo_sys)
+        except OSError as exc:
+            _fail(
+                f"{vo_sys_path} konnte nicht geschrieben werden: {exc}. "
+                f"Geschrieben wurde bereits {viu_sys_path.name}, es fehlt {vo_sys_path.name}."
+            )
         typer.echo("VIU_Matter_System.xml, VO_Matter_System.xml: Heartbeat und /resync")
         if fixture is None and node is None:
             return
@@ -1635,12 +2184,19 @@ Und im Rumpf, **vor** dem Laden des Snapshots:
 
 Damit sind drei Aufrufe möglich: nur ein Gerät, nur die Systemvorlagen, oder beides.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_system_template.py -v`
 Expected: PASS, 5 Tests
 
-- [ ] **Step 5: Commit**
+Dazu die Regressionstests aus dem Review-Fix (2026-09-02): die Systemvorlagen-Pinnung
+gegen die Referenzdateien in `test_reference.py` (2 Tests) und der Schutz der beiden
+`write_bytes`-Aufrufe sowie die mkdir-Reihenfolge in `test_export_cli.py` (2 Tests).
+
+Run: `uv run pytest tests/export/test_reference.py tests/test_export_cli.py -v`
+Expected: PASS, 15 Tests in `test_reference.py`, 13 Tests in `test_export_cli.py`
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/export/documents.py src/loxmatter/cli.py tests/export/test_system_template.py
@@ -1660,9 +2216,20 @@ git commit -m "feat(export): Systemvorlage mit Heartbeat und resync"
 
 **Interfaces:**
 - Produces: CLI-Kommandos `loxmatter run` und `loxmatter fake-miniserver`
-- `class FakeMiniserver` mit `async def start()`, `async def stop()`, `received: list[tuple[str, str]]`, `def silent_keys(template: Path) -> list[str]`
+- `class FakeMiniserver` mit `async def start()`, `async def stop()`,
+  `received: list[tuple[str, str]]`, `malformed: list[bytes]`,
+  `port: int` (Property — bei `port=0` der tatsächlich gebundene Port),
+  `on_received: Callable[[str, str], None] | None`,
+  `on_malformed: Callable[[bytes], None] | None` (beide Konstruktor-Kwargs, für
+  `loxmatter fake-miniserver`s Echtzeit-Ausgabe mit Zeitstempel — siehe
+  `_fake_miniserver` in `cli.py`), `announced_keys(template: Path) -> set[str]`,
+  `silent_keys(template: Path) -> list[str]`
+  **(Korrektur, Review-Fix I6, 2026-09-02: gegenüber dem ursprünglichen
+  Entwurf unten um `malformed`, `on_received`, `on_malformed` und
+  `announced_keys` erweitert — `port` ist eine Property, kein Attribut,
+  siehe Step 3/6.)**
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/devtools/test_fake_miniserver.py`:
 
@@ -1720,12 +2287,12 @@ def test_silent_keys_reads_the_check_attribute():
     assert all(not k.endswith(":\\v") for k in fake.silent_keys(REFERENZ))
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/devtools -v`
 Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.devtools'`
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/devtools/fake_miniserver.py`:
 
@@ -1793,7 +2360,107 @@ class FakeMiniserver:
         return sorted(angekuendigt - gesehen)
 ```
 
-- [ ] **Step 4: `loxmatter run` schreiben**
+**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben ist der urspruengliche Stand vor der Umsetzung, hier zur Nachvollziehbarkeit des Plans stehengelassen, aber nicht mehr verbindlich. Tatsaechlich ausgeliefert wurde eine erweiterte Fassung — `on_received`/`on_malformed` als optionale Konstruktor-Callbacks (fuer `loxmatter fake-miniserver`s Echtzeit-Ausgabe, siehe `_fake_miniserver` unten), `announced_keys()` getrennt von `silent_keys()` ausgelagert (fuer `_silent_keys_report`s Unterscheidung "nichts zu pruefen" vs. "alles gesehen", siehe Step 4/6) und `_DatagramProtocol` statt `_Protokoll` benannt. Der tatsaechliche Quelltext steht in `src/loxmatter/devtools/fake_miniserver.py`:
+
+```python
+"""Ersetzt den Loxone Miniserver beim Entwickeln.
+
+Der dritte Punkt unten ist der eigentliche Gewinn: er vergleicht, welche
+Signale eine erzeugte Vorlage ankuendigt, mit denen, die tatsaechlich ein
+Datagramm geschickt haben. Ein exportiertes Signal, das nie feuert, ist ein
+Mapping-Fehler - und ohne diesen Abgleich faellt er erst in Loxone auf, wo er
+wie ein Geraetefehler aussieht.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from collections.abc import Callable
+from pathlib import Path
+
+# Liest genau das Attribut, das render_virtual_in_udp schreibt (siehe
+# export/documents.py): Check="<schluessel>:\v".
+_CHECK = re.compile(r'Check="([^:"]+):\\v"')
+
+
+class _DatagramProtocol(asyncio.DatagramProtocol):
+    def __init__(self, server: FakeMiniserver) -> None:
+        self._server = server
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        text = data.decode(errors="replace")
+        key, sep, value = text.partition(":")
+        if not sep:
+            self._server.malformed.append(data)
+            if self._server.on_malformed is not None:
+                self._server.on_malformed(data)
+            return
+        self._server.received.append((key, value))
+        if self._server.on_received is not None:
+            self._server.on_received(key, value)
+
+
+class FakeMiniserver:
+    """Nimmt UDP-Datagramme entgegen wie der echte Miniserver - ohne ihn.
+
+    `on_received`/`on_malformed` sind fuer `loxmatter fake-miniserver`
+    gedacht (Echtzeit-Ausgabe mit Zeitstempel) - `received`/`malformed`
+    bleiben die primaere, im Test abgefragte Quelle und wachsen immer,
+    unabhaengig davon, ob ein Callback gesetzt ist.
+    """
+
+    def __init__(
+        self,
+        port: int = 7000,
+        host: str = "127.0.0.1",
+        *,
+        on_received: Callable[[str, str], None] | None = None,
+        on_malformed: Callable[[bytes], None] | None = None,
+    ) -> None:
+        self._host, self._port = host, port
+        self.received: list[tuple[str, str]] = []
+        self.malformed: list[bytes] = []
+        self.on_received = on_received
+        self.on_malformed = on_malformed
+        self._transport: asyncio.DatagramTransport | None = None
+
+    @property
+    def port(self) -> int:
+        if self._transport is None:
+            return self._port
+        return int(self._transport.get_extra_info("sockname")[1])
+
+    async def start(self) -> None:
+        loop = asyncio.get_running_loop()
+        transport, _ = await loop.create_datagram_endpoint(
+            lambda: _DatagramProtocol(self), local_addr=(self._host, self._port)
+        )
+        self._transport = transport
+
+    async def stop(self) -> None:
+        if self._transport is not None:
+            self._transport.close()
+            self._transport = None
+
+    def announced_keys(self, template: Path) -> set[str]:
+        """Signale, die die Vorlage per `Check`-Attribut ankuendigt.
+
+        Getrennt von `silent_keys` gehalten, damit ein Aufrufer (siehe
+        `loxmatter fake-miniserver`) unterscheiden kann, ob eine Vorlage
+        schlicht KEIN Check-Attribut traegt (z. B. eine VO_-Datei oder eine
+        leere Vorlage) - dann gibt es nichts zu pruefen - statt das mit dem
+        Fall zu verwechseln, dass alle angekuendigten Signale gesehen wurden.
+        """
+        return set(_CHECK.findall(template.read_text(encoding="utf-8-sig")))
+
+    def silent_keys(self, template: Path) -> list[str]:
+        """Signale, die die Vorlage ankuendigt, die aber nie ein Datagramm schickten."""
+        seen = {key for key, _ in self.received}
+        return sorted(self.announced_keys(template) - seen)
+```
+
+- [x] **Step 4: `loxmatter run` schreiben**
 
 In `src/loxmatter/cli.py`:
 
@@ -1821,7 +2488,17 @@ async def _run(url: str, miniserver: str, port: int, listen: int, store_path: Pa
 
     try:
         await client.connect()
+        # Ohne diesen Aufruf verbindet sich die Bridge, hört aber nie auf
+        # etwas: subscribe() ist es, was Attribut-/Event-Änderungen und
+        # Erreichbarkeit überhaupt erst an `runtime` weiterreicht (siehe
+        # unten). resolve_device_id bildet die Node-ID auf die stabile
+        # device_id ab, an der die Schlüssel hängen.
+        await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
+        # Nachtrag, Live-Lauf 2026-09-02 (Spec 6.4): erst aus dem aktuellen
+        # Geraetezustand saeen, DANN erst der Full-Resend - sonst faende der
+        # einen leeren Cache vor und schickte nichts. Siehe Runtime.seed_from_snapshot.
+        await runtime.seed_from_snapshot(await client.snapshots())
         # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
 
@@ -1833,6 +2510,132 @@ async def _run(url: str, miniserver: str, port: int, listen: int, store_path: Pa
         await runtime.stop()
         await sender.close()
         await client.disconnect()
+        store.close()
+```
+
+**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben ist der urspruengliche Stand vor der Umsetzung, hier zur Nachvollziehbarkeit des Plans stehengelassen, aber nicht mehr verbindlich. Tatsaechlich ausgeliefert wurde eine deutlich erweiterte Fassung — `run` loest den Store-Pfad selbst auf, gibt ihn aus (Review-Fix M10, 2026-09-02) und oeffnet die Datenbank SYNCHRON vor `asyncio.run(...)`, damit ein unbeschreibbarer Pfad als klarer CLI-Fehler endet statt als Traceback aus dem Inneren von `asyncio.run`; `_run` nimmt den bereits geoeffneten `store` deshalb als ersten Parameter entgegen (nicht `store_path`) und raeumt jede der vier Ressourcen (Laufzeit, Sender, matter-Client, Datenbank) im `finally` in einem EIGENEN try/except auf, damit ein Fehler beim Aufraeumen einer Ressource die uebrigen nicht mitreisst. Der tatsaechliche Quelltext steht in `src/loxmatter/cli.py`:
+
+```python
+@app.command()
+def run(
+    url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
+    miniserver: str = typer.Option(..., help="IP des Miniservers"),
+    port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
+    listen: int = typer.Option(8080, help="Port für die HTTP-Kommandos aus Loxone"),
+    store_path: Path | None = typer.Option(  # noqa: B008
+        None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
+    ),
+) -> None:
+    """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein.
+
+    Öffnet die Datenbank schon hier, synchron — ein unbeschreibbarer Pfad
+    soll als klarer CLI-Fehler enden (wie bei `export`), nicht als
+    Traceback aus dem Inneren von `asyncio.run`.
+    """
+    resolved_store_path = _resolve_store_path(store_path)
+    # Wie bei `export` ausgegeben (Review-Fix M10, 2026-09-02): die
+    # wahrscheinlichste Fehlkonfiguration ist eine `export`- und eine
+    # `run`-Datenbank, die auseinanderlaufen — exportiert mit
+    # `--store-path`, gestartet ohne (oder umgekehrt). Ohne diese Zeile
+    # zeigt sich das erst als 404 in einem Log, das niemand liest, weil
+    # `run` den verwendeten Pfad bislang nie nannte.
+    typer.echo(f"Datenbank: {resolved_store_path.resolve()}")
+    try:
+        resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(
+            f"Verzeichnis {resolved_store_path.parent} konnte nicht angelegt werden: {exc}. "
+            "Ist der Pfad beschreibbar?"
+        )
+    try:
+        store = Store(resolved_store_path)
+    except (OSError, sqlite3.Error) as exc:
+        _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
+
+    asyncio.run(_run(store, url, miniserver, port, listen))
+```
+
+```python
+async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) -> None:
+    """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
+
+    `store` kommt bereits geöffnet herein (siehe `run` oben). `UdpSender`,
+    `Runtime` und `_build_client` führen in ihren Konstruktoren keine E/A
+    aus, die scheitern könnte — anders als `Store(...)` selbst. Ab hier sind
+    also garantiert alle vier Ressourcen vorhanden, wenn `finally` sie
+    schließt: kein Leck durch einen fehlgeschlagenen Konstruktor irgendwo
+    zwischen `try` und dem ersten `await`.
+
+    Jeder Aufräumschritt in `finally` steht in seinem eigenen `try`/`except`:
+    scheitert einer (z. B. `runtime.stop()`, weil der letzte Full-Resend
+    mitten in einem Sendefehler steckte), dürfen die folgenden trotzdem
+    laufen — sonst bliebe je nach Fehlerort der UDP-Socket offen oder die
+    matter-server-Verbindung hängen. `asyncio.CancelledError` fließt an all
+    dem vorbei ungefangen durch: ein Strg-C soll den Abbruch weiterreichen,
+    nicht als Aufräumfehler verschluckt werden.
+
+    Zum eigentlichen Abbruchverhalten: `uvicorn.Server.serve()` fängt
+    SIGINT/SIGTERM selbst ab (`Server.capture_signals`) und kehrt bei einem
+    ersten Strg-C geordnet zurück, statt eine Ausnahme zu werfen — der
+    `finally`-Block unten läuft in diesem Fall wie bei jedem anderen reguären
+    Ende auch. `asyncio.run()` selbst installiert seit Python 3.11 zusätzlich
+    einen eigenen SIGINT-Handler, der bei einem Strg-C außerhalb von
+    `serve()` (z. B. während `client.connect()`) den gesamten `_run`-Task
+    abbricht — auch das erreicht `finally` als normale Abbruch-Ausnahme.
+    """
+    sender = UdpSender(miniserver, port)
+    runtime = Runtime(store, sender)
+    client = _build_client(url)
+
+    async def invoke(call: MatterCall) -> None:
+        await client.send_command(call)
+
+    try:
+        try:
+            await client.connect()
+        except CannotConnect:
+            _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+        except MatterUnavailableError as exc:
+            _fail(
+                f"matter-server unter {url} hat sich verbunden, aber keine "
+                f"Bereitschaft gemeldet: {exc}"
+            )
+        await client.subscribe(store.device_id_for_node, runtime)
+        await runtime.start()
+        # Startwerte aus dem aktuellen Geraetezustand laden, BEVOR der Resend
+        # unten sie verschickt (Spec 6.4, Live-Lauf vom 2026-09-02): ohne das
+        # faende `resend_all()` einen leeren Cache vor, weil ein Wert dort nur
+        # ueber eine sich aendernde Subscription landet - siehe
+        # `Runtime.seed_from_snapshot`.
+        await runtime.seed_from_snapshot(await client.snapshots())
+        # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
+        await runtime.resend_all()
+
+        config = uvicorn.Config(
+            build_app(store, invoke, runtime), host="0.0.0.0", port=listen, log_level="info"
+        )
+        await uvicorn.Server(config).serve()
+    finally:
+        try:
+            await runtime.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Laufzeit konnte beim Beenden nicht sauber gestoppt werden")
+        try:
+            await sender.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("UDP-Sender konnte beim Beenden nicht sauber geschlossen werden")
+        try:
+            await client.disconnect()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Verbindung zu matter-server konnte beim Beenden nicht sauber getrennt werden"
+            )
         store.close()
 ```
 
@@ -1849,6 +2652,20 @@ gehört zu dieser Task:
 
 Schreibe für beide Tests gegen die vorhandene Fake-Upstream-Attrappe in
 `tests/matter/test_client.py`, nicht gegen einen echten Server.
+
+`_run()`s eigenes Aufbau/Abbau-Verhalten (Verbindung, Subscription, Start, Full-Resend,
+HTTP-Server, und der Abbau in jedem Fehlerfall — inklusive eines Abbruchs mitten im
+Start, VOR `serve()`, denn genau der Aufruf von `subscribe()` oben steht dort mit an)
+gehört in eigene Tests gegen eine `_FakeUpstream`-Attrappe in `tests/test_cli.py`, nicht
+gegen einen echten matter-server.
+
+Run: `uv run pytest tests/test_cli.py -v`
+Expected: PASS, 6 Tests für `_run()`s Aufbau/Abbau (davon 1 für den Abbruch während des
+Starts, vor `serve()`).
+
+**Nachtrag, Live-Lauf 2026-09-02:** ein siebter Test kam hinzu, der prüft, dass `_run()`
+`runtime.seed_from_snapshot(...)` mit den aktuellen Snapshots aufruft, und zwar VOR dem
+ersten `resend_all()` — macht 7 Tests für `_run()`s Aufbau/Abbau in `tests/test_cli.py`.
 
 Dazu das Kommando für das Testdoppel:
 
@@ -1867,13 +2684,84 @@ def fake_miniserver_cmd(
 Es druckt jedes Datagramm mit Zeitstempel und bei Strg-C, sofern `--template` gesetzt
 ist, die stummen Signale.
 
-- [ ] **Step 5: Vollständige Prüfung**
+**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben fehlten zwei Dinge, die tatsaechlich ausgeliefert wurden. Erstens prueft `fake_miniserver_cmd` `--template` schon VOR `asyncio.run(_fake_miniserver(...))`, nicht erst danach — der Pfad wird sonst erst im `finally` von `_fake_miniserver` gelesen, also erst NACH dem Warten auf Strg-C, und ein falscher Pfad wuerde den Nutzer erst nach dem Abbruch ueberraschen (Review-Fix Minor #5). Zweitens gibt es `_silent_keys_report` — eine eigene Funktion fuer die Abschlussmeldung, die DREI Faelle unterscheidet, nicht zwei: `announced` leer (die Vorlage traegt gar kein `Check`-Attribut, z. B. eine VO_-Datei — nichts zu pruefen), `announced` nicht leer und `silent` leer (tatsaechlich alles gesehen) und `announced`/`silent` beide nicht leer (Review-Fix Minor #4). Der tatsaechliche Quelltext steht in `src/loxmatter/cli.py`:
+
+```python
+@app.command(name="fake-miniserver")
+def fake_miniserver_cmd(
+    port: int = typer.Option(7000, help="UDP-Port, auf dem gelauscht wird"),
+    template: Path | None = typer.Option(  # noqa: B008
+        None, help="Erzeugte VIU_-Vorlage: nennt am Ende die Signale, die nie feuerten"
+    ),
+) -> None:
+    """Ersetzt den Miniserver: schreibt jedes Datagramm mit.
+
+    `--template` wird bereits hier geprueft, statt den Nutzer erst nach dem
+    Warten auf Strg-C (der Pfad wird erst im `finally` von `_fake_miniserver`
+    gelesen) mit einem Fehler zu ueberraschen — wie bei den uebrigen Kommandos
+    dieses Moduls soll ein falscher Pfad sofort als CLI-Fehler enden (Review-Fix
+    Minor #5).
+    """
+    if template is not None and not template.is_file():
+        _fail(f"Vorlage {template} wurde nicht gefunden.")
+    asyncio.run(_fake_miniserver(port, template))
+
+
+def _silent_keys_report(template_name: str, announced: set[str], silent: list[str]) -> str:
+    """Formuliert die Abschlussmeldung von `fake-miniserver --template`.
+
+    Drei zu unterscheidende Faelle: `announced` leer heisst, die Vorlage traegt
+    gar kein `Check`-Attribut (z. B. eine VO_-Datei oder eine leere Vorlage) —
+    dann gibt es nichts zu pruefen, und das ist etwas anderes als "alles wurde
+    gesehen". Nur wenn `announced` nicht leer und `silent` leer ist, war die
+    Pruefung tatsaechlich erfolgreich (Review-Fix Minor #4).
+    """
+    if not announced:
+        return f"{template_name} enthält keine Check-Signale — nichts zu prüfen."
+    if not silent:
+        return (
+            f"Alle {len(announced)} Signale aus {template_name} wurden mindestens einmal gesehen."
+        )
+    lines = [f"{len(silent)} Signale aus {template_name} nie gesehen:"]
+    lines += [f"  {key}" for key in silent]
+    return "\n".join(lines)
+
+
+async def _fake_miniserver(port: int, template: Path | None) -> None:
+    # datetime.now() ohne tz ist hier Absicht: das ist die Ortszeit fuer einen
+    # Menschen, der dem Terminal beim Draufschauen zusieht - keine
+    # gespeicherte oder verglichene Zeit.
+    def announce(key: str, value: str) -> None:
+        typer.echo(f"{datetime.now():%H:%M:%S} {key} = {value}")  # noqa: DTZ005
+
+    def announce_malformed(data: bytes) -> None:
+        typer.echo(
+            f"{datetime.now():%H:%M:%S} KAPUTT (kein Doppelpunkt): {data!r}",  # noqa: DTZ005
+            err=True,
+        )
+
+    fake = FakeMiniserver(port=port, on_received=announce, on_malformed=announce_malformed)
+    await fake.start()
+    typer.echo(f"fake-miniserver lauscht auf UDP-Port {fake.port} — Strg-C zum Beenden")
+    try:
+        await asyncio.Event().wait()  # blockiert, bis Strg-C den Task abbricht
+    finally:
+        await fake.stop()
+        if template is not None:
+            announced = fake.announced_keys(template)
+            silent = fake.silent_keys(template)
+            typer.echo(f"\n{_silent_keys_report(template.name, announced, silent)}")
+```
+
+
+
+- [x] **Step 5: Vollständige Prüfung**
 
 ```bash
 uv run pytest -v && uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
-- [ ] **Step 6: Durchstich ohne Miniserver**
+- [x] **Step 6: Durchstich ohne Miniserver**
 
 ```bash
 uv run loxmatter fake-miniserver --port 7000 --template ./export/VIU_d1_*.xml
@@ -1889,7 +2777,24 @@ Erwartet: Datagramme der Steckdose erscheinen; ein Druck auf den Taster erzeugt 
 und Zähler; `bridge_alive` toggelt. Am Ende nennt der `fake-miniserver` die stummen
 Signale — bei einer Steckdose ohne Last sind das viele, das ist kein Fehler.
 
-- [ ] **Step 7: Durchstich mit echtem Miniserver**
+**Korrektur, Live-Lauf 2026-09-02:** der Satz oben galt für Signale, die sich während
+des Laufs nie ändern — nicht dafür, dass sie beim Start überhaupt nie ankommen. Der
+erste Lauf zeigte genau diese Verwechslung: über 40 s kamen nur drei Datagramme an
+(Heartbeat, ein HTTP-ausgelöster Schaltbefehl), keines der 109 exportierbaren
+Attributsignale, weil `resend_all()` beim Start einen leeren Cache vorfand (siehe Spec
+6.4 und Task 4). Nach dem Fix hier erscheinen alle 109 Signale der Steckdose direkt nach
+dem Verbindungsaufbau, unabhängig davon, ob sich danach je etwas ändert — „stumm" darf
+sich ab jetzt nur noch auf Signale beziehen, die nach dem Start nie ein zweites Mal
+gesendet werden, nicht auf ein komplett fehlendes erstes Mal.
+
+- [ ] **Step 7: Durchstich mit echtem Miniserver — 🔴 EINZIGER NOCH OFFENER SCHRITT DER GESAMTEN PHASE (Review-Fix I6, 2026-09-02)**
+
+> **Alles andere in diesem Plan ist erledigt und abgehakt.** Dies ist die letzte
+> unangekreuzte Checkbox unter allen ~50 in diesem Dokument. Sie kann nicht von einem
+> Agenten erledigt werden — sie braucht einen Menschen mit Zugriff auf Loxone Config und
+> den echten Miniserver (siehe "Dieser Schritt braucht einen Menschen..." unten). Bevor
+> diese Phase als abgeschlossen gilt, muss genau dieser Schritt nachgeholt werden — siehe
+> auch "Abschluss der Phase" ganz unten in diesem Dokument.
 
 **Dieser Schritt braucht einen Menschen mit Loxone Config.** Er ist der Zweck der Phase.
 
@@ -1906,7 +2811,7 @@ Miniserver-IP starten, und in der Loxone-Visualisierung prüfen:
 
 Was abweicht, geht in die Spec — **nicht** in eine Anpassung der Tests.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/loxmatter/devtools src/loxmatter/cli.py tests/devtools deploy/
@@ -1919,10 +2824,11 @@ git commit -m "feat(cli): loxmatter run und fake-miniserver"
 
 Die Phase ist fertig, wenn:
 
-1. `uv run pytest` ohne Hardware und ohne Netz durchläuft,
-2. der Durchstich ohne Miniserver (Task 8 Schritt 6) läuft,
-3. **die fünf Punkte aus Task 8 Schritt 7 an echter Hardware bestätigt sind**,
-4. Abweichungen in der Spec stehen.
+1. [x] `uv run pytest` ohne Hardware und ohne Netz durchläuft,
+2. [x] der Durchstich ohne Miniserver (Task 8 Schritt 6) läuft,
+3. [ ] **die fünf Punkte aus Task 8 Schritt 7 an echter Hardware bestätigt sind —
+   EINZIGER OFFENER PUNKT (Review-Fix I6, 2026-09-02), siehe dort**,
+4. [x] Abweichungen in der Spec stehen.
 
 **Bleibt offen:** die Farbraum-Umrechnung ist gegen Referenzwerte geprüft, aber nicht
 gegen eine Leuchte. Das ist der einzige Teil, den diese Phase nicht abschließen kann,

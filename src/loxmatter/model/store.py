@@ -16,14 +16,20 @@ Attribute) — in dem Fall haengt ``_assign_key`` die Element-ID an
 (``d12_1_temp_5``), um die von der Tabelle ``signal.key`` erzwungene
 Eindeutigkeit zu erhalten, ohne den Schluessel eines schon vergebenen
 Signals zu aendern.
+
+Eine Store-Instanz gehoert genau einem Thread und genau einer Event-Loop -
+`sqlite3.Connection` ist ohne `check_same_thread=False` an ihren Erzeuger-
+Thread gebunden, und dieses Modul weicht davon bewusst nicht ab.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.profiles.table import Exportability, lookup
@@ -52,6 +58,18 @@ CREATE TABLE IF NOT EXISTS signal (
     exportability TEXT NOT NULL,
     UNIQUE (device_id, endpoint, cluster_id, element_id, kind)
 );
+CREATE TABLE IF NOT EXISTS command (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id   INTEGER NOT NULL REFERENCES device(id),
+    node_id     INTEGER NOT NULL,
+    endpoint    INTEGER NOT NULL,
+    cluster_id  INTEGER NOT NULL,
+    command_id  INTEGER NOT NULL,
+    key         TEXT NOT NULL UNIQUE,
+    slug        TEXT NOT NULL,
+    takes_value INTEGER NOT NULL,
+    UNIQUE (device_id, endpoint, cluster_id, command_id)
+);
 """
 
 
@@ -62,6 +80,29 @@ class StoredSignal:
     title: str
     unit: str
     exportability: Exportability
+
+
+@dataclass(frozen=True)
+class StoredCommand:
+    key: str
+    slug: str
+    node_id: int
+    endpoint: int
+    cluster_id: int
+    command_id: int
+    takes_value: bool
+
+
+class UnknownCommandError(KeyError):
+    """`KeyError.__str__` haengt die Nachricht in `repr()` ein, wodurch
+    `str(exc)` zusaetzliche Anfuehrungszeichen um den ganzen deutschen Text
+    legt — Task 6 macht daraus einen HTTP-Fehlerkoerper, dem die Klammerung
+    nicht anzusehen sein soll. Die Unterklasse gibt die Nachricht
+    unveraendert zurueck; `pytest.raises(KeyError, ...)` faengt sie weiterhin,
+    da sie von `KeyError` erbt."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
 
 
 class Store:
@@ -106,6 +147,23 @@ class Store:
         if row is None:
             raise KeyError(f"unbekanntes Geraet {device_id}")
         return int(row["udp_port"])
+
+    def device_id_for_node(self, node_id: int) -> int | None:
+        """Bildet eine Matter-Node-ID auf die zugehoerige, stabile `device_id` ab.
+
+        Fuer die Laufzeit (Task 8): eine eingehende Subscription von
+        matter-server traegt nur die Node-ID, aber die Signalschluessel
+        haengen an der `device_id` (siehe Modul-Docstring - eine Node-ID kann
+        sich aendern, die `device_id` nie). `None`, wenn kein aktives Geraet
+        mit dieser Node-ID bekannt ist, etwa weil es noch nie exportiert oder
+        inzwischen entfernt (`forget_device`) wurde - eine Node-ID eines
+        entfernten Geraets darf nicht auf dessen alte, inaktive `device_id`
+        zeigen.
+        """
+        row = self._db.execute(
+            "SELECT id FROM device WHERE node_id = ? AND active = 1", (node_id,)
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
 
     def _existing_keys(self, device_id: int) -> set[str]:
         rows = self._db.execute(
@@ -217,3 +275,117 @@ class Store:
             )
             for r in rows
         ]
+
+    def _existing_command_keys(self, device_id: int) -> set[str]:
+        rows = self._db.execute(
+            "SELECT key FROM command WHERE device_id = ?", (device_id,)
+        ).fetchall()
+        return {str(r["key"]) for r in rows}
+
+    def register_commands(
+        self, device_id: int, commands: Sequence[DeviceCommand], node_id: int
+    ) -> list[StoredCommand]:
+        """Macht die exportierten Kommando-Schluessel zur Laufzeit aufloesbar.
+
+        Ohne das schreibt der Exporter Schluessel in die Vorlage, die spaeter
+        niemand zurueck auf ein Matter-Kommando abbilden kann. Der Schluessel
+        wird ausschliesslich hier zusammengesetzt — der Exporter (cli.py)
+        uebernimmt das Ergebnis, statt ihn ein zweites Mal selbst zu bauen.
+        Zwei Stellen, die denselben Schluessel unabhaengig zusammensetzen,
+        wuerden sonst auseinanderdriften, ohne dass ein Fehler es meldet.
+
+        Ein schon bekanntes Kommando (gleiches device_id/endpoint/cluster_id/
+        command_id) behaelt seinen Schluessel, aber `takes_value` und `slug`
+        werden bei jedem Aufruf neu uebernommen — genau wie `register_signals`
+        `unit` und `exportability` neu bestimmt. Sonst erreichte eine
+        Korrektur in `clusters.yaml` (ein Kommando, das nachtraeglich einen
+        Wert erwartet, oder umbenannt wird) ein schon gespeichertes Kommando
+        nie, und die einzige Abhilfe waere das Loeschen der ganzen Datenbank,
+        was jeden Schluessel zerstoert.
+
+        Laeuft als eine Transaktion: scheitert die Schluesselvergabe fuer ein
+        einzelnes neues Kommando, wird die gesamte Registrierung
+        zurueckgerollt statt das Geraet mit einer Teilmenge seiner Kommandos
+        zu belassen. Absichtlich kein `INSERT OR IGNORE` — das wuerde eine
+        echte Schluessel-Kollision nicht melden, sondern das zweite Kommando
+        stillschweigend verwerfen (siehe Modul-Docstring und
+        `register_signals`). Anders als bei Signalen gibt es hier keine
+        Ausweichstrategie ueber eine zusaetzliche ID: zwei Kommandos
+        verschiedener Cluster auf demselben Endpoint mit gleichem Slug sind
+        ein Fehler in `clusters.yaml`, keine ordnungsgemaesse Mehrdeutigkeit.
+        """
+        taken = self._existing_command_keys(device_id)
+        try:
+            for command in commands:
+                existing = self._db.execute(
+                    "SELECT key FROM command WHERE device_id = ? AND endpoint = ?"
+                    " AND cluster_id = ? AND command_id = ?",
+                    (device_id, command.endpoint, command.cluster_id, command.command_id),
+                ).fetchone()
+                if existing is not None:
+                    self._db.execute(
+                        "UPDATE command SET takes_value = ?, slug = ? WHERE key = ?",
+                        (int(command.takes_value), command.slug, existing["key"]),
+                    )
+                    continue
+
+                key = f"d{device_id}_{command.endpoint}_{command.slug}"
+                if key in taken:
+                    collision = self._db.execute(
+                        "SELECT cluster_id, command_id FROM command"
+                        " WHERE device_id = ? AND key = ?",
+                        (device_id, key),
+                    ).fetchone()
+                    raise ValueError(
+                        f"Schluessel-Kollision fuer Geraet {device_id}: Kommando "
+                        f"(cluster_id={command.cluster_id}, command_id={command.command_id}) "
+                        f"und (cluster_id={collision['cluster_id']}, "
+                        f"command_id={collision['command_id']}) teilen sich den "
+                        f"Schluessel {key!r}"
+                    )
+                taken.add(key)
+                self._db.execute(
+                    "INSERT INTO command "
+                    "(device_id, node_id, endpoint, cluster_id, command_id, key, slug,"
+                    " takes_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        device_id,
+                        node_id,
+                        command.endpoint,
+                        command.cluster_id,
+                        command.command_id,
+                        key,
+                        command.slug,
+                        int(command.takes_value),
+                    ),
+                )
+        except (ValueError, sqlite3.Error):
+            self._db.rollback()
+            raise
+        self._db.commit()
+        return self.commands(device_id)
+
+    def commands(self, device_id: int) -> list[StoredCommand]:
+        rows = self._db.execute(
+            "SELECT * FROM command WHERE device_id = ? ORDER BY endpoint, cluster_id, command_id",
+            (device_id,),
+        ).fetchall()
+        return [self._as_command(r) for r in rows]
+
+    def resolve_command(self, key: str) -> StoredCommand:
+        row = self._db.execute("SELECT * FROM command WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            raise UnknownCommandError(f"unbekannter Kommando-Schluessel {key!r}")
+        return self._as_command(row)
+
+    @staticmethod
+    def _as_command(row: sqlite3.Row) -> StoredCommand:
+        return StoredCommand(
+            key=row["key"],
+            slug=row["slug"],
+            node_id=int(row["node_id"]),
+            endpoint=int(row["endpoint"]),
+            cluster_id=int(row["cluster_id"]),
+            command_id=int(row["command_id"]),
+            takes_value=bool(row["takes_value"]),
+        )

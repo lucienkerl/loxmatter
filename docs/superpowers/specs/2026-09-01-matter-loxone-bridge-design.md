@@ -389,6 +389,20 @@ bis das nächste Update eintrifft — bei einem Temperatursensor potenziell Stun
 - **`/resync`-Endpoint**, als fertiger `VirtualOutCmd` mitexportiert. Im Config-Projekt
   an den Systemstart-Baustein gehängt, sind nach jedem Neustart sofort alle Werte da.
 
+**Befund (Phase 4, Live-Lauf 2026-09-02).** Ein Resend kann nur Werte verschicken, die
+die Bridge schon selbst hält — er iteriert den zuletzt gesendeten Wert je Signal, nicht
+den Gerätezustand. Dieser Cache entsteht ausschließlich über Subscriptions, die sich
+*ändernde* Werte melden, und ist beim Start leer. Ein Live-Lauf mit einer
+Matter-Steckdose ohne Last bestätigte das: über 40 s kamen genau drei Datagramme an
+(Heartbeat, ein per HTTP ausgelöster Schaltbefehl), aber keines der 109 exportierbaren
+Attributsignale — der Full-Resend beim Start lief leer, weil noch nichts im Cache stand,
+und ohne eine sich ändernde Last hätte sich das auf unabsehbare Zeit nicht geändert.
+Genau in diesem Moment — direkt nach einem Neustart der Bridge — ist der Mechanismus
+also leer, obwohl er hier am nötigsten wäre. Die Bridge muss sich deshalb beim Start
+selbst aus dem aktuellen Gerätezustand säen (`Runtime.seed_from_snapshot`, gefüttert aus
+`BridgeMatterClient.snapshots()` — demselben Bild, aus dem auch `loxmatter export`
+liest), bevor der erste Full-Resend läuft.
+
 ### 6.5 Zusätzliche Signale
 
 - `d<id>_online` — digital, pro Gerät: erreichbar ja/nein.
@@ -536,6 +550,31 @@ ein eigener Testfall in der Skalierungs-Testsuite.
 
 Farbe: Loxone liefert in Lumitech- bzw. RGB-Notation, Matter erwartet Hue/Saturation
 oder CIE xy. Die Umrechnung liegt in `commands/` und ist beidseitig zu testen.
+
+**Rechercheergebnis (Task 5, 2026-09-02).** Die RGB-Codierung ist offiziell belegt: der
+Loxone-Baustein "RGB Lighting Controller" gibt Farbe auf einem einzelnen Analogausgang
+als eine Dezimalzahl aus, die drei Prozentwerte (je 0-100) dezimal aneinanderreiht -
+`AQa = rot% + gruen% * 1000 + blau% * 1_000_000` (z. B. 20040060 = 60 % Rot, 40 % Gruen,
+20 % Blau). Quelle: Loxone Knowledge Base, "RGB Lighting Controller", Abschnitt
+"Outputs" (https://www.loxone.com/enen/kb/rgb-scene-controller/, abgerufen 2026-09-02).
+
+Fuer die Lumitech-Codierung (Helligkeit plus Farbtemperatur in einer Zahl) hat sich
+**keine belastbare Quelle** finden lassen - weder auf der offiziellen
+Beleuchtungsbaustein-Seite noch im Structure-File-PDF. Der einzige Treffer ist ein
+Forumsbeitrag mit selbst mitgeloggten DMX-Werten (vermutetes Format "AABBBCCCC"), den
+der Autor selbst als Vermutung kennzeichnet
+(https://www.loxforum.com/forum/hardware-zubehoer-sensorik/143867-lumitech-ausgang-dmx-dimmer,
+Beitrag #2). Task 5 implementiert deshalb nur die (unstrittige) Matter-seitige
+Umrechnung Kelvin→Mired und RGB→Hue/Saturation in `commands/color.py`;
+`to_matter_call` nimmt fuer Farbtemperatur einen bereits entpackten Kelvin-Wert
+entgegen und dekodiert keine rohe Loxone-Zahl. Das Entpacken der rohen Loxone-Zahl
+(RGB wie Lumitech) bleibt Aufgabe von Task 6 (HTTP-Endpoint) bzw. der WebUI, sobald fuer
+Lumitech eine verlaessliche Quelle vorliegt - siehe Offene Punkte.
+
+**Nicht an Hardware geprueft.** Fuer diese Aufgabe stand keine Matter-Leuchte zur
+Verfuegung. `kelvin_to_mireds` und `rgb_to_hue_saturation` sind ausschliesslich gegen
+Referenzwerte (Zigbee/Matter-Mired-Konvention bzw. HSV-Definition) getestet, nicht gegen
+ein reales Geraet.
 
 ---
 
@@ -717,3 +756,95 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
 ## 12. Offene Punkte
 
 1. Konkretes Funkmodul für die Referenz-Compose-Datei.
+2. **Loxone-Lumitech-Codierung ungeklärt** (Task 5, 2026-09-02). Wie Loxone Helligkeit
+   und Farbtemperatur im Lumitech-Ausgabemodus als eine Zahl codiert, ist in der
+   offiziellen Loxone-Dokumentation nicht auffindbar — nur ein als Vermutung
+   gekennzeichneter Forumsbeitrag existiert (siehe 7.3). `commands/translate.py`
+   erwartet deshalb für Farbtemperatur bereits einen entpackten Kelvin-Wert statt der
+   rohen Loxone-Zahl. Vor Task 6 (HTTP-Endpoint) klären, sonst kann dieser die rohe
+   Zahl nicht zuverlässig entpacken. Die RGB-Codierung ist dagegen belegt (7.3).
+3. **`subscribe()` abonniert Attribute nur statisch — und das kompoundiert mit
+   `Runtime.invalidate_index()` zu einer stillen Sackgasse** (Task 8, 2026-09-02).
+   `BridgeMatterClient.subscribe()` (`matter/client.py`) registriert beim Aufruf genau
+   eine Upstream-Subscription je (Node, Attributpfad)-Paar, das zu diesem Zeitpunkt
+   bekannt ist — begründet im Moduldocstring dort: `attr_path_filter` steuert nur, OB
+   ein registrierter Callback feuert, nicht WAS ihm übergeben wird, und für
+   `EventType.ATTRIBUTE_UPDATED` ist die gelieferte `data` einzig der neue Wert, ohne
+   Node-ID oder Pfad — eine einzelne Wildcard-Subscription könnte ein solches Update
+   deshalb keinem Gerät zuordnen. Ein Attributpfad, den ein Gerät ERST NACH diesem
+   Aufruf neu meldet — nach einem Firmware-Update, das einen Cluster freischaltet, oder
+   weil ein Gerät nachträglich kommissioniert wird — bekommt dadurch nie eine
+   Subscription und liefert folglich nie ein Update.
+
+   Das verzahnt sich mit einer zweiten, für sich genommen unabhängig wirkenden Grenze:
+   `Runtime.invalidate_index()` (`loxone/runtime.py`) existiert genau für den Fall, dass
+   jemand `Store.register_signals()` erneut für ein bereits laufendes Gerät aufruft, um
+   ein neu hinzugekommenes Signal bekannt zu machen. Sie verwirft dabei aber nur
+   `Runtime`s eigenen Cache bereits ABONNIERTER Pfade (`_signal_for`s
+   `_signals`/`_indexed`) — sie registriert keine neue Upstream-Subscription und kann es
+   auch nicht, sie kennt `BridgeMatterClient` gar nicht. Hat `subscribe()` den Pfad nie
+   kennengelernt, erzeugt matter-server dafür überhaupt kein Event; es gibt für
+   `invalidate_index()` folglich nichts zu verpassen. Auch `_signal_for`s eigenes
+   Debug-Log (das bei einem unbekannten Signal feuert) sieht diesen Fall nie, weil
+   `on_attribute`/`on_event` für einen nie abonnierten Pfad schlicht nie aufgerufen
+   werden — nicht einmal auf Debug-Ebene steht dazu etwas im Log.
+
+   Wer also "ein Signal zur Laufzeit an ein laufendes Gerät anhängen" allein mit
+   `Store.register_signals()` gefolgt von `Runtime.invalidate_index(device_id)` bauen
+   will, landet in genau dieser stillen Sackgasse: der Aufruf läuft fehlerfrei durch,
+   der Cache wird sauber neu aufgebaut — aber es kommt nie ein Wert an, weil die
+   eigentliche Lücke eine Ebene tiefer liegt, bei `subscribe()`, nicht bei
+   `invalidate_index()`. Ein korrekter Fix braucht deshalb beides: nach
+   `Store.register_signals()` muss NEBEN `Runtime.invalidate_index(device_id)` auch
+   `BridgeMatterClient.subscribe()` für den betroffenen Node erneut laufen (oder gezielt
+   um den neuen Pfad erweitert werden) — sich auf die Cache-Invalidierung allein zu
+   verlassen reicht nicht. Für die anvisierte Nutzung dieser Phase (`connect()` liest
+   den vollen Node-Cache, danach einmalig `subscribe()`, keine Laufzeit-
+   Rekommissionierung) ist die Lücke hinnehmbar; sie ist aber ein offener Punkt, keine
+   erledigte Aufgabe.
+4. **Event-Zähler (`<key>_n`) sind prozesslokal und überleben einen Bruecken-Neustart
+   nicht** (`Runtime`, `loxone/runtime.py`; Review-Fix I7, 2026-09-02). Spec 6.3 verkauft
+   diesen Zähler als monotonen Wert, dessen Vorzug ist, dass ein verlorenes UDP-Datagramm
+   ihn nur *springen* lässt, statt den Tastendruck zu verschlucken — Loxone-Logik soll auf
+   ihn achten können, ohne je einen Druck zu verpassen. `Runtime.__init__` setzt
+   `self._counters: dict[str, int] = {}` aber ohne jede Seedung, und der Zähler existiert
+   nirgends außerhalb dieses Prozessspeichers — kein Store-Feld, kein `seed_from_snapshot`,
+   kein `/resync`-Pfad. Ein Neustart der Bridge (Deployment, Absturz, Container-Neustart)
+   setzt ihn deshalb auf 0 zurück, und der nächste Tastendruck sendet wieder `1`. Das ist
+   nicht dieselbe Fehlerklasse, die 6.3 adressiert: ein VERLORENES Paket lässt den Zähler
+   *steigen* (springt von z. B. 4 auf 6, immer noch erkennbar als "es gab einen Druck"), ein
+   NEUSTART lässt ihn *fallen* (von 47 zurück auf 1) — eine Loxone-Logik, die auf "Zähler hat
+   sich erhöht" wartet, verpasst diesen einen Druck nach jedem Neustart der Bridge
+   vollständig, das genaue Gegenteil dessen, wofür der Zähler eingeführt wurde. Ein Fix
+   bräuchte eines von zwei Dingen: entweder der Zähler wird persistiert (z. B. im `Store`,
+   analog zu den Signalschlüsseln selbst, mit derselben Sorgfalt bei nebenläufigem Zugriff)
+   und beim Start aus der Datenbank statt bei 0 wieder aufgenommen, oder die Loxone-seitige
+   Logik überwacht den Zähler auf *Änderung* statt auf *Erhöhung* — Letzteres ist die
+   einfachere Änderung, verlangt aber, dass jedes Config-Projekt, das diesen Zähler nutzt,
+   das auch tatsächlich so verdrahtet. Weder das eine noch das andere ist in dieser Phase
+   umgesetzt; unangetastet gelassen, weil das Verhalten nicht ungefragt geändert werden
+   sollte, aber hier festgehalten, weil 6.3 sonst mehr verspricht, als die Implementierung
+   hält.
+5. **`MultiPressComplete` liefert nur die zwei Basissignale, nicht die in 6.3 versprochenen
+   `_press2`/`_press3`/`_presscount`** (`export/signals.py`, `discovery.py`; Review-Fix
+   I6/M13, 2026-09-02). Spec 6.3 verspricht wörtlich: „Bei `MultiPressComplete` zusätzlich
+   `_press2`, `_press3` als eigene Impulse sowie `_presscount`." Tatsächlich exportiert
+   `export/signals.py`s `to_inputs` für JEDES Event — `MultiPressComplete` eingeschlossen —
+   ausschließlich die beiden generischen Signale, die auch jedes andere Event bekommt:
+   `<key>` (digitaler Impuls) und `<key>_n` (monotoner Zähler, siehe Punkt 4 oben zu dessen
+   eigener Lücke). Es gibt weder eine Sonderbehandlung für den Switch-Cluster-Event Nr. 6
+   (`MultiPressComplete`, siehe `discovery.FEATURE_MAP_EVENTS`) noch einen Weg, aus dem
+   rohen `MultiPressComplete`-Ereignis (das laut Matter-Spezifikation die Anzahl der
+   erkannten Presses als Nutzdaten trägt) eine Presszahl herauszulesen und in eigene
+   Impulse/einen `_presscount`-Wert zu übersetzen — `matter/paths.py`s Event-Erkennung
+   liefert ohnehin nur den Pfad (`endpoint/cluster/event`), keine Nutzdaten, und
+   `Runtime.on_event` kennt entsprechend keinen Parameter dafür. Ein Gerät mit
+   Mehrfachdruck-Erkennung (z. B. IKEA-Taster mit Doppel-/Dreifachklick) liefert also
+   `MultiPressComplete` als denselben einzelnen Impuls wie `InitialPress` — ein Doppelklick
+   sieht in Loxone genauso aus wie ein einzelner Druck, nur der `_n`-Zähler zählt weiter.
+   Ein Fix bräuchte: (a) das rohe `MultiPressComplete`-Ereignis mit seinen Nutzdaten statt
+   nur seinem Pfad an `Runtime.on_event` durchzureichen, (b) eine Interpretation dieser
+   Nutzdaten als Presszahl, und (c) eine Erweiterung von `export/signals.py`, die für dieses
+   eine Event drei zusätzliche `LoxoneInput`s erzeugt statt der generischen zwei. Nicht in
+   dieser Phase umgesetzt — hier festgehalten, damit 6.3 nicht mehr verspricht, als
+   `export/signals.py` tatsächlich liefert.

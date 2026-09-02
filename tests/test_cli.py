@@ -1,16 +1,20 @@
 import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
+import typer
 from matter_server.client.exceptions import CannotConnect
 from typer.testing import CliRunner
 
 from loxmatter import cli
 from loxmatter.cli import app, render_report
 from loxmatter.matter import client as matter_client
-from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.models import NodeSnapshot
+from loxmatter.model.store import Store
 
 FIXTURE = Path(__file__).parent / "fixtures" / "nodes" / "example_light.json"
 
@@ -107,6 +111,19 @@ class _FakeUpstream:
     def get_nodes(self) -> list[Any]:
         return self._nodes
 
+    def subscribe_events(
+        self,
+        callback: Any,
+        event_filter: Any = None,
+        node_filter: Any = None,
+        attr_path_filter: Any = None,
+    ) -> Any:
+        """Fuer `loxmatter run` (BridgeMatterClient.subscribe()) — die
+        run()-Tests unten pruefen Aufbau/Abbau, nicht die Zustellung
+        einzelner Aktualisierungen (das leistet tests/matter/test_client.py
+        bereits ausfuehrlich)."""
+        return lambda: None
+
 
 class _FakeHttpSession:
     async def close(self) -> None:
@@ -190,3 +207,350 @@ def test_cli_reports_connect_timeout_without_traceback(monkeypatch):
     # Von den beiden anderen Fehlerpfaden unterscheidbar:
     assert "nicht erreichbar" not in result.stderr
     assert "nicht bekannt" not in result.stderr
+
+
+# --- loxmatter run: Aufbau/Abbau ohne Netz -----------------------------
+#
+# Was hier NICHT geprüft wird: die Zustellung einzelner Attribut-/Event-
+# Aktualisierungen über subscribe() (siehe tests/matter/test_client.py) und
+# das eigentliche HTTP-Verhalten von build_app() (siehe tests/loxone/). Hier
+# geht es ausschließlich um _run()s eigene Verantwortung: startet es die
+# vier Ressourcen, und — wichtiger — räumt es sie in jedem Fall wieder auf.
+
+
+class _SpySender:
+    """Steht für UdpSender — ohne echten Socket."""
+
+    def __init__(self, host: str, port: int) -> None:
+        self.host = host
+        self.port = port
+        self.close_calls = 0
+
+    async def send(self, key: str, value: object, *, force: bool = False) -> bool:
+        return True
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+class _SpyRuntime:
+    """Steht für Runtime — erfüllt RuntimeEventHandler und zählt Aufrufe."""
+
+    def __init__(self, store: Store, sender: _SpySender) -> None:
+        self.store = store
+        self.sender = sender
+        self.started = False
+        self.stop_calls = 0
+        self.resend_calls = 0
+        self.seed_calls = 0
+        # Reihenfolge der beiden Aufrufe, damit ein Test pruefen kann, dass
+        # das Saeen VOR dem ersten Resend passiert (siehe _run-Docstring):
+        # ein Resend nach dem Saeen ist der ganze Witz von Spec 6.4, ein
+        # Resend davor faende einen noch leeren Cache vor.
+        self.call_order: list[str] = []
+
+    async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
+        pass
+
+    async def on_event(self, device_id: int, path: str) -> None:
+        pass
+
+    async def set_online(self, device_id: int, online: bool) -> None:
+        pass
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stop_calls += 1
+
+    async def seed_from_snapshot(self, snapshots: list[NodeSnapshot]) -> int:
+        self.seed_calls += 1
+        self.call_order.append("seed")
+        return 0
+
+    async def resend_all(self) -> int:
+        self.resend_calls += 1
+        self.call_order.append("resend")
+        return 0
+
+
+class _SpyUvicornServer:
+    """serve() kehrt sofort zurück — wie uvicorn es nach einem ersten,
+    geordnet abgefangenen Strg-C selbst tut (Server.capture_signals)."""
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    async def serve(self) -> None:
+        return None
+
+
+class _HangingUvicornServer:
+    """serve() blockiert, bis der umgebende Task abgebrochen wird — wie bei
+    echtem uvicorn, solange kein Signal eintrifft."""
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    async def serve(self) -> None:
+        await asyncio.Event().wait()
+
+
+class _FailingUvicornServer:
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    async def serve(self) -> None:
+        raise OSError("Adresse bereits verwendet")
+
+
+def _install_run_spies(
+    monkeypatch: pytest.MonkeyPatch, *, connect_error: BaseException | None = None
+) -> tuple[list[_SpySender], list[_SpyRuntime], list[BridgeMatterClient]]:
+    """Ersetzt Sender, Laufzeit und matter-Client durch Attrappen, damit
+    _run() ohne Netzwerk/Hardware getestet werden kann. uvicorn.Server bleibt
+    Sache des jeweiligen Tests (unterschiedliches Serve-Verhalten)."""
+    senders: list[_SpySender] = []
+    runtimes: list[_SpyRuntime] = []
+    clients: list[BridgeMatterClient] = []
+
+    def make_sender(host: str, port: int) -> _SpySender:
+        sender = _SpySender(host, port)
+        senders.append(sender)
+        return sender
+
+    def make_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender)
+        runtimes.append(runtime)
+        return runtime
+
+    def make_client(url: str) -> BridgeMatterClient:
+        client = _fake_client(nodes=[], connect_error=connect_error)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr(cli, "UdpSender", make_sender)
+    monkeypatch.setattr(cli, "Runtime", make_runtime)
+    monkeypatch.setattr(cli, "_build_client", make_client)
+    return senders, runtimes, clients
+
+
+def _assert_store_is_closed(store: Store) -> None:
+    with pytest.raises(sqlite3.ProgrammingError):
+        store.udp_port(1)
+
+
+async def test_run_stops_everything_after_a_clean_shutdown(monkeypatch, tmp_path):
+    """uvicorn.Server.serve() kehrt nach einem ersten Strg-C geordnet
+    zurück (siehe _run-Docstring) — dieser Test bildet genau das nach."""
+    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert runtimes[0].started is True
+    assert runtimes[0].resend_calls == 1
+    assert runtimes[0].stop_calls == 1
+    assert senders[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError):
+        await clients[0].snapshots()
+    _assert_store_is_closed(store)
+
+
+async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_path):
+    """Live-Lauf vom 2026-09-02 (Spec 6.4): ohne ein Saeen aus dem aktuellen
+    Geraetezustand VOR dem ersten `resend_all()` findet dieser Resend einen
+    leeren Cache vor und sendet nichts."""
+    _, runtimes, _ = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert runtimes[0].seed_calls == 1
+    assert runtimes[0].call_order == ["seed", "resend"]
+
+
+async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_path):
+    """Scheitert schon connect(), dürfen weder Runtime noch Sender noch die
+    Datenbank offen bleiben — auch wenn runtime.start() nie lief."""
+    senders, runtimes, _clients = _install_run_spies(
+        monkeypatch, connect_error=CannotConnect("boom")
+    )
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    with pytest.raises(typer.Exit):
+        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert runtimes[0].started is False
+    assert runtimes[0].stop_calls == 1  # sicher aufrufbar, auch ungestartet
+    assert senders[0].close_calls == 1
+    _assert_store_is_closed(store)
+
+
+async def test_run_cleans_up_when_serve_raises(monkeypatch, tmp_path):
+    """Ein Fehler beim Start des HTTP-Servers (z. B. Port belegt) darf
+    Laufzeit, Sender, Client und Datenbank nicht offen lassen."""
+    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _FailingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    with pytest.raises(OSError, match="Adresse"):
+        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert runtimes[0].stop_calls == 1
+    assert senders[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError):
+        await clients[0].snapshots()
+    _assert_store_is_closed(store)
+
+
+async def test_run_cleans_up_on_cancellation(monkeypatch, tmp_path):
+    """Simuliert Strg-C über eine echte Task-Cancellation: serve() hängt,
+    bis der _run-Task abgebrochen wird — asyncio.run() installiert seit
+    Python 3.11 selbst einen SIGINT-Handler, der genau das tut (siehe
+    _run-Docstring)."""
+    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert runtimes[0].stop_calls == 1
+    assert senders[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError):
+        await clients[0].snapshots()
+    _assert_store_is_closed(store)
+
+
+async def test_run_continues_cleanup_when_one_step_fails(monkeypatch, tmp_path):
+    """Scheitert ein Aufräumschritt (hier: runtime.stop()), müssen die
+    folgenden trotzdem laufen — jeder Schritt steht in _run() in seinem
+    eigenen try/except, genau dafür."""
+    senders, runtimes, clients = _install_run_spies(monkeypatch)
+
+    def make_broken_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender)
+
+        async def broken_stop() -> None:
+            runtime.stop_calls += 1
+            raise RuntimeError("Sendefehler beim letzten Full-Resend")
+
+        runtime.stop = broken_stop  # type: ignore[method-assign]
+        runtimes.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(cli, "Runtime", make_broken_runtime)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert runtimes[0].stop_calls == 1
+    assert senders[0].close_calls == 1  # trotz gescheitertem runtime.stop()
+    with pytest.raises(MatterUnavailableError):
+        await clients[0].snapshots()
+    _assert_store_is_closed(store)
+
+
+async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path):
+    """Bricht waehrend `resend_all()` ab - also VOR `serve()`, im Unterschied zu
+    `test_run_cleans_up_on_cancellation` oben, das immer erst `serve()` erreicht
+    (dessen 0.05s-Schlaf reicht laengst, bis connect()/subscribe()/start()/
+    resend_all() der Attrappen durchgelaufen sind). Von den vier Schritten vor
+    `serve()` ist `resend_all()` gezielt gewaehlt: es ist der einzige mit einem
+    eigenen inneren `await` (hier bewusst auf ein nie gesetztes Event), an dem
+    eine Cancellation ueberhaupt landen kann - die drei anderen Fake-Aufrufe
+    kehren synchron zurueck und boeten keinen Interrupt-Punkt."""
+    senders, runtimes, clients = _install_run_spies(monkeypatch)
+
+    def make_slow_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender)
+
+        async def resend_all_blocks_until_cancelled() -> int:
+            runtime.resend_calls += 1
+            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+            return 0  # pragma: no cover - wird nie erreicht
+
+        runtime.resend_all = resend_all_blocks_until_cancelled  # type: ignore[method-assign]
+        runtimes.append(runtime)
+        return runtime
+
+    monkeypatch.setattr(cli, "Runtime", make_slow_runtime)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # started() und der eine resend_all()-Aufruf sind gelaufen - serve() nie:
+    # sonst wuerde dies nur test_run_cleans_up_on_cancellation wiederholen.
+    assert runtimes[0].started is True
+    assert runtimes[0].resend_calls == 1
+    assert runtimes[0].stop_calls == 1
+    assert senders[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError):
+        await clients[0].snapshots()
+    _assert_store_is_closed(store)
+
+
+def test_run_prints_which_store_was_used(monkeypatch, tmp_path):
+    """Review-Fix M10, 2026-09-02: `export` gab den verwendeten Store-Pfad
+    schon aus, `run` bislang nicht — die wahrscheinlichste Fehlkonfiguration
+    (exportiert mit `--store-path`, gestartet ohne, oder umgekehrt) zeigte
+    sich sonst erst als 404 in einem Log, das niemand liest. Der Test laesst
+    `connect()` bewusst scheitern (CannotConnect), damit er ohne Netz und
+    ohne einen laufenden HTTP-Server durchläuft — die Ausgabe passiert schon
+    vor diesem Fehlschlag."""
+    _install_run_spies(monkeypatch, connect_error=CannotConnect("boom"))
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store_path = tmp_path / "run.sqlite"
+
+    result = CliRunner().invoke(
+        app, ["run", "--miniserver", "127.0.0.1", "--store-path", str(store_path)]
+    )
+
+    assert str(store_path) in result.stdout
+
+
+# --- fake-miniserver: --template ----------------------------------------
+
+
+def test_fake_miniserver_rejects_a_missing_template_before_listening(tmp_path):
+    """Ein falscher --template-Pfad soll sofort scheitern, statt erst nach dem
+    Warten auf Strg-C (Review-Fix Minor #5) - `CliRunner.invoke` haengt hier
+    deshalb nicht: die Pruefung sitzt vor `asyncio.run(_fake_miniserver(...))`."""
+    missing = tmp_path / "nicht_da.xml"
+
+    result = CliRunner().invoke(app, ["fake-miniserver", "--template", str(missing)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "wurde nicht gefunden" in result.stderr
+
+
+def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen():
+    """Review-Fix Minor #4: eine Vorlage ohne Check-Attribute (z. B. eine
+    VO_-Datei) hat nichts zu pruefen - das darf nicht wie "alles gesehen"
+    aussehen, sonst liest es sich wie eine bestandene statt einer
+    ausgebliebenen Pruefung."""
+    nothing_to_check = cli._silent_keys_report("VO_x.xml", announced=set(), silent=[])
+    assert "nichts zu prüfen" in nothing_to_check
+    assert "Alle" not in nothing_to_check
+
+    all_seen = cli._silent_keys_report("VIU_x.xml", announced={"a", "b"}, silent=[])
+    assert "Alle 2 Signale" in all_seen
+
+    some_silent = cli._silent_keys_report("VIU_x.xml", announced={"a", "b"}, silent=["b"])
+    assert "1 Signale aus VIU_x.xml nie gesehen" in some_silent
+    assert "  b" in some_silent

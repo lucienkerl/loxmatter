@@ -140,6 +140,53 @@ def render_virtual_out(
     )
 
 
+def render_system_templates(bridge_ip: str, port: int, listen_port: int) -> tuple[bytes, bytes]:
+    """Die beiden Vorlagen, die zu keinem Geraet gehoeren.
+
+    bridge_alive ist der Watchdog (Spec 6.5): er toggelt, solange die Bridge
+    laeuft, und deckt "Container tot" wie "Netz weg" gleichermassen ab.
+
+    /resync gehoert im Config-Projekt an den Systemstart-Baustein (Spec 6.4).
+    UDP ist zustandslos - ohne diesen Aufruf stehen nach einem Neustart des
+    Miniservers alle Eingaenge auf ihrem Defaultwert, bei einem Temperatursensor
+    womoeglich stundenlang.
+
+    `listen_port` ist der HTTP-Port, auf dem `loxmatter run` die Kommandos
+    aus Loxone entgegennimmt (Review-Fix I3, 2026-09-02: vorher hier fest auf
+    8080 verdrahtet, unabhaengig von `run --listen`; ein abweichender Port
+    liess `/resync` im Config-Projekt ins Leere laufen, ohne dass der
+    Miniserver das je meldet - er wertet die Antwort eines virtuellen
+    Ausgangs nicht aus).
+    """
+    viu = render_virtual_in_udp(
+        "System",
+        bridge_ip,
+        port,
+        [
+            LoxoneInput(
+                key="bridge_alive",
+                title="Bridge erreichbar",
+                comment="Watchdog: toggelt, solange die Bridge laeuft",
+                analog=False,
+                unit_format="",
+            )
+        ],
+    )
+    vo = render_virtual_out(
+        "System",
+        f"http://{bridge_ip}:{listen_port}",
+        [
+            LoxoneCommand(
+                key="resync",
+                title="Alle Werte neu senden",
+                path="/resync",
+                analog=False,
+            )
+        ],
+    )
+    return viu, vo
+
+
 def filename_for(prefix: str, device_id: int, device_label: str) -> str:
     """Dateiname nach Spec 6.1, auf ASCII normalisiert.
 

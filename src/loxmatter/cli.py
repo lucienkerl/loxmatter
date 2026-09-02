@@ -4,22 +4,31 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import NoReturn
 
 import typer
+import uvicorn
 from matter_server.client.exceptions import CannotConnect
 
+from loxmatter.commands.translate import MatterCall
+from loxmatter.devtools.fake_miniserver import FakeMiniserver
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.documents import (
     LoxoneCommand,
     filename_for,
+    render_system_templates,
     render_virtual_in_udp,
     render_virtual_out,
 )
 from loxmatter.export.signals import to_inputs
+from loxmatter.loxone.runtime import Runtime
+from loxmatter.loxone.sender import UdpSender
+from loxmatter.loxone.server import build_app
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.discovery import (
     extract_signals,
@@ -30,6 +39,8 @@ from loxmatter.matter.discovery import (
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import Exportability
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="Matter → Loxone Bridge")
 
@@ -89,6 +100,26 @@ def _fail(message: str) -> NoReturn:
     Programmende mit Exit-Code ≠ 0 — statt eines Tracebacks."""
     typer.echo(message, err=True)
     raise typer.Exit(code=1)
+
+
+def _ensure_out_dir(out: Path) -> None:
+    """Legt das Zielverzeichnis an; meldet einen Fehlschlag als CLI-Fehler
+    statt eines Tracebacks.
+
+    `export` ruft dies an zwei Stellen auf — einmal vor den Systemvorlagen,
+    einmal vor den Gerätevorlagen (`mkdir(exist_ok=True)` verträgt den
+    zweiten Aufruf) — statt einmal ganz am Anfang. So entsteht das
+    Verzeichnis erst, wenn feststeht, dass das Kommando tatsächlich etwas
+    schreibt: ein Aufruf ohne `--system`, `--node` oder `--fixture` scheitert
+    an der Parametervalidierung in `_load_snapshot`, bevor hier irgendetwas
+    angelegt wird (Review-Fix Minor #3, 2026-09-02).
+    """
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(
+            f"Zielverzeichnis {out} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
+        )
 
 
 def _load_fixture(path: Path) -> NodeSnapshot:
@@ -198,6 +229,12 @@ def export(
     url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
     bridge_ip: str = typer.Option(..., help="IP dieser Bridge, aus Sicht des Miniservers"),
     port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
+    listen: int = typer.Option(
+        8080,
+        help="HTTP-Port in der erzeugten Kommando-URL (VO-Vorlage). Muss mit dem "
+        "--listen übereinstimmen, mit dem `loxmatter run` später gestartet wird — "
+        "sonst laufen die Ausgangsbefehle ins Leere, ohne dass der Miniserver das meldet.",
+    ),
     out: Path = typer.Option(Path("."), help="Zielverzeichnis für die Vorlagen"),  # noqa: B008
     store_path: Path | None = typer.Option(  # noqa: B008
         None,
@@ -216,6 +253,12 @@ def export(
         help="Auch Kommandos unbekannter Cluster exportieren. "
         "Verwaltungscluster bleiben in jedem Fall gesperrt.",
     ),
+    system: bool = typer.Option(
+        False,
+        "--system",
+        help="Erzeugt zusätzlich die geräteunabhängigen Vorlagen "
+        "(bridge_alive, /resync). Einmalig zu importieren.",
+    ),
 ) -> None:
     """Erzeugt die Loxone-Vorlagen für ein Gerät.
 
@@ -224,7 +267,35 @@ def export(
     `--store-path`. Der verwendete Pfad wird ausgegeben, damit ein Nutzer,
     der versehentlich zwei Datenbanken erzeugt hat, das an der Ausgabe sieht
     statt es aus toten Bausteinen in Loxone zu erschließen.
+
+    `bridge_alive` und `/resync` gehören zu keinem Gerät (Spec 6.2, 6.4, 6.5)
+    — deshalb prüft `--system` hier zuerst, vor dem Laden des Abbilds: sonst
+    verlangte der Aufbau des Kommandos immer `--node` oder `--fixture`, auch
+    wenn nur die Systemvorlagen gebraucht werden.
     """
+    if system:
+        _ensure_out_dir(out)
+        viu_sys, vo_sys = render_system_templates(bridge_ip, port, listen)
+        viu_sys_path = out / "VIU_Matter_System.xml"
+        vo_sys_path = out / "VO_Matter_System.xml"
+        try:
+            viu_sys_path.write_bytes(viu_sys)
+        except OSError as exc:
+            _fail(
+                f"{viu_sys_path} konnte nicht geschrieben werden: {exc}. "
+                "Es wurde noch keine Datei angelegt."
+            )
+        try:
+            vo_sys_path.write_bytes(vo_sys)
+        except OSError as exc:
+            _fail(
+                f"{vo_sys_path} konnte nicht geschrieben werden: {exc}. "
+                f"Geschrieben wurde bereits {viu_sys_path.name}, es fehlt {vo_sys_path.name}."
+            )
+        typer.echo("VIU_Matter_System.xml, VO_Matter_System.xml: Heartbeat und /resync")
+        if fixture is None and node is None:
+            return
+
     snapshot = _load_snapshot(fixture, node, url)
 
     resolved_store_path = _resolve_store_path(store_path)
@@ -244,31 +315,31 @@ def export(
     try:
         device_id = store.register_device(snapshot)
         stored = store.register_signals(device_id, snapshot)
+        # Ausgangsbefehle kommen aus AcceptedCommandList, nicht aus den Attributen:
+        # Matter-Attribute sind fast alle nur lesbar (Task 6).
+        stored_commands = store.register_commands(
+            device_id, extract_commands(snapshot, raw=raw_commands), snapshot.node_id
+        )
     finally:
         store.close()
 
     label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or f"Node {snapshot.node_id}"
     inputs = to_inputs(stored, device_id, label)
-    # Ausgangsbefehle kommen aus AcceptedCommandList, nicht aus den Attributen:
-    # Matter-Attribute sind fast alle nur lesbar (Task 6).
-    device_commands = extract_commands(snapshot, raw=raw_commands)
+    # Der Schluessel kommt ausschliesslich vom Store (siehe register_commands):
+    # so stammen der Schluessel in der Vorlage und der in der Datenbank aus
+    # einer Quelle statt aus zwei unabhaengigen Zusammensetzungen, die
+    # auseinanderdriften koennten, ohne dass ein Fehler es meldet.
     commands = [
         LoxoneCommand(
-            key=f"d{device_id}_{c.endpoint}_{c.slug}",
+            key=c.key,
             title=c.slug,
-            path=f"/cmd/d{device_id}_{c.endpoint}_{c.slug}/" + ("<v>" if c.takes_value else "1"),
+            path=f"/cmd/{c.key}/" + ("<v>" if c.takes_value else "1"),
             analog=c.takes_value,
         )
-        for c in device_commands
+        for c in stored_commands
     ]
 
-    try:
-        out.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        _fail(
-            f"Zielverzeichnis {out} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
-        )
-
+    _ensure_out_dir(out)
     viu = out / filename_for("VIU", device_id, label)
     vo = out / filename_for("VO", device_id, label)
 
@@ -277,7 +348,7 @@ def export(
     except OSError as exc:
         _fail(f"{viu} konnte nicht geschrieben werden: {exc}. Es wurde noch keine Datei angelegt.")
     try:
-        vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:8080", commands))
+        vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:{listen}", commands))
     except OSError as exc:
         _fail(
             f"{vo} konnte nicht geschrieben werden: {exc}. "
@@ -291,3 +362,191 @@ def export(
     typer.echo(f"{viu.name}: {len(inputs)} Eingänge")
     typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
     typer.echo(f"{skipped} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)")
+
+
+@app.command()
+def run(
+    url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
+    miniserver: str = typer.Option(..., help="IP des Miniservers"),
+    port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
+    listen: int = typer.Option(8080, help="Port für die HTTP-Kommandos aus Loxone"),
+    store_path: Path | None = typer.Option(  # noqa: B008
+        None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
+    ),
+) -> None:
+    """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein.
+
+    Öffnet die Datenbank schon hier, synchron — ein unbeschreibbarer Pfad
+    soll als klarer CLI-Fehler enden (wie bei `export`), nicht als
+    Traceback aus dem Inneren von `asyncio.run`.
+    """
+    resolved_store_path = _resolve_store_path(store_path)
+    # Wie bei `export` ausgegeben (Review-Fix M10, 2026-09-02): die
+    # wahrscheinlichste Fehlkonfiguration ist eine `export`- und eine
+    # `run`-Datenbank, die auseinanderlaufen — exportiert mit
+    # `--store-path`, gestartet ohne (oder umgekehrt). Ohne diese Zeile
+    # zeigt sich das erst als 404 in einem Log, das niemand liest, weil
+    # `run` den verwendeten Pfad bislang nie nannte.
+    typer.echo(f"Datenbank: {resolved_store_path.resolve()}")
+    try:
+        resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(
+            f"Verzeichnis {resolved_store_path.parent} konnte nicht angelegt werden: {exc}. "
+            "Ist der Pfad beschreibbar?"
+        )
+    try:
+        store = Store(resolved_store_path)
+    except (OSError, sqlite3.Error) as exc:
+        _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
+
+    asyncio.run(_run(store, url, miniserver, port, listen))
+
+
+async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) -> None:
+    """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
+
+    `store` kommt bereits geöffnet herein (siehe `run` oben). `UdpSender`,
+    `Runtime` und `_build_client` führen in ihren Konstruktoren keine E/A
+    aus, die scheitern könnte — anders als `Store(...)` selbst. Ab hier sind
+    also garantiert alle vier Ressourcen vorhanden, wenn `finally` sie
+    schließt: kein Leck durch einen fehlgeschlagenen Konstruktor irgendwo
+    zwischen `try` und dem ersten `await`.
+
+    Jeder Aufräumschritt in `finally` steht in seinem eigenen `try`/`except`:
+    scheitert einer (z. B. `runtime.stop()`, weil der letzte Full-Resend
+    mitten in einem Sendefehler steckte), dürfen die folgenden trotzdem
+    laufen — sonst bliebe je nach Fehlerort der UDP-Socket offen oder die
+    matter-server-Verbindung hängen. `asyncio.CancelledError` fließt an all
+    dem vorbei ungefangen durch: ein Strg-C soll den Abbruch weiterreichen,
+    nicht als Aufräumfehler verschluckt werden.
+
+    Zum eigentlichen Abbruchverhalten: `uvicorn.Server.serve()` fängt
+    SIGINT/SIGTERM selbst ab (`Server.capture_signals`) und kehrt bei einem
+    ersten Strg-C geordnet zurück, statt eine Ausnahme zu werfen — der
+    `finally`-Block unten läuft in diesem Fall wie bei jedem anderen reguären
+    Ende auch. `asyncio.run()` selbst installiert seit Python 3.11 zusätzlich
+    einen eigenen SIGINT-Handler, der bei einem Strg-C außerhalb von
+    `serve()` (z. B. während `client.connect()`) den gesamten `_run`-Task
+    abbricht — auch das erreicht `finally` als normale Abbruch-Ausnahme.
+    """
+    sender = UdpSender(miniserver, port)
+    runtime = Runtime(store, sender)
+    client = _build_client(url)
+
+    async def invoke(call: MatterCall) -> None:
+        await client.send_command(call)
+
+    try:
+        try:
+            await client.connect()
+        except CannotConnect:
+            _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+        except MatterUnavailableError as exc:
+            _fail(
+                f"matter-server unter {url} hat sich verbunden, aber keine "
+                f"Bereitschaft gemeldet: {exc}"
+            )
+        await client.subscribe(store.device_id_for_node, runtime)
+        await runtime.start()
+        # Startwerte aus dem aktuellen Geraetezustand laden, BEVOR der Resend
+        # unten sie verschickt (Spec 6.4, Live-Lauf vom 2026-09-02): ohne das
+        # faende `resend_all()` einen leeren Cache vor, weil ein Wert dort nur
+        # ueber eine sich aendernde Subscription landet - siehe
+        # `Runtime.seed_from_snapshot`.
+        await runtime.seed_from_snapshot(await client.snapshots())
+        # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
+        await runtime.resend_all()
+
+        config = uvicorn.Config(
+            build_app(store, invoke, runtime), host="0.0.0.0", port=listen, log_level="info"
+        )
+        await uvicorn.Server(config).serve()
+    finally:
+        try:
+            await runtime.stop()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Laufzeit konnte beim Beenden nicht sauber gestoppt werden")
+        try:
+            await sender.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("UDP-Sender konnte beim Beenden nicht sauber geschlossen werden")
+        try:
+            await client.disconnect()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Verbindung zu matter-server konnte beim Beenden nicht sauber getrennt werden"
+            )
+        store.close()
+
+
+@app.command(name="fake-miniserver")
+def fake_miniserver_cmd(
+    port: int = typer.Option(7000, help="UDP-Port, auf dem gelauscht wird"),
+    template: Path | None = typer.Option(  # noqa: B008
+        None, help="Erzeugte VIU_-Vorlage: nennt am Ende die Signale, die nie feuerten"
+    ),
+) -> None:
+    """Ersetzt den Miniserver: schreibt jedes Datagramm mit.
+
+    `--template` wird bereits hier geprueft, statt den Nutzer erst nach dem
+    Warten auf Strg-C (der Pfad wird erst im `finally` von `_fake_miniserver`
+    gelesen) mit einem Fehler zu ueberraschen — wie bei den uebrigen Kommandos
+    dieses Moduls soll ein falscher Pfad sofort als CLI-Fehler enden (Review-Fix
+    Minor #5).
+    """
+    if template is not None and not template.is_file():
+        _fail(f"Vorlage {template} wurde nicht gefunden.")
+    asyncio.run(_fake_miniserver(port, template))
+
+
+def _silent_keys_report(template_name: str, announced: set[str], silent: list[str]) -> str:
+    """Formuliert die Abschlussmeldung von `fake-miniserver --template`.
+
+    Drei zu unterscheidende Faelle: `announced` leer heisst, die Vorlage traegt
+    gar kein `Check`-Attribut (z. B. eine VO_-Datei oder eine leere Vorlage) —
+    dann gibt es nichts zu pruefen, und das ist etwas anderes als "alles wurde
+    gesehen". Nur wenn `announced` nicht leer und `silent` leer ist, war die
+    Pruefung tatsaechlich erfolgreich (Review-Fix Minor #4).
+    """
+    if not announced:
+        return f"{template_name} enthält keine Check-Signale — nichts zu prüfen."
+    if not silent:
+        return (
+            f"Alle {len(announced)} Signale aus {template_name} wurden mindestens einmal gesehen."
+        )
+    lines = [f"{len(silent)} Signale aus {template_name} nie gesehen:"]
+    lines += [f"  {key}" for key in silent]
+    return "\n".join(lines)
+
+
+async def _fake_miniserver(port: int, template: Path | None) -> None:
+    # datetime.now() ohne tz ist hier Absicht: das ist die Ortszeit fuer einen
+    # Menschen, der dem Terminal beim Draufschauen zusieht - keine
+    # gespeicherte oder verglichene Zeit.
+    def announce(key: str, value: str) -> None:
+        typer.echo(f"{datetime.now():%H:%M:%S} {key} = {value}")  # noqa: DTZ005
+
+    def announce_malformed(data: bytes) -> None:
+        typer.echo(
+            f"{datetime.now():%H:%M:%S} KAPUTT (kein Doppelpunkt): {data!r}",  # noqa: DTZ005
+            err=True,
+        )
+
+    fake = FakeMiniserver(port=port, on_received=announce, on_malformed=announce_malformed)
+    await fake.start()
+    typer.echo(f"fake-miniserver lauscht auf UDP-Port {fake.port} — Strg-C zum Beenden")
+    try:
+        await asyncio.Event().wait()  # blockiert, bis Strg-C den Task abbricht
+    finally:
+        await fake.stop()
+        if template is not None:
+            announced = fake.announced_keys(template)
+            silent = fake.silent_keys(template)
+            typer.echo(f"\n{_silent_keys_report(template.name, announced, silent)}")
