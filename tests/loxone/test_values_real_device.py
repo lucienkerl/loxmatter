@@ -27,14 +27,14 @@ def test_mains_voltage_lands_near_230_volt():
 def test_exactly_109_signals_yield_a_value():
     """Spec 6.6: von 159 Attributsignalen erreichen 109 einen UDP-Eingang."""
     snap = plug()
-    werte = [to_loxone_value(s, snap.attributes.get(s.path)) for s in extract_signals(snap)]
-    assert sum(1 for w in werte if w is not None) == 109
+    values = [to_loxone_value(s, snap.attributes.get(s.path)) for s in extract_signals(snap)]
+    assert sum(1 for v in values if v is not None) == 109
 
 
 def test_no_value_formats_to_scientific_notation():
     """Loxone kann "1e-05" nicht lesen - das waere ein stiller Ausfall."""
     snap = plug()
     for ref in extract_signals(snap):
-        wert = to_loxone_value(ref, snap.attributes.get(ref.path))
-        if wert is not None:
-            assert "e" not in format_value(wert).lower()
+        value = to_loxone_value(ref, snap.attributes.get(ref.path))
+        if value is not None:
+            assert "e" not in format_value(value).lower()
