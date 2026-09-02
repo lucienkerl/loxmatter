@@ -61,11 +61,20 @@ async def test_the_page_names_all_four_views(api):
 
 
 async def test_the_page_does_not_promise_what_the_spec_excludes(api):
-    """Spec 8.2: Inbetriebnahme- und Diagnosewerkzeug, keine Smart-Home-Oberflaeche."""
+    """Spec 8.2: Inbetriebnahme- und Diagnosewerkzeug, keine Smart-Home-Oberflaeche.
+
+    Prueft nicht nur `index.html`, sondern auch `/static/app.js` (Review-Fix
+    Minor #3, 2026-09-02): die vier Woerter sind heute in keiner der beiden
+    Dateien vorhanden, das war also bislang kein falsches Gruen - aber ein
+    kuenftiges Feature, dessen deutsche Texte nur in JavaScript entstehen
+    (z. B. dynamisch zusammengesetzt statt im Markup), zoege sonst an dieser
+    Sperre vorbei, ohne dass sie es je bemerkt."""
     client, _, _ = api
     page = (await client.get("/")).text.lower()
+    script = (await client.get("/static/app.js")).text.lower()
     for absent in ("szene", "zeitplan", "automatisierung", "favorit"):
         assert absent not in page
+        assert absent not in script
 
 
 async def test_static_files_do_not_escape_their_directory(api):

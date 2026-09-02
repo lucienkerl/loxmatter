@@ -41,6 +41,13 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    # Task 7, Review-Fix Important #1: startet einen echten `uvicorn`-Prozess
+    # (siehe tests/api/test_live_smoke.py) - kein Ausschluss per Default,
+    # der Marker dient nur der gezielten Auswahl/Abwahl (`-m slow` /
+    # `-m "not slow"`), nicht dem Vergessen dieses Tests.
+    "slow: startet einen echten Server-Prozess statt des In-Prozess-Testpfads",
+]
 
 [tool.ruff]
 line-length = 100

@@ -26,13 +26,7 @@
       <h1>loxmatter</h1>
       <div class="connection-status">
         <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
-        <span
-          x-text="
-            socketConnected
-              ? 'Live-Verbindung aktiv'
-              : (socketEverConnected ? 'Verbindung verloren – verbinde neu…' : 'Verbinde…')
-          "
-        ></span>
+        <span x-text="connectionStatusText()"></span>
       </div>
     </header>
 

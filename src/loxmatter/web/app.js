@@ -19,6 +19,17 @@
 const RECONNECT_DELAY_INITIAL_MS = 1000;
 const RECONNECT_DELAY_MAX_MS = 15000;
 
+// Nach wie vielen erfolglosen Versuchen der ALLERERSTEN Verbindung (vor der
+// ersten je erfolgreichen) die Kopfzeile von der neutralen "Verbinde…"-
+// Formulierung auf einen klareren Text wechselt (Review-Fix Minor #4,
+// 2026-09-02). Ohne das bliebe die Kopfzeile bei einer Bruecke, die von
+// Anfang an nicht erreichbar ist, unbegrenzt bei "Verbinde…" stehen, waehrend
+// im Hintergrund still weiterversucht wird - kein Datenrisiko (es gibt ja
+// noch keine Live-Werte, die faelschlich aktuell wirken koennten), aber ein
+// schwaecheres Diagnosesignal als der Fall der VERLORENEN Verbindung, der
+// bereits einen roten Banner und "Verbindung verloren" bekommt.
+const INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3;
+
 /**
  * Liest den Fehlertext aus einer FastAPI-Fehlerantwort (`{"detail": "..."}"`)
  * - oder liefert einen generischen Text, falls die Antwort kein JSON war
@@ -44,11 +55,25 @@ async function readErrorDetail(response) {
  * verwaessert, waere genau das Gegenteil ihres Zwecks (Spec 8.1).
  */
 async function requestJson(method, path, body) {
-  const response = await fetch(path, {
-    method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      method,
+      headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // `fetch()` selbst wirft nur bei einem Fehler auf Netzwerkebene -
+    // Verbindung abgelehnt, Bruecken-Prozess unten, Netz nicht erreichbar -
+    // nie bei einer Fehlerantwort des Servers (die faengt `readErrorDetail`
+    // oben ab, weiter unten in dieser Funktion). Ohne dieses `catch` liefe
+    // der rohe Browsertext dafuer ("Failed to fetch" o. ae.) unveraendert
+    // bis in die Oberflaeche durch - Englisch und Browser-Jargon, in einem
+    // Werkzeug, dessen Zweck es gerade ist, einen Fehlschlag ehrlich UND
+    // verstaendlich zu zeigen (Spec 8.1). Review-Fix Important #2,
+    // 2026-09-02.
+    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+  }
   if (!response.ok) {
     throw new Error(await readErrorDetail(response));
   }
@@ -114,6 +139,10 @@ function app() {
     socket: null,
     socketConnected: false,
     socketEverConnected: false,
+    // Zaehlt erfolglose Versuche der ALLERERSTEN Verbindung - bleibt ab der
+    // ersten erfolgreichen Verbindung unbenutzt (Review-Fix Minor #4, siehe
+    // `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE` oben).
+    initialConnectFailures: 0,
     reconnectDelayMs: RECONNECT_DELAY_INITIAL_MS,
     reconnectTimer: null,
 
@@ -518,6 +547,18 @@ function app() {
 
     scheduleReconnect() {
       this.socketConnected = false;
+      if (!this.socketEverConnected) {
+        // Noch nie erfolgreich verbunden gewesen - dieser Versuch war einer
+        // der ERSTEN, nicht der Verlust einer bestehenden Verbindung
+        // (Review-Fix Minor #4). Nach oben gedeckelt, damit die Zahl nicht
+        // unbegrenzt waechst, waehrend die Bruecke dauerhaft unerreichbar
+        // bleibt - `connectionStatusText()` unten fragt ohnehin nur, ob die
+        // Schwelle erreicht ist, nicht nach dem genauen Wert.
+        this.initialConnectFailures = Math.min(
+          this.initialConnectFailures + 1,
+          INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE,
+        );
+      }
       if (this.reconnectTimer !== null) {
         return;
       }
@@ -526,6 +567,23 @@ function app() {
         this.connectLive();
       }, this.reconnectDelayMs);
       this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, RECONNECT_DELAY_MAX_MS);
+    },
+
+    // Kopfzeilentext der Live-Verbindung (Spec 8.3) - als eigene Funktion
+    // statt einer verschachtelten Bedingung direkt in `index.html`, seit
+    // Review-Fix Minor #4 einen dritten Fall dazubekommen hat (siehe
+    // `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE` oben).
+    connectionStatusText() {
+      if (this.socketConnected) {
+        return "Live-Verbindung aktiv";
+      }
+      if (this.socketEverConnected) {
+        return "Verbindung verloren – verbinde neu…";
+      }
+      if (this.initialConnectFailures >= INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE) {
+        return "Keine Verbindung zur Brücke möglich – verbinde weiter…";
+      }
+      return "Verbinde…";
     },
 
     // ---------------------------------------------------------------------

@@ -1394,10 +1394,67 @@ Die Live-Werte kommen über den WebSocket aus Task 3. Bricht er ab, zeigt die Ob
 das an und verbindet sich neu — eine Oberfläche, die eingefrorene Werte als aktuell
 darstellt, ist schlimmer als eine, die sagt, dass sie die Verbindung verloren hat.
 
+**Review-Fix, 2026-09-02 — vier Befunde, zwei davon mit Testfolgen:**
+
+**Important #1 — die WebSocket-Absicherung hatte keinen Regressionstest.** Beim Bau
+dieser Task stellte sich heraus, dass `uvicorn` allein (ohne das `"standard"`-Extra)
+keine WebSocket-Implementierung mitbringt — ein echter `uvicorn`-Prozess beantwortete
+`GET /api/live` mit `404 Unsupported upgrade request`, während die komplette Testsuite
+grün blieb, weil `tests/api/test_live.py` ausschließlich über den In-Prozess-ASGI-Pfad
+(`_InProcessWebSocket` in `tests/api/conftest.py`) läuft und uvicorns eigene
+HTTP/WebSocket-Weiche damit nie durchquert. `websockets>=12` wurde deshalb als eigene
+Zeile zu `pyproject.toml` hinzugefügt (mit Begründungskommentar dort) — seither die
+einzige Absicherung dagegen, und eine, die eine spätere Abhängigkeits-Aktualisierung,
+ein Aufräumen ("importiert ja niemand `websockets` direkt") oder ein Wechsel auf
+blosses `uvicorn` lautlos wieder einreißen könnte, ohne dass `uv run pytest` es
+bemerkt. Neu: `tests/api/test_live_smoke.py` startet dafür einen ECHTEN
+`uvicorn.Server` auf `127.0.0.1`, Port `0` (kollidiert nie, verlässt nie die Maschine),
+und führt darüber einen echten WebSocket-Handshake nach RFC 6455 gegen `/api/live` aus
+— über ein rohes TCP-Socket, bewusst ohne eine WebSocket-Client-Bibliothek zu benutzen
+(sonst würde ein aus dem Environment entferntes `websockets` schon den Testclient an
+einem `ImportError` scheitern lassen, nicht den eigentlich untersuchten Server). Als
+`@pytest.mark.slow` markiert (registriert in `pyproject.toml`), aber ohne
+Default-Ausschluss — läuft mit, kostet aber unter einer Sekunde.
+
+**Important #2 — eine abgebrochene Verbindung sprach Englisch.** `requestJson` in
+`app.js` erzeugte einen deutschen Ausweichtext nur, wenn der Server überhaupt
+geantwortet hat. Wirft `fetch()` selbst (Verbindung abgelehnt, Brücken-Prozess unten,
+Netz nicht erreichbar), lief der rohe Browsertext ("Failed to fetch") unverändert bis
+in die Oberfläche durch — Englisch und Browser-Jargon, ausgerechnet in dem Werkzeug,
+dessen Zweck es ist, einen Fehlschlag ehrlich zu zeigen (Spec 8.1). `requestJson`
+fängt diesen Fall jetzt in einem eigenen `try`/`catch` um den `fetch()`-Aufruf ab und
+wirft stattdessen einen deutschen Text, der sagt, dass die Brücke nicht erreichbar ist
+und möglicherweise nicht läuft.
+
+**Minor #3 — die Sperrliste sah nur die Auslieferung, nicht das JavaScript.**
+`test_the_page_does_not_promise_what_the_spec_excludes` (Spec 8.2) durchsuchte nur die
+ausgelieferte `index.html` nach "szene", "zeitplan", "automatisierung", "favorit". Die
+vier Wörter fehlen heute auch in `app.js`, war also kein falsches Grün — aber ein
+künftiges Feature, dessen deutsche Texte nur in JavaScript entstehen, wäre daran
+vorbeigekommen. Der Test lädt jetzt zusätzlich `/static/app.js` und prüft dieselbe
+Sperrliste dagegen.
+
+**Minor #4 — eine nie erfolgreiche erste Verbindung sah wie "verbindet noch" aus.**
+Scheiterte der allererste WebSocket-Handshake dauerhaft, blieb `socketEverConnected`
+auf `false` — weder der rote Banner noch der schärfere Kopfzeilentext (beide an
+`socketEverConnected` geknüpft) erschienen je, die Kopfzeile blieb unbegrenzt bei der
+neutralen "Verbinde…"-Formulierung stehen, während im Hintergrund still weiterversucht
+wurde. Kein Datenrisiko (es gibt ja noch keine Live-Werte, die veraltet wirken
+könnten), aber ein schwächeres Diagnosesignal als der Fall der verlorenen Verbindung.
+`app.js` zählt jetzt erfolglose Versuche der allerersten Verbindung
+(`initialConnectFailures`, gedeckelt bei
+`INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3`) und
+`connectionStatusText()` (die Kopfzeilenlogik, jetzt eine eigene Funktion statt einer
+verschachtelten Bedingung in `index.html`) schaltet danach auf einen klaren Text um,
+der sagt, dass keine Verbindung zustande kam.
+
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `uv run pytest tests/api/test_web.py -v`
-Expected: PASS, 5 Tests
+Run: `uv run pytest tests/api/test_web.py tests/api/test_live_smoke.py -v`
+Expected: PASS, 6 Tests (5 aus `test_web.py`, unverändert in der Zahl seit der
+ursprünglichen Task 7 — Review-Fix Minor #3 hat eine bestehende Assertion erweitert,
+keinen neuen Test hinzugefügt — dazu 1 neuer Test in `test_live_smoke.py` aus dem
+Review-Fix vom 2026-09-02, Important #1)
 
 - [ ] **Step 6: Von Hand ansehen**
 
