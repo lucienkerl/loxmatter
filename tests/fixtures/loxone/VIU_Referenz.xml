@@ -1,0 +1,6 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<VirtualInUdp Title="Beispiel 1" Comment="" Address="" Port="602">
+	<Info templateType="1" minVersion="15050304"/>
+	<VirtualInUdpCmd Title="Beispiel 1" Comment="" Address="" Check="d1_1_beispiel:\v" Signed="true" Analog="true" SourceValLow="70" DestValLow="0" SourceValHigh="78" DestValHigh="1" DefVal="0" MinVal="-10000" MaxVal="10000" Unit="&lt;v.1&gt;" HintText=""/>
+	<VirtualInUdpCmd Title="Beispiel 1" Comment="" Address="" Check="d1_1_beispiel:\v" Signed="true" Analog="true" SourceValLow="0" DestValLow="0" SourceValHigh="1000" DestValHigh="1" DefVal="0" MinVal="-10000" MaxVal="10000" Unit="&lt;v.3&gt; kW" HintText=""/>
+</VirtualInUdp>

@@ -271,6 +271,28 @@ die IP der Bridge, von der Datagramme akzeptiert werden. `Port` ist der Port, au
 der Miniserver lauscht. Im `VirtualOut` ist `Address` dagegen die Ziel-Basis-URL der
 Bridge.
 
+**Korrektur 2026-09-02, belegt an 26 Vorlagen aus einer echten Installation**
+(91 `VirtualInUdpCmd`, 19 `VirtualOutCmd`). Die obige Form stammte aus einer fremden
+Referenzimplementierung und weicht in vier Punkten von dem ab, was Loxone Config
+tatsächlich schreibt:
+
+1. **Jede Vorlage trägt ein `<Info>`-Element als erstes Kind** — in allen 26 Dateien,
+   ohne Ausnahme:
+   `<Info templateType="1" minVersion="14040925"/>`
+   `templateType` ist **1** für `VirtualInUdp`, **2** für `VirtualInHttp`, **3** für
+   `VirtualOut`. `minVersion` ist eine Loxone-Config-Version im Format `JJMMTTHH`.
+2. **`VirtualInUdpCmd` hat 15 Attribute**, nicht 13 — es fehlten `Unit` und `HintText`:
+   `Title, Comment, Address, Check, Signed, Analog, SourceValLow, DestValLow,
+   SourceValHigh, DestValHigh, DefVal, MinVal, MaxVal, Unit, HintText`
+3. **`VirtualOut` hat `HintText`** zwischen `CmdInit` und `CloseAfterSend`.
+4. **`VirtualOutCmd` hat 15 Attribute und kein `ID`**, und die beiden Methodenfelder
+   stehen zusammen statt verteilt:
+   `Title, Comment, CmdOnMethod, CmdOffMethod, CmdOn, CmdOnHTTP, CmdOnPost, CmdOff,
+   CmdOffHTTP, CmdOffPost, CmdAnswer, HintText, Analog, Repeat, RepeatRate`
+
+Bestätigt haben sich dagegen: UTF-8 mit BOM (26 von 26), reines CRLF (26 von 26) und
+die XML-Deklaration wörtlich (26 von 26).
+
 Dateiformat: **UTF-8 mit BOM, CRLF-Zeilenenden.**
 Dateinamen: `VIU_<name>.xml` und `VO_<name>.xml`.
 Ablage: `Dokumente\Loxone\Loxone Config\Templates\VirtualIn\` bzw. `...\VirtualOut\`.
@@ -487,6 +509,17 @@ durchgängig in **kW** — der Energiemanager, die Zähler- und Verbrauchsbauste
 kW am Eingang. Wir liefern deshalb kW, nicht W. Dieselbe Regel gilt für jeden künftigen
 Eintrag in der Profiltabelle: maßgeblich ist die Einheit, die der Loxone-Baustein
 erwartet, nicht die naheliegende SI-Einheit.
+
+**`Unit` ist ein Formatstring, kein Einheitentext.** Loxone schreibt dort Muster wie
+`<v.3> kW`, `<v.1> °C` oder `<v>%`: die Ziffer hinter dem Punkt ist die Zahl der
+angezeigten Nachkommastellen. Gemessen an 26 realen Vorlagen ist `<v.3> kW` mit
+Abstand die häufigste Form für Leistung.
+
+**Das hebelt die Regel unten auf der Anzeigeebene aus.** Ein Wert von 0,0003 kW kommt
+mit `<v.3> kW` als `0.000` auf der Oberfläche an — der Wert im Miniserver stimmt, aber
+niemand sieht ihn. Der Exporter muss für Leistung deshalb **`<v.6> kW`** schreiben, nicht
+das übliche `<v.3>`. Dasselbe gilt für jede Größe, deren interessanter Bereich mehrere
+Größenordnungen umfasst.
 
 **Folge für die Zahlenformatierung.** Von mW nach kW sind sechs Größenordnungen. Ein
 Standby-Verbraucher mit 300 mW wird zu `0.0003` kW. Der UDP-Sender darf Werte deshalb

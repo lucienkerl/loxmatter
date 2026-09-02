@@ -2,3 +2,9 @@
 __pycache__/
 *.pyc
 .superpowers/
+
+# Vorlagen aus einer echten Loxone-Installation: enthalten IPs, Hostnamen und
+# Zugangsdaten. Duerfen nicht ins Repository. Golden Files werden daraus
+# bereinigt abgeleitet, nicht die Originale.
+tests/fixtures/VirtualIn/
+tests/fixtures/VirtualOut/
