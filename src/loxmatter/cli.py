@@ -261,11 +261,7 @@ def export(
     commands = [
         LoxoneCommand(
             key=c.key,
-            # Schluesselform d<device_id>_<endpoint>_<slug> (siehe
-            # Store.register_commands): device_id und endpoint sind Zahlen
-            # ohne "_", der Rest nach dem zweiten Unterstrich ist der Slug —
-            # auch wenn der selbst welche enthaelt (z. B. "level_onoff").
-            title=c.key.split("_", 2)[-1],
+            title=c.slug,
             path=f"/cmd/{c.key}/" + ("<v>" if c.takes_value else "1"),
             analog=c.takes_value,
         )

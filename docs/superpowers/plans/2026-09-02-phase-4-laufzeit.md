@@ -350,9 +350,14 @@ aber nichts kann diesen Schlüssel später zurück auf ein Matter-Kommando abbil
 **Interfaces:**
 - Consumes: `DeviceCommand` aus `export.commands`, `NodeSnapshot`
 - Produces:
-  - `class StoredCommand` — frozen: `key`, `node_id`, `endpoint`, `cluster_id`, `command_id`, `takes_value`
+  - `class StoredCommand` — frozen: `key`, `slug`, `node_id`, `endpoint`, `cluster_id`, `command_id`, `takes_value`
+  - `class UnknownCommandError(KeyError)` — eigenes `__str__`, damit `str(exc)` keine
+    `repr()`-Anfuehrungszeichen um die Meldung legt (Task 6 macht daraus einen HTTP-Body)
   - `Store.register_commands(device_id: int, commands: Sequence[DeviceCommand], node_id: int) -> list[StoredCommand]`
-  - `Store.resolve_command(key: str) -> StoredCommand` — wirft `KeyError` mit deutscher Meldung
+    — meldet eine echte Schluessel-Kollision statt sie stillschweigend zu verwerfen, und
+    aktualisiert `takes_value`/`slug` eines schon bekannten Kommandos bei jedem Aufruf
+  - `Store.resolve_command(key: str) -> StoredCommand` — wirft `UnknownCommandError` mit
+    deutscher Meldung
   - `Store.commands(device_id: int) -> list[StoredCommand]`
 
 - [ ] **Step 1: Write the failing test**
@@ -365,9 +370,10 @@ from pathlib import Path
 
 import pytest
 
-from loxmatter.export.commands import extract_commands
+from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
+from loxmatter.profiles import table
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -403,8 +409,11 @@ def test_plug_commands_are_resolvable_by_their_exported_key(store):
 
 def test_unknown_key_raises_with_a_german_message(store):
     registered(store, "ikea_grillplats_plug.json")
-    with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel"):
+    with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel") as excinfo:
         store.resolve_command("d1_1_gibtsnicht")
+    # str(KeyError(...)) haengt sonst repr()-Anfuehrungszeichen um die ganze
+    # Nachricht — UnknownCommandError gibt sie unveraendert zurueck.
+    assert str(excinfo.value) == "unbekannter Kommando-Schluessel 'd1_1_gibtsnicht'"
 
 
 def test_button_registers_no_commands(store):
@@ -430,6 +439,59 @@ def test_command_keys_match_the_exported_scheme(store):
 def test_node_id_is_stored_so_the_runtime_can_address_the_device(store):
     _, snap, commands = registered(store, "ikea_grillplats_plug.json")
     assert {c.node_id for c in commands} == {snap.node_id}
+
+
+def test_command_key_collision_raises_instead_of_dropping_silently(store, monkeypatch):
+    """Zwei Kommandos verschiedener Cluster auf demselben Endpoint koennen
+    denselben Slug bekommen — ein zukuenftiger Eintrag in `clusters.yaml` fuer
+    einen zweiten Cluster auf einem Endpoint, der sich schon einen Slug mit
+    `onoff`/`level` teilt, ist eine ganz gewoehnliche Matter-Anordnung.
+    `command_slug` wird hier gezielt auf einen festen Wert gezwungen, um genau
+    das nachzustellen. Das darf `register_commands` nicht mit `INSERT OR
+    IGNORE` stillschweigend loesen — es muss laut scheitern, und das Geraet
+    darf danach keine Kommandos aus diesem gescheiterten Aufruf enthalten."""
+    real_command_slug = table.command_slug
+
+    def fake_command_slug(cluster_id: int, command_id: int) -> str | None:
+        if cluster_id == 3 and command_id == 0:
+            return "on"
+        return real_command_slug(cluster_id, command_id)
+
+    monkeypatch.setattr("loxmatter.export.commands.command_slug", fake_command_slug)
+
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    commands = extract_commands(snap)
+
+    with pytest.raises(ValueError, match="Schluessel-Kollision"):
+        store.register_commands(device_id, commands, snap.node_id)
+
+    assert store.commands(device_id) == []
+
+
+def test_takes_value_change_is_picked_up_on_reregistration(store):
+    """Anders als bei Signalen fror `register_commands` `takes_value` beim
+    ersten Einlernen fuer immer ein. Eine Korrektur in `clusters.yaml` muss
+    ein schon gespeichertes Kommando erreichen, ohne seinen Schluessel zu
+    aendern (Spec 6.2)."""
+    device_id, snap, first = registered(store, "ikea_grillplats_plug.json")
+    on_before = next(c for c in first if c.slug == "on")
+    assert on_before.takes_value is False
+
+    updated = [
+        DeviceCommand(
+            endpoint=on_before.endpoint,
+            cluster_id=on_before.cluster_id,
+            command_id=on_before.command_id,
+            slug=on_before.slug,
+            takes_value=True,
+        )
+    ]
+    again = store.register_commands(device_id, updated, snap.node_id)
+
+    on_after = next(c for c in again if c.key == on_before.key)
+    assert on_after.takes_value is True
+    assert on_after.key == on_before.key
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -450,22 +512,40 @@ CREATE TABLE IF NOT EXISTS command (
     cluster_id  INTEGER NOT NULL,
     command_id  INTEGER NOT NULL,
     key         TEXT NOT NULL UNIQUE,
+    slug        TEXT NOT NULL,
     takes_value INTEGER NOT NULL,
     UNIQUE (device_id, endpoint, cluster_id, command_id)
 );
 ```
 
-Dazu die Datenklasse und die drei Methoden:
+Dazu die Datenklasse, `UnknownCommandError` und die Methoden:
 
 ```python
 @dataclass(frozen=True)
 class StoredCommand:
     key: str
+    slug: str
     node_id: int
     endpoint: int
     cluster_id: int
     command_id: int
     takes_value: bool
+
+
+class UnknownCommandError(KeyError):
+    """`KeyError.__str__` haengt die Nachricht in `repr()` ein, wodurch
+    `str(exc)` zusaetzliche Anfuehrungszeichen um den deutschen Text legt —
+    Task 6 macht daraus einen HTTP-Fehlerkoerper. Die Unterklasse gibt die
+    Nachricht unveraendert zurueck; `pytest.raises(KeyError, ...)` faengt sie
+    weiterhin, da sie von `KeyError` erbt."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
+def _existing_command_keys(self, device_id: int) -> set[str]:
+    rows = self._db.execute("SELECT key FROM command WHERE device_id = ?", (device_id,)).fetchall()
+    return {str(r["key"]) for r in rows}
 
 
 def register_commands(
@@ -475,22 +555,67 @@ def register_commands(
 
     Ohne das schreibt der Exporter Schluessel in die Vorlage, die spaeter
     niemand zurueck auf ein Matter-Kommando abbilden kann.
+
+    Ein schon bekanntes Kommando (gleiches device_id/endpoint/cluster_id/
+    command_id) behaelt seinen Schluessel, aber `takes_value` und `slug`
+    werden bei jedem Aufruf neu uebernommen — genau wie `register_signals`
+    `unit` und `exportability` neu bestimmt, statt sie beim ersten Einlernen
+    fuer immer einzufrieren.
+
+    Laeuft als eine Transaktion mit Rollback bei Fehlschlag. Absichtlich kein
+    `INSERT OR IGNORE` — das wuerde eine echte Schluessel-Kollision nicht
+    melden, sondern das zweite Kommando stillschweigend verwerfen (siehe
+    `register_signals`). Anders als bei Signalen gibt es hier keine
+    Ausweichstrategie: zwei Kommandos verschiedener Cluster auf demselben
+    Endpoint mit gleichem Slug sind ein Fehler in `clusters.yaml`.
     """
-    for command in commands:
-        self._db.execute(
-            "INSERT OR IGNORE INTO command "
-            "(device_id, node_id, endpoint, cluster_id, command_id, key, takes_value) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                device_id,
-                node_id,
-                command.endpoint,
-                command.cluster_id,
-                command.command_id,
-                f"d{device_id}_{command.endpoint}_{command.slug}",
-                int(command.takes_value),
-            ),
-        )
+    taken = self._existing_command_keys(device_id)
+    try:
+        for command in commands:
+            existing = self._db.execute(
+                "SELECT key FROM command WHERE device_id = ? AND endpoint = ?"
+                " AND cluster_id = ? AND command_id = ?",
+                (device_id, command.endpoint, command.cluster_id, command.command_id),
+            ).fetchone()
+            if existing is not None:
+                self._db.execute(
+                    "UPDATE command SET takes_value = ?, slug = ? WHERE key = ?",
+                    (int(command.takes_value), command.slug, existing["key"]),
+                )
+                continue
+
+            key = f"d{device_id}_{command.endpoint}_{command.slug}"
+            if key in taken:
+                collision = self._db.execute(
+                    "SELECT cluster_id, command_id FROM command WHERE device_id = ? AND key = ?",
+                    (device_id, key),
+                ).fetchone()
+                raise ValueError(
+                    f"Schluessel-Kollision fuer Geraet {device_id}: Kommando "
+                    f"(cluster_id={command.cluster_id}, command_id={command.command_id}) "
+                    f"und (cluster_id={collision['cluster_id']}, "
+                    f"command_id={collision['command_id']}) teilen sich den "
+                    f"Schluessel {key!r}"
+                )
+            taken.add(key)
+            self._db.execute(
+                "INSERT INTO command "
+                "(device_id, node_id, endpoint, cluster_id, command_id, key, slug,"
+                " takes_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    device_id,
+                    node_id,
+                    command.endpoint,
+                    command.cluster_id,
+                    command.command_id,
+                    key,
+                    command.slug,
+                    int(command.takes_value),
+                ),
+            )
+    except (ValueError, sqlite3.Error):
+        self._db.rollback()
+        raise
     self._db.commit()
     return self.commands(device_id)
 
@@ -506,7 +631,7 @@ def commands(self, device_id: int) -> list[StoredCommand]:
 def resolve_command(self, key: str) -> StoredCommand:
     row = self._db.execute("SELECT * FROM command WHERE key = ?", (key,)).fetchone()
     if row is None:
-        raise KeyError(f"unbekannter Kommando-Schluessel {key!r}")
+        raise UnknownCommandError(f"unbekannter Kommando-Schluessel {key!r}")
     return self._as_command(row)
 
 
@@ -514,6 +639,7 @@ def resolve_command(self, key: str) -> StoredCommand:
 def _as_command(row: sqlite3.Row) -> StoredCommand:
     return StoredCommand(
         key=row["key"],
+        slug=row["slug"],
         node_id=int(row["node_id"]),
         endpoint=int(row["endpoint"]),
         cluster_id=int(row["cluster_id"]),
@@ -536,12 +662,17 @@ und innerhalb desselben `try`, ergänzen:
 Und die `LoxoneCommand`-Liste aus `stored_commands` statt aus `device_commands` bauen,
 damit der Schlüssel in der Vorlage und der Schlüssel in der Datenbank aus **einer**
 Quelle stammen. Zwei Stellen, die denselben Schlüssel unabhängig zusammensetzen, driften
-auseinander — und das fiele erst auf, wenn ein Loxone-Baustein nichts mehr tut.
+auseinander — und das fiele erst auf, wenn ein Loxone-Baustein nichts mehr tut. Der Titel
+kommt aus `c.slug` — `StoredCommand` traegt den Slug jetzt in einer eigenen Spalte, statt
+ihn aus dem Schlüssel zurueckzuparsen (`c.key.split("_", 2)[-1]`). Zwei Stellen, die
+dieselbe Zusammensetzung getrennt kennen muessen, sind derselbe Auseinanderdrift-Fehler
+wie oben, nur eine Ebene tiefer.
 
 - [ ] **Step 5: Run tests**
 
 Run: `uv run pytest tests/model tests/test_export_cli.py -v`
-Expected: PASS; die bestehenden Export-Tests müssen unverändert durchlaufen.
+Expected: PASS, 8 Tests in `test_store_commands.py`; die bestehenden Export-Tests müssen
+unverändert durchlaufen.
 
 - [ ] **Step 6: Commit**
 
