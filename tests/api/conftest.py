@@ -209,14 +209,29 @@ class _InProcessWebSocket:
 
     Implementiert nur, was diese Testsuite braucht: verbinden, `receive_json`,
     sauber trennen. Kein Text-/Bytes-Versand, kein Ping/Pong - die WebUI
-    schickt auf dieser Route nichts, sie hoert nur zu (siehe `api/live.py`)."""
+    schickt auf dieser Route nichts, sie hoert nur zu (siehe `api/live.py`).
 
-    def __init__(self, app: Any, path: str) -> None:
+    `break_send_after` (Review-Fix Important #2 in `api/live.py`,
+    2026-09-02): rein additiv, `None` (Default) aendert am obigen Verhalten
+    nichts. Gesetzt, laesst es den ASGI-`send`-Aufrufer selbst ein
+    `RuntimeError` werfen, sobald mehr als `break_send_after`
+    `websocket.send`-Nachrichten durchgelaufen sind - simuliert damit genau
+    den Fall aus dem Modul-Docstring von `api/live.py`: eine ASGI-Schicht,
+    die beim Versand auf eine bereits verlorene Verbindung kein
+    `WebSocketDisconnect`, sondern ein `RuntimeError` wirft. Ohne dieses
+    Werkzeug liesse sich dieser Pfad in diesem Inprozess-Harness gar nicht
+    erreichen: `_from_app` unten ist unbegrenzt, ein Test, der einfach nicht
+    liest, erzeugt hier - anders als ein echter, volles TCP-Sendepuffer
+    blockierender Client - keinen echten Sendefehler."""
+
+    def __init__(self, app: Any, path: str, *, break_send_after: int | None = None) -> None:
         self._app = app
         self._path = path
         self._to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._from_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
+        self._break_send_after = break_send_after
+        self._sends_before_break = 0
 
     async def __aenter__(self) -> Self:
         scope: dict[str, Any] = {
@@ -239,6 +254,10 @@ class _InProcessWebSocket:
             return await self._to_app.get()
 
         async def send(message: dict[str, Any]) -> None:
+            if self._break_send_after is not None and message["type"] == "websocket.send":
+                if self._sends_before_break >= self._break_send_after:
+                    raise RuntimeError('Cannot call "send" once a close message has been sent.')
+                self._sends_before_break += 1
             await self._from_app.put(message)
 
         self._task = asyncio.create_task(self._app(scope, receive, send))
@@ -264,6 +283,16 @@ class _InProcessWebSocket:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
 
+    async def wait_closed(self, timeout: float = 2) -> None:
+        """Wartet, bis die SERVER-Seite die Verbindung von sich aus beendet
+        hat - ohne, anders als `__aexit__`, selbst ein
+        `websocket.disconnect` zu schicken. Fuer Tests, die pruefen wollen,
+        dass die Route sich selbst aufraeumt (z. B. nach einem simulierten
+        Sendefehler ueber `break_send_after`), statt dass der Client die
+        Trennung ausloest."""
+        assert self._task is not None
+        await asyncio.wait_for(self._task, timeout=timeout)
+
 
 class WebSocketClient:
     """Duenner Wrapper um `httpx2.AsyncClient`, der zusaetzlich
@@ -276,8 +305,10 @@ class WebSocketClient:
         self._client = client
         self._app = app
 
-    def websocket_connect(self, url: str) -> _InProcessWebSocket:
-        return _InProcessWebSocket(self._app, url)
+    def websocket_connect(
+        self, url: str, *, break_send_after: int | None = None
+    ) -> _InProcessWebSocket:
+        return _InProcessWebSocket(self._app, url, break_send_after=break_send_after)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)

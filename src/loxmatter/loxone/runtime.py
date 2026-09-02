@@ -371,6 +371,10 @@ class Runtime:
                 # Ueberschreiben. Sicherer Ueberspringen statt eines
                 # `None`-Werts auf der Leitung.
                 continue
+            # Bewusst kein `_notify_observers(...)` hier (Review-Fix Minor
+            # #3, 2026-09-02): ein Resend verschickt nur Werte, die ein
+            # Beobachter (z. B. die WebUI) laengst als aktuell gesehen hat -
+            # kein neuer Wert, also auch keine neue Benachrichtigung noetig.
             await self._sender.send(key, value, force=True)
             count += 1
         return count
@@ -396,6 +400,11 @@ class Runtime:
         # beiden Mengen nie geleert werden.
         try:
             for key in list(self._pulses_high):
+                # Bewusst kein `_notify_observers(...)` hier (Review-Fix
+                # Minor #3, 2026-09-02): ein Beobachter hat den High-Wert
+                # dieses Impulses bereits gesehen (siehe `on_event`) - das
+                # Senken beim Beenden ist reines Aufraeumen fuer Loxone,
+                # keine neue Information fuer die WebUI.
                 await self._sender.send(key, False)
         except asyncio.CancelledError:
             raise

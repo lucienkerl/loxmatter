@@ -680,10 +680,38 @@ In `Runtime` ergänzen. Zwei Regeln, die im Docstring stehen müssen:
 Jede Verbindung meldet sich als Beobachter an und beim Trennen wieder ab. Ein
 `WebSocketDisconnect` ist der Normalfall, kein Fehler — er darf nichts ins Log schreiben.
 
+Die Warteschlange je Verbindung ist **begrenzt** (`QUEUE_MAXSIZE = 512`, Review-Fix
+Important #1, 2026-09-02) — nicht unbegrenzt, wie eine frühere Fassung annahm. Diese
+Brücke läuft wochenlang unbeaufsichtigt in jemandes Zuhause; ein Browser-Tab im
+Hintergrund oder ein eingeschlafenes Laptop, das nicht mehr liest, ist dort Alltag, kein
+Randfall. Die Grenze ist so gewählt, dass sie einen vollen Resend-Burst (`/resync`,
+Spec 6.4 — schon ein einzelnes Gerät wie der Testsuite-Stecker kommt auf ~110
+Datagramme) klaglos aufnimmt, mit deutlicher Luft nach oben. Bei Überlauf fällt der
+**älteste** Eintrag, nicht der neueste — eine Live-Ansicht will den aktuellsten Stand.
+Ein Debug-Log meldet sich beim Übergang ins Verwerfen (nicht bei jedem weiteren
+Verwurf), damit eine hängende Verbindung im Betrieb auffindbar bleibt. Bewusst NICHT
+umgesetzt: die Verbindung aktiv zu trennen, wenn sie dauerhaft voll bleibt — die
+Begrenzung deckelt bereits die einzige Gefahr (unbegrenztes Wachstum) auf eine feste,
+kleine Größe; eine zusätzliche Zeitschwelle bräuchte eine eigene, schwer zu
+begründende Kalibrierung und würde riskieren, eine nur kurz gedrosselte Sitzung
+rauszuwerfen, für einen Gewinn, der bei bereits gedeckeltem Speicher gering ist.
+
+Um einen Client, der während des Trennens mitten im Versand steckt, robust zu behandeln
+(Review-Fix Important #2, 2026-09-02): `_send_loop` fängt nicht nur `WebSocketDisconnect`
+ab, sondern auch `RuntimeError` direkt an der Sendestelle — manche ASGI-Server werfen bei
+einem Sendeversuch auf eine bereits verlorene Verbindung genau das statt
+`WebSocketDisconnect`. Beides ist derselbe Fall (ein Browser-Tab, der weg ist, kein
+Programmfehler) und landet deshalb auf `logger.debug`, nie auf `logger.error` — und die
+Route meldet den Beobachter trotzdem im `finally` ab.
+
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_live.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 9 Tests (5 aus der ursprünglichen Task 3, dazu 4 aus dem Review-Fix vom
+2026-09-02: Warteschlangen-Überlauf verwirft den ältesten Eintrag und lässt UDP-Pfad wie
+Beobachter-Registrierung unberührt, ein `RuntimeError` beim Versand wird wie eine
+Trennung behandelt ohne Fehler-Log, und zwei gleichzeitige Verbindungen bleiben
+voneinander isoliert)
 
 - [ ] **Step 6: Commit**
 
