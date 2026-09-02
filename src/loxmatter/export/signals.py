@@ -59,6 +59,18 @@ def to_inputs(
       nirgends reserviert — trifft ihn ein spaeterer `clusters.yaml`-Slug
       zufaellig, waeren das zwei `LoxoneInput`s mit identischem Schluessel,
       also zwei Loxone-Objekte, die denselben UDP-Namen abhoeren.
+
+    ``signal.exported`` entscheidet, ob ein Signal ueberhaupt ein
+    `LoxoneInput` erzeugt (Review-Fix Important #3, 2026-09-02): vorher
+    filterte diese Funktion ausschliesslich nach `exportability`, und das
+    `exported`-Flag aus `PATCH /api/signals/{key}` (Spec 5) veraenderte die
+    API-Antwort, aber nie eine erzeugte Vorlage — das Abschalten eines
+    Signals in der Oberflaeche hatte auf den Export schlicht keine Wirkung.
+    Ein Event mit `exported=False` erzeugt deshalb weder Impuls noch
+    Zaehler. Das Online-Signal des Geraets bleibt davon ausdruecklich
+    unberuehrt: es gehoert nicht zu einem einzelnen Signal, sondern zum
+    Geraet selbst (Spec 6.5), und `StoredSignal` traegt dafuer gar kein
+    `exported`-Flag.
     """
     prefix = f"d{device_id}_"
     inputs: list[LoxoneInput] = []
@@ -82,6 +94,9 @@ def to_inputs(
                 f"Signal {signal.key!r} gehoert nicht zu Geraet {device_id} "
                 f"(erwartetes Praefix {prefix!r})."
             )
+
+        if not signal.exported:
+            continue
 
         comment = f"{device_label} · {signal.ref.path}"
 
