@@ -110,6 +110,78 @@ def build_old_database(path: Path) -> None:
         db.close()
 
 
+_V1_SCHEMA = """
+CREATE TABLE IF NOT EXISTS device (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    unique_id  TEXT NOT NULL,
+    node_id    INTEGER NOT NULL,
+    label      TEXT NOT NULL,
+    udp_port   INTEGER NOT NULL,
+    active     INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS signal (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id     INTEGER NOT NULL REFERENCES device(id),
+    endpoint      INTEGER NOT NULL,
+    cluster_id    INTEGER NOT NULL,
+    element_id    INTEGER NOT NULL,
+    kind          TEXT NOT NULL,
+    key           TEXT NOT NULL UNIQUE,
+    title         TEXT NOT NULL,
+    unit          TEXT NOT NULL,
+    exportability TEXT NOT NULL,
+    exported      INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (device_id, endpoint, cluster_id, element_id, kind)
+);
+CREATE TABLE IF NOT EXISTS command (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id   INTEGER NOT NULL REFERENCES device(id),
+    node_id     INTEGER NOT NULL,
+    endpoint    INTEGER NOT NULL,
+    cluster_id  INTEGER NOT NULL,
+    command_id  INTEGER NOT NULL,
+    key         TEXT NOT NULL UNIQUE,
+    slug        TEXT NOT NULL,
+    takes_value INTEGER NOT NULL,
+    UNIQUE (device_id, endpoint, cluster_id, command_id)
+);
+"""
+
+
+def build_v1_database(path: Path) -> None:
+    """Legt eine Datenbank GENAU auf Schema-Version 1 an (Review-Fix Minor
+    #2, 2026-09-02): `signal.exported` ist schon da (anders als bei
+    `build_old_database`, Version 0), `device.exported_at`/`updated_at`
+    dagegen noch nicht (die kommen erst mit `_migrate_to_v2`).
+
+    Bislang testete diese Datei nur den Sprung von Version 0 auf die
+    aktuelle Version - nie das Oeffnen einer Datenbank, die zwischen zwei
+    Schema-Aenderungen dieser Phase tatsaechlich angelegt wurde (etwa von
+    einer Installation, die genau zwischen Task 2 und Task 5 dieser Phase
+    einmal `loxmatter export` oder `loxmatter run` ausgefuehrt hat). Dass
+    `_migrate` schrittweise ueber `range(version + 1, _SCHEMA_VERSION + 1)`
+    laeuft, macht diesen Zwischenschritt zwar plausibel - belegt war er
+    bislang nicht."""
+    db = sqlite3.connect(str(path))
+    try:
+        db.executescript(_V1_SCHEMA)
+        db.execute(
+            "INSERT INTO device (id, unique_id, node_id, label, udp_port, active)"
+            " VALUES (1, 'dev-1', 42, 'Testgeraet', 7000, 1)"
+        )
+        db.execute(
+            "INSERT INTO signal"
+            " (id, device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"
+            " exportability, exported) VALUES"
+            " (1, 1, 1, 6, 1, 'attribute', 'd1_1_power', 'Leistung', 'kW', ?, 1)",
+            (Exportability.ANALOG.value,),
+        )
+        db.execute("PRAGMA user_version = 1")
+        db.commit()
+    finally:
+        db.close()
+
+
 def user_version(path: Path) -> int:
     db = sqlite3.connect(str(path))
     try:
@@ -218,3 +290,51 @@ def test_migrating_an_old_database_adds_exported_at_and_updated_at_as_null(tmp_p
     assert device.exported_at is None
     assert device.updated_at is None
     assert user_version(path) == 2
+
+
+def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
+    """Der bislang unbelegte Zwischenschritt: eine Datenbank, die genau auf
+    Version 1 steht (`signal.exported` vorhanden, `device.exported_at`/
+    `updated_at` noch nicht), oeffnet sich fehlerfrei und landet auf
+    Version 2 - `_migrate_to_v1` darf dabei NICHT erneut laufen (sonst
+    scheiterte `ALTER TABLE signal ADD COLUMN exported` mit "duplicate
+    column", weil die Spalte schon da ist)."""
+    path = tmp_path / "v1.sqlite"
+    build_v1_database(path)
+    assert user_version(path) == 1
+
+    store = Store(path)
+    try:
+        (device,) = store.devices()
+        (signal,) = store.signals(1)
+    finally:
+        store.close()
+
+    assert user_version(path) == 2
+    assert device.exported_at is None
+    assert device.updated_at is None
+    # Der v1-Bestandswert bleibt unangetastet - kein erneuter Backfill.
+    assert signal.key == "d1_1_power"
+    assert signal.exported is True
+
+
+def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
+    """Ergaenzt `test_opening_a_v1_database_only_runs_the_v2_migration`:
+    ein zweites Oeffnen nach der Migration darf keine weitere Schreibung
+    ausloesen und die Werte unveraendert lassen."""
+    path = tmp_path / "v1.sqlite"
+    build_v1_database(path)
+
+    first = Store(path)
+    first.close()
+    assert user_version(path) == 2
+
+    second = Store(path)
+    try:
+        (device,) = second.devices()
+    finally:
+        second.close()
+
+    assert user_version(path) == 2
+    assert device.exported_at is None
+    assert device.updated_at is None

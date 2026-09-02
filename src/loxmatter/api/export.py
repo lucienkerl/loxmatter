@@ -46,6 +46,16 @@ Ein Download, der manchmal zaehlt und manchmal nicht, waere schwerer zu
 erklaeren als ein Zeitstempel, der bei einem folgenlosen erneuten Download
 harmlos vorspringt.
 
+Wann genau `mark_exported` faellt, ist dabei nicht beliebig: `download`
+markiert erst, NACHDEM das ZIP im Speicher vollstaendig aufgebaut ist - nie
+Geraet fuer Geraet waehrend des Aufbaus (Review-Fix Important #1,
+2026-09-02). Ein Fehler zwischen zwei Geraeten (ein Rendern, das wirft, ein
+`store.commands`/`store.signals`, das scheitert, ein `forget_device` aus
+einer parallelen Anfrage) darf kein Geraet als exportiert zuruecklassen,
+dessen Vorlage der Client mangels 500er-Antwort nie bekommen hat - siehe den
+Docstring von `download` unten. Dieselbe Ueberlegung stand schon hinter dem
+verzoegerten `mark_exported`-Aufruf in `cli.py`s `export`-Kommando.
+
 **Entscheidung 2 - der Port kommt aus der Anfrage, nicht aus dem Code.**
 `download` verlangt `port` (UDP, VirtualInUdp) und `listen` (HTTP, die
 Kommando-URLs in VirtualOut) als Query-Parameter, mit denselben Vorgaben wie
@@ -184,7 +194,9 @@ def build_export_router(store: Store) -> APIRouter:
         Entscheidung 1) und veraendert auch sonst keine Zeile. `bridge_ip`
         selbst geht in keine der Zahlen unten ein - es zaehlt nur mit, damit
         eine fehlende Angabe hier ebenso als 422 auffaellt wie spaeter bei
-        `/download`, statt erst nach dem Klick auf "Herunterladen"."""
+        `/download`, statt erst nach dem Klick auf "Herunterladen". Es
+        taucht deshalb bewusst in keinem Feld von `ExportPreviewOut` auf,
+        obwohl es Pflichtparameter ist."""
         devices = [_device_preview(device, store) for device in store.devices()]
         system_files = ["VIU_Matter_System.xml", "VO_Matter_System.xml"] if system else []
         return ExportPreviewOut(devices=devices, system_files=system_files)
@@ -207,12 +219,28 @@ def build_export_router(store: Store) -> APIRouter:
         Zwischenzustand auf der Platte.
 
         Markiert jedes ausgelieferte Geraet ueber `Store.mark_exported` als
-        exportiert (Entscheidung 1 im Modul-Docstring). Die Kurzanleitung
-        liegt IMMER bei, unabhaengig von `system` und selbst dann, wenn kein
-        einziges Geraet registriert ist - eine leere Installation liefert so
-        ein gueltiges, nicht-leeres ZIP statt eines leeren Archivs oder eines
+        exportiert (Entscheidung 1 im Modul-Docstring) - aber ERST, nachdem
+        das Archiv vollstaendig aufgebaut ist, nicht Geraet fuer Geraet
+        waehrend des Aufbaus (Review-Fix Important #1, 2026-09-02).
+        Waere zwischen zwei Geraeten ein Fehler aufgetreten - ein Rendern,
+        das wirft, ein `store.commands`/`store.signals`, das scheitert, ein
+        `forget_device` aus einer parallelen Anfrage -, haette FastAPI 500
+        geantwortet und der Client kein ZIP erhalten, waehrend jedes bis
+        dahin verarbeitete Geraet trotzdem dauerhaft als exportiert
+        vermerkt gewesen waere: `GET /api/export/status` haette es
+        anschliessend als "seither unveraendert" gemeldet, obwohl niemand
+        die zugehoerige Vorlage je bekommen hat. Dieselbe Disziplin wie in
+        `cli.py`s `export`-Kommando, das seinen `Store.mark_exported`-Aufruf
+        aus genau diesem Grund erst nach beiden erfolgreichen
+        `write_bytes`-Aufrufen ausfuehrt. Die Kurzanleitung liegt IMMER bei,
+        unabhaengig von `system` und selbst dann, wenn kein einziges Geraet
+        registriert ist - eine leere Installation liefert so ein gueltiges,
+        nicht-leeres ZIP statt eines leeren Archivs oder eines
         Serverfehlers."""
         buffer = io.BytesIO()
+        # Gesammelt statt sofort vermerkt (siehe oben) - erst nach dem
+        # vollstaendigen Aufbau des Archivs unten abgearbeitet.
+        exported_device_ids: list[int] = []
         with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
             if system:
                 viu_system, vo_system = render_system_templates(bridge_ip, port, listen)
@@ -232,9 +260,16 @@ def build_export_router(store: Store) -> APIRouter:
                     filename_for("VO", device.id, device.label),
                     render_virtual_out(device.label, f"http://{bridge_ip}:{listen}", commands),
                 )
-                store.mark_exported(device.id)
+                exported_device_ids.append(device.id)
 
             archive.writestr(_README_NAME, _README_TEXT)
+
+        # Das Archiv ist an dieser Stelle vollstaendig - jetzt erst zaehlt
+        # der Export (siehe Docstring oben). Ein Fehler weiter oben haette
+        # diese Zeile nie erreicht, und keines der bis dahin verarbeiteten
+        # Geraete waere faelschlich als exportiert markiert.
+        for device_id in exported_device_ids:
+            store.mark_exported(device_id)
 
         return Response(
             content=buffer.getvalue(),

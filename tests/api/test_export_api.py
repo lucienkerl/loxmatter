@@ -123,6 +123,43 @@ async def test_download_marks_a_device_as_exported(api):
     assert entry["changed_since_export"] is False
 
 
+async def test_a_failure_partway_through_the_archive_marks_no_device(api, monkeypatch):
+    """Review-Fix Important #1, 2026-09-02: `download` markierte bislang
+    jedes Geraet SOFORT, waehrend das ZIP noch aufgebaut wurde - schlug der
+    Aufbau eines spaeteren Geraets fehl (500, kein ZIP beim Client), blieben
+    die zuvor verarbeiteten Geraete trotzdem dauerhaft als exportiert
+    vermerkt. Zwei Geraete im Store, das zweite laesst `to_inputs`
+    (aufgerufen aus `api.export.download`) absichtlich scheitern - das
+    erste Geraet ist zu diesem Zeitpunkt schon vollstaendig ins Archiv
+    geschrieben. Nach dem Fix darf trotzdem KEINS der beiden markiert
+    sein, weil das Archiv nie fertig wurde."""
+    client, store, first_device_id = api
+    second_snapshot = load_snapshot("example_light.json")
+    second_device_id = store.register_device(second_snapshot)
+    store.register_signals(second_device_id, second_snapshot)
+    store.register_commands(
+        second_device_id, extract_commands(second_snapshot), second_snapshot.node_id
+    )
+    assert store.devices()[0].id == first_device_id  # erstes Geraet wird zuerst verarbeitet
+
+    import loxmatter.api.export as export_module
+
+    original_to_inputs = export_module.to_inputs
+
+    def boom(signals, device_id, label):  # type: ignore[no-untyped-def]
+        if device_id == second_device_id:
+            raise RuntimeError("simulierter Absturz beim Rendern des zweiten Geraets")
+        return original_to_inputs(signals, device_id, label)
+
+    monkeypatch.setattr(export_module, "to_inputs", boom)
+
+    with pytest.raises(RuntimeError, match="simulierter Absturz"):
+        await client.get("/api/export/download?bridge_ip=192.168.1.50")
+
+    assert store.device(first_device_id).exported_at is None
+    assert store.device(second_device_id).exported_at is None
+
+
 async def test_a_rename_after_export_marks_the_device_changed_again(api):
     """Ein Export ist kein Einfrieren: aendert sich das Geraet danach - hier
     ueber eine Umbenennung -, muss `GET /api/export/status` das melden."""

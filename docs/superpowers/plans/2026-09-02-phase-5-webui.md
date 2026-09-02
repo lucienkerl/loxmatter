@@ -994,16 +994,95 @@ Andernfalls vergibt die Oberfläche andere Schlüssel als die CLI, und ein Nutze
 beides benutzt, bekommt zwei Sätze Vorlagen für dasselbe Gerät. Ein Test dagegen gehört
 dazu.
 
+**`download` markiert erst NACH dem vollständigen Archiv, nie währenddessen**
+(Review-Fix Important #1, 2026-09-02 — siehe unten): `Store.mark_exported` wird pro
+Gerät gesammelt, aber erst aufgerufen, nachdem die `with zipfile.ZipFile(...)`-Schleife
+abgeschlossen und das ZIP vollständig im Speicher aufgebaut ist. Dieselbe Disziplin wie
+in `cli.py`s `export`-Kommando, das seinen `mark_exported`-Aufruf ebenfalls erst nach
+beiden erfolgreichen `write_bytes`-Aufrufen ausführt: schlägt der Aufbau eines Geräts
+mitten in der Schleife fehl (ein Rendern, das wirft, ein `store.commands`/
+`store.signals`, das scheitert, ein `forget_device` aus einer parallelen Anfrage), gibt
+es kein ZIP für den Client — dann darf auch kein zuvor verarbeitetes Gerät fälschlich
+als exportiert dastehen.
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_export_api.py -v`
-Expected: PASS, 7 Tests
+Expected: PASS, 14 Tests (mehr als die 7 im ursprünglichen Testentwurf oben — im
+Zuge des Tasks kamen zusätzliche Fälle dazu, u. a. das leere-Installation- und das
+entferntes-Gerät-Szenario)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/api/export.py tests/api/test_export_api.py
 git commit -m "feat(api): Vorlagen als Vorschau und als ZIP"
+```
+
+**Review-Fix (2026-09-02), ein Important- und drei Minor-Befunde:**
+
+1. **Important — `download` markierte ein Gerät als exportiert, bevor das ZIP
+   fertig war.** `store.mark_exported(device.id)` stand bislang IN der
+   Schleife, direkt nach den beiden `archive.writestr`-Aufrufen für dieses
+   Gerät, und committete sofort. Schlug der Aufbau eines späteren Geräts fehl
+   (ein Rendern, das wirft, ein `store.commands`/`store.signals`, das
+   scheitert, ein `forget_device` aus einer parallelen Anfrage), antwortete
+   FastAPI mit 500 — der Client bekam gar kein ZIP —, während jedes bis
+   dahin verarbeitete Gerät trotzdem dauerhaft als exportiert vermerkt blieb.
+   `GET /api/export/status` meldete ein solches Gerät danach fälschlich als
+   "seither unverändert", obwohl niemand die zugehörige Vorlage je erhalten
+   hat. Der CLI-Pfad (`cli.py`s `export`-Kommando) war genau gegen diesen
+   Fall schon gehärtet — die API übernahm die Disziplin nicht. Behoben:
+   `download` sammelt die Geräte-IDs während des Aufbaus in einer Liste und
+   ruft `store.mark_exported` erst NACH dem vollständig aufgebauten Archiv
+   auf, unmittelbar vor der Antwort. Neuer Test:
+   `test_a_failure_partway_through_the_archive_marks_no_device` — zwei
+   Geräte im Store, das zweite lässt `to_inputs` absichtlich scheitern; das
+   erste Gerät ist zu diesem Zeitpunkt schon vollständig ins Archiv
+   geschrieben. Nach dem Fix bleibt trotzdem keins der beiden markiert.
+2. **Minor — kein Test für den Migrationspfad v1 → v2.** Die bestehende
+   Testsuite (`tests/model/test_store_migration.py`) deckte nur eine
+   Alt-Datenbank auf Version 0 und eine frische auf der jeweils neuesten
+   Version ab; keine Datenbank auf genau Version 1 (`signal.exported`
+   vorhanden, `device.exported_at`/`updated_at` noch nicht) wurde je
+   geöffnet. Diese Phase hatte schon einmal eine Schema-Änderung ohne
+   Migration ausgeliefert (siehe die Schema-Migration-Notiz in Task 2) —
+   der Zwischenschritt verdient deshalb einen direkten Test statt nur einer
+   aus der schleifenbasierten `_migrate`-Logik abgeleiteten Vermutung. Neue
+   Tests in `tests/model/test_store_migration.py`:
+   `test_opening_a_v1_database_only_runs_the_v2_migration` und
+   `test_reopening_an_already_v2_database_is_a_noop`, mit einer neuen
+   `build_v1_database`-Hilfsfunktion nach demselben Muster wie
+   `build_old_database`.
+3. **Minor — doppelte Migrations-Absicherung.** `_migrate_to_v1` und
+   `_migrate_to_v2` lasen beide `PRAGMA table_info`, prüften auf eine
+   fehlende Spalte und führten bedingt ein `ALTER TABLE` aus — zweimal von
+   Hand hingeschrieben statt einmal geteilt, und bei einer zweiten
+   Schema-Änderung in einer Phase ist eine dritte wahrscheinlich. Extrahiert
+   nach `_add_column_if_missing(db, table, column, ddl) -> bool` in
+   `model/store.py`; der Rückgabewert (wurde die Spalte neu angelegt?)
+   erlaubt `_migrate_to_v1` weiterhin, seinen Backfill nur bei einer echten
+   Alt-Datenbank auszuführen.
+4. **Minor — `preview` verlangt einen Parameter, den es nie benutzt.**
+   `bridge_ip` ist auf `/api/export/preview` Pflicht, taucht aber in keinem
+   Feld der Antwort auf — vertretbar (derselbe 422-Test wie bei `download`,
+   dieselbe Signatur wie bei `download`), aber ein künftiger Aufrufer würde
+   sich fragen, warum. Der Docstring von `preview` (wird zur
+   OpenAPI-Beschreibung) sagt das jetzt in einem zusätzlichen Satz
+   ausdrücklich: `bridge_ip` taucht bewusst in keinem Feld von
+   `ExportPreviewOut` auf, obwohl es Pflichtparameter ist.
+
+Drei neue Tests insgesamt: einer in `tests/api/test_export_api.py`
+(`test_a_failure_partway_through_the_archive_marks_no_device`) und zwei in
+`tests/model/test_store_migration.py`
+(`test_opening_a_v1_database_only_runs_the_v2_migration`,
+`test_reopening_an_already_v2_database_is_a_noop`) — **Expected: PASS, 398
+Tests** in der gesamten Suite (395 vor diesem Review-Fix plus die drei
+neuen).
+
+```bash
+git add src tests docs
+git commit -m "fix(api): Export erst nach fertigem Archiv vermerken"
 ```
 
 ---

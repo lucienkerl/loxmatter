@@ -89,22 +89,41 @@ CREATE TABLE IF NOT EXISTS command (
 """
 
 
+def _add_column_if_missing(db: sqlite3.Connection, table: str, column: str, ddl: str) -> bool:
+    """Fuegt `column` zu `table` hinzu, falls sie fehlt - gemeinsame Absicherung
+    fuer `_migrate_to_v1` und `_migrate_to_v2` (Review-Fix Minor #3, 2026-09-02:
+    beide pruefen `PRAGMA table_info`, dieselbe Falle, dieselbe Idee, zuvor
+    zweimal von Hand hingeschrieben statt einmal geteilt).
+
+    Die Falle, gegen die der Spaltencheck schuetzt: eine frisch angelegte
+    Datenbank hat eine neue Spalte durch `_SCHEMA`s `CREATE TABLE IF NOT
+    EXISTS` bereits, waehrend `PRAGMA user_version` bei ihr ebenfalls noch auf
+    0 steht (siehe `_migrate`). `ALTER TABLE ... ADD COLUMN` liefe dort gegen
+    eine schon vorhandene Spalte und scheiterte mit "duplicate column".
+
+    Gibt zurueck, ob die Spalte neu hinzugefuegt wurde (`False`, wenn sie
+    schon da war) - `_migrate_to_v1` braucht das, um seinen Backfill nur bei
+    einer echten Alt-Datenbank auszufuehren, nicht bei einer frischen."""
+    columns = {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}
+    if column in columns:
+        return False
+    db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    return True
+
+
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
     """Fuegt `signal.exported` hinzu und befuellt bestehende Zeilen anhand
     ihrer `exportability` (Review-Fix Important #1 und #2, 2026-09-02) -
     dieselbe Regel wie bei einem frisch registrierten Signal, siehe
     `profiles.table.is_exportable`.
 
-    Laeuft sowohl gegen eine echte Alt-Datenbank (die Spalte fehlt noch) als
-    auch gegen eine frisch angelegte (``_SCHEMA`` hat sie mit `CREATE TABLE`
-    bereits angelegt, `PRAGMA user_version` steht bei einer neuen Datenbank
-    aber ebenfalls auf 0) - im zweiten Fall ist `ALTER TABLE` falsch und
-    wuerde mit "duplicate column" scheitern, deshalb der Spaltencheck vorweg.
+    Der Backfill laeuft nur, wenn `_add_column_if_missing` die Spalte
+    tatsaechlich neu angelegt hat - bei einer frisch erzeugten Datenbank
+    (Spalte schon durch `_SCHEMA` da) gibt es keine Bestandszeilen, die
+    rueckwirkend befuellt werden muessten.
     """
-    columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(signal)")}
-    if "exported" in columns:
+    if not _add_column_if_missing(db, "signal", "exported", "INTEGER NOT NULL DEFAULT 1"):
         return
-    db.execute("ALTER TABLE signal ADD COLUMN exported INTEGER NOT NULL DEFAULT 1")
     exportable_values = tuple(e.value for e in (Exportability.ANALOG, Exportability.DIGITAL))
     placeholders = ", ".join("?" for _ in exportable_values)
     db.execute(
@@ -128,15 +147,14 @@ def _migrate_to_v2(db: sqlite3.Connection) -> None:
     unbekanntes `updated_at` als "seither geaendert", die vorsichtigere der
     beiden moeglichen Annahmen.
 
-    Derselbe Spaltencheck wie in `_migrate_to_v1`, aus demselben Grund: eine
-    frisch angelegte Datenbank hat die Spalten durch `_SCHEMA` bereits, `ALTER
-    TABLE` waere dort ein Fehler statt eines No-ops.
-    """
-    columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(device)")}
-    if "exported_at" not in columns:
-        db.execute("ALTER TABLE device ADD COLUMN exported_at TEXT")
-    if "updated_at" not in columns:
-        db.execute("ALTER TABLE device ADD COLUMN updated_at TEXT")
+    Jede Spalte einzeln ueber `_add_column_if_missing` geprueft, weil eine
+    Datenbank, die genau auf Version 1 steht (`signal.exported` vorhanden,
+    beide Spalten hier noch nicht), von einer echten Alt-Datenbank (Version
+    0, laeuft `_migrate_to_v1` und `_migrate_to_v2` nacheinander in
+    demselben Lauf) nicht zu unterscheiden sein muss - beide landen hier mit
+    fehlenden Spalten und bekommen sie angelegt."""
+    _add_column_if_missing(db, "device", "exported_at", "TEXT")
+    _add_column_if_missing(db, "device", "updated_at", "TEXT")
 
 
 # Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
