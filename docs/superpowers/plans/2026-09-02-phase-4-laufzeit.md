@@ -141,6 +141,33 @@ def test_format_renders_booleans_as_one_and_zero():
 def test_datagram_matches_the_exported_check_pattern():
     """Die Vorlage erkennt "<key>:\\v" - das Datagramm muss dazu passen (Spec 6.1)."""
     assert datagram("d1_2_power", 0.0003) == b"d1_2_power:0.0003"
+
+
+def test_format_keeps_negative_values_intact():
+    """Ein negatives Vorzeichen ist kein Rundungsfehler und darf nicht verschwinden."""
+    assert format_value(-21.5) == "-21.5"
+    assert format_value(-0.5) == "-0.5"
+    assert format_value(-1234567.89) == "-1234567.89"
+
+
+def test_format_rounds_negative_near_zero_to_plain_zero():
+    """ "-0" ist in einer Loxone-Visualisierung schlicht falsch - egal wie es entsteht."""
+    assert format_value(-1e-07) == "0"
+    assert format_value(-0.0) == "0"
+
+
+def test_negative_temperature_end_to_end():
+    """TemperatureMeasurement in Hundertstelgrad unter Null - der Alltagsfall im Winter."""
+    ref = attr(1026, 0)
+    value = to_loxone_value(ref, -1270)
+    assert value == pytest.approx(-12.7)
+    assert format_value(value) == "-12.7"
+
+
+def test_format_never_renders_scientific_notation_for_negative_values():
+    """Gegenstueck zu test_no_value_formats_to_scientific_notation, mit negativem Vorzeichen."""
+    assert "e" not in format_value(-0.000001).lower()
+    assert "e" not in format_value(-1234567.89).lower()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -230,11 +257,18 @@ def to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None:
 
 
 def format_value(value: float | bool) -> str:
-    """Textform fuer das Datagramm: bis zu sechs Nachkommastellen, ohne Nullen am Ende."""
+    """Textform fuer das Datagramm: bis zu sechs Nachkommastellen, ohne Nullen am Ende.
+
+    Ein Wert, der auf null rundet, wird immer als "0" ausgegeben - unabhaengig vom
+    Vorzeichen. Sonst liesse ein negativer Rundungsrest wie -1e-07 ein "-0" durch,
+    das in der Loxone-Visualisierung schlicht falsch waere.
+    """
     if isinstance(value, bool):
         return "1" if value else "0"
     text = f"{value:.{MAX_DECIMALS}f}".rstrip("0").rstrip(".")
-    return text or "0"
+    if text in ("", "-0"):
+        return "0"
+    return text
 
 
 def datagram(key: str, value: float | bool) -> bytes:
@@ -245,7 +279,7 @@ def datagram(key: str, value: float | bool) -> bytes:
 - [ ] **Step 6: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_values.py -v`
-Expected: PASS, 11 Tests
+Expected: PASS, 15 Tests
 
 - [ ] **Step 7: Gegen das echte Gerät halten**
 
