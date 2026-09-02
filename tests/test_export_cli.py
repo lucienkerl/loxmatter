@@ -133,3 +133,83 @@ def test_export_reports_what_it_skipped(tmp_path):
     )
     assert "50" in result.stdout
     assert "nicht exportierbar" in result.stdout
+
+
+def test_export_fails_cleanly_when_the_second_file_cannot_be_written(tmp_path, monkeypatch):
+    """Fix Important #2: ein OSError beim zweiten write_bytes darf keinen
+    Traceback zeigen, sondern muss ueber _fail() laufen — und dabei sagen,
+    welche Datei bereits geschrieben wurde und welche fehlt."""
+    original_write_bytes = Path.write_bytes
+
+    def flaky_write_bytes(self: Path, data: bytes) -> int:
+        if self.name.startswith("VO_"):
+            raise OSError("Kein Speicherplatz mehr auf dem Geraet")
+        return original_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", flaky_write_bytes)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    written = sorted(p.name for p in tmp_path.glob("*.xml"))
+    assert len(written) == 1
+    assert written[0].startswith("VIU_")
+    # Die Meldung nennt die fehlgeschlagene Datei und sagt, was bereits da ist.
+    assert "VO_" in result.stderr
+    assert "VIU_" in result.stderr
+
+
+def test_export_requires_node_or_fixture(tmp_path):
+    """Fix Minor #4: export teilt sich _load_snapshot mit inspect — dessen
+    Fehlerpfade sind bislang nur ueber inspect getestet, nicht ueber export
+    selbst."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "entweder --node oder --fixture angeben" in result.output
+
+
+def test_export_reports_malformed_fixture_missing_node_id(tmp_path):
+    """Fix Minor #4: dieselbe deutsche Meldung wie bei inspect (test_cli.py),
+    hier ueber den export-Einstiegspunkt ausgeloest."""
+    broken = tmp_path / "broken.json"
+    broken.write_text('{"attributes": {}}', encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(broken),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "node_id" in result.stderr
