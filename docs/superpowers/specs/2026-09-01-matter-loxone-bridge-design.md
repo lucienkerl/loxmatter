@@ -537,6 +537,31 @@ ein eigener Testfall in der Skalierungs-Testsuite.
 Farbe: Loxone liefert in Lumitech- bzw. RGB-Notation, Matter erwartet Hue/Saturation
 oder CIE xy. Die Umrechnung liegt in `commands/` und ist beidseitig zu testen.
 
+**Rechercheergebnis (Task 5, 2026-09-02).** Die RGB-Codierung ist offiziell belegt: der
+Loxone-Baustein "RGB Lighting Controller" gibt Farbe auf einem einzelnen Analogausgang
+als eine Dezimalzahl aus, die drei Prozentwerte (je 0-100) dezimal aneinanderreiht -
+`AQa = rot% + gruen% * 1000 + blau% * 1_000_000` (z. B. 20040060 = 60 % Rot, 40 % Gruen,
+20 % Blau). Quelle: Loxone Knowledge Base, "RGB Lighting Controller", Abschnitt
+"Outputs" (https://www.loxone.com/enen/kb/rgb-scene-controller/, abgerufen 2026-09-02).
+
+Fuer die Lumitech-Codierung (Helligkeit plus Farbtemperatur in einer Zahl) hat sich
+**keine belastbare Quelle** finden lassen - weder auf der offiziellen
+Beleuchtungsbaustein-Seite noch im Structure-File-PDF. Der einzige Treffer ist ein
+Forumsbeitrag mit selbst mitgeloggten DMX-Werten (vermutetes Format "AABBBCCCC"), den
+der Autor selbst als Vermutung kennzeichnet
+(https://www.loxforum.com/forum/hardware-zubehoer-sensorik/143867-lumitech-ausgang-dmx-dimmer,
+Beitrag #2). Task 5 implementiert deshalb nur die (unstrittige) Matter-seitige
+Umrechnung Kelvin→Mired und RGB→Hue/Saturation in `commands/color.py`;
+`to_matter_call` nimmt fuer Farbtemperatur einen bereits entpackten Kelvin-Wert
+entgegen und dekodiert keine rohe Loxone-Zahl. Das Entpacken der rohen Loxone-Zahl
+(RGB wie Lumitech) bleibt Aufgabe von Task 6 (HTTP-Endpoint) bzw. der WebUI, sobald fuer
+Lumitech eine verlaessliche Quelle vorliegt - siehe Offene Punkte.
+
+**Nicht an Hardware geprueft.** Fuer diese Aufgabe stand keine Matter-Leuchte zur
+Verfuegung. `kelvin_to_mireds` und `rgb_to_hue_saturation` sind ausschliesslich gegen
+Referenzwerte (Zigbee/Matter-Mired-Konvention bzw. HSV-Definition) getestet, nicht gegen
+ein reales Geraet.
+
 ---
 
 ## 8. WebUI
@@ -717,3 +742,10 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
 ## 12. Offene Punkte
 
 1. Konkretes Funkmodul für die Referenz-Compose-Datei.
+2. **Loxone-Lumitech-Codierung ungeklärt** (Task 5, 2026-09-02). Wie Loxone Helligkeit
+   und Farbtemperatur im Lumitech-Ausgabemodus als eine Zahl codiert, ist in der
+   offiziellen Loxone-Dokumentation nicht auffindbar — nur ein als Vermutung
+   gekennzeichneter Forumsbeitrag existiert (siehe 7.3). `commands/translate.py`
+   erwartet deshalb für Farbtemperatur bereits einen entpackten Kelvin-Wert statt der
+   rohen Loxone-Zahl. Vor Task 6 (HTTP-Endpoint) klären, sonst kann dieser die rohe
+   Zahl nicht zuverlässig entpacken. Die RGB-Codierung ist dagegen belegt (7.3).
