@@ -1096,6 +1096,7 @@ Installation beantwortbar wird.
 - Create: `src/loxmatter/api/diagnostics.py`
 - Modify: `src/loxmatter/loxone/sender.py` (Mitschnitt)
 - Modify: `src/loxmatter/loxone/server.py` (Kommando-Log)
+- Modify: `src/loxmatter/cli.py` (`--matter-data-dir`-Option, Grundlage für die Sicherung)
 - Create: `tests/api/test_diagnostics.py`
 
 **Interfaces:**
@@ -1121,6 +1122,22 @@ Der Endpunkt liefert den Inhalt des matter-server-Datenverzeichnisses als Archiv
 zu übernehmen. Der Download gehört deshalb hinter das Token aus Task 8, und die
 Oberfläche muss danebenschreiben, was da heruntergeladen wird — nicht nur einen
 Knopf mit „Backup" zeigen.
+
+**Die Compose-Verdrahtung bleibt bis Task 8 auskommentiert (Review-Fix Critical,
+2026-09-02).** `--matter-data-dir` in `cli.py` ist harmlos — eine Option, die per
+Default aus ist und die Route erst mit echten Daten füttert, wenn jemand sie
+ausdrücklich setzt. Der Volume-Mount `./data:/matter-data:ro` in
+`deploy/testhost/docker-compose.yml`, der genau das täte, wäre das Gegenteil: dieser
+Dienst läuft dort mit `network_mode: host`, absichtlich, damit der Miniserver ihn
+erreicht — und das bedeutet, jeder im selben Netz erreicht ihn ebenfalls. Ohne den
+Token-Schutz aus Task 8 macht diese eine Zeile im Compose-File aus einer
+theoretischen Schwäche eine tatsächlich ausnutzbare: `GET
+/api/diagnostics/fabric-backup` ist bis dahin vollkommen ungeschützt (siehe deren
+Docstring). Diese Task liefert deshalb nur den Code-Pfad und die CLI-Option; die
+Volume-Zeile und `--matter-data-dir` im `command:` bleiben in
+`deploy/testhost/docker-compose.yml` auskommentiert, mit Verweis auf Task 8, bis
+dessen Token-Schutz steht. Task 8 aktiviert beide Zeilen wieder — siehe dessen
+Schritt 3.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1241,6 +1258,24 @@ zu tun ist — ein roter Punkt ohne Erklärung verschiebt das Rätsel nur.
 
 Run: `uv run pytest tests/api/test_diagnostics.py -v`
 Expected: PASS, 8 Tests
+
+**Review-Fix (2026-09-02), ein Critical- und ein Important-Befund:** die
+`fabric-backup`-Route hing anfangs ungeschützt an einem Compose-Mount, der sie mit
+echten Daten fütterte, ohne dass der Token-Schutz aus Task 8 schon stand — siehe oben,
+"Die Compose-Verdrahtung bleibt bis Task 8 auskommentiert". Dazu waren beide
+503-Zweige der Route (`matter_data_dir is None`, `not matter_data_dir.is_dir()`)
+ungetestet. Sechs neue Tests in `tests/api/test_diagnostics.py`:
+`test_command_log_does_not_record_diagnostics_polling`,
+`test_command_log_never_carries_a_query_string`,
+`test_a_check_that_raises_unexpectedly_fails_gracefully` (Systemcheck-Robustheit,
+bereits vor diesem Review-Fix ergänzt) sowie
+`test_fabric_backup_is_503_without_a_configured_directory`,
+`test_fabric_backup_is_503_when_the_configured_directory_is_missing` und
+`test_fabric_backup_is_503_when_the_configured_path_is_a_file` (die beiden 503-Zweige
+plus der bislang unbetrachtete Fall "Pfad existiert, ist aber keine Datei").
+
+Run: `uv run pytest tests/api/test_diagnostics.py -v`
+Expected: PASS, 14 Tests (8 aus diesem Plan-Entwurf plus die sechs oben)
 
 - [ ] **Step 5: Commit**
 
@@ -1455,6 +1490,17 @@ Matter-Client durch, damit Einlernen funktioniert.
 Der `loxmatter`-Dienst in `deploy/testhost/docker-compose.yml` veröffentlicht jetzt einen
 Port, der eine Bedienoberfläche trägt. Vermerke das dort und im README, zusammen mit dem
 Hinweis zum Token.
+
+**Die Fabric-Sicherung wieder einhängen (Review-Fix Critical, 2026-09-02).** Task 6
+kommentierte die Volume-Zeile `./data:/matter-data:ro` und `--matter-data-dir
+/matter-data` im `command:` des `loxmatter`-Dienstes bewusst aus, mit Verweis genau
+hierher — ohne Token wäre `GET /api/diagnostics/fabric-backup` sonst für jeden im
+selben Netz erreichbar gewesen (siehe Task 6, "Die Compose-Verdrahtung bleibt bis
+Task 8 auskommentiert"). Jetzt, wo `build_api_guard` steht: beide Zeilen wieder
+einkommentieren, den Erklärkommentar dort auf "aktiv seit Task 8" umschreiben statt
+ihn ersatzlos zu streichen (die Begründung, warum das vorher gefährlich war, bleibt
+für den nächsten Leser wertvoll), und danach von Hand bestätigen, dass
+`/api/diagnostics/fabric-backup` ohne `Authorization`-Header mit 401 antwortet.
 
 - [ ] **Step 4: Vollständige Prüfung**
 

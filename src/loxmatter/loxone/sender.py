@@ -38,23 +38,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-from datetime import UTC, datetime
 
 from loxmatter.api.diagnostics import DatagramLogEntry, RingBuffer
 from loxmatter.loxone.values import datagram
+from loxmatter.timestamps import now_iso
 
 RATE_LIMIT_PER_SECOND = 50.0
 DATAGRAM_LOG_SIZE = 500
 
 logger = logging.getLogger(__name__)
-
-
-def _now_iso() -> str:
-    """ISO-8601-Zeitstempel in UTC, mit Mikrosekunden - wie `model.store.
-    Store._now`, hier unabhaengig dupliziert statt geteilt: eine einzeilige
-    Funktion importieren, nur um eine zweite Modulabhaengigkeit zu sparen,
-    waere mehr Kopplung, als sie einspart."""
-    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 class UdpSender:
@@ -131,7 +123,7 @@ class UdpSender:
         try:
             _, _, value_text = text.partition(":")
             self._datagram_log.append(
-                DatagramLogEntry(key=key, value=value_text, timestamp=_now_iso())
+                DatagramLogEntry(key=key, value=value_text, timestamp=now_iso())
             )
         except Exception:
             logger.exception(

@@ -356,3 +356,27 @@ def test_store_survives_reopening(tmp_path):
     assert second.register_device(snap) == device_id
     assert {s.key for s in second.signals(device_id)} == keys
     second.close()
+
+
+def test_check_writable_succeeds_on_a_healthy_database(store):
+    """Der einfache Fall: keine offene Transaktion, kein Fehler."""
+    store.check_writable()
+
+
+def test_check_writable_recovers_from_a_leftover_open_transaction(store):
+    """Review-Fix Minor (2026-09-02): `rename_device`, `mark_exported`,
+    `set_title` und `set_exported` legen kein eigenes try/except um ihr
+    `UPDATE ...` plus `commit()` (anders als z. B. `register_signals`) -
+    scheitert dort das `UPDATE` selbst oder erst das `commit()`, bleibt die
+    von Python vor dem `UPDATE` automatisch eroeffnete Transaktion auf der
+    Verbindung offen. Dieser Test simuliert genau das (ein `UPDATE` ohne
+    anschliessendes `commit()`/`rollback()`) und prueft, dass
+    `check_writable` das nicht mit "nicht beschreibbar" verwechselt - siehe
+    Docstring dort."""
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+
+    store._db.execute("UPDATE device SET label = ? WHERE id = ?", ("Zwischenstand", device_id))
+    assert store._db.in_transaction
+
+    store.check_writable()  # darf trotz der offenen Transaktion nicht werfen

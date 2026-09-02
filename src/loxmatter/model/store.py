@@ -27,13 +27,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.profiles.table import Exportability, is_exportable, lookup
+from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
 
@@ -311,22 +311,48 @@ class Store:
         gesperrten Datenbank; aendert bei Erfolg nichts an den Daten.
 
         Fuer den Systemcheck der Diagnose (Spec 10.5, siehe
-        `api.diagnostics._check_store`) - der einzige Aufrufer bislang."""
+        `api.diagnostics._check_store`) - der einzige Aufrufer bislang.
+
+        **Vorab: eine eventuell schon offene, implizite Transaktion wird
+        zurueckgerollt (Review-Fix Important, 2026-09-02).** Ein paar
+        schreibende Methoden dieser Klasse (`rename_device`,
+        `mark_exported`, `set_title`, `set_exported`) legen kein eigenes
+        try/except um ihr `UPDATE ...` plus `commit()` - anders als z. B.
+        `register_signals`, das bei `ValueError`/`sqlite3.Error`
+        ausdruecklich zurueckrollt. Scheitert dort das `UPDATE` selbst oder
+        sogar erst das `commit()` (z. B. volle Platte), bleibt die von
+        Python VOR dem `UPDATE` automatisch eroeffnete Transaktion auf
+        dieser Verbindung offen. Ein zweites, direkt darauf folgendes
+        `BEGIN IMMEDIATE` wuerde dann IMMER mit `sqlite3.OperationalError:
+        cannot start a transaction within a transaction` scheitern -
+        unabhaengig davon, ob die Datenbank inzwischen wieder beschreibbar
+        ist. Ohne die Behandlung hier wuerde der Systemcheck genau diesen
+        Fall faelschlich als "nicht beschreibbar" melden, obwohl die
+        Datenbank selbst in Ordnung sein kann.
+
+        Das Zurueckrollen ist hier unbedenklich: jede Store-Instanz gehoert
+        genau einem Thread und einer Event-Loop, und jede schreibende
+        Methode ist rein synchron - sie haengt nie mitten in ihrer eigenen
+        Transaktion an einem `await`. Eine zum Zeitpunkt DIESES Aufrufs
+        vorgefundene offene Transaktion kann deshalb nie eine tatsaechlich
+        noch laufende, legitime Transaktion sein - sie ist immer der Rest
+        eines bereits fehlgeschlagenen, nie committeten Schreibversuchs,
+        dessen Ausnahme schon an dessen eigenen Aufrufer weitergereicht
+        wurde. Sie zurueckzurollen verwirft deshalb garantiert keine
+        erfolgreich geschriebenen Daten."""
+        if self._db.in_transaction:
+            self._db.rollback()
         self._db.execute("BEGIN IMMEDIATE")
         self._db.rollback()
 
     @staticmethod
     def _now() -> str:
-        """ISO-8601-Zeitstempel in UTC, mit Mikrosekunden (Task 5, Phase 5).
-
-        Fest mit `timespec="microseconds"`, damit zwei kurz aufeinander
-        folgende Zeitstempel (z. B. Export, dann sofort eine Umbenennung)
-        als Text zuverlaessig in derselben Reihenfolge vergleichbar bleiben
-        wie chronologisch - ohne das liesse `datetime.isoformat()` die
-        Sekundenbruchteile bei einem zufaelligen exakten Sekundenwert weg,
-        was zwei Zeitstempel unterschiedlicher Laenge ergeben koennte.
-        """
-        return datetime.now(UTC).isoformat(timespec="microseconds")
+        """Duenne Bruecke zu `loxmatter.timestamps.now_iso` (Review-Fix
+        Minor, 2026-09-02 - siehe dort fuer die Begruendung, warum diese
+        Funktion nicht mehr eigenstaendig implementiert ist). Bleibt als
+        eigene Methode erhalten, weil `self._now()` bereits an vielen
+        Stellen dieser Klasse verdrahtet ist."""
+        return now_iso()
 
     def _device_identity(self, snapshot: NodeSnapshot) -> str:
         """Faellt auf die Node-ID zurueck: manche Geraete melden keine UniqueID (Spec 7.2)."""

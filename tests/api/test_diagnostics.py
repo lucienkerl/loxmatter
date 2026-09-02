@@ -179,6 +179,64 @@ async def test_fabric_backup_is_a_real_archive(api):
     assert len(response.content) > 0
 
 
+async def test_fabric_backup_is_503_without_a_configured_directory(
+    no_invoke, fake_runtime, fake_client, tmp_path
+):
+    """Der erste der beiden 503-Zweige (Task-6-Review, Punkt 3):
+    `matter_data_dir is None` - der Dienst laeuft ohne `--matter-data-dir`,
+    z. B. weil die Bereitstellung diese Option (noch) nicht setzt (siehe
+    deploy/testhost/docker-compose.yml, dort bewusst auskommentiert, bis
+    Task 8 den Token-Schutz liefert)."""
+    store = Store(tmp_path / "t.sqlite")
+    app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/diagnostics/fabric-backup")
+    store.close()
+
+    assert response.status_code == 503
+    assert "matter-data-dir" in response.json()["detail"]
+
+
+async def test_fabric_backup_is_503_when_the_configured_directory_is_missing(
+    no_invoke, fake_runtime, fake_client, tmp_path
+):
+    """Der zweite 503-Zweig: `matter_data_dir` ist gesetzt, aber der Pfad
+    existiert (mehr) nicht - z. B. eine Einhaengung, die zwischenzeitlich
+    ausgehaengt wurde."""
+    store = Store(tmp_path / "t.sqlite")
+    missing = tmp_path / "existiert-nicht"
+    app = build_app(
+        store, no_invoke, fake_runtime(store), client=fake_client, matter_data_dir=missing
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/diagnostics/fabric-backup")
+    store.close()
+
+    assert response.status_code == 503
+
+
+async def test_fabric_backup_is_503_when_the_configured_path_is_a_file(
+    no_invoke, fake_runtime, fake_client, tmp_path
+):
+    """Derselbe Zweig wie oben (`not matter_data_dir.is_dir()`), aber ueber
+    den bislang unbetrachteten dritten Fall: der Pfad existiert durchaus,
+    ist aber kein Verzeichnis, sondern eine gewoehnliche Datei."""
+    store = Store(tmp_path / "t.sqlite")
+    not_a_directory = tmp_path / "matter-data-ist-eine-datei"
+    not_a_directory.write_text("keine Fabric-Sicherung, nur eine gewoehnliche Datei")
+    app = build_app(
+        store, no_invoke, fake_runtime(store), client=fake_client, matter_data_dir=not_a_directory
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/diagnostics/fabric-backup")
+    store.close()
+
+    assert response.status_code == 503
+
+
 async def test_a_failing_check_says_what_to_do(api_without_matter):
     """Ein roter Punkt ohne Hinweis hilft niemandem."""
     client, _, _ = api_without_matter

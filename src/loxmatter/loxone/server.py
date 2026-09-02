@@ -44,16 +44,23 @@ ausfuehrlicher begruendet:
   faehrt nur als Vorsichtsmassnahme gegen ein kuenftiges, als
   Query-Parameter uebergebenes Token (Task 8) mit.
 
-Die Middleware haengt ihren eigenen try/except um das Anhaengen an den
-Ringpuffer (nicht um `call_next` selbst!) - ein Fehler beim Mitschreiben
+Die Middleware haengt ein eigenes try/except um das Anhaengen an den
+Ringpuffer selbst (`_append_command_log`) - ein Fehler beim Mitschreiben
 darf niemals die eigentliche Antwort verhindern, dieselbe Regel wie beim
-Datagramm-Mitschnitt in `loxone.sender.UdpSender._record_sent`."""
+Datagramm-Mitschnitt in `loxone.sender.UdpSender._record_sent`. Das ist
+etwas anderes als der Aufruf von `call_next`: der liegt seit Review-Fix
+Important (2026-09-02) SEHR WOHL in einem try/except, denn eine
+unbehandelte Ausnahme aus einer Route soll trotzdem im Kommando-Log
+erscheinen - vermerkt mit `_CRASHED_STATUS` -, bevor sie unveraendert
+weitergereicht wird (siehe `_record_command`). Vorher verliess eine
+abstuerzende Route `call_next`, ohne dass das try/except je erreicht
+wurde - der Aufruf, der den Dienst zu Fall bringt, fehlte deshalb genau
+dort, wo ein Diagnostiker ihn am dringendsten braucht."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -73,6 +80,7 @@ from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
+from loxmatter.timestamps import now_iso
 
 Invoker = Callable[[MatterCall], Awaitable[None]]
 
@@ -84,12 +92,12 @@ COMMAND_LOG_SIZE = 500
 # aufgenommen - siehe Moduldocstring.
 _DIAGNOSTICS_PREFIX = "/api/diagnostics"
 
-
-def _now_iso() -> str:
-    """ISO-8601-Zeitstempel in UTC, mit Mikrosekunden - wie `model.store.
-    Store._now`/`loxone.sender._now_iso`, hier bewusst ein drittes Mal
-    unabhaengig dupliziert statt geteilt (siehe Begruendung dort)."""
-    return datetime.now(UTC).isoformat(timespec="microseconds")
+# Kein echter HTTP-Statuscode (die liegen alle zwischen 100 und 599) -
+# markiert einen Kommando-Log-Eintrag, bei dem die Route selbst abgestuerzt
+# ist (eine unbehandelte Ausnahme aus `call_next`), statt tatsaechlich mit
+# diesem Code geantwortet zu haben. Unterscheidbar von jedem echten
+# Statuscode, siehe `_record_command` (Review-Fix Important, 2026-09-02).
+_CRASHED_STATUS = 0
 
 
 def build_app(
@@ -103,28 +111,60 @@ def build_app(
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
 
+    def _append_command_log(*, method: str, path: str, status: int) -> None:
+        """Haengt einen Eintrag an - in ein eigenes try/except gekapselt, ein
+        Fehler beim Mitschreiben selbst darf weder die Antwort noch (im
+        Absturz-Zweig unten) die weitergereichte Ausnahme verhindern."""
+        try:
+            command_log.append(
+                CommandLogEntry(method=method, path=path, status=status, timestamp=now_iso())
+            )
+        except Exception:
+            logger.exception(
+                "Kommando-Mitschnitt fuer %s %s fehlgeschlagen - Antwort wird trotzdem "
+                "ausgeliefert",
+                method,
+                path,
+            )
+
     @app.middleware("http")
     async def _record_command(
         request: Request, call_next: Callable[[Request], Awaitable[StarletteResponse]]
     ) -> StarletteResponse:
-        response = await call_next(request)
-        if not request.url.path.startswith(_DIAGNOSTICS_PREFIX):
-            try:
-                command_log.append(
-                    CommandLogEntry(
-                        method=request.method,
-                        path=request.url.path,
-                        status=response.status_code,
-                        timestamp=_now_iso(),
-                    )
+        """Zeichnet JEDEN Aufruf ausserhalb von `/api/diagnostics/*` auf -
+        auch den, der die Route selbst zum Absturz bringt (Review-Fix
+        Important, 2026-09-02).
+
+        `call_next` lag bislang UNGESCHUETZT in dieser Funktion: eine
+        unbehandelte Ausnahme aus einer Route (kein `HTTPException`, ein
+        echter Programmfehler) verliess `call_next`, BEVOR das
+        try/except unten je erreicht wurde - genau der Aufruf, der den
+        Dienst zu Fall bringt, tauchte deshalb nie in `GET
+        /api/diagnostics/commands` auf. Das `try` hier faengt deshalb den
+        Absturz selbst ab, vermerkt ihn mit `_CRASHED_STATUS` (kein echter
+        Statuscode, siehe dort) und wirft die Ausnahme dann UNVERAENDERT
+        erneut (`raise` ohne Argument haelt den urspruenglichen Traceback) -
+        Middleware darf eine Ausnahme nicht schlucken, Starlettes eigene
+        Fehlerbehandlung (`ServerErrorMiddleware`) muss sie weiterhin sehen,
+        um z. B. die 500-Antwort zu erzeugen. Das Mitschreiben selbst kostet
+        dabei nichts zusaetzlich."""
+        record = not request.url.path.startswith(_DIAGNOSTICS_PREFIX)
+        try:
+            response = await call_next(request)
+        except Exception:
+            if record:
+                _append_command_log(
+                    method=request.method,
+                    path=request.url.path,
+                    status=_CRASHED_STATUS,
                 )
-            except Exception:
-                logger.exception(
-                    "Kommando-Mitschnitt fuer %s %s fehlgeschlagen - Antwort wird trotzdem "
-                    "ausgeliefert",
-                    request.method,
-                    request.url.path,
-                )
+            raise
+        if record:
+            _append_command_log(
+                method=request.method,
+                path=request.url.path,
+                status=response.status_code,
+            )
         return response
 
     app.include_router(build_device_router(store, client, runtime))

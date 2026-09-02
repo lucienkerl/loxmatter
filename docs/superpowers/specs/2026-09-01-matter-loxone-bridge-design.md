@@ -157,6 +157,18 @@ WebSocket nach innen, UDP und HTTP nach Loxone.
 unersetzliche Zustand. Verlust bedeutet, alle Geräte neu einlernen zu müssen. Muss im
 Deployment-Guide und in der WebUI prominent stehen; die WebUI bietet einen Backup-Export.
 
+**Sicherheitsstatus dieses Backup-Exports (Review-Fix Critical, 2026-09-02, festgehalten
+statt nur impliziert):** `GET /api/diagnostics/fabric-backup` (10.5) ist **heute
+ungeschützt** — ohne den Token-Schutz aus Task 8 kann jeder, der den Port dieses Dienstes
+erreicht, die kompletten Fabric-Credentials herunterladen. `loxmatter` läuft mit
+`network_mode: host` (siehe oben), damit der Miniserver ihn erreicht — dieselbe
+Erreichbarkeit gilt fürs gesamte LAN. Deshalb bleibt der Read-only-Mount des
+matter-server-Datenverzeichnisses (`./data:/matter-data:ro`) und die zugehörige
+`--matter-data-dir`-Option in `deploy/testhost/docker-compose.yml` **absichtlich
+auskommentiert**, bis Task 8 den Token-Schutz liefert — ohne diese Einhängung liefert die
+Route nur einen 503, statt echte Schlüssel auszuliefern. Task 8 kommentiert beide Zeilen
+wieder ein, sobald `build_api_guard` steht.
+
 ### 4.2 Module in `loxmatter`
 
 | Modul | Aufgabe | Abhängigkeiten |
@@ -798,6 +810,9 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
   entstehen und wie viele.
 - **Systemcheck**: IPv6 vorhanden, mDNS erreichbar, Dongle da, matter-server verbunden,
   Miniserver erreichbar. Jede Zeile grün oder rot mit konkretem Hinweis.
+- **Fabric-Sicherung** (`GET /api/diagnostics/fabric-backup`, siehe 4.1): Download des
+  matter-server-Datenverzeichnisses als Archiv. **Bis Task 8 ohne Token-Schutz** — siehe
+  4.1 und den Docstring der Route selbst, der das an erster Stelle festhält.
 
 ---
 
