@@ -15,13 +15,19 @@ waere fuer genau diesen Zweck nutzlos - siehe `_heartbeat_loop`.
 Zustands-Wiederherstellung (Spec 6.4) - UDP ist zustandslos. Nach einem
 Neustart des Miniservers stehen alle Eingaenge auf ihrem Defaultwert, bis das
 naechste Update kommt; bei einem Temperatursensor koennen das Stunden sein.
+
+Beobachter (Spec 8.3, Phase 5 Task 3) - die WebUI zeigt Live-Werte ueber
+dieselbe Subscription an, die auch den UDP-Sender speist. Kein zweiter Pfad,
+kein Polling: `add_observer` haengt eine Oberflaeche an denselben Strom von
+Attribut-, Event- und Online-Aenderungen, der bereits an Loxone geht - siehe
+`_notify_observers`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Protocol
 
 from loxmatter.loxone.values import to_loxone_value
@@ -86,6 +92,60 @@ class Runtime:
         # unsichtbar (Review-Fix Important #3).
         self._signals: dict[tuple[int, str, str], StoredSignal] = {}
         self._indexed: set[int] = set()
+        # Beobachter der WebUI (Spec 8.3) - siehe `add_observer`.
+        self._observers: list[Callable[[str, object], None]] = []
+
+    def add_observer(self, callback: Callable[[str, object], None]) -> None:
+        """Meldet einen Beobachter an, der jeden Wert sieht, den auch der
+        UDP-Sender sieht (Spec 8.3) - kein zweiter Pfad, kein Polling.
+
+        Zwei Regeln, beide in `_notify_observers` umgesetzt:
+
+        - Der Beobachter wird ERST NACH dem Senden aufgerufen. Die Bruecke
+          zu Loxone ist der Zweck dieser Laufzeit; die Oberflaeche schaut
+          nur zu. Schlaegt das Senden fehl, erfaehrt der Beobachter, was
+          tatsaechlich geschah - nicht, was beabsichtigt war.
+        - Ein Beobachter, der wirft, wird geloggt und uebersprungen. Er darf
+          den UDP-Pfad nicht mitreissen - dieselbe Regel, die in Phase 4 die
+          Heartbeat-Schleife gehaertet hat (siehe `_heartbeat_loop`): ein
+          geschlossener Browser-Tab darf die Bruecke nicht anhalten."""
+        self._observers.append(callback)
+
+    def remove_observer(self, callback: Callable[[str, object], None]) -> None:
+        """Meldet einen Beobachter wieder ab - z. B. wenn ein WebSocket
+        getrennt wird. Ein unbekannter Beobachter (z. B. doppelt abgemeldet)
+        ist kein Fehler, sondern wird still ignoriert."""
+        try:
+            self._observers.remove(callback)
+        except ValueError:
+            pass
+
+    def observer_count(self) -> int:
+        """Anzahl aktuell angemeldeter Beobachter - fuer Tests, die pruefen
+        wollen, dass ein getrennter Client tatsaechlich abgemeldet wurde und
+        nicht als Leiche haengen bleibt."""
+        return len(self._observers)
+
+    def _notify_observers(self, key: str, value: object) -> None:
+        """Ruft jeden Beobachter mit dem soeben gesendeten Schluessel/Wert-
+        Paar auf - IMMER erst nachdem `self._sender.send(...)` zurueckkam
+        (siehe Aufrufstellen in `on_attribute`, `on_event`, `_release_pulse`
+        und `set_online`).
+
+        Eine Kopie der Liste iterieren statt des Originals: ein Beobachter,
+        der sich selbst waehrend seines Aufrufs abmeldet (`remove_observer`),
+        darf die laufende Benachrichtigung der uebrigen nicht stoeren."""
+        for observer in list(self._observers):
+            try:
+                observer(key, value)
+            except Exception:
+                # Dieselbe Begruendung wie bei `_heartbeat_loop`: ein
+                # Beobachter-Fehler (z. B. ein Programmfehler in der WebUI)
+                # darf den UDP-Pfad nicht mitreissen - geloggt, uebersprungen,
+                # weiter geht's mit dem naechsten Beobachter.
+                logger.exception(
+                    "Beobachter fuer Schluessel %r ist fehlgeschlagen - wird uebersprungen", key
+                )
 
     def _signal_for(self, device_id: int, path: str, kind: SignalKind) -> StoredSignal | None:
         """Findet das gespeicherte Signal zu einem Matter-Pfad, ohne bei
@@ -147,7 +207,9 @@ class Runtime:
         key = self._cache_attribute(device_id, path, raw)
         if key is None:
             return
-        await self._sender.send(key, self._last_values[key])
+        value = self._last_values[key]
+        await self._sender.send(key, value)
+        self._notify_observers(key, value)
 
     async def seed_from_snapshot(self, snapshots: Sequence[NodeSnapshot]) -> int:
         """Fuellt den Cache aus dem aktuellen Geraetezustand (Spec 6.4).
@@ -218,8 +280,10 @@ class Runtime:
         # bliebe, waere fuer diesen Zweck kein Gewinn (Review-Fix Minor #2).
         self._counters[key] = self._counters.get(key, 0) + 1
         await self._sender.send(key, True)
+        self._notify_observers(key, True)
         self._pulses_high.add(key)
         await self._sender.send(f"{key}_n", self._counters[key])
+        self._notify_observers(f"{key}_n", self._counters[key])
         self._last_values[f"{key}_n"] = self._counters[key]
         task = asyncio.create_task(self._release_pulse(key))
         task.add_done_callback(self._pulse_tasks.discard)
@@ -228,6 +292,7 @@ class Runtime:
     async def _release_pulse(self, key: str) -> None:
         await asyncio.sleep(PULSE_MILLISECONDS / 1000)
         await self._sender.send(key, False)
+        self._notify_observers(key, False)
         self._pulses_high.discard(key)
 
     @staticmethod
@@ -250,7 +315,9 @@ class Runtime:
 
     async def set_online(self, device_id: int, online: bool) -> None:
         self._cache_online(device_id, online)
-        await self._sender.send(self._online_key(device_id), online)
+        key = self._online_key(device_id)
+        await self._sender.send(key, online)
+        self._notify_observers(key, online)
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         """Alle zuletzt bekannten Werte eines Geraets, indiziert nach
