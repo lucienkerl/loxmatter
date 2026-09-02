@@ -14,6 +14,12 @@ das wuerde eine vertauschte, fehlende oder zusaetzliche Attribut-Spalte in
 ``documents.py`` von keinem der bisherigen 168 Tests bemerkt, obwohl genau
 das die Abweichungsklasse ist, die diese Phase verhindern soll (siehe
 Korrektur 2026-09-02 in Spec 6.1).
+
+Der dritte Block (Review-Fix Minor #2, 2026-09-02) pinnt dieselbe Form fuer
+``render_system_templates``. Die Garantie oben gilt bislang nur fuer diese
+Funktion mit, weil sie heute ein reiner Durchreicher zu
+``render_virtual_in_udp``/``render_virtual_out`` ist — das wuerde nicht mehr
+gelten, sobald sie einen zweiten Eingang oder Ausgang bekommt.
 """
 
 import re
@@ -21,7 +27,12 @@ from pathlib import Path
 
 import pytest
 
-from loxmatter.export.documents import LoxoneCommand, render_virtual_in_udp, render_virtual_out
+from loxmatter.export.documents import (
+    LoxoneCommand,
+    render_system_templates,
+    render_virtual_in_udp,
+    render_virtual_out,
+)
 from loxmatter.export.signals import LoxoneInput
 from loxmatter.export.xml import DECLARATION
 
@@ -117,3 +128,40 @@ def test_info_element_is_the_first_child_in_the_virtual_out_reference_and_output
     rendered_children = [line.strip() for line in _rendered_vo_lines()[2:-1]]
     assert reference_children[0].startswith("<Info ")
     assert rendered_children[0].startswith("<Info ")
+
+
+# -- Dieselbe Pinnung fuer render_system_templates (Review-Fix Minor #2) ---
+
+
+def _rendered_system_viu_lines() -> list[str]:
+    viu_sys, _vo_sys = render_system_templates("192.168.1.50", 7000)
+    return viu_sys.decode("utf-8-sig").splitlines()
+
+
+def _rendered_system_vo_lines() -> list[str]:
+    _viu_sys, vo_sys = render_system_templates("192.168.1.50", 7000)
+    return vo_sys.decode("utf-8-sig").splitlines()
+
+
+def test_system_virtual_in_udp_matches_the_reference_shape():
+    reference_lines = _lines(FIXTURES / "VIU_Referenz.xml")
+    rendered_lines = _rendered_system_viu_lines()
+    reference_root = _first_matching(reference_lines, "<VirtualInUdp ")
+    rendered_root = _first_matching(rendered_lines, "<VirtualInUdp ")
+    reference_cmd = _first_matching(reference_lines, "<VirtualInUdpCmd ")
+    rendered_cmd = _first_matching(rendered_lines, "<VirtualInUdpCmd ")
+    assert _attr_names(rendered_root) == _attr_names(reference_root)
+    assert _attr_names(rendered_cmd) == _attr_names(reference_cmd)
+    assert rendered_lines[2:-1][0].strip().startswith("<Info ")
+
+
+def test_system_virtual_out_matches_the_reference_shape():
+    reference_lines = _lines(FIXTURES / "VO_Referenz.xml")
+    rendered_lines = _rendered_system_vo_lines()
+    reference_root = _first_matching(reference_lines, "<VirtualOut ")
+    rendered_root = _first_matching(rendered_lines, "<VirtualOut ")
+    reference_cmd = _first_matching(reference_lines, "<VirtualOutCmd ")
+    rendered_cmd = _first_matching(rendered_lines, "<VirtualOutCmd ")
+    assert _attr_names(rendered_root) == _attr_names(reference_root)
+    assert _attr_names(rendered_cmd) == _attr_names(reference_cmd)
+    assert rendered_lines[2:-1][0].strip().startswith("<Info ")

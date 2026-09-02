@@ -2135,14 +2135,36 @@ system: bool = (
 )
 ```
 
-Und im Rumpf, **vor** dem Laden des Snapshots:
+Und im Rumpf, **vor** dem Laden des Snapshots. Beide `write_bytes`-Aufrufe stehen in
+try/except wie die drei Gerätevorlagen-Schreibvorgänge weiter unten — ein OSError hier
+(volle Platte, schreibgeschütztes Volume in der künftigen Container-Bereitstellung) darf
+ebenso wenig einen Traceback zeigen wie dort (Review-Fix Important #1, 2026-09-02).
+`out.mkdir` läuft dabei nicht mehr unbedingt ganz am Anfang, sondern erst hier und noch
+einmal vor den Gerätevorlagen (`_ensure_out_dir`, `mkdir(exist_ok=True)` verträgt den
+zweiten Aufruf) — ein Aufruf ganz ohne `--system`, `--node` oder `--fixture` scheitert an
+der Parametervalidierung in `_load_snapshot`, bevor irgendein Verzeichnis entsteht
+(Review-Fix Minor #3, 2026-09-02):
 
 ```python
-    out.mkdir(parents=True, exist_ok=True)
     if system:
+        _ensure_out_dir(out)
         viu_sys, vo_sys = render_system_templates(bridge_ip, port)
-        (out / "VIU_Matter_System.xml").write_bytes(viu_sys)
-        (out / "VO_Matter_System.xml").write_bytes(vo_sys)
+        viu_sys_path = out / "VIU_Matter_System.xml"
+        vo_sys_path = out / "VO_Matter_System.xml"
+        try:
+            viu_sys_path.write_bytes(viu_sys)
+        except OSError as exc:
+            _fail(
+                f"{viu_sys_path} konnte nicht geschrieben werden: {exc}. "
+                "Es wurde noch keine Datei angelegt."
+            )
+        try:
+            vo_sys_path.write_bytes(vo_sys)
+        except OSError as exc:
+            _fail(
+                f"{vo_sys_path} konnte nicht geschrieben werden: {exc}. "
+                f"Geschrieben wurde bereits {viu_sys_path.name}, es fehlt {vo_sys_path.name}."
+            )
         typer.echo("VIU_Matter_System.xml, VO_Matter_System.xml: Heartbeat und /resync")
         if fixture is None and node is None:
             return
@@ -2154,6 +2176,13 @@ Damit sind drei Aufrufe möglich: nur ein Gerät, nur die Systemvorlagen, oder b
 
 Run: `uv run pytest tests/export/test_system_template.py -v`
 Expected: PASS, 5 Tests
+
+Dazu die Regressionstests aus dem Review-Fix (2026-09-02): die Systemvorlagen-Pinnung
+gegen die Referenzdateien in `test_reference.py` (2 Tests) und der Schutz der beiden
+`write_bytes`-Aufrufe sowie die mkdir-Reihenfolge in `test_export_cli.py` (2 Tests).
+
+Run: `uv run pytest tests/export/test_reference.py tests/test_export_cli.py -v`
+Expected: PASS, 15 Tests in `test_reference.py`, 13 Tests in `test_export_cli.py`
 
 - [ ] **Step 5: Commit**
 

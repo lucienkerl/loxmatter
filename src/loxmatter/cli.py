@@ -92,6 +92,26 @@ def _fail(message: str) -> NoReturn:
     raise typer.Exit(code=1)
 
 
+def _ensure_out_dir(out: Path) -> None:
+    """Legt das Zielverzeichnis an; meldet einen Fehlschlag als CLI-Fehler
+    statt eines Tracebacks.
+
+    `export` ruft dies an zwei Stellen auf — einmal vor den Systemvorlagen,
+    einmal vor den Gerätevorlagen (`mkdir(exist_ok=True)` verträgt den
+    zweiten Aufruf) — statt einmal ganz am Anfang. So entsteht das
+    Verzeichnis erst, wenn feststeht, dass das Kommando tatsächlich etwas
+    schreibt: ein Aufruf ohne `--system`, `--node` oder `--fixture` scheitert
+    an der Parametervalidierung in `_load_snapshot`, bevor hier irgendetwas
+    angelegt wird (Review-Fix Minor #3, 2026-09-02).
+    """
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(
+            f"Zielverzeichnis {out} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
+        )
+
+
 def _load_fixture(path: Path) -> NodeSnapshot:
     """Lädt eine Fixture-Datei; meldet kaputten Inhalt als CLI-Fehler statt
     mit einem rohen KeyError/JSONDecodeError abzubrechen."""
@@ -237,16 +257,25 @@ def export(
     verlangte der Aufbau des Kommandos immer `--node` oder `--fixture`, auch
     wenn nur die Systemvorlagen gebraucht werden.
     """
-    try:
-        out.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        _fail(
-            f"Zielverzeichnis {out} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
-        )
     if system:
+        _ensure_out_dir(out)
         viu_sys, vo_sys = render_system_templates(bridge_ip, port)
-        (out / "VIU_Matter_System.xml").write_bytes(viu_sys)
-        (out / "VO_Matter_System.xml").write_bytes(vo_sys)
+        viu_sys_path = out / "VIU_Matter_System.xml"
+        vo_sys_path = out / "VO_Matter_System.xml"
+        try:
+            viu_sys_path.write_bytes(viu_sys)
+        except OSError as exc:
+            _fail(
+                f"{viu_sys_path} konnte nicht geschrieben werden: {exc}. "
+                "Es wurde noch keine Datei angelegt."
+            )
+        try:
+            vo_sys_path.write_bytes(vo_sys)
+        except OSError as exc:
+            _fail(
+                f"{vo_sys_path} konnte nicht geschrieben werden: {exc}. "
+                f"Geschrieben wurde bereits {viu_sys_path.name}, es fehlt {vo_sys_path.name}."
+            )
         typer.echo("VIU_Matter_System.xml, VO_Matter_System.xml: Heartbeat und /resync")
         if fixture is None and node is None:
             return
@@ -294,6 +323,7 @@ def export(
         for c in stored_commands
     ]
 
+    _ensure_out_dir(out)
     viu = out / filename_for("VIU", device_id, label)
     vo = out / filename_for("VO", device_id, label)
 
