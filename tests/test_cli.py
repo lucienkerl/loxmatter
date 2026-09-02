@@ -504,6 +504,25 @@ async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path
     _assert_store_is_closed(store)
 
 
+def test_run_prints_which_store_was_used(monkeypatch, tmp_path):
+    """Review-Fix M10, 2026-09-02: `export` gab den verwendeten Store-Pfad
+    schon aus, `run` bislang nicht — die wahrscheinlichste Fehlkonfiguration
+    (exportiert mit `--store-path`, gestartet ohne, oder umgekehrt) zeigte
+    sich sonst erst als 404 in einem Log, das niemand liest. Der Test laesst
+    `connect()` bewusst scheitern (CannotConnect), damit er ohne Netz und
+    ohne einen laufenden HTTP-Server durchläuft — die Ausgabe passiert schon
+    vor diesem Fehlschlag."""
+    _install_run_spies(monkeypatch, connect_error=CannotConnect("boom"))
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store_path = tmp_path / "run.sqlite"
+
+    result = CliRunner().invoke(
+        app, ["run", "--miniserver", "127.0.0.1", "--store-path", str(store_path)]
+    )
+
+    assert str(store_path) in result.stdout
+
+
 # --- fake-miniserver: --template ----------------------------------------
 
 

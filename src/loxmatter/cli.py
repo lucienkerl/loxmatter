@@ -381,6 +381,13 @@ def run(
     Traceback aus dem Inneren von `asyncio.run`.
     """
     resolved_store_path = _resolve_store_path(store_path)
+    # Wie bei `export` ausgegeben (Review-Fix M10, 2026-09-02): die
+    # wahrscheinlichste Fehlkonfiguration ist eine `export`- und eine
+    # `run`-Datenbank, die auseinanderlaufen — exportiert mit
+    # `--store-path`, gestartet ohne (oder umgekehrt). Ohne diese Zeile
+    # zeigt sich das erst als 404 in einem Log, das niemand liest, weil
+    # `run` den verwendeten Pfad bislang nie nannte.
+    typer.echo(f"Datenbank: {resolved_store_path.resolve()}")
     try:
         resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
