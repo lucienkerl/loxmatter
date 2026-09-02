@@ -1,9 +1,10 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from loxmatter.matter.models import NodeSnapshot
+from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import Exportability, Profile, lookup
 
@@ -153,6 +154,75 @@ def test_reregistering_keeps_existing_keys_and_adds_new_ones(store):
     before = {s.ref: s.key for s in store.register_signals(device_id, snap)}
     again = {s.ref: s.key for s in store.register_signals(device_id, snap)}
     assert again == before
+
+
+def test_null_attribute_becomes_exportable_once_it_reports_a_real_value(store):
+    """Review-Fix Important #2: `1/6/16387` (StartUpOnOff) meldet bei der
+    IKEA-Steckdose anfangs `null` und ist deshalb exportability=none — nicht
+    weil das Attribut generell unexportierbar waere, sondern weil gerade kein
+    Wert vorliegt. Faengt das Geraet spaeter an, einen echten Wert zu
+    melden, muss die naechste Registrierung das nachziehen, ohne den einmal
+    vergebenen Schluessel zu aendern. Vorher fror `register_signals` `unit`
+    und `exportability` fuer immer ein, sobald ein Signal einmal bekannt war."""
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    before = {s.ref: s for s in store.register_signals(device_id, snap)}
+    target = SignalRef(1, 6, 16387, SignalKind.ATTRIBUTE)
+    assert before[target].exportability == Exportability.NONE
+
+    updated_attributes = dict(snap.attributes)
+    updated_attributes["1/6/16387"] = True
+    updated_snap = replace(snap, attributes=updated_attributes)
+
+    after = {s.ref: s for s in store.register_signals(device_id, updated_snap)}
+    assert after[target].exportability == Exportability.DIGITAL
+    assert after[target].key == before[target].key
+
+
+def test_changed_unit_in_the_table_reaches_an_already_stored_signal(store, monkeypatch):
+    """Review-Fix Important #2: eine Korrektur in `clusters.yaml` muss ein
+    schon gespeichertes Signal erreichen. Vorher war die einzige Abhilfe das
+    Loeschen der gesamten Datenbank — was auch jeden Schluessel zerstoert
+    haette."""
+    real_lookup = lookup
+    target = SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)  # onoff
+
+    def make_fake(unit: str):
+        def fake(ref: SignalRef, value: object) -> Profile:
+            if ref == target:
+                return Profile(slug="onoff", unit=unit, exportability=Exportability.DIGITAL)
+            return real_lookup(ref, value)
+
+        return fake
+
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+
+    monkeypatch.setattr("loxmatter.model.store.lookup", make_fake("alte_einheit"))
+    before = {s.ref: s for s in store.register_signals(device_id, snap)}
+    assert before[target].unit == "alte_einheit"
+
+    monkeypatch.setattr("loxmatter.model.store.lookup", make_fake("neue_einheit"))
+    after = {s.ref: s for s in store.register_signals(device_id, snap)}
+    assert after[target].unit == "neue_einheit"
+    assert after[target].key == before[target].key
+
+
+def test_user_set_title_survives_reregistration(store):
+    """Review-Fix Important #2: `title` ist Nutzereigentum, sobald `set_title`
+    es gesetzt hat, und darf von einem erneuten `register_signals` — anders
+    als `unit`/`exportability` — nicht ueberschrieben werden."""
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    onoff_key = next(s.key for s in signals if s.ref.cluster_id == 6 and s.ref.element_id == 0)
+
+    store.set_title(onoff_key, "Kaffeemaschine")
+    again = store.register_signals(device_id, snap)
+
+    renamed = next(s for s in again if s.key == onoff_key)
+    assert renamed.title == "Kaffeemaschine"
+    assert renamed.key == onoff_key
 
 
 def test_all_devices_share_the_default_udp_port(store):

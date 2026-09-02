@@ -133,27 +133,44 @@ class Store:
         return disambiguated
 
     def register_signals(self, device_id: int, snapshot: NodeSnapshot) -> list[StoredSignal]:
-        """Legt neue Signale an; bereits bekannte bleiben unveraendert (Spec 6.2).
+        """Legt neue Signale an; bekannte behalten Schluessel und Titel, aber
+        `unit` und `exportability` werden bei jedem Aufruf neu bestimmt.
+
+        Spec 6.2 verlangt Unveraenderlichkeit ausdruecklich nur fuer den
+        Schluessel — nicht fuer `unit` oder `exportability`. Wuerden diese
+        beim ersten Einlernen eingefroren, bliebe ein Signal, das nur meldet,
+        weil gerade kein Kommissionierungsfenster offen ist, oder ein
+        Attribut wie `StartUpOnOff`, das ein Geraet erst spaeter befuellt,
+        fuer immer bei `exportability=none` stehen — und eine Korrektur in
+        `clusters.yaml` erreichte ein schon gespeichertes Signal nie. Die
+        einzige Abhilfe waere das Loeschen der ganzen Datenbank, was jeden
+        Schluessel zerstoert. `title` dagegen bleibt unangetastet, sobald
+        `set_title` es einmal gesetzt hat — ab dann gehoert es dem Nutzer
+        (siehe `test_key_survives_a_title_change`).
 
         Laeuft als eine Transaktion: scheitert die Schluesselvergabe fuer ein
-        einzelnes Signal (siehe `_assign_key`), wird die gesamte Registrierung
-        zurueckgerollt statt das Geraet mit einer Teilmenge seiner Signale zu
-        belassen. Absichtlich kein `INSERT OR IGNORE` — das wuerde eine echte
-        Schluessel-Kollision nicht melden, sondern das zweite Signal
-        stillschweigend verwerfen (siehe Modul-Docstring).
+        einzelnes neues Signal (siehe `_assign_key`), wird die gesamte
+        Registrierung zurueckgerollt statt das Geraet mit einer Teilmenge
+        seiner Signale zu belassen. Absichtlich kein `INSERT OR IGNORE` — das
+        wuerde eine echte Schluessel-Kollision nicht melden, sondern das
+        zweite Signal stillschweigend verwerfen (siehe Modul-Docstring).
         """
         taken = self._existing_keys(device_id)
         try:
             for ref in extract_signals(snapshot):
-                exists = self._db.execute(
-                    "SELECT 1 FROM signal WHERE device_id = ? AND endpoint = ? AND cluster_id = ?"
+                profile = lookup(ref, snapshot.attributes.get(ref.path))
+                existing = self._db.execute(
+                    "SELECT key FROM signal WHERE device_id = ? AND endpoint = ? AND cluster_id = ?"
                     " AND element_id = ? AND kind = ?",
                     (device_id, ref.endpoint, ref.cluster_id, ref.element_id, ref.kind.value),
                 ).fetchone()
-                if exists is not None:
+                if existing is not None:
+                    self._db.execute(
+                        "UPDATE signal SET unit = ?, exportability = ? WHERE key = ?",
+                        (profile.unit, profile.exportability.value, existing["key"]),
+                    )
                     continue
 
-                profile = lookup(ref, snapshot.attributes.get(ref.path))
                 key = self._assign_key(device_id, ref, profile.slug, taken)
                 taken.add(key)
                 self._db.execute(
