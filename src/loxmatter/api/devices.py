@@ -35,6 +35,21 @@ Teilausfall unterschiedlich schlimme Zustaende:
 Die zweite Reihenfolge hinterlaesst damit im Fehlerfall einen sichtbaren,
 diagnostizierbaren Zustand statt eines stillen; `remove_device` unten setzt
 sie deshalb um.
+
+**Unverifizierte Annahme (Minor #3, Review 2026-09-02):** "Ein erneutes
+`DELETE` bleibt moeglich" oben setzt voraus, dass `remove_node` gegen einen
+Node erneut aufgerufen werden darf, der beim ersten (teilweise gescheiterten)
+Versuch schon aus der Fabric entfernt wurde - also gegen `matter-server`
+retry-sicher ist. `tests/api/conftest.py::FakeMatterClient.remove_node`
+haengt jeden Aufruf lediglich an eine Liste an und kann diese Annahme nicht
+pruefen; ob das echte `MatterClient.remove_node` einen bereits entfernten
+Node mit einem Fehler quittiert oder ihn klaglos ignoriert, ist gegen die
+installierte `python-matter-server`-Version bislang nicht belegt (anders als
+die drei Methoden im Docstring von `matter/client.py`, die explizit gegen
+den Quelltext geprueft sind). Ein Fehlschlag dort waere kein neues Problem -
+er landete wie jeder andere `MatterUnavailableError` als 502 -, aber die
+Zusicherung "bleibt moeglich" ist bis dahin eine Annahme, keine belegte
+Tatsache.
 """
 
 from __future__ import annotations
@@ -53,7 +68,7 @@ from loxmatter.api.models import (
 from loxmatter.export.commands import extract_commands
 from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
 from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDeviceError
-from loxmatter.profiles.table import Exportability
+from loxmatter.profiles.table import Exportability, is_exportable
 
 # Warum ein Signal nicht exportierbar ist (Spec 6.6) - nur fuer die beiden
 # Faelle, die `Exportability` von ANALOG/DIGITAL unterscheidet. `NONE` deckt
@@ -76,7 +91,7 @@ class RuntimeValues(Protocol):
 
 
 def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> SignalOut:
-    exportable = signal.exportability in (Exportability.ANALOG, Exportability.DIGITAL)
+    exportable = is_exportable(signal.exportability)
     reason = None if exportable else _UNEXPORTABLE_REASONS.get(signal.exportability)
     return SignalOut(
         key=signal.key,
@@ -92,12 +107,18 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
 
 
 def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> DeviceOut:
+    # `store.signals(device.id)` holt hier die volle Zeile pro Signal, obwohl
+    # `list_devices` (Minor #2, Review 2026-09-02) sie nur zaehlt - ein N+1-
+    # Zugriff pro Geraet in `GET /api/devices`. Bewusst hingenommen statt
+    # einer eigenen COUNT/SUM-Abfrage: die Zahl der Geraete einer Bruecke
+    # bleibt klein (eine Loxone-Instanz, keine Flotte), `exportable_count`
+    # braucht ohnehin `is_exportable` pro Zeile - eine SQL-Aggregation muesste
+    # diese Regel ein zweites Mal in SQL nachbilden und liefe damit genau in
+    # das Auseinanderdriften, das Important #2 oben erst behoben hat.
     signals = store.signals(device.id)
     values = runtime.last_values_for(device.id)
     online = bool(values.get(f"d{device.id}_online", False))
-    exportable_count = sum(
-        1 for s in signals if s.exportability in (Exportability.ANALOG, Exportability.DIGITAL)
-    )
+    exportable_count = sum(1 for s in signals if is_exportable(s.exportability))
     return DeviceOut(
         id=device.id,
         node_id=device.node_id,
@@ -157,10 +178,27 @@ def build_device_router(
         aenderbar, koennte ein Klick in der Oberflaeche einen Baustein im Haus
         still totlegen. Das Modell `SignalPatch` kennt deshalb gar kein Feld
         dafuer - ein mitgeschicktes `key` wird verworfen, nicht angewendet.
+
+        Anders als jede geraete-gebundene Route (`_require_device` oben)
+        loeste diese Route bisher ausschliesslich ueber `signal_by_key` auf,
+        ohne zu pruefen, ob das zugehoerige Geraet ueberhaupt noch aktiv ist
+        (Review-Fix Important #4, 2026-09-02): nach `DELETE
+        /api/devices/{id}` meldete `GET /api/devices/{id}` korrekt 404, aber
+        `PATCH /api/signals/{key}` mutierte die Zeile eines entfernten
+        Geraets weiterhin klaglos - eine Signalzeile, die nirgends mehr in
+        der Oberflaeche sichtbar ist, aber ueber ihren Schluessel trotzdem
+        noch aenderbar bleibt. Die Pruefung unten schliesst diese Luecke.
         """
         stored = store.signal_by_key(key)
         if stored is None:
             raise HTTPException(status_code=404, detail=f"unbekannter Signal-Schluessel {key!r}")
+        try:
+            store.device(stored.device_id)
+        except UnknownDeviceError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Signal {key!r} gehoert zu Geraet {stored.device_id}, das entfernt wurde",
+            ) from exc
         if patch.title is not None:
             store.set_title(key, patch.title)
         if patch.exported is not None:

@@ -94,6 +94,37 @@ async def test_exporting_a_signal_can_be_turned_off(api):
     assert next(s for s in store.signals(device_id) if s.key == key).exported is False
 
 
+async def test_signal_route_404s_once_its_device_has_been_removed(api):
+    """Review-Fix Important #4, 2026-09-02: `rename_signal` loeste bisher
+    ausschliesslich ueber `signal_by_key` auf, ohne wie jede geraete-gebundene
+    Route zu pruefen, ob das zugehoerige Geraet noch aktiv ist. Nach dem
+    Entfernen meldete `GET /api/devices/{id}` korrekt 404, aber `PATCH
+    /api/signals/{key}` mutierte die verwaiste Zeile weiterhin klaglos. Ruft
+    `store.forget_device` hier direkt statt ueber `DELETE
+    /api/devices/{id}` - dieser Test gilt unabhaengig vom Matter-Client."""
+    client, store, device_id, _ = api
+    key = store.signals(device_id)[0].key
+    store.forget_device(device_id)
+
+    response = await client.patch(f"/api/signals/{key}", json={"title": "x"})
+    assert response.status_code == 404
+    assert "entfernt" in response.json()["detail"]
+
+
+async def test_signal_route_404s_after_the_device_is_removed_through_the_api(api):
+    """Wie oben, aber ueber den echten `DELETE`-Pfad statt eines direkten
+    `store.forget_device`-Aufrufs - belegt, dass der Fix auch fuer den Weg
+    greift, den eine Nutzerin tatsaechlich in der Oberflaeche ausloest."""
+    client, store, device_id, _ = api
+    key = store.signals(device_id)[0].key
+
+    remove_response = await client.delete(f"/api/devices/{device_id}")
+    assert remove_response.status_code == 204
+
+    response = await client.patch(f"/api/signals/{key}", json={"exported": False})
+    assert response.status_code == 404
+
+
 async def test_single_device_matches_the_list_entry(api):
     client, _, device_id, _ = api
     detail = (await client.get(f"/api/devices/{device_id}")).json()
