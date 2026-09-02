@@ -172,7 +172,7 @@ class Store:
                         profile.exportability.value,
                     ),
                 )
-        except Exception:
+        except (ValueError, sqlite3.Error):
             self._db.rollback()
             raise
         self._db.commit()

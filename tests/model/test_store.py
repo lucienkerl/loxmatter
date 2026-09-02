@@ -5,7 +5,7 @@ import pytest
 
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
-from loxmatter.profiles.table import lookup
+from loxmatter.profiles.table import Exportability, Profile, lookup
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
@@ -29,11 +29,45 @@ def test_device_id_is_stable_across_registrations(store):
 
 
 def test_device_id_is_never_reused(store):
+    """Zwei *verschiedene* Geraete bekommen unterschiedliche ids.
+
+    Das beweist nur, dass AUTOINCREMENT funktioniert — es waere auch dann
+    gruen, wenn die Spalte `active` gar nicht existierte und
+    `register_device` bei jedem Aufruf blind eine neue Zeile anlegte. Die
+    eigentlich schuetzenswerte Eigenschaft — dasselbe physische Geraet
+    bekommt nach `forget_device` + erneutem Einlernen eine neue id und neue
+    Schluessel — prueft stattdessen
+    `test_recommissioned_device_gets_fresh_id_and_keys`.
+    """
     plug = load("ikea_grillplats_plug.json")
     button = load("ikea_bilresa_button.json")
     first = store.register_device(plug)
     store.forget_device(first)
     assert store.register_device(button) != first
+
+
+def test_recommissioned_device_gets_fresh_id_and_keys(store):
+    """Dasselbe physische Geraet, vergessen und neu eingelernt, muss eine
+    neue device_id und neue Schluessel bekommen — sonst wuerde es die alte
+    Loxone-Verdrahtung eines frueheren Eigentuemers stillschweigend erben
+    (siehe Modul-Docstring in store.py). Das ist die Eigenschaft, die das
+    `WHERE unique_id = ? AND active = 1` in `register_device` tatsaechlich
+    schuetzt; faellt das `active = 1` weg, findet die Abfrage die alte,
+    vergessene Zeile wieder und dieser Test schlaegt fehl.
+    """
+    snap = load("ikea_grillplats_plug.json")
+
+    old_id = store.register_device(snap)
+    old_keys = {s.key for s in store.register_signals(old_id, snap)}
+
+    store.forget_device(old_id)
+
+    new_id = store.register_device(snap)
+    assert new_id != old_id
+    assert store.signals(new_id) == []
+
+    new_keys = {s.key for s in store.register_signals(new_id, snap)}
+    assert new_keys.isdisjoint(old_keys)
 
 
 def test_key_format_matches_spec_6_2(store):
@@ -68,8 +102,6 @@ def test_disambiguates_when_two_signals_share_a_slug_on_the_same_endpoint(store,
     fixen Slug gezwungen: Cluster 3 traegt auf Endpoint 1 zwei Attribute
     (Element-ID 0 und 1) der IKEA-Steckdose, die dadurch denselben Slug
     "fake" erhalten."""
-    from loxmatter.profiles.table import Exportability, Profile
-
     real_lookup = lookup
 
     def fake_lookup(ref, value):
@@ -97,8 +129,6 @@ def test_irreconcilable_key_collision_raises_instead_of_dropping_silently(store,
     verwirft (die Gefahr eines `INSERT OR IGNORE`, siehe Modul-Docstring in
     store.py) — es muss laut scheitern, und das Geraet darf danach keine
     Signale aus diesem gescheiterten Aufruf enthalten."""
-    from loxmatter.profiles.table import Exportability, Profile
-
     real_lookup = lookup
 
     def fake_lookup(ref, value):
