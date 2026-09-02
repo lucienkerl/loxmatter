@@ -49,6 +49,30 @@ Subscription-Abgleich bei `NODE_ADDED`. Für die anvisierte Nutzung (`connect()`
 liest den vollen Node-Cache, danach einmalig `subscribe()`) ist das
 hinnehmbar, gehört aber in die Spec als offener Punkt, nicht in ein
 stilles Vergessen — siehe Task-8-Report.
+
+commission_with_code()/remove_node()/set_thread_dataset() — belegt gegen die
+installierte python-matter-server==8.1.2 (Task 1, Phase 5):
+
+`MatterClient.commission_with_code(self, code: str, network_only: bool =
+False) -> MatterNodeData` — `MatterClient.remove_node(self, node_id: int) ->
+None` — `MatterClient.set_thread_operational_dataset(self, dataset: str) ->
+None`. `remove_node` und `set_thread_operational_dataset` entsprechen exakt
+der Planannahme.
+
+`commission_with_code` NICHT: Der Plan nahm an, der Rückgabewert trüge seine
+Rohattribute wie ein `MatterNode` aus `get_nodes()` unter `node_data.attributes`
+(siehe oben zu `snapshots()`). Tatsächlich liefert `commission_with_code`
+laut Quelltext (`dataclass_from_dict(MatterNodeData, data)`) das
+`MatterNodeData`-Dataclass selbst zurück — `node_id` und `attributes` liegen
+dort unmittelbar auf dem Objekt, keine Verschachtelung. `MatterNode` (mit
+`node_data`-Indirektion) und `MatterNodeData` (flach) sind in
+python-matter-server zwei verschiedene Typen; `get_nodes()` liefert Ersteres,
+`commission_with_code()` Letzteres. Bei ungeprüfter Übernahme der
+Plan-Annahme hätte `node.node_data.attributes` mit `AttributeError`
+fehlgeschlagen — hier immerhin laut, anders als die zwei still ausfallenden
+Fehlannahmen aus Phase 4 (siehe oben), aber ohne Nachsehen (Step 1) wäre
+auch das erst beim ersten echten Einlernversuch aufgefallen, nicht beim
+Schreiben des Codes.
 """
 
 from __future__ import annotations
@@ -75,6 +99,18 @@ LISTENER_READY_TIMEOUT_SECONDS: Final = 10.0
 class MatterUnavailableError(RuntimeError):
     """matter-server ist nicht verbunden, kennt den gefragten Node nicht,
     oder kennt das angeforderte Kommando nicht."""
+
+
+class CommissioningError(RuntimeError):
+    """Das Einlernen eines Geraets ist fehlgeschlagen.
+
+    Fasst sowohl eine Ablehnung durch das Geraet (z. B. falscher Code, schon
+    in einem anderen Oekosystem) als auch einen Verbindungsabbruch zu
+    matter-server waehrend des Einlernens zusammen — beides erreicht diese
+    Klasse ueber `except Exception` in commission_with_code(). Die
+    urspruengliche Ausnahme bleibt ueber `__cause__` erhalten; ein Aufrufer,
+    der zwischen "Geraet hat abgelehnt" und "Verbindung verloren"
+    unterscheiden will, muss dort nachsehen (siehe Task-1-Report)."""
 
 
 class RuntimeEventHandler(Protocol):
@@ -288,6 +324,43 @@ class BridgeMatterClient:
             if candidate.node_id == node_id:
                 return candidate
         raise MatterUnavailableError(f"unbekannter Node {node_id}")
+
+    async def commission_with_code(self, code: str) -> NodeSnapshot:
+        """Lernt ein Geraet ueber seinen Pairing-Code ein.
+
+        Der Code ist die 11-stellige Zahl oder der 21-stellige MT:-Code vom
+        Geraet oder seiner Verpackung. Haengt das Geraet schon in einem
+        anderen Oekosystem, funktioniert der aufgedruckte Code nicht mehr -
+        dann braucht es von dort einen Multi-Admin-Code (Spec 7.1).
+
+        Der Upstream liefert hier ein `MatterNodeData` zurueck, dessen
+        `node_id`/`attributes`/`available` unmittelbar auf dem Objekt liegen
+        - anders als bei `get_nodes()` (siehe Modul-Docstring). Ein
+        Thread-Geraet scheitert hier mit "Required network information not
+        provided", solange `set_thread_dataset()` nicht vorher aufgerufen
+        wurde.
+        """
+        upstream = self._require_upstream()
+        try:
+            node = await upstream.commission_with_code(code)
+        except Exception as exc:
+            raise CommissioningError(f"Einlernen fehlgeschlagen: {exc}") from exc
+        return NodeSnapshot.from_raw(
+            node.node_id, {"attributes": node.attributes, "available": node.available}
+        )
+
+    async def remove_node(self, node_id: int) -> None:
+        """Entfernt ein Geraet aus der Fabric."""
+        await self._require_upstream().remove_node(node_id)
+
+    async def set_thread_dataset(self, dataset: str) -> None:
+        """Uebergibt matter-server die Thread-Zugangsdaten.
+
+        Ohne diesen Schritt scheitert das Einlernen eines Thread-Geraets mit
+        "Required network information not provided" - der Controller findet
+        das Geraet per BLE, kann ihm aber kein Netz nennen.
+        """
+        await self._require_upstream().set_thread_operational_dataset(dataset)
 
     async def send_command(self, call: MatterCall) -> None:
         """Führt einen übersetzten `MatterCall` über den Upstream aus.
