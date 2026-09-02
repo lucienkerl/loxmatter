@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 from pathlib import Path
 from typing import NoReturn
 
@@ -227,10 +228,19 @@ def export(
     snapshot = _load_snapshot(fixture, node, url)
 
     resolved_store_path = _resolve_store_path(store_path)
-    typer.echo(f"Datenbank: {resolved_store_path}")
-    resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"Datenbank: {resolved_store_path.resolve()}")
+    try:
+        resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(
+            f"Verzeichnis {resolved_store_path.parent} konnte nicht angelegt werden: {exc}. "
+            "Ist der Pfad beschreibbar?"
+        )
 
-    store = Store(resolved_store_path)
+    try:
+        store = Store(resolved_store_path)
+    except (OSError, sqlite3.Error) as exc:
+        _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
     try:
         device_id = store.register_device(snapshot)
         stored = store.register_signals(device_id, snapshot)
@@ -252,7 +262,13 @@ def export(
         for c in device_commands
     ]
 
-    out.mkdir(parents=True, exist_ok=True)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        _fail(
+            f"Zielverzeichnis {out} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
+        )
+
     viu = out / filename_for("VIU", device_id, label)
     vo = out / filename_for("VO", device_id, label)
 

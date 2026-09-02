@@ -171,6 +171,39 @@ def test_export_fails_cleanly_when_the_second_file_cannot_be_written(tmp_path, m
     assert "VIU_" in result.stderr
 
 
+def test_export_fails_cleanly_when_the_output_directory_cannot_be_created(tmp_path, monkeypatch):
+    """Review-Fix Important #3: `out.mkdir` war einer von drei ungeschuetzten
+    Fehlerpunkten neben den beiden `write_bytes`-Aufrufen — ein `--out` unter
+    einem schreibgeschuetzten Verzeichnis (ein Templates-Ordner ohne
+    Schreibrechte, eine eingehaengte Freigabe) darf keinen Traceback zeigen,
+    sondern muss ueber `_fail()` laufen."""
+    original_mkdir = Path.mkdir
+
+    def flaky_mkdir(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name == "gesperrt":
+            raise OSError("Keine Schreibrechte")
+        return original_mkdir(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "mkdir", flaky_mkdir)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path / "gesperrt"),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    assert "gesperrt" in result.stderr
+
+
 def test_export_requires_node_or_fixture(tmp_path):
     """Fix Minor #4: export teilt sich _load_snapshot mit inspect — dessen
     Fehlerpfade sind bislang nur ueber inspect getestet, nicht ueber export
