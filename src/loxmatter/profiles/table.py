@@ -107,12 +107,32 @@ def unit_format(unit: str) -> str:
     return f"<v.{decimals}>{separator}{unit}"
 
 
-# Cluster, deren Kommandos nie als Loxone-Ausgang erscheinen duerfen. 0/62 enthaelt
-# RemoveFabric, 0/48 und 0/49 die Kommissionierung, 0/51 den TestEventTrigger. Ein
-# Loxone-Baustein, der eines davon ausloest, kann das Geraet unbrauchbar machen.
-# Diese Liste gilt auch im Rohmodus.
+# Cluster, deren Kommandos nie als Loxone-Ausgang erscheinen duerfen. Diese Liste
+# gilt auch im Rohmodus. Jeder Eintrag ist eine bewusste Entscheidung, keine
+# Aufzaehlung - die Liste ist absichtlich konservativ: ein zu Unrecht gesperrter
+# Cluster kostet einen fehlenden Befehl, ein zu Unrecht vergessener kann das Geraet
+# aus dem Netz werfen.
 ADMINISTRATIVE_CLUSTERS: frozenset[int] = frozenset(
-    {42, 48, 49, 51, 52, 53, 54, 55, 60, 62, 63, 70}
+    {
+        31,  # AccessControl - regelt, wer mit dem Geraet ueberhaupt sprechen darf
+        41,  # OtaSoftwareUpdateProvider - ApplyUpdateRequest kann ein Firmware-Update erzwingen
+        42,  # OtaSoftwareUpdateRequestor - AnnounceOtaProvider stoesst eine Update-Suche an
+        48,  # GeneralCommissioning - Kommissionierung
+        49,  # NetworkCommissioning - Kommissionierung
+        50,  # DiagnosticLogs - RetrieveLogsRequest
+        51,  # GeneralDiagnostics - TestEventTrigger
+        52,  # SoftwareDiagnostics - ResetWatermarks setzt Diagnosezaehler zurueck
+        53,  # ThreadNetworkDiagnostics - ResetCounts setzt Diagnosezaehler zurueck
+        54,  # WiFiNetworkDiagnostics - ResetCounts setzt Diagnosezaehler zurueck
+        55,  # EthernetNetworkDiagnostics - ResetCounts setzt Diagnosezaehler zurueck
+        56,  # TimeSynchronization - SetUTCTime, SetTrustedTimeSource: eine falsche Uhr
+        #     bricht Zeitplaene und Zertifikatspruefung
+        60,  # AdministratorCommissioning - OpenCommissioningWindow oeffnet das Geraet fuer
+        #     eine weitere Fabric
+        62,  # OperationalCredentials - RemoveFabric
+        63,  # GroupKeyManagement - verwaltet die Sicherheitsschluessel der Gruppen
+        70,  # IcdManagement - RegisterClient steuert, wer das Geraet aufwecken darf
+    }
 )
 
 

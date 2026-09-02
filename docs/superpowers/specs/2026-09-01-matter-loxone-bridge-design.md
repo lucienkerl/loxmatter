@@ -452,7 +452,7 @@ für Geräte, deren Cluster die Tabelle noch nicht kennt.
 die sich abschalten lässt:
 
 ```
-42, 48, 49, 51, 52, 53, 54, 55, 60, 62, 63, 70
+31, 41, 42, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 62, 63, 70
 ```
 
 Die Asymmetrie ist beabsichtigt. Ein unbekanntes Attribut zu viel zu exportieren kostet
