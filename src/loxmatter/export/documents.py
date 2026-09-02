@@ -140,11 +140,30 @@ def render_virtual_out(
     )
 
 
-def filename_for(prefix: str, device_label: str) -> str:
-    """Dateiname nach Spec 6.1, auf ASCII normalisiert."""
+def filename_for(prefix: str, device_id: int, device_label: str) -> str:
+    """Dateiname nach Spec 6.1, auf ASCII normalisiert.
+
+    `device_id` ist nicht Dekoration — er ist der einzige Teil des Namens,
+    der Eindeutigkeit garantiert. `Store` vergibt ihn unveraenderlich und
+    verwendet ihn nirgends doppelt (siehe `export.signals`); die Normalisierung
+    unten dagegen ist verlustbehaftet und bildet absichtlich viele
+    unterschiedliche Labels ("Lampe 1", "Lampe_1", "Lampe-1", "厨房", "")
+    auf denselben oder einen leeren String ab. Ohne die Geraete-ID wuerden
+    zwei Geraete mit kollidierendem Label sich beim Export gegenseitig
+    ueberschreiben — der Nutzer importiert dann eine Vorlage im Glauben, es
+    seien zwei. Also: die ID hier NICHT entfernen, auch wenn sie im Namen
+    redundant zum Label aussieht.
+
+    Das Label bleibt trotzdem im Namen — es macht die Datei fuer einen
+    Menschen wiedererkennbar, waehrend die ID sie eindeutig macht.
+    """
     text = "".join(_UMLAUTS.get(char, char) for char in device_label)
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     safe = "".join(char if char.isalnum() else "_" for char in text)
     while "__" in safe:
         safe = safe.replace("__", "_")
-    return f"{prefix}_{safe.strip('_')}.xml"
+    safe = safe.strip("_")
+    stem = f"{prefix}_d{device_id}"
+    if safe:
+        stem = f"{stem}_{safe}"
+    return f"{stem}.xml"

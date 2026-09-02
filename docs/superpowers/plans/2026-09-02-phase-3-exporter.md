@@ -1202,7 +1202,7 @@ git commit -m "feat(export): Events zu Impuls und Zaehler, Online-Signal je Gera
   - `render_virtual_out(device_label: str, base_url: str, commands: Sequence[LoxoneCommand]) -> bytes`
     — schreibt vor den `VirtualOutCmd`-Kindern ein `<Info templateType="3" minVersion="14040925"/>`
   - `class LoxoneCommand` — frozen: `key: str`, `title: str`, `path: str`, `analog: bool`
-  - `filename_for(prefix: str, device_label: str) -> str`
+  - `filename_for(prefix: str, device_id: int, device_label: str) -> str`
 
 `minVersion="14040925"` ist für beide Vorlagentypen der niedrigste an den 26 realen
 Vorlagen beobachtete Wert (Spec 6.1, „Korrektur 2026-09-02") — er gate also die
@@ -1334,14 +1334,43 @@ def test_info_element_is_the_first_child_of_virtual_out():
 
 
 def test_filenames_follow_the_spec_prefixes():
-    assert filename_for("VIU", "Wohnzimmer Lampe") == "VIU_Wohnzimmer_Lampe.xml"
-    assert filename_for("VO", "Küche/Steckdose") == "VO_Kueche_Steckdose.xml"
+    assert filename_for("VIU", 12, "Wohnzimmer Lampe") == "VIU_d12_Wohnzimmer_Lampe.xml"
+    assert filename_for("VO", 7, "Küche/Steckdose") == "VO_d7_Kueche_Steckdose.xml"
 
 
 def test_filename_is_ascii_only():
-    name = filename_for("VIU", "Büro Ölheizung —Süd")
+    name = filename_for("VIU", 3, "Büro Ölheizung —Süd")
     assert name.isascii()
     assert name.startswith("VIU_") and name.endswith(".xml")
+
+
+def test_filenames_of_labels_differing_only_by_separator_do_not_collide():
+    """ "Lampe 1", "Lampe_1" und "Lampe-1" normalisieren alle auf dasselbe
+    Label-Segment — auf verschiedenen Geraeten muss die ID sie trotzdem
+    trennen."""
+    space = filename_for("VIU", 1, "Lampe 1")
+    underscore = filename_for("VIU", 2, "Lampe_1")
+    hyphen = filename_for("VIU", 3, "Lampe-1")
+    assert len({space, underscore, hyphen}) == 3
+
+
+def test_filename_with_empty_label_has_no_trailing_separator_or_empty_segment():
+    """Ein Label, das komplett wegnormalisiert (nicht-ASCII, leer, nur
+    Sonderzeichen), darf weder mit "_" enden noch ein leeres "__"-Segment
+    hinterlassen — die Datei bleibt trotzdem eindeutig ueber die ID."""
+    for label in ("厨房", "", "!!!"):
+        name = filename_for("VIU", 12, label)
+        assert name == "VIU_d12.xml"
+        assert not name.endswith("_.xml")
+        assert "__" not in name
+
+
+def test_same_label_on_different_device_ids_never_collides():
+    first = filename_for("VIU", 1, "Wohnzimmerlampe")
+    second = filename_for("VIU", 2, "Wohnzimmerlampe")
+    assert first != second
+    assert first == "VIU_d1_Wohnzimmerlampe.xml"
+    assert second == "VIU_d2_Wohnzimmerlampe.xml"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1496,20 +1525,39 @@ def render_virtual_out(
     )
 
 
-def filename_for(prefix: str, device_label: str) -> str:
-    """Dateiname nach Spec 6.1, auf ASCII normalisiert."""
+def filename_for(prefix: str, device_id: int, device_label: str) -> str:
+    """Dateiname nach Spec 6.1, auf ASCII normalisiert.
+
+    `device_id` ist nicht Dekoration — er ist der einzige Teil des Namens,
+    der Eindeutigkeit garantiert. `Store` vergibt ihn unveraenderlich und
+    verwendet ihn nirgends doppelt (siehe `export.signals`); die Normalisierung
+    unten dagegen ist verlustbehaftet und bildet absichtlich viele
+    unterschiedliche Labels ("Lampe 1", "Lampe_1", "Lampe-1", "厨房", "")
+    auf denselben oder einen leeren String ab. Ohne die Geraete-ID wuerden
+    zwei Geraete mit kollidierendem Label sich beim Export gegenseitig
+    ueberschreiben — der Nutzer importiert dann eine Vorlage im Glauben, es
+    seien zwei. Also: die ID hier NICHT entfernen, auch wenn sie im Namen
+    redundant zum Label aussieht.
+
+    Das Label bleibt trotzdem im Namen — es macht die Datei fuer einen
+    Menschen wiedererkennbar, waehrend die ID sie eindeutig macht.
+    """
     text = "".join(_UMLAUTS.get(char, char) for char in device_label)
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
     safe = "".join(char if char.isalnum() else "_" for char in text)
     while "__" in safe:
         safe = safe.replace("__", "_")
-    return f"{prefix}_{safe.strip('_')}.xml"
+    safe = safe.strip("_")
+    stem = f"{prefix}_d{device_id}"
+    if safe:
+        stem = f"{stem}_{safe}"
+    return f"{stem}.xml"
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_documents.py -v`
-Expected: PASS, 12 Tests
+Expected: PASS, 15 Tests
 
 - [ ] **Step 5: Commit**
 
@@ -1975,8 +2023,8 @@ def export(
     ]
 
     out.mkdir(parents=True, exist_ok=True)
-    viu = out / filename_for("VIU", label)
-    vo = out / filename_for("VO", label)
+    viu = out / filename_for("VIU", device_id, label)
+    vo = out / filename_for("VO", device_id, label)
     viu.write_bytes(render_virtual_in_udp(label, bridge_ip, port, inputs))
     vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:8080", commands))
 

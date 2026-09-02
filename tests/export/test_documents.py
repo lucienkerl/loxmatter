@@ -122,11 +122,40 @@ def test_info_element_is_the_first_child_of_virtual_out():
 
 
 def test_filenames_follow_the_spec_prefixes():
-    assert filename_for("VIU", "Wohnzimmer Lampe") == "VIU_Wohnzimmer_Lampe.xml"
-    assert filename_for("VO", "Küche/Steckdose") == "VO_Kueche_Steckdose.xml"
+    assert filename_for("VIU", 12, "Wohnzimmer Lampe") == "VIU_d12_Wohnzimmer_Lampe.xml"
+    assert filename_for("VO", 7, "Küche/Steckdose") == "VO_d7_Kueche_Steckdose.xml"
 
 
 def test_filename_is_ascii_only():
-    name = filename_for("VIU", "Büro Ölheizung —Süd")
+    name = filename_for("VIU", 3, "Büro Ölheizung —Süd")
     assert name.isascii()
     assert name.startswith("VIU_") and name.endswith(".xml")
+
+
+def test_filenames_of_labels_differing_only_by_separator_do_not_collide():
+    """ "Lampe 1", "Lampe_1" und "Lampe-1" normalisieren alle auf dasselbe
+    Label-Segment — auf verschiedenen Geraeten muss die ID sie trotzdem
+    trennen."""
+    space = filename_for("VIU", 1, "Lampe 1")
+    underscore = filename_for("VIU", 2, "Lampe_1")
+    hyphen = filename_for("VIU", 3, "Lampe-1")
+    assert len({space, underscore, hyphen}) == 3
+
+
+def test_filename_with_empty_label_has_no_trailing_separator_or_empty_segment():
+    """Ein Label, das komplett wegnormalisiert (nicht-ASCII, leer, nur
+    Sonderzeichen), darf weder mit "_" enden noch ein leeres "__"-Segment
+    hinterlassen — die Datei bleibt trotzdem eindeutig ueber die ID."""
+    for label in ("厨房", "", "!!!"):
+        name = filename_for("VIU", 12, label)
+        assert name == "VIU_d12.xml"
+        assert not name.endswith("_.xml")
+        assert "__" not in name
+
+
+def test_same_label_on_different_device_ids_never_collides():
+    first = filename_for("VIU", 1, "Wohnzimmerlampe")
+    second = filename_for("VIU", 2, "Wohnzimmerlampe")
+    assert first != second
+    assert first == "VIU_d1_Wohnzimmerlampe.xml"
+    assert second == "VIU_d2_Wohnzimmerlampe.xml"
