@@ -229,6 +229,12 @@ def export(
     url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
     bridge_ip: str = typer.Option(..., help="IP dieser Bridge, aus Sicht des Miniservers"),
     port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
+    listen: int = typer.Option(
+        8080,
+        help="HTTP-Port in der erzeugten Kommando-URL (VO-Vorlage). Muss mit dem "
+        "--listen übereinstimmen, mit dem `loxmatter run` später gestartet wird — "
+        "sonst laufen die Ausgangsbefehle ins Leere, ohne dass der Miniserver das meldet.",
+    ),
     out: Path = typer.Option(Path("."), help="Zielverzeichnis für die Vorlagen"),  # noqa: B008
     store_path: Path | None = typer.Option(  # noqa: B008
         None,
@@ -269,7 +275,7 @@ def export(
     """
     if system:
         _ensure_out_dir(out)
-        viu_sys, vo_sys = render_system_templates(bridge_ip, port)
+        viu_sys, vo_sys = render_system_templates(bridge_ip, port, listen)
         viu_sys_path = out / "VIU_Matter_System.xml"
         vo_sys_path = out / "VO_Matter_System.xml"
         try:
@@ -342,7 +348,7 @@ def export(
     except OSError as exc:
         _fail(f"{viu} konnte nicht geschrieben werden: {exc}. Es wurde noch keine Datei angelegt.")
     try:
-        vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:8080", commands))
+        vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:{listen}", commands))
     except OSError as exc:
         _fail(
             f"{vo} konnte nicht geschrieben werden: {exc}. "

@@ -100,6 +100,30 @@ def test_plug_gets_only_the_onoff_commands(tmp_path):
     assert text.count("<VirtualOutCmd ") == 3
 
 
+def test_listen_option_reaches_the_command_url(tmp_path):
+    """Review-Fix I3, 2026-09-02: `export` hatte den HTTP-Port der Kommando-URL
+    fest auf 8080 verdrahtet, unabhaengig von `run --listen`. Ohne `--listen`
+    bleibt der Default 8080 (Rueckwaertskompatibilitaet), mit einem
+    abweichenden Wert muss er in der VO-Vorlage ankommen."""
+    CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--listen",
+            "9090",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    text = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
+    assert 'Address="http://192.168.1.50:9090"' in text
+    assert "8080" not in text
+
+
 def test_button_gets_no_output_commands(tmp_path):
     """Ein Taster ist ein Eingabegeraet - die VO_-Datei bleibt leer."""
     CliRunner().invoke(

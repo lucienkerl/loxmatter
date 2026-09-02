@@ -134,12 +134,12 @@ def test_info_element_is_the_first_child_in_the_virtual_out_reference_and_output
 
 
 def _rendered_system_viu_lines() -> list[str]:
-    viu_sys, _vo_sys = render_system_templates("192.168.1.50", 7000)
+    viu_sys, _vo_sys = render_system_templates("192.168.1.50", 7000, 8080)
     return viu_sys.decode("utf-8-sig").splitlines()
 
 
 def _rendered_system_vo_lines() -> list[str]:
-    _viu_sys, vo_sys = render_system_templates("192.168.1.50", 7000)
+    _viu_sys, vo_sys = render_system_templates("192.168.1.50", 7000, 8080)
     return vo_sys.decode("utf-8-sig").splitlines()
 
 
