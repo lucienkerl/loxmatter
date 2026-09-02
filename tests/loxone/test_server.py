@@ -88,7 +88,9 @@ async def test_resync_forces_a_full_resend(client):
     c, _, _ = client
     response = await c.get("/resync")
     assert response.status_code == 200
-    assert "gesendet" in response.text.lower() or response.json()["gesendet"] >= 0
+    # Review-Fix M9, 2026-09-02: "gesendet" war ein deutscher Schluessel in
+    # einem Wire-Format - umbenannt zu "sent" (siehe server.py).
+    assert "sent" in response.text.lower() or response.json()["sent"] >= 0
 
 
 async def test_health_answers_without_touching_matter(client):

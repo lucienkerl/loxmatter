@@ -47,7 +47,11 @@ def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
             raise HTTPException(
                 status_code=502, detail=f"Full-Resend fehlgeschlagen: {exc}"
             ) from exc
-        return {"gesendet": count}
+        # Englischer Schluessel im Wire-Format (Review-Fix M9, 2026-09-02):
+        # Bezeichner in Antworten sind wie Code-Bezeichner Englisch, auch
+        # wenn Prosa/Fehlermeldungen Deutsch bleiben - "gesendet" war hier
+        # der einzige deutsche Schluessel in einer JSON-Antwort.
+        return {"sent": count}
 
     @app.get("/cmd/{key}/{value}")
     async def command(key: str, value: str) -> dict[str, str]:
