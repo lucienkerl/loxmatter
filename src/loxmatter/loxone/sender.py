@@ -25,38 +25,44 @@ RATE_LIMIT_PER_SECOND = 50.0
 
 class UdpSender:
     def __init__(self, host: str, port: int, *, rate_limit: float = RATE_LIMIT_PER_SECOND) -> None:
+        """Baut den UDP-Socket auf. Ein rate_limit von 0 oder darunter bedeutet: kein Rate-Limit."""
         self._target = (host, port)
         self._interval = 1.0 / rate_limit if rate_limit > 0 else 0.0
         self._socket: socket.socket | None = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.setblocking(False)
-        self._letzte: dict[str, str] = {}
-        self._naechster_sendezeitpunkt = 0.0
-        self._sperre = asyncio.Lock()
+        self._last_sent: dict[str, str] = {}
+        self._next_send_time = 0.0
+        self._lock = asyncio.Lock()
 
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
         """Sendet, wenn sich der Wert geaendert hat oder force gesetzt ist."""
         if self._socket is None:
             raise RuntimeError("UdpSender ist geschlossen")
 
-        paket = datagram(key, value)
-        text = paket.decode()
-        if not force and self._letzte.get(key) == text:
+        packet = datagram(key, value)
+        text = packet.decode()
+        if not force and self._last_sent.get(key) == text:
             return False
 
-        async with self._sperre:
+        async with self._lock:
             if self._socket is None:
                 raise RuntimeError("UdpSender ist geschlossen")
             loop = asyncio.get_running_loop()
-            wartezeit = self._naechster_sendezeitpunkt - loop.time()
-            if wartezeit > 0:
-                await asyncio.sleep(wartezeit)
-            self._socket.sendto(paket, self._target)
-            self._naechster_sendezeitpunkt = loop.time() + self._interval
+            wait_time = self._next_send_time - loop.time()
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
+            self._socket.sendto(packet, self._target)
+            self._next_send_time = loop.time() + self._interval
 
-        self._letzte[key] = text
+        self._last_sent[key] = text
         return True
 
     async def close(self) -> None:
-        if self._socket is not None:
-            self._socket.close()
-            self._socket = None
+        """Schliesst den Socket. Nimmt dieselbe Sperre wie send(), damit ein
+        Sendevorgang, der gerade im Rate-Limit-Schlaf steckt, nicht auf einen
+        bereits geschlossenen Socket trifft. Mehrfacher Aufruf bleibt unschaedlich.
+        """
+        async with self._lock:
+            if self._socket is not None:
+                self._socket.close()
+                self._socket = None

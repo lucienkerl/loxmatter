@@ -711,7 +711,7 @@ from loxmatter.loxone.sender import UdpSender
 
 
 @pytest.fixture
-def empfaenger():
+def receiver():
     """Ein UDP-Socket auf 127.0.0.1 - verlaesst die Maschine nicht."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
@@ -720,63 +720,63 @@ def empfaenger():
     sock.close()
 
 
-def empfangen(sock: socket.socket) -> list[bytes]:
-    pakete = []
+def received(sock: socket.socket) -> list[bytes]:
+    packets = []
     while True:
         try:
-            pakete.append(sock.recv(4096))
+            packets.append(sock.recv(4096))
         except BlockingIOError:
-            return pakete
+            return packets
 
 
-async def test_sends_the_expected_datagram(empfaenger):
-    host, port = empfaenger.getsockname()
+async def test_sends_the_expected_datagram(receiver):
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     await sender.send("d1_2_power", 0.0003)
     await asyncio.sleep(0.05)
-    assert empfangen(empfaenger) == [b"d1_2_power:0.0003"]
+    assert received(receiver) == [b"d1_2_power:0.0003"]
     await sender.close()
 
 
-async def test_unchanged_value_is_not_resent(empfaenger):
+async def test_unchanged_value_is_not_resent(receiver):
     """Entprellung: ein Sensor, der jede Sekunde denselben Wert meldet, flutet nicht."""
-    host, port = empfaenger.getsockname()
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     assert await sender.send("d1_1_temp", 21.5) is True
     assert await sender.send("d1_1_temp", 21.5) is False
     await asyncio.sleep(0.05)
-    assert len(empfangen(empfaenger)) == 1
+    assert len(received(receiver)) == 1
     await sender.close()
 
 
-async def test_changed_value_is_sent(empfaenger):
-    host, port = empfaenger.getsockname()
+async def test_changed_value_is_sent(receiver):
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     await sender.send("d1_1_temp", 21.5)
     assert await sender.send("d1_1_temp", 21.6) is True
     await asyncio.sleep(0.05)
-    assert len(empfangen(empfaenger)) == 2
+    assert len(received(receiver)) == 2
     await sender.close()
 
 
-async def test_force_resends_an_unchanged_value(empfaenger):
+async def test_force_resends_an_unchanged_value(receiver):
     """Der Full-Resend nach einem Miniserver-Neustart muss die Entprellung umgehen."""
-    host, port = empfaenger.getsockname()
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     await sender.send("d1_1_temp", 21.5)
     assert await sender.send("d1_1_temp", 21.5, force=True) is True
     await sender.close()
 
 
-async def test_rate_limit_staggers_a_burst(empfaenger):
+async def test_rate_limit_staggers_a_burst(receiver):
     """Spec 6.4: gestaffelt auf etwa 50 Datagramme pro Sekunde."""
-    host, port = empfaenger.getsockname()
+    host, port = receiver.getsockname()
     sender = UdpSender(host, port, rate_limit=100.0)
     start = asyncio.get_running_loop().time()
     for i in range(10):
         await sender.send(f"d1_1_a{i}", i)
-    dauer = asyncio.get_running_loop().time() - start
-    assert dauer >= 0.09
+    duration = asyncio.get_running_loop().time() - start
+    assert duration >= 0.09
     await sender.close()
 
 
@@ -785,6 +785,37 @@ async def test_send_after_close_raises():
     await sender.close()
     with pytest.raises(RuntimeError, match="geschlossen"):
         await sender.send("d1_1_temp", 21.5)
+
+
+async def test_close_during_in_flight_send_does_not_crash(receiver):
+    """Ein close() waehrend eines im Rate-Limit-Schlaf parkierten Sendevorgangs
+    darf niemals einen AttributeError durch einen bereits geschlossenen Socket
+    ausloesen - entweder schliesst der Sendevorgang sauber ab, oder er sieht das
+    dokumentierte RuntimeError."""
+    host, port = receiver.getsockname()
+    sender = UdpSender(host, port, rate_limit=10.0)
+    await sender.send("d1_1_a", 1)
+
+    async def delayed_send() -> bool | RuntimeError:
+        try:
+            return await sender.send("d1_1_b", 2)
+        except RuntimeError as error:
+            return error
+
+    send_task = asyncio.create_task(delayed_send())
+    await asyncio.sleep(0.02)
+    close_task = asyncio.create_task(sender.close())
+
+    result = await send_task
+    await close_task
+
+    assert result is True or isinstance(result, RuntimeError)
+
+
+async def test_close_is_idempotent():
+    sender = UdpSender("127.0.0.1", 7000)
+    await sender.close()
+    await sender.close()
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -824,45 +855,53 @@ RATE_LIMIT_PER_SECOND = 50.0
 
 class UdpSender:
     def __init__(self, host: str, port: int, *, rate_limit: float = RATE_LIMIT_PER_SECOND) -> None:
+        """Baut den UDP-Socket auf. Ein rate_limit von 0 oder darunter bedeutet: kein Rate-Limit."""
         self._target = (host, port)
         self._interval = 1.0 / rate_limit if rate_limit > 0 else 0.0
         self._socket: socket.socket | None = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.setblocking(False)
-        self._letzte: dict[str, str] = {}
-        self._naechster_sendezeitpunkt = 0.0
-        self._sperre = asyncio.Lock()
+        self._last_sent: dict[str, str] = {}
+        self._next_send_time = 0.0
+        self._lock = asyncio.Lock()
 
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
         """Sendet, wenn sich der Wert geaendert hat oder force gesetzt ist."""
         if self._socket is None:
             raise RuntimeError("UdpSender ist geschlossen")
 
-        paket = datagram(key, value)
-        text = paket.decode()
-        if not force and self._letzte.get(key) == text:
+        packet = datagram(key, value)
+        text = packet.decode()
+        if not force and self._last_sent.get(key) == text:
             return False
 
-        async with self._sperre:
+        async with self._lock:
+            if self._socket is None:
+                raise RuntimeError("UdpSender ist geschlossen")
             loop = asyncio.get_running_loop()
-            wartezeit = self._naechster_sendezeitpunkt - loop.time()
-            if wartezeit > 0:
-                await asyncio.sleep(wartezeit)
-            self._socket.sendto(paket, self._target)
-            self._naechster_sendezeitpunkt = loop.time() + self._interval
+            wait_time = self._next_send_time - loop.time()
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
+            self._socket.sendto(packet, self._target)
+            self._next_send_time = loop.time() + self._interval
 
-        self._letzte[key] = text
+        self._last_sent[key] = text
         return True
 
     async def close(self) -> None:
-        if self._socket is not None:
-            self._socket.close()
-            self._socket = None
+        """Schliesst den Socket. Nimmt dieselbe Sperre wie send(), damit ein
+        Sendevorgang, der gerade im Rate-Limit-Schlaf steckt, nicht auf einen
+        bereits geschlossenen Socket trifft. Mehrfacher Aufruf bleibt unschaedlich.
+        """
+        async with self._lock:
+            if self._socket is not None:
+                self._socket.close()
+                self._socket = None
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_sender.py -v`
-Expected: PASS, 6 Tests
+Expected: PASS, 8 Tests
 
 - [ ] **Step 5: Commit**
 
