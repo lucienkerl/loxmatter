@@ -43,7 +43,7 @@ def _command(key: str, slug: str, device_id: int, command_id: int) -> StoredComm
     )
 
 
-def _patch(index, device, signals, *, include_new_devices, commands=()):
+def _patch_bytes(index, device, signals, *, include_new_devices, commands=()):
     commands = list(commands)
     plan = build_plan(index, [device], {device.id: signals}, {device.id: commands})
     return apply_plan(
@@ -56,6 +56,12 @@ def _patch(index, device, signals, *, include_new_devices, commands=()):
         bridge_ip="10.0.0.5",
         port=7000,
         listen=8080,
+    )
+
+
+def _patch(index, device, signals, *, include_new_devices, commands=()):
+    return _patch_bytes(
+        index, device, signals, include_new_devices=include_new_devices, commands=commands
     ).decode("utf-8-sig")
 
 
@@ -72,15 +78,81 @@ def test_updated_attribute_is_replaced_in_place(sample_project):
     assert '<Co K="AQ" U="1000-0003-0000-bbbbbbbbbbbbbbbb"/>' in patched
 
 
-def test_untouched_regions_stay_byte_identical(sample_project):
+def test_orphaned_object_is_left_untouched(sample_project):
+    """Ein verwaistes Signal wird nur gemeldet, nie veraendert (Entwurf
+    Abschnitt 2). Das ist eine Inhalts-, keine Byte-Identitaets-Zusage - die
+    prueft `test_unchanged_plan_leaves_the_file_byte_identical` unten."""
     index = build_index(sample_project)
     device = _device(1, "Altes Geraet")
     signals = [_signal("d1_1_onoff", 1, title="Ein/Aus")]
     patched = _patch(index, device, signals, include_new_devices=False)
-    # Das verwaiste Signal wird nur gemeldet, nie veraendert (Entwurf
-    # Abschnitt 2).
     assert 'Title="Verwaist"' in patched
     assert 'Check="d9_9_verwaist:\\v"' in patched
+
+
+def _unchanged_signals() -> list[StoredSignal]:
+    """Signale, die exakt dem entsprechen, was in `sample_project` steht - der
+    Plan enthaelt damit weder `updated` noch `new_signal`/`new_device` (siehe
+    `tests/projectsync/test_diff.py`,
+    `test_has_changes_is_false_when_everything_matches`)."""
+    return [_signal("d1_1_onoff", 1, title="Alter Titel")]
+
+
+def test_unchanged_plan_leaves_the_file_byte_identical(sample_project):
+    """Die Kernzusage des ganzen Entwurfs (Abschnitt 3.2/9): was nicht im Plan
+    steht, wird nicht angefasst. Ein Plan ohne jede geplante Aenderung muss
+    darum EXAKT dieselben Bytes zurueckliefern - einzige erlaubte Abweichung
+    ist ein vorangestelltes BOM, wenn das Original keines hatte (siehe
+    `patch`-Moduldocstring).
+
+    Bewusst ein voller Byte-Vergleich statt einiger Teilstring-Proben: nur so
+    faellt auch eine Aenderung auf, an die beim Schreiben des Tests niemand
+    gedacht hat."""
+    index = build_index(sample_project)
+    device = _device(1, "Altes Geraet")
+    plan = build_plan(index, [device], {1: _unchanged_signals()}, {1: []})
+    assert plan.has_changes is False
+
+    patched = _patch_bytes(index, device, _unchanged_signals(), include_new_devices=True)
+    assert patched == ("﻿" + sample_project).encode("utf-8")
+    assert patched.decode("utf-8").lstrip("﻿") == sample_project.lstrip("﻿")
+
+
+def test_created_u_ids_are_unique_across_the_whole_file(sample_project):
+    """ID-Eindeutigkeit neu erzeugter `U`-Werte gegen ALLE vorhandenen
+    (Entwurf Abschnitt 6/9) - ueber ein Szenario, das beide Neuanlage-Wege
+    gleichzeitig geht: ein neues Signal in einem bestehenden Container
+    (Geraet 1) und ein komplett neues Geraet mit mehreren Signalen und
+    Kommandos (Geraet 2). Jedes davon erzeugt neben dem Objekt selbst noch
+    `Co`-Verdrahtungsstummel mit eigenen IDs."""
+    import re
+
+    index = build_index(sample_project)
+    devices = [_device(1, "Altes Geraet"), _device(2, "Neues Geraet")]
+    signals = {
+        1: [_signal("d1_1_onoff", 1, title="Alter Titel"), _signal("d1_1_temp", 1)],
+        2: [_signal("d2_1_onoff", 2), _signal("d2_1_temp", 2)],
+    }
+    commands = {1: [], 2: [_command("d2_1_on", "on", 2, 1), _command("d2_1_off", "off", 2, 0)]}
+    plan = build_plan(index, devices, signals, commands)
+    # Vor dem Patchen festhalten: `new_unique_id` traegt jede erzeugte ID
+    # sofort in `index.all_u_values` nach.
+    u_count_before = len(index.all_u_values)
+    patched = apply_plan(
+        index,
+        plan,
+        devices,
+        signals,
+        commands,
+        include_new_devices=True,
+        bridge_ip="10.0.0.5",
+        port=7000,
+        listen=8080,
+    ).decode("utf-8-sig")
+
+    all_u = re.findall(r'\bU="([^"]*)"', patched)
+    assert len(all_u) > u_count_before  # es wurden wirklich welche erzeugt
+    assert len(set(all_u)) == len(all_u)
 
 
 def test_new_signal_is_appended_inside_existing_container(sample_project):
