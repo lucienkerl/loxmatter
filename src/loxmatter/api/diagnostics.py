@@ -183,7 +183,21 @@ class RingBuffer[T]:
     Beobachter selbst ueber denselben Logger, ist das eine echte,
     unbegrenzte Rekursion (siehe `diagnostics.logbuffer`-Moduldocstring).
     `LogBufferHandler.add_observer` ist der einzige sichere Weg, neue
-    Logzeilen zu beobachten."""
+    Logzeilen zu beobachten.
+
+    **Dieselbe Warnung gilt spiegelbildlich fuer `UdpSender.datagram_log`**
+    (Review-Fix Kleinigkeit #3, 2026-09-03) - ebenfalls ein oeffentlich
+    lesbarer `RingBuffer`, ebenfalls NIEMALS `add_observer` direkt darauf
+    aufrufen. Die konkrete Gefahr ist hier eine andere als bei
+    `LogBufferHandler` (keine Rekursion - `UdpSender` protokolliert nichts,
+    das seinerseits `datagram_log` fuellt), aber dieselbe Gefahrenklasse:
+    ein dort registrierter Beobachter liefe synchron innerhalb von
+    `UdpSender.send`, und zwar INNERHALB von dessen `async with self._lock`
+    (siehe dort) - ein langsamer oder haengender Beobachter bremste damit
+    jeden nachfolgenden Versand ueber denselben `UdpSender`, nicht nur den
+    gerade laufenden Aufruf. `UdpSender.add_datagram_observer` ist der
+    einzige sichere Weg, neue Datagramme zu beobachten - genau wie
+    `LogBufferHandler.add_observer` fuer Logzeilen."""
 
     def __init__(self, maxlen: int = 500) -> None:
         self._items: collections.deque[T] = collections.deque(maxlen=maxlen)

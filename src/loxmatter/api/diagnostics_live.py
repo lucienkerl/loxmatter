@@ -59,9 +59,48 @@ dieselbe Angabe (z. B. der Zeitstempel) in zwei Antworten zweimal anders.
   Beobachter darf laut Vertrag von `LogBufferHandler.add_observer` NICHT
   blockieren und muss zuegig zurueckkehren: er laeuft im Thread, der die
   Zeile erzeugt hat, unter `logging.Handler.lock` - ein wartender Beobachter
-  koennte in einen Deadlock laufen (siehe dort). `queue.put(...)`
-  (`BoundedQueue.put`, Task 1) ist genau dafuer gebaut: rein synchron, kein
-  `await`, kann nicht blockieren.
+  koennte in einen Deadlock laufen (siehe dort).
+
+  **Und genau dieser Thread ist NICHT der Event-Loop-Thread dieser Route**
+  (Review-Fix Wichtig #1, 2026-09-03). `LogBufferHandler.add_observer`
+  sagt es woertlich: der Beobachter laeuft "im Thread, der die Zeile erzeugt
+  hat" - und dieses Projekt protokolliert aus aiohttp und dem chip-SDK, also
+  aus fremden Threads, nicht nur aus dem Event-Loop-Thread dieser Route.
+  `on_log` darf deshalb NICHT einfach `queue.put(...)` aufrufen: `put`
+  fasst ueber `BoundedQueue` hinweg `asyncio.Queue`-Interna an
+  (`put_nowait`/`get_nowait`, darunter `Future.set_result`, das ueber
+  `loop.call_soon` einen wartenden `await queue.get()` weckt) - und
+  `asyncio.Queue` ist NICHT thread-sicher, `loop.call_soon` aus einem
+  fremden Thread weckt einen bereits blockierten Event-Loop nicht (nur
+  `call_soon_threadsafe` schreibt dafuer in die Selbst-Pipe des Loops). Eine
+  ruhige Verbindung - `send_loop` haengt in `await queue.get()`, sonst
+  passiert auf dem Loop gerade nichts - wuerde eine Logzeile aus einem
+  echten fremden Thread deshalb unter Umstaenden GAR NICHT sehen, bis
+  irgendetwas Unbeteiligtes den Loop aus einem anderen Grund weckt: kein
+  Absturz, keine Fehlermeldung, der Log-Zweig des Stroms bleibt einfach
+  leer. `live()` haelt deshalb den laufenden Loop
+  (`asyncio.get_running_loop()`) fest, BEVOR er `on_log` definiert, und
+  `on_log` reiht seine Nutzlast ueber `loop.call_soon_threadsafe(queue.put,
+  ...)` ein statt `queue.put(...)` direkt aufzurufen - das schreibt in die
+  Selbst-Pipe des Loops und weckt ihn zuverlaessig, auch aus einem fremden
+  Thread. `call_soon_threadsafe` wirft `RuntimeError`, wenn der Loop bereits
+  geschlossen ist (moeglich waehrend des Herunterfahrens, wenn genau dann
+  noch eine Logzeile entsteht) - `on_log` faengt das ab und protokolliert
+  NICHTS dabei, sonst waere das genau die Rekursion, die Task 3 fuer diesen
+  Handler ausschliesst (siehe `diagnostics.logbuffer`-Moduldocstring, "Die
+  eine Regel...").
+
+  `on_datagram` und `on_command` bleiben bei einfachem `queue.put(...)`:
+  beide laufen ausschliesslich im Event-Loop-Thread dieser Route (siehe die
+  beiden Abschnitte oben - `UdpSender.send` haelt seinen eigenen `asyncio.
+  Lock`, die Kommando-Middleware ist eine gewoehnliche ASGI-Middleware),
+  fuer keinen von beiden gilt die Thread-Warnung von `LogBufferHandler.
+  add_observer`. `call_soon_threadsafe` waere fuer sie kein Fehler, aber ein
+  unnoetiger Umweg (eine zusaetzliche Rundreise durch die Selbst-Pipe des
+  Loops fuer einen Aufruf, der ohnehin schon im richtigen Thread steht) -
+  und wuerde den fuer LESER wichtigsten Unterschied zwischen den drei
+  Zweigen (welcher davon aus einem fremden Thread kommt) hinter derselben
+  Zeile verstecken, statt ihn wie hier sichtbar zu lassen.
 
 **`sender` und `log_handler` sind optional** (siehe `build_app` in
 `loxone.server`): `None` bedeutet "dieser Teil des Livestreams ist fuer
@@ -137,6 +176,10 @@ def build_diagnostics_live_router(
         subprotocol = accepted_subprotocol(websocket)
         await websocket.accept(subprotocol=subprotocol)
         queue = BoundedQueue(QUEUE_MAXSIZE, connection_label=str(websocket.client))
+        # Festgehalten, BEVOR `on_log` definiert wird - siehe Moduldocstring,
+        # Abschnitt "Logs": `on_log` braucht ihn, um aus einem fremden Thread
+        # heraus zuverlaessig ueber `call_soon_threadsafe` einzureihen.
+        loop = asyncio.get_running_loop()
 
         def on_datagram(entry: DatagramLogEntry) -> None:
             queue.put(
@@ -160,15 +203,36 @@ def build_diagnostics_live_router(
             )
 
         def on_log(entry: LogEntry) -> None:
-            queue.put(
-                {
-                    "kind": "log",
-                    "level": entry.level,
-                    "logger": entry.logger,
-                    "message": entry.message,
-                    "timestamp": entry.timestamp,
-                }
-            )
+            # Laeuft moeglicherweise in einem FREMDEN Thread (siehe
+            # Moduldocstring, Abschnitt "Logs") - `queue.put` deshalb
+            # NICHT direkt aufrufen, sondern ueber `call_soon_threadsafe`
+            # einreihen, das den Event-Loop auch aus einem fremden Thread
+            # zuverlaessig weckt.
+            # Annotiert, nicht dem Typ-Inferenz-Ergebnis von mypy ueberlassen:
+            # ohne die explizite `dict[str, object]` schliesst mypy aus den
+            # ausschliesslich Zeichenketten-wertigen Feldern hier
+            # `dict[str, str]` - `BoundedQueue.put` (und damit
+            # `call_soon_threadsafe(queue.put, ...)` unten) erwartet aber
+            # `dict[str, object]`, dieselbe Nutzlastform wie `on_datagram`/
+            # `on_command`.
+            payload: dict[str, object] = {
+                "kind": "log",
+                "level": entry.level,
+                "logger": entry.logger,
+                "message": entry.message,
+                "timestamp": entry.timestamp,
+            }
+            try:
+                loop.call_soon_threadsafe(queue.put, payload)
+            except RuntimeError:
+                # Der Loop ist bereits geschlossen (Herunterfahren, waehrend
+                # genau jetzt noch eine Logzeile entsteht) - dieselbe Regel
+                # wie ueberall in `LogBufferHandler`: ein Beobachter darf
+                # niemals in den Logging-Pfad hineinwerfen, und er darf hier
+                # nichts protokollieren, sonst waere das die Rekursion, die
+                # Task 3 fuer diesen Handler ausschliesst (siehe
+                # `diagnostics.logbuffer`-Moduldocstring, "Die eine Regel...").
+                pass
 
         # Momentaufnahme VOR dem Anmelden der Beobachter (siehe
         # Moduldocstring) - `list(...)` je Ring, NIE eine blosse
@@ -187,15 +251,22 @@ def build_diagnostics_live_router(
             for log_entry in list(log_handler.entries)[-SNAPSHOT_LIMIT:]:
                 on_log(log_entry)
 
-        if sender is not None:
-            sender.add_datagram_observer(on_datagram)
-        command_log.add_observer(on_command)
-        if log_handler is not None:
-            log_handler.add_observer(on_log)
-
-        watcher = asyncio.create_task(watch_for_disconnect(websocket))
-        pump = asyncio.create_task(send_loop(websocket, queue))
+        # Alle drei Anmeldungen INNERHALB des `try` (Review-Fix Kleinigkeit
+        # #2, 2026-09-03): stuende die zweite oder dritte davor und wuerfe,
+        # bliebe die erste fuer immer angemeldet, weil das `finally` sie nie
+        # zu sehen bekaeme. `list.append` (beide `add_observer`-Methoden)
+        # wirft in der Praxis nicht - strukturell richtig ist es trotzdem,
+        # denn `api.live.build_live_router` (das Vorbild) hat nur eine
+        # einzige Anmeldung und stellt die Frage deshalb gar nicht erst.
         try:
+            if sender is not None:
+                sender.add_datagram_observer(on_datagram)
+            command_log.add_observer(on_command)
+            if log_handler is not None:
+                log_handler.add_observer(on_log)
+
+            watcher = asyncio.create_task(watch_for_disconnect(websocket))
+            pump = asyncio.create_task(send_loop(websocket, queue))
             done, pending = await asyncio.wait({watcher, pump}, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
@@ -207,7 +278,11 @@ def build_diagnostics_live_router(
         finally:
             # Dieselbe Bedingung wie beim Anmelden oben - ein Zweig, der nie
             # angemeldet wurde (sender/log_handler ist None), darf auch
-            # nicht abgemeldet werden.
+            # nicht abgemeldet werden. Ein Zweig, der zwar angemeldet werden
+            # SOLLTE, aber wegen eines fruehen Fehlers nie tatsaechlich
+            # angemeldet wurde, meldet hier trotzdem folgenlos ab - beide
+            # `remove_observer`-Methoden ignorieren einen unbekannten
+            # Beobachter still (siehe dort).
             if sender is not None:
                 sender.remove_datagram_observer(on_datagram)
             command_log.remove_observer(on_command)

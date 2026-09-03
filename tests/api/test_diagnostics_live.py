@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
 from typing import Any
 
 import httpx2 as httpx
@@ -72,6 +74,63 @@ async def test_a_fresh_log_line_arrives_as_a_message(api_with_runtime):
     assert message["kind"] == "log"
     assert message["level"] == "WARNING"
     assert message["message"] == "Miniserver nicht erreichbar"
+
+
+async def test_a_log_line_from_a_real_other_thread_arrives(api_with_runtime):
+    """Review-Fix Wichtig #1, 2026-09-03: `on_log` haengt an
+    `LogBufferHandler.add_observer`, dessen Vertrag ausdruecklich sagt, dass
+    der Beobachter "im Thread laeuft, der die Zeile erzeugt hat" - in
+    diesem Projekt aiohttp und das chip-SDK, also ein FREMDER Thread, nicht
+    der Event-Loop-Thread dieser Route. Ein blosses `queue.put(...)` fasst
+    `asyncio.Queue`-Interna an (`put_nowait` -> `Future.set_result` ->
+    `loop.call_soon`) - aus einem fremden Thread weckt `loop.call_soon`
+    einen bereits blockierten Event-Loop nicht, nur `call_soon_threadsafe`
+    tut das (siehe api/diagnostics_live.py, Moduldocstring, Abschnitt
+    "Logs"). Kein Test bis hierhin hat das gefunden, weil jede Logzeile
+    bislang aus derselben Coroutine kam, auf der auch der Loop laeuft.
+
+    Deshalb erzeugt dieser Test die Zeile aus einem ECHTEN, separaten
+    `threading.Thread` - nicht bloss sequenziell wie `test_a_line_from_
+    another_thread_arrives` in test_logbuffer.py (dort `start(); join()`
+    VOR dem naechsten Schritt), sondern waehrend die Verbindung bereits
+    wirklich RUHT: `send_loop` haengt in `await queue.get()`, sonst
+    passiert auf dem Loop nichts - genau der Zustand, in dem ein blosses
+    `call_soon` aus einem fremden Thread den blockierten Selector nicht
+    weckt. Die 0,3-Sekunden-Verzoegerung im Erzeuger-Thread gibt der
+    Verbraucher-Coroutine Zeit, tatsaechlich in diesem Wartezustand
+    anzukommen, BEVOR die Zeile entsteht.
+
+    `asyncio.wait_for(..., timeout=2)` gibt dem Test eine Zeitgrenze, wie
+    verlangt: schlaeft die Verbindung weiter, WIRFT der Test (statt zu
+    haengen). Die zusaetzliche `elapsed < 1.0`-Pruefung unten macht den
+    Test auch gegen den Sonderfall robust, dass `wait_for`s eigener
+    Zeitgeber (der einzige andere im Test geplante Ereignis) den
+    blockierten Selector zufaellig zur gleichen Zeit weckt wie die
+    verspaetete Zeile selbst: mit der Behebung kommt die Nachricht binnen
+    Millisekunden nach den 0,3 s des Erzeuger-Threads an, weit VOR der
+    Zeitgrenze - kaeme sie stattdessen erst spaet an (oder gar nicht, siehe
+    `wait_for`s eigene `TimeoutError`), schlaegt der Test in jedem Fall
+    fehl, nie nur zufaellig durch."""
+    client, _runtime, _device_id = api_with_runtime
+    async with client.websocket_connect("/api/diagnostics/live") as socket:
+        await _drain_snapshot(socket)
+
+        def emit_from_another_thread() -> None:
+            time.sleep(0.3)
+            logging.getLogger("loxmatter.test").warning("aus einem echten fremden Thread")
+
+        thread = threading.Thread(target=emit_from_another_thread)
+        thread.start()
+        try:
+            started = asyncio.get_running_loop().time()
+            message = await asyncio.wait_for(socket.receive_json(), timeout=2)
+            elapsed = asyncio.get_running_loop().time() - started
+        finally:
+            thread.join()
+
+    assert message["kind"] == "log"
+    assert message["message"] == "aus einem echten fremden Thread"
+    assert elapsed < 1.0
 
 
 async def test_the_connection_starts_with_a_snapshot(api_with_runtime):
