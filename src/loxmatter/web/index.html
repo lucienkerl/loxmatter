@@ -26,50 +26,77 @@
     Hier steht mit Absicht KEIN `x-init="init()"` (Review-Fix Fix 2,
     2026-09-03). Alpine 3 ruft die Methode `init()` eines mit `x-data`
     erzeugten Datenobjekts von sich aus genau einmal auf. Ein zusaetzliches
-    `x-init="init()"` ruft sie ein zweites Mal - und `init()` oeffnet den
-    Live-WebSocket. Jeder offene Tab hielt dadurch ZWEI Verbindungen, von
-    denen nur die zuletzt geoeffnete in `this.socket` steht. Die andere
-    bekommt trotzdem jeden Wert, belegt im Backend eine Queue samt zwei
-    asyncio-Tasks und einen Beobachter und ist fuer `restartLive()`
-    unsichtbar (das schliesst nur `this.socket`) - sie stirbt erst mit dem
-    Tab. Wer hier ein `x-init` ergaenzen moechte: dafuer gibt es keinen
-    Grund, `init()` laeuft bereits.
+    `x-init="init()"` ruft sie ein zweites Mal - und `init()` startet nach
+    einer angemeldeten Sitzung den Live-WebSocket. Jeder offene Tab hielt
+    dadurch ZWEI Verbindungen, von denen nur die zuletzt geoeffnete in
+    `this.socket` steht. Die andere bekommt trotzdem jeden Wert, belegt im
+    Backend eine Queue samt zwei asyncio-Tasks und einen Beobachter und
+    bleibt fuer die Oberflaeche unsichtbar - sie stirbt erst mit dem Tab.
+    Wer hier ein `x-init` ergaenzen moechte: dafuer gibt es keinen Grund,
+    `init()` laeuft bereits.
   -->
   <body x-data="app()">
+    <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
+         sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
+    <template x-if="authReady && !authenticated && !passwordSet">
+      <main class="auth-screen">
+        <h1>loxmatter einrichten</h1>
+        <p class="banner warn">
+          Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, kann
+          <strong>jeder im Netz</strong> sie übernehmen, indem er dieses Formular ausfüllt.
+          Schließe die Einrichtung deshalb jetzt ab und nicht später.
+        </p>
+        <label>
+          Passwort
+          <input type="password" autocomplete="new-password" x-model="passwordDraft"
+                 @keydown.enter="submitSetup()" />
+        </label>
+        <label>
+          Passwort wiederholen
+          <input type="password" autocomplete="new-password" x-model="passwordRepeatDraft"
+                 @keydown.enter="submitSetup()" />
+        </label>
+        <p class="hint">
+          Mindestens 8 Zeichen. Dieser Dienst spricht HTTP ohne Verschlüsselung – nimm ein
+          Passwort, das du nirgendwo sonst benutzt.
+        </p>
+        <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
+        <button class="primary" :disabled="authBusy" @click="submitSetup()">
+          Passwort vergeben
+        </button>
+      </main>
+    </template>
+
+    <template x-if="authReady && !authenticated && passwordSet">
+      <main class="auth-screen">
+        <h1>loxmatter</h1>
+        <label>
+          Passwort
+          <input type="password" autocomplete="current-password" x-model="passwordDraft"
+                 @keydown.enter="submitLogin()" />
+        </label>
+        <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
+        <button class="primary" :disabled="authBusy" @click="submitLogin()">Anmelden</button>
+      </main>
+    </template>
+
+    <!-- `x-if` haengt an genau EIN Kindelement - deshalb dieser leere `<div>`
+         um Kopfzeile, Banner, Reiter und Hauptbereich, statt vier Geschwister
+         direkt ins `<template>` zu haengen (das liesse Alpine nur das erste
+         davon beachten). -->
+    <template x-if="authenticated">
+    <div>
     <header class="app-header">
       <h1>loxmatter</h1>
       <div class="header-right">
         <!--
-          Zugang: ein Feld fuer das API-Token, kein Login-Bildschirm und keine
-          Sitzungsverwaltung (Review-Fix Fix 1b, 2026-09-03). Steht in der
-          Kopfzeile, weil eine 401 in jeder der vier Ansichten auftreten kann
-          und der Hinweis darauf hierher fuehrt. Das gespeicherte Token wird
-          nie wieder angezeigt - nur „gesetzt" oder „kein Token".
+          Zugang: seit dem WebUI-Login gibt es hier kein Token-Feld mehr,
+          sondern nur den Weg hinaus. Der Weg hinein sind die beiden
+          Bildschirme unter dieser Kopfzeile.
         -->
-        <div class="token-box">
-          <span class="badge" :class="tokenIsSet ? 'ok' : 'warn'" x-text="tokenStatusText()"></span>
-          <template x-if="!tokenEditing">
-            <span class="row">
-              <button @click="startTokenEdit()" x-text="tokenIsSet ? 'Ersetzen' : 'Token eingeben'">
-              </button>
-              <button class="danger" x-show="tokenIsSet" @click="clearToken()">Löschen</button>
-            </span>
-          </template>
-          <template x-if="tokenEditing">
-            <span class="row">
-              <input
-                type="password"
-                class="token-input"
-                placeholder="API-Token"
-                autocomplete="off"
-                x-model="tokenDraft"
-                @keydown.enter="saveToken()"
-              />
-              <button class="primary" @click="saveToken()">Speichern</button>
-              <button @click="cancelTokenEdit()">Abbrechen</button>
-            </span>
-          </template>
-        </div>
+        <button class="logout" x-show="authenticated" x-cloak @click="logout()">
+          Abmelden
+        </button>
         <div class="connection-status">
           <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
           <span x-text="connectionStatusText()"></span>
@@ -341,10 +368,10 @@
               Vorschau ansehen
             </button>
             <!--
-              Ein `<a href>` kann keinen `Authorization`-Header tragen und
-              wuerde bei gesetztem Token die Seite durch die rohe
-              401-Antwort ersetzen - deshalb ein Knopf, der die Datei ueber
-              `fetch()` holt (siehe `downloadExport` in app.js).
+              Ein `<a href>` wuerde eine Fehlerantwort (401 nach abgelaufener
+              Sitzung, 422 bei leerem Pflichtfeld) als rohen Text anzeigen
+              statt in der Oberflaeche - deshalb ein Knopf, der die Datei
+              ueber `fetch()` holt (siehe `downloadExport` in app.js).
             -->
             <button class="primary" @click="downloadExport()">ZIP herunterladen</button>
           </div>
@@ -450,6 +477,8 @@
         </div>
       </section>
     </main>
+    </div>
+    </template>
 
     <script defer src="/static/app.js"></script>
     <script defer src="/static/vendor/alpine.min.js"></script>

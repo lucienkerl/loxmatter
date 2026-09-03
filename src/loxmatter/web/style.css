@@ -304,10 +304,19 @@ button:disabled {
   border: 1px solid var(--ok);
 }
 
-/* Kopfzeile rechts: Zugang (Token) und Live-Status nebeneinander, bei
- * schmalem Fenster untereinander - `flex-wrap`, damit der Token-Kasten den
- * Verbindungsstatus nicht aus der Kopfzeile draengt (Review-Fix Fix 1b,
- * 2026-09-03). */
+/* Fehlt bislang: der Einrichtungsbildschirm braucht eine dritte Banner-Farbe
+   fuer die Warnung vor einer noch offenen Ersteinrichtung - weder Fehler
+   (rot) noch Erfolg (gruen). Dieselben `--warn`-Variablen wie `.badge.warn`
+   oben. */
+.banner.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border: 1px solid var(--warn);
+}
+
+/* Kopfzeile rechts: Abmelde-Knopf und Live-Status nebeneinander, bei
+ * schmalem Fenster untereinander - `flex-wrap`, damit keins der beiden das
+ * andere aus der Kopfzeile draengt. */
 .header-right {
   display: flex;
   align-items: center;
@@ -316,26 +325,38 @@ button:disabled {
   justify-content: flex-end;
 }
 
-.token-box {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-/* `input[type="text"]` bekommt weiter oben `flex: 1 1 auto` und eine
- * Mindestbreite - das ist fuer ein Feld in einer Karte richtig, wuerde die
- * Kopfzeile aber sprengen. Das Tokenfeld bekommt deshalb eine eigene, feste
- * Breite. */
-.token-input {
-  width: 11rem;
-}
-
 .connection-status {
   display: flex;
   align-items: center;
   gap: 0.4rem;
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+/* Der Einrichtungs- und der Login-Bildschirm: eine schmale Spalte in der
+   Seitenmitte, damit klar ist, dass hier nichts anderes zu tun ist. */
+.auth-screen {
+  max-width: 26rem;
+  margin: 4rem auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.auth-screen label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.auth-screen input {
+  padding: 0.5rem;
+  font-size: 1rem;
+}
+
+.auth-screen .hint {
+  font-size: 0.85rem;
+  opacity: 0.8;
 }
 
 .signal-row {

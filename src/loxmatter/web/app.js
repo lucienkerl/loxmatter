@@ -30,76 +30,14 @@ const RECONNECT_DELAY_MAX_MS = 15000;
 // bereits einen roten Banner und "Verbindung verloren" bekommt.
 const INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3;
 
-// Schluessel, unter dem das API-Token im `localStorage` des Browsers liegt
-// (Review-Fix Fix 1a, 2026-09-03).
-//
-// Warum `localStorage` und nicht etwas anderes: das Token muss einen
-// Seitenwechsel und einen Neustart des Browsers ueberleben, sonst muesste es
-// bei jedem Aufruf neu getippt werden - eine Diagnoseoberflaeche, die das
-// verlangt, benutzt am Ende niemand, und ein Betreiber, der sie deshalb
-// ohne Token betreibt, hat einen ungeschuetzten Dienst statt eines
-// unbequemen. Das Token verlaesst den Browser ausschliesslich als
-// `Authorization`-Header (bzw. als WebSocket-Subprotokoll, siehe
-// `connectLive`) an DENSELBEN Ursprung, von dem diese Seite geladen wurde -
-// es geht an keine dritte Stelle, in keine URL, in keinen Query-Parameter
-// (der stuende in Server-Logs, Proxy-Logs und der Browser-History).
-//
-// Die bekannte Schwaeche von `localStorage` ist ein XSS: fremdes Skript im
-// Ursprung dieser Seite koennte den Wert lesen. Das ist hier vertretbar,
-// weil die Oberflaeche NIRGENDS Fremdinhalt als HTML rendert - jede
-// Ausgabe laeuft ueber Alpines `x-text` (setzt `textContent`, nie
-// `innerHTML`), es gibt kein `x-html`, kein `eval`, keinen `innerHTML`-
-// Zuweisung und keine eingebundene Fremdressource (Alpine liegt vendort
-// unter `/static/vendor/`, siehe Kopfkommentar von index.html). Wer Skript
-// in diesen Ursprung einschleusen koennte, haette ohnehin schon Zugriff auf
-// die ausgelieferten Dateien selbst - und damit ein groesseres Problem als
-// das Token.
-const TOKEN_STORAGE_KEY = "loxmatter_token";
-
-// Erster Wert der WebSocket-Subprotokoll-Liste, an dem der Server erkennt,
-// dass der zweite Wert das Token ist (siehe `connectLive` und
-// `loxone.server.build_api_guard`).
-const WEBSOCKET_BEARER_MARKER = "bearer";
-
 /**
- * Liest das gespeicherte Token - `null`, wenn keins gesetzt ist.
- *
- * Bei jedem Aufruf frisch aus dem `localStorage` statt aus einer Kopie im
- * Zustand: so kann es keine zwei Wahrheiten geben, wenn das Token in einem
- * zweiten Tab geaendert wird. `localStorage` kann werfen (Browser mit
- * blockierten Website-Daten, privates Fenster in manchen Browsern) - dann
- * gilt "kein Token", und die Oberflaeche verhaelt sich wie ohne.
- */
-function readStoredToken() {
-  try {
-    const token = window.localStorage.getItem(TOKEN_STORAGE_KEY);
-    return token ? token : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Die Kopfzeilen fuer einen Aufruf an `/api` - mit Token genau EIN
- * zusaetzlicher Header, ohne Token gar keiner (nicht `Bearer ` mit leerem
- * Wert, das waere ein Token "" und damit eine sinnlose 401).
- */
-function authHeaders() {
-  const token = readStoredToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-/**
- * Fehler eines Aufrufs, dem das Token fehlt oder dessen Token falsch ist -
- * eigene Klasse, damit die Oberflaeche diesen Fall von jedem anderen
- * Fehlschlag unterscheiden kann, ohne auf einen Meldungstext zu pruefen.
+ * Fehler eines Aufrufs ohne gueltige Sitzung - eigene Klasse, damit die
+ * Oberflaeche diesen Fall von jedem anderen Fehlschlag unterscheiden kann,
+ * ohne auf einen Meldungstext zu pruefen.
  */
 class UnauthorizedError extends Error {
   constructor() {
-    super(
-      "Für diesen Zugriff wird ein gültiges API-Token benötigt – " +
-        "oben rechts unter „Token“ eintragen.",
-    );
+    super("Die Sitzung ist abgelaufen – bitte erneut anmelden.");
     this.name = "UnauthorizedError";
   }
 }
@@ -133,10 +71,13 @@ async function requestJson(method, path, body) {
   try {
     response = await fetch(path, {
       method,
-      headers: {
-        ...authHeaders(),
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
-      },
+      // Das Sitzungs-Cookie statt eines Tokens im Header: `same-origin`
+      // schickt es an genau den Ursprung mit, von dem diese Seite geladen
+      // wurde, und an keinen anderen. Ein `Authorization`-Header wird hier
+      // nicht mehr gesetzt - der Weg ueber das Token gibt es weiterhin,
+      // aber fuer Skripte, nicht fuer diesen Browser (siehe api/auth.py).
+      credentials: "same-origin",
+      headers: body !== undefined ? { "Content-Type": "application/json" } : {},
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -151,12 +92,15 @@ async function requestJson(method, path, body) {
     // 2026-09-02.
     throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
   }
-  if (response.status === 401) {
-    // Nicht der rohe Servertext ("Ungültiges oder fehlendes Token"): der
-    // sagt zwar, WAS falsch ist, aber nicht, was jetzt zu tun ist. Wer das
-    // Token gerade falsch abgetippt hat, muss das hier erkennen koennen -
-    // deshalb eine eigene Fehlerklasse, die die Oberflaeche zum Eingabefeld
-    // fuehrt (siehe `request` unten).
+  if (response.status === 401 && !path.startsWith("/auth/")) {
+    // Nicht der rohe Servertext: eine 401 mitten im Betrieb heisst, die
+    // Sitzung ist abgelaufen, und die eigene Fehlerklasse fuehrt die
+    // Oberflaeche zurueck zum Login-Bildschirm (siehe `noteAuthError`
+    // unten). Fuer `/auth/`-Pfade selbst gilt das NICHT: dort ist eine 401
+    // schlicht "Falsches Passwort", und genau dieser Servertext soll den
+    // Login-Bildschirm erreichen, nicht die hier vorformulierte Meldung
+    // ueber eine abgelaufene Sitzung, die es beim allerersten Versuch noch
+    // gar nicht gab.
     throw new UnauthorizedError();
   }
   if (!response.ok) {
@@ -169,18 +113,15 @@ async function requestJson(method, path, body) {
 }
 
 /**
- * Laedt eine Datei von `/api` herunter - mit demselben Token-Header wie
- * `requestJson`, weil ein gewoehnlicher `<a href>` keinen Header tragen
- * kann und bei gesetztem Token nur die rohe 401-Antwort anzeigen wuerde.
- *
- * Die zweite (und letzte) `fetch()`-Stelle der Oberflaeche. Sie holt sich
- * ihre Kopfzeilen aus derselben `authHeaders()`-Funktion wie `requestJson`,
- * damit es fuer das Token weiterhin genau EINEN Ort gibt.
+ * Laedt eine Datei von `/api` herunter. Ueber `fetch` und nicht ueber ein
+ * `<a href>`, weil eine 401 sonst als roher Fehlertext im Browserfenster
+ * landete statt in der Oberflaeche - und weil der Blob-Download so den
+ * Dateinamen setzen kann.
  */
 async function requestDownload(path, filename) {
   let response;
   try {
-    response = await fetch(path, { headers: authHeaders() });
+    response = await fetch(path, { credentials: "same-origin" });
   } catch {
     throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
   }
@@ -212,14 +153,16 @@ function app() {
     // --- Ansicht ---------------------------------------------------------
     view: "devices",
 
-    // --- Zugang (Review-Fix Fix 1b, 2026-09-03) --------------------------
-    // Kein Login, keine Sitzung: ein Feld fuer das API-Token, mehr nicht.
-    // `tokenIsSet` haelt nur, OB eins gespeichert ist - der Wert selbst wird
-    // nach dem Speichern nirgends mehr angezeigt (`tokenDraft` wird geleert),
-    // damit er nicht ueber der Schulter mitlesbar auf dem Bildschirm steht.
-    tokenIsSet: readStoredToken() !== null,
-    tokenEditing: false,
-    tokenDraft: "",
+    // --- Zugang -----------------------------------------------------------
+    // `authReady` verhindert das Aufblitzen des falschen Bildschirms: bis
+    // `/auth-info` geantwortet hat, weiss die Seite nicht, ob sie Einrichtung,
+    // Login oder die App zeigen muss, und zeigt deshalb keines davon.
+    authReady: false,
+    passwordSet: false,
+    authenticated: false,
+    passwordDraft: "",
+    passwordRepeatDraft: "",
+    authBusy: false,
     authError: null,
 
     // --- Geraete -----------------------------------------------------------
@@ -284,18 +227,20 @@ function app() {
     // Ruft Alpine von sich aus genau EINMAL auf, sobald `x-data="app()"`
     // ausgewertet ist. `index.html` traegt deshalb bewusst kein
     // `x-init="init()"` (Review-Fix Fix 2, 2026-09-03) - das rief die
-    // Methode ein zweites Mal auf, und mit ihr `connectLive()`: jeder
-    // offene Tab hielt zwei Live-Verbindungen, von denen nur die zuletzt
-    // geoeffnete in `this.socket` landete. Die andere war damit auch fuer
-    // `restartLive()` nicht mehr erreichbar (das schliesst `this.socket`)
-    // und lief bis zum Schliessen des Tabs weiter.
+    // Methode ein zweites Mal auf, und mit ihr (nach einer angemeldeten
+    // Sitzung) `startApp()`: jeder offene Tab hielt dann zwei
+    // Live-Verbindungen, von denen nur die zuletzt geoeffnete in
+    // `this.socket` landete. Die andere blieb unsichtbar und lief bis zum
+    // Schliessen des Tabs weiter.
     async init() {
-      await this.loadDevices();
-      this.connectLive();
+      await this.loadAuthInfo();
+      if (this.authenticated) {
+        await this.startApp();
+      }
     },
 
     // ---------------------------------------------------------------------
-    // Zugang: das API-Token (Review-Fix Fix 1b, 2026-09-03)
+    // Zugang
     // ---------------------------------------------------------------------
 
     /**
@@ -325,79 +270,94 @@ function app() {
       }
     },
 
+    /**
+     * Eine 401 mitten im Betrieb heisst: die Sitzung ist abgelaufen oder
+     * wurde anderswo beendet. Dann zurueck auf den Login-Bildschirm - eine
+     * Fehlermeldung, die auf ein Eingabefeld verweist, das es nicht mehr
+     * gibt, waere schlimmer als gar keine.
+     */
     noteAuthError(error) {
       if (error instanceof UnauthorizedError) {
+        this.authenticated = false;
         this.authError = error.message;
-        this.tokenEditing = true;
       }
     },
 
-    tokenStatusText() {
-      return this.tokenIsSet ? "Token gesetzt" : "kein Token";
-    },
-
-    startTokenEdit() {
-      // Absichtlich leer statt mit dem gespeicherten Token vorbelegt: ein
-      // gespeichertes Geheimnis wird nie wieder angezeigt, auch nicht in
-      // einem Passwortfeld, aus dem es sich mit zwei Handgriffen auslesen
-      // liesse. Wer es ersetzen will, tippt es neu.
-      this.tokenDraft = "";
-      this.tokenEditing = true;
-    },
-
-    cancelTokenEdit() {
-      this.tokenDraft = "";
-      this.tokenEditing = false;
-    },
-
-    async saveToken() {
-      const token = this.tokenDraft.trim();
-      if (!token) {
-        return;
-      }
+    /** Fragt den Zustand des Zugangs ab - der erste Aufruf jeder Seite. */
+    async loadAuthInfo() {
       try {
-        window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
-      } catch {
-        this.authError =
-          "Das Token konnte nicht gespeichert werden – dieser Browser erlaubt keine " +
-          "Website-Daten (privates Fenster oder blockierte Speicherung?).";
-        return;
+        const info = await requestJson("GET", "/auth-info");
+        this.passwordSet = info.password_set;
+        this.authenticated = info.authenticated;
+      } catch (error) {
+        this.authError = error.message;
+      } finally {
+        this.authReady = true;
       }
-      this.tokenIsSet = true;
-      this.tokenDraft = "";
-      this.tokenEditing = false;
-      this.authError = null;
-      await this.reloadAfterTokenChange();
-    },
-
-    async clearToken() {
-      try {
-        window.localStorage.removeItem(TOKEN_STORAGE_KEY);
-      } catch {
-        // Konnte nicht gespeichert werden, kann auch nicht geloescht
-        // werden - dann war ohnehin nie etwas gespeichert.
-      }
-      this.tokenIsSet = false;
-      this.tokenDraft = "";
-      this.tokenEditing = false;
-      this.authError = null;
-      await this.reloadAfterTokenChange();
     },
 
     /**
-     * Nach einem Wechsel des Tokens ist jeder bisher geladene Stand
-     * fragwuerdig (er kann aus einer 401 stammen) und die Live-Verbindung
-     * traegt noch das alte - oder gar kein - Token im Handshake. Deshalb
-     * beides neu: die aktuelle Ansicht und der WebSocket.
+     * Alles, was eine angemeldete Sitzung voraussetzt. Getrennt von `init`,
+     * weil es nach dem Login ein zweites Mal laufen muss - dann ohne
+     * Neuladen der Seite.
      */
-    async reloadAfterTokenChange() {
-      // Auch die beiden Download-Fehler: eine Meldung "Token nötig", die
-      // nach dem Eintragen des Tokens stehen bliebe, waere schlicht falsch.
-      this.backupError = null;
-      this.exportError = null;
-      this.restartLive();
+    async startApp() {
       await this.loadDevices();
-      await this.selectView(this.view);
+      this.connectLive();
+    },
+
+    async submitSetup() {
+      if (this.passwordDraft !== this.passwordRepeatDraft) {
+        this.authError = "Die beiden Eingaben stimmen nicht überein.";
+        return;
+      }
+      await this.submitPassword("/auth/setup");
+    },
+
+    async submitLogin() {
+      await this.submitPassword("/auth/login");
+    },
+
+    /**
+     * Der gemeinsame Teil von Einrichtung und Login: absenden, Fehler
+     * anzeigen, bei Erfolg die App starten. Das Cookie setzt der Server,
+     * diese Seite fasst es nie an (es ist `HttpOnly`).
+     *
+     * Ruft `requestJson` direkt auf, nicht `this.request`: dessen 401-Fall
+     * ist fuer einen Tippfehler im Passwort gedacht, nicht fuer einen
+     * fehlgeschlagenen Login selbst - `requestJson` weiss das (siehe dessen
+     * Pfadpruefung) und wirft hier den Servertext ("Falsches Passwort.")
+     * unveraendert als gewoehnlichen `Error`.
+     */
+    async submitPassword(path) {
+      this.authBusy = true;
+      this.authError = null;
+      try {
+        await requestJson("POST", path, { password: this.passwordDraft });
+      } catch (error) {
+        this.authError = error.message;
+        return;
+      } finally {
+        this.authBusy = false;
+        // In jedem Fall: ein Passwort bleibt nicht im Speicher der Seite
+        // stehen, auch nicht nach einem Fehlversuch.
+        this.passwordDraft = "";
+        this.passwordRepeatDraft = "";
+      }
+      this.passwordSet = true;
+      this.authenticated = true;
+      await this.startApp();
+    },
+
+    async logout() {
+      try {
+        await requestJson("POST", "/auth/logout");
+      } catch {
+        // Auch ein fehlgeschlagener Logout soll abmelden: das Neuladen
+        // unten verwirft jeden geladenen Stand, und ohne gueltige Sitzung
+        // kommt die Seite ohnehin nur bis zum Login-Bildschirm.
+      }
+      window.location.reload();
     },
 
     // ---------------------------------------------------------------------
@@ -776,11 +736,11 @@ function app() {
       return `/api/export/download?${params}`;
     },
 
-    // Frueher ein gewoehnlicher `<a href>`: der kann keinen
-    // `Authorization`-Header tragen und wuerde bei gesetztem Token die
-    // ganze Seite durch die rohe 401-Antwort ersetzen (Review-Fix Fix 1a,
-    // 2026-09-03). Deshalb ueber `download()`, das denselben Header setzt
-    // wie jeder andere Aufruf.
+    // Frueher ein gewoehnlicher `<a href>`: eine Fehlerantwort (z. B. 401
+    // nach abgelaufener Sitzung, oder 422 bei leerem Pflichtfeld) haette die
+    // ganze Seite durch ihren rohen Text ersetzt statt in der Oberflaeche zu
+    // erscheinen (Review-Fix Fix 1a, 2026-09-03). Deshalb ueber `download()`,
+    // das wie jeder andere Aufruf `requestDownload()` nutzt.
     //
     // Die IP-Pruefung stand vorher aus demselben Grund hier: ohne sie
     // ersetzte ein Klick bei leerem IP-Feld die Seite durch die rohe
@@ -855,38 +815,14 @@ function app() {
     connectLive() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const url = `${protocol}//${window.location.host}/api/live`;
-      // Ein Browser-`WebSocket` kann keine eigenen Kopfzeilen tragen -
-      // `Authorization` ist hier unmoeglich (Review-Fix Fix 1c,
-      // 2026-09-03). Der einzige vom Browser beeinflussbare Kanal im
-      // Handshake ist die Subprotokoll-Liste, die als
-      // `Sec-WebSocket-Protocol: bearer, <Token>` auf die Leitung geht -
-      // einem Query-Parameter vorzuziehen, weil der in Server-Logs,
-      // Proxy-Logs und der Browser-History landet, ein Header nicht. Der
-      // Server liest das Token dort aus und gibt NUR den Marker zurueck
-      // (siehe `loxone.server.build_api_guard` und `api.live`). Ohne Token
-      // wie bisher ganz ohne zweites Argument.
-      const token = readStoredToken();
-      let socket;
-      try {
-        socket = token
-          ? new WebSocket(url, [WEBSOCKET_BEARER_MARKER, token])
-          : new WebSocket(url);
-      } catch {
-        // Der Konstruktor wirft SYNCHRON, wenn ein Subprotokoll-Wert kein
-        // gueltiges HTTP-Token ist - ein Token mit Leerzeichen, Komma oder
-        // Nicht-ASCII also. Ohne dieses `catch` risse der Fehler `init()`
-        // mitten heraus: die Statusanzeige bliebe fuer immer bei
-        // "Verbinde...", und der Grund stuende nur in der
-        // Entwicklerkonsole. Genau der Satz, den `.env.example` und beide
-        // READMEs zum Zeichensatz sagen, gehoert stattdessen in die
-        // Oberflaeche (Review-Fix Minor #1, 2026-09-03).
-        this.authError =
-          "Dieses Token lässt sich nicht über eine WebSocket-Verbindung übertragen – " +
-          "es darf nur Zeichen ohne Leerzeichen, Komma und Umlaute enthalten. " +
-          "Empfohlen: `openssl rand -hex 32`.";
-        this.tokenEditing = true;
-        return;
-      }
+      // Kein Subprotokoll mehr: das Sitzungs-Cookie reist beim Handshake von
+      // selbst mit, weil dieser WebSocket denselben Ursprung hat wie die
+      // Seite. Der frueher noetige Umweg `new WebSocket(url, ["bearer",
+      // token])` - und mit ihm der Sonderfall, dass ein Token mit Leerzeichen
+      // den Konstruktor synchron werfen liess - entfaellt ersatzlos. Der
+      // Server liest das Subprotokoll weiterhin, aber fuer Skripte (siehe
+      // `loxone.server.build_api_guard`).
+      const socket = new WebSocket(url);
 
       socket.addEventListener("open", () => {
         this.socketConnected = true;
@@ -902,11 +838,11 @@ function app() {
       // Sowohl ein sauberes Schliessen als auch ein Verbindungsfehler
       // sollen dieselbe Wiederverbindung ausloesen - eine Oberflaeche, die
       // eingefrorene Werte weiter als aktuell zeigt, ist schlimmer als
-      // eine, die zugibt, dass sie die Verbindung verloren hat.
-      // Die Pruefung `this.socket === socket` gehoert zu `restartLive()`
-      // unten: eine bewusst verworfene Verbindung (Tokenwechsel) darf keine
-      // Wiederverbindung planen, sonst laufen nach dem Neustart zwei
-      // Verbindungen nebeneinander.
+      // eine, die zugibt, dass sie die Verbindung verloren hat. Die
+      // Pruefung `this.socket === socket` ist eine reine Vorsichtsmassnahme
+      // gegen zwei parallele Verbindungen, falls `connectLive` je aus zwei
+      // Stellen gleichzeitig aufgerufen wird - heute gibt es dafuer keinen
+      // Weg.
       socket.addEventListener("close", () => {
         if (this.socket === socket) {
           this.scheduleReconnect();
@@ -915,26 +851,6 @@ function app() {
       socket.addEventListener("error", () => socket.close());
 
       this.socket = socket;
-    },
-
-    /**
-     * Verwirft die laufende Live-Verbindung und baut sie sofort neu auf -
-     * gebraucht nach einem Tokenwechsel, weil das Token im Handshake steckt
-     * und eine bestehende Verbindung es nicht nachtraeglich aendern kann.
-     */
-    restartLive() {
-      if (this.reconnectTimer !== null) {
-        window.clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = null;
-      }
-      this.reconnectDelayMs = RECONNECT_DELAY_INITIAL_MS;
-      const previous = this.socket;
-      this.socket = null;
-      this.socketConnected = false;
-      if (previous) {
-        previous.close();
-      }
-      this.connectLive();
     },
 
     scheduleReconnect() {

@@ -21,7 +21,6 @@ from conftest import load_snapshot
 
 from loxmatter.api.diagnostics import FABRIC_BACKUP_NAME
 from loxmatter.api.export import ARCHIVE_NAME
-from loxmatter.api.live import BEARER_SUBPROTOCOL
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
@@ -108,42 +107,57 @@ async def test_static_files_do_not_escape_their_directory(api):
 
 
 # ---------------------------------------------------------------------------
-# Das API-Token in der Oberflaeche (Review-Fix Fix 1, 2026-09-03). Ohne
+# Einrichtung und Login statt eines Token-Feldes (Task 7, WebUI-Login). Ohne
 # Browser laesst sich hier nicht klicken - pruefbar ist aber, dass die
 # ausgelieferten Dateien die Eigenschaften tragen, ohne die die Bedienung
 # nachweislich nicht funktionieren KANN.
 # ---------------------------------------------------------------------------
 
 
-async def test_the_interface_offers_a_field_to_enter_the_token(api):
-    """Ohne Eingabemoeglichkeit sperrt ein gesetztes Token den Betreiber aus
-    seiner eigenen Oberflaeche aus - genau der gemeldete Fehler. Typ
-    `password`, damit es nicht ueber der Schulter mitlesbar ist."""
+async def test_the_interface_offers_setup_and_login_instead_of_a_token_field(api):
+    """Nachfolger von `test_the_interface_offers_a_field_to_enter_the_token`
+    (Review-Fix Fix 1). Beide Bildschirme stehen unbedingt im ausgelieferten
+    Markup - Alpine blendet sie erst im Browser per `x-if`/`x-show` ein oder
+    aus, ein Test ohne Browser-Engine sieht deshalb immer beide. Geprueft
+    wird: drei Passwortfelder vom Typ `password` (zwei fuer die Einrichtung,
+    eins fuer den Login - Typ `password`, damit nichts ueber der Schulter
+    mitlesbar ist), die beiden Absende-Beschriftungen, und dass die alte
+    Token-Eingabe verschwunden ist."""
     client, _, _ = api
     page = (await client.get("/")).text
-    assert 'type="password"' in page
-    assert "Token" in page
+    assert page.count('type="password"') == 3
+    assert "Passwort vergeben" in page
+    assert "Anmelden" in page
+    assert "token-box" not in page
+    assert "token-input" not in page
 
 
 async def test_no_plain_link_points_at_a_token_protected_route(api):
-    """Ein `<a href>` kann keinen `Authorization`-Header tragen: bei
-    gesetztem Token wuerde ein Klick darauf die Seite durch die rohe
-    401-Antwort ersetzen. Jeder Download unter `/api` muss deshalb ueber
-    `fetch()` laufen (siehe `requestDownload` in app.js)."""
+    """Ein `<a href>` haette bei jeder Fehlerantwort (heute z. B. eine 401
+    nach abgelaufener Sitzung) die Seite durch deren rohen Text ersetzt.
+    Jeder Download unter `/api` muss deshalb ueber `fetch()` laufen (siehe
+    `requestDownload` in app.js)."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert 'href="/api' not in page
 
 
-async def test_the_token_never_travels_in_a_url(api):
-    """Ein Token als Query-Parameter landet in Server-Logs, Proxy-Logs und
-    der Browser-History - deshalb Header bzw. WebSocket-Subprotokoll (siehe
-    `loxone.server.build_api_guard` und `api.diagnostics`s Moduldocstring
-    zur selben Ueberlegung beim Kommando-Log)."""
+async def test_no_secret_travels_in_a_url_or_local_storage(api):
+    """Nachfolger von `test_the_token_never_travels_in_a_url`: seit dem
+    WebUI-Login (Task 7) gibt es kein Token mehr, das ueber den Browser
+    haette lecken koennen - das Passwort geht ausschliesslich im Rumpf eines
+    POST an `/auth/setup` bzw. `/auth/login`, die Sitzung ausschliesslich als
+    `HttpOnly`-Cookie, das dieses Skript nie anfasst. Belegt wird, dass beide
+    frueheren Wege dafuer aus der Oberflaeche verschwunden sind: kein
+    `Bearer`-Header mehr (ein Kommentar in `requestJson` nennt das Wort
+    `Authorization` zwar noch beim Erklaeren, WARUM es fehlt - das ist kein
+    falsches Gruen, das hier bewusst nicht mitgeprueft wird), kein
+    `localStorage`, kein Geheimnis in einer URL."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    assert "Authorization" in script
-    for forbidden in ("?token=", "&token=", "?api_token=", "&api_token="):
+    assert "Bearer" not in script
+    assert "localStorage" not in script
+    for forbidden in ("?token=", "&token=", "?api_token=", "&api_token=", "?password=", "&password="):
         assert forbidden not in script
 
 
@@ -157,16 +171,6 @@ async def test_the_browser_and_the_server_agree_on_the_download_filenames(api):
     script = (await client.get("/static/app.js")).text
     assert f'"{ARCHIVE_NAME}"' in script
     assert f'"{FABRIC_BACKUP_NAME}"' in script
-
-
-async def test_the_browser_and_the_server_agree_on_the_websocket_bearer_marker(api):
-    """Die beiden Seiten des Subprotokoll-Wegs stehen in verschiedenen
-    Dateien und verschiedenen Sprachen - waere der Marker auf einer Seite
-    ein anderer, schluege der Handshake bei gesetztem Token fehl, und keine
-    der beiden Dateien saehe fuer sich genommen falsch aus."""
-    client, _, _ = api
-    script = (await client.get("/static/app.js")).text
-    assert f'"{BEARER_SUBPROTOCOL}"' in script
 
 
 async def test_the_page_declares_a_doctype(api):
@@ -185,10 +189,10 @@ async def test_the_page_declares_a_doctype(api):
 async def test_the_page_does_not_call_init_a_second_time(api):
     """Alpine 3 ruft `init()` eines `x-data`-Objekts von sich aus auf. Ein
     zusaetzliches `x-init="init()"` auf demselben Element ruft es ein
-    zweites Mal - und `init()` oeffnet den Live-WebSocket: jeder offene Tab
-    hielt so zwei Verbindungen, von denen nur die zuletzt geoeffnete in
-    `this.socket` landete; die andere war damit auch fuer `restartLive()`
-    nicht mehr erreichbar und lief bis zum Schliessen des Tabs weiter.
+    zweites Mal - und `init()` startet nach einer angemeldeten Sitzung den
+    Live-WebSocket: jeder offene Tab hielt so zwei Verbindungen, von denen
+    nur die zuletzt geoeffnete in `this.socket` landete; die andere blieb
+    unsichtbar und lief bis zum Schliessen des Tabs weiter.
 
     **Was dieser Test belegt und was nicht.** Er belegt, dass die
     ausgelieferte Seite `init()` nicht ausdruecklich ein zweites Mal
