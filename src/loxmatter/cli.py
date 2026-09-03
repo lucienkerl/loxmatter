@@ -461,72 +461,29 @@ def _warn_if_no_password(store: Store) -> None:
     `tests/api/test_security.py`."""
     if store.auth.password_hash() is not None:
         return
-    logger.warning(
-        "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, "
-        "lässt sich niemand über die Oberfläche anmelden — und jeder, der den Port "
-        "erreicht, kann die Ersteinrichtung abschließen und die Brücke damit "
-        "übernehmen. Öffne die Oberfläche jetzt und vergib ein Passwort."
-    )
+    logger.warning(i18n.t("cli.run.warn_no_password"))
 
 
-@app.command()
+@app.command(help=i18n.t("cli.run.help"))
 def run(
-    url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
-    miniserver: str = typer.Option(..., help="IP des Miniservers"),
-    port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
-    listen: int = typer.Option(8080, help="Port für die HTTP-Kommandos aus Loxone"),
-    host: str = typer.Option(
-        "0.0.0.0",
-        help="Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der "
-        "Miniserver den Dienst erreichen muss — siehe --api-token für die "
-        "dazugehörige Absicherung der `/api`-Routen (Spec 9, Task 8).",
-    ),
+    url: str = typer.Option("ws://localhost:5580/ws", help=i18n.t("cli.common.help_matter_url")),
+    miniserver: str = typer.Option(..., help=i18n.t("cli.run.help_miniserver")),
+    port: int = typer.Option(7000, help=i18n.t("cli.common.help_udp_port")),
+    listen: int = typer.Option(8080, help=i18n.t("cli.run.help_listen")),
+    host: str = typer.Option("0.0.0.0", help=i18n.t("cli.run.help_host")),
     api_token: str | None = typer.Option(
-        None,
-        "--api-token",
-        envvar="LOXMATTER_API_TOKEN",
-        help="Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, "
-        "Fabric-Sicherung) mit `Authorization: Bearer <Token>` — alternativ "
-        "zur angemeldeten Sitzung, nicht zusätzlich zu ihr erforderlich "
-        "(Spec 9, Task 8; Spec 11). `/cmd` und `/resync` bleiben immer "
-        "offen — der Miniserver kann keinen Header mitschicken. Nur "
-        "Zeichen verwenden, die in einem HTTP-Header stehen dürfen — keine "
-        "Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` erfüllt "
-        "das. Alternative über die Umgebungsvariable LOXMATTER_API_TOKEN.",
+        None, "--api-token", envvar="LOXMATTER_API_TOKEN", help=i18n.t("cli.run.help_api_token")
     ),
     store_path: Path | None = typer.Option(  # noqa: B008
-        None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
+        None,
+        help=i18n.t("cli.common.help_store_path_short"),  # noqa: B008
     ),
     matter_data_dir: Path | None = typer.Option(  # noqa: B008
         None,
         "--matter-data-dir",
-        help="matter-server-Datenverzeichnis (storage-path), read-only in diesen "
-        "Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` "
-        "(Spec 4.1, Task 6, Phase 5). Ohne Angabe antwortet die Route mit 503 "
-        "statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die "
-        "dazugehörige Volume-Einhängung.",
+        help=i18n.t("cli.run.help_matter_data_dir"),  # noqa: B008
     ),
 ) -> None:
-    """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein.
-
-    Öffnet die Datenbank schon hier, synchron — ein unbeschreibbarer Pfad
-    soll als klarer CLI-Fehler enden (wie bei `export`), nicht als
-    Traceback aus dem Inneren von `asyncio.run`.
-
-    **`install_log_buffer()` steht als ALLERERSTE Anweisung hier** —
-    Nachbesserung Task 7, Fix 1. Bis dahin hing der Aufruf in `_run()`
-    unmittelbar vor `uvicorn.Config(...)`, also NACH `client.connect()`,
-    `subscribe()`, `runtime.start()`, `seed_from_snapshot()` und
-    `resend_all()` — und nach der Warnung unten (`_warn_if_no_password`),
-    die synchron laeuft, bevor `_run()` ueberhaupt beginnt. Alles, was diese
-    Schritte protokollieren, war deshalb weg, bevor der Ring existierte:
-    allen voran der Sicherheitshinweis zum fehlenden Passwort, der genau
-    dafuer da ist, dass eine Person, die die Ansicht statt eines Terminals
-    vor sich hat, ihn zu sehen bekommt (siehe `test_run_installs_the_log_
-    buffer_before_the_password_warning` in `tests/test_cli.py`). Der
-    entstandene Handler wandert unten unveraendert durch `_run()` bis zu
-    `build_app()` — siehe dessen Docstring, Abschnitt "Log-Ring", fuer die
-    Fortsetzung dieser Begruendung."""
     log_handler = install_log_buffer()
     resolved_store_path = _resolve_store_path(store_path)
     # Wie bei `export` ausgegeben (Review-Fix M10, 2026-09-02): die
@@ -535,18 +492,15 @@ def run(
     # `--store-path`, gestartet ohne (oder umgekehrt). Ohne diese Zeile
     # zeigt sich das erst als 404 in einem Log, das niemand liest, weil
     # `run` den verwendeten Pfad bislang nie nannte.
-    typer.echo(f"Datenbank: {resolved_store_path.resolve()}")
+    typer.echo(i18n.t("cli.common.echo_database_path", path=resolved_store_path.resolve()))
     try:
         resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        _fail(
-            f"Verzeichnis {resolved_store_path.parent} konnte nicht angelegt werden: {exc}. "
-            "Ist der Pfad beschreibbar?"
-        )
+        _fail(i18n.t("cli.common.fail_store_dir", dir=resolved_store_path.parent, exc=exc))
     try:
         store = Store(resolved_store_path)
     except (OSError, sqlite3.Error) as exc:
-        _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
+        _fail(i18n.t("cli.common.fail_store_open", path=resolved_store_path, exc=exc))
 
     _warn_if_no_password(store)
     asyncio.run(
@@ -640,12 +594,9 @@ async def _run(
         try:
             await client.connect()
         except CannotConnect:
-            _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+            _fail(i18n.t("cli.common.fail_matter_unreachable", url=url))
         except MatterUnavailableError as exc:
-            _fail(
-                f"matter-server unter {url} hat sich verbunden, aber keine "
-                f"Bereitschaft gemeldet: {exc}"
-            )
+            _fail(i18n.t("cli.common.fail_matter_not_ready", url=url, exc=exc))
         await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
         # Startwerte aus dem aktuellen Geraetezustand laden, BEVOR der Resend
@@ -700,64 +651,28 @@ async def _run(
         store.close()
 
 
-@app.command()
+@app.command(help=i18n.t("cli.set_password.help"))
 def set_password(
     store_path: Path | None = typer.Option(  # noqa: B008
-        None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
+        None,
+        help=i18n.t("cli.common.help_store_path_short"),  # noqa: B008
     ),
 ) -> None:
-    """Setzt das Passwort der Oberfläche neu — der Notausgang für den Fall,
-    dass es vergessen wurde.
-
-    Ohne diesen Befehl wäre eine headless aufgesetzte Installation mit
-    vergessenem Passwort endgültig verloren: die Ersteinrichtung ist nach
-    der ersten Passwortvergabe dauerhaft geschlossen (409), und einen
-    zweiten Weg hinein gibt es nicht. Wer diesen Befehl ausführen kann, hat
-    Zugriff auf die Datenbankdatei selbst — der Befehl macht daraus nur
-    einen benutzbaren Weg statt eines Bastelns am SQLite.
-
-    Verlangt deshalb eine VORHANDENE Datenbank (siehe die Prüfung unten,
-    Notausgang-Fund 2026-09-03): dieser Befehl setzt ein Passwort ZURÜCK,
-    eine neue Datenbank anzulegen ist in keinem seiner Anwendungsfälle
-    gewollt — im Referenz-Deployment
-    (`deploy/testhost/docker-compose.yml`) liegt sie in einem benannten
-    Docker-Volume, das ausschließlich INNERHALB des Containers unter
-    `LOXMATTER_STORE` erreichbar ist. Auf dem Host träfe `Store(...)` sonst
-    kommentarlos eine neue, leere Fremddatenbank, schriebe den Hash
-    hinein und meldete Erfolg — während die eigentliche Brücke unverändert
-    gesperrt bliebe. Diese Prüfung ist die einzige Stelle, die einen
-    falschen Pfad überhaupt sichtbar macht, statt ihn lautlos zu
-    verschlucken.
-
-    Meldet dabei alle offenen Sitzungen ab — in DERSELBEN Transaktion wie
-    den neuen Hash (siehe `AuthStore.reset_password`): wer das Passwort
-    zurücksetzt, will nicht, dass eine alte Sitzung weiterläuft, und ein
-    Fehlschlag zwischen zwei getrennt committenden Schritten dürfte diesen
-    Zustand nicht halb herstellen.
-    """
     resolved_store_path = _resolve_store_path(store_path)
     if not resolved_store_path.is_file():
-        _fail(
-            f"Datenbank {resolved_store_path} wurde nicht gefunden. `set-password` "
-            "setzt ein Passwort ZURÜCK und legt deshalb absichtlich keine neue "
-            "Datenbank an — das würde eine leere Fremddatenbank erzeugen und Erfolg "
-            "melden, während die eigentliche Brücke gesperrt bliebe. Prüfe den "
-            "Pfad, gib ihn über --store-path an, oder führe den Befehl — im "
-            "Referenz-Deployment — im laufenden Container aus: `docker compose "
-            "exec loxmatter loxmatter set-password`. Bei einer frischen Installation "
-            "aus dem Quellcode kann die Datenbank auch schlicht noch fehlen — sie "
-            "entsteht erst beim ersten `loxmatter run`."
-        )
-    password = typer.prompt("Neues Passwort", hide_input=True, confirmation_prompt=True)
+        _fail(i18n.t("cli.set_password.fail_db_not_found", path=resolved_store_path))
+    password = typer.prompt(
+        i18n.t("cli.set_password.prompt"), hide_input=True, confirmation_prompt=True
+    )
     if len(password) < MIN_PASSWORD_LENGTH:
-        _fail(f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben.")
+        _fail(i18n.t("cli.set_password.fail_too_short", min_length=MIN_PASSWORD_LENGTH))
     store = Store(resolved_store_path)
     try:
         store.auth.reset_password(hash_password(password))
     finally:
         store.close()
     # Bewusst ohne das Passwort in der Ausgabe - auch nicht verkuerzt.
-    typer.echo("Passwort gesetzt. Alle offenen Sitzungen wurden abgemeldet.")
+    typer.echo(i18n.t("cli.set_password.echo_success"))
 
 
 @app.command(name="set-language", help=i18n.t("cli.set_language.help"))
@@ -793,11 +708,12 @@ def set_language_cmd(
     typer.echo(i18n.t("cli.set_language.echo_success", language=language))
 
 
-@app.command(name="fake-miniserver")
+@app.command(name="fake-miniserver", help=i18n.t("cli.fake_miniserver.help"))
 def fake_miniserver_cmd(
-    port: int = typer.Option(7000, help="UDP-Port, auf dem gelauscht wird"),
+    port: int = typer.Option(7000, help=i18n.t("cli.fake_miniserver.help_port")),
     template: Path | None = typer.Option(  # noqa: B008
-        None, help="Erzeugte VIU_-Vorlage: nennt am Ende die Signale, die nie feuerten"
+        None,
+        help=i18n.t("cli.fake_miniserver.help_template"),  # noqa: B008
     ),
 ) -> None:
     """Ersetzt den Miniserver: schreibt jedes Datagramm mit.
@@ -809,7 +725,7 @@ def fake_miniserver_cmd(
     Minor #5).
     """
     if template is not None and not template.is_file():
-        _fail(f"Vorlage {template} wurde nicht gefunden.")
+        _fail(i18n.t("cli.fake_miniserver.fail_template_not_found", path=template))
     asyncio.run(_fake_miniserver(port, template))
 
 
@@ -823,12 +739,16 @@ def _silent_keys_report(template_name: str, announced: set[str], silent: list[st
     Pruefung tatsaechlich erfolgreich (Review-Fix Minor #4).
     """
     if not announced:
-        return f"{template_name} enthält keine Check-Signale — nichts zu prüfen."
+        return i18n.t("cli.fake_miniserver.report_no_check_signals", template=template_name)
     if not silent:
-        return (
-            f"Alle {len(announced)} Signale aus {template_name} wurden mindestens einmal gesehen."
+        return i18n.t(
+            "cli.fake_miniserver.report_all_seen", count=len(announced), template=template_name
         )
-    lines = [f"{len(silent)} Signale aus {template_name} nie gesehen:"]
+    lines = [
+        i18n.t(
+            "cli.fake_miniserver.report_silent_header", count=len(silent), template=template_name
+        )
+    ]
     lines += [f"  {key}" for key in silent]
     return "\n".join(lines)
 
@@ -842,13 +762,13 @@ async def _fake_miniserver(port: int, template: Path | None) -> None:
 
     def announce_malformed(data: bytes) -> None:
         typer.echo(
-            f"{datetime.now():%H:%M:%S} KAPUTT (kein Doppelpunkt): {data!r}",  # noqa: DTZ005
+            f"{datetime.now():%H:%M:%S} {i18n.t('cli.fake_miniserver.malformed')} ({data!r})",  # noqa: DTZ005
             err=True,
         )
 
     fake = FakeMiniserver(port=port, on_received=announce, on_malformed=announce_malformed)
     await fake.start()
-    typer.echo(f"fake-miniserver lauscht auf UDP-Port {fake.port} — Strg-C zum Beenden")
+    typer.echo(i18n.t("cli.fake_miniserver.echo_listening", port=fake.port))
     try:
         await asyncio.Event().wait()  # blockiert, bis Strg-C den Task abbricht
     finally:

@@ -75,6 +75,7 @@ import pytest
 from conftest import authenticate, load_snapshot
 from fastapi import HTTPException
 
+from loxmatter import i18n
 from loxmatter.auth.passwords import hash_password
 from loxmatter.auth.sessions import SESSION_COOKIE
 from loxmatter.cli import _warn_if_no_password
@@ -777,6 +778,21 @@ async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secu
 
 
 def test_warn_if_no_password_logs_a_clear_warning(caplog, tmp_path):
+    store = Store(tmp_path / "t.sqlite")  # kein Passwort vergeben
+    try:
+        with caplog.at_level(logging.WARNING):
+            _warn_if_no_password(store)
+    finally:
+        store.close()
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.WARNING
+    assert "No password has been set" in caplog.records[0].message  # cli.run.warn_no_password
+
+
+def test_warn_if_no_password_logs_a_clear_warning_in_german(caplog, tmp_path):
+    """Deutsches Gegenstueck zu `test_warn_if_no_password_logs_a_clear_warning`
+    oben."""
+    i18n.set_language("de")
     store = Store(tmp_path / "t.sqlite")  # kein Passwort vergeben
     try:
         with caplog.at_level(logging.WARNING):

@@ -542,6 +542,29 @@ def test_run_installs_the_log_buffer_before_the_password_warning(monkeypatch, tm
     ]
     assert len(log_buffer_handlers) == 1
     messages = [e.message for e in log_buffer_handlers[0].entries]
+    assert any(
+        "No password has been set for this bridge yet" in message for message in messages
+    )  # cli.run.warn_no_password
+
+
+def test_run_installs_the_log_buffer_before_the_password_warning_in_german(monkeypatch, tmp_path):
+    """Deutsches Gegenstueck zu `test_run_installs_the_log_buffer_before_the_
+    password_warning` oben - siehe dort fuer die ausfuehrliche Begruendung."""
+    i18n.set_language("de")
+    _install_run_spies(monkeypatch, connect_error=CannotConnect("boom"))
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    store_path = tmp_path / "run.sqlite"
+
+    result = CliRunner().invoke(
+        app, ["run", "--miniserver", "127.0.0.1", "--store-path", str(store_path)]
+    )
+
+    assert result.exit_code != 0
+    log_buffer_handlers = [
+        h for h in logging.getLogger("loxmatter").handlers if isinstance(h, LogBufferHandler)
+    ]
+    assert len(log_buffer_handlers) == 1
+    messages = [e.message for e in log_buffer_handlers[0].entries]
     assert any("noch kein Passwort vergeben" in message for message in messages)
 
 
@@ -779,6 +802,19 @@ def test_fake_miniserver_rejects_a_missing_template_before_listening(tmp_path):
 
     assert result.exit_code != 0
     assert "Traceback" not in result.output
+    assert "was not found" in result.stderr  # cli.fake_miniserver.fail_template_not_found
+
+
+def test_fake_miniserver_rejects_a_missing_template_before_listening_in_german(tmp_path):
+    """Deutsches Gegenstueck zu
+    `test_fake_miniserver_rejects_a_missing_template_before_listening` oben."""
+    i18n.set_language("de")
+    missing = tmp_path / "nicht_da.xml"
+
+    result = CliRunner().invoke(app, ["fake-miniserver", "--template", str(missing)])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
     assert "wurde nicht gefunden" in result.stderr
 
 
@@ -787,6 +823,24 @@ def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen():
     VO_-Datei) hat nichts zu pruefen - das darf nicht wie "alles gesehen"
     aussehen, sonst liest es sich wie eine bestandene statt einer
     ausgebliebenen Pruefung."""
+    nothing_to_check = cli._silent_keys_report("VO_x.xml", announced=set(), silent=[])
+    assert "nothing to check" in nothing_to_check  # cli.fake_miniserver.report_no_check_signals
+    assert "All" not in nothing_to_check
+
+    all_seen = cli._silent_keys_report("VIU_x.xml", announced={"a", "b"}, silent=[])
+    assert "All 2 signals" in all_seen  # cli.fake_miniserver.report_all_seen
+
+    some_silent = cli._silent_keys_report("VIU_x.xml", announced={"a", "b"}, silent=["b"])
+    assert (
+        "1 signals from VIU_x.xml never seen" in some_silent
+    )  # cli.fake_miniserver.report_silent_header
+    assert "  b" in some_silent
+
+
+def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen_in_german():
+    """Deutsches Gegenstueck zu
+    `test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen` oben."""
+    i18n.set_language("de")
     nothing_to_check = cli._silent_keys_report("VO_x.xml", announced=set(), silent=[])
     assert "nichts zu prüfen" in nothing_to_check
     assert "Alle" not in nothing_to_check
