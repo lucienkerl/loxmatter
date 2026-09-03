@@ -5,6 +5,7 @@ from loxmatter.profiles.table import (
     Exportability,
     classify,
     is_exportable,
+    known_attribute_section,
     lookup,
     names_element,
     scale_factor,
@@ -111,6 +112,36 @@ def test_names_element_covers_events_too():
     """Cluster 59 benennt seine Ereignisse; die Feinauswahl darf einen
     Tastendruck nicht als unbenannt verwerfen."""
     assert names_element(SignalRef(1, 59, 1, SignalKind.EVENT)) is True
+
+
+def test_known_attribute_section_true_for_a_cluster_that_names_attributes():
+    assert known_attribute_section(6) is True
+
+
+def test_known_attribute_section_false_for_a_cluster_the_table_does_not_know():
+    assert known_attribute_section(4711) is False
+
+
+def test_known_attribute_section_false_for_a_cluster_known_only_for_its_commands(
+    monkeypatch,
+):
+    """Review-Fix 1b (Nachbesserung Phase 6): ein Cluster kann in der
+    Tabelle stehen, ohne etwas ueber seine Attribute zu sagen - genau die
+    Form, in der Cluster 768 (ColorControl) bis zu dieser Nachbesserung
+    stand (nur `commands:`, kein `attributes:`). Mit einer synthetischen
+    Tabelle statt an Cluster 768 selbst geprueft, damit dieser Test die
+    Falle als solche festhaelt und nicht verstummt, jetzt wo 768 einen
+    `attributes:`-Abschnitt hat."""
+    monkeypatch.setattr(
+        "loxmatter.profiles.table._table",
+        lambda: {
+            999: {
+                "name": "commands_only",
+                "commands": {1: {"slug": "go", "takes_value": False}},
+            }
+        },
+    )
+    assert known_attribute_section(999) is False
 
 
 def test_the_battery_level_is_named_and_scaled_to_percent():

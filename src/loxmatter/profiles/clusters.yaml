@@ -46,6 +46,47 @@ clusters:
       12: {slug: battery, unit: "%", scale: 0.5}
   768:
     name: colorcontrol
+    attributes:
+      # Attribut-IDs gegen das installierte SDK belegt (chip.clusters.Objects.
+      # ColorControl.Attributes): CurrentHue=0, CurrentSaturation=1,
+      # ColorTemperatureMireds=7, ColorMode=8.
+      #
+      # Fehlte bis zur Phase-6-Nachbesserung komplett: der Cluster stand nur
+      # mit `commands:` unten in der Tabelle (Phase 4, fuer
+      # MoveToColorTemperature). Schicht 3 von `is_functional`
+      # (profiles/relevance.py) fragte deshalb `knows_cluster(768)` (wahr)
+      # und dann `names_element`, das ohne diesen Abschnitt IMMER falsch war
+      # - jedes Attribut von ColorControl galt dadurch als nicht funktional,
+      # waehrend der Ausgangsbefehl fuer die Farbtemperatur (unten,
+      # `commands:`) laengst exportiert wurde: Loxone konnte die Farbe
+      # setzen, aber nie zurueckgemeldet bekommen. `known_attribute_section`
+      # in `profiles/table.py` schliesst diese Falle jetzt strukturell fuer
+      # jeden kuenftigen nur-Kommando-Cluster, nicht nur fuer diesen.
+      #
+      # Farbton (Hue, 0): Matter zaehlt 0-254 fuer 0-360°. Auf Grad skaliert
+      # statt roh gelassen - anders als bei der Farbtemperatur unten ist
+      # 360/254 ein linearer Faktor, den der vorhandene `scale`-Mechanismus
+      # korrekt ausdruecken kann, und Grad ist die in Farbwaehlern uebliche
+      # Einheit. Kein Eintrag in `_UNIT_DECIMALS`: ohne eine echte
+      # Loxone-Vorlage, die eine Nachkommastellenzahl fuer Grad belegt,
+      # bleibt der Loxone-Formatstring leer, statt eine erfundene Genauigkeit
+      # vorzugeben - die WebUI zeigt "°" trotzdem an (`signal.unit`, direkt
+      # aus dieser Tabelle, unabhaengig von `unit_format`).
+      0: {slug: hue, unit: "°", scale: 1.4173228346456692}
+      # Saettigung (CurrentSaturation, 1): 0-254 wie `level` (Cluster 8) -
+      # derselbe Zahlenwert wie dort, nicht neu ausgerechnet.
+      1: {slug: saturation, unit: "%", scale: 0.3937007874015748}
+      # Farbtemperatur (ColorTemperatureMireds, 7): Matter liefert Mired,
+      # Loxone will Kelvin - aber Kelvin = 1e6 / Mired ist ein Kehrwert,
+      # kein Faktor, und der `scale`-Mechanismus kann nur multiplizieren.
+      # Der Wert bleibt deshalb in Mired stehen, mit einem Slug, der das
+      # klarstellt, statt eine falsche Kelvin-Zahl zu erfinden. Offener
+      # Punkt (fehlende Kehrwert-Umrechnung):
+      # docs/superpowers/specs/2026-09-03-signalauswahl-design.md Abschnitt 10.
+      7: {slug: colortemp_mireds, unit: mired}
+      # Farbmodus (ColorMode, 8): eine Aufzaehlung, keine physikalische
+      # Groesse - keine Einheit.
+      8: {slug: colormode, unit: ""}
     commands:
       # MoveToColorTemperature - der einzige ColorControl-Befehl, den
       # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS und
