@@ -129,19 +129,30 @@ def _new_signal_edit(
 
 def _new_device_edit(
     index: ProjectIndex,
-    entry: PlanEntry,
+    entries: Sequence[PlanEntry],
     entries_by_key: Mapping[str, LoxoneInput] | Mapping[str, LoxoneCommand],
     bridge_ip: str,
     port: int,
     listen: int,
 ) -> _Edit:
-    is_input = entry.kind == "input"
+    """EIN neuer Geraete-Container fuer ALLE `NEW_DEVICE`-Eintraege eines
+    Geraets derselben Art (`entries` ist die Gruppe zu einem `(kind,
+    device_id)`).
+
+    Bewusst eine Gruppe statt eines einzelnen Eintrags: `export.signals.
+    to_inputs` erzeugt je Geraet immer zusaetzlich ein Online-Signal, ein
+    real neues Geraet hat also praktisch nie nur einen Eintrag. Ein Container
+    je Eintrag ergaebe mehrere gleichnamige `VirtualUdpIn`-Geraete mit
+    identischer Adresse und Port, jedes mit genau einem Kommando darin -
+    strukturell falsch, nicht nur unschoen."""
+    first = entries[0]
+    is_input = first.kind == "input"
     caption = index.virtual_in_caption if is_input else index.virtual_out_caption
     if caption is None or caption.inner_end is None:
         section = "VirtualInCaption" if is_input else "VirtualOutCaption"
         raise MissingCaptionError(
             f"Die Projektdatei hat keinen `{section}`-Abschnitt - ein komplett "
-            f"neuer Geraete-Container fuer '{entry.device_label}' kann darum nicht "
+            f"neuer Geraete-Container fuer '{first.device_label}' kann darum nicht "
             "automatisch eingefuegt werden. Bitte zuerst manuell einen virtuellen "
             f"{'Eingang' if is_input else 'Ausgang'} in der Loxone Config anlegen."
         )
@@ -151,27 +162,33 @@ def _new_device_edit(
     container_u = new_unique_id(index.all_u_values)
     if is_input:
         container_open = new_input_container_open_tag(
-            entry.device_label, bridge_ip, port, container_iname, container_u
+            first.device_label, bridge_ip, port, container_iname, container_u
         )
     else:
         container_open = new_output_container_open_tag(
-            entry.device_label, f"http://{bridge_ip}:{listen}", container_iname, container_u
+            first.device_label, f"http://{bridge_ip}:{listen}", container_iname, container_u
         )
 
     cmd_iname_prefix = "VCI" if is_input else "VQC"
-    cmd_iname = new_iname(cmd_iname_prefix, index.all_inames)
-    cmd_u = new_unique_id(index.all_u_values)
     iodata = find_any_iodata_attrs(index.text, caption)
-    obj = entries_by_key[entry.key]
-    cmd_open = (
-        new_input_cmd_open_tag(cast(LoxoneInput, obj), cmd_iname, cmd_u)
-        if is_input
-        else new_output_cmd_open_tag(cast(LoxoneCommand, obj), cmd_iname, cmd_u)
-    )
-    children_xml = new_cmd_children_xml(
-        kind="input" if is_input else "output", existing_u=index.all_u_values, iodata_attrs=iodata
-    )
-    full_xml = f"{container_open}{cmd_open}{children_xml}</C></C>"
+    cmds: list[str] = []
+    for entry in entries:
+        cmd_iname = new_iname(cmd_iname_prefix, index.all_inames)
+        cmd_u = new_unique_id(index.all_u_values)
+        obj = entries_by_key[entry.key]
+        cmd_open = (
+            new_input_cmd_open_tag(cast(LoxoneInput, obj), cmd_iname, cmd_u)
+            if is_input
+            else new_output_cmd_open_tag(cast(LoxoneCommand, obj), cmd_iname, cmd_u)
+        )
+        children_xml = new_cmd_children_xml(
+            kind="input" if is_input else "output",
+            existing_u=index.all_u_values,
+            iodata_attrs=iodata,
+        )
+        cmds.append(f"{cmd_open}{children_xml}</C>")
+
+    full_xml = f"{container_open}{''.join(cmds)}</C>"
     pos = caption.inner_end
     return _Edit(pos, pos, full_xml)
 
@@ -218,6 +235,11 @@ def apply_plan(
 
     edits: list[_Edit] = []
     created_count = 0
+    # (kind, device_id) -> alle NEW_DEVICE-Eintraege dieses Geraets, damit ein
+    # Geraet genau EINEN neuen Container bekommt statt einen je Signal (siehe
+    # `_new_device_edit`). `dict` haelt die Reihenfolge des Plans fest, die
+    # erzeugte Datei ist damit reproduzierbar.
+    new_device_groups: dict[tuple[str, int], list[PlanEntry]] = {}
     for entry in plan.entries:
         if entry.status is PlanStatus.UPDATED:
             edits += _update_edits(index, entry)
@@ -226,9 +248,14 @@ def apply_plan(
             edits.append(_new_signal_edit(index, entry, source))
             created_count += 1
         elif entry.status is PlanStatus.NEW_DEVICE and include_new_devices:
-            source = desired_inputs if entry.kind == "input" else desired_outputs
-            edits.append(_new_device_edit(index, entry, source, bridge_ip, port, listen))
-            created_count += 2  # Container + erstes Cmd sind beides neue <C>-Objekte.
+            new_device_groups.setdefault((entry.kind, entry.device_id), []).append(entry)
+
+    for (kind, _device_id), group in new_device_groups.items():
+        source = desired_inputs if kind == "input" else desired_outputs
+        edits.append(_new_device_edit(index, group, source, bridge_ip, port, listen))
+        # Der Container selbst plus ein Cmd je Eintrag sind alles neue
+        # <C>-Objekte.
+        created_count += 1 + len(group)
 
     next_obj_edit = _next_obj_edit(index, created_count)
     if next_obj_edit is not None:

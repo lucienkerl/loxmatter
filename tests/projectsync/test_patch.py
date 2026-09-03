@@ -1,5 +1,5 @@
 from loxmatter.export.signals import SignalKind
-from loxmatter.model.store import SignalRef, StoredDevice, StoredSignal
+from loxmatter.model.store import SignalRef, StoredCommand, StoredDevice, StoredSignal
 from loxmatter.profiles.table import Exportability
 from loxmatter.projectsync.diff import build_plan
 from loxmatter.projectsync.index import build_index
@@ -30,14 +30,28 @@ def _device(device_id: int, label: str) -> StoredDevice:
     )
 
 
-def _patch(index, device, signals, *, include_new_devices):
-    plan = build_plan(index, [device], {device.id: signals}, {device.id: []})
+def _command(key: str, slug: str, device_id: int, command_id: int) -> StoredCommand:
+    return StoredCommand(
+        key=key,
+        slug=slug,
+        node_id=device_id,
+        endpoint=1,
+        cluster_id=6,
+        command_id=command_id,
+        takes_value=False,
+        device_id=device_id,
+    )
+
+
+def _patch(index, device, signals, *, include_new_devices, commands=()):
+    commands = list(commands)
+    plan = build_plan(index, [device], {device.id: signals}, {device.id: commands})
     return apply_plan(
         index,
         plan,
         [device],
         {device.id: signals},
-        {device.id: []},
+        {device.id: commands},
         include_new_devices=include_new_devices,
         bridge_ip="10.0.0.5",
         port=7000,
@@ -108,6 +122,38 @@ def test_new_device_is_created_with_the_flag(sample_project):
     assert 'Check="d2_1_onoff:\\v"' in patched
     assert 'Title="Matter — Neues Geraet"' in patched
     assert 'Address="10.0.0.5"' in patched
+
+
+def test_new_device_with_several_signals_gets_exactly_one_container(sample_project):
+    """Ein komplett neues Geraet mit MEHREREN neuen Signalen darf genau EINEN
+    `VirtualUdpIn`-Container bekommen, der alle Kommandos als Kinder traegt -
+    nicht einen eigenen Container je Signal.
+
+    Der Fall ist nicht exotisch, sondern der Normalfall: `export.signals.
+    to_inputs` erzeugt je Geraet immer zusaetzlich das Online-Signal, jedes
+    reale neue Geraet hat also mindestens zwei `NEW_DEVICE`-Eintraege. Ein
+    Container je Eintrag ergaebe mehrere gleichnamige Geraete mit identischer
+    Adresse/Port - eine strukturell falsche Projektdatei."""
+    index = build_index(sample_project)
+    device = _device(2, "Neues Geraet")
+    signals = [_signal("d2_1_onoff", 2), _signal("d2_1_temp", 2, title="Temperatur", unit="°C")]
+    commands = [_command("d2_1_on", "on", 2, 1), _command("d2_1_off", "off", 2, 0)]
+    patched = _patch(index, device, signals, include_new_devices=True, commands=commands)
+
+    # Je genau ein neuer Container - zusaetzlich zu dem je einen, den die
+    # Beispieldatei fuer Geraet 1 schon mitbringt.
+    assert patched.count('Type="VirtualUdpIn"') == 2
+    assert patched.count('Type="VirtualOut"') == 2
+
+    patched_index = build_index(patched)
+    new_input_keys = {key for key in patched_index.input_containers if key.startswith("d2_")}
+    assert new_input_keys == {"d2_1_onoff", "d2_1_temp", "d2_online"}
+    # Alle drei haengen im SELBEN Container (gleiche U-ID).
+    assert len({patched_index.input_containers[key].attrs["U"] for key in new_input_keys}) == 1
+
+    new_output_keys = {key for key in patched_index.output_containers if key.startswith("d2_")}
+    assert new_output_keys == {"d2_1_on", "d2_1_off"}
+    assert len({patched_index.output_containers[key].attrs["U"] for key in new_output_keys}) == 1
 
 
 def test_next_obj_is_raised_when_new_objects_were_created(sample_project):
