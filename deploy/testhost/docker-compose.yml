@@ -16,6 +16,28 @@
 #     selbst gebaut (siehe ../../Dockerfile, dort auch der Hinweis, dass das
 #     Image noch ungeprueft ist - kein Docker/Netz in der Umgebung, die
 #     diesen Dienst hinzugefuegt hat). Braucht MINISERVER_IP in .env.
+# Der Projektname steht HIER und nicht in der .env (2026-09-03).
+#
+# Compose leitet ihn sonst aus dem Verzeichnisnamen ab, und daraus entstehen
+# die Namen der benannten Volumes: `<projekt>_loxmatter-store` haelt die
+# Signalschluessel, `<projekt>_otbr-state` den Thread-Netzwerkschluessel.
+# Beides ist unersetzlich - die Schluessel sind die Verdrahtung in der
+# Loxone-Konfiguration, der Thread-Schluessel das Netz, in dem die Geraete
+# stehen.
+#
+# Haengt der Name am Verzeichnis, aendert ihn jeder Umzug des Checkouts, jedes
+# Umbenennen und jedes Klonen unter anderem Namen - und Compose legt
+# stillschweigend LEERE Volumes an, statt einen Fehler zu melden. Genau das
+# passierte beim Umzug dieses Stacks von ~/loxmatter-testhost in einen
+# Git-Checkout; dort war es nur deshalb harmlos, weil der alte Name von Hand
+# in der .env festgehalten wurde. Wer die .env spaeter neu aus
+# .env.example erzeugt, haette den Schutz wieder verloren. Hier steht er
+# fest.
+#
+# COMPOSE_PROJECT_NAME in der Umgebung sticht diesen Eintrag weiterhin; wer
+# mehrere Instanzen nebeneinander betreibt, kann ihn also weiter benutzen.
+name: loxmatter-testhost
+
 services:
   otbr:
     image: openthread/otbr:latest

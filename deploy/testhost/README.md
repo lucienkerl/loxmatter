@@ -53,12 +53,10 @@ nötig waren.** Sie stehen unten bereits an der richtigen Stelle in der Reihenfo
 **Schritt 1 — Dateien kopieren und Konfiguration anlegen:**
 
 ```bash
-# auf dem Mac, im Repo:
-scp deploy/testhost/docker-compose.yml deploy/testhost/.env.example \
-    pi@10.0.1.56:~/loxmatter-testhost/
-
-# auf dem Pi:
-cd ~/loxmatter-testhost
+# auf dem Pi (seit 2026-09-03 ein Git-Checkout, vorher per scp kopierte
+# Einzeldateien unter ~/loxmatter-testhost):
+git clone https://github.com/lucienkerl/loxmatter.git ~/matter-loxone
+cd ~/matter-loxone/deploy/testhost
 cp .env.example .env      # RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_ADAPTER ggf. anpassen
 mkdir -p data
 
@@ -133,12 +131,26 @@ Das Skript merkt, dass es aus einem Checkout heraus läuft, und baut aus
 diesem — nicht aus dem per rsync gefüllten `~/loxmatter-build`. Es sagt vor
 dem Bauen, aus welchem Verzeichnis und von welchem Commit es ausliefert.
 
-Der Checkout ersetzt dabei **nur die Quellen**. Der laufende Stack bleibt,
-wo er ist (`~/loxmatter-testhost`) — samt matter-servers Datenverzeichnis,
-das dort als `./data` relativ zur Compose-Datei liegt. Ein Umzug des
-Projekts in den Checkout würde diesen Pfad ins Leere zeigen lassen und
-Compose matter-server mit leerer Fabric neu erzeugen; alle Geräte müssten
-neu eingelernt werden. Deshalb bleiben beide Verzeichnisse getrennt.
+Seit dem 3. September 2026 liegt **der ganze Stack** im Checkout, nicht nur
+die Quellen: `docker-compose.yml`, `.env` und matter-servers
+Datenverzeichnis `data/`. Vorher lag er flach unter `~/loxmatter-testhost`.
+
+**Wer einen bestehenden Stack umzieht, muss zwei Dinge mitnehmen, sonst
+verliert er sie:**
+
+1. **Das Datenverzeichnis** (`data/`) — es ist ein Bind-Mount *relativ zur
+   Compose-Datei*. Ein Umzug ohne es lässt den Pfad ins Leere zeigen, und
+   Compose erzeugt matter-server mit leerer Fabric: alle Geräte müssten neu
+   eingelernt werden. Also `mv altes/data neues/data`, bevor der neue Stack
+   startet.
+2. **Den Thread-Zustand von OTBR** — siehe den Kommentar am Volume
+   `otbr-state` in `docker-compose.yml`. Ein leeres Volume einzuhängen
+   löscht das Thread-Netz genauso, wie gar keins zu haben.
+
+Um den **Projektnamen** muss sich dagegen niemand mehr kümmern: er steht seit
+demselben Tag als `name:` in `docker-compose.yml` fest. Vorher leitete Compose
+ihn aus dem Verzeichnisnamen ab — dann hätte der Umzug die benannten Volumes
+umbenannt und stillschweigend leere angelegt, statt einen Fehler zu melden.
 
 Ohne Checkout, mit per rsync gefüllten Quellen, geht auch:
 
@@ -412,20 +424,20 @@ state` liefert `leader`. Kein zweiter Versuch mit 115200 nötig.
 
 ## Fabric-Volume sichern (`./data`)
 
-`matter-server` legt Fabric-/Node-Zustand unter `~/loxmatter-testhost/data` ab
+`matter-server` legt Fabric-/Node-Zustand unter `~/matter-loxone/deploy/testhost/data` ab
 (`chip.json`, `chip_*.ini`, `credentials/`, sowie eine `<NodeID>.json` pro
 committetem Node). Sicherung vom Pi:
 
 ```bash
-ssh pi@10.0.1.56 'tar czf - -C ~/loxmatter-testhost data' > matter-server-data-backup.tar.gz
+ssh pi@10.0.1.56 'tar czf - -C ~/matter-loxone/deploy/testhost data' > matter-server-data-backup.tar.gz
 ```
 
 Rueckspielen (Container vorher stoppen):
 
 ```bash
-ssh pi@10.0.1.56 'cd ~/loxmatter-testhost && docker compose stop matter-server'
-cat matter-server-data-backup.tar.gz | ssh pi@10.0.1.56 'tar xzf - -C ~/loxmatter-testhost'
-ssh pi@10.0.1.56 'cd ~/loxmatter-testhost && docker compose start matter-server'
+ssh pi@10.0.1.56 'cd ~/matter-loxone/deploy/testhost && docker compose stop matter-server'
+cat matter-server-data-backup.tar.gz | ssh pi@10.0.1.56 'tar xzf - -C ~/matter-loxone/deploy/testhost'
+ssh pi@10.0.1.56 'cd ~/matter-loxone/deploy/testhost && docker compose start matter-server'
 ```
 
 ## Thread-Datensatz — NICHT ins Repository
@@ -435,7 +447,7 @@ aus (hex-kodiert). Das ist ein Netzwerk-Credential (enthaelt u.a. den Network Ke
 wer ihn hat, kann dem Thread-Netz beitreten. Er gehoert **nicht** ins Repository und
 nicht unter `deploy/`.
 
-Abgelegt auf dem Pi unter `~/loxmatter-testhost/thread-dataset.txt` (Modus `600`,
+Abgelegt auf dem Pi unter `~/matter-loxone/deploy/testhost/thread-dataset.txt` (Modus `600`,
 nur fuer den Betreiber lesbar). `deploy/testhost/.gitignore` schliesst zusaetzlich
 `.env`, `data/` und alles, was wie ein Dataset benannt ist
 (`*.dataset`, `thread-dataset*`), von Commits aus, falls jemand versehentlich in
@@ -548,8 +560,9 @@ verschwindet.
 
 ## Dateien in diesem Verzeichnis
 
-- `docker-compose.yml` — Compose-Definition, wie auf dem Pi unter
-  `~/loxmatter-testhost/docker-compose.yml` deployt (identisch).
+- `docker-compose.yml` — Compose-Definition. Der Pi benutzt seit dem
+  3. September 2026 **diese Datei selbst**, aus einem Git-Checkout unter
+  `~/matter-loxone` — keine Kopie mehr, die auseinanderlaufen kann.
 - `.env.example` — Vorlage fuer `.env` auf dem Pi.
 - `.gitignore` — verhindert versehentliches Commit von `.env`, `data/` und
   Dataset-Dateien, falls diese jemals lokal in diesem Repo-Pfad angelegt werden.
