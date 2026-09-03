@@ -37,6 +37,17 @@ class SignalOut(BaseModel):
 
 
 class DeviceOut(BaseModel):
+    """`signal_count`/`exportable_count` sagen, wie viele Signale es gibt und
+    wie viele davon technisch auf einen Loxone-Eingang passen (Spec 6.6) -
+    beide unabhaengig davon, ob sie tatsaechlich als Vorlage exportiert
+    wuerden. `next_export_count` (Nachbesserung Fix 7, Phase 6) ist die
+    davon verschiedene Zahl, die die Gerätekachel bis dahin gar nicht zeigte:
+    wie viele `LoxoneInput`s (inklusive Online-Signal) der naechste Export
+    tatsaechlich erzeugt (`export.signals.to_inputs`, gefiltert auf
+    `exported`) - fuer die Steckdose der Testvorlage etwa 159 Signale, 110
+    exportierbar, aber nur 6 im naechsten Export (5 funktionale plus das
+    Online-Signal)."""
+
     model_config = ConfigDict(frozen=True)
 
     id: int
@@ -45,6 +56,7 @@ class DeviceOut(BaseModel):
     online: bool
     signal_count: int
     exportable_count: int
+    next_export_count: int
 
 
 class SignalPatch(BaseModel):

@@ -549,6 +549,22 @@ function app() {
       return signals ? signals.filter((signal) => !signal.functional) : [];
     },
 
+    // Beide Bloecke der Signale-Ansicht als eine Liste (Review-Fix 6,
+    // Nachbesserung Phase 6): vorher stand die Signalzeilen-Vorlage in
+    // index.html zweimal, byte-identisch bis auf `functionalSignalsFor`
+    // gegen `expertSignalsFor` - 51 Zeilen doppelt, die bei jeder
+    // Aenderung zweimal angefasst werden mussten, ohne dass etwas ein
+    // Auseinanderlaufen bemerkt haette. `collapsible` steuert in der
+    // Vorlage, ob ein Block hinter `showExpertSignals` versteckt ist und
+    // seine Anzahl in der Ueberschrift zeigt - der Rest (Zeilen-Markup,
+    // leer-Hinweis) ist fuer beide Gruppen identisch.
+    signalGroupsFor(deviceId) {
+      return [
+        { key: "functional", title: "Funktional", collapsible: false, signals: this.functionalSignalsFor(deviceId) },
+        { key: "expert", title: "Experte", collapsible: true, signals: this.expertSignalsFor(deviceId) },
+      ];
+    },
+
     liveValueOf(signal) {
       if (Object.prototype.hasOwnProperty.call(this.liveValues, signal.key)) {
         return this.liveValues[signal.key];

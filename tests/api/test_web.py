@@ -250,6 +250,21 @@ async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api
     assert "Signale (Anfang der Liste)" not in page
 
 
+async def test_the_export_preview_shows_how_many_signals_are_held_back(api):
+    """Nachbesserung Fix 3 (Abschlussreview): `hidden_count` kam schon vorher
+    aus `GET /api/export/preview`, aber nirgends in der Oberflaeche an - die
+    Vorschautabelle hatte Spalten fuer Eingaenge, Befehle und Uebersprungen,
+    keine fuer als Experte zurueckgehaltene Signale. Belegt wie die
+    uebrigen Markup-Tests in dieser Datei nur, dass die ausgelieferte Seite
+    die Spalte und ihre Bindung an `device.hidden_count` enthaelt - nicht,
+    dass Alpine sie zur Laufzeit korrekt befuellt (dafuer braeuchte es eine
+    Browser-Engine, siehe `test_the_page_does_not_call_init_a_second_time`)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "Als Experte zurückgehalten" in page
+    assert 'x-text="device.hidden_count"' in page
+
+
 async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
     """Der Wert dieses Feldes wird zur `Address` des virtuellen
     UDP-Eingangs und zum Rumpf der Kommando-URLs (`http://<ip>:<listen>`) -

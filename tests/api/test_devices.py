@@ -34,6 +34,21 @@ async def test_device_list_carries_name_and_signal_count(api):
     assert devices[0]["signal_count"] == 159
 
 
+async def test_device_list_reports_how_many_inputs_the_next_export_would_produce(api):
+    """Nachbesserung Fix 7 (Abschlussreview): die Gerätekachel zeigte bisher
+    nur `signal_count` (159) und `exportable_count` (110) - beide korrekt,
+    aber keine davon beantwortet, wie viele Eingänge der nächste Export
+    tatsächlich erzeugt. `next_export_count` ist dieselbe Zahl wie
+    `ExportDeviceOut.inputs` in der Exportvorschau: 5 funktionale Signale
+    plus das Online-Signal, siehe
+    `test_export_api.py::test_preview_reports_what_would_be_written`."""
+    client, _, device_id, _ = api
+    response = await client.get("/api/devices")
+    devices = response.json()
+    device = next(d for d in devices if d["id"] == device_id)
+    assert device["next_export_count"] == 6
+
+
 async def test_signal_tree_marks_what_cannot_be_exported(api):
     """Spec 6.6: nicht abbildbare Werte werden angezeigt, aber nicht exportierbar."""
     client, _, device_id, _ = api

@@ -151,7 +151,8 @@
               />
               <span
                 class="muted"
-                x-text="device.signal_count + ' Signale, ' + device.exportable_count + ' exportierbar'"
+                :title="device.signal_count + ' Signale, ' + device.exportable_count + ' exportierbar'"
+                x-text="device.next_export_count + ' Eingänge im nächsten Export'"
               ></span>
               <button
                 @click="toggleExpanded(device)"
@@ -257,130 +258,91 @@
               Signale laden
             </button>
 
+            <!--
+              Beide Bloecke (Funktional, Experte) teilen sich seit Review-
+              Fix 6 (Nachbesserung Phase 6) diese eine Signalzeilen-Vorlage
+              statt zweier byte-identischer Kopien, die nur gegen
+              `functionalSignalsFor` bzw. `expertSignalsFor` liefen -
+              `signalGroupsFor` (app.js) liefert dafuer beide Gruppen mit
+              ihren Metadaten (Titel, Anzahl, ob zuklappbar).
+            -->
             <template x-if="signalsByDevice[device.id]">
               <div>
-                <h3>Funktional</h3>
-                <p class="hint" x-show="functionalSignalsFor(device.id).length === 0">
-                  Kein Signal dieses Geräts gilt als funktional.
-                </p>
-                <template x-for="signal in functionalSignalsFor(device.id)" :key="signal.key">
-                  <div class="device-controls">
-                    <div class="row">
+                <template x-for="group in signalGroupsFor(device.id)" :key="group.key">
+                  <div>
+                    <h3>
+                      <span x-text="group.title"></span>
                       <span
-                        class="key"
-                        title="Verdrahtung in Loxone – nicht änderbar."
-                        x-text="signal.key"
+                        class="muted"
+                        x-show="group.collapsible"
+                        x-text="'(' + group.signals.length + ')'"
                       ></span>
-                      <input
-                        type="text"
-                        :value="signal.title"
-                        @input="titleDrafts[signal.key] = $event.target.value"
-                        @change="saveTitle(signal)"
-                      />
-                      <span class="hint" x-text="signal.path"></span>
-                      <span
-                        class="value"
-                        x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
-                      ></span>
-                      <label x-show="signal.exportable">
-                        <input
-                          type="checkbox"
-                          :checked="signal.exported"
-                          @change="toggleExported(signal)"
-                        />
-                        exportieren
-                      </label>
-                      <span
-                        class="badge warn"
-                        x-show="!signal.exportable"
-                        x-text="signal.reason"
-                      ></span>
-                    </div>
-                    <div class="row" x-show="signal.kind === 'attribute'">
-                      <input
-                        type="text"
-                        placeholder="Rohwert schreiben"
-                        @input="rawWriteDrafts[signal.key] = $event.target.value"
-                      />
-                      <button
-                        @click="writeRaw(signal)"
-                        :disabled="rawWriteBusyKey === signal.key"
-                      >
-                        Schreiben
-                      </button>
-                      <span
-                        x-show="rawWriteMessages[signal.key]"
-                        :class="rawWriteMessageClass(signal)"
-                        x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
-                      ></span>
+                    </h3>
+                    <p class="hint" x-show="!group.collapsible && group.signals.length === 0">
+                      Kein Signal dieses Geräts gilt als funktional.
+                    </p>
+                    <p class="hint" x-show="group.collapsible && !showExpertSignals">
+                      Zugeklappt – <span x-text="group.signals.length"></span> Signale ohne
+                      erkannte Bedeutung für diesen Gerätetyp. „Experten-Signale anzeigen“ oben
+                      blendet sie für alle Geräte ein.
+                    </p>
+                    <div x-show="!group.collapsible || showExpertSignals" x-cloak>
+                      <template x-for="signal in group.signals" :key="signal.key">
+                        <div class="device-controls">
+                          <div class="row">
+                            <span
+                              class="key"
+                              title="Verdrahtung in Loxone – nicht änderbar."
+                              x-text="signal.key"
+                            ></span>
+                            <input
+                              type="text"
+                              :value="signal.title"
+                              @input="titleDrafts[signal.key] = $event.target.value"
+                              @change="saveTitle(signal)"
+                            />
+                            <span class="hint" x-text="signal.path"></span>
+                            <span
+                              class="value"
+                              x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                            ></span>
+                            <label x-show="signal.exportable">
+                              <input
+                                type="checkbox"
+                                :checked="signal.exported"
+                                @change="toggleExported(signal)"
+                              />
+                              exportieren
+                            </label>
+                            <span
+                              class="badge warn"
+                              x-show="!signal.exportable"
+                              x-text="signal.reason"
+                            ></span>
+                          </div>
+                          <div class="row" x-show="signal.kind === 'attribute'">
+                            <input
+                              type="text"
+                              placeholder="Rohwert schreiben"
+                              @input="rawWriteDrafts[signal.key] = $event.target.value"
+                            />
+                            <button
+                              @click="writeRaw(signal)"
+                              :disabled="rawWriteBusyKey === signal.key"
+                            >
+                              Schreiben
+                            </button>
+                            <span
+                              x-show="rawWriteMessages[signal.key]"
+                              :class="rawWriteMessageClass(signal)"
+                              x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
+                            ></span>
+                          </div>
+                        </div>
+                      </template>
                     </div>
                   </div>
                 </template>
-
-                <h3>
-                  Experte
-                  <span class="muted" x-text="'(' + expertSignalsFor(device.id).length + ')'"></span>
-                </h3>
-                <p class="hint" x-show="!showExpertSignals">
-                  Zugeklappt – <span x-text="expertSignalsFor(device.id).length"></span> Signale
-                  ohne erkannte Bedeutung für diesen Gerätetyp. „Experten-Signale anzeigen“ oben
-                  blendet sie für alle Geräte ein.
-                </p>
-                <div x-show="showExpertSignals" x-cloak>
-                  <template x-for="signal in expertSignalsFor(device.id)" :key="signal.key">
-                    <div class="device-controls">
-                      <div class="row">
-                        <span
-                          class="key"
-                          title="Verdrahtung in Loxone – nicht änderbar."
-                          x-text="signal.key"
-                        ></span>
-                        <input
-                          type="text"
-                          :value="signal.title"
-                          @input="titleDrafts[signal.key] = $event.target.value"
-                          @change="saveTitle(signal)"
-                        />
-                        <span class="hint" x-text="signal.path"></span>
-                        <span
-                          class="value"
-                          x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
-                        ></span>
-                        <label x-show="signal.exportable">
-                          <input
-                            type="checkbox"
-                            :checked="signal.exported"
-                            @change="toggleExported(signal)"
-                          />
-                          exportieren
-                        </label>
-                        <span
-                          class="badge warn"
-                          x-show="!signal.exportable"
-                          x-text="signal.reason"
-                        ></span>
-                      </div>
-                      <div class="row" x-show="signal.kind === 'attribute'">
-                        <input
-                          type="text"
-                          placeholder="Rohwert schreiben"
-                          @input="rawWriteDrafts[signal.key] = $event.target.value"
-                        />
-                        <button
-                          @click="writeRaw(signal)"
-                          :disabled="rawWriteBusyKey === signal.key"
-                        >
-                          Schreiben
-                        </button>
-                        <span
-                          x-show="rawWriteMessages[signal.key]"
-                          :class="rawWriteMessageClass(signal)"
-                          x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
-                        ></span>
-                      </div>
-                    </div>
-                  </template>
-                </div>
               </div>
             </template>
           </div>
@@ -451,6 +413,7 @@
                   <th>Eingänge</th>
                   <th>Befehle</th>
                   <th>Übersprungen</th>
+                  <th>Als Experte zurückgehalten</th>
                   <th>Zuletzt exportiert</th>
                 </tr>
               </thead>
@@ -463,12 +426,18 @@
                     <td x-text="device.inputs"></td>
                     <td x-text="device.commands"></td>
                     <td x-text="device.skipped"></td>
+                    <td x-text="device.hidden_count"></td>
                     <td x-text="formatTimestamp(exportedAtFor(device.device_id))"></td>
                   </tr>
                 </template>
               </tbody>
             </table>
           </div>
+          <p class="hint">
+            „Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber
+            standardmäßig nicht zum Gerätetyp gehören (Ansicht „Signale“, Block „Experte“) – dort
+            lässt sich jedes einzeln freischalten.
+          </p>
           <p class="hint" x-show="exportPreview && exportPreview.system_files.length > 0">
             Systemvorlagen: <span x-text="exportPreview ? exportPreview.system_files.join(', ') : ''"></span>
           </p>
