@@ -20,22 +20,57 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterator
+from uuid import uuid4
 
 import pytest
 
-from loxmatter.diagnostics.logbuffer import LogBufferHandler, LogEntry, install_log_buffer
+from loxmatter.diagnostics.logbuffer import (
+    LOG_BUFFER_SIZE,
+    LogBufferHandler,
+    LogEntry,
+    install_log_buffer,
+)
 
 
-def _logger_with_handler() -> tuple[logging.Logger, LogBufferHandler]:
-    logger = logging.getLogger(f"test.{id(object())}")
+@pytest.fixture
+def logger_with_handler() -> Iterator[tuple[logging.Logger, LogBufferHandler]]:
+    """Legt einen frischen Logger mit garantiert eindeutigem Namen und
+    angehaengtem `LogBufferHandler` an, und meldet den Handler nach dem Test
+    wieder ab.
+
+    `uuid4().hex` statt `id(object())` (wie im urspruenglichen Brief-Code):
+    `id()` liefert die Speicheradresse eines Objekts, und CPython gibt die
+    Adresse eines sofort wieder freigegebenen temporaeren Objekts fast immer
+    an das naechste `object()` weiter - ein Lauf von 200 Aufrufen von
+    `id(object())` ergab genau EINE einzige unterschiedliche ID, nicht 200
+    eindeutige Namen. Ohne diese Aenderung haetten mehrere Tests denselben
+    Loggernamen geteilt (mit je einem eigenen `LogBufferHandler` daran) -
+    heute folgenlos, weil kein Test eine Aussage ueber einen ANDEREN,
+    gleichzeitig aktiven `test.*`-Logger trifft, aber ein Zufall, kein
+    Entwurf, und beim naechsten Test, der genau das prueft, eine stille
+    Fehlerquelle.
+
+    Meldet den Handler ueber `removeHandler` wieder ab (nicht
+    `.handlers.clear()`, siehe auch `_cleanup_test_recursion_proof_logger`
+    unten): ohne das blieben fuenf Handler an fuenf `test.*`-Loggern haengen
+    (einer je Testfunktion unten, die diese Fixture benutzt) - heute
+    folgenlos, weil jeder Loggername einzigartig ist und niemand mehr
+    hinschaut, aber unnoetiger Ballast in `logging.Logger.manager.
+    loggerDict`, der bei einem kuenftigen, absichtlichen Wiederverwenden
+    eines Namens ploetzlich sichtbar wuerde."""
+    logger = logging.getLogger(f"test.{uuid4().hex}")
     logger.setLevel(logging.INFO)
     handler = LogBufferHandler()
     logger.addHandler(handler)
-    return logger, handler
+    yield logger, handler
+    logger.removeHandler(handler)
 
 
-def test_a_log_line_lands_in_the_ring() -> None:
-    logger, handler = _logger_with_handler()
+def test_a_log_line_lands_in_the_ring(
+    logger_with_handler: tuple[logging.Logger, LogBufferHandler],
+) -> None:
+    logger, handler = logger_with_handler
     logger.warning("Miniserver nicht erreichbar")
 
     entries = list(handler.entries)
@@ -43,10 +78,19 @@ def test_a_log_line_lands_in_the_ring() -> None:
     assert entries[0].level == "WARNING"
 
 
-def test_a_line_from_another_thread_arrives() -> None:
+def test_a_line_from_another_thread_arrives(
+    logger_with_handler: tuple[logging.Logger, LogBufferHandler],
+) -> None:
     """Logzeilen entstehen in diesem Projekt auch in fremden Threads - aiohttp
-    und das chip-SDK. `emit` laeuft dort, wo die Zeile entsteht."""
-    logger, handler = _logger_with_handler()
+    und das chip-SDK. `emit` laeuft dort, wo die Zeile entsteht.
+
+    Streng sequenziell (`start()` dann sofort `join()`), keine echte
+    Nebenlaeufigkeit - das reicht, um zu belegen, dass `emit()` aus einem
+    fremden Thread funktioniert, beweist aber NICHTS ueber gleichzeitiges
+    Protokollieren aus zwei Threads (siehe Moduldocstring, Abschnitt
+    "Warum thread-lokal...", wo eine fruehere Fassung dieses Docstrings
+    genau das faelschlich behauptet hatte)."""
+    logger, handler = logger_with_handler
     thread = threading.Thread(target=lambda: logger.info("aus einem Thread"))
     thread.start()
     thread.join()
@@ -64,12 +108,14 @@ def _throwing_observer(entry: LogEntry) -> None:
     raise RuntimeError("kaputt")
 
 
-def test_a_throwing_observer_neither_breaks_logging_nor_logs() -> None:
+def test_a_throwing_observer_neither_breaks_logging_nor_logs(
+    logger_with_handler: tuple[logging.Logger, LogBufferHandler],
+) -> None:
     """Die eine Stelle im Projekt, an der ein verschluckter Fehler NICHT
     durch einen Logeintrag ausgeglichen werden darf: der Ausgleich waere
     selbst eine Logzeile, die denselben Handler aufruft - eine
     Endlosschleife."""
-    logger, handler = _logger_with_handler()
+    logger, handler = logger_with_handler
     handler.add_observer(_throwing_observer)
 
     logger.info("erste")
@@ -78,8 +124,10 @@ def test_a_throwing_observer_neither_breaks_logging_nor_logs() -> None:
     assert [e.message for e in handler.entries] == ["erste", "zweite"]
 
 
-def test_the_observer_sees_each_entry_once() -> None:
-    logger, handler = _logger_with_handler()
+def test_the_observer_sees_each_entry_once(
+    logger_with_handler: tuple[logging.Logger, LogBufferHandler],
+) -> None:
+    logger, handler = logger_with_handler
     seen: list[LogEntry] = []
     handler.add_observer(seen.append)
 
@@ -88,10 +136,12 @@ def test_the_observer_sees_each_entry_once() -> None:
     assert [e.message for e in seen] == ["eine Zeile"]
 
 
-def test_an_exception_is_kept_as_text() -> None:
+def test_an_exception_is_kept_as_text(
+    logger_with_handler: tuple[logging.Logger, LogBufferHandler],
+) -> None:
     """Bei einer Stoerung ist der Traceback das Interessanteste - er darf
     nicht verlorengehen, nur weil er nicht in `message` steht."""
-    logger, handler = _logger_with_handler()
+    logger, handler = logger_with_handler
     try:
         raise ValueError("etwas ging schief")
     except ValueError:
@@ -100,6 +150,49 @@ def test_an_exception_is_kept_as_text() -> None:
     entry = next(iter(handler.entries))
     assert "ValueError" in entry.message
     assert "etwas ging schief" in entry.message
+
+
+def test_remove_observer_stops_further_notifications(
+    logger_with_handler: tuple[logging.Logger, LogBufferHandler],
+) -> None:
+    """Bislang ungeprueft, obwohl Teil des Interfaces (Task-3-Brief): eine
+    abgemeldete Beobachterin darf keine spaetere Zeile mehr sehen, auch
+    wenn die Zeile selbst weiterhin im Ring landet."""
+    logger, handler = logger_with_handler
+    seen: list[LogEntry] = []
+    handler.add_observer(seen.append)
+
+    logger.info("erste")
+    handler.remove_observer(seen.append)
+    logger.info("zweite")
+
+    assert [e.message for e in seen] == ["erste"]
+    assert [e.message for e in handler.entries] == ["erste", "zweite"]
+
+
+def test_removing_an_unknown_observer_is_ignored() -> None:
+    """Ein nie angemeldeter (oder bereits entfernter) Beobachter ist kein
+    Fehler - dieselbe Regel wie bei `Runtime.remove_observer` (siehe
+    Docstring von `remove_observer`), bislang ungeprueft."""
+    handler = LogBufferHandler()
+    handler.remove_observer(lambda entry: None)
+
+
+def test_the_ring_evicts_the_oldest_entry_once_full(
+    logger_with_handler: tuple[logging.Logger, LogBufferHandler],
+) -> None:
+    """`LOG_BUFFER_SIZE` ist Teil des oeffentlichen Interfaces (Task-3-Brief),
+    aber die Verdraengung selbst war bislang ungeprueft - nur `RingBuffer`
+    (in `api.diagnostics`) hat einen eigenen Verdraengungstest, nicht dieser
+    Handler, der ihn benutzt."""
+    logger, handler = logger_with_handler
+    for i in range(LOG_BUFFER_SIZE + 1):
+        logger.info("Zeile %d", i)
+
+    entries = list(handler.entries)
+    assert len(entries) == LOG_BUFFER_SIZE
+    assert entries[0].message == "Zeile 1"
+    assert entries[-1].message == f"Zeile {LOG_BUFFER_SIZE}"
 
 
 def _log_via_same_logger_observer(entry: LogEntry) -> None:
@@ -150,6 +243,39 @@ def test_an_observer_that_logs_through_the_same_handler_terminates() -> None:
         logger.removeHandler(handler)
 
 
+def test_a_directly_nested_emit_call_bypassing_the_lock_still_terminates(
+    logger_with_handler: tuple[logging.Logger, LogBufferHandler],
+) -> None:
+    """Belegt die im Moduldocstring (Abschnitt "Warum thread-lokal...")
+    genannte tatsaechliche Notwendigkeit der Wiedereintrittssperre: nicht
+    Nebenlaeufigkeit (dagegen schuetzt bereits `logging.Handler.lock`),
+    sondern ein Beobachter, der `handler.emit(...)` DIREKT aufruft und damit
+    `Handler.handle()` samt Schloss vollstaendig umgeht. Auch dieser Fall
+    bricht nach genau einer Ebene ab - die Sperre wirkt unabhaengig davon,
+    ueber welchen Weg der verschachtelte Aufruf ankommt."""
+    logger, handler = logger_with_handler
+    direct_record = logging.LogRecord(
+        name=logger.name,
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=0,
+        msg="direkt emittiert, am Schloss vorbei",
+        args=(),
+        exc_info=None,
+    )
+
+    def _direct_emit_observer(entry: LogEntry) -> None:
+        handler.emit(direct_record)  # bewusst NICHT ueber logger.info() -> Handler.handle()
+
+    handler.add_observer(_direct_emit_observer)
+    logger.info("erste Zeile")
+
+    assert [e.message for e in handler.entries] == [
+        "erste Zeile",
+        "direkt emittiert, am Schloss vorbei",
+    ]
+
+
 def test_install_log_buffer_attaches_to_the_loxmatter_logger_only() -> None:
     """`install_log_buffer` haengt NICHT an den Root-Logger - Zeilen fremder
     Bibliotheken (aiohttp, chip-SDK) gehoeren nicht in eine Bedienoberflaeche
@@ -169,23 +295,74 @@ def test_install_log_buffer_attaches_to_the_loxmatter_logger_only() -> None:
         # Aufraeumen: "loxmatter" ist ein globaler, ueber die Testsuite
         # geteilter Logger - ohne das bliebe dieser Handler an ihm haengen
         # und wuerde spaetere Tests verfaelschen (Randbedingung des Auftrags).
+        # Seit `install_log_buffer` auch die Logger-Stufe selbst setzt (Fix
+        # 3, siehe Docstring dort), muss diese Stufe hier ebenfalls
+        # zurueckgesetzt werden - sonst bliebe `loxmatter` fuer den Rest des
+        # Testlaufs auf INFO stehen statt auf der urspruenglichen,
+        # unveraenderten Stufe (NOTSET).
         logging.getLogger("loxmatter").removeHandler(handler)
+        logging.getLogger("loxmatter").setLevel(logging.NOTSET)
 
 
-def test_install_log_buffer_sets_the_given_level() -> None:
+def test_install_log_buffer_default_level_captures_info_lines() -> None:
+    """Reproduziert den Fund aus Fix 3: mit der Vorgabe (Stufe INFO) muss
+    eine INFO-Zeile im Ring landen. Vor der Behebung wurde sie von
+    `Logger.isEnabledFor` verworfen, bevor sie den Handler je erreichte -
+    `install_log_buffer` setzte nur `handler.setLevel(level)`, nicht die
+    Stufe des Loggers `loxmatter` selbst, und dessen effektive Stufe blieb
+    ohne das auf der von Python vorgegebenen WARNING (kein `basicConfig`,
+    kein `setLevel`, kein `dictConfig` fuer `loxmatter` irgendwo im
+    Projekt). `install_log_buffer()` waere damit fuer die im Entwurf
+    (Live-Feed-Spec, Abschnitt 4) verlangte Stufe "ab INFO" praktisch
+    wirkungslos gewesen."""
+    handler = install_log_buffer()
+    try:
+        logging.getLogger("loxmatter").info("Testzeile auf INFO")
+        assert [e.message for e in handler.entries] == ["Testzeile auf INFO"]
+    finally:
+        logging.getLogger("loxmatter").removeHandler(handler)
+        logging.getLogger("loxmatter").setLevel(logging.NOTSET)
+
+
+def test_install_log_buffer_only_captures_from_the_given_level() -> None:
+    """Ersetzt `test_install_log_buffer_sets_the_given_level` (Fix 3): die
+    alte Fassung pruefte nur `handler.level == logging.WARNING` - eine
+    Wiederholung der Zuweisung eine Zeile zuvor, die auch dann gruen
+    gemeldet haette, wenn `install_log_buffer` die Stufe des LOGGERS gar
+    nicht gesetzt haette (der eigentliche Fehler aus Fix 3). Diese
+    verhaltensbezogene Fassung protokolliert tatsaechlich unterhalb UND auf
+    der gesetzten Stufe und prueft, was davon im Ring ankommt: eine
+    INFO-Zeile muss verworfen werden, eine WARNING-Zeile muss ankommen."""
     handler = install_log_buffer(level=logging.WARNING)
     try:
         assert handler.level == logging.WARNING
+
+        logging.getLogger("loxmatter").info("sollte NICHT im Ring landen")
+        logging.getLogger("loxmatter").warning("sollte im Ring landen")
+
+        assert [e.message for e in handler.entries] == ["sollte im Ring landen"]
     finally:
         logging.getLogger("loxmatter").removeHandler(handler)
+        logging.getLogger("loxmatter").setLevel(logging.NOTSET)
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_test_recursion_proof_logger() -> None:
+def _cleanup_test_recursion_proof_logger() -> Iterator[None]:
     """Der Rekursionsbeweis-Test haengt einen Handler an
     `test.recursion-proof` - kein globaler Logger, aber zur Sicherheit
     trotzdem im `finally` des jeweiligen Tests abgemeldet. Dieses Fixture
     ist ein zusaetzliches Netz, falls ein kuenftiger Test denselben Namen
-    wiederverwendet."""
+    wiederverwendet.
+
+    `-> Iterator[None]`, nicht `-> None`: diese Funktion enthaelt `yield`
+    und ist damit ein Generator, keine gewoehnliche Funktion - die
+    Rueckgabeannotation hatte das bislang verschwiegen. Entfernt Handler
+    einzeln ueber `removeHandler` statt pauschal ueber `.handlers.clear()`:
+    Letzteres wuerde JEDEN Handler an diesem Logger entfernen, auch einen,
+    der - anders als heute - aus einem anderen Grund als diesem Testnetz
+    dort haengen sollte; `removeHandler` je Handler ist die dafuer
+    vorgesehene, gezielte Methode."""
     yield
-    logging.getLogger("test.recursion-proof").handlers.clear()
+    recursion_logger = logging.getLogger("test.recursion-proof")
+    for handler in list(recursion_logger.handlers):
+        recursion_logger.removeHandler(handler)

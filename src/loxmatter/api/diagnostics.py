@@ -139,7 +139,25 @@ class RingBuffer[T]:
     O(1); diese Klasse fuegt nur die schmale, absichtlich MINIMALE
     Oberflaeche hinzu, die die Diagnose-Routen unten brauchen (anhaengen,
     iterieren, zaehlen) - kein `clear()`, kein Indexzugriff, nichts, das ein
-    Aufrufer nutzen koennte, um Eintraege nachtraeglich zu manipulieren."""
+    Aufrufer nutzen koennte, um Eintraege nachtraeglich zu manipulieren.
+
+    **Ein Leser, der `for entry in ring:` durchlaufen koennte, waehrend aus
+    einem anderen Thread gleichzeitig angehaengt wird, MUSS zuerst
+    `list(ring)` aufrufen, um eine Momentaufnahme zu bekommen.** `append` ist dank der
+    GIL ein atomarer, einzelner C-Aufruf (siehe
+    `diagnostics.logbuffer`-Moduldocstring) - `__iter__` unten dagegen
+    nicht: er gibt einen lebenden `deque`-Iterator zurueck, und `deque`
+    erkennt eine Mutation waehrend einer laufenden Iteration. Sobald der
+    Ring einmal voll ist, verdraengt jedes weitere `append` den aeltesten
+    Eintrag - genau das ist eine Mutation im Sinne dieser Erkennung, und
+    eine parallel laufende `for`-Schleife bricht dann mit
+    `RuntimeError('deque mutated during iteration')` ab. Solange jeder Ring
+    nur aus einem einzigen Pfad heraus beschrieben wird (bislang der Fall:
+    ein Event-Loop je Ring), tritt das nie auf. `diagnostics.logbuffer.
+    LogBufferHandler` ist der erste Schreiber, der aus BELIEBIGEN Threads
+    gleichzeitig anhaengen kann - fuer einen Ring, den er fuellt, ist eine
+    blosse `for`-Schleife deshalb nicht mehr sicher; `list(ring)` dagegen
+    schon, weil auch das ein einziger, atomarer C-Aufruf ist."""
 
     def __init__(self, maxlen: int = 500) -> None:
         self._items: collections.deque[T] = collections.deque(maxlen=maxlen)
