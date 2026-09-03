@@ -31,4 +31,6 @@ kommentarlos eine neue, leere Datenbank anzulegen und Erfolg zu melden.
 
 **Ein Hinweis zum Passwort.** Der Dienst spricht HTTP ohne Verschlüsselung;
 das Passwort geht beim Anmelden im Klartext über das Netz. Nimm eines, das
-du nirgendwo sonst benutzt.
+du nirgendwo sonst benutzt — und lass es dir erzeugen, statt dir eines
+auszudenken. Hinter der Anmeldung liegt auch die Fabric-Sicherung; acht
+Zeichen tragen die nur, solange sie nicht zu raten sind.

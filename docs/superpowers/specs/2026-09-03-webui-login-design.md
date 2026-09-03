@@ -131,10 +131,31 @@ eines einzigen Ablaufs ohne Sonderfall in Code und Dokumentation.
 
 Der Preis, der damit gekauft wird, ist in beiden Fällen derselbe und muss
 klar benannt sein: **zwischen dem Start ohne Passwort und der
-Passwortvergabe kann jeder, der den Dienst im Netz erreicht, ihn
-übernehmen.** Der rechtmäßige Betreiber erfährt davon erst dadurch, dass
-sein eigenes Passwort nicht angenommen wird. Wer die Brücke aufsetzt und
-erst Tage später weiterkonfiguriert, lässt dieses Fenster tagelang offen.
+Passwortvergabe kann jeder, der den Dienst erreicht, ihn übernehmen.** Der
+rechtmäßige Betreiber erfährt davon erst dadurch, dass sein eigenes
+Passwort nicht angenommen wird. Wer die Brücke aufsetzt und erst Tage
+später weiterkonfiguriert, lässt dieses Fenster tagelang offen.
+
+**„Wer den Dienst erreicht" ist dabei weiter zu lesen als „wer im selben
+Netz steht"** (Nachtrag vom 3. September 2026, aus dem Abschlussreview).
+Eine fremde Webseite, deren Name nach kurzer TTL auf die LAN-Adresse der
+Brücke umschwenkt — DNS-Rebinding —, ist für den Browser des Betreibers
+derselbe Ursprung. Damit entfallen sowohl der CORS-Preflight, der einen
+fremden `Content-Type: application/json` sonst blockiert, als auch die
+Wirkung von `SameSite=Strict`: `POST /auth/setup` ist aus dem Internet
+erreichbar, sobald der Betreiber irgendeine Seite öffnet, während seine
+Brücke noch ohne Passwort läuft. Nach der Passwortvergabe bleibt die
+Wirkung eines solchen Angriffs auf `/cmd` und `/resync` beschränkt, die
+ohnehin bewusst offen sind.
+
+Ein Test auf `Sec-Fetch-Site` (nur `same-origin` und `none` zulassen) auf
+den beiden `/auth`-Routen würde genau diese Grenze herstellen und wäre
+wenige Zeilen groß. Er wurde am 3. September 2026 **bewusst nicht**
+umgesetzt: der Betreiber richtet die Brücke unmittelbar nach dem Ausrollen
+ein, das Fenster ist damit Minuten lang, und eine weitere Prüfung auf dem
+einzigen Weg hinein ist eine weitere Stelle, an der man sich aussperren
+kann. Wer die Brücke länger unkonfiguriert stehen lässt, sollte das anders
+entscheiden.
 
 Beim Bestandssystem wiegt das schwerer als bei der Neuinstallation, und
 auch das gehört hierher: die Anlage war bereits abgesichert, der Betreiber
@@ -231,7 +252,7 @@ unangemeldet erreichbar sein.
 
 | Route | Verhalten |
 | --- | --- |
-| `GET /auth-info` | `{"password_set": bool, "authenticated": bool}`. Sagt der Oberfläche, ob sie Einrichtung, Login oder die App zeigt. Kein Geheimnis: beide Werte sind auch daran ablesbar, wie `/api/devices` antwortet. |
+| `GET /auth-info` | `{"password_set": bool, "authenticated": bool}`. Sagt der Oberfläche, ob sie Einrichtung, Login oder die App zeigt. Kein Geheimnis: `password_set` ist auch daran ablesbar, wie `POST /auth/login` antwortet (409 vor der Ersteinrichtung, 401 danach), `authenticated` daran, ob `/api/devices` Daten liefert. **Nicht** mehr an `/api/devices` allein — seit Abschnitt 4 antwortet die Route in beiden Zuständen mit 401 (korrigiert am 3. September 2026). Praktische Folge: ein Netzscan findet über `GET /auth-info` nicht eingerichtete Brücken, ohne Spur in einem Fehlerzähler zu hinterlassen. |
 | `POST /auth/setup` | Nimmt das neue Passwort entgegen, **solange keines gesetzt ist** — ohne weiteren Nachweis, auch wenn ein Token konfiguriert ist (5). Ist bereits eines gesetzt: 409, ohne Ausnahme. Legt bei Erfolg sofort eine Sitzung an, damit der Betreiber nicht direkt danach noch einmal tippt. |
 | `POST /auth/login` | Prüft das Passwort, legt bei Erfolg eine Sitzung an. |
 | `POST /auth/logout` | Löscht die Sitzungszeile **serverseitig** und räumt das Cookie ab. Ein Logout, der nur das Cookie löscht, lässt eine gestohlene Kennung weiterleben. |
@@ -307,9 +328,29 @@ fünf Router hängt, prüft `tests/api/test_security.py` bereits Router für
 Router einzeln statt über den gemeinsamen Präfix.
 
 Nach dem Login ist der Download damit frei — ohne Token, ohne Zusatzschritt.
-Das folgt aus 3: ein Login ist der stärkere Ausweis, und eine Ausnahme, die
-den Betreiber nach erfolgreicher Anmeldung noch einmal nach einem zweiten
-Geheimnis fragt, schützt nichts, das nicht schon geschützt wäre.
+Eine Ausnahme, die den Betreiber nach erfolgreicher Anmeldung noch einmal
+nach einem zweiten Geheimnis fragt, schützt nichts, das nicht schon
+geschützt wäre.
+
+**Der Ausweis vor dieser Route ist dabei schwächer geworden, und das gehört
+hierher** (Nachtrag vom 3. September 2026, aus dem Abschlussreview). Ein
+früherer Absatz nannte den Login den „stärkeren Ausweis" — das stimmt für
+seine *Verfügbarkeit* (es gibt jetzt immer einen), nicht für seine *Stärke*.
+Vorher stand vor `GET /api/diagnostics/fabric-backup` ein Geheimnis mit 256
+Bit Entropie, das nicht zu raten war. Jetzt steht dort ein Passwort von
+mindestens acht Zeichen, im Klartext über HTTP übertragen (14.1), gebremst
+durch eine Drosselung von rund zwei Versuchen je Minute — also etwa 2.900
+Versuche am Tag gegen den einzigen unwiderruflichen Zustand dieser
+Installation (Hauptdokument 4.1). Ein Wörterbuchpasswort fällt darunter in
+Tagen.
+
+Die Entfernung des 403-Zweigs bleibt trotzdem richtig: der Zustand, gegen
+den er stand, existiert nicht mehr. Und die Mindestlänge bleibt am
+3. September 2026 bewusst bei acht Zeichen — die Alternative (zwölf) wurde
+geprüft und verworfen. Was daraus folgt, gehört in die Dokumentation und
+nicht in eine Konstante: **das Passwort dieser Brücke sollte zufällig sein,
+nicht merkbar.** Acht zufällige Zeichen tragen die obige Rechnung, acht
+gewählte nicht.
 
 Unverändert bleibt, dass `build_diagnostics_router` **weder Passwort noch
 Hash noch Token** zu sehen bekommt: was er nicht kennt, kann er nicht

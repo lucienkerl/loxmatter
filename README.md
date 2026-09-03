@@ -112,7 +112,11 @@ Passwort-Status.
 
 **Kein TLS.** Der Dienst spricht weiterhin HTTP ohne Verschlüsselung; sowohl
 das Token als auch das Passwort gehen bei jeder Übertragung im Klartext über
-das Netz. Ein Passwort verwenden, das nirgendwo sonst benutzt wird.
+das Netz. Ein Passwort verwenden, das nirgendwo sonst benutzt wird — und
+zwar ein **zufällig erzeugtes**, kein ausgedachtes. Hinter der Anmeldung
+liegt seit dem Wegfall des 403-Zweigs auch die Fabric-Sicherung, und acht
+Zeichen tragen deren Absicherung nur, solange sie nicht zu raten sind
+(siehe Abschnitt 11 des Entwurfs).
 
 Die Fabric-Sicherung (`GET /api/diagnostics/fabric-backup`) ist heute keine
 Ausnahme mehr — sie war es früher: ohne konfiguriertes Token antwortete

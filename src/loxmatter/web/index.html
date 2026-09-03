@@ -57,8 +57,9 @@
                  @keydown.enter="submitSetup()" />
         </label>
         <p class="hint">
-          Mindestens 8 Zeichen. Dieser Dienst spricht HTTP ohne Verschlüsselung – nimm ein
-          Passwort, das du nirgendwo sonst benutzt.
+          Mindestens 8 Zeichen, am besten zufällig erzeugt statt ausgedacht – hinter dieser
+          Anmeldung liegt auch die Fabric-Sicherung. Dieser Dienst spricht HTTP ohne
+          Verschlüsselung; nimm ein Passwort, das du nirgendwo sonst benutzt.
         </p>
         <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
         <button class="primary" :disabled="authBusy" @click="submitSetup()">
