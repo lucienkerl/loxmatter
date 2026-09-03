@@ -126,62 +126,82 @@ def render_virtual_in_udp(
     )
 
 
+def _virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]:
+    """Die Attribute eines virtuellen Ausgangs, in der Form, die Loxone Config
+    selbst schreibt.
+
+    Belegt an einer Vorlage, die Config nach einem funktionierenden Import
+    ausgegeben hat (`tests/fixtures/loxone/VO_Funktionierend.xml`, vom
+    Anwender geliefert, 2026-09-03). Zwei Regeln stecken darin, und beide
+    hatten wir vorher falsch:
+
+    **`Analog="false"` genau dann, wenn ein Aus-Befehl gesetzt ist.** Das ist
+    der digitale Ausgang, bei dem Config den Haken "Als Digitalausgang
+    verwenden" setzt und das Feld fuer den Aus-Befehl ueberhaupt erst
+    anbietet. Ein Ausgang mit nur einem Befehl - `on`, `off`, `toggle` -
+    traegt `Analog="true"`.
+
+    Es haengt also am Aus-Befehl, NICHT daran, ob das Kommando einen Wert
+    nimmt. Genau das war der Fehler: `onoff` kam mit gesetztem Haken nicht
+    an, und `CmdOff` blieb wirkungslos.
+
+    **Die vier Skalierungsattribute nur beim analogen Ausgang.** Config
+    schreibt `SourceValLow`/`DestValLow`/`SourceValHigh`/`DestValHigh` bei
+    jedem Ausgang ohne Aus-Befehl und laesst sie beim digitalen ganz weg.
+
+    Die aeltere `VO_Referenz.xml` widerspricht dem beim `Analog`-Wert. Sie
+    ist eine von Hand bereinigte Ableitung, diese Datei kommt unveraendert
+    aus Config - im Zweifel gilt Config. Die Referenz bleibt fuer alles
+    andere gueltig (Attributnamen, Reihenfolge, Aufbau des Dokuments).
+    """
+    digital = bool(command.off_path)
+    attributes: list[tuple[str, str]] = [
+        ("Title", command.title),
+        ("Comment", command.key),
+        ("CmdOnMethod", "GET"),
+        ("CmdOffMethod", "GET"),
+        ("CmdOn", command.path),
+        ("CmdOnHTTP", ""),
+        ("CmdOnPost", ""),
+        ("CmdOff", command.off_path),
+        ("CmdOffHTTP", ""),
+        ("CmdOffPost", ""),
+        ("CmdAnswer", ""),
+        ("Analog", _flag(not digital)),
+        ("Repeat", "0"),
+        ("RepeatRate", "0"),
+    ]
+    if not digital:
+        attributes += [
+            ("SourceValLow", "0"),
+            ("DestValLow", "0"),
+            ("SourceValHigh", "0"),
+            ("DestValHigh", "0"),
+        ]
+    # `HintText` steht zuletzt, nicht in der Mitte - auch das schreibt Config
+    # so.
+    attributes.append(("HintText", ""))
+    return attributes
+
+
 def render_virtual_out(
     device_label: str,
     base_url: str,
     commands: Sequence[LoxoneCommand],
 ) -> bytes:
     info = ("Info", [("templateType", "3"), ("minVersion", _MIN_VERSION)])
-    children = [
-        (
-            "VirtualOutCmd",
-            [
-                ("Title", command.title),
-                ("Comment", command.key),
-                ("CmdOnMethod", "GET"),
-                ("CmdOffMethod", "GET"),
-                ("CmdOn", command.path),
-                ("CmdOnHTTP", ""),
-                ("CmdOnPost", ""),
-                ("CmdOff", command.off_path),
-                ("CmdOffHTTP", ""),
-                ("CmdOffPost", ""),
-                ("CmdAnswer", ""),
-                ("HintText", ""),
-                # UMGEKEHRT zu `command.analog` (2026-09-03). In Loxone
-                # Config entspricht dieses Attribut dem Haken "Als
-                # Digitalausgang verwenden", nicht der Frage "ist das ein
-                # analoger Ausgang" - dem Namen zum Trotz.
-                #
-                # Belegt an der Config des Anwenders: unser `onoff` kam mit
-                # `Analog="false"` an, und der Haken war NICHT gesetzt -
-                # weshalb Loxone auch das Feld fuer den Aus-Befehl gar nicht
-                # erst anbietet und unser `CmdOff` wirkungslos blieb.
-                #
-                # Dazu passt die Referenzvorlage aus einer echten
-                # Installation (tests/fixtures/loxone/VO_Referenz.xml): ihr
-                # einziger Befehl ist ANALOG (`CmdOn` enthaelt `<v>`) und
-                # traegt trotzdem `Analog="false"`.
-                #
-                # Ein Test vergleicht diesen Wert jetzt gegen die Referenz.
-                # Vorher verglich der Referenztest nur die Namen der
-                # Attribute und ihre Reihenfolge - deshalb ist es nie
-                # aufgefallen.
-                ("Analog", _flag(not command.analog)),
-                ("Repeat", "0"),
-                ("RepeatRate", "0"),
-            ],
-        )
-        for command in commands
-    ]
+    children = [("VirtualOutCmd", _virtual_out_cmd_attributes(command)) for command in commands]
     return render_document(
         "VirtualOut",
         [
+            # Reihenfolge wie in der von Loxone Config selbst geschriebenen
+            # Vorlage (tests/fixtures/loxone/VO_Funktionierend.xml):
+            # `HintText` steht dort vorn, nicht hinter `CmdInit`.
+            ("HintText", ""),
             ("Title", f"Matter — {device_label}"),
             ("Comment", "erzeugt von loxmatter"),
             ("Address", base_url),
             ("CmdInit", ""),
-            ("HintText", ""),
             ("CloseAfterSend", "true"),
             ("CmdSep", ""),
         ],

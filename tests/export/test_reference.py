@@ -121,13 +121,13 @@ def test_virtual_in_udp_cmd_attribute_set_and_order_matches_the_reference():
 
 
 def test_virtual_out_root_attribute_set_and_order_matches_the_reference():
-    reference = _first_matching(_lines(FIXTURES / "VO_Referenz.xml"), "<VirtualOut ")
+    reference = _first_matching(_lines(FIXTURES / "VO_Funktionierend.xml"), "<VirtualOut ")
     rendered = _first_matching(_rendered_vo_lines(), "<VirtualOut ")
     assert _attr_names(rendered) == _attr_names(reference)
 
 
 def test_virtual_out_cmd_attribute_set_and_order_matches_the_reference():
-    reference = _first_matching(_lines(FIXTURES / "VO_Referenz.xml"), "<VirtualOutCmd ")
+    reference = _first_matching(_lines(FIXTURES / "VO_Funktionierend.xml"), "<VirtualOutCmd ")
     rendered = _first_matching(_rendered_vo_lines(), "<VirtualOutCmd ")
     assert _attr_names(rendered) == _attr_names(reference)
 
@@ -140,7 +140,7 @@ def test_info_element_is_the_first_child_in_the_virtual_in_udp_reference_and_out
 
 
 def test_info_element_is_the_first_child_in_the_virtual_out_reference_and_output():
-    reference_children = [line.strip() for line in _lines(FIXTURES / "VO_Referenz.xml")[2:-1]]
+    reference_children = [line.strip() for line in _lines(FIXTURES / "VO_Funktionierend.xml")[2:-1]]
     rendered_children = [line.strip() for line in _rendered_vo_lines()[2:-1]]
     assert reference_children[0].startswith("<Info ")
     assert rendered_children[0].startswith("<Info ")
@@ -172,7 +172,7 @@ def test_system_virtual_in_udp_matches_the_reference_shape():
 
 
 def test_system_virtual_out_matches_the_reference_shape():
-    reference_lines = _lines(FIXTURES / "VO_Referenz.xml")
+    reference_lines = _lines(FIXTURES / "VO_Funktionierend.xml")
     rendered_lines = _rendered_system_vo_lines()
     reference_root = _first_matching(reference_lines, "<VirtualOut ")
     rendered_root = _first_matching(rendered_lines, "<VirtualOut ")
@@ -189,49 +189,113 @@ def _attr(line: str, name: str) -> str:
     return match.group(1)
 
 
-def test_a_valued_command_carries_the_same_analog_flag_as_the_reference():
-    """Der Referenzbefehl aus einer echten Installation ist ANALOG - sein
-    `CmdOn` enthaelt `<v>` - und traegt trotzdem `Analog="false"`.
+def test_the_analog_flag_hangs_on_the_off_command_not_on_the_value():
+    """Die Regel, die uns zweimal falsch war - jetzt aus einer Vorlage
+    belegt, die Loxone Config nach einem funktionierenden Import selbst
+    geschrieben hat (`VO_Funktionierend.xml`, vom Anwender geliefert,
+    2026-09-03).
 
-    Dem Namen zum Trotz entspricht dieses Attribut in Loxone Config also
-    nicht der Frage "ist das analog", sondern dem Haken "Als Digitalausgang
-    verwenden". Wir schrieben es bis zum 2026-09-03 andersherum.
+    `Analog="false"` steht genau dort, wo ein Aus-Befehl gesetzt ist: das
+    ist der digitale Ausgang, bei dem Config den Haken "Als Digitalausgang
+    verwenden" setzt und das Feld fuer den Aus-Befehl ueberhaupt erst
+    anbietet. Ein Ausgang mit nur einem Befehl traegt `Analog="true"` - auch
+    dann, wenn er keinen Wert nimmt.
 
-    Der Referenztest verglich bisher nur die NAMEN der Attribute und ihre
-    Reihenfolge. Genau deshalb blieb der falsche Wert jahrelang unbemerkt -
-    und dieser Test schliesst die Luecke.
+    Es haengt also am AUS-BEFEHL, nicht daran, ob das Kommando einen Wert
+    erwartet. Beide frueheren Fassungen banden es an den Wert, einmal
+    direkt und einmal invertiert, und beide Male blieb `CmdOff` wirkungslos.
     """
-    reference = _first_matching(_lines(FIXTURES / "VO_Referenz.xml"), "<VirtualOutCmd ")
-    assert "&lt;v&gt;" in _attr(reference, "CmdOn"), "Referenzbefehl ist nicht analog"
+    gold = {
+        _attr(line, "Title"): line
+        for line in _lines(FIXTURES / "VO_Funktionierend.xml")
+        if "<VirtualOutCmd " in line
+    }
+    assert _attr(gold["onoff"], "Analog") == "false"
+    assert _attr(gold["onoff"], "CmdOff") == "/cmd/d1_1_off/1"
+    for single in ("on", "off", "toggle"):
+        assert _attr(gold[single], "Analog") == "true"
+        assert _attr(gold[single], "CmdOff") == ""
 
-    valued = [LoxoneCommand("d1_1_level", "level", "/cmd/d1_1_level/<v>", True)]
-    rendered = _first_matching(
-        render_virtual_out("Lampe", "http://192.168.1.50:8080", valued)
+    paired = LoxoneCommand("d1_1_on", "onoff", "/cmd/d1_1_on/1", False, off_path="/cmd/d1_1_off/1")
+    single = LoxoneCommand("d1_1_toggle", "toggle", "/cmd/d1_1_toggle/1", False)
+    valued = LoxoneCommand("d1_1_level", "level", "/cmd/d1_1_level/<v>", True)
+    lines = {
+        _attr(line, "Title"): line
+        for line in render_virtual_out(
+            "Steckdose", "http://192.168.1.50:8080", [paired, single, valued]
+        )
         .decode("utf-8-sig")
-        .splitlines(),
-        "<VirtualOutCmd ",
-    )
-    assert _attr(rendered, "Analog") == _attr(reference, "Analog") == "false"
+        .splitlines()
+        if "<VirtualOutCmd " in line
+    }
+    assert _attr(lines["onoff"], "Analog") == "false"
+    assert _attr(lines["toggle"], "Analog") == "true"
+    assert _attr(lines["level"], "Analog") == "true"
 
 
-def test_a_switching_command_asks_loxone_for_a_digital_output():
-    """Ohne `Analog="true"` bleibt in Loxone Config der Haken "Als
-    Digitalausgang verwenden" leer - und damit bietet Config das Feld fuer
-    den Aus-Befehl gar nicht erst an, sodass unser `CmdOff` wirkungslos
-    bleibt. Am Miniserver des Anwenders beobachtet (2026-09-03).
+def test_the_scaling_attributes_appear_only_on_the_analog_outputs():
+    """Config schreibt SourceValLow/DestValLow/SourceValHigh/DestValHigh bei
+    jedem Ausgang OHNE Aus-Befehl und laesst sie beim digitalen ganz weg."""
+    scaling = ("SourceValLow", "DestValLow", "SourceValHigh", "DestValHigh")
+    gold = {
+        _attr(line, "Title"): line
+        for line in _lines(FIXTURES / "VO_Funktionierend.xml")
+        if "<VirtualOutCmd " in line
+    }
+    for name in scaling:
+        assert f'{name}="' not in gold["onoff"]
+        assert f'{name}="0"' in gold["toggle"]
 
-    Diese Richtung ist NICHT aus der Referenzvorlage belegt: die enthaelt
-    nur einen analogen Befehl. Sie stammt aus der Beobachtung an der echten
-    Config.
-    """
-    switching = [
-        LoxoneCommand("d1_1_on", "onoff", "/cmd/d1_1_on/1", False, off_path="/cmd/d1_1_off/1")
+    paired = LoxoneCommand("d1_1_on", "onoff", "/cmd/d1_1_on/1", False, off_path="/cmd/d1_1_off/1")
+    single = LoxoneCommand("d1_1_toggle", "toggle", "/cmd/d1_1_toggle/1", False)
+    lines = {
+        _attr(line, "Title"): line
+        for line in render_virtual_out("Steckdose", "http://192.168.1.50:8080", [paired, single])
+        .decode("utf-8-sig")
+        .splitlines()
+        if "<VirtualOutCmd " in line
+    }
+    for name in scaling:
+        assert f'{name}="' not in lines["onoff"]
+        assert f'{name}="0"' in lines["toggle"]
+
+
+def test_every_command_matches_what_config_wrote_attribute_for_attribute():
+    """Der Test, der die beiden Fehler zusammen gefangen haette. Der aeltere
+    Referenztest verglich nur die NAMEN der Attribute und ihre Reihenfolge -
+    eine Golden-File-Pruefung, die nur die Form prueft, laesst genau die
+    Bedeutung durch, fuer die man sie hat."""
+    gold = {
+        _attr(line, "Title"): _attr_pairs(line)
+        for line in _lines(FIXTURES / "VO_Funktionierend.xml")
+        if "<VirtualOutCmd " in line
+    }
+    commands = [
+        LoxoneCommand("d1_1_off", "off", "/cmd/d1_1_off/1", False),
+        LoxoneCommand("d1_1_on", "onoff", "/cmd/d1_1_on/1", False, off_path="/cmd/d1_1_off/1"),
+        LoxoneCommand("d1_1_on", "on", "/cmd/d1_1_on/1", False),
+        LoxoneCommand("d1_1_toggle", "toggle", "/cmd/d1_1_toggle/1", False),
     ]
-    rendered = _first_matching(
-        render_virtual_out("Steckdose", "http://192.168.1.50:8080", switching)
+    rendered = {
+        _attr(line, "Title"): _attr_pairs(line)
+        for line in render_virtual_out(
+            "IKEA of Sweden GRILLPLATS Plug", "http://10.0.1.56:8080", commands
+        )
         .decode("utf-8-sig")
-        .splitlines(),
-        "<VirtualOutCmd ",
-    )
-    assert _attr(rendered, "Analog") == "true"
-    assert _attr(rendered, "CmdOff") == "/cmd/d1_1_off/1"
+        .splitlines()
+        if "<VirtualOutCmd " in line
+    }
+    for title in gold:
+        ours = dict(rendered[title])
+        # `Comment` traegt bei uns den Schluessel, Config hat ihn beim
+        # Zurueckschreiben uebernommen - ausser beim kombinierten Ausgang,
+        # wo unser Kommentar beide Schluessel nennt.
+        assert [k for k, _ in rendered[title]] == [k for k, _ in gold[title]], title
+        for name, value in gold[title]:
+            if name == "Comment":
+                continue
+            assert ours[name] == value, f"{title}.{name}"
+
+
+def _attr_pairs(line: str) -> list[tuple[str, str]]:
+    return re.findall(r'(\w+)="([^"]*)"', line)

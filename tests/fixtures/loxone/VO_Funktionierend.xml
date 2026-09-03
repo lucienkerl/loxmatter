@@ -1,0 +1,8 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<VirtualOut HintText="" Title="Matter — IKEA of Sweden GRILLPLATS Plug1" Comment="erzeugt von loxmatter" Address="http://10.0.1.56:8080" CmdInit="" CloseAfterSend="true" CmdSep="">
+	<Info templateType="3" minVersion="17030902"/>
+	<VirtualOutCmd Title="off" Comment="d1_1_off" CmdOnMethod="GET" CmdOffMethod="GET" CmdOn="/cmd/d1_1_off/1" CmdOnHTTP="" CmdOnPost="" CmdOff="" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" Analog="true" Repeat="0" RepeatRate="0" SourceValLow="0" DestValLow="0" SourceValHigh="0" DestValHigh="0" HintText=""/>
+	<VirtualOutCmd Title="onoff" Comment="d1_1_on + d1_1_off" CmdOnMethod="GET" CmdOffMethod="GET" CmdOn="/cmd/d1_1_on/1" CmdOnHTTP="" CmdOnPost="" CmdOff="/cmd/d1_1_off/1" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" Analog="false" Repeat="0" RepeatRate="0" HintText=""/>
+	<VirtualOutCmd Title="on" Comment="d1_1_on" CmdOnMethod="GET" CmdOffMethod="GET" CmdOn="/cmd/d1_1_on/1" CmdOnHTTP="" CmdOnPost="" CmdOff="" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" Analog="true" Repeat="0" RepeatRate="0" SourceValLow="0" DestValLow="0" SourceValHigh="0" DestValHigh="0" HintText=""/>
+	<VirtualOutCmd Title="toggle" Comment="d1_1_toggle" CmdOnMethod="GET" CmdOffMethod="GET" CmdOn="/cmd/d1_1_toggle/1" CmdOnHTTP="" CmdOnPost="" CmdOff="" CmdOffHTTP="" CmdOffPost="" CmdAnswer="" Analog="true" Repeat="0" RepeatRate="0" SourceValLow="0" DestValLow="0" SourceValHigh="0" DestValHigh="0" HintText=""/>
+</VirtualOut>
