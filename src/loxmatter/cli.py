@@ -430,14 +430,13 @@ def run(
         "--api-token",
         envvar="LOXMATTER_API_TOKEN",
         help="Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, "
-        "Fabric-Sicherung) mit `Authorization: Bearer <Token>`. `/cmd` und "
-        "/resync` bleiben immer offen — der Miniserver kann keinen Header "
-        "mitschicken (Spec 9, Task 8). Ohne Token erscheint beim Start eine "
-        "Warnung im Log, und `GET /api/diagnostics/fabric-backup` wird gar "
-        "nicht erst ausgeliefert (403). Nur Zeichen verwenden, die in einem "
-        "HTTP-Header stehen dürfen — keine Leerzeichen, kein Komma, ASCII; "
-        "`openssl rand -hex 32` erfüllt das. Alternative über die "
-        "Umgebungsvariable LOXMATTER_API_TOKEN.",
+        "Fabric-Sicherung) mit `Authorization: Bearer <Token>` — alternativ "
+        "zur angemeldeten Sitzung, nicht zusätzlich zu ihr erforderlich "
+        "(Spec 9, Task 8; Spec 11). `/cmd` und `/resync` bleiben immer "
+        "offen — der Miniserver kann keinen Header mitschicken. Nur "
+        "Zeichen verwenden, die in einem HTTP-Header stehen dürfen — keine "
+        "Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` erfüllt "
+        "das. Alternative über die Umgebungsvariable LOXMATTER_API_TOKEN.",
     ),
     store_path: Path | None = typer.Option(  # noqa: B008
         None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."

@@ -793,12 +793,10 @@ function app() {
       }
     },
 
-    // Ebenfalls kein `<a href>` mehr (siehe `downloadExport`). Zusaetzlich
-    // faellt hier seit Review-Fix Fix 3 (2026-09-03) ein zweiter Fall an:
-    // laeuft der Dienst ganz OHNE Token, verweigert er diese eine Route mit
-    // 403 und einer Erklaerung im `detail` - die soll der Anwender lesen
-    // koennen, statt eine heruntergeladene Datei zu bekommen, die in
-    // Wahrheit eine Fehlermeldung ist.
+    // Ebenfalls kein `<a href>` mehr (siehe `downloadExport`): ein
+    // Fehler (z. B. 503 ohne eingehaengtes Datenverzeichnis) soll als
+    // lesbare Meldung erscheinen, statt eine heruntergeladene Datei zu
+    // ergeben, die in Wahrheit eine Fehlermeldung ist.
     async downloadFabricBackup() {
       this.backupError = null;
       try {

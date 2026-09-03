@@ -18,14 +18,14 @@ nicht ausloesen.
 das "die Bruecke laeuft ohne Matter-Verbindung" - fuer den Test, dass eine
 rote Zeile im Systemcheck einen brauchbaren Hinweis traegt.
 
-`api_with_token` - wie `api`, aber mit gesetztem API-Token. Seit Review-Fix
-Fix 3 (2026-09-03) liefert `GET /api/diagnostics/fabric-backup` OHNE
-gesetztes Token gar nichts mehr aus (403, siehe api/diagnostics.py) - jeder
-Test, der die Sicherung selbst betrachtet, braucht deshalb einen Dienst mit
-Token und schickt den passenden Header mit. Die uebrigen Fixtures bleiben
-absichtlich ohne Token: alle anderen Diagnose-Routen sind davon unberuehrt,
-und das soll hier weiterhin so gepruft werden, wie ein Betrieb ohne Token
-sie tatsaechlich sieht.
+`api_with_token` - wie `api`, aber mit gesetztem API-Token statt einer
+angemeldeten Sitzung. `GET /api/diagnostics/fabric-backup` verlangt - wie
+jede `/api`-Route - einen der beiden Nachweise (Task 8, Phase 5, Spec 9);
+die Tests, die die Sicherung selbst betrachten, weisen sich hier ueber den
+Token-Header statt ueber eine Anmeldung aus, um beide Wege abzudecken. Die
+uebrigen Fixtures bleiben absichtlich ohne Token: alle anderen
+Diagnose-Routen sind davon unberuehrt, und das soll hier weiterhin so
+gepruft werden, wie ein Betrieb ohne Token sie tatsaechlich sieht.
 """
 
 from __future__ import annotations

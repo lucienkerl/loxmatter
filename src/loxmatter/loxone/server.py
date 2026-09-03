@@ -403,15 +403,6 @@ def build_app(
             client,
             sender,
             matter_data_dir,
-            # Bewusst nur "ist eins gesetzt?", nicht das Token selbst: der
-            # Diagnose-Router muss das Geheimnis nicht kennen, um die
-            # Fabric-Sicherung ohne Token zu verweigern (Review-Fix Fix 3,
-            # 2026-09-03) - und was er nicht kennt, kann er auch nicht
-            # versehentlich in eine Antwort oder ins Log schreiben.
-            # Dieselbe Normalisierung wie im Waechter, damit ein
-            # Leerraum-Token hier nicht als gesetzt gilt, waehrend der
-            # Waechter es durchlaesst.
-            api_token_configured=normalize_api_token(api_token) is not None,
         ),
         dependencies=api_guard,
     )

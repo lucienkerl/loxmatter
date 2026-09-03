@@ -27,10 +27,6 @@ Drei Gruppen:
   das Token deshalb als Subprotokoll `bearer, <Token>` mit.
 - `test_normalize_api_token_*` / `test_whitespace_*` - ein Token aus reinem
   Leerraum ist kein Token (Review-Fix Fix 2, 2026-09-03).
-- `test_fabric_backup_without_a_*token_*` - ohne konfiguriertes Token wird die
-  Fabric-Sicherung gar nicht erst ausgeliefert (Review-Fix Fix 3,
-  2026-09-03), auch dann nicht, wenn eine Sitzung angemeldet ist - jede
-  andere `/api`-Route bleibt fuer diese Sitzung trotzdem offen.
 - `test_warn_if_no_password_*` - die Warnung aus `cli.py`, die einen Betrieb
   ohne Passwort sichtbar machen soll (Task 8: nicht mehr das Token - ein
   konfiguriertes Token bringt sie nicht zum Schweigen).
@@ -41,6 +37,11 @@ Drei Gruppen:
   offen, und die Reihenfolge der beiden Nachweise (Cookie zuerst, Token
   zusaetzlich) bleibt auch bei einem gleichzeitig ungueltigen Cookie
   erhalten.
+- `test_fabric_backup_is_served_after_a_login_without_any_token` (Task 9,
+  WebUI-Login) - der frueher hier eigens getestete 403 ohne konfiguriertes
+  Token ist entfallen: ein Login ist der staerkere Ausweis, die Route
+  verhaelt sich seither wie jede andere `/api`-Route (siehe
+  `api.diagnostics.fabric_backup`).
 """
 
 from __future__ import annotations
@@ -326,11 +327,11 @@ async def test_a_token_with_a_trailing_newline_is_usable_over_http(tmp_path, no_
 
 
 # ---------------------------------------------------------------------------
-# Ohne Token, aber angemeldet: /api ist offen - bis auf die Fabric-Sicherung
-# (Task 8: der Zustand OHNE Anmeldung ist inzwischen ausnahmslos 401, siehe
-# oben `test_without_a_password_every_api_route_is_closed`. Diese Tests hier
-# pruefen die verbliebene Frage - reicht die Anmeldung allein, ohne Token,
-# fuer die vier gewoehnlichen `/api`-Router?).
+# Ohne Token, aber angemeldet: jede /api-Route ist offen - auch die
+# Fabric-Sicherung (Task 8: der Zustand OHNE Anmeldung ist inzwischen
+# ausnahmslos 401, siehe oben `test_without_a_password_every_api_route_is_
+# closed`. Diese Tests hier pruefen die verbliebene Frage - reicht die
+# Anmeldung allein, ohne Token, fuer die vier gewoehnlichen `/api`-Router?).
 # ---------------------------------------------------------------------------
 
 
@@ -362,44 +363,10 @@ async def test_without_a_token_a_signed_in_diagnostics_commands_is_open(open_cli
     assert response.status_code == 200
 
 
-async def test_fabric_backup_without_a_configured_token_is_refused_with_403(open_client):
-    """Die einzige Ausnahme von "angemeldet oeffnet jede /api-Route" (Review-Fix
-    Fix 3, 2026-09-03): `matter_data_dir` ist in dieser Fixture gesetzt, die
-    Route KOENNTE also echte Fabric-Zugangsdaten ausliefern. Genau das darf
-    ohne konfiguriertes Token nicht passieren - selbst mit gueltiger Sitzung -,
-    403, weil eine Wiederholung mit Zugangsdaten nicht helfen kann (es gibt
-    keine)."""
-    client, _, _, store = open_client
-    await _authenticate(store, client)
-    response = await client.get("/api/diagnostics/fabric-backup")
-    assert response.status_code == 403
-
-
-async def test_fabric_backup_without_a_configured_token_returns_no_data(open_client):
-    """Nicht nur ein anderer Statuscode - kein ZIP, keine Datei, nichts."""
-    client, _, _, store = open_client
-    await _authenticate(store, client)
-    response = await client.get("/api/diagnostics/fabric-backup")
-    assert response.status_code == 403
-    assert response.headers["content-type"].startswith("application/json")
-    assert "content-disposition" not in response.headers
-    assert "LOXMATTER_API_TOKEN" in response.json()["detail"]
-
-
-async def test_fabric_backup_with_a_whitespace_only_token_is_refused_too(tmp_path, no_invoke):
-    """Ein Leerraum-Token gilt als "kein Token" - auch hier, sonst haetten
-    Waechter und Sicherung zwei verschiedene Vorstellungen davon, was
-    "gesetzt" heisst."""
-    async for client, _, _, store in _build_client(tmp_path, no_invoke, api_token="  "):
-        await _authenticate(store, client)
-        response = await client.get("/api/diagnostics/fabric-backup")
-        assert response.status_code == 403
-
-
 async def test_the_other_api_routes_stay_open_for_a_signed_in_client_without_a_token(open_client):
-    """Die Gegenprobe zu den vier Tests darueber: NUR die Fabric-Sicherung
-    wird ohne konfiguriertes Token verweigert, alles andere bleibt fuer eine
-    angemeldete Sitzung offen."""
+    """Die Gegenprobe zu den vier Tests darueber: jede weitere `/api`-Route
+    bleibt fuer eine angemeldete Sitzung offen, auch ohne konfiguriertes
+    Token - nichts an dieser Sitzung ist auf ein Token angewiesen."""
     client, _, device_id, store = open_client
     await _authenticate(store, client)
     for path in (
@@ -845,3 +812,15 @@ async def test_a_valid_token_wins_even_with_an_invalid_cookie_alongside(secured_
     client.cookies.set(SESSION_COOKIE, "erfunden")
     response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
     assert response.status_code == 200
+
+
+async def test_fabric_backup_is_served_after_a_login_without_any_token(open_client):
+    """Nach dem Login ist auch die Fabric-Sicherung frei (Spec 11): ein Login
+    ist der staerkere Ausweis, und ein zweites Geheimnis danach schuetzte
+    nichts, das nicht schon geschuetzt waere."""
+    client, _app, _device_id, store = open_client
+    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+    await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
+    response = await client.get("/api/diagnostics/fabric-backup")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/zip"
