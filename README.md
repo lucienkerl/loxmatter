@@ -1,8 +1,64 @@
-# loxmatter
+# loxmatter 🌉
 
-Bindet Matter-Geräte (Thread und WiFi) an einen Loxone Miniserver an.
+![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
+
+Bindet Matter-Geräte (Thread und WiFi) an einen Loxone Miniserver an —
+selbst gehostet, ohne Cloud.
 
 Design: [`docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md)
+
+## Inhalt
+
+- [Was macht loxmatter?](#was-macht-loxmatter)
+- [Stand](#stand)
+- [Voraussetzungen](#voraussetzungen)
+- [Erste Schritte](#erste-schritte)
+- [Entwickeln](#entwickeln)
+- [Ein Gerät ansehen](#ein-gerät-ansehen)
+- [Dauerhaft betreiben: `loxmatter run`](#dauerhaft-betreiben-loxmatter-run)
+- [Lizenz](#lizenz)
+
+## Was macht loxmatter?
+
+Matter-Geräte (Lampen, Steckdosen, Sensoren, Taster …) und ein Loxone
+Miniserver sprechen von Haus aus nicht miteinander. loxmatter sitzt
+dazwischen: Es liest jeden Wert, den ein Matter-Gerät liefert — inklusive
+Ereignissen wie Tastendrücken — und reicht ihn an den Miniserver weiter, und
+umgekehrt setzt es Befehle aus Loxone in Matter-Kommandos um. Geräte werden
+über eine Weboberfläche eingelernt; die passenden Loxone-Objekte entstehen
+als fertige Vorlagendatei zum Import in Loxone Config, nicht per Handarbeit.
+
+```mermaid
+flowchart LR
+    subgraph Geraete["Matter-Geräte"]
+        thread["🌡️ Thread-Gerät<br/>Sensor, Taster ..."]
+        wifi["💡 WiFi-Gerät<br/>Lampe, Steckdose ..."]
+    end
+
+    subgraph Host["Docker-Stack – ein Host, z. B. Raspberry Pi"]
+        otbr["🔀 otbr<br/>Thread Border Router"]
+        ms["🧠 matter-server<br/>steuert die Geräte"]
+        lm["🌉 loxmatter<br/>diese Brücke"]
+    end
+
+    mini["🏠 Loxone<br/>Miniserver"]
+    browser["🖥️ Browser<br/>Einrichtung & Diagnose"]
+
+    thread -- Thread --> otbr --> ms
+    wifi -- WiFi --> ms
+    ms -- "Werte (Subscription)" --> lm
+    lm -- Kommandos --> ms
+    lm -- "Werte (UDP)" --> mini
+    mini -- "Befehle (HTTP)" --> lm
+    browser -- HTTP --> lm
+    lm -- "Live-Werte (WebSocket)" --> browser
+```
+
+Kein Profil pro Gerätetyp: loxmatter liest den Endpoint-/Cluster-Baum eines
+Geräts generisch aus, statt eine kuratierte Liste unterstützter Geräte zu
+pflegen. Neue Geräte funktionieren dadurch am ersten Tag, auch ohne dass
+loxmatter sie kennt.
 
 ## Stand
 
@@ -24,6 +80,95 @@ Attribut fehlte. Für Events trug sie nicht: keins der beiden Geräte führt die
 Cluster-spezifisch (`discovery.FEATURE_MAP_EVENTS`). Details, Zahlen und die
 Konsequenzen stehen im Validierungsabschnitt der Spec,
 [Abschnitt 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
+
+## Voraussetzungen
+
+**Software**
+
+- [Docker](https://docs.docker.com/get-docker/) mit Compose-Plugin — für den
+  vollständigen Stack (empfohlen für den eigenen Betrieb)
+- oder, wer nur die Kommandozeile ohne Container nutzen will: Python 3.12+
+  und [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
+- Git
+
+**Hardware**
+
+- Ein Loxone Miniserver im selben Netzwerk wie der Rechner, auf dem loxmatter
+  läuft
+- Ein Host, auf dem der Dienst dauerhaft läuft — z. B. ein Raspberry Pi 4 im
+  selben Netz wie Miniserver und Geräte (die Testumgebung dieses Projekts
+  läuft so, siehe [`deploy/testhost/`](deploy/testhost/))
+- Nur für **Thread**-Geräte: ein USB-Funkmodul als Thread-Funkadapter (z. B.
+  SONOFF Dongle Plus MG24) am Host — der Docker-Stack bringt dafür einen
+  eigenen OpenThread Border Router mit
+- Ein Bluetooth-Adapter am Host, für das Einlernen von Geräten per BLE
+  (Matter-Commissioning)
+
+Kein Vorwissen über Matter oder Thread nötig — der Docker-Stack bringt die
+komplette Matter-Steuerung (`matter-server`) und den Thread-Border-Router
+(`otbr`) bereits mit.
+
+## Erste Schritte
+
+### Schnell reinschnuppern, ohne Hardware
+
+Zeigt, wie loxmatter ein Gerät liest — läuft komplett gegen ein
+gespeichertes Beispiel-Gerät, ohne Netzwerk oder echte Hardware:
+
+```bash
+git clone git@github.com:lucienkerl/loxmatter.git
+cd loxmatter
+uv sync
+uv run pytest                                                    # Testsuite, ohne Hardware
+uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
+```
+
+Siehe [Ein Gerät ansehen](#ein-gerät-ansehen) für mehr dazu.
+
+### Eigene Umgebung aufsetzen (mit echter Hardware)
+
+1. Repository auf dem Host klonen, der dauerhaft laufen soll:
+
+   ```bash
+   git clone git@github.com:lucienkerl/loxmatter.git
+   cd loxmatter/deploy/testhost
+   ```
+
+2. `.env` aus der Vorlage anlegen und ausfüllen (Funkadapter, Bluetooth,
+   IP des Miniservers):
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Details zu jeder Variable stehen als Kommentar in
+   [`.env.example`](deploy/testhost/.env.example).
+
+3. Stack starten:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+   Das baut und startet drei Container: `otbr` (Thread-Netz), `matter-server`
+   (Matter-Steuerung) und `loxmatter` (diese Brücke).
+
+4. Im Browser `http://<Host>:8080/` öffnen. Beim allerersten Aufruf zeigt
+   die Oberfläche eine Ersteinrichtung — ein Passwort vergeben, siehe
+   [Zugangsschutz](#dauerhaft-betreiben-loxmatter-run) unten.
+
+5. In der Weboberfläche ein Gerät einlernen, ansehen und die Vorlage
+   exportieren (`VIU_*.xml`, `VO_*.xml`). Diese Dateien in Loxone Config
+   importieren und die entstandenen Ein-/Ausgänge auf die gewünschten
+   Funktionsbausteine ziehen — das bleibt Handarbeit, aber pro Gerät nur
+   einmal.
+
+> **Hinweis:** [`deploy/testhost/`](deploy/testhost/) ist die Umgebung, gegen
+> die dieses Projekt bisher getestet wurde — kein gehärtetes
+> Produktions-Image (nicht-root-Nutzer, gepinnte Digests, o. Ä. sind noch
+> offen). Für den Hausgebrauch heute trotzdem der geradlinigste Weg; die
+> Sicherheitshinweise unter [Dauerhaft betreiben](#dauerhaft-betreiben-loxmatter-run)
+> gelten unverändert.
 
 ## Entwickeln
 
@@ -92,6 +237,8 @@ Warnung, und muss sie in der Signalliste erneut setzen. Eine bereits in
 Loxone importierte Vorlage bleibt davon unberührt – die Laufzeitstrecke
 sendet ohnehin unabhängig vom Haken; betroffen ist nur eine **neu**
 erzeugte Vorlage nach dem Update.
+
+### Zugangsschutz
 
 Der Dienst bindet standardmäßig auf `0.0.0.0` (`--host`), damit der
 Miniserver ihn erreicht — dieselbe Erreichbarkeit gilt fürs restliche
