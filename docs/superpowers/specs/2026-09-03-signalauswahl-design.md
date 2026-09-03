@@ -12,6 +12,13 @@ Loxone-UDP-Eingang abbildbar sind. Davon sind **vier** das, wofür man eine
 Steckdose kauft: Ein/Aus, Spannung, Strom, Leistung. 55 der 109 sind
 Thread-Funkzähler, weitere acht Seriennummern und Firmwareversionen.
 
+*(Diese 109 sind der Ausgangsbefund vor diesem Entwurf — siehe Abschnitt 5:
+der fünfte gewollte Wert, der Zählerstand, gehört technisch noch nicht dazu,
+weil ihn Abschnitt 4.4 als Struktur zeigt, die die generische Zerlegung bis
+hierhin verwirft. Nach Umsetzung von Abschnitt 5 sind es 110 — der
+Zählerstand kommt zu den technisch abbildbaren hinzu. Beleg:
+`tests/loxone/test_values_real_device.py::test_exactly_110_signals_yield_a_value`.)*
+
 Ein Anwender bekommt damit eine Vorlage mit 110 virtuellen Eingängen für ein
 Gerät mit einem Schalter. Das war die Beschwerde, mit der dieses Projekt
 begann ("sonst hat man nachher 200 Eingänge und kann die nicht einem
@@ -151,13 +158,17 @@ gehört in die Tabelle, nicht in den Kopf des Anwenders.
 
 ### 4.4 Ergebnis
 
-| | heute | danach |
+| | heute (technisch abbildbar) | danach (standardmäßig exportiert) |
 |---|---:|---:|
-| Steckdose | 109 | **5** — Ein/Aus, Spannung, Strom, Leistung, Verbrauch |
+| Steckdose | 110 | **5** — Ein/Aus, Spannung, Strom, Leistung, Verbrauch |
 | Taster | 122 | **17** — beide Wippen vollständig, Batteriestand |
 
-An den echten Geräten durchgerechnet, nicht geschätzt: die Strukturregel
-allein bringt 109 → 18 und 122 → 27; die Feinauswahl aus 4.3 den Rest.
+An den echten Geräten durchgerechnet, nicht geschätzt (nachgezählt am
+umgesetzten Stand, `tests/model/test_store.py`,
+`tests/profiles/test_relevance.py`): die Strukturregel allein bringt
+110 → 19 und 122 → 27; die Feinauswahl aus 4.3 den Rest. Die 110 der
+Steckdose zählen den Zählerstand aus Abschnitt 5 bereits mit — vor dessen
+Umsetzung wären es 109 → 18 gewesen, siehe Fußnote in Abschnitt 1.
 
 Die 17 des Tasters sind je Wippe `positions`, `position` und die sechs
 Ereignisse (`press`, `longpress`, `shortrelease`, `longrelease`,
@@ -202,8 +213,16 @@ sonst meldet die Oberfläche einen Wert, den der Export nicht kennt.
 Die Signalzeilen speichern Titel, Einheit und Exportierbarkeit **mit ab**.
 Eine Tabellenerweiterung wirkt deshalb nicht von selbst rückwirkend.
 
-Die Migration (Schema v3) leitet bei jedem bestehenden Signal Titel,
-Einheit, Exportierbarkeit und den Vorgabewert von `exported` neu ab.
+**Zwei Migrationen, nicht eine.** Umgesetzt als Schema **v3**
+(`_migrate_to_v3`, Aufgabe 7): leitet bei jedem bestehenden Signal Titel,
+Einheit, Exportierbarkeit und den Vorgabewert von `exported` neu ab. Aufgabe
+8 (Phase 6, außerhalb des ursprünglichen Zuschnitts dieses Entwurfs, aber
+dieselbe Frage) fügt Schema **v4** hinzu (`_migrate_to_v4`): eine eigene
+Spalte `signal.functional`, rückwirkend aus derselben Ersatzregel befüllt
+(siehe unten) — getrennt von `exported`, weil `exported` seit dem ersten
+Bekanntsein eines Signals dem Nutzer gehört (ein manuell umgelegter Haken
+bleibt umgelegt), während `is_functional` eine reine Eigenschaft des
+Gerätetyps ist.
 
 **Der Schlüssel bleibt unangetastet.** Ein Taster, der vor dem Update
 eingelernt wurde, behält `d2_0_c47_a12` und heißt ab dann „battery" in
@@ -212,6 +231,39 @@ Schlüssel für denselben Wert ist hässlich; ein umbenannter Schlüssel wäre
 ein stillschweigend toter Funktionsbaustein in einer fremden Config, und das
 ist die eine Sache, die dieses Werkzeug niemals tun darf (Abschnitt 6.2 des
 Hauptdokuments).
+
+**Die Ersatzregel weicht von der echten Descriptor-Auswertung ab — nicht nur
+theoretisch.** Eine Migration läuft beim Öffnen der Datenbank
+(`sqlite3.Connection`), nie mit einem `NodeSnapshot` — der Descriptor-Cluster
+(4.1) ist ihr grundsätzlich nicht zugänglich. Beide Migrationen behelfen sich
+deshalb mit derselben Ersatzregel (`store._endpoint0_device_types`, geteilt
+zwischen `_migrate_to_v3` und `_migrate_to_v4`, siehe deren ausführliche
+Docstrings in `src/loxmatter/model/store.py`): **Endpunkt 0 gilt immer als
+Root Node** (Matter Core-Spezifikation 9.2.1 — die einzige Aussage, die sich
+ohne Abbild sicher treffen lässt), **jeder andere Endpunkt gilt als
+Nutz-Endpunkt**, und Power Source gilt auf Endpunkt 0 als erklärt, sobald dort
+überhaupt ein Signal des Clusters 47 gespeichert ist. Das ist eine Annäherung,
+keine Nachbildung der echten Regel aus 4.1 — dort steht ausdrücklich, dass
+diese Annahme „keine Aufnahme je bestätigt" habe. Gegengeprüft an beiden
+eingecheckten Abbildern liefert sie für Stecker und Taster dieselbe Anzahl
+exportierter/funktionaler Signale wie eine frische Registrierung mit echtem
+Abbild — 5 bzw. 17 — aber das ist an diesen zwei Geräten geprüft, keine
+Garantie für jedes denkbare Gerät (z. B. eines mit einem zweiten
+Verwaltungs-Gerätetyp, der nicht Root Node ist, oder einem Nutz-Gerätetyp mit
+einem anderen Cluster als 47 auf Endpunkt 0 — beide Fälle lägen außerhalb der
+beiden Prüfgeräte und die Ersatzregel kennt sie nicht).
+
+Zusätzlich hebt `_migrate_to_v3` `exportability` in einem einzigen, eng
+begrenzten Fall an, statt den gespeicherten Wert unangetastet zu lassen: trägt
+ein Tabelleneintrag heute eine Feldnummer (Abschnitt 5, der Zählerstand), gilt
+das daraus gezogene Element unabhängig vom gespeicherten Wert als ANALOG. Das
+hat eine bekannte, bewusst hingenommene Grenze: ein Zähler, der zur
+Registrierzeit `null` war (nie gemessen), wird trotzdem auf ANALOG angehoben
+und gilt als exportiert — ein Loxone-Eingang, der nie einen Wert trägt.
+`to_loxone_value` liefert zur Laufzeit weiterhin `None` dafür, es fließt also
+kein erfundener Wert, nur die erzeugte Vorlage bekommt einen Eingang zu viel.
+Details und die Abwägung, warum die Ausnahme trotzdem bleibt:
+`_migrate_to_v3`-Docstring, Abschnitt „Zwei offene Grenzen dieser Ausnahme".
 
 Die Migration hält je Gerät fest, wie viele Eingänge wegfallen. Die
 Oberfläche zeigt das vor dem nächsten Export, mit dem Hinweis, dass die
@@ -271,13 +323,34 @@ Prüfsteine. Alle Tests laufen ohne Hardware und ohne Netz.
 
 ## 10. Offene Punkte
 
-1. Die drei Gerätetyp-Nummern sind gegen die Matter Device Library zu
-   belegen (Abschnitt 4.1), nicht aus diesem Dokument zu übernehmen.
-2. Ob die Feinauswahl aus 4.3 auch für Cluster gelten soll, deren Namen aus
+1. ~~Die drei Gerätetyp-Nummern sind gegen die Matter Device Library zu
+   belegen (Abschnitt 4.1), nicht aus diesem Dokument zu übernehmen.~~
+   **Erledigt (Task 1).** Quelle ist `matter_server.client.models.device_types`
+   (Teil des installierten `python-matter-server`-Pakets) — laut eigenem
+   Modul-Docstring maschinell erzeugt aus `zcl/data-model/chip/
+   matter-devices.xml` der CSA-Spezifikation. `chip.clusters.Objects`
+   (installiertes chip-SDK) enthält dagegen **keine** Gerätetyp-Tabelle, nur
+   die Cluster-Struktur des Descriptor-Attributs selbst — dort nachgesehen,
+   nicht angenommen. Gegengeprüft an beiden eingecheckten Abbildern
+   (`tests/fixtures/nodes/`): Root Node `0x0016`, OTA Requestor `0x0012`,
+   Power Source `0x0011`, deckt sich mit den in `relevance.py` verwendeten
+   Konstanten. Kein direkter Blick in die Matter Device Library Specification
+   selbst (kein Netzzugriff in der Umsetzungsumgebung) — diese sekundäre,
+   aber maschinell erzeugte und empirisch gegengeprüfte Quelle ist, worauf
+   sich die drei Zahlen stützen (Details: `.superpowers/sdd/task-1-report.md`).
+2. ~~Ob die Feinauswahl aus 4.3 auch für Cluster gelten soll, deren Namen aus
    dem SDK-Katalog stammen, ist offen. Vorschlag: nein — der Katalog kennt
-   keine Relevanz, und „benannt" hieße dann „alle".
+   keine Relevanz, und „benannt" hieße dann „alle".~~ **Entschieden, im
+   vorgeschlagenen Sinn (nein).** `relevance.is_functional` fragt
+   `profiles.table.knows_cluster`/`names_element` — beide werten
+   ausschließlich `clusters.yaml` aus (`profiles.table._table()`), nie den
+   SDK-Katalog aus 4.2. Ein Cluster, der nur über den Katalog einen Namen
+   bekommt, aber in `clusters.yaml` nicht steht, bleibt für die Feinauswahl
+   „unbekannt" und damit vollständig relevant — deckt sich mit 4.2 oben
+   („Der Katalog liefert Namen, keine Relevanz").
 3. Ein Gerät mit mehreren Nutz-Gerätetypen auf einem Endpunkt (Brücken,
    Kombigeräte) ist ungeprüft; die Regel behandelt es korrekt als Nutz-
    Endpunkt, aber es lag keines vor.
 4. Ob `Relevance` später vom Anwender überschreibbar sein soll (eigene
-   Sperrliste), bleibt offen. Bis jemand danach fragt: nein.
+   Sperrliste), bleibt offen. Bis jemand danach fragt: nein. Ausdrücklich
+   nicht Teil dieser Phase (Aufgabe 9, Abschlusskriterien).

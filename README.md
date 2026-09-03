@@ -54,6 +54,18 @@ ausliefert:
 - `/` und `/api/*` für eine Bedienoberfläche im Browser: Geräte einlernen,
   ansehen, benennen, schalten, Vorlagen exportieren, Diagnose.
 
+**Was eine exportierte Vorlage standardmäßig enthält.** Ein Gerät liefert oft
+weit mehr Signale, als jemand in Loxone haben will — eine Steckdose etwa über
+hundert, meist Thread-Funkzähler, Seriennummern und andere Verwaltungswerte.
+Der Export nimmt deshalb standardmäßig nur die **funktionalen** Signale
+mit — die, die zum erkannten Gerätetyp gehören (bei einer Steckdose: Ein/Aus,
+Spannung, Strom, Leistung, Verbrauch). Alles andere bleibt technisch
+exportierbar, ist aber nicht angehakt. In der Signalliste der WebUI stehen
+diese übrigen Signale im zugeklappten Block „Experte" (mit Anzahl in der
+Überschrift) — jedes davon trägt seinen eigenen Exportieren-Haken und lässt
+sich dort einzeln aktivieren, etwa ein Thread-Zähler zur Fehlersuche.
+Begründung und Auswahlregel: [Signalauswahl-Entwurf](docs/superpowers/specs/2026-09-03-signalauswahl-design.md).
+
 Der Dienst bindet standardmäßig auf `0.0.0.0` (`--host`), damit der
 Miniserver ihn erreicht — dieselbe Erreichbarkeit gilt fürs restliche
 Netz. **Die `/api`-Routen sind deshalb mit `--api-token` bzw. der
