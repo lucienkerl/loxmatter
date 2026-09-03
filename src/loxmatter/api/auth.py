@@ -65,6 +65,14 @@ class StatusOut(BaseModel):
 # gilt bewusst unabhaengig von `LoginThrottle`: die bremst nur WIEDERHOLTE
 # Anfragen EINER Adresse, nicht viele GLEICHZEITIGE Anfragen verschiedener
 # Adressen.
+#
+# Entsteht hier auf Modulebene, also AUSSERHALB jedes Event-Loops - das
+# traegt nur, weil AnyIO dafuer einen Adapter liefert, der sich beim ersten
+# Gebrauch an den dann laufenden Loop bindet und bei einem Wechsel neu
+# bindet (uvicorn hat dafuer einen einzigen Loop, die Testsuite viele -
+# beides funktioniert deshalb). Wer diese Konstante spaeter in eine Funktion
+# verschiebt, sollte das wissen, statt sich zu wundern, warum es trotzdem
+# noch geht.
 _PASSWORD_HASH_LIMITER = anyio.CapacityLimiter(4)
 
 
@@ -179,8 +187,12 @@ def build_auth_router(store: Store) -> APIRouter:
            Limiter begrenzt zusaetzlich, wieviele dieser 16-MiB-Berechnungen
            gleichzeitig im Speicher stehen koennen (Review-Fund, 2026-09-03,
            siehe Kommentar an `_PASSWORD_HASH_LIMITER`).
-        3. Dieselbe `LoginThrottle` wie `/auth/login` (unten) begrenzt
-           zusaetzlich, wie oft in kurzer Zeit ueberhaupt bis zum Hashen
+        3. Der Fehlversuch wird HIER, VOR dem `await anyio.to_thread.run_sync`,
+           optimistisch gebucht - genau wie in `/auth/login` unten, dessen
+           Kommentar an der Buchung die ausfuehrliche Begruendung und die
+           Messung traegt (60 statt hoechstens `FAILURES_BEFORE_THROTTLING`
+           echter Rateversuche ohne das Vorziehen). Dieselbe `LoginThrottle`
+           begrenzt so, wie oft in kurzer Zeit ueberhaupt bis zum Hashen
            vorgedrungen werden kann - der Fall, den Punkt 1 nicht abdeckt:
            eine Bruecke, deren Ersteinrichtung noch nie stattgefunden hat.
         """
@@ -205,14 +217,17 @@ def build_auth_router(store: Store) -> APIRouter:
             # ohne dass er je ein falsches Passwort eingegeben haette. Die
             # Drosselungs-*Pruefung* oben bleibt unveraendert bestehen.
             raise HTTPException(status_code=409, detail=_ALREADY_SET_UP_DETAIL)
+        throttle.record_failure(client)
         hashed = await anyio.to_thread.run_sync(
             hash_password, body.password, limiter=_PASSWORD_HASH_LIMITER
         )
         if not store.auth.set_password_hash_if_unset(hashed):
-            # Der Wettlauf aus Punkt 1 oben: zwischen der Pruefung und
-            # diesem Schreiben hat eine andere, gleichzeitige Einrichtung
-            # gewonnen.
-            throttle.record_failure(client)
+            # Der Wettlauf aus Punkt 1 oben: zwischen der Pruefung und diesem
+            # Schreiben hat eine andere, gleichzeitige Einrichtung gewonnen.
+            # KEIN zweites `record_failure` hier (Review-Fund, 2026-09-03):
+            # der Fehlversuch steht bereits vor dem `await` oben zu Buche -
+            # ein weiterer hier waere eine Doppelbuchung fuer denselben
+            # Versuch.
             raise HTTPException(status_code=409, detail=_ALREADY_SET_UP_DETAIL)
         throttle.record_success(client)
         _start_session(response)
@@ -260,6 +275,17 @@ def build_auth_router(store: Store) -> APIRouter:
         # Erfolg holt `record_success` den Zaehler sofort wieder herunter,
         # das sequenzielle Verhalten (fuenf Fehlversuche, danach eine Sperre)
         # bleibt dadurch unveraendert.
+        #
+        # Zwei Eigenschaften dieser vorgezogenen Buchung sind gewollt, aber
+        # nicht offensichtlich: Bricht die Anfrage waehrend des `await` ab
+        # (Verbindungsabbruch, abgebrochene Aufgabe, ein scrypt-Fehler unter
+        # Last), nimmt niemand die Buchung zurueck - ein Betreiber kann sich
+        # so, ohne je ein falsches Passwort einzugeben, in Richtung der
+        # Sperre bewegen. Fuer einen Sicherheitszaehler ist das die richtige
+        # Richtung (im Zweifel zaehlen statt vergessen). Und ein
+        # ERFOLGREICHER fuenfter Versuch setzt fuer die Dauer des
+        # scrypt-Laufs ebenfalls kurzzeitig eine Sperre, die `record_success`
+        # gleich danach selbst wieder aufhebt.
         throttle.record_failure(client)
         if not await anyio.to_thread.run_sync(
             verify_password, body.password, stored, limiter=_PASSWORD_HASH_LIMITER

@@ -165,11 +165,54 @@ async def test_concurrent_wrong_passwords_are_still_throttled(auth_client):
     )
     statuses = [response.status_code for response in responses]
 
-    # Hoechstens `FAILURES_BEFORE_THROTTLING` echte Pruefungen des
-    # Passworts - alles danach muss die Drosselung mit 429 abfangen, egal
-    # wie viele Anfragen gleichzeitig ankamen.
-    assert statuses.count(401) <= FAILURES_BEFORE_THROTTLING
+    # Genau `FAILURES_BEFORE_THROTTLING` echte Pruefungen des Passworts -
+    # alles danach muss die Drosselung mit 429 abfangen, egal wie viele
+    # Anfragen gleichzeitig ankamen. `<=` waere hier zahnlos: die Aussage
+    # bliebe auch wahr, wenn die Route ausnahmslos 429 antwortete (0 ist
+    # ebenfalls <= `FAILURES_BEFORE_THROTTLING`). Der Wert ist deterministisch,
+    # weil der Rumpf von `/auth/login` bis zur Buchung synchron gegenueber dem
+    # Event-Loop laeuft - kein `await` liegt dazwischen, siehe Kommentar oben.
+    assert statuses.count(401) == FAILURES_BEFORE_THROTTLING
     assert statuses.count(429) == attempts - statuses.count(401)
+
+
+async def test_concurrent_setup_attempts_are_still_throttled(auth_client, monkeypatch):
+    """Regressionsfund (Fund 1, 2026-09-03): dieselbe Luecke wie im Test
+    oben, nur in `/auth/setup` statt `/auth/login` - dort bucht vor dieser
+    Behebung nichts VOR dem `await anyio.to_thread.run_sync(hash_password, ...)`,
+    also kommen beliebig viele gleichzeitige Einrichtungsversuche an
+    `throttle.retry_after` vorbei, bevor auch nur einer den Zaehler erhoeht
+    (nachgemessen vor der Behebung: 20 von 20 gleichzeitigen Versuchen gegen
+    eine noch nicht eingerichtete Bruecke drangen bis zum 16-MiB-Hashen vor).
+
+    Statuscodes allein verraten das hier NICHT, anders als beim Login: der
+    Verlierer eines Wettlaufs um `set_password_hash_if_unset` bekommt
+    ebenfalls 409, obwohl er zuvor gehasht hat - ein 409 heisst also nicht
+    "wurde gedrosselt". Deshalb zaehlt dieser Test direkt die Aufrufe von
+    `hash_password` per Monkeypatch mit, statt sich auf die Statuscodes zu
+    verlassen."""
+    client, _ = auth_client
+
+    calls = 0
+    original_hash_password = hash_password
+
+    def counting_hash_password(password: str) -> str:
+        nonlocal calls
+        calls += 1
+        return original_hash_password(password)
+
+    monkeypatch.setattr("loxmatter.api.auth.hash_password", counting_hash_password)
+
+    attempts = FAILURES_BEFORE_THROTTLING * 4
+    responses = await asyncio.gather(
+        *(client.post("/auth/setup", json={"password": f"{PASSWORT}-{i}"}) for i in range(attempts))
+    )
+
+    # Genau `FAILURES_BEFORE_THROTTLING` Versuche drangen bis zum Hashen vor -
+    # derselbe deterministische Grund wie beim Login: der Rumpf von
+    # `/auth/setup` laeuft bis zur Buchung synchron.
+    assert calls == FAILURES_BEFORE_THROTTLING
+    assert [response.status_code for response in responses].count(200) == 1
 
 
 async def test_logout_ends_the_session_on_the_server(auth_client):
