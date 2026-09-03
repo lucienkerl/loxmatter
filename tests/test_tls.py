@@ -221,19 +221,19 @@ def test_a_password_protected_ca_key_does_not_crash_the_startup(tmp_path):
     """Ein passwortgeschuetzter CA-Schluessel loest TypeError aus, der
     bisher nicht gefangen wurde. Das Modul muss ihn abfangen wie jeden
     anderen Fehler beim Laden des Schluessels, um die Zusage einzuloesen:
-    prepare_tls darf niemals wirft (TLS darf den Start nicht verhindern).
+    prepare_tls wirft niemals (TLS darf den Start nicht verhindern).
     Stattdessen wird die CA regeneriert.
     """
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
 
-    # Gültiges Material erzeugen
+    # Gueltiges Material erzeugen
     material = ensure_tls_material(tmp_path)
     original_ca_serial = _serial(tmp_path / "ca.crt")
     assert material.ca_certificate.exists()
     assert material.private_key.exists()
 
-    # CA-Schlüssel durch einen passwortgeschützten ersetzen
+    # CA-Schluessel durch einen passwortgeschuetzten ersetzen
     encrypted_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     encrypted_key_bytes = encrypted_key.private_bytes(
         encoding=serialization.Encoding.PEM,
