@@ -687,6 +687,85 @@
           <button @click="downloadFabricBackup()">Sicherung herunterladen</button>
           <p x-show="backupError" x-cloak class="banner danger" x-text="backupError"></p>
         </div>
+
+        <!--
+          Projektdatei-Sync (Aufgabe 12): bestehende Loxone-Projektdatei
+          hochladen, Plan ansehen, gepatchte Datei herunterladen - erst
+          NACHDEM der Plan zu sehen war (Entwurf: kein Download vor dem
+          Plan). Beide gepatchten Fassungen kommen bereits in der
+          Upload-Antwort mit (siehe `downloadPatchedProject` in app.js),
+          der Haken unten waehlt nur zwischen ihnen, ohne einen zweiten
+          Aufruf an die Bruecke.
+        -->
+        <div class="card">
+          <h2>Projektdatei-Sync</h2>
+          <p class="hint">
+            Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden
+            aktualisiert, neue Signale ergänzt. Nichts wird heruntergeladen, bevor du den Plan
+            gesehen hast.
+          </p>
+          <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
+            Bitte zuerst in
+            <a href="#" @click.prevent="selectView('settings')">Einstellungen → Verbindung zum Miniserver</a>
+            die Brücken-IP hinterlegen.
+          </p>
+          <div class="row">
+            <label
+              >Projektdatei (.Loxone)
+              <input
+                type="file"
+                accept=".Loxone,.xml"
+                @change="uploadProjectFile($event)"
+                :disabled="projectSync.busy"
+            /></label>
+          </div>
+          <p x-show="projectSync.busy" x-cloak class="hint">Wird verarbeitet …</p>
+          <p x-show="projectSync.error" x-cloak class="banner danger" x-text="projectSync.error"></p>
+
+          <template x-if="projectSync.plan">
+            <div>
+              <p x-show="!projectSync.plan.has_changes" class="hint">
+                Alles aktuell – keine Änderungen nötig.
+              </p>
+              <div style="overflow-x: auto" x-show="projectSync.plan.has_changes">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Gerät</th>
+                      <th>Signal</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="entry in projectSync.plan.entries" :key="entry.kind + entry.key">
+                      <tr>
+                        <td x-text="entry.device_label || '—'"></td>
+                        <td x-text="entry.title"></td>
+                        <td>
+                          <span
+                            class="badge"
+                            :class="projectSyncStatusBadgeClass(entry.status)"
+                            x-text="projectSyncStatusLabel(entry.status)"
+                          ></span>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="row">
+                <label>
+                  <input type="checkbox" x-model="projectSync.includeNewDevices" />
+                  Neue Geräte-Container ebenfalls anlegen (experimentell, noch nicht gegen Loxone
+                  Config validiert)
+                </label>
+              </div>
+              <button class="primary" @click="downloadPatchedProject()">
+                Gepatchte Datei herunterladen
+              </button>
+            </div>
+          </template>
+        </div>
       </section>
 
       <!-- ================================================================

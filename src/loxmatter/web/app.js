@@ -228,6 +228,51 @@ async function requestDownload(path, filename) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
+/**
+ * Laedt eine Datei per multipart/form-data hoch und erwartet JSON zurueck -
+ * eigene Funktion statt `requestJson`, weil ein Datei-Upload kein
+ * `JSON.stringify`-Body ist und `Content-Type` dem Browser ueberlassen
+ * werden muss (er setzt die Multipart-Boundary selbst, inklusive der
+ * Trennzeichenfolge, die `JSON.stringify` gar nicht kennt).
+ */
+async function requestUpload(path, formData) {
+  let response;
+  try {
+    response = await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      body: formData,
+    });
+  } catch {
+    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+  }
+  if (response.status === 401) {
+    throw new UnauthorizedError();
+  }
+  if (!response.ok) {
+    const error = new Error(await readErrorDetail(response));
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+/**
+ * Dekodiert einen Base64-String zu einem Blob - fuer den Download der
+ * gepatchten Projektdatei aus der JSON-Antwort von
+ * `/api/export/project-sync` (die Datei kommt eingebettet in der
+ * Plan-Antwort, nicht ueber einen eigenen Download-Aufruf, siehe
+ * `downloadPatchedProject` unten).
+ */
+function blobFromBase64(base64, mimeType) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
 function app() {
   return {
     // --- Ansicht ---------------------------------------------------------
@@ -310,6 +355,23 @@ function app() {
     systemError: null,
     diagnosticsBusy: false,
     backupError: null,
+
+    // --- Projektdatei-Sync (Aufgabe 12) ------------------------------------
+    // `plan` traegt die komplette Antwort von `/api/export/project-sync`
+    // unveraendert (Entries UND die beiden fertig gepatchten Dateien als
+    // Base64) - `downloadPatchedProject` liest daraus, statt fuer den
+    // Haken "Neue Geraete-Container ebenfalls anlegen" einen zweiten Aufruf
+    // an die Bruecke zu machen. Solange `plan` `null` ist, gab es noch
+    // keine Antwort zu sehen - und genau daran haengt der Download-Knopf
+    // in `index.html` (`x-show="projectSync.plan"`): nichts herunterladen,
+    // bevor der Plan gesehen wurde.
+    projectSync: {
+      file: null,
+      plan: null,
+      includeNewDevices: false,
+      busy: false,
+      error: "",
+    },
 
     // --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------
     // Drei Straeme, gefuellt von genau EINEM WebSocket
@@ -401,6 +463,16 @@ function app() {
     async download(path, filename) {
       try {
         await requestDownload(path, filename);
+      } catch (error) {
+        this.noteAuthError(error);
+        throw error;
+      }
+    },
+
+    /** Wie `request`, aber fuer den Datei-Upload (Projektdatei-Sync). */
+    async upload(path, formData) {
+      try {
+        return await requestUpload(path, formData);
       } catch (error) {
         this.noteAuthError(error);
         throw error;
@@ -1227,6 +1299,109 @@ function app() {
       } catch (error) {
         this.backupError = `Sicherung nicht möglich: ${error.message}`;
       }
+    },
+
+    // ---------------------------------------------------------------------
+    // Projektdatei-Sync (Aufgabe 12)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Laedt die hochgeladene Loxone-Projektdatei zu `/api/export/project-sync`
+     * hoch und zeigt die Antwort (Plan + beide gepatchten Dateien) an.
+     * Dieselbe IP-Pruefung wie `downloadExport`/`exportDevice`: ohne sie
+     * ersetzte ein Klick bei leerem IP-Feld die Seite durch die rohe
+     * 422-Fehlerantwort des Backends (Pflichtparameter `bridge_ip`).
+     */
+    async uploadProjectFile(event) {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      if (!file) {
+        return;
+      }
+      this.projectSync.error = "";
+      if (!this.bridgeSettings.bridge_ip) {
+        this.projectSync.error =
+          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        input.value = "";
+        return;
+      }
+      this.projectSync.busy = true;
+      this.projectSync.plan = null;
+      this.projectSync.file = file.name;
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const params = new URLSearchParams({ bridge_ip: this.bridgeSettings.bridge_ip });
+        this.projectSync.plan = await this.upload(`/api/export/project-sync?${params}`, formData);
+      } catch (error) {
+        this.projectSync.error = `Hochladen fehlgeschlagen: ${error.message}`;
+      } finally {
+        this.projectSync.busy = false;
+        // Loescht die Dateiauswahl im Eingabefeld selbst - ohne das loest
+        // ein erneuter Upload DERSELBEN Datei kein `change`-Ereignis mehr
+        // aus, weil sich der Wert des Feldes aus Sicht des Browsers nicht
+        // geaendert hat.
+        input.value = "";
+      }
+    },
+
+    /** Deutsche Kurzbezeichnung fuer die `PlanStatus`-Werte aus
+     * `projectsync/diff.py` (`unchanged`, `updated`, `new_signal`,
+     * `new_device`, `orphaned`, `conflict`) - die Rohwerte sind Englisch
+     * (Bezeichner-Konvention dieses Projekts, siehe Kommentar am Kopf
+     * dieser Datei), duerfen aber nicht unuebersetzt auf dem Bildschirm
+     * landen. */
+    projectSyncStatusLabel(status) {
+      const labels = {
+        unchanged: "Unverändert",
+        updated: "Aktualisiert",
+        new_signal: "Neues Signal",
+        new_device: "Neues Gerät",
+        orphaned: "Verwaist – wird nicht verändert",
+        conflict: "Konflikt – wird übersprungen",
+      };
+      return labels[status] || status;
+    },
+
+    /** Badge-Farbe fuer `projectSyncStatusLabel` - dieselben drei Klassen
+     * (`ok`/`warn`/`danger`), die `.badge` in `style.css` schon fuer den
+     * Systemcheck kennt. `conflict` ist der einzige Fall, in dem eine
+     * bestehende Attribut-Menge NICHT dem erwarteten Schema entspricht und
+     * deshalb unangetastet bleibt (siehe `patch.py`) - daher `danger` statt
+     * nur `warn`. */
+    projectSyncStatusBadgeClass(status) {
+      if (status === "conflict") {
+        return "danger";
+      }
+      if (status === "unchanged") {
+        return "ok";
+      }
+      return "warn";
+    },
+
+    /**
+     * Baut den Blob aus der Base64-kodierten Datei, die bereits Teil der
+     * Plan-Antwort war (kein zweiter Aufruf an die Bruecke noetig) - der
+     * Haken "Neue Geraete-Container ebenfalls anlegen" waehlt dabei nur
+     * aus, WELCHE der beiden mitgelieferten Fassungen heruntergeladen wird.
+     */
+    downloadPatchedProject() {
+      if (!this.projectSync.plan) {
+        return;
+      }
+      const base64 = this.projectSync.includeNewDevices
+        ? this.projectSync.plan.patched_with_new_devices_base64
+        : this.projectSync.plan.patched_conservative_base64;
+      const blob = blobFromBase64(base64, "application/xml");
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "loxmatter-projekt-gepatcht.Loxone";
+      link.click();
+      // Verzoegertes Freigeben wie in `requestDownload` oben - manche
+      // Browser (Firefox) starten den Download eines Objekt-URLs erst nach
+      // dem laufenden Aufrufstapel.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     },
 
     // ---------------------------------------------------------------------
