@@ -56,11 +56,20 @@ DEFAULT_UDP_PORT = 7000
 # `_migrate_to_v2`. Version 3 (Aufgabe 7, Phase 6) fuegt keine Spalte hinzu -
 # sie leitet `signal.title`, `signal.unit` und den Vorgabewert von
 # `signal.exported` fuer BESTEHENDE Zeilen aus der Profiltabelle neu ab, siehe
-# `_migrate_to_v3`. Version 4 (WebUI-Login) fuegt die Tabellen `setting` und
-# `session` hinzu, siehe `_migrate_to_v4` - beide sind bei einer frischen
-# Datenbank bereits durch `_SCHEMA` da, die Migration ist deshalb nur fuer
-# Bestandsdatenbanken noetig.
-_SCHEMA_VERSION = 4
+# `_migrate_to_v3`. Version 4 (Aufgabe 8, Phase 6) fuegt `signal.functional`
+# hinzu, siehe `_migrate_to_v4`. Version 5 (WebUI-Login) fuegt die Tabellen
+# `setting` und `session` hinzu, siehe `_migrate_to_v5` - beide sind bei einer
+# frischen Datenbank bereits durch `_SCHEMA` da, die Migration ist deshalb nur
+# fuer Bestandsdatenbanken noetig.
+#
+# **Warum der Login-Umzug die 5 bekommt und nicht die 4.** Beide Vorhaben
+# entstanden parallel und beanspruchten die 4. Eine Datenbank, die Phase 6
+# bereits gesehen hat, steht auf 4 - eine zweite Migration unter derselben
+# Nummer wuerde von `_migrate` stillschweigend uebersprungen, und der Dienst
+# startete ohne die Tabellen, die er zum Anmelden braucht. Die Nummer haengt
+# an der Reihenfolge, in der die Aenderungen zusammengefuehrt wurden, nicht
+# daran, wann sie geschrieben wurden.
+_SCHEMA_VERSION = 5
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
@@ -85,6 +94,7 @@ CREATE TABLE IF NOT EXISTS signal (
     unit          TEXT NOT NULL,
     exportability TEXT NOT NULL,
     exported      INTEGER NOT NULL DEFAULT 1,
+    functional    INTEGER NOT NULL DEFAULT 1,
     UNIQUE (device_id, endpoint, cluster_id, element_id, kind)
 );
 CREATE TABLE IF NOT EXISTS command (
@@ -182,6 +192,39 @@ def _migrate_to_v2(db: sqlite3.Connection) -> None:
     fehlenden Spalten und bekommen sie angelegt."""
     _add_column_if_missing(db, "device", "exported_at", "TEXT")
     _add_column_if_missing(db, "device", "updated_at", "TEXT")
+
+
+def _endpoint0_device_types(rows: Sequence[sqlite3.Row]) -> dict[int, dict[int, frozenset[int]]]:
+    """Ersatzregel fuer `profiles.relevance.device_types_by_endpoint`, wenn
+    kein Geraeteabbild vorliegt, sondern nur bereits gespeicherte Zeilen -
+    gemeinsame Grundlage von `_migrate_to_v3` (Aufgabe 7) und
+    `_migrate_to_v4` (Aufgabe 8): beide muessen `is_functional` ohne
+    `NodeSnapshot` aufrufen, aus genau demselben Grund (siehe der
+    Docstring-Abschnitt "Woher die Geraetetypen je Endpunkt kommen" unten
+    bei `_migrate_to_v3`) und mit genau derselben Ersatzregel - eine zweite,
+    nur leicht abweichende Kopie waere fuer zwei Migrationen, die dieselbe
+    Frage stellen, nicht zu rechtfertigen.
+
+    Endpunkt 0 gilt immer als Root Node (Matter Core-Spezifikation 9.2.1),
+    PowerSource zusaetzlich, sobald Endpunkt 0 ueberhaupt ein Signal dieses
+    Clusters traegt (`relevance.UTILITY_ENDPOINT_KEEP_CLUSTERS`, bislang der
+    einzige belegte Fall). `rows` muss mindestens die Spalten `device_id`,
+    `endpoint` und `cluster_id` tragen."""
+    clusters_on_endpoint0: dict[int, set[int]] = {}
+    for row in rows:
+        if int(row["endpoint"]) == 0:
+            clusters_on_endpoint0.setdefault(int(row["device_id"]), set()).add(
+                int(row["cluster_id"])
+            )
+
+    device_types_by_device: dict[int, dict[int, frozenset[int]]] = {}
+    for device_id, endpoint0_clusters in clusters_on_endpoint0.items():
+        declared = {ROOT_NODE_DEVICE_TYPE}
+        for cluster_id, required_type in UTILITY_ENDPOINT_KEEP_CLUSTERS.items():
+            if cluster_id in endpoint0_clusters:
+                declared.add(required_type)
+        device_types_by_device[device_id] = {0: frozenset(declared)}
+    return device_types_by_device
 
 
 def _migrate_to_v3(db: sqlite3.Connection) -> None:
@@ -360,28 +403,7 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
     rows = db.execute(
         "SELECT device_id, key, endpoint, cluster_id, element_id, kind, exportability FROM signal"
     ).fetchall()
-
-    # Cluster-IDs je (Geraet, Endpunkt 0) - die einzige Grundlage, die zur
-    # Migrationszeit ueber ein Geraet ueberhaupt bekannt ist (siehe Docstring
-    # oben). Nur Endpunkt 0 wird gesondert betrachtet, siehe dort.
-    clusters_on_endpoint0: dict[int, set[int]] = {}
-    for row in rows:
-        if int(row["endpoint"]) == 0:
-            clusters_on_endpoint0.setdefault(int(row["device_id"]), set()).add(
-                int(row["cluster_id"])
-            )
-
-    # Die Ersatzregel selbst, einmal je Geraet gebaut statt je Zeile neu:
-    # Endpunkt 0 gilt immer als Root Node, PowerSource zusaetzlich, sobald
-    # Endpunkt 0 ueberhaupt ein Signal dieses Clusters traegt (siehe
-    # Docstring oben).
-    device_types_by_device: dict[int, dict[int, frozenset[int]]] = {}
-    for device_id, endpoint0_clusters in clusters_on_endpoint0.items():
-        declared = {ROOT_NODE_DEVICE_TYPE}
-        for cluster_id, required_type in UTILITY_ENDPOINT_KEEP_CLUSTERS.items():
-            if cluster_id in endpoint0_clusters:
-                declared.add(required_type)
-        device_types_by_device[device_id] = {0: frozenset(declared)}
+    device_types_by_device = _endpoint0_device_types(rows)
 
     for row in rows:
         try:
@@ -419,6 +441,68 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
 
 
 def _migrate_to_v4(db: sqlite3.Connection) -> None:
+    """Fuegt `signal.functional` hinzu und befuellt bestehende Zeilen (Aufgabe 8).
+
+    **Warum eine eigene Spalte, obwohl `exported` schon existiert.** Beide
+    starten beim Anlegen eines Signals (`register_signals`) am selben Wert -
+    `is_exportable(...) and is_functional(...)` -, laufen aber danach
+    auseinander, sobald jemand einen Haken in der Signale-Ansicht umlegt
+    (`PATCH /api/signals/{key}`, `set_exported`): `exported` gehoert dann dem
+    Nutzer, `is_functional` bleibt eine reine Eigenschaft des Geraets, die
+    sich durch einen Klick nicht aendert. Die Oberflaeche braucht aber genau
+    diese zweite, vom Nutzer UNBEEINFLUSSTE Antwort, um die Signalliste in
+    "Funktional" und "Experte" zu gliedern (`api.devices._signal_out`) - ein
+    Nutzer, der ein technisches Signal manuell exportiert, soll es dadurch
+    nicht auch aus dem Experte-Block herausheben, und umgekehrt. Ohne eigene
+    Spalte gaebe es nur zwei schlechte Alternativen: `is_functional` bei
+    jeder Anfrage neu berechnen (braucht die Geraetetypen je Endpunkt, siehe
+    `_migrate_to_v3`s Docstring - genau das Problem, das dort schon gegen
+    eine Spalte sprach, JETZT aber nicht mehr gilt, weil `register_signals`
+    das Ergebnis ab sofort ohnehin schon kennt und mitschreiben kann), oder
+    `exported` fuer beide Fragen gleichzeitig missbrauchen und damit die
+    Nutzer-Auswahl beim Umschalten stillschweigend verlieren.
+
+    **Der Ruecksicherungsfall (Bestandszeilen ohne Geraeteabbild) laeuft
+    ueber dieselbe Ersatzregel wie `_migrate_to_v3`**, siehe
+    `_endpoint0_device_types` - dieselben dort dokumentierten Grenzen gelten
+    hier unveraendert (Endpunkt 0 = Root Node angenommen, PowerSource nur
+    ueber Cluster-Anwesenheit statt echter Geraetetyp-Deklaration erkannt,
+    kein Wissen ueber einen Verwaltungs-Endpunkt jenseits von Endpunkt 0).
+    Anders als `_migrate_to_v3` fasst diese Migration `exportability` und
+    `exported` nicht an - nur die neue Spalte.
+
+    Wie `_migrate_to_v1`: der Backfill laeuft nur, wenn die Spalte tatsaechlich
+    neu angelegt wurde, nicht bei einer frisch erzeugten Datenbank (Spalte
+    schon durch `_SCHEMA` da, keine Bestandszeilen). Eine Zeile, die sich
+    nicht parsen laesst, bleibt beim Spalten-Default `functional = 1` stehen -
+    derselbe konservative Fehlschlagfall wie bei `_migrate_to_v3` ("diese eine
+    Zeile bleibt unveraendert" dort bedeutet fuer `exported`, hier fuer
+    `functional`: im Zweifel sichtbar statt versteckt)."""
+    if not _add_column_if_missing(db, "signal", "functional", "INTEGER NOT NULL DEFAULT 1"):
+        return
+    rows = db.execute(
+        "SELECT device_id, key, endpoint, cluster_id, element_id, kind FROM signal"
+    ).fetchall()
+    device_types_by_device = _endpoint0_device_types(rows)
+
+    for row in rows:
+        try:
+            ref = SignalRef(
+                int(row["endpoint"]),
+                int(row["cluster_id"]),
+                int(row["element_id"]),
+                SignalKind(row["kind"]),
+            )
+            device_types = device_types_by_device.get(int(row["device_id"]), {})
+            functional = int(is_functional(ref, device_types))
+        except (ValueError, KeyError):
+            # Diese eine Zeile bleibt beim Spalten-Default stehen (siehe
+            # Docstring) - kein Abbruch der gesamten Migration.
+            continue
+        db.execute("UPDATE signal SET functional = ? WHERE key = ?", (functional, row["key"]))
+
+
+def _migrate_to_v5(db: sqlite3.Connection) -> None:
     """Legt `setting` und `session` an (WebUI-Login).
 
     `CREATE TABLE IF NOT EXISTS` und nicht `CREATE TABLE`: eine frisch
@@ -453,6 +537,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
+    5: _migrate_to_v5,
 }
 
 
@@ -513,6 +598,17 @@ class StoredSignal:
     # nicht abbildbares Signal (siehe Spec 6.6) hat hier nie eine editierbare
     # Checkbox, siehe `exportable` in `api.models.SignalOut`.
     exported: bool
+    # functional (Aufgabe 8, Phase 6): ob `profiles.relevance.is_functional`
+    # dieses Signal fuer diesen GERAETETYP als gewollt einstuft - anders als
+    # `exported` vom Nutzer NICHT umschaltbar und bleibt deshalb auch dann
+    # unveraendert, wenn ein Nutzer `exported` per Checkbox umlegt. Beide
+    # Felder starten beim Anlegen am selben Wert, laufen aber ab dem ersten
+    # Klick auseinander - siehe `_migrate_to_v4`, wo diese Unterscheidung
+    # ausfuehrlich begruendet ist. Die Oberflaeche nutzt allein DIESES Feld,
+    # um die Signalliste in "Funktional" und "Experte" zu gliedern
+    # (`api.devices._signal_out`) - eine zweite Berechnung der Regel in der
+    # API-Schicht oder gar in JavaScript gibt es bewusst nicht.
+    functional: bool
 
 
 @dataclass(frozen=True)
@@ -820,9 +916,21 @@ class Store:
                     (device_id, ref.endpoint, ref.cluster_id, ref.element_id, ref.kind.value),
                 ).fetchone()
                 if existing is not None:
+                    # `functional` wird hier MIT aktualisiert, anders als
+                    # `exported` (Aufgabe 8): es ist eine reine Eigenschaft
+                    # des Geraets (`profiles.relevance.is_functional`), nicht
+                    # vom Nutzer umschaltbar - ein Firmware-Update, das einen
+                    # Endpunkt-Geraetetyp aendert, soll sich hier genauso
+                    # nachziehen wie bei `unit`/`exportability`. Siehe
+                    # `StoredSignal.functional`.
                     self._db.execute(
-                        "UPDATE signal SET unit = ?, exportability = ? WHERE key = ?",
-                        (profile.unit, profile.exportability.value, existing["key"]),
+                        "UPDATE signal SET unit = ?, exportability = ?, functional = ? WHERE key = ?",
+                        (
+                            profile.unit,
+                            profile.exportability.value,
+                            int(is_functional(ref, device_types)),
+                            existing["key"],
+                        ),
                     )
                     continue
 
@@ -836,12 +944,15 @@ class Store:
                 #
                 # Nur beim ANLEGEN: der UPDATE-Zweig oben fasst `exported`
                 # weiterhin nicht an, sobald ein Signal einmal bekannt ist -
-                # ab dann gehoert der Wert dem Nutzer.
-                exported = is_exportable(profile.exportability) and is_functional(ref, device_types)
+                # ab dann gehoert der Wert dem Nutzer. `functional` dagegen
+                # gehoert nie dem Nutzer (siehe oben) und wird deshalb in
+                # BEIDEN Zweigen geschrieben.
+                functional = is_functional(ref, device_types)
+                exported = is_exportable(profile.exportability) and functional
                 self._db.execute(
                     "INSERT INTO signal "
                     "(device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"
-                    " exportability, exported) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " exportability, exported, functional) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         device_id,
                         ref.endpoint,
@@ -853,6 +964,7 @@ class Store:
                         profile.unit,
                         profile.exportability.value,
                         int(exported),
+                        int(functional),
                     ),
                 )
             # Geraet als "seither geaendert" markieren (Task 5, Phase 5): ein
@@ -907,6 +1019,7 @@ class Store:
             exportability=Exportability(row["exportability"]),
             device_id=int(row["device_id"]),
             exported=bool(row["exported"]),
+            functional=bool(row["functional"]),
         )
 
     def signals(self, device_id: int) -> list[StoredSignal]:

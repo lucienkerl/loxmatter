@@ -19,7 +19,7 @@ from typing import Any
 
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.matter.paths import parse_attribute_path
-from loxmatter.profiles.table import knows_cluster, names_element
+from loxmatter.profiles.table import known_attribute_section, names_element
 
 DESCRIPTOR_CLUSTER_ID = 29
 DEVICE_TYPE_LIST_ID = 0
@@ -115,9 +115,14 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
        nur ueberhaupt in Betracht, was zu einem dort ebenfalls deklarierten
        Nutz-Geraetetyp gehoert - alles andere scheidet hier sofort aus.
     3. Was Schicht 2 durchlaesst (und jeder Nutz-Endpunkt ohnehin) ist
-       gewollt - ausser bei einem Cluster, den die Profiltabelle kennt: dort
-       nur die benannten Elemente. Ein unbekannter Cluster bleibt
-       vollstaendig gewollt (Hauptdokument 3.5).
+       gewollt - ausser bei einem Cluster, fuer den die Profiltabelle einen
+       `attributes:`-Abschnitt fuehrt: dort nur die dort benannten Elemente.
+       Ein unbekannter Cluster, UND ein bekannter Cluster ohne
+       `attributes:`-Abschnitt (etwa einer, der nur wegen seiner Kommandos in
+       der Tabelle steht), bleiben vollstaendig gewollt (Hauptdokument 3.5).
+       Diese Unterscheidung ist `known_attribute_section` in
+       `profiles.table` - review-fix Phase 6: `knows_cluster` allein reichte
+       nicht, siehe dessen Docstring.
 
     Wichtig: Schicht 2 gewaehrt nur den Cluster einen Platz auf dem
     Verwaltungs-Endpunkt, nicht schon jedes seiner Elemente - Schicht 3
@@ -144,6 +149,6 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
 
     if ref.kind is SignalKind.EVENT:
         return True
-    if knows_cluster(ref.cluster_id):
+    if known_attribute_section(ref.cluster_id):
         return names_element(ref)
     return True

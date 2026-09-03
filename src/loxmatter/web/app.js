@@ -30,6 +30,17 @@ const RECONNECT_DELAY_MAX_MS = 15000;
 // bereits einen roten Banner und "Verbindung verloren" bekommt.
 const INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3;
 
+// Der Heartbeat-Schluessel der Bruecke (siehe loxone/runtime.py,
+// HEARTBEAT_KEY). Er gehoert zu keinem Geraet und kommt auch dann, wenn
+// sich an keinem etwas aendert - damit ist er das einzige verlaessliche
+// Lebenszeichen, das diese Oberflaeche hat.
+const HEARTBEAT_KEY = "bridge_alive";
+
+// Laufende Nummer fuer Kurzmeldungen. Modulweit statt im Zustand, weil
+// sie nur die Meldungen auseinanderhalten muss und niemanden sonst
+// interessiert.
+let toastCounter = 0;
+
 /**
  * Fehler eines Aufrufs ohne gueltige Sitzung - eigene Klasse, damit die
  * Oberflaeche diesen Fall von jedem anderen Fehlschlag unterscheiden kann,
@@ -179,8 +190,18 @@ function app() {
     controlsByDevice: {},
     commandValueDrafts: {},
     commandBusyKey: null,
-    commandMessage: null,
-    commandMessageIsError: false,
+    // Kurzmeldungen als Overlay statt im Textfluss (2026-09-03): eine
+    // eingeblendete Zeile im Fluss verschiebt alles darunter, und wer
+    // gerade einen zweiten Befehl anklicken will, trifft daneben.
+    toasts: [],
+    // Wann ein Schluessel zuletzt ueber die Live-Verbindung kam. Macht den
+    // Unterschied sichtbar zwischen "nichts aendert sich" und "nichts
+    // kommt an" - bei einer Steckdose ohne Last sieht beides gleich aus.
+    liveSeenAt: {},
+    lastHeartbeatAt: null,
+    // Tickt jede Sekunde, damit die "vor ..."-Angaben mitlaufen. Ohne
+    // dieses Feld saehe Alpine keinen Grund, sie neu zu zeichnen.
+    nowTick: Date.now(),
     labelDrafts: {},
     deviceActionError: null,
 
@@ -192,13 +213,19 @@ function app() {
     commissionMessageIsError: false,
 
     // --- Signale (geteilt mit der Geraete-Ansicht: dieselbe Liste dient
-    // dort als "wichtigste Live-Werte") ------------------------------------
+    // dort als Kurzfassung der funktionalen Signale) -----------------------
     signalsByDevice: {},
     signalsError: null,
     titleDrafts: {},
     rawWriteDrafts: {},
     rawWriteBusyKey: null,
     rawWriteMessages: {},
+    // Experte-Block (Aufgabe 8): standardmaessig zugeklappt, ein einziger
+    // globaler Schalter statt Zustand je Geraet - die Ansicht "Signale"
+    // zeigt ohnehin alle Geraete auf einmal untereinander, ein Zustand pro
+    // Karte wuerde hier keinen zusaetzlichen Nutzen bringen, nur zusaetzliche
+    // Klicks.
+    showExpertSignals: false,
 
     // --- Export --------------------------------------------------------
     exportBridgeIp: "",
@@ -240,6 +267,17 @@ function app() {
     // `this.socket` landete. Die andere blieb unsichtbar und lief bis zum
     // Schliessen des Tabs weiter.
     async init() {
+      // Der Sekundentakt fuer die Lebenszeichen-Anzeige steht hier und NICHT
+      // in `startApp()`: `startApp()` laeuft auch nach einer Neuanmeldung
+      // erneut, und ein zweites `setInterval` liesse sich danach durch
+      // nichts mehr stoppen - genau die Falle, die dieses Projekt schon
+      // zweimal mit doppelten Live-Verbindungen getroffen hat. `init()`
+      // ruft Alpine garantiert genau einmal auf. Der Takt kostet nichts,
+      // solange niemand angemeldet ist: er schreibt in ein Feld, das nur
+      // die Kopfzeile der App liest.
+      window.setInterval(() => {
+        this.nowTick = Date.now();
+      }, 1000);
       await this.loadAuthInfo();
       if (this.authenticated) {
         await this.startApp();
@@ -317,8 +355,39 @@ function app() {
      * Neuladen der Seite.
      */
     async startApp() {
+      // Zwischenspeicher und Fehlermeldungen leeren, BEVOR irgendetwas neu
+      // geladen wird. Diese Methode laeuft nicht nur beim ersten Aufbau,
+      // sondern auch nach einer Neuanmeldung - und dann steht in diesen
+      // Feldern noch der Stand von vor dem Sitzungsende.
+      //
+      // Die geraeteweisen Zwischenspeicher sind dabei der heikle Teil (Fund
+      // aus Phase 6, hier uebernommen): bei einer 401 legt
+      // `loadControls`/`loadSignals` gar keinen Eintrag an - der
+      // Zwischenspeicher bleibt leer, und ein leerer Eintrag ist von "dieses
+      // Geraet hat keine Befehle" nicht zu unterscheiden. Ohne dieses Leeren
+      // zeigte ein aufgeklapptes Geraet nach der Neuanmeldung dauerhaft
+      // "Keine bekannten Ausgangsbefehle", obwohl es drei gibt, und nur ein
+      // Neuladen der Seite half. Genau die Sorte stillschweigend falscher
+      // Zustand, die Spec 8.1 ausschliessen will.
+      this.backupError = null;
+      this.exportError = null;
+      this.deviceActionError = null;
+      this.signalsError = null;
+      this.controlsByDevice = {};
+      this.signalsByDevice = {};
       await this.loadDevices();
       this.connectLive();
+      // Nach einer Neuanmeldung steht die Ansicht nicht zwingend auf
+      // "Geraete" - `loadDevices` allein fuellte dann die falsche.
+      await this.selectView(this.view);
+      // Ein aufgeklapptes Geraet haengt an keiner Ansicht - `selectView`
+      // holt seine Bedienelemente nicht mit.
+      if (this.expandedDeviceId !== null) {
+        await Promise.all([
+          this.loadControls(this.expandedDeviceId),
+          this.loadSignals(this.expandedDeviceId),
+        ]);
+      }
     },
 
     async submitSetup() {
@@ -430,10 +499,20 @@ function app() {
     // 8.3) - fehlt er (noch keine Nachricht fuer dieses Geraet
     // eingetroffen), gilt der zuletzt geladene Stand aus `GET
     // /api/devices`.
+    // KEIN `hasOwnProperty` hier (2026-09-03). Alpines Reaktivitaet
+    // erfasst eine Abhaengigkeit nur bei einem echten Property-ZUGRIFF;
+    // `Object.prototype.hasOwnProperty.call(obj, key)` laeuft daran vorbei.
+    // Folge in der ausgelieferten Fassung: die erste Nachricht fuer einen
+    // Schluessel, den `liveValues` noch nicht kannte, veraenderte die
+    // Anzeige NICHT - erst ein spaeteres Neuzeichnen aus anderem Grund
+    // holte sie nach. Von aussen sah das aus, als kaeme ueber die
+    // Live-Verbindung nichts an, obwohl der Wert laengst im Zustand stand.
+    // Ein direkter Zugriff mit `=== undefined` wird dagegen erfasst.
     isOnline(device) {
       const liveKey = `d${device.id}_online`;
-      if (Object.prototype.hasOwnProperty.call(this.liveValues, liveKey)) {
-        return Boolean(this.liveValues[liveKey]);
+      const live = this.liveValues[liveKey];
+      if (live !== undefined) {
+        return Boolean(live);
       }
       return device.online;
     },
@@ -463,6 +542,19 @@ function app() {
       return this.controlsByDevice[deviceId] || null;
     },
 
+    /**
+     * Ob die Bedienelemente dieses Geraets ueberhaupt geladen werden
+     * konnten. Ohne diese Unterscheidung rendert die Oberflaeche einen
+     * fehlgeschlagenen Abruf als "Keine bekannten Ausgangsbefehle" - eine
+     * Aussage ueber das Geraet, wo in Wahrheit eine ueber die Verbindung
+     * faellig waere (Spec 8.1: ein Fehlschlag darf nicht als harmloser
+     * Zustand erscheinen).
+     */
+    controlsLoaded(deviceId) {
+      // Direkter Zugriff, kein `hasOwnProperty` - siehe `isOnline`.
+      return this.controlsByDevice[deviceId] !== undefined;
+    },
+
     // Die drei folgenden Helfer bestehen einzig, damit `index.html` kein
     // optionales Verkettungsoperator (`?.`) in einem Alpine-Ausdruck
     // braucht, um mit einem noch nicht geladenen Eintrag umzugehen - eine
@@ -483,44 +575,76 @@ function app() {
       return status ? status.exported_at : null;
     },
 
-    // Kurzliste fuer die Geraete-Ansicht: nur, was nach Loxone exportiert
-    // werden koennte, und davon nur die ersten paar - der vollstaendige
-    // Baum steht in der Signale-Ansicht. Ohne diese Deckelung waere sie bei
-    // einem Geraet mit hundert exportierbaren Signalen (kein Einzelfall,
-    // siehe IKEA-GRILLPLATS-Testvorlage) keine Kurzliste mehr, sondern
-    // derselbe volle Baum ein zweites Mal.
+    // Kurzliste fuer die Geraete-Ansicht: nur die funktionalen Signale
+    // (`signal.functional`, aus `profiles.relevance.is_functional` -
+    // Aufgabe 8), und davon nur die ersten paar - der vollstaendige Baum
+    // (inklusive Experte-Block) steht in der Signale-Ansicht. Die Deckelung
+    // bleibt trotzdem bestehen, auch wenn die funktionale Menge fuer die
+    // beiden bislang bekannten Geraete klein ist (5 bzw. 17): ein Geraet mit
+    // mehr funktionalen Signalen als hier Platz haben, ist von dieser Regel
+    // nicht ausgeschlossen.
     //
-    // Frueher hiessen diese drei Helfer `KEY_SIGNAL_LIMIT`/`keySignalsFor`/
-    // `remainingKeySignalCount` und die Ueberschrift daneben "Wichtigste
-    // Werte" (Review-Fix Fix 9, 2026-09-03). Beides versprach eine
-    // Rangfolge, die es nicht gibt: `GET /api/devices/{id}/signals` liefert
-    // die Zeilen in `Store.signals`-Reihenfolge (ORDER BY endpoint,
-    // cluster_id, element_id, kind), ein `slice(0, 6)` darauf ergibt "die
-    // sechs mit der kleinsten Cluster-Nummer" - fuer die Steckdose aus der
-    // Testvorlage NetworkCommissioning und BasicInformation, nicht Ein/Aus
-    // und nicht die Leistung. Eine echte Rangfolge braeuchte eine
-    // Bewertung je Cluster, also eine weitere Tabelle; die gibt es nicht,
-    // und sie zu erfinden waere schlechter als ein ehrlicher Name.
-    SIGNAL_PREVIEW_LIMIT: 6,
+    // Frueher hiessen diese drei Helfer `exportableSignalsFor`/
+    // `firstSignalsFor`/`remainingSignalCount`, gefiltert auf `exportable`
+    // statt auf `functional`, und die Ueberschrift daneben hiess "Signale
+    // (Anfang der Liste)" (Review-Fix Fix 9, 2026-09-03): `exportable`
+    // beantwortet nur, ob ein Wert TECHNISCH auf einen Loxone-Eingang
+    // passt, nicht, ob ihn jemand WILL - eine Steckdose hat 110
+    // exportierbare Signale, darunter Netzwerk- und Geraeteangaben, aber
+    // nur 5 funktionale. Seit `signal.functional` das direkt beantwortet
+    // (statt einer geratenen Reihenfolge), ist die Kurzliste wieder ehrlich
+    // benennbar.
+    FUNCTIONAL_PREVIEW_LIMIT: 6,
 
-    exportableSignalsFor(deviceId) {
+    functionalSignalsFor(deviceId) {
       const signals = this.signalsByDevice[deviceId];
-      return signals ? signals.filter((signal) => signal.exportable) : [];
+      return signals ? signals.filter((signal) => signal.functional) : [];
     },
 
     firstSignalsFor(deviceId) {
-      return this.exportableSignalsFor(deviceId).slice(0, this.SIGNAL_PREVIEW_LIMIT);
+      return this.functionalSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT);
     },
 
     remainingSignalCount(deviceId) {
-      return Math.max(0, this.exportableSignalsFor(deviceId).length - this.SIGNAL_PREVIEW_LIMIT);
+      return Math.max(
+        0,
+        this.functionalSignalsFor(deviceId).length - this.FUNCTIONAL_PREVIEW_LIMIT,
+      );
+    },
+
+    // Signale-Ansicht (Aufgabe 8): "Funktional" zeigt sofort, was
+    // `is_functional` als gewollt einstuft; "Experte" bleibt zugeklappt,
+    // bis `showExpertSignals` das global fuer alle Geraetekarten umschaltet
+    // - dieselbe Datengrundlage wie oben, nur ungefiltert nach der
+    // jeweils anderen Bedingung. Keine der beiden Listen bildet die
+    // Relevanz-Regel selbst nach: beide lesen nur `signal.functional`, das
+    // die API bereits fertig mitliefert (`api.devices._signal_out`).
+    expertSignalsFor(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      return signals ? signals.filter((signal) => !signal.functional) : [];
+    },
+
+    // Beide Bloecke der Signale-Ansicht als eine Liste (Review-Fix 6,
+    // Nachbesserung Phase 6): vorher stand die Signalzeilen-Vorlage in
+    // index.html zweimal, byte-identisch bis auf `functionalSignalsFor`
+    // gegen `expertSignalsFor` - 51 Zeilen doppelt, die bei jeder
+    // Aenderung zweimal angefasst werden mussten, ohne dass etwas ein
+    // Auseinanderlaufen bemerkt haette. `collapsible` steuert in der
+    // Vorlage, ob ein Block hinter `showExpertSignals` versteckt ist und
+    // seine Anzahl in der Ueberschrift zeigt - der Rest (Zeilen-Markup,
+    // leer-Hinweis) ist fuer beide Gruppen identisch.
+    signalGroupsFor(deviceId) {
+      return [
+        { key: "functional", title: "Funktional", collapsible: false, signals: this.functionalSignalsFor(deviceId) },
+        { key: "expert", title: "Experte", collapsible: true, signals: this.expertSignalsFor(deviceId) },
+      ];
     },
 
     liveValueOf(signal) {
-      if (Object.prototype.hasOwnProperty.call(this.liveValues, signal.key)) {
-        return this.liveValues[signal.key];
-      }
-      return signal.value;
+      // Direkter Zugriff, kein `hasOwnProperty` - siehe `isOnline`. Genau
+      // hier war der Fehler am sichtbarsten: die Werte bewegten sich nicht.
+      const live = this.liveValues[signal.key];
+      return live === undefined ? signal.value : live;
     },
 
     async saveLabel(device) {
@@ -574,19 +698,76 @@ function app() {
     },
 
     async executeCommand(device, command) {
-      this.commandMessage = null;
       this.commandBusyKey = command.key;
       const value = command.takes_value ? this.commandValueDrafts[command.key] ?? "" : "1";
       try {
         await this.request("POST", `/api/commands/${command.key}`, { value: String(value) });
-        this.commandMessage = `"${command.slug}" wurde an ${device.label} gesendet.`;
-        this.commandMessageIsError = false;
+        this.showToast(`"${command.slug}" wurde an ${device.label} gesendet.`);
       } catch (error) {
-        this.commandMessage = `"${command.slug}" ist fehlgeschlagen: ${error.message}`;
-        this.commandMessageIsError = true;
+        this.showToast(`"${command.slug}" ist fehlgeschlagen: ${error.message}`, true);
       } finally {
         this.commandBusyKey = null;
       }
+    },
+
+    // ---------------------------------------------------------------------
+    // Kurzmeldungen (2026-09-03)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Zeigt eine Meldung als Overlay am unteren Rand. Bewusst NICHT im
+     * Textfluss: die vorherige Fassung blendete eine Zeile ueber der
+     * Geraeteliste ein, wodurch beim Schalten die ganze Seite sprang und
+     * der naechste Klick daneben ging.
+     *
+     * Fehler bleiben deutlich laenger stehen als Erfolge - eine
+     * Erfolgsmeldung hat man gesehen, sobald das Geraet reagiert, eine
+     * Fehlermeldung will man lesen.
+     */
+    showToast(text, isError = false) {
+      const id = ++toastCounter;
+      this.toasts.push({ id, text, isError });
+      window.setTimeout(() => this.dismissToast(id), isError ? 12000 : 4000);
+    },
+
+    dismissToast(id) {
+      this.toasts = this.toasts.filter((toast) => toast.id !== id);
+    },
+
+    // ---------------------------------------------------------------------
+    // Lebenszeichen (2026-09-03)
+    // ---------------------------------------------------------------------
+
+    /**
+     * "vor 3 s", "vor 12 min" - oder null, wenn dieser Schluessel ueber die
+     * Live-Verbindung noch nie kam. Liest `nowTick`, damit Alpine die
+     * Angabe jede Sekunde neu zeichnet.
+     */
+    sinceText(timestamp) {
+      if (!timestamp) {
+        return null;
+      }
+      const seconds = Math.max(0, Math.round((this.nowTick - timestamp) / 1000));
+      if (seconds < 60) {
+        return `vor ${seconds} s`;
+      }
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) {
+        return `vor ${minutes} min`;
+      }
+      return `vor ${Math.round(minutes / 60)} h`;
+    },
+
+    /** Wann zuletzt IRGENDETWAS ueber die Leitung kam - der Heartbeat
+     * eingeschlossen. Das ist die Angabe, die "nichts aendert sich" von
+     * "nichts kommt an" unterscheidet. */
+    heartbeatText() {
+      return this.sinceText(this.lastHeartbeatAt);
+    },
+
+    /** Wann dieses eine Signal zuletzt einen Wert lieferte. */
+    signalSeenText(signal) {
+      return this.sinceText(this.liveSeenAt[signal.key]);
     },
 
     async commissionDevice() {
@@ -886,6 +1067,14 @@ function app() {
       socket.addEventListener("message", (event) => {
         const message = JSON.parse(event.data);
         this.liveValues[message.key] = message.value;
+        const now = Date.now();
+        this.liveSeenAt[message.key] = now;
+        // Der Heartbeat gehoert zu keinem Geraet (Spec 6.5) und ist genau
+        // deshalb das ehrliche Lebenszeichen: er kommt auch dann, wenn
+        // sich an keinem Geraet etwas aendert.
+        if (message.key === HEARTBEAT_KEY) {
+          this.lastHeartbeatAt = now;
+        }
       });
 
       // Sowohl ein sauberes Schliessen als auch ein Verbindungsfehler

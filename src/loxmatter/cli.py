@@ -364,9 +364,22 @@ def export(
     # `api/export.py`, und beide neben genau dem Helfer, der diese
     # Verdopplung schon einmal beenden sollte.
     skipped = sum(1 for s in stored if not is_exportable(s.exportability))
+    # hidden_count (Nachbesserung Fix 3, Phase 6): dieselbe Zahl, die
+    # `api/export.py`s `_device_preview` als `ExportDeviceOut.hidden_count`
+    # ausliefert (`StoredSignal.functional`, aus
+    # `profiles.relevance.is_functional` - keine zweite Berechnung hier,
+    # nur derselbe Ausdruck auf denselben Zeilen). Vorher blieb die Rechnung
+    # auf der Kommandozeile sichtbar unvollstaendig: "6 Eingaenge" und "49
+    # Signale nicht exportierbar" bei 159 Signalen liessen die restlichen
+    # 104 unerwaehnt.
+    hidden_count = sum(1 for s in stored if not s.functional)
     typer.echo(f"{viu.name}: {len(inputs)} Eingänge")
     typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
     typer.echo(f"{skipped} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)")
+    typer.echo(
+        f"{hidden_count} Signale als Experte zurückgehalten "
+        "(Weboberfläche, Ansicht „Signale“, Block „Experte“ – dort einzeln freischaltbar)"
+    )
 
     # exported_at (Task 5, Phase 5): `GET /api/export/status` der WebUI muss
     # "wann zuletzt exportiert" unabhaengig davon beantworten, ob der letzte

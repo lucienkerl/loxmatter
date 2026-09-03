@@ -164,6 +164,30 @@ def test_export_reports_what_it_skipped(tmp_path):
     assert "nicht exportierbar" in result.stdout
 
 
+def test_export_reports_how_many_signals_are_held_back_as_expert(tmp_path):
+    """Nachbesserung Fix 3 (Abschlussreview): vorher meldete `export` nur
+    "6 Eingaenge" und "49 Signale nicht exportierbar" fuer ein Geraet mit
+    159 Signalen - ueber die restlichen 104 sagte niemand etwas, und wo man
+    sie einschaltet, auch nicht. Verhalten geprueft, nicht die interne
+    Rechnung: die Zahl (154, siehe `ExportDeviceOut.hidden_count`-Docstring
+    fuer dasselbe Geraet) und ein Hinweis auf den Ort, an dem man sie
+    einzeln freischaltet, muessen in der Ausgabe stehen."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    assert "154" in result.stdout
+    assert "Experte" in result.stdout
+
+
 def test_export_fails_cleanly_when_the_second_file_cannot_be_written(tmp_path, monkeypatch):
     """Fix Important #2: ein OSError beim zweiten write_bytes darf keinen
     Traceback zeigen, sondern muss ueber _fail() laufen — und dabei sagen,

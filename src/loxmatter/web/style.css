@@ -383,6 +383,14 @@ button:disabled {
   border-top: 1px dashed var(--border);
 }
 
+/* Signale-Ansicht (Aufgabe 8): der globale Schalter zwischen den Hinweisen
+ * oben und den ersten Geraetekarten braucht etwas Luft, sonst klebt er am
+ * ersten Kartenrand - derselbe Zwischenraum wie zwischen zwei Karten
+ * (`.card { margin-bottom: 1rem }`), keine neue Farbe oder Groesse. */
+.signal-group-toggle {
+  margin-bottom: 1rem;
+}
+
 footer.hint-block {
   margin-top: 0.4rem;
 }
@@ -417,4 +425,55 @@ footer.hint-block {
   border-bottom: 1px solid var(--border);
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* Kurzmeldungen als Overlay (2026-09-03).
+
+   `position: fixed` ist hier die ganze Idee: die Meldung liegt ausserhalb
+   des Textflusses und verschiebt deshalb nichts. Die vorherige Fassung
+   blendete eine Zeile ueber der Geraeteliste ein - beim Schalten sprang
+   die ganze Seite, und der naechste Klick ging daneben. */
+.toasts {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  /* Die Leiste selbst faengt keine Klicks ab - nur die Meldungen darin,
+     damit ein Klick daneben weiter die Seite darunter erreicht. */
+  pointer-events: none;
+  max-width: min(28rem, calc(100vw - 2rem));
+}
+
+.toast {
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0.6rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.35;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+}
+
+.toast-ok {
+  border-color: var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.toast-error {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* Lebenszeichen neben der Verbindungsanzeige: bewusst zurueckhaltend, es
+   ist eine Beruhigung, keine Meldung. */
+.heartbeat {
+  color: var(--text-muted);
 }

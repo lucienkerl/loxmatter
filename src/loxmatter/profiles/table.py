@@ -88,6 +88,28 @@ def knows_cluster(cluster_id: int) -> bool:
     return cluster_id in _table()
 
 
+def known_attribute_section(cluster_id: int) -> bool:
+    """Ob die Tabelle fuer diesen Cluster ueberhaupt einen `attributes:`-
+    Abschnitt fuehrt - unabhaengig davon, ob er etwas benennt.
+
+    Getrennt von `knows_cluster`, weil `knows_cluster` nur fragt, ob der
+    Cluster ueberhaupt in der Tabelle steht - ein Cluster kann dort stehen
+    und trotzdem nichts ueber seine Attribute sagen, wenn er nur wegen
+    seiner Kommandos gepflegt wurde (Cluster 768/ColorControl bis zur
+    Phase-6-Nachbesserung: nur `commands:`, kein `attributes:`). Ohne diese
+    Unterscheidung las `profiles.relevance.is_functional` "kennt die Tabelle
+    den Cluster" faelschlich als "kennt die Tabelle jedes seiner Attribute"
+    - `names_element` schlaegt in einem fehlenden Abschnitt IMMER erfolglos
+    nach (`cluster.get(section) or {}` wird `{}`), und jedes Attribut eines
+    nur-fuer-Kommandos gepflegten Clusters galt dadurch als nicht funktional,
+    obwohl die Tabelle zu ihnen gar keine Aussage trifft. Die Falle ist
+    strukturell und nicht auf Cluster 768 beschraenkt: jeder kuenftige
+    Cluster, der nur fuer ein Kommando oder eine Einheit in die Tabelle
+    kommt, waere sonst in allen seinen Attributen verstummt."""
+    cluster = _table().get(cluster_id)
+    return cluster is not None and cluster.get("attributes") is not None
+
+
 def names_element(ref: SignalRef) -> bool:
     """Ob die Profiltabelle genau dieses Element namentlich fuehrt.
 

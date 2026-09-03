@@ -141,6 +141,52 @@ def test_an_event_on_a_utility_endpoint_with_an_unknown_cluster_is_not_functiona
     assert is_functional(ref, _PLUG_TYPES) is False
 
 
+def test_a_cluster_known_only_for_its_commands_keeps_its_attributes_functional(
+    monkeypatch,
+):
+    """Review-Fix 1b (Nachbesserung Phase 6, Abschlussreview): Schicht 3 fragte
+    bislang nur `knows_cluster` - wahr, sobald der Cluster IRGENDEINEN
+    Abschnitt fuehrt, auch nur `commands:`. `names_element` schlaegt dann in
+    einem fehlenden `attributes:`-Abschnitt IMMER erfolglos nach, und jedes
+    Attribut galt als nicht funktional - der Fehler, den Cluster 768
+    (ColorControl) bis zu dieser Nachbesserung tatsaechlich hatte (siehe
+    `test_extended_color_light_attributes_are_functional_after_the_cluster_768_fix`
+    unten). Hier mit einer synthetischen Tabelle nachgestellt statt an
+    Cluster 768 selbst, damit dieser Test die Falle STRUKTURELL festhaelt -
+    fuer jeden kuenftigen nur-Kommando-Cluster, nicht nur den einen jetzt
+    behobenen Fall."""
+    monkeypatch.setattr(
+        "loxmatter.profiles.table._table",
+        lambda: {
+            999: {
+                "name": "commands_only",
+                "commands": {1: {"slug": "go", "takes_value": False}},
+            }
+        },
+    )
+    ref = SignalRef(1, 999, 42, SignalKind.ATTRIBUTE)
+    assert is_functional(ref, _PLUG_TYPES) is True
+
+
+def test_extended_color_light_attributes_are_functional_after_the_cluster_768_fix():
+    """Belegt den Fund aus dem Abschlussreview direkt, am (synthetischen)
+    Geraet: vor Review-Fix 1 stand Cluster 768 (ColorControl) nur mit
+    `commands:` in der Tabelle - jedes seiner Attribute (`CurrentHue`,
+    `CurrentSaturation`, `ColorTemperatureMireds`, `ColorMode`) galt deshalb
+    als nicht funktional, waehrend der Ausgangsbefehl fuer die
+    Farbtemperatur laengst exportiert wurde: Loxone konnte die Farbe setzen,
+    aber nie zurueckgemeldet bekommen. `tests/fixtures/nodes/
+    synthetic_color_light.json` ist synthetisch (siehe Kommentar dort) -
+    Geraetetyp und Attribut-IDs sind gegen dieselben Quellen belegt wie
+    `profiles/clusters.yaml` Cluster 768 selbst."""
+    snapshot = _snapshot("synthetic_color_light.json")
+    types = device_types_by_endpoint(snapshot)
+    # 0, 1, 7, 8 = CurrentHue, CurrentSaturation, ColorTemperatureMireds, ColorMode
+    for element_id in (0, 1, 7, 8):
+        ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)
+        assert is_functional(ref, types) is True
+
+
 def test_an_unnamed_power_source_attribute_on_the_utility_endpoint_is_not_functional():
     """Aufgabe 6, gefunden beim Verdrahten: Schicht 2 gab bisher bei einem
     zutreffenden `UTILITY_ENDPOINT_KEEP_CLUSTERS`-Eintrag den ganzen Cluster

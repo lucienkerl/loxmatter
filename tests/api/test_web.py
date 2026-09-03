@@ -216,6 +216,66 @@ async def test_the_page_does_not_call_init_a_second_time(api):
     assert "x-init" not in markup
 
 
+async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
+    """Aufgabe 8: die Signalliste soll sich in „Funktional“ (offen) und
+    „Experte“ (zugeklappt, mit Anzahl, plus Schalter) gliedern, statt alle
+    159 Signale eines Geraets flach untereinander zu zeigen.
+
+    **Was dieser Test belegt und was nicht.** Belegt wird nur, dass die
+    ausgelieferten Dateien (`index.html`, `app.js`) die dafuer noetigen
+    Bausteine enthalten: beide Ueberschriften, den Schaltertext und - im
+    Skript - dass beide Listen tatsaechlich ueber `signal.functional`
+    unterschieden werden statt ueber eine zweite, in JavaScript
+    nachgebaute Relevanz-Regel. NICHT belegt wird, dass Alpine daraus zur
+    Laufzeit tatsaechlich zwei getrennte, korrekt gefilterte Bloecke
+    macht, dass der Schalter beim Klicken etwas umschaltet, oder dass die
+    Gliederung fuer ein echtes Geraet richtig aussieht - dafuer braeuchte
+    es eine Browser-Engine, die es in dieser Suite nicht gibt (siehe
+    `test_the_page_does_not_call_init_a_second_time` oben)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert "Funktional" in page
+    assert "Experte" in page
+    assert "Experten-Signale anzeigen" in page
+    # Beide Listen lesen nur das von der API mitgelieferte Feld, keine
+    # eigene JavaScript-Fassung von `profiles.relevance.is_functional`.
+    assert "signal.functional" in script
+
+
+async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api):
+    """Review-Fix Fix 9 (2026-09-03) hatte die Ueberschrift „Wichtigste
+    Werte“ absichtlich in „Signale (Anfang der Liste)“ umbenannt, weil die
+    gezeigten Signale damals nur nach `exportable` gefiltert waren - bei
+    der Testvorlage NetworkCommissioning und BasicInformation statt Ein/Aus
+    und Leistung. Seit `signal.functional` das echte Auswahlkriterium
+    mitliefert, ist die alte, ehrlichere Formulierung wieder zutreffend.
+
+    Belegt nur, dass die neue Beschriftung ausgeliefert wird und die alte
+    verschwunden ist - nicht, dass die damit beworbenen Signale zur
+    Laufzeit tatsaechlich die funktionalen sind (siehe Testdocstring
+    oben)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "Funktionale Signale" in page
+    assert "Signale (Anfang der Liste)" not in page
+
+
+async def test_the_export_preview_shows_how_many_signals_are_held_back(api):
+    """Nachbesserung Fix 3 (Abschlussreview): `hidden_count` kam schon vorher
+    aus `GET /api/export/preview`, aber nirgends in der Oberflaeche an - die
+    Vorschautabelle hatte Spalten fuer Eingaenge, Befehle und Uebersprungen,
+    keine fuer als Experte zurueckgehaltene Signale. Belegt wie die
+    uebrigen Markup-Tests in dieser Datei nur, dass die ausgelieferte Seite
+    die Spalte und ihre Bindung an `device.hidden_count` enthaelt - nicht,
+    dass Alpine sie zur Laufzeit korrekt befuellt (dafuer braeuchte es eine
+    Browser-Engine, siehe `test_the_page_does_not_call_init_a_second_time`)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "Als Experte zurückgehalten" in page
+    assert 'x-text="device.hidden_count"' in page
+
+
 async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
     """Der Wert dieses Feldes wird zur `Address` des virtuellen
     UDP-Eingangs und zum Rumpf der Kommando-URLs (`http://<ip>:<listen>`) -

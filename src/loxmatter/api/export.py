@@ -153,6 +153,11 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
     # unterschiedlich viele "uebersprungene" Signale gemeldet, ohne dass
     # ein Test das bemerkt.
     skipped = sum(1 for s in signals if not is_exportable(s.exportability))
+    # hidden_count (Aufgabe 8): wie viele Signale die Oberflaeche im
+    # zugeklappten "Experte"-Block versteckt - `StoredSignal.functional`
+    # kommt unveraendert aus `Store.register_signals`
+    # (`profiles.relevance.is_functional`), keine zweite Berechnung hier.
+    hidden_count = sum(1 for s in signals if not s.functional)
     return ExportDeviceOut(
         device_id=device.id,
         label=device.label,
@@ -161,6 +166,7 @@ def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:
         inputs=len(inputs),
         commands=len(commands),
         skipped=skipped,
+        hidden_count=hidden_count,
     )
 
 

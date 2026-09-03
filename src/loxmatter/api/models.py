@@ -11,6 +11,17 @@ from pydantic import BaseModel, ConfigDict
 
 
 class SignalOut(BaseModel):
+    """`exportable`/`reason` (Spec 6.6) und `exported` (vom Nutzer umschaltbar,
+    siehe `model.store.StoredSignal.exported`) sagen, was TECHNISCH auf einen
+    Loxone-Eingang passt und was DAVON in den naechsten Export soll -
+    `functional` (Aufgabe 8) beantwortet eine dritte, unabhaengige Frage: ob
+    `profiles.relevance.is_functional` dieses Signal fuer den GERAETETYP als
+    gewollt einstuft. Die Oberflaeche nutzt allein dieses Feld, um die
+    Signalliste in "Funktional" und "Experte" zu gliedern (`api.devices.
+    _signal_out` liest es unveraendert aus `StoredSignal.functional`) - eine
+    zweite Berechnung der Regel gibt es weder in der API-Schicht noch in
+    JavaScript."""
+
     model_config = ConfigDict(frozen=True)
 
     key: str
@@ -22,9 +33,21 @@ class SignalOut(BaseModel):
     exportable: bool
     reason: str | None
     exported: bool
+    functional: bool
 
 
 class DeviceOut(BaseModel):
+    """`signal_count`/`exportable_count` sagen, wie viele Signale es gibt und
+    wie viele davon technisch auf einen Loxone-Eingang passen (Spec 6.6) -
+    beide unabhaengig davon, ob sie tatsaechlich als Vorlage exportiert
+    wuerden. `next_export_count` (Nachbesserung Fix 7, Phase 6) ist die
+    davon verschiedene Zahl, die die Gerätekachel bis dahin gar nicht zeigte:
+    wie viele `LoxoneInput`s (inklusive Online-Signal) der naechste Export
+    tatsaechlich erzeugt (`export.signals.to_inputs`, gefiltert auf
+    `exported`) - fuer die Steckdose der Testvorlage etwa 159 Signale, 110
+    exportierbar, aber nur 6 im naechsten Export (5 funktionale plus das
+    Online-Signal)."""
+
     model_config = ConfigDict(frozen=True)
 
     id: int
@@ -33,6 +56,7 @@ class DeviceOut(BaseModel):
     online: bool
     signal_count: int
     exportable_count: int
+    next_export_count: int
 
 
 class SignalPatch(BaseModel):
@@ -139,7 +163,14 @@ class ExportDeviceOut(BaseModel):
     `exported`-Flag. `viu_filename`/`vo_filename` sind dieselben Namen, die
     auch im ZIP von `GET /api/export/download` landen (`filename_for`) - so
     kann die Oberflaeche vor dem Herunterladen bereits zeigen, welche
-    Dateien entstehen."""
+    Dateien entstehen.
+
+    `hidden_count` (Aufgabe 8): wie viele Signale dieses Geraets die
+    Signalliste standardmaessig im zugeklappten "Experte"-Block versteckt,
+    weil `profiles.relevance.is_functional` sie nicht als gewollt einstuft
+    (`StoredSignal.functional`) - unabhaengig davon, ob sie technisch
+    exportierbar waeren. Fuer die Steckdose der Testvorlage sind das 154 von
+    159 Signalen."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -150,6 +181,7 @@ class ExportDeviceOut(BaseModel):
     inputs: int
     commands: int
     skipped: int
+    hidden_count: int
 
 
 class ExportPreviewOut(BaseModel):

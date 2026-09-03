@@ -54,6 +54,17 @@ async def test_preview_reports_what_would_be_written(api):
     assert device["skipped"] == 49
 
 
+async def test_the_preview_reports_how_many_signals_are_hidden(api):
+    """`hidden_count` (Aufgabe 8): wie viele Signale die Oberflaeche im
+    zugeklappten "Experte"-Block der Signale-Ansicht versteckt - fuer die
+    Steckdose der Testvorlage 154 von 159 (siehe `_signal_out`-Test in
+    `test_devices.py`, nur 5 sind funktional)."""
+    client, _, device_id = api
+    body = (await client.get("/api/export/preview?bridge_ip=10.0.0.1")).json()
+    plug = next(d for d in body["devices"] if d["device_id"] == device_id)
+    assert plug["hidden_count"] > 100
+
+
 async def test_preview_does_not_write_anything(api, tmp_path):
     """Vorschau heisst Vorschau."""
     client, _, _ = api

@@ -101,6 +101,16 @@
         <div class="connection-status">
           <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
           <span x-text="connectionStatusText()"></span>
+          <!--
+            Das Lebenszeichen (2026-09-03). Die Bruecke schickt alle 30 s
+            einen Heartbeat, auch wenn sich an keinem Geraet etwas aendert.
+            Ohne diese Anzeige war eine ruhige Anlage - eine Steckdose ohne
+            Last meldet weder Strom noch Leistung - von einer abgestuerzten
+            nicht zu unterscheiden.
+          -->
+          <span class="heartbeat" x-show="lastHeartbeatAt" x-cloak>
+            · Lebenszeichen <span x-text="heartbeatText()"></span>
+          </span>
         </div>
       </div>
     </header>
@@ -156,12 +166,6 @@
 
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
         <p x-show="deviceActionError" x-cloak class="banner danger" x-text="deviceActionError"></p>
-        <p
-          x-show="commandMessage"
-          x-cloak
-          :class="commandMessageIsError ? 'banner danger' : 'banner ok'"
-          x-text="commandMessage"
-        ></p>
 
         <p x-show="devices.length === 0 && !devicesError" class="hint">
           Noch kein Gerät eingelernt.
@@ -179,7 +183,8 @@
               />
               <span
                 class="muted"
-                x-text="device.signal_count + ' Signale, ' + device.exportable_count + ' exportierbar'"
+                :title="device.signal_count + ' Signale, ' + device.exportable_count + ' exportierbar'"
+                x-text="device.next_export_count + ' Eingänge im nächsten Export'"
               ></span>
               <button
                 @click="toggleExpanded(device)"
@@ -190,7 +195,13 @@
 
             <div class="device-controls" x-show="expandedDeviceId === device.id" x-cloak>
               <h3>Bedienung</h3>
-              <p class="hint" x-show="commandsFor(device.id).length === 0">
+              <p class="hint" x-show="!controlsLoaded(device.id)">
+                Bedienelemente noch nicht geladen – siehe Meldung oben.
+              </p>
+              <p
+                class="hint"
+                x-show="controlsLoaded(device.id) && commandsFor(device.id).length === 0"
+              >
                 Keine bekannten Ausgangsbefehle für dieses Gerät.
               </p>
               <div class="row">
@@ -225,14 +236,15 @@
                 weitere Kommandos vorhanden, aber nicht benannt.
               </p>
 
-              <h3>Signale (Anfang der Liste)</h3>
+              <h3>Funktionale Signale</h3>
               <p class="hint">
-                Keine Rangfolge: die ersten
-                <span x-text="SIGNAL_PREVIEW_LIMIT"></span> exportierbaren Signale in
-                derselben Reihenfolge wie in der Ansicht „Signale“ (Endpunkt, dann
-                Cluster-Nummer). Das ist nicht dasselbe wie „die wichtigsten“ – bei einer
-                Steckdose stehen hier eher Netzwerk- und Geräteangaben als Ein/Aus und
-                Leistung.
+                Die Signale, die zum Gerätetyp gehören (siehe Ansicht „Signale“, Block
+                „Funktional“) – bei einer Steckdose sind das Ein/Aus und die Leistungswerte,
+                nicht Netzwerk- oder Geräteangaben. Gezeigt werden die ersten
+                <span x-text="FUNCTIONAL_PREVIEW_LIMIT"></span>
+                in derselben Reihenfolge wie dort (Endpunkt, dann Cluster-Nummer) – auch
+                das keine Rangfolge, nur eine Deckelung für Geräte mit vielen funktionalen
+                Signalen.
               </p>
               <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
                 <div class="signal-row">
@@ -242,7 +254,17 @@
                     class="value"
                     x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                   ></span>
-                  <span></span>
+                  <!--
+                    Auch hier, nicht nur in der Ansicht "Signale"
+                    (2026-09-03): die Geraete-Ansicht ist die, auf die man
+                    schaut, wenn man wissen will, ob sich etwas tut.
+                  -->
+                  <span
+                    class="hint"
+                    x-show="signalSeenText(signal)"
+                    x-cloak
+                    x-text="signalSeenText(signal)"
+                  ></span>
                 </div>
               </template>
               <p class="hint" x-show="remainingSignalCount(device.id) > 0">
@@ -263,6 +285,16 @@
           Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier
           nicht ändern – ein Klick würde dort einen Baustein still lahmlegen.
         </p>
+        <p class="hint">
+          „Funktional“ sind die Signale, die zum erkannten Gerätetyp gehören (Ein/Aus, Leistung
+          und Ähnliches) – „Experte“ alles andere (Netzwerk-, Geräte- und Diagnosewerte,
+          technische Zähler). Beide Blöcke behalten den Exportieren-Haken für jedes einzelne
+          Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist.
+        </p>
+        <label class="row signal-group-toggle">
+          <input type="checkbox" x-model="showExpertSignals" />
+          Experten-Signale anzeigen
+        </label>
 
         <template x-for="device in devices" :key="'signals-' + device.id">
           <div class="card">
@@ -274,53 +306,105 @@
               Signale laden
             </button>
 
-            <template x-for="signal in signalsByDevice[device.id] || []" :key="signal.key">
-              <div class="device-controls">
-                <div class="row">
-                  <span
-                    class="key"
-                    title="Verdrahtung in Loxone – nicht änderbar."
-                    x-text="signal.key"
-                  ></span>
-                  <input
-                    type="text"
-                    :value="signal.title"
-                    @input="titleDrafts[signal.key] = $event.target.value"
-                    @change="saveTitle(signal)"
-                  />
-                  <span class="hint" x-text="signal.path"></span>
-                  <span
-                    class="value"
-                    x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
-                  ></span>
-                  <label x-show="signal.exportable">
-                    <input
-                      type="checkbox"
-                      :checked="signal.exported"
-                      @change="toggleExported(signal)"
-                    />
-                    exportieren
-                  </label>
-                  <span class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></span>
-                </div>
-                <div class="row" x-show="signal.kind === 'attribute'">
-                  <input
-                    type="text"
-                    placeholder="Rohwert schreiben"
-                    @input="rawWriteDrafts[signal.key] = $event.target.value"
-                  />
-                  <button
-                    @click="writeRaw(signal)"
-                    :disabled="rawWriteBusyKey === signal.key"
-                  >
-                    Schreiben
-                  </button>
-                  <span
-                    x-show="rawWriteMessages[signal.key]"
-                    :class="rawWriteMessageClass(signal)"
-                    x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
-                  ></span>
-                </div>
+            <!--
+              Beide Bloecke (Funktional, Experte) teilen sich seit Review-
+              Fix 6 (Nachbesserung Phase 6) diese eine Signalzeilen-Vorlage
+              statt zweier byte-identischer Kopien, die nur gegen
+              `functionalSignalsFor` bzw. `expertSignalsFor` liefen -
+              `signalGroupsFor` (app.js) liefert dafuer beide Gruppen mit
+              ihren Metadaten (Titel, Anzahl, ob zuklappbar).
+            -->
+            <template x-if="signalsByDevice[device.id]">
+              <div>
+                <template x-for="group in signalGroupsFor(device.id)" :key="group.key">
+                  <div>
+                    <h3>
+                      <span x-text="group.title"></span>
+                      <span
+                        class="muted"
+                        x-show="group.collapsible"
+                        x-text="'(' + group.signals.length + ')'"
+                      ></span>
+                    </h3>
+                    <p class="hint" x-show="!group.collapsible && group.signals.length === 0">
+                      Kein Signal dieses Geräts gilt als funktional.
+                    </p>
+                    <p class="hint" x-show="group.collapsible && !showExpertSignals">
+                      Zugeklappt – <span x-text="group.signals.length"></span> Signale ohne
+                      erkannte Bedeutung für diesen Gerätetyp. „Experten-Signale anzeigen“ oben
+                      blendet sie für alle Geräte ein.
+                    </p>
+                    <div x-show="!group.collapsible || showExpertSignals" x-cloak>
+                      <template x-for="signal in group.signals" :key="signal.key">
+                        <div class="device-controls">
+                          <div class="row">
+                            <span
+                              class="key"
+                              title="Verdrahtung in Loxone – nicht änderbar."
+                              x-text="signal.key"
+                            ></span>
+                            <input
+                              type="text"
+                              :value="signal.title"
+                              @input="titleDrafts[signal.key] = $event.target.value"
+                              @change="saveTitle(signal)"
+                            />
+                            <span class="hint" x-text="signal.path"></span>
+                            <span
+                              class="value"
+                              x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                            ></span>
+                            <!--
+                              Wann dieser Wert zuletzt ueber die Live-
+                              Verbindung kam (2026-09-03). Steht hier nichts,
+                              hat sich das Signal seit dem Laden der Seite
+                              nicht geaendert - was bei einer Steckdose ohne
+                              Last der Normalfall ist und ohne diese Angabe
+                              wie ein Fehler aussieht.
+                            -->
+                            <span
+                              class="hint"
+                              x-show="signalSeenText(signal)"
+                              x-cloak
+                              x-text="signalSeenText(signal)"
+                            ></span>
+                            <label x-show="signal.exportable">
+                              <input
+                                type="checkbox"
+                                :checked="signal.exported"
+                                @change="toggleExported(signal)"
+                              />
+                              exportieren
+                            </label>
+                            <span
+                              class="badge warn"
+                              x-show="!signal.exportable"
+                              x-text="signal.reason"
+                            ></span>
+                          </div>
+                          <div class="row" x-show="signal.kind === 'attribute'">
+                            <input
+                              type="text"
+                              placeholder="Rohwert schreiben"
+                              @input="rawWriteDrafts[signal.key] = $event.target.value"
+                            />
+                            <button
+                              @click="writeRaw(signal)"
+                              :disabled="rawWriteBusyKey === signal.key"
+                            >
+                              Schreiben
+                            </button>
+                            <span
+                              x-show="rawWriteMessages[signal.key]"
+                              :class="rawWriteMessageClass(signal)"
+                              x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
+                            ></span>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
               </div>
             </template>
           </div>
@@ -391,6 +475,7 @@
                   <th>Eingänge</th>
                   <th>Befehle</th>
                   <th>Übersprungen</th>
+                  <th>Als Experte zurückgehalten</th>
                   <th>Zuletzt exportiert</th>
                 </tr>
               </thead>
@@ -403,12 +488,18 @@
                     <td x-text="device.inputs"></td>
                     <td x-text="device.commands"></td>
                     <td x-text="device.skipped"></td>
+                    <td x-text="device.hidden_count"></td>
                     <td x-text="formatTimestamp(exportedAtFor(device.device_id))"></td>
                   </tr>
                 </template>
               </tbody>
             </table>
           </div>
+          <p class="hint">
+            „Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber
+            standardmäßig nicht zum Gerätetyp gehören (Ansicht „Signale“, Block „Experte“) – dort
+            lässt sich jedes einzeln freischalten.
+          </p>
           <p class="hint" x-show="exportPreview && exportPreview.system_files.length > 0">
             Systemvorlagen: <span x-text="exportPreview ? exportPreview.system_files.join(', ') : ''"></span>
           </p>
@@ -480,6 +571,24 @@
     </main>
     </div>
     </template>
+
+    <!--
+      Kurzmeldungen als Overlay. `position: fixed` heisst: sie stehen
+      ausserhalb des Textflusses und verschieben nichts. Die vorherige
+      Fassung blendete eine Zeile ueber der Geraeteliste ein, wodurch beim
+      Schalten die ganze Seite sprang und der naechste Klick daneben ging.
+    -->
+    <div class="toasts" aria-live="polite">
+      <template x-for="toast in toasts" :key="toast.id">
+        <div
+          class="toast"
+          :class="toast.isError ? 'toast-error' : 'toast-ok'"
+          @click="dismissToast(toast.id)"
+          title="Zum Ausblenden anklicken"
+          x-text="toast.text"
+        ></div>
+      </template>
+    </div>
 
     <script defer src="/static/app.js"></script>
     <script defer src="/static/vendor/alpine.min.js"></script>

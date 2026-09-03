@@ -434,6 +434,16 @@ class Runtime:
             try:
                 self._heartbeat_on = not self._heartbeat_on
                 await self._sender.send(HEARTBEAT_KEY, self._heartbeat_on, force=True)
+                # Auch an die Oberflaeche (2026-09-03). Vorher ging der
+                # Heartbeat nur an Loxone, und eine Bruecke, an der sich
+                # gerade nichts aendert - eine Steckdose ohne Last meldet
+                # weder Strom noch Leistung -, war in der Live-Ansicht von
+                # einer abgestuerzten nicht zu unterscheiden: kein Wert
+                # bewegte sich, und niemand konnte sagen, ob nichts passiert
+                # oder nichts ankommt. Der Heartbeat ist genau das Signal,
+                # das diese Frage beantwortet; ihn der Oberflaeche
+                # vorzuenthalten war eine Luecke, keine Entscheidung.
+                self._notify_observers(HEARTBEAT_KEY, self._heartbeat_on)
             except asyncio.CancelledError:
                 raise
             except Exception:
