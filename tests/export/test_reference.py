@@ -285,13 +285,13 @@ def test_every_command_matches_what_config_wrote_attribute_for_attribute():
         .splitlines()
         if "<VirtualOutCmd " in line
     }
-    for title in gold:
+    for title, gold_attributes in gold.items():
         ours = dict(rendered[title])
         # `Comment` traegt bei uns den Schluessel, Config hat ihn beim
         # Zurueckschreiben uebernommen - ausser beim kombinierten Ausgang,
         # wo unser Kommentar beide Schluessel nennt.
-        assert [k for k, _ in rendered[title]] == [k for k, _ in gold[title]], title
-        for name, value in gold[title]:
+        assert [k for k, _ in rendered[title]] == [k for k, _ in gold_attributes], title
+        for name, value in gold_attributes:
             if name == "Comment":
                 continue
             assert ours[name] == value, f"{title}.{name}"
