@@ -53,11 +53,39 @@ from loxmatter.profiles.table import Exportability, unit_format
 
 @dataclass(frozen=True)
 class LoxoneInput:
+    """Ein virtueller UDP-Eingang, wie er in der Vorlage landet.
+
+    Zu `analog` und `check_suffix` (beide am Miniserver geprueft,
+    2026-09-03): ein DIGITALER Eingang loest aus, sobald sein
+    Erkennungsmuster passt - den Wert hinter dem Doppelpunkt wertet Loxone
+    dabei nicht aus. Das hat zwei Folgen, die im Betrieb auffielen:
+
+    * Ein Zustand wie `onoff` schickt `key:1` und `key:0`. Auf ein Muster
+      mit `\v` passen beide, der Eingang stand also immer auf Ein.
+    * Ein Ereignis schickt einen Impuls, also ebenfalls `key:1` und kurz
+      darauf `key:0`. Ein Tastendruck loeste damit ZWEIMAL aus.
+
+    Deshalb:
+
+    * **Zustaende sind analog.** Loxone liest die Zahl, 1 und 0 werden
+      unterscheidbar. Ein analoger Eingang mit 0/1 treibt jeden Baustein,
+      der einen Zustand erwartet.
+    * **Ereignisse bleiben digital**, aber ihr Muster endet auf `:1` statt
+      auf `:\v`. Nur die steigende Flanke passt, die Null wird ignoriert,
+      und der Impuls loest genau einmal aus. Das geht ausschliesslich bei
+      Signalen, die von sich aus einen Impuls erzeugen - bei einem Zustand
+      waere die Null gerade die Information, die verloren ginge.
+    """
+
     key: str
     title: str
     comment: str
     analog: bool
     unit_format: str
+    # Was hinter "key:" im Erkennungsmuster steht. "\\v" liest den Wert aus
+    # (Zustaende und Zaehler), "1" passt nur auf die steigende Flanke
+    # (Ereignisse).
+    check_suffix: str = "\\v"
 
 
 def to_inputs(
@@ -118,7 +146,12 @@ def to_inputs(
 
         if signal.ref.kind is SignalKind.EVENT:
             emit(
-                LoxoneInput(signal.key, signal.title, f"{comment} · Impuls", False, ""),
+                # Digital, aber das Muster passt nur auf die steigende
+                # Flanke: der Impuls loest damit genau einmal aus statt
+                # zweimal (siehe LoxoneInput).
+                LoxoneInput(
+                    signal.key, signal.title, f"{comment} · Impuls", False, "", check_suffix="1"
+                ),
                 f"dem Impuls von {signal.key!r}",
             )
             emit(
@@ -129,20 +162,19 @@ def to_inputs(
             )
             continue
 
-        if signal.exportability is Exportability.ANALOG:
+        if signal.exportability in (Exportability.ANALOG, Exportability.DIGITAL):
+            # Auch das Boolesche analog: ein digitaler Eingang koennte 1 und
+            # 0 nicht unterscheiden (siehe LoxoneInput). Die Einheit bleibt
+            # dabei die des Signals - ein Zustand hat keine.
             emit(
                 LoxoneInput(signal.key, signal.title, comment, True, unit_format(signal.unit)),
-                f"dem Signal {signal.key!r}",
-            )
-        elif signal.exportability is Exportability.DIGITAL:
-            emit(
-                LoxoneInput(signal.key, signal.title, comment, False, ""),
                 f"dem Signal {signal.key!r}",
             )
 
     online_key = f"d{device_id}_online"
     emit(
-        LoxoneInput(online_key, f"{device_label} erreichbar", device_label, False, ""),
+        # Ein Zustand, kein Impuls - also analog (siehe LoxoneInput).
+        LoxoneInput(online_key, f"{device_label} erreichbar", device_label, True, ""),
         "dem Online-Signal",
     )
     return inputs

@@ -76,7 +76,13 @@ def test_button_events_appear_as_pulse_and_counter(tmp_path):
         ],
     )
     text = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
-    assert "_press:\\v" in text
+    # Der Impuls wird auf der steigenden Flanke erkannt, nicht ueber den
+    # Wert: sonst loeste ein Tastendruck zweimal aus, weil auf `...:\v`
+    # sowohl `press:1` als auch das `press:0` des Impulsendes passt (am
+    # Miniserver beobachtet, 2026-09-03).
+    assert "_press:1" in text
+    assert "_press:\\v" not in text
+    # Der Zaehler ist ein Wert und wird weiterhin als solcher gelesen.
     assert "_press_n:\\v" in text
 
 

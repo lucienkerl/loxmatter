@@ -84,7 +84,7 @@ def render_virtual_in_udp(
                 ("Title", entry.title),
                 ("Comment", entry.comment),
                 ("Address", ""),
-                ("Check", f"{entry.key}:\\v"),
+                ("Check", f"{entry.key}:{entry.check_suffix}"),
                 ("Signed", "true"),
                 ("Analog", _flag(entry.analog)),
                 ("SourceValLow", "0"),
@@ -183,7 +183,13 @@ def render_system_templates(bridge_ip: str, port: int, listen_port: int) -> tupl
                 key="bridge_alive",
                 title="Bridge erreichbar",
                 comment="Watchdog: toggelt, solange die Bridge laeuft",
-                analog=False,
+                # Analog wie jeder Zustand (2026-09-03): der Watchdog lebt
+                # gerade davon, dass der Wert zwischen 1 und 0 WECHSELT. Ein
+                # digitaler Eingang wertet den Wert nicht aus - er saehe nur,
+                # dass ein Muster passt, und koennte den Wechsel damit gar
+                # nicht bemerken. Genau das soll er aber: bleibt der Wert
+                # stehen, ist die Bruecke tot.
+                analog=True,
                 unit_format="",
             )
         ],

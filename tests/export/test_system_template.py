@@ -21,10 +21,15 @@ def text(raw: bytes) -> str:
     return raw.decode("utf-8-sig")
 
 
-def test_input_template_carries_the_heartbeat():
+def test_input_template_carries_the_heartbeat_as_an_analog_value():
+    """Analog, nicht digital (2026-09-03, am Miniserver geklaert): der
+    Watchdog lebt davon, dass der Wert zwischen 1 und 0 WECHSELT. Ein
+    digitaler UDP-Eingang wertet den Wert nicht aus - er saehe nur, dass ein
+    Muster passt, und koennte den Wechsel gar nicht bemerken. Genau das soll
+    er aber: bleibt der Wert stehen, ist die Bruecke tot."""
     viu, _ = render_system_templates("192.168.1.50", 7000, 8080)
     assert 'Check="bridge_alive:\\v"' in text(viu)
-    assert 'Analog="false"' in text(viu)
+    assert 'Analog="true"' in text(viu)
 
 
 def test_output_template_carries_resync():

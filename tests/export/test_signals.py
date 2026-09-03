@@ -60,9 +60,17 @@ def test_analog_attribute_becomes_one_analog_input():
     assert inputs[0].unit_format == "<v.1> °C"
 
 
-def test_digital_attribute_becomes_one_digital_input():
+def test_a_boolean_state_becomes_an_analog_input():
+    """Frueher digital. Am Miniserver zeigte sich (2026-09-03), dass ein
+    digitaler UDP-Eingang schon beim Erkennen des Musters ausloest und den
+    Wert dahinter nicht auswertet: `d1_1_onoff:1` und `d1_1_onoff:0` passen
+    beide auf `...:\v`, der Eingang stand also dauerhaft auf Ein.
+
+    Analog liest Loxone die Zahl, und 1 und 0 werden unterscheidbar. Der
+    Wert bleibt boolesch - nur der Eingangstyp aendert sich."""
     inputs = to_inputs([signal("d1_1_onoff", exportability=Exportability.DIGITAL)], 1, "Steckdose")
-    assert inputs[0].analog is False
+    assert inputs[0].analog is True
+    assert inputs[0].check_suffix == "\\v"
     assert inputs[0].unit_format == ""
 
 
@@ -101,7 +109,9 @@ def test_online_signal_is_added_once_per_device():
     inputs = to_inputs([signal("d1_1_a"), signal("d1_1_b")], 1, "Geraet")
     assert [i.key for i in inputs].count("d1_online") == 1
     online = next(i for i in inputs if i.key == "d1_online")
-    assert online.analog is False
+    # Ein Zustand, kein Impuls - also analog, aus demselben Grund wie
+    # `onoff` (siehe test_a_boolean_state_becomes_an_analog_input).
+    assert online.analog is True
 
 
 def test_unit_no_longer_lands_in_the_comment():
