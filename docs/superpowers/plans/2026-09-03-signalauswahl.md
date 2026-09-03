@@ -194,9 +194,7 @@ ROOT_NODE_DEVICE_TYPE = 0x0016
 OTA_REQUESTOR_DEVICE_TYPE = 0x0012
 POWER_SOURCE_DEVICE_TYPE = 0x0011
 
-UTILITY_DEVICE_TYPES: frozenset[int] = frozenset(
-    {ROOT_NODE_DEVICE_TYPE, OTA_REQUESTOR_DEVICE_TYPE}
-)
+UTILITY_DEVICE_TYPES: frozenset[int] = frozenset({ROOT_NODE_DEVICE_TYPE, OTA_REQUESTOR_DEVICE_TYPE})
 
 
 def _device_type_ids(raw: object) -> frozenset[int]:
@@ -1020,18 +1018,16 @@ Vor der Schleife über `extract_signals(snapshot)`:
 Und die Zeile, die `exported` bestimmt:
 
 ```python
-                # Zwei Fragen, zwei Antworten (Entwurf 2026-09-03, 3):
-                # `is_exportable` sagt, ob der Wert ueberhaupt auf einen
-                # Loxone-Eingang passt; `is_functional`, ob ihn jemand
-                # standardmaessig will. Ein Thread-Funkzaehler ist das
-                # erste und nicht das zweite.
-                #
-                # Nur beim ANLEGEN: der UPDATE-Zweig oben fasst `exported`
-                # weiterhin nicht an, sobald ein Signal einmal bekannt ist -
-                # ab dann gehoert der Wert dem Nutzer.
-                exported = is_exportable(profile.exportability) and is_functional(
-                    ref, device_types
-                )
+# Zwei Fragen, zwei Antworten (Entwurf 2026-09-03, 3):
+# `is_exportable` sagt, ob der Wert ueberhaupt auf einen
+# Loxone-Eingang passt; `is_functional`, ob ihn jemand
+# standardmaessig will. Ein Thread-Funkzaehler ist das
+# erste und nicht das zweite.
+#
+# Nur beim ANLEGEN: der UPDATE-Zweig oben fasst `exported`
+# weiterhin nicht an, sobald ein Signal einmal bekannt ist -
+# ab dann gehoert der Wert dem Nutzer.
+exported = is_exportable(profile.exportability) and is_functional(ref, device_types)
 ```
 
 - [ ] **Step 4: Test laufen lassen, Erfolg bestätigen**
