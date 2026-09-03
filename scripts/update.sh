@@ -20,6 +20,7 @@
 #
 #   ./scripts/update.sh              # holen, bauen, neu starten
 #   ./scripts/update.sh --no-pull    # nur bauen und neu starten
+#   ./scripts/update.sh --no-cache   # ohne Layer-Cache bauen
 #
 # Auf dem Rechner auszufuehren, auf dem die Bruecke laeuft. Der Stack liegt
 # im Repository selbst (deploy/testhost/), das Skript findet ihn ueber
@@ -33,17 +34,19 @@
 set -euo pipefail
 
 PULL=1
-case "${1:-}" in
-  "")         ;;
-  --no-pull)  PULL=0 ;;
-  -h|--help)  sed -n '18,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-  *)          printf 'Unbekanntes Argument: %s (erlaubt: --no-pull, --help)\n' "$1" >&2; exit 2 ;;
-esac
+NO_CACHE=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-pull)  PULL=0 ;;
+    --no-cache) NO_CACHE=1 ;;
+    -h|--help)  sed -n '18,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)          printf 'Unbekanntes Argument: %s (erlaubt: --no-pull, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
+  esac
+done
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STACK="$REPO/deploy/testhost"
 SERVICE="loxmatter"
-IMAGE="loxmatter:local"
 BACKUPS="$HOME/loxmatter-backups"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
@@ -87,8 +90,16 @@ else
   printf '\nKein Datenbank-Volume gefunden (%s) - erster Lauf?\n' "$VOLUME"
 fi
 
+# Ueber `docker compose build`, NICHT ueber ein eigenes `docker build`
+# (2026-09-03): der Dienst traegt in der Compose-Datei einen `build:`-Block,
+# baut also sein eigenes Image. Ein daneben gebautes `loxmatter:local`
+# benutzt niemand - das Skript baute monatelang ein Image, das nirgends
+# ankam, waehrend Compose bei `up` ein vorhandenes Image einfach
+# weiterverwendet, statt neu zu bauen. Der Dienst lief danach unveraendert
+# weiter und meldete trotzdem "Fertig".
 say "Baue das Image"
-docker build -t "$IMAGE" "$REPO" || die "Build fehlgeschlagen - der laufende Dienst bleibt unveraendert."
+(cd "$STACK" && docker compose build ${NO_CACHE:+--no-cache} "$SERVICE") \
+  || die "Build fehlgeschlagen - der laufende Dienst bleibt unveraendert."
 
 say "Starte den Dienst neu"
 (cd "$STACK" && docker compose up -d --no-deps --force-recreate "$SERVICE") \
