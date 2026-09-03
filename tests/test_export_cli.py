@@ -18,6 +18,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from loxmatter import i18n
 from loxmatter.cli import app
 from loxmatter.model.store import Store
 
@@ -179,10 +180,49 @@ def test_button_gets_no_output_commands(tmp_path):
     written = sorted(p.name for p in tmp_path.glob("*.xml"))
     assert any(n.startswith("VIU_") for n in written)
     assert not any(n.startswith("VO_") for n in written)
+    assert "skipped" in result.stdout  # cli.export.echo_vo_skipped
+
+
+def test_button_gets_no_output_commands_in_german(tmp_path):
+    i18n.set_language("de")
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_bilresa_button.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0
+    written = sorted(p.name for p in tmp_path.glob("*.xml"))
+    assert any(n.startswith("VIU_") for n in written)
+    assert not any(n.startswith("VO_") for n in written)
     assert "übersprungen" in result.stdout
 
 
 def test_export_reports_what_it_skipped(tmp_path):
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    assert "49" in result.stdout
+    assert "not exportable" in result.stdout  # cli.export.echo_skipped_signals
+
+
+def test_export_reports_what_it_skipped_in_german(tmp_path):
+    i18n.set_language("de")
     result = CliRunner().invoke(
         app,
         [
@@ -207,6 +247,24 @@ def test_export_reports_how_many_signals_are_held_back_as_expert(tmp_path):
     Rechnung: die Zahl (154, siehe `ExportDeviceOut.hidden_count`-Docstring
     fuer dasselbe Geraet) und ein Hinweis auf den Ort, an dem man sie
     einzeln freischaltet, muessen in der Ausgabe stehen."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    assert "154" in result.stdout
+    assert "expert" in result.stdout  # cli.export.echo_hidden_signals
+
+
+def test_export_reports_how_many_signals_are_held_back_as_expert_in_german(tmp_path):
+    i18n.set_language("de")
     result = CliRunner().invoke(
         app,
         [
@@ -354,6 +412,25 @@ def test_export_requires_node_or_fixture(tmp_path):
     """Fix Minor #4: export teilt sich _load_snapshot mit inspect — dessen
     Fehlerpfade sind bislang nur ueber inspect getestet, nicht ueber export
     selbst."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    # cli.common.error_need_node_or_fixture
+    assert "specify either --node or --fixture" in result.output
+
+
+def test_export_requires_node_or_fixture_in_german(tmp_path):
+    i18n.set_language("de")
     result = CliRunner().invoke(
         app,
         [

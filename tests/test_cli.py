@@ -27,7 +27,7 @@ import typer
 from matter_server.client.exceptions import CannotConnect
 from typer.testing import CliRunner
 
-from loxmatter import cli
+from loxmatter import cli, i18n
 from loxmatter.auth.passwords import hash_password, verify_password
 from loxmatter.cli import app, render_report
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
@@ -193,10 +193,38 @@ def test_cli_reports_node_not_found(monkeypatch):
 
     assert result.exit_code != 0
     assert "Traceback" not in result.output
+    assert "not known" in result.stderr  # cli.common.fail_node_unknown
+
+
+def test_cli_reports_node_not_found_in_german(monkeypatch):
+    i18n.set_language("de")
+    monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(nodes=[]))
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://test/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
     assert "nicht bekannt" in result.stderr
 
 
 def test_cli_reports_unreachable_server(monkeypatch):
+    monkeypatch.setattr(
+        cli,
+        "_build_client",
+        lambda url: _fake_client(connect_error=CannotConnect("boom")),
+    )
+
+    result = CliRunner().invoke(
+        app, ["inspect", "--node", "1", "--url", "ws://testhost.invalid:5580/ws"]
+    )
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "unreachable" in result.stderr  # cli.common.fail_matter_unreachable
+
+
+def test_cli_reports_unreachable_server_in_german(monkeypatch):
+    i18n.set_language("de")
     monkeypatch.setattr(
         cli,
         "_build_client",
@@ -216,6 +244,21 @@ def test_cli_reports_connect_timeout_without_traceback(monkeypatch):
     # Der Server nimmt das Websocket an, meldet aber nie Bereitschaft — genau
     # der Fall, für den LISTENER_READY_TIMEOUT_SECONDS existiert. Klein
     # gepatcht, damit der Test nicht wirklich zehn Sekunden wartet.
+    monkeypatch.setattr(matter_client, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(never_ready=True))
+
+    result = CliRunner().invoke(app, ["inspect", "--node", "1", "--url", "ws://test/ws"])
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "did not report readiness" in result.stderr  # cli.common.fail_matter_not_ready
+    # Von den beiden anderen Fehlerpfaden unterscheidbar:
+    assert "unreachable" not in result.stderr
+    assert "not known" not in result.stderr
+
+
+def test_cli_reports_connect_timeout_without_traceback_in_german(monkeypatch):
+    i18n.set_language("de")
     monkeypatch.setattr(matter_client, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(cli, "_build_client", lambda url: _fake_client(never_ready=True))
 

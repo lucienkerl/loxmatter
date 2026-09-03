@@ -225,9 +225,7 @@ def _ensure_out_dir(out: Path) -> None:
     try:
         out.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        _fail(
-            f"Zielverzeichnis {out} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
-        )
+        _fail(i18n.t("cli.common.fail_target_dir", dir=out, exc=exc))
 
 
 def _load_fixture(path: Path) -> NodeSnapshot:
@@ -236,11 +234,11 @@ def _load_fixture(path: Path) -> NodeSnapshot:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        _fail(f"Fixture {path} enthält kein gültiges JSON: {exc}")
+        _fail(i18n.t("cli.common.fail_fixture_invalid_json", path=path, exc=exc))
     try:
         node_id = raw["node_id"]
     except (KeyError, TypeError):
-        _fail(f"Fixture {path} hat kein Feld 'node_id'.")
+        _fail(i18n.t("cli.common.fail_fixture_missing_node_id", path=path))
     return NodeSnapshot.from_raw(node_id, raw)
 
 
@@ -261,95 +259,57 @@ def _load_snapshot(fixture: Path | None, node: int | None, url: str) -> NodeSnap
     if fixture is not None:
         return _load_fixture(fixture)
     if node is None:
-        raise typer.BadParameter("entweder --node oder --fixture angeben")
+        raise typer.BadParameter(i18n.t("cli.common.error_need_node_or_fixture"))
 
     async def run() -> NodeSnapshot:
         client = _build_client(url)
         try:
             await client.connect()
         except CannotConnect:
-            _fail(f"matter-server unter {url} nicht erreichbar — läuft der Dienst?")
+            _fail(i18n.t("cli.common.fail_matter_unreachable", url=url))
         except MatterUnavailableError as exc:
-            _fail(
-                f"matter-server unter {url} hat sich verbunden, aber keine "
-                f"Bereitschaft gemeldet: {exc}"
-            )
+            _fail(i18n.t("cli.common.fail_matter_not_ready", url=url, exc=exc))
         try:
             return await client.snapshot(node)
         except MatterUnavailableError:
-            _fail(f"Node {node} ist am matter-server ({url}) nicht bekannt — kommissioniert?")
+            _fail(i18n.t("cli.common.fail_node_unknown", node=node, url=url))
         finally:
             await client.disconnect()
 
     return asyncio.run(run())
 
 
-@app.command()
+@app.command(help=i18n.t("cli.inspect.help"))
 def inspect(
-    node: int | None = typer.Option(None, help="Node-ID am laufenden matter-server"),
+    node: int | None = typer.Option(None, help=i18n.t("cli.common.help_node")),
     fixture: Path | None = typer.Option(  # noqa: B008 — typer-Idiom, `Path` gilt Ruff nicht als unveränderlich
-        None, help="Statt matter-server ein gespeichertes Abbild"
+        None,
+        help=i18n.t("cli.inspect.help_fixture"),  # noqa: B008
     ),
-    url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
+    url: str = typer.Option("ws://localhost:5580/ws", help=i18n.t("cli.common.help_matter_url")),
 ) -> None:
-    """Listet alle Attribute und Events eines Geräts auf."""
     snapshot = _load_snapshot(fixture, node, url)
     typer.echo(render_report(snapshot))
 
 
-@app.command()
+@app.command(help=i18n.t("cli.export.help"))
 def export(
-    fixture: Path | None = typer.Option(  # noqa: B008
-        None, help="Gespeichertes Abbild statt eines laufenden matter-server"
-    ),
-    node: int | None = typer.Option(None, help="Node-ID am laufenden matter-server"),
-    url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
-    bridge_ip: str = typer.Option(..., help="IP dieser Bridge, aus Sicht des Miniservers"),
-    port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
-    listen: int = typer.Option(
-        8080,
-        help="HTTP-Port in der erzeugten Kommando-URL (VO-Vorlage). Muss mit dem "
-        "--listen übereinstimmen, mit dem `loxmatter run` später gestartet wird — "
-        "sonst laufen die Ausgangsbefehle ins Leere, ohne dass der Miniserver das meldet.",
-    ),
-    out: Path = typer.Option(Path("."), help="Zielverzeichnis für die Vorlagen"),  # noqa: B008
+    fixture: Path | None = typer.Option(None, help=i18n.t("cli.export.help_fixture")),  # noqa: B008
+    node: int | None = typer.Option(None, help=i18n.t("cli.common.help_node")),
+    url: str = typer.Option("ws://localhost:5580/ws", help=i18n.t("cli.common.help_matter_url")),
+    bridge_ip: str = typer.Option(..., help=i18n.t("cli.export.help_bridge_ip")),
+    port: int = typer.Option(7000, help=i18n.t("cli.common.help_udp_port")),
+    listen: int = typer.Option(8080, help=i18n.t("cli.export.help_listen")),
+    out: Path = typer.Option(Path("."), help=i18n.t("cli.export.help_out")),  # noqa: B008
     store_path: Path | None = typer.Option(  # noqa: B008
         None,
-        help="Datenbank mit den Signalschlüsseln. Standard: "
-        "~/.loxmatter/loxmatter.sqlite — bewusst unabhängig vom "
-        "Arbeitsverzeichnis. Die Schlüssel darin sind die Verdrahtung in "
-        "Loxone; ein relativer Pfad würde bei einem Aufruf aus einem anderen "
-        "Verzeichnis die Datenbank verfehlen, dem Gerät eine neue device_id "
-        "zuweisen und damit jede bestehende Verdrahtung stillschweigend "
-        "zerstören. Alternative über die Umgebungsvariable LOXMATTER_STORE, "
-        "etwa für ein eingehängtes Volume im Container.",
+        help=i18n.t("cli.export.help_store_path"),  # noqa: B008
     ),
     raw_commands: bool = typer.Option(
-        False,
-        "--raw-commands",
-        help="Auch Kommandos unbekannter Cluster exportieren. "
-        "Verwaltungscluster bleiben in jedem Fall gesperrt.",
+        False, "--raw-commands", help=i18n.t("cli.export.help_raw_commands")
     ),
-    system: bool = typer.Option(
-        False,
-        "--system",
-        help="Erzeugt zusätzlich die geräteunabhängigen Vorlagen "
-        "(bridge_alive, /resync). Einmalig zu importieren.",
-    ),
+    system: bool = typer.Option(False, "--system", help=i18n.t("cli.export.help_system")),
 ) -> None:
-    """Erzeugt die Loxone-Vorlagen für ein Gerät.
-
-    Der Ort der Signalschlüssel-Datenbank entscheidet über die
-    Schlüsselstabilität — siehe `_resolve_store_path` und die Hilfe zu
-    `--store-path`. Der verwendete Pfad wird ausgegeben, damit ein Nutzer,
-    der versehentlich zwei Datenbanken erzeugt hat, das an der Ausgabe sieht
-    statt es aus toten Bausteinen in Loxone zu erschließen.
-
-    `bridge_alive` und `/resync` gehören zu keinem Gerät (Spec 6.2, 6.4, 6.5)
-    — deshalb prüft `--system` hier zuerst, vor dem Laden des Abbilds: sonst
-    verlangte der Aufbau des Kommandos immer `--node` oder `--fixture`, auch
-    wenn nur die Systemvorlagen gebraucht werden.
-    """
     if system:
         _ensure_out_dir(out)
         viu_sys, vo_sys = render_system_templates(bridge_ip, port, listen)
@@ -358,37 +318,36 @@ def export(
         try:
             viu_sys_path.write_bytes(viu_sys)
         except OSError as exc:
-            _fail(
-                f"{viu_sys_path} konnte nicht geschrieben werden: {exc}. "
-                "Es wurde noch keine Datei angelegt."
-            )
+            _fail(i18n.t("cli.export.fail_write_first_file", path=viu_sys_path, exc=exc))
         try:
             vo_sys_path.write_bytes(vo_sys)
         except OSError as exc:
             _fail(
-                f"{vo_sys_path} konnte nicht geschrieben werden: {exc}. "
-                f"Geschrieben wurde bereits {viu_sys_path.name}, es fehlt {vo_sys_path.name}."
+                i18n.t(
+                    "cli.export.fail_write_second_file",
+                    path=vo_sys_path,
+                    exc=exc,
+                    written=viu_sys_path.name,
+                    missing=vo_sys_path.name,
+                )
             )
-        typer.echo("VIU_Matter_System.xml, VO_Matter_System.xml: Heartbeat und /resync")
+        typer.echo(i18n.t("cli.export.echo_system_templates"))
         if fixture is None and node is None:
             return
 
     snapshot = _load_snapshot(fixture, node, url)
 
     resolved_store_path = _resolve_store_path(store_path)
-    typer.echo(f"Datenbank: {resolved_store_path.resolve()}")
+    typer.echo(i18n.t("cli.common.echo_database_path", path=resolved_store_path.resolve()))
     try:
         resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        _fail(
-            f"Verzeichnis {resolved_store_path.parent} konnte nicht angelegt werden: {exc}. "
-            "Ist der Pfad beschreibbar?"
-        )
+        _fail(i18n.t("cli.common.fail_store_dir", dir=resolved_store_path.parent, exc=exc))
 
     try:
         store = Store(resolved_store_path)
     except (OSError, sqlite3.Error) as exc:
-        _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
+        _fail(i18n.t("cli.common.fail_store_open", path=resolved_store_path, exc=exc))
     try:
         device_id = store.register_device(snapshot)
         stored = store.register_signals(device_id, snapshot)
@@ -415,7 +374,7 @@ def export(
     try:
         viu.write_bytes(render_virtual_in_udp(label, bridge_ip, port, inputs))
     except OSError as exc:
-        _fail(f"{viu} konnte nicht geschrieben werden: {exc}. Es wurde noch keine Datei angelegt.")
+        _fail(i18n.t("cli.export.fail_write_first_file", path=viu, exc=exc))
     # Ohne Ausgangsbefehle waere die VO-Vorlage leer bis auf ihr Grundgeruest -
     # ein Import in Loxone Config braechte nichts ausser eine leere Vorlage im
     # Baum. Das Online-Signal macht die VIU-Vorlage dagegen nie leer (siehe
@@ -425,8 +384,13 @@ def export(
             vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:{listen}", commands))
         except OSError as exc:
             _fail(
-                f"{vo} konnte nicht geschrieben werden: {exc}. "
-                f"Geschrieben wurde bereits {viu}, es fehlt {vo.name}."
+                i18n.t(
+                    "cli.export.fail_write_second_file",
+                    path=vo,
+                    exc=exc,
+                    written=viu,
+                    missing=vo.name,
+                )
             )
 
     # Text zaehlt mit: der virtuelle Texteingang ist ein eigener Vorlagentyp
@@ -446,16 +410,13 @@ def export(
     # Signale nicht exportierbar" bei 159 Signalen liessen die restlichen
     # 104 unerwaehnt.
     hidden_count = sum(1 for s in stored if not s.functional)
-    typer.echo(f"{viu.name}: {len(inputs)} Eingänge")
+    typer.echo(i18n.t("cli.export.echo_viu_summary", filename=viu.name, count=len(inputs)))
     if commands:
-        typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
+        typer.echo(i18n.t("cli.export.echo_vo_summary", filename=vo.name, count=len(commands)))
     else:
-        typer.echo(f"{vo.name}: übersprungen (keine Ausgangsbefehle, leere Vorlage)")
-    typer.echo(f"{skipped} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)")
-    typer.echo(
-        f"{hidden_count} Signale als Experte zurückgehalten "
-        "(Weboberfläche, Ansicht „Signale“, Block „Experte“ – dort einzeln freischaltbar)"
-    )
+        typer.echo(i18n.t("cli.export.echo_vo_skipped", filename=vo.name))
+    typer.echo(i18n.t("cli.export.echo_skipped_signals", count=skipped))
+    typer.echo(i18n.t("cli.export.echo_hidden_signals", count=hidden_count))
 
     # exported_at (Task 5, Phase 5): `GET /api/export/status` der WebUI muss
     # "wann zuletzt exportiert" unabhaengig davon beantworten, ob der letzte
