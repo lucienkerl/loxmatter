@@ -398,11 +398,14 @@ async def api_with_runtime(
     **`install_log_buffer()` fuer denselben Grund** - der Log-Zweig der
     neuen Route (`log_handler.add_observer`, Task 3) braucht einen echten
     `LogBufferHandler`, angehaengt an den Logger `loxmatter`. Wird nach dem
-    Test wieder abgemeldet (`removeHandler`) - sonst haeufte jeder Test, der
-    diese Fixture benutzt, einen weiteren Handler am selben, PROZESSWEITEN
-    Logger an (siehe `tests/diagnostics/test_logbuffer.py` fuer dasselbe
-    Muster)."""
+    Test wieder abgemeldet, UND die Stufe des Loggers zurueckgesetzt -
+    sonst haeufte jeder Test, der diese Fixture benutzt, einen weiteren
+    Handler am selben, PROZESSWEITEN Logger an, und dessen Stufe bliebe
+    auf INFO stehen (siehe `tests/diagnostics/test_logbuffer.py` fuer
+    dasselbe Muster)."""
     store, device_id = plug_store
+    loxmatter_logger = logging.getLogger("loxmatter")
+    previous_level = loxmatter_logger.level
     receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     receiver.bind(("127.0.0.1", 0))
     receiver.setblocking(False)
@@ -425,5 +428,12 @@ async def api_with_runtime(
             yield WebSocketClient(client, app), runtime, device_id
     finally:
         await sender.close()
-        logging.getLogger("loxmatter").removeHandler(log_handler)
+        loxmatter_logger.removeHandler(log_handler)
+        # Auch die STUFE zuruecksetzen (2026-09-03): `install_log_buffer`
+        # setzt seit Task 3 nicht nur die Stufe des Handlers, sondern auch
+        # die des Loggers - sonst blieb `loxmatter` nach dieser Fixture
+        # dauerhaft auf INFO stehen, obwohl der Handler laengst abgemeldet
+        # ist. Ein Test, der spaeter laeuft und eine andere Stufe erwartet,
+        # saehe dann etwas, das kein Test gesetzt hat.
+        loxmatter_logger.setLevel(previous_level)
         receiver.close()
