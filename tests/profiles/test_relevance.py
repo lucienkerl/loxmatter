@@ -7,15 +7,18 @@ from pathlib import Path
 
 import pytest
 
-from loxmatter.matter.models import NodeSnapshot
+from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.profiles.relevance import (
     OTA_REQUESTOR_DEVICE_TYPE,
     POWER_SOURCE_DEVICE_TYPE,
     ROOT_NODE_DEVICE_TYPE,
     device_types_by_endpoint,
+    is_functional,
 )
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
+
+_KIND = SignalKind.ATTRIBUTE
 
 
 def _snapshot(name: str) -> NodeSnapshot:
@@ -63,3 +66,63 @@ def test_an_unexpected_descriptor_shape_yields_no_device_types(raw):
     Nutz-Endpunkt: im Zweifel ein Eingang zu viel, nie ein fehlender Wert."""
     snapshot = NodeSnapshot.from_raw(1, {"attributes": {"0/29/0": raw}})
     assert device_types_by_endpoint(snapshot) == {0: frozenset()}
+
+
+_PLUG_TYPES = {0: frozenset({18, 22}), 1: frozenset({266}), 2: frozenset({1296})}
+_BUTTON_TYPES = {0: frozenset({17, 18, 22}), 1: frozenset({15}), 2: frozenset({15})}
+
+
+def test_a_thread_diagnostics_counter_on_the_root_endpoint_is_not_functional():
+    ref = SignalRef(0, 53, 4, SignalKind.ATTRIBUTE)
+    assert is_functional(ref, _PLUG_TYPES) is False
+
+
+def test_the_battery_level_on_a_root_endpoint_is_functional():
+    """Der Ausnahmefall, den der Descriptor selbst begruendet: der Taster
+    deklariert auf Endpunkt 0 zusaetzlich Power Source."""
+    ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
+    assert is_functional(ref, _BUTTON_TYPES) is True
+
+
+def test_the_battery_cluster_is_not_functional_where_no_power_source_is_declared():
+    """Dieselbe Cluster-Nummer auf einem Endpunkt ohne Power-Source-Typ
+    bleibt Verwaltung. Die Regel haengt am deklarierten Geraetetyp, nicht an
+    der Cluster-Nummer - sonst waere sie doch wieder nur eine Liste."""
+    ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
+    assert is_functional(ref, _PLUG_TYPES) is False
+
+
+def test_onoff_on_an_application_endpoint_is_functional():
+    assert is_functional(SignalRef(1, 6, 0, _KIND), _PLUG_TYPES) is True
+
+
+def test_a_generic_attribute_of_a_known_cluster_is_not_functional():
+    """StartUpOnOff (0x4003) sitzt legitim bei OnOff, will aber niemand in
+    Loxone. Die Tabelle kennt Cluster 6 und benennt dort nur Attribut 0."""
+    assert is_functional(SignalRef(1, 6, 0x4003, _KIND), _PLUG_TYPES) is False
+
+
+def test_every_attribute_of_an_unknown_cluster_stays_functional():
+    """Die Grundwette des Projekts (Hauptdokument 3.5): ein Geraetetyp, den
+    dieses Werkzeug nie gesehen hat, funktioniert trotzdem. Waere das hier
+    falsch, laege ein fremdes Geraet stumm - ohne dass jemand merkte, dass
+    etwas fehlt."""
+    assert is_functional(SignalRef(1, 4711, 99, _KIND), _PLUG_TYPES) is True
+
+
+def test_identify_groups_and_descriptor_are_never_functional():
+    for cluster_id in (3, 4, 29):
+        assert is_functional(SignalRef(1, cluster_id, 0, _KIND), _PLUG_TYPES) is False
+
+
+def test_an_endpoint_without_a_declared_type_counts_as_an_application_endpoint():
+    """Im Zweifel ein Eingang zu viel, nie ein fehlender Wert."""
+    assert is_functional(SignalRef(9, 4711, 0, _KIND), _PLUG_TYPES) is True
+
+
+def test_events_of_a_known_cluster_stay_functional():
+    """Ein verworfenes Ereignis waere ein Tastendruck, der in Loxone nie
+    ankommt - die erste Anforderung dieses Projekts ueberhaupt."""
+    for event_id in (1, 2, 3, 4, 5, 6):
+        ref = SignalRef(1, 59, event_id, SignalKind.EVENT)
+        assert is_functional(ref, _BUTTON_TYPES) is True

@@ -81,6 +81,27 @@ def _table() -> dict[int, dict[str, Any]]:
     return {int(k): v for k, v in (raw.get("clusters") or {}).items()}
 
 
+def knows_cluster(cluster_id: int) -> bool:
+    """Ob die Profiltabelle diesen Cluster ueberhaupt fuehrt."""
+    return cluster_id in _table()
+
+
+def names_element(ref: SignalRef) -> bool:
+    """Ob die Profiltabelle genau dieses Element namentlich fuehrt.
+
+    Getrennt von `lookup`, weil `lookup` fuer ein unbenanntes Element einen
+    generischen Namen erfindet (`c6_a16387`) und die Unterscheidung damit
+    verliert. Die Feinauswahl in `profiles.relevance` braucht sie aber:
+    innerhalb eines bekannten Clusters ist "benannt" das Kennzeichen fuer
+    "gewollt".
+    """
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return False
+    section = "events" if ref.kind is SignalKind.EVENT else "attributes"
+    return ref.element_id in (cluster.get(section) or {})
+
+
 def lookup(ref: SignalRef, value: object) -> Profile:
     """Liefert Name, Einheit und Exportierbarkeit fuer ein Signal."""
     cluster = _table().get(ref.cluster_id, {})

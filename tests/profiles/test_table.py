@@ -1,5 +1,5 @@
 from loxmatter.matter.models import SignalKind, SignalRef
-from loxmatter.profiles.table import Exportability, classify, lookup, unit_format
+from loxmatter.profiles.table import Exportability, classify, lookup, names_element, unit_format
 
 
 def test_bool_is_digital():
@@ -79,3 +79,25 @@ def test_unit_format_uses_one_decimal_for_the_common_units():
 
 def test_unit_format_for_empty_unit_is_empty():
     assert unit_format("") == ""
+
+
+def test_names_element_separates_named_from_generic_within_a_known_cluster():
+    """Die Tabelle kennt Cluster 6 und benennt dort nur Attribut 0. Genau
+    diese Unterscheidung traegt die Feinauswahl: `onoff` ist gewollt,
+    StartUpOnOff (0x4003) nicht."""
+    known = SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)
+    generic = SignalRef(1, 6, 0x4003, SignalKind.ATTRIBUTE)
+    assert names_element(known) is True
+    assert names_element(generic) is False
+
+
+def test_names_element_is_false_for_a_cluster_the_table_does_not_know():
+    """Ein unbekannter Cluster benennt nichts. Der Aufrufer (relevance)
+    darf daraus NICHT 'alles aus' folgern - siehe dort."""
+    assert names_element(SignalRef(1, 4711, 0, SignalKind.ATTRIBUTE)) is False
+
+
+def test_names_element_covers_events_too():
+    """Cluster 59 benennt seine Ereignisse; die Feinauswahl darf einen
+    Tastendruck nicht als unbenannt verwerfen."""
+    assert names_element(SignalRef(1, 59, 1, SignalKind.EVENT)) is True

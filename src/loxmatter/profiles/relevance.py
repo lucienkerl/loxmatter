@@ -17,8 +17,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from loxmatter.matter.models import NodeSnapshot
+from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.matter.paths import parse_attribute_path
+from loxmatter.profiles.table import knows_cluster, names_element
 
 DESCRIPTOR_CLUSTER_ID = 29
 DEVICE_TYPE_LIST_ID = 0
@@ -82,3 +83,50 @@ def device_types_by_endpoint(snapshot: NodeSnapshot) -> dict[int, frozenset[int]
             continue
         result[endpoint] = _device_type_ids(value)
     return result
+
+
+# Auf jedem Endpunkt Verwaltung, unabhaengig vom Geraetetyp: Identify
+# (Blinken zur Identifikation), Groups (Matter-Gruppenverwaltung) und der
+# Descriptor selbst. Keiner davon hat eine Bedeutung fuer eine
+# Hausautomation.
+BOILERPLATE_CLUSTERS: frozenset[int] = frozenset({3, 4, DESCRIPTOR_CLUSTER_ID})
+
+# Cluster, die auf einem Verwaltungs-Endpunkt dennoch gewollt sind - aber
+# nur, wenn das Geraet den zugehoerigen Nutz-Geraetetyp dort auch
+# deklariert. Der Batteriestand ist der Fall, der das noetig macht.
+UTILITY_ENDPOINT_KEEP_CLUSTERS: dict[int, int] = {
+    47: POWER_SOURCE_DEVICE_TYPE,  # PowerSource
+}
+
+
+def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bool:
+    """Ob dieses Signal standardmaessig gewollt ist (Entwurf 2026-09-03, 4).
+
+    Drei Schichten, in dieser Reihenfolge:
+
+    1. Boilerplate-Cluster sind nie gewollt, auf keinem Endpunkt.
+    2. Auf einem Verwaltungs-Endpunkt (Root Node oder OTA Requestor) ist
+       nur gewollt, was zu einem dort ebenfalls deklarierten Nutz-
+       Geraetetyp gehoert.
+    3. Auf einem Nutz-Endpunkt ist alles gewollt - ausser bei einem
+       Cluster, den die Profiltabelle kennt: dort nur die benannten
+       Elemente. Ein unbekannter Cluster bleibt vollstaendig gewollt
+       (Hauptdokument 3.5).
+
+    Ereignisse unterliegen Schicht 3 nicht: sie sind in der Tabelle
+    ohnehin namentlich gefuehrt, und ein verworfenes Ereignis waere ein
+    Tastendruck, der in Loxone nie ankommt.
+    """
+    if ref.cluster_id in BOILERPLATE_CLUSTERS:
+        return False
+
+    declared = device_types.get(ref.endpoint, frozenset())
+    if declared & UTILITY_DEVICE_TYPES:
+        required = UTILITY_ENDPOINT_KEEP_CLUSTERS.get(ref.cluster_id)
+        return required is not None and required in declared
+
+    if ref.kind is SignalKind.EVENT:
+        return True
+    if knows_cluster(ref.cluster_id):
+        return names_element(ref)
+    return True
