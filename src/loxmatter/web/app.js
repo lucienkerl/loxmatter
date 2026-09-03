@@ -204,7 +204,6 @@ function app() {
     // --- Geraete -----------------------------------------------------------
     devices: [],
     devicesError: null,
-    expandedDeviceId: null,
     controlsByDevice: {},
     commandValueDrafts: {},
     commandBusyKey: null,
@@ -401,19 +400,18 @@ function app() {
       this.controlsByDevice = {};
       this.signalsByDevice = {};
       await this.loadDevices();
-      await this.loadSettings();
+      // Jede Karte zeigt Werte und Bedienelemente sofort, ohne Klick
+      // (Geraete-Dashboard-Entwurf Abschnitt 3) - deshalb laedt startApp()
+      // beides fuer JEDES Geraet, nicht erst fuer eines nach einem
+      // Aufklappen (das es seit diesem Entwurf nicht mehr gibt).
+      await Promise.all([
+        ...this.devices.map((device) => this.loadControls(device.id)),
+        ...this.devices.map((device) => this.loadSignals(device.id)),
+        this.loadExportStatus(),
+        this.loadSettings(),
+      ]);
       this.connectLive();
-      // Nach einer Neuanmeldung steht die Ansicht nicht zwingend auf
-      // "Geraete" - `loadDevices` allein fuellte dann die falsche.
       await this.selectView(this.view);
-      // Ein aufgeklapptes Geraet haengt an keiner Ansicht - `selectView`
-      // holt seine Bedienelemente nicht mit.
-      if (this.expandedDeviceId !== null) {
-        await Promise.all([
-          this.loadControls(this.expandedDeviceId),
-          this.loadSignals(this.expandedDeviceId),
-        ]);
-      }
     },
 
     async submitSetup() {
@@ -545,16 +543,6 @@ function app() {
       return device.online;
     },
 
-    async toggleExpanded(device) {
-      if (this.expandedDeviceId === device.id) {
-        this.expandedDeviceId = null;
-        return;
-      }
-      this.expandedDeviceId = device.id;
-      this.deviceActionError = null;
-      await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);
-    },
-
     async loadControls(deviceId) {
       try {
         this.controlsByDevice[deviceId] = await this.request(
@@ -601,6 +589,34 @@ function app() {
     exportedAtFor(deviceId) {
       const status = this.exportStatusFor(deviceId);
       return status ? status.exported_at : null;
+    },
+
+    // Wie `ExportStatusOut.changed_since_export` server-seitig: ohne
+    // geladenen Status (z. B. ein gerade erst eingelerntes Geraet, bevor
+    // die naechste `loadExportStatus`-Runde durch ist) gilt "geaendert" -
+    // dieselbe vorsichtige Annahme wie beim Server (siehe api/export.py,
+    // `_changed_since_export`).
+    changedSinceExport(deviceId) {
+      const status = this.exportStatusFor(deviceId);
+      return status ? status.changed_since_export : true;
+    },
+
+    exportHintFor(deviceId) {
+      const status = this.exportStatusFor(deviceId);
+      if (!status || !status.exported_at) {
+        return "Noch nicht exportiert";
+      }
+      return `Zuletzt exportiert am ${this.formatTimestamp(status.exported_at)}`;
+    },
+
+    // Klassen fuer den Farbstreifen der Kachel (style.css, `.device-card`) -
+    // eine Funktion statt eines Inline-Ausdrucks in index.html, weil zwei
+    // Bedingungen (online UND geaendert) hier zusammenkommen.
+    deviceCardClass(device) {
+      return {
+        "is-offline": !this.isOnline(device),
+        "is-changed": this.isOnline(device) && this.changedSinceExport(device.id),
+      };
     },
 
     // Kurzliste fuer die Geraete-Ansicht: nur die funktionalen Signale
@@ -717,9 +733,6 @@ function app() {
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
-        if (this.expandedDeviceId === device.id) {
-          this.expandedDeviceId = null;
-        }
       } catch (error) {
         this.deviceActionError = `Gerät konnte nicht entfernt werden: ${error.message}`;
       }
@@ -813,6 +826,10 @@ function app() {
         }
         const device = await this.request("POST", "/api/devices/commission", body);
         this.devices.push(device);
+        // Karte ist ab sofort sichtbar und immer offen (Abschnitt 3) - ohne
+        // dieses Nachladen zeigte sie "Signale werden geladen…" dauerhaft,
+        // bis irgendwann die Ansicht neu betreten wuerde.
+        await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);
         // Der Satz zur Subscription ist kein Schmuck (Review-Fix Fix 3,
         // 2026-09-03, siehe Spec 12.3): `BridgeMatterClient.subscribe()`
         // laeuft genau einmal beim Start der Bruecke und meldet nur die

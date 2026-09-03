@@ -210,31 +210,58 @@
         </p>
 
         <template x-for="device in devices" :key="device.id">
-          <div class="card">
+          <div class="card device-card" :class="deviceCardClass(device)">
             <div class="row">
-              <span class="dot" :class="isOnline(device) ? 'online' : 'offline'"></span>
+              <span class="type-badge">
+                <svg class="icon"><use href="#i-device"></use></svg>
+              </span>
               <input
                 type="text"
                 :value="device.label"
                 @input="labelDrafts[device.id] = $event.target.value"
                 @change="saveLabel(device)"
               />
-              <span
-                class="muted"
-                :title="device.signal_count + ' Signale, ' + device.exportable_count + ' exportierbar'"
-                x-text="device.next_export_count + ' Eingänge im nächsten Export'"
-              ></span>
-              <button
-                @click="toggleExpanded(device)"
-                x-text="expandedDeviceId === device.id ? 'Einklappen' : 'Details'"
-              ></button>
+              <span class="status-pill warn" x-show="isOnline(device) && changedSinceExport(device.id)">
+                <svg class="icon"><use href="#i-warn"></use></svg>
+                Geändert seit Export
+              </span>
+              <span class="status-pill off" x-show="!isOnline(device)">
+                <svg class="icon"><use href="#i-offline"></use></svg>
+                Offline
+              </span>
               <button class="danger" @click="removeDevice(device)">Entfernen</button>
             </div>
 
-            <div class="device-controls" x-show="expandedDeviceId === device.id" x-cloak>
+            <div class="device-controls">
+              <h3>Werte</h3>
+              <p class="hint" x-show="!signalsByDevice[device.id]">Signale werden geladen…</p>
+              <p
+                class="hint"
+                x-show="signalsByDevice[device.id] && firstSignalsFor(device.id).length === 0"
+              >
+                Keine funktionalen Signale für dieses Gerät.
+              </p>
+              <div class="value-chips" x-show="signalsByDevice[device.id]">
+                <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
+                  <span class="value-chip">
+                    <span x-text="signal.title"></span>
+                    <span
+                      class="value"
+                      x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                    ></span>
+                  </span>
+                </template>
+              </div>
+              <p class="hint" x-show="remainingSignalCount(device.id) > 0">
+                <span x-text="remainingSignalCount(device.id)"></span>
+                weitere in der Ansicht „Signale".
+              </p>
+            </div>
+
+            <div class="device-controls">
               <h3>Bedienung</h3>
               <p class="hint" x-show="!controlsLoaded(device.id)">
-                Bedienelemente noch nicht geladen – siehe Meldung oben.
+                Bedienelemente werden geladen…
               </p>
               <p
                 class="hint"
@@ -248,7 +275,7 @@
                     <button
                       x-show="!command.takes_value"
                       @click="executeCommand(device, command)"
-                      :disabled="commandBusyKey === command.key"
+                      :disabled="commandBusyKey === command.key || !isOnline(device)"
                       x-text="command.slug"
                     ></button>
                     <span x-show="command.takes_value" class="row">
@@ -261,7 +288,7 @@
                       />
                       <button
                         @click="executeCommand(device, command)"
-                        :disabled="commandBusyKey === command.key"
+                        :disabled="commandBusyKey === command.key || !isOnline(device)"
                       >
                         Senden
                       </button>
@@ -273,42 +300,10 @@
                 <span x-text="hiddenRawCommandsFor(device.id)"></span>
                 weitere Kommandos vorhanden, aber nicht benannt.
               </p>
+            </div>
 
-              <h3>Funktionale Signale</h3>
-              <p class="hint">
-                Die Signale, die zum Gerätetyp gehören (siehe Ansicht „Signale“, Block
-                „Funktional“) – bei einer Steckdose sind das Ein/Aus und die Leistungswerte,
-                nicht Netzwerk- oder Geräteangaben. Gezeigt werden die ersten
-                <span x-text="FUNCTIONAL_PREVIEW_LIMIT"></span>
-                in derselben Reihenfolge wie dort (Endpunkt, dann Cluster-Nummer) – auch
-                das keine Rangfolge, nur eine Deckelung für Geräte mit vielen funktionalen
-                Signalen.
-              </p>
-              <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
-                <div class="signal-row">
-                  <span x-text="signal.title"></span>
-                  <span class="key" x-text="signal.key"></span>
-                  <span
-                    class="value"
-                    x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
-                  ></span>
-                  <!--
-                    Auch hier, nicht nur in der Ansicht "Signale"
-                    (2026-09-03): die Geraete-Ansicht ist die, auf die man
-                    schaut, wenn man wissen will, ob sich etwas tut.
-                  -->
-                  <span
-                    class="hint"
-                    x-show="signalSeenText(signal)"
-                    x-cloak
-                    x-text="signalSeenText(signal)"
-                  ></span>
-                </div>
-              </template>
-              <p class="hint" x-show="remainingSignalCount(device.id) > 0">
-                <span x-text="remainingSignalCount(device.id)"></span>
-                weitere in der Ansicht „Signale“.
-              </p>
+            <div class="device-controls row">
+              <span class="hint" x-text="exportHintFor(device.id)"></span>
             </div>
           </div>
         </template>

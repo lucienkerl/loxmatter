@@ -267,14 +267,25 @@ async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api
     und Leistung. Seit `signal.functional` das echte Auswahlkriterium
     mitliefert, ist die alte, ehrlichere Formulierung wieder zutreffend.
 
-    Belegt nur, dass die neue Beschriftung ausgeliefert wird und die alte
-    verschwunden ist - nicht, dass die damit beworbenen Signale zur
+    Aufgabe 8 hat die Kachel seither erneut umgebaut (immer offen statt
+    per Klick aufgeklappt) und dabei die Ueberschrift auf das schlichte
+    „Werte“ verkuerzt - ein eigener Hinweis auf "funktional" waere dort
+    ueberfluessig geworden, denn die Kachel zeigt ohnehin ausschliesslich
+    die funktionalen Signale, ohne Umschalter und ohne Anspruch auf eine
+    Rangfolge. Die urspruengliche Sorge des Tests - eine Ueberschrift, die
+    mehr verspricht als die Kachel haelt - bleibt trotzdem gueltig zu
+    pruefen: die alte, falsche Formulierung darf nirgends mehr auftauchen,
+    und die aktuelle Ueberschrift muss ausgeliefert werden.
+
+    Belegt nur, dass die aktuelle Beschriftung ausgeliefert wird und die
+    alte verschwunden ist - nicht, dass die damit gezeigten Signale zur
     Laufzeit tatsaechlich die funktionalen sind (siehe Testdocstring
     oben)."""
     client, _, _ = api
     page = (await client.get("/")).text
-    assert "Funktionale Signale" in page
+    assert "<h3>Werte</h3>" in page
     assert "Signale (Anfang der Liste)" not in page
+    assert "Funktionale Signale" not in page
 
 
 async def test_the_export_preview_shows_how_many_signals_are_held_back(api):
