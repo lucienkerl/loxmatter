@@ -1,0 +1,202 @@
+# loxmatter - Uebersetzungstabelle.
+#
+# Flache, punktierte Schluessel statt verschachtelter YAML-Struktur: neue
+# Namensraeume (api.*, web.* in spaeteren Phasen) kommen dazu, ohne
+# bestehende Eintraege umzubauen. Jeder Eintrag traegt mindestens "en" -
+# t() faellt bei fehlendem "de" automatisch auf "en" zurueck (siehe
+# i18n/__init__.py), nie umgekehrt.
+#
+# test.* gehoert zu tests/test_i18n.py - dort absichtlich mit einem
+# Eintrag OHNE "de", um den Ruecksicherungsfall an echten Daten zu
+# belegen, statt eine zweite, nur fuer Tests geladene Datei zu pflegen.
+
+test.greeting:
+  en: "Hello, {name}!"
+  de: "Hallo, {name}!"
+test.english_only:
+  en: "English only"
+
+cli.app.help:
+  en: "Matter → Loxone bridge"
+  de: "Matter → Loxone Bridge"
+
+cli.common.help_matter_url:
+  en: "Address of matter-server"
+  de: "Adresse von matter-server"
+cli.common.help_node:
+  en: "Node ID on the running matter-server"
+  de: "Node-ID am laufenden matter-server"
+cli.common.help_udp_port:
+  en: "UDP port the Miniserver listens on"
+  de: "UDP-Port, auf dem der Miniserver lauscht"
+cli.common.help_store_path_short:
+  en: "Database holding the signal keys. See --store-path under `export`."
+  de: "Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
+cli.common.echo_database_path:
+  en: "Database: {path}"
+  de: "Datenbank: {path}"
+cli.common.fail_fixture_invalid_json:
+  en: "Fixture {path} does not contain valid JSON: {exc}"
+  de: "Fixture {path} enthält kein gültiges JSON: {exc}"
+cli.common.fail_fixture_missing_node_id:
+  en: "Fixture {path} has no 'node_id' field."
+  de: "Fixture {path} hat kein Feld 'node_id'."
+cli.common.error_need_node_or_fixture:
+  en: "specify either --node or --fixture"
+  de: "entweder --node oder --fixture angeben"
+cli.common.fail_matter_unreachable:
+  en: "matter-server at {url} unreachable — is the service running?"
+  de: "matter-server unter {url} nicht erreichbar — läuft der Dienst?"
+cli.common.fail_matter_not_ready:
+  en: "matter-server at {url} connected, but did not report readiness: {exc}"
+  de: "matter-server unter {url} hat sich verbunden, aber keine Bereitschaft gemeldet: {exc}"
+cli.common.fail_node_unknown:
+  en: "Node {node} is not known to matter-server ({url}) — commissioned?"
+  de: "Node {node} ist am matter-server ({url}) nicht bekannt — kommissioniert?"
+cli.common.fail_target_dir:
+  en: "Target directory {dir} could not be created: {exc}. Is the path writable?"
+  de: "Zielverzeichnis {dir} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
+cli.common.fail_store_dir:
+  en: "Directory {dir} could not be created: {exc}. Is the path writable?"
+  de: "Verzeichnis {dir} konnte nicht angelegt werden: {exc}. Ist der Pfad beschreibbar?"
+cli.common.fail_store_open:
+  en: "Database {path} could not be opened: {exc}"
+  de: "Datenbank {path} konnte nicht geöffnet werden: {exc}"
+
+cli.inspect.help:
+  en: "Lists all attributes and events of a device."
+  de: "Listet alle Attribute und Events eines Geräts auf."
+cli.inspect.help_fixture:
+  en: "Use a saved snapshot instead of matter-server"
+  de: "Statt matter-server ein gespeichertes Abbild"
+
+cli.export.help:
+  en: "Generates the Loxone templates for a device."
+  de: "Erzeugt die Loxone-Vorlagen für ein Gerät."
+cli.export.help_fixture:
+  en: "Saved snapshot instead of a running matter-server"
+  de: "Gespeichertes Abbild statt eines laufenden matter-server"
+cli.export.help_bridge_ip:
+  en: "IP of this bridge, as seen from the Miniserver"
+  de: "IP dieser Bridge, aus Sicht des Miniservers"
+cli.export.help_listen:
+  en: "HTTP port in the generated command URL (VO template). Must match the --listen used when `loxmatter run` is started later — otherwise output commands go nowhere, without the Miniserver reporting it."
+  de: "HTTP-Port in der erzeugten Kommando-URL (VO-Vorlage). Muss mit dem --listen übereinstimmen, mit dem `loxmatter run` später gestartet wird — sonst laufen die Ausgangsbefehle ins Leere, ohne dass der Miniserver das meldet."
+cli.export.help_out:
+  en: "Target directory for the templates"
+  de: "Zielverzeichnis für die Vorlagen"
+cli.export.help_store_path:
+  en: "Database holding the signal keys. Default: ~/.loxmatter/loxmatter.sqlite — deliberately independent of the working directory. The keys in it are the wiring in Loxone; a relative path would miss the database when called from a different directory, assign the device a new device_id, and thereby silently destroy every existing wiring. Alternative: the LOXMATTER_STORE environment variable, e.g. for a mounted volume in a container."
+  de: "Datenbank mit den Signalschlüsseln. Standard: ~/.loxmatter/loxmatter.sqlite — bewusst unabhängig vom Arbeitsverzeichnis. Die Schlüssel darin sind die Verdrahtung in Loxone; ein relativer Pfad würde bei einem Aufruf aus einem anderen Verzeichnis die Datenbank verfehlen, dem Gerät eine neue device_id zuweisen und damit jede bestehende Verdrahtung stillschweigend zerstören. Alternative über die Umgebungsvariable LOXMATTER_STORE, etwa für ein eingehängtes Volume im Container."
+cli.export.help_raw_commands:
+  en: "Also export commands from unknown clusters. Management clusters always stay locked."
+  de: "Auch Kommandos unbekannter Cluster exportieren. Verwaltungscluster bleiben in jedem Fall gesperrt."
+cli.export.help_system:
+  en: "Also generates the device-independent templates (bridge_alive, /resync). Import once."
+  de: "Erzeugt zusätzlich die geräteunabhängigen Vorlagen (bridge_alive, /resync). Einmalig zu importieren."
+cli.export.echo_system_templates:
+  en: "VIU_Matter_System.xml, VO_Matter_System.xml: heartbeat and /resync"
+  de: "VIU_Matter_System.xml, VO_Matter_System.xml: Heartbeat und /resync"
+cli.export.echo_viu_summary:
+  en: "{filename}: {count} inputs"
+  de: "{filename}: {count} Eingänge"
+cli.export.echo_vo_summary:
+  en: "{filename}: {count} output commands"
+  de: "{filename}: {count} Ausgangsbefehle"
+cli.export.echo_vo_skipped:
+  en: "{filename}: skipped (no output commands, empty template)"
+  de: "{filename}: übersprungen (keine Ausgangsbefehle, leere Vorlage)"
+cli.export.echo_skipped_signals:
+  en: "{count} signals not exportable (lists, structs, text, null values)"
+  de: "{count} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)"
+cli.export.echo_hidden_signals:
+  en: "{count} signals held back as expert (WebUI, \"Signals\" view, \"Expert\" section – enable them individually there)"
+  de: "{count} Signale als Experte zurückgehalten (Weboberfläche, Ansicht „Signale“, Block „Experte“ – dort einzeln freischaltbar)"
+cli.export.fail_write_first_file:
+  en: "{path} could not be written: {exc}. No file has been created yet."
+  de: "{path} konnte nicht geschrieben werden: {exc}. Es wurde noch keine Datei angelegt."
+cli.export.fail_write_second_file:
+  en: "{path} could not be written: {exc}. {written} has already been written, {missing} is missing."
+  de: "{path} konnte nicht geschrieben werden: {exc}. Geschrieben wurde bereits {written}, es fehlt {missing}."
+
+cli.run.help:
+  en: "Connects Matter and Loxone permanently: values out, commands in."
+  de: "Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein."
+cli.run.help_miniserver:
+  en: "IP of the Miniserver"
+  de: "IP des Miniservers"
+cli.run.help_listen:
+  en: "Port for the HTTP commands coming from Loxone"
+  de: "Port für die HTTP-Kommandos aus Loxone"
+cli.run.help_host:
+  en: "Address the HTTP service binds to. Default 0.0.0.0, because the Miniserver must be able to reach the service — see --api-token for the corresponding protection of the `/api` routes (Spec 9, Task 8)."
+  de: "Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der Miniserver den Dienst erreichen muss — siehe --api-token für die dazugehörige Absicherung der `/api`-Routen (Spec 9, Task 8)."
+cli.run.help_api_token:
+  en: "Protects the WebUI's `/api` routes (commissioning, removal, fabric backup) with `Authorization: Bearer <Token>` — an alternative to the signed-in session, not required in addition to it (Spec 9, Task 8; Spec 11). `/cmd` and `/resync` always stay open — the Miniserver cannot send a header. Only use characters allowed in an HTTP header — no spaces, no comma, ASCII; `openssl rand -hex 32` satisfies that. Alternative via the LOXMATTER_API_TOKEN environment variable."
+  de: "Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, Fabric-Sicherung) mit `Authorization: Bearer <Token>` — alternativ zur angemeldeten Sitzung, nicht zusätzlich zu ihr erforderlich (Spec 9, Task 8; Spec 11). `/cmd` und `/resync` bleiben immer offen — der Miniserver kann keinen Header mitschicken. Nur Zeichen verwenden, die in einem HTTP-Header stehen dürfen — keine Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` erfüllt das. Alternative über die Umgebungsvariable LOXMATTER_API_TOKEN."
+cli.run.help_matter_data_dir:
+  en: "matter-server data directory (storage-path), mounted read-only into this service — basis for `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5). Without it, the route responds with 503 instead of a backup. See deploy/testhost/docker-compose.yml for the corresponding volume mount."
+  de: "matter-server-Datenverzeichnis (storage-path), read-only in diesen Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5). Ohne Angabe antwortet die Route mit 503 statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die dazugehörige Volume-Einhängung."
+cli.run.warn_no_password:
+  en: "No password has been set for this bridge yet. Until it is, nobody can sign in through the interface — and anyone who can reach the port can complete the initial setup and take over the bridge. Open the interface now and set a password."
+  de: "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, lässt sich niemand über die Oberfläche anmelden — und jeder, der den Port erreicht, kann die Ersteinrichtung abschließen und die Brücke damit übernehmen. Öffne die Oberfläche jetzt und vergib ein Passwort."
+
+cli.set_password.help:
+  en: "Resets the interface password — the emergency exit for when it has been forgotten."
+  de: "Setzt das Passwort der Oberfläche neu — der Notausgang für den Fall, dass es vergessen wurde."
+cli.set_password.fail_db_not_found:
+  en: "Database {path} was not found. `set-password` RESETS a password, so it deliberately does not create a new database — that would create an empty, unrelated database and report success while the actual bridge stayed locked. Check the path, pass it via --store-path, or — in the reference deployment — run the command inside the running container: `docker compose exec loxmatter loxmatter set-password`. On a fresh install from source, the database may simply not exist yet — it is created on the first `loxmatter run`."
+  de: "Datenbank {path} wurde nicht gefunden. `set-password` setzt ein Passwort ZURÜCK und legt deshalb absichtlich keine neue Datenbank an — das würde eine leere Fremddatenbank erzeugen und Erfolg melden, während die eigentliche Brücke gesperrt bliebe. Prüfe den Pfad, gib ihn über --store-path an, oder führe den Befehl — im Referenz-Deployment — im laufenden Container aus: `docker compose exec loxmatter loxmatter set-password`. Bei einer frischen Installation aus dem Quellcode kann die Datenbank auch schlicht noch fehlen — sie entsteht erst beim ersten `loxmatter run`."
+cli.set_password.prompt:
+  en: "New password"
+  de: "Neues Passwort"
+cli.set_password.fail_too_short:
+  en: "The password must be at least {min_length} characters long."
+  de: "Das Passwort muss mindestens {min_length} Zeichen haben."
+cli.set_password.echo_success:
+  en: "Password set. All open sessions have been signed out."
+  de: "Passwort gesetzt. Alle offenen Sitzungen wurden abgemeldet."
+
+cli.set_language.help:
+  en: "Sets the shared language setting (CLI and web interface)."
+  de: "Setzt die gemeinsame Spracheinstellung (CLI und Weboberfläche)."
+cli.set_language.help_language:
+  en: "Target language: en or de."
+  de: "Zielsprache: en oder de."
+cli.set_language.fail_unsupported:
+  en: "Unsupported language '{language}' — expected: {supported}."
+  de: "Nicht unterstützte Sprache '{language}' — erwartet: {supported}."
+cli.set_language.fail_db_not_found:
+  en: "Database {path} was not found. `set-language` deliberately does not create a new database — run `loxmatter run` first, or pass the correct path via --store-path."
+  de: "Datenbank {path} wurde nicht gefunden. `set-language` legt absichtlich keine neue Datenbank an — führe zuerst `loxmatter run` aus oder gib den richtigen Pfad über --store-path an."
+cli.set_language.echo_success:
+  en: "Language set to '{language}'."
+  de: "Sprache auf '{language}' gesetzt."
+
+cli.fake_miniserver.help:
+  en: "Replaces the Miniserver: logs every datagram."
+  de: "Ersetzt den Miniserver: schreibt jedes Datagramm mit."
+cli.fake_miniserver.help_port:
+  en: "UDP port to listen on"
+  de: "UDP-Port, auf dem gelauscht wird"
+cli.fake_miniserver.help_template:
+  en: "Generated VIU_ template: reports at the end which signals never fired"
+  de: "Erzeugte VIU_-Vorlage: nennt am Ende die Signale, die nie feuerten"
+cli.fake_miniserver.fail_template_not_found:
+  en: "Template {path} was not found."
+  de: "Vorlage {path} wurde nicht gefunden."
+cli.fake_miniserver.echo_listening:
+  en: "fake-miniserver listening on UDP port {port} — Ctrl+C to stop"
+  de: "fake-miniserver lauscht auf UDP-Port {port} — Strg-C zum Beenden"
+cli.fake_miniserver.malformed:
+  en: "BROKEN (no colon)"
+  de: "KAPUTT (kein Doppelpunkt)"
+cli.fake_miniserver.report_no_check_signals:
+  en: "{template} contains no check signals — nothing to check."
+  de: "{template} enthält keine Check-Signale — nichts zu prüfen."
+cli.fake_miniserver.report_all_seen:
+  en: "All {count} signals from {template} were seen at least once."
+  de: "Alle {count} Signale aus {template} wurden mindestens einmal gesehen."
+cli.fake_miniserver.report_silent_header:
+  en: "{count} signals from {template} never seen:"
+  de: "{count} Signale aus {template} nie gesehen:"

@@ -16,9 +16,12 @@
 
 """Gemeinsame Fixtures für die gesamte Testsuite."""
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+from loxmatter import i18n
 
 
 @pytest.fixture(autouse=True)
@@ -40,3 +43,16 @@ def isolate_loxmatter_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     fake_home.mkdir()
     monkeypatch.setattr(Path, "home", lambda: fake_home)
     monkeypatch.setenv("LOXMATTER_STORE", str(tmp_path / "autouse-loxmatter.sqlite"))
+
+
+@pytest.fixture(autouse=True)
+def reset_language() -> Iterator[None]:
+    """Setzt die globale Spracheinstellung nach jedem Test zurueck.
+
+    `loxmatter.i18n.set_language` haelt die aktuelle Sprache in einer
+    prozessweiten Variable (eine gemeinsame Einstellung fuer die ganze
+    Installation, siehe i18n/__init__.py) - ein Test, der `set_language("de")`
+    aufruft und nicht zuruecksetzt, wuerde jeden nachfolgenden Test in
+    derselben Session mit deutscher statt englischer Ausgabe konfrontieren."""
+    yield
+    i18n.set_language(i18n.DEFAULT_LANGUAGE)
