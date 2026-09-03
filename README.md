@@ -136,3 +136,36 @@ Ein lauffähiges Beispiel steht in
 [`deploy/testhost/docker-compose.yml`](deploy/testhost/docker-compose.yml);
 `deploy/testhost/README.md` führt `LOXMATTER_API_TOKEN` unter den Variablen
 auf, die beim Einrichten gesetzt werden.
+
+## Lizenz
+
+**GNU General Public License, Version 3 oder später** — der vollständige Text
+steht in [`LICENSE`](LICENSE).
+
+Das heißt in der Praxis: du darfst dieses Werkzeug benutzen, verändern und
+weitergeben. Wer es in veränderter Form weitergibt, muss seine Änderungen
+unter derselben Lizenz offenlegen. Ein geschlossenes Produkt darf daraus
+nicht werden — das ist der Zweck dieser Wahl.
+
+Die Angabe lautet `GPL-3.0-or-later`, nicht `-only`: eine spätere Fassung der
+GPL darf ebenfalls verwendet werden. Das ist die von der Free Software
+Foundation empfohlene Form.
+
+### Fremdsoftware
+
+Alle Abhängigkeiten sind permissiv lizenziert und mit der GPL-3.0 vereinbar:
+
+| | |
+|---|---|
+| `python-matter-server`, chip-SDK | Apache-2.0 |
+| FastAPI, Pydantic, Typer, PyYAML | MIT |
+| Starlette, uvicorn, websockets | BSD-3-Clause |
+| Alpine.js (mitgeliefert) | MIT |
+
+Alpine.js liegt als unveränderte Kopie unter
+[`src/loxmatter/web/vendor/`](src/loxmatter/web/vendor/) — mit seinem eigenen
+Lizenztext daneben, wie die MIT-Lizenz es verlangt. Die GPL dieses Projekts
+erstreckt sich nicht auf Alpine.js selbst.
+
+Apache-2.0 ist einseitig mit der GPL-3.0 vereinbar: Apache-lizenzierter Code
+darf in ein GPL-3.0-Werk aufgenommen werden, der umgekehrte Weg nicht.
