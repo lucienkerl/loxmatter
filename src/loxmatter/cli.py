@@ -634,7 +634,9 @@ def set_password(
             "melden, während die eigentliche Brücke gesperrt bliebe. Prüfe den "
             "Pfad, gib ihn über --store-path an, oder führe den Befehl — im "
             "Referenz-Deployment — im laufenden Container aus: `docker compose "
-            "exec loxmatter loxmatter set-password`."
+            "exec loxmatter loxmatter set-password`. Bei einer frischen Installation "
+            "aus dem Quellcode kann die Datenbank auch schlicht noch fehlen — sie "
+            "entsteht erst beim ersten `loxmatter run`."
         )
     password = typer.prompt("Neues Passwort", hide_input=True, confirmation_prompt=True)
     if len(password) < MIN_PASSWORD_LENGTH:
