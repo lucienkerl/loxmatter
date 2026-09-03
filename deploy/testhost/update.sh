@@ -31,8 +31,31 @@ die() { printf '\n\033[31mAbbruch: %s\033[0m\n' "$*" >&2; exit 1; }
 # Teil auf dem Zielrechner: sichern, bauen, neu starten, nachsehen
 # ---------------------------------------------------------------------------
 run_local() {
-  cd "$HOME/$BUILD_DIR" || die "Quellen fehlen unter ~/$BUILD_DIR - erst vom Mac aus aufrufen."
-  [ -f Dockerfile ] || die "Kein Dockerfile in ~/$BUILD_DIR."
+  # Woher die Quellen kommen, haengt davon ab, wie dieses Skript auf den
+  # Rechner kam:
+  #
+  #   - Als Teil eines Git-Checkouts (`git clone`, dann
+  #     `bash deploy/testhost/update.sh --local`): dann liegt der
+  #     Dockerfile zwei Ebenen ueber dieser Datei, und genau der Checkout
+  #     ist gemeint - `git pull` davor, und man liefert aus, was man
+  #     gerade geholt hat.
+  #   - Per rsync vom Mac (siehe `run_remote`): dann liegt die Datei flach
+  #     in ~/$BUILD_DIR neben dem Dockerfile.
+  #
+  # Der Checkout gewinnt, weil er der ausdruecklichere Fall ist: wer ihn
+  # angelegt hat, will aus ihm ausliefern.
+  local checkout src
+  checkout="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)" || checkout=""
+  if [ -n "$checkout" ] && [ -f "$checkout/Dockerfile" ]; then
+    src="$checkout"
+    if [ -d "$checkout/.git" ]; then
+      printf '\nQuellen aus dem Checkout %s (%s)\n' "$src" "$(git -C "$src" rev-parse --short HEAD 2>/dev/null || echo 'kein Commit')"
+    fi
+  else
+    src="$HOME/$BUILD_DIR"
+  fi
+  cd "$src" || die "Quellen fehlen unter $src - erst vom Mac aus aufrufen oder das Repo klonen."
+  [ -f Dockerfile ] || die "Kein Dockerfile in $src."
   local stack="$HOME/$STACK_DIR"
   [ -f "$stack/docker-compose.yml" ] || die "Kein docker-compose.yml in ~/$STACK_DIR."
   grep -q "^  ${SERVICE}:" "$stack/docker-compose.yml" \

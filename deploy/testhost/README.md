@@ -82,14 +82,30 @@ startet nur den `loxmatter`-Dienst neu:
 
 Anderer Zielrechner: `LOXMATTER_HOST=pi@10.0.1.99 ./deploy/testhost/update.sh`.
 
-Auf dem Pi allein, wenn die Quellen schon dort liegen:
+Auf dem Zielrechner selbst, aus einem Git-Checkout — der bequemere Weg,
+sobald das Repo dort liegt:
+
+```bash
+git clone https://github.com/lucienkerl/loxmatter.git ~/matter-loxone
+cd ~/matter-loxone && git pull && bash deploy/testhost/update.sh --local
+```
+
+Das Skript merkt, dass es aus einem Checkout heraus läuft, und baut aus
+diesem — nicht aus dem per rsync gefüllten `~/loxmatter-build`. Es sagt vor
+dem Bauen, aus welchem Verzeichnis und von welchem Commit es ausliefert.
+
+Der Checkout ersetzt dabei **nur die Quellen**. Der laufende Stack bleibt,
+wo er ist (`~/loxmatter-testhost`) — samt matter-servers Datenverzeichnis,
+das dort als `./data` relativ zur Compose-Datei liegt. Ein Umzug des
+Projekts in den Checkout würde diesen Pfad ins Leere zeigen lassen und
+Compose matter-server mit leerer Fabric neu erzeugen; alle Geräte müssten
+neu eingelernt werden. Deshalb bleiben beide Verzeichnisse getrennt.
+
+Ohne Checkout, mit per rsync gefüllten Quellen, geht auch:
 
 ```bash
 bash ~/loxmatter-build/update.sh --local
 ```
-
-Ein `git pull` auf dem Pi gibt es nicht — das Projekt hat kein Remote, die
-Quellen kommen per rsync vom Mac.
 
 Was das Skript zusichert:
 
