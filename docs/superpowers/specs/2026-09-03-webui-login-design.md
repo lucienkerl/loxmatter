@@ -37,7 +37,7 @@ Passwort, wie man sie von jedem anderen selbst gehosteten Dienst kennt.
   Browsers, sondern der von Skripten und `curl`. `LOXMATTER_API_TOKEN`,
   `--api-token`, `normalize_api_token` und der WebSocket-Subprotokoll-Weg
   `bearer, <Token>` bleiben serverseitig vollständig erhalten.
-- **Kein TLS.** Der Dienst spricht weiterhin HTTP auf Port 8080. Siehe 13.1.
+- **Kein TLS.** Der Dienst spricht weiterhin HTTP auf Port 8080. Siehe 14.1.
 - **Kein Benutzername.** Ein Dienst, ein Betreiber, ein Passwort. Ein
   Namensfeld wäre eine Eingabe ohne Entscheidung dahinter.
 
@@ -76,56 +76,80 @@ Nachweise statt über einen. Reihenfolge je Anfrage:
 1. **Gültiges Sitzungs-Cookie** → durch.
 2. **Gültiges Bearer-Token** (Header oder WebSocket-Subprotokoll, beides wie
    bisher) → durch.
-3. **Weder noch, und es ist mindestens ein Zugangsmittel eingerichtet**
-   (Passwort gesetzt oder Token konfiguriert) → 401.
-4. **Weder noch, und es ist gar nichts eingerichtet** → durch, mit
-   derselben deutlichen Startwarnung wie heute. Das ist der Zustand vor der
-   Ersteinrichtung; siehe 5.
+3. **Weder noch** → 401.
+
+**Punkt 3 kennt keine Ausnahme mehr, und das ist die eigentliche Härtung
+dieses Entwurfs.** Heute läuft ein Dienst ohne konfiguriertes Token mit
+vollständig offenen `/api`-Routen und lediglich einer Warnung im Log — wer
+die Warnung überliest, betreibt eine offene Brücke, ohne es zu merken.
+Künftig gibt es diesen Zustand nicht: solange kein Passwort gesetzt ist,
+antwortet **jede** `/api`-Route mit 401, und die Oberfläche kann nichts
+anderes als den Einrichtungsbildschirm zeigen. Die Passwortvergabe ist
+damit Voraussetzung des Betriebs und nicht mehr eine Empfehlung, die man
+ignorieren kann.
+
+Das gilt ausdrücklich auch für **bestehende Installationen nach dem
+Update**: eine Brücke, die bisher ohne Token lief, liefert nach dem Update
+keine Gerätedaten mehr aus, bis ein Passwort vergeben ist. Ein
+konfiguriertes `LOXMATTER_API_TOKEN` kommt über Punkt 2 unverändert durch —
+Skripte und Automatisierungen brechen durch das Update also nicht ab,
+auch nicht in der Zeit vor der Passwortvergabe.
 
 Der Wächter gilt unverändert für alle fünf `/api`-Router einschließlich der
 WebSocket-Route `/api/live`. Die Peer-Adresse des Aufrufers spielt in keiner
 dieser Entscheidungen eine Rolle.
 
-`cli._warn_if_missing_api_token` prüft künftig nicht mehr nur das Token,
-sondern beide Zugangsmittel, und heißt entsprechend
-`_warn_if_no_credentials`. Ein Dienst mit gesetztem Passwort und ohne Token
-ist abgesichert und soll nicht länger warnen.
+`cli._warn_if_missing_api_token` warnt künftig, solange **kein Passwort
+gesetzt** ist, und heißt entsprechend `_warn_if_no_password`. Ein
+konfiguriertes Token bringt die Warnung nicht mehr zum Schweigen: es ist
+der Weg für Skripte, kein Ersatz für die Ersteinrichtung.
 
 ## 5. Erststart: Trust on first use
 
-Ist im Store kein Passwort hinterlegt und auch kein Token konfiguriert,
-zeigt die Oberfläche einen Einrichtungsbildschirm, auf dem das Passwort
-vergeben wird — ohne weiteren Nachweis. Wer zuerst kommt, richtet ein.
+Ist im Store kein Passwort hinterlegt, zeigt die Oberfläche einen
+Einrichtungsbildschirm, auf dem das Passwort vergeben wird — ohne weiteren
+Nachweis. Wer zuerst kommt, richtet ein.
 
-**Trust on first use gilt nur für den wirklich ersten Start.** Läuft der
-Dienst bereits mit konfiguriertem `LOXMATTER_API_TOKEN`, aber noch ohne
-Passwort, verlangt die Einrichtung dieses Token. Sonst wäre der
-Einrichtungsbildschirm ein Weg, eine bereits abgesicherte Installation zu
-übernehmen: ein Unbeteiligter im Netz vergibt sich ein Passwort und hat
-damit den Vollzugriff, den das Token gerade verhindern sollte. Drei
-Zustände, drei Verhalten:
+**Das gilt für jede Installation ohne Passwort, auch für eine bestehende
+nach dem Update.** Es gibt keinen Sonderfall für einen bereits
+konfigurierten `LOXMATTER_API_TOKEN`: ein Bildschirm, ein Ablauf, dieselben
+Regeln. Zwei Zustände, zwei Verhalten:
 
-| Passwort | Token | `POST /auth/setup` |
-| --- | --- | --- |
-| nicht gesetzt | nicht konfiguriert | offen (Trust on first use) |
-| nicht gesetzt | konfiguriert | verlangt `Authorization: Bearer <Token>` |
-| gesetzt | beliebig | 409, dauerhaft |
+| Passwort | `POST /auth/setup` |
+| --- | --- |
+| nicht gesetzt | offen (Trust on first use) |
+| gesetzt | 409, dauerhaft |
 
-**Das ist eine bewusst getroffene Abwägung, kein Versehen.** Sie wurde am
-3. September 2026 gegen drei Alternativen entschieden: Einrichtungscode im
-Startlog, Zeitfenster von 15 Minuten nach dem Start, und Erstpasswort per
-CLI. Ausschlaggebend war, dass die Einrichtung ohne Blick in ein Log und
-ohne Shell auf dem Host möglich sein soll.
+**Das ist eine bewusst getroffene Abwägung, kein Versehen.** Für die
+Neuinstallation wurde sie am 3. September 2026 gegen drei Alternativen
+entschieden: Einrichtungscode im Startlog, Zeitfenster von 15 Minuten nach
+dem Start, und Erstpasswort per CLI. Ausschlaggebend war, dass die
+Einrichtung ohne Blick in ein Log und ohne Shell auf dem Host möglich sein
+soll. Für das Bestandssystem wurde am selben Tag gegen die Variante
+entschieden, dort einmalig das vorhandene Token abzufragen — zugunsten
+eines einzigen Ablaufs ohne Sonderfall in Code und Dokumentation.
 
-Der Preis, der damit gekauft wird: zwischen dem ersten Start und der
+Der Preis, der damit gekauft wird, ist in beiden Fällen derselbe und muss
+klar benannt sein: **zwischen dem Start ohne Passwort und der
 Passwortvergabe kann jeder, der den Dienst im Netz erreicht, ihn
-übernehmen — und der rechtmäßige Betreiber erfährt davon erst dadurch, dass
+übernehmen.** Der rechtmäßige Betreiber erfährt davon erst dadurch, dass
 sein eigenes Passwort nicht angenommen wird. Wer die Brücke aufsetzt und
 erst Tage später weiterkonfiguriert, lässt dieses Fenster tagelang offen.
 
-Drei Milderungen, die innerhalb dieser Entscheidung liegen und deshalb
-umgesetzt werden:
+Beim Bestandssystem wiegt das schwerer als bei der Neuinstallation, und
+auch das gehört hierher: die Anlage war bereits abgesichert, der Betreiber
+hat keinen Anlass, nach einem Update mit einem Übernahmefenster zu rechnen,
+und er bemerkt das Update unter Umständen erst Tage später. Wer diese
+Version ausrollt, sollte sich unmittelbar danach anmelden. Das gehört
+**in den Release-Hinweis und in die README**, nicht nur in diese Spec.
 
+Was das Fenster begrenzt, und was innerhalb dieser Entscheidung liegt:
+
+- Solange kein Passwort gesetzt ist, sind alle `/api`-Routen gesperrt
+  (Abschnitt 4). Wer den Dienst in diesem Zustand erreicht, aber die
+  Einrichtung *nicht* abschließt, sieht keine Gerätedaten, keine
+  Diagnose und keine Fabric-Sicherung. Angreifbar ist allein die
+  Übernahme selbst, nicht der Bestand.
 - Solange kein Passwort gesetzt ist, schreibt der Dienst bei **jedem** Start
   eine deutliche Warnzeile ins Log — nicht nur beim ersten.
 - Der Einrichtungsbildschirm benennt den Zustand offen: diese Brücke ist
@@ -133,6 +157,8 @@ umgesetzt werden:
   abgeschlossen werden.
 - Sobald ein Passwort gesetzt ist, ist der Einrichtungsweg **dauerhaft**
   geschlossen (`POST /auth/setup` antwortet ab dann mit 409, siehe 8).
+- Ein bereits konfiguriertes Token bleibt nach der Einrichtung gültig; die
+  Passwortvergabe entwertet es nicht.
 
 ## 6. Speicherung
 
@@ -156,7 +182,7 @@ CREATE TABLE IF NOT EXISTS session (
 
 `setting` trägt zunächst genau einen Schlüssel, `password_hash`. Die Tabelle
 ist trotzdem generisch angelegt, weil die restliche Konfiguration später
-denselben Weg gehen soll (13.2).
+denselben Weg gehen soll (14.2).
 
 **Passwort-Hash: `hashlib.scrypt` aus der Standardbibliothek**, abgelegt als
 `scrypt$<n>$<r>$<p>$<salt-hex>$<hash-hex>` mit n = 2^14, r = 8, p = 1,
@@ -194,7 +220,7 @@ Attribute:
 - **Ausdrücklich ohne `Secure`.** Der Dienst spricht HTTP; mit `Secure` würde
   der Browser das Cookie verwerfen und niemand käme hinein. Diese Zeile ist
   bewusst gesetzt und darf nicht "der Sicherheit halber" nachgezogen werden,
-  solange 13.1 offen ist.
+  solange 14.1 offen ist.
 
 Laufzeit 30 Tage, bei jedem erfolgreichen Zugriff gleitend verlängert.
 
@@ -205,8 +231,8 @@ unangemeldet erreichbar sein.
 
 | Route | Verhalten |
 | --- | --- |
-| `GET /auth-info` | `{"password_set": bool, "token_configured": bool, "authenticated": bool}`. Sagt der Oberfläche, ob sie Einrichtung, Login oder die App zeigt — und ob die Einrichtung zusätzlich das Token verlangt (5). Kein Geheimnis: alle drei Werte sind auch daran ablesbar, wie `/api/devices` antwortet. |
-| `POST /auth/setup` | Nimmt das neue Passwort entgegen, **nur solange keines gesetzt ist**, und nur unter den Bedingungen der Tabelle in 5. Ist bereits eines gesetzt: 409, ohne Ausnahme. Legt bei Erfolg sofort eine Sitzung an, damit der Betreiber nicht direkt danach noch einmal tippt. |
+| `GET /auth-info` | `{"password_set": bool, "authenticated": bool}`. Sagt der Oberfläche, ob sie Einrichtung, Login oder die App zeigt. Kein Geheimnis: beide Werte sind auch daran ablesbar, wie `/api/devices` antwortet. |
+| `POST /auth/setup` | Nimmt das neue Passwort entgegen, **solange keines gesetzt ist** — ohne weiteren Nachweis, auch wenn ein Token konfiguriert ist (5). Ist bereits eines gesetzt: 409, ohne Ausnahme. Legt bei Erfolg sofort eine Sitzung an, damit der Betreiber nicht direkt danach noch einmal tippt. |
 | `POST /auth/login` | Prüft das Passwort, legt bei Erfolg eine Sitzung an. |
 | `POST /auth/logout` | Löscht die Sitzungszeile **serverseitig** und räumt das Cookie ab. Ein Logout, der nur das Cookie löscht, lässt eine gestohlene Kennung weiterleben. |
 
@@ -238,9 +264,8 @@ Passwort zurücksetzt, will nicht, dass eine alte Sitzung weiterläuft.
 `web/index.html` bekommt zwei Bildschirme vor die eigentliche App, gesteuert
 durch `GET /auth-info` beim Start:
 
-- **Einrichtung** — Passwort zweimal eingeben, mit dem Hinweis aus 5. Ist
-  laut `/auth-info` ein Token konfiguriert, kommt ein drittes Feld für das
-  Token dazu (5), mit dem Hinweis, wo es herkommt (`LOXMATTER_API_TOKEN`).
+- **Einrichtung** — Passwort zweimal eingeben, mit dem Hinweis aus 5. Kein
+  weiteres Feld, unabhängig davon, ob ein Token konfiguriert ist.
 - **Login** — ein Feld, ein Knopf, verständliche Fehlermeldung bei falschem
   Passwort und bei aktiver Sperre ("zu viele Versuche, in X Sekunden wieder
   möglich").
@@ -266,18 +291,29 @@ solange kein Token konfiguriert ist (403, Review-Fix Fix 3 vom
 2026-09-03) — die Route soll nicht ungeschützt im LAN stehen, weil hinter
 ihr die Übernahme der Fabric hängt.
 
-Diese Sperre bleibt, ihre Bedingung wird nur ehrlicher benannt: der
-Parameter `api_token_configured` von `build_diagnostics_router` heißt künftig
-`credentials_configured` und ist wahr, wenn **ein Passwort gesetzt ODER ein
-Token konfiguriert** ist. Nach dem Login ist der Download damit frei — ohne
-Token, ohne Zusatzschritt. Das folgt aus 3: ein Login ist der stärkere
-Ausweis, und eine Ausnahme, die den Betreiber nach erfolgreicher Anmeldung
-noch einmal nach einem zweiten Geheimnis fragt, schützt nichts, das nicht
-schon geschützt wäre.
+**Der Zustand, gegen den diese Sperre gerichtet war, kann nicht mehr
+eintreten.** Sie verteidigte den Fall „Dienst läuft ohne jedes Zugangsmittel,
+also sind alle `/api`-Routen offen" — genau diesen Fall schafft Abschnitt 4
+ab: ohne Passwort ist jede `/api`-Route gesperrt, und wer durchkommt, hat
+ein Cookie oder ein Token vorgezeigt. Der Parameter `api_token_configured`
+und der 403-Zweig entfallen deshalb ersatzlos.
 
-Der Router bekommt weiterhin **nur einen Wahrheitswert**, nie das Passwort,
-den Hash oder das Token: was er nicht kennt, kann er nicht versehentlich in
-eine Antwort oder ins Log schreiben.
+Das ist bewusst eine Entfernung und kein Übersehen. Ein unerreichbarer
+Zweig, dessen ausführlicher Docstring eine Lage beschreibt, die es nicht
+mehr gibt, führt den nächsten Leser in die Irre — er liest dort eine
+Bedingung, auf die er sich verlässt, und die nichts mehr prüft. Was den
+Schutz künftig trägt, ist der Wächter selbst, und dass er auf **jedem** der
+fünf Router hängt, prüft `tests/api/test_security.py` bereits Router für
+Router einzeln statt über den gemeinsamen Präfix.
+
+Nach dem Login ist der Download damit frei — ohne Token, ohne Zusatzschritt.
+Das folgt aus 3: ein Login ist der stärkere Ausweis, und eine Ausnahme, die
+den Betreiber nach erfolgreicher Anmeldung noch einmal nach einem zweiten
+Geheimnis fragt, schützt nichts, das nicht schon geschützt wäre.
+
+Unverändert bleibt, dass `build_diagnostics_router` **weder Passwort noch
+Hash noch Token** zu sehen bekommt: was er nicht kennt, kann er nicht
+versehentlich in eine Antwort oder ins Log schreiben.
 
 ## 12. Prüfung
 
@@ -298,30 +334,61 @@ Neue Datei `tests/api/test_auth.py`:
 
 - Sitzungs-Cookie kommt durch jede der fünf `/api`-Router-Gruppen.
 - Bearer-Token kommt unverändert weiter durch.
-- Weder noch → 401, solange ein Zugangsmittel eingerichtet ist.
-- Gar nichts eingerichtet → alles offen (Zustand vor der Einrichtung).
-- `POST /auth/setup` nach gesetztem Passwort → 409.
-- `POST /auth/setup` ohne Passwort, aber mit konfiguriertem Token: ohne
-  Token → 401, mit gültigem Token → Passwort gesetzt. Das ist der Test, der
-  die Lücke aus 5 offenhielte, wenn er fehlte.
-- Die umbenannte Startwarnung `cli._warn_if_no_credentials`: warnt ohne
-  jedes Zugangsmittel, schweigt bei gesetztem Passwort **und** bei
-  konfiguriertem Token.
+- Weder noch → 401, **ausnahmslos**. Insbesondere der Zustand „kein
+  Passwort, kein Token": jede der fünf Router-Gruppen antwortet mit 401,
+  nicht mit Daten. Das ist der Test, der die Verschärfung aus Abschnitt 4
+  festhält — bisher war genau dieser Zustand offen.
+- Kein Passwort, aber konfiguriertes Token: `/api` bleibt mit Token
+  erreichbar. Das ist der Bestandsfall unmittelbar nach dem Update; er
+  belegt, dass Skripte das Update überstehen.
+- `POST /auth/setup` ohne gesetztes Passwort → Passwort gesetzt, auch bei
+  konfiguriertem Token und ohne diesen mitzuschicken (5).
+- `POST /auth/setup` nach gesetztem Passwort → 409, auch mit gültigem Token.
+- Ein vor der Einrichtung konfiguriertes Token bleibt nach der
+  Passwortvergabe gültig.
+- Die umbenannte Startwarnung `cli._warn_if_no_password`: warnt ohne
+  gesetztes Passwort — auch bei konfiguriertem Token —, schweigt mit.
 - Logout macht das Cookie sofort wertlos (derselbe Wert danach → 401).
 - `/api/live` verbindet mit Cookie und ohne Subprotokoll.
 - `/cmd` und `/resync` bleiben in **jedem** dieser Zustände offen.
 - `GET /api/diagnostics/fabric-backup` nach Login ohne Token → 200.
 
-## 13. Offene Punkte
+## 13. Dokumentation
 
-**13.1 Kein TLS.** Beim Login geht das Passwort im Klartext über das Netz.
+Diese Änderung ist für bestehende Installationen ein Bruch — eine Brücke,
+die bisher ohne Token lief, liefert nach dem Update nichts mehr aus, bis ein
+Passwort vergeben ist (4). Das darf niemand erst am schweigenden Dienst
+bemerken. Nachzuziehen sind:
+
+- **Release-Hinweis:** was passiert, was zu tun ist (Oberfläche öffnen,
+  Passwort vergeben), und der Hinweis aus 5, das unmittelbar nach dem
+  Ausrollen zu tun und nicht auf später zu verschieben.
+- **README:** Abschnitt zur Absicherung neu — Login statt Token-Eingabe,
+  Passwortvergabe beim ersten Aufruf, `loxmatter set-password` als
+  Notausgang, und der Rat aus 14.1 zu einem Passwort, das nirgends sonst
+  benutzt wird.
+- **`deploy/testhost/.env.example`:** `LOXMATTER_API_TOKEN` verliert seine
+  Rolle als Zugang zur Oberfläche und behält nur die für Skripte. Der lange
+  Kommentar, der heute zur Eingabe in der Oberfläche anleitet, wird falsch
+  und muss ersetzt werden.
+- **`deploy/testhost/docker-compose.yml`:** derselbe Kommentar an
+  `LOXMATTER_API_TOKEN` und an der Volume-Zeile für `/matter-data` — dort
+  steht heute, dass Einhängung und Token zusammengehören. Künftig trägt das
+  Passwort diese Rolle.
+- **Moduldocstrings** von `loxone/server.py` und `api/diagnostics.py`: beide
+  beschreiben das Token als einzigen Ausweis. Beide erklären ausführlich
+  Zustände, die es nach 4 und 11 nicht mehr gibt.
+
+## 14. Offene Punkte
+
+**14.1 Kein TLS.** Beim Login geht das Passwort im Klartext über das Netz.
 Das ist keine Verschlechterung — der `Authorization`-Header tut das heute
 schon —, aber ein Passwort wird von Menschen wiederverwendet, ein
 dienstspezifisches Token nicht. Die Dokumentation muss deshalb ausdrücklich
 zu einem Passwort raten, das nirgends sonst benutzt wird. TLS (Zertifikat,
 Reverse-Proxy, `Secure`-Flag am Cookie) ist ein eigener Entwurf.
 
-**13.2 Restliche Konfiguration in der Oberfläche.** Miniserver-Adresse,
+**14.2 Restliche Konfiguration in der Oberfläche.** Miniserver-Adresse,
 matter-server-Adresse, Ports und Datenverzeichnis kommen weiterhin aus
 `docker-compose.yml` und den CLI-Optionen. Sie in die Oberfläche zu holen —
 mitsamt der Frage, welche Werte im laufenden Betrieb änderbar sind und
@@ -329,6 +396,6 @@ welche einen Neustart brauchen — ist der eigentliche Weg zur headless
 aufgesetzten Installation und bekommt eine eigene Spec. Dieser Entwurf legt
 mit `setting` und dem Einrichtungsbildschirm die Mechanik dafür an.
 
-**13.3 Mehrere Betreiber.** Ein Passwort, kein Benutzername, keine Rollen.
+**14.3 Mehrere Betreiber.** Ein Passwort, kein Benutzername, keine Rollen.
 Sollte das je gebraucht werden, trägt das Schema es (`setting` wird zu einer
 `user`-Tabelle), aber es ist heute kein Ziel.
