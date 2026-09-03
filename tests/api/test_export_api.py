@@ -40,10 +40,15 @@ async def api(
 
 
 async def test_preview_reports_what_would_be_written(api):
+    """`inputs` seit Aufgabe 6: 5 relevante Signale der Steckdose (siehe
+    `tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`)
+    plus das Online-Signal, macht 6. `skipped` bleibt bei 49 - das zaehlt
+    weiterhin nur technisch nicht Abbildbares (`is_exportable`), unberuehrt
+    von der neuen Relevanz-Auswahl."""
     client, _, device_id = api
     preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
     device = next(d for d in preview["devices"] if d["device_id"] == device_id)
-    assert device["inputs"] == 111
+    assert device["inputs"] == 6
     assert device["commands"] == 3
     assert device["skipped"] == 49
 

@@ -65,7 +65,11 @@ def test_button_events_appear_as_pulse_and_counter(tmp_path):
 
 
 def test_non_exportable_attributes_do_not_appear(tmp_path):
-    """Spec 6.6: von 159 Attributen erreichen nur 110 einen UDP-Eingang."""
+    """Spec 6.6: von 159 Attributen sind nur 110 technisch abbildbar. Seit
+    Aufgabe 6 exportiert `loxmatter export` zusaetzlich nur, was
+    `profiles.relevance.is_functional` als tatsaechlich gewollt einstuft -
+    bei dieser Steckdose bleiben davon 5 uebrig (siehe
+    `tests/export/test_signals.py::test_plug_fixture_yields_6_inputs_with_the_relevance_default`)."""
     CliRunner().invoke(
         app,
         [
@@ -80,7 +84,7 @@ def test_non_exportable_attributes_do_not_appear(tmp_path):
     )
     text = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
     commands = text.count("<VirtualInUdpCmd ")
-    assert commands == 110 + 1  # abbildbare Attribute plus Online-Signal
+    assert commands == 5 + 1  # relevante Attribute plus Online-Signal
 
 
 def test_plug_gets_only_the_onoff_commands(tmp_path):

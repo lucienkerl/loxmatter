@@ -32,6 +32,7 @@ from pathlib import Path
 from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
+from loxmatter.profiles.relevance import device_types_by_endpoint, is_functional
 from loxmatter.profiles.table import Exportability, is_exportable, lookup
 from loxmatter.timestamps import now_iso
 
@@ -522,6 +523,7 @@ class Store:
         zweite Signal stillschweigend verwerfen (siehe Modul-Docstring).
         """
         taken = self._existing_keys(device_id)
+        device_types = device_types_by_endpoint(snapshot)
         try:
             for ref in extract_signals(snapshot):
                 profile = lookup(ref, snapshot.attributes.get(ref.path))
@@ -539,23 +541,16 @@ class Store:
 
                 key = self._assign_key(device_id, ref, profile.slug, taken)
                 taken.add(key)
-                # exported startet gleich `exportable` (Task 2, Phase 5): ein
-                # frisch entdecktes Signal, das ueberhaupt auf einen
-                # Loxone-Eingang passt, soll ohne einen manuellen Zwischen-
-                # schritt in der WebUI auch tatsaechlich exportiert werden -
-                # das entspricht dem bisherigen Verhalten von `loxmatter
-                # export`, das jedes exportierbare Signal ungefragt mitnahm.
-                # Einmal gesetzt, bleibt der Wert wie `title` Nutzereigentum:
-                # der UPDATE-Zweig oben (bereits bekanntes Signal) fasst
-                # `exported` bewusst nicht an.
+                # Zwei Fragen, zwei Antworten (Entwurf 2026-09-03, 3):
+                # `is_exportable` sagt, ob der Wert ueberhaupt auf einen
+                # Loxone-Eingang passt; `is_functional`, ob ihn jemand
+                # standardmaessig will. Ein Thread-Funkzaehler ist das
+                # erste und nicht das zweite.
                 #
-                # `is_exportable` statt der frueheren, hier direkt notierten
-                # ``is not Exportability.NONE`` (Review-Fix Important #2,
-                # 2026-09-02): das schloss TEXT faelschlich als "exported"
-                # ein, obwohl `api.devices` TEXT unabhaengig davon schon
-                # immer als nicht exportierbar fuehrte - siehe
-                # `profiles.table.is_exportable`.
-                exported = is_exportable(profile.exportability)
+                # Nur beim ANLEGEN: der UPDATE-Zweig oben fasst `exported`
+                # weiterhin nicht an, sobald ein Signal einmal bekannt ist -
+                # ab dann gehoert der Wert dem Nutzer.
+                exported = is_exportable(profile.exportability) and is_functional(ref, device_types)
                 self._db.execute(
                     "INSERT INTO signal "
                     "(device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"

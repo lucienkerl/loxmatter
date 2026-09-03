@@ -6,6 +6,7 @@ import pytest
 
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store, UnknownDeviceError
+from loxmatter.profiles.relevance import device_types_by_endpoint, is_functional
 from loxmatter.profiles.table import Exportability, Profile, lookup
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
@@ -301,23 +302,89 @@ def test_signal_by_key_is_none_for_an_unknown_key(store):
     assert store.signal_by_key("d1_1_gibtsnicht") is None
 
 
-def test_new_signal_is_exported_exactly_when_it_is_exportable(store):
-    """Review-Fix Important #2: `expected` unten wird bewusst NICHT ueber
-    `profiles.table.is_exportable` berechnet, das ist genau die Funktion,
-    die `register_signals` selbst fuer das Default von `exported` aufruft -
-    ein Test, der dieselbe Funktion wie die Produktion aufruft, kann einen
-    Fehler in genau dieser Funktion nie auffangen. Die Bedingung hier ist die
-    unabhaengig ausformulierte Regel aus Spec 6.6 (nur ANALOG/DIGITAL passen
-    auf einen Loxone-Eingang) - vorher stand hier faelschlich
-    ``exportability is not Exportability.NONE``, was TEXT als "exported"
-    durchgehen liess, obwohl `api.devices` TEXT unabhaengig davon nie als
-    exportierbar fuehrte."""
+def test_new_signal_is_exported_exactly_when_it_is_exportable_and_functional(store):
+    """Aufgabe 6: `expected` unten wird bewusst NICHT ueber
+    `profiles.table.is_exportable` berechnet, das ist genau die eine Haelfte
+    von `register_signals`s eigener Formel - ein Test, der dieselbe Funktion
+    wie die Produktion aufruft, kann einen Fehler in genau dieser Funktion
+    nie auffangen. Die technische Haelfte bleibt deshalb die unabhaengig
+    ausformulierte Regel aus Spec 6.6 (nur ANALOG/DIGITAL passen auf einen
+    Loxone-Eingang - Review-Fix Important #2, 2026-09-02).
+
+    Die zweite Haelfte, `is_functional`, wird hier dagegen bewusst
+    wiederverwendet statt von Hand nachgebaut: ein erster Versuch, die
+    Feinauswahl der Profiltabelle (welches Element von Cluster 144/145
+    benannt ist) von Hand in dieses Testmodul zu kopieren, driftete beim
+    Schreiben sofort vom echten Stand ab (12 falsche Vorhersagen bei einem
+    Testlauf gegen den echten Store). `is_functional` ist keine Funktion
+    dieser Aufgabe, sondern eine bereits in `tests/profiles/test_relevance.py`
+    unabhaengig gegen genau diese Descriptor-Daten gepruefte Vorstufe
+    (Aufgaben 1-2) - sie hier ein zweites Mal nachzubauen haette nur ein
+    zweites, staendig nachzupflegendes Abbild derselben Tabelle ergeben,
+    keinen staerkeren Test."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
+    device_types = device_types_by_endpoint(snap)
     for signal in signals:
-        expected = signal.exportability in (Exportability.ANALOG, Exportability.DIGITAL)
-        assert signal.exported is expected
+        technically_exportable = signal.exportability in (
+            Exportability.ANALOG,
+            Exportability.DIGITAL,
+        )
+        expected = technically_exportable and is_functional(signal.ref, device_types)
+        assert signal.exported is expected, signal.key
+
+
+def test_a_freshly_registered_plug_exports_only_its_meaningful_values(store):
+    """Das Ziel dieses ganzen Entwurfs, am echten Geraet: fuenf Werte, die
+    etwas bedeuten, statt 109 technisch abbildbarer."""
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+
+    exported = {s.key for s in store.signals(device_id) if s.exported}
+    assert exported == {
+        "d1_1_onoff",
+        "d1_2_voltage",
+        "d1_2_current",
+        "d1_2_power",
+        "d1_2_energy_imported",
+    }
+
+
+def test_a_freshly_registered_button_keeps_both_rockers_and_the_battery(store):
+    """Der Fall, an dem sich zeigt, ob die Regel zu gierig ist: alle sechs
+    Ereignisse beider Wippen muessen durchkommen, dazu der Batteriestand."""
+    snap = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+
+    exported = {s.key for s in store.signals(device_id) if s.exported}
+    for endpoint in (1, 2):
+        for slug in (
+            "press",
+            "longpress",
+            "shortrelease",
+            "longrelease",
+            "multipress_ongoing",
+            "multipress",
+        ):
+            assert f"d1_{endpoint}_{slug}" in exported
+    assert "d1_0_battery" in exported
+    assert len(exported) == 17
+
+
+def test_a_thread_counter_is_stored_but_not_exported(store):
+    """Nicht geloescht, nur abgewaehlt: der Experten-Block soll ihn
+    freischalten koennen, ohne dass das Geraet neu eingelernt wird."""
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+
+    counters = [s for s in store.signals(device_id) if s.ref.cluster_id == 53]
+    assert counters, "Thread-Zaehler sollen weiterhin gespeichert werden"
+    assert all(not s.exported for s in counters)
+    assert all(s.exportability is Exportability.ANALOG for s in counters[:1])
 
 
 def test_set_exported_toggles_the_flag_without_touching_the_key(store):

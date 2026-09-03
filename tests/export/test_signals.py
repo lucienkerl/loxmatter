@@ -149,14 +149,16 @@ def test_the_online_signal_is_unaffected_by_any_signals_export_flag():
     assert [i.key for i in inputs] == ["d1_online"]
 
 
-def test_plug_fixture_yields_111_inputs_with_the_corrected_default(tmp_path):
-    """Regression Important #2 + #3 (Review 2026-09-02): mit dem
-    korrigierten `exported`-Default (`profiles.table.is_exportable`, nur
-    ANALOG/DIGITAL statt "alles ausser NONE") bleibt die Eingangszahl exakt
-    gleich wie vorher - die 110 exportierbaren Signale der IKEA-Steckdose
-    (siehe `tests/api/test_devices.py::test_signal_tree_marks_what_cannot_be_exported`,
-    seit Aufgabe 5 inklusive des aus seiner Struktur gezogenen Zaehlerstands)
-    starten weiterhin alle mit `exported=True`, plus das Online-Signal."""
+def test_plug_fixture_yields_6_inputs_with_the_relevance_default(tmp_path):
+    """Aufgabe 6: der `exported`-Default heisst seither nicht mehr nur
+    `profiles.table.is_exportable` (technisch abbildbar), sondern zusaetzlich
+    `profiles.relevance.is_functional` (auch tatsaechlich gewollt) - von den
+    110 technisch abbildbaren Signalen der IKEA-Steckdose (siehe
+    `tests/api/test_devices.py::test_signal_tree_marks_what_cannot_be_exported`)
+    bleiben nur die fuenf uebrig, die etwas bedeuten: `onoff` sowie Spannung,
+    Strom, Wirkleistung und Zaehlerstand der Energiemessung (siehe
+    `tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`).
+    Plus das Online-Signal, macht 6."""
     snap = load("ikea_grillplats_plug.json")
     store = Store(tmp_path / "t.sqlite")
     try:
@@ -167,14 +169,16 @@ def test_plug_fixture_yields_111_inputs_with_the_corrected_default(tmp_path):
 
     label = f"{snap.vendor_name} {snap.product_name}".strip()
     inputs = to_inputs(signals, device_id, label)
-    assert len(inputs) == 111
+    assert len(inputs) == 6
 
 
 def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_path):
     """Regression Important #3: das Abschalten genau eines Signals in der
     WebUI muss den erzeugten Export exakt um einen Eingang verkleinern - ein
     Attribut, kein Event, damit der Effekt nicht durch Impuls+Zaehler auf
-    zwei Eingaenge springt."""
+    zwei Eingaenge springt. Basiszahl seit Aufgabe 6: 6 (siehe
+    `test_plug_fixture_yields_6_inputs_with_the_relevance_default`), also
+    5 nach dem Abschalten."""
     snap = load("ikea_grillplats_plug.json")
     store = Store(tmp_path / "t.sqlite")
     try:
@@ -188,4 +192,4 @@ def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_
 
     label = f"{snap.vendor_name} {snap.product_name}".strip()
     inputs = to_inputs(signals, device_id, label)
-    assert len(inputs) == 110
+    assert len(inputs) == 5
