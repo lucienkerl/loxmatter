@@ -16,6 +16,7 @@
 
 import asyncio
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ from typer.testing import CliRunner
 from loxmatter import cli
 from loxmatter.auth.passwords import hash_password, verify_password
 from loxmatter.cli import app, render_report
+from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.matter import client as matter_client
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.models import NodeSnapshot
@@ -388,6 +390,49 @@ async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_pa
 
     assert runtimes[0].seed_calls == 1
     assert runtimes[0].call_order == ["seed", "resend"]
+
+
+async def test_run_attaches_a_log_buffer_handler_to_the_loxmatter_logger(monkeypatch, tmp_path):
+    """Task 5 (Phase 5): `_run()` haengt beim Aufbau der Anwendung einen
+    `LogBufferHandler` an den Logger `loxmatter` - vorher hing dort ueberhaupt
+    keiner, und der Log-Strom der Route `/api/diagnostics/live` (Task 4)
+    blieb im echten Lauf leer.
+
+    Spioniert `install_log_buffer` an, statt den zurueckgegebenen Handler
+    ausschliesslich ueber `logging.getLogger("loxmatter").handlers`
+    aufzuspueren - so gilt die Zaehlung unten (`len(installed) == 1`) auch
+    dann, wenn der Logger aus einem fruehreren, nicht sauber aufgeraeumten
+    Test bereits einen ANDEREN `LogBufferHandler` traegt."""
+    _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
+    real_install_log_buffer = cli.install_log_buffer
+    installed: list[LogBufferHandler] = []
+
+    def spying_install_log_buffer(*args: Any, **kwargs: Any) -> LogBufferHandler:
+        handler = real_install_log_buffer(*args, **kwargs)
+        installed.append(handler)
+        return handler
+
+    monkeypatch.setattr(cli, "install_log_buffer", spying_install_log_buffer)
+    store = Store(tmp_path / "t.sqlite")
+
+    try:
+        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+        # Genau einmal angehaengt (siehe _run-Docstring) - ein zweiter Aufruf
+        # haengte einen zweiten Handler an denselben Logger, und jede Zeile
+        # stuende doppelt im Ring.
+        assert len(installed) == 1
+        handler = installed[0]
+        assert handler in logging.getLogger("loxmatter").handlers
+
+        logging.getLogger("loxmatter.test").info("aus einem Modul-Logger")
+
+        messages = [e.message for e in handler.entries]
+        assert messages.count("aus einem Modul-Logger") == 1
+    finally:
+        logging.getLogger("loxmatter").removeHandler(installed[0])
+        logging.getLogger("loxmatter").setLevel(logging.NOTSET)
 
 
 async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_path):

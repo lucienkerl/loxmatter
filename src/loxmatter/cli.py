@@ -34,6 +34,7 @@ from matter_server.client.exceptions import CannotConnect
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
 from loxmatter.commands.translate import MatterCall
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
+from loxmatter.diagnostics.logbuffer import install_log_buffer
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.documents import (
     filename_for,
@@ -551,6 +552,26 @@ async def _run(
     einen eigenen SIGINT-Handler, der bei einem Strg-C außerhalb von
     `serve()` (z. B. während `client.connect()`) den gesamten `_run`-Task
     abbricht — auch das erreicht `finally` als normale Abbruch-Ausnahme.
+
+    **Log-Ring (Task 5, Phase 5).** `install_log_buffer()` hängt einen
+    `LogBufferHandler` an den Logger `loxmatter` und wird an GENAU EINER
+    Stelle im gesamten Quelltext aufgerufen — hier, ein einziges Mal pro
+    Ausführung dieser Funktion. Das ist kein Zufall, sondern die gesamte
+    Absicherung: `_run()` selbst läuft genau einmal je Prozess (`run()` ruft
+    sie über `asyncio.run(...)` genau einmal auf, und `run()` ist der
+    einzige Aufrufer). Ein zweiter Aufruf von `install_log_buffer()` —
+    gleich an welcher Stelle — hängte einen ZWEITEN `LogBufferHandler` an
+    denselben, prozessweiten Logger `loxmatter`, und jede folgende Logzeile
+    liefe zweimal in `Logger.callHandlers` ein und stünde doppelt im Ring
+    (siehe `test_run_attaches_a_log_buffer_handler_to_the_loxmatter_logger`
+    in `tests/test_cli.py`, das genau das mit einer Zeilenzählung belegt,
+    NICHT bloß mit "ein Handler ist vorhanden"). Der entstandene Handler
+    wird unten unverändert an `build_app()` weitergereicht, damit die Route
+    `/api/diagnostics/live` (Task 4 dieser Phase) ihren Log-Zweig bekommt —
+    ohne dies bliebe `log_handler` dort auf seinem Vorgabewert `None`
+    stehen, und der Log-Strom des Livestreams wäre im echten Lauf dauerhaft
+    leer (siehe `loxone.server.build_app`-Moduldocstring, Abschnitt
+    "`log_handler` ist neu...", das genau diese Lücke schon benannte).
     """
     sender = UdpSender(miniserver, port)
     runtime = Runtime(store, sender)
@@ -580,6 +601,10 @@ async def _run(
         # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
 
+        # Genau EIN Aufruf im gesamten Quelltext (siehe Docstring oben,
+        # Abschnitt "Log-Ring") - ein zweiter haengte einen zweiten Handler
+        # an denselben Logger `loxmatter`.
+        log_handler = install_log_buffer()
         config = uvicorn.Config(
             build_app(
                 store,
@@ -589,6 +614,7 @@ async def _run(
                 sender=sender,
                 matter_data_dir=matter_data_dir,
                 api_token=api_token,
+                log_handler=log_handler,
             ),
             host=host,
             port=listen,

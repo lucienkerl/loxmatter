@@ -46,8 +46,10 @@ fuer jeden der beiden Faelle konkret bedeutet).
 **`log_handler` ist neu in Task 4 dieser Phase (Diagnose-Livestream,
 Spec 10.5).** Aus demselben Grund optional mit Default `None`: nicht jeder
 Aufrufer hat `diagnostics.logbuffer.install_log_buffer()` bereits
-aufgerufen (`cli.py`s Verdrahtung ist eine spaetere Aufgabe, siehe
-`api.diagnostics_live`-Moduldocstring). `None` bedeutet hier "kein
+aufgerufen. `cli.py`s `_run` tut das inzwischen (Task 5, Phase 5) und reicht
+den entstandenen Handler hier durch - ein Aufrufer, der `build_app` direkt
+nutzt (z. B. ein Test), bekommt weiterhin `None`, solange er nicht selbst
+`install_log_buffer()` aufruft und durchreicht. `None` bedeutet hier "kein
 Log-Zweig im Livestream", nicht "der Livestream insgesamt fehlt" - die
 WebSocket-Route `/api/diagnostics/live` (unten, `build_diagnostics_live_router`)
 antwortet trotzdem, nur ohne Logzeilen darin (siehe dort).
