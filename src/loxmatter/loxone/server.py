@@ -439,10 +439,10 @@ def build_app(
             )
         return response
 
-    # `dependencies=api_guard` auf jedem der sieben `/api`-Router (Task 8,
-    # Phase 5, siehe `build_api_guard` oben; siebter seit `POST
+    # `dependencies=api_guard` auf jedem der acht `/api`-Router (Task 8,
+    # Phase 5, siehe `build_api_guard` oben; achter seit `POST
     # /api/export/project-sync`, Task 11, Phase 6): das schuetzt ausnahmslos
-    # jede Route dieser sieben Router, inklusive der WebSocket-Routen
+    # jede Route dieser acht Router, inklusive der WebSocket-Routen
     # `/api/live` und `/api/diagnostics/live` - und ausdruecklich NICHT
     # `/cmd`, `/resync`, `/health`, `/` und `/static`, die weiter unten ohne
     # `dependencies` eingehaengt werden.
