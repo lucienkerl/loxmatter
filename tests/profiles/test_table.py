@@ -120,3 +120,27 @@ def test_the_battery_level_is_named_and_scaled_to_percent():
     assert profile.slug == "battery"
     assert profile.unit == "%"
     assert scale_factor(ref) == pytest.approx(0.5)
+
+
+def test_a_generic_signal_keeps_its_slug_but_gains_a_readable_title():
+    """Der Schluessel bleibt generisch - er ist die Verdrahtung in Loxone
+    und darf sich nie bewegen. Nur die Anzeige wird lesbar."""
+    ref = SignalRef(0, 51, 1, SignalKind.ATTRIBUTE)
+    profile = lookup(ref, 3)
+    assert profile.slug == "c51_a1"
+    assert profile.title != "c51_a1"
+
+
+def test_a_table_named_signal_uses_its_own_name_for_both():
+    """Wo die eigene Tabelle etwas weiss, gewinnt sie: `onoff` ist
+    sprechender als `OnOff`, und die Einheit kennt das SDK ohnehin nicht."""
+    profile = lookup(SignalRef(1, 6, 0, SignalKind.ATTRIBUTE), True)
+    assert profile.slug == "onoff"
+    assert profile.title == "onoff"
+
+
+def test_a_signal_the_catalog_does_not_know_falls_back_to_the_slug():
+    ref = SignalRef(1, 4711, 3, SignalKind.ATTRIBUTE)
+    profile = lookup(ref, 1)
+    assert profile.slug == "c4711_a3"
+    assert profile.title == "c4711_a3"

@@ -107,7 +107,7 @@ def test_disambiguates_when_two_signals_share_a_slug_on_the_same_endpoint(store,
 
     def fake_lookup(ref, value):
         if ref.endpoint == 1 and ref.cluster_id == 3:
-            return Profile(slug="fake", unit="", exportability=Exportability.DIGITAL)
+            return Profile(slug="fake", title="fake", unit="", exportability=Exportability.DIGITAL)
         return real_lookup(ref, value)
 
     monkeypatch.setattr("loxmatter.model.store.lookup", fake_lookup)
@@ -134,7 +134,7 @@ def test_irreconcilable_key_collision_raises_instead_of_dropping_silently(store,
 
     def fake_lookup(ref, value):
         if ref.endpoint == 1 and ref.element_id == 0 and ref.cluster_id in (3, 4, 6):
-            return Profile(slug="fake", unit="", exportability=Exportability.DIGITAL)
+            return Profile(slug="fake", title="fake", unit="", exportability=Exportability.DIGITAL)
         return real_lookup(ref, value)
 
     monkeypatch.setattr("loxmatter.model.store.lookup", fake_lookup)
@@ -190,7 +190,9 @@ def test_changed_unit_in_the_table_reaches_an_already_stored_signal(store, monke
     def make_fake(unit: str):
         def fake(ref: SignalRef, value: object) -> Profile:
             if ref == target:
-                return Profile(slug="onoff", unit=unit, exportability=Exportability.DIGITAL)
+                return Profile(
+                    slug="onoff", title="onoff", unit=unit, exportability=Exportability.DIGITAL
+                )
             return real_lookup(ref, value)
 
         return fake

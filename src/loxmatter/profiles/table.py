@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from loxmatter.matter.models import SignalKind, SignalRef
+from loxmatter.profiles.catalog import element_name
 
 _TABLE_PATH = Path(__file__).with_name("clusters.yaml")
 
@@ -37,6 +38,7 @@ class Exportability(str, Enum):
 @dataclass(frozen=True)
 class Profile:
     slug: str
+    title: str
     unit: str
     exportability: Exportability
 
@@ -103,21 +105,47 @@ def names_element(ref: SignalRef) -> bool:
 
 
 def lookup(ref: SignalRef, value: object) -> Profile:
-    """Liefert Name, Einheit und Exportierbarkeit fuer ein Signal."""
+    """Liefert Name(n), Einheit und Exportierbarkeit fuer ein Signal.
+
+    `slug` ist Schluesselmaterial (Hauptdokument 6.2) und bleibt deshalb
+    immer generisch, wenn die eigene Tabelle das Element nicht namentlich
+    fuehrt - er darf sich nie bewegen, sonst stirbt eine bestehende
+    Loxone-Verdrahtung lautlos. `title` ist reine Anzeige: fuehrt die
+    Tabelle das Element, gewinnt sie (dieselbe Kuerze wie der Slug reicht
+    dort aus). Sonst speist der SDK-Katalog (`profiles.catalog.element_name`)
+    den Klartextnamen aus der Matter-Spezifikation; kennt auch der ihn
+    nicht, faellt `title` auf den generischen Slug zurueck - Anzeige und
+    Betrieb funktionieren so unabhaengig davon, ob der Katalog ueberhaupt
+    verfuegbar ist (siehe Docstring dort).
+    """
     cluster = _table().get(ref.cluster_id, {})
     section = "events" if ref.kind is SignalKind.EVENT else "attributes"
     entry = (cluster.get(section) or {}).get(ref.element_id)
 
     if ref.kind is SignalKind.EVENT:
-        slug = entry["slug"] if entry else f"c{ref.cluster_id}_e{ref.element_id}"
-        return Profile(slug=slug, unit="", exportability=Exportability.DIGITAL)
+        if entry:
+            return Profile(
+                slug=entry["slug"],
+                title=entry["slug"],
+                unit="",
+                exportability=Exportability.DIGITAL,
+            )
+        slug = f"c{ref.cluster_id}_e{ref.element_id}"
+        return Profile(
+            slug=slug, title=element_name(ref) or slug, unit="", exportability=Exportability.DIGITAL
+        )
 
     if entry:
         return Profile(
-            slug=entry["slug"], unit=entry.get("unit", ""), exportability=classify(value)
+            slug=entry["slug"],
+            title=entry["slug"],
+            unit=entry.get("unit", ""),
+            exportability=classify(value),
         )
+    slug = f"c{ref.cluster_id}_a{ref.element_id}"
     return Profile(
-        slug=f"c{ref.cluster_id}_a{ref.element_id}",
+        slug=slug,
+        title=element_name(ref) or slug,
         unit="",
         exportability=classify(value),
     )

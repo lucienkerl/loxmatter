@@ -508,7 +508,11 @@ class Store:
         einzige Abhilfe waere das Loeschen der ganzen Datenbank, was jeden
         Schluessel zerstoert. `title` dagegen bleibt unangetastet, sobald
         `set_title` es einmal gesetzt hat — ab dann gehoert es dem Nutzer
-        (siehe `test_key_survives_a_title_change`).
+        (siehe `test_key_survives_a_title_change`). Nur beim Anlegen (Zweig
+        unten ohne `existing`) wird die Titelspalte einmalig aus
+        `profile.title` befuellt — bei einem generischen Slug ist das der
+        Klartextname aus dem SDK-Katalog (`profiles.table.lookup`,
+        `profiles.catalog.element_name`), sonst derselbe Wert wie `slug`.
 
         Laeuft als eine Transaktion: scheitert die Schluesselvergabe fuer ein
         einzelnes neues Signal (siehe `_assign_key`), wird die gesamte
@@ -563,7 +567,7 @@ class Store:
                         ref.element_id,
                         ref.kind.value,
                         key,
-                        profile.slug,
+                        profile.title,
                         profile.unit,
                         profile.exportability.value,
                         int(exported),
