@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import sqlite3
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import NoReturn
@@ -31,6 +32,7 @@ import typer
 import uvicorn
 from matter_server.client.exceptions import CannotConnect
 
+from loxmatter import i18n
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
 from loxmatter.commands.translate import MatterCall
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
@@ -55,12 +57,100 @@ from loxmatter.matter.discovery import (
     find_unreported_attributes,
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
+from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
 
 logger = logging.getLogger(__name__)
 
-app = typer.Typer(help="Matter → Loxone Bridge")
+
+def _resolve_store_path(explicit: Path | None) -> Path:
+    """Ermittelt den Pfad der Signalschlüssel-Datenbank.
+
+    Rangfolge: `--store-path` schlägt die Umgebungsvariable `LOXMATTER_STORE`,
+    die wiederum den Standard `~/.loxmatter/loxmatter.sqlite` schlägt.
+
+    Der Standard ist absichtlich vom Arbeitsverzeichnis unabhängig. Die
+    Datenbank hält die Signalschlüssel — und die Schlüssel *sind* die
+    Verdrahtung in Loxone (Spec 6.2): sobald ein Nutzer einen exportierten
+    Eingang auf einen Funktionsbaustein gezogen hat, verbindet nur noch der
+    Schlüsseltext den Baustein mit der Bridge. Läge der Standard relativ zum
+    Arbeitsverzeichnis (z. B. `loxmatter.sqlite`), würde ein Export aus einem
+    anderen Verzeichnis — heute `~/exports`, morgen der Desktop, oder ein
+    Cron-Job mit eigenem Arbeitsverzeichnis — die vorhandene Datenbank
+    verfehlen. Das Werkzeug hielte das Gerät dann für neu, vergäbe eine neue
+    `device_id` und damit einen komplett neuen Satz Schlüssel. Der Nutzer
+    importiert die neue Vorlage, und jeder bisher verdrahtete Baustein wird
+    stillschweigend tot — ohne Fehlermeldung. NICHT wieder auf einen
+    relativen Pfad vereinfachen.
+
+    `LOXMATTER_STORE` erlaubt einen abweichenden, festen Ort — etwa ein
+    eingehängtes Volume in einer Container-Bereitstellung.
+    """
+    if explicit is not None:
+        return explicit
+    override = os.environ.get("LOXMATTER_STORE")
+    if override:
+        return Path(override)
+    return Path.home() / ".loxmatter" / "loxmatter.sqlite"
+
+
+def _resolve_cli_language(store_path: Path, env: Mapping[str, str]) -> str:
+    """Bestimmt die Sprache fuer GENAU diesen Prozess, aufgerufen einmal
+    beim Modulimport (siehe unten, vor `app = typer.Typer(...)`) - siehe
+    Spec-Abschnitt 4.
+
+    Rangfolge: `LOXMATTER_LANG` (dieser Aufruf, ohne die gespeicherte
+    Einstellung zu aendern) > gespeicherte Einstellung > `DEFAULT_LANGUAGE`.
+    Ein ungueltiger `LOXMATTER_LANG`-Wert warnt auf stderr und faellt auf
+    die naechste Stufe zurueck - diese eine Warnung bleibt zwangslaeufig
+    Englisch, die Sprache steht an dieser Stelle noch nicht fest.
+
+    `store_path` ist NICHT `--store-path` (das ist zu diesem Zeitpunkt noch
+    nicht geparst, siehe den Abschnitt "Deviation from the spec" im
+    Implementierungsplan dieser Aufgabe) - der Aufrufer uebergibt
+    `_resolve_store_path(None)`, also `LOXMATTER_STORE` oder den
+    Standardpfad.
+
+    Oeffnet die Datenbank nur lesend und nur fuer diese eine Abfrage - NICHT
+    ueber `Store(...)`, das bei jedem Aufruf `CREATE TABLE IF NOT EXISTS`
+    und Migrationen ausfuehrt und damit einen Schreibzugriff braucht, den
+    ein blosses `--help` nie voraussetzen darf."""
+    override = env.get("LOXMATTER_LANG")
+    if override:
+        candidate = override.strip().lower()
+        if candidate in i18n.SUPPORTED_LANGUAGES:
+            return candidate
+        typer.echo(
+            f"Warning: LOXMATTER_LANG={override!r} is not supported "
+            f"(expected one of: {', '.join(sorted(i18n.SUPPORTED_LANGUAGES))}) - "
+            "falling back to the stored or default language.",
+            err=True,
+        )
+    if store_path.is_file():
+        try:
+            conn = sqlite3.connect(f"file:{store_path}?mode=ro", uri=True)
+        except (sqlite3.Error, OSError):
+            return i18n.DEFAULT_LANGUAGE
+        try:
+            conn.row_factory = sqlite3.Row
+            return LocaleStore(conn).get_language()
+        except sqlite3.Error:
+            return i18n.DEFAULT_LANGUAGE
+        finally:
+            conn.close()
+    return i18n.DEFAULT_LANGUAGE
+
+
+# Einmal beim Modulimport aufgeloest, vor jeder Kommandodefinition unten -
+# `help=`-Texte sind Typer-Konstruktionsargumente und damit an dieser Stelle
+# eingefroren (siehe Spec-Abschnitt 5). `typer.echo`/`_fail`-Aufrufe IN den
+# Kommandos lesen `i18n.current_language()` dagegen bei jedem Aufruf frisch
+# ueber `t()` - fuer sie ist dieser eine Bootstrap-Aufruf kein Einfrieren,
+# nur der Startwert.
+i18n.set_language(_resolve_cli_language(_resolve_store_path(None), os.environ))
+
+app = typer.Typer(help=i18n.t("cli.app.help"))
 
 
 @app.callback()
@@ -192,37 +282,6 @@ def _load_snapshot(fixture: Path | None, node: int | None, url: str) -> NodeSnap
             await client.disconnect()
 
     return asyncio.run(run())
-
-
-def _resolve_store_path(explicit: Path | None) -> Path:
-    """Ermittelt den Pfad der Signalschlüssel-Datenbank.
-
-    Rangfolge: `--store-path` schlägt die Umgebungsvariable `LOXMATTER_STORE`,
-    die wiederum den Standard `~/.loxmatter/loxmatter.sqlite` schlägt.
-
-    Der Standard ist absichtlich vom Arbeitsverzeichnis unabhängig. Die
-    Datenbank hält die Signalschlüssel — und die Schlüssel *sind* die
-    Verdrahtung in Loxone (Spec 6.2): sobald ein Nutzer einen exportierten
-    Eingang auf einen Funktionsbaustein gezogen hat, verbindet nur noch der
-    Schlüsseltext den Baustein mit der Bridge. Läge der Standard relativ zum
-    Arbeitsverzeichnis (z. B. `loxmatter.sqlite`), würde ein Export aus einem
-    anderen Verzeichnis — heute `~/exports`, morgen der Desktop, oder ein
-    Cron-Job mit eigenem Arbeitsverzeichnis — die vorhandene Datenbank
-    verfehlen. Das Werkzeug hielte das Gerät dann für neu, vergäbe eine neue
-    `device_id` und damit einen komplett neuen Satz Schlüssel. Der Nutzer
-    importiert die neue Vorlage, und jeder bisher verdrahtete Baustein wird
-    stillschweigend tot — ohne Fehlermeldung. NICHT wieder auf einen
-    relativen Pfad vereinfachen.
-
-    `LOXMATTER_STORE` erlaubt einen abweichenden, festen Ort — etwa ein
-    eingehängtes Volume in einer Container-Bereitstellung.
-    """
-    if explicit is not None:
-        return explicit
-    override = os.environ.get("LOXMATTER_STORE")
-    if override:
-        return Path(override)
-    return Path.home() / ".loxmatter" / "loxmatter.sqlite"
 
 
 @app.command()
@@ -738,6 +797,39 @@ def set_password(
         store.close()
     # Bewusst ohne das Passwort in der Ausgabe - auch nicht verkuerzt.
     typer.echo("Passwort gesetzt. Alle offenen Sitzungen wurden abgemeldet.")
+
+
+@app.command(name="set-language", help=i18n.t("cli.set_language.help"))
+def set_language_cmd(
+    language: str = typer.Argument(..., help=i18n.t("cli.set_language.help_language")),
+    store_path: Path | None = typer.Option(  # noqa: B008
+        None,
+        help=i18n.t("cli.common.help_store_path_short"),  # noqa: B008
+    ),
+) -> None:
+    """Setzt die gemeinsame Spracheinstellung (CLI und, ab Phase B, WebUI).
+
+    Verlangt wie `set_password` eine VORHANDENE Datenbank und aus demselben
+    Grund: eine neue, leere Fremddatenbank auf dem Host anzulegen waere bei
+    einer containerisierten Installation (`LOXMATTER_STORE` nur innerhalb des
+    Containers erreichbar) ein stiller Fehlschlag mit gemeldetem Erfolg."""
+    if language not in i18n.SUPPORTED_LANGUAGES:
+        _fail(
+            i18n.t(
+                "cli.set_language.fail_unsupported",
+                language=language,
+                supported=", ".join(sorted(i18n.SUPPORTED_LANGUAGES)),
+            )
+        )
+    resolved_store_path = _resolve_store_path(store_path)
+    if not resolved_store_path.is_file():
+        _fail(i18n.t("cli.set_language.fail_db_not_found", path=resolved_store_path))
+    store = Store(resolved_store_path)
+    try:
+        store.locale.set_language(language)
+    finally:
+        store.close()
+    typer.echo(i18n.t("cli.set_language.echo_success", language=language))
 
 
 @app.command(name="fake-miniserver")
