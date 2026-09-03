@@ -31,7 +31,11 @@
   --border: #d7dbe0;
   --text: #1c2126;
   --text-muted: #5b6572;
-  --accent: #2d6a4f;
+  /* Kupfer/Amber statt Gruen (Geraete-Dashboard-Entwurf, freigegeben nach
+     Vorlage): bewusst getrennt von --ok, das gruen bleibt - eine Kupfer-
+     Primaertaste neben einer gruenen "online"-Markierung soll nicht wie
+     derselbe Zustand aussehen. */
+  --accent: #a15a2c;
   --accent-contrast: #ffffff;
   --danger: #9a2f2f;
   --danger-bg: #fbeaea;
@@ -39,6 +43,16 @@
   --ok-bg: #e8f3ee;
   --warn: #8a5a00;
   --warn-bg: #fdf3e0;
+  /* Offline-Status einer Geraetekarte (Abschnitt 3 des Entwurfs) - eigene
+     Farbe statt --danger, das an anderer Stelle (Verbindungsstatus oben in
+     der Kopfzeile) weiterhin Rot bleibt. */
+  --off: #5b6572;
+  --off-bg: #e7e9ec;
+  /* Getoenter Hintergrund fuer das Typ-Icon einer Geraetekarte - aus der
+     Akzentfarbe abgeleitet, nicht aus --ok: das Icon zeigt "das ist ein
+     Geraet", keinen Status. */
+  --type-bg: #f4e6da;
+  --type-fg: #a15a2c;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -49,14 +63,18 @@
     --border: #313a42;
     --text: #e7ebee;
     --text-muted: #98a3ad;
-    --accent: #6fbf9a;
-    --accent-contrast: #0c1210;
+    --accent: #e2915c;
+    --accent-contrast: #2a1508;
     --danger: #e08a8a;
     --danger-bg: #3a1f1f;
     --ok: #6fbf9a;
     --ok-bg: #1c2f27;
     --warn: #e0b35a;
     --warn-bg: #362a10;
+    --off: #98a3ad;
+    --off-bg: #23282d;
+    --type-bg: #2e2015;
+    --type-fg: #e2915c;
   }
 }
 
@@ -494,4 +512,100 @@ footer.hint-block {
    ist eine Beruhigung, keine Meldung. */
 .heartbeat {
   color: var(--text-muted);
+}
+
+/* Geraete-Dashboard-Entwurf (2026-09-03): Icons, Status-Pille und
+   Wert-Chips fuer die immer offene Geraetekarte. */
+
+.icon {
+  width: 1.1em;
+  height: 1.1em;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -0.15em;
+  flex: none;
+}
+
+.type-badge {
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--type-bg);
+  color: var(--type-fg);
+  flex: none;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+.status-pill.warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.status-pill.off {
+  background: var(--off-bg);
+  color: var(--off);
+}
+
+/* Linker Farbstreifen an einer Geraetekarte - traegt dieselbe Bedeutung
+   wie die Status-Pille daneben, bewusst redundant: faellt beim schnellen
+   Scrollen ueber viele Geraete auf, ohne dass die Pille gelesen werden
+   muss. Grundzustand (kein Modifikator) ist gruen = unauffaellig. */
+.device-card {
+  position: relative;
+  overflow: hidden;
+  padding-left: calc(1rem + 4px);
+}
+
+.device-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--ok);
+}
+
+.device-card.is-changed::before {
+  background: var(--warn);
+}
+
+.device-card.is-offline::before {
+  background: var(--off);
+}
+
+.device-card.is-offline {
+  opacity: 0.75;
+}
+
+.value-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.value-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.7rem;
 }
