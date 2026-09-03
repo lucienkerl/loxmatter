@@ -183,6 +183,19 @@ wieder aktiv, zusammen mit einem in `.env` gesetzten `LOXMATTER_API_TOKEN` — o
 diese Einhängung lieferte die Route ohnehin nur einen 503, statt echte Schlüssel
 auszuliefern.
 
+**Nachbesserung vom 2026-09-03 (WebUI-Login, siehe
+[2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md)):** der
+gesamte vorstehende Absatz beschreibt einen Zwischenstand, keinen aktuellen. Es
+gibt seither keine Regel „`/api` bleibt ohne Token offen" mehr, von der diese
+Route die eine Ausnahme wäre — jede `/api`-Route, diese eingeschlossen, verlangt
+eine gültige Sitzung (Passwort-Login) oder ein gültiges Bearer-Token, sonst 401.
+Der eigens für diese Route gebaute 403-Zweig ist damit ersatzlos entfallen, weil
+der Zustand, gegen den er gerichtet war — eine erreichbare Bruecke ganz ohne
+Nachweis — nicht mehr eintreten kann (Einzelheiten: `api/diagnostics.py`s
+Moduldocstring). Die Einhängung selbst bleibt vertretbar, aus demselben Grund
+wie jede andere `/api`-Route: nicht weil ein Token daneben steht, sondern weil
+ohne Nachweis niemand mehr hinkommt.
+
 ### 4.2 Module in `loxmatter`
 
 | Modul | Aufgabe | Abhängigkeiten |
@@ -745,6 +758,12 @@ statt mit einem Erfolg, der nichts bewirkt — siehe Offene Punkte, Punkt 6.
 
 ### 9.1 Absicherung der `/api`-Routen (Task 8, 2026-09-02)
 
+**Hinweis vorab:** dieser Abschnitt beschreibt die Absicherung, wie sie zwischen
+Task 8 und dem 2026-09-03 bestand — ein optionales Token, ohne das `/api` offen
+blieb (mit einer Ausnahme für die Fabric-Sicherung). Seit dem WebUI-Login gilt
+das nicht mehr; was sich geändert hat, steht gebündelt am Ende dieses
+Abschnitts, nicht in jedem einzelnen Satz unten nachgetragen.
+
 Bis Phase 4 bot dieser Dienst zwei Endpunkte für den Miniserver: `/cmd` und
 `/resync`. Wer den Port erreichte, konnte damit höchstens ein Gerät schalten. Seit
 Phase 5 (Task 1: Einlernen, Task 2: Entfernen, Task 6: Fabric-Sicherung als Download)
@@ -832,6 +851,34 @@ konfiguriertes Token gar nichts gibt, womit sich jemand authentifizieren KÖNNTE
 Wiederholung mit Zugangsdaten kann nicht helfen, und genau das unterscheidet 403 von
 401 (RFC 9110). 503 bleibt dem bereits vorhandenen Fall „kein Datenverzeichnis
 eingehängt" vorbehalten — drei Ursachen, drei unterscheidbare Codes.
+
+**Dieser gesamte Abschnitt beschreibt den Stand von Task 8 (2026-09-02) und
+dessen Nachbesserungen bis zum 2026-09-03 — nicht mehr den heutigen.** Die
+Ergänzung [2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md)
+löst das Token als alleinigen Ausweis für den Browser ab, und Task 9/10 haben
+das umgesetzt: eine Ersteinrichtung vergibt beim ersten Aufruf ein Passwort,
+danach meldet sich der Browser mit Sitzungs-Cookie an (`loxone.server.
+build_api_guard`, `auth.sessions`). Zwei Sätze oben sind dadurch überholt,
+nicht nur ergänzt:
+
+- „Ist kein Token konfiguriert, bleiben diese Routen unverändert offen" gilt
+  nicht mehr. Ohne gültige Sitzung UND ohne gültiges Token endet jede
+  `/api`-Anfrage mit 401 — auch wenn gar kein Passwort und gar kein Token
+  eingerichtet sind. Die Startwarnung (`cli._warn_if_missing_api_token`) gibt
+  es entsprechend nicht mehr; ihre Nachfolgerin `cli._warn_if_no_password`
+  warnt vor dem fehlenden Passwort, nicht vor dem fehlenden Token.
+- Die eben beschriebene **Ausnahme für die Fabric-Sicherung entfällt
+  ersatzlos**, weil es keine Regel „`/api` bleibt offen" mehr gibt, von der sie
+  eine Ausnahme sein könnte — der eigens dafür gebaute 403-Zweig ist aus
+  `api/diagnostics.py` entfernt (siehe dessen Moduldocstring).
+
+Was aus diesem Abschnitt unverändert gilt: `/cmd` und `/resync` bleiben ohne
+jede Absicherung, aus demselben Grund; das Bearer-Token bleibt als Weg für
+Skripte und `curl` bestehen, mit denselben zwei Übertragungswegen und
+derselben Zeichensatz-Anforderung; und `openssl rand -hex 32` bleibt der
+empfohlene Weg zu einem Token. Details der Ersteinrichtung, der
+Passwort-Anforderungen und der Sitzungsverwaltung stehen in der Ergänzung, nicht
+hier verdoppelt.
 
 ---
 
@@ -932,12 +979,13 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
   verbunden, Miniserver erreichbar" — mDNS und Dongle sind nicht umgesetzt, `store`
   stand in keiner Spec. Siehe offener Punkt 9 in Abschnitt 12.
 - **Fabric-Sicherung** (`GET /api/diagnostics/fabric-backup`, siehe 4.1): Download des
-  matter-server-Datenverzeichnisses als Archiv. **Geschützt durch das Token seit
-  Task 8** (siehe 4.1, 9.1 und den Docstring der Route selbst) — und als einzige
-  `/api`-Route **ohne konfiguriertes Token gar nicht erst ausgeliefert** (HTTP 403 mit
-  Begründung im `detail`). Die Startwarnung erscheint weiterhin, sie tritt hier aber
-  nicht an die Stelle einer Sperre. Diese Zeile sagte bis zum 2026-09-03 noch, die Route
-  bleibe ohne Token offen.
+  matter-server-Datenverzeichnisses als Archiv. Geschützt wie jede andere
+  `/api`-Route auch: ohne gültige Sitzung (WebUI-Login) oder gültiges Token
+  antwortet die Route mit 401. Bis zum 2026-09-03 hatte diese eine Route einen
+  eigenen 403-Zweig für den Fall „kein Token konfiguriert" (siehe 4.1, 9.1) —
+  der ist mit dem WebUI-Login ersatzlos entfallen, weil der Zustand, gegen den
+  er gerichtet war (die Route erreichbar, aber gar kein Nachweis im System),
+  seither gar nicht mehr eintreten kann.
 
 ---
 
@@ -1107,28 +1155,41 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    beim Import das anzeigt. Keiner der beiden Wege ist in dieser Phase umgesetzt;
    festgehalten, weil die heutige Erlaubnisliste eine bewusste, aber nicht die
    einzig mögliche Antwort auf 8.4s Befund ist.
-8. **Die Oberfläche schickt das Token mit — offen bleibt nur, dass es keine Rolle
-   für „nur ansehen" gibt** (Task 8, 2026-09-02; nachgebessert 2026-09-03). Der
-   ursprüngliche Punkt hier — ein gesetztes Token sperrte den Betreiber aus seiner
-   eigenen Oberfläche aus, weil `app.js` nirgends einen `Authorization`-Header setzte
-   und es kein Feld für ein Token gab — ist **erledigt**: `requestJson` und
-   `requestDownload` setzen den Header (das Token liegt im `localStorage` des
-   Browsers, siehe README), die Kopfzeile trägt ein Passwortfeld zum Eintragen,
-   Ersetzen und Löschen, eine 401 führt mit einem verständlichen Hinweis dorthin, und
-   `/api/live` überträgt das Token als Subprotokoll `bearer, <Token>` (9.1). Die
-   beiden Downloads (Export-ZIP, Fabric-Sicherung) laufen aus demselben Grund nicht
-   mehr über ein `<a href>` — ein Link kann keinen Header tragen.
+8. **Die Oberfläche meldet sich seit dem WebUI-Login mit Passwort an — nicht mehr
+   mit einem im Browser eingetragenen Token** (Task 8, 2026-09-02; abgelöst durch
+   [2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md), umgesetzt
+   Task 9/10). Was hier bis zum 2026-09-03 stand — ein Passwortfeld für das Token
+   oben rechts, das Token im `localStorage` des Browsers gehalten, bei jedem
+   Aufruf als `Authorization`-Header mitgeschickt — gibt es nicht mehr: `app.js`
+   setzt für den Browser keinen `Authorization`-Header und legt kein Geheimnis in
+   `localStorage` ab. Stattdessen vergibt die Ersteinrichtung (`/auth/setup`) beim
+   ersten Aufruf ein Passwort, `POST /auth/login` setzt danach das
+   Sitzungs-Cookie `loxmatter_session`, und der Browser meldet sich damit an jeder
+   `/api`-Route und am WebSocket-Handshake von `/api/live` an, ganz ohne
+   Subprotokoll-Umweg (`build_api_guard` prüft das Cookie zuerst). Der Download
+   der Fabric-Sicherung reist über dasselbe Cookie statt über ein Token im Header
+   — an `requestDownload()` statt einem einfachen `<a href>` ändert das nichts:
+   der fehlende Header war nur einer von zwei Gründen dafür, und der zweite gilt
+   unverändert weiter — eine 401 oder 503 soll als lesbare Meldung in der
+   Oberfläche erscheinen statt als roher Fehlertext im Browserfenster (`app.js`,
+   `requestDownload`). Das Bearer-Token bleibt als serverseitiger Weg für Skripte
+   und `curl` vollständig erhalten, ist aber seither kein Weg mehr, den die
+   Oberfläche selbst benutzt.
 
-   Was tatsächlich offen bleibt: **das Token kennt nur „alles oder nichts".** Wer es
-   hat, kann ansehen, schalten, einlernen, entfernen und die Fabric-Sicherung
-   herunterladen; wer es nicht hat, sieht von `/api` nichts. Es gibt keine
-   Nur-Lese-Rolle für jemanden, der bloß den Zustand betrachten soll, und kein
-   zweites, eingeschränktes Token. Für die anvisierte Nutzung (ein Haushalt, eine
-   Person, die die Brücke betreibt) ist das angemessen — für eine Installation, in der
-   mehrere Personen unterschiedlich weit dürfen sollen, wäre es zu grob. Ebenfalls
-   offen und bewusst nicht in dieser Phase gebaut: das Token ist ein statisches,
-   dauerhaftes Geheimnis ohne Ablauf, ohne Rotation und ohne Widerruf einzelner
-   Browser — ein Wechsel bedeutet, es überall neu einzutragen.
+   Was tatsächlich offen bleibt, jetzt fürs Passwort statt fürs Token: **es kennt
+   nur „alles oder nichts".** Wer es hat, kann ansehen, schalten, einlernen,
+   entfernen und die Fabric-Sicherung herunterladen; wer es nicht hat, sieht von
+   `/api` nichts. Es gibt keine Nur-Lese-Rolle für jemanden, der bloß den Zustand
+   betrachten soll, und kein zweites, eingeschränktes Passwort oder Token. Für die
+   anvisierte Nutzung (ein Haushalt, eine Person, die die Brücke betreibt) ist das
+   angemessen — für eine Installation, in der mehrere Personen unterschiedlich
+   weit dürfen sollen, wäre es zu grob. Anders als beim alten Token gilt die
+   Sitzung selbst nicht mehr unbegrenzt: sie läuft nach 30 Tagen Inaktivität ab
+   (`auth.sessions.SESSION_LIFETIME_SECONDS`), lässt sich per `POST /auth/logout`
+   einzeln beenden, und `loxmatter set-password` beendet auf einen Schlag alle
+   Sitzungen. Das Bearer-Token selbst bleibt dagegen das alte statische Geheimnis
+   ohne Ablauf, ohne Rotation und ohne Widerruf einzelner Aufrufer — für den
+   Skript-Weg unverändert offen.
 9. **Der Systemcheck prüft mDNS, den Funk-Dongle, OTBR und das Thread-Netz nicht**
    (Review-Fix Fix 6, 2026-09-03). 10.5 und Abschnitt 8, Ansicht 4, versprachen bis
    dahin „mDNS erreichbar, Dongle da" sowie „Status von matter-server und OTBR,

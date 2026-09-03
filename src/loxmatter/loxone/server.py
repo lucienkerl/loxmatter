@@ -42,9 +42,15 @@ ruft virtuelle Ausgaenge ohne Header auf, ein Token dort wuerde die
 Loxone-Integration schlicht abschalten. `api_token` ist deshalb optional
 mit Default `None` - derselbe Grund wie bei `client`/`sender` oben: jeder
 bisherige Aufruf ohne das Argument laeuft unveraendert weiter, nur eben
-ohne Token-Schutz. Seit dem WebUI-Login ersetzt eine angemeldete Sitzung
-das Token ohnehin fuer den Normalbetrieb; die Warnung im Log gilt seither
-dem fehlenden Passwort, nicht mehr dem fehlenden Token (siehe
+ohne den Token-Weg in den Waechter. Seit dem WebUI-Login (docs/superpowers/
+specs/2026-09-03-webui-login-design.md, Abschnitt 4) gibt es zwei Nachweise
+statt einem, und keinen offenen Zustand mehr: `None` heisst
+seither NICHT mehr "diese `/api`-Route ist unbewacht", sondern nur noch
+"kein Bearer-Token akzeptiert" - die angemeldete Sitzung (Passwort, Cookie
+`loxmatter_session`) bleibt der Weg des Browsers und deckt den Normalbetrieb
+ab; ist gar kein Passwort vergeben, antwortet die Route trotzdem mit 401,
+nicht offen (siehe `build_api_guard`, dort ausfuehrlich). Die Warnung im Log
+gilt seither dem fehlenden Passwort, nicht mehr dem fehlenden Token (siehe
 `cli._warn_if_no_password`).
 
 **Kommando-Log (Spec 10.5).** Die Middleware `_record_command` unten

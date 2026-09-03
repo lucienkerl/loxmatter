@@ -56,52 +56,64 @@ ausliefert:
 
 Der Dienst bindet standardmäßig auf `0.0.0.0` (`--host`), damit der
 Miniserver ihn erreicht — dieselbe Erreichbarkeit gilt fürs restliche
-Netz. **Die `/api`-Routen sind deshalb mit `--api-token` bzw. der
-Umgebungsvariable `LOXMATTER_API_TOKEN` absicherbar**
-(`Authorization: Bearer <Token>`). `/cmd` und `/resync` bleiben davon *immer*
-unberührt — der Miniserver kann keinen Header mitschicken, das ist eine
-bewusste Grenze: wer den Port erreicht, kann ein Gerät weiterhin schalten,
-aber nicht mehr einlernen, entfernen oder die Fabric-Sicherung
-herunterladen. „Wer den Port erreicht" ist dabei weiter zu verstehen, als es
-klingt: `/cmd/{key}/{value}` ist ein GET ohne Ursprungsprüfung, den auch eine
-beliebige Webseite auslösen kann, die jemand aus diesem Netz im Browser
-öffnet (`<img src="http://…/cmd/…">`) — ein Fuß im LAN ist dafür nicht
-nötig. Ohne gesetztes Token startet der Dienst trotzdem — mit einer
-deutlichen Warnung im Log. Details und Begründung: [Spec, Abschnitt
-9](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#9-fehlerbehandlung).
+Netz. **Die `/api`-Routen verlangen deshalb eine Anmeldung.** Beim ersten
+Öffnen von `http://<Host>:8080/` zeigt die Oberfläche eine Ersteinrichtung:
+ein Passwort vergeben, fertig. Danach meldet man sich mit diesem Passwort
+an, die Oberfläche hält die Anmeldung über ein Sitzungs-Cookie
+(`loxmatter_session`, 30 Tage gültig, gleitend verlängert). **Bis das
+Passwort vergeben ist, liefert keine `/api`-Route irgendetwas aus** — jede
+Anfrage endet mit 401, und die Oberfläche zeigt nichts außer dem
+Einrichtungsbildschirm. Das ist ein bewusster Bruch mit dem früheren
+Verhalten (ein Dienst ohne Token lief bis dahin offen weiter, nur mit einer
+Log-Warnung): der offene Zustand gibt es nicht mehr. Die Ersteinrichtung
+verlangt dabei keinen weiteren Nachweis — wer zuerst kommt, vergibt das
+Passwort. Das ist eine bewusste Abwägung (Trust on first use), damit sich
+der Dienst ohne Shell-Zugriff auf dem Host einrichten lässt; der Preis ist
+ein Zeitfenster zwischen dem Start des Dienstes und der ersten Anmeldung, in
+dem jeder im Netz die Brücke übernehmen kann — es sollte deshalb Minuten
+dauern, nicht Tage. Ein vergessenes Passwort setzt `uv run
+loxmatter set-password` auf dem Host neu; das meldet dabei alle offenen
+Sitzungen ab. Details und Begründung:
+[Ergänzungs-Spec](docs/superpowers/specs/2026-09-03-webui-login-design.md).
 
-**So bedienen Sie das Token.** Die mitgelieferte Browser-Oberfläche kann es
-mitschicken: oben rechts steht ein Feld dafür (Typ `password`, damit es
-nicht über der Schulter mitlesbar ist). Eingetragen wird es im
-`localStorage` des Browsers gehalten und bei jedem Aufruf als
-`Authorization: Bearer <Token>` an denselben Ursprung geschickt, von dem die
-Seite geladen wurde — nie in einer URL, nie als Query-Parameter (der stünde
-in Server-Logs, Proxy-Logs und der Browser-History). Angezeigt wird es nach
-dem Speichern nicht mehr, nur noch „Token gesetzt" mit einem Knopf zum
-Ersetzen und einem zum Löschen. Antwortet ein Aufruf mit 401, sagt die
-Oberfläche das im Klartext und klappt das Feld auf, statt einen rohen
-Fehlertext zu zeigen.
+`/cmd` und `/resync` bleiben davon *immer* unberührt — der Miniserver kann
+keinen Header und kein Cookie mitschicken, das ist eine bewusste Grenze: wer
+den Port erreicht, kann ein Gerät weiterhin schalten, aber nicht mehr
+einlernen, entfernen oder die Fabric-Sicherung herunterladen. „Wer den Port
+erreicht" ist dabei weiter zu verstehen, als es klingt: `/cmd/{key}/{value}`
+ist ein GET ohne Ursprungsprüfung, den auch eine beliebige Webseite auslösen
+kann, die jemand aus diesem Netz im Browser öffnet
+(`<img src="http://…/cmd/…">`) — ein Fuß im LAN ist dafür nicht nötig.
 
-Die Live-Werte-Route `/api/live` ist ein Sonderfall: ein Browser-`WebSocket`
-kann keine eigenen Kopfzeilen setzen. Die Oberfläche schickt das Token dort
-deshalb als Subprotokoll (`new WebSocket(url, ["bearer", token])`), was der
-Browser als `Sec-WebSocket-Protocol: bearer, <Token>` überträgt; der
-`Authorization`-Header bleibt der Hauptweg für alles andere. Daraus folgt
-eine Anforderung an das Token selbst: **es muss in einem HTTP-Header und in
-einem Subprotokoll übertragbar sein — keine Leerzeichen, kein Komma, kein
-Nicht-ASCII.** `openssl rand -hex 32` liefert nur `[0-9a-f]` und ist der
-empfohlene Weg zu einem Token. Ein Token, das nur aus Leerraum besteht (ein
-versehentlicher Zeilenumbruch in einer `.env`), gilt als „nicht gesetzt".
+**`LOXMATTER_API_TOKEN` gibt es weiterhin — aber nur noch für Skripte und
+`curl`, nicht mehr für den Browser.** Gesetzt per `--api-token` bzw. der
+Umgebungsvariable, akzeptiert `build_api_guard` es weiterhin als
+`Authorization: Bearer <Token>` und, für den WebSocket-Handshake von
+`/api/live`, als Subprotokoll (`Sec-WebSocket-Protocol: bearer, <Token>`) —
+daraus folgt dieselbe Anforderung an das Token wie bisher: **keine
+Leerzeichen, kein Komma, kein Nicht-ASCII**, `openssl rand -hex 32` liefert
+nur `[0-9a-f]` und ist der empfohlene Weg dazu. Ein Token, das nur aus
+Leerraum besteht (ein versehentlicher Zeilenumbruch in einer `.env`), gilt
+als „nicht gesetzt". Die Browser-Oberfläche selbst setzt keinen
+`Authorization`-Header mehr und legt kein Geheimnis mehr im `localStorage`
+ab — das Sitzungs-Cookie übernimmt diese Rolle. Bestehende Automatisierungen
+gegen `LOXMATTER_API_TOKEN` brechen durch dieses Update nicht ab, auch nicht
+vor der Passwortvergabe: der Token-Pfad im Wächter existiert unabhängig vom
+Passwort-Status.
 
-**Ohne Token wird die Fabric-Sicherung nicht ausgeliefert.** `GET
-/api/diagnostics/fabric-backup` antwortet dann mit 403 statt mit den
-Fabric-Zugangsdaten — sie sind der einzige unersetzliche Zustand der
-Installation, und wer sie herunterlädt, kann die Matter-Fabric übernehmen.
-Alle übrigen `/api`-Routen bleiben ohne Token unverändert offen. Das ist
-kein Ersatz für ein Token, sondern die Absicherung des einen Falls, dessen
-Schaden nicht rückgängig zu machen ist.
+**Kein TLS.** Der Dienst spricht weiterhin HTTP ohne Verschlüsselung; sowohl
+das Token als auch das Passwort gehen bei jeder Übertragung im Klartext über
+das Netz. Ein Passwort verwenden, das nirgendwo sonst benutzt wird.
+
+Die Fabric-Sicherung (`GET /api/diagnostics/fabric-backup`) ist heute keine
+Ausnahme mehr — sie war es früher: ohne konfiguriertes Token antwortete
+diese eine Route mit 403, während alle übrigen `/api`-Routen ohne Token
+offen blieben. Diesen Sonderfall gibt es nicht mehr, weil die Regel, von der
+er eine Ausnahme war, selbst entfallen ist: **alle** `/api`-Routen — die
+Fabric-Sicherung eingeschlossen — verlangen jetzt gleichermaßen eine gültige
+Sitzung oder ein gültiges Token, sonst 401.
 
 Ein lauffähiges Beispiel steht in
 [`deploy/testhost/docker-compose.yml`](deploy/testhost/docker-compose.yml);
 `deploy/testhost/README.md` führt `LOXMATTER_API_TOKEN` unter den Variablen
-auf, die beim Einrichten gesetzt werden.
+auf, die beim Einrichten optional gesetzt werden können.

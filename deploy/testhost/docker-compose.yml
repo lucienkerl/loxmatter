@@ -81,10 +81,13 @@ services:
     #
     # Seit Phase 5 traegt genau dieser Port zusaetzlich die Bedienoberflaeche
     # (`/api/*`, `/`) - derselbe FastAPI-Dienst, dasselbe `--listen`. Wer
-    # `http://<Host>:8080/` im Browser oeffnet, sieht die WebUI zum
-    # Einlernen, Ansehen und Bedienen von Geraeten. Seit Task 8 (Phase 5)
-    # ist `/api/*` durch `LOXMATTER_API_TOKEN` unten geschuetzt - `/cmd` und
-    # `/resync` fuer den Miniserver bleiben bewusst offen (siehe dort).
+    # `http://<Host>:8080/` im Browser oeffnet, sieht beim allerersten Mal
+    # eine Ersteinrichtung (Passwort vergeben) und danach eine Anmeldung -
+    # seit dem WebUI-Login (Task 9/10, Phase 6) ist `/api/*` durch diese
+    # Anmeldung geschuetzt, nicht mehr durch `LOXMATTER_API_TOKEN` unten.
+    # Das Token bleibt als zusaetzlicher Weg fuer Skripte und `curl`
+    # bestehen (siehe dort). `/cmd` und `/resync` fuer den Miniserver
+    # bleiben bewusst offen (siehe dort).
     network_mode: host
     volumes:
       - loxmatter-store:/data
@@ -94,22 +97,30 @@ services:
       # bis hierher BEWUSST AUSKOMMENTIERT (Review-Fix Critical,
       # 2026-09-02), weil dieser Dienst mit `network_mode: host` laeuft
       # (siehe oben, Begruendung) und das Netz ihn deshalb genauso erreicht
-      # wie den Miniserver: ohne Token waere `/api/diagnostics/fabric-
+      # wie den Miniserver: ohne Absicherung waere `/api/diagnostics/fabric-
       # backup` vollkommen ungeschuetzt gewesen, mit dieser Zeile eingehaengt
       # also der Download der kompletten, unersetzlichen Fabric-Credentials
       # (Spec 4.1) fuer jeden im selben Netz erreichbar, nicht nur
-      # theoretisch moeglich. Task 8 liefert jetzt `build_api_guard` (siehe
-      # `src/loxmatter/loxone/server.py`) UND setzt unten `LOXMATTER_API_TOKEN`
-      # - beides zusammen macht diese Einhaengung vertretbar.
+      # theoretisch moeglich.
       #
-      # Seit der Nachbesserung vom 2026-09-03 kann diese Kombination auch
-      # nicht mehr still auseinanderfallen: `GET
-      # /api/diagnostics/fabric-backup` verweigert ohne gesetztes Token die
-      # Auslieferung (403, siehe `api/diagnostics.py`). Wer
-      # `LOXMATTER_API_TOKEN` unten entfernt, waehrend diese Zeile aktiv
-      # bleibt, stellt also nicht mehr den vor Task 8 gefaehrlichen Zustand
-      # her - er verliert nur die Sicherung. Beide Zeilen gehoeren
-      # trotzdem zusammen: OHNE Token ist die Einhaengung wirkungslos.
+      # Diese Begruendung galt zunaechst dem Token: Task 8 lieferte
+      # `build_api_guard` (siehe `src/loxmatter/loxone/server.py`) UND
+      # setzte unten `LOXMATTER_API_TOKEN` voraus - beides zusammen machte
+      # die Einhaengung vertretbar, und ein vergessenes Token liess
+      # `/api/diagnostics/fabric-backup` folgerichtig mit 403 gar nichts
+      # mehr ausliefern (Nachbesserung vom 2026-09-03).
+      #
+      # Seit dem WebUI-Login (Task 9/10, Phase 6, selbes Datum) traegt diese
+      # Rolle stattdessen das Passwort: ohne gueltige Sitzung oder gueltiges
+      # Token liefert JEDE `/api`-Route 401, die Fabric-Sicherung
+      # eingeschlossen - der eigene 403-Zweig dafuer ist ersatzlos
+      # entfallen, weil es die Regel, von der er eine Ausnahme war ("/api
+      # bleibt ohne Token offen"), selbst nicht mehr gibt. `LOXMATTER_API_TOKEN`
+      # unten ist dadurch fuer die Absicherung dieser Einhaengung nicht mehr
+      # Voraussetzung, sondern optional (siehe dort): wer es leer laesst,
+      # verliert nur den Skript-Zugang, nicht den Schutz der Fabric-Daten -
+      # denn ohne ein am Host vergebenes Passwort antwortet keine
+      # `/api`-Route, unabhaengig vom Token.
       - ./data:/matter-data:ro
     environment:
       # Eigener, fester Ort statt des Nutzer-Home-Defaults (siehe
@@ -117,22 +128,29 @@ services:
       # Volume ueberlebt ein `docker compose down`/`up`, ein Nutzer-Home im
       # Container tut das nicht.
       LOXMATTER_STORE: /data/loxmatter.sqlite
-      # Schuetzt saemtliche `/api`-Routen (Einlernen, Entfernen, Fabric-
-      # Sicherung) mit `Authorization: Bearer <Token>` - siehe
-      # `build_api_guard` in src/loxmatter/loxone/server.py und README.md.
-      # `/cmd`/`/resync` bleiben davon unberuehrt, der Miniserver braucht
-      # kein Token (siehe dort). Setzen Sie `LOXMATTER_API_TOKEN` in `.env`
-      # auf einen zufaelligen, langen Wert (z. B. `openssl rand -hex 32`).
-      # Fehlt die Variable in `.env`, interpoliert Docker Compose hier einen
-      # leeren String - `typer`s `envvar`-Aufloesung behandelt eine leere
+      # Zusaetzlicher Zugang zu saemtlichen `/api`-Routen (Einlernen,
+      # Entfernen, Fabric-Sicherung) ueber `Authorization: Bearer <Token>` -
+      # siehe `build_api_guard` in src/loxmatter/loxone/server.py und
+      # README.md. `/cmd`/`/resync` bleiben davon unberuehrt, der
+      # Miniserver braucht kein Token (siehe dort).
+      #
+      # OPTIONAL seit dem WebUI-Login (Task 9/10, Phase 6): der Zugang zur
+      # Oberflaeche selbst laeuft ueber ein Passwort, das beim ersten
+      # Aufruf von `http://<Host>:8080/` vergeben wird, nicht mehr ueber
+      # dieses Token. Dieses Token bleibt trotzdem sinnvoll gesetzt fuer
+      # Skripte und `curl`, die sich nicht per Browser anmelden koennen -
+      # setzen Sie `LOXMATTER_API_TOKEN` in `.env` dafuer auf einen
+      # zufaelligen, langen Wert (z. B. `openssl rand -hex 32`). Fehlt die
+      # Variable in `.env`, interpoliert Docker Compose hier einen leeren
+      # String - `typer`s `envvar`-Aufloesung behandelt eine leere
       # Umgebungsvariable wie eine fehlende (verifiziert: `api_token` wird
       # dann `None`, nicht `""`), `loxmatter run` startet also unveraendert
-      # OHNE Token-Schutz, mit der deutlichen Warnung "Kein API-Token
-      # gesetzt" im Log - und `GET /api/diagnostics/fabric-backup` liefert
-      # dann nichts mehr aus (403, siehe `api/diagnostics.py`), damit die
-      # oben eingehaengten Fabric-Credentials nicht ungeschuetzt im LAN
-      # stehen. PRUEFEN Sie nach dem ersten Start trotzdem das Log, falls
-      # `.env` das Token versehentlich vergessen haben sollte.
+      # ohne den Token-Weg. Anders als vor dem WebUI-Login bedeutet das
+      # KEINE Luecke: ohne gesetztes Passwort antwortet ohnehin keine
+      # `/api`-Route (401, siehe README) - die Fabric-Sicherung eingeschlossen,
+      # deren fruehere eigene 403-Sperre bei fehlendem Token deshalb entfallen
+      # ist. Die Startwarnung gilt seither dem fehlenden Passwort
+      # (`cli._warn_if_no_password`), nicht mehr dem fehlenden Token.
       LOXMATTER_API_TOKEN: ${LOXMATTER_API_TOKEN}
     command:
       - run

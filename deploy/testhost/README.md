@@ -62,29 +62,33 @@ cd ~/loxmatter-testhost
 cp .env.example .env      # RADIO_DEVICE/RADIO_BAUDRATE/BACKBONE_IF/BLUETOOTH_ADAPTER ggf. anpassen
 mkdir -p data
 
-# MINISERVER_IP und LOXMATTER_API_TOKEN in .env setzen - beide sind leer
-# ausgeliefert und beide muessen gesetzt werden. Die vorhandenen Zeilen
-# ERSETZEN, nicht anhaengen: eine zweite Definition derselben Variablen
-# waere zwar wirksam (Compose nimmt die letzte), aber wer die Datei spaeter
-# bearbeitet, aendert dann die falsche Zeile.
+# MINISERVER_IP muss gesetzt werden, leer ausgeliefert. LOXMATTER_API_TOKEN
+# ist optional (siehe unten) - wer es trotzdem setzen will, ERSETZT die
+# vorhandene Zeile, statt eine zweite anzuhaengen: eine zweite Definition
+# derselben Variablen waere zwar wirksam (Compose nimmt die letzte), aber
+# wer die Datei spaeter bearbeitet, aendert dann die falsche Zeile.
 sed -i "s|^LOXMATTER_API_TOKEN=.*|LOXMATTER_API_TOKEN=$(openssl rand -hex 32)|" .env
 sed -i "s|^MINISERVER_IP=.*|MINISERVER_IP=10.0.1.99|" .env   # eigene Adresse einsetzen
 ```
 
-**Zum Token, weil es leicht übersehen wird:** dieser Stack läuft mit
-`network_mode: host` und hängt das matter-server-Datenverzeichnis in den
-loxmatter-Dienst ein. Ohne gesetztes `LOXMATTER_API_TOKEN` liefert
-`GET /api/diagnostics/fabric-backup` deshalb **gar nichts** mehr aus (HTTP
-403) — sonst könnte jeder im selben Netz die Fabric-Zugangsdaten
-herunterladen und damit die Matter-Fabric übernehmen. Die übrigen
-`/api`-Routen (Geräte ansehen, einlernen, entfernen) bleiben ohne Token
-offen erreichbar; im Log steht dann eine deutliche Warnung. `openssl rand
--hex 32` ist der empfohlene Weg zu einem Token — es muss in einem
-HTTP-Header und in einem WebSocket-Subprotokoll übertragbar sein, also
-keine Leerzeichen, kein Komma, ASCII; `openssl rand -hex 32` liefert nur
-`[0-9a-f]`. Das gesetzte Token danach in der Browser-Oberfläche oben rechts
-unter „Token" eintragen — sie schickt es bei jedem Aufruf mit und bleibt
-damit uneingeschränkt nutzbar.
+**Zugang zur Oberfläche: ein Passwort, nicht `LOXMATTER_API_TOKEN`.** Seit
+dem WebUI-Login (Task 9/10, Phase 6) vergibt man beim ersten Öffnen von
+`http://10.0.1.56:8080/` im Browser ein Passwort — bis das geschehen ist,
+liefert **keine** `/api`-Route irgendetwas aus (HTTP 401), unabhängig davon,
+ob `LOXMATTER_API_TOKEN` gesetzt ist. Das gilt auch für die
+Fabric-Sicherung (`GET /api/diagnostics/fabric-backup`): dieser Stack läuft
+mit `network_mode: host` und hängt das matter-server-Datenverzeichnis in den
+loxmatter-Dienst ein, aber ein fehlendes Token ist dafür seit dem
+WebUI-Login nicht mehr die entscheidende Bedingung — ohne vergebenes
+Passwort antwortet ohnehin keine `/api`-Route, diese eingeschlossen; der
+frühere eigene 403-Zweig für „kein Token gesetzt" ist damit entfallen.
+
+`LOXMATTER_API_TOKEN` bleibt trotzdem sinnvoll gesetzt, wenn diese Instanz
+auch per Skript oder `curl` angesprochen werden soll — für den Browser
+selbst wird es nicht mehr gebraucht. `openssl rand -hex 32` ist der
+empfohlene Weg dazu — es muss in einem HTTP-Header und in einem
+WebSocket-Subprotokoll übertragbar sein, also keine Leerzeichen, kein
+Komma, ASCII; `openssl rand -hex 32` liefert nur `[0-9a-f]`.
 
 **Schritt 2 — Bluetooth entsperren.** Nur bei der Ersteinrichtung nötig: `hci0` war
 werksseitig rfkill-soft-blockiert, und ohne diesen Schritt startet `matter-server` ohne
