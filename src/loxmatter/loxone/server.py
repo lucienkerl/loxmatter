@@ -46,10 +46,12 @@ fuer jeden der beiden Faelle konkret bedeutet).
 **`log_handler` ist neu in Task 4 dieser Phase (Diagnose-Livestream,
 Spec 10.5).** Aus demselben Grund optional mit Default `None`: nicht jeder
 Aufrufer hat `diagnostics.logbuffer.install_log_buffer()` bereits
-aufgerufen. `cli.py`s `_run` tut das inzwischen (Task 5, Phase 5) und reicht
-den entstandenen Handler hier durch - ein Aufrufer, der `build_app` direkt
-nutzt (z. B. ein Test), bekommt weiterhin `None`, solange er nicht selbst
-`install_log_buffer()` aufruft und durchreicht. `None` bedeutet hier "kein
+aufgerufen. `cli.py`s `run()` tut das inzwischen (Task 5, Phase 5; seit
+Nachbesserung Task 7, Fix 1 als dessen allererste Anweisung, VOR `_run()`)
+und reicht den entstandenen Handler als Parameter an `_run()` durch, das ihn
+unveraendert hier bei `build_app()` einreicht - ein Aufrufer, der `build_app`
+direkt nutzt (z. B. ein Test), bekommt weiterhin `None`, solange er nicht
+selbst `install_log_buffer()` aufruft und durchreicht. `None` bedeutet hier "kein
 Log-Zweig im Livestream", nicht "der Livestream insgesamt fehlt" - die
 WebSocket-Route `/api/diagnostics/live` (unten, `build_diagnostics_live_router`)
 antwortet trotzdem, nur ohne Logzeilen darin (siehe dort).
@@ -285,10 +287,11 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
     `.env.example` und README empfohlene `openssl rand -hex 32` liefert nur
     `[0-9a-f]` und erfuellt das von sich aus.
 
-    Die Route `/api/live` muss das gewaehlte Subprotokoll im Accept
-    zurueckgeben, sonst bricht der Browser den Handshake nach RFC 6455 ab -
-    das erledigt `api.live` (siehe dort; zurueckgegeben wird `"bearer"`,
-    niemals das Token).
+    Die WebSocket-Routen `/api/live` UND `/api/diagnostics/live` muessen das
+    gewaehlte Subprotokoll im Accept zurueckgeben, sonst bricht der Browser
+    den Handshake nach RFC 6455 ab - das erledigt fuer beide dieselbe
+    Funktion `api.streaming.accepted_subprotocol` (siehe dort; zurueckgegeben
+    wird `"bearer"`, niemals das Token).
 
     **Es gibt keinen offenen Zustand mehr.** Bis hierher liess ein Dienst
     ohne konfiguriertes Token jede `/api`-Route durch und begnuegte sich mit
@@ -299,7 +302,8 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
     dann ausschliesslich die Ersteinrichtung unter `/auth/setup`, die
     ausserhalb dieses Waechters haengt (siehe `api/auth.py`).
 
-    Gilt fuer HTTP-Routen UND fuer die WebSocket-Route `/api/live` gleichermassen:
+    Gilt fuer HTTP-Routen UND fuer die WebSocket-Routen `/api/live` und
+    `/api/diagnostics/live` gleichermassen:
     `app.include_router(..., dependencies=[Depends(guard)])` loest diese
     Abhaengigkeit vor JEDER Route des jeweiligen Routers auf, auch vor einem
     WebSocket-Handshake - FastAPI/uvicorn lehnen eine `HTTPException` aus
@@ -316,8 +320,9 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
 
     `HTTPConnection` statt `Request`: es ist der gemeinsame Basistyp von
     `Request` und `WebSocket`, und dieselbe Abhaengigkeit haengt an beiden
-    Sorten von Routen - `/api/live` ist eine WebSocket-Route, in der ein
-    `Request`-Parameter gar nicht aufloesbar waere. Das Cookie reist beim
+    Sorten von Routen - `/api/live` und `/api/diagnostics/live` sind
+    WebSocket-Routen, in denen ein `Request`-Parameter gar nicht aufloesbar
+    waere. Das Cookie reist beim
     WebSocket-Handshake von selbst mit (gleicher Ursprung), weshalb der
     Browser dort seit dem Login kein Subprotokoll mehr braucht."""
     # Einmal beim Bauen normalisiert, nicht bei jeder Anfrage: `None` und ein

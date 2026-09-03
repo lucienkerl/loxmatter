@@ -30,7 +30,7 @@ Sieben Gruppen:
   `Authorization`-Header, und ganz ohne Token bleibt jede Anfrage ohne
   Sitzung abgelehnt).
 - `test_*` mit `secured_client`/`open_client` - dieselbe Aufgabe wie oben,
-  aber durch die tatsaechliche ASGI-App hindurch: jede der fuenf `/api`-
+  aber durch die tatsaechliche ASGI-App hindurch: jede der sechs `/api`-
   Router UND `/cmd`/`/resync` einzeln angefragt, damit ein Router, der aus
   Versehen ohne `dependencies=api_guard` eingebunden wuerde, hier auffiele
   statt sich auf den Router-Praefix zu verlassen.
@@ -391,10 +391,14 @@ async def test_the_other_api_routes_stay_open_for_a_signed_in_client_without_a_t
 
 
 # ---------------------------------------------------------------------------
-# Mit Token: jeder der fuenf /api-Router verlangt ihn einzeln - nicht nur
+# Mit Token: jeder der sechs /api-Router verlangt ihn einzeln - nicht nur
 # "irgendeine" Route, jede. Ein Router, der versehentlich ohne
 # dependencies=api_guard eingebunden wuerde, faellt hier auf, statt sich
-# darauf zu verlassen, dass der Praefix /api schon irgendwie schuetzt.
+# darauf zu verlassen, dass der Praefix /api schon irgendwie schuetzt. Vier
+# davon als gewoehnliche HTTP-Tests direkt unten (devices, export, control,
+# diagnostics) - die beiden WebSocket-Router (`/api/live`,
+# `/api/diagnostics/live`) folgen demselben Prinzip in der Gruppe
+# `test_websocket_*` weiter unten, siehe Moduldocstring oben.
 # ---------------------------------------------------------------------------
 
 
@@ -480,7 +484,10 @@ async def test_fabric_backup_is_reachable_with_the_correct_header(secured_client
 
 async def test_a_session_cookie_opens_every_api_router(secured_client):
     """Der zweite Nachweis neben dem Token: wer angemeldet ist, kommt ohne
-    `Authorization`-Header durch jede der fuenf Router-Gruppen."""
+    `Authorization`-Header durch die hier geprueften Router-Gruppen (device-,
+    export- und diagnostics-Router) - eine Stichprobe von dreien, nicht eine
+    vollstaendige Aufzaehlung aller sechs `/api`-Router wie bei den
+    Token-Tests weiter oben."""
     client, _app, device_id, store = secured_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     assert (

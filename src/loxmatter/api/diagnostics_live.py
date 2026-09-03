@@ -110,12 +110,32 @@ Momentaufnahme), die uebrigen beiden laufen unveraendert weiter.
 `command_log` ist dagegen nicht optional: `loxone.server.build_app` legt
 ihn immer an, unabhaengig von `sender`/`client`/`log_handler`.
 
-**Die Momentaufnahme laeuft VOR dem Anmelden der Beobachter** - sonst
-klaffte eine Luecke zwischen "einmal abrufen" und "ab jetzt zuhoeren", und
-ein Eintrag, der genau dazwischen entsteht, ginge verloren (derselbe Grund,
-aus dem `api.live` keine Momentaufnahme braucht: dort gibt es keine
-Historie, nur den naechsten Wert). `SNAPSHOT_LIMIT` begrenzt sie je Strom -
-siehe dort fuer die Begruendung der Zahl.
+**Die Momentaufnahme laeuft VOR dem Anmelden der Beobachter - und genau
+DIESE Reihenfolge kann einen Eintrag verlieren, nicht die umgekehrte**
+(richtiggestellt in Nachbesserung Task 7, Fix 3a: eine fruehere Fassung
+dieses Docstrings behauptete das Gegenteil). Ein Eintrag, der genau
+zwischen "Momentaufnahme genommen" und "Beobachter angemeldet" entsteht,
+landet in KEINEM der beiden Wege - die Momentaufnahme war schon gezogen,
+der Beobachter noch nicht angemeldet - und geht damit verloren. Die
+umgekehrte Reihenfolge (zuerst anmelden, dann die Momentaufnahme ziehen)
+haette stattdessen das andere Problem: ein Eintrag aus genau diesem
+Fenster erschiene ZWEIMAL, einmal live ueber den frisch angemeldeten
+Beobachter und einmal in der danach gezogenen Momentaufnahme. Verlieren
+statt verdoppeln ist hier die bewusste Wahl - eine Zeile zu wenig faellt
+in einer Live-Ansicht kaum auf, eine Zeile zu viel schon.
+
+Fuer Datagramme und Kommandos ist das ohnehin folgenlos: zwischen
+`list(...)` und dem jeweiligen `add_observer` steht kein `await`, und
+beide moeglichen Schreiber (`UdpSender.send`, die Kommando-Middleware)
+laufen selbst im Event-Loop-Thread dieser Route - ohne einen
+Zwischenausstieg kann dort nichts dazwischenfahren, das Fenster ist real,
+aber leer. Bei **Logzeilen aus einem fremden Thread** dagegen ist die
+Luecke echt: `LogBufferHandler.emit()` laeuft synchron in JEDEM Thread, der
+gerade protokolliert (siehe `diagnostics.logbuffer`-Moduldocstring), nicht
+im Event-Loop-Thread dieser Route - ein `emit()`-Aufruf aus aiohttp oder
+dem chip-SDK kann jederzeit dazwischenfahren, unabhaengig davon, was der
+Event-Loop gerade tut. `SNAPSHOT_LIMIT` begrenzt die Momentaufnahme je
+Strom - siehe dort fuer die Begruendung der Zahl.
 
 **Im `finally` werden alle DREI - beziehungsweise nur die tatsaechlich
 angemeldeten - Beobachter wieder abgemeldet.** Ein `sender`/`log_handler`

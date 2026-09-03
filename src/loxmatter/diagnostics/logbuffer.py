@@ -29,7 +29,8 @@ generischer, laufzeitunabhaengiger Ringpuffer an einer Stelle).
 unterscheidet: `LogBufferHandler` darf NIEMALS selbst protokollieren -
 auch nicht im Fehlerfall.** Ueberall sonst im Projekt gilt "einen
 Beobachterfehler verschlucken, aber loggen" (siehe z. B.
-`loxone.sender._notify_datagram_observers`). Hier waere der Logeintrag
+`api.diagnostics.RingBuffer.append`, an dem seit Nachbesserung Task 7,
+Fix 2 auch `UdpSender.add_datagram_observer` haengt). Hier waere der Logeintrag
 selbst der naechste Aufruf DESSELBEN Handlers - `logger.exception(...)`
 in `emit()` liefe direkt wieder bei `emit()` ein und erzeugte eine
 Endlosschleife. Deshalb faengt `emit()` jeden Fehler ab, den ein

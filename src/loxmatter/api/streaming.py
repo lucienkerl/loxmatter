@@ -142,6 +142,25 @@ class BoundedQueue:
         self._dropping = False
 
     def put(self, payload: dict[str, object]) -> None:
+        """Reiht ein, wirft bei Ueberlauf den AELTESTEN Eintrag weg (siehe
+        Klassendocstring).
+
+        **Bedingt gefaehrlich fuer eine `/api/diagnostics/live`-Verbindung,
+        deren `log_handler`-Zweig verdrahtet ist** (Nachbesserung Task 7,
+        Fix 3b). `logger.debug(...)` unten laeuft auf dem Loop-Thread,
+        AUSSERHALB von `LogBufferHandler.emit()` - also ohne dessen
+        Wiedereintrittssperre (siehe `diagnostics.logbuffer`-Moduldocstring).
+        Liefe der Logger `loxmatter.api.streaming` jemals auf DEBUG, erzeugte
+        der Uebergang ins Verwerfen eine neue Logzeile, die - sofern
+        `on_log` fuer dieselbe Verbindung angemeldet ist - ueber genau
+        dieses `put` erneut eingereiht wuerde: eine verworfene Logzeile
+        erzeugt eine neue, die wieder eingereiht wird. Heute unerreichbar,
+        weil `install_log_buffer()` den Logger `loxmatter` auf INFO haelt
+        und nichts im Projekt einen DEBUG-Schalter anbietet (siehe
+        Entwurf, Abschnitt 7, Punkt 2) - der `_dropping`-Zustand oben
+        begrenzt die Wiedereinreihung selbst dann auf einen einzigen
+        verschachtelten `put`-Aufruf, keine unbegrenzte Rekursion, aber ein
+        spaeterer DEBUG-Schalter sollte diese Stelle kennen."""
         if self._queue.full():
             self._queue.get_nowait()  # aeltesten Eintrag verwerfen, Platz fuer den neuesten schaffen
             if not self._dropping:

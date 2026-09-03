@@ -116,12 +116,14 @@ beiden Routen gebraucht. Zweimal gehalten hieße, jede künftige Korrektur
 zweimal zu machen; die erste war schon nötig (die unbegrenzte Warteschlange,
 Review-Fix Phase 5).
 
-**Nachrichtenformat.** Jede Nachricht trägt ihre Art und einen Zeitstempel:
+**Nachrichtenformat.** Jede Nachricht trägt ihre Art und einen Zeitstempel
+(Feldname korrigiert in Nachbesserung Task 7, Fix 3e — die Umsetzung nennt
+ihn `timestamp`, nicht `at`; das Feld `forced` fehlte hier ganz):
 
 ```json
-{"kind": "datagram", "at": "…", "key": "d1_2_power", "value": "0"}
-{"kind": "command",  "at": "…", "path": "/cmd/d1_1_on/1", "status": 200}
-{"kind": "log",      "at": "…", "level": "WARNING", "logger": "…", "message": "…"}
+{"kind": "datagram", "timestamp": "…", "key": "d1_2_power", "value": "0", "forced": false}
+{"kind": "command",  "timestamp": "…", "path": "/cmd/d1_1_on/1", "status": 200}
+{"kind": "log",      "timestamp": "…", "level": "WARNING", "logger": "…", "message": "…"}
 ```
 
 Die tatsächlichen Feldnamen übernimmt die Umsetzung aus den bestehenden
@@ -129,9 +131,18 @@ Ring-Einträgen (`DatagramLogEntry`, `CommandLogEntry`), damit nicht dieselbe
 Angabe zweimal verschieden heisst.
 
 **Beim Verbinden zuerst eine Momentaufnahme**, dann live. Damit ist die Ansicht
-sofort gefüllt und es entsteht keine Lücke zwischen „einmal abrufen" und „ab
-jetzt zuhören". Die vorhandenen GET-Routen bleiben unverändert für Skripte
-und `curl`.
+sofort gefüllt. **Das verhindert eine Lücke zwischen „einmal abrufen" und „ab
+jetzt zuhören" nicht — anders, als eine frühere Fassung dieses Entwurfs hier
+behauptete** (richtiggestellt in Nachbesserung Task 7, Fix 3a): genau diese
+Reihenfolge lässt einen Eintrag fallen, der exakt dazwischen entsteht (die
+Momentaufnahme ist schon gezogen, der Beobachter noch nicht angemeldet); die
+umgekehrte Reihenfolge würde ihn stattdessen verdoppeln. Verlieren statt
+verdoppeln ist die bewusste Wahl. Für Datagramme und Kommandos bleibt das
+Fenster folgenlos (kein `await` dazwischen, beide möglichen Schreiber laufen
+im Event-Loop-Thread dieser Route), für Logzeilen aus einem fremden Thread
+(siehe Abschnitt 2.3) ist die Lücke dagegen real — siehe
+`api/diagnostics_live.py`-Moduldocstring für die ausführliche Fassung. Die
+vorhandenen GET-Routen bleiben unverändert für Skripte und `curl`.
 
 ## 4. Oberfläche
 

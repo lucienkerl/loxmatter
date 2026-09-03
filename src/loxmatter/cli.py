@@ -34,7 +34,7 @@ from matter_server.client.exceptions import CannotConnect
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
 from loxmatter.commands.translate import MatterCall
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
-from loxmatter.diagnostics.logbuffer import install_log_buffer
+from loxmatter.diagnostics.logbuffer import LogBufferHandler, install_log_buffer
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.documents import (
     filename_for,
@@ -492,7 +492,22 @@ def run(
     Öffnet die Datenbank schon hier, synchron — ein unbeschreibbarer Pfad
     soll als klarer CLI-Fehler enden (wie bei `export`), nicht als
     Traceback aus dem Inneren von `asyncio.run`.
-    """
+
+    **`install_log_buffer()` steht als ALLERERSTE Anweisung hier** —
+    Nachbesserung Task 7, Fix 1. Bis dahin hing der Aufruf in `_run()`
+    unmittelbar vor `uvicorn.Config(...)`, also NACH `client.connect()`,
+    `subscribe()`, `runtime.start()`, `seed_from_snapshot()` und
+    `resend_all()` — und nach der Warnung unten (`_warn_if_no_password`),
+    die synchron laeuft, bevor `_run()` ueberhaupt beginnt. Alles, was diese
+    Schritte protokollieren, war deshalb weg, bevor der Ring existierte:
+    allen voran der Sicherheitshinweis zum fehlenden Passwort, der genau
+    dafuer da ist, dass eine Person, die die Ansicht statt eines Terminals
+    vor sich hat, ihn zu sehen bekommt (siehe `test_run_installs_the_log_
+    buffer_before_the_password_warning` in `tests/test_cli.py`). Der
+    entstandene Handler wandert unten unveraendert durch `_run()` bis zu
+    `build_app()` — siehe dessen Docstring, Abschnitt "Log-Ring", fuer die
+    Fortsetzung dieser Begruendung."""
+    log_handler = install_log_buffer()
     resolved_store_path = _resolve_store_path(store_path)
     # Wie bei `export` ausgegeben (Review-Fix M10, 2026-09-02): die
     # wahrscheinlichste Fehlkonfiguration ist eine `export`- und eine
@@ -514,7 +529,9 @@ def run(
         _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
 
     _warn_if_no_password(store)
-    asyncio.run(_run(store, url, miniserver, port, listen, matter_data_dir, host, api_token))
+    asyncio.run(
+        _run(store, url, miniserver, port, listen, matter_data_dir, host, api_token, log_handler)
+    )
 
 
 async def _run(
@@ -526,6 +543,7 @@ async def _run(
     matter_data_dir: Path | None = None,
     host: str = "0.0.0.0",  # Standard wie in `run` — der Miniserver muss den Dienst erreichen
     api_token: str | None = None,
+    log_handler: LogBufferHandler | None = None,
 ) -> None:
     """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
 
@@ -553,26 +571,44 @@ async def _run(
     `serve()` (z. B. während `client.connect()`) den gesamten `_run`-Task
     abbricht — auch das erreicht `finally` als normale Abbruch-Ausnahme.
 
-    **Log-Ring (Task 5, Phase 5).** `install_log_buffer()` hängt einen
-    `LogBufferHandler` an den Logger `loxmatter` und wird an GENAU EINER
-    Stelle im gesamten Quelltext aufgerufen — hier, ein einziges Mal pro
-    Ausführung dieser Funktion. Das ist kein Zufall, sondern die gesamte
-    Absicherung: `_run()` selbst läuft genau einmal je Prozess (`run()` ruft
-    sie über `asyncio.run(...)` genau einmal auf, und `run()` ist der
-    einzige Aufrufer). Ein zweiter Aufruf von `install_log_buffer()` —
-    gleich an welcher Stelle — hängte einen ZWEITEN `LogBufferHandler` an
-    denselben, prozessweiten Logger `loxmatter`, und jede folgende Logzeile
-    liefe zweimal in `Logger.callHandlers` ein und stünde doppelt im Ring
-    (siehe `test_run_attaches_a_log_buffer_handler_to_the_loxmatter_logger`
+    **Log-Ring (Task 5, Phase 5; Aufrufstelle korrigiert in Task 7, Fix 1).**
+    `install_log_buffer()` hängt einen `LogBufferHandler` an den Logger
+    `loxmatter` und wird an GENAU EINER Stelle im gesamten Quelltext
+    aufgerufen — in `run()` oben, als dessen allererste Anweisung, NICHT
+    hier. `_run()` bekommt den fertigen Handler als Parameter `log_handler`
+    herein und reicht ihn unten unverändert an `build_app()` weiter. Die
+    Absicherung "genau einmal" hängt an der ZAHL der Aufrufstellen im
+    Quelltext, nicht an ihrer Position: `run()` ruft `install_log_buffer()`
+    selbst nur einmal auf und ist der einzige Aufrufer von `_run()` (über
+    `asyncio.run(...)`, ebenfalls nur einmal je Prozess). Ein zweiter
+    Aufruf von `install_log_buffer()` — gleich an welcher Stelle — hängte
+    einen ZWEITEN `LogBufferHandler` an denselben, prozessweiten Logger
+    `loxmatter`, und jede folgende Logzeile liefe zweimal in
+    `Logger.callHandlers` ein und stünde doppelt im Ring (siehe
+    `test_run_installs_the_log_buffer_exactly_once_and_passes_it_to__run`
     in `tests/test_cli.py`, das genau das mit einer Zeilenzählung belegt,
-    NICHT bloß mit "ein Handler ist vorhanden"). Der entstandene Handler
-    wird unten unverändert an `build_app()` weitergereicht, damit die Route
-    `/api/diagnostics/live` (Task 4 dieser Phase) ihren Log-Zweig bekommt —
-    ohne dies bliebe `log_handler` dort auf seinem Vorgabewert `None`
-    stehen, und der Log-Strom des Livestreams wäre im echten Lauf dauerhaft
-    leer (siehe `loxone.server.build_app`-Moduldocstring, Abschnitt
-    "`log_handler` ist neu...", das genau diese Lücke schon benannte).
-    """
+    NICHT bloß mit "ein Handler ist vorhanden").
+
+    **Warum die Aufrufstelle ueberhaupt umzog.** Bis Task 7 hing der Aufruf
+    hier in `_run()`, unmittelbar vor `uvicorn.Config(...)` — also NACH
+    `client.connect()`, `subscribe()`, `runtime.start()`,
+    `seed_from_snapshot()` und `resend_all()`, und nach der Warnung aus
+    `_warn_if_no_password` in `run()`, die synchron läuft, bevor `_run()`
+    überhaupt beginnt. Jede Zeile, die einer dieser Schritte protokollierte,
+    war deshalb weg, bevor der Ring existierte — allen voran der
+    Sicherheitshinweis zum fehlenden Passwort (siehe
+    `test_run_installs_the_log_buffer_before_the_password_warning` in
+    `tests/test_cli.py`, das genau diese Zeile nach einem `run()`-Lauf im
+    Ring nachweist).
+
+    Ohne die Weitergabe an `build_app()` unten bliebe `log_handler` dort
+    auf seinem Vorgabewert `None` stehen, und der Log-Strom der Route
+    `/api/diagnostics/live` (Task 4 dieser Phase) wäre im echten Lauf
+    dauerhaft leer (siehe `loxone.server.build_app`-Moduldocstring,
+    Abschnitt "`log_handler` ist neu...", das genau diese Lücke schon
+    benannte — siehe dort auch für den umgekehrten Fall, ein `log_handler`
+    von `None`, wie ihn jeder Aufrufer von `_run()` bekommt, der keinen
+    übergibt, z. B. ein Test)."""
     sender = UdpSender(miniserver, port)
     runtime = Runtime(store, sender)
     client = _build_client(url)
@@ -601,10 +637,9 @@ async def _run(
         # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
 
-        # Genau EIN Aufruf im gesamten Quelltext (siehe Docstring oben,
-        # Abschnitt "Log-Ring") - ein zweiter haengte einen zweiten Handler
-        # an denselben Logger `loxmatter`.
-        log_handler = install_log_buffer()
+        # `log_handler` kommt bereits fertig herein (siehe Docstring oben,
+        # Abschnitt "Log-Ring") - `install_log_buffer()` selbst steht seit
+        # Task 7 (Fix 1) einzig in `run()`, VOR diesem gesamten Aufbau.
         config = uvicorn.Config(
             build_app(
                 store,

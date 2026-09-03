@@ -34,7 +34,9 @@ import httpx2 as httpx
 import pytest
 from conftest import WebSocketClient, authenticate
 
+from loxmatter.api.diagnostics import RingBuffer
 from loxmatter.api.diagnostics_live import SNAPSHOT_LIMIT
+from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.server import build_app
 
@@ -210,13 +212,68 @@ async def test_the_snapshot_is_capped_per_stream(api_with_runtime):
     assert len(commands) == SNAPSHOT_LIMIT
 
 
-async def test_observers_are_unsubscribed_after_disconnect(api_with_runtime, caplog):
+async def test_observers_are_unsubscribed_after_disconnect(api_with_runtime, caplog, monkeypatch):
     """Im `finally` werden alle drei Beobachter wieder abgemeldet -
     Aktivitaet NACH dem Trennen darf weder einen Fehler werfen noch die
-    naechste Verbindung beeintraechtigen."""
+    naechste Verbindung beeintraechtigen.
+
+    Nachbesserung Task 7, Fix 3c: die vorherige Fassung prüfte nur, dass
+    danach keine ERROR-Zeilen entstehen und die naechste Verbindung
+    funktioniert - beides gilt unveraendert, selbst wenn alle drei
+    Beobachter vollstaendig verleckt blieben (ein Test, der so gar nicht
+    fehlschlagen KANN). Dieser Test zaehlt stattdessen die tatsaechlichen
+    An-/Abmeldungen - nach dem Vorbild von `runtime.observer_count()` in
+    `test_live.py`, das hier aber nicht direkt uebertragbar ist: die
+    `api_with_runtime`-Fixture gibt weder `sender` noch den lokalen
+    `command_log`-Ring (eine reine Variable in `loxone.server.build_app`)
+    nach aussen. Ein Spion an den beiden oeffentlichen Methoden, die
+    `api.diagnostics_live` tatsaechlich aufruft (`RingBuffer.add_observer`/
+    `remove_observer` - seit Nachbesserung Task 7, Fix 2 auch der Weg von
+    `UdpSender.add_datagram_observer`, siehe dort - und `LogBufferHandler.
+    add_observer`/`remove_observer`), macht die Anzahl unabhaengig davon
+    sichtbar: zwei `RingBuffer`-Anmeldungen (`sender.datagram_log` UND
+    `command_log`) und eine `LogBufferHandler`-Anmeldung beim Verbinden,
+    dieselben drei Objekte exakt einmal abgemeldet beim Trennen."""
+    ring_added: list[RingBuffer[Any]] = []
+    ring_removed: list[RingBuffer[Any]] = []
+    log_added: list[LogBufferHandler] = []
+    log_removed: list[LogBufferHandler] = []
+    original_ring_add = RingBuffer.add_observer
+    original_ring_remove = RingBuffer.remove_observer
+    original_log_add = LogBufferHandler.add_observer
+    original_log_remove = LogBufferHandler.remove_observer
+
+    def spy_ring_add(self: RingBuffer[Any], callback: Any) -> None:
+        ring_added.append(self)
+        original_ring_add(self, callback)
+
+    def spy_ring_remove(self: RingBuffer[Any], callback: Any) -> None:
+        ring_removed.append(self)
+        original_ring_remove(self, callback)
+
+    def spy_log_add(self: LogBufferHandler, callback: Any) -> None:
+        log_added.append(self)
+        original_log_add(self, callback)
+
+    def spy_log_remove(self: LogBufferHandler, callback: Any) -> None:
+        log_removed.append(self)
+        original_log_remove(self, callback)
+
+    monkeypatch.setattr(RingBuffer, "add_observer", spy_ring_add)
+    monkeypatch.setattr(RingBuffer, "remove_observer", spy_ring_remove)
+    monkeypatch.setattr(LogBufferHandler, "add_observer", spy_log_add)
+    monkeypatch.setattr(LogBufferHandler, "remove_observer", spy_log_remove)
+
     client, runtime, device_id = api_with_runtime
     async with client.websocket_connect("/api/diagnostics/live") as socket:
         await _drain_snapshot(socket)
+
+    assert len(ring_added) == 2
+    assert len(log_added) == 1
+    assert len(ring_removed) == 2
+    assert len(log_removed) == 1
+    assert set(ring_added) == set(ring_removed)
+    assert set(log_added) == set(log_removed)
 
     # Nach dem Trennen: neue Eintraege in allen drei Stroemen duerfen nicht
     # gegen eine tote Verbindung anlaufen.

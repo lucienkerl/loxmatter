@@ -572,9 +572,17 @@
               Heartbeat und Full-Resend ausblenden
             </label>
             <label>
+              <!--
+                Kein "Debug" hier (Nachbesserung Task 7, Fix 3f): der Ring
+                haengt serverseitig auf INFO (`install_log_buffer()` setzt
+                sowohl Handler- als auch Loggerstufe, siehe cli.py), DEBUG-
+                Zeilen kommen also nie an. Eine Option, die nie etwas
+                anderes zeigt als "Info", waere ein leeres Versprechen -
+                siehe Entwurf, Abschnitt 7, Punkt 2, fuer den (bislang
+                fehlenden) DEBUG-Schalter, der das aendern wuerde.
+              -->
               Log-Stufe
               <select x-model="logLevel">
-                <option value="DEBUG">Debug</option>
                 <option value="INFO">Info</option>
                 <option value="WARNING">Warnung</option>
                 <option value="ERROR">Fehler</option>
