@@ -432,9 +432,13 @@ dabei ein Reverse-Proxy vorgeschaltet wird: `_client_id` in `api/auth.py`
 liest die Peer-Adresse der Verbindung, und die sähe dann für jeden Aufrufer
 gleich aus — die Adresse des Proxys. Fünf Fehlversuche irgendeines
 Aufrufers sperrten dann JEDEN Betreiber gemeinsam aus, mit einer Anfrage je
-30 Sekunden dauerhaft. Dieser eigene Entwurf muss die `LoginThrottle`
-deshalb auf einen vertrauenswürdig ausgewerteten `X-Forwarded-For`
-umstellen, sonst wird die Drosselung zur globalen Aussperrung.
+30 Sekunden dauerhaft. Dasselbe Ziel erreicht ein Unix-Socket — die übliche
+Begleitung genau dieses Reverse-Proxys — auf kürzerem Weg: dort ist
+`request.client` `None`, und `_client_id` fällt auf den festen Rückgabewert
+`"unbekannt"` zurück, den sich dann ebenfalls alle Aufrufer teilen. Dieser
+eigene Entwurf muss die `LoginThrottle` deshalb auf einen vertrauenswürdig
+ausgewerteten `X-Forwarded-For` umstellen, sonst wird die Drosselung zur
+globalen Aussperrung.
 
 **14.2 Restliche Konfiguration in der Oberfläche.** Miniserver-Adresse,
 matter-server-Adresse, Ports und Datenverzeichnis kommen weiterhin aus
