@@ -19,9 +19,9 @@ ausschliesslich im `Set-Cookie`) oder in einem Log - in keinem Zweig.
 
 from __future__ import annotations
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
-from starlette.concurrency import run_in_threadpool
 
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password, verify_password
 from loxmatter.auth.sessions import (
@@ -45,6 +45,27 @@ class AuthInfoOut(BaseModel):
 
 class StatusOut(BaseModel):
     status: str
+
+
+# Eigener, kleiner Limiter statt `starlette.concurrency.run_in_threadpool`
+# (das anyios Standard-Limiter von 40 gleichzeitigen Threads verwendet und
+# keinen eigenen durchreicht - deshalb hier direkt `anyio.to_thread.run_sync`
+# mit `limiter=`). `hash_password`/`verify_password` rechnen scrypt mit
+# 16 MiB je laufender Berechnung (`auth.passwords`); 4 Faeden sind damit
+# 4 * 16 MiB = 64 MiB als Obergrenze dessen, was ein UNAUTHENTIFIZIERTER
+# Aufrufer allein durch gleichzeitige Anmelde- oder Einrichtungsversuche
+# binden kann - gegenueber 40 * 16 MiB = 640 MiB mit dem Standardwert.
+# Gemessen: RSS-Spitze 476 MiB bei 40 gleichzeitigen Anmeldungen ueber den
+# Standard-Threadpool, gegenueber 28 MiB zuvor (scrypt seriell im
+# Event-Loop, siehe `verify_password`-Aufruf unten). Das Zielgeraet ist ein
+# Raspberry Pi, auf dem laut `deploy/testhost/docker-compose.yml`
+# zusaetzlich `matter-server` und `otbr` denselben Speicher teilen - ein
+# wiederholter Ausschlag dieser Groessenordnung, ausgeloest von aussen ohne
+# jede Anmeldung, ist dort ein realistischer OOM-Ausloeser. Die Obergrenze
+# gilt bewusst unabhaengig von `LoginThrottle`: die bremst nur WIEDERHOLTE
+# Anfragen EINER Adresse, nicht viele GLEICHZEITIGE Anfragen verschiedener
+# Adressen.
+_PASSWORD_HASH_LIMITER = anyio.CapacityLimiter(4)
 
 
 # Der 409-Text von `/auth/setup` unten - eigene Konstante statt inline, weil
@@ -147,11 +168,17 @@ def build_auth_router(store: Store) -> APIRouter:
            tatsaechlichen Schreiben (zwei gleichzeitige ERSTE Einrichtungen),
            kostet im Normalfall aber nichts mehr, weil sie dann gar nicht
            mehr erreicht wird.
-        2. `hash_password` laeuft ueber `run_in_threadpool` - diese Funktion
-           ist `async def`, und `hashlib.scrypt` gibt die Kontrolle nie an
-           den Event-Loop zurueck. Ohne den Threadpool wuerde JEDE gleich-
-           zeitige Anfrage - auch an `/cmd`, `/resync` und jede andere Route
-           dieses Prozesses - fuer die Dauer der Berechnung stillstehen.
+        2. `hash_password` laeuft ueber `anyio.to_thread.run_sync` in einem
+           eigenen, auf 4 begrenzten Thread-Limiter (`_PASSWORD_HASH_LIMITER`
+           oben) - nicht ueber `starlette.concurrency.run_in_threadpool` und
+           dessen anyio-Standardlimiter von 40 Threads, der keinen eigenen
+           Wert durchreicht. `hashlib.scrypt` gibt die Kontrolle nie an den
+           Event-Loop zurueck; ohne einen Thread wuerde JEDE gleichzeitige
+           Anfrage - auch an `/cmd`, `/resync` und jede andere Route dieses
+           Prozesses - fuer die Dauer der Berechnung stillstehen. Der enge
+           Limiter begrenzt zusaetzlich, wieviele dieser 16-MiB-Berechnungen
+           gleichzeitig im Speicher stehen koennen (Review-Fund, 2026-09-03,
+           siehe Kommentar an `_PASSWORD_HASH_LIMITER`).
         3. Dieselbe `LoginThrottle` wie `/auth/login` (unten) begrenzt
            zusaetzlich, wie oft in kurzer Zeit ueberhaupt bis zum Hashen
            vorgedrungen werden kann - der Fall, den Punkt 1 nicht abdeckt:
@@ -166,9 +193,21 @@ def build_auth_router(store: Store) -> APIRouter:
             )
         _require_length(body.password)
         if store.auth.password_hash() is not None:
-            throttle.record_failure(client)
+            # KEIN `record_failure` hier (Review-Fund, 2026-09-03): dieser
+            # Zweig ist seit der billigen Pruefung oben in Punkt 1 kein
+            # Fehlversuch gegen ein Geheimnis, sondern nur noch ein indizier-
+            # tes SELECT - es gibt hier nichts mehr zu schuetzen. Vorher
+            # zaehlte er dennoch mit und teilte sich den Zaehler mit
+            # `/auth/login`: eine Oberflaeche, die faelschlich noch den
+            # Einrichtungsbildschirm zeigt (z. B. weil `/auth-info` beim
+            # Laden fehlschlug), sperrte einen Betreiber, der fuenfmal
+            # "Passwort vergeben" klickt, damit auch aus dem LOGIN aus -
+            # ohne dass er je ein falsches Passwort eingegeben haette. Die
+            # Drosselungs-*Pruefung* oben bleibt unveraendert bestehen.
             raise HTTPException(status_code=409, detail=_ALREADY_SET_UP_DETAIL)
-        hashed = await run_in_threadpool(hash_password, body.password)
+        hashed = await anyio.to_thread.run_sync(
+            hash_password, body.password, limiter=_PASSWORD_HASH_LIMITER
+        )
         if not store.auth.set_password_hash_if_unset(hashed):
             # Der Wettlauf aus Punkt 1 oben: zwischen der Pruefung und
             # diesem Schreiben hat eine andere, gleichzeitige Einrichtung
@@ -200,13 +239,31 @@ def build_auth_router(store: Store) -> APIRouter:
                     "die Ersteinrichtung abschließen."
                 ),
             )
-        # Ueber den Threadpool wie `hash_password` oben in `setup`:
+        # Ueber den Thread-Limiter wie `hash_password` oben in `setup`:
         # `hashlib.scrypt` blockiert den Event-Loop synchron, und diese
         # Route haengt wie `/auth/setup` ohne Waechter (siehe Moduldocstring)
         # - eine Anmeldung darf `/cmd`/`/resync` genauso wenig ausbremsen wie
         # ein Einrichtungsversuch.
-        if not await run_in_threadpool(verify_password, body.password, stored):
-            throttle.record_failure(client)
+        #
+        # Der Fehlversuch wird HIER, VOR dem `await`, optimistisch gebucht -
+        # nicht erst nach dessen Ergebnis. Grund: `anyio.to_thread.run_sync`
+        # gibt an dieser Stelle die Kontrolle an den Event-Loop zurueck, und
+        # in der Zeit koennen beliebig viele gleichzeitige Anfragen DERSELBEN
+        # Adresse ebenfalls an `throttle.retry_after` oben vorbeikommen,
+        # bevor auch nur eine von ihnen den Zaehler erhoeht hat - ein
+        # Pruefen-dann-Handeln-Fenster, das der fruehere synchrone Code nicht
+        # hatte (dort lief der Rumpf gegenueber dem Loop atomar). Gemessen:
+        # 60 gleichzeitige Falschanmeldungen von einer Adresse ergaben ohne
+        # dieses Vorziehen 60 statt der vorgesehenen
+        # `FAILURES_BEFORE_THROTTLING` echten Rateversuche - die Drosselung
+        # liess sich durch reine Parallelitaet vollstaendig umgehen. Bei
+        # Erfolg holt `record_success` den Zaehler sofort wieder herunter,
+        # das sequenzielle Verhalten (fuenf Fehlversuche, danach eine Sperre)
+        # bleibt dadurch unveraendert.
+        throttle.record_failure(client)
+        if not await anyio.to_thread.run_sync(
+            verify_password, body.password, stored, limiter=_PASSWORD_HASH_LIMITER
+        ):
             raise HTTPException(status_code=401, detail="Falsches Passwort.")
         throttle.record_success(client)
         _start_session(response)

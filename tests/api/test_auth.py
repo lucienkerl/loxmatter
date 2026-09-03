@@ -10,6 +10,7 @@ selbst mit. Genau so verhaelt sich auch der Browser.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -133,6 +134,44 @@ async def test_repeated_wrong_passwords_are_throttled(auth_client):
     assert response.status_code == 429
 
 
+async def test_concurrent_wrong_passwords_are_still_throttled(auth_client):
+    """Regressionsfund (Review, 2026-09-03): der `await` in
+    `anyio.to_thread.run_sync` (vormals `run_in_threadpool`) unterbricht den
+    Rumpf von `/auth/login` an einer Stelle, die der fruehere synchrone
+    Code nicht hatte. Bucht die Route den Fehlversuch erst NACH diesem
+    `await`, laufen gleichzeitige Anfragen alle an `throttle.retry_after`
+    vorbei, BEVOR auch nur eine von ihnen den Zaehler erhoeht - die
+    Drosselung liesse sich durch reine Parallelitaet vollstaendig umgehen
+    (nachgemessen vor der Behebung: 60 gleichzeitige Anfragen einer
+    Adresse ergaben 60 statt hoechstens `FAILURES_BEFORE_THROTTLING`
+    echten Rateversuchen). Deutlich mehr Anfragen als
+    `FAILURES_BEFORE_THROTTLING`, damit ein zufaelliges Durchrutschen
+    einzelner Anfragen den Test nicht verdeckt. `asyncio.gather` reicht
+    hier ohne echte Threads: `client.post(...)` erzeugt bei jedem Aufruf
+    unten sofort eine Coroutine, `gather` startet alle nahezu gleichzeitig
+    als eigene Tasks - und der Rumpf von `/auth/login` laeuft bis zum
+    ersten `await` (das `retry_after`-Pruefen eingeschlossen) synchron,
+    ohne dass der Event-Loop dazwischen an eine andere Anfrage abgeben
+    kann."""
+    client, store = auth_client
+    store.auth.set_password_hash(hash_password(PASSWORT))
+
+    attempts = FAILURES_BEFORE_THROTTLING * 4
+    responses = await asyncio.gather(
+        *(
+            client.post("/auth/login", json={"password": "falsch-aber-lang"})
+            for _ in range(attempts)
+        )
+    )
+    statuses = [response.status_code for response in responses]
+
+    # Hoechstens `FAILURES_BEFORE_THROTTLING` echte Pruefungen des
+    # Passworts - alles danach muss die Drosselung mit 429 abfangen, egal
+    # wie viele Anfragen gleichzeitig ankamen.
+    assert statuses.count(401) <= FAILURES_BEFORE_THROTTLING
+    assert statuses.count(429) == attempts - statuses.count(401)
+
+
 async def test_logout_ends_the_session_on_the_server(auth_client):
     """Nicht nur das Cookie loeschen: derselbe Wert darf danach nicht mehr
     gelten, sonst lebt eine gestohlene Kennung weiter."""
@@ -166,18 +205,22 @@ async def test_no_response_ever_contains_the_password_or_its_hash(auth_client):
     assert stored is not None
     responses.append(await client.get("/auth-info"))
 
+    # 409 auf einer laengst eingerichteten Bruecke - deckt den Fehlerzweig
+    # zwar ab, zaehlt aber SEIT DEM FUND ZU 3 UNTEN nicht mehr als
+    # Fehlversuch fuer die Drosselung (es gibt dort nichts mehr zu
+    # schuetzen, siehe Kommentar am 409-Zweig in `api/auth.py`).
     already_set_up = await client.post("/auth/setup", json={"password": "ein-anderes-passwort"})
-    assert already_set_up.status_code == 409  # 1. Fehlversuch fuer die Drosselung unten
+    assert already_set_up.status_code == 409
     responses.append(already_set_up)
 
     wrong = await client.post("/auth/login", json={"password": "falsch-aber-lang"})
-    assert wrong.status_code == 401  # 2. Fehlversuch
+    assert wrong.status_code == 401  # 1. (und einziger bisheriger) Fehlversuch
     responses.append(wrong)
 
-    # /auth/setup und /auth/login teilen sich dieselbe LoginThrottle (Fund A,
-    # Schritt 3) - zwei Fehlversuche stehen aus den beiden Anfragen oben
-    # bereits zu Buche, hier folgen die restlichen bis zur Drosselung.
-    for _ in range(FAILURES_BEFORE_THROTTLING - 2):
+    # /auth/setup und /auth/login teilen sich dieselbe LoginThrottle - ein
+    # Fehlversuch steht aus der Anfrage oben bereits zu Buche, hier folgen
+    # die restlichen bis zur Drosselung.
+    for _ in range(FAILURES_BEFORE_THROTTLING - 1):
         responses.append(await client.post("/auth/login", json={"password": "falsch-aber-lang"}))
 
     throttled = await client.post("/auth/login", json={"password": PASSWORT})
