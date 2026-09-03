@@ -427,7 +427,14 @@ Das ist keine Verschlechterung — der `Authorization`-Header tut das heute
 schon —, aber ein Passwort wird von Menschen wiederverwendet, ein
 dienstspezifisches Token nicht. Die Dokumentation muss deshalb ausdrücklich
 zu einem Passwort raten, das nirgends sonst benutzt wird. TLS (Zertifikat,
-Reverse-Proxy, `Secure`-Flag am Cookie) ist ein eigener Entwurf.
+Reverse-Proxy, `Secure`-Flag am Cookie) ist ein eigener Entwurf. Sobald
+dabei ein Reverse-Proxy vorgeschaltet wird: `_client_id` in `api/auth.py`
+liest die Peer-Adresse der Verbindung, und die sähe dann für jeden Aufrufer
+gleich aus — die Adresse des Proxys. Fünf Fehlversuche irgendeines
+Aufrufers sperrten dann JEDEN Betreiber gemeinsam aus, mit einer Anfrage je
+30 Sekunden dauerhaft. Dieser eigene Entwurf muss die `LoginThrottle`
+deshalb auf einen vertrauenswürdig ausgewerteten `X-Forwarded-For`
+umstellen, sonst wird die Drosselung zur globalen Aussperrung.
 
 **14.2 Restliche Konfiguration in der Oberfläche.** Miniserver-Adresse,
 matter-server-Adresse, Ports und Datenverzeichnis kommen weiterhin aus
