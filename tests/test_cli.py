@@ -10,6 +10,7 @@ from matter_server.client.exceptions import CannotConnect
 from typer.testing import CliRunner
 
 from loxmatter import cli
+from loxmatter.auth.passwords import hash_password, verify_password
 from loxmatter.cli import app, render_report
 from loxmatter.matter import client as matter_client
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
@@ -554,3 +555,45 @@ def test_silent_keys_report_distinguishes_nothing_to_check_from_all_seen():
     some_silent = cli._silent_keys_report("VIU_x.xml", announced={"a", "b"}, silent=["b"])
     assert "1 Signale aus VIU_x.xml nie gesehen" in some_silent
     assert "  b" in some_silent
+
+
+def test_set_password_writes_a_hash_and_clears_sessions(tmp_path):
+    """Der Notausgang aus Spec 9: ein headless aufgesetzter Dienst mit
+    vergessenem Passwort waere sonst endgueltig verloren."""
+    path = tmp_path / "t.sqlite"
+    store = Store(path)
+    store.auth.set_password_hash(hash_password("altes-passwort"))
+    store.auth.create_session("alte-sitzung", created_at=1, expires_at=2**31)
+    store.close()
+
+    result = CliRunner().invoke(
+        app, ["set-password", "--store-path", str(path)], input="neues-passwort\nneues-passwort\n"
+    )
+    assert result.exit_code == 0
+
+    store = Store(path)
+    try:
+        stored = store.auth.password_hash()
+        assert stored is not None
+        assert verify_password("neues-passwort", stored) is True
+        # Wer das Passwort zuruecksetzt, will nicht, dass eine alte Sitzung
+        # weiterlaeuft.
+        assert store.auth.session_expires_at("alte-sitzung") is None
+    finally:
+        store.close()
+    # Das Passwort selbst darf in keiner Ausgabe stehen.
+    assert "neues-passwort" not in result.output
+
+
+def test_set_password_rejects_a_short_password(tmp_path):
+    path = tmp_path / "t.sqlite"
+    Store(path).close()
+    result = CliRunner().invoke(
+        app, ["set-password", "--store-path", str(path)], input="kurz\nkurz\n"
+    )
+    assert result.exit_code != 0
+    store = Store(path)
+    try:
+        assert store.auth.password_hash() is None
+    finally:
+        store.close()

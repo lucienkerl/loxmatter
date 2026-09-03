@@ -15,6 +15,7 @@ import typer
 import uvicorn
 from matter_server.client.exceptions import CannotConnect
 
+from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
 from loxmatter.commands.translate import MatterCall
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
 from loxmatter.export.commands import extract_commands
@@ -582,6 +583,38 @@ async def _run(
                 "Verbindung zu matter-server konnte beim Beenden nicht sauber getrennt werden"
             )
         store.close()
+
+
+@app.command()
+def set_password(
+    store_path: Path | None = typer.Option(  # noqa: B008
+        None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
+    ),
+) -> None:
+    """Setzt das Passwort der Oberfläche neu — der Notausgang für den Fall,
+    dass es vergessen wurde.
+
+    Ohne diesen Befehl wäre eine headless aufgesetzte Installation mit
+    vergessenem Passwort endgültig verloren: die Ersteinrichtung ist nach
+    der ersten Passwortvergabe dauerhaft geschlossen (409), und einen
+    zweiten Weg hinein gibt es nicht. Wer diesen Befehl ausführen kann, hat
+    Zugriff auf die Datenbankdatei selbst — der Befehl macht daraus nur
+    einen benutzbaren Weg statt eines Bastelns am SQLite.
+
+    Meldet dabei alle offenen Sitzungen ab: wer das Passwort zurücksetzt,
+    will nicht, dass eine alte Sitzung weiterläuft.
+    """
+    password = typer.prompt("Neues Passwort", hide_input=True, confirmation_prompt=True)
+    if len(password) < MIN_PASSWORD_LENGTH:
+        _fail(f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben.")
+    store = Store(_resolve_store_path(store_path))
+    try:
+        store.auth.set_password_hash(hash_password(password))
+        store.auth.delete_all_sessions()
+    finally:
+        store.close()
+    # Bewusst ohne das Passwort in der Ausgabe - auch nicht verkuerzt.
+    typer.echo("Passwort gesetzt. Alle offenen Sitzungen wurden abgemeldet.")
 
 
 @app.command(name="fake-miniserver")
