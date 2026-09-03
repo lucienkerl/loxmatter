@@ -107,6 +107,32 @@ async def test_download_returns_a_zip_with_both_templates(api):
     assert any(n.startswith(f"VO_d{device_id}_") for n in names)
 
 
+async def test_download_skips_the_vo_file_for_a_device_without_commands(
+    tmp_path, no_invoke, fake_runtime
+):
+    """Ein Taster hat keine Ausgangsbefehle - ohne diese Ausnahme waere die
+    VO_-Datei nur ihr leeres Grundgeruest, und ein Import in Loxone Config
+    braechte nichts ausser einer leeren Vorlage im Baum (dieselbe Regel wie
+    in `tests/test_export_cli.py::test_button_gets_no_output_commands`)."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+
+    app = build_app(store, no_invoke, fake_runtime(store))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    store.close()
+
+    assert response.status_code == 200
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    assert any(n.startswith(f"VIU_d{device_id}_") for n in names)
+    assert not any(n.startswith(f"VO_d{device_id}_") for n in names)
+
+
 async def test_zip_contains_the_system_templates_and_a_readme(api):
     client, _, _ = api
     response = await client.get("/api/export/download?bridge_ip=192.168.1.50&system=true")

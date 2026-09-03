@@ -313,10 +313,16 @@ def build_export_router(store: Store) -> APIRouter:
                     filename_for("VIU", device.id, device.label),
                     render_virtual_in_udp(device.label, bridge_ip, port, inputs),
                 )
-                archive.writestr(
-                    filename_for("VO", device.id, device.label),
-                    render_virtual_out(device.label, f"http://{bridge_ip}:{listen}", commands),
-                )
+                # Ohne Ausgangsbefehle waere die VO-Vorlage leer bis auf ihr
+                # Grundgeruest - ein Import in Loxone Config braechte nichts
+                # ausser eine leere Vorlage im Baum. Das Online-Signal macht
+                # die VIU-Vorlage dagegen nie leer (siehe `to_inputs`), sie
+                # entsteht deshalb immer.
+                if commands:
+                    archive.writestr(
+                        filename_for("VO", device.id, device.label),
+                        render_virtual_out(device.label, f"http://{bridge_ip}:{listen}", commands),
+                    )
                 exported_device_ids.append(device.id)
 
             archive.writestr(_README_NAME, _README_TEXT)

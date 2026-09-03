@@ -160,8 +160,10 @@ def test_listen_option_reaches_the_command_url(tmp_path):
 
 
 def test_button_gets_no_output_commands(tmp_path):
-    """Ein Taster ist ein Eingabegeraet - die VO_-Datei bleibt leer."""
-    CliRunner().invoke(
+    """Ein Taster ist ein Eingabegeraet - ohne Ausgangsbefehle entsteht gar
+    keine VO_-Datei. Vorher wurde eine leere Vorlage geschrieben; die haette
+    man in Loxone Config importiert, ohne dass sie irgendetwas enthielte."""
+    result = CliRunner().invoke(
         app,
         [
             "export",
@@ -173,8 +175,11 @@ def test_button_gets_no_output_commands(tmp_path):
             str(tmp_path),
         ],
     )
-    text = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
-    assert text.count("<VirtualOutCmd ") == 0
+    assert result.exit_code == 0
+    written = sorted(p.name for p in tmp_path.glob("*.xml"))
+    assert any(n.startswith("VIU_") for n in written)
+    assert not any(n.startswith("VO_") for n in written)
+    assert "übersprungen" in result.stdout
 
 
 def test_export_reports_what_it_skipped(tmp_path):

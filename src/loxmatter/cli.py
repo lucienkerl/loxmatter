@@ -356,13 +356,18 @@ def export(
         viu.write_bytes(render_virtual_in_udp(label, bridge_ip, port, inputs))
     except OSError as exc:
         _fail(f"{viu} konnte nicht geschrieben werden: {exc}. Es wurde noch keine Datei angelegt.")
-    try:
-        vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:{listen}", commands))
-    except OSError as exc:
-        _fail(
-            f"{vo} konnte nicht geschrieben werden: {exc}. "
-            f"Geschrieben wurde bereits {viu}, es fehlt {vo.name}."
-        )
+    # Ohne Ausgangsbefehle waere die VO-Vorlage leer bis auf ihr Grundgeruest -
+    # ein Import in Loxone Config braechte nichts ausser eine leere Vorlage im
+    # Baum. Das Online-Signal macht die VIU-Vorlage dagegen nie leer (siehe
+    # `to_inputs`), sie entsteht deshalb immer.
+    if commands:
+        try:
+            vo.write_bytes(render_virtual_out(label, f"http://{bridge_ip}:{listen}", commands))
+        except OSError as exc:
+            _fail(
+                f"{vo} konnte nicht geschrieben werden: {exc}. "
+                f"Geschrieben wurde bereits {viu}, es fehlt {vo.name}."
+            )
 
     # Text zaehlt mit: der virtuelle Texteingang ist ein eigener Vorlagentyp
     # und kommt in einer spaeteren Ausbaustufe (Spec 6.6). Die Entscheidung
@@ -382,7 +387,10 @@ def export(
     # 104 unerwaehnt.
     hidden_count = sum(1 for s in stored if not s.functional)
     typer.echo(f"{viu.name}: {len(inputs)} Eingänge")
-    typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
+    if commands:
+        typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
+    else:
+        typer.echo(f"{vo.name}: übersprungen (keine Ausgangsbefehle, leere Vorlage)")
     typer.echo(f"{skipped} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)")
     typer.echo(
         f"{hidden_count} Signale als Experte zurückgehalten "
