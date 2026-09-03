@@ -235,13 +235,28 @@ def lookup(ref: SignalRef, value: object) -> Profile:
 # steht bewusst nicht bei den uebrigen physikalischen Groessen mit 1 Dezimale:
 # von mW nach kW sind sechs Groessenordnungen, und mit <v.3> verschwindet ein
 # 300-mW-Standby-Verbraucher als 0.000 auf der Oberflaeche.
+# Loxone nimmt im Formatstring hoechstens DREI Nachkommastellen an; `<v.4>`
+# und mehr funktioniert nicht (am Miniserver geprueft, 2026-09-03). Diese
+# Grenze ist der Grund, warum `unit_format` unten deckelt.
+MAX_LOXONE_DECIMALS = 3
+
 _UNIT_DECIMALS: dict[str, int] = {
-    "kW": 6,
-    "kWh": 6,
+    # Leistung und Energie standen hier auf 6, weil von mW nach kW sechs
+    # Groessenordnungen liegen und ein 300-mW-Standby-Verbraucher mit drei
+    # Stellen als 0.000 verschwindet. Loxone nimmt sechs aber nicht an, und
+    # ein nicht angenommener Formatstring ist schlimmer als eine grobe
+    # Anzeige. Der WERT bleibt davon unberuehrt - der Formatstring bestimmt
+    # nur die Darstellung, Bausteine und Statistik rechnen mit der vollen
+    # Zahl. Sichtbar verloren geht damit nur, was unter einem Watt liegt.
+    "kW": MAX_LOXONE_DECIMALS,
+    "kWh": MAX_LOXONE_DECIMALS,
     "°C": 1,
     "%": 1,
     "V": 1,
     "A": 1,
+    # Farbton in Grad und Farbtemperatur in Mired sind ganzzahlig sinnvoll.
+    "°": 0,
+    "mired": 0,
 }
 
 # Loxone schreibt vor Prozent keine Leerstelle (`<v>%`), vor jeder anderen
@@ -255,6 +270,10 @@ def unit_format(unit: str) -> str:
     decimals = _UNIT_DECIMALS.get(unit)
     if decimals is None:
         return ""
+    # Gedeckelt statt nur in der Tabelle richtig gehalten: ein Eintrag mit
+    # mehr Stellen waere sonst ein Formatstring, den der Miniserver nicht
+    # annimmt - und das faellt erst beim Import auf, nicht hier.
+    decimals = min(decimals, MAX_LOXONE_DECIMALS)
     separator = "" if unit in _UNITS_WITHOUT_LEADING_SPACE else " "
     return f"<v.{decimals}>{separator}{unit}"
 

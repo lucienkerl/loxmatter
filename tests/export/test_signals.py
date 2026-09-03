@@ -112,12 +112,15 @@ def test_unit_no_longer_lands_in_the_comment():
     assert power.unit_format
 
 
-def test_power_unit_gets_the_widened_six_decimal_format():
-    """Spec 7.3: mit dem sonst ueblichen <v.3> zeigt ein 300-mW-Standby-
-    Verbraucher 0.000 an — deshalb <v.6> fuer Leistung."""
+def test_power_unit_uses_the_finest_format_loxone_accepts():
+    """Frueher <v.6>, weil ein 300-mW-Standby-Verbraucher mit drei Stellen
+    als 0.000 verschwindet (Spec 7.3). Der Miniserver nimmt aber hoechstens
+    drei an — am Geraet geprueft am 2026-09-03 —, und ein abgelehnter
+    Formatstring waere schlimmer als eine grobe Anzeige. Betroffen ist nur
+    die Darstellung, nicht der Wert, mit dem Loxone rechnet."""
     inputs = to_inputs([signal("d1_1_power", unit="kW")], 1, "Steckdose")
     power = next(i for i in inputs if i.key == "d1_1_power")
-    assert power.unit_format == "<v.6> kW"
+    assert power.unit_format == "<v.3> kW"
 
 
 def test_empty_signal_list_still_yields_the_online_input():

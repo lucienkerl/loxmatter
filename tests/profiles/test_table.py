@@ -18,6 +18,8 @@ import pytest
 
 from loxmatter.matter.models import SignalKind, SignalRef
 from loxmatter.profiles.table import (
+    _UNIT_DECIMALS,
+    MAX_LOXONE_DECIMALS,
     Exportability,
     classify,
     is_exportable,
@@ -91,10 +93,22 @@ def test_events_are_digital_regardless_of_value():
     assert lookup(ref, None).exportability is Exportability.DIGITAL
 
 
-def test_unit_format_widens_power_to_six_decimals():
-    """Spec 7.3: mit <v.3> zeigt ein 300-mW-Standby-Verbraucher 0.000 an."""
-    assert unit_format("kW") == "<v.6> kW"
-    assert unit_format("kWh") == "<v.6> kWh"
+def test_power_gets_the_finest_resolution_loxone_accepts():
+    """Frueher forderte dieser Test `<v.6>`, mit gutem Grund: von mW nach kW
+    liegen sechs Groessenordnungen, und mit drei Stellen verschwindet ein
+    300-mW-Standby-Verbraucher als 0.000 (Spec 7.3).
+
+    Der Miniserver nimmt sechs Stellen aber nicht an - am Geraet geprueft am
+    2026-09-03. Drei ist damit nicht die gewuenschte, sondern die
+    erreichbare Aufloesung, und ein Formatstring, den der Miniserver
+    ablehnt, waere schlimmer als eine grobe Anzeige.
+
+    Verloren geht dabei nur die DARSTELLUNG unterhalb eines Watts: der
+    Formatstring beschreibt, wie Loxone die Zahl zeigt, nicht welche Zahl
+    ankommt. Bausteine und Statistik rechnen weiter mit dem vollen Wert.
+    """
+    assert unit_format("kW") == "<v.3> kW"
+    assert unit_format("kWh") == "<v.3> kWh"
 
 
 def test_unit_format_uses_one_decimal_for_the_common_units():
@@ -240,3 +254,19 @@ def test_a_cluster_without_a_field_entry_still_sees_the_whole_value():
     Eine unbekannte Struktur bleibt unbekannt."""
     ref = SignalRef(1, 4711, 0, SignalKind.ATTRIBUTE)
     assert lookup(ref, {"0": 5}).exportability is Exportability.NONE
+
+
+def test_no_unit_format_exceeds_what_loxone_accepts():
+    """Der Miniserver nimmt hoechstens drei Nachkommastellen an; `<v.4>` und
+    mehr funktioniert nicht (am Geraet geprueft, 2026-09-03).
+
+    Die Pruefung laeuft ueber ALLE Eintraege der Tabelle, nicht ueber eine
+    Auswahl: der Fehler entstand dadurch, dass jemand - zu Recht - mehr
+    Stellen fuer die Leistung wollte und niemand die Grenze kannte. Ein
+    Formatstring, den der Miniserver ablehnt, faellt sonst erst beim Import
+    auf, also beim Anwender.
+    """
+    for unit in _UNIT_DECIMALS:
+        rendered = unit_format(unit)
+        decimals = int(rendered.split("<v.")[1].split(">")[0])
+        assert decimals <= MAX_LOXONE_DECIMALS, f"{unit!r} ergibt {rendered!r}"
