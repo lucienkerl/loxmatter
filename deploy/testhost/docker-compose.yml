@@ -37,6 +37,22 @@ services:
       NAT64: "0"
       FIREWALL: "0"
     command: --backbone-interface ${BACKBONE_IF}
+    # Ohne diese Grenze startet OTBR nicht (2026-09-03, an einem Pi 4
+    # gemessen). Der Docker-Daemon reicht hier ein `nofile` von
+    # 1_073_741_816 in den Container; `start-stop-daemon`, mit dem das
+    # init-Skript des Images `otbr-agent` startet, schliesst vor dem `exec`
+    # JEDEN Deskriptor von 3 bis zu dieser Grenze einzeln. Das sind ueber
+    # eine Milliarde Systemaufrufe: der Prozess dreht mit 100 % CPU und
+    # kommt praktisch nie zum eigentlichen Agenten. Sichtbar wird das als
+    # "ot-ctl: connect session failed" und einem Container, der laeuft, ohne
+    # dass ein Thread-Netz entsteht.
+    #
+    # Der Fehler traf dieses Projekt schon einmal nach einem Neustart des
+    # Pi und wurde damals von Hand umgangen, ohne die Ursache zu kennen.
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 4096
     volumes:
       # Der Thread-Zustand ueberlebt sonst KEINEN Neubau des Containers
       # (2026-09-03). Das Image sieht dafuer kein Volume vor, und OTBR legt
