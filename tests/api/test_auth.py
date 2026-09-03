@@ -193,12 +193,16 @@ async def test_concurrent_setup_attempts_are_still_throttled(auth_client, monkey
     verlassen."""
     client, _ = auth_client
 
-    calls = 0
+    # Eine Liste und kein Zaehler: `hash_password` laeuft seit dem
+    # `CapacityLimiter` in bis zu vier Worker-Threads gleichzeitig, und
+    # `int += 1` ist in CPython nicht atomar - ein verlorener Zaehlschritt
+    # ergaebe ein sporadisch rotes `4 == 5` in der CI. `list.append` ist
+    # atomar und hat dieses Fenster nicht.
+    calls: list[None] = []
     original_hash_password = hash_password
 
     def counting_hash_password(password: str) -> str:
-        nonlocal calls
-        calls += 1
+        calls.append(None)
         return original_hash_password(password)
 
     monkeypatch.setattr("loxmatter.api.auth.hash_password", counting_hash_password)
@@ -211,7 +215,7 @@ async def test_concurrent_setup_attempts_are_still_throttled(auth_client, monkey
     # Genau `FAILURES_BEFORE_THROTTLING` Versuche drangen bis zum Hashen vor -
     # derselbe deterministische Grund wie beim Login: der Rumpf von
     # `/auth/setup` laeuft bis zur Buchung synchron.
-    assert calls == FAILURES_BEFORE_THROTTLING
+    assert len(calls) == FAILURES_BEFORE_THROTTLING
     assert [response.status_code for response in responses].count(200) == 1
 
 
