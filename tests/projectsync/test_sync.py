@@ -91,3 +91,20 @@ def test_run_sync_raises_project_format_error_for_garbage(tmp_path):
     with pytest.raises(ProjectFormatError):
         run_sync(b"nicht xml", store, bridge_ip="10.0.0.5", port=7000, listen=8080)
     store.close()
+
+
+def test_run_sync_raises_project_format_error_for_non_utf8_upload(tmp_path):
+    """Wer eine falsche Datei hochlaedt (Bild, ZIP, UTF-16-Export), bekommt
+    beim Dekodieren einen `UnicodeDecodeError` - der ist keine
+    `ProjectFormatError` und schlug bis in den Endpunkt als HTTP 500 durch.
+    Erwartet ist die uebliche klare Meldung (Entwurf Abschnitt 8)."""
+    import pytest
+
+    from loxmatter.projectsync.index import ProjectFormatError
+
+    store = _plug_store(tmp_path)
+    # UTF-16-kodiertes "<ControlList/>" - gueltiger Text, nur eben nicht UTF-8.
+    utf16 = "<ControlList/>".encode("utf-16")
+    with pytest.raises(ProjectFormatError, match="UTF-8"):
+        run_sync(utf16, store, bridge_ip="10.0.0.5", port=7000, listen=8080)
+    store.close()

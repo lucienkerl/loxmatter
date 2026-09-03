@@ -60,6 +60,22 @@ def test_parse_root_raises_on_missing_control_list():
         parse_root("<NotAProject/>")
 
 
+def test_unterminated_attribute_value_raises_project_format_error():
+    """Ein abgeschnittenes Tag (Anfuehrungszeichen nie geschlossen, Datei
+    danach zu Ende) liess die Zeichenschleife in `_find_tag_close` bislang
+    ueber das Textende hinauslaufen und einen nackten `IndexError` werfen -
+    der bis in den Upload-Endpunkt als HTTP 500 durchschlug. Erwartet ist
+    stattdessen eine klare Meldung (Entwurf Abschnitt 8: "klare
+    Fehlermeldung, kein Absturz")."""
+    import pytest
+
+    from loxmatter.projectsync.scan import ProjectFormatError
+
+    truncated = '<C Type="VirtualUdpIn" Title="abgeschnitten'
+    with pytest.raises(ProjectFormatError):
+        scan_children(truncated, 0, len(truncated))
+
+
 def test_scan_children_handles_unescaped_gt_in_attribute_value():
     # XML erlaubt ein woertliches '>' in einem Attributwert, ohne dass es als
     # `&gt;` escaped werden muss (nur '<', '&' und das Anfuehrungszeichen

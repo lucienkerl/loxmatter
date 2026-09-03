@@ -83,16 +83,24 @@ def _find_tag_close(text: str, start: int) -> int:
     (anders als '<', '&' und das Anfuehrungszeichen selbst), ein Wert wie
     `Title="Temp > 20"` ist gueltiges, unescaped XML. Ein '"' schaltet die
     Erkennung um - ein woertliches Anfuehrungszeichen INNERHALB eines Werts
-    waere selbst escaped (`&quot;`), zaehlt hier also nicht als Umschalter."""
+    waere selbst escaped (`&quot;`), zaehlt hier also nicht als Umschalter.
+
+    Laeuft die Suche ueber das Textende hinaus (abgeschnittene Datei, nie
+    geschlossenes Anfuehrungszeichen), ist das ein Formatfehler der
+    hochgeladenen Datei - kein nackter `IndexError`, der als HTTP 500 beim
+    Anwender ankaeme (Entwurf Abschnitt 8)."""
     in_quotes = False
     pos = start
-    while True:
+    while pos < len(text):
         char = text[pos]
         if char == '"':
             in_quotes = not in_quotes
         elif char == ">" and not in_quotes:
             return pos
         pos += 1
+    raise ProjectFormatError(
+        "Unerwartetes Dateiende: ein Attribut oder Tag wurde nicht abgeschlossen."
+    )
 
 
 def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:

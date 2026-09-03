@@ -45,7 +45,16 @@ class ProjectSyncResult:
 def run_sync(
     raw: bytes, store: Store, *, bridge_ip: str, port: int, listen: int
 ) -> ProjectSyncResult:
-    text = raw.decode("utf-8-sig")
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        # Eine falsche Datei (Bild, ZIP, UTF-16-Export) darf hier keinen
+        # nackten UnicodeDecodeError liefern - der waere im Endpunkt eine
+        # HTTP 500 statt einer verstaendlichen Meldung (Entwurf Abschnitt 8).
+        raise ProjectFormatError(
+            "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine "
+            "Loxone-Projektdatei wird als UTF-8 gespeichert."
+        ) from exc
     index = build_index(text)
     devices = store.devices()
     signals_by_device: dict[int, Sequence[StoredSignal]] = {
