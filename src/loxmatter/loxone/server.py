@@ -139,6 +139,7 @@ from loxmatter.api.diagnostics import (
 from loxmatter.api.diagnostics_live import build_diagnostics_live_router
 from loxmatter.api.export import build_export_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
+from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.settings import build_settings_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
@@ -438,15 +439,16 @@ def build_app(
             )
         return response
 
-    # `dependencies=api_guard` auf jedem der sechs `/api`-Router (Task 8,
-    # Phase 5, siehe `build_api_guard` oben; sechster seit dem Live-Feed,
-    # `build_diagnostics_live_router`): das schuetzt ausnahmslos jede Route
-    # dieser sechs Router, inklusive der WebSocket-Routen `/api/live` und
-    # `/api/diagnostics/live` - und ausdruecklich NICHT `/cmd`, `/resync`,
-    # `/health`, `/` und `/static`, die weiter unten ohne `dependencies`
-    # eingehaengt werden.
+    # `dependencies=api_guard` auf jedem der sieben `/api`-Router (Task 8,
+    # Phase 5, siehe `build_api_guard` oben; siebter seit `POST
+    # /api/export/project-sync`, Task 11, Phase 6): das schuetzt ausnahmslos
+    # jede Route dieser sieben Router, inklusive der WebSocket-Routen
+    # `/api/live` und `/api/diagnostics/live` - und ausdruecklich NICHT
+    # `/cmd`, `/resync`, `/health`, `/` und `/static`, die weiter unten ohne
+    # `dependencies` eingehaengt werden.
     app.include_router(build_device_router(store, client, runtime), dependencies=api_guard)
     app.include_router(build_export_router(store), dependencies=api_guard)
+    app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
     # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
