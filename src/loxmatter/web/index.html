@@ -544,11 +544,73 @@
           </ul>
         </div>
 
+        <!--
+          Live-Diagnose (Aufgabe 6, Spec 10.5): EIN WebSocket
+          (`/api/diagnostics/live`, geoeffnet/geschlossen in `selectView`,
+          app.js) fuellt die drei Straeme darunter laufend statt wie bisher
+          einmalig per GET. Diese eine Karte traegt die vier Bedienelemente
+          fuer alle drei Bereiche - kein eigenes Set je Bereich, es gibt nur
+          eine Verbindung und einen Pausenzustand fuer alle drei.
+        -->
+        <div class="card">
+          <div class="row">
+            <h2 style="margin: 0">Live-Diagnose</h2>
+            <span class="connection-status">
+              <span class="dot" :class="diagnosticsConnected ? 'online' : 'offline'"></span>
+              <span
+                x-text="diagnosticsConnected ? 'Live-Verbindung aktiv' : 'Verbindung getrennt – verbinde neu…'"
+              ></span>
+            </span>
+          </div>
+          <div class="row">
+            <button
+              @click="diagnosticsPaused = !diagnosticsPaused"
+              x-text="diagnosticsPaused ? 'Fortsetzen' : 'Pausieren'"
+            ></button>
+            <label>
+              <input type="checkbox" x-model="hideNoise" />
+              Heartbeat und Full-Resend ausblenden
+            </label>
+            <label>
+              Log-Stufe
+              <select x-model="logLevel">
+                <option value="DEBUG">Debug</option>
+                <option value="INFO">Info</option>
+                <option value="WARNING">Warnung</option>
+                <option value="ERROR">Fehler</option>
+                <option value="CRITICAL">Kritisch</option>
+              </select>
+            </label>
+            <button @click="clearDiagnosticsBuffers()">Leeren</button>
+          </div>
+          <p class="hint">
+            „Pausieren“ haelt nur das Anhaengen neuer Zeilen an, nicht die Verbindung selbst –
+            waehrend der Pause eintreffende Zeilen werden nicht nachgeholt, wie bei einem
+            angehaltenen <span class="key">tail -f</span>. „Leeren“ wirkt nur auf diese Seite,
+            nicht auf die Ringe der Brücke.
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Logs</h2>
+          <p class="hint">Protokollzeilen der Brücke, laufend – älteste oben, jüngste unten.</p>
+          <div class="log-list">
+            <template x-for="(entry, index) in visibleDiagnosticsLogs()" :key="index">
+              <div
+                class="entry"
+                x-text="entry.timestamp + '  [' + entry.level + '] ' + entry.logger + ': ' + entry.message"
+              ></div>
+            </template>
+          </div>
+        </div>
+
         <div class="card">
           <h2>UDP-Mitschnitt</h2>
-          <p class="hint">Tatsächlich über den Draht geschickte Datagramme, jüngste zuletzt.</p>
+          <p class="hint">
+            Tatsächlich über den Draht geschickte Datagramme, laufend – jüngste zuletzt.
+          </p>
           <div class="log-list">
-            <template x-for="(entry, index) in datagrams" :key="index">
+            <template x-for="(entry, index) in visibleDatagrams()" :key="index">
               <div
                 class="entry"
                 x-text="entry.timestamp + '  ' + entry.key + ' = ' + entry.value"
@@ -559,7 +621,7 @@
 
         <div class="card">
           <h2>Kommando-Log</h2>
-          <p class="hint">Eingehende HTTP-Aufrufe mit ihrem Ergebnis.</p>
+          <p class="hint">Eingehende HTTP-Aufrufe mit ihrem Ergebnis, laufend.</p>
           <div class="log-list">
             <template x-for="(entry, index) in commandLog" :key="index">
               <div
