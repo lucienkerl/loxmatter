@@ -51,14 +51,22 @@ Projekts überhaupt.
 | Begriff | Frage | heute |
 |---|---|---|
 | `Exportability` | Lässt sich der Wert überhaupt auf einen UDP-Eingang abbilden? | vorhanden |
-| **`Relevance`** | Will ein Anwender ihn standardmäßig? | **neu** |
+| **Relevanz** | Will ein Anwender ihn standardmäßig? | **neu** |
 
 Ein Thread-Funkzähler ist exportierbar, aber nicht relevant. Eine Struktur
 ohne benanntes Element ist nicht exportierbar, egal wie relevant sie wäre.
 Die beiden zu vermischen wäre der Fehler, den später niemand mehr
 auseinanderklamüsert.
 
-`Relevance` entscheidet nur über den **Vorgabewert** der bereits
+**Korrektur (Abschlussreview, Nachbesserung Kleinigkeit 9):** anders als
+`Exportability` (ein echter Typ, `profiles.table.Exportability`) ist
+„Relevanz" hier ein Prosa-Begriff, kein Bezeichner - im Code heißt die
+Funktion `profiles.relevance.is_functional`, die Spalte
+`StoredSignal.functional`. Eine frühere Fassung dieses Abschnitts schrieb
+„Relevance" in Code-Formatierung, wie einen Typnamen, den es so nicht
+gibt.
+
+Relevanz entscheidet nur über den **Vorgabewert** der bereits
 existierenden Spalte `exported`. Die Mechanik — pro Signal umschaltbar über
 `PATCH /api/signals/{key}`, ausgewertet in `export.signals.to_inputs` —
 bleibt, wie sie ist.
@@ -219,10 +227,28 @@ Einheit, Exportierbarkeit und den Vorgabewert von `exported` neu ab. Aufgabe
 8 (Phase 6, außerhalb des ursprünglichen Zuschnitts dieses Entwurfs, aber
 dieselbe Frage) fügt Schema **v4** hinzu (`_migrate_to_v4`): eine eigene
 Spalte `signal.functional`, rückwirkend aus derselben Ersatzregel befüllt
-(siehe unten) — getrennt von `exported`, weil `exported` seit dem ersten
+(siehe unten) — getrennt von `exported`, weil `exported` ab dem ersten
 Bekanntsein eines Signals dem Nutzer gehört (ein manuell umgelegter Haken
-bleibt umgelegt), während `is_functional` eine reine Eigenschaft des
-Gerätetyps ist.
+bleibt bei jedem *weiteren* Neu-Einlesen umgelegt: `register_signals`/
+`set_exported` fassen ein einmal bekanntes `exported` nicht mehr an),
+während `is_functional` eine reine Eigenschaft des Gerätetyps ist.
+
+**Korrektur (Abschlussreview, Nachbesserung Fix 2):** Der Absatz oben
+beschreibt die Regel für den laufenden Betrieb korrekt, aber nicht für
+dieses eine Update selbst. `_migrate_to_v3` schreibt `exported` für **jede**
+Bestandszeile einmalig neu, unabhängig davon, ob ein Nutzer sie zuvor von
+Hand umgelegt hat — das Schema kennt keine Spalte, die „automatischer
+Vorgabewert" von „bewusste Nutzerentscheidung" unterscheidet, und kann diese
+Unterscheidung deshalb bei DIESEM Update nicht einhalten. Wer vor diesem
+Update z. B. zwölf Thread-Zähler von Hand freigeschaltet oder ein Signal
+umbenannt hat, verliert das beim ersten Start dieser Fassung, ohne Warnung.
+Entwarnung, so weit sie reicht: der Laufzeitpfad (`loxone.runtime`) filtert
+beim Senden nicht auf `exported` — eine bestehende UDP-Verdrahtung stirbt
+dadurch nicht. Betroffen ist erst eine NEU erzeugte Loxone-Vorlage nach
+diesem Update. Details: `_migrate_to_v3`-Docstring in
+`src/loxmatter/model/store.py`, Abschnitt „Was diese Migration sonst NICHT
+kann"; der Hinweis fürs Betreiber-Publikum steht im Haupt-README unter
+„Was eine exportierte Vorlage standardmäßig enthält".
 
 **Der Schlüssel bleibt unangetastet.** Ein Taster, der vor dem Update
 eingelernt wurde, behält `d2_0_c47_a12` und heißt ab dann „battery" in
@@ -265,11 +291,6 @@ kein erfundener Wert, nur die erzeugte Vorlage bekommt einen Eingang zu viel.
 Details und die Abwägung, warum die Ausnahme trotzdem bleibt:
 `_migrate_to_v3`-Docstring, Abschnitt „Zwei offene Grenzen dieser Ausnahme".
 
-Die Migration hält je Gerät fest, wie viele Eingänge wegfallen. Die
-Oberfläche zeigt das vor dem nächsten Export, mit dem Hinweis, dass die
-entsprechenden Objekte in Loxone verwaisen — dieselbe Warnung wie beim
-Entfernen eines Geräts.
-
 Bewusst rückwirkend statt nur für Neugeräte: zwei Regelsätze nebeneinander —
 alte Geräte so, neue anders — wären auf Dauer niemandem zu erklären, und der
 Unterschied hinge am Einlerndatum, das niemand im Kopf hat.
@@ -288,19 +309,27 @@ Phase 5: heute sind das NetworkCommissioning und BasicInformation, also
 weder Ein/Aus noch Leistung).
 
 Die Exportvorschau nennt zusätzlich, wie viele Signale als Experte
-ausgeblendet sind, und warnt, wenn ein Export weniger Eingänge erzeugt als
-der vorige.
+ausgeblendet sind (`ExportDeviceOut.hidden_count`, Spalte „Als Experte
+zurückgehalten" in der Vorschautabelle).
 
 ## 8. Fehlerbehandlung
 
 | Fall | Verhalten |
 |---|---|
 | `DeviceTypeList` fehlt oder ist leer | Endpunkt gilt als Nutz-Endpunkt (an) |
-| `DeviceTypeList` nicht lesbar (Struktur unerwartet) | wie oben, plus Logeintrag |
+| `DeviceTypeList` nicht lesbar (Struktur unerwartet) | wie oben — still, kein Logeintrag (siehe unten) |
 | Gerätetyp unbekannt | kein Verwaltungstyp ⇒ an |
 | Cluster unbekannt | vollständig an (Abschnitt 2) |
 | `field` gesetzt, Element fehlt | nicht exportierbar, kein Raten |
-| Migration schlägt bei einem Signal fehl | Zeile bleibt unverändert, Logeintrag; kein Abbruch |
+| Migration schlägt bei einem Signal fehl | Zeile bleibt unverändert — still, kein Logeintrag (siehe unten); kein Abbruch |
+
+**Korrektur (Abschlussreview, Nachbesserung Fix 5):** zwei Zeilen dieser
+Tabelle versprachen ursprünglich einen Logeintrag. Weder
+`profiles/relevance.py` noch `model/store.py` importiert ein
+Logging-Modul — beide Pfade schlucken den Fehlerfall bewusst still (im
+Zweifel ein Eingang zu viel bzw. eine unveränderte Zeile, nie ein Absturz),
+ohne ihn irgendwo zu vermerken. Die Tabelle oben ist auf das tatsächliche
+Verhalten gebracht.
 
 ## 9. Prüfung
 
@@ -351,6 +380,29 @@ Prüfsteine. Alle Tests laufen ohne Hardware und ohne Netz.
 3. Ein Gerät mit mehreren Nutz-Gerätetypen auf einem Endpunkt (Brücken,
    Kombigeräte) ist ungeprüft; die Regel behandelt es korrekt als Nutz-
    Endpunkt, aber es lag keines vor.
-4. Ob `Relevance` später vom Anwender überschreibbar sein soll (eigene
+4. Ob die Relevanz-Einstufung (`is_functional`) später vom Anwender überschreibbar sein soll (eigene
    Sperrliste), bleibt offen. Bis jemand danach fragt: nein. Ausdrücklich
    nicht Teil dieser Phase (Aufgabe 9, Abschlusskriterien).
+5. **Nicht gebaut (Abschlussreview, Nachbesserung Fix 4):** dass die
+   Migration je Gerät festhält, wie viele Eingänge wegfallen, und dass die
+   Oberfläche davor warnt, dass die entsprechenden Objekte in Loxone
+   verwaisen. Frühere Fassungen dieses Abschnitts behaupteten beides als
+   erledigt — weder `_migrate_to_v3`/`_migrate_to_v4` noch die WebUI
+   zeichnen diese Zahl je Gerät auf. `hidden_count` (Abschnitt 7, Aufgabe 8)
+   ist eine Momentaufnahme des aktuellen Zustands, kein Vergleich zu einem
+   früheren Export.
+6. **Nicht gebaut:** eine Warnung in der Exportvorschau, wenn ein Export
+   weniger Eingänge erzeugt als der vorige. Die Vorschau zeigt `inputs` und
+   `hidden_count` je Gerät (Abschnitt 7), vergleicht das aber nicht mit dem
+   vorangegangenen Export.
+7. **Mired → Kelvin fehlt (Abschlussreview, Fix 1a).** Cluster 768
+   (ColorControl), Attribut `ColorTemperatureMireds` (7): Matter liefert
+   Mired, Loxone erwartet Kelvin, und `Kelvin = 1e6 / Mired` ist ein
+   Kehrwert — der vorhandene `scale`-Mechanismus in `clusters.yaml` kann nur
+   multiplizieren, keinen Kehrwert bilden. Der Wert bleibt deshalb bis auf
+   Weiteres in Mired stehen, mit dem Slug `colortemp_mireds`, der das
+   klarstellt. Eine Lösung bräuchte entweder eine zweite Umrechnungsart in
+   `profiles/table.py` (neben `scale` ein `invert`- oder
+   `formula`-Feld) oder eine Umrechnung zur Laufzeit in
+   `loxone.values.to_loxone_value` — außerhalb des Zuschnitts dieser
+   Nachbesserung.

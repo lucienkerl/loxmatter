@@ -337,7 +337,8 @@ def test_new_signal_is_exported_exactly_when_it_is_exportable_and_functional(sto
 
 def test_a_freshly_registered_plug_exports_only_its_meaningful_values(store):
     """Das Ziel dieses ganzen Entwurfs, am echten Geraet: fuenf Werte, die
-    etwas bedeuten, statt 109 technisch abbildbarer."""
+    etwas bedeuten, statt 110 technisch abbildbarer (Entwurf Abschnitt 1 und
+    4.4 - 109 war der Stand vor Umsetzung von Abschnitt 5, dem Zaehlerstand)."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)

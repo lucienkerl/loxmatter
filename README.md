@@ -74,6 +74,17 @@ diese übrigen Signale im zugeklappten Block „Experte" (mit Anzahl in der
 sich dort einzeln aktivieren, etwa ein Thread-Zähler zur Fehlersuche.
 Begründung und Auswahlregel: [Signalauswahl-Entwurf](docs/superpowers/specs/2026-09-03-signalauswahl-design.md).
 
+**Achtung beim Update auf diese Fassung, wenn schon Geräte eingelernt
+sind.** Der Einmal-Umzug der Datenbank auf dieses Schema setzt den
+Exportieren-Haken **jedes** bereits gespeicherten Signals auf den neuen
+Vorgabewert zurück – auch wenn er zuvor von Hand umgelegt wurde. Wer vor
+diesem Update z. B. Thread-Zähler gezielt freigeschaltet oder ein Signal
+abgeschaltet hat, verliert diese Auswahl beim ersten Start danach, ohne
+Warnung, und muss sie in der Signalliste erneut setzen. Eine bereits in
+Loxone importierte Vorlage bleibt davon unberührt – die Laufzeitstrecke
+sendet ohnehin unabhängig vom Haken; betroffen ist nur eine **neu**
+erzeugte Vorlage nach dem Update.
+
 Der Dienst bindet standardmäßig auf `0.0.0.0` (`--host`), damit der
 Miniserver ihn erreicht — dieselbe Erreichbarkeit gilt fürs restliche
 Netz. **Die `/api`-Routen sind deshalb mit `--api-token` bzw. der
