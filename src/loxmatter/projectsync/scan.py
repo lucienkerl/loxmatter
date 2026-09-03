@@ -79,13 +79,31 @@ def parse_attrs(tag_text: str) -> dict[str, str]:
     return attrs
 
 
+def _find_tag_close(text: str, start: int) -> int:
+    """Findet das '>', das ein Start-Tag wirklich beendet - nicht das erste
+    '>' im Text danach. XML verlangt kein Escaping von '>' in Attributwerten
+    (anders als '<', '&' und das Anfuehrungszeichen selbst), ein Wert wie
+    `Title="Temp > 20"` ist gueltiges, unescaped XML. Ein '"' schaltet die
+    Erkennung um - ein woertliches Anfuehrungszeichen INNERHALB eines Werts
+    waere selbst escaped (`&quot;`), zaehlt hier also nicht als Umschalter."""
+    in_quotes = False
+    pos = start
+    while True:
+        char = text[pos]
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == ">" and not in_quotes:
+            return pos
+        pos += 1
+
+
 def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:
     """Ausgehend vom `<` eines `<C>`-Elements: liefert `(inner_end, outer_end,
     self_closing)`. Laeuft token-weise vorwaerts (naechstes `<C...>` oder
     naechstes `</C>`, je nachdem was zuerst kommt) und haelt dabei die
     Verschachtelungstiefe nach, um das WIRKLICH passende `</C>` zu finden,
     nicht nur das naechste im Dokument."""
-    tag_close = text.index(">", open_start)
+    tag_close = _find_tag_close(text, open_start)
     self_closing = text[tag_close - 1] == "/"
     open_end = tag_close + 1
     if self_closing:
@@ -99,7 +117,7 @@ def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:
         if next_close_pos == -1:
             raise ProjectFormatError("Unerwartetes Dateiende: <C> ohne schliessendes </C>.")
         if next_open is not None and next_open.start() < next_close_pos:
-            inner_tag_close = text.index(">", next_open.end())
+            inner_tag_close = _find_tag_close(text, next_open.end())
             inner_self_closing = text[inner_tag_close - 1] == "/"
             pos = inner_tag_close + 1
             if not inner_self_closing:
@@ -121,7 +139,7 @@ def scan_children(text: str, start: int, end: int) -> list[Element]:
         if match is None:
             break
         open_start = match.start()
-        tag_close = text.index(">", open_start)
+        tag_close = _find_tag_close(text, open_start)
         tag_text = text[open_start : tag_close + 1]
         attrs = parse_attrs(tag_text)
         inner_end, outer_end, self_closing = _skip_element(text, open_start)

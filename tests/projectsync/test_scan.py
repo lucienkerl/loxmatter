@@ -58,3 +58,29 @@ def test_parse_root_raises_on_missing_control_list():
 
     with pytest.raises(ProjectFormatError):
         parse_root("<NotAProject/>")
+
+
+def test_scan_children_handles_unescaped_gt_in_attribute_value():
+    # XML erlaubt ein woertliches '>' in einem Attributwert, ohne dass es als
+    # `&gt;` escaped werden muss (nur '<', '&' und das Anfuehrungszeichen
+    # selbst muessen escaped werden). Ein Titel wie 'Temp > 20' ist also
+    # gueltiges, unescaped XML, das eine Loxone-Projektdatei so enthalten
+    # darf. Ein naives `text.index(">", open_start)` faende das '>' mitten im
+    # Attributwert statt das wirkliche Tag-Ende.
+    doc = (
+        '<C Type="VirtualUdpIn" IName="VUI1" U="u-container" Title="Temp > 20">'
+        '<C Type="VirtualUdpInCmd" IName="VCI1" U="u-cmd1" Title="An"/>'
+        "</C>"
+        '<C Type="VirtualUdpIn" IName="VUI2" U="u-container2" Title="Zweites">'
+        "</C>"
+    )
+    [first, second] = scan_children(doc, 0, len(doc))
+
+    assert first.attrs["Title"] == "Temp > 20"
+    assert first.attrs["IName"] == "VUI1"
+    assert not first.self_closing
+    assert len(first.children) == 1
+    assert first.children[0].attrs["IName"] == "VCI1"
+
+    assert second.type == "VirtualUdpIn"
+    assert second.attrs["IName"] == "VUI2"
