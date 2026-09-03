@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from loxmatter.model.store import Store, StoredCommand, StoredSignal
 from loxmatter.projectsync.diff import SyncPlan, build_plan
 from loxmatter.projectsync.index import ProjectFormatError, build_index
-from loxmatter.projectsync.patch import apply_plan
+from loxmatter.projectsync.patch import MissingCaptionError, apply_plan
 
 __all__ = ["ProjectFormatError", "ProjectSyncResult", "run_sync"]
 
@@ -35,7 +35,11 @@ __all__ = ["ProjectFormatError", "ProjectSyncResult", "run_sync"]
 class ProjectSyncResult:
     plan: SyncPlan
     patched_conservative: bytes
-    patched_with_new_devices: bytes
+    # `None`, wenn die experimentelle Variante fuer diese Datei nicht gebaut
+    # werden konnte - dann traegt `new_devices_unavailable_reason` den Grund
+    # (und umgekehrt: ist die Variante da, ist der Grund `None`).
+    patched_with_new_devices: bytes | None
+    new_devices_unavailable_reason: str | None
 
 
 def run_sync(
@@ -51,6 +55,9 @@ def run_sync(
         device.id: store.commands(device.id) for device in devices
     }
     plan = build_plan(index, devices, signals_by_device, commands_by_device)
+    # Ohne `try`: nur `NEW_DEVICE`-Eintraege erreichen mit
+    # `include_new_devices=True` den Code, der eine Caption braucht - die
+    # konservative Variante kann also gar keinen `MissingCaptionError` werfen.
     conservative = apply_plan(
         index,
         plan,
@@ -62,15 +69,26 @@ def run_sync(
         port=port,
         listen=listen,
     )
-    with_new_devices = apply_plan(
-        index,
-        plan,
-        devices,
-        signals_by_device,
-        commands_by_device,
-        include_new_devices=True,
-        bridge_ip=bridge_ip,
-        port=port,
-        listen=listen,
-    )
-    return ProjectSyncResult(plan, conservative, with_new_devices)
+    with_new_devices: bytes | None
+    reason: str | None
+    try:
+        with_new_devices = apply_plan(
+            index,
+            plan,
+            devices,
+            signals_by_device,
+            commands_by_device,
+            include_new_devices=True,
+            bridge_ip=bridge_ip,
+            port=port,
+            listen=listen,
+        )
+        reason = None
+    except MissingCaptionError as exc:
+        # Eine fehlende Caption ist laut Entwurf Abschnitt 8 eine Grenze des
+        # EXPERIMENTELLEN Pfades, kein Grund, den ganzen Upload scheitern zu
+        # lassen: Plan und konservative Variante bleiben nutzbar, nur diese
+        # eine Variante entfaellt - mit Begruendung statt kommentarlos.
+        with_new_devices = None
+        reason = str(exc)
+    return ProjectSyncResult(plan, conservative, with_new_devices, reason)

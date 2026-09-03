@@ -31,13 +31,54 @@ def _plug_store(tmp_path):
     return store
 
 
+# Ein wohlgeformtes Projekt, in dem noch nie ein virtueller EINGANG angelegt
+# wurde - es fehlt also der `VirtualInCaption`-Abschnitt, in den ein komplett
+# neuer Eingangs-Container muesste. Realistischer Fall fuer jemanden, der
+# bislang nur Vorlagen fuer Ausgaenge importiert hat.
+NO_VIRTUAL_IN_CAPTION_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">'
+    "</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
 def test_run_sync_returns_plan_and_both_file_variants(tmp_path, sample_project):
     store = _plug_store(tmp_path)
     result = run_sync(
         sample_project.encode("utf-8"), store, bridge_ip="10.0.0.5", port=7000, listen=8080
     )
     assert result.plan.entries  # nicht leer - die Steckdose hat Signale
+    assert result.patched_with_new_devices is not None
     assert result.patched_conservative != result.patched_with_new_devices
+    assert result.new_devices_unavailable_reason is None
+    store.close()
+
+
+def test_missing_caption_disables_only_the_experimental_variant(tmp_path):
+    """Fehlt der `VirtualInCaption`-Abschnitt, ist das laut Entwurf Abschnitt
+    8 eine Grenze des EXPERIMENTELLEN Pfades - kein Grund, den ganzen Upload
+    scheitern zu lassen. Plan und konservative Variante muessen weiterhin
+    entstehen, nur `patched_with_new_devices` faellt mit einer Begruendung
+    weg."""
+    store = _plug_store(tmp_path)
+    result = run_sync(
+        NO_VIRTUAL_IN_CAPTION_PROJECT.encode("utf-8"),
+        store,
+        bridge_ip="10.0.0.5",
+        port=7000,
+        listen=8080,
+    )
+    assert result.patched_with_new_devices is None
+    assert result.new_devices_unavailable_reason
+    assert "VirtualInCaption" in result.new_devices_unavailable_reason
+
+    # Plan und konservative Variante sind davon voellig unberuehrt: die
+    # konservative Variante legt nie einen Container an, kann also gar nicht
+    # an einer fehlenden Caption scheitern.
+    assert result.plan.entries
+    assert result.patched_conservative.decode("utf-8-sig") == NO_VIRTUAL_IN_CAPTION_PROJECT
     store.close()
 
 

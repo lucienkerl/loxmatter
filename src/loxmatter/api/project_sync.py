@@ -23,18 +23,18 @@ den auch `api.export` und `api.devices` bekommen (siehe deren
 Moduldocstrings zur Begruendung: ein zweiter, unabhaengig geoeffneter Store
 vergaebe fuer dasselbe Geraet einen zweiten Satz Signalschluessel).
 
-**Zwei Fehlerpfade, beide als 400.** `run_sync` (Task 10) baut in einem
-Aufruf IMMER beide Varianten - auch `include_new_devices=True` -, unabhaengig
-davon, ob eine spaetere Oberflaeche diese Variante ueberhaupt anzeigt. Neben
-`ProjectFormatError` (die Datei ist kein gueltiges/erkennbares Loxone-Projekt)
-kann darum auch `patch.MissingCaptionError` bis hierher durchschlagen: ein
-ansonsten wohlgeformtes Projekt, dem schlicht der `VirtualInCaption`- bzw.
-`VirtualOutCaption`-Abschnitt fehlt, den ein komplett neu anzulegendes Geraet
-dieser Art braeuchte. Anders als `ProjectFormatError` ist das kein Format-,
-sondern ein Inhaltsproblem der hochgeladenen Datei - beide sind aus Sicht
-dieses Endpunkts aber gleich zu behandeln: kein Serverfehler, sondern eine
-verstaendliche 400 mit der deutschen Fehlermeldung, die die jeweilige
-Exception schon traegt."""
+**Ein Fehlerpfad als 400.** `ProjectFormatError` - die hochgeladene Datei ist
+kein gueltiges/erkennbares Loxone-Projekt (kein `ControlList`, unabgeschlossenes
+Tag, keine UTF-8-Textdatei) - wird zur verstaendlichen 400 mit der deutschen
+Meldung, die die Exception schon traegt. Kein Serverfehler, kein nackter 500.
+
+`patch.MissingCaptionError` gehoert ausdruecklich NICHT dazu: ein ansonsten
+wohlgeformtes Projekt, dem nur der `VirtualInCaption`- bzw.
+`VirtualOutCaption`-Abschnitt fehlt, ist laut Entwurf Abschnitt 8 eine Grenze
+des experimentellen Pfades, kein Grund, die ganze Antwort zu verwerfen.
+`run_sync` faengt das darum selbst ab und liefert
+`patched_with_new_devices=None` plus `new_devices_unavailable_reason`; Plan
+und konservative Datei kommen normal beim Anwender an."""
 
 from __future__ import annotations
 
@@ -46,7 +46,6 @@ from loxmatter.api.models import ProjectSyncEntryOut, ProjectSyncPlanOut
 from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store
 from loxmatter.projectsync.diff import SyncPlan
 from loxmatter.projectsync.index import ProjectFormatError
-from loxmatter.projectsync.patch import MissingCaptionError
 from loxmatter.projectsync.sync import run_sync
 
 
@@ -87,18 +86,22 @@ def build_project_sync_router(store: Store) -> APIRouter:
         raw = await file.read()
         try:
             result = run_sync(raw, store, bridge_ip=bridge_ip, port=port, listen=listen)
-        except (ProjectFormatError, MissingCaptionError) as exc:
+        except ProjectFormatError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        with_new_devices = result.patched_with_new_devices
         return ProjectSyncPlanOut(
             entries=_entries_out(result.plan),
             has_changes=result.plan.has_changes,
             patched_conservative_base64=base64.b64encode(result.patched_conservative).decode(
                 "ascii"
             ),
-            patched_with_new_devices_base64=base64.b64encode(
-                result.patched_with_new_devices
-            ).decode("ascii"),
+            patched_with_new_devices_base64=(
+                None
+                if with_new_devices is None
+                else base64.b64encode(with_new_devices).decode("ascii")
+            ),
+            new_devices_unavailable_reason=result.new_devices_unavailable_reason,
         )
 
     return router

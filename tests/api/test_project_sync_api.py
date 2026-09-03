@@ -46,12 +46,11 @@ SAMPLE_PROJECT = (
 # oben. Ein reales Projekt, in dem noch nie ein virtueller Eingang angelegt
 # wurde, sieht so aus (siehe `tests/projectsync/test_patch.py`,
 # NO_VIRTUAL_IN_CAPTION_PROJECT, fuer dasselbe Muster auf Ebene von
-# `patch.apply_plan`). `run_sync` (Task 10) berechnet IMMER beide Varianten
-# in einem Aufruf, auch die `include_new_devices=True`-Variante - dieser
-# Endpunkt muss also `MissingCaptionError` behandeln, sobald ein hochgeladenes
-# Projekt fuer eine Geraete-Art (hier: Eingaenge) gar keinen Caption-Abschnitt
-# hat UND mindestens ein neues Geraet dieser Art einbringt, unabhaengig davon,
-# ob die Anfrage selbst `include_new_devices` ueberhaupt anfordert.
+# `patch.apply_plan`). `run_sync` faengt den daraus folgenden
+# `MissingCaptionError` selbst ab und liefert die Variante mit neuen Geraete-
+# Containern als `None` samt Begruendung - der Upload als Ganzes bleibt
+# erfolgreich (Entwurf Abschnitt 8: die fehlende Caption ist ein Sonderfall
+# der Neuanlage, also des experimentellen Pfads).
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -88,6 +87,7 @@ async def test_project_sync_returns_plan_and_both_variants(api):
     body = response.json()
     assert body["entries"]
     assert body["has_changes"] is True
+    assert body["new_devices_unavailable_reason"] is None
     conservative = base64.b64decode(body["patched_conservative_base64"])
     with_new_devices = base64.b64decode(body["patched_with_new_devices_base64"])
     assert b"VirtualUdpIn" not in conservative  # Neuanlage nur mit dem Haken
@@ -118,14 +118,14 @@ async def test_project_sync_requires_authentication(tmp_path, no_invoke, fake_ru
     store.close()
 
 
-async def test_project_sync_reports_missing_caption_as_400(api):
+async def test_project_sync_missing_caption_still_returns_plan_and_conservative(api):
     """Ein wohlgeformtes Projekt ohne `VirtualInCaption`-Abschnitt, hochgeladen
     fuer ein Geraet, das komplett neu ist (die Steckdose aus der `api`-Fixture
-    hat keinen passenden Container in `NO_VIRTUAL_IN_CAPTION_PROJECT`): `
-    run_sync` wirft dabei `MissingCaptionError` beim Aufbau der
-    `include_new_devices=True`-Variante (siehe Modul-Docstring oben) - das
-    darf nicht als 500 durchschlagen, sondern muss als 400 mit einer
-    Fehlermeldung ankommen, die den fehlenden Abschnitt nennt."""
+    hat keinen passenden Container in `NO_VIRTUAL_IN_CAPTION_PROJECT`): die
+    fehlende Caption ist laut Entwurf Abschnitt 8 eine Grenze des
+    EXPERIMENTELLEN Pfades, nicht der ganzen Anfrage. Plan und konservative
+    Datei muessen also normal ankommen, nur die Variante mit neuen Geraete-
+    Containern faellt mit einer nachvollziehbaren Begruendung weg."""
     client, _store = api
     response = await client.post(
         "/api/export/project-sync",
@@ -138,5 +138,10 @@ async def test_project_sync_reports_missing_caption_as_400(api):
             )
         },
     )
-    assert response.status_code == 400
-    assert "VirtualInCaption" in response.json()["detail"]
+    assert response.status_code == 200
+    body = response.json()
+    assert body["entries"]
+    assert body["patched_with_new_devices_base64"] is None
+    assert "VirtualInCaption" in body["new_devices_unavailable_reason"]
+    conservative = base64.b64decode(body["patched_conservative_base64"])
+    assert conservative.decode("utf-8-sig") == NO_VIRTUAL_IN_CAPTION_PROJECT

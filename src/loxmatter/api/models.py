@@ -283,4 +283,10 @@ class ProjectSyncPlanOut(BaseModel):
     entries: list[ProjectSyncEntryOut]
     has_changes: bool
     patched_conservative_base64: str
-    patched_with_new_devices_base64: str
+    # `None`, wenn die experimentelle Variante fuer diese Datei nicht gebaut
+    # werden konnte (z. B. fehlender `VirtualInCaption`-Abschnitt, Entwurf
+    # Abschnitt 8). Der Plan und die konservative Variante bleiben davon
+    # unberuehrt - die Oberflaeche zeigt dann nur den Grund statt des
+    # Download-Angebots.
+    patched_with_new_devices_base64: str | None
+    new_devices_unavailable_reason: str | None
