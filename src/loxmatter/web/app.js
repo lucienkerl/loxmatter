@@ -1392,10 +1392,12 @@ function app() {
       }
       if (message.kind === "datagram") {
         this.appendDiagnosticsEntry(this.datagrams, message);
+        this.pinLogListToTop("datagramsList");
       } else if (message.kind === "command") {
         this.appendDiagnosticsEntry(this.commandLog, message);
       } else if (message.kind === "log") {
         this.appendDiagnosticsEntry(this.diagnosticsLogs, message);
+        this.pinLogListToTop("diagnosticsLogsList");
       }
       // Eine unbekannte `kind` wird still ignoriert statt zu werfen: eine
       // kuenftige, hier noch unbekannte Nachrichtenart soll die Verbindung
@@ -1411,6 +1413,30 @@ function app() {
     },
 
     /**
+     * Haelt eine `.log-list` oben angeheftet, nachdem eine neue Zeile
+     * eingetroffen ist - aber nur, wenn man dort ohnehin schon war. Die
+     * Vorlage zeigt die Straeme umgekehrt an (jüngste zuerst, siehe
+     * `visibleDatagrams`/`visibleDiagnosticsLogs`), daher bedeutet
+     * "mitscrollen" hier: Scrollposition oben (0) halten, nicht ans Ende
+     * springen. Wer nach unten gescrollt hat, um aeltere Zeilen zu lesen,
+     * wird durch neu eintreffende Zeilen nicht zurueckgerissen - der
+     * Toleranzwert (4px) faengt Rundungsreste vom Scrollen ab, kein
+     * Trackpad/Mausrad haelt exakt bei 0 an.
+     */
+    pinLogListToTop(ref) {
+      const el = this.$refs[ref];
+      if (!el) {
+        return;
+      }
+      const wasAtTop = el.scrollTop <= 4;
+      this.$nextTick(() => {
+        if (wasAtTop) {
+          el.scrollTop = 0;
+        }
+      });
+    },
+
+    /**
      * Die UDP-Mitschnitt-Zeilen, wie `hideNoise` sie gerade zeigen soll.
      * Der Filter liest `entry.forced` (`api/diagnostics_live.py`, gefuellt
      * aus `DatagramLogEntry.forced` - siehe dort fuer die Begruendung,
@@ -1422,7 +1448,13 @@ function app() {
      * Mikrosekunden hintereinander eintreffen.
      */
     visibleDatagrams() {
-      return this.hideNoise ? this.datagrams.filter((entry) => !entry.forced) : this.datagrams;
+      const entries = this.hideNoise
+        ? this.datagrams.filter((entry) => !entry.forced)
+        : this.datagrams;
+      // Angezeigt wird umgekehrt (juengste zuerst) - der Ringpuffer selbst
+      // bleibt aeltester-zuerst, damit `appendDiagnosticsEntry` mit `shift()`
+      // weiterhin am aeltesten Eintrag kappt (siehe dort).
+      return [...entries].reverse();
     },
 
     /**
@@ -1432,10 +1464,12 @@ function app() {
      */
     visibleDiagnosticsLogs() {
       const threshold = LOG_LEVEL_ORDER.indexOf(this.logLevel);
-      return this.diagnosticsLogs.filter((entry) => {
+      const entries = this.diagnosticsLogs.filter((entry) => {
         const rank = LOG_LEVEL_ORDER.indexOf(entry.level);
         return rank === -1 || rank >= threshold;
       });
+      // Siehe Kommentar in visibleDatagrams(): Anzeige umgekehrt, Ringpuffer nicht.
+      return entries.reverse();
     },
 
     /**

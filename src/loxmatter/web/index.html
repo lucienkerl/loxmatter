@@ -634,8 +634,8 @@
 
         <div class="card">
           <h2>Logs</h2>
-          <p class="hint">Protokollzeilen der Brücke, laufend – älteste oben, jüngste unten.</p>
-          <div class="log-list">
+          <p class="hint">Protokollzeilen der Brücke, laufend – jüngste oben, folgt automatisch.</p>
+          <div class="log-list" x-ref="diagnosticsLogsList">
             <template x-for="(entry, index) in visibleDiagnosticsLogs()" :key="index">
               <div
                 class="entry"
@@ -648,9 +648,9 @@
         <div class="card">
           <h2>UDP-Mitschnitt</h2>
           <p class="hint">
-            Tatsächlich über den Draht geschickte Datagramme, laufend – jüngste zuletzt.
+            Tatsächlich über den Draht geschickte Datagramme, laufend – jüngste oben, folgt automatisch.
           </p>
-          <div class="log-list">
+          <div class="log-list" x-ref="datagramsList">
             <template x-for="(entry, index) in visibleDatagrams()" :key="index">
               <div
                 class="entry"
