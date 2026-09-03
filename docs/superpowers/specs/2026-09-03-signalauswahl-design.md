@@ -174,10 +174,17 @@ Die Profiltabelle bekommt ein optionales Feld `field`:
 145:
   name: energy
   attributes:
-    1: {slug: energy_imported, field: energy, unit: "kWh", scale: 1.0e-6}
+    # field: 0 = EnergyMeasurementStruct.energy, gegen das installierte SDK
+    # belegt (chip.clusters.Objects.ElectricalEnergyMeasurement.Structs).
+    1: {slug: energy_imported, field: 0, unit: "kWh", scale: 1.0e-6}
 ```
 
-Ist `field` gesetzt und der Wert eine Struktur, die dieses Element als Zahl
+`field` ist eine **Feldnummer, kein Name**: matter-server liefert Strukturen
+als Wörterbuch mit dem Feld-Tag als Schlüssel, und zwar als Zeichenkette —
+der Descriptor-Cluster kommt etwa als `[{"0": 18, "1": 1}]` an. Eine
+Implementierung, die auf `value["energy"]` zugreift, findet nichts.
+
+Ist `field` gesetzt und der Wert eine Struktur, die dieses Feld als Zahl
 enthält, so ist das Signal analog exportierbar; der Rest der Struktur
 (Zeitstempel) bleibt weg. Fehlt das Element oder ist es keine Zahl, bleibt
 das Signal nicht exportierbar — **es wird nicht geraten**. Eine erfundene
