@@ -104,7 +104,14 @@ async function requestJson(method, path, body) {
     throw new UnauthorizedError();
   }
   if (!response.ok) {
-    throw new Error(await readErrorDetail(response));
+    const error = new Error(await readErrorDetail(response));
+    // `status` haengt hier mit dran, nicht nur der Text: `submitPassword`
+    // unten muss eine 409 auf `/auth/setup` von jedem anderen Fehlschlag
+    // unterscheiden koennen, und der Meldungstext dafuer ist kein
+    // verlaesslicher Anker (der duerfte sich unabhaengig vom Statuscode
+    // aendern).
+    error.status = response.status;
+    throw error;
   }
   if (response.status === 204) {
     return null;
@@ -289,6 +296,14 @@ function app() {
         const info = await requestJson("GET", "/auth-info");
         this.passwordSet = info.password_set;
         this.authenticated = info.authenticated;
+        // Loescht einen aelteren Fehlerbanner ("Die Bruecke ist nicht
+        // erreichbar" o. ae.) im Erfolgsfall - diese Funktion lief frueher
+        // nur einmal je Seitenaufbau, seit `handleLiveDisconnect` laeuft sie
+        // aber bei JEDEM Verbindungsabbruch erneut: ohne diese Zeile bliebe
+        // ein Banner von einem kurzen Netzausfall stehen, auch nachdem die
+        // naechste Anfrage laengst wieder erfolgreich war (Review-Fund,
+        // 2026-09-03).
+        this.authError = null;
       } catch (error) {
         this.authError = error.message;
       } finally {
@@ -336,6 +351,20 @@ function app() {
         await requestJson("POST", path, { password: this.passwordDraft });
       } catch (error) {
         this.authError = error.message;
+        if (path === "/auth/setup" && error.status === 409) {
+          // Diese Bruecke hat laengst ein Passwort - der Bildschirm zeigte
+          // die Einrichtung trotzdem, typischerweise weil `/auth-info` beim
+          // Laden fehlschlug und `passwordSet` deshalb bei `false` blieb
+          // (siehe `loadAuthInfo`). Ohne diesen Wechsel bliebe die Seite auf
+          // dem Einrichtungsbildschirm samt Uebernahme-Warnung stehen, und
+          // ein Betreiber, der dort mehrfach "Passwort vergeben" klickt,
+          // sperrte sich ueber die gemeinsame `LoginThrottle` auch aus dem
+          // LOGIN aus - ohne je ein falsches Passwort eingegeben zu haben
+          // (Review-Fund, 2026-09-03; der zweite Teil der Behebung ist der
+          // 409-Zweig in `api/auth.py`, der seither keinen Fehlversuch mehr
+          // dafuer bucht).
+          this.passwordSet = true;
+        }
         return;
       } finally {
         this.authBusy = false;
@@ -909,6 +938,15 @@ function app() {
      * exponentielle Backoff bleibt dadurch unveraendert wirksam.
      */
     async handleLiveDisconnect() {
+      // ALS ERSTES, vor dem `await` unten: der Socket ist in diesem Moment
+      // bereits tot (dieser Aufruf kommt aus seinem `close`-Ereignis), die
+      // Kopfzeile meldete ohne diese Zeile aber bis zum Ende von
+      // `loadAuthInfo()` weiter "Live-Verbindung aktiv" und liess den
+      // Banner "Werte koennen veraltet sein" aus - genau der Zustand, den
+      // der Kommentar in `connectLive()` oben als "schlimmer, als
+      // zuzugeben, dass die Verbindung weg ist" beschreibt (Review-Fund,
+      // 2026-09-03).
+      this.socketConnected = false;
       await this.loadAuthInfo();
       if (!this.authenticated) {
         this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
