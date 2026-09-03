@@ -726,13 +726,16 @@
             <div>
               <!--
                 Review-Fix Important #5: die Tabelle haengt jetzt an
-                `entries.length > 0`, nicht mehr an `has_changes` - sonst
-                blieben `orphaned`/`conflict`-Eintraege unsichtbar, obwohl
+                `has_changes || projectSyncHasInformationalEntries(...)`,
+                nicht mehr nur an `has_changes` - sonst blieben
+                `orphaned`/`conflict`-Eintraege unsichtbar, obwohl
                 `has_changes` sie absichtlich nicht mitzaehlt (siehe
-                `SyncPlan.has_changes` in `diff.py`). Die "Alles
-                aktuell"-Meldung zeigt sich nur noch, wenn wirklich gar
-                nichts zu berichten ist: keine Aenderung UND keine
-                informativen Eintraege.
+                `SyncPlan.has_changes` in `diff.py`). Die Bedingung ist
+                bewusst das logische Gegenteil der "Alles aktuell"-Meldung
+                darunter, damit genau eine der beiden sichtbar ist: die
+                Meldung zeigt sich nur noch, wenn wirklich gar nichts zu
+                berichten ist: keine Aenderung UND keine informativen
+                Eintraege.
               -->
               <p
                 x-show="!projectSync.plan.has_changes && !projectSyncHasInformationalEntries(projectSync.plan.entries)"
@@ -740,7 +743,7 @@
               >
                 Alles aktuell – keine Änderungen nötig.
               </p>
-              <div style="overflow-x: auto" x-show="projectSync.plan.entries.length > 0">
+              <div style="overflow-x: auto" x-show="projectSync.plan.has_changes || projectSyncHasInformationalEntries(projectSync.plan.entries)">
                 <table>
                   <thead>
                     <tr>
