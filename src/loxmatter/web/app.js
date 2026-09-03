@@ -1331,7 +1331,11 @@ function app() {
       try {
         const formData = new FormData();
         formData.append("file", file);
-        const params = new URLSearchParams({ bridge_ip: this.bridgeSettings.bridge_ip });
+        const params = new URLSearchParams({
+          bridge_ip: this.bridgeSettings.bridge_ip,
+          port: String(this.bridgeSettings.udp_port),
+          listen: String(this.bridgeSettings.listen_port),
+        });
         this.projectSync.plan = await this.upload(`/api/export/project-sync?${params}`, formData);
       } catch (error) {
         this.projectSync.error = `Hochladen fehlgeschlagen: ${error.message}`;
