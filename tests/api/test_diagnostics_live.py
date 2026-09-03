@@ -64,6 +64,30 @@ async def test_a_fresh_datagram_arrives_as_a_message(api_with_runtime):
     assert message["key"] == f"d{device_id}_2_voltage"
 
 
+async def test_a_datagram_message_carries_why_it_was_sent(api_with_runtime):
+    """Nachbesserung Task 6 (2026-09-03): die WebUI erkennt ein
+    entbehrliches Datagramm (Heartbeat, Full-Resend) am `forced`-Feld der
+    Nachricht - nicht mehr an der Ankunftsrate im Browser (siehe
+    `DatagramLogEntry.forced` und `app.js`, `visibleDatagrams`, fuer die
+    Begruendung). Eine echte Wertaenderung (`on_attribute`, kein `force`)
+    muss `forced: false` tragen, ein `resend_all()` (derselbe `force=True`-
+    Aufrufer wie der Heartbeat) `forced: true`."""
+    client, runtime, device_id = api_with_runtime
+    async with client.websocket_connect("/api/diagnostics/live") as socket:
+        await _drain_snapshot(socket)
+
+        await runtime.on_attribute(device_id, "2/144/4", 230000)
+        changed = await asyncio.wait_for(socket.receive_json(), timeout=2)
+
+        await runtime.resend_all()
+        resent = await asyncio.wait_for(socket.receive_json(), timeout=2)
+
+    assert changed["kind"] == "datagram"
+    assert changed["forced"] is False
+    assert resent["kind"] == "datagram"
+    assert resent["forced"] is True
+
+
 async def test_a_fresh_log_line_arrives_as_a_message(api_with_runtime):
     client, _, _ = api_with_runtime
     async with client.websocket_connect("/api/diagnostics/live") as socket:

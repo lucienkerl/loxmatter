@@ -69,24 +69,21 @@ const HEARTBEAT_KEY = "bridge_alive";
 // lassen.
 const DIAGNOSTICS_LINE_LIMIT = 500;
 
-// Woran ein Datagramm als "Rauschen" erkannt wird, das `hideNoise` ausblendet
-// (Entwurf 4, Aufgabe 6): der Heartbeat-Schluessel selbst (HEARTBEAT_KEY,
-// siehe oben) UND jedes Datagramm, das als Teil eines Schwalls ankommt.
-//
-// Ein Full-Resend (`Runtime.resend_all()`, ausgeloest ueber /resync, Spec
-// 6.4) schickt auf einen Schlag JEDEN bekannten Wert eines Geraets neu -
-// schon ein einzelner IKEA-Stecker kommt dabei auf rund 110 Datagramme
-// (siehe QUEUE_MAXSIZE in api/streaming.py), die alle binnen weniger
-// Millisekunden hintereinander eintreffen. Eine tatsaechliche, einzelne
-// Zustandsaenderung liegt dagegen praktisch immer isoliert - kein Geraet
-// dieses Projekts aendert regelmaessig mehrere Signale in derselben
-// Millisekunde. Das Datagramm selbst traegt dafuer KEINE eigene Markierung
-// (`api/diagnostics_live.py`: ein Full-Resend-Datagramm sieht auf der
-// Leitung identisch aus wie jedes andere) - der Schwall wird deshalb rein
-// an der ANKUNFTSRATE im Browser erkannt: liegt der Abstand zum vorigen
-// Datagramm unter DATAGRAM_BURST_GAP_MS, gelten BEIDE (das vorige UND das
-// gerade eingetroffene) als Teil desselben Schwalls.
-const DATAGRAM_BURST_GAP_MS = 200;
+// Woran ein Datagramm als "Rauschen" erkannt wird, das `hideNoise`
+// ausblendet: an `message.forced` (`api/diagnostics_live.py`, gefuellt aus
+// `DatagramLogEntry.forced`, siehe dort) - NICHT mehr an der Ankunftsrate im
+// Browser (Nachbesserung Task 6, 2026-09-03). Die fruehere Heuristik hier
+// nahm an, "kein Geraet dieses Projekts aendert regelmaessig mehrere Signale
+// in derselben Millisekunde" - das widerlegt `Runtime.on_event`
+// (`loxone/runtime.py`) selbst: ein Impuls und sein Zaehler gehen dort ohne
+// jede Wartezeit dazwischen hintereinander raus, wenige Mikrosekunden
+// auseinander, und waren damit IMMER als Schwall markiert. Der Server weiss
+// dagegen bereits verlaesslich, warum ein Datagramm ging - `force=True`
+// steht fuer GENAU zwei Aufrufer, `Runtime.resend_all()` (Full-Resend) und
+// den Heartbeat, niemals fuer eine echte Wertaenderung. Diese Auskunft zu
+// uebernehmen statt sie im Browser aus dem Zeitabstand zu erraten, ist der
+// eigentliche Fix - eine Ankunftsrate kann zwei echte, dicht aufeinander
+// folgende Aenderungen strukturell nicht von einem Schwall unterscheiden.
 
 // Reihenfolge der Python-Logstufen, wie `logging` sie kennt - fuer den
 // Vergleich mit `logLevel` unten ("ab Stufe X zeigen"). Ein Eintrag mit
@@ -322,10 +319,6 @@ function app() {
     diagnosticsPaused: false,
     diagnosticsReconnectDelayMs: RECONNECT_DELAY_INITIAL_MS,
     diagnosticsReconnectTimer: null,
-    // Zeitpunkt des zuletzt eingetroffenen Datagramms - fuer die
-    // Schwall-Erkennung in `appendDatagramEntry` (siehe DATAGRAM_BURST_GAP_MS
-    // oben).
-    lastDatagramArrivalAt: null,
     // Anzeigefilter (Entwurf 4): wirken NUR auf das, was diese beiden
     // `visible...`-Funktionen zurueckgeben - die gehaltenen Zeilen selbst
     // (`datagrams`, `diagnosticsLogs`) bleiben unveraendert. Wer den Filter
@@ -1135,6 +1128,29 @@ function app() {
      * wie `/api/live` (`loxone/server.py`) und braucht deshalb denselben,
      * einfacheren Weg - ein erfundenes zweites Subprotokoll waere eine
      * Abweichung vom Vorbild, nicht ein Folgen.
+     *
+     * **Leert alle drei Straeme, BEVOR die neue Verbindung aufgebaut wird**
+     * (Nachbesserung Task 6, 2026-09-03): jede (Wieder-)Verbindung bekommt
+     * von `api/diagnostics_live.py` eine Momentaufnahme von bis zu
+     * `SNAPSHOT_LIMIT` Eintraegen je Strom, in genau derselben
+     * Nachrichtenform wie eine laufende Zeile und ohne eigene Kennzeichnung
+     * als Momentaufnahme. Ohne dieses Leeren haengte sich diese
+     * Momentaufnahme einfach an das bereits Gehaltene an - ein Wechsel weg
+     * von "System" und zurueck, oder jede automatische Wiederverbindung
+     * nach einem Netzhaenger, haette bis zu 150 bereits vorhandene Zeilen
+     * ein zweites Mal angehaengt, auf dem gewoehnlichsten Weg durch die
+     * Oberflaeche. Der einfachere der beiden moeglichen Wege gegenueber
+     * einer serverseitigen Kennzeichnung der Momentaufnahme:
+     * `clearDiagnosticsBuffers()` (dieselbe Funktion, die auch der
+     * "Leeren"-Knopf ruft) macht die Unterscheidung "Momentaufnahme vs.
+     * laufende Zeile" im Browser schlicht ueberfluessig, statt sie dort
+     * nachzubilden - keine neue Nachrichtenform, kein Zusammenfuehren zweier
+     * Quellen beim Anzeigen. Der Preis: eine Wiederverbindung verwirft auch
+     * Zeilen, die aelter sind als die letzten `SNAPSHOT_LIMIT` je Strom (50)
+     * und NICHT durch die folgende Momentaufnahme ersetzt werden - fuer eine
+     * Diagnoseansicht, deren "Leeren"-Knopf genau das ohnehin schon jederzeit
+     * bewusst anbietet, ist das kein neues Risiko, nur derselbe Verlust zu
+     * einem zusaetzlichen Zeitpunkt.
      */
     connectDiagnosticsLive() {
       if (this.diagnosticsReconnectTimer !== null) {
@@ -1147,6 +1163,7 @@ function app() {
       if (previous) {
         previous.close();
       }
+      this.clearDiagnosticsBuffers();
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const url = `${protocol}//${window.location.host}/api/diagnostics/live`;
@@ -1251,7 +1268,7 @@ function app() {
         return;
       }
       if (message.kind === "datagram") {
-        this.appendDatagramEntry(message);
+        this.appendDiagnosticsEntry(this.datagrams, message);
       } else if (message.kind === "command") {
         this.appendDiagnosticsEntry(this.commandLog, message);
       } else if (message.kind === "log") {
@@ -1271,29 +1288,18 @@ function app() {
     },
 
     /**
-     * Wie `appendDiagnosticsEntry`, aber zusaetzlich mit der
-     * Schwall-Erkennung fuer `hideNoise` (siehe DATAGRAM_BURST_GAP_MS oben):
-     * markiert das eingetroffene Datagramm (und, falls es Teil eines
-     * Schwalls ist, RUECKWIRKEND auch das direkt vorige) mit `entry.noise`.
-     * `visibleDatagrams()` liest dieses Feld beim Anzeigen - die gehaltene
-     * Liste selbst behaelt jedes Datagramm, markiert oder nicht (Entwurf 4).
+     * Die UDP-Mitschnitt-Zeilen, wie `hideNoise` sie gerade zeigen soll.
+     * Der Filter liest `entry.forced` (`api/diagnostics_live.py`, gefuellt
+     * aus `DatagramLogEntry.forced` - siehe dort fuer die Begruendung,
+     * warum diese Auskunft vom Server kommt statt aus einer im Browser
+     * nachgebauten Zeitheuristik): `True` steht ausschliesslich fuer den
+     * Heartbeat und einen Full-Resend, niemals fuer eine echte
+     * Wertaenderung - auch dann nicht, wenn zwei echte Aenderungen (z. B.
+     * ein Impuls und sein Zaehler, siehe `Runtime.on_event`) binnen
+     * Mikrosekunden hintereinander eintreffen.
      */
-    appendDatagramEntry(entry) {
-      const now = Date.now();
-      const gap =
-        this.lastDatagramArrivalAt === null ? Infinity : now - this.lastDatagramArrivalAt;
-      const partOfBurst = gap <= DATAGRAM_BURST_GAP_MS;
-      if (partOfBurst && this.datagrams.length > 0) {
-        this.datagrams[this.datagrams.length - 1].noise = true;
-      }
-      entry.noise = partOfBurst || entry.key === HEARTBEAT_KEY;
-      this.appendDiagnosticsEntry(this.datagrams, entry);
-      this.lastDatagramArrivalAt = now;
-    },
-
-    /** Die UDP-Mitschnitt-Zeilen, wie `hideNoise` sie gerade zeigen soll. */
     visibleDatagrams() {
-      return this.hideNoise ? this.datagrams.filter((entry) => !entry.noise) : this.datagrams;
+      return this.hideNoise ? this.datagrams.filter((entry) => !entry.forced) : this.datagrams;
     },
 
     /**
@@ -1313,12 +1319,13 @@ function app() {
      * Leert alle drei gehaltenen Straeme auf dieser Seite - nur die Anzeige
      * in diesem Tab, keine Wirkung auf die Ringe des Servers (die naechste
      * Momentaufnahme beim erneuten Verbinden zeigt sie unveraendert wieder).
+     * Auch von `connectDiagnosticsLive()` selbst gerufen, VOR jedem
+     * (Wieder-)Aufbau der Verbindung - siehe dortiger Kommentar.
      */
     clearDiagnosticsBuffers() {
       this.datagrams = [];
       this.commandLog = [];
       this.diagnosticsLogs = [];
-      this.lastDatagramArrivalAt = null;
     },
 
     // ---------------------------------------------------------------------

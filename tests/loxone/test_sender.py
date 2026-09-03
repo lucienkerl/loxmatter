@@ -81,6 +81,31 @@ async def test_force_resends_an_unchanged_value(receiver):
     await sender.close()
 
 
+async def test_the_forced_field_reflects_why_a_datagram_was_sent_not_when(receiver):
+    """Haelt den Fall fest, der die fruehere Zeitheuristik der WebUI
+    widerlegte (Nachbesserung Task 6, 2026-09-03): `Runtime.on_event`
+    (loxone/runtime.py) schickt einen Impuls und seinen Zaehler unmittelbar
+    hintereinander, ohne `force` - zwei echte Wertaenderungen, Mikrosekunden
+    auseinander. Eine Heuristik auf die Ankunftsrate haette beide als
+    Rauschen markiert; `DatagramLogEntry.forced` unterscheidet stattdessen
+    korrekt danach, WARUM gesendet wurde: `False` fuer jede echte
+    Wertaenderung (auch dicht aufeinanderfolgende), `True` nur fuer die
+    beiden `force=True`-Aufrufer, Heartbeat und Full-Resend."""
+    host, port = receiver.getsockname()
+    sender = UdpSender(host, port)
+
+    # Impuls und Zaehler, wie Runtime.on_event sie verschickt - direkt
+    # hintereinander, ohne jede Wartezeit dazwischen.
+    await sender.send("d1_1_press", True)
+    await sender.send("d1_1_press_n", 1)
+    # Heartbeat und Full-Resend - die einzigen beiden Aufrufer, die force=True setzen.
+    await sender.send("bridge_alive", True, force=True)
+    await sender.send("d1_1_press", True, force=True)
+
+    assert [entry.forced for entry in sender.datagram_log] == [False, False, True, True]
+    await sender.close()
+
+
 async def test_rate_limit_staggers_a_burst(receiver):
     """Spec 6.4: gestaffelt auf etwa 50 Datagramme pro Sekunde."""
     host, port = receiver.getsockname()

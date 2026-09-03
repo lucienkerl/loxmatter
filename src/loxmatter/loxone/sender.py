@@ -145,23 +145,31 @@ class UdpSender:
             # Ein uebersprungener (entprellter) Wert oben erreicht diese
             # Zeile nie, ein force=True-Resend dagegen schon: beides ist
             # richtig, denn beides beschreibt, was wirklich ueber den Draht
-            # ging.
-            self._record_sent(key, text)
+            # ging. `force` wird unveraendert durchgereicht (Nachbesserung
+            # Task 6, 2026-09-03): `DatagramLogEntry.forced` haelt damit
+            # WARUM gesendet wurde fest - einzige verlaessliche Quelle
+            # dieser Unterscheidung, siehe dortiger Docstring.
+            self._record_sent(key, text, force)
 
         self._last_sent[key] = text
         return True
 
-    def _record_sent(self, key: str, text: str) -> None:
+    def _record_sent(self, key: str, text: str, forced: bool) -> None:
         """Haengt einen Eintrag an `datagram_log` an und benachrichtigt
         danach die Beobachterkette - beides abgeschottet in einem eigenen
         try/except (Task-6-Report, Punkt 1): ein Fehler beim Mitschreiben
         (heute keiner ersichtlich, aber ein spaeterer Umbau koennte einen
         einschleppen) darf niemals den bereits erfolgten Versand rueckwirkend
         zu einem Fehlschlag machen - `send()` hat an dieser Stelle sein
-        Datagramm laengst verschickt."""
+        Datagramm laengst verschickt.
+
+        `forced` ist das `force`-Argument von `send()`, unveraendert
+        durchgereicht - siehe `DatagramLogEntry.forced` fuer die Begruendung,
+        warum genau diese Stelle sie kennt und eine Zeitheuristik im Browser
+        sie nicht ersetzen kann."""
         try:
             _, _, value_text = text.partition(":")
-            entry = DatagramLogEntry(key=key, value=value_text, timestamp=now_iso())
+            entry = DatagramLogEntry(key=key, value=value_text, timestamp=now_iso(), forced=forced)
             self._datagram_log.append(entry)
         except Exception:
             logger.exception(

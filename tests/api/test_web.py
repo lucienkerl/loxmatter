@@ -184,6 +184,38 @@ async def test_no_secret_travels_in_a_url_or_local_storage(api):
         assert forbidden not in script
 
 
+async def test_reconnecting_the_diagnostics_channel_clears_the_three_buffers_first(api):
+    """Nachbesserung Task 6 (2026-09-03): jede (Wieder-)Verbindung des
+    Diagnose-Kanals (`/api/diagnostics/live`) bekommt vom Server eine
+    Momentaufnahme von bis zu `SNAPSHOT_LIMIT` Eintraegen je Strom, in
+    GENAU derselben Nachrichtenform wie eine laufende Zeile - ohne
+    Kennzeichnung als Momentaufnahme (siehe `api/diagnostics_live.py`).
+    Ohne ein Leeren der drei gehaltenen Straeme VOR jedem (Wieder-)Aufbau
+    haengte sich diese Momentaufnahme einfach an das bereits Gehaltene an:
+    ein Wechsel weg von "System" und zurueck, oder jede automatische
+    Wiederverbindung nach einem Netzhaenger, haette bis zu 150 bereits
+    vorhandene Zeilen ein zweites Mal angehaengt.
+
+    **Was dieser Test belegt und was nicht.** Ohne Browser-Engine laesst sich
+    hier nicht ausfuehren, dass `connectDiagnosticsLive()` zur Laufzeit
+    tatsaechlich `this.datagrams`/`this.commandLog`/`this.diagnosticsLogs`
+    leert, oder dass ein Wechsel der Ansicht diese Funktion ueberhaupt
+    aufruft. Belegt wird nur, dass der AUSGELIEFERTE Quelltext innerhalb des
+    Rumpfs von `connectDiagnosticsLive()` `clearDiagnosticsBuffers()` ruft -
+    und zwar VOR dem Aufbau des neuen `WebSocket`, nicht erst danach (sonst
+    liefe die Momentaufnahme der alten Verbindung dem Leeren noch in die
+    Quere)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    start = script.index("connectDiagnosticsLive() {")
+    end = script.index("disconnectDiagnosticsLive() {", start)
+    body = script[start:end]
+
+    assert "clearDiagnosticsBuffers()" in body
+    assert body.index("clearDiagnosticsBuffers()") < body.index("new WebSocket(")
+
+
 async def test_the_browser_and_the_server_agree_on_the_download_filenames(api):
     """Seit die beiden Downloads ueber `fetch` statt ueber einen Link laufen,
     vergibt der Browser den Dateinamen selbst - der Server schickt seinen
@@ -377,20 +409,30 @@ async def test_the_diagnostics_filter_only_affects_display_not_held_lines(api):
 
 async def test_the_noise_rule_is_written_down(api):
     """Die Aufgabenstellung ueberlaesst bewusst, woran „Rauschen" (der
-    Heartbeat und ein Full-Resend-Schwall) erkannt wird - verlangt aber, dass
-    die gewaehlte Regel als Kommentar nachlesbar ist, nicht nur implizit im
-    Code steckt: „ein Filter, dessen Kriterium niemand nachlesen kann, ist
-    beim naechsten Zweifel wertlos."
+    Heartbeat und ein Full-Resend) erkannt wird - verlangt aber, dass die
+    gewaehlte Regel als Kommentar nachlesbar ist, nicht nur implizit im Code
+    steckt: „ein Filter, dessen Kriterium niemand nachlesen kann, ist beim
+    naechsten Zweifel wertlos."
 
-    Belegt nur, dass ein solcher Kommentar existiert und die beiden Faelle
-    (Heartbeat-Schluessel, Schwall-Erkennung ueber die Ankunftsrate) beim
-    Namen nennt - nicht, dass die Erkennung zur Laufzeit korrekt zwischen
-    Rauschen und echten Aenderungen unterscheidet."""
+    Seit der Nachbesserung (Task 6, 2026-09-03) liegt das Kriterium NICHT
+    mehr im Browser: eine fruehere Regel ueber die Ankunftsrate markierte
+    jeden schnell aufeinanderfolgenden, aber echten Wertewechsel (z. B.
+    Impuls und Zaehler aus `Runtime.on_event`) faelschlich als Rauschen -
+    das gewaehlte Kriterium ist stattdessen das vom Server mitgeschickte
+    `forced`-Feld (`DatagramLogEntry.forced`).
+
+    Belegt nur, dass ein solcher Kommentar existiert und Feld, Quelle und
+    die widerlegte fruehere Regel beim Namen nennt - nicht, dass die
+    Unterscheidung zur Laufzeit korrekt zwischen Rauschen und echten
+    Aenderungen trennt (siehe dafuer `tests/loxone/test_sender.py`,
+    `test_the_forced_field_reflects_why_a_datagram_was_sent_not_when`, und
+    `tests/api/test_diagnostics_live.py`,
+    `test_a_datagram_message_carries_why_it_was_sent`)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    assert "DATAGRAM_BURST_GAP_MS" in script
+    assert "message.forced" in script
+    assert "DatagramLogEntry.forced" in script
     assert "Schwall" in script
-    assert "HEARTBEAT_KEY" in script
     assert "Full-Resend" in script
 
 

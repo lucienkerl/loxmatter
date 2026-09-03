@@ -188,6 +188,14 @@ def build_diagnostics_live_router(
                     "key": entry.key,
                     "value": entry.value,
                     "timestamp": entry.timestamp,
+                    # Nachbesserung Task 6 (2026-09-03): die WebUI erkennt
+                    # ein entbehrliches Datagramm (Heartbeat, Full-Resend)
+                    # daran - nicht mehr an der Ankunftsrate im Browser, die
+                    # jeden schnell aufeinanderfolgenden ECHTEN Wertewechsel
+                    # (z. B. Impuls + Zaehler aus `Runtime.on_event`)
+                    # faelschlich mitgetroffen haette. Siehe
+                    # `DatagramLogEntry.forced` fuer die Begruendung.
+                    "forced": entry.forced,
                 }
             )
 
