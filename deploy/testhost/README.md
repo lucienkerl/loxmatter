@@ -110,112 +110,36 @@ Datenbank nicht existiert, statt eine neue anzulegen.
 
 ## Aktualisieren
 
-Vom Mac aus, im Repo — kopiert die Quellen, baut das Image auf dem Pi und
-startet nur den `loxmatter`-Dienst neu:
+Auf dem Rechner, auf dem die Brücke läuft:
 
 ```bash
-./deploy/testhost/update.sh
+cd ~/matter-loxone && ./scripts/update.sh
 ```
 
-Anderer Zielrechner: `LOXMATTER_HOST=pi@10.0.1.99 ./deploy/testhost/update.sh`.
+Holt den neuesten Stand, baut das Image, startet den Dienst neu. Nur bauen
+und neu starten, ohne zu holen: `./scripts/update.sh --no-pull`.
 
-Auf dem Zielrechner selbst, aus einem Git-Checkout — der bequemere Weg,
-sobald das Repo dort liegt:
+Das Skript findet den Stack über seinen eigenen Pfad — es gibt nichts zu
+konfigurieren, solange es aus dem Repository heraus läuft.
 
-```bash
-git clone https://github.com/lucienkerl/loxmatter.git ~/matter-loxone
-cd ~/matter-loxone && git pull && bash deploy/testhost/update.sh --local
-```
+Was es zusichert:
 
-Das Skript merkt, dass es aus einem Checkout heraus läuft, und baut aus
-diesem — nicht aus dem per rsync gefüllten `~/loxmatter-build`. Es sagt vor
-dem Bauen, aus welchem Verzeichnis und von welchem Commit es ausliefert.
-
-Seit dem 3. September 2026 liegt **der ganze Stack** im Checkout, nicht nur
-die Quellen: `docker-compose.yml`, `.env` und matter-servers
-Datenverzeichnis `data/`. Vorher lag er flach unter `~/loxmatter-testhost`.
-
-**Wer einen bestehenden Stack umzieht, muss zwei Dinge mitnehmen, sonst
-verliert er sie:**
-
-1. **Das Datenverzeichnis** (`data/`) — es ist ein Bind-Mount *relativ zur
-   Compose-Datei*. Ein Umzug ohne es lässt den Pfad ins Leere zeigen, und
-   Compose erzeugt matter-server mit leerer Fabric: alle Geräte müssten neu
-   eingelernt werden. Also `mv altes/data neues/data`, bevor der neue Stack
-   startet.
-2. **Den Thread-Zustand von OTBR** — siehe den Kommentar am Volume
-   `otbr-state` in `docker-compose.yml`. Ein leeres Volume einzuhängen
-   löscht das Thread-Netz genauso, wie gar keins zu haben.
-
-Um den **Projektnamen** muss sich dagegen niemand mehr kümmern: er steht seit
-demselben Tag als `name:` in `docker-compose.yml` fest. Vorher leitete Compose
-ihn aus dem Verzeichnisnamen ab — dann hätte der Umzug die benannten Volumes
-umbenannt und stillschweigend leere angelegt, statt einen Fehler zu melden.
-
-Ohne Checkout, mit per rsync gefüllten Quellen, geht auch:
-
-```bash
-bash ~/loxmatter-build/update.sh --local
-```
-
-Was das Skript zusichert:
-
-- **Es sichert die Signaldatenbank, bevor es irgendetwas ändert.** Darin stehen
-  die Signalschlüssel, und die sind die Verdrahtung in der Loxone-Konfiguration
-  — das Einzige, was ein misslungenes Update nicht wiederherstellen könnte. Die
-  Sicherungen liegen unter `~/loxmatter-backups/`, die letzten zehn bleiben.
-- **matter-server und OTBR bleiben unangetastet** (`docker compose up --no-deps`).
-  Ohne das erzeugt Compose sie mit neu, sobald sich die Projektkonfiguration
-  geändert hat; die Fabric übersteht das zwar, aber ein Neustart des Thread-Netzes
+- **Es sichert die Signaldatenbank, bevor es irgendetwas ändert.** Darin
+  stehen die Signalschlüssel, und die sind die Verdrahtung in der
+  Loxone-Konfiguration — das Einzige, was ein misslungenes Update nicht
+  wiederherstellen könnte. Die Sicherungen liegen unter
+  `~/loxmatter-backups/`, die letzten zehn bleiben.
+- **matter-server und OTBR bleiben unangetastet** (`docker compose up
+  --no-deps`). Ohne das erzeugt Compose sie mit neu, sobald sich die
+  Projektkonfiguration geändert hat; OTBRs Thread-Zustand übersteht das zwar
+  (er liegt im Volume `otbr-state`), aber ein Neustart des Thread-Netzes
   ohne Grund gehört nicht zu einem Update.
-- **Es bricht ab, bevor es schadet.** Schlägt die Sicherung oder der Build fehl,
-  läuft der alte Dienst unverändert weiter. Antwortet `/health` nach dem Neustart
-  nicht innerhalb von 20 Sekunden, zeigt es die letzten Logzeilen und meldet
-  einen Fehlschlag statt Erfolg.
-- Am Ende sagt es, wie viele Signale je Gerät exportiert werden — die Zahl, die
-  sich mit Phase 6 geändert hat.
-
-**Schritt 2 — Bluetooth entsperren.** Nur bei der Ersteinrichtung nötig: `hci0` war
-werksseitig rfkill-soft-blockiert, und ohne diesen Schritt startet `matter-server` ohne
-funktionsfähiges BLE. **Der Unblock hält über Reboots hinweg** — am 2026-09-01 durch
-einen echten Reboot geprüft (siehe "Bluetooth-Adapter ist rfkill-soft-blocked"). Prüfe
-mit `rfkill list bluetooth`; steht dort `Soft blocked: no`, überspring diesen Schritt:
-
-```bash
-docker run --rm --privileged -v /sys:/sys alpine \
-  sh -c 'echo 0 > /sys/class/rfkill/rfkill0/soft'
-```
-
-**Schritt 3 — Stack starten:**
-
-```bash
-docker compose up -d
-```
-
-**Schritt 4 — OTBR-Wrapper killen und Binaries direkt starten.** Der
-`start-stop-daemon` im OTBR-Image hängt auf diesem Kernel endlos, `otbr-agent`/
-`otbr-web` kommen nie hoch (**nicht persistent** — nach jedem Neustart des
-`otbr`-Containers erneut nötig, siehe "start-stop-daemon haengt auf dem
-Pi-Kernel"):
-
-```bash
-docker exec otbr sh -c 'kill -9 $(cat /var/run/otbr-agent.pid) $(cat /var/run/otbr-web.pid)'
-docker exec -d otbr /usr/sbin/otbr-agent -I wpan0 -B wlan0 -d7 \
-  --rest-listen-address 127.0.0.1 \
-  spinel+hdlc+uart:///dev/ttyUSB0?uart-baudrate=460800
-docker exec -d otbr /usr/sbin/otbr-web -I wpan0 -d7 -a 127.0.0.1 -p 80
-```
-
-**Schritt 5 — Thread-Netz einmalig bilden:**
-
-```bash
-docker exec otbr ot-ctl dataset init new
-docker exec otbr ot-ctl dataset commit active
-docker exec otbr ot-ctl ifconfig up
-docker exec otbr ot-ctl thread start
-docker exec otbr ot-ctl state          # erwartet: leader
-docker exec otbr ot-ctl dataset active -x
-```
+- **Es bricht ab, bevor es schadet.** Schlägt die Sicherung oder der Build
+  fehl, läuft der alte Dienst unverändert weiter. Antwortet `/health` nach
+  dem Neustart nicht innerhalb von 20 Sekunden, zeigt es die letzten
+  Logzeilen und meldet einen Fehlschlag statt Erfolg.
+- Am Ende sagt es, aus welchem Commit es ausgeliefert hat und wie viele
+  Signale je Gerät exportiert werden.
 
 ## BLE aktivieren
 
