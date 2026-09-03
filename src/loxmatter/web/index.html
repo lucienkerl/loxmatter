@@ -458,21 +458,18 @@
           <div class="row">
             <label
               >IP dieser Brücke
-              <input type="text" x-model="exportBridgeIp" placeholder="z. B. 192.168.1.20"
+              <input type="text" :value="bridgeSettings.bridge_ip || ''" readonly
             /></label>
-            <label>UDP-Port <input type="number" x-model.number="exportPort" /></label>
+            <label>UDP-Port <input type="number" :value="bridgeSettings.udp_port" readonly /></label>
             <label>
               HTTP-Port (Kommandos)
-              <input type="number" x-model.number="exportListenPort" />
+              <input type="number" :value="bridgeSettings.listen_port" readonly />
             </label>
           </div>
           <p class="hint">
-            Gemeint ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der
-            Miniserver ihn sieht. <strong>Nicht</strong> die Adresse des Miniservers. Der
-            virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die
-            Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span>
-            auf. Steht hier die Miniserver-IP, sehen die Vorlagen richtig aus, bleiben aber
-            stumm – ohne jede Fehlermeldung.
+            Wird in
+            <a href="#" @click.prevent="selectView('settings')">Einstellungen → Verbindung zum Miniserver</a>
+            verwaltet.
           </p>
           <div class="row">
             <label><input type="checkbox" x-model="exportIncludeSystem" /> Systemvorlagen einschließen</label>

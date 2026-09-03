@@ -962,14 +962,15 @@ function app() {
 
     async previewExport() {
       this.exportError = null;
-      if (!this.exportBridgeIp.trim()) {
-        this.exportError = "Bitte zuerst die IP der Bruecke (aus Sicht des Miniservers) eingeben.";
+      if (!this.bridgeSettings.bridge_ip) {
+        this.exportError =
+          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
         return;
       }
       this.exportBusy = true;
       try {
         const params = new URLSearchParams({
-          bridge_ip: this.exportBridgeIp.trim(),
+          bridge_ip: this.bridgeSettings.bridge_ip,
           system: String(this.exportIncludeSystem),
         });
         this.exportPreview = await this.request("GET", `/api/export/preview?${params}`);
@@ -1004,9 +1005,9 @@ function app() {
     // hat (siehe `api/export.py`).
     downloadUrl() {
       const params = new URLSearchParams({
-        bridge_ip: this.exportBridgeIp.trim(),
-        port: String(this.exportPort),
-        listen: String(this.exportListenPort),
+        bridge_ip: this.bridgeSettings.bridge_ip,
+        port: String(this.bridgeSettings.udp_port),
+        listen: String(this.bridgeSettings.listen_port),
         system: String(this.exportIncludeSystem),
         only_pending: String(this.exportOnlyPending),
       });
@@ -1028,8 +1029,9 @@ function app() {
     // bessere Antwort.
     async downloadExport() {
       this.exportError = null;
-      if (!this.exportBridgeIp.trim()) {
-        this.exportError = "Bitte zuerst die IP der Bruecke (aus Sicht des Miniservers) eingeben.";
+      if (!this.bridgeSettings.bridge_ip) {
+        this.exportError =
+          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
         return;
       }
       try {

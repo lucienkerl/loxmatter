@@ -304,6 +304,6 @@ async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
     will."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    label = _label_around(markup, 'x-model="exportBridgeIp"')
+    label = _label_around(markup, ':value="bridgeSettings.bridge_ip')
     assert "Miniserver" not in label, label
     assert "IP dieser Brücke" in label, label
