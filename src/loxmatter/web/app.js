@@ -1066,6 +1066,33 @@ function app() {
       await this.loadExportStatus();
     },
 
+    // Export-Knopf an einer einzelnen Geraetekarte (Geraete-Dashboard-
+    // Entwurf, Abschnitt 6) - kein Vorschauschritt: die Werte stehen ja
+    // bereits offen auf der Karte, eine zusaetzliche Vorschau waere
+    // doppelte Information.
+    async exportDevice(device) {
+      this.deviceActionError = null;
+      if (!this.bridgeSettings.bridge_ip) {
+        this.deviceActionError =
+          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        return;
+      }
+      const params = new URLSearchParams({
+        bridge_ip: this.bridgeSettings.bridge_ip,
+        port: String(this.bridgeSettings.udp_port),
+        listen: String(this.bridgeSettings.listen_port),
+        device_id: String(device.id),
+      });
+      try {
+        await this.download(`/api/export/download?${params}`, `loxmatter-d${device.id}-export.zip`);
+        this.showToast(`${device.label} wurde exportiert.`);
+      } catch (error) {
+        this.deviceActionError = `Export fehlgeschlagen: ${error.message}`;
+        return;
+      }
+      await this.loadExportStatus();
+    },
+
     // ---------------------------------------------------------------------
     // System
     // ---------------------------------------------------------------------

@@ -304,6 +304,15 @@
 
             <div class="device-controls row">
               <span class="hint" x-text="exportHintFor(device.id)"></span>
+              <span style="flex: 1 1 auto"></span>
+              <button
+                class="primary"
+                @click="exportDevice(device)"
+                :disabled="!bridgeSettings.bridge_ip"
+                :title="!bridgeSettings.bridge_ip ? 'Erst in Einstellungen → Verbindung zum Miniserver hinterlegen' : ''"
+              >
+                Exportieren
+              </button>
             </div>
           </div>
         </template>
