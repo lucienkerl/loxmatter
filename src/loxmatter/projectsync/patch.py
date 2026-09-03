@@ -74,7 +74,16 @@ class _Edit:
 
 
 def _attr_span(text: str, tag_start: int, tag_end: int, name: str) -> tuple[int, int] | None:
-    pattern = re.compile(rf'{re.escape(name)}="(?:[^"&]|&[^;]+;)*"')
+    """Byte-Bereich von `name="wert"` innerhalb eines Start-Tags, oder `None`,
+    wenn das Attribut dort nicht vorkommt.
+
+    Der Rueckblick `(?<![A-Za-z0-9_])` ist kein Detail: ohne ihn faende
+    `re.search` fuer `Title` auch die zweite Haelfte eines laengeren
+    Attributnamens (`XTitle="..."`) - und weil `search` den ERSTEN Treffer im
+    Tag liefert, wuerde ein solches Attribut still ueberschrieben statt des
+    eigentlich gemeinten. Ein Attributname beginnt immer nach Leerraum oder
+    direkt nach `<C`, nie mitten in einem Bezeichner."""
+    pattern = re.compile(rf'(?<![A-Za-z0-9_]){re.escape(name)}="(?:[^"&]|&[^;]+;)*"')
     match = pattern.search(text, tag_start, tag_end)
     return None if match is None else (match.start(), match.end())
 

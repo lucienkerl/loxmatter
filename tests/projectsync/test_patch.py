@@ -221,6 +221,47 @@ NO_VIRTUAL_IN_CAPTION_PROJECT = (
 )
 
 
+# Ein Projekt, in dem VOR dem echten `Title` ein Attribut steht, dessen Name
+# auf einen verwalteten Attributnamen ENDET (`XTitle`). Solche Namen sind in
+# einer echten Projektdatei nicht ausgeschlossen - dieses Projekt kennt laengst
+# nicht alle Bausteintypen, die Loxone Config schreibt.
+DECOY_ATTR_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="VirtualInCaption" IName="C1" U="1000-0000-0000-aaaaaaaaaaaaaaaa">\r\n'
+    '\t\t<C Type="VirtualUdpIn" IName="VUI1" U="1000-0001-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Matter — Altes Geraet" WF="16384" Address="10.0.0.5" Port="7000">\r\n'
+    '\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" U="1000-0002-0000-aaaaaaaaaaaaaaaa"'
+    ' XTitle="Bitte nicht anfassen" Title="Alter Titel" Nio="2" WF="16384"'
+    ' Check="d1_1_onoff:\\v" Analog="true">\r\n'
+    '\t\t\t\t<Co K="AQ" U="1000-0003-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
+    "\t\t\t</C>\r\n"
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
+def test_update_does_not_rewrite_an_attribute_that_only_ends_in_the_name():
+    """`_attr_span` suchte `Title="..."` ohne Wortgrenze links - `re.search`
+    lieferte damit den ersten Treffer irgendwo im Tag, also auch die zweite
+    Haelfte eines laengeren Attributnamens wie `XTitle`. Das Update schrieb
+    dann still in das FALSCHE Attribut und liess das echte unberuehrt: genau
+    der Bruch der Zusage, nie Bytes anzufassen, die dieses Projekt nicht
+    versteht (Entwurf Abschnitt 3.2)."""
+    index = build_index(DECOY_ATTR_PROJECT)
+    device = _device(1, "Altes Geraet")
+    signals = [_signal("d1_1_onoff", 1, title="Neuer Titel")]
+    patched = _patch(index, device, signals, include_new_devices=False)
+
+    assert 'XTitle="Bitte nicht anfassen"' in patched
+    patched_index = build_index(patched)
+    cmd = patched_index.input_cmds["d1_1_onoff"]
+    assert cmd.attrs["XTitle"] == "Bitte nicht anfassen"
+    assert cmd.attrs["Title"] == "Neuer Titel"
+
+
 def test_new_device_without_virtual_in_caption_raises_clear_error():
     """`include_new_devices=True` fuer ein Geraet, das einen komplett neuen
     Eingangs-Container braucht, in einem Projekt ohne jeden bestehenden
