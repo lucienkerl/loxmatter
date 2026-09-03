@@ -112,16 +112,26 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
 
     1. Boilerplate-Cluster sind nie gewollt, auf keinem Endpunkt.
     2. Auf einem Verwaltungs-Endpunkt (Root Node oder OTA Requestor) ist
-       nur gewollt, was zu einem dort ebenfalls deklarierten Nutz-
-       Geraetetyp gehoert.
-    3. Auf einem Nutz-Endpunkt ist alles gewollt - ausser bei einem
-       Cluster, den die Profiltabelle kennt: dort nur die benannten
-       Elemente. Ein unbekannter Cluster bleibt vollstaendig gewollt
-       (Hauptdokument 3.5).
+       nur ueberhaupt in Betracht, was zu einem dort ebenfalls deklarierten
+       Nutz-Geraetetyp gehoert - alles andere scheidet hier sofort aus.
+    3. Was Schicht 2 durchlaesst (und jeder Nutz-Endpunkt ohnehin) ist
+       gewollt - ausser bei einem Cluster, den die Profiltabelle kennt: dort
+       nur die benannten Elemente. Ein unbekannter Cluster bleibt
+       vollstaendig gewollt (Hauptdokument 3.5).
 
-    Ereignisse unterliegen Schicht 3 nicht: sie sind in der Tabelle
-    ohnehin namentlich gefuehrt, und ein verworfenes Ereignis waere ein
-    Tastendruck, der in Loxone nie ankommt.
+    Wichtig: Schicht 2 gewaehrt nur den Cluster einen Platz auf dem
+    Verwaltungs-Endpunkt, nicht schon jedes seiner Elemente - Schicht 3
+    filtert innerhalb dieses Clusters genauso wie bei einem Nutz-Endpunkt.
+    Der Taster deklariert Power Source auf Endpunkt 0 wegen des
+    Batteriestands (Element 12), traegt denselben Cluster 47 aber mit 36
+    weiteren, nicht benannten Attributen (Ladezustand, Batteriechemie, ANSI-
+    Bezeichnungen, Fehlerlisten) - ohne diesen zweiten Filter waeren alle 37
+    "gewollt", nur weil einer von ihnen es ist (Aufgabe 6, siehe
+    `test_an_unnamed_power_source_attribute_on_the_utility_endpoint_is_not_functional`).
+
+    Ereignisse unterliegen dem Cluster-Tabellen-Filter aus Schicht 3 nicht:
+    sie sind in der Tabelle ohnehin namentlich gefuehrt, und ein verworfenes
+    Ereignis waere ein Tastendruck, der in Loxone nie ankommt.
     """
     if ref.cluster_id in BOILERPLATE_CLUSTERS:
         return False
@@ -129,7 +139,8 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
     declared = device_types.get(ref.endpoint, frozenset())
     if declared & UTILITY_DEVICE_TYPES:
         required = UTILITY_ENDPOINT_KEEP_CLUSTERS.get(ref.cluster_id)
-        return required is not None and required in declared
+        if required is None or required not in declared:
+            return False
 
     if ref.kind is SignalKind.EVENT:
         return True

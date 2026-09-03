@@ -139,3 +139,15 @@ def test_an_event_on_a_utility_endpoint_with_an_unknown_cluster_is_not_functiona
     Dieser Test stellt sicher, dass das nicht passiert."""
     ref = SignalRef(0, 51, 0, SignalKind.EVENT)  # Cluster 51: GeneralDiagnostics
     assert is_functional(ref, _PLUG_TYPES) is False
+
+
+def test_an_unnamed_power_source_attribute_on_the_utility_endpoint_is_not_functional():
+    """Aufgabe 6, gefunden beim Verdrahten: Schicht 2 gab bisher bei einem
+    zutreffenden `UTILITY_ENDPOINT_KEEP_CLUSTERS`-Eintrag den ganzen Cluster
+    frei, statt wie Schicht 3 nur dessen benannte Elemente. `clusters.yaml`
+    ist eindeutig ("Nur dieses eine von 37 Attributen ist benannt") - der
+    Taster meldet unter 0/47/0 (BatChargeLevel) tatsaechlich einen Wert, und
+    der durfte trotzdem nicht durchrutschen, nur weil derselbe Cluster auch
+    den Batteriestand traegt."""
+    ref = SignalRef(0, 47, 0, SignalKind.ATTRIBUTE)
+    assert is_functional(ref, _BUTTON_TYPES) is False
