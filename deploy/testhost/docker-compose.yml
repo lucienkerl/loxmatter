@@ -37,6 +37,31 @@ services:
       NAT64: "0"
       FIREWALL: "0"
     command: --backbone-interface ${BACKBONE_IF}
+    volumes:
+      # Der Thread-Zustand ueberlebt sonst KEINEN Neubau des Containers
+      # (2026-09-03). Das Image sieht dafuer kein Volume vor, und OTBR legt
+      # seine Netzdaten - Netzwerkschluessel, PAN-ID, Kanal - unter
+      # /var/lib/thread in der Schreibschicht ab. Ein `docker compose down`,
+      # ein Image-Update oder ein Umzug des Projektverzeichnisses bildet
+      # damit ein NEUES Thread-Netz, und jedes bereits eingelernte Geraet
+      # muesste zurueckgesetzt und neu gepaart werden - bei einem
+      # Sensor hinter einer Schranktuer keine Kleinigkeit.
+      #
+      # Wer einen laufenden Stack ohne dieses Volume nachruestet, muss den
+      # Zustand zuerst herausholen und in das leere Volume legen, sonst
+      # startet OTBR mit leerem Zustand und das Netz ist trotzdem weg:
+      #
+      #   docker cp otbr:/var/lib/thread /tmp/thread-state
+      #   docker volume create <projekt>_otbr-state
+      #   docker run --rm -v <projekt>_otbr-state:/d -v /tmp/thread-state:/s:ro \
+      #       alpine sh -c 'cp -a /s/. /d/'
+      #
+      # Rueckfallweg, falls doch etwas schiefgeht: der aktive Datensatz als
+      # Hex (`docker exec otbr ot-ctl dataset active -x`) laesst sich mit
+      # `ot-ctl dataset set active <hex>` in einen frischen Container
+      # zuruecksetzen. Diese Zeichenkette ist ein Credential und gehoert
+      # weder ins Repository noch in ein Log.
+      - otbr-state:/var/lib/thread
 
   matter-server:
     image: ghcr.io/home-assistant-libs/python-matter-server:stable
@@ -171,6 +196,8 @@ services:
       - matter-server
 
 volumes:
+  # Der Thread-Zustand von OTBR (siehe dort, ausfuehrliche Begruendung).
+  otbr-state:
   # Named Volume statt Bind-Mount (anders als matter-server oben): die
   # Signalschluessel-Datenbank gehoert nicht in den Projekt-Checkout auf dem
   # Host, sondern lebt unabhaengig davon (siehe LOXMATTER_STORE oben).
