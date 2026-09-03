@@ -832,7 +832,6 @@ function app() {
         window.clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
       }
-      this.reconnectDelayMs = RECONNECT_DELAY_INITIAL_MS;
       const previous = this.socket;
       this.socket = null;
       this.socketConnected = false;
@@ -873,9 +872,11 @@ function app() {
       // selbst setzt `this.socket` gleich im Anschluss auf den neuen Socket
       // - das `close`-Ereignis der alten Verbindung feuert asynchron und
       // trifft hier also auf ein `this.socket`, das schon nicht mehr sie
-      // selbst ist. Zwei Wege rufen `connectLive()` auf eine noch lebende
-      // Verbindung auf: `startApp()` nach einer Neuanmeldung und der
-      // `reconnectTimer` unten, falls beide gleichzeitig aktiv werden.
+      // selbst ist. Nur ein Weg kann `connectLive()` ueberhaupt auf eine
+      // noch lebende Verbindung treffen lassen: `startApp()` nach einer
+      // Neuanmeldung. Der `reconnectTimer` unten dagegen entsteht erst aus
+      // dem `close`-Ereignis dieser Verbindung und trifft daher immer auf
+      // einen bereits geschlossenen Socket.
       socket.addEventListener("close", () => {
         if (this.socket === socket) {
           this.scheduleReconnect();
