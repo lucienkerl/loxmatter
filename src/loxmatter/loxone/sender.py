@@ -54,6 +54,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
+from collections.abc import Callable
 
 from loxmatter.api.diagnostics import DatagramLogEntry, RingBuffer
 from loxmatter.loxone.values import datagram
@@ -83,6 +84,7 @@ class UdpSender:
         self._next_send_time = 0.0
         self._lock = asyncio.Lock()
         self._datagram_log: RingBuffer[DatagramLogEntry] = RingBuffer(maxlen=log_size)
+        self._datagram_observers: list[Callable[[DatagramLogEntry], None]] = []
 
     @property
     def target(self) -> tuple[str, int]:
@@ -99,6 +101,26 @@ class UdpSender:
         Property verhindert zusaetzlich, dass ein Aufrufer `self._datagram_log`
         durch ein komplett anderes Objekt ersetzt."""
         return self._datagram_log
+
+    def add_datagram_observer(self, callback: Callable[[DatagramLogEntry], None]) -> None:
+        """Meldet einen Beobachter an, der jedes tatsaechlich gesendete
+        Datagramm sieht - auch die, die `Runtime._notify_observers` bewusst
+        auslaesst (Full-Resend, Absenken eines Impulses; siehe dortiger
+        Docstring). Genau deshalb haengt diese Kette hier am Sender und nicht
+        an der Laufzeit: siehe Moduldocstring, Abschnitt "Mitschnitt".
+
+        Der Beobachter wird aus `_record_sent` heraus aufgerufen, also NACH
+        dem `sendto()` und NACH dem Anhaengen an `datagram_log`."""
+        self._datagram_observers.append(callback)
+
+    def remove_datagram_observer(self, callback: Callable[[DatagramLogEntry], None]) -> None:
+        """Meldet einen Beobachter wieder ab. Ein unbekannter Beobachter
+        (z. B. doppelt abgemeldet) ist kein Fehler, sondern wird still
+        ignoriert - dieselbe Regel wie bei `Runtime.remove_observer`."""
+        try:
+            self._datagram_observers.remove(callback)
+        except ValueError:
+            pass
 
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
         """Sendet, wenn sich der Wert geaendert hat oder force gesetzt ist."""
@@ -130,23 +152,49 @@ class UdpSender:
         return True
 
     def _record_sent(self, key: str, text: str) -> None:
-        """Haengt einen Eintrag an `datagram_log` - abgeschottet in einem
-        eigenen try/except (Task-6-Report, Punkt 1): ein Fehler beim
-        Mitschreiben (heute keiner ersichtlich, aber ein spaeterer Umbau
-        koennte einen einschleppen) darf niemals den bereits erfolgten
-        Versand rueckwirkend zu einem Fehlschlag machen - `send()` hat an
-        dieser Stelle sein Datagramm laengst verschickt."""
+        """Haengt einen Eintrag an `datagram_log` an und benachrichtigt
+        danach die Beobachterkette - beides abgeschottet in einem eigenen
+        try/except (Task-6-Report, Punkt 1): ein Fehler beim Mitschreiben
+        (heute keiner ersichtlich, aber ein spaeterer Umbau koennte einen
+        einschleppen) darf niemals den bereits erfolgten Versand rueckwirkend
+        zu einem Fehlschlag machen - `send()` hat an dieser Stelle sein
+        Datagramm laengst verschickt."""
         try:
             _, _, value_text = text.partition(":")
-            self._datagram_log.append(
-                DatagramLogEntry(key=key, value=value_text, timestamp=now_iso())
-            )
+            entry = DatagramLogEntry(key=key, value=value_text, timestamp=now_iso())
+            self._datagram_log.append(entry)
         except Exception:
             logger.exception(
                 "Mitschnitt des gesendeten Datagramms fuer Schluessel %r fehlgeschlagen - "
                 "der Versand selbst ist davon nicht betroffen",
                 key,
             )
+            return
+        self._notify_datagram_observers(entry)
+
+    def _notify_datagram_observers(self, entry: DatagramLogEntry) -> None:
+        """Ruft jeden Beobachter mit dem soeben aufgezeichneten Datagramm auf
+        - nach demselben Muster wie `Runtime._notify_observers` (dort
+        nachlesen).
+
+        Eine Kopie der Liste iterieren statt des Originals: ein Beobachter,
+        der sich selbst waehrend seines Aufrufs abmeldet
+        (`remove_datagram_observer`), darf die laufende Benachrichtigung der
+        uebrigen nicht stoeren.
+
+        Ein Fehler eines Beobachters wird geloggt und uebersprungen - anders
+        als beim Log-Handler (dort waere der Logeintrag selbst die
+        Endlosschleife) protokolliert der UDP-Pfad hier ohnehin schon, eine
+        stille Verschluckung waere die schlechtere Wahl."""
+        for observer in list(self._datagram_observers):
+            try:
+                observer(entry)
+            except Exception:
+                logger.exception(
+                    "Beobachter fuer gesendetes Datagramm %r ist fehlgeschlagen - "
+                    "wird uebersprungen",
+                    entry.key,
+                )
 
     async def close(self) -> None:
         """Schliesst den Socket. Nimmt dieselbe Sperre wie send(), damit ein

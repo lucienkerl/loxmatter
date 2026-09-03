@@ -19,6 +19,7 @@ import socket
 
 import pytest
 
+from loxmatter.api.diagnostics import DatagramLogEntry
 from loxmatter.loxone.sender import UdpSender
 
 
@@ -128,3 +129,52 @@ async def test_close_is_idempotent():
     sender = UdpSender("127.0.0.1", 7000)
     await sender.close()
     await sender.close()
+
+
+def test_a_datagram_observer_sees_every_send():
+    """Auch das, was die Laufzeit-Beobachter auslassen: den Full-Resend und
+    das Absenken eines Impulses. Das ist der Grund, warum der Mitschnitt am
+    Sender haengt und nicht an der Laufzeit."""
+    sender = UdpSender("127.0.0.1", 7000)
+    seen: list[str] = []
+
+    def observer(entry: DatagramLogEntry) -> None:
+        seen.append(f"{entry.key}={entry.value}")
+
+    sender.add_datagram_observer(observer)
+
+    asyncio.run(sender.send("d1_1_onoff", True))
+    asyncio.run(sender.send("d1_1_onoff", False, force=True))
+
+    assert seen == ["d1_1_onoff=1", "d1_1_onoff=0"]
+
+
+def test_a_throwing_observer_does_not_break_the_send_path():
+    """Ein Diagnosewerkzeug, das den Pfad anhaelt, den es beobachtet, waere
+    schlimmer als gar keins - dieselbe Begruendung wie beim Mitschreiben
+    selbst (siehe `_record_sent`)."""
+
+    def _throwing_observer(entry: DatagramLogEntry) -> None:
+        raise RuntimeError("kaputt")
+
+    sender = UdpSender("127.0.0.1", 7000)
+    sender.add_datagram_observer(_throwing_observer)
+
+    asyncio.run(sender.send("d1_1_onoff", True))
+
+    assert [entry.key for entry in sender.datagram_log] == ["d1_1_onoff"]
+
+
+def test_a_removed_observer_is_no_longer_called():
+    sender = UdpSender("127.0.0.1", 7000)
+    seen: list[str] = []
+
+    def observer(entry: DatagramLogEntry) -> None:
+        seen.append(entry.key)
+
+    sender.add_datagram_observer(observer)
+    sender.remove_datagram_observer(observer)
+
+    asyncio.run(sender.send("d1_1_onoff", True))
+
+    assert seen == []
