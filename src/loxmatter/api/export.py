@@ -101,6 +101,7 @@ from loxmatter.export.documents import (
     render_virtual_in_udp,
     render_virtual_out,
 )
+from loxmatter.export.outputs import to_outputs
 from loxmatter.export.signals import to_inputs
 from loxmatter.model.store import DEFAULT_UDP_PORT, Store, StoredCommand, StoredDevice
 from loxmatter.profiles.table import is_exportable
@@ -144,15 +145,7 @@ def _loxone_commands(commands: Sequence[StoredCommand]) -> list[LoxoneCommand]:
     `StoredCommand` statt `DeviceCommand` angewandt, weil dieser Router aus
     dem `Store` liest statt aus einem frischen Matter-Abbild (siehe
     Modul-Docstring)."""
-    return [
-        LoxoneCommand(
-            key=command.key,
-            title=command.slug,
-            path=f"/cmd/{command.key}/" + ("<v>" if command.takes_value else "1"),
-            analog=command.takes_value,
-        )
-        for command in commands
-    ]
+    return to_outputs(commands)
 
 
 def _device_preview(device: StoredDevice, store: Store) -> ExportDeviceOut:

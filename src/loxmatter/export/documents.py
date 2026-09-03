@@ -60,10 +60,24 @@ _MIN_VERSION = "14040925"
 
 @dataclass(frozen=True)
 class LoxoneCommand:
+    """Ein virtueller Ausgang, wie er in der Vorlage landet.
+
+    `off_path` ist der zweite Befehl desselben Ausgangs. Loxone sieht fuer
+    einen digitalen virtuellen Ausgang `CmdOn` UND `CmdOff` vor: EIN Objekt,
+    das bei der steigenden Flanke das eine und bei der fallenden das andere
+    schickt. Genau das braucht man, um einen Schalter direkt darauf zu
+    legen - zwei getrennte Ausgaenge fuer Ein und Aus muesste man in der
+    Config erst wieder von Hand zusammenbinden.
+
+    Leer, wenn es keinen Gegenbefehl gibt (`toggle`, oder jedes Kommando mit
+    Wert wie `level`). Dann bleibt `CmdOff` leer, wie bisher.
+    """
+
     key: str
     title: str
     path: str
     analog: bool
+    off_path: str = ""
 
 
 def _flag(value: bool) -> str:
@@ -129,7 +143,7 @@ def render_virtual_out(
                 ("CmdOn", command.path),
                 ("CmdOnHTTP", ""),
                 ("CmdOnPost", ""),
-                ("CmdOff", ""),
+                ("CmdOff", command.off_path),
                 ("CmdOffHTTP", ""),
                 ("CmdOffPost", ""),
                 ("CmdAnswer", ""),

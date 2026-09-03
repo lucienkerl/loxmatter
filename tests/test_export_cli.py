@@ -124,7 +124,15 @@ def test_plug_gets_only_the_onoff_commands(tmp_path):
         ],
     )
     text = next(tmp_path.glob("VO_*.xml")).read_text(encoding="utf-8-sig")
-    assert text.count("<VirtualOutCmd ") == 3
+    # Drei Befehle (on, off, toggle) und zusaetzlich der kombinierte
+    # Ein/Aus-Ausgang (2026-09-03): Loxone kennt fuer einen digitalen
+    # virtuellen Ausgang CmdOn UND CmdOff, und darauf laesst sich ein
+    # Schalter direkt legen. Die einzelnen bleiben daneben stehen - fuer
+    # Geraete, die auch ausserhalb von Loxone geschaltet werden koennen,
+    # wo man Ein und Aus einzeln ausloesen will statt an einer Flanke zu
+    # haengen, die vielleicht nicht kommt.
+    assert text.count("<VirtualOutCmd ") == 4
+    assert 'CmdOn="/cmd/d1_1_on/1" CmdOnHTTP="" CmdOnPost="" CmdOff="/cmd/d1_1_off/1"' in text
 
 
 def test_listen_option_reaches_the_command_url(tmp_path):

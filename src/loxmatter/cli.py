@@ -36,12 +36,12 @@ from loxmatter.commands.translate import MatterCall
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.documents import (
-    LoxoneCommand,
     filename_for,
     render_system_templates,
     render_virtual_in_udp,
     render_virtual_out,
 )
+from loxmatter.export.outputs import to_outputs
 from loxmatter.export.signals import to_inputs
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
@@ -346,15 +346,7 @@ def export(
     # so stammen der Schluessel in der Vorlage und der in der Datenbank aus
     # einer Quelle statt aus zwei unabhaengigen Zusammensetzungen, die
     # auseinanderdriften koennten, ohne dass ein Fehler es meldet.
-    commands = [
-        LoxoneCommand(
-            key=c.key,
-            title=c.slug,
-            path=f"/cmd/{c.key}/" + ("<v>" if c.takes_value else "1"),
-            analog=c.takes_value,
-        )
-        for c in stored_commands
-    ]
+    commands = to_outputs(stored_commands)
 
     _ensure_out_dir(out)
     viu = out / filename_for("VIU", device_id, label)
