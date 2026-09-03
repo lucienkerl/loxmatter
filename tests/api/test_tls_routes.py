@@ -100,8 +100,12 @@ async def test_the_status_route_needs_a_token(client_factory, tls_state):
 
 
 async def test_the_status_names_the_port_and_the_addresses(client_factory, tls_state):
-    async with client_factory(tls_state=tls_state) as client:
-        payload = (await client.get("/api/diagnostics/tls")).json()
+    """`/api/diagnostics/tls` ist wie jede `/api`-Route geschuetzt (WebUI-Login,
+    Spec 11) - ohne Bearer-Token bekaeme man hier nur 401 statt der Nutzlast,
+    die dieser Test prueft."""
+    headers = {"Authorization": "Bearer geheim"}
+    async with client_factory(tls_state=tls_state, api_token="geheim") as client:
+        payload = (await client.get("/api/diagnostics/tls", headers=headers)).json()
 
     assert payload["enabled"] is True
     assert payload["port"] == 8443
@@ -114,11 +118,14 @@ async def test_the_status_names_the_port_and_the_addresses(client_factory, tls_s
 async def test_the_status_distinguishes_switched_off_from_broken(client_factory):
     from loxmatter.tls import TlsState
 
-    async with client_factory(tls_state=TlsState(material=None, port=None, error=None)) as client:
-        switched_off = (await client.get("/api/diagnostics/tls")).json()
+    headers = {"Authorization": "Bearer geheim"}
+    async with client_factory(
+        tls_state=TlsState(material=None, port=None, error=None), api_token="geheim"
+    ) as client:
+        switched_off = (await client.get("/api/diagnostics/tls", headers=headers)).json()
     broken = TlsState(material=None, port=None, error="kein Platz auf dem Datentraeger")
-    async with client_factory(tls_state=broken) as client:
-        failed = (await client.get("/api/diagnostics/tls")).json()
+    async with client_factory(tls_state=broken, api_token="geheim") as client:
+        failed = (await client.get("/api/diagnostics/tls", headers=headers)).json()
 
     assert switched_off["enabled"] is False
     assert switched_off["error"] is None
