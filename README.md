@@ -6,16 +6,24 @@ Design: [`docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`](doc
 
 ## Stand
 
-Phase 1 von 6 (Matter-Adapter und Signal-Extraktion) läuft. Der Matter-Adapter
-und das CLI-Kommando `loxmatter inspect` sind gebaut, getestet und gegen 2
-reale IKEA-Geräte an einem laufenden matter-server validiert (Testumgebung:
-[`deploy/testhost/`](deploy/testhost/)). Ergebnis: Für Attribute trägt die
-generische Zerlegung uneingeschränkt — jeder Attributpfad war parsebar, kein
-gelistetes Attribut fehlte. Für Events trug sie nicht: keins der beiden
-Geräte führt die `EventList`, deshalb ist die Event-Erkennung jetzt
-FeatureMap-basiert und Cluster-spezifisch (`discovery.FEATURE_MAP_EVENTS`).
-Details, Zahlen und die Konsequenzen daraus stehen im Validierungsabschnitt
-der Spec, [Abschnitt 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
+Phasen 1 und 3 bis 6 sind gebaut: Matter-Adapter und Signal-Extraktion,
+Vorlagen-Export, die Laufzeitstrecke zwischen Matter und Loxone, die
+Bedienoberfläche samt Zugangsschutz und die Signalauswahl. Phase 2 wurde
+übersprungen. Validiert gegen zwei reale IKEA-Geräte an einem laufenden
+matter-server (Testumgebung: [`deploy/testhost/`](deploy/testhost/)); der
+Dienst läuft dort als Container.
+
+**Noch offen:** der Durchstich gegen einen echten Loxone Miniserver — die
+erzeugten Vorlagen sind bisher nur gegen einen nachgebauten Miniserver
+geprüft, nicht in Loxone Config importiert.
+
+Aus der Validierung von Phase 1: für Attribute trägt die generische
+Zerlegung uneingeschränkt — jeder Attributpfad war parsebar, kein gelistetes
+Attribut fehlte. Für Events trug sie nicht: keins der beiden Geräte führt die
+`EventList`, deshalb ist die Event-Erkennung FeatureMap-basiert und
+Cluster-spezifisch (`discovery.FEATURE_MAP_EVENTS`). Details, Zahlen und die
+Konsequenzen stehen im Validierungsabschnitt der Spec,
+[Abschnitt 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
 
 ## Entwickeln
 

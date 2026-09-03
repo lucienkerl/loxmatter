@@ -442,8 +442,9 @@ die Bridge schon selbst hält — er iteriert den zuletzt gesendeten Wert je Sig
 den Gerätezustand. Dieser Cache entsteht ausschließlich über Subscriptions, die sich
 *ändernde* Werte melden, und ist beim Start leer. Ein Live-Lauf mit einer
 Matter-Steckdose ohne Last bestätigte das: über 40 s kamen genau drei Datagramme an
-(Heartbeat, ein per HTTP ausgelöster Schaltbefehl), aber keines der 109 exportierbaren
-Attributsignale — der Full-Resend beim Start lief leer, weil noch nichts im Cache stand,
+(Heartbeat, ein per HTTP ausgelöster Schaltbefehl), aber keines der damals 109
+exportierbaren Attributsignale (heute 110, siehe 6.6 — der Zählerstand aus der
+Energie-Struktur kam in Phase 6 dazu) — der Full-Resend beim Start lief leer, weil noch nichts im Cache stand,
 und ohne eine sich ändernde Last hätte sich das auf unabsehbare Zeit nicht geändert.
 Genau in diesem Moment — direkt nach einem Neustart der Bridge — ist der Mechanismus
 also leer, obwohl er hier am nötigsten wäre. Die Bridge muss sich deshalb beim Start
