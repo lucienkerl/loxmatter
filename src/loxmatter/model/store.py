@@ -32,8 +32,13 @@ from pathlib import Path
 from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
-from loxmatter.profiles.relevance import device_types_by_endpoint, is_functional
-from loxmatter.profiles.table import Exportability, is_exportable, lookup
+from loxmatter.profiles.relevance import (
+    ROOT_NODE_DEVICE_TYPE,
+    UTILITY_ENDPOINT_KEEP_CLUSTERS,
+    device_types_by_endpoint,
+    is_functional,
+)
+from loxmatter.profiles.table import Exportability, is_exportable, lookup, struct_field
 from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
@@ -47,8 +52,11 @@ DEFAULT_UDP_PORT = 7000
 # noch nie gesetzt); Version 1 fuegt `signal.exported` hinzu und befuellt
 # Bestandszeilen zurueckwirkend, siehe `_migrate_to_v1`. Version 2 (Task 5,
 # Phase 5) fuegt `device.exported_at` und `device.updated_at` hinzu, siehe
-# `_migrate_to_v2`.
-_SCHEMA_VERSION = 2
+# `_migrate_to_v2`. Version 3 (Aufgabe 7, Phase 6) fuegt keine Spalte hinzu -
+# sie leitet `signal.title`, `signal.unit` und den Vorgabewert von
+# `signal.exported` fuer BESTEHENDE Zeilen aus der Profiltabelle neu ab, siehe
+# `_migrate_to_v3`.
+_SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
@@ -163,12 +171,173 @@ def _migrate_to_v2(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "device", "updated_at", "TEXT")
 
 
+def _migrate_to_v3(db: sqlite3.Connection) -> None:
+    """Leitet `title`, `unit` und den Vorgabewert von `exported` fuer
+    BESTEHENDE Signale neu ab (Aufgabe 7) - der Schluessel bleibt dabei in
+    jedem Fall unangetastet, siehe Modul-Docstring und Hauptdokument 6.2.
+
+    **Warum rueckwirkend, nicht nur fuer neu eingelernte Geraete:** Aufgabe 6
+    hat `profiles.relevance.is_functional` bereits verdrahtet, aber nur in
+    `register_signals` - ein Geraet, das gestern eingelernt wurde, sieht die
+    Korrektur nie, ausser es wird komplett neu eingelernt. Zwei
+    Regelsaetze, deren Unterschied allein am Einlerndatum haengt, waeren
+    niemandem zu erklaeren.
+
+    **Der Schluessel bleibt unangetastet.** Diese Migration schreibt nie in
+    die Spalte `key`. Folge: ein vor diesem Update eingelerntes Geraet
+    behaelt z. B. `d2_0_c47_a12` und heisst ab jetzt "battery"; ein danach
+    eingelerntes Geraet bekommt fuer denselben Wert den neuen Schluessel
+    `d2_0_battery`. Zwei Schluessel fuer denselben Wert, je nach
+    Einlerndatum - haesslich, aber Absicht (Hauptdokument 6.2): die
+    Alternative waere ein stillschweigend toter Funktionsbaustein in einer
+    fremden Loxone-Konfiguration.
+
+    **Woher die Geraetetypen je Endpunkt kommen (die im Aufgabenzuschnitt
+    bewusst offen gelassene Entscheidung):** `is_functional` braucht die vom
+    Geraet deklarierten Geraetetypen je Endpunkt, um einen
+    Verwaltungs-Endpunkt (Root Node, OTA Requestor) von einem Nutz-Endpunkt
+    zu unterscheiden - diese Angabe steht im Geraeteabbild
+    (Descriptor-Cluster), nicht in dieser Datenbank.
+
+    Eine neue Spalte, die `register_device`/`register_signals` ab sofort
+    mitschreibt, loest das NICHT: eine Migration laeuft beim Oeffnen einer
+    Datenbank (`_migrate` ruft sie mit `db: sqlite3.Connection` auf, nie mit
+    einem `NodeSnapshot`) und hat deshalb NIE ein Abbild zur Hand - auch in
+    einer kuenftigen Migration nicht. Und genau die hier zu migrierenden
+    Bestandszeilen sind vor einer solchen Spalte entstanden, haetten also
+    ohnehin nichts, das sie befuellen koennte. Eine neue Spalte waere damit
+    fuer DIESE Migration wertlos; sie haette nur helfen koennen, wenn sie
+    schon bei der urspruenglichen Registrierung existiert haette.
+
+    Deshalb der zweite Weg aus dem Aufgabenzuschnitt: eine Ersatzregel aus
+    den ohnehin gespeicherten Cluster-/Endpunkt-Nummern. Matter garantiert
+    strukturell, dass Endpunkt 0 immer der Root-Node-Endpunkt ist (Core-
+    Spezifikation 9.2.1) - das ist die einzige Aussage ueber einen
+    Verwaltungs-Endpunkt, die sich OHNE Abbild sicher treffen laesst; jeder
+    andere Endpunkt gilt hier als gewoehnlicher Nutz-Endpunkt. Fuer den
+    bislang einzigen belegten Ausnahmefall
+    (`relevance.UTILITY_ENDPOINT_KEEP_CLUSTERS`: PowerSource, Cluster 47)
+    gilt der zugehoerige Nutz-Geraetetyp als erklaert, sobald Endpunkt 0
+    ueberhaupt ein Signal dieses Clusters traegt - ein Geraet exponiert den
+    PowerSource-Cluster auf seinem Root-Endpunkt nur, wenn es dort
+    tatsaechlich einen Batteriestand zu melden hat. Gegengeprueft an beiden
+    eingecheckten Abbildern (`tests/fixtures/nodes/`, siehe
+    `test_store_migration.py`,
+    `test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures`):
+    diese Ersatzregel liefert fuer den Stecker und den Taster exakt
+    dieselbe Anzahl exportierter Signale wie eine frische Registrierung mit
+    echtem Abbild - 5 bzw. 17.
+
+    **`exportability` wird nur in einem einzigen, eng begrenzten Fall
+    angehoben, sonst unangetastet gelassen:** `classify()` (Spec 6.6)
+    braucht grundsaetzlich einen echten Laufzeitwert, den eine Migration
+    nie hat - der gespeicherte Wert bleibt deshalb im Regelfall die beste
+    verfuegbare Wahrheit. Die eine Ausnahme: traegt der Tabelleneintrag
+    heute eine Feldnummer (`profiles.table.struct_field` - Aufgabe 5, der
+    Zaehlerstand), gilt das daraus gezogene Element als abbildbar (ANALOG),
+    UNABHAENGIG vom gespeicherten Wert. Begruendung: eine Feldnummer traegt
+    nur ein, wer im Matter-Spezifikationstext nachgesehen hat, dass genau
+    dieses Struktur-Element numerisch ist (Cluster-Autor-Wissen, keine
+    Laufzeit-Eigenschaft) - eine Zeile, deren Struktur zur Registrierzeit
+    noch nicht auslesbar war (kein `field:` in der damaligen
+    `clusters.yaml`, deshalb `exportability=none`, Spec 6.6), wird durch
+    diese Migration genau wie durch ein Neu-Einlesen mit echtem Wert auf
+    ANALOG gehoben. Fuer jeden benannten Eintrag OHNE Feldnummer ist
+    `classify(struct_member(ref, value))` ohnehin identisch mit
+    `classify(value)` - Benennung allein aendert die Klassifizierung nie,
+    nur eine neue Feldnummer tut das.
+
+    **Was diese Migration sonst NICHT kann:**
+    - Jenseits der Feldnummer-Ausnahme oben wird `exportability` NICHT neu
+      klassifiziert. Eine Korrektur in `clusters.yaml`, die aus einem
+      anderen Grund die Klassifizierung eines Werts aendern wuerde, erreicht
+      ein schon gespeichertes Signal deshalb weiterhin erst beim naechsten
+      echten Neu-Einlesen des Geraets (`register_signals`), nicht durch
+      diese Migration. `title` und `unit` sind davon nicht betroffen: beide
+      haengen in `profiles.table.lookup` nie vom Laufzeitwert ab.
+    - Ein vom Nutzer ueber `set_title` personalisierter Titel wird von
+      dieser einmaligen Migration ebenfalls ueberschrieben - die Datenbank
+      unterscheidet nicht, ob ein gespeicherter Titel der automatische
+      Vorgabewert ist oder eine bewusste Umbenennung.
+    - Ein Verwaltungs-Endpunkt jenseits von Endpunkt 0 (aus Matters Sicht
+      nicht ausgeschlossen, an den beiden bislang bekannten echten Geraeten
+      aber nie beobachtet) wird von der Ersatzregel nicht erkannt; ein
+      solches Geraet bliebe nach der Migration grosszuegiger exportiert,
+      als es eine echte Neuregistrierung waere.
+    - Scheitert die Neuableitung fuer eine einzelne Zeile (z. B. ein
+      unerwarteter Wert in `kind`), bleibt GENAU DIESE Zeile unveraendert
+      stehen - kein Abbruch der gesamten Migration, keine halb migrierte
+      Datenbank (Entwurf 8, siehe
+      `test_a_signal_the_table_cannot_classify_survives_the_migration`).
+    """
+    rows = db.execute(
+        "SELECT device_id, key, endpoint, cluster_id, element_id, kind, exportability FROM signal"
+    ).fetchall()
+
+    # Cluster-IDs je (Geraet, Endpunkt 0) - die einzige Grundlage, die zur
+    # Migrationszeit ueber ein Geraet ueberhaupt bekannt ist (siehe Docstring
+    # oben). Nur Endpunkt 0 wird gesondert betrachtet, siehe dort.
+    clusters_on_endpoint0: dict[int, set[int]] = {}
+    for row in rows:
+        if int(row["endpoint"]) == 0:
+            clusters_on_endpoint0.setdefault(int(row["device_id"]), set()).add(
+                int(row["cluster_id"])
+            )
+
+    # Die Ersatzregel selbst, einmal je Geraet gebaut statt je Zeile neu:
+    # Endpunkt 0 gilt immer als Root Node, PowerSource zusaetzlich, sobald
+    # Endpunkt 0 ueberhaupt ein Signal dieses Clusters traegt (siehe
+    # Docstring oben).
+    device_types_by_device: dict[int, dict[int, frozenset[int]]] = {}
+    for device_id, endpoint0_clusters in clusters_on_endpoint0.items():
+        declared = {ROOT_NODE_DEVICE_TYPE}
+        for cluster_id, required_type in UTILITY_ENDPOINT_KEEP_CLUSTERS.items():
+            if cluster_id in endpoint0_clusters:
+                declared.add(required_type)
+        device_types_by_device[device_id] = {0: frozenset(declared)}
+
+    for row in rows:
+        try:
+            ref = SignalRef(
+                int(row["endpoint"]),
+                int(row["cluster_id"]),
+                int(row["element_id"]),
+                SignalKind(row["kind"]),
+            )
+            # `value=None`: `lookup` braucht den Laufzeitwert nur fuer die
+            # Exportability-Klassifizierung - `title` und `unit` haengen in
+            # `profiles.table.lookup` nie von `value` ab (siehe Docstring
+            # oben).
+            profile = lookup(ref, None)
+            # Kein Eintrag noetig, wenn dieses Geraet gar kein Signal auf
+            # Endpunkt 0 hat - `is_functional` behandelt einen fehlenden
+            # Endpunkt darin ohnehin wie einen gewoehnlichen Nutz-Endpunkt.
+            device_types = device_types_by_device.get(int(row["device_id"]), {})
+            exportability = Exportability(row["exportability"])
+            if struct_field(ref) is not None:
+                # Die einzige Ausnahme, in der diese Migration eine
+                # Klassifizierung OHNE Laufzeitwert anhebt (siehe Docstring,
+                # "Feldnummer").
+                exportability = Exportability.ANALOG
+            exported = int(is_exportable(exportability) and is_functional(ref, device_types))
+        except (ValueError, KeyError):
+            # Diese eine Zeile bleibt unveraendert (siehe Docstring, "Was
+            # diese Migration sonst NICHT kann") - kein Abbruch der
+            # Transaktion.
+            continue
+        db.execute(
+            "UPDATE signal SET title = ?, unit = ?, exportability = ?, exported = ? WHERE key = ?",
+            (profile.title, profile.unit, exportability.value, exported, row["key"]),
+        )
+
+
 # Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
 # Erweiterung fuer eine spaetere Schema-Aenderung: einfach anhaengen, mit der
 # naechsten Versionsnummer als Schluessel.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
+    3: _migrate_to_v3,
 }
 
 
