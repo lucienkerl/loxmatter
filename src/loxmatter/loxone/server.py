@@ -87,6 +87,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import HTTPConnection
 from starlette.responses import Response as StarletteResponse
 
 from loxmatter.api.auth import build_auth_router
@@ -99,6 +100,7 @@ from loxmatter.api.diagnostics import (
 )
 from loxmatter.api.export import build_export_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, build_live_router
+from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
@@ -211,7 +213,7 @@ def _tokens_match(presented: str, expected: str) -> bool:
     return secrets.compare_digest(presented.encode("utf-8"), expected.encode("utf-8"))
 
 
-def build_api_guard(token: str | None) -> Callable[..., Awaitable[None]]:
+def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[None]]:
     """Schuetzt die `/api`-Routen, nicht die des Miniservers (Task 8, Phase 5).
 
     Der Miniserver ruft virtuelle Ausgaenge ohne Header auf - er kann kein
@@ -266,16 +268,34 @@ def build_api_guard(token: str | None) -> Callable[..., Awaitable[None]]:
     WebSocket-Handshake - FastAPI/uvicorn lehnen eine `HTTPException` aus
     einer WebSocket-Abhaengigkeit ueber die ASGI-„Denial Response"-Erweiterung
     ab (HTTP-Statuscode vor dem Accept), statt die Verbindung erst anzunehmen
-    und dann zu schliessen (verifiziert in `tests/api/test_security.py`)."""
+    und dann zu schliessen (verifiziert in `tests/api/test_security.py`).
+
+    **Seit dem WebUI-Login gibt es zwei Nachweise statt einem.** Zuerst das
+    Sitzungs-Cookie (`loxmatter_session`, siehe `auth.sessions`), dann das
+    Bearer-Token. Das Cookie ist der Weg des Browsers, das Token der von
+    Skripten und `curl` - deshalb wird das Cookie zuerst geprueft: es ist
+    der haeufigere Fall, und es kostet einen SELECT statt eines
+    Hash-Vergleichs.
+
+    `HTTPConnection` statt `Request`: es ist der gemeinsame Basistyp von
+    `Request` und `WebSocket`, und dieselbe Abhaengigkeit haengt an beiden
+    Sorten von Routen - `/api/live` ist eine WebSocket-Route, in der ein
+    `Request`-Parameter gar nicht aufloesbar waere. Das Cookie reist beim
+    WebSocket-Handshake von selbst mit (gleicher Ursprung), weshalb der
+    Browser dort seit dem Login kein Subprotokoll mehr braucht."""
     # Einmal beim Bauen normalisiert, nicht bei jeder Anfrage: `None` und ein
     # reines Leerraum-Token sind derselbe Fall, und zwar genau derselbe, den
     # `cli._warn_if_missing_api_token` meldet - siehe `normalize_api_token`.
     expected = normalize_api_token(token)
 
     async def guard(
+        conn: HTTPConnection,
         authorization: str | None = Header(default=None),
         sec_websocket_protocol: str | None = Header(default=None),
     ) -> None:
+        session_id = conn.cookies.get(SESSION_COOKIE)
+        if session_id is not None and session_is_valid(store.auth, session_id):
+            return
         if expected is None:
             return
         presented = _token_from_authorization(authorization)
@@ -298,7 +318,7 @@ def build_app(
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
-    api_guard = [Depends(build_api_guard(api_token))]
+    api_guard = [Depends(build_api_guard(api_token, store))]
 
     def _append_command_log(*, method: str, path: str, status: int) -> None:
         """Haengt einen Eintrag an - in ein eigenes try/except gekapselt, ein

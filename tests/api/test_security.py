@@ -46,6 +46,7 @@ import pytest
 from conftest import load_snapshot
 from fastapi import HTTPException
 
+from loxmatter.auth.passwords import hash_password
 from loxmatter.cli import _warn_if_missing_api_token
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
@@ -79,10 +80,13 @@ def _matter_data_dir(tmp_path: Path) -> Path:
 
 async def _build_client(
     tmp_path: Path, no_invoke: Any, *, api_token: str | None
-) -> AsyncIterator[tuple[httpx.AsyncClient, Any, int]]:
+) -> AsyncIterator[tuple[httpx.AsyncClient, Any, int, Store]]:
     """Baut Store, eine ECHTE `Runtime` (fuer `/resync`) und die App mit dem
     gegebenen `api_token` - gemeinsamer Aufbau fuer `secured_client` und
-    `open_client` unten, die sich nur in `api_token` unterscheiden."""
+    `open_client` unten, die sich nur in `api_token` unterscheiden.
+
+    Gibt seit dem WebUI-Login auch den `Store` mit heraus: die Tests
+    brauchen ihn, um ein Passwort zu setzen und sich anzumelden."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -99,7 +103,7 @@ async def _build_client(
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client, app, device_id
+        yield client, app, device_id, store
     store.close()
 
 
@@ -127,6 +131,27 @@ async def open_client(tmp_path, no_invoke):
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def guard_store(tmp_path):
+    """Ein leerer Store fuer die Tests, die `build_api_guard` direkt aufrufen -
+    ohne Passwort und ohne Sitzung, damit dort weiterhin allein das Token
+    ueber Durchlassen oder Ablehnen entscheidet."""
+    store = Store(tmp_path / "guard.sqlite")
+    yield store
+    store.close()
+
+
+class _FakeConnection:
+    """Genuegt `guard` als `conn`-Argument in den `test_guard_*`-Tests unten -
+    die pruefen ausschliesslich die Token-Logik und brauchen dafuer nur ein
+    Objekt mit `.cookies`, keine echte `HTTPConnection` aus einer laufenden
+    App (die gibt es hier, anders als bei `secured_client`/`open_client`,
+    nicht)."""
+
+    def __init__(self) -> None:
+        self.cookies: dict[str, str] = {}
+
+
 async def _call_guard(
     guard: Any, *, authorization: str | None = None, subprotocol: str | None = None
 ) -> None:
@@ -136,49 +161,51 @@ async def _call_guard(
     als Wert (der Default der Signatur), nicht `None`: ausserhalb einer
     laufenden App loest niemand die Abhaengigkeit auf. Dieser Helfer haelt
     diese Falle an genau einer Stelle statt in jedem Test."""
-    await guard(authorization=authorization, sec_websocket_protocol=subprotocol)
+    await guard(
+        _FakeConnection(), authorization=authorization, sec_websocket_protocol=subprotocol
+    )
 
 
-async def test_guard_lets_everything_through_when_no_token_is_configured():
-    guard = build_api_guard(None)
+async def test_guard_lets_everything_through_when_no_token_is_configured(guard_store):
+    guard = build_api_guard(None, guard_store)
     await _call_guard(guard)  # wirft nicht
     await _call_guard(guard, authorization="Bearer irgendwas")  # wirft auch dann nicht
 
 
-async def test_guard_rejects_a_missing_header_when_a_token_is_configured():
-    guard = build_api_guard("secret")
+async def test_guard_rejects_a_missing_header_when_a_token_is_configured(guard_store):
+    guard = build_api_guard("secret", guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard)
     assert excinfo.value.status_code == 401
 
 
-async def test_guard_rejects_a_wrong_token():
-    guard = build_api_guard("secret")
+async def test_guard_rejects_a_wrong_token(guard_store):
+    guard = build_api_guard("secret", guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard, authorization="Bearer falsch")
     assert excinfo.value.status_code == 401
 
 
-async def test_guard_accepts_the_exact_bearer_token():
-    guard = build_api_guard("secret")
+async def test_guard_accepts_the_exact_bearer_token(guard_store):
+    guard = build_api_guard("secret", guard_store)
     await _call_guard(guard, authorization="Bearer secret")  # wirft nicht
 
 
-async def test_guard_rejects_a_non_ascii_token_with_401_not_a_crash():
+async def test_guard_rejects_a_non_ascii_token_with_401_not_a_crash(guard_store):
     """`secrets.compare_digest` wirft bei `str`-Argumenten `TypeError`, sobald
     eines davon Nicht-ASCII enthaelt (Review-Fix Fix 2). Ein Angreifer koennte
     damit sonst mit einem einzigen Umlaut im Header einen 500er statt eines
     401 ausloesen - der Waechter vergleicht deshalb UTF-8-Bytes."""
-    guard = build_api_guard("secret")
+    guard = build_api_guard("secret", guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard, authorization="Bearer gehe\u00dfimnis")
     assert excinfo.value.status_code == 401
 
 
-async def test_guard_accepts_a_non_ascii_token_that_actually_matches():
+async def test_guard_accepts_a_non_ascii_token_that_actually_matches(guard_store):
     """Die Kehrseite des Tests darueber: ein Nicht-ASCII-Token wird nicht
     pauschal abgelehnt, es wird nur nicht mehr zum Absturz."""
-    guard = build_api_guard("gehe\u00dfimnis")
+    guard = build_api_guard("gehe\u00dfimnis", guard_store)
     await _call_guard(guard, authorization="Bearer gehe\u00dfimnis")  # wirft nicht
 
 
@@ -188,38 +215,38 @@ async def test_guard_accepts_a_non_ascii_token_that_actually_matches():
 # ---------------------------------------------------------------------------
 
 
-async def test_guard_accepts_the_token_from_the_websocket_subprotocol():
-    guard = build_api_guard("secret")
+async def test_guard_accepts_the_token_from_the_websocket_subprotocol(guard_store):
+    guard = build_api_guard("secret", guard_store)
     await _call_guard(guard, subprotocol="bearer, secret")  # wirft nicht
 
 
-async def test_guard_rejects_a_wrong_token_in_the_websocket_subprotocol():
-    guard = build_api_guard("secret")
+async def test_guard_rejects_a_wrong_token_in_the_websocket_subprotocol(guard_store):
+    guard = build_api_guard("secret", guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard, subprotocol="bearer, falsch")
     assert excinfo.value.status_code == 401
 
 
-async def test_guard_rejects_a_subprotocol_without_the_bearer_marker():
+async def test_guard_rejects_a_subprotocol_without_the_bearer_marker(guard_store):
     """Nur die Form `bearer, <Token>` gilt - ein einzelner Wert ist kein
     Token, auch wenn er zufaellig dem Geheimnis gleicht."""
-    guard = build_api_guard("secret")
+    guard = build_api_guard("secret", guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard, subprotocol="secret")
     assert excinfo.value.status_code == 401
 
 
-async def test_guard_rejects_a_subprotocol_with_more_than_two_values():
-    guard = build_api_guard("secret")
+async def test_guard_rejects_a_subprotocol_with_more_than_two_values(guard_store):
+    guard = build_api_guard("secret", guard_store)
     with pytest.raises(HTTPException) as excinfo:
         await _call_guard(guard, subprotocol="bearer, secret, extra")
     assert excinfo.value.status_code == 401
 
 
-async def test_an_authorization_header_still_wins_over_a_wrong_subprotocol():
+async def test_an_authorization_header_still_wins_over_a_wrong_subprotocol(guard_store):
     """Der `Authorization`-Header bleibt der Hauptweg: ist er korrekt, kommt
     der Aufruf durch, gleich was im Subprotokoll steht."""
-    guard = build_api_guard("secret")
+    guard = build_api_guard("secret", guard_store)
     await _call_guard(guard, authorization="Bearer secret", subprotocol="bearer, falsch")
 
 
@@ -242,12 +269,12 @@ def test_normalize_api_token_strips_the_outer_whitespace_of_a_real_token():
     assert normalize_api_token("  secret\n") == "secret"
 
 
-async def test_a_whitespace_only_token_leaves_the_api_open():
+async def test_a_whitespace_only_token_leaves_the_api_open(guard_store):
     """Der gemeldete Fehler: der Waechter hielt Leerraum fuer ein echtes
     Geheimnis und sperrte den Dienst dauerhaft - ohne dass die Startwarnung
     darauf hingewiesen haette. Offen MIT Warnung ist besser als gesperrt
     ohne jede Diagnose."""
-    guard = build_api_guard("   ")
+    guard = build_api_guard("   ", guard_store)
     await _call_guard(guard)  # wirft nicht
 
 
@@ -264,7 +291,7 @@ async def test_a_token_with_a_trailing_newline_is_usable_over_http(tmp_path, no_
     """Der Fall aus der kopierten `.env`: das Token traegt einen
     Zeilenumbruch, der Browser kann ihn nicht mitschicken. Nach der
     Normalisierung passt das abgeschnittene Geheimnis."""
-    async for client, _, _ in _build_client(tmp_path, no_invoke, api_token="secret\n"):
+    async for client, _, _, _ in _build_client(tmp_path, no_invoke, api_token="secret\n"):
         response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
         assert response.status_code == 200
 
@@ -275,25 +302,25 @@ async def test_a_token_with_a_trailing_newline_is_usable_over_http(tmp_path, no_
 
 
 async def test_without_token_devices_route_is_open(open_client):
-    client, _, _ = open_client
+    client, _, _, _ = open_client
     response = await client.get("/api/devices")
     assert response.status_code == 200
 
 
 async def test_without_token_export_status_is_open(open_client):
-    client, _, _ = open_client
+    client, _, _, _ = open_client
     response = await client.get("/api/export/status")
     assert response.status_code == 200
 
 
 async def test_without_token_controls_route_is_open(open_client):
-    client, _, device_id = open_client
+    client, _, device_id, _ = open_client
     response = await client.get(f"/api/devices/{device_id}/controls")
     assert response.status_code == 200
 
 
 async def test_without_token_diagnostics_commands_is_open(open_client):
-    client, _, _ = open_client
+    client, _, _, _ = open_client
     response = await client.get("/api/diagnostics/commands")
     assert response.status_code == 200
 
@@ -304,14 +331,14 @@ async def test_fabric_backup_without_a_token_is_refused_with_403(open_client):
     Route KOENNTE also echte Fabric-Zugangsdaten ausliefern. Genau das darf
     ohne konfiguriertes Token nicht passieren - 403, weil eine Wiederholung
     mit Zugangsdaten nicht helfen kann (es gibt keine)."""
-    client, _, _ = open_client
+    client, _, _, _ = open_client
     response = await client.get("/api/diagnostics/fabric-backup")
     assert response.status_code == 403
 
 
 async def test_fabric_backup_without_a_token_returns_no_data(open_client):
     """Nicht nur ein anderer Statuscode - kein ZIP, keine Datei, nichts."""
-    client, _, _ = open_client
+    client, _, _, _ = open_client
     response = await client.get("/api/diagnostics/fabric-backup")
     assert response.headers["content-type"].startswith("application/json")
     assert "content-disposition" not in response.headers
@@ -322,7 +349,7 @@ async def test_fabric_backup_with_a_whitespace_only_token_is_refused_too(tmp_pat
     """Ein Leerraum-Token gilt als "kein Token" - auch hier, sonst haetten
     Waechter und Sicherung zwei verschiedene Vorstellungen davon, was
     "gesetzt" heisst."""
-    async for client, _, _ in _build_client(tmp_path, no_invoke, api_token="  "):
+    async for client, _, _, _ in _build_client(tmp_path, no_invoke, api_token="  "):
         response = await client.get("/api/diagnostics/fabric-backup")
         assert response.status_code == 403
 
@@ -330,7 +357,7 @@ async def test_fabric_backup_with_a_whitespace_only_token_is_refused_too(tmp_pat
 async def test_the_other_api_routes_stay_open_without_a_token(open_client):
     """Die Gegenprobe zu den drei Tests darueber: NUR die Fabric-Sicherung
     wird ohne Token verweigert, alles andere bleibt so offen wie vorher."""
-    client, _, device_id = open_client
+    client, _, device_id, _ = open_client
     for path in (
         "/api/devices",
         "/api/export/status",
@@ -351,7 +378,7 @@ async def test_the_other_api_routes_stay_open_without_a_token(open_client):
 
 
 async def test_with_token_devices_route_needs_the_header(secured_client):
-    client, _, _ = secured_client
+    client, _, _, _ = secured_client
     without_header = await client.get("/api/devices")
     assert without_header.status_code == 401
 
@@ -360,7 +387,7 @@ async def test_with_token_devices_route_needs_the_header(secured_client):
 
 
 async def test_with_token_export_router_needs_the_header(secured_client):
-    client, _, _ = secured_client
+    client, _, _, _ = secured_client
     without_header = await client.get("/api/export/status")
     assert without_header.status_code == 401
 
@@ -369,7 +396,7 @@ async def test_with_token_export_router_needs_the_header(secured_client):
 
 
 async def test_with_token_control_router_needs_the_header(secured_client):
-    client, _, device_id = secured_client
+    client, _, device_id, _ = secured_client
     without_header = await client.get(f"/api/devices/{device_id}/controls")
     assert without_header.status_code == 401
 
@@ -380,7 +407,7 @@ async def test_with_token_control_router_needs_the_header(secured_client):
 
 
 async def test_with_token_diagnostics_router_needs_the_header(secured_client):
-    client, _, _ = secured_client
+    client, _, _, _ = secured_client
     without_header = await client.get("/api/diagnostics/commands")
     assert without_header.status_code == 401
 
@@ -391,7 +418,7 @@ async def test_with_token_diagnostics_router_needs_the_header(secured_client):
 
 
 async def test_with_wrong_token_is_rejected_too(secured_client):
-    client, _, _ = secured_client
+    client, _, _, _ = secured_client
     response = await client.get("/api/devices", headers={"Authorization": "Bearer falsch"})
     assert response.status_code == 401
 
@@ -409,18 +436,58 @@ async def test_fabric_backup_is_401_without_a_header_even_with_a_configured_dire
     """`matter_data_dir` ist gesetzt (siehe `_build_client`) - ohne Token
     waere die Route also tatsaechlich in der Lage, echte Daten
     auszuliefern. Genau das darf ohne Header nicht passieren."""
-    client, _, _ = secured_client
+    client, _, _, _ = secured_client
     response = await client.get("/api/diagnostics/fabric-backup")
     assert response.status_code == 401
 
 
 async def test_fabric_backup_is_reachable_with_the_correct_header(secured_client):
-    client, _, _ = secured_client
+    client, _, _, _ = secured_client
     response = await client.get(
         "/api/diagnostics/fabric-backup", headers={"Authorization": "Bearer secret"}
     )
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/zip"
+
+
+# ---------------------------------------------------------------------------
+# Das Sitzungs-Cookie: der zweite Nachweis neben dem Token (Task 6, Phase 6).
+# Additiv - der Waechter laesst zusaetzlich Cookies durch, ohne dem Token
+# etwas wegzunehmen.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_session_cookie_opens_every_api_router(secured_client):
+    """Der zweite Nachweis neben dem Token: wer angemeldet ist, kommt ohne
+    `Authorization`-Header durch jede der fuenf Router-Gruppen."""
+    client, _app, device_id, store = secured_client
+    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+    assert (
+        await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
+    ).status_code == 200
+
+    for path in [
+        "/api/devices",
+        f"/api/devices/{device_id}/controls",
+        "/api/export/status",
+        "/api/diagnostics/system",
+    ]:
+        response = await client.get(path)
+        assert response.status_code == 200, f"{path} verlangte trotz Sitzung eine Anmeldung"
+
+
+async def test_an_invalid_session_cookie_does_not_open_anything(secured_client):
+    client, _app, _device_id, _store = secured_client
+    client.cookies.set("loxmatter_session", "erfunden")
+    assert (await client.get("/api/devices")).status_code == 401
+
+
+async def test_the_token_still_works_next_to_the_cookie(secured_client):
+    """Der Weg fuer Skripte bleibt unveraendert - er ist der Grund, warum
+    das Token ueberhaupt bestehen bleibt."""
+    client, _app, _device_id, _store = secured_client
+    response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
+    assert response.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -431,13 +498,13 @@ async def test_fabric_backup_is_reachable_with_the_correct_header(secured_client
 
 
 async def test_with_token_cmd_route_stays_open(secured_client):
-    client, _, device_id = secured_client
+    client, _, device_id, _ = secured_client
     response = await client.get(f"/cmd/d{device_id}_1_on/1")
     assert response.status_code == 200
 
 
 async def test_with_token_resync_route_stays_open(secured_client):
-    client, _, _ = secured_client
+    client, _, _, _ = secured_client
     response = await client.get("/resync")
     assert response.status_code == 200
 
@@ -446,7 +513,7 @@ async def test_with_token_health_route_stays_open(secured_client):
     """`/health` liegt wie `/cmd`/`/resync` ausserhalb von `/api` - kein
     Diagnose-Endpunkt, der Bestandsdaten preisgibt, muss also ebenfalls
     unabhaengig vom Token erreichbar bleiben."""
-    client, _, _ = secured_client
+    client, _, _, _ = secured_client
     response = await client.get("/health")
     assert response.status_code == 200
 
@@ -543,13 +610,13 @@ def _bearer_subprotocol_handshake(
 
 
 async def test_websocket_live_is_rejected_with_401_without_a_header(secured_client):
-    _, app, _ = secured_client
+    _, app, _, _ = secured_client
     status = await _websocket_handshake_status(app, "/api/live", headers=[])
     assert status == 401
 
 
 async def test_websocket_live_is_accepted_with_the_correct_header(secured_client):
-    _, app, _ = secured_client
+    _, app, _, _ = secured_client
     status = await _websocket_handshake_status(
         app, "/api/live", headers=[(b"authorization", b"Bearer secret")]
     )
@@ -559,7 +626,7 @@ async def test_websocket_live_is_accepted_with_the_correct_header(secured_client
 async def test_websocket_live_is_accepted_without_a_header_when_no_token_is_configured(
     open_client,
 ):
-    _, app, _ = open_client
+    _, app, _, _ = open_client
     status = await _websocket_handshake_status(app, "/api/live", headers=[])
     assert status is None
 
@@ -568,14 +635,14 @@ async def test_websocket_live_is_accepted_with_the_token_in_the_subprotocol(secu
     """Der Weg, den die Oberflaeche tatsaechlich geht: ein Browser kann bei
     `new WebSocket(...)` keinen `Authorization`-Header setzen (Review-Fix
     Fix 1c, 2026-09-03)."""
-    _, app, _ = secured_client
+    _, app, _, _ = secured_client
     headers, subprotocols = _bearer_subprotocol_handshake("secret")
     status = await _websocket_handshake_status(app, "/api/live", headers, subprotocols)
     assert status is None
 
 
 async def test_websocket_live_is_rejected_with_a_wrong_token_in_the_subprotocol(secured_client):
-    _, app, _ = secured_client
+    _, app, _, _ = secured_client
     headers, subprotocols = _bearer_subprotocol_handshake("falsch")
     status = await _websocket_handshake_status(app, "/api/live", headers, subprotocols)
     assert status == 401
@@ -586,7 +653,7 @@ async def test_websocket_live_echoes_the_bearer_marker_never_the_token(secured_c
     angebotene Subprotokoll nicht zurueckgibt. Zurueck darf aber
     ausschliesslich der Marker - das Token wuerde sonst in jedem Proxy- und
     Browser-Protokoll auf dem Weg landen."""
-    _, app, _ = secured_client
+    _, app, _, _ = secured_client
     headers, subprotocols = _bearer_subprotocol_handshake("secret")
     message = await _websocket_handshake(app, "/api/live", headers, subprotocols)
     assert message["type"] == "websocket.accept"
@@ -598,10 +665,30 @@ async def test_websocket_live_answers_without_a_subprotocol_when_none_was_offere
     gesetzt, oder ein Nicht-Browser-Client mit echtem `Authorization`-Header)
     darf keins zurueckbekommen - ein nicht angebotenes Subprotokoll ist nach
     RFC 6455 ebenso ein Handshake-Fehler."""
-    _, app, _ = open_client
+    _, app, _, _ = open_client
     message = await _websocket_handshake(app, "/api/live", headers=[])
     assert message["type"] == "websocket.accept"
     assert message["subprotocol"] is None
+
+
+async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secured_client):
+    """Der Punkt, an dem der Umweg ueber das Subprotokoll ueberfluessig wird:
+    das Cookie reist beim Handshake von selbst mit, weil dieser WebSocket
+    denselben Ursprung hat wie die Seite. Genau darauf verlaesst sich
+    `app.js`, seit dort `new WebSocket(url)` ohne zweites Argument steht."""
+    client, app, _device_id, store = secured_client
+    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+    login = await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
+    assert login.status_code == 200
+    session_id = client.cookies.get("loxmatter_session")
+    assert session_id is not None
+
+    status = await _websocket_handshake_status(
+        app,
+        "/api/live",
+        headers=[(b"cookie", f"loxmatter_session={session_id}".encode())],
+    )
+    assert status is None, "Der Handshake wurde trotz gueltiger Sitzung abgelehnt"
 
 
 # ---------------------------------------------------------------------------
