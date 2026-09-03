@@ -247,6 +247,44 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
     `classify(value)` - Benennung allein aendert die Klassifizierung nie,
     nur eine neue Feldnummer tut das.
 
+    **Zwei offene Grenzen dieser Ausnahme, bewusst hingenommen statt
+    beseitigt (Aufgabe 7, Nachbesserung Fix 1):**
+    - Sie sieht den Laufzeitwert nicht: ein Zaehler, der noch NIE gemessen
+      wurde (Matter liefert dafuer `null`, kein Zahlenwert), wird trotzdem
+      auf ANALOG gehoben und gilt danach als exportiert - ein
+      Loxone-Eingang, der nie einen Wert traegt, eine Checkbox in der
+      Oberflaeche, die luegt. Zur Laufzeit passiert dabei nichts Falsches:
+      `to_loxone_value` leitet unabhaengig aus dem echten Wert ab und
+      liefert dafuer weiterhin `None` (Spec 6.6), es fliesst also nie ein
+      erfundener Wert - nur die erzeugte Vorlage bekommt einen Eingang zu
+      viel. Erwogen und verworfen wurde, die Ausnahme deswegen ganz zu
+      streichen: der Stecker (`tests/fixtures/nodes/ikea_grillplats_plug.json`)
+      meldet fuer `energy_imported` (Cluster 145, Element 1) bereits einen
+      echten Wert (0, kein `null`) - eine frische Registrierung stuft dieses
+      Signal ueber genau diese Ausnahme als ANALOG und damit exportiert ein
+      (siehe `lookup`). Ohne die Ausnahme bliebe die migrierte
+      Exportability beim vor-Aufgabe-6-Wert NONE stehen (siehe
+      `_pretend_unnamed_profile` in `test_store_migration.py`), und die
+      Gegenprobe
+      (`test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures`)
+      fiele fuer den Stecker von 5 auf 4 - also just die Zahl, die dieses
+      Modul selbst als Beleg fuer die Ersatzregel nennt. Streichen wuerde
+      damit ein bewiesen richtiges Verhalten (der Stecker) gegen ein rein
+      hypothetisches, an keinem der beiden eingecheckten Abbilder
+      beobachtbares (der nie gemessene Zaehler) eintauschen - die Ausnahme
+      bleibt deshalb bestehen, mit dieser Grenze hier offen benannt statt
+      stillschweigend in Kauf genommen. Siehe
+      `test_a_never_measured_energy_counter_is_still_promoted_by_the_field_number_exception`.
+    - Sie ist hart auf ANALOG verdrahtet, nicht auf die tatsaechliche
+      Struktur-Semantik: beide heute bekannten Faelle
+      (`energy_imported`/`energy_exported`, `EnergyMeasurementStruct.energy`)
+      sind laut Matter-Spezifikation numerisch - ANALOG ist also heute in
+      jedem Fall richtig. Traegt `clusters.yaml` kuenftig ein `field:` auf
+      ein boolesches Strukturelement ein, laege diese Zeile falsch (DIGITAL
+      waere richtig): die Tabelle kennt bislang keinen Typ je Feld, nur die
+      Feldnummer selbst. Unbelegt, weil es noch keinen solchen Fall gibt -
+      wer den ersten Fall dieser Art anlegt, muss diese Stelle mitdenken.
+
     **Was diese Migration sonst NICHT kann:**
     - Jenseits der Feldnummer-Ausnahme oben wird `exportability` NICHT neu
       klassifiziert. Eine Korrektur in `clusters.yaml`, die aus einem
@@ -259,16 +297,52 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
       dieser einmaligen Migration ebenfalls ueberschrieben - die Datenbank
       unterscheidet nicht, ob ein gespeicherter Titel der automatische
       Vorgabewert ist oder eine bewusste Umbenennung.
+    - Dasselbe gilt fuer `exported`: laut `register_signals`/`set_exported`
+      gehoert der Wert ab dem ersten Bekanntsein eines Signals dem Nutzer -
+      ein bewusst umgeschaltetes Signal bleibt bei jedem weiteren
+      Neu-Einlesen unangetastet (siehe dort). Diese Migration kann das
+      nicht einhalten: sie schreibt `exported` fuer JEDE Zeile einmalig neu,
+      weil das Schema keine Spalte kennt, die "vom Nutzer gesetzt" von
+      "automatischer Vorgabewert" unterscheidet - innerhalb des
+      Aufgabenzuschnitts unvermeidbar. Ein Betreiber, der zwoelf Signale
+      von Hand freigeschaltet (oder abgeschaltet) hat, verliert diese
+      Auswahl bei diesem einen Update. Entwarnung: der Laufzeitpfad
+      (`loxone.runtime`) filtert beim Senden NICHT auf `exported` - eine
+      bestehende UDP-Verdrahtung stirbt dadurch nicht. Betroffen ist erst
+      eine NEU erzeugte Loxone-Vorlage nach diesem Update
+      (`export.signals.to_inputs` filtert dort auf `exported`, siehe dessen
+      Docstring).
     - Ein Verwaltungs-Endpunkt jenseits von Endpunkt 0 (aus Matters Sicht
       nicht ausgeschlossen, an den beiden bislang bekannten echten Geraeten
       aber nie beobachtet) wird von der Ersatzregel nicht erkannt; ein
-      solches Geraet bliebe nach der Migration grosszuegiger exportiert,
-      als es eine echte Neuregistrierung waere.
+      solches Geraet bliebe nach der Migration grosszuegiger exportiert, als
+      es eine echte Neuregistrierung waere. Das ist aber NICHT die einzige
+      Abweichung von `device_types_by_endpoint`, und nicht immer die
+      grosszuegigere Richtung - "hoechstens grosszuegiger" waere hier eine
+      falsche Zusicherung, siehe die beiden folgenden Punkte.
+    - Die Ersatzregel schliesst von "Cluster 47 (PowerSource) liegt auf
+      Endpunkt 0" auf "PowerSource ist dort als Geraetetyp deklariert" -
+      `is_functional` fragt aber nach der Geraetetyp-Deklaration, nicht nach
+      blosser Cluster-Anwesenheit. Bei einem Taster, dessen Descriptor auf
+      Endpunkt 0 tatsaechlich nur Root Node nennt (der PowerSource-Cluster
+      liegt zwar vor, ist dort aber nicht als Geraetetyp gemeldet): eine
+      frische Registrierung exportiert 16 Signale, diese Migration 17 - in
+      diesem Fall IST die Migration grosszuegiger.
+    - Meldet ein Abbild fuer Endpunkt 0 gar keine `DeviceTypeList`, behandelt
+      `is_functional` bei einer frischen Registrierung Endpunkt 0 wie einen
+      gewoehnlichen NUTZ-Endpunkt (`profiles.relevance.device_types_by_endpoint`:
+      ein Endpunkt ohne Descriptor-Eintrag taucht dort gar nicht auf, und
+      eine fehlende Deklaration schliesst layer 2 in `is_functional` damit
+      aus). Diese Migration nimmt dagegen IMMER Endpunkt 0 = Root Node an,
+      egal ob ein Abbild das je bestaetigt hat. Beispiel: frisch 108
+      exportierte Signale, migriert 17 - hier ist die Migration deutlich
+      WENIGER grosszuegig, die entgegengesetzte Richtung der beiden Punkte
+      oben.
     - Scheitert die Neuableitung fuer eine einzelne Zeile (z. B. ein
       unerwarteter Wert in `kind`), bleibt GENAU DIESE Zeile unveraendert
       stehen - kein Abbruch der gesamten Migration, keine halb migrierte
       Datenbank (Entwurf 8, siehe
-      `test_a_signal_the_table_cannot_classify_survives_the_migration`).
+      `test_an_unparseable_row_survives_the_migration_untouched`).
     """
     rows = db.execute(
         "SELECT device_id, key, endpoint, cluster_id, element_id, kind, exportability FROM signal"

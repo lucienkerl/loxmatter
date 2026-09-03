@@ -471,7 +471,7 @@ def _build_store_at_schema_v2(
     `extra_row` haengt eine zusaetzliche Zeile an (Schluessel, Endpunkt,
     Cluster-ID, Element-ID, Art) fuer einen Cluster, den die Profiltabelle
     nicht kennt - fuer
-    `test_a_signal_the_table_cannot_classify_survives_the_migration`.
+    `test_a_row_with_an_unknown_cluster_still_gets_rewritten`.
 
     Gibt die Menge der in DIESEM Aufruf vergebenen Schluessel zurueck
     (inklusive `extra_row`, falls gesetzt).
@@ -573,13 +573,171 @@ def test_the_migration_applies_the_new_default_to_existing_devices(tmp_path):
     assert len(exported) < 30, "die Signalflut muss auch rueckwirkend weg sein"
 
 
-def test_a_signal_the_table_cannot_classify_survives_the_migration(tmp_path):
-    """Scheitert die Neuableitung fuer eine Zeile, bleibt sie unveraendert -
-    kein Abbruch, keine halb migrierte Datenbank (Entwurf 8)."""
+def test_a_row_with_an_unknown_cluster_still_gets_rewritten(tmp_path):
+    """Umbenannt (Nachbesserung Fix 3, Aufgabe 7) - der urspruengliche Name
+    behauptete, dieser Test belege das `except` in `_migrate_to_v3`s
+    Zeilenschleife. Das stimmt nicht: `lookup()` faengt einen unbekannten
+    Cluster selbst ab (generischer Slug/Titel-Zweig) und wirft nie - die
+    Zeile ueberlebt zwar, wird dabei aber umgeschrieben (`title='kaputt'`
+    wird zu `title='c4711_a0'`, dem generischen Titel). Dieser Test prueft
+    also nur, dass ein unbekannter Cluster KEINEN Fehler ausloest, nicht die
+    Ausfalleigenschaft selbst - die steckt in
+    `test_an_unparseable_row_survives_the_migration_untouched` unten."""
     path = tmp_path / "s.sqlite"
     _build_store_at_schema_v2(path, extra_row=("d1_9_kaputt", 9, 4711, 0, "attribute"))
     store = Store(path)
-    assert any(s.key == "d1_9_kaputt" for s in store.signals(1))
+    try:
+        (row,) = [s for s in store.signals(1) if s.key == "d1_9_kaputt"]
+    finally:
+        store.close()
+    assert row.title == "c4711_a0"
+
+
+def test_an_unparseable_row_survives_the_migration_untouched(tmp_path):
+    """Die tragende Ausfalleigenschaft (Entwurf 8, Nachbesserung Fix 3,
+    Aufgabe 7) direkt am `except (ValueError, KeyError)` in
+    `_migrate_to_v3`s Zeilenschleife, nicht nur an ihrer Aussenwirkung.
+
+    `Store._as_signal` parst `kind` ueber `SignalKind(row["kind"])` genauso
+    ungeschuetzt wie `_migrate_to_v3` selbst - `store.signals(1)` scheitert
+    deshalb an dieser Zeile ebenso (belegt: eine fruehere Fassung dieses
+    Tests rief genau das auf und bekam denselben `ValueError`, den
+    `_migrate_to_v3` selbst abfaengt). Direkt per `sqlite3` (wie
+    `build_old_database`/`build_v1_database` oben) ist die Zeile dagegen
+    problemlos anzulegen, ohne je durch `Store` zu gehen: `SignalKind('kaputt')`
+    innerhalb von `_migrate_to_v3` wirft `ValueError`, BEVOR `lookup()`
+    ueberhaupt aufgerufen wird, landet im `except` und bleibt Wort fuer Wort
+    stehen - inklusive des ansonsten immer neu abgeleiteten `title`. Die
+    Kehrseite gilt beim LESEN nach der Migration genauso: die gesunde
+    Batteriezeile wird gezielt ueber `signal_by_key` geholt (beruehrt nur
+    diese eine Zeile), die kaputte danach roh per `sqlite3` - `store.signals(1)`
+    liefe fuer BEIDE Zeilen durch `_as_signal` und schluege mit der kaputten
+    noch in der Tabelle sofort fehl. Die gesunde Zeile im selben Aufruf
+    zeigt gleichzeitig: die kaputte Zeile reisst die Transaktion nicht mit,
+    die gesunde wird migriert."""
+    path = tmp_path / "s.sqlite"
+    db = sqlite3.connect(str(path))
+    try:
+        db.executescript(_V2_SCHEMA)
+        db.execute(
+            "INSERT INTO device (id, unique_id, node_id, label, udp_port, active)"
+            " VALUES (1, 'dev-1', 42, 'Testgeraet', 7000, 1)"
+        )
+        # exportability=analog wie bei einer echten Registrierung: der
+        # Batteriestand liefert schon damals eine Zahl (siehe
+        # `clusters.yaml`, Cluster 47), `exported=1` wie bei der
+        # Vor-Aufgabe-6-Regel (nur `is_exportable`, ohne `is_functional`,
+        # siehe `_build_store_at_schema_v2` oben).
+        db.execute(
+            "INSERT INTO signal"
+            " (device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"
+            " exportability, exported) VALUES"
+            " (1, 0, 47, 12, 'attribute', 'd1_0_c47_a12', 'Batterie-Alt', '', ?, 1)",
+            (Exportability.ANALOG.value,),
+        )
+        db.execute(
+            "INSERT INTO signal"
+            " (device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"
+            " exportability, exported) VALUES"
+            " (1, 9, 4711, 0, 'kaputt', 'd1_9_kaputt', 'kaputt', '', ?, 1)",
+            (Exportability.ANALOG.value,),
+        )
+        db.execute("PRAGMA user_version = 2")
+        db.commit()
+    finally:
+        db.close()
+
+    # `store.signals(1)` geht fuer BEIDE Zeilen durch `_as_signal`, das
+    # `kind` genauso ungeschuetzt parst wie `_migrate_to_v3` - mit der
+    # kaputten Zeile noch in der Tabelle wuerde das hier selbst scheitern
+    # (Store._as_signal). Deshalb: die gesunde Zeile gezielt ueber
+    # `signal_by_key` (beruehrt nur diese eine Zeile), die kaputte danach
+    # roh per `sqlite3` - exakt der Weg, den ein `kind`, das `Store` selbst
+    # nie mehr einliest, tatsaechlich noch pruefbar macht.
+    store = Store(path)
+    try:
+        battery = store.signal_by_key("d1_0_c47_a12")
+    finally:
+        store.close()
+    assert battery is not None
+
+    # Die gesunde Zeile wurde neu abgeleitet ...
+    assert battery.title == "battery"
+    assert battery.unit == "%"
+    assert battery.exportability is Exportability.ANALOG
+    assert battery.exported is True
+
+    # ... die kaputte blieb Wort fuer Wort stehen, kein Abbruch - belegt
+    # roh per `sqlite3`, weil `Store` selbst an ihrem `kind` scheitern
+    # wuerde (siehe oben).
+    db = sqlite3.connect(str(path))
+    try:
+        db.row_factory = sqlite3.Row
+        broken = db.execute(
+            "SELECT title, unit, exportability, exported, kind FROM signal WHERE key = ?",
+            ("d1_9_kaputt",),
+        ).fetchone()
+    finally:
+        db.close()
+    assert broken is not None
+    assert broken["kind"] == "kaputt"
+    assert broken["title"] == "kaputt"
+    assert broken["unit"] == ""
+    assert broken["exportability"] == Exportability.ANALOG.value
+    assert broken["exported"] == 1
+
+
+def test_a_never_measured_energy_counter_is_still_promoted_by_the_field_number_exception(
+    tmp_path,
+):
+    """Haelt die in Fix 1 bewusst hingenommene Grenze fest (Nachbesserung
+    Aufgabe 7, siehe `_migrate_to_v3`-Docstring, Abschnitt "Zwei offene
+    Grenzen dieser Ausnahme"): die Feldnummer-Ausnahme sieht den
+    Laufzeitwert nicht.
+
+    Diese Zeile steht hier so, wie sie eine echte Registrierung VOR
+    Einfuehrung des `field:0`-Eintrags fuer Cluster 145 angelegt haette,
+    UND wie sie eine Registrierung anlegen wuerde, waere der zugrunde
+    liegende Zaehler noch nie gemessen worden (Matter liefert dafuer
+    `null`, `classify(None)` ergibt `none` - siehe `_pretend_unnamed_profile`
+    und `profiles.table.classify`): `exportability=none`, `exported=0`.
+
+    Die Migration hebt sie trotzdem auf ANALOG und exportiert - unabhaengig
+    davon, ob der Zaehler inzwischen wirklich einen Wert hat, denn
+    `_migrate_to_v3` ruft `lookup(ref, None)` immer mit `value=None` auf.
+    Zur Laufzeit bleibt das folgenlos (`to_loxone_value` liefert fuer einen
+    weiterhin `null`en Wert ebenfalls `None`), aber die erzeugte
+    Loxone-Vorlage bekommt einen Eingang, der nie einen Wert traegt - siehe
+    Docstring."""
+    path = tmp_path / "s.sqlite"
+    db = sqlite3.connect(str(path))
+    try:
+        db.executescript(_V2_SCHEMA)
+        db.execute(
+            "INSERT INTO device (id, unique_id, node_id, label, udp_port, active)"
+            " VALUES (1, 'dev-1', 42, 'Testgeraet', 7000, 1)"
+        )
+        db.execute(
+            "INSERT INTO signal"
+            " (device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"
+            " exportability, exported) VALUES"
+            " (1, 2, 145, 2, 'attribute', 'd1_2_c145_a2', 'c145_a2', '', ?, 0)",
+            (Exportability.NONE.value,),
+        )
+        db.execute("PRAGMA user_version = 2")
+        db.commit()
+    finally:
+        db.close()
+
+    store = Store(path)
+    try:
+        (signal,) = store.signals(1)
+    finally:
+        store.close()
+
+    assert signal.key == "d1_2_c145_a2", "Schluessel bleibt der alte"
+    assert signal.exportability is Exportability.ANALOG
+    assert signal.exported is True
 
 
 def test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures(tmp_path):
@@ -605,5 +763,4 @@ def test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures(
     finally:
         store.close()
 
-    print("Gegenprobe (Schritt 5):", counts)
     assert sorted(counts.values()) == [5, 17]
