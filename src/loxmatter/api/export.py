@@ -103,10 +103,8 @@ from loxmatter.export.documents import (
 )
 from loxmatter.export.outputs import to_outputs
 from loxmatter.export.signals import to_inputs
-from loxmatter.model.store import DEFAULT_UDP_PORT, Store, StoredCommand, StoredDevice
+from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store, StoredCommand, StoredDevice
 from loxmatter.profiles.table import is_exportable
-
-_DEFAULT_LISTEN_PORT = 8080
 
 # Oeffentlich, weil die Oberflaeche denselben Dateinamen vergeben muss:
 # seit die Downloads ueber `fetch` statt ueber einen Link laufen, benennt
@@ -240,7 +238,7 @@ def build_export_router(store: Store) -> APIRouter:
         bridge_ip: str = Query(..., description="IP der Bruecke, aus Sicht des Miniservers"),
         port: int = Query(DEFAULT_UDP_PORT, description="UDP-Port, auf dem der Miniserver lauscht"),
         listen: int = Query(
-            _DEFAULT_LISTEN_PORT,
+            DEFAULT_LISTEN_PORT,
             description="HTTP-Port in der erzeugten Kommando-URL (VO-Vorlage) - muss mit"
             " dem --listen von `loxmatter run` uebereinstimmen (siehe Modul-Docstring,"
             " Entscheidung 2).",

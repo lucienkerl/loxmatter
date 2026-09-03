@@ -59,6 +59,16 @@ from loxmatter.profiles.table import Exportability, is_exportable, lookup, struc
 from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
+# `_DEFAULT_LISTEN_PORT` von `api/export.py` hierher gehoben (Geraete-
+# Dashboard-Entwurf, Abschnitt 4): der neue `BridgeSettingsStore` unten
+# braucht denselben Vorgabewert, und ein zweiter, unabhaengig gepflegter
+# Literal `8080` waere genau die Art Drift, vor der `api/export.py`s eigener
+# Moduldocstring (Entscheidung 2) bereits warnt.
+DEFAULT_LISTEN_PORT = 8080
+
+# Importiert nach den Konstanten-Definitionen, um zirkulaere Importe zu vermeiden:
+# `settings_store.py` importiert `DEFAULT_LISTEN_PORT` und `DEFAULT_UDP_PORT`.
+from loxmatter.model.settings_store import BridgeSettingsStore  # noqa: E402
 
 # Schema-Version dieses Moduls, verwaltet ueber `PRAGMA user_version` (Review-Fix
 # Important #1, 2026-09-02). `CREATE TABLE IF NOT EXISTS` allein erreicht eine
@@ -703,6 +713,8 @@ class Store:
         # Sicht auf dieselbe Verbindung, kein zweiter Verbindungsaufbau -
         # siehe Moduldocstring von `auth_store.py`.
         self.auth = AuthStore(self._db)
+        # Sicht auf dieselbe Verbindung - siehe `settings_store.py`.
+        self.settings = BridgeSettingsStore(self._db)
 
     def close(self) -> None:
         self._db.close()
