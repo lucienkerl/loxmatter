@@ -25,9 +25,19 @@ clusters:
   47:
     name: powersource
     attributes:
-      # BatPercentRemaining. Matter zaehlt in halben Prozent (0-200) laut
-      # Matter Application Cluster Specification - daher 0.5. Attribut-ID
-      # gegen chip.clusters.Objects.PowerSource.Attributes belegt.
+      # BatPercentRemaining, Attribut-ID gegen
+      # chip.clusters.Objects.PowerSource.Attributes belegt.
+      #
+      # Der Faktor 0.5 ist NICHT gegen eine Primaerquelle belegt (Review-Fix
+      # Important, 2026-09-03): die Matter Application Cluster Specification
+      # gibt den Wert nach allgemeiner Kenntnis in halben Prozent (0-200) an,
+      # aber weder das installierte chip-SDK noch matter_server fuehren
+      # Einheiten mit, und das Spezifikationsdokument selbst lag hier nicht
+      # vor. Was tatsaechlich belegt ist: das eingecheckte Abbild
+      # tests/fixtures/nodes/ikea_bilresa_button.json meldet unter 0/47/12
+      # den Wert 200 bei einem Taster, dessen Batterie voll ist - was zu
+      # halben Prozent passt und zu ganzen nicht. Ein Umstandsbeweis, kein
+      # Beleg. Wer die Spezifikation zur Hand hat, moege ihn ersetzen.
       #
       # Nur dieses eine von 37 Attributen ist benannt, und das ist die
       # Feinauswahl aus dem Entwurf (4.3): PowerSource fuehrt daneben
