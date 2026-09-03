@@ -473,3 +473,35 @@ async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
     readonly_label = _label_around(markup, ':value="bridgeSettings.bridge_ip')
     assert "Miniserver" not in readonly_label, readonly_label
     assert "IP dieser Brücke" in readonly_label, readonly_label
+
+
+async def test_the_age_is_a_tooltip_and_the_change_is_a_highlight(api):
+    """Die Altersangabe stand frueher neben dem Wert und aenderte jede
+    Sekunde ihre Breite - das schob die Zeile hin und her und zog den Blick
+    auf die Bewegung statt auf die Aenderung (2026-09-03).
+
+    Jetzt traegt sie der `title` der Zelle, und die Aenderung zeigt eine
+    Hervorhebung, die wieder verblasst. Belegt ist damit, dass beides
+    ausgeliefert wird - NICHT, dass es im Browser so aussieht: in dieser
+    Suite laeuft keine Engine, die CSS anwendet oder Alpine ausfuehrt.
+    """
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "signalAgeTitle(signal)" in page
+    assert "'value-fresh': signalIsFresh(signal)" in page
+    # Nirgends mehr im Textfluss - das war die Ursache des Zappelns.
+    assert 'x-text="signalSeenText(signal)"' not in page
+
+
+async def test_the_highlight_cannot_change_the_width_of_a_cell(api):
+    """Polster und Radius muessen am Grundzustand haengen, nicht an der
+    Hervorhebung: kaemen sie mit ihr dazu, waere das Zappeln zurueck - nur
+    an einer anderen Stelle."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    base = css.split(".value {", 1)[1].split("}", 1)[0]
+    highlight = css.split(".value-fresh {", 1)[1].split("}", 1)[0]
+    assert "padding" in base
+    assert "padding" not in highlight
+    assert "border-radius" in base
+    assert "border-radius" not in highlight

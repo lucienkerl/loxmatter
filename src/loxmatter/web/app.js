@@ -54,6 +54,12 @@ const INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3;
 // Lebenszeichen, das diese Oberflaeche hat.
 const HEARTBEAT_KEY = "bridge_alive";
 
+// Wie lange ein frisch eingetroffener Wert hervorgehoben bleibt. Etwas mehr
+// als zwei Sekunden: `nowTick` laeuft im Sekundentakt, also ist die Grenze
+// ohnehin auf eine Sekunde genau, und kuerzer als zwei Ticks liefe man
+// Gefahr, die Hervorhebung zu verpassen, wenn man gerade woanders hinsieht.
+const VALUE_FRESH_MS = 2500;
+
 // --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------------
 //
 // Obergrenze der gehaltenen Zeilen je Strom (Logs, UDP-Mitschnitt,
@@ -879,9 +885,31 @@ function app() {
       return this.sinceText(this.lastHeartbeatAt);
     },
 
-    /** Wann dieses eine Signal zuletzt einen Wert lieferte. */
+    /** Wann dieses eine Signal zuletzt einen Wert lieferte. Steht nur noch
+     * im `title` der Zelle, nicht mehr daneben im Textfluss: eine Angabe wie
+     * "vor 7 s", die sich jede Sekunde aendert, aendert dabei auch ihre
+     * Breite und schiebt die Zeile hin und her. Das zog den Blick auf die
+     * Bewegung statt auf die Aenderung, um die es geht (2026-09-03). */
     signalSeenText(signal) {
       return this.sinceText(this.liveSeenAt[signal.key]);
+    },
+
+    /** Ob dieses Signal gerade eben einen Wert bekommen hat. Traegt die
+     * Hervorhebung, die den Blick an die richtige Stelle zieht - ohne dass
+     * sich am Aufbau der Zeile irgendetwas bewegt. Liest `nowTick`, damit
+     * Alpine die Klasse wieder loswird, wenn die Zeit um ist. */
+    signalIsFresh(signal) {
+      const at = this.liveSeenAt[signal.key];
+      return at !== undefined && this.nowTick - at < VALUE_FRESH_MS;
+    },
+
+    /** Der Tooltip einer Wertzelle: wann der Wert zuletzt kam, oder ein
+     * Hinweis, dass seit dem Laden der Seite nichts kam. */
+    signalAgeTitle(signal) {
+      const text = this.signalSeenText(signal);
+      return text
+        ? `Zuletzt aktualisiert ${text}`
+        : "Seit dem Laden der Seite unveraendert";
     },
 
     async commissionDevice() {

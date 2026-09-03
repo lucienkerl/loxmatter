@@ -411,6 +411,37 @@ button:disabled {
 .value {
   font-family: var(--mono);
   font-weight: 600;
+  /* Polster und Radius stehen IMMER, nicht erst bei `.value-fresh`
+     (2026-09-03): kaemen sie mit der Hervorhebung dazu, aenderte sich die
+     Breite der Zelle, und wir haetten das Zappeln zurueck, das die
+     Altersangabe hier verursacht hat. */
+  padding: 0 0.25rem;
+  border-radius: 3px;
+  background: transparent;
+  /* Nur der Weg ZURUECK ist eine Blende. Das Aufleuchten selbst kommt
+     sofort - siehe `.value-fresh`. */
+  transition:
+    background-color 1.4s ease-out,
+    color 1.4s ease-out;
+}
+
+/* Ein Wert, der gerade eben eingetroffen ist. Traegt die Aufmerksamkeit,
+   die vorher eine mitlaufende Sekundenangabe tragen sollte - nur ohne dass
+   sich am Aufbau der Zeile etwas bewegt. `transition: none` macht das
+   Aufleuchten schlagartig; verschwindet die Klasse wieder, greift die
+   Blende von `.value` oben. */
+.value-fresh {
+  transition: none;
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+/* Wer Bewegung im Betriebssystem abbestellt hat, bekommt hier keine.
+   Die Hervorhebung bleibt - sie ist die Information, nicht die Blende. */
+@media (prefers-reduced-motion: reduce) {
+  .value {
+    transition: none;
+  }
 }
 
 .device-controls {
