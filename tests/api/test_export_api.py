@@ -417,3 +417,54 @@ async def test_the_interface_asks_for_the_filter_it_shows(api):
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "only_pending" in script
+
+
+# ---------------------------------------------------------------------------
+# device_id: Export eines einzelnen Geraets ueber den Export-Knopf an der
+# Geraetekarte (Geraete-Dashboard-Entwurf, 2026-09-03, Abschnitt 6). Kein
+# eigener Endpunkt - derselbe `/api/export/download`, nur auf ein Geraet
+# eingeschraenkt.
+# ---------------------------------------------------------------------------
+
+
+async def test_download_with_device_id_contains_only_that_device(api):
+    client, store, first_id = api
+    second_id = _second_device(store)
+
+    response = await client.get(
+        f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}"
+    )
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    assert any(n.startswith(f"VIU_d{first_id}_") for n in names)
+    assert not any(n.startswith(f"VIU_d{second_id}_") for n in names)
+
+
+async def test_download_with_device_id_marks_only_that_device_exported(api):
+    client, store, first_id = api
+    second_id = _second_device(store)
+
+    await client.get(f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}")
+
+    assert store.device(first_id).exported_at is not None
+    assert store.device(second_id).exported_at is None
+
+
+async def test_download_with_device_id_ignores_only_pending(api):
+    """`device_id` gewinnt gegen `only_pending` (Entwurf Abschnitt 6): das
+    angeforderte Geraet wird exportiert, auch wenn es laut
+    `changed_since_export` gar nicht ausstuende."""
+    client, store, first_id = api
+    await client.get(f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}")
+    assert store.device(first_id).exported_at is not None  # bereits exportiert, "nicht aenderend"
+
+    response = await client.get(
+        f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}&only_pending=true"
+    )
+    names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
+    assert any(n.startswith(f"VIU_d{first_id}_") for n in names)
+
+
+async def test_download_with_unknown_device_id_yields_404(api):
+    client, _, _ = api
+    response = await client.get("/api/export/download?bridge_ip=192.168.1.50&device_id=999999")
+    assert response.status_code == 404

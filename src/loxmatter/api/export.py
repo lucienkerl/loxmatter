@@ -90,7 +90,7 @@ import io
 import zipfile
 from collections.abc import Sequence
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from loxmatter.api.models import ExportDeviceOut, ExportPreviewOut, ExportStatusOut
@@ -103,7 +103,14 @@ from loxmatter.export.documents import (
 )
 from loxmatter.export.outputs import to_outputs
 from loxmatter.export.signals import to_inputs
-from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store, StoredCommand, StoredDevice
+from loxmatter.model.store import (
+    DEFAULT_LISTEN_PORT,
+    DEFAULT_UDP_PORT,
+    Store,
+    StoredCommand,
+    StoredDevice,
+    UnknownDeviceError,
+)
 from loxmatter.profiles.table import is_exportable
 
 # Oeffentlich, weil die Oberflaeche denselben Dateinamen vergeben muss:
@@ -250,7 +257,14 @@ def build_export_router(store: Store) -> APIRouter:
             False,
             description="Nur Geraete, die seit ihrem letzten Export geaendert wurden"
             " (dieselbe Bedingung wie `changed_since_export` in /status). Die uebrigen"
-            " kommen weder ins Archiv noch bekommen sie ein neues `exported_at`.",
+            " kommen weder ins Archiv noch bekommen sie ein neues `exported_at`. Wird"
+            " ignoriert, wenn `device_id` gesetzt ist.",
+        ),
+        device_id: int | None = Query(
+            None,
+            description="Nur dieses eine Geraet exportieren (Geraete-Dashboard-Entwurf,"
+            " Abschnitt 6, Export-Knopf an der Geraetekarte) - ignoriert `only_pending`."
+            " 404, wenn das Geraet nicht (mehr) existiert.",
         ),
     ) -> Response:
         """Baut das ZIP im Speicher - keine temporaere Datei, kein
@@ -289,7 +303,20 @@ def build_export_router(store: Store) -> APIRouter:
         keinen neuen Zeitstempel und bleibt in `GET /api/export/status`
         korrekt als ausstehend stehen. Die Systemvorlagen haengen weiterhin
         allein an `system`: sie gehoeren zu keinem Geraet und koennen
-        deshalb auch nicht "seit dem letzten Export unveraendert" sein."""
+        deshalb auch nicht "seit dem letzten Export unveraendert" sein.
+
+        **`device_id` (Geraete-Dashboard-Entwurf, 2026-09-03, Abschnitt 6).**
+        Gesetzt, beschraenkt sich die Auswahl auf genau dieses eine Geraet,
+        unabhaengig von `only_pending` - der Export-Knopf an einer
+        Geraetekarte fragt nie, ob das Geraet "ansteht", er exportiert das
+        eine Geraet, das gerade sichtbar ist. Ein unbekanntes oder
+        entferntes Geraet ergibt 404, geprueft VOR dem Aufbau des Archivs."""
+        if device_id is not None:
+            try:
+                store.device(device_id)
+            except UnknownDeviceError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
         buffer = io.BytesIO()
         # Gesammelt statt sofort vermerkt (siehe oben) - erst nach dem
         # vollstaendigen Aufbau des Archivs unten abgearbeitet.
@@ -301,7 +328,10 @@ def build_export_router(store: Store) -> APIRouter:
                 archive.writestr("VO_Matter_System.xml", vo_system)
 
             for device in store.devices():
-                if only_pending and not _changed_since_export(device):
+                if device_id is not None:
+                    if device.id != device_id:
+                        continue
+                elif only_pending and not _changed_since_export(device):
                     continue
                 signals = store.signals(device.id)
                 commands = _loxone_commands(store.commands(device.id))
@@ -329,8 +359,8 @@ def build_export_router(store: Store) -> APIRouter:
         # der Export (siehe Docstring oben). Ein Fehler weiter oben haette
         # diese Zeile nie erreicht, und keines der bis dahin verarbeiteten
         # Geraete waere faelschlich als exportiert markiert.
-        for device_id in exported_device_ids:
-            store.mark_exported(device_id)
+        for device_id_written in exported_device_ids:
+            store.mark_exported(device_id_written)
 
         return Response(
             content=buffer.getvalue(),
