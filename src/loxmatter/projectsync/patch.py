@@ -27,7 +27,13 @@ vorherige Positionen gueltig, ohne Versatz nachrechnen zu muessen.
 auseinanderlaufen koennen. Der Grund, das nicht ueber den `PlanEntry`
 hindurchzureichen: der traegt nur, was die Oberflaeche zeigen muss
 (Titel/Schluessel/Status), nicht `unit_format`/`check_suffix`/`off_path`, die
-ein neu angelegtes Objekt zusaetzlich braucht."""
+ein neu angelegtes Objekt zusaetzlich braucht.
+
+Die einzige Aenderung, die `apply_plan` ausserhalb des Plans vornimmt: die
+Ausgabe traegt IMMER ein BOM (`export.xml.BOM`, dieselbe Konstante wie die
+Vorlagendateien) - hinzugefuegt, falls das Original keines hatte, sonst
+unveraendert uebernommen. Wer Byte-Identitaet gegen die Eingabe prueft, muss
+das einrechnen."""
 
 from __future__ import annotations
 
@@ -39,7 +45,7 @@ from typing import cast
 from loxmatter.export.documents import LoxoneCommand
 from loxmatter.export.outputs import to_outputs
 from loxmatter.export.signals import LoxoneInput, to_inputs
-from loxmatter.export.xml import escape_attr_value
+from loxmatter.export.xml import BOM, escape_attr_value
 from loxmatter.model.store import StoredCommand, StoredDevice, StoredSignal
 from loxmatter.projectsync.diff import PlanEntry, PlanStatus, SyncPlan
 from loxmatter.projectsync.ids import new_iname, new_unique_id
@@ -271,6 +277,6 @@ def apply_plan(
         edits.append(next_obj_edit)
 
     patched_text = _apply_edits(index.text, edits)
-    if not patched_text.startswith("﻿"):
-        patched_text = "﻿" + patched_text
+    if not patched_text.startswith(BOM):
+        patched_text = BOM + patched_text
     return patched_text.encode("utf-8")

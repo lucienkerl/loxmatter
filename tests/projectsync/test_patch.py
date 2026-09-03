@@ -1,4 +1,5 @@
 from loxmatter.export.signals import SignalKind
+from loxmatter.export.xml import BOM
 from loxmatter.model.store import SignalRef, StoredCommand, StoredDevice, StoredSignal
 from loxmatter.profiles.table import Exportability
 from loxmatter.projectsync.diff import build_plan
@@ -116,6 +117,20 @@ def test_unchanged_plan_leaves_the_file_byte_identical(sample_project):
     patched = _patch_bytes(index, device, _unchanged_signals(), include_new_devices=True)
     assert patched == ("﻿" + sample_project).encode("utf-8")
     assert patched.decode("utf-8").lstrip("﻿") == sample_project.lstrip("﻿")
+
+
+def test_existing_bom_is_preserved_and_not_duplicated(sample_project):
+    """Gegenstueck zum Test oben: hatte das Original schon ein BOM, kommt
+    genau EINES zurueck, nicht zwei. Loxone Config schreibt seine Projektdatei
+    mit BOM, dieser Fall ist also der Normalfall - der BOM-lose oben der
+    Sonderfall (siehe `patch`-Moduldocstring)."""
+    with_bom = BOM + sample_project
+    index = build_index(with_bom)
+    device = _device(1, "Altes Geraet")
+    patched = _patch_bytes(index, device, _unchanged_signals(), include_new_devices=True)
+
+    assert patched == with_bom.encode("utf-8")
+    assert patched.decode("utf-8").count(BOM) == 1
 
 
 def test_created_u_ids_are_unique_across_the_whole_file(sample_project):
