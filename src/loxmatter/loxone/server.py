@@ -124,6 +124,7 @@ from loxmatter.api.diagnostics import (
 )
 from loxmatter.api.export import build_export_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, build_live_router
+from loxmatter.api.settings import build_settings_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.loxone.runtime import Runtime
@@ -413,6 +414,7 @@ def build_app(
     # `/static`, die weiter unten ohne `dependencies` eingehaengt werden.
     app.include_router(build_device_router(store, client, runtime), dependencies=api_guard)
     app.include_router(build_export_router(store), dependencies=api_guard)
+    app.include_router(build_settings_router(store), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
     # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
     # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst

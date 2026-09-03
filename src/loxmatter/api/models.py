@@ -23,7 +23,7 @@ Tabellen. Aendert sich das Schema, aendert sich nicht zwangslaeufig die API.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SignalOut(BaseModel):
@@ -226,3 +226,31 @@ class ExportStatusOut(BaseModel):
     label: str
     exported_at: str | None
     changed_since_export: bool
+
+
+class BridgeSettingsOut(BaseModel):
+    """Antwort von `GET`/`PATCH /api/settings` (Geraete-Dashboard-Entwurf,
+    Abschnitt 4). `bridge_ip`/`saved_at` sind `None`, solange niemand die
+    Verbindung zum Miniserver eingerichtet hat - der Fall, in dem die
+    Oberflaeche den Export-Knopf an jeder Geraetekarte deaktiviert."""
+
+    model_config = ConfigDict(frozen=True)
+
+    bridge_ip: str | None
+    udp_port: int
+    listen_port: int
+    saved_at: str | None
+
+
+class BridgeSettingsIn(BaseModel):
+    """Rumpf von `PATCH /api/settings` - alle drei Felder zusammen, kein
+    Teil-Update: sie gehoeren fachlich zusammen (dieselbe virtuelle
+    Verbindung), ein Teil-Update koennte sonst eine gueltige IP mit einem
+    inzwischen falschen Port stehen lassen. `min_length=1` auf `bridge_ip`
+    ergibt 422 bei leerem Feld, ohne einen eigenen Validator."""
+
+    model_config = ConfigDict(frozen=True)
+
+    bridge_ip: str = Field(min_length=1)
+    udp_port: int
+    listen_port: int
