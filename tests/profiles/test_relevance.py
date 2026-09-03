@@ -126,3 +126,16 @@ def test_events_of_a_known_cluster_stay_functional():
     for event_id in (1, 2, 3, 4, 5, 6):
         ref = SignalRef(1, 59, event_id, SignalKind.EVENT)
         assert is_functional(ref, _BUTTON_TYPES) is True
+
+
+def test_an_event_on_a_utility_endpoint_with_an_unknown_cluster_is_not_functional():
+    """Ein Ereignis auf dem Verwaltungs-Endpunkt ist nicht funktional, auch wenn es
+    ein Ereignis ist. Der Docstring saegt 'Ereignisse unterliegen Schicht 3 nicht',
+    aber ein Leser koennte das falsch verstehen als 'Ereignisse werden nicht von
+    Schicht 3 gefiltert' und ueberseht dadurch die Filterung durch Schicht 2
+    (Verwaltungs-Endpunkte). Wenn jemand spaeter den Sonderfall fuer Ereignisse
+    nach vorne zieht, um den Code zu 'vereinfachen', gibt das stillschweigend
+    Diagnose-Ereignisse des Verwaltungs-Endpunkts frei - ohne dass ein Test anschlaegt.
+    Dieser Test stellt sicher, dass das nicht passiert."""
+    ref = SignalRef(0, 51, 0, SignalKind.EVENT)  # Cluster 51: GeneralDiagnostics
+    assert is_functional(ref, _PLUG_TYPES) is False

@@ -94,6 +94,12 @@ BOILERPLATE_CLUSTERS: frozenset[int] = frozenset({3, 4, DESCRIPTOR_CLUSTER_ID})
 # Cluster, die auf einem Verwaltungs-Endpunkt dennoch gewollt sind - aber
 # nur, wenn das Geraet den zugehoerigen Nutz-Geraetetyp dort auch
 # deklariert. Der Batteriestand ist der Fall, der das noetig macht.
+#
+# WICHTIG: Das ist KEINE vollstaendige Nachschlagetabelle aller Geraetetypen
+# und ihrer Cluster - nur die Ausnahmen, die an echten Geraeten tatsaechlich
+# vorkommen. Ein neuer Fall erfordert eine konkrete Belegung (Link zum
+# Geraet oder zur Spezifikation), nicht die Annahme, dass die Tabelle
+# von sich aus vollstaendig waere.
 UTILITY_ENDPOINT_KEEP_CLUSTERS: dict[int, int] = {
     47: POWER_SOURCE_DEVICE_TYPE,  # PowerSource
 }
