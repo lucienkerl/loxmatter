@@ -8,6 +8,14 @@ license-files = ["LICENSE", "src/loxmatter/web/vendor/LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.9",
+    # Task 1, QR/HTTPS: Erzeugung der lokalen CA und des Server-Zertifikats
+    # fuer den HTTPS-Listener (Entwurf Abschnitt 4.4/4.5). Ein `openssl`-
+    # Aufruf als Alternative wurde verworfen: das Basisimage
+    # `python:3.12-slim` garantiert das Binary nicht, und der Dockerfile
+    # sagt ueber sich selbst, dass er nie gebaut wurde. `>=42`, weil erst
+    # dort `Certificate.not_valid_after_utc` existiert - der zeitzonenechte
+    # Ersatz fuer das inzwischen veraltete `not_valid_after`.
+    "cryptography>=42",
     "fastapi>=0.115",
     "python-matter-server>=8.1.2",
     "pyyaml>=6.0",
