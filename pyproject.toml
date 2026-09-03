@@ -1,6 +1,10 @@
 [project]
 name = "loxmatter"
 version = "0.1.0"
+description = "Bindet Matter-Geraete (Thread und WiFi) an einen Loxone Miniserver an"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "src/loxmatter/web/vendor/LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.9",
