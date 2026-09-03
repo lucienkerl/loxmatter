@@ -107,6 +107,7 @@ import logging
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Protocol
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
@@ -116,18 +117,17 @@ from starlette.responses import Response as StarletteResponse
 
 from loxmatter.api.auth import build_auth_router
 from loxmatter.api.control import build_control_router
-from loxmatter.api.devices import build_device_router
+from loxmatter.api.devices import RuntimeValues, build_device_router
 from loxmatter.api.diagnostics import (
     CommandLogEntry,
     RingBuffer,
     build_diagnostics_router,
 )
 from loxmatter.api.export import build_export_router
-from loxmatter.api.live import BEARER_SUBPROTOCOL, build_live_router
+from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.settings import build_settings_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
-from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
@@ -338,10 +338,22 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
     return guard
 
 
+class _RuntimeDependency(RuntimeValues, ObservableRuntime, Protocol):
+    """Was `build_app` selbst von `runtime` braucht - zusaetzlich zu den
+    schmaleren Protokollen der einzelnen Router (`RuntimeValues` fuer
+    `build_device_router`, `ObservableRuntime` fuer `build_live_router`):
+    `resend_all` fuer `/resync` weiter unten (Spec 6.4). `loxone.runtime.
+    Runtime` erfuellt das bereits unveraendert; ein Double (siehe
+    `scripts/dev_web_server.py`, `_SeededRuntime`) muss dafuer keine echte
+    `Runtime` mehr aufbauen."""
+
+    async def resend_all(self) -> int: ...
+
+
 def build_app(
     store: Store,
     invoke: Invoker,
-    runtime: Runtime,
+    runtime: _RuntimeDependency,
     client: BridgeMatterClient | None = None,
     sender: UdpSender | None = None,
     matter_data_dir: Path | None = None,
@@ -407,9 +419,9 @@ def build_app(
             )
         return response
 
-    # `dependencies=api_guard` auf jedem der fuenf `/api`-Router (Task 8,
+    # `dependencies=api_guard` auf jedem der sechs `/api`-Router (Task 8,
     # Phase 5, siehe `build_api_guard` oben): das schuetzt ausnahmslos jede
-    # Route dieser fuenf Router, inklusive der WebSocket-Route `/api/live" -
+    # Route dieser sechs Router, inklusive der WebSocket-Route `/api/live" -
     # und ausdruecklich NICHT `/cmd`, `/resync`, `/health`, `/` und
     # `/static`, die weiter unten ohne `dependencies` eingehaengt werden.
     app.include_router(build_device_router(store, client, runtime), dependencies=api_guard)

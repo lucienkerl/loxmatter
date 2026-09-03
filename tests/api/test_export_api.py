@@ -431,9 +431,7 @@ async def test_download_with_device_id_contains_only_that_device(api):
     client, store, first_id = api
     second_id = _second_device(store)
 
-    response = await client.get(
-        f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}"
-    )
+    response = await client.get(f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}")
     names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
     assert any(n.startswith(f"VIU_d{first_id}_") for n in names)
     assert not any(n.startswith(f"VIU_d{second_id}_") for n in names)

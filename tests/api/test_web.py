@@ -312,9 +312,20 @@ async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
     und stumm bleiben: die Kommandos gingen an den Miniserver selbst zurueck,
     und dessen Adressfilter verwarf die Datagramme der Bruecke - ohne
     Fehlermeldung, genau der Fehlschlagtyp, den Spec 8.1 ausschliessen
-    will."""
+    will.
+
+    Zwei Stellen zeigen das Feld (Geraete-Dashboard-Entwurf, Abschnitt 4/5):
+    editierbar in Einstellungen (`settingsDraft.bridge_ip`) - dort tippt
+    jemand tatsaechlich hinein, dort waere eine falsche Beschriftung am
+    teuersten - und schreibgeschuetzt im Export-Tab (`bridgeSettings.
+    bridge_ip`), das denselben Wert nur noch anzeigt."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    label = _label_around(markup, ':value="bridgeSettings.bridge_ip')
-    assert "Miniserver" not in label, label
-    assert "IP dieser Brücke" in label, label
+
+    editable_label = _label_around(markup, 'x-model="settingsDraft.bridge_ip')
+    assert "Miniserver" not in editable_label, editable_label
+    assert "IP dieser Brücke" in editable_label, editable_label
+
+    readonly_label = _label_around(markup, ':value="bridgeSettings.bridge_ip')
+    assert "Miniserver" not in readonly_label, readonly_label
+    assert "IP dieser Brücke" in readonly_label, readonly_label

@@ -204,8 +204,7 @@ class BridgeSettingsStore:
 
     def get(self) -> BridgeSettings:
         rows = self._db.execute(
-            f"SELECT key, value FROM setting WHERE key IN"
-            f" ({', '.join('?' for _ in _ALL_KEYS)})",
+            f"SELECT key, value FROM setting WHERE key IN ({', '.join('?' for _ in _ALL_KEYS)})",
             _ALL_KEYS,
         ).fetchall()
         values = {row["key"]: row["value"] for row in rows}
@@ -278,7 +277,13 @@ Expected: PASS (4 Tests)
 `src/loxmatter/api/export.py` definiert bislang selbst `_DEFAULT_LISTEN_PORT = 8080` (Zeile 109). Ersetze den Import (Zeile 106) und die Konstante:
 
 ```python
-from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store, StoredCommand, StoredDevice
+from loxmatter.model.store import (
+    DEFAULT_LISTEN_PORT,
+    DEFAULT_UDP_PORT,
+    Store,
+    StoredCommand,
+    StoredDevice,
+)
 ```
 
 Entferne Zeile 109 (`_DEFAULT_LISTEN_PORT = 8080`) und ersetze die einzige Verwendung in der `download`-Route (Query-Default für `listen`, aktuell `_DEFAULT_LISTEN_PORT`) durch `DEFAULT_LISTEN_PORT`.
@@ -608,9 +613,7 @@ async def test_download_with_device_id_contains_only_that_device(api):
     client, store, first_id = api
     second_id = _second_device(store)
 
-    response = await client.get(
-        f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}"
-    )
+    response = await client.get(f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}")
     names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
     assert any(n.startswith(f"VIU_d{first_id}_") for n in names)
     assert not any(n.startswith(f"VIU_d{second_id}_") for n in names)
@@ -665,7 +668,14 @@ from fastapi import APIRouter, HTTPException, Query
 Import ergänzen (Zeile 106, bei den bestehenden `model.store`-Importen):
 
 ```python
-from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store, StoredCommand, StoredDevice, UnknownDeviceError
+from loxmatter.model.store import (
+    DEFAULT_LISTEN_PORT,
+    DEFAULT_UDP_PORT,
+    Store,
+    StoredCommand,
+    StoredDevice,
+    UnknownDeviceError,
+)
 ```
 
 Die `download`-Route (Zeile 238-341) wird zu:

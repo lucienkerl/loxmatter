@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 import uvicorn
@@ -50,10 +51,18 @@ def _load_snapshot(name: str) -> NodeSnapshot:
 
 
 class _SeededRuntime:
-    """Erfuellt `api.devices.RuntimeValues` mit ein paar erfundenen, aber
-    plausiblen Werten - genug, damit die Geraetekarten nicht nur "-" zeigen.
-    Kein Ersatz fuer `Runtime`: es gibt keine Live-Verbindung, die Werte
-    stehen fest, bis dieser Prozess neu startet."""
+    """Erfuellt `loxone.server._RuntimeDependency` - alles, was `build_app`
+    selbst und die Router, denen es `runtime` weiterreicht, brauchen:
+    `api.devices.RuntimeValues.last_values_for` mit ein paar erfundenen,
+    aber plausiblen Werten (genug, damit die Geraetekarten nicht nur "-"
+    zeigen), `api.live.ObservableRuntime.add_observer`/`remove_observer`
+    als No-Ops (`/api/live` ruft sie bei jedem Verbindungsaufbau bzw.
+    -abbau auf, egal ob dieser Dienst je einen Wert live nachliefert), und
+    `resend_all` als No-Op fuer `/resync`. Kein Ersatz fuer `Runtime`: es
+    gibt keine echte Live-Verbindung, die gesetzten Werte stehen fest, bis
+    dieser Prozess neu startet - ein Beobachter, der hier angemeldet wird,
+    bekommt schlicht nie eine Benachrichtigung, und `/resync` verschickt
+    nichts."""
 
     def __init__(self, values: dict[str, float | bool]) -> None:
         self._values = values
@@ -61,6 +70,15 @@ class _SeededRuntime:
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
+
+    def add_observer(self, callback: Callable[[str, object], None]) -> None:
+        return None
+
+    def remove_observer(self, callback: Callable[[str, object], None]) -> None:
+        return None
+
+    async def resend_all(self) -> int:
+        return 0
 
 
 async def _invoke(call: MatterCall) -> None:

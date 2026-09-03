@@ -73,8 +73,7 @@ class BridgeSettingsStore:
 
     def get(self) -> BridgeSettings:
         rows = self._db.execute(
-            f"SELECT key, value FROM setting WHERE key IN"
-            f" ({', '.join('?' for _ in _ALL_KEYS)})",
+            f"SELECT key, value FROM setting WHERE key IN ({', '.join('?' for _ in _ALL_KEYS)})",
             _ALL_KEYS,
         ).fetchall()
         values = {row["key"]: row["value"] for row in rows}

@@ -249,12 +249,18 @@
                       class="value"
                       x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                     ></span>
+                    <span
+                      class="hint"
+                      x-show="signalSeenText(signal)"
+                      x-cloak
+                      x-text="signalSeenText(signal)"
+                    ></span>
                   </span>
                 </template>
               </div>
               <p class="hint" x-show="remainingSignalCount(device.id) > 0">
                 <span x-text="remainingSignalCount(device.id)"></span>
-                weitere in der Ansicht „Signale".
+                weitere in der Ansicht „Signale“.
               </p>
             </div>
 
@@ -302,17 +308,21 @@
               </p>
             </div>
 
-            <div class="device-controls row">
-              <span class="hint" x-text="exportHintFor(device.id)"></span>
-              <span style="flex: 1 1 auto"></span>
-              <button
-                class="primary"
-                @click="exportDevice(device)"
-                :disabled="!bridgeSettings.bridge_ip"
-                :title="!bridgeSettings.bridge_ip ? 'Erst in Einstellungen → Verbindung zum Miniserver hinterlegen' : ''"
-              >
-                Exportieren
-              </button>
+            <div class="device-controls">
+              <div class="row">
+                <span class="hint" x-text="exportHintFor(device.id)"></span>
+                <span style="flex: 1 1 auto"></span>
+                <button
+                  class="primary"
+                  @click="exportDevice(device)"
+                  :disabled="!bridgeSettings.bridge_ip"
+                >
+                  Exportieren
+                </button>
+              </div>
+              <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
+                Erst in <a href="#" @click.prevent="selectView('settings')">Einstellungen → Verbindung zum Miniserver</a> hinterlegen.
+              </p>
             </div>
           </div>
         </template>
