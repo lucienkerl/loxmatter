@@ -111,6 +111,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 
 from loxmatter.model.store import Store
+from loxmatter.tls import TlsState
 
 if TYPE_CHECKING:
     # Ausschliesslich fuer Typannotationen - siehe Moduldocstring, warum
@@ -207,6 +208,29 @@ class SystemCheckOut(BaseModel):
     name: str
     ok: bool
     detail: str
+
+
+class TlsStatusOut(BaseModel):
+    """Zustand des HTTPS-Listeners (Entwurf Abschnitt 5).
+
+    `enabled=False` mit `error=None` heisst "abgeschaltet" (`--https-port
+    0`), `enabled=False` mit einem `error` heisst "gewollt, aber nicht
+    moeglich" - die Oberflaeche muss beide unterschiedlich erklaeren, sonst
+    sucht jemand einen Fehler, den er selbst konfiguriert hat, oder haelt
+    einen echten Fehler fuer eine Einstellung.
+
+    Der Pfad zum Herunterladen der CA steht hier bewusst NICHT drin: er ist
+    fest `/ca.crt` und liegt ausserhalb von `/api`, damit ihn auch jemand
+    ohne Token erreicht. Ihn hier zu melden erweckte den Eindruck, er sei
+    beweglich."""
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool
+    port: int | None
+    addresses: list[str]
+    expires: str | None
+    error: str | None
 
 
 _CheckFn = Callable[[], tuple[bool, str]]
@@ -334,6 +358,7 @@ def build_diagnostics_router(
     client: BridgeMatterClient | None,
     sender: UdpSender | None,
     matter_data_dir: Path | None,
+    tls_state: TlsState | None = None,
 ) -> APIRouter:
     """Baut den `APIRouter` fuer `/api/diagnostics/*` (Spec 10.5).
 
@@ -370,6 +395,31 @@ def build_diagnostics_router(
             )
             for entry in command_log
         ]
+
+    @router.get("/tls")
+    async def tls_status() -> TlsStatusOut:
+        """Sagt, ob HTTPS laeuft, unter welchen Adressen und wie lange noch.
+
+        Geschuetzt wie jede `/api`-Route - anders als `GET /ca.crt`, das
+        ohne Token auskommen MUSS (siehe `loxone.server`). Der Unterschied
+        ist kein Versehen: dieser Zustand wird gelesen, wenn man bereits in
+        der Oberflaeche ist, das Zertifikat dagegen, bevor man ihr ueber
+        HTTPS ueberhaupt vertrauen kann."""
+        if tls_state is None or tls_state.material is None:
+            return TlsStatusOut(
+                enabled=False,
+                port=None,
+                addresses=[],
+                expires=None,
+                error=None if tls_state is None else tls_state.error,
+            )
+        return TlsStatusOut(
+            enabled=True,
+            port=tls_state.port,
+            addresses=list(tls_state.material.addresses),
+            expires=tls_state.material.not_valid_after.isoformat(),
+            error=None,
+        )
 
     @router.get("/system")
     async def system() -> list[SystemCheckOut]:

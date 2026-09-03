@@ -131,6 +131,7 @@ from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
 from loxmatter.timestamps import now_iso
+from loxmatter.tls import TlsState
 
 Invoker = Callable[[MatterCall], Awaitable[None]]
 
@@ -345,6 +346,7 @@ def build_app(
     sender: UdpSender | None = None,
     matter_data_dir: Path | None = None,
     api_token: str | None = None,
+    tls_state: TlsState | None = None,
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
@@ -425,6 +427,7 @@ def build_app(
             client,
             sender,
             matter_data_dir,
+            tls_state=tls_state,
         ),
         dependencies=api_guard,
     )
@@ -450,6 +453,36 @@ def build_app(
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/ca.crt", include_in_schema=False)
+    async def ca_certificate() -> FileResponse:
+        """Das CA-Zertifikat zum Installieren auf einem Handy (Entwurf 5).
+
+        **Bewusst ohne Token und ausserhalb von `/api`.** Beides ist
+        notwendig, nicht bequem. Jeder der fuenf `/api`-Router haengt am
+        Waechter (siehe oben) - eine token-freie Ausnahme darunter waere
+        eine Falle fuer die naechste Person, die einen sechsten Router
+        ergaenzt und die Ausnahme nicht kennt. Und sie muss ueber HTTP
+        erreichbar sein: man laedt sie genau dann, BEVOR man dem
+        HTTPS-Zugang vertraut; ueber HTTPS abrufbar zu sein huelfe erst,
+        wenn man sie schon nicht mehr braeuchte.
+
+        Ausgeliefert wird der oeffentliche Teil der CA - kein Geheimnis.
+        Die Schwaeche liegt woanders und steht so in der README: wer das
+        installiert, vertraut dieser CA fuer JEDE Adresse, und der Transport
+        hierher ist unverschluesselt. Wer im selben LAN dazwischenfunken
+        kann, kann eine eigene CA unterschieben."""
+        if tls_state is None or tls_state.material is None:
+            raise HTTPException(
+                status_code=503,
+                detail="HTTPS ist fuer diesen Dienst nicht eingerichtet - es gibt kein "
+                "Zertifikat zum Herunterladen.",
+            )
+        return FileResponse(
+            tls_state.material.ca_certificate,
+            media_type="application/x-x509-ca-cert",
+            filename="loxmatter-ca.crt",
+        )
 
     @app.get("/resync")
     async def resync() -> dict[str, int]:
