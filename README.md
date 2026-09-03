@@ -169,3 +169,14 @@ erstreckt sich nicht auf Alpine.js selbst.
 
 Apache-2.0 ist einseitig mit der GPL-3.0 vereinbar: Apache-lizenzierter Code
 darf in ein GPL-3.0-Werk aufgenommen werden, der umgekehrte Weg nicht.
+
+### Hinweise in den Quelldateien
+
+Jede Quelldatei trägt den GPL-Hinweis im Kopf, wie ihn der Abschnitt „How to
+Apply These Terms" der GPL vorsieht — außer `src/loxmatter/web/vendor/`, das
+unter MIT steht und seinen eigenen Hinweis behält.
+
+Der Hinweis steht in der englischen Fassung der Free Software Foundation,
+obwohl dieses Projekt sonst deutsche Prosa verwendet. Das ist Absicht: er ist
+ein rechtlicher Verweis auf die `LICENSE`, und eine eigene Übersetzung wäre
+eine Auslegung, über die man streiten kann.
