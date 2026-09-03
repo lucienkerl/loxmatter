@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -360,6 +361,76 @@ def _assert_store_is_closed(store: Store) -> None:
         store.udp_port(1)
 
 
+def _reset_loxmatter_logger(original_handlers: list[logging.Handler], original_level: int) -> None:
+    """Stellt Handler-Liste und Stufe des Loggers `loxmatter` wieder her.
+
+    Aus der Fixture unten ausgelagert, damit genau dieses Rueckbau-Verhalten
+    fuer sich allein testbar ist, ohne pytests Fixture-Maschinerie
+    verschachtelt anstossen zu muessen (siehe
+    `test_reset_loxmatter_logger_removes_every_leaked_log_buffer_handler`
+    unten - der Beleg, den die Nachbesserung zu Fix 1 verlangt)."""
+    logger = logging.getLogger("loxmatter")
+    logger.handlers[:] = original_handlers
+    logger.setLevel(original_level)
+
+
+@pytest.fixture(autouse=True)
+def _restore_loxmatter_logger() -> Iterator[None]:
+    """Setzt den Logger `loxmatter` nach jedem Test dieser Datei auf seinen
+    vorherigen Zustand zurueck.
+
+    Absichtlich HIER, nicht in `tests/conftest.py`: `install_log_buffer()`
+    wird ausschliesslich von `_run()` aufgerufen (siehe dessen Docstring),
+    und `_run()` ruft ausschliesslich diese Datei direkt auf — kein anderes
+    Testmodul der Suite fasst den Logger `loxmatter` an. Eine globale,
+    prozessweite Fixture wuerde denselben Rueckbau fuer alle ueber 600
+    Tests der uebrigen Suite mitschleppen, die mit Logging nichts zu tun
+    haben; als `autouse`-Fixture DIESER Datei greift sie nur dort, wo der
+    Zustand ueberhaupt entstehen kann.
+
+    Ohne das: jeder `_run()`-Aufruf in dieser Datei haengt ueber
+    `install_log_buffer()` einen neuen `LogBufferHandler` an den
+    prozessweiten Logger `loxmatter` und setzt dessen Stufe auf `INFO` —
+    und beides ueberlebt den einzelnen Test, weil `logging.getLogger(...)`
+    denselben, modulweiten Logger liefert, gleich wie oft er aufgerufen
+    wird. Gemessen (siehe Task-Bericht): nach dieser Datei allein blieben
+    ohne Rueckbau fuenf verwaiste `LogBufferHandler` am Logger haengen, und
+    seine Stufe stand dauerhaft auf `INFO` (20) statt auf `NOTSET` (0)."""
+    logger = logging.getLogger("loxmatter")
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+    yield
+    _reset_loxmatter_logger(original_handlers, original_level)
+
+
+def test_reset_loxmatter_logger_removes_every_leaked_log_buffer_handler():
+    """Beleg statt Behauptung fuer die autouse-Fixture oben (Nachbesserung
+    Task 5, Fix 1): haengt ZWEI `LogBufferHandler` an den Logger `loxmatter`
+    an - mehr, als ein einzelner `_run()`-Aufruf je anhaengen sollte, aber
+    genau das Bild, das ein vergessenes Aufraeumen ueber mehrere Tests
+    hinweg hinterlaesst - und prueft, dass `_reset_loxmatter_logger` (die
+    von der Fixture nach jedem Test aufgerufene Rueckbau-Logik) danach
+    GENAU KEINEN mehr uebrig laesst und die Stufe auf ihren Ausgangswert
+    zurueckfaellt."""
+    logger = logging.getLogger("loxmatter")
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+    assert not any(isinstance(h, LogBufferHandler) for h in original_handlers)
+
+    cli.install_log_buffer()
+    cli.install_log_buffer()
+    assert (
+        len([h for h in logger.handlers if isinstance(h, LogBufferHandler)]) == 2
+    )  # der zu bereinigende Ausgangszustand
+    assert logger.level == logging.INFO
+
+    _reset_loxmatter_logger(original_handlers, original_level)
+
+    assert logger.handlers == original_handlers
+    assert not any(isinstance(h, LogBufferHandler) for h in logger.handlers)
+    assert logger.level == original_level
+
+
 async def test_run_stops_everything_after_a_clean_shutdown(monkeypatch, tmp_path):
     """uvicorn.Server.serve() kehrt nach einem ersten Strg-C geordnet
     zurück (siehe _run-Docstring) — dieser Test bildet genau das nach."""
@@ -398,41 +469,39 @@ async def test_run_attaches_a_log_buffer_handler_to_the_loxmatter_logger(monkeyp
     keiner, und der Log-Strom der Route `/api/diagnostics/live` (Task 4)
     blieb im echten Lauf leer.
 
-    Spioniert `install_log_buffer` an, statt den zurueckgegebenen Handler
-    ausschliesslich ueber `logging.getLogger("loxmatter").handlers`
-    aufzuspueren - so gilt die Zaehlung unten (`len(installed) == 1`) auch
-    dann, wenn der Logger aus einem fruehreren, nicht sauber aufgeraeumten
-    Test bereits einen ANDEREN `LogBufferHandler` traegt."""
+    Review-Fix (Nachbesserung Task 5): die vorherige Fassung zaehlte einen
+    Aufrufzaehler auf einem Spion um `install_log_buffer` (`len(installed)
+    == 1`) - das wiederholt nur die Quelltextstruktur ("die Zeile steht
+    einmal da") und haette einen zweiten `install_log_buffer()`-Aufruf in
+    `_run()` NICHT erkannt: jeder Aufruf legt einen eigenen Handler MIT
+    EINEM EIGENEN Ring an, zwei Aufrufe ergaeben also zwei
+    `installed`-Eintraege, aber auch zwei getrennte Ringe, in denen jede
+    Zeile weiterhin genau einmal stuende - der Rueckfall waere unsichtbar
+    geblieben. Die tragende Eigenschaft ist eine andere und wird jetzt
+    direkt gemessen: am Logger `loxmatter` selbst haengt nach `_run()`
+    genau EIN `LogBufferHandler`, unabhaengig davon, wie oft
+    `install_log_buffer()` aufgerufen wurde. Die Wiederherstellung des
+    Logger-Zustands nach dem Test uebernimmt die autouse-Fixture
+    `_restore_loxmatter_logger` oben in dieser Datei."""
     _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
-    real_install_log_buffer = cli.install_log_buffer
-    installed: list[LogBufferHandler] = []
-
-    def spying_install_log_buffer(*args: Any, **kwargs: Any) -> LogBufferHandler:
-        handler = real_install_log_buffer(*args, **kwargs)
-        installed.append(handler)
-        return handler
-
-    monkeypatch.setattr(cli, "install_log_buffer", spying_install_log_buffer)
     store = Store(tmp_path / "t.sqlite")
 
-    try:
-        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
 
-        # Genau einmal angehaengt (siehe _run-Docstring) - ein zweiter Aufruf
-        # haengte einen zweiten Handler an denselben Logger, und jede Zeile
-        # stuende doppelt im Ring.
-        assert len(installed) == 1
-        handler = installed[0]
-        assert handler in logging.getLogger("loxmatter").handlers
+    log_buffer_handlers = [
+        h for h in logging.getLogger("loxmatter").handlers if isinstance(h, LogBufferHandler)
+    ]
+    # Genau einer haengt am Logger (siehe _run-Docstring) - ein zweiter
+    # `install_log_buffer()`-Aufruf haengte einen zweiten Handler an
+    # denselben Logger, und jede Zeile stuende doppelt im Ring.
+    assert len(log_buffer_handlers) == 1
+    handler = log_buffer_handlers[0]
 
-        logging.getLogger("loxmatter.test").info("aus einem Modul-Logger")
+    logging.getLogger("loxmatter.test").info("aus einem Modul-Logger")
 
-        messages = [e.message for e in handler.entries]
-        assert messages.count("aus einem Modul-Logger") == 1
-    finally:
-        logging.getLogger("loxmatter").removeHandler(installed[0])
-        logging.getLogger("loxmatter").setLevel(logging.NOTSET)
+    messages = [e.message for e in handler.entries]
+    assert messages.count("aus einem Modul-Logger") == 1
 
 
 async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_path):
