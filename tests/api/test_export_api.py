@@ -43,9 +43,9 @@ async def test_preview_reports_what_would_be_written(api):
     client, _, device_id = api
     preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
     device = next(d for d in preview["devices"] if d["device_id"] == device_id)
-    assert device["inputs"] == 110
+    assert device["inputs"] == 111
     assert device["commands"] == 3
-    assert device["skipped"] == 50
+    assert device["skipped"] == 49
 
 
 async def test_preview_does_not_write_anything(api, tmp_path):

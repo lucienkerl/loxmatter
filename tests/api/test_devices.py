@@ -39,7 +39,7 @@ async def test_signal_tree_marks_what_cannot_be_exported(api):
     client, _, device_id, _ = api
     signals = (await client.get(f"/api/devices/{device_id}/signals")).json()
     assert len(signals) == 159
-    assert sum(1 for s in signals if s["exportable"]) == 109
+    assert sum(1 for s in signals if s["exportable"]) == 110
     unexportable = next(s for s in signals if not s["exportable"])
     assert unexportable["reason"]
 

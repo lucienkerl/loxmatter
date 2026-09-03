@@ -16,7 +16,9 @@ def load(name: str) -> NodeSnapshot:
 
 
 def test_plug_matches_the_breakdown_recorded_in_spec_6_6():
-    """Spec 6.6, Tabelle: 102 analog, 7 digital, 13 Text, 37 nicht abbildbar."""
+    """Spec 6.6, Tabelle: 102 analog, 7 digital, 13 Text, 37 nicht abbildbar -
+    plus Aufgabe 5: der Zaehlerstand (2/145/1) ist eine Struktur mit
+    numerischem Element und wandert seither von NONE zu ANALOG (103/36)."""
     snap = load("ikea_grillplats_plug.json")
     signals = extract_signals(snap)
     zaehlung = {kind: 0 for kind in Exportability}
@@ -24,14 +26,16 @@ def test_plug_matches_the_breakdown_recorded_in_spec_6_6():
         zaehlung[lookup(ref, snap.attributes.get(ref.path)).exportability] += 1
 
     assert len(signals) == 159
-    assert zaehlung[Exportability.ANALOG] == 102
+    assert zaehlung[Exportability.ANALOG] == 103
     assert zaehlung[Exportability.DIGITAL] == 7
     assert zaehlung[Exportability.TEXT] == 13
-    assert zaehlung[Exportability.NONE] == 37  # 32 Listen/Structs + 5 Nullwerte
+    assert zaehlung[Exportability.NONE] == 36  # 32 Listen/Structs - 1 + 5 Nullwerte
 
 
-def test_only_109_of_the_plugs_signals_reach_a_udp_input():
-    """Nicht 45, sondern 50 fallen weg - die 5 Nullwerte kommen zu den 45 dazu."""
+def test_only_110_of_the_plugs_signals_reach_a_udp_input():
+    """Nicht 45, sondern 49 fallen weg - die 5 Nullwerte kommen zu den
+    verbleibenden 44 Listen/Structs dazu (Aufgabe 5 zieht den Zaehlerstand
+    aus seiner Struktur und macht ihn abbildbar)."""
     snap = load("ikea_grillplats_plug.json")
     abbildbar = [
         ref
@@ -39,7 +43,7 @@ def test_only_109_of_the_plugs_signals_reach_a_udp_input():
         if lookup(ref, snap.attributes.get(ref.path)).exportability
         in (Exportability.ANALOG, Exportability.DIGITAL)
     ]
-    assert len(abbildbar) == 109
+    assert len(abbildbar) == 110
 
 
 def test_plug_power_attribute_carries_kw():

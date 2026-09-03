@@ -24,11 +24,12 @@ def test_mains_voltage_lands_near_230_volt():
     assert to_loxone_value(ref, snap.attributes[ref.path]) == pytest.approx(230.0)
 
 
-def test_exactly_109_signals_yield_a_value():
-    """Spec 6.6: von 159 Attributsignalen erreichen 109 einen UDP-Eingang."""
+def test_exactly_110_signals_yield_a_value():
+    """Spec 6.6: von 159 Attributsignalen erreichen 110 einen UDP-Eingang -
+    seit Aufgabe 5 zaehlt der aus der Struktur gezogene Zaehlerstand mit."""
     snap = plug()
     values = [to_loxone_value(s, snap.attributes.get(s.path)) for s in extract_signals(snap)]
-    assert sum(1 for v in values if v is not None) == 109
+    assert sum(1 for v in values if v is not None) == 110
 
 
 def test_no_value_formats_to_scientific_notation():

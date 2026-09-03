@@ -149,12 +149,13 @@ def test_the_online_signal_is_unaffected_by_any_signals_export_flag():
     assert [i.key for i in inputs] == ["d1_online"]
 
 
-def test_plug_fixture_yields_110_inputs_with_the_corrected_default(tmp_path):
+def test_plug_fixture_yields_111_inputs_with_the_corrected_default(tmp_path):
     """Regression Important #2 + #3 (Review 2026-09-02): mit dem
     korrigierten `exported`-Default (`profiles.table.is_exportable`, nur
     ANALOG/DIGITAL statt "alles ausser NONE") bleibt die Eingangszahl exakt
-    gleich wie vorher - die 109 exportierbaren Signale der IKEA-Steckdose
-    (siehe `tests/api/test_devices.py::test_signal_tree_marks_what_cannot_be_exported`)
+    gleich wie vorher - die 110 exportierbaren Signale der IKEA-Steckdose
+    (siehe `tests/api/test_devices.py::test_signal_tree_marks_what_cannot_be_exported`,
+    seit Aufgabe 5 inklusive des aus seiner Struktur gezogenen Zaehlerstands)
     starten weiterhin alle mit `exported=True`, plus das Online-Signal."""
     snap = load("ikea_grillplats_plug.json")
     store = Store(tmp_path / "t.sqlite")
@@ -166,7 +167,7 @@ def test_plug_fixture_yields_110_inputs_with_the_corrected_default(tmp_path):
 
     label = f"{snap.vendor_name} {snap.product_name}".strip()
     inputs = to_inputs(signals, device_id, label)
-    assert len(inputs) == 110
+    assert len(inputs) == 111
 
 
 def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_path):
@@ -187,4 +188,4 @@ def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_
 
     label = f"{snap.vendor_name} {snap.product_name}".strip()
     inputs = to_inputs(signals, device_id, label)
-    assert len(inputs) == 109
+    assert len(inputs) == 110

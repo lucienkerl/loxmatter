@@ -65,7 +65,7 @@ def test_button_events_appear_as_pulse_and_counter(tmp_path):
 
 
 def test_non_exportable_attributes_do_not_appear(tmp_path):
-    """Spec 6.6: von 159 Attributen erreichen nur 109 einen UDP-Eingang."""
+    """Spec 6.6: von 159 Attributen erreichen nur 110 einen UDP-Eingang."""
     CliRunner().invoke(
         app,
         [
@@ -80,7 +80,7 @@ def test_non_exportable_attributes_do_not_appear(tmp_path):
     )
     text = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
     commands = text.count("<VirtualInUdpCmd ")
-    assert commands == 109 + 1  # abbildbare Attribute plus Online-Signal
+    assert commands == 110 + 1  # abbildbare Attribute plus Online-Signal
 
 
 def test_plug_gets_only_the_onoff_commands(tmp_path):
@@ -156,7 +156,7 @@ def test_export_reports_what_it_skipped(tmp_path):
             str(tmp_path),
         ],
     )
-    assert "50" in result.stdout
+    assert "49" in result.stdout
     assert "nicht exportierbar" in result.stdout
 
 
