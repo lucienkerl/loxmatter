@@ -239,7 +239,7 @@ def test_migrating_an_old_database_sets_the_schema_version(tmp_path):
     store = Store(path)
     store.close()
 
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
 
 def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
@@ -254,7 +254,7 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
     first = Store(path)
     first.set_exported("d1_1_power", True)
     first.close()
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
     second = Store(path)
     try:
@@ -263,14 +263,14 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
         second.close()
 
     assert power.exported is True
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
 
 def test_a_fresh_database_is_already_at_the_latest_version(tmp_path):
     path = tmp_path / "fresh.sqlite"
     store = Store(path)
     store.close()
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
 
 def test_migration_failure_leaves_the_database_unchanged(tmp_path, monkeypatch):
@@ -312,7 +312,7 @@ def test_migrating_an_old_database_adds_exported_at_and_updated_at_as_null(tmp_p
 
     assert device.exported_at is None
     assert device.updated_at is None
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
 
 def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
@@ -340,7 +340,7 @@ def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
     finally:
         store.close()
 
-    assert user_version(path) == 3
+    assert user_version(path) == 4
     assert device.exported_at is None
     assert device.updated_at is None
     assert signal.key == "d1_1_power"
@@ -356,7 +356,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
 
     first = Store(path)
     first.close()
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
     second = Store(path)
     try:
@@ -364,7 +364,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
     finally:
         second.close()
 
-    assert user_version(path) == 3
+    assert user_version(path) == 4
     assert device.exported_at is None
     assert device.updated_at is None
 
@@ -764,3 +764,32 @@ def test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures(
         store.close()
 
     assert sorted(counts.values()) == [5, 17]
+
+
+def test_migration_to_v4_adds_the_auth_tables_without_touching_devices(tmp_path):
+    """Eine Bestandsdatenbank auf Version 3 bekommt `setting` und `session`,
+    und ihre Geraetezeilen bleiben unangetastet."""
+    path = tmp_path / "alt.sqlite"
+    store = Store(path)
+    snapshot = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    signals_before = len(store.signals(device_id))
+    store.close()
+
+    # Auf Version 3 zuruecksetzen und beide Tabellen entfernen - so sieht
+    # eine Datenbank aus, die vor dieser Aenderung angelegt wurde.
+    db = sqlite3.connect(str(path))
+    db.executescript("DROP TABLE session; DROP TABLE setting; PRAGMA user_version = 3;")
+    db.commit()
+    db.close()
+
+    store = Store(path)
+    try:
+        assert user_version(path) == 4
+        assert store.auth.password_hash() is None
+        store.auth.create_session("a", created_at=1, expires_at=2)
+        assert store.auth.session_expires_at("a") == 2
+        assert len(store.signals(device_id)) == signals_before
+    finally:
+        store.close()

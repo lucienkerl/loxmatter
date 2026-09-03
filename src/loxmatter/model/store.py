@@ -32,6 +32,7 @@ from pathlib import Path
 from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
+from loxmatter.model.auth_store import AuthStore
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
     UTILITY_ENDPOINT_KEEP_CLUSTERS,
@@ -55,8 +56,11 @@ DEFAULT_UDP_PORT = 7000
 # `_migrate_to_v2`. Version 3 (Aufgabe 7, Phase 6) fuegt keine Spalte hinzu -
 # sie leitet `signal.title`, `signal.unit` und den Vorgabewert von
 # `signal.exported` fuer BESTEHENDE Zeilen aus der Profiltabelle neu ab, siehe
-# `_migrate_to_v3`.
-_SCHEMA_VERSION = 3
+# `_migrate_to_v3`. Version 4 (WebUI-Login) fuegt die Tabellen `setting` und
+# `session` hinzu, siehe `_migrate_to_v4` - beide sind bei einer frischen
+# Datenbank bereits durch `_SCHEMA` da, die Migration ist deshalb nur fuer
+# Bestandsdatenbanken noetig.
+_SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
@@ -94,6 +98,15 @@ CREATE TABLE IF NOT EXISTS command (
     slug        TEXT NOT NULL,
     takes_value INTEGER NOT NULL,
     UNIQUE (device_id, endpoint, cluster_id, command_id)
+);
+CREATE TABLE IF NOT EXISTS setting (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session (
+    id         TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
 );
 """
 
@@ -405,6 +418,33 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v4(db: sqlite3.Connection) -> None:
+    """Legt `setting` und `session` an (WebUI-Login).
+
+    `CREATE TABLE IF NOT EXISTS` und nicht `CREATE TABLE`: eine frisch
+    angelegte Datenbank hat beide Tabellen bereits durch `_SCHEMA`, steht
+    dabei aber ebenfalls auf `PRAGMA user_version = 0` und laeuft deshalb
+    durch dieselbe Migrationskette (siehe `_migrate` und
+    `_add_column_if_missing` zur gleichen Falle bei Spalten).
+
+    Kein Backfill: eine Bestandsdatenbank hat kein Passwort und keine
+    Sitzung, und genau das ist der richtige Zustand - sie geht nach dem
+    Update durch die Ersteinrichtung (Spec 5)."""
+    db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS setting (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS session (
+            id         TEXT PRIMARY KEY,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL
+        );
+        """
+    )
+
+
 # Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
 # Erweiterung fuer eine spaetere Schema-Aenderung: einfach anhaengen, mit der
 # naechsten Versionsnummer als Schluessel.
@@ -412,6 +452,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
     3: _migrate_to_v3,
+    4: _migrate_to_v4,
 }
 
 
@@ -547,6 +588,9 @@ class Store:
         self._db.executescript(_SCHEMA)
         self._db.commit()
         _migrate(self._db)
+        # Sicht auf dieselbe Verbindung, kein zweiter Verbindungsaufbau -
+        # siehe Moduldocstring von `auth_store.py`.
+        self.auth = AuthStore(self._db)
 
     def close(self) -> None:
         self._db.close()
