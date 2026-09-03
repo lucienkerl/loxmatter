@@ -22,6 +22,18 @@ clusters:
     commands:
       0: {slug: level, takes_value: true}
       4: {slug: level_onoff, takes_value: true}
+  47:
+    name: powersource
+    attributes:
+      # BatPercentRemaining. Matter zaehlt in halben Prozent (0-200) laut
+      # Matter Application Cluster Specification - daher 0.5. Attribut-ID
+      # gegen chip.clusters.Objects.PowerSource.Attributes belegt.
+      #
+      # Nur dieses eine von 37 Attributen ist benannt, und das ist die
+      # Feinauswahl aus dem Entwurf (4.3): PowerSource fuehrt daneben
+      # Ladezustaende, Batteriechemie, ANSI-Bezeichnungen und Fehlerlisten.
+      # Wer eines davon braucht, schaltet es im Experten-Block frei.
+      12: {slug: battery, unit: "%", scale: 0.5}
   768:
     name: colorcontrol
     commands:

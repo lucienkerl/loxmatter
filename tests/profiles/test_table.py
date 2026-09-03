@@ -1,5 +1,14 @@
+import pytest
+
 from loxmatter.matter.models import SignalKind, SignalRef
-from loxmatter.profiles.table import Exportability, classify, lookup, names_element, unit_format
+from loxmatter.profiles.table import (
+    Exportability,
+    classify,
+    lookup,
+    names_element,
+    scale_factor,
+    unit_format,
+)
 
 
 def test_bool_is_digital():
@@ -101,3 +110,13 @@ def test_names_element_covers_events_too():
     """Cluster 59 benennt seine Ereignisse; die Feinauswahl darf einen
     Tastendruck nicht als unbenannt verwerfen."""
     assert names_element(SignalRef(1, 59, 1, SignalKind.EVENT)) is True
+
+
+def test_the_battery_level_is_named_and_scaled_to_percent():
+    """Matter zaehlt BatPercentRemaining in halben Prozent (0-200). Ohne
+    den Faktor zeigte Loxone bei voller Batterie 200 %."""
+    ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
+    profile = lookup(ref, 190)
+    assert profile.slug == "battery"
+    assert profile.unit == "%"
+    assert scale_factor(ref) == pytest.approx(0.5)
