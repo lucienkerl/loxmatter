@@ -36,9 +36,7 @@ import re
 from dataclasses import dataclass, field
 
 _OPEN_OR_SELFCLOSE = re.compile(r"<C(?=[\s/>])")
-_ATTR = re.compile(
-    r'([A-Za-z_][\w]*)="((?:[^"&]|&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)*)"'
-)
+_ATTR = re.compile(r'([A-Za-z_][\w]*)="((?:[^"&]|&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)*)"')
 _CONTROL_LIST_OPEN = re.compile(r"<ControlList\b[^>]*>")
 
 
@@ -173,7 +171,5 @@ def parse_root(text: str) -> tuple[dict[str, str], int, int, int]:
         )
     close_start = text.rfind("</ControlList>")
     if close_start == -1:
-        raise ProjectFormatError(
-            "Keine gueltige Loxone-Projektdatei: </ControlList> fehlt."
-        )
+        raise ProjectFormatError("Keine gueltige Loxone-Projektdatei: </ControlList> fehlt.")
     return parse_attrs(match.group(0)), match.start(), match.end(), close_start
