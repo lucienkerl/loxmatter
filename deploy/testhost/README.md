@@ -71,6 +71,43 @@ sed -i "s|^LOXMATTER_API_TOKEN=.*|LOXMATTER_API_TOKEN=$(openssl rand -hex 32)|" 
 sed -i "s|^MINISERVER_IP=.*|MINISERVER_IP=10.0.1.99|" .env   # eigene Adresse einsetzen
 ```
 
+## Aktualisieren
+
+Vom Mac aus, im Repo — kopiert die Quellen, baut das Image auf dem Pi und
+startet nur den `loxmatter`-Dienst neu:
+
+```bash
+./deploy/testhost/update.sh
+```
+
+Anderer Zielrechner: `LOXMATTER_HOST=pi@10.0.1.99 ./deploy/testhost/update.sh`.
+
+Auf dem Pi allein, wenn die Quellen schon dort liegen:
+
+```bash
+bash ~/loxmatter-build/update.sh --local
+```
+
+Ein `git pull` auf dem Pi gibt es nicht — das Projekt hat kein Remote, die
+Quellen kommen per rsync vom Mac.
+
+Was das Skript zusichert:
+
+- **Es sichert die Signaldatenbank, bevor es irgendetwas ändert.** Darin stehen
+  die Signalschlüssel, und die sind die Verdrahtung in der Loxone-Konfiguration
+  — das Einzige, was ein misslungenes Update nicht wiederherstellen könnte. Die
+  Sicherungen liegen unter `~/loxmatter-backups/`, die letzten zehn bleiben.
+- **matter-server und OTBR bleiben unangetastet** (`docker compose up --no-deps`).
+  Ohne das erzeugt Compose sie mit neu, sobald sich die Projektkonfiguration
+  geändert hat; die Fabric übersteht das zwar, aber ein Neustart des Thread-Netzes
+  ohne Grund gehört nicht zu einem Update.
+- **Es bricht ab, bevor es schadet.** Schlägt die Sicherung oder der Build fehl,
+  läuft der alte Dienst unverändert weiter. Antwortet `/health` nach dem Neustart
+  nicht innerhalb von 20 Sekunden, zeigt es die letzten Logzeilen und meldet
+  einen Fehlschlag statt Erfolg.
+- Am Ende sagt es, wie viele Signale je Gerät exportiert werden — die Zahl, die
+  sich mit Phase 6 geändert hat.
+
 **Zum Token, weil es leicht übersehen wird:** dieser Stack läuft mit
 `network_mode: host` und hängt das matter-server-Datenverzeichnis in den
 loxmatter-Dienst ein. Ohne gesetztes `LOXMATTER_API_TOKEN` liefert
