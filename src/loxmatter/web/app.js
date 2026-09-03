@@ -245,10 +245,16 @@ function app() {
     // Klicks.
     showExpertSignals: false,
 
+    // --- Einstellungen ---------------------------------------------------
+    // `bridgeSettings` ist der zuletzt vom Server geladene Stand (auch von
+    // Task 7 und Task 9 gelesen); `settingsDraft` sind die drei Eingabefelder
+    // auf diesem Tab, erst nach "Speichern" uebernommen.
+    bridgeSettings: { bridge_ip: null, udp_port: 7000, listen_port: 8080, saved_at: null },
+    settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
+    settingsBusy: false,
+    settingsError: null,
+
     // --- Export --------------------------------------------------------
-    exportBridgeIp: "",
-    exportPort: 7000,
-    exportListenPort: 8080,
     exportIncludeSystem: false,
     exportOnlyPending: false,
     exportPreview: null,
@@ -391,9 +397,11 @@ function app() {
       this.exportError = null;
       this.deviceActionError = null;
       this.signalsError = null;
+      this.settingsError = null;
       this.controlsByDevice = {};
       this.signalsByDevice = {};
       await this.loadDevices();
+      await this.loadSettings();
       this.connectLive();
       // Nach einer Neuanmeldung steht die Ansicht nicht zwingend auf
       // "Geraete" - `loadDevices` allein fuellte dann die falsche.
@@ -496,6 +504,8 @@ function app() {
         await this.loadExportStatus();
       } else if (view === "system") {
         await this.loadSystem();
+      } else if (view === "settings") {
+        await this.loadSettings();
       }
     },
 
@@ -909,6 +919,45 @@ function app() {
 
     exportStatusFor(deviceId) {
       return this.exportStatusByDevice[deviceId] || null;
+    },
+
+    // ---------------------------------------------------------------------
+    // Einstellungen
+    // ---------------------------------------------------------------------
+
+    async loadSettings() {
+      this.settingsError = null;
+      try {
+        this.bridgeSettings = await this.request("GET", "/api/settings");
+        this.settingsDraft = {
+          bridge_ip: this.bridgeSettings.bridge_ip ?? "",
+          udp_port: this.bridgeSettings.udp_port,
+          listen_port: this.bridgeSettings.listen_port,
+        };
+      } catch (error) {
+        this.settingsError = `Einstellungen konnten nicht geladen werden: ${error.message}`;
+      }
+    },
+
+    async saveSettings() {
+      this.settingsError = null;
+      if (!this.settingsDraft.bridge_ip.trim()) {
+        this.settingsError = "Bitte die IP dieser Brücke eingeben.";
+        return;
+      }
+      this.settingsBusy = true;
+      try {
+        this.bridgeSettings = await this.request("PATCH", "/api/settings", {
+          bridge_ip: this.settingsDraft.bridge_ip.trim(),
+          udp_port: Number(this.settingsDraft.udp_port),
+          listen_port: Number(this.settingsDraft.listen_port),
+        });
+        this.showToast("Einstellungen gespeichert.");
+      } catch (error) {
+        this.settingsError = `Einstellungen konnten nicht gespeichert werden: ${error.message}`;
+      } finally {
+        this.settingsBusy = false;
+      }
     },
 
     async previewExport() {
