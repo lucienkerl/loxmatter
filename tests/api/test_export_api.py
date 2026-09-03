@@ -40,12 +40,28 @@ async def api(
 
 
 async def test_preview_reports_what_would_be_written(api):
+    """`inputs` seit Aufgabe 6: 5 relevante Signale der Steckdose (siehe
+    `tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`)
+    plus das Online-Signal, macht 6. `skipped` bleibt bei 49 - das zaehlt
+    weiterhin nur technisch nicht Abbildbares (`is_exportable`), unberuehrt
+    von der neuen Relevanz-Auswahl."""
     client, _, device_id = api
     preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
     device = next(d for d in preview["devices"] if d["device_id"] == device_id)
-    assert device["inputs"] == 110
+    assert device["inputs"] == 6
     assert device["commands"] == 3
-    assert device["skipped"] == 50
+    assert device["skipped"] == 49
+
+
+async def test_the_preview_reports_how_many_signals_are_hidden(api):
+    """`hidden_count` (Aufgabe 8): wie viele Signale die Oberflaeche im
+    zugeklappten "Experte"-Block der Signale-Ansicht versteckt - fuer die
+    Steckdose der Testvorlage 154 von 159 (siehe `_signal_out`-Test in
+    `test_devices.py`, nur 5 sind funktional)."""
+    client, _, device_id = api
+    body = (await client.get("/api/export/preview?bridge_ip=10.0.0.1")).json()
+    plug = next(d for d in body["devices"] if d["device_id"] == device_id)
+    assert plug["hidden_count"] > 100
 
 
 async def test_preview_does_not_write_anything(api, tmp_path):

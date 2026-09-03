@@ -22,8 +22,71 @@ clusters:
     commands:
       0: {slug: level, takes_value: true}
       4: {slug: level_onoff, takes_value: true}
+  47:
+    name: powersource
+    attributes:
+      # BatPercentRemaining, Attribut-ID gegen
+      # chip.clusters.Objects.PowerSource.Attributes belegt.
+      #
+      # Der Faktor 0.5 ist NICHT gegen eine Primaerquelle belegt (Review-Fix
+      # Important, 2026-09-03): die Matter Application Cluster Specification
+      # gibt den Wert nach allgemeiner Kenntnis in halben Prozent (0-200) an,
+      # aber weder das installierte chip-SDK noch matter_server fuehren
+      # Einheiten mit, und das Spezifikationsdokument selbst lag hier nicht
+      # vor. Was tatsaechlich belegt ist: das eingecheckte Abbild
+      # tests/fixtures/nodes/ikea_bilresa_button.json meldet unter 0/47/12
+      # den Wert 200 bei einem Taster, dessen Batterie voll ist - was zu
+      # halben Prozent passt und zu ganzen nicht. Ein Umstandsbeweis, kein
+      # Beleg. Wer die Spezifikation zur Hand hat, moege ihn ersetzen.
+      #
+      # Nur dieses eine von 37 Attributen ist benannt, und das ist die
+      # Feinauswahl aus dem Entwurf (4.3): PowerSource fuehrt daneben
+      # Ladezustaende, Batteriechemie, ANSI-Bezeichnungen und Fehlerlisten.
+      # Wer eines davon braucht, schaltet es im Experten-Block frei.
+      12: {slug: battery, unit: "%", scale: 0.5}
   768:
     name: colorcontrol
+    attributes:
+      # Attribut-IDs gegen das installierte SDK belegt (chip.clusters.Objects.
+      # ColorControl.Attributes): CurrentHue=0, CurrentSaturation=1,
+      # ColorTemperatureMireds=7, ColorMode=8.
+      #
+      # Fehlte bis zur Phase-6-Nachbesserung komplett: der Cluster stand nur
+      # mit `commands:` unten in der Tabelle (Phase 4, fuer
+      # MoveToColorTemperature). Schicht 3 von `is_functional`
+      # (profiles/relevance.py) fragte deshalb `knows_cluster(768)` (wahr)
+      # und dann `names_element`, das ohne diesen Abschnitt IMMER falsch war
+      # - jedes Attribut von ColorControl galt dadurch als nicht funktional,
+      # waehrend der Ausgangsbefehl fuer die Farbtemperatur (unten,
+      # `commands:`) laengst exportiert wurde: Loxone konnte die Farbe
+      # setzen, aber nie zurueckgemeldet bekommen. `known_attribute_section`
+      # in `profiles/table.py` schliesst diese Falle jetzt strukturell fuer
+      # jeden kuenftigen nur-Kommando-Cluster, nicht nur fuer diesen.
+      #
+      # Farbton (Hue, 0): Matter zaehlt 0-254 fuer 0-360°. Auf Grad skaliert
+      # statt roh gelassen - anders als bei der Farbtemperatur unten ist
+      # 360/254 ein linearer Faktor, den der vorhandene `scale`-Mechanismus
+      # korrekt ausdruecken kann, und Grad ist die in Farbwaehlern uebliche
+      # Einheit. Kein Eintrag in `_UNIT_DECIMALS`: ohne eine echte
+      # Loxone-Vorlage, die eine Nachkommastellenzahl fuer Grad belegt,
+      # bleibt der Loxone-Formatstring leer, statt eine erfundene Genauigkeit
+      # vorzugeben - die WebUI zeigt "°" trotzdem an (`signal.unit`, direkt
+      # aus dieser Tabelle, unabhaengig von `unit_format`).
+      0: {slug: hue, unit: "°", scale: 1.4173228346456692}
+      # Saettigung (CurrentSaturation, 1): 0-254 wie `level` (Cluster 8) -
+      # derselbe Zahlenwert wie dort, nicht neu ausgerechnet.
+      1: {slug: saturation, unit: "%", scale: 0.3937007874015748}
+      # Farbtemperatur (ColorTemperatureMireds, 7): Matter liefert Mired,
+      # Loxone will Kelvin - aber Kelvin = 1e6 / Mired ist ein Kehrwert,
+      # kein Faktor, und der `scale`-Mechanismus kann nur multiplizieren.
+      # Der Wert bleibt deshalb in Mired stehen, mit einem Slug, der das
+      # klarstellt, statt eine falsche Kelvin-Zahl zu erfinden. Offener
+      # Punkt (fehlende Kehrwert-Umrechnung):
+      # docs/superpowers/specs/2026-09-03-signalauswahl-design.md Abschnitt 10.
+      7: {slug: colortemp_mireds, unit: mired}
+      # Farbmodus (ColorMode, 8): eine Aufzaehlung, keine physikalische
+      # Groesse - keine Einheit.
+      8: {slug: colormode, unit: ""}
     commands:
       # MoveToColorTemperature - der einzige ColorControl-Befehl, den
       # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS und
@@ -57,8 +120,16 @@ clusters:
   145:
     name: energy
     attributes:
-      1: {slug: energy_imported, unit: "kWh", scale: 0.000001}
-      2: {slug: energy_exported, unit: "kWh", scale: 0.000001}
+      # CumulativeEnergyImported/-Exported. Matter liefert beide als
+      # EnergyMeasurementStruct - Wert plus Zeitstempel -, nicht als Zahl.
+      # `field: 0` ist EnergyMeasurementStruct.energy, gegen
+      # chip.clusters.Objects belegt; die ZEITSTEMPEL bleiben absichtlich
+      # weg, sie haben in Loxone keine Verwendung.
+      #
+      # Matter zaehlt in mWh (Matter Application Cluster Specification),
+      # Loxone will kWh (Hauptdokument 7.3): 1 kWh = 1e6 mWh.
+      1: {slug: energy_imported, field: 0, unit: "kWh", scale: 0.000001}
+      2: {slug: energy_exported, field: 0, unit: "kWh", scale: 0.000001}
   59:
     name: switch
     attributes:

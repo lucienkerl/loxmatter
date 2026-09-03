@@ -65,7 +65,11 @@ def test_button_events_appear_as_pulse_and_counter(tmp_path):
 
 
 def test_non_exportable_attributes_do_not_appear(tmp_path):
-    """Spec 6.6: von 159 Attributen erreichen nur 109 einen UDP-Eingang."""
+    """Spec 6.6: von 159 Attributen sind nur 110 technisch abbildbar. Seit
+    Aufgabe 6 exportiert `loxmatter export` zusaetzlich nur, was
+    `profiles.relevance.is_functional` als tatsaechlich gewollt einstuft -
+    bei dieser Steckdose bleiben davon 5 uebrig (siehe
+    `tests/export/test_signals.py::test_plug_fixture_yields_6_inputs_with_the_relevance_default`)."""
     CliRunner().invoke(
         app,
         [
@@ -80,7 +84,7 @@ def test_non_exportable_attributes_do_not_appear(tmp_path):
     )
     text = next(tmp_path.glob("VIU_*.xml")).read_text(encoding="utf-8-sig")
     commands = text.count("<VirtualInUdpCmd ")
-    assert commands == 109 + 1  # abbildbare Attribute plus Online-Signal
+    assert commands == 5 + 1  # relevante Attribute plus Online-Signal
 
 
 def test_plug_gets_only_the_onoff_commands(tmp_path):
@@ -156,8 +160,32 @@ def test_export_reports_what_it_skipped(tmp_path):
             str(tmp_path),
         ],
     )
-    assert "50" in result.stdout
+    assert "49" in result.stdout
     assert "nicht exportierbar" in result.stdout
+
+
+def test_export_reports_how_many_signals_are_held_back_as_expert(tmp_path):
+    """Nachbesserung Fix 3 (Abschlussreview): vorher meldete `export` nur
+    "6 Eingaenge" und "49 Signale nicht exportierbar" fuer ein Geraet mit
+    159 Signalen - ueber die restlichen 104 sagte niemand etwas, und wo man
+    sie einschaltet, auch nicht. Verhalten geprueft, nicht die interne
+    Rechnung: die Zahl (154, siehe `ExportDeviceOut.hidden_count`-Docstring
+    fuer dasselbe Geraet) und ein Hinweis auf den Ort, an dem man sie
+    einzeln freischaltet, muessen in der Ausgabe stehen."""
+    result = CliRunner().invoke(
+        app,
+        [
+            "export",
+            "--fixture",
+            str(FIXTURES / "ikea_grillplats_plug.json"),
+            "--bridge-ip",
+            "192.168.1.50",
+            "--out",
+            str(tmp_path),
+        ],
+    )
+    assert "154" in result.stdout
+    assert "Experte" in result.stdout
 
 
 def test_export_fails_cleanly_when_the_second_file_cannot_be_written(tmp_path, monkeypatch):

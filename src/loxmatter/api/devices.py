@@ -66,6 +66,7 @@ from loxmatter.api.models import (
     SignalPatch,
 )
 from loxmatter.export.commands import extract_commands
+from loxmatter.export.signals import to_inputs
 from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
 from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDeviceError
 from loxmatter.profiles.table import Exportability, is_exportable
@@ -91,6 +92,15 @@ class RuntimeValues(Protocol):
 
 
 def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> SignalOut:
+    """`functional` kommt unveraendert aus `StoredSignal.functional` -
+    `profiles.relevance.is_functional` braucht die Geraetetypen je Endpunkt
+    (`device_types_by_endpoint`), die diese Funktion hier gar nicht sieht
+    (nur `signal` und die aktuellen Werte). `Store.register_signals`
+    berechnet das Ergebnis bereits einmalig bei der Registrierung, mit dem
+    echten Geraeteabbild zur Hand, und schreibt es in die Zeile - siehe dort
+    und `_migrate_to_v4` fuer Bestandsgeraete. Eine zweite Berechnung hier
+    (oder gar in der Oberflaeche) wuerde dieselbe Regel ein zweites Mal
+    nachbilden, ohne das Abbild zu haben, das sie eigentlich braucht."""
     exportable = is_exportable(signal.exportability)
     reason = None if exportable else _UNEXPORTABLE_REASONS.get(signal.exportability)
     return SignalOut(
@@ -103,6 +113,7 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
         exportable=exportable,
         reason=reason,
         exported=signal.exported,
+        functional=signal.functional,
     )
 
 
@@ -119,6 +130,13 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     values = runtime.last_values_for(device.id)
     online = bool(values.get(f"d{device.id}_online", False))
     exportable_count = sum(1 for s in signals if is_exportable(s.exportability))
+    # next_export_count (Nachbesserung Fix 7, Phase 6): dieselbe Zusammensetzung
+    # wie `ExportDeviceOut.inputs` in `api/export.py` (`to_inputs`, gefiltert
+    # auf `exported`) - keine zweite, nur aehnliche Zaehlung hier. Die
+    # Gerätekachel zeigte bisher "159 Signale, 110 exportierbar" ueber einer
+    # Liste von fuenf - beide Zahlen stimmten, keine beantwortete, wie viele
+    # Eingaenge der naechste Export tatsaechlich erzeugt.
+    next_export_count = len(to_inputs(signals, device.id, device.label))
     return DeviceOut(
         id=device.id,
         node_id=device.node_id,
@@ -126,6 +144,7 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
         online=online,
         signal_count=len(signals),
         exportable_count=exportable_count,
+        next_export_count=next_export_count,
     )
 
 

@@ -129,6 +129,18 @@ auf einen virtuellen UDP-Eingang abbilden, der nur Zahlen und digitale Werte
 kennt (für Strings gibt es immerhin einen virtuellen Text-Eingang; für Listen
 und Structs nichts). Konsequenz für den Exporter (6.6) und die WebUI (8).
 
+**Ergänzung (Phase 6, 2026-09-03).** Von den technisch abbildbaren Signalen
+(6.6) will ein Anwender nur einen kleinen Teil standardmäßig exportiert sehen
+— bei der Steckdose fünf davon (Ein/Aus, Spannung, Strom, Leistung,
+Verbrauch). [Der Signalauswahl-Entwurf](2026-09-03-signalauswahl-design.md)
+führt dafür den Begriff `Relevance` ein, getrennt von der hier beschriebenen
+`Exportability`. Die generische Zerlegung selbst bleibt dabei **unverändert**
+— sie liefert weiterhin jedes lesbare Attribut und jedes Event als Signal,
+genau wie oben validiert; `Relevance` ändert nur, welcher **Vorgabewert** die
+Spalte `exported` (Abschnitt 5) beim Einlernen bekommt. Eine Positivliste
+("nur was ich kenne, kommt durch") wurde dafür ausdrücklich verworfen — sie
+widerspräche der hier getroffenen Grundwette, siehe dortiger Abschnitt 2.
+
 ---
 
 ## 4. Systemarchitektur
@@ -234,16 +246,26 @@ Signal
   id            int
   device_id     → Device
   endpoint      int
-  cluster       int
+  cluster_id    int
   kind          'attribute' | 'event'
-  element       int (Attribute ID oder Event ID)
+  element_id    int (Attribute ID oder Event ID)
   key           str, UNIQUE, unveränderlich  ← die Loxone-Verdrahtung
   title         str, frei änderbar
-  analog        bool
-  scale         float
   unit          str
-  exported      bool
+  exportability 'analog' | 'digital' | 'text' | 'none' (Abschnitt 6.6)
+  exported      bool, Vorgabewert seit Phase 6 = `exportability` abbildbar
+                UND `functional` (unten) - nicht `functional` allein
+  functional    bool, seit Phase 6 (Schema v4) — ob `profiles.relevance.
+                is_functional` dieses Signal für den erkannten Gerätetyp
+                standardmäßig will (Signalauswahl-Entwurf, Abschnitt 3/4).
+                Nicht vom Nutzer umschaltbar, anders als `exported`.
 ```
+
+`analog`/`scale` aus einer früheren Fassung dieses Abschnitts existieren als
+Spalten nicht — die Skalierung ist Sache der Profiltabelle
+(`profiles/clusters.yaml`) zur Laufzeit, nicht eine pro Signal gespeicherte
+Zahl; `exportability` ist die tatsächlich gespeicherte, feinere Ersetzung für
+das hier zuvor genannte `analog: bool`.
 
 Das Gerät trägt zusätzlich die Loxone-Export-Metadaten:
 
@@ -420,8 +442,9 @@ die Bridge schon selbst hält — er iteriert den zuletzt gesendeten Wert je Sig
 den Gerätezustand. Dieser Cache entsteht ausschließlich über Subscriptions, die sich
 *ändernde* Werte melden, und ist beim Start leer. Ein Live-Lauf mit einer
 Matter-Steckdose ohne Last bestätigte das: über 40 s kamen genau drei Datagramme an
-(Heartbeat, ein per HTTP ausgelöster Schaltbefehl), aber keines der 109 exportierbaren
-Attributsignale — der Full-Resend beim Start lief leer, weil noch nichts im Cache stand,
+(Heartbeat, ein per HTTP ausgelöster Schaltbefehl), aber keines der damals 109
+exportierbaren Attributsignale (heute 110, siehe 6.6 — der Zählerstand aus der
+Energie-Struktur kam in Phase 6 dazu) — der Full-Resend beim Start lief leer, weil noch nichts im Cache stand,
 und ohne eine sich ändernde Last hätte sich das auf unabsehbare Zeit nicht geändert.
 Genau in diesem Moment — direkt nach einem Neustart der Bridge — ist der Mechanismus
 also leer, obwohl er hier am nötigsten wäre. Die Bridge muss sich deshalb beim Start
@@ -474,6 +497,40 @@ Attributsignale der Steckdose, gemessen am 2026-09-01:
 
 Wer die 45 als „nicht exportierbar" liest, verzählt sich um die fünf
 Nullwerte.
+
+**Ergänzung (Phase 6, 2026-09-03).** Die Tabelle oben ist eine Momentaufnahme
+vom 2026-09-01 und bleibt als solche stehen. Zwei Dinge haben sich seither
+geändert, beide durch den [Signalauswahl-Entwurf](2026-09-03-signalauswahl-design.md):
+
+Erstens die **109 selbst sind nicht mehr aktuell — es sind jetzt 110.**
+Cluster 145 (kumulativer Verbrauch) liefert seinen Wert als Struktur
+(Energiewert plus zwei Zeitstempel) und fiel deshalb am 2026-09-01 vollständig
+in die Zeile „Listen und Structs" oben. Der Signalauswahl-Entwurf (Abschnitt
+5) zieht seither das benannte Zahlenfeld aus genau dieser Struktur
+(`profiles.table.struct_member`, `field: 0` in `clusters.yaml`) — der
+Zählerstand selbst ist damit numerisch geworden und zählt seither zu
+„abbildbar" mit, die Zeitstempel bleiben weiterhin weg. Betroffen ist nur
+`energy_imported` (die Prüfvorlage meldet nie einen Wert für
+`energy_exported`, das Attribut fehlt im Abbild ganz). Belegt durch
+`tests/loxone/test_values_real_device.py::test_exactly_110_signals_yield_a_value`,
+`tests/profiles/test_real_device_fixtures.py` und
+`tests/api/test_devices.py` — alle drei erwarten heute **110**, nicht 109.
+Der [Signalauswahl-Entwurf](2026-09-03-signalauswahl-design.md) selbst nannte
+an mehreren Stellen ebenfalls noch die alte Zahl 109 (dort korrigiert, mit
+derselben Begründung); ein Testdocstring
+(`tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`)
+nennt sie in seiner Prosa weiterhin — reiner Kommentartext ohne Assertion
+darauf, hier belassen, weil diese Aufgabe ausdrücklich keinen Code anfasst.
+
+Zweitens ändert sich der **Vorgabewert von `exported`**: von diesen 110 sind
+bei der Steckdose nur **5** das, wofür ein Anwender das Gerät eingelernt hat
+(Ein/Aus, Spannung, Strom, Leistung, Verbrauch — Letzterer ist genau der oben
+neu hinzugekommene Zählerstand). Die übrigen 105 bleiben technisch
+exportierbar, stehen ab sofort aber standardmäßig **nicht** angehakt — der
+Anwender kann sie im „Experte"-Block der WebUI (Abschnitt 7 des
+Signalauswahl-Entwurfs) einzeln wieder aktivieren, genau wie zuvor auch. Der
+Signalauswahl-Entwurf begründet die Auswahlregel
+(`profiles.relevance.is_functional`).
 
 ### 6.7 Ausgangsbefehle: Erlaubnisliste
 

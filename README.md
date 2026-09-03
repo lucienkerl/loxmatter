@@ -6,16 +6,24 @@ Design: [`docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`](doc
 
 ## Stand
 
-Phase 1 von 6 (Matter-Adapter und Signal-Extraktion) läuft. Der Matter-Adapter
-und das CLI-Kommando `loxmatter inspect` sind gebaut, getestet und gegen 2
-reale IKEA-Geräte an einem laufenden matter-server validiert (Testumgebung:
-[`deploy/testhost/`](deploy/testhost/)). Ergebnis: Für Attribute trägt die
-generische Zerlegung uneingeschränkt — jeder Attributpfad war parsebar, kein
-gelistetes Attribut fehlte. Für Events trug sie nicht: keins der beiden
-Geräte führt die `EventList`, deshalb ist die Event-Erkennung jetzt
-FeatureMap-basiert und Cluster-spezifisch (`discovery.FEATURE_MAP_EVENTS`).
-Details, Zahlen und die Konsequenzen daraus stehen im Validierungsabschnitt
-der Spec, [Abschnitt 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
+Phasen 1 und 3 bis 6 sind gebaut: Matter-Adapter und Signal-Extraktion,
+Vorlagen-Export, die Laufzeitstrecke zwischen Matter und Loxone, die
+Bedienoberfläche samt Zugangsschutz und die Signalauswahl. Phase 2 wurde
+übersprungen. Validiert gegen zwei reale IKEA-Geräte an einem laufenden
+matter-server (Testumgebung: [`deploy/testhost/`](deploy/testhost/)); der
+Dienst läuft dort als Container.
+
+**Noch offen:** der Durchstich gegen einen echten Loxone Miniserver — die
+erzeugten Vorlagen sind bisher nur gegen einen nachgebauten Miniserver
+geprüft, nicht in Loxone Config importiert.
+
+Aus der Validierung von Phase 1: für Attribute trägt die generische
+Zerlegung uneingeschränkt — jeder Attributpfad war parsebar, kein gelistetes
+Attribut fehlte. Für Events trug sie nicht: keins der beiden Geräte führt die
+`EventList`, deshalb ist die Event-Erkennung FeatureMap-basiert und
+Cluster-spezifisch (`discovery.FEATURE_MAP_EVENTS`). Details, Zahlen und die
+Konsequenzen stehen im Validierungsabschnitt der Spec,
+[Abschnitt 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
 
 ## Entwickeln
 
@@ -53,6 +61,29 @@ ausliefert:
   seit Phase 4.
 - `/` und `/api/*` für eine Bedienoberfläche im Browser: Geräte einlernen,
   ansehen, benennen, schalten, Vorlagen exportieren, Diagnose.
+
+**Was eine exportierte Vorlage standardmäßig enthält.** Ein Gerät liefert oft
+weit mehr Signale, als jemand in Loxone haben will — eine Steckdose etwa über
+hundert, meist Thread-Funkzähler, Seriennummern und andere Verwaltungswerte.
+Der Export nimmt deshalb standardmäßig nur die **funktionalen** Signale
+mit — die, die zum erkannten Gerätetyp gehören (bei einer Steckdose: Ein/Aus,
+Spannung, Strom, Leistung, Verbrauch). Alles andere bleibt technisch
+exportierbar, ist aber nicht angehakt. In der Signalliste der WebUI stehen
+diese übrigen Signale im zugeklappten Block „Experte" (mit Anzahl in der
+Überschrift) — jedes davon trägt seinen eigenen Exportieren-Haken und lässt
+sich dort einzeln aktivieren, etwa ein Thread-Zähler zur Fehlersuche.
+Begründung und Auswahlregel: [Signalauswahl-Entwurf](docs/superpowers/specs/2026-09-03-signalauswahl-design.md).
+
+**Achtung beim Update auf diese Fassung, wenn schon Geräte eingelernt
+sind.** Der Einmal-Umzug der Datenbank auf dieses Schema setzt den
+Exportieren-Haken **jedes** bereits gespeicherten Signals auf den neuen
+Vorgabewert zurück – auch wenn er zuvor von Hand umgelegt wurde. Wer vor
+diesem Update z. B. Thread-Zähler gezielt freigeschaltet oder ein Signal
+abgeschaltet hat, verliert diese Auswahl beim ersten Start danach, ohne
+Warnung, und muss sie in der Signalliste erneut setzen. Eine bereits in
+Loxone importierte Vorlage bleibt davon unberührt – die Laufzeitstrecke
+sendet ohnehin unabhängig vom Haken; betroffen ist nur eine **neu**
+erzeugte Vorlage nach dem Update.
 
 Der Dienst bindet standardmäßig auf `0.0.0.0` (`--host`), damit der
 Miniserver ihn erreicht — dieselbe Erreichbarkeit gilt fürs restliche

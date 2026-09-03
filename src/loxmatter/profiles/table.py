@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from loxmatter.matter.models import SignalKind, SignalRef
+from loxmatter.profiles.catalog import element_name
 
 _TABLE_PATH = Path(__file__).with_name("clusters.yaml")
 
@@ -37,6 +38,7 @@ class Exportability(str, Enum):
 @dataclass(frozen=True)
 class Profile:
     slug: str
+    title: str
     unit: str
     exportability: Exportability
 
@@ -81,22 +83,133 @@ def _table() -> dict[int, dict[str, Any]]:
     return {int(k): v for k, v in (raw.get("clusters") or {}).items()}
 
 
+def knows_cluster(cluster_id: int) -> bool:
+    """Ob die Profiltabelle diesen Cluster ueberhaupt fuehrt."""
+    return cluster_id in _table()
+
+
+def known_attribute_section(cluster_id: int) -> bool:
+    """Ob die Tabelle fuer diesen Cluster ueberhaupt einen `attributes:`-
+    Abschnitt fuehrt - unabhaengig davon, ob er etwas benennt.
+
+    Getrennt von `knows_cluster`, weil `knows_cluster` nur fragt, ob der
+    Cluster ueberhaupt in der Tabelle steht - ein Cluster kann dort stehen
+    und trotzdem nichts ueber seine Attribute sagen, wenn er nur wegen
+    seiner Kommandos gepflegt wurde (Cluster 768/ColorControl bis zur
+    Phase-6-Nachbesserung: nur `commands:`, kein `attributes:`). Ohne diese
+    Unterscheidung las `profiles.relevance.is_functional` "kennt die Tabelle
+    den Cluster" faelschlich als "kennt die Tabelle jedes seiner Attribute"
+    - `names_element` schlaegt in einem fehlenden Abschnitt IMMER erfolglos
+    nach (`cluster.get(section) or {}` wird `{}`), und jedes Attribut eines
+    nur-fuer-Kommandos gepflegten Clusters galt dadurch als nicht funktional,
+    obwohl die Tabelle zu ihnen gar keine Aussage trifft. Die Falle ist
+    strukturell und nicht auf Cluster 768 beschraenkt: jeder kuenftige
+    Cluster, der nur fuer ein Kommando oder eine Einheit in die Tabelle
+    kommt, waere sonst in allen seinen Attributen verstummt."""
+    cluster = _table().get(cluster_id)
+    return cluster is not None and cluster.get("attributes") is not None
+
+
+def names_element(ref: SignalRef) -> bool:
+    """Ob die Profiltabelle genau dieses Element namentlich fuehrt.
+
+    Getrennt von `lookup`, weil `lookup` fuer ein unbenanntes Element einen
+    generischen Namen erfindet (`c6_a16387`) und die Unterscheidung damit
+    verliert. Die Feinauswahl in `profiles.relevance` braucht sie aber:
+    innerhalb eines bekannten Clusters ist "benannt" das Kennzeichen fuer
+    "gewollt".
+    """
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return False
+    section = "events" if ref.kind is SignalKind.EVENT else "attributes"
+    return ref.element_id in (cluster.get(section) or {})
+
+
+def struct_field(ref: SignalRef) -> int | None:
+    """Die Feldnummer, die aus einer Struktur zu ziehen ist - oder None.
+
+    Nur fuer Attribute eines Clusters, den die Tabelle kennt und bei dem
+    der Eintrag ein `field` traegt.
+    """
+    if ref.kind is SignalKind.EVENT:
+        return None
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return None
+    entry = (cluster.get("attributes") or {}).get(ref.element_id)
+    if not entry:
+        return None
+    field = entry.get("field")
+    return int(field) if field is not None else None
+
+
+def struct_member(ref: SignalRef, raw: object) -> object:
+    """Der Wert, auf dem klassifiziert und gerechnet wird.
+
+    Ohne `field`-Eintrag unveraendert `raw`. Mit `field` das benannte
+    Element der Struktur - und `None`, wenn der Wert keine Struktur ist
+    oder das Element fehlt. Dann bleibt das Signal nicht exportierbar; es
+    wird NICHT geraten (Entwurf 2026-09-03, 5).
+
+    matter-server liefert Strukturen als Woerterbuch mit dem Feld-Tag als
+    Zeichenkette (`{"0": ...}`); die Zahl wird ebenso akzeptiert.
+
+    Diese eine Funktion ist die gemeinsame Quelle fuer `lookup` (Einstufung
+    beim Einlernen) und `loxone.values.to_loxone_value` (Laufzeit). Zwei
+    Kopien wuerden auseinanderlaufen und die Oberflaeche einen Wert melden
+    lassen, den der Export nicht kennt.
+    """
+    field = struct_field(ref)
+    if field is None:
+        return raw
+    if not isinstance(raw, dict):
+        return None
+    return raw.get(str(field), raw.get(field))
+
+
 def lookup(ref: SignalRef, value: object) -> Profile:
-    """Liefert Name, Einheit und Exportierbarkeit fuer ein Signal."""
+    """Liefert Name(n), Einheit und Exportierbarkeit fuer ein Signal.
+
+    `slug` ist Schluesselmaterial (Hauptdokument 6.2) und bleibt deshalb
+    immer generisch, wenn die eigene Tabelle das Element nicht namentlich
+    fuehrt - er darf sich nie bewegen, sonst stirbt eine bestehende
+    Loxone-Verdrahtung lautlos. `title` ist reine Anzeige: fuehrt die
+    Tabelle das Element, gewinnt sie (dieselbe Kuerze wie der Slug reicht
+    dort aus). Sonst speist der SDK-Katalog (`profiles.catalog.element_name`)
+    den Klartextnamen aus der Matter-Spezifikation; kennt auch der ihn
+    nicht, faellt `title` auf den generischen Slug zurueck - Anzeige und
+    Betrieb funktionieren so unabhaengig davon, ob der Katalog ueberhaupt
+    verfuegbar ist (siehe Docstring dort).
+    """
     cluster = _table().get(ref.cluster_id, {})
     section = "events" if ref.kind is SignalKind.EVENT else "attributes"
     entry = (cluster.get(section) or {}).get(ref.element_id)
 
     if ref.kind is SignalKind.EVENT:
-        slug = entry["slug"] if entry else f"c{ref.cluster_id}_e{ref.element_id}"
-        return Profile(slug=slug, unit="", exportability=Exportability.DIGITAL)
+        if entry:
+            return Profile(
+                slug=entry["slug"],
+                title=entry["slug"],
+                unit="",
+                exportability=Exportability.DIGITAL,
+            )
+        slug = f"c{ref.cluster_id}_e{ref.element_id}"
+        return Profile(
+            slug=slug, title=element_name(ref) or slug, unit="", exportability=Exportability.DIGITAL
+        )
 
     if entry:
         return Profile(
-            slug=entry["slug"], unit=entry.get("unit", ""), exportability=classify(value)
+            slug=entry["slug"],
+            title=entry["slug"],
+            unit=entry.get("unit", ""),
+            exportability=classify(struct_member(ref, value)),
         )
+    slug = f"c{ref.cluster_id}_a{ref.element_id}"
     return Profile(
-        slug=f"c{ref.cluster_id}_a{ref.element_id}",
+        slug=slug,
+        title=element_name(ref) or slug,
         unit="",
         exportability=classify(value),
     )
