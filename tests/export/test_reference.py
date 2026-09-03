@@ -181,3 +181,57 @@ def test_system_virtual_out_matches_the_reference_shape():
     assert _attr_names(rendered_root) == _attr_names(reference_root)
     assert _attr_names(rendered_cmd) == _attr_names(reference_cmd)
     assert rendered_lines[2:-1][0].strip().startswith("<Info ")
+
+
+def _attr(line: str, name: str) -> str:
+    match = re.search(rf'{name}="([^"]*)"', line)
+    assert match, f"{name} fehlt in {line!r}"
+    return match.group(1)
+
+
+def test_a_valued_command_carries_the_same_analog_flag_as_the_reference():
+    """Der Referenzbefehl aus einer echten Installation ist ANALOG - sein
+    `CmdOn` enthaelt `<v>` - und traegt trotzdem `Analog="false"`.
+
+    Dem Namen zum Trotz entspricht dieses Attribut in Loxone Config also
+    nicht der Frage "ist das analog", sondern dem Haken "Als Digitalausgang
+    verwenden". Wir schrieben es bis zum 2026-09-03 andersherum.
+
+    Der Referenztest verglich bisher nur die NAMEN der Attribute und ihre
+    Reihenfolge. Genau deshalb blieb der falsche Wert jahrelang unbemerkt -
+    und dieser Test schliesst die Luecke.
+    """
+    reference = _first_matching(_lines(FIXTURES / "VO_Referenz.xml"), "<VirtualOutCmd ")
+    assert "&lt;v&gt;" in _attr(reference, "CmdOn"), "Referenzbefehl ist nicht analog"
+
+    valued = [LoxoneCommand("d1_1_level", "level", "/cmd/d1_1_level/<v>", True)]
+    rendered = _first_matching(
+        render_virtual_out("Lampe", "http://192.168.1.50:8080", valued)
+        .decode("utf-8-sig")
+        .splitlines(),
+        "<VirtualOutCmd ",
+    )
+    assert _attr(rendered, "Analog") == _attr(reference, "Analog") == "false"
+
+
+def test_a_switching_command_asks_loxone_for_a_digital_output():
+    """Ohne `Analog="true"` bleibt in Loxone Config der Haken "Als
+    Digitalausgang verwenden" leer - und damit bietet Config das Feld fuer
+    den Aus-Befehl gar nicht erst an, sodass unser `CmdOff` wirkungslos
+    bleibt. Am Miniserver des Anwenders beobachtet (2026-09-03).
+
+    Diese Richtung ist NICHT aus der Referenzvorlage belegt: die enthaelt
+    nur einen analogen Befehl. Sie stammt aus der Beobachtung an der echten
+    Config.
+    """
+    switching = [
+        LoxoneCommand("d1_1_on", "onoff", "/cmd/d1_1_on/1", False, off_path="/cmd/d1_1_off/1")
+    ]
+    rendered = _first_matching(
+        render_virtual_out("Steckdose", "http://192.168.1.50:8080", switching)
+        .decode("utf-8-sig")
+        .splitlines(),
+        "<VirtualOutCmd ",
+    )
+    assert _attr(rendered, "Analog") == "true"
+    assert _attr(rendered, "CmdOff") == "/cmd/d1_1_off/1"

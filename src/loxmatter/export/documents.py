@@ -148,7 +148,26 @@ def render_virtual_out(
                 ("CmdOffPost", ""),
                 ("CmdAnswer", ""),
                 ("HintText", ""),
-                ("Analog", _flag(command.analog)),
+                # UMGEKEHRT zu `command.analog` (2026-09-03). In Loxone
+                # Config entspricht dieses Attribut dem Haken "Als
+                # Digitalausgang verwenden", nicht der Frage "ist das ein
+                # analoger Ausgang" - dem Namen zum Trotz.
+                #
+                # Belegt an der Config des Anwenders: unser `onoff` kam mit
+                # `Analog="false"` an, und der Haken war NICHT gesetzt -
+                # weshalb Loxone auch das Feld fuer den Aus-Befehl gar nicht
+                # erst anbietet und unser `CmdOff` wirkungslos blieb.
+                #
+                # Dazu passt die Referenzvorlage aus einer echten
+                # Installation (tests/fixtures/loxone/VO_Referenz.xml): ihr
+                # einziger Befehl ist ANALOG (`CmdOn` enthaelt `<v>`) und
+                # traegt trotzdem `Analog="false"`.
+                #
+                # Ein Test vergleicht diesen Wert jetzt gegen die Referenz.
+                # Vorher verglich der Referenztest nur die Namen der
+                # Attribute und ihre Reihenfolge - deshalb ist es nie
+                # aufgefallen.
+                ("Analog", _flag(not command.analog)),
                 ("Repeat", "0"),
                 ("RepeatRate", "0"),
             ],
