@@ -380,35 +380,127 @@ def _check_store(store: Store) -> tuple[bool, str]:
     return True, "Beschreibbar."
 
 
-def _check_ipv6() -> tuple[bool, str]:
-    """Matter/Thread braucht IPv6 - ein Host ohne globalen IPv6-Pfad kann kein
-    Thread-Geraet erreichen, selbst wenn der Border Router laeuft.
+# Die Linux-Tabelle der lokalen IPv6-Adressen. Spalten: Adresse (hex, ohne
+# Doppelpunkte), Interface-Index, Praefixlaenge, SCOPE, Flags, Name.
+# Scope 0x00 heisst "global" und schliesst die Unique-Local-Adressen (fd00::/8)
+# ein - genau die, auf denen ein Thread-Netz laeuft.
+_IF_INET6 = Path("/proc/net/if_inet6")
 
-    Verbindet sich dabei nirgendwohin: `2001:db8::1` ist die von RFC 3849
-    fuer genau diesen Zweck reservierte, garantiert nie geroutete
-    Dokumentations-Adresse, und `connect()` auf einem UDP-Socket sendet
-    ohnehin kein einziges Paket - er traegt nur die lokale Routing-
-    Entscheidung des Kernels ein (welche eigene Adresse waere die Quelle,
-    gaebe es ein Ziel dort). Kein Netzwerkkontakt, keine Wartezeit."""
+# Der Name, unter dem OTBR seine Thread-Schnittstelle anlegt. Verschwindet
+# mit dem Agenten: stirbt er (z. B. an einem RCP-Timeout, weil das Funkmodul
+# nicht mehr antwortet), ist die Schnittstelle weg, waehrend der Container
+# weiterlaeuft - `restart: unless-stopped` greift dann nicht.
+_THREAD_INTERFACE_PREFIX = "wpan"
+
+
+def _routed_ipv6_addresses() -> list[tuple[str, str]] | None:
+    """Alle gerouteten (nicht link-lokalen, nicht Loopback) IPv6-Adressen
+    dieses Hosts als (Adresse, Schnittstelle) - oder None, wenn sich das auf
+    diesem System nicht feststellen laesst.
+
+    Liest `/proc/net/if_inet6` statt einen Socket zu befragen: ein
+    `connect()`-Test braucht ein ZIEL, und welches man waehlt, entscheidet
+    schon das Ergebnis. Genau daran scheiterte die frueherer Fassung dieses
+    Checks (siehe `_check_ipv6`).
+
+    None (statt einer leeren Liste) heisst "nicht feststellbar" - auf einem
+    Nicht-Linux-System gibt es die Datei nicht. Das ist etwas anderes als
+    "keine gefunden" und wird von den Aufrufern auch anders behandelt.
+    """
+    try:
+        raw = _IF_INET6.read_text(encoding="ascii")
+    except OSError:
+        return None
+    found: list[tuple[str, str]] = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        address, scope, interface = parts[0], parts[3], parts[5]
+        # Nur Scope 00. Alles andere ist link-lokal (20), Loopback (10) oder
+        # eine der selteneren Zwischenstufen - keine davon traegt ein
+        # Thread-Netz.
+        if scope != "00":
+            continue
+        readable = ":".join(address[i : i + 4] for i in range(0, 32, 4))
+        found.append((readable, interface))
+    return found
+
+
+def _check_ipv6() -> tuple[bool, str]:
+    """Ob dieser Host ueberhaupt eine geroutete IPv6-Adresse hat.
+
+    **Verlangt ausdruecklich KEIN globales IPv6** (2026-09-03). Die frueherer
+    Fassung tat das: sie fragte den Kernel nach der Quelladresse fuer
+    `2001:db8::1` und meldete rot, wenn keine Route dorthin existierte. Auf
+    einem gesunden Thread-Aufbau ist das der Normalfall - Thread laeuft ueber
+    Unique-Local-Adressen (fd00::/8) aus dem Praefix, das der Border Router
+    ankuendigt, und die meisten Heimnetze haben ueberhaupt kein globales
+    IPv6. Der Check meldete also einen Fehler, wo keiner war.
+
+    Jetzt zaehlt, was tatsaechlich vorhanden ist: jede Adresse mit Scope
+    "global" - ULA eingeschlossen.
+    """
     if not socket.has_ipv6:
         return False, "Diese Python-Installation wurde ohne IPv6-Unterstuetzung gebaut."
-    try:
-        with socket.socket(socket.AF_INET6, socket.SOCK_DGRAM) as probe:
-            probe.connect(("2001:db8::1", 80))
-            local_address = probe.getsockname()[0]
-    except OSError as exc:
-        return False, (
-            f"Kein lokaler IPv6-Pfad gefunden ({exc}). Matter/Thread-Geraete sind ohne "
-            "IPv6 nicht erreichbar - pruefen Sie die Netzwerkkonfiguration dieses Hosts "
-            "(z. B. `ip -6 route`) und den Thread-Border-Router."
+    addresses = _routed_ipv6_addresses()
+    if addresses is None:
+        return True, (
+            "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht "
+            "(kein Linux). Im Container laeuft die Bruecke unter Linux, dort greift "
+            "die Pruefung."
         )
-    if local_address in ("::1",) or local_address.startswith("fe80"):
+    if not addresses:
         return False, (
-            f"Nur eine link-lokale/Loopback-IPv6-Adresse gefunden ({local_address}). "
-            "Matter/Thread braucht eine geroutete IPv6-Adresse - pruefen Sie den Thread-"
-            "Border-Router bzw. die Netzwerkkonfiguration dieses Hosts."
+            "Keine geroutete IPv6-Adresse gefunden - nur link-lokale oder Loopback. "
+            "Matter/Thread-Geraete sind damit nicht erreichbar. Laeuft der "
+            "Thread-Border-Router, und kuendigt er sein Praefix an?"
         )
-    return True, f"Lokale, geroutete IPv6-Adresse gefunden: {local_address}."
+    shown = ", ".join(f"{address} auf {interface}" for address, interface in addresses[:3])
+    more = f" (und {len(addresses) - 3} weitere)" if len(addresses) > 3 else ""
+    return True, f"Geroutete IPv6-Adressen vorhanden: {shown}{more}."
+
+
+def _check_thread() -> tuple[bool, str]:
+    """Ob eine Thread-Schnittstelle mit einer Mesh-Adresse existiert.
+
+    Das ist der Check, der einen echten Ausfall vom 2026-09-03 gezeigt
+    haette: das Funkmodul hoerte um 14:57 auf zu antworten, der OTBR-Agent
+    brach mit einem RCP-Timeout ab, und `wpan0` verschwand - waehrend der
+    Container weiterlief. `restart: unless-stopped` greift in diesem Fall
+    nicht, weil nicht der Container gestorben ist, sondern nur ein Prozess
+    darin. Sechseinhalb Stunden lang war kein Geraet erreichbar, und nichts
+    hat es gemeldet.
+
+    Absichtlich ueber die Schnittstelle statt ueber `ot-ctl`: dieser Dienst
+    laeuft in einem eigenen Container und hat keinen Zugriff auf den von
+    OTBR. Die Schnittstelle dagegen liegt im Netzwerk-Namensraum des Hosts,
+    den beide teilen (`network_mode: host`), und ihr Verschwinden ist
+    dasselbe Signal - ohne dass dieser Dienst Rechte braucht, die er sonst
+    nirgends braucht.
+    """
+    addresses = _routed_ipv6_addresses()
+    if addresses is None:
+        return True, (
+            "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht (kein Linux)."
+        )
+    thread = [
+        (address, interface)
+        for address, interface in addresses
+        if interface.startswith(_THREAD_INTERFACE_PREFIX)
+    ]
+    if not thread:
+        return False, (
+            f"Keine Thread-Schnittstelle ({_THREAD_INTERFACE_PREFIX}*) mit einer "
+            "Mesh-Adresse gefunden. Laeuft der OTBR-Agent? Er bricht bei einem "
+            "RCP-Timeout ab - wenn das Funkmodul nicht mehr antwortet -, ohne dass "
+            "der Container endet, und wird dann von niemandem neu gestartet. "
+            "`docker compose restart otbr` holt ihn zurueck."
+        )
+    return True, (
+        f"Thread-Schnittstelle {thread[0][1]} hat {len(thread)} Mesh-Adresse(n), "
+        f"z. B. {thread[0][0]}."
+    )
 
 
 def _check_miniserver(sender: UdpSender | None) -> tuple[bool, str]:
@@ -491,6 +583,7 @@ def build_diagnostics_router(
             _run_check("matter-server", lambda: _check_matter_server(client)),
             _run_check("store", lambda: _check_store(store)),
             _run_check("ipv6", _check_ipv6),
+            _run_check("thread", _check_thread),
             _run_check("miniserver", lambda: _check_miniserver(sender)),
         ]
 

@@ -54,6 +54,7 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate, load_snapshot
 
+from loxmatter.api import diagnostics
 from loxmatter.api.diagnostics import RingBuffer
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.sender import UdpSender
@@ -219,7 +220,7 @@ async def test_system_check_reports_each_line_with_a_verdict(api):
     client, _, _ = api
     checks = (await client.get("/api/diagnostics/system")).json()
     names = {c["name"] for c in checks}
-    assert {"matter-server", "store", "ipv6"} <= names
+    assert {"matter-server", "store", "ipv6", "thread"} <= names
     for check in checks:
         assert check["ok"] in (True, False)
         assert check["detail"]
@@ -353,3 +354,82 @@ async def test_a_check_that_raises_unexpectedly_fails_gracefully(api, monkeypatc
     store_check = next(c for c in checks if c["name"] == "store")
     assert store_check["ok"] is False
     assert len(store_check["detail"]) > 20
+
+
+# ---------------------------------------------------------------------------
+# IPv6- und Thread-Pruefung (2026-09-03)
+# ---------------------------------------------------------------------------
+
+# Auszug aus einem echten `/proc/net/if_inet6` des Testhosts. Spalten:
+# Adresse (hex, ohne Doppelpunkte), Interface-Index, Praefixlaenge, Scope,
+# Flags, Name.
+_IF_INET6_WITH_THREAD = """\
+fe80000000000000da3addfffe99419e 03 40 20 80 wlan0
+00000000000000000000000000000001 01 80 10 80 lo
+fd2745d78c7800010e26ce8e4edd7c50 07 40 00 00 wpan0
+fd7df0629267d2e0000000fffe00fc10 07 40 00 00 wpan0
+"""
+
+# Derselbe Host, nachdem der OTBR-Agent an einem RCP-Timeout gestorben ist:
+# `wpan0` ist verschwunden, uebrig bleiben link-lokal und Loopback.
+_IF_INET6_WITHOUT_THREAD = """\
+fe80000000000000da3addfffe99419e 03 40 20 80 wlan0
+00000000000000000000000000000001 01 80 10 80 lo
+"""
+
+
+def _with_if_inet6(monkeypatch, tmp_path, content: str | None) -> None:
+    """Legt `_IF_INET6` auf eine Datei mit diesem Inhalt - oder auf einen
+    Pfad, den es nicht gibt, wenn `content is None` (Nicht-Linux)."""
+    path = tmp_path / "if_inet6"
+    if content is not None:
+        path.write_text(content, encoding="ascii")
+    monkeypatch.setattr(diagnostics, "_IF_INET6", path)
+
+
+def test_ipv6_accepts_a_unique_local_address(monkeypatch, tmp_path):
+    """Der Fehler, den dieser Check frueher hatte: er verlangte eine Route zu
+    einer GLOBALEN Adresse und meldete auf einem gesunden Thread-Aufbau rot.
+    Thread laeuft ueber Unique-Local-Adressen, und die meisten Heimnetze
+    haben ueberhaupt kein globales IPv6."""
+    _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITH_THREAD)
+    ok, detail = diagnostics._check_ipv6()
+    assert ok is True
+    assert "fd27" in detail
+
+
+def test_ipv6_fails_when_only_link_local_and_loopback_remain(monkeypatch, tmp_path):
+    _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITHOUT_THREAD)
+    ok, detail = diagnostics._check_ipv6()
+    assert ok is False
+    assert "link-lokale" in detail
+
+
+def test_thread_check_finds_the_mesh_interface(monkeypatch, tmp_path):
+    _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITH_THREAD)
+    ok, detail = diagnostics._check_thread()
+    assert ok is True
+    assert "wpan0" in detail
+
+
+def test_thread_check_fails_when_the_interface_is_gone(monkeypatch, tmp_path):
+    """Der echte Ausfall vom 2026-09-03: das Funkmodul antwortete nicht mehr,
+    der OTBR-Agent brach mit einem RCP-Timeout ab, `wpan0` verschwand - und
+    der Container lief weiter, sodass `restart: unless-stopped` nicht griff.
+    Sechseinhalb Stunden lang war kein Geraet erreichbar. Dieser Check haette
+    es gezeigt."""
+    _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITHOUT_THREAD)
+    ok, detail = diagnostics._check_thread()
+    assert ok is False
+    assert "OTBR" in detail
+    assert "restart" in detail
+
+
+def test_both_checks_stay_quiet_where_they_cannot_look(monkeypatch, tmp_path):
+    """Auf einem Nicht-Linux-System gibt es /proc/net/if_inet6 nicht. Das ist
+    kein Fehler des Aufbaus, sondern eine Grenze der Pruefung - ein roter
+    Punkt dafuer waere eine Falschmeldung auf jedem Entwicklungsrechner."""
+    _with_if_inet6(monkeypatch, tmp_path, None)
+    for ok, detail in (diagnostics._check_ipv6(), diagnostics._check_thread()):
+        assert ok is True
+        assert "Nicht feststellbar" in detail
