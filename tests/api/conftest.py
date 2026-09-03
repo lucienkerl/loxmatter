@@ -67,6 +67,7 @@ from typing import Any, Self
 import httpx2 as httpx
 import pytest
 
+from loxmatter.auth.passwords import hash_password
 from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
@@ -81,6 +82,25 @@ def load_snapshot(name: str) -> NodeSnapshot:
     """Laedt ein aufgezeichnetes Geraet aus `tests/fixtures/nodes/`."""
     raw = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
     return NodeSnapshot.from_raw(raw["node_id"], raw)
+
+
+# Das Passwort, mit dem sich jede Testfixture anmeldet. Ein fester Wert und
+# kein zufaelliger: er taucht in Fehlermeldungen fehlschlagender Tests auf,
+# und dort ist "test-passwort" hilfreicher als eine Zufallsfolge.
+TEST_PASSWORD = "test-passwort"
+
+
+async def authenticate(store: Store, client: httpx.AsyncClient) -> None:
+    """Setzt ein Passwort und meldet `client` an.
+
+    Gebraucht seit der Waechter ohne Nachweis nichts mehr durchlaesst (Spec 4):
+    eine Testfixture, die `/api` aufruft, muss angemeldet sein wie ein
+    Browser. `httpx.AsyncClient` fuehrt einen eigenen Cookie-Speicher, ein
+    einziger Aufruf hier genuegt also fuer alle folgenden Anfragen desselben
+    Clients."""
+    store.auth.set_password_hash(hash_password(TEST_PASSWORD))
+    response = await client.post("/auth/login", json={"password": TEST_PASSWORD})
+    assert response.status_code == 200, "Anmeldung in der Testfixture fehlgeschlagen"
 
 
 @pytest.fixture
@@ -228,9 +248,24 @@ class _InProcessWebSocket:
     Werkzeug liesse sich dieser Pfad in diesem Inprozess-Harness gar nicht
     erreichen: `_from_app` unten ist unbegrenzt, ein Test, der einfach nicht
     liest, erzeugt hier - anders als ein echter, volles TCP-Sendepuffer
-    blockierender Client - keinen echten Sendefehler."""
+    blockierender Client - keinen echten Sendefehler.
 
-    def __init__(self, app: Any, path: str, *, break_send_after: int | None = None) -> None:
+    `cookies` (Task 8, Phase 5): das Sitzungs-Cookie, mit dem sich
+    `WebSocketClient` bereits ueber `authenticate()` angemeldet hat, reist
+    hier NICHT von selbst mit - dieser Scope wird von Hand gebaut, nicht aus
+    einer echten Verbindung abgeleitet, die den Cookie-Header eines Browsers
+    automatisch mitschickt. Ohne diesen Parameter wuerde jeder Test, der
+    `websocket_connect` benutzt, am seit Task 8 geschlossenen Waechter
+    scheitern, obwohl `client` laengst angemeldet ist."""
+
+    def __init__(
+        self,
+        app: Any,
+        path: str,
+        *,
+        break_send_after: int | None = None,
+        cookies: dict[str, str] | None = None,
+    ) -> None:
         self._app = app
         self._path = path
         self._to_app: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -238,8 +273,13 @@ class _InProcessWebSocket:
         self._task: asyncio.Task[None] | None = None
         self._break_send_after = break_send_after
         self._sends_before_break = 0
+        self._cookies = cookies or {}
 
     async def __aenter__(self) -> Self:
+        headers: list[tuple[bytes, bytes]] = []
+        if self._cookies:
+            cookie_header = "; ".join(f"{name}={value}" for name, value in self._cookies.items())
+            headers.append((b"cookie", cookie_header.encode()))
         scope: dict[str, Any] = {
             "type": "websocket",
             "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -248,7 +288,7 @@ class _InProcessWebSocket:
             "raw_path": self._path.encode(),
             "root_path": "",
             "query_string": b"",
-            "headers": [],
+            "headers": headers,
             "client": ("testclient", 123),
             "server": ("testserver", 80),
             "subprotocols": [],
@@ -314,7 +354,16 @@ class WebSocketClient:
     def websocket_connect(
         self, url: str, *, break_send_after: int | None = None
     ) -> _InProcessWebSocket:
-        return _InProcessWebSocket(self._app, url, break_send_after=break_send_after)
+        # `dict(self._client.cookies)` statt des Cookie-Jars selbst: das
+        # Sitzungs-Cookie aus `authenticate()` soll unveraendert mitreisen,
+        # wie es bei einem echten Browser-WebSocket vom selben Ursprung aus
+        # geschaehe (siehe `_InProcessWebSocket`-Docstring).
+        return _InProcessWebSocket(
+            self._app,
+            url,
+            break_send_after=break_send_after,
+            cookies=dict(self._client.cookies),
+        )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._client, name)
@@ -332,4 +381,5 @@ async def api_with_runtime(
     app = build_app(store, no_invoke, runtime, client=fake_client)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
         yield WebSocketClient(client, app), runtime, device_id

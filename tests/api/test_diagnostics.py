@@ -36,7 +36,7 @@ from pathlib import Path
 
 import httpx2 as httpx
 import pytest
-from conftest import load_snapshot
+from conftest import authenticate, load_snapshot
 
 from loxmatter.api.diagnostics import RingBuffer
 from loxmatter.export.commands import extract_commands
@@ -88,6 +88,7 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client):
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
         yield client, store, device_id
     store.close()
 
@@ -112,6 +113,7 @@ async def api_with_sender(tmp_path, no_invoke, fake_runtime, fake_client, receiv
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
         yield client, sender, device_id
     await sender.close()
     store.close()
@@ -136,6 +138,7 @@ async def api_with_token(tmp_path, no_invoke, fake_runtime, fake_client):
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
         yield client, store, device_id
     store.close()
 
@@ -151,6 +154,7 @@ async def api_without_matter(tmp_path, no_invoke, fake_runtime):
     app = build_app(store, no_invoke, fake_runtime(store), client=None)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
         yield client, store, device_id
     store.close()
 

@@ -114,11 +114,15 @@ def _perform_raw_handshake_response(
     return response.decode("iso-8859-1")
 
 
-def _perform_raw_handshake(host: str, port: int, path: str, *, timeout: float) -> str:
+def _perform_raw_handshake(
+    host: str, port: int, path: str, *, timeout: float, subprotocols: str | None = None
+) -> str:
     """Nur die Statuszeile der Antwort (z. B. "HTTP/1.1 101 Switching
     Protocols" im Erfolgsfall, "HTTP/1.1 404 Not Found" beim hier
     untersuchten Regressionsfall)."""
-    response = _perform_raw_handshake_response(host, port, path, timeout=timeout)
+    response = _perform_raw_handshake_response(
+        host, port, path, timeout=timeout, subprotocols=subprotocols
+    )
     return response.split("\r\n", 1)[0]
 
 
@@ -166,12 +170,25 @@ def test_a_real_uvicorn_upgrades_api_live_to_a_websocket(plug_store, no_invoke):
     im Nebenthread ist also unterstuetzt), unabhaengig von der Schleife, die
     `pytest-asyncio` fuer async-Tests dieser Suite aufspannt."""
     store, _device_id = plug_store
+    # Seit Task 8 laesst der Waechter nichts mehr ohne Nachweis durch - hier
+    # ein Token statt einer angemeldeten Sitzung, bewusst: `Store` gehoert
+    # laut eigenem Moduldocstring "genau einem Thread und genau einer
+    # Event-Loop", `server.run()` unten laeuft aber in einem EIGENEN Thread
+    # (siehe Docstring dieser Funktion). Ein Sitzungscookie wuerde den
+    # Waechter `store.auth.session_expires_at` aus genau diesem fremden
+    # Thread aufrufen lassen und mit `sqlite3.ProgrammingError` abstuerzen;
+    # der Token-Vergleich (`_tokens_match`) ist reiner String-Vergleich und
+    # ruehrt den Store gar nicht erst an.
     runtime = Runtime(store, _NullSender())
-    app = build_app(store, no_invoke, runtime)
+    app = build_app(store, no_invoke, runtime, api_token="secret")
 
     with _running_server(app) as port:
         status_line = _perform_raw_handshake(
-            "127.0.0.1", port, "/api/live", timeout=STARTUP_TIMEOUT_S
+            "127.0.0.1",
+            port,
+            "/api/live",
+            timeout=STARTUP_TIMEOUT_S,
+            subprotocols="bearer, secret",
         )
         assert "101" in status_line, f"WebSocket-Upgrade fehlgeschlagen: {status_line!r}"
 

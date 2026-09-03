@@ -28,7 +28,7 @@ from loxmatter.export.documents import (
 from loxmatter.export.signals import to_inputs
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
-from loxmatter.loxone.server import build_app, normalize_api_token
+from loxmatter.loxone.server import build_app
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.discovery import (
     extract_signals,
@@ -382,35 +382,35 @@ def export(
         store.close()
 
 
-def _warn_if_missing_api_token(api_token: str | None) -> None:
-    """Warnt beim Start deutlich, wenn kein API-Token gesetzt ist (Task 8,
-    Phase 5, Spec 9).
+def _warn_if_no_password(store_path: Path) -> None:
+    """Warnt beim Start deutlich, solange kein Passwort vergeben ist.
+
+    Die Warnung gilt seit dem WebUI-Login dem Passwort und NICHT mehr dem
+    Token: ein konfiguriertes Token bringt sie nicht zum Schweigen, denn es
+    ist der Weg fuer Skripte und kein Ersatz fuer die Ersteinrichtung.
+
+    Der Zustand, vor dem sie warnt, ist ein anderer als frueher. Bis hierher
+    lief ein Dienst ohne Token vollstaendig offen. Jetzt liefert er ohne
+    Passwort gar nichts mehr aus - dafuer kann bis zur Passwortvergabe jeder,
+    der ihn erreicht, ihn uebernehmen, indem er die Ersteinrichtung
+    abschliesst (Spec 5, bewusst so entschieden). Genau darauf zielt dieser
+    Text.
 
     Eigene Funktion statt einer Zeile inline in `run`/`_run`, damit ein Test
-    sie ohne laufenden Server aufrufen kann (`asyncio.run(_run(...))` startet
-    `uvicorn.Server.serve()`, das in einer Testsuite ohne Netzwerkzugriff
-    nicht laufen soll — siehe `tests/api/test_security.py`).
-
-    Aufgerufen aus `run` (synchron, vor `asyncio.run`), nicht aus `_run`
-    selbst: so erscheint die Warnung garantiert genau einmal beim Start,
-    bevor irgendein `await` die Kontrolle abgibt, unabhängig davon, wie
-    `_run` seinen Ablauf künftig ändert.
-
-    Die Entscheidung „gesetzt oder nicht" trifft `normalize_api_token`
-    (`loxone.server`) — dieselbe Funktion, die auch `build_api_guard`
-    benutzt, damit Warnung und Wächter nicht auseinanderlaufen können
-    (Review-Fix Fix 2, 2026-09-03). Ein Token aus reinem Leerraum galt dem
-    Wächter vorher als echtes Geheimnis, während diese Warnung ausblieb:
-    der Dienst war gesperrt und sagte nichts dazu."""
-    if normalize_api_token(api_token) is None:
-        logger.warning(
-            "Kein API-Token gesetzt — die Oberfläche ist für jeden erreichbar, "
-            "der den Port erreicht, einschließlich Einlernen und Entfernen von "
-            "Geräten, und die Fabric-Sicherung "
-            "(GET /api/diagnostics/fabric-backup) wird deshalb gar nicht erst "
-            "ausgeliefert. Setze LOXMATTER_API_TOKEN oder --api-token, z. B. "
-            "mit `openssl rand -hex 32` erzeugt."
-        )
+    sie ohne laufenden Server aufrufen kann - siehe
+    `tests/api/test_security.py`."""
+    store = Store(store_path)
+    try:
+        if store.auth.password_hash() is not None:
+            return
+    finally:
+        store.close()
+    logger.warning(
+        "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, "
+        "liefert keine /api-Route Daten aus — und jeder, der den Port erreicht, kann "
+        "die Ersteinrichtung abschließen und die Brücke damit übernehmen. Öffne die "
+        "Oberfläche jetzt und vergib ein Passwort."
+    )
 
 
 @app.command()
@@ -478,7 +478,7 @@ def run(
     except (OSError, sqlite3.Error) as exc:
         _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
 
-    _warn_if_missing_api_token(api_token)
+    _warn_if_no_password(resolved_store_path)
     asyncio.run(_run(store, url, miniserver, port, listen, matter_data_dir, host, api_token))
 
 

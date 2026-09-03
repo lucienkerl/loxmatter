@@ -9,9 +9,10 @@ mitschicken kann?
 Drei Gruppen:
 
 - `test_guard_*` - `build_api_guard` selbst, ganz ohne FastAPI-App: die
-  reine Entscheidungslogik (kein Token konfiguriert -> immer durch; Token
-  konfiguriert -> nur der exakt passende `Authorization`-Header kommt
-  durch).
+  reine Entscheidungslogik (seit Task 8 gibt es keinen offenen Zustand mehr -
+  ohne gueltige Sitzung entscheidet ausschliesslich der exakt passende
+  `Authorization`-Header, und ganz ohne Token bleibt jede Anfrage ohne
+  Sitzung abgelehnt).
 - `test_*` mit `secured_client`/`open_client` - dieselbe Aufgabe wie oben,
   aber durch die tatsaechliche ASGI-App hindurch: jede der fuenf `/api`-
   Router UND `/cmd`/`/resync` einzeln angefragt, damit ein Router, der aus
@@ -26,16 +27,26 @@ Drei Gruppen:
   das Token deshalb als Subprotokoll `bearer, <Token>` mit.
 - `test_normalize_api_token_*` / `test_whitespace_*` - ein Token aus reinem
   Leerraum ist kein Token (Review-Fix Fix 2, 2026-09-03).
-- `test_fabric_backup_without_a_token_*` - ohne konfiguriertes Token wird die
+- `test_fabric_backup_without_a_*token_*` - ohne konfiguriertes Token wird die
   Fabric-Sicherung gar nicht erst ausgeliefert (Review-Fix Fix 3,
-  2026-09-03), waehrend jede andere `/api`-Route offen bleibt.
-- `test_warn_if_missing_api_token_*` - die Warnung aus `cli.py`, die einen
-  Betrieb ohne Token trotzdem sichtbar machen soll.
+  2026-09-03), auch dann nicht, wenn eine Sitzung angemeldet ist - jede
+  andere `/api`-Route bleibt fuer diese Sitzung trotzdem offen.
+- `test_warn_if_no_password_*` - die Warnung aus `cli.py`, die einen Betrieb
+  ohne Passwort sichtbar machen soll (Task 8: nicht mehr das Token - ein
+  konfiguriertes Token bringt sie nicht zum Schweigen).
+- `test_without_a_password_*` / `test_a_password_alone_is_enough` /
+  `test_a_valid_token_wins_*` (Task 8) - die eigentliche Verschaerfung
+  dieses Tasks: ohne jeden Nachweis (weder Sitzung noch Token) endet JEDE
+  `/api`-Route mit 401, `/cmd`/`/resync`/`/health` bleiben unveraendert
+  offen, und die Reihenfolge der beiden Nachweise (Cookie zuerst, Token
+  zusaetzlich) bleibt auch bei einem gleichzeitig ungueltigen Cookie
+  erhalten.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -47,7 +58,8 @@ from conftest import load_snapshot
 from fastapi import HTTPException
 
 from loxmatter.auth.passwords import hash_password
-from loxmatter.cli import _warn_if_missing_api_token
+from loxmatter.auth.sessions import SESSION_COOKIE
+from loxmatter.cli import _warn_if_no_password
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.server import build_api_guard, build_app, normalize_api_token
@@ -126,6 +138,17 @@ async def open_client(tmp_path, no_invoke):
         yield item
 
 
+async def _authenticate(store: Store, client: httpx.AsyncClient) -> None:
+    """Setzt ein Passwort und meldet `client` an - wie `conftest.authenticate`,
+    aber lokal statt ueber eine gemeinsame Fixture: diese Datei meldet
+    bewusst nur dort an, wo ein Test das ausdruecklich tut (siehe
+    Moduldocstring), niemals ueber `open_client`/`secured_client` selbst,
+    die genau den unangemeldeten Zustand pruefen sollen."""
+    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+    response = await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
+    assert response.status_code == 200, "Anmeldung im Test fehlgeschlagen"
+
+
 # ---------------------------------------------------------------------------
 # build_api_guard selbst - ohne FastAPI-App, reine Entscheidungslogik.
 # ---------------------------------------------------------------------------
@@ -164,10 +187,20 @@ async def _call_guard(
     await guard(_FakeConnection(), authorization=authorization, sec_websocket_protocol=subprotocol)
 
 
-async def test_guard_lets_everything_through_when_no_token_is_configured(guard_store):
+async def test_guard_rejects_everything_when_no_token_is_configured_and_no_session_exists(
+    guard_store,
+):
+    """Task 8: der bis dahin offene Zustand (kein Token konfiguriert -> der
+    Waechter laesst durch) entfaellt ersatzlos. Ohne Sitzung UND ohne Token
+    bleibt jede Anfrage abgelehnt, ganz gleich, was im Authorization-Header
+    steht - `guard_store` hat weder ein Passwort noch eine Sitzung."""
     guard = build_api_guard(None, guard_store)
-    await _call_guard(guard)  # wirft nicht
-    await _call_guard(guard, authorization="Bearer irgendwas")  # wirft auch dann nicht
+    with pytest.raises(HTTPException) as excinfo:
+        await _call_guard(guard)
+    assert excinfo.value.status_code == 401
+    with pytest.raises(HTTPException) as excinfo:
+        await _call_guard(guard, authorization="Bearer irgendwas")
+    assert excinfo.value.status_code == 401
 
 
 async def test_guard_rejects_a_missing_header_when_a_token_is_configured(guard_store):
@@ -267,22 +300,20 @@ def test_normalize_api_token_strips_the_outer_whitespace_of_a_real_token():
     assert normalize_api_token("  secret\n") == "secret"
 
 
-async def test_a_whitespace_only_token_leaves_the_api_open(guard_store):
-    """Der gemeldete Fehler: der Waechter hielt Leerraum fuer ein echtes
-    Geheimnis und sperrte den Dienst dauerhaft - ohne dass die Startwarnung
-    darauf hingewiesen haette. Offen MIT Warnung ist besser als gesperrt
-    ohne jede Diagnose."""
+async def test_a_whitespace_only_token_behaves_like_no_token_at_all(guard_store):
+    """Der urspruenglich gemeldete Fehler: der Waechter hielt Leerraum fuer
+    ein echtes Geheimnis, das kein HTTP-Header je uebertragen konnte, und
+    sperrte den Dienst dauerhaft - ohne dass die Startwarnung darauf
+    hingewiesen haette. Seit Task 8 bedeutet "kein Token" nicht mehr offen,
+    sondern denselben 401 wie ganz ohne Token (siehe
+    `test_guard_rejects_everything_when_no_token_is_configured_and_no_
+    session_exists` oben) - ein Leerraum-Token darf sich davon nicht
+    unterscheiden, sonst waeren Waechter und `normalize_api_token` wieder
+    auseinandergelaufen."""
     guard = build_api_guard("   ", guard_store)
-    await _call_guard(guard)  # wirft nicht
-
-
-def test_a_whitespace_only_token_triggers_the_startup_warning(caplog):
-    """Waechter und Warnung duerfen nicht auseinanderlaufen - beide fragen
-    `normalize_api_token`."""
-    with caplog.at_level(logging.WARNING):
-        _warn_if_missing_api_token("   ")
-    assert len(caplog.records) == 1
-    assert "Kein API-Token gesetzt" in caplog.records[0].message
+    with pytest.raises(HTTPException) as excinfo:
+        await _call_guard(guard)
+    assert excinfo.value.status_code == 401
 
 
 async def test_a_token_with_a_trailing_newline_is_usable_over_http(tmp_path, no_invoke):
@@ -295,49 +326,61 @@ async def test_a_token_with_a_trailing_newline_is_usable_over_http(tmp_path, no_
 
 
 # ---------------------------------------------------------------------------
-# Ohne Token: /api ist offen (Zustand vor Task 8, unveraendertes Verhalten).
+# Ohne Token, aber angemeldet: /api ist offen - bis auf die Fabric-Sicherung
+# (Task 8: der Zustand OHNE Anmeldung ist inzwischen ausnahmslos 401, siehe
+# oben `test_without_a_password_every_api_route_is_closed`. Diese Tests hier
+# pruefen die verbliebene Frage - reicht die Anmeldung allein, ohne Token,
+# fuer die vier gewoehnlichen `/api`-Router?).
 # ---------------------------------------------------------------------------
 
 
-async def test_without_token_devices_route_is_open(open_client):
-    client, _, _, _ = open_client
+async def test_without_a_token_a_signed_in_devices_route_is_open(open_client):
+    client, _, _, store = open_client
+    await _authenticate(store, client)
     response = await client.get("/api/devices")
     assert response.status_code == 200
 
 
-async def test_without_token_export_status_is_open(open_client):
-    client, _, _, _ = open_client
+async def test_without_a_token_a_signed_in_export_status_is_open(open_client):
+    client, _, _, store = open_client
+    await _authenticate(store, client)
     response = await client.get("/api/export/status")
     assert response.status_code == 200
 
 
-async def test_without_token_controls_route_is_open(open_client):
-    client, _, device_id, _ = open_client
+async def test_without_a_token_a_signed_in_controls_route_is_open(open_client):
+    client, _, device_id, store = open_client
+    await _authenticate(store, client)
     response = await client.get(f"/api/devices/{device_id}/controls")
     assert response.status_code == 200
 
 
-async def test_without_token_diagnostics_commands_is_open(open_client):
-    client, _, _, _ = open_client
+async def test_without_a_token_a_signed_in_diagnostics_commands_is_open(open_client):
+    client, _, _, store = open_client
+    await _authenticate(store, client)
     response = await client.get("/api/diagnostics/commands")
     assert response.status_code == 200
 
 
-async def test_fabric_backup_without_a_token_is_refused_with_403(open_client):
-    """Die einzige Ausnahme von "ohne Token bleibt `/api` offen" (Review-Fix
+async def test_fabric_backup_without_a_configured_token_is_refused_with_403(open_client):
+    """Die einzige Ausnahme von "angemeldet oeffnet jede /api-Route" (Review-Fix
     Fix 3, 2026-09-03): `matter_data_dir` ist in dieser Fixture gesetzt, die
     Route KOENNTE also echte Fabric-Zugangsdaten ausliefern. Genau das darf
-    ohne konfiguriertes Token nicht passieren - 403, weil eine Wiederholung
-    mit Zugangsdaten nicht helfen kann (es gibt keine)."""
-    client, _, _, _ = open_client
+    ohne konfiguriertes Token nicht passieren - selbst mit gueltiger Sitzung -,
+    403, weil eine Wiederholung mit Zugangsdaten nicht helfen kann (es gibt
+    keine)."""
+    client, _, _, store = open_client
+    await _authenticate(store, client)
     response = await client.get("/api/diagnostics/fabric-backup")
     assert response.status_code == 403
 
 
-async def test_fabric_backup_without_a_token_returns_no_data(open_client):
+async def test_fabric_backup_without_a_configured_token_returns_no_data(open_client):
     """Nicht nur ein anderer Statuscode - kein ZIP, keine Datei, nichts."""
-    client, _, _, _ = open_client
+    client, _, _, store = open_client
+    await _authenticate(store, client)
     response = await client.get("/api/diagnostics/fabric-backup")
+    assert response.status_code == 403
     assert response.headers["content-type"].startswith("application/json")
     assert "content-disposition" not in response.headers
     assert "LOXMATTER_API_TOKEN" in response.json()["detail"]
@@ -347,15 +390,18 @@ async def test_fabric_backup_with_a_whitespace_only_token_is_refused_too(tmp_pat
     """Ein Leerraum-Token gilt als "kein Token" - auch hier, sonst haetten
     Waechter und Sicherung zwei verschiedene Vorstellungen davon, was
     "gesetzt" heisst."""
-    async for client, _, _, _ in _build_client(tmp_path, no_invoke, api_token="  "):
+    async for client, _, _, store in _build_client(tmp_path, no_invoke, api_token="  "):
+        await _authenticate(store, client)
         response = await client.get("/api/diagnostics/fabric-backup")
         assert response.status_code == 403
 
 
-async def test_the_other_api_routes_stay_open_without_a_token(open_client):
-    """Die Gegenprobe zu den drei Tests darueber: NUR die Fabric-Sicherung
-    wird ohne Token verweigert, alles andere bleibt so offen wie vorher."""
-    client, _, device_id, _ = open_client
+async def test_the_other_api_routes_stay_open_for_a_signed_in_client_without_a_token(open_client):
+    """Die Gegenprobe zu den vier Tests darueber: NUR die Fabric-Sicherung
+    wird ohne konfiguriertes Token verweigert, alles andere bleibt fuer eine
+    angemeldete Sitzung offen."""
+    client, _, device_id, store = open_client
+    await _authenticate(store, client)
     for path in (
         "/api/devices",
         "/api/export/status",
@@ -621,12 +667,14 @@ async def test_websocket_live_is_accepted_with_the_correct_header(secured_client
     assert status is None
 
 
-async def test_websocket_live_is_accepted_without_a_header_when_no_token_is_configured(
+async def test_websocket_live_is_rejected_without_a_header_when_no_token_is_configured(
     open_client,
 ):
+    """Task 8: kein Token konfiguriert heisst nicht mehr automatisch offen -
+    ohne Sitzungscookie im Handshake bleibt auch `/api/live` bei 401."""
     _, app, _, _ = open_client
     status = await _websocket_handshake_status(app, "/api/live", headers=[])
-    assert status is None
+    assert status == 401
 
 
 async def test_websocket_live_is_accepted_with_the_token_in_the_subprotocol(secured_client):
@@ -658,13 +706,25 @@ async def test_websocket_live_echoes_the_bearer_marker_never_the_token(secured_c
     assert message["subprotocol"] == "bearer"
 
 
-async def test_websocket_live_answers_without_a_subprotocol_when_none_was_offered(open_client):
-    """Die Gegenprobe: ein Client ohne Subprotokoll-Angebot (kein Token
-    gesetzt, oder ein Nicht-Browser-Client mit echtem `Authorization`-Header)
-    darf keins zurueckbekommen - ein nicht angebotenes Subprotokoll ist nach
-    RFC 6455 ebenso ein Handshake-Fehler."""
-    _, app, _, _ = open_client
-    message = await _websocket_handshake(app, "/api/live", headers=[])
+async def test_websocket_live_answers_without_a_subprotocol_when_none_was_offered(secured_client):
+    """Die Gegenprobe zu `test_websocket_live_echoes_the_bearer_marker_never_
+    the_token` oben: ein Client ohne Subprotokoll-Angebot darf keins
+    zurueckbekommen - ein nicht angebotenes Subprotokoll ist nach RFC 6455
+    ebenso ein Handshake-Fehler. Seit Task 8 braucht auch dieser Handshake
+    einen gueltigen Nachweis, um ueberhaupt bis zum Accept zu kommen - hier
+    das Sitzungscookie, derselbe Weg wie bei
+    `test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol`
+    unten (dort ohne Interesse am Subprotokoll-Feld selbst)."""
+    client, app, _device_id, store = secured_client
+    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+    login = await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
+    assert login.status_code == 200
+    session_id = client.cookies.get("loxmatter_session")
+    assert session_id is not None
+
+    message = await _websocket_handshake(
+        app, "/api/live", headers=[(b"cookie", f"loxmatter_session={session_id}".encode())]
+    )
     assert message["type"] == "websocket.accept"
     assert message["subprotocol"] is None
 
@@ -690,20 +750,98 @@ async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secu
 
 
 # ---------------------------------------------------------------------------
-# Die Warnung im Log (cli.py) - sichtbar fuer einen Betrieb ohne Token.
+# Die Warnung im Log (cli.py) - sichtbar fuer einen Betrieb ohne Passwort
+# (Task 8: nicht mehr fuer einen Betrieb ohne Token - siehe
+# `_warn_if_no_password`-Docstring in cli.py).
 # ---------------------------------------------------------------------------
 
 
-def test_warn_if_missing_api_token_logs_a_clear_warning(caplog):
+def test_warn_if_no_password_logs_a_clear_warning(caplog, tmp_path):
+    store_path = tmp_path / "t.sqlite"
+    Store(store_path).close()  # legt die Datenbank an, ohne ein Passwort zu vergeben
     with caplog.at_level(logging.WARNING):
-        _warn_if_missing_api_token(None)
+        _warn_if_no_password(store_path)
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.WARNING
-    assert "Kein API-Token gesetzt" in caplog.records[0].message
-    assert "LOXMATTER_API_TOKEN" in caplog.records[0].message
+    assert "kein Passwort" in caplog.records[0].message
 
 
-def test_warn_if_missing_api_token_stays_silent_when_a_token_is_set(caplog):
+def test_warn_if_no_password_stays_silent_once_one_is_set(caplog, tmp_path):
+    store_path = tmp_path / "t.sqlite"
+    store = Store(store_path)
+    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+    store.close()
     with caplog.at_level(logging.WARNING):
-        _warn_if_missing_api_token("secret")
+        _warn_if_no_password(store_path)
     assert caplog.records == []
+
+
+def test_warn_if_no_password_has_no_token_parameter_to_silence_it() -> None:
+    """Ein konfiguriertes Token darf die Warnung nicht zum Schweigen bringen
+    (siehe `_warn_if_no_password`-Docstring: "ein konfiguriertes Token
+    bringt sie nicht zum Schweigen") - dafuer reicht der Blick auf die
+    Signatur: seit Task 8 gibt es gar keinen Token-Parameter mehr, ueber den
+    ein Aufrufer das versuchen koennte. Ein Regressionstest, der eine
+    versehentlich wieder eingefuehrte Token-Kopplung sofort auffaellig
+    macht."""
+    assert list(inspect.signature(_warn_if_no_password).parameters) == ["store_path"]
+
+
+# ---------------------------------------------------------------------------
+# Task 8: Ohne Passwort liefert `/api` nichts mehr aus - der bislang offene
+# Zustand (kein Token -> Waechter laesst durch) entfaellt ersatzlos.
+# ---------------------------------------------------------------------------
+
+
+async def test_without_a_password_every_api_route_is_closed(open_client):
+    """Die Verschaerfung aus Spec 4: bis hierher war genau dieser Zustand -
+    kein Passwort, kein Token - vollstaendig offen, mit nichts als einer
+    Warnung im Log."""
+    client, _app, device_id, _store = open_client
+    for path in [
+        "/api/devices",
+        f"/api/devices/{device_id}/controls",
+        "/api/export/status",
+        "/api/diagnostics/system",
+        "/api/diagnostics/fabric-backup",
+    ]:
+        response = await client.get(path)
+        assert response.status_code == 401, f"{path} lieferte ohne Passwort noch Daten aus"
+
+
+async def test_without_a_password_the_miniserver_routes_stay_open(open_client):
+    """`/cmd` und `/resync` bleiben in JEDEM Zustand offen - der Miniserver
+    kann weder Header noch Cookie mitschicken."""
+    client, _app, _device_id, _store = open_client
+    assert (await client.get("/resync")).status_code == 200
+    assert (await client.get("/health")).status_code == 200
+
+
+async def test_without_a_password_a_configured_token_still_works(secured_client):
+    """Der Bestandsfall unmittelbar nach dem Update: das Passwort fehlt
+    noch, das Token steht in der `.env` - Skripte duerfen dadurch nicht
+    abreissen."""
+    client, _app, _device_id, _store = secured_client
+    response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
+    assert response.status_code == 200
+
+
+async def test_a_password_alone_is_enough(open_client):
+    """Kein Token konfiguriert, aber angemeldet - der Normalfall nach der
+    Ersteinrichtung."""
+    client, _app, _device_id, store = open_client
+    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+    await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
+    assert (await client.get("/api/devices")).status_code == 200
+
+
+async def test_a_valid_token_wins_even_with_an_invalid_cookie_alongside(secured_client):
+    """Die Reihenfolge der beiden Nachweise (Review-Fund zu Task 6): das
+    Cookie wird zuerst geprueft, aber ein ungueltiges oder fremdes Cookie
+    darf einen gleichzeitig gueltigen Token-Header nicht ausstechen - sonst
+    koennte ein manipulierter Cookie-Wert ein Skript aussperren, das sich
+    korrekt mit `Authorization: Bearer <Token>` ausweist."""
+    client, _app, _device_id, _store = secured_client
+    client.cookies.set(SESSION_COOKIE, "erfunden")
+    response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
+    assert response.status_code == 200

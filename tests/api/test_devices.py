@@ -1,6 +1,6 @@
 import httpx2 as httpx
 import pytest
-from conftest import load_snapshot
+from conftest import authenticate, load_snapshot
 
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
@@ -19,6 +19,7 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client):
     app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
         yield c, store, device_id, fake_client
     store.close()
 
@@ -204,6 +205,7 @@ async def test_commissioning_without_a_matter_client_yields_503(tmp_path, no_inv
     app = build_app(store, no_invoke, fake_runtime(store))  # client defaults to None
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
         response = await c.post("/api/devices/commission", json={"code": "MT:ABC123"})
     assert response.status_code == 503
     store.close()
@@ -218,6 +220,7 @@ async def test_removal_without_a_matter_client_yields_503(tmp_path, no_invoke, f
     app = build_app(store, no_invoke, fake_runtime(store))  # nur 3 Argumente, wie in Phase 4
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
         response = await c.delete(f"/api/devices/{device_id}")
     assert response.status_code == 503
     store.close()

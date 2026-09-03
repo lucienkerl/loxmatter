@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
+from loxmatter.auth.passwords import hash_password
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.server import build_app
@@ -180,6 +181,13 @@ async def test_a_crashing_route_still_appears_in_the_command_log_and_still_raise
 
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
+        # Seit Task 8 verlangt auch `/api/diagnostics/commands` eine
+        # Anmeldung - ohne sie waere die folgende Antwort ein 401 statt der
+        # erwarteten Kommando-Liste, ganz unabhaengig vom hier eigentlich
+        # untersuchten Absturz-Pfad.
+        store.auth.set_password_hash(hash_password("test-passwort"))
+        login = await c.post("/auth/login", json={"password": "test-passwort"})
+        assert login.status_code == 200
         with pytest.raises(RuntimeError, match="Simulierter Programmfehler"):
             await c.get("/__boom__")
         entries = (await c.get("/api/diagnostics/commands")).json()

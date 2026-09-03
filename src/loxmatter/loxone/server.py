@@ -42,8 +42,10 @@ ruft virtuelle Ausgaenge ohne Header auf, ein Token dort wuerde die
 Loxone-Integration schlicht abschalten. `api_token` ist deshalb optional
 mit Default `None` - derselbe Grund wie bei `client`/`sender` oben: jeder
 bisherige Aufruf ohne das Argument laeuft unveraendert weiter, nur eben
-ohne Token-Schutz (mit einer Warnung im Log dafuer, siehe
-`cli._warn_if_missing_api_token`).
+ohne Token-Schutz. Seit dem WebUI-Login ersetzt eine angemeldete Sitzung
+das Token ohnehin fuer den Normalbetrieb; die Warnung im Log gilt seither
+dem fehlenden Passwort, nicht mehr dem fehlenden Token (siehe
+`cli._warn_if_no_password`).
 
 **Kommando-Log (Spec 10.5).** Die Middleware `_record_command` unten
 zeichnet JEDEN eingehenden HTTP-Aufruf auf dieser App auf - Methode, Pfad,
@@ -139,17 +141,18 @@ def normalize_api_token(token: str | None) -> str | None:
     """Die EINE Stelle, an der entschieden wird, ob ein Token gesetzt ist
     (Review-Fix Fix 2, 2026-09-03).
 
-    Waechter (`build_api_guard`) und Startwarnung
-    (`cli._warn_if_missing_api_token`) fragen beide hier - sonst koennten sie
-    auseinanderlaufen, und genau das war der gemeldete Fehler: ein Token, das
-    nur aus Leerraum besteht (ein abgeschnittener Zeilenumbruch aus einer
-    kopierten `.env`, `--api-token " "`), galt dem Waechter als echtes
-    Geheimnis, war aber ueber einen HTTP-Header gar nicht korrekt sendbar -
-    HTTP-Headerwerte enthalten keine Zeilenumbrueche, und fuehrender/
-    abschliessender Leerraum wird beim Parsen ohnehin verworfen (RFC 9110).
-    Der Dienst war damit dauerhaft gesperrt, und die Warnung, die genau
-    diesen Zustand haette melden sollen, blieb aus, weil das Token ja "nicht
-    None" war.
+    `build_api_guard` fragt hier - bis Task 8 fragte auch die Startwarnung
+    hier (`cli._warn_if_missing_api_token`); seit sie sich um das Passwort
+    statt um das Token dreht, fragt sie ausschliesslich den Store (siehe
+    `cli._warn_if_no_password`). Der urspruenglich gemeldete Fehler bleibt
+    trotzdem der Grund fuer diese Funktion: ein Token, das nur aus Leerraum
+    besteht (ein abgeschnittener Zeilenumbruch aus einer kopierten `.env`,
+    `--api-token " "`), galt dem Waechter als echtes Geheimnis, war aber
+    ueber einen HTTP-Header gar nicht korrekt sendbar - HTTP-Headerwerte
+    enthalten keine Zeilenumbrueche, und fuehrender/abschliessender
+    Leerraum wird beim Parsen ohnehin verworfen (RFC 9110). Der Token-Pfad
+    war damit dauerhaft unbenutzbar, ohne dass irgendetwas darauf
+    hingewiesen haette, weil das Token ja "nicht None" war.
 
     Deshalb zwei Schritte, beide hier und nirgends sonst:
 
@@ -158,10 +161,10 @@ def normalize_api_token(token: str | None) -> str | None:
       Zeilenumbruch dasteht - alles andere waere ein Geheimnis, das niemand
       je uebertragen kann.
     - Bleibt nichts uebrig, ist das Ergebnis `None` - also exakt derselbe
-      Fall wie "kein Token gesetzt", mit derselben Warnung im Log und
-      denselben Folgen (`/api` offen, Fabric-Sicherung gesperrt, siehe
-      `api.diagnostics`). Ein offener Dienst MIT Warnung ist besser als ein
-      dauerhaft gesperrter ohne jede Diagnose."""
+      Fall wie "kein Token gesetzt", mit denselben Folgen: der Token-Pfad
+      im Waechter (`build_api_guard`) bleibt verschlossen, und die
+      Fabric-Sicherung bleibt gesperrt (siehe `api.diagnostics`) - beides
+      unabhaengig davon, ob daneben noch eine Sitzung greift."""
     if token is None:
         return None
     stripped = token.strip()
@@ -251,16 +254,14 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
     das erledigt `api.live` (siehe dort; zurueckgegeben wird `"bearer"`,
     niemals das Token).
 
-    Kein Token gesetzt - `token is None` oder ein Token aus reinem Leerraum,
-    beides entscheidet `normalize_api_token` (siehe dort) - laesst den
-    Wächter unveraendert durch, derselbe Zustand wie vor Task 8, mit der
-    einen Ausnahme der Fabric-Sicherung (siehe `api.diagnostics`). Das ist
-    der einzig sinnvolle Standard: der Miniserver-Pfad braucht ohnehin kein
-    Token, und ein Dienst, der ohne explizit gesetztes Token nicht mehr
-    starten wuerde, waere fuer eine Testumgebung oder ein Erstinbetriebnahme-
-    ohne-Anleitung schlicht unbenutzbar. Die Warnung, die dafuer beim Start
-    im Log erscheint (siehe `cli._warn_if_missing_api_token`), ist der
-    Ausgleich dafuer.
+    **Es gibt keinen offenen Zustand mehr.** Bis hierher liess ein Dienst
+    ohne konfiguriertes Token jede `/api`-Route durch und begnuegte sich mit
+    einer Warnung im Log - wer die Warnung ueberlas, betrieb eine offene
+    Bruecke, ohne es zu merken. Seit dem WebUI-Login gilt: ohne gueltiges
+    Cookie und ohne gueltiges Token endet jede Anfrage hier mit 401, auch
+    wenn weder Passwort noch Token eingerichtet sind. Der Weg hinein ist
+    dann ausschliesslich die Ersteinrichtung unter `/auth/setup`, die
+    ausserhalb dieses Waechters haengt (siehe `api/auth.py`).
 
     Gilt fuer HTTP-Routen UND fuer die WebSocket-Route `/api/live` gleichermassen:
     `app.include_router(..., dependencies=[Depends(guard)])` loest diese
@@ -284,8 +285,7 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
     WebSocket-Handshake von selbst mit (gleicher Ursprung), weshalb der
     Browser dort seit dem Login kein Subprotokoll mehr braucht."""
     # Einmal beim Bauen normalisiert, nicht bei jeder Anfrage: `None` und ein
-    # reines Leerraum-Token sind derselbe Fall, und zwar genau derselbe, den
-    # `cli._warn_if_missing_api_token` meldet - siehe `normalize_api_token`.
+    # reines Leerraum-Token sind derselbe Fall - siehe `normalize_api_token`.
     expected = normalize_api_token(token)
 
     async def guard(
@@ -296,13 +296,20 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
         session_id = conn.cookies.get(SESSION_COOKIE)
         if session_id is not None and session_is_valid(store.auth, session_id):
             return
-        if expected is None:
-            return
-        presented = _token_from_authorization(authorization)
-        if presented is None:
-            presented = _token_from_websocket_subprotocol(sec_websocket_protocol)
-        if presented is None or not _tokens_match(presented, expected):
-            raise HTTPException(status_code=401, detail="Ungültiges oder fehlendes Token")
+        if expected is not None:
+            presented = _token_from_authorization(authorization)
+            if presented is None:
+                presented = _token_from_websocket_subprotocol(sec_websocket_protocol)
+            if presented is not None and _tokens_match(presented, expected):
+                return
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Anmeldung erforderlich – bitte die Oberfläche öffnen und anmelden. "
+                "Skripte verwenden `Authorization: Bearer <Token>` mit dem unter "
+                "LOXMATTER_API_TOKEN gesetzten Wert."
+            ),
+        )
 
     return guard
 

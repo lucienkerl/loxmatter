@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx2 as httpx
 import pytest
-from conftest import load_snapshot
+from conftest import authenticate, load_snapshot
 from typer.testing import CliRunner
 
 from loxmatter.cli import app as cli_app
@@ -35,6 +35,7 @@ async def api(
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
         yield client, store, device_id
     store.close()
 
@@ -205,6 +206,7 @@ async def test_an_empty_installation_yields_an_empty_preview_and_a_non_empty_zip
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
         preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
         assert preview["devices"] == []
 
@@ -251,6 +253,7 @@ async def test_api_export_writes_the_same_database_as_the_cli(tmp_path, no_invok
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
         devices = (await client.get("/api/devices")).json()
         assert len(devices) == 1  # nicht zwei - CLI und API sehen dasselbe Geraet
         device_id = devices[0]["id"]
