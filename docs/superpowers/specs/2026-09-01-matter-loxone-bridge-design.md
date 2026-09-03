@@ -710,7 +710,9 @@ welche Geräte danach als exportiert vermerkt sind). Pro Gerät ist sichtbar, wa
 exportiert wurde und ob sich seither Signale geändert haben. Enthält die Kurzanleitung
 und die einmaligen Systemvorlagen.
 
-**4. System** — Systemcheck, Logs (UDP-Mitschnitt und Kommando-Log), Backup der
+**4. System** — Systemcheck, Live-Feed (Logzeilen, UDP-Mitschnitt und Kommando-Log,
+laufend statt einmalig — seit 2026-09-03, siehe 10.5 und den
+[Live-Feed-Entwurf](2026-09-03-diagnose-livefeed-design.md)), Backup der
 Fabric-Credentials. Der Systemcheck prüft vier Dinge: matter-server, die
 Signalschlüssel-Datenbank, den lokalen IPv6-Pfad und den Routing-Pfad zum Miniserver
 (10.5). **OTBR und Thread-Netz prüft er nicht** — festgehalten als offener Punkt 9 in
@@ -739,6 +741,19 @@ Bridge dupliziert es nicht.
 Ein WebSocket vom Backend zur SPA schiebt Attribut- und Event-Änderungen sowie
 Online-Status durch. Dieselbe Subscription, die den UDP-Sender speist — kein zweiter
 Pfad, kein Polling.
+
+**Seit 2026-09-03 gibt es davon zwei, nicht einen** (Live-Feed für Logs,
+UDP-Mitschnitt und Kommando-Log, siehe 10.5 und
+[Entwurf](2026-09-03-diagnose-livefeed-design.md)): `/api/live` bleibt der
+Wertekanal oben, `/api/diagnostics/live` ist ein zweiter, eigener WebSocket
+für die Ansicht „System". Getrennt, nicht angehängt, weil beide verschiedene
+Lebensdauern haben (der Wertekanal läuft, solange irgendeine Ansicht offen
+ist; der Diagnosekanal nur, solange die Ansicht „System" offen ist) und
+verschiedene Mengen — ein vergessener Browsertab auf „Geräte" bekäme sonst
+dauerhaft jede Logzeile mitgeliefert. Beide teilen sich dieselbe
+WebSocket-Mechanik (`api/streaming.py`: begrenzte Warteschlange,
+Trennungserkennung, Subprotokoll-Aushandlung fürs Token) und denselben
+Zugangsschutz (9.1).
 
 ### 8.4 Rohes Attributschreiben: Erlaubnisliste (Task 4, 2026-09-02; Befund berichtigt,
 Review-Fix Important #2, 2026-09-02)
@@ -1024,6 +1039,23 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
   filterbar pro Gerät. Beantwortet „sendet die Bridge überhaupt etwas?" ohne Wireshark.
 - **Kommando-Log**: eingehende HTTP-Aufrufe vom Miniserver mit Ergebnis. Beantwortet
   die Gegenrichtung.
+- **Logzeilen** (seit 2026-09-03): ein `logging.Handler`
+  (`LogBufferHandler`, `diagnostics/logbuffer.py`) hält die letzten 500
+  Zeilen des Loggers `loxmatter` — nicht des Root-Loggers, die Zeilen
+  fremder Bibliotheken gehören nicht in eine Bedienoberfläche — ab Stufe
+  INFO in einem Ring. Dieselben Zeilen, die auch `docker logs` zeigt, nur
+  ohne Shell-Zugriff auf den Host. `install_log_buffer()` setzt dafür beim
+  Start sowohl die Stufe des Handlers als auch die des Loggers selbst —
+  ohne Letzteres bliebe `loxmatter` auf der von Python vorgegebenen
+  effektiven Stufe WARNING, und keine `logger.info(...)`-Zeile im ganzen
+  Projekt erreichte den Ring, egal welche Stufe der Handler trägt (siehe
+  Docstring dort für die Begründung).
+- **Live-Kanal** (`GET /api/diagnostics/live`, WebSocket, seit 2026-09-03):
+  schiebt UDP-Mitschnitt, Kommando-Log und Logzeilen laufend statt
+  einmalig zur Ansicht „System" — mit einer Momentaufnahme beim Verbinden,
+  danach live. Ersetzt das manuelle Neuladen; Details, Nachrichtenformat
+  und Abgrenzung zu `/api/live` (8.3):
+  [Live-Feed-Entwurf](2026-09-03-diagnose-livefeed-design.md).
 - **Vorlagen-Vorschau**: vor dem Download zeigt die WebUI, welche Objekte und Befehle
   entstehen und wie viele.
 - **Systemcheck** (`GET /api/diagnostics/system`): vier Zeilen, jede grün oder rot mit

@@ -54,12 +54,36 @@ ein Fehler dort wird verschluckt und **nicht geloggt**. Das ist die eine Stelle
 im Projekt, an der ein verschluckter Fehler nicht durch einen Logeintrag
 ausgeglichen werden darf.
 
+Die Absicherung dafür ist eine Wiedereintrittssperre um die
+Beobachterschleife, thread-lokal geführt (`LogBufferHandler`,
+`diagnostics/logbuffer.py`, umgesetzt). **Sie deckt bewusst nicht
+`self.format(record)` selbst ab** — das ist eine Lücke, keine Behauptung des
+Gegenteils: ein Log-Argument, dessen `__str__`/`__repr__` seinerseits über
+denselben Logger protokolliert, rekursiert durch `format()` ungebremst bis
+`RecursionError`, ohne dass die Sperre je zum Zug käme. Kein heutiger
+Aufrufer im Projekt tut das (alle `%`-Argumente sind einfache Werte); wer die
+Sperre auf `format()` ausdehnt, muss den Eintrag trotzdem an den Ring
+anhängen, bevor er abbricht — die Zeile soll nicht verlorengehen, nur weil
+sie den Fehler ausgelöst hat.
+
 **Er läuft im aufrufenden Thread.** `logging.Handler.emit` wird dort
 ausgeführt, wo die Zeile entsteht — bei diesem Projekt auch aus aiohttp und dem
-chip-SDK, also aus fremden Threads. Der Handler hängt deshalb nur an den Ring
-an (`collections.deque.append` ist unter CPython atomar) und weckt den
-Event-Loop über `loop.call_soon_threadsafe`. Er wartet nie und kennt keine
-asyncio-Primitive.
+chip-SDK, also aus fremden Threads. Der Handler selbst hängt deshalb nur an
+den Ring an (`collections.deque.append` ist unter CPython atomar) und ruft
+seine Beobachter synchron im selben Thread auf; er wartet nie und kennt
+selbst keine asyncio-Primitive (siehe `diagnostics/logbuffer.py`,
+`LogBufferHandler.add_observer`: ein Beobachter darf laut Vertrag ebenfalls
+nicht blockieren). **Das Wecken des Event-Loops ist deshalb Sache des
+jeweiligen Beobachters, nicht des Handlers** — anders, als eine frühere
+Fassung dieses Entwurfs hier behauptete. Für den Diagnose-Feed ist dieser
+Beobachter `on_log` in `api/diagnostics_live.py`: er hält den laufenden Loop
+fest, bevor er sich anmeldet, und reiht über
+`loop.call_soon_threadsafe(queue.put, ...)` ein statt `queue.put(...)` direkt
+aufzurufen — die erste Umsetzung tat das nicht, und eine Logzeile aus einem
+echten fremden Thread wäre unter Umständen nie angekommen, weil ein
+bereits schlafender Event-Loop nur über `call_soon_threadsafe` (nicht über
+gewöhnlichen Queue-Zugriff) zuverlässig aus einem fremden Thread geweckt
+wird.
 
 **Er verschiebt keine Geheimnisse.** Der Feed zeigt, was ohnehin in
 `docker logs` steht, und liegt hinter demselben Token-Schutz wie alle
@@ -124,6 +148,21 @@ einmalig. Dazu vier Bedienelemente:
 Der Filter „ausblenden" wirkt nur auf die **Anzeige**, nicht auf den Ring: wer
 ihn ausschaltet, sieht die vorhandenen Zeilen sofort, ohne auf neue zu warten.
 
+**Woran „Heartbeat und Resend" erkannt wird, entschied erst die Umsetzung —
+dieser Entwurf ließ es offen.** Der erste Anlauf maß die Ankunftsrate im
+Browser (ein `DATAGRAM_BURST_GAP_MS`-Fenster) und blendete alles aus, was zu
+schnell aufeinanderfolgte — und traf damit auch einen echten Tastendruck:
+`Runtime.on_event` sendet Impuls und Zähler binnen Mikrosekunden
+hintereinander, genau das Muster, das die Heuristik für Rauschen hielt. Die
+tatsächlich umgesetzte Fassung fragt stattdessen eine Tatsache statt einer
+Vermutung ab: `UdpSender.send` reicht sein `force`-Argument unverändert als
+Feld `forced` bis in `DatagramLogEntry` und von dort in die Live-Nachricht
+durch (`api/diagnostics_live.py`). `force=True` setzen im ganzen Projekt
+genau zwei Aufrufer, `Runtime.resend_all()` (Full-Resend) und der Heartbeat
+— `False` heißt dagegen immer eine echte Wertänderung, wie schnell sie auch
+kommt. `hideNoise` in `app.js` filtert seither auf `!entry.forced`, nicht
+mehr auf die Ankunftsrate.
+
 Der Kanal geht auf beim Wechsel auf „System" und beim Verlassen wieder zu.
 **Genau eine Verbindung** — die Lehre aus Phase 5, wo ein zusätzliches
 `x-init="init()"` pro Tab dauerhaft zwei offene Kanäle erzeugte, weil Alpine 3
@@ -162,10 +201,22 @@ Alle Tests laufen ohne Hardware und ohne Netzzugriff.
 
 ## 7. Offene Punkte
 
-1. Ob die Zeilenobergrenze im Browser und die Ringgröße im Dienst verschieden
-   sein sollten, ist ungeprüft. Vorschlag: gleich, bis jemand einen Grund
-   nennt.
-2. Der Stufenfilter wirkt clientseitig. Ein Dienst, der auf DEBUG läuft, füllt
-   den Ring damit trotzdem mit Debug-Zeilen. Bis jemand DEBUG im Betrieb
-   braucht: unverändert lassen.
-3. Ein Herunterladen des Mitschnitts als Datei ist nicht Teil dieses Entwurfs.
+1. **Entschieden: gleich.** `DIAGNOSTICS_LINE_LIMIT` in `app.js` und alle drei
+   Ringgrößen im Dienst (`DATAGRAM_LOG_SIZE` in `loxone/sender.py`,
+   `COMMAND_LOG_SIZE` in `loxone/server.py`, `LOG_BUFFER_SIZE` in
+   `diagnostics/logbuffer.py`) stehen auf 500 — wie vorgeschlagen, ohne dass
+   ein Grund für eine Abweichung genannt wurde.
+2. **Teilweise entschärft, nicht geschlossen.** Der Stufenfilter wirkt
+   weiterhin clientseitig — daran hat sich nichts geändert. Was sich
+   geändert hat: `install_log_buffer()` setzt beim Start nicht nur die Stufe
+   des Handlers, sondern auch die des Loggers `loxmatter` selbst (siehe
+   Abschnitt 2.3-Ergänzung oben) — ohne diese Zeile hätte die Vorgabe „ab
+   INFO" gar nichts erfasst, weil in diesem Projekt sonst niemand die
+   Loggerstufe setzt. Solange niemand `install_log_buffer(level=logging.
+   DEBUG)` aufruft — wofür `loxmatter run` heute keinen Schalter anbietet —,
+   kann DEBUG den Ring gar nicht erreichen; der ursprüngliche Punkt bleibt
+   aber unverändert gültig, sobald das einmal möglich wird: der Ring speichert
+   dann ungefiltert, das Stufenfilter der Oberfläche wirkt weiter nur auf die
+   Anzeige.
+3. Ein Herunterladen des Mitschnitts als Datei ist weiterhin nicht Teil
+   dieses Entwurfs.
