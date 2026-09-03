@@ -365,7 +365,7 @@ async def test_run_stops_everything_after_a_clean_shutdown(monkeypatch, tmp_path
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
-    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, https_port=0)
 
     assert runtimes[0].started is True
     assert runtimes[0].resend_calls == 1
@@ -384,7 +384,7 @@ async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_pa
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
-    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, https_port=0)
 
     assert runtimes[0].seed_calls == 1
     assert runtimes[0].call_order == ["seed", "resend"]
@@ -400,7 +400,7 @@ async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_
     store = Store(tmp_path / "t.sqlite")
 
     with pytest.raises(typer.Exit):
-        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, https_port=0)
 
     assert runtimes[0].started is False
     assert runtimes[0].stop_calls == 1  # sicher aufrufbar, auch ungestartet
@@ -416,7 +416,7 @@ async def test_run_cleans_up_when_serve_raises(monkeypatch, tmp_path):
     store = Store(tmp_path / "t.sqlite")
 
     with pytest.raises(OSError, match="Adresse"):
-        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+        await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, https_port=0)
 
     assert runtimes[0].stop_calls == 1
     assert senders[0].close_calls == 1
@@ -434,7 +434,9 @@ async def test_run_cleans_up_on_cancellation(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
-    task = asyncio.create_task(cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080))
+    task = asyncio.create_task(
+        cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, https_port=0)
+    )
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -468,7 +470,7 @@ async def test_run_continues_cleanup_when_one_step_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
-    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, https_port=0)
 
     assert runtimes[0].stop_calls == 1
     assert senders[0].close_calls == 1  # trotz gescheitertem runtime.stop()
@@ -504,7 +506,9 @@ async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
-    task = asyncio.create_task(cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080))
+    task = asyncio.create_task(
+        cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080, https_port=0)
+    )
     await asyncio.sleep(0.05)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):

@@ -19,16 +19,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import sqlite3
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import Final, NoReturn
 
 import typer
 import uvicorn
+from fastapi import FastAPI
 from matter_server.client.exceptions import CannotConnect
 
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
@@ -56,6 +59,7 @@ from loxmatter.matter.discovery import (
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
+from loxmatter.tls import TlsState, prepare_tls
 
 logger = logging.getLogger(__name__)
 
@@ -485,6 +489,24 @@ def run(
         "statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die "
         "dazugehörige Volume-Einhängung.",
     ),
+    https_port: int = typer.Option(
+        8443,
+        "--https-port",
+        help="Port für den zusätzlichen HTTPS-Listener der WebUI. `0` schaltet "
+        "ihn ab. Er liefert dieselbe App wie --listen; `/cmd` und `/resync` "
+        "bleiben davon unberührt und weiter über HTTP erreichbar, weil der "
+        "Miniserver ein selbstsigniertes Zertifikat nicht akzeptiert. HTTPS "
+        "wird gebraucht, damit der Browser die Kamera für den QR-Scan "
+        "freigibt — über eine LAN-Adresse ohne TLS bleibt sie gesperrt.",
+    ),
+    tls_dir: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--tls-dir",
+        help="Wo Zertifikat und Schlüssel liegen. Ohne Angabe ein "
+        "Unterverzeichnis `tls` neben der Datenbank. Wird beim Start "
+        "angelegt und befüllt; schlägt das fehl, startet der Dienst "
+        "trotzdem — nur ohne HTTPS und mit einer Warnung im Log.",
+    ),
 ) -> None:
     """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein.
 
@@ -513,7 +535,99 @@ def run(
         _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
 
     _warn_if_no_password(store)
-    asyncio.run(_run(store, url, miniserver, port, listen, matter_data_dir, host, api_token))
+    asyncio.run(
+        _run(
+            store,
+            url,
+            miniserver,
+            port,
+            listen,
+            matter_data_dir,
+            host,
+            api_token,
+            https_port,
+            tls_dir if tls_dir is not None else resolved_store_path.parent / "tls",
+        )
+    )
+
+
+# Wie lange nach einem Abbruch auf das geordnete Ende beider Server gewartet
+# wird, bevor der Prozess ohnehin endet. Grosszuegig genug fuer offene
+# WebSocket-Verbindungen (`/api/live`), kurz genug, dass ein zweites Strg-C
+# nicht noetig wird.
+SHUTDOWN_TIMEOUT_SECONDS: Final = 10.0
+
+
+def _neutralize_signal_capture(server: uvicorn.Server) -> None:
+    """Nimmt einem `uvicorn.Server` das Abfangen von SIGINT/SIGTERM.
+
+    Der Grund steht in Entwurf 4.2 und ist am installierten Quelltext
+    abgelesen: `Server.serve()` betritt `capture_signals()`, und das setzt
+    seine Handler mit `signal.signal(sig, self.handle_exit)`. Zwei Server im
+    selben Prozess bedeuten damit, dass der zweite den Handler des ersten
+    UEBERSCHREIBT - bei einem Strg-C setzt nur der zweite sein
+    `should_exit`, der erste bemerkt nichts und laeuft weiter. Der Dienst
+    liesse sich nicht mehr beenden, mit einer Ursache, die in keinem Log
+    steht.
+
+    Ersetzt wird instanzweise, nicht auf der Klasse: ein anderer Aufrufer
+    von `uvicorn` im selben Prozess (heute keiner, morgen vielleicht ein
+    Test) soll davon unberuehrt bleiben.
+
+    Ohne uvicorns Handler bleibt es bei dem Abbruchweg, den `_run`s
+    Docstring ohnehin beschreibt - der SIGINT-Handler, den `asyncio.run`
+    seit Python 3.11 selbst installiert, bricht den `_run`-Task ab.
+    """
+
+    @contextlib.contextmanager
+    def _no_capture() -> Iterator[None]:
+        yield
+
+    server.capture_signals = _no_capture  # type: ignore[method-assign]
+
+
+def _server_configs(
+    app: FastAPI, host: str, listen: int, tls_state: TlsState
+) -> list[uvicorn.Config]:
+    """Eine Konfiguration fuer HTTP, bei eingerichtetem TLS eine zweite fuer
+    HTTPS - beide auf DERSELBEN App (Entwurf 4.1).
+
+    `/cmd` ist ueber HTTPS damit ebenfalls erreichbar und dort schlicht
+    ungenutzt. Es dort zu sperren hiesse, dieselbe App an zwei Stellen
+    unterschiedlich zusammenzubauen, fuer einen Gewinn von null."""
+    configs = [uvicorn.Config(app, host=host, port=listen, log_level="info")]
+    if tls_state.material is not None and tls_state.port is not None:
+        configs.append(
+            uvicorn.Config(
+                app,
+                host=host,
+                port=tls_state.port,
+                log_level="info",
+                ssl_certfile=str(tls_state.material.certificate),
+                ssl_keyfile=str(tls_state.material.private_key),
+            )
+        )
+    return configs
+
+
+async def _serve_forever(servers: list[uvicorn.Server]) -> None:
+    """Laesst alle Server laufen und beendet bei einem Abbruch ALLE.
+
+    `asyncio.shield` ist hier der Kern: ohne es wuerde der Abbruch die
+    `serve()`-Tasks unmittelbar abbrechen, mitten in einer Anfrage, statt
+    sie ueber `should_exit` geordnet auslaufen zu lassen. Mit ihm laufen die
+    Tasks weiter, waehrend dieser Rahmen bereits die Abbruch-Ausnahme
+    bekommt - dann wird `should_exit` gesetzt und auf ihr Ende gewartet.
+    Der `raise` am Schluss reicht den Abbruch weiter an `_run`, dessen
+    `finally`-Block Laufzeit, Sender und Client schliesst."""
+    tasks = [asyncio.create_task(server.serve()) for server in servers]
+    try:
+        await asyncio.shield(asyncio.gather(*tasks))
+    except asyncio.CancelledError:
+        for server in servers:
+            server.should_exit = True
+        await asyncio.wait(tasks, timeout=SHUTDOWN_TIMEOUT_SECONDS)
+        raise
 
 
 async def _run(
@@ -525,6 +639,8 @@ async def _run(
     matter_data_dir: Path | None = None,
     host: str = "0.0.0.0",  # Standard wie in `run` — der Miniserver muss den Dienst erreichen
     api_token: str | None = None,
+    https_port: int = 8443,
+    tls_dir: Path | None = None,
 ) -> None:
     """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
 
@@ -543,14 +659,23 @@ async def _run(
     dem vorbei ungefangen durch: ein Strg-C soll den Abbruch weiterreichen,
     nicht als Aufräumfehler verschluckt werden.
 
-    Zum eigentlichen Abbruchverhalten: `uvicorn.Server.serve()` fängt
-    SIGINT/SIGTERM selbst ab (`Server.capture_signals`) und kehrt bei einem
-    ersten Strg-C geordnet zurück, statt eine Ausnahme zu werfen — der
-    `finally`-Block unten läuft in diesem Fall wie bei jedem anderen reguären
-    Ende auch. `asyncio.run()` selbst installiert seit Python 3.11 zusätzlich
-    einen eigenen SIGINT-Handler, der bei einem Strg-C außerhalb von
-    `serve()` (z. B. während `client.connect()`) den gesamten `_run`-Task
-    abbricht — auch das erreicht `finally` als normale Abbruch-Ausnahme.
+    Zum eigentlichen Abbruchverhalten (seit Task 3 zwei Listener, HTTP und
+    optional HTTPS, auf derselben App - siehe `_server_configs`): jeder
+    `uvicorn.Server` wuerde in `serve()` eigene SIGINT/SIGTERM-Handler
+    installieren (`Server.capture_signals`), und bei zwei Servern im selben
+    Prozess ueberschriebe der zweite den Handler des ersten - ein Strg-C
+    beendete dann nur einen, der andere liefe unbemerkt weiter. Deshalb wird
+    jeder Server vor dem Start einzeln neutralisiert
+    (`_neutralize_signal_capture`) und keiner faengt SIGINT/SIGTERM mehr
+    selbst ab. Ein Strg-C bleibt dadurch beim SIGINT-Handler, den
+    `asyncio.run()` seit Python 3.11 selbst installiert: der bricht den
+    gesamten `_run`-Task ab, unabhaengig davon, ob der Abbruch waehrend
+    `client.connect()`, waehrend `serve()` oder sonstwo eintrifft.
+    `_serve_forever` faengt diesen Abbruch ab, setzt `should_exit` auf ALLEN
+    Servern und wartet geordnet auf ihr Ende, bevor sie die Abbruch-Ausnahme
+    weiterreicht - der `finally`-Block unten laeuft also in jedem Fall als
+    Reaktion auf eine Abbruch-Ausnahme, nicht mehr auf eine regulaere
+    Rueckkehr von `serve()`.
     """
     sender = UdpSender(miniserver, port)
     runtime = Runtime(store, sender)
@@ -580,21 +705,27 @@ async def _run(
         # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
 
-        config = uvicorn.Config(
-            build_app(
-                store,
-                invoke,
-                runtime,
-                client=client,
-                sender=sender,
-                matter_data_dir=matter_data_dir,
-                api_token=api_token,
-            ),
-            host=host,
-            port=listen,
-            log_level="info",
+        # TLS zuerst, dann die App: `build_app` braucht den Zustand, um
+        # `/ca.crt` auszuliefern und `/api/diagnostics/tls` zu beantworten.
+        # `prepare_tls` wirft nie (siehe dort) - schlaegt die Erzeugung fehl,
+        # laeuft der Dienst wie bisher nur ueber HTTP.
+        tls_state = prepare_tls(tls_dir if tls_dir is not None else Path("tls"), https_port)
+        app = build_app(
+            store,
+            invoke,
+            runtime,
+            client=client,
+            sender=sender,
+            matter_data_dir=matter_data_dir,
+            api_token=api_token,
+            tls_state=tls_state,
         )
-        await uvicorn.Server(config).serve()
+        servers = [
+            uvicorn.Server(config) for config in _server_configs(app, host, listen, tls_state)
+        ]
+        for server in servers:
+            _neutralize_signal_capture(server)
+        await _serve_forever(servers)
     finally:
         try:
             await runtime.stop()
