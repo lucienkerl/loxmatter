@@ -59,6 +59,7 @@
   - `@dataclass(frozen=True) class TlsMaterial` mit `ca_certificate: Path`, `certificate: Path`, `private_key: Path`, `addresses: tuple[str, ...]`, `not_valid_after: datetime.datetime`
   - `@dataclass(frozen=True) class TlsState` mit `material: TlsMaterial | None`, `port: int | None`, `error: str | None`
   - `def local_ipv4_addresses() -> list[str]`
+  - `def _filter_addresses(found: set[str]) -> list[str]`
   - `def ensure_tls_material(tls_dir: Path) -> TlsMaterial` (wirft `TlsUnavailableError`)
   - `def prepare_tls(tls_dir: Path, port: int) -> TlsState` (wirft **nie**)
   - Modulkonstanten `CA_FILE`, `CA_KEY_FILE`, `SERVER_FILE`, `SERVER_KEY_FILE`, `CRYPTOGRAPHY_AVAILABLE`, `SERVER_VALID_DAYS`, `CA_VALID_DAYS`
@@ -178,15 +179,30 @@ def test_the_private_keys_are_readable_by_nobody_else(tmp_path):
         assert (tmp_path / name).stat().st_mode & 0o077 == 0
 
 
-def test_the_certificate_covers_localhost_and_every_local_address(tmp_path):
-    material = ensure_tls_material(tmp_path)
+def test_the_certificate_always_covers_localhost(tmp_path):
+    ensure_tls_material(tmp_path)
     names = _san(tmp_path / "server.crt")
 
     assert "localhost" in names["dns"]
     assert "127.0.0.1" in names["ip"]
     assert "::1" in names["ip"]
-    for address in material.addresses:
-        assert address in names["ip"]
+
+
+def test_the_certificate_covers_every_address_it_was_given(tmp_path, monkeypatch):
+    """Die Adressliste wird hier FEST vorgegeben, statt die echte zu
+    benutzen: `local_ipv4_addresses()` liefert in einer Sandbox ohne
+    Netzwerk eine leere Liste, und eine Schleife darueber liefe leer durch -
+    ein gruener Test, der nichts geprueft hat. Die Suite soll laut README
+    ohne Netzwerkzugriff laufen, also darf ihr Ergebnis nicht davon
+    abhaengen, ob gerade ein Kabel steckt."""
+    monkeypatch.setattr(tls, "local_ipv4_addresses", lambda: ["192.168.178.42", "10.0.0.7"])
+
+    material = ensure_tls_material(tmp_path)
+    names = _san(tmp_path / "server.crt")
+
+    assert material.addresses == ("192.168.178.42", "10.0.0.7")
+    assert "192.168.178.42" in names["ip"]
+    assert "10.0.0.7" in names["ip"]
 
 
 def test_a_second_call_reuses_what_is_already_there(tmp_path):
@@ -277,9 +293,23 @@ def test_port_zero_switches_https_off_without_an_error(tmp_path):
 
 
 def test_local_addresses_never_contain_loopback():
-    """127.0.0.1 wird ohnehin fest hinzugefuegt - stuende es zusaetzlich in
-    dieser Liste, taeuschte der DHCP-Vergleich in `ensure_tls_material` eine
-    Aenderung vor, wo keine ist."""
+    """127.0.0.1 wird in `_build_server_certificate` ohnehin fest
+    hinzugefuegt - stuende es zusaetzlich in dieser Liste, taeuschte der
+    Vergleich in `ensure_tls_material` eine Aenderung vor, wo keine ist.
+
+    Der Filter wird an einer FESTEN Eingabe geprueft, nicht am echten
+    Netzwerk: ohne Netz ist die echte Liste leer, und eine Schleife darueber
+    liefe leer durch. `_filter_addresses` ist genau deshalb eine eigene
+    Funktion - sie ist der Teil von `local_ipv4_addresses`, der eine
+    pruefbare Regel enthaelt."""
+    found = {"127.0.0.1", "127.0.1.1", "192.168.178.42", "10.0.0.7"}
+
+    assert tls._filter_addresses(found) == ["10.0.0.7", "192.168.178.42"]
+
+
+def test_the_real_address_lookup_returns_no_loopback(tmp_path):
+    """Dieselbe Regel am echten Aufruf. Er darf eine leere Liste liefern
+    (kein Netz) - was er nicht darf, ist Loopback zurueckgeben."""
     for address in tls.local_ipv4_addresses():
         assert not address.startswith("127.")
 ```
@@ -442,6 +472,15 @@ def local_ipv4_addresses() -> list[str]:
     except (OSError, socket.gaierror):
         pass
 
+    return _filter_addresses(found)
+
+
+def _filter_addresses(found: set[str]) -> list[str]:
+    """Der pruefbare Teil von `local_ipv4_addresses`: Loopback raus, sortiert.
+
+    Eigene Funktion, damit die Regel an einer festen Eingabe pruefbar ist -
+    die echte Ermittlung liefert in einer Sandbox ohne Netz eine leere
+    Menge, und ein Test darueber liefe leer durch."""
     return sorted(address for address in found if not address.startswith("127."))
 
 
@@ -655,7 +694,7 @@ def prepare_tls(tls_dir: Path, port: int) -> TlsState:
 - [ ] **Step 5: Tests laufen lassen**
 
 Run: `uv run pytest tests/test_tls.py -v`
-Expected: PASS, alle 14 Tests.
+Expected: PASS, alle 16 Tests.
 
 - [ ] **Step 6: Linter und Typprüfung**
 
@@ -1814,7 +1853,9 @@ async def test_the_switch_does_not_carry_the_token_in_the_url(api):
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "#token=" not in script
-    assert "token=" not in script.split("switchToHttps")[-1][:400]
+    assert "location.hash" not in script
+    # Der Wechsel baut die Zieladresse aus Host und Port - mehr nicht.
+    assert "window.location.href = `https://${window.location.hostname}:" in script
 ```
 
 - [ ] **Step 2: Tests laufen lassen und Fehlschlag bestätigen**
