@@ -142,14 +142,15 @@ def normalize_api_token(token: str | None) -> str | None:
     (Review-Fix Fix 2, 2026-09-03).
 
     `build_api_guard` fragt hier - bis Task 8 fragte auch die Startwarnung
-    hier (`cli._warn_if_missing_api_token`); seit sie sich um das Passwort
-    statt um das Token dreht, fragt sie ausschliesslich den Store (siehe
-    `cli._warn_if_no_password`). Der urspruenglich gemeldete Fehler bleibt
-    trotzdem der Grund fuer diese Funktion: ein Token, das nur aus Leerraum
-    besteht (ein abgeschnittener Zeilenumbruch aus einer kopierten `.env`,
-    `--api-token " "`), galt dem Waechter als echtes Geheimnis, war aber
-    ueber einen HTTP-Header gar nicht korrekt sendbar - HTTP-Headerwerte
-    enthalten keine Zeilenumbrueche, und fuehrender/abschliessender
+    hier (damals `cli._warn_if_missing_api_token`); seit sie sich um das
+    Passwort statt um das Token dreht, fragt sie ausschliesslich den Store
+    und heisst entsprechend `cli._warn_if_no_password`. Der urspruenglich
+    gemeldete Fehler bleibt trotzdem der Grund fuer diese Funktion: ein
+    Token, das nur aus Leerraum besteht (ein abgeschnittener Zeilenumbruch
+    aus einer kopierten `.env`, `--api-token " "`), galt dem Waechter als
+    echtes Geheimnis, war aber ueber einen HTTP-Header gar nicht korrekt
+    sendbar - HTTP-Headerwerte enthalten keine Zeilenumbrueche, und
+    fuehrender/abschliessender
     Leerraum wird beim Parsen ohnehin verworfen (RFC 9110). Der Token-Pfad
     war damit dauerhaft unbenutzbar, ohne dass irgendetwas darauf
     hingewiesen haette, weil das Token ja "nicht None" war.

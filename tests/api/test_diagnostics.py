@@ -138,7 +138,6 @@ async def api_with_token(tmp_path, no_invoke, fake_runtime, fake_client):
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        await authenticate(store, client)
         yield client, store, device_id
     store.close()
 

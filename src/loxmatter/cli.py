@@ -407,9 +407,9 @@ def _warn_if_no_password(store_path: Path) -> None:
         store.close()
     logger.warning(
         "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, "
-        "liefert keine /api-Route Daten aus — und jeder, der den Port erreicht, kann "
-        "die Ersteinrichtung abschließen und die Brücke damit übernehmen. Öffne die "
-        "Oberfläche jetzt und vergib ein Passwort."
+        "lässt sich niemand über die Oberfläche anmelden — und jeder, der den Port "
+        "erreicht, kann die Ersteinrichtung abschließen und die Brücke damit "
+        "übernehmen. Öffne die Oberfläche jetzt und vergib ein Passwort."
     )
 
 
