@@ -76,6 +76,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
+import socket
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Self
@@ -85,8 +87,10 @@ import pytest
 
 from loxmatter.auth.passwords import hash_password
 from loxmatter.commands.translate import MatterCall
+from loxmatter.diagnostics.logbuffer import install_log_buffer
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
+from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
@@ -226,20 +230,6 @@ def plug_store(tmp_path):
     store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
     yield store, device_id
     store.close()
-
-
-class _NullSender:
-    """Ein Sender, der nichts wirklich verschickt - fuer Tests, die eine
-    echte `Runtime` (und damit ihre Beobachter-Verdrahtung) brauchen, aber
-    keinen UDP-Sender. Anders als `RecordingSender`/`FakeSender` in den
-    jeweiligen Testdateien selbst zeichnet dieser hier nichts auf - er ist
-    nur Fuellmaterial fuer `Runtime.__init__`."""
-
-    async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
-        return True
-
-    async def close(self) -> None:
-        return None
 
 
 class _InProcessWebSocket:
@@ -391,11 +381,49 @@ async def api_with_runtime(
 ) -> AsyncIterator[tuple[WebSocketClient, Runtime, int]]:
     """Wie die `api`-Fixture in `test_devices.py`, aber mit einer ECHTEN
     `Runtime` statt `FakeRuntime` - fuer Tests der Beobachter-Verdrahtung
-    und der WebSocket-Route `/api/live` (Task 3, Spec 8.3)."""
+    und der WebSocket-Routen `/api/live` (Task 3, Spec 8.3) und
+    `/api/diagnostics/live` (Task 4, Spec 10.5).
+
+    **Ein ECHTER `UdpSender` statt eines Fuellmaterial-Objekts** (anders als
+    noch in Task 3) - `api.diagnostics_live.build_diagnostics_live_router`
+    haengt an `sender.add_datagram_observer` (Task 2), und dieser Zweig
+    haengt an `UdpSender.send`s Mitschnitt (`_record_sent`), nicht an
+    `Runtime`s Beobachterkette (siehe dort). Ein Fake-Sender, der nur
+    `send()`/`close()` erfuellt, wuerde diesen Mitschnitt nie ausloesen -
+    `test_a_fresh_datagram_arrives_as_a_message` braucht also denselben
+    Aufbau wie `api_with_sender` in `test_diagnostics.py` (ein UDP-Socket
+    auf `127.0.0.1`, der die Maschine nicht verlaesst, Port `0` fuer einen
+    vom Betriebssystem zugeteilten, freien Port).
+
+    **`install_log_buffer()` fuer denselben Grund** - der Log-Zweig der
+    neuen Route (`log_handler.add_observer`, Task 3) braucht einen echten
+    `LogBufferHandler`, angehaengt an den Logger `loxmatter`. Wird nach dem
+    Test wieder abgemeldet (`removeHandler`) - sonst haeufte jeder Test, der
+    diese Fixture benutzt, einen weiteren Handler am selben, PROZESSWEITEN
+    Logger an (siehe `tests/diagnostics/test_logbuffer.py` fuer dasselbe
+    Muster)."""
     store, device_id = plug_store
-    runtime = Runtime(store, _NullSender())
-    app = build_app(store, no_invoke, runtime, client=fake_client)
+    receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    receiver.bind(("127.0.0.1", 0))
+    receiver.setblocking(False)
+    host, port = receiver.getsockname()
+    sender = UdpSender(host, port)
+    runtime = Runtime(store, sender)
+    log_handler = install_log_buffer()
+    app = build_app(
+        store,
+        no_invoke,
+        runtime,
+        client=fake_client,
+        sender=sender,
+        log_handler=log_handler,
+    )
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        await authenticate(store, client)
-        yield WebSocketClient(client, app), runtime, device_id
+    try:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            await authenticate(store, client)
+            yield WebSocketClient(client, app), runtime, device_id
+    finally:
+        await sender.close()
+        logging.getLogger("loxmatter").removeHandler(log_handler)
+        receiver.close()

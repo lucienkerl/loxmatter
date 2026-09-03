@@ -34,8 +34,9 @@ Sieben Gruppen:
   Router UND `/cmd`/`/resync` einzeln angefragt, damit ein Router, der aus
   Versehen ohne `dependencies=api_guard` eingebunden wuerde, hier auffiele
   statt sich auf den Router-Praefix zu verlassen.
-- `test_websocket_*` - `/api/live` ist keine gewoehnliche Route: die
-  Ablehnung passiert VOR `websocket.accept()`, ueber die ASGI-„Denial
+- `test_websocket_*` - `/api/live` und, seit Task 4 dieser Phase,
+  `/api/diagnostics/live` sind keine gewoehnlichen Routen: die Ablehnung
+  passiert VOR `websocket.accept()`, ueber die ASGI-„Denial
   Response"-Erweiterung (siehe `_websocket_handshake_status` unten und
   `build_api_guard`s Docstring in `loxone/server.py`). Seit Review-Fix
   Fix 1c (2026-09-03) kommt hier der zweite Uebertragungsweg dazu: ein
@@ -703,6 +704,42 @@ async def test_websocket_live_answers_without_a_subprotocol_when_none_was_offere
     )
     assert message["type"] == "websocket.accept"
     assert message["subprotocol"] is None
+
+
+async def test_websocket_diagnostics_live_is_rejected_with_401_without_a_header(secured_client):
+    """`/api/diagnostics/live` (Task 4, Phase 5, Spec 10.5) ist eine zweite
+    WebSocket-Route neben `/api/live` - derselbe Waechter, dieselbe
+    ASGI-„Denial Response"-Pruefung, damit ein aus Versehen ohne
+    `dependencies=api_guard` eingebundener Router hier auffiele."""
+    _, app, _, _ = secured_client
+    status = await _websocket_handshake_status(app, "/api/diagnostics/live", headers=[])
+    assert status == 401
+
+
+async def test_websocket_diagnostics_live_is_accepted_with_the_correct_header(secured_client):
+    _, app, _, _ = secured_client
+    status = await _websocket_handshake_status(
+        app, "/api/diagnostics/live", headers=[(b"authorization", b"Bearer secret")]
+    )
+    assert status is None
+
+
+async def test_websocket_diagnostics_live_is_accepted_with_the_token_in_the_subprotocol(
+    secured_client,
+):
+    _, app, _, _ = secured_client
+    headers, subprotocols = _bearer_subprotocol_handshake("secret")
+    status = await _websocket_handshake_status(app, "/api/diagnostics/live", headers, subprotocols)
+    assert status is None
+
+
+async def test_websocket_diagnostics_live_is_rejected_with_a_wrong_token_in_the_subprotocol(
+    secured_client,
+):
+    _, app, _, _ = secured_client
+    headers, subprotocols = _bearer_subprotocol_handshake("falsch")
+    status = await _websocket_handshake_status(app, "/api/diagnostics/live", headers, subprotocols)
+    assert status == 401
 
 
 async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secured_client):

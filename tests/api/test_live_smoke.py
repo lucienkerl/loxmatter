@@ -210,6 +210,29 @@ def test_a_real_uvicorn_upgrades_api_live_to_a_websocket(plug_store, no_invoke):
 
 
 @pytest.mark.slow
+def test_a_real_uvicorn_upgrades_api_diagnostics_live_to_a_websocket(plug_store, no_invoke):
+    """Dieselbe Regression wie oben, fuer die zweite WebSocket-Route dieser
+    Bruecke (Task 4, Phase 5, Spec 10.5): `/api/diagnostics/live` haengt am
+    selben `uvicorn`-Aufbau, eine fehlende `websockets`-Installation traefe
+    beide Routen gleichermassen - dieser Test deckt sie unabhaengig voneinander
+    ab, damit ein Regressions-Fund an der einen die andere nicht ungeprueft
+    laesst."""
+    store, _device_id = plug_store
+    runtime = Runtime(store, _NullSender())
+    app = build_app(store, no_invoke, runtime, api_token="secret")
+
+    with _running_server(app) as port:
+        status_line = _perform_raw_handshake(
+            "127.0.0.1",
+            port,
+            "/api/diagnostics/live",
+            timeout=STARTUP_TIMEOUT_S,
+            subprotocols="bearer, secret",
+        )
+        assert "101" in status_line, f"WebSocket-Upgrade fehlgeschlagen: {status_line!r}"
+
+
+@pytest.mark.slow
 def test_a_real_uvicorn_accepts_the_token_from_the_websocket_subprotocol(plug_store, no_invoke):
     """Der Weg, den die Browser-Oberflaeche bei gesetztem Token geht - hier
     einmal gegen einen ECHTEN Server statt gegen die ASGI-App direkt

@@ -137,9 +137,10 @@ class RingBuffer[T]:
     ist ohnehin nur die letzten Minuten/Stunden. `collections.deque(maxlen=
     ...)` erledigt das Verwerfen der aeltesten Eintraege bereits nativ in
     O(1); diese Klasse fuegt nur die schmale, absichtlich MINIMALE
-    Oberflaeche hinzu, die die Diagnose-Routen unten brauchen (anhaengen,
-    iterieren, zaehlen) - kein `clear()`, kein Indexzugriff, nichts, das ein
-    Aufrufer nutzen koennte, um Eintraege nachtraeglich zu manipulieren.
+    Oberflaeche hinzu, die die Diagnose-Routen brauchen (anhaengen,
+    iterieren, zaehlen, beobachten) - kein `clear()`, kein Indexzugriff,
+    nichts, das ein Aufrufer nutzen koennte, um Eintraege nachtraeglich zu
+    manipulieren.
 
     **Ein Leser, der `for entry in ring:` durchlaufen koennte, waehrend aus
     einem anderen Thread gleichzeitig angehaengt wird, MUSS zuerst
@@ -157,13 +158,67 @@ class RingBuffer[T]:
     LogBufferHandler` ist der erste Schreiber, der aus BELIEBIGEN Threads
     gleichzeitig anhaengen kann - fuer einen Ring, den er fuellt, ist eine
     blosse `for`-Schleife deshalb nicht mehr sicher; `list(ring)` dagegen
-    schon, weil auch das ein einziger, atomarer C-Aufruf ist."""
+    schon, weil auch das ein einziger, atomarer C-Aufruf ist.
+
+    **Beobachter (Task 4, Phase 5, Spec 10.5).** `add_observer`/
+    `remove_observer` benachrichtigen bei jedem `append` - dieselbe
+    Anmelde-/Abmelde-Form wie `UdpSender.add_datagram_observer` und
+    `LogBufferHandler.add_observer`, absichtlich HIER statt in einer
+    weiteren, eigenen Klasse: der Kommando-Log-Ring in `loxone.server`
+    braucht eine Beobachterkette (fuer `api.diagnostics_live`), hat aber -
+    anders als `UdpSender` und `LogBufferHandler` - keinen eigenen
+    Besitzer-Typ, an dem sie sonst haengen koennte (er ist dort eine blosse
+    lokale Variable). Ein Beobachterfehler wird geloggt und uebersprungen,
+    genau wie bei `UdpSender._notify_datagram_observers` - anders als bei
+    `LogBufferHandler` gibt es hier kein Rekursionsrisiko durch die eigene
+    Fehlerprotokollierung, weil kein Ring dieses Projekts Logzeilen selbst
+    erzeugt.
+
+    **Warnung fuer kuenftige Aufrufer:** `LogBufferHandler.entries` ist
+    ebenfalls ein `RingBuffer`, oeffentlich lesbar fuer die Momentaufnahme -
+    `add_observer` NIEMALS direkt auf `log_handler.entries` aufrufen. Ein
+    dort registrierter Beobachter liefe synchron innerhalb von
+    `LogBufferHandler.emit()`, waehrend `logging.Handler.lock` gehalten
+    wird und OHNE die dortige Wiedereintrittssperre - protokolliert dieser
+    Beobachter selbst ueber denselben Logger, ist das eine echte,
+    unbegrenzte Rekursion (siehe `diagnostics.logbuffer`-Moduldocstring).
+    `LogBufferHandler.add_observer` ist der einzige sichere Weg, neue
+    Logzeilen zu beobachten."""
 
     def __init__(self, maxlen: int = 500) -> None:
         self._items: collections.deque[T] = collections.deque(maxlen=maxlen)
+        self._observers: list[Callable[[T], None]] = []
 
     def append(self, item: T) -> None:
         self._items.append(item)
+        for observer in list(self._observers):
+            # Kopie der Liste iterieren - ein Beobachter, der sich selbst
+            # waehrend seines Aufrufs abmeldet, darf die laufende
+            # Benachrichtigung der uebrigen nicht stoeren (dasselbe Muster
+            # wie `UdpSender._notify_datagram_observers`).
+            try:
+                observer(item)
+            except Exception:
+                logger.exception(
+                    "Beobachter fuer einen neuen Ringpuffer-Eintrag ist fehlgeschlagen - "
+                    "wird uebersprungen"
+                )
+
+    def add_observer(self, callback: Callable[[T], None]) -> None:
+        """Meldet einen Beobachter an, der jeden NEUEN Eintrag sieht - nicht
+        die bereits vorhandenen (siehe Klassendocstring). Der Beobachter
+        darf nicht blockieren: `append` laeuft im Aufrufpfad des
+        jeweiligen Schreibers (siehe dort)."""
+        self._observers.append(callback)
+
+    def remove_observer(self, callback: Callable[[T], None]) -> None:
+        """Meldet einen Beobachter wieder ab. Ein unbekannter Beobachter
+        (z. B. doppelt abgemeldet) ist kein Fehler, sondern wird still
+        ignoriert - dieselbe Regel wie bei `Runtime.remove_observer`."""
+        try:
+            self._observers.remove(callback)
+        except ValueError:
+            pass
 
     def __iter__(self) -> Iterator[T]:
         return iter(self._items)
