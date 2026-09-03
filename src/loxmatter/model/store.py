@@ -49,6 +49,7 @@ from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.auth_store import AuthStore
+from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
@@ -714,6 +715,8 @@ class Store:
         self.settings = BridgeSettingsStore(
             self._db, default_udp_port=DEFAULT_UDP_PORT, default_listen_port=DEFAULT_LISTEN_PORT
         )
+        # Sicht auf dieselbe Verbindung - siehe `locale_store.py`.
+        self.locale = LocaleStore(self._db)
 
     def close(self) -> None:
         self._db.close()
