@@ -597,3 +597,21 @@ def test_set_password_rejects_a_short_password(tmp_path):
         assert store.auth.password_hash() is None
     finally:
         store.close()
+
+
+def test_set_password_fails_loudly_instead_of_creating_a_new_database(tmp_path):
+    """Notausgang-Fund (2026-09-03): `Store(...)` legt eine fehlende Datei
+    kommentarlos neu an. Auf der Referenz-Installation liegt die eigentliche
+    Datenbank aber in einem Docker-Volume, das auf dem Host unter diesem
+    Pfad gar nicht sichtbar ist — ohne diese Pruefung traefe der Befehl dort
+    eine leere Fremddatenbank, schriebe den Hash hinein und meldete Erfolg,
+    waehrend die Bruecke unveraendert gesperrt bliebe. `set-password` setzt
+    ein Passwort ZURUECK; eine neue Datenbank anzulegen ist in keinem seiner
+    Anwendungsfaelle gewollt."""
+    path = tmp_path / "kein-solches-volume" / "loxmatter.sqlite"
+    result = CliRunner().invoke(
+        app, ["set-password", "--store-path", str(path)], input="neues-passwort\nneues-passwort\n"
+    )
+    assert result.exit_code != 0
+    assert not path.exists()
+    assert not path.parent.exists()

@@ -383,8 +383,17 @@ def export(
         store.close()
 
 
-def _warn_if_no_password(store_path: Path) -> None:
+def _warn_if_no_password(store: Store) -> None:
     """Warnt beim Start deutlich, solange kein Passwort vergeben ist.
+
+    Nimmt den bereits geoeffneten `Store` entgegen, nicht dessen Pfad: `run`
+    unten oeffnet ihn ohnehin schon (in einem `try`/`except`, das einen
+    unbeschreibbaren Pfad als klaren CLI-Fehler beendet) und reicht ihn drei
+    Zeilen spaeter an `_run` weiter. Eine zweite `Store(store_path)` hier
+    haette dieselbe Datei ein zweites Mal geoeffnet - ein zweiter
+    `_migrate`-Lauf, eine zweite Sperrdomaene auf derselben SQLite-Datei, und
+    ohne den Schutz des `try`/`except` von `run`, das nur die ERSTE Oeffnung
+    umgibt.
 
     Die Warnung gilt seit dem WebUI-Login dem Passwort und NICHT mehr dem
     Token: ein konfiguriertes Token bringt sie nicht zum Schweigen, denn es
@@ -400,12 +409,8 @@ def _warn_if_no_password(store_path: Path) -> None:
     Eigene Funktion statt einer Zeile inline in `run`/`_run`, damit ein Test
     sie ohne laufenden Server aufrufen kann - siehe
     `tests/api/test_security.py`."""
-    store = Store(store_path)
-    try:
-        if store.auth.password_hash() is not None:
-            return
-    finally:
-        store.close()
+    if store.auth.password_hash() is not None:
+        return
     logger.warning(
         "Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, "
         "lässt sich niemand über die Oberfläche anmelden — und jeder, der den Port "
@@ -478,7 +483,7 @@ def run(
     except (OSError, sqlite3.Error) as exc:
         _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
 
-    _warn_if_no_password(resolved_store_path)
+    _warn_if_no_password(store)
     asyncio.run(_run(store, url, miniserver, port, listen, matter_data_dir, host, api_token))
 
 
@@ -601,16 +606,42 @@ def set_password(
     Zugriff auf die Datenbankdatei selbst — der Befehl macht daraus nur
     einen benutzbaren Weg statt eines Bastelns am SQLite.
 
-    Meldet dabei alle offenen Sitzungen ab: wer das Passwort zurücksetzt,
-    will nicht, dass eine alte Sitzung weiterläuft.
+    Verlangt deshalb eine VORHANDENE Datenbank (siehe die Prüfung unten,
+    Notausgang-Fund 2026-09-03): dieser Befehl setzt ein Passwort ZURÜCK,
+    eine neue Datenbank anzulegen ist in keinem seiner Anwendungsfälle
+    gewollt — im Referenz-Deployment
+    (`deploy/testhost/docker-compose.yml`) liegt sie in einem benannten
+    Docker-Volume, das ausschließlich INNERHALB des Containers unter
+    `LOXMATTER_STORE` erreichbar ist. Auf dem Host träfe `Store(...)` sonst
+    kommentarlos eine neue, leere Fremddatenbank, schriebe den Hash
+    hinein und meldete Erfolg — während die eigentliche Brücke unverändert
+    gesperrt bliebe. Diese Prüfung ist die einzige Stelle, die einen
+    falschen Pfad überhaupt sichtbar macht, statt ihn lautlos zu
+    verschlucken.
+
+    Meldet dabei alle offenen Sitzungen ab — in DERSELBEN Transaktion wie
+    den neuen Hash (siehe `AuthStore.reset_password`): wer das Passwort
+    zurücksetzt, will nicht, dass eine alte Sitzung weiterläuft, und ein
+    Fehlschlag zwischen zwei getrennt committenden Schritten dürfte diesen
+    Zustand nicht halb herstellen.
     """
+    resolved_store_path = _resolve_store_path(store_path)
+    if not resolved_store_path.is_file():
+        _fail(
+            f"Datenbank {resolved_store_path} wurde nicht gefunden. `set-password` "
+            "setzt ein Passwort ZURÜCK und legt deshalb absichtlich keine neue "
+            "Datenbank an — das würde eine leere Fremddatenbank erzeugen und Erfolg "
+            "melden, während die eigentliche Brücke gesperrt bliebe. Prüfe den "
+            "Pfad, gib ihn über --store-path an, oder führe den Befehl — im "
+            "Referenz-Deployment — im laufenden Container aus: `docker compose "
+            "exec loxmatter loxmatter set-password`."
+        )
     password = typer.prompt("Neues Passwort", hide_input=True, confirmation_prompt=True)
     if len(password) < MIN_PASSWORD_LENGTH:
         _fail(f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben.")
-    store = Store(_resolve_store_path(store_path))
+    store = Store(resolved_store_path)
     try:
-        store.auth.set_password_hash(hash_password(password))
-        store.auth.delete_all_sessions()
+        store.auth.reset_password(hash_password(password))
     finally:
         store.close()
     # Bewusst ohne das Passwort in der Ausgabe - auch nicht verkuerzt.

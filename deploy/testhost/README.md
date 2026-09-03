@@ -90,6 +90,26 @@ empfohlene Weg dazu — es muss in einem HTTP-Header und in einem
 WebSocket-Subprotokoll übertragbar sein, also keine Leerzeichen, kein
 Komma, ASCII; `openssl rand -hex 32` liefert nur `[0-9a-f]`.
 
+**Passwort vergessen — der Notausgang.** `loxmatter set-password` setzt es
+neu und meldet dabei alle offenen Sitzungen ab. Auf DIESEM Stack **im
+laufenden Container** ausführen, nicht auf dem Pi selbst:
+
+```bash
+docker compose exec loxmatter loxmatter set-password
+```
+
+Der Grund, warum `uv run loxmatter set-password` auf dem Pi hier NICHT
+funktioniert: die Datenbank liegt im benannten Docker-Volume
+`loxmatter-store` (siehe `docker-compose.yml`, `LOXMATTER_STORE:
+/data/loxmatter.sqlite`) — dieser Pfad existiert nur *innerhalb* des
+Containers. Auf dem Host fehlt diese Umgebungsvariable, `set-password`
+träfe dort ersatzweise den Nutzer-Home-Standard
+(`~/.loxmatter/loxmatter.sqlite`), also eine andere, leere Datenbank —
+ohne diesen Notausgang-Fund hätte der Befehl das kommentarlos angelegt und
+Erfolg gemeldet, während die eigentliche Brücke unverändert gesperrt
+bliebe. Er bricht deshalb mit einem klaren Fehler ab, wenn die angegebene
+Datenbank nicht existiert, statt eine neue anzulegen.
+
 **Schritt 2 — Bluetooth entsperren.** Nur bei der Ersteinrichtung nötig: `hci0` war
 werksseitig rfkill-soft-blockiert, und ohne diesen Schritt startet `matter-server` ohne
 funktionsfähiges BLE. **Der Unblock hält über Reboots hinweg** — am 2026-09-01 durch

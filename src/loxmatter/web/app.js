@@ -877,12 +877,44 @@ function app() {
       // einen bereits geschlossenen Socket.
       socket.addEventListener("close", () => {
         if (this.socket === socket) {
-          this.scheduleReconnect();
+          this.handleLiveDisconnect();
         }
       });
       socket.addEventListener("error", () => socket.close());
 
       this.socket = socket;
+    },
+
+    /**
+     * Reagiert auf den Abbruch der Live-Verbindung: ein gewoehnlicher
+     * Netzwerkausfall soll weiter automatisch wiederverbinden, eine
+     * ungueltig gewordene Sitzung dagegen zurueck zum Login fuehren - ohne
+     * diese Unterscheidung bliebe ein offener Tab fuer immer bei
+     * "Verbindung verloren" haengen, weil der Browser eine mit 401
+     * abgelehnte WebSocket-Verbindung nicht von einem echten Netzwerkfehler
+     * unterscheiden kann (beides feuert nur `close`) und `scheduleReconnect`
+     * es deshalb unbegrenzt im Sekundentakt weiter versuchen wuerde.
+     *
+     * Ausgeloest u. a. durch `loxmatter set-password` (meldet alle
+     * Sitzungen ab) oder ein Logout in einem anderen Tab - kein Aufruf
+     * dieser Seite erfaehrt sonst je davon, solange niemand nachfragt: es
+     * gibt keinen periodischen HTTP-Aufruf, der den Sitzungszustand
+     * einfaengt, die Ansichten laden nur auf Klick.
+     *
+     * `/auth-info` haengt ausserhalb des Waechters (siehe api/auth.py) und
+     * ist genau fuer diese Frage da. Bleibt die Sitzung gueltig (oder
+     * schlaegt schon die Anfrage selbst fehl, z. B. weil das Netz komplett
+     * weg ist - `loadAuthInfo` ruehrt `authenticated` in diesem Fall nicht
+     * an), geht es wie bisher mit `scheduleReconnect` weiter; der
+     * exponentielle Backoff bleibt dadurch unveraendert wirksam.
+     */
+    async handleLiveDisconnect() {
+      await this.loadAuthInfo();
+      if (!this.authenticated) {
+        this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
+        return;
+      }
+      this.scheduleReconnect();
     },
 
     scheduleReconnect() {

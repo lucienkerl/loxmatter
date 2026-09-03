@@ -71,9 +71,18 @@ Passwort. Das ist eine bewusste Abwägung (Trust on first use), damit sich
 der Dienst ohne Shell-Zugriff auf dem Host einrichten lässt; der Preis ist
 ein Zeitfenster zwischen dem Start des Dienstes und der ersten Anmeldung, in
 dem jeder im Netz die Brücke übernehmen kann — es sollte deshalb Minuten
-dauern, nicht Tage. Ein vergessenes Passwort setzt `uv run
-loxmatter set-password` auf dem Host neu; das meldet dabei alle offenen
-Sitzungen ab. Details und Begründung:
+dauern, nicht Tage. Ein vergessenes Passwort setzt im Referenz-Deployment
+(siehe [`deploy/testhost/`](deploy/testhost/)) `docker compose exec
+loxmatter loxmatter set-password` **im laufenden Container** neu; bei einer
+Installation aus dem Quellcode entsprechend `uv run loxmatter
+set-password` auf dem Host. Beides meldet dabei alle offenen Sitzungen ab.
+**Wichtig bei einer containerisierten Installation:** die Datenbank liegt
+dort typischerweise in einem benannten Docker-Volume und ist über
+`LOXMATTER_STORE` nur *innerhalb* des Containers erreichbar — `set-password`
+auf dem Host träfe dort eine andere, leere Datenbank und meldete
+fälschlich Erfolg, ohne die eigentliche Brücke zu entsperren; der Befehl
+bricht seit dem entsprechenden Fund deshalb mit einem klaren Fehler ab,
+statt eine neue Datenbank anzulegen. Details und Begründung:
 [Ergänzungs-Spec](docs/superpowers/specs/2026-09-03-webui-login-design.md).
 
 `/cmd` und `/resync` bleiben davon *immer* unberührt — der Miniserver kann

@@ -64,16 +64,39 @@ class AuthStore:
         return cursor.rowcount == 1
 
     def set_password_hash(self, value: str) -> None:
-        """Setzt den Hash und ueberschreibt einen vorhandenen.
+        """Setzt den Hash und ueberschreibt einen vorhandenen, fuer sich
+        allein committend.
 
-        Der Weg fuer `loxmatter set-password` auf dem Host (Spec 9), NICHT
-        fuer die Oberflaeche - die benutzt ausschliesslich
-        `set_password_hash_if_unset`."""
+        NICHT der Weg fuer `loxmatter set-password` (siehe `reset_password`
+        unten, der diese Anweisung mit dem Abmelden aller Sitzungen zu EINER
+        Transaktion zusammenfasst) - dieser Baustein bleibt oeffentlich, weil
+        Testcode ihn nutzt, um in einer Fixture ein Passwort vorzugeben, ohne
+        dabei Sitzungen anzufassen."""
         self._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (_PASSWORD_KEY, value),
         )
+        self._db.commit()
+
+    def reset_password(self, value: str) -> None:
+        """Setzt einen neuen Hash und meldet alle Sitzungen ab - in EINER
+        Transaktion, nicht als zwei fuer sich genommen committende Schritte.
+
+        Der einzige Aufrufer ist `loxmatter set-password` (Spec 9,
+        Notausgang). Getrennt committende Anweisungen liessen ein Fenster
+        offen, in dem bereits das neue Passwort gilt, waehrend eine alte -
+        eigentlich abzumeldende - Sitzung noch weiterlaeuft: scheitert der
+        zweite Schritt (z. B. ein voller Datentraeger zwischen den beiden
+        Commits), bleibt genau der Zustand stehen, gegen den dieser Befehl
+        gebaut wurde. Ein gemeinsamer Commit macht das unmoeglich - entweder
+        gilt hinterher beides oder keins von beidem."""
+        self._db.execute(
+            "INSERT INTO setting (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (_PASSWORD_KEY, value),
+        )
+        self._db.execute("DELETE FROM session")
         self._db.commit()
 
     def create_session(self, session_id: str, *, created_at: int, expires_at: int) -> None:

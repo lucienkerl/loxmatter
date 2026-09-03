@@ -71,6 +71,29 @@ def test_purge_removes_only_expired_sessions(tmp_path):
         store.close()
 
 
+def test_reset_password_replaces_the_hash_and_clears_sessions(tmp_path):
+    """Fund G: `loxmatter set-password` darf den neuen Hash und das Abmelden
+    aller Sitzungen nicht als zwei getrennt committende Schritte absetzen -
+    scheitert der zweite, gilt das neue Passwort, waehrend eine alte Sitzung
+    weiterlaeuft. `reset_password` fasst beides in einer Transaktion
+    zusammen; dieser Test prueft nur das sichtbare Ergebnis, nicht die
+    Transaktionsgrenze selbst (die ist ohne einen fehlschlagenden zweiten
+    Schritt nicht beobachtbar)."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        store.auth.set_password_hash_if_unset("alt")
+        store.auth.create_session("a", created_at=1, expires_at=500)
+        store.auth.create_session("b", created_at=1, expires_at=500)
+
+        store.auth.reset_password("neu")
+
+        assert store.auth.password_hash() == "neu"
+        assert store.auth.session_expires_at("a") is None
+        assert store.auth.session_expires_at("b") is None
+    finally:
+        store.close()
+
+
 def test_delete_all_sessions_leaves_the_password_untouched(tmp_path):
     store = Store(tmp_path / "t.sqlite")
     try:

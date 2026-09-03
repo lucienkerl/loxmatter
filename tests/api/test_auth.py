@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import httpx2 as httpx
 import pytest
@@ -74,6 +75,24 @@ async def test_setup_is_closed_for_good_once_a_password_is_set(auth_client):
     assert second.status_code == 409
 
 
+async def test_setup_does_not_hash_once_a_password_is_already_set(auth_client, monkeypatch):
+    """Regressionsfund: `hash_password(body.password)` stand als Argument da
+    und wurde deshalb IMMER ausgewertet, auch auf einer laengst eingerichteten
+    Bruecke - 16 MiB scrypt, synchron im Event-Loop, bei jedem Aufruf dieser
+    ungeschuetzten Route. Die billige Pruefung `password_hash() is not None`
+    muss VOR dem Hashen greifen, nicht nur VOR dem Schreiben."""
+    client, _ = auth_client
+    await client.post("/auth/setup", json={"password": PASSWORT})
+
+    spy = Mock(name="hash_password")
+    monkeypatch.setattr("loxmatter.api.auth.hash_password", spy)
+
+    second = await client.post("/auth/setup", json={"password": "ein-anderes-passwort"})
+
+    assert second.status_code == 409
+    spy.assert_not_called()
+
+
 async def test_setup_rejects_a_short_password(auth_client):
     client, store = auth_client
     response = await client.post("/auth/setup", json={"password": "kurz"})
@@ -130,13 +149,41 @@ async def test_logout_ends_the_session_on_the_server(auth_client):
 
 
 async def test_no_response_ever_contains_the_password_or_its_hash(auth_client):
+    """Deckt neben den erfolgreichen 200er-Antworten auch die vier
+    Fehlerzweige ab (401, 409, 422, 429, Fund D) - genau dort wuerde ein
+    spaeter versehentlich eingebauter Wert ("Falsches Passwort: <x>") am
+    ehesten landen, weil ein Fehlertext haeufiger von Hand nachgebessert
+    wird als ein schlichtes `{"status": "ok"}`."""
     client, store = auth_client
-    await client.post("/auth/setup", json={"password": PASSWORT})
+    responses = [await client.post("/auth/setup", json={"password": "kurz"})]  # 422
+    assert responses[-1].status_code == 422
+
+    setup_ok = await client.post("/auth/setup", json={"password": PASSWORT})
+    assert setup_ok.status_code == 200
+    responses.append(setup_ok)
+
     stored = store.auth.password_hash()
     assert stored is not None
-    for response in [
-        await client.get("/auth-info"),
-        await client.post("/auth/login", json={"password": PASSWORT}),
-    ]:
+    responses.append(await client.get("/auth-info"))
+
+    already_set_up = await client.post("/auth/setup", json={"password": "ein-anderes-passwort"})
+    assert already_set_up.status_code == 409  # 1. Fehlversuch fuer die Drosselung unten
+    responses.append(already_set_up)
+
+    wrong = await client.post("/auth/login", json={"password": "falsch-aber-lang"})
+    assert wrong.status_code == 401  # 2. Fehlversuch
+    responses.append(wrong)
+
+    # /auth/setup und /auth/login teilen sich dieselbe LoginThrottle (Fund A,
+    # Schritt 3) - zwei Fehlversuche stehen aus den beiden Anfragen oben
+    # bereits zu Buche, hier folgen die restlichen bis zur Drosselung.
+    for _ in range(FAILURES_BEFORE_THROTTLING - 2):
+        responses.append(await client.post("/auth/login", json={"password": "falsch-aber-lang"}))
+
+    throttled = await client.post("/auth/login", json={"password": PASSWORT})
+    assert throttled.status_code == 429
+    responses.append(throttled)
+
+    for response in responses:
         assert PASSWORT not in response.text
         assert stored not in response.text

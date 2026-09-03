@@ -6,7 +6,7 @@ verlangt - jede Route unter `/api`, einschliesslich der WebSocket-Route
 `/cmd` und `/resync` unveraendert offen, weil der Miniserver keinen Header
 mitschicken kann?
 
-Drei Gruppen:
+Sieben Gruppen:
 
 - `test_guard_*` - `build_api_guard` selbst, ganz ohne FastAPI-App: die
   reine Entscheidungslogik (seit Task 8 gibt es keinen offenen Zustand mehr -
@@ -55,7 +55,7 @@ from typing import Any
 
 import httpx2 as httpx
 import pytest
-from conftest import load_snapshot
+from conftest import authenticate, load_snapshot
 from fastapi import HTTPException
 
 from loxmatter.auth.passwords import hash_password
@@ -133,21 +133,14 @@ async def secured_client(tmp_path, no_invoke):
 
 @pytest.fixture
 async def open_client(tmp_path, no_invoke):
-    """Dieselbe App, aber ohne Token - der Zustand vor Task 8 bzw. eine
-    Installation, die (noch) keins gesetzt hat."""
+    """Dieselbe App, aber ohne konfiguriertes `LOXMATTER_API_TOKEN` - eine
+    Installation, die ausschliesslich auf die Anmeldung setzt. Anders als
+    der Name nahelegt, ist das seit Task 8 (Spec 4) kein offener Zustand:
+    ohne Anmeldung antwortet jede `/api`-Route weiterhin mit 401 (siehe
+    `test_without_a_password_every_api_route_is_closed` unten) - "offen"
+    heisst hier nur "kein zweiter, tokenbasierter Nachweis daneben"."""
     async for item in _build_client(tmp_path, no_invoke, api_token=None):
         yield item
-
-
-async def _authenticate(store: Store, client: httpx.AsyncClient) -> None:
-    """Setzt ein Passwort und meldet `client` an - wie `conftest.authenticate`,
-    aber lokal statt ueber eine gemeinsame Fixture: diese Datei meldet
-    bewusst nur dort an, wo ein Test das ausdruecklich tut (siehe
-    Moduldocstring), niemals ueber `open_client`/`secured_client` selbst,
-    die genau den unangemeldeten Zustand pruefen sollen."""
-    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
-    response = await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
-    assert response.status_code == 200, "Anmeldung im Test fehlgeschlagen"
 
 
 # ---------------------------------------------------------------------------
@@ -337,28 +330,28 @@ async def test_a_token_with_a_trailing_newline_is_usable_over_http(tmp_path, no_
 
 async def test_without_a_token_a_signed_in_devices_route_is_open(open_client):
     client, _, _, store = open_client
-    await _authenticate(store, client)
+    await authenticate(store, client)
     response = await client.get("/api/devices")
     assert response.status_code == 200
 
 
 async def test_without_a_token_a_signed_in_export_status_is_open(open_client):
     client, _, _, store = open_client
-    await _authenticate(store, client)
+    await authenticate(store, client)
     response = await client.get("/api/export/status")
     assert response.status_code == 200
 
 
 async def test_without_a_token_a_signed_in_controls_route_is_open(open_client):
     client, _, device_id, store = open_client
-    await _authenticate(store, client)
+    await authenticate(store, client)
     response = await client.get(f"/api/devices/{device_id}/controls")
     assert response.status_code == 200
 
 
 async def test_without_a_token_a_signed_in_diagnostics_commands_is_open(open_client):
     client, _, _, store = open_client
-    await _authenticate(store, client)
+    await authenticate(store, client)
     response = await client.get("/api/diagnostics/commands")
     assert response.status_code == 200
 
@@ -368,7 +361,7 @@ async def test_the_other_api_routes_stay_open_for_a_signed_in_client_without_a_t
     bleibt fuer eine angemeldete Sitzung offen, auch ohne konfiguriertes
     Token - nichts an dieser Sitzung ist auf ein Token angewiesen."""
     client, _, device_id, store = open_client
-    await _authenticate(store, client)
+    await authenticate(store, client)
     for path in (
         "/api/devices",
         "/api/export/status",
@@ -724,34 +717,42 @@ async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secu
 
 
 def test_warn_if_no_password_logs_a_clear_warning(caplog, tmp_path):
-    store_path = tmp_path / "t.sqlite"
-    Store(store_path).close()  # legt die Datenbank an, ohne ein Passwort zu vergeben
-    with caplog.at_level(logging.WARNING):
-        _warn_if_no_password(store_path)
+    store = Store(tmp_path / "t.sqlite")  # kein Passwort vergeben
+    try:
+        with caplog.at_level(logging.WARNING):
+            _warn_if_no_password(store)
+    finally:
+        store.close()
     assert len(caplog.records) == 1
     assert caplog.records[0].levelno == logging.WARNING
     assert "kein Passwort" in caplog.records[0].message
 
 
 def test_warn_if_no_password_stays_silent_once_one_is_set(caplog, tmp_path):
-    store_path = tmp_path / "t.sqlite"
-    store = Store(store_path)
-    store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
-    store.close()
-    with caplog.at_level(logging.WARNING):
-        _warn_if_no_password(store_path)
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
+        with caplog.at_level(logging.WARNING):
+            _warn_if_no_password(store)
+    finally:
+        store.close()
     assert caplog.records == []
 
 
-def test_warn_if_no_password_has_no_token_parameter_to_silence_it() -> None:
-    """Ein konfiguriertes Token darf die Warnung nicht zum Schweigen bringen
-    (siehe `_warn_if_no_password`-Docstring: "ein konfiguriertes Token
-    bringt sie nicht zum Schweigen") - dafuer reicht der Blick auf die
-    Signatur: seit Task 8 gibt es gar keinen Token-Parameter mehr, ueber den
-    ein Aufrufer das versuchen koennte. Ein Regressionstest, der eine
-    versehentlich wieder eingefuehrte Token-Kopplung sofort auffaellig
-    macht."""
-    assert list(inspect.signature(_warn_if_no_password).parameters) == ["store_path"]
+def test_warn_if_no_password_takes_an_already_open_store_not_a_path() -> None:
+    """Fund F: `_warn_if_no_password` nahm frueher einen Pfad entgegen und
+    oeffnete daraus eine ZWEITE `Store`-Verbindung - direkt nachdem `run`
+    bereits eine geoeffnet hatte, die es drei Zeilen spaeter an `_run`
+    weiterreicht. Das bedeutete einen doppelten `_migrate`-Lauf, eine zweite
+    Sperrdomaene auf derselben Datei und eine Oeffnung ohne den Schutz des
+    `try`/`except`, das die erste umgibt. Die Signatur soll das nicht wieder
+    zulassen: ein `Store`, kein `Path`.
+
+    Zusammen mit den Tests oben deckt das auch ab, dass ein konfiguriertes
+    Token die Warnung weiterhin nicht zum Schweigen bringen kann - seit
+    Task 8 gibt es dafuer gar keinen Parameter mehr, ueber den ein Aufrufer
+    das versuchen koennte."""
+    assert list(inspect.signature(_warn_if_no_password).parameters) == ["store"]
 
 
 # ---------------------------------------------------------------------------

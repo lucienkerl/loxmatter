@@ -21,8 +21,13 @@ Automatisierungen brechen durch dieses Update nicht ab, auch nicht vor der
 Passwortvergabe. `/cmd` und `/resync` für den Miniserver bleiben wie immer
 ohne jede Absicherung erreichbar.
 
-**Passwort vergessen.** `uv run loxmatter set-password` auf dem Host setzt
-es neu und meldet alle offenen Sitzungen ab.
+**Passwort vergessen.** Im Referenz-Deployment (Docker) setzt `docker
+compose exec loxmatter loxmatter set-password` **im laufenden Container**
+es neu und meldet alle offenen Sitzungen ab. Bei einer Installation aus dem
+Quellcode entsprechend `uv run loxmatter set-password` auf dem Host — dort
+liegt die Datenbank in einem Docker-Volume, das der Host-Pfad nicht sieht;
+`set-password` bricht seit dem entsprechenden Fund ab, statt dort
+kommentarlos eine neue, leere Datenbank anzulegen und Erfolg zu melden.
 
 **Ein Hinweis zum Passwort.** Der Dienst spricht HTTP ohne Verschlüsselung;
 das Passwort geht beim Anmelden im Klartext über das Netz. Nimm eines, das
