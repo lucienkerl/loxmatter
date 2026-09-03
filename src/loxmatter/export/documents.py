@@ -116,9 +116,7 @@ def render_virtual_in_udp(
     inputs: Sequence[LoxoneInput],
 ) -> bytes:
     info = ("Info", [("templateType", "1"), ("minVersion", _MIN_VERSION)])
-    children = [
-        ("VirtualInUdpCmd", virtual_in_udp_cmd_attributes(entry)) for entry in inputs
-    ]
+    children = [("VirtualInUdpCmd", virtual_in_udp_cmd_attributes(entry)) for entry in inputs]
     return render_document(
         "VirtualInUdp",
         [
