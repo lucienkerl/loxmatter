@@ -35,7 +35,7 @@ DECLARATION = '<?xml version="1.0" encoding="utf-8"?>'
 Attrs = Sequence[tuple[str, str]]
 
 
-def _escape_attr_value(value: str) -> str:
+def escape_attr_value(value: str) -> str:
     """Escaped einen Attributwert fuer doppelt gequotete XML-Attribute.
 
     Absichtlich keine Bibliothek: ``xml.sax.saxutils.quoteattr`` wechselt je
@@ -48,8 +48,8 @@ def _escape_attr_value(value: str) -> str:
     )
 
 
-def _render_attrs(attrs: Attrs) -> str:
-    return " ".join(f'{name}="{_escape_attr_value(value)}"' for name, value in attrs)
+def render_attrs(attrs: Attrs) -> str:
+    return " ".join(f'{name}="{escape_attr_value(value)}"' for name, value in attrs)
 
 
 def render_document(
@@ -58,7 +58,7 @@ def render_document(
     children: Sequence[tuple[str, Attrs]],
 ) -> bytes:
     """Erzeugt eine Vorlagendatei: UTF-8 mit BOM, CRLF, ein Kind je Zeile."""
-    lines = [DECLARATION, f"<{root} {_render_attrs(root_attrs)}>"]
-    lines += [f"\t<{tag} {_render_attrs(attrs)}/>" for tag, attrs in children]
+    lines = [DECLARATION, f"<{root} {render_attrs(root_attrs)}>"]
+    lines += [f"\t<{tag} {render_attrs(attrs)}/>" for tag, attrs in children]
     lines.append(f"</{root}>")
     return (BOM + CRLF.join(lines) + CRLF).encode("utf-8")
