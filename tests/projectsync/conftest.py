@@ -21,11 +21,15 @@ ausserhalb des Repos, siehe Entwurf Abschnitt 9).
 
 Enthaelt fuer Geraet 1 (``d1_...``) ein bereits bestehendes Eingangssignal
 (``d1_1_onoff``, Titel weicht bewusst vom Soll ab - deckt den `updated`-Fall
-ab) und ein bestehendes Ausgangssignal (``d1_1_on``). Geraet 1 hat KEIN
-``d1_1_temp`` - deckt den `new_signal`-Fall ab (Container existiert, Signal
-fehlt). Geraet 2 existiert in der Datei ueberhaupt nicht - deckt den
-`new_device`-Fall ab. ``d9_9_verwaist`` gehoert zu keinem bekannten Geraet
-mehr - deckt den `orphaned`-Fall ab."""
+ab), das dazugehoerige Online-Signal (``d1_online`` - `export.signals.
+to_inputs` erzeugt dieses Signal fuer JEDES Geraet automatisch mit, siehe
+dortigen Docstring; ohne einen passenden Eintrag hier waere jeder Diff-Plan
+fuer Geraet 1 niemals `unchanged`, selbst wenn alle uebrigen Signale
+uebereinstimmen) und ein bestehendes Ausgangssignal (``d1_1_on``). Geraet 1
+hat KEIN ``d1_1_temp`` - deckt den `new_signal`-Fall ab (Container
+existiert, Signal fehlt). Geraet 2 existiert in der Datei ueberhaupt nicht -
+deckt den `new_device`-Fall ab. ``d9_9_verwaist`` gehoert zu keinem
+bekannten Geraet mehr - deckt den `orphaned`-Fall ab."""
 
 import pytest
 
@@ -41,6 +45,15 @@ SAMPLE_PROJECT = (
     ' MinChange="0.25" MinTime="1000">\r\n'
     '\t\t\t\t<Co K="AQ" U="1000-0003-0000-bbbbbbbbbbbbbbbb"/>\r\n'
     '\t\t\t\t<Co K="Q" U="1000-0004-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
+    '\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    "\t\t\t</C>\r\n"
+    '\t\t\t<C Type="VirtualUdpInCmd" IName="VCI3" U="1000-000e-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Altes Geraet erreichbar" Nio="2" WF="16384" Check="d1_online:\\v" Signed="true"'
+    ' Analog="true" SourceValHigh="100" DestValHigh="100" MinVal="-10000" MaxVal="10000"'
+    ' MinChange="0.25" MinTime="1000">\r\n'
+    '\t\t\t\t<Co K="AQ" U="1000-000f-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t<Co K="Q" U="1000-0010-0000-bbbbbbbbbbbbbbbb"/>\r\n'
     '\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
     '\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
     "\t\t\t</C>\r\n"
