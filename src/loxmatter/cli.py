@@ -170,12 +170,12 @@ def render_report(snapshot: NodeSnapshot) -> str:
     attributes = [s for s in signals if s.kind is SignalKind.ATTRIBUTE]
     events = [s for s in signals if s.kind is SignalKind.EVENT]
 
-    lines.append(f"Attribute ({len(attributes)}):")
+    lines.append(i18n.t("cli.inspect.report_attributes", count=len(attributes)))
     for ref in attributes:
         lines.append(f"  {ref.path:<16} = {snapshot.attributes.get(ref.path)!r}")
 
     lines.append("")
-    lines.append(f"Events ({len(events)}):")
+    lines.append(i18n.t("cli.inspect.report_events", count=len(events)))
     for ref in events:
         lines.append(f"  {ref.path}")
 
@@ -183,20 +183,19 @@ def render_report(snapshot: NodeSnapshot) -> str:
     if missing:
         lines += [
             "",
-            f"NICHT GELIEFERT ({len(missing)}) — vom Gerät gelistet, aber ohne Wert:",
+            i18n.t("cli.inspect.report_missing", count=len(missing)),
         ]
         lines += [f"  {ref.path}" for ref in missing]
 
     broken = find_unparsable_paths(snapshot)
     if broken:
-        lines += ["", f"NICHT LESBAR ({len(broken)}):"] + [f"  {p}" for p in broken]
+        lines += ["", i18n.t("cli.inspect.report_unparsable", count=len(broken))] + [
+            f"  {p}" for p in broken
+        ]
 
     undiscoverable = find_clusters_with_undiscoverable_events(snapshot)
     if undiscoverable:
-        header = (
-            f"NICHT ABLEITBAR ({len(undiscoverable)}) \u2014 weder EventList noch "
-            "FeatureMap-Tabelleneintrag, ob dieser Cluster Events hat, ist unbekannt:"
-        )
+        header = i18n.t("cli.inspect.report_undiscoverable", count=len(undiscoverable))
         lines += ["", header]
         lines += [f"  {endpoint}/{cluster_id}" for endpoint, cluster_id in undiscoverable]
 
@@ -388,7 +387,7 @@ def export(
                     "cli.export.fail_write_second_file",
                     path=vo,
                     exc=exc,
-                    written=viu,
+                    written=viu.name,
                     missing=vo.name,
                 )
             )
@@ -705,6 +704,7 @@ def set_language_cmd(
         store.locale.set_language(language)
     finally:
         store.close()
+    i18n.set_language(language)
     typer.echo(i18n.t("cli.set_language.echo_success", language=language))
 
 

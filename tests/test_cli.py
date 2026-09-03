@@ -65,6 +65,14 @@ def test_report_hides_global_attributes():
 def test_report_flags_attributes_the_device_claimed_but_did_not_report():
     # AttributeList nennt 0 und 16, geliefert wurde nur 0.
     report = render_report(load())
+    assert "NOT DELIVERED" in report
+    assert "1/6/16" in report
+
+
+def test_report_flags_attributes_the_device_claimed_but_did_not_report_in_german():
+    # AttributeList nennt 0 und 16, geliefert wurde nur 0.
+    i18n.set_language("de")
+    report = render_report(load())
     assert "NICHT GELIEFERT" in report
     assert "1/6/16" in report
 
@@ -78,6 +86,14 @@ def test_cli_reads_a_fixture_without_network():
 def test_report_flags_unparsable_paths():
     snap = NodeSnapshot.from_raw(1, {"attributes": {"kaputt": 1, "1/6/0": True}})
     report = render_report(snap)
+    assert "NOT READABLE" in report
+    assert "kaputt" in report
+
+
+def test_report_flags_unparsable_paths_in_german():
+    i18n.set_language("de")
+    snap = NodeSnapshot.from_raw(1, {"attributes": {"kaputt": 1, "1/6/0": True}})
+    report = render_report(snap)
     assert "NICHT LESBAR" in report
     assert "kaputt" in report
 
@@ -85,6 +101,16 @@ def test_report_flags_unparsable_paths():
 def test_report_flags_clusters_with_undiscoverable_events():
     # Cluster 42 (OTA Requestor) hat mandatorische Events, aber weder eine
     # EventList noch einen Eintrag in FEATURE_MAP_EVENTS.
+    snap = NodeSnapshot.from_raw(1, {"attributes": {"0/42/0": 1}})
+    report = render_report(snap)
+    assert "NOT DERIVABLE" in report
+    assert "0/42" in report
+
+
+def test_report_flags_clusters_with_undiscoverable_events_in_german():
+    # Cluster 42 (OTA Requestor) hat mandatorische Events, aber weder eine
+    # EventList noch einen Eintrag in FEATURE_MAP_EVENTS.
+    i18n.set_language("de")
     snap = NodeSnapshot.from_raw(1, {"attributes": {"0/42/0": 1}})
     report = render_report(snap)
     assert "NICHT ABLEITBAR" in report

@@ -47,12 +47,16 @@ def isolate_loxmatter_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.fixture(autouse=True)
 def reset_language() -> Iterator[None]:
-    """Setzt die globale Spracheinstellung nach jedem Test zurueck.
+    """Setzt die globale Spracheinstellung vor UND nach jedem Test zurueck.
 
-    `loxmatter.i18n.set_language` haelt die aktuelle Sprache in einer
-    prozessweiten Variable (eine gemeinsame Einstellung fuer die ganze
-    Installation, siehe i18n/__init__.py) - ein Test, der `set_language("de")`
-    aufruft und nicht zuruecksetzt, wuerde jeden nachfolgenden Test in
-    derselben Session mit deutscher statt englischer Ausgabe konfrontieren."""
+    Nur nach dem Test zurueckzusetzen reicht nicht: `cli.py`s
+    Modul-Import-Bootstrap (siehe dort) laeuft VOR jeder Fixture und liest
+    dabei die echte Umgebung (LOXMATTER_LANG, eine echte gespeicherte
+    Einstellung) - ohne das Zuruecksetzen VOR dem Test haengt das Ergebnis
+    des allerersten in einer Session ausgefuehrten Tests vom Sprachzustand
+    der Entwicklungsumgebung ab, in der pytest laeuft (Befund aus dem
+    abschliessenden Review: mit `LOXMATTER_LANG=de` in der Umgebung schlug
+    ein gezielt einzeln ausgefuehrter Test fehl)."""
+    i18n.set_language(i18n.DEFAULT_LANGUAGE)
     yield
     i18n.set_language(i18n.DEFAULT_LANGUAGE)

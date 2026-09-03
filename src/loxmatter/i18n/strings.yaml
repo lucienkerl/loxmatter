@@ -70,6 +70,23 @@ cli.inspect.help_fixture:
   en: "Use a saved snapshot instead of matter-server"
   de: "Statt matter-server ein gespeichertes Abbild"
 
+# render_report (final-review fix)
+cli.inspect.report_attributes:
+  en: "Attributes ({count}):"
+  de: "Attribute ({count}):"
+cli.inspect.report_events:
+  en: "Events ({count}):"
+  de: "Events ({count}):"
+cli.inspect.report_missing:
+  en: "NOT DELIVERED ({count}) — listed by the device, but without a value:"
+  de: "NICHT GELIEFERT ({count}) — vom Gerät gelistet, aber ohne Wert:"
+cli.inspect.report_unparsable:
+  en: "NOT READABLE ({count}):"
+  de: "NICHT LESBAR ({count}):"
+cli.inspect.report_undiscoverable:
+  en: "NOT DERIVABLE ({count}) — neither an EventList nor a FeatureMap table entry says whether this cluster has events:"
+  de: "NICHT ABLEITBAR ({count}) — weder EventList noch FeatureMap-Tabelleneintrag, ob dieser Cluster Events hat, ist unbekannt:"
+
 cli.export.help:
   en: "Generates the Loxone templates for a device."
   de: "Erzeugt die Loxone-Vorlagen für ein Gerät."

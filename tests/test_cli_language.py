@@ -97,6 +97,17 @@ def test_set_language_command_persists_the_choice(tmp_path):
         store.close()
 
 
+def test_set_language_command_confirms_in_the_newly_set_language(tmp_path):
+    # set_language_cmd aktualisiert auch die prozessweite Sprache, bevor es
+    # die Bestaetigung ausgibt - sonst wuerde die Bestaetigung selbst noch
+    # in der Sprache erscheinen, die gerade verlassen wird.
+    store_path = tmp_path / "t.sqlite"
+    Store(store_path).close()
+    result = CliRunner().invoke(app, ["set-language", "de", "--store-path", str(store_path)])
+    assert result.exit_code == 0, result.stdout
+    assert "Sprache auf 'de' gesetzt." in result.stdout
+
+
 def test_set_language_command_rejects_a_missing_database(tmp_path):
     store_path = tmp_path / "does-not-exist.sqlite"
     result = CliRunner().invoke(app, ["set-language", "de", "--store-path", str(store_path)])
@@ -128,3 +139,18 @@ def test_help_text_is_german_when_loxmatter_lang_is_set(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "Statt matter-server ein gespeichertes Abbild" in result.stdout
+
+    # Zusaetzlich die App-Level-Beschreibung (`--help` ohne Unterkommando):
+    # sie haengt an der dateiordnungsabhaengigen Verdrahtung aus einer
+    # frueheren Nachbesserung, die pro-Kommando-Hilfetexte wie oben nicht
+    # abdecken - ein Revert dieser Verdrahtung wuerde vom Test oben allein
+    # nicht bemerkt.
+    app_result = subprocess.run(
+        [sys.executable, "-c", "from loxmatter.cli import app; app()", "--help"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert app_result.returncode == 0, app_result.stderr
+    assert "Matter → Loxone Bridge" in app_result.stdout
