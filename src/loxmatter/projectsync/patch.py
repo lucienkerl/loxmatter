@@ -54,7 +54,16 @@ from loxmatter.projectsync.schema import (
     sibling_iodata_attrs,
 )
 
-__all__ = ["apply_plan"]
+__all__ = ["MissingCaptionError", "apply_plan"]
+
+
+class MissingCaptionError(ValueError):
+    """Die Projektdatei hat (noch) keinen `VirtualInCaption`- bzw.
+    `VirtualOutCaption`-Abschnitt, in den ein komplett neues Geraet
+    eingefuegt werden koennte. Anders als `ProjectFormatError`: die Datei ist
+    dabei nicht fehlerhaft, ihr fehlt nur ein optionaler Abschnitt, den genau
+    diese Operation braucht - das automatische Anlegen dieses Abschnitts ist
+    laut Entwurf ein spaeterer Ausbauschritt, hier (noch) nicht unterstuetzt."""
 
 
 @dataclass(frozen=True)
@@ -128,7 +137,14 @@ def _new_device_edit(
 ) -> _Edit:
     is_input = entry.kind == "input"
     caption = index.virtual_in_caption if is_input else index.virtual_out_caption
-    assert caption is not None and caption.inner_end is not None
+    if caption is None or caption.inner_end is None:
+        section = "VirtualInCaption" if is_input else "VirtualOutCaption"
+        raise MissingCaptionError(
+            f"Die Projektdatei hat keinen `{section}`-Abschnitt - ein komplett "
+            f"neuer Geraete-Container fuer '{entry.device_label}' kann darum nicht "
+            "automatisch eingefuegt werden. Bitte zuerst manuell einen virtuellen "
+            f"{'Eingang' if is_input else 'Ausgang'} in der Loxone Config anlegen."
+        )
 
     container_iname_prefix = "VUI" if is_input else "VQ"
     container_iname = new_iname(container_iname_prefix, index.all_inames)

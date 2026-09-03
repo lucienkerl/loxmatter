@@ -6,12 +6,12 @@ from loxmatter.projectsync.index import build_index
 from loxmatter.projectsync.patch import apply_plan
 
 
-def _signal(key: str, device_id: int, title: str = "Ein/Aus") -> StoredSignal:
+def _signal(key: str, device_id: int, title: str = "Ein/Aus", unit: str = "") -> StoredSignal:
     return StoredSignal(
         key=key,
         ref=SignalRef(endpoint=1, cluster_id=6, element_id=0, kind=SignalKind.ATTRIBUTE),
         title=title,
-        unit="",
+        unit=unit,
         exportability=Exportability.DIGITAL,
         device_id=device_id,
         exported=True,
@@ -127,3 +127,80 @@ def test_output_is_valid_xml(sample_project):
     signals = [_signal("d2_1_onoff", 2)]
     patched = _patch(index, device, signals, include_new_devices=True)
     ET.fromstring(patched)  # wirft bei ungueltigem XML
+
+
+def test_missing_attribute_is_inserted_into_existing_tag(sample_project):
+    """`d1_1_onoff` hat im Beispieldokument gar kein `Unit`-Attribut auf dem
+    `<C>`-Tag selbst (nur das `Display`-Kindelement traegt eines). Ein Signal
+    mit einer echten physikalischen Einheit (anders als der Standard-`_signal`
+    mit `unit=""`) macht `Unit` zu einem gewuenschten, aber im bestehenden Tag
+    fehlenden Attribut - das deckt den `if span is None`-Einfuege-Zweig in
+    `_update_edits` ab, den bislang kein Test beruehrt hat (alle anderen
+    Updates aendern nur ein bereits vorhandenes `Title`)."""
+    import xml.etree.ElementTree as ET
+
+    index = build_index(sample_project)
+    # Vorher: kein `Unit=` auf dem VCI1-Tag selbst.
+    assert "Unit" not in index.input_cmds["d1_1_onoff"].attrs
+
+    device = _device(1, "Altes Geraet")
+    signals = [_signal("d1_1_onoff", 1, title="Alter Titel", unit="°C")]
+    patched = _patch(index, device, signals, include_new_devices=False)
+
+    # Neu eingefuegt, mit dem richtigen (escapten) Wert, in genau das Tag,
+    # dem es vorher fehlte - nicht irgendwo sonst im Dokument.
+    assert 'Unit="&lt;v.1&gt; °C"' in patched
+    patched_index = build_index(patched)
+    assert patched_index.input_cmds["d1_1_onoff"].attrs["Unit"] == "<v.1> °C"
+    # Die uebrigen, unveraenderten Attribute des Tags bleiben erhalten - das
+    # Einfuegen haengt nur vor dem schliessenden '>' an, statt das Tag zu
+    # ersetzen.
+    assert 'Check="d1_1_onoff:\\v"' in patched
+    assert 'Title="Alter Titel"' in patched
+
+    ET.fromstring(patched)  # wirft bei ungueltigem XML
+
+
+# Synthetische Projektdatei, die absichtlich GAR KEINEN `VirtualInCaption`-
+# Abschnitt enthaelt - anders als `sample_project` aus conftest.py, das immer
+# beide Abschnitte hat. Ein reales Projekt, in dem noch nie ein virtueller
+# Eingang angelegt wurde, sieht so aus. Bewusst nicht in conftest.py, weil
+# dieses Dokument nur fuer den Fehlerpfad in `_new_device_edit` gebraucht wird.
+NO_VIRTUAL_IN_CAPTION_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">\r\n'
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
+def test_new_device_without_virtual_in_caption_raises_clear_error():
+    """`include_new_devices=True` fuer ein Geraet, das einen komplett neuen
+    Eingangs-Container braucht, in einem Projekt ohne jeden bestehenden
+    `VirtualInCaption`-Abschnitt: `_new_device_edit` darf hier nicht mit einem
+    nackten `AssertionError` abstuerzen, sondern muss einen aussagekraeftigen
+    `MissingCaptionError` werfen (Finding 2 aus dem Review)."""
+    import pytest
+
+    from loxmatter.projectsync.patch import MissingCaptionError
+
+    index = build_index(NO_VIRTUAL_IN_CAPTION_PROJECT)
+    assert index.virtual_in_caption is None
+
+    device = _device(2, "Neues Geraet")
+    signals = [_signal("d2_1_onoff", 2)]
+    plan = build_plan(index, [device], {device.id: signals}, {device.id: []})
+
+    with pytest.raises(MissingCaptionError, match="VirtualInCaption"):
+        apply_plan(
+            index,
+            plan,
+            [device],
+            {device.id: signals},
+            {device.id: []},
+            include_new_devices=True,
+            bridge_ip="10.0.0.5",
+            port=7000,
+            listen=8080,
+        )
