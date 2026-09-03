@@ -58,9 +58,7 @@ def build_auth_router(store: Store) -> APIRouter:
         if len(password) < MIN_PASSWORD_LENGTH:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben."
-                ),
+                detail=(f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben."),
             )
 
     def _start_session(response: Response) -> None:
@@ -87,9 +85,7 @@ def build_auth_router(store: Store) -> APIRouter:
         session_id = request.cookies.get(SESSION_COOKIE)
         return AuthInfoOut(
             password_set=store.auth.password_hash() is not None,
-            authenticated=(
-                session_id is not None and session_is_valid(store.auth, session_id)
-            ),
+            authenticated=(session_id is not None and session_is_valid(store.auth, session_id)),
         )
 
     @router.post("/auth/setup")

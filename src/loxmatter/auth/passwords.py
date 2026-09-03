@@ -43,9 +43,7 @@ MIN_PASSWORD_LENGTH = 8
 def hash_password(password: str) -> str:
     """Rechnet den abzulegenden Wert - mit frischem Salz bei jedem Aufruf."""
     salt = secrets.token_bytes(_SALT_BYTES)
-    key = hashlib.scrypt(
-        password.encode("utf-8"), salt=salt, n=_N, r=_R, p=_P, dklen=_KEY_BYTES
-    )
+    key = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=_N, r=_R, p=_P, dklen=_KEY_BYTES)
     return f"{_SCHEME}${_N}${_R}${_P}${salt.hex()}${key.hex()}"
 
 

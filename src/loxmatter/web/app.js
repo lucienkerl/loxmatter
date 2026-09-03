@@ -813,6 +813,33 @@ function app() {
     // ---------------------------------------------------------------------
 
     connectLive() {
+      // Aufraeumen vor jedem Neuaufbau - frueher der Rumpf von
+      // `restartLive()`, das der Token-Aufraeumung diente (Tokenwechsel
+      // machte eine bestehende Verbindung ungueltig) und beim Entfernen der
+      // Token-Eingabe als vermeintlich toter Code mitgeloescht wurde. War es
+      // nicht: dieselbe Aufraeumung fehlt jetzt auch dem Fall, dass
+      // `connectLive()` waehrend eine ALTE Verbindung noch lebt erneut
+      // aufgerufen wird - etwa wenn nach einer abgelaufenen Sitzung
+      // (`noteAuthError`, Login-Bildschirm) gleichzeitig der
+      // `reconnectTimer` der alten Verbindung noch armiert ist UND
+      // `submitPassword` -> `startApp()` nach der Neuanmeldung selbst einen
+      // Aufruf ausloest: ohne dieses Aufraeumen liefe der alte, verwaiste
+      // Socket authentifiziert weiter (sein `close`-Handler haette den
+      // Vergleich `this.socket === socket` schon gegen den NEUEN Socket
+      // verloren und loest daher nie eine Wiederverbindung aus), waehrend
+      // der Timer kurz danach eine dritte Verbindung eroeffnet.
+      if (this.reconnectTimer !== null) {
+        window.clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.reconnectDelayMs = RECONNECT_DELAY_INITIAL_MS;
+      const previous = this.socket;
+      this.socket = null;
+      this.socketConnected = false;
+      if (previous) {
+        previous.close();
+      }
+
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const url = `${protocol}//${window.location.host}/api/live`;
       // Kein Subprotokoll mehr: das Sitzungs-Cookie reist beim Handshake von
@@ -839,10 +866,16 @@ function app() {
       // sollen dieselbe Wiederverbindung ausloesen - eine Oberflaeche, die
       // eingefrorene Werte weiter als aktuell zeigt, ist schlimmer als
       // eine, die zugibt, dass sie die Verbindung verloren hat. Die
-      // Pruefung `this.socket === socket` ist eine reine Vorsichtsmassnahme
-      // gegen zwei parallele Verbindungen, falls `connectLive` je aus zwei
-      // Stellen gleichzeitig aufgerufen wird - heute gibt es dafuer keinen
-      // Weg.
+      // Pruefung `this.socket === socket` verhindert, dass eine bewusst
+      // verworfene Verbindung noch eine Wiederverbindung anstoesst: der
+      // Aufraeum-Teil oben in `connectLive()` schliesst eine alte Verbindung
+      // erst, NACHDEM er `this.socket` schon geleert hat, und dieser Aufruf
+      // selbst setzt `this.socket` gleich im Anschluss auf den neuen Socket
+      // - das `close`-Ereignis der alten Verbindung feuert asynchron und
+      // trifft hier also auf ein `this.socket`, das schon nicht mehr sie
+      // selbst ist. Zwei Wege rufen `connectLive()` auf eine noch lebende
+      // Verbindung auf: `startApp()` nach einer Neuanmeldung und der
+      // `reconnectTimer` unten, falls beide gleichzeitig aktiv werden.
       socket.addEventListener("close", () => {
         if (this.socket === socket) {
           this.scheduleReconnect();

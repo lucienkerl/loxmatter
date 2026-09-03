@@ -93,9 +93,7 @@ class AuthStore:
         return None if row is None else int(row["expires_at"])
 
     def extend_session(self, session_id: str, *, expires_at: int) -> None:
-        self._db.execute(
-            "UPDATE session SET expires_at = ? WHERE id = ?", (expires_at, session_id)
-        )
+        self._db.execute("UPDATE session SET expires_at = ? WHERE id = ?", (expires_at, session_id))
         self._db.commit()
 
     def delete_session(self, session_id: str) -> None:

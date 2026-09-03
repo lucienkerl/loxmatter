@@ -46,9 +46,7 @@ def open_session(auth: AuthStore, *, now: int | None = None) -> str:
     moment = int(time.time()) if now is None else now
     auth.purge_expired_sessions(moment)
     session_id = secrets.token_hex(32)
-    auth.create_session(
-        session_id, created_at=moment, expires_at=moment + SESSION_LIFETIME_SECONDS
-    )
+    auth.create_session(session_id, created_at=moment, expires_at=moment + SESSION_LIFETIME_SECONDS)
     return session_id
 
 

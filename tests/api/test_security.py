@@ -161,9 +161,7 @@ async def _call_guard(
     als Wert (der Default der Signatur), nicht `None`: ausserhalb einer
     laufenden App loest niemand die Abhaengigkeit auf. Dieser Helfer haelt
     diese Falle an genau einer Stelle statt in jedem Test."""
-    await guard(
-        _FakeConnection(), authorization=authorization, sec_websocket_protocol=subprotocol
-    )
+    await guard(_FakeConnection(), authorization=authorization, sec_websocket_protocol=subprotocol)
 
 
 async def test_guard_lets_everything_through_when_no_token_is_configured(guard_store):

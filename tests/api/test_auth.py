@@ -33,7 +33,9 @@ class _NullSender:
 
 
 @pytest.fixture
-async def auth_client(tmp_path: Path, no_invoke: Any) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
+async def auth_client(
+    tmp_path: Path, no_invoke: Any
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
     """Eine App ohne gesetztes Passwort - der Zustand der Ersteinrichtung."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")

@@ -253,9 +253,7 @@ class AuthStore:
         return None if row is None else int(row["expires_at"])
 
     def extend_session(self, session_id: str, *, expires_at: int) -> None:
-        self._db.execute(
-            "UPDATE session SET expires_at = ? WHERE id = ?", (expires_at, session_id)
-        )
+        self._db.execute("UPDATE session SET expires_at = ? WHERE id = ?", (expires_at, session_id))
         self._db.commit()
 
     def delete_session(self, session_id: str) -> None:
@@ -574,9 +572,7 @@ MIN_PASSWORD_LENGTH = 8
 def hash_password(password: str) -> str:
     """Rechnet den abzulegenden Wert - mit frischem Salz bei jedem Aufruf."""
     salt = secrets.token_bytes(_SALT_BYTES)
-    key = hashlib.scrypt(
-        password.encode("utf-8"), salt=salt, n=_N, r=_R, p=_P, dklen=_KEY_BYTES
-    )
+    key = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=_N, r=_R, p=_P, dklen=_KEY_BYTES)
     return f"{_SCHEME}${_N}${_R}${_P}${salt.hex()}${key.hex()}"
 
 
@@ -794,9 +790,7 @@ def open_session(auth: AuthStore, *, now: int | None = None) -> str:
     moment = int(time.time()) if now is None else now
     auth.purge_expired_sessions(moment)
     session_id = secrets.token_hex(32)
-    auth.create_session(
-        session_id, created_at=moment, expires_at=moment + SESSION_LIFETIME_SECONDS
-    )
+    auth.create_session(session_id, created_at=moment, expires_at=moment + SESSION_LIFETIME_SECONDS)
     return session_id
 
 
@@ -1052,7 +1046,9 @@ class _NullSender:
 
 
 @pytest.fixture
-async def auth_client(tmp_path: Path, no_invoke: Any) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
+async def auth_client(
+    tmp_path: Path, no_invoke: Any
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
     """Eine App ohne gesetztes Passwort - der Zustand der Ersteinrichtung."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
@@ -1229,9 +1225,7 @@ def build_auth_router(store: Store) -> APIRouter:
         if len(password) < MIN_PASSWORD_LENGTH:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben."
-                ),
+                detail=(f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben."),
             )
 
     def _start_session(response: Response) -> None:
@@ -1258,9 +1252,7 @@ def build_auth_router(store: Store) -> APIRouter:
         session_id = request.cookies.get(SESSION_COOKIE)
         return AuthInfoOut(
             password_set=store.auth.password_hash() is not None,
-            authenticated=(
-                session_id is not None and session_is_valid(store.auth, session_id)
-            ),
+            authenticated=(session_id is not None and session_is_valid(store.auth, session_id)),
         )
 
     @router.post("/auth/setup")
@@ -2296,9 +2288,7 @@ def test_set_password_writes_a_hash_and_clears_sessions(tmp_path):
 def test_set_password_rejects_a_short_password(tmp_path):
     path = tmp_path / "t.sqlite"
     Store(path).close()
-    result = runner.invoke(
-        app, ["set-password", "--store-path", str(path)], input="kurz\nkurz\n"
-    )
+    result = runner.invoke(app, ["set-password", "--store-path", str(path)], input="kurz\nkurz\n")
     assert result.exit_code != 0
     store = Store(path)
     try:

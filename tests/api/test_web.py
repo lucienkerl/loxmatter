@@ -157,7 +157,14 @@ async def test_no_secret_travels_in_a_url_or_local_storage(api):
     script = (await client.get("/static/app.js")).text
     assert "Bearer" not in script
     assert "localStorage" not in script
-    for forbidden in ("?token=", "&token=", "?api_token=", "&api_token=", "?password=", "&password="):
+    for forbidden in (
+        "?token=",
+        "&token=",
+        "?api_token=",
+        "&api_token=",
+        "?password=",
+        "&password=",
+    ):
         assert forbidden not in script
 
 
