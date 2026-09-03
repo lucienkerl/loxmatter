@@ -365,6 +365,12 @@ function app() {
     // keine Antwort zu sehen - und genau daran haengt der Download-Knopf
     // in `index.html` (`x-show="projectSync.plan"`): nichts herunterladen,
     // bevor der Plan gesehen wurde.
+    // `plan.patched_with_new_devices_base64` ist `null`, wenn die
+    // hochgeladene Datei keinen `VirtualInCaption`/`VirtualOutCaption`-
+    // Abschnitt hat (Review-Fix Important #4) - `plan.
+    // new_devices_unavailable_reason` traegt dann den Grund. Beides bleibt
+    // wie der Rest von `plan` unveraendert aus der API-Antwort, keine
+    // eigene camelCase-Kopie.
     projectSync: {
       file: null,
       plan: null,
@@ -1383,24 +1389,84 @@ function app() {
       return "warn";
     },
 
+    /** Fuer die "Alles aktuell"-Meldung (Review-Fix Important #5): `orphaned`-
+     * und `conflict`-Eintraege sind informativ und werden nie gepatcht
+     * (siehe `SyncPlan.has_changes` in `diff.py`, das genau diese beiden
+     * Status bewusst ausklammert), muessen aber trotzdem sichtbar bleiben,
+     * auch wenn `has_changes` deshalb `false` ist. */
+    projectSyncHasInformationalEntries(entries) {
+      return (entries || []).some(
+        (entry) => entry.status === "orphaned" || entry.status === "conflict",
+      );
+    },
+
+    /** Deutsche Beschriftung fuer die Attributnamen aus `entry.changes` -
+     * dieselben Schluessel wie `MANAGED_INPUT_CMD_ATTRS`/
+     * `MANAGED_OUTPUT_CMD_ATTRS` in `projectsync/schema.py`. Unbekannte
+     * Namen (sollte nicht vorkommen) erscheinen unuebersetzt statt zu
+     * verschwinden. */
+    projectSyncAttrLabel(attr) {
+      const labels = {
+        Title: "Titel",
+        Check: "Prüfbefehl",
+        Analog: "Analog",
+        Unit: "Einheit",
+        CmdOn: "Befehl Ein",
+        CmdOff: "Befehl Aus",
+      };
+      return labels[attr] || attr;
+    },
+
+    /**
+     * Formatiert `entry.changes` (nur bei `status === "updated"` befuellt,
+     * sonst leer - siehe `ProjectSyncEntryOut` in `api/models.py`) als
+     * mehrzeiligen Text fuer die Plan-Tabelle, ein Attribut pro Zeile in der
+     * Form `Titel: "Alt" → "Neu"` (Review-Fix Important #6). Reines
+     * `x-text` statt `x-html`: die Werte stammen aus der hochgeladenen
+     * Projektdatei und sind nicht vertrauenswuerdig.
+     */
+    projectSyncChangesText(entry) {
+      const changes = entry.changes || {};
+      return Object.entries(changes)
+        .map(([attr, values]) => {
+          const [oldValue, newValue] = values;
+          return `${this.projectSyncAttrLabel(attr)}: "${oldValue}" → "${newValue}"`;
+        })
+        .join("\n");
+    },
+
     /**
      * Baut den Blob aus der Base64-kodierten Datei, die bereits Teil der
      * Plan-Antwort war (kein zweiter Aufruf an die Bruecke noetig) - der
      * Haken "Neue Geraete-Container ebenfalls anlegen" waehlt dabei nur
      * aus, WELCHE der beiden mitgelieferten Fassungen heruntergeladen wird.
+     *
+     * `patched_with_new_devices_base64` kann `null` sein, wenn die
+     * hochgeladene Datei keinen `VirtualInCaption`/`VirtualOutCaption`-
+     * Abschnitt fuer einen neuen Geraete-Container enthaelt
+     * (`new_devices_unavailable_reason` traegt dann den Grund, angezeigt in
+     * `index.html`). Der Haken ist in dem Fall bereits deaktiviert - diese
+     * Pruefung hier ist nur die zweite Verteidigungslinie, falls er trotzdem
+     * angehakt sein sollte, und faellt still auf die konservative Fassung
+     * zurueck statt `atob(null)` auszuloesen.
      */
     downloadPatchedProject() {
       if (!this.projectSync.plan) {
         return;
       }
-      const base64 = this.projectSync.includeNewDevices
-        ? this.projectSync.plan.patched_with_new_devices_base64
-        : this.projectSync.plan.patched_conservative_base64;
+      const wantsNewDevices = this.projectSync.includeNewDevices;
+      const base64 =
+        wantsNewDevices && this.projectSync.plan.patched_with_new_devices_base64
+          ? this.projectSync.plan.patched_with_new_devices_base64
+          : this.projectSync.plan.patched_conservative_base64;
+      const isNewDevicesVariant = wantsNewDevices && Boolean(this.projectSync.plan.patched_with_new_devices_base64);
       const blob = blobFromBase64(base64, "application/xml");
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = objectUrl;
-      link.download = "loxmatter-projekt-gepatcht.Loxone";
+      link.download = isNewDevicesVariant
+        ? "loxmatter-projekt-gepatcht-mit-neuen-geraeten.Loxone"
+        : "loxmatter-projekt-gepatcht.Loxone";
       link.click();
       // Verzoegertes Freigeben wie in `requestDownload` oben - manche
       // Browser (Firefox) starten den Download eines Objekt-URLs erst nach
