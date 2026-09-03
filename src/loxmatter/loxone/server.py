@@ -89,6 +89,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response as StarletteResponse
 
+from loxmatter.api.auth import build_auth_router
 from loxmatter.api.control import build_control_router
 from loxmatter.api.devices import build_device_router
 from loxmatter.api.diagnostics import (
@@ -386,6 +387,12 @@ def build_app(
         ),
         dependencies=api_guard,
     )
+
+    # OHNE `dependencies=api_guard` - genau wie `/health`, `/cmd` und
+    # `/resync` weiter unten. Wer sich noch nicht angemeldet hat, muss diese
+    # vier Routen erreichen koennen, sonst gibt es keinen Weg hinein
+    # (siehe api/auth.py, Moduldocstring).
+    app.include_router(build_auth_router(store))
 
     # Task 7, Phase 5: die WebUI selbst. `StaticFiles` weist einen Zugriff,
     # der ueber `_WEB_DIR` hinaus will (z. B. `/static/../../../etc/passwd`),
