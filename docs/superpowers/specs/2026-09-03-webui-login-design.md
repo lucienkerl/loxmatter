@@ -164,8 +164,8 @@ Was das Fenster begrenzt, und was innerhalb dieser Entscheidung liegt:
 
 Der Store (`model/store.py`) hat bereits ein versioniertes Schema mit
 Migrationen (`_SCHEMA_VERSION`, `_migrate`) und liegt im persistenten Volume
-unter `LOXMATTER_STORE`. Neue Migration `_migrate_to_v3`, `_SCHEMA_VERSION`
-auf 3:
+unter `LOXMATTER_STORE`. `_SCHEMA_VERSION` steht nach Phase 6 auf 3; neu
+kommt `_migrate_to_v4` hinzu, `_SCHEMA_VERSION` geht auf 4:
 
 ```sql
 CREATE TABLE IF NOT EXISTS setting (
@@ -327,7 +327,7 @@ Neue Datei `tests/api/test_auth.py`:
 - Sperre: fünf Fehlversuche, dann Drosselung; erfolgreicher Login setzt
   zurück; eine zweite Peer-Adresse ist von der Sperre der ersten nicht
   betroffen.
-- Migration: eine Datenbank auf Schemaversion 2 wird auf 3 gehoben, ohne
+- Migration: eine Datenbank auf Schemaversion 3 wird auf 4 gehoben, ohne
   Bestandszeilen in `device`/`signal`/`command` anzutasten.
 
 `tests/api/test_security.py` wächst um:
