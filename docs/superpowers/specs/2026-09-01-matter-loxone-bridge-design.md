@@ -143,19 +143,45 @@ docker compose
 │                   network_mode: host (mDNS + IPv6 zwingend)
 │                   Volume: Fabric-Credentials
 └── loxmatter       FastAPI + WebUI + SQLite
-                    Bridge-Networking, Port 8080/tcp
+                    network_mode: host, Port 8080/tcp
 
 Profil "dev" ergänzt (siehe 10.2)
 ├── virtual-devices  CHIP-Beispielgeräte, echt einlernbar
 └── fake-miniserver  UDP-Mitschnitt + Kommando-Sender statt Loxone
 ```
 
-Nur `otbr` und `matter-server` benötigen Host-Networking. `loxmatter` spricht
-WebSocket nach innen, UDP und HTTP nach Loxone.
+`otbr` und `matter-server` benötigen Host-Networking zwingend (mDNS, IPv6).
+`loxmatter` spricht WebSocket nach innen sowie UDP und HTTP nach Loxone und käme
+technisch auch mit Bridge-Networking aus, läuft in der Referenz-Installation
+(`deploy/testhost/docker-compose.yml`) aber ebenfalls mit `network_mode: host` — aus
+zwei dort ausführlich begründeten Gründen: `--url` (Default
+`ws://localhost:5580/ws`) erreicht den ebenfalls host-vernetzten `matter-server` nur
+über `127.0.0.1` (im Compose-Bridge-Netz ist er kein auflösbarer Servicename), und der
+HTTP-Port für die Loxone-Ausgangsbefehle (`--listen`) ist damit ohne eigene Portfreigabe
+vom Miniserver aus erreichbar. Diagramm und Fließtext sagten dazu bis zum 2026-09-03
+Gegenteiliges („Bridge-Networking" oben, `network_mode: host` unten, mit einem „siehe
+oben" auf das Diagramm); maßgeblich ist und war die Compose-Datei.
 
 **Kritisch:** Das Volume mit den Fabric-Credentials von `matter-server` ist der einzige
 unersetzliche Zustand. Verlust bedeutet, alle Geräte neu einlernen zu müssen. Muss im
 Deployment-Guide und in der WebUI prominent stehen; die WebUI bietet einen Backup-Export.
+
+**Sicherheitsstatus dieses Backup-Exports (geschützt seit Task 8, 2026-09-02 — siehe
+9.1 für die vollständige Entscheidung):** `GET /api/diagnostics/fabric-backup` (10.5)
+verlangt seit Task 8 `Authorization: Bearer <Token>`, sobald `--api-token`/
+`LOXMATTER_API_TOKEN` gesetzt ist (`loxone.server.build_api_guard`). `loxmatter` läuft
+mit `network_mode: host` (siehe oben), damit der Miniserver ihn erreicht — dieselbe
+Erreichbarkeit gilt fürs gesamte LAN, deshalb ist ein gesetztes Token hier keine
+Option, sondern die Voraussetzung für einen sicheren Betrieb: **ohne konfiguriertes
+Token liefert diese Route gar nichts aus** (HTTP 403 mit Begründung im `detail`) — sie
+ist die einzige Ausnahme von der Regel, dass `/api` ohne Token offen bleibt (9.1;
+Fassung vom 2026-09-03, dieser Absatz sagte bis dahin noch das Gegenteil). Der
+Read-only-Mount des matter-server-Datenverzeichnisses (`./data:/matter-data:ro`)
+und die zugehörige
+`--matter-data-dir`-Option in `deploy/testhost/docker-compose.yml` sind seit Task 8
+wieder aktiv, zusammen mit einem in `.env` gesetzten `LOXMATTER_API_TOKEN` — ohne
+diese Einhängung lieferte die Route ohnehin nur einen 503, statt echte Schlüssel
+auszuliefern.
 
 ### 4.2 Module in `loxmatter`
 
@@ -168,7 +194,7 @@ Deployment-Guide und in der WebUI prominent stehen; die WebUI bietet einen Backu
 | `commands/` | Übersetzt „gewünschter Zustand → Matter-Kommando": Level-Skalierung, Farbraum, Cover-Position, Setpoints. **Von `loxone/in` und `web/` gemeinsam genutzt** | matter, model, profiles |
 | `loxone/in` | HTTP-Endpoints für virtuelle Ausgänge; delegiert an `commands/` | commands |
 | `export/` | Generiert `VIU_*.xml` und `VO_*.xml` | model, profiles |
-| `web/` | SPA, spricht ausschließlich REST gegen das Backend | — |
+| `web/` | SPA. REST gegen das Backend für alles, was sie tut; dazu **eine** WebSocket-Verbindung `/api/live`, die nur Live-Werte empfängt und nie sendet (8.3 verlangt sie) | — |
 
 `commands/` existiert genau deshalb als eigenes Modul: Loxone-HTTP-Ausgang und WebUI-Bedienung
 sind zwei Aufrufer derselben Logik. Läge sie in `loxone/in`, gäbe es die Farbraum- und
@@ -602,13 +628,23 @@ Ansicht 1 keinen Regler hat, und für unbekannte Cluster. Nicht-exportierbare We
 der Export-Checkbox — gerade zur Diagnose sind sie nützlich, auch wenn sie nie ein
 UDP-Datagramm werden.
 
-**3. Export** — Miniserver-IP und UDP-Port eintragen. Vorlagen pro Gerät herunterladen,
-einzeln oder als ZIP; Filter „nur noch nicht exportierte Geräte". Pro Gerät ist
-sichtbar, wann zuletzt exportiert wurde und ob sich seither Signale geändert haben.
-Enthält die Kurzanleitung und die einmaligen Systemvorlagen.
+**3. Export** — die IP **dieser Brücke** (aus Sicht des Miniservers) und den UDP-Port
+eintragen. Nicht die Adresse des Miniservers: der Wert wird zur `Address` des virtuellen
+UDP-Eingangs — die Absenderadresse, von der der Miniserver Datagramme überhaupt annimmt
+— und zum Rumpf der Kommando-URLs `http://<ip>:<listen>` im virtuellen Ausgang (6.1).
+Diese Zeile sagte bis zum 2026-09-03 „Miniserver-IP", und die Oberfläche beschriftete
+das Feld entsprechend; eine damit erzeugte Vorlage sieht korrekt aus und bleibt stumm.
+Vorlagen pro Gerät herunterladen, einzeln oder als ZIP; Filter „nur noch nicht
+exportierte Geräte", der für die Vorschau **und** für das ZIP gilt (er entscheidet auch,
+welche Geräte danach als exportiert vermerkt sind). Pro Gerät ist sichtbar, wann zuletzt
+exportiert wurde und ob sich seither Signale geändert haben. Enthält die Kurzanleitung
+und die einmaligen Systemvorlagen.
 
-**4. System** — Status von matter-server und OTBR, Thread-Netz, Logs, Backup der
-Fabric-Credentials.
+**4. System** — Systemcheck, Logs (UDP-Mitschnitt und Kommando-Log), Backup der
+Fabric-Credentials. Der Systemcheck prüft vier Dinge: matter-server, die
+Signalschlüssel-Datenbank, den lokalen IPv6-Pfad und den Routing-Pfad zum Miniserver
+(10.5). **OTBR und Thread-Netz prüft er nicht** — festgehalten als offener Punkt 9 in
+Abschnitt 12, nicht als stille Auslassung.
 
 ### 8.1 Warum die Bedienung mehr ist als Komfort
 
@@ -634,6 +670,66 @@ Ein WebSocket vom Backend zur SPA schiebt Attribut- und Event-Änderungen sowie
 Online-Status durch. Dieselbe Subscription, die den UDP-Sender speist — kein zweiter
 Pfad, kein Polling.
 
+### 8.4 Rohes Attributschreiben: Erlaubnisliste (Task 4, 2026-09-02; Befund berichtigt,
+Review-Fix Important #2, 2026-09-02)
+
+**Befund: die Schreibbarkeit eines Attributs steht in einer Tabelle, die diese
+Installation nicht laden kann und die python-matter-server nirgends benutzt — nicht,
+wie hier zuerst behauptet, in gar keiner Tabelle.** Geprüft gegen die installierten
+Pakete (python-matter-server==8.1.2), nicht vermutet:
+
+- `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` — die Basisklasse jeder
+  generierten Attribut-Klasse (z. B. `BasicInformation.Attributes.NodeLabel`) — trägt
+  `cluster_id`, `attribute_id`, `attribute_type`, `must_use_timed_write`. Keine
+  dieser Eigenschaften unterscheidet Lese- von Schreibzugriff;
+  `must_use_timed_write` regelt nur, ob ein *erlaubter* Schreibzugriff einen
+  Timed-Write-Envelope braucht.
+- `matter_server.client.client.MatterClient.write_attribute(node_id, attribute_path,
+  value)` prüft vorher nichts — der Aufruf geht ungeprüft an den Controller; eine
+  Ablehnung käme, wenn überhaupt, als Fehler vom Gerät selbst zurück.
+- **Eine Volltextsuche nach „writable“ ergab sehr wohl Treffer — hier stand vorher
+  fälschlich das Gegenteil.** `chip/clusters/CHIPClusters.py`, Teil des installierten
+  `chip`-Pakets, trägt eine eigene, von `ClusterObjects` unabhängige Tabelle mit genau
+  dieser Information: `grep -c '"writable": True'
+  .venv/lib/python3.12/site-packages/chip/clusters/CHIPClusters.py` liefert **250**
+  Treffer, und für `BasicInformation` (Cluster 0x28 = 40) sind darin exakt die drei
+  Attribut-IDs 5 (`NodeLabel`), 6 (`Location`) und 16 (`LocalConfigDisabled`) mit
+  `"writable": True` markiert — genau die drei, auf die die Erlaubnisliste unten
+  unabhängig davon schon gegen ein echtes Gerät kam.
+- **Dieses Modul ist trotzdem nicht importierbar, und python-matter-server benutzt es
+  nirgends.** `from chip.clusters.CHIPClusters import ChipClusters` scheitert in
+  dieser Distribution mit `ImportError: cannot import name 'exceptions' from 'chip'`
+  — das Paket `home_assistant_chip_clusters`, das hier `chip.clusters.CHIPClusters`
+  bereitstellt, liefert die Datei ohne das dazugehörige `chip/exceptions.py`, das sie
+  beim Laden voraussetzt. Eine Suche nach `CHIPClusters` im installierten
+  `matter_server`-Paket ergibt außerdem keinen einzigen Treffer.
+
+Die praktische Konsequenz ist dieselbe wie vorher — die Erlaubnisliste bleibt für
+heute richtig —, nur ihre Begründung ist jetzt eine andere: nicht „die Information
+existiert nicht“, sondern „die Information existiert in einer Tabelle, die diese
+Installation nicht laden kann und die python-matter-server selbst nicht liest“. Das
+ist ein Unterschied mit Konsequenz: die zweite Situation hat einen offensichtlichen
+Weg in die Zukunft, den die erste nicht hätte — siehe Offene Punkte, Punkt 7.
+
+**Konsequenz: dieselbe Asymmetrie wie bei Kommandos (6.7), diesmal für Attribute.**
+`POST /api/signals/{key}/write` (`api/control.py`) lehnt jeden Schreibversuch auf ein
+Attribut ab, das nicht auf einer expliziten Erlaubnisliste steht — eine großzügige
+Durchreiche wie beim *Export* (3.5) wäre hier falsch: ein zu Unrecht exportiertes
+Attribut kostet einen ungenutzten Eingang, ein zu Unrecht freigegebener Schreibzugriff
+kann ein Gerät fehlkonfigurieren. Die Liste ist bewusst klein und enthält nur
+`BasicInformation.NodeLabel` (0/40/5), `.Location` (0/40/6) und
+`.LocalConfigDisabled` (0/40/16) — alle drei belegt gegen die eingecheckte
+IKEA-GRILLPLATS-Vorlage (`tests/fixtures/nodes/ikea_grillplats_plug.json`), nicht nur
+laut Spezifikation vermutet.
+
+**Offener Punkt: selbst ein erlaubtes Attribut lässt sich heute noch nicht tatsächlich
+schreiben.** `BridgeMatterClient` (`matter/client.py`) hat kein `write_attribute`, und
+`build_control_router(store, invoke)` nimmt dafür auch keinen zweiten Aufrufer entgegen
+— `invoke` ist ausschließlich für Kommandos typisiert
+(`Callable[[MatterCall], Awaitable[None]]`), ein Attribut-Schreibzugriff ist keins.
+`POST /api/signals/{key}/write` antwortet für ein erlaubtes Attribut deshalb mit 501
+statt mit einem Erfolg, der nichts bewirkt — siehe Offene Punkte, Punkt 6.
+
 ---
 
 ## 9. Fehlerbehandlung
@@ -646,6 +742,96 @@ Pfad, kein Polling.
 | UDP-Sendefehler | Log, kein Retry (fire and forget) |
 | Unbekanntes Cluster | Roh-Export ohne Skalierung, Warnung in der WebUI |
 | Gerät entfernt und neu eingelernt | Neue `device_id`, neue Keys. Die alten Loxone-Objekte werden verwaist — die WebUI weist darauf hin und benennt die zu löschenden Objekte |
+
+### 9.1 Absicherung der `/api`-Routen (Task 8, 2026-09-02)
+
+Bis Phase 4 bot dieser Dienst zwei Endpunkte für den Miniserver: `/cmd` und
+`/resync`. Wer den Port erreichte, konnte damit höchstens ein Gerät schalten. Seit
+Phase 5 (Task 1: Einlernen, Task 2: Entfernen, Task 6: Fabric-Sicherung als Download)
+ist das Gewicht ein anderes: wer den Port erreicht, kann Geräte aus der Fabric werfen
+oder die kompletten, unersetzlichen Fabric-Credentials herunterladen (siehe 4.1). Das
+ist eine Änderung der Art des Risikos, nicht nur seines Grads.
+
+**Die Entscheidung:** ein optionales Bearer-Token (`--api-token`/
+`LOXMATTER_API_TOKEN`, siehe `loxone.server.build_api_guard`) schützt ab hier
+ausnahmslos jede Route unter `/api` — lesend und schreibend, alle fünf Router
+(Geräte, Steuerung, Export, Live-Werte inklusive der WebSocket-Route `/api/live`,
+Diagnose inklusive der Fabric-Sicherung). Ist kein Token konfiguriert, bleiben diese
+Routen unverändert offen — mit einer deutlichen Warnung im Log beim Start
+(`cli._warn_if_missing_api_token`). Ein Dienst, der ohne Token gar nicht erst startet,
+wäre für eine Testumgebung oder eine Erstinbetriebnahme ohne vorbereitetes Geheimnis
+unbenutzbar; die Warnung ist der bewusst gewählte Ausgleich dafür.
+
+**Warum `/cmd` und `/resync` bewusst ausgenommen bleiben:** der Miniserver ruft
+virtuelle Ausgänge als einfachen HTTP-GET auf, ohne die Möglichkeit, einen Header
+mitzuschicken — das ist eine Eigenschaft des Loxone-Vorlagenformats (6.1), keine
+Wahl dieses Projekts. Ein Token auf diesem Pfad würde die Loxone-Integration schlicht
+abschalten, nicht absichern. Das ist eine reale, dauerhafte Grenze und wird hier als
+solche festgehalten, nicht als Unzulänglichkeit: **auch mit gesetztem Token kann jeder
+im selben Netz weiterhin Geräte über `/cmd` schalten.** Was das Token verhindert, ist
+ausschließlich die Veränderung des Bestands — Einlernen, Entfernen und der Download
+der Fabric-Sicherung.
+
+**Wie weit „wer den Port erreicht" bei `/cmd` wirklich reicht** (ergänzt 2026-09-03).
+`/cmd/{key}/{value}` ist ein unauthentifizierter **GET** ohne jede Prüfung des
+Ursprungs. Ein GET braucht kein Skript und keinen Fuß im LAN: jede beliebige Webseite,
+die jemand aus diesem Netz im Browser öffnet, kann mit einem einzigen
+`<img src="http://<bruecke>:8080/cmd/d12_1_onoff/1">` ein Gerät schalten — der Browser
+schickt die Anfrage aus dem LAN heraus, ohne dass der Angreifer je selbst im Netz war,
+und braucht die Antwort nicht zu sehen. Weder eine `Origin`-Prüfung noch ein
+CSRF-Token noch eine Beschränkung auf POST hülfe hier, ohne genau das kaputtzumachen,
+wofür die Route existiert: der Miniserver schickt einen schlichten GET ohne Header und
+ohne Zustand. Das Risiko ist damit nicht anders geartet als oben beschrieben, aber
+deutlich größer als „wer den Port erreicht" nahelegt, und wird hier in seiner
+tatsächlichen Reichweite festgehalten, statt in einer Formulierung zu verschwinden, die
+einen Angreifer im selben Netz voraussetzt. Was es begrenzt, ist ausschließlich der
+Schaden: über `/cmd` lässt sich schalten, nichts einlernen, nichts entfernen und nichts
+herunterladen.
+
+`--host` (Standard `0.0.0.0`) bindet weiterhin an alle Schnittstellen, weil der
+Miniserver den Dienst erreichen muss — das Token ändert daran nichts, es schützt nur,
+was hinter `/api` erreichbar ist, nicht die Erreichbarkeit selbst.
+
+**Zwei Übertragungswege für das Token, und warum es zwei sein müssen** (Nachbesserung
+nach Review, 2026-09-03). `Authorization: Bearer <Token>` ist der Hauptweg und gilt für
+jede REST-Route. Für die WebSocket-Route `/api/live` ist er strukturell unmöglich: die
+Browser-`WebSocket`-API (`new WebSocket(url, protocols)`) kennt überhaupt keinen
+Parameter für eigene Kopfzeilen. Der einzige vom Browser beeinflussbare Kanal im
+Handshake ist das Subprotokoll-Argument, das als `Sec-WebSocket-Protocol` auf die
+Leitung geht. Die Oberfläche verbindet sich deshalb mit `new WebSocket(url, ["bearer",
+token])`, und `build_api_guard` akzeptiert das Token zusätzlich aus diesem einen Header,
+ausschließlich in der Form `bearer, <Token>`. Ein Query-Parameter wäre die naheliegende
+Alternative und ist bewusst NICHT gewählt: er landet in Server-Logs, Proxy-Logs und der
+Browser-History, ein Header nicht — dieselbe Überlegung, aus der `api/diagnostics.py`
+das Kommando-Log ohne Query-Zeichenkette führt (10.5). `api/live.py` gibt im Accept den
+Marker `bearer` zurück (nie das Token), weil der Browser den Handshake nach RFC 6455
+sonst abbricht.
+
+**Daraus folgt eine Anforderung an das Token selbst:** es muss als HTTP-Token
+übertragbar sein — keine Leerzeichen, kein Komma, kein Nicht-ASCII. `openssl rand -hex
+32`, der in `.env.example` und README empfohlene Weg, liefert nur `[0-9a-f]` und
+erfüllt das von sich aus; die Anforderung steht dort ausdrücklich, statt eine
+stillschweigende Annahme zu bleiben. Ein Token, das nur aus Leerraum besteht (ein
+abgeschnittener Zeilenumbruch aus einer kopierten `.env`), gilt als „nicht gesetzt" —
+`normalize_api_token` entscheidet das für Wächter UND Startwarnung gemeinsam, sonst
+wäre der Dienst gesperrt, ohne dass die Warnung darauf hinwiese. Der Vergleich selbst
+läuft über `secrets.compare_digest` auf UTF-8-Bytes, nicht über `!=` und nicht über
+`str` (bei `str` wirft `compare_digest` `TypeError`, sobald Nicht-ASCII im Spiel ist —
+ein Nicht-ASCII-Token im Header darf keinen 500er auslösen).
+
+**Die eine Ausnahme von „ohne Token bleibt `/api` offen": die Fabric-Sicherung.** `GET
+/api/diagnostics/fabric-backup` wird ohne konfiguriertes Token gar nicht erst
+ausgeliefert (HTTP 403, mit einer Erklärung im `detail`). Alle übrigen Routen bleiben
+unverändert offen. Der Grund ist der Unterschied im Schaden, nicht im Prinzip: eine
+ungeschützte Geräteliste ist peinlich, eine ungeschützte Fabric-Sicherung ist die
+irreversible Übernahme der Fabric (4.1). Die Referenz-Installation
+(`deploy/testhost/`) hängt das matter-server-Datenverzeichnis ein und läuft mit
+`network_mode: host` — ein Standard, der von Disziplin beim Lesen der README abhinge,
+wäre für genau diese eine Route nicht vertretbar. 403 und nicht 401, weil es ohne
+konfiguriertes Token gar nichts gibt, womit sich jemand authentifizieren KÖNNTE: eine
+Wiederholung mit Zugangsdaten kann nicht helfen, und genau das unterscheidet 403 von
+401 (RFC 9110). 503 bleibt dem bereits vorhandenen Fall „kein Datenverzeichnis
+eingehängt" vorbehalten — drei Ursachen, drei unterscheidbare Codes.
 
 ---
 
@@ -736,8 +922,22 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
   die Gegenrichtung.
 - **Vorlagen-Vorschau**: vor dem Download zeigt die WebUI, welche Objekte und Befehle
   entstehen und wie viele.
-- **Systemcheck**: IPv6 vorhanden, mDNS erreichbar, Dongle da, matter-server verbunden,
-  Miniserver erreichbar. Jede Zeile grün oder rot mit konkretem Hinweis.
+- **Systemcheck** (`GET /api/diagnostics/system`): vier Zeilen, jede grün oder rot mit
+  konkretem Hinweis — `matter-server` (besteht eine Verbindung?), `store` (ist die
+  Signalschlüssel-Datenbank beschreibbar? ohne das kein Einlernen und kein
+  Export-Vermerk), `ipv6` (gibt es lokal eine geroutete IPv6-Adresse? Matter und Thread
+  brauchen sie) und `miniserver` (existiert ein Routing-Pfad zum konfigurierten Ziel?
+  mehr ist bei Fire-and-Forget-UDP ohne ICMP-Auswertung nicht feststellbar). Diese Liste
+  hieß bis zum 2026-09-03 „IPv6 vorhanden, mDNS erreichbar, Dongle da, matter-server
+  verbunden, Miniserver erreichbar" — mDNS und Dongle sind nicht umgesetzt, `store`
+  stand in keiner Spec. Siehe offener Punkt 9 in Abschnitt 12.
+- **Fabric-Sicherung** (`GET /api/diagnostics/fabric-backup`, siehe 4.1): Download des
+  matter-server-Datenverzeichnisses als Archiv. **Geschützt durch das Token seit
+  Task 8** (siehe 4.1, 9.1 und den Docstring der Route selbst) — und als einzige
+  `/api`-Route **ohne konfiguriertes Token gar nicht erst ausgeliefert** (HTTP 403 mit
+  Begründung im `detail`). Die Startwarnung erscheint weiterhin, sie tritt hier aber
+  nicht an die Stelle einer Sperre. Diese Zeile sagte bis zum 2026-09-03 noch, die Route
+  bleibe ohne Token offen.
 
 ---
 
@@ -802,6 +1002,21 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    den vollen Node-Cache, danach einmalig `subscribe()`, keine Laufzeit-
    Rekommissionierung) ist die Lücke hinnehmbar; sie ist aber ein offener Punkt, keine
    erledigte Aufgabe.
+
+   **Was ein Anwender davon sieht** (ergänzt 2026-09-03, nachdem Phase 5 das Einlernen
+   in die WebUI geholt hat). Bis dahin beschrieb dieser Punkt nur die Ursache; die
+   Auswirkung ist unangenehmer, als sie klingt. Ein über Ansicht 1 frisch eingelerntes
+   Gerät bekommt vom NODE_ADDED-Ereignis sofort `d<id>_online = 1` und erscheint in der
+   Liste **online und grün** — `subscribe()` lief aber beim Start der Brücke und kennt
+   diesen Node nicht, also bleibt `Runtime.last_values_for()` für ihn leer und jedes
+   Signal steht in Ansicht 1 und 2 dauerhaft auf „-". Grün und ohne einen einzigen Wert
+   ist von außen nicht von einem kaputten Gerät zu unterscheiden, und es ist genau die
+   Reihenfolge, in der ein Erstbetrieb abläuft: einlernen, dann Werte ansehen.
+   Abhilfe bis zu einem echten Fix ist ein Neustart der Brücke — danach kennt
+   `subscribe()` den Node. Die Erfolgsmeldung nach dem Einlernen sagt das in einem Satz
+   (`web/app.js`, `commissionDevice`), damit niemand diesen bekannten Grenzfall für
+   einen Fehler seiner Installation hält. Der Export der Vorlagen ist davon nicht
+   betroffen: er liest den `Store`, nicht die Live-Werte.
 4. **Event-Zähler (`<key>_n`) sind prozesslokal und überleben einen Bruecken-Neustart
    nicht** (`Runtime`, `loxone/runtime.py`; Review-Fix I7, 2026-09-02). Spec 6.3 verkauft
    diesen Zähler als monotonen Wert, dessen Vorzug ist, dass ein verlorenes UDP-Datagramm
@@ -848,3 +1063,94 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
    eine Event drei zusätzliche `LoxoneInput`s erzeugt statt der generischen zwei. Nicht in
    dieser Phase umgesetzt — hier festgehalten, damit 6.3 nicht mehr verspricht, als
    `export/signals.py` tatsächlich liefert.
+6. **Rohes Attributschreiben ist bis zur Erlaubnisliste abgesichert, aber nicht an
+   matter-server angebunden** (Task 4, 2026-09-02; siehe 8.4). `POST
+   /api/signals/{key}/write` (`api/control.py`) lehnt jedes Attribut ab, das nicht auf
+   der (bewusst kleinen, gegen ein echtes Gerät belegten) Erlaubnisliste
+   `_WRITABLE_ATTRIBUTES` steht — das ist getestet
+   (`test_raw_write_of_a_non_writable_attribute_is_refused`). Für ein *erlaubtes*
+   Attribut gibt es aber noch keinen Weg zum Gerät: `BridgeMatterClient` hat kein
+   `write_attribute` (anders als `send_command`, das über `matter_server.client.client.
+   MatterClient.send_device_command` läuft), und `build_control_router(store, invoke)`
+   nimmt dafür auch keinen zweiten Aufrufer entgegen — `invoke` ist per Typ
+   (`Callable[[MatterCall], Awaitable[None]]`) auf Kommandos beschränkt, ein
+   Attribut-Schreibzugriff ist keins. Die Route antwortet für ein erlaubtes Attribut
+   deshalb ehrlich mit 501, statt einen Erfolg vorzutäuschen, der nichts bewirkt. Ein
+   Fix bräuchte: (a) `BridgeMatterClient.write_attribute(node_id, attribute_path,
+   value)` als dünnen Wrapper um `MatterClient.write_attribute` — nach demselben Muster
+   wie `remove_node`/`set_thread_dataset` (Task 1) —, und (b) eine zweite,
+   attributförmige Aufrufer-Schnittstelle für `build_control_router`, analog zu
+   `invoke` für Kommandos. Nicht in dieser Phase umgesetzt — hier festgehalten, damit
+   Ansicht 2 (8, „Schreibbare Attribute lassen sich hier roh setzen") nicht mehr
+   verspricht, als die WebUI heute tatsächlich kann.
+7. **Die von Hand gepflegte Erlaubnisliste (8.4) skaliert nicht über eine Handvoll
+   Geräte hinaus — und es gibt inzwischen einen belegten Weg, sie durch eine Tabelle
+   zu ersetzen** (Review-Fix Important #2, 2026-09-02). `_WRITABLE_ATTRIBUTES`
+   (`api/control.py`) braucht heute für jedes Attribut, das irgendjemand jemals
+   beschreiben möchte, einen eigenen, gegen ein echtes Gerät oder die
+   Matter-Spezifikation belegten Eintrag — bei einer Installation mit mehr als einer
+   Handvoll unterschiedlicher Gerätetypen wird das schnell zur Wartungslast, die
+   keiner mehr pflegt, und eine ungepflegte Erlaubnisliste ist entweder zu eng
+   (fehlende Bedienmöglichkeiten) oder, schlimmer, wird aus Bequemlichkeit durch eine
+   Sperrliste ersetzt (siehe 8.4, wieso das die falsche Asymmetrie wäre). Wie 8.4 jetzt
+   festhält, existiert die Schreibbarkeits-Information tatsächlich, in
+   `chip/clusters/CHIPClusters.py`, nur ist das Modul in dieser Distribution nicht
+   importierbar (`ImportError: cannot import name 'exceptions' from 'chip'`) und
+   python-matter-server liest es nicht. Zwei Wege könnten das ändern: (a) eine
+   spätere Version von `home_assistant_chip_clusters`/`chip` liefert das fehlende
+   `chip/exceptions.py` mit, wodurch `ChipClusters.py` importierbar würde und seine
+   `"writable"`-Flags zur Laufzeit abfragbar wären, oder (b) die Datei wird nicht
+   importiert, sondern als reine Textdaten geparst (sie ist ein großes, aber
+   syntaktisch reguläres Python-Literal) — ein Weg mit eigenem Risiko, weil er ein
+   internes, nicht als Schnittstelle gedachtes Format einer Fremdbibliothek
+   nachbildet und bei einer künftigen Version brechen kann, ohne dass ein Fehlschlag
+   beim Import das anzeigt. Keiner der beiden Wege ist in dieser Phase umgesetzt;
+   festgehalten, weil die heutige Erlaubnisliste eine bewusste, aber nicht die
+   einzig mögliche Antwort auf 8.4s Befund ist.
+8. **Die Oberfläche schickt das Token mit — offen bleibt nur, dass es keine Rolle
+   für „nur ansehen" gibt** (Task 8, 2026-09-02; nachgebessert 2026-09-03). Der
+   ursprüngliche Punkt hier — ein gesetztes Token sperrte den Betreiber aus seiner
+   eigenen Oberfläche aus, weil `app.js` nirgends einen `Authorization`-Header setzte
+   und es kein Feld für ein Token gab — ist **erledigt**: `requestJson` und
+   `requestDownload` setzen den Header (das Token liegt im `localStorage` des
+   Browsers, siehe README), die Kopfzeile trägt ein Passwortfeld zum Eintragen,
+   Ersetzen und Löschen, eine 401 führt mit einem verständlichen Hinweis dorthin, und
+   `/api/live` überträgt das Token als Subprotokoll `bearer, <Token>` (9.1). Die
+   beiden Downloads (Export-ZIP, Fabric-Sicherung) laufen aus demselben Grund nicht
+   mehr über ein `<a href>` — ein Link kann keinen Header tragen.
+
+   Was tatsächlich offen bleibt: **das Token kennt nur „alles oder nichts".** Wer es
+   hat, kann ansehen, schalten, einlernen, entfernen und die Fabric-Sicherung
+   herunterladen; wer es nicht hat, sieht von `/api` nichts. Es gibt keine
+   Nur-Lese-Rolle für jemanden, der bloß den Zustand betrachten soll, und kein
+   zweites, eingeschränktes Token. Für die anvisierte Nutzung (ein Haushalt, eine
+   Person, die die Brücke betreibt) ist das angemessen — für eine Installation, in der
+   mehrere Personen unterschiedlich weit dürfen sollen, wäre es zu grob. Ebenfalls
+   offen und bewusst nicht in dieser Phase gebaut: das Token ist ein statisches,
+   dauerhaftes Geheimnis ohne Ablauf, ohne Rotation und ohne Widerruf einzelner
+   Browser — ein Wechsel bedeutet, es überall neu einzutragen.
+9. **Der Systemcheck prüft mDNS, den Funk-Dongle, OTBR und das Thread-Netz nicht**
+   (Review-Fix Fix 6, 2026-09-03). 10.5 und Abschnitt 8, Ansicht 4, versprachen bis
+   dahin „mDNS erreichbar, Dongle da" sowie „Status von matter-server und OTBR,
+   Thread-Netz". Umgesetzt sind vier Prüfungen: `matter-server`, `store`, `ipv6`,
+   `miniserver` (`api/diagnostics.py`, `build_diagnostics_router`s `/system`). Beide
+   Spec-Stellen sind auf das gebracht, was läuft; die Lücke steht hier, statt sie
+   stillschweigend aus der Spec zu streichen. Was fehlt und was es kostet:
+
+   - **mDNS erreichbar** — Matter-Geräte im WLAN/Ethernet werden über mDNS gefunden.
+     Scheitert das, schlägt das Einlernen fehl, ohne dass eine Diagnosezeile darauf
+     zeigt; heute meldet nur `matter-server` „verbunden", was die Frage nicht berührt.
+   - **Dongle da** — der USB-Funkstick des Border Routers. Fehlt er, ist kein
+     Thread-Gerät erreichbar. Prüfbar wäre er nur im OTBR-Container, nicht in diesem
+     Prozess: `loxmatter` sieht das USB-Gerät nicht.
+   - **OTBR und Thread-Netz** — Status des Border Routers und ob überhaupt ein
+     Thread-Netz gebildet ist. Beides steht hinter der REST-Schnittstelle von OTBR, zu
+     der dieser Dienst heute keine Verbindung hat.
+
+   Bewusst NICHT in dieser Nachbesserung nachgebaut: die drei Prüfungen brauchen
+   Zugriff auf Dinge außerhalb dieses Prozesses (mDNS-Auflösung im Hostnetz, USB, eine
+   zweite HTTP-Schnittstelle) und damit je eine eigene Entscheidung darüber, was ein
+   Fehlschlag bedeuten soll — eine rote Zeile, die in einer korrekt laufenden
+   Installation aus einem Umgebungsgrund rot ist, macht die Diagnoseseite wertlos.
+   `store` wiederum ist eine sinnvolle, in keiner Spec-Fassung vorgesehene Ergänzung
+   und steht deshalb ab jetzt in 10.5.

@@ -1,18 +1,37 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from loxmatter.export.signals import to_inputs
-from loxmatter.matter.models import SignalKind, SignalRef
-from loxmatter.model.store import StoredSignal
+from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
+from loxmatter.model.store import Store, StoredSignal
 from loxmatter.profiles.table import Exportability
 
+FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
-def signal(key, kind=SignalKind.ATTRIBUTE, exportability=Exportability.ANALOG, unit=""):
+
+def load(name: str) -> NodeSnapshot:
+    raw = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+    return NodeSnapshot.from_raw(raw["node_id"], raw)
+
+
+def signal(
+    key,
+    kind=SignalKind.ATTRIBUTE,
+    exportability=Exportability.ANALOG,
+    unit="",
+    device_id=1,
+    exported=True,
+):
     return StoredSignal(
         key=key,
         ref=SignalRef(1, 6, 0, kind),
         title=key,
         unit=unit,
         exportability=exportability,
+        device_id=device_id,
+        exported=exported,
     )
 
 
@@ -104,3 +123,68 @@ def test_signal_from_a_different_device_raises():
     foreign = signal("d9_1_temp")
     with pytest.raises(ValueError, match="d9_1_temp"):
         to_inputs([foreign], 3, "Taster")
+
+
+def test_an_unexported_analog_signal_produces_no_input():
+    """Review-Fix Important #3: `exported=False` war bisher wirkungslos -
+    `to_inputs` filterte ausschliesslich nach `exportability`, egal was das
+    Flag aus `PATCH /api/signals/{key}` sagte."""
+    inputs = to_inputs([signal("d1_1_temp", exported=False)], 1, "X")
+    assert [i.key for i in inputs] == ["d1_online"]
+
+
+def test_an_unexported_event_produces_neither_pulse_nor_counter():
+    event = signal(
+        "d1_1_press", kind=SignalKind.EVENT, exportability=Exportability.DIGITAL, exported=False
+    )
+    inputs = to_inputs([event], 1, "Taster")
+    assert [i.key for i in inputs] == ["d1_online"]
+
+
+def test_the_online_signal_is_unaffected_by_any_signals_export_flag():
+    """Das Online-Signal gehoert dem Geraet, nicht einem einzelnen Signal
+    (Spec 6.5) - es bleibt auch da, wenn kein einziges Signal exportiert
+    wird."""
+    inputs = to_inputs([signal("d1_1_a", exported=False), signal("d1_1_b", exported=False)], 1, "X")
+    assert [i.key for i in inputs] == ["d1_online"]
+
+
+def test_plug_fixture_yields_110_inputs_with_the_corrected_default(tmp_path):
+    """Regression Important #2 + #3 (Review 2026-09-02): mit dem
+    korrigierten `exported`-Default (`profiles.table.is_exportable`, nur
+    ANALOG/DIGITAL statt "alles ausser NONE") bleibt die Eingangszahl exakt
+    gleich wie vorher - die 109 exportierbaren Signale der IKEA-Steckdose
+    (siehe `tests/api/test_devices.py::test_signal_tree_marks_what_cannot_be_exported`)
+    starten weiterhin alle mit `exported=True`, plus das Online-Signal."""
+    snap = load("ikea_grillplats_plug.json")
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(snap)
+        signals = store.register_signals(device_id, snap)
+    finally:
+        store.close()
+
+    label = f"{snap.vendor_name} {snap.product_name}".strip()
+    inputs = to_inputs(signals, device_id, label)
+    assert len(inputs) == 110
+
+
+def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_path):
+    """Regression Important #3: das Abschalten genau eines Signals in der
+    WebUI muss den erzeugten Export exakt um einen Eingang verkleinern - ein
+    Attribut, kein Event, damit der Effekt nicht durch Impuls+Zaehler auf
+    zwei Eingaenge springt."""
+    snap = load("ikea_grillplats_plug.json")
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(snap)
+        signals = store.register_signals(device_id, snap)
+        target = next(s for s in signals if s.exported and s.ref.kind is SignalKind.ATTRIBUTE)
+        store.set_exported(target.key, False)
+        signals = store.signals(device_id)
+    finally:
+        store.close()
+
+    label = f"{snap.vendor_name} {snap.product_name}".strip()
+    inputs = to_inputs(signals, device_id, label)
+    assert len(inputs) == 109

@@ -207,7 +207,17 @@ In `src/loxmatter/matter/client.py` ergänzen:
 
 ```python
 class CommissioningError(RuntimeError):
-    """Das Einlernen eines Geraets ist fehlgeschlagen."""
+    """Das Einlernen eines Geraets ist am Geraet selbst gescheitert (z. B.
+    falscher Code, Geraet haengt schon in einem anderen Oekosystem, Timeout
+    beim Interview).
+
+    Ein Verbindungsverlust zu matter-server WAEHREND des Einlernens ist
+    davon ausdruecklich abgegrenzt: commission_with_code() faengt
+    `NotConnected`/`ConnectionClosed`/`CannotConnect` gesondert ab und wirft
+    dafuer `MatterUnavailableError`, denn nur so laesst sich unterscheiden,
+    ob das Geraet abgelehnt hat oder matter-server nicht erreichbar war
+    (Spec 8.1/9). Die urspruengliche Ausnahme bleibt ueber `__cause__`
+    erhalten."""
 
 
 async def commission_with_code(self, code: str) -> NodeSnapshot:
@@ -219,8 +229,20 @@ async def commission_with_code(self, code: str) -> NodeSnapshot:
     es von dort einen Multi-Admin-Code (Spec 7.1).
     """
     upstream = self._require_upstream()
+
+    # Lazy importiert wie _default_session_factory: Tests mit einem
+    # Fake-Upstream sollen matter_server nie laden müssen.
+    from matter_server.client.exceptions import CannotConnect, ConnectionClosed, NotConnected
+
     try:
         node = await upstream.commission_with_code(code)
+    except (NotConnected, ConnectionClosed, CannotConnect) as exc:
+        # Verbindungsverlust zu matter-server ist keine Ablehnung durch das
+        # Geraet — muss VOR dem generischen except Exception unten stehen,
+        # sonst würde er dort mitgefangen und als CommissioningError
+        # gemeldet (Spec 8.1/9 verlangt die Unterscheidung).
+        msg = f"matter-server nicht erreichbar: {exc}"
+        raise MatterUnavailableError(msg) from exc
     except Exception as exc:
         raise CommissioningError(f"Einlernen fehlgeschlagen: {exc}") from exc
     return NodeSnapshot.from_raw(node.node_id, {"attributes": node.node_data.attributes})
@@ -244,7 +266,7 @@ async def set_thread_dataset(self, dataset: str) -> None:
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_client_commissioning.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 8 Tests
 
 - [ ] **Step 6: Commit**
 
@@ -262,13 +284,55 @@ git commit -m "feat(matter): Geraete einlernen und entfernen"
 - Create: `src/loxmatter/api/models.py`
 - Create: `src/loxmatter/api/devices.py`
 - Create: `tests/api/test_devices.py`
-- Modify: `src/loxmatter/model/store.py` (Abfragen, die die API braucht)
+- Modify: `src/loxmatter/model/store.py` (Abfragen, die die API braucht; **neue Spalte
+  `signal.exported` — siehe "Schema-Migration" unten, NICHT einfach an `_SCHEMA`
+  anhängen)
+- Create: `tests/model/test_store_migration.py`
 
 **Interfaces:**
 - Consumes: `Store`, `StoredSignal`, `BridgeMatterClient`, `Runtime`
 - Produces:
   - `DeviceOut`, `SignalOut` — frozen Pydantic-Modelle
   - `build_device_router(store, client, runtime) -> APIRouter` mit Präfix `/api`
+
+**Schema-Migration (Review-Fix Important #1, 2026-09-02 — hier ergänzt, weil eine
+frühere Fassung dieses Plans eine neue Spalte lehrte, ohne eine Migration dafür
+vorzusehen):**
+
+`_SCHEMA` verwendet `CREATE TABLE IF NOT EXISTS` — das erreicht eine bereits
+bestehende Tabelle nie mit einer neuen Spalte. Die Spalte `signal.exported` diesem
+String einfach hinzuzufügen reicht deshalb NICHT: gegen eine Datenbank, die vor
+diesem Task angelegt wurde (`loxmatter export`/`loxmatter run` aus Phase 4 oder
+früheren Läufen dieser Phase), bleibt sie unsichtbar, und `Store.signals()`
+scheitert mit `IndexError: No item with that key`. Weil die Datenbank die
+Signalschlüssel trägt — die Verdrahtung in Loxone, siehe Modul-Docstring von
+`store.py` — ist die einzige Abhilfe ohne Migration das Löschen der gesamten
+Datenbank, was jeden Schlüssel und jede bestehende Verdrahtung im Haus zerstört.
+
+Die Migration verwaltet `PRAGMA user_version` als Schema-Version:
+
+- Version 0 ist "vor dieser Migrationslogik" — jede Datenbank, bei der
+  `user_version` noch nie gesetzt wurde, sowohl eine echte Alt-Datenbank als auch
+  (bevor der erste `Store(...)`-Aufruf sie stempelt) eine frisch angelegte.
+- Version 1 fügt `signal.exported` hinzu (`ALTER TABLE ... ADD COLUMN`) und
+  befüllt bestehende Zeilen zurückwirkend — **nicht** pauschal mit dem
+  Spalten-Default, sondern nach derselben Regel wie ein frisch registriertes
+  Signal: exportierbar (ANALOG/DIGITAL) → `True`, sonst (TEXT, NONE) → `False`
+  (siehe `is_exportable` unten).
+- Läuft in einer Transaktion: `ALTER TABLE ADD COLUMN` ist in SQLite vollständig
+  transaktional, ein `db.rollback()` im Fehlerfall macht auch schon ausgeführte
+  Schritte dieses Laufs wieder rückgängig, `PRAGMA user_version` wird nur bei
+  vollständigem Erfolg erhöht.
+- Auf dem neuesten Stand: kein Schreibzugriff, echtes No-op — jeder Start außer
+  dem allerersten nach einer Schema-Änderung.
+
+Tests dafür (`tests/model/test_store_migration.py`) bauen die Alt-Datenbank direkt
+per `sqlite3` mit dem Schema-Stand VOR `exported` auf (nicht über `Store`, die legt
+die Spalte ja längst an), fügen ein Gerät und mehrere Signale mit unterschiedlicher
+`exportability` ein und öffnen sie dann mit dem aktuellen `Store`: gelesen wird
+korrekt, der Backfill stimmt, die Version steht danach auf 1, und ein erneutes
+Öffnen ist ein No-op (ein zwischenzeitlich vom Nutzer gesetztes `exported` bleibt
+erhalten statt vom Backfill überschrieben zu werden).
 
 **Achtung, Signaturänderung:** `build_app` aus Phase 4 nimmt heute
 `(store, invoke, runtime)`. Für das Einlernen braucht es zusätzlich den Matter-Client:
@@ -466,10 +530,32 @@ async def rename_signal(key: str, patch: SignalPatch) -> SignalOut:
 
 `SignalPatch` trägt ausschließlich `title: str | None` und `exported: bool | None`.
 
+`rename_signal` muss — wie jede geräte-gebundene Route dieses Routers — erst
+prüfen, ob das Gerät hinter `signal_by_key(key).device_id` noch aktiv ist, bevor
+es etwas ändert (Review-Fix Important #4, 2026-09-02): sonst bleibt die Zeile
+eines per `DELETE /api/devices/{id}` entfernten Geräts über ihren Schlüssel
+weiterhin lesbar und mutierbar, obwohl `GET /api/devices/{id}` für dasselbe Gerät
+längst 404 meldet. 404 mit einer deutschen Meldung, die sagt, dass das Gerät
+entfernt wurde — nicht die generische "unbekanntes Geräte-ID"-Meldung von
+`_require_device`, die zwischen "nie existiert" und "entfernt" nicht
+unterscheidet.
+
+`register_signals` in `store.py` setzt das Default von `exported` beim ersten
+Registrieren eines Signals auf `is_exportable(profile.exportability)` — dieselbe
+Funktion, die `_signal_out`/`_device_out` unten für `exportable`/
+`exportable_count` aufrufen (`profiles.table.is_exportable`, exportierbar genau
+für ANALOG/DIGITAL). Eine zweite, unabhängig hingeschriebene Fassung derselben
+Regel (etwa `exportability is not Exportability.NONE`, was TEXT fälschlich
+mit einschlösse) ist genau das, was Review-Fix Important #2 (2026-09-02) beheben
+musste — beide Stellen dieses Tasks müssen dieselbe Funktion aufrufen, nicht
+eigenständig dieselbe Idee nachbilden.
+
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/ -v`
-Expected: PASS, 7 Tests
+Expected: PASS, 22 Tests (7 aus diesem Plan-Entwurf plus 15, die im Zuge dieses
+Tasks tatsächlich dazukamen: Einlernen, Entfernen, das Export-Flag, und der
+Review-Fix zu einem Signal-Zugriff auf ein bereits entferntes Gerät)
 
 - [ ] **Step 6: Commit**
 
@@ -594,10 +680,38 @@ In `Runtime` ergänzen. Zwei Regeln, die im Docstring stehen müssen:
 Jede Verbindung meldet sich als Beobachter an und beim Trennen wieder ab. Ein
 `WebSocketDisconnect` ist der Normalfall, kein Fehler — er darf nichts ins Log schreiben.
 
+Die Warteschlange je Verbindung ist **begrenzt** (`QUEUE_MAXSIZE = 512`, Review-Fix
+Important #1, 2026-09-02) — nicht unbegrenzt, wie eine frühere Fassung annahm. Diese
+Brücke läuft wochenlang unbeaufsichtigt in jemandes Zuhause; ein Browser-Tab im
+Hintergrund oder ein eingeschlafenes Laptop, das nicht mehr liest, ist dort Alltag, kein
+Randfall. Die Grenze ist so gewählt, dass sie einen vollen Resend-Burst (`/resync`,
+Spec 6.4 — schon ein einzelnes Gerät wie der Testsuite-Stecker kommt auf ~110
+Datagramme) klaglos aufnimmt, mit deutlicher Luft nach oben. Bei Überlauf fällt der
+**älteste** Eintrag, nicht der neueste — eine Live-Ansicht will den aktuellsten Stand.
+Ein Debug-Log meldet sich beim Übergang ins Verwerfen (nicht bei jedem weiteren
+Verwurf), damit eine hängende Verbindung im Betrieb auffindbar bleibt. Bewusst NICHT
+umgesetzt: die Verbindung aktiv zu trennen, wenn sie dauerhaft voll bleibt — die
+Begrenzung deckelt bereits die einzige Gefahr (unbegrenztes Wachstum) auf eine feste,
+kleine Größe; eine zusätzliche Zeitschwelle bräuchte eine eigene, schwer zu
+begründende Kalibrierung und würde riskieren, eine nur kurz gedrosselte Sitzung
+rauszuwerfen, für einen Gewinn, der bei bereits gedeckeltem Speicher gering ist.
+
+Um einen Client, der während des Trennens mitten im Versand steckt, robust zu behandeln
+(Review-Fix Important #2, 2026-09-02): `_send_loop` fängt nicht nur `WebSocketDisconnect`
+ab, sondern auch `RuntimeError` direkt an der Sendestelle — manche ASGI-Server werfen bei
+einem Sendeversuch auf eine bereits verlorene Verbindung genau das statt
+`WebSocketDisconnect`. Beides ist derselbe Fall (ein Browser-Tab, der weg ist, kein
+Programmfehler) und landet deshalb auf `logger.debug`, nie auf `logger.error` — und die
+Route meldet den Beobachter trotzdem im `finally` ab.
+
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_live.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 9 Tests (5 aus der ursprünglichen Task 3, dazu 4 aus dem Review-Fix vom
+2026-09-02: Warteschlangen-Überlauf verwirft den ältesten Eintrag und lässt UDP-Pfad wie
+Beobachter-Registrierung unberührt, ein `RuntimeError` beim Versand wird wie eine
+Trennung behandelt ohne Fehler-Log, und zwei gleichzeitige Verbindungen bleiben
+voneinander isoliert)
 
 - [ ] **Step 6: Commit**
 
@@ -728,6 +842,56 @@ git add src/loxmatter/api/control.py tests/api/test_control.py
 git commit -m "feat(api): Geraete aus der Oberflaeche bedienen"
 ```
 
+**Review-Fix (2026-09-02), zwei Important- und zwei Minor-Befunde:**
+
+1. **Important — `POST /api/commands/{key}` prüfte nie, ob das Gerät des Kommandos
+   noch aktiv ist.** `Store.resolve_command` löst den Schlüssel allein über die
+   `command`-Tabelle auf, und `forget_device` löscht dort keine Zeile — es setzt nur
+   `device.active = 0`. Ein Kommando gegen ein bereits entferntes Gerät ließ sich
+   dadurch weiterhin auslösen, während `GET /api/devices/{id}/controls` für dasselbe
+   Gerät korrekt 404 meldete. Behoben nach demselben Muster wie `write_signal` (dort
+   schon vorhanden) und `PATCH /api/signals/{key}` (`api/devices.py`, Review-Fix
+   Important #4 aus Task 2): `StoredCommand` trägt jetzt `device_id`, und
+   `execute_command` prüft `store.device(stored.device_id)`, bevor es übersetzt und
+   auslöst — ein entferntes Gerät liefert 404 mit deutscher Meldung. Neuer Test:
+   `test_command_at_a_removed_device_is_refused`. `GET /api/devices/{id}/controls`
+   und `POST /api/signals/{key}/write` wurden dabei erneut geprüft — beide waren
+   bereits abgesichert (`_require_device` bzw. die vorhandene Prüfung in
+   `write_signal`), keine Änderung nötig.
+2. **Important — Spec 8.4 und der Moduldocstring behaupteten fälschlich, eine
+   Volltextsuche nach „writable“ habe keinen Treffer ergeben.** Tatsächlich trägt
+   `chip/clusters/CHIPClusters.py` (Teil des installierten `chip`-Pakets) 250
+   Vorkommen von `"writable": True`, darunter für `BasicInformation` exakt die drei
+   Attribute, auf die die Erlaubnisliste unabhängig davon schon kam. Die Information
+   existiert also — sie steht nur in einem Modul, das in dieser Distribution nicht
+   importierbar ist (`ImportError: cannot import name 'exceptions' from 'chip'`, weil
+   `home_assistant_chip_clusters` `CHIPClusters.py` ohne das dazugehörige
+   `chip/exceptions.py` ausliefert) und das python-matter-server nirgends benutzt. Die
+   praktische Konsequenz (Erlaubnisliste bleibt richtig) ändert sich dadurch nicht,
+   aber die Begründung wurde in Spec 8.4 und im Moduldocstring korrigiert. Spec 12
+   bekommt dazu einen neuen Punkt 7: die von Hand gepflegte Erlaubnisliste skaliert
+   nicht über eine Handvoll Geräte hinaus und könnte ersetzt werden, sobald dieses
+   Modul importierbar wird oder sich das Parsen als Daten als vertretbar erweist.
+3. **Minor — die 400/501-Antworten von `POST /api/signals/{key}/write` verwiesen auf
+   „den Moduldocstring von api/control.py“**, brauchbar in einem Log, aber nichtssagend
+   für die Oberfläche. Beide Meldungen sagen jetzt selbst auf Deutsch, was los ist und
+   was sich tun lässt, ohne auf eine Datei zu verweisen.
+4. **Minor — `GET /api/devices/{id}/controls` zeigte gefilterte rohe Kommandos gar
+   nicht an**, was korrekt ist (Spec 6.7), aber eine Person, die ein unbekanntes Gerät
+   diagnostiziert, verlor dabei die Information, dass es sie überhaupt gibt. Die Route
+   liefert jetzt `{"commands": [...], "hidden_raw_commands": N}` statt einer nackten
+   Liste (neues Modell `ControlsOut`). Neuer Test:
+   `test_hidden_raw_commands_are_counted`.
+
+Zwei neue Tests (`test_command_at_a_removed_device_is_refused`,
+`test_hidden_raw_commands_are_counted`) zu den ursprünglichen sieben — **Expected:
+PASS, 9 Tests** in `tests/api/test_control.py`.
+
+```bash
+git add src tests docs
+git commit -m "fix(api): Kommandos an entfernte Geraete abweisen"
+```
+
 ---
 
 ### Task 5: Export über die API
@@ -830,16 +994,95 @@ Andernfalls vergibt die Oberfläche andere Schlüssel als die CLI, und ein Nutze
 beides benutzt, bekommt zwei Sätze Vorlagen für dasselbe Gerät. Ein Test dagegen gehört
 dazu.
 
+**`download` markiert erst NACH dem vollständigen Archiv, nie währenddessen**
+(Review-Fix Important #1, 2026-09-02 — siehe unten): `Store.mark_exported` wird pro
+Gerät gesammelt, aber erst aufgerufen, nachdem die `with zipfile.ZipFile(...)`-Schleife
+abgeschlossen und das ZIP vollständig im Speicher aufgebaut ist. Dieselbe Disziplin wie
+in `cli.py`s `export`-Kommando, das seinen `mark_exported`-Aufruf ebenfalls erst nach
+beiden erfolgreichen `write_bytes`-Aufrufen ausführt: schlägt der Aufbau eines Geräts
+mitten in der Schleife fehl (ein Rendern, das wirft, ein `store.commands`/
+`store.signals`, das scheitert, ein `forget_device` aus einer parallelen Anfrage), gibt
+es kein ZIP für den Client — dann darf auch kein zuvor verarbeitetes Gerät fälschlich
+als exportiert dastehen.
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_export_api.py -v`
-Expected: PASS, 7 Tests
+Expected: PASS, 14 Tests (mehr als die 7 im ursprünglichen Testentwurf oben — im
+Zuge des Tasks kamen zusätzliche Fälle dazu, u. a. das leere-Installation- und das
+entferntes-Gerät-Szenario)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/api/export.py tests/api/test_export_api.py
 git commit -m "feat(api): Vorlagen als Vorschau und als ZIP"
+```
+
+**Review-Fix (2026-09-02), ein Important- und drei Minor-Befunde:**
+
+1. **Important — `download` markierte ein Gerät als exportiert, bevor das ZIP
+   fertig war.** `store.mark_exported(device.id)` stand bislang IN der
+   Schleife, direkt nach den beiden `archive.writestr`-Aufrufen für dieses
+   Gerät, und committete sofort. Schlug der Aufbau eines späteren Geräts fehl
+   (ein Rendern, das wirft, ein `store.commands`/`store.signals`, das
+   scheitert, ein `forget_device` aus einer parallelen Anfrage), antwortete
+   FastAPI mit 500 — der Client bekam gar kein ZIP —, während jedes bis
+   dahin verarbeitete Gerät trotzdem dauerhaft als exportiert vermerkt blieb.
+   `GET /api/export/status` meldete ein solches Gerät danach fälschlich als
+   "seither unverändert", obwohl niemand die zugehörige Vorlage je erhalten
+   hat. Der CLI-Pfad (`cli.py`s `export`-Kommando) war genau gegen diesen
+   Fall schon gehärtet — die API übernahm die Disziplin nicht. Behoben:
+   `download` sammelt die Geräte-IDs während des Aufbaus in einer Liste und
+   ruft `store.mark_exported` erst NACH dem vollständig aufgebauten Archiv
+   auf, unmittelbar vor der Antwort. Neuer Test:
+   `test_a_failure_partway_through_the_archive_marks_no_device` — zwei
+   Geräte im Store, das zweite lässt `to_inputs` absichtlich scheitern; das
+   erste Gerät ist zu diesem Zeitpunkt schon vollständig ins Archiv
+   geschrieben. Nach dem Fix bleibt trotzdem keins der beiden markiert.
+2. **Minor — kein Test für den Migrationspfad v1 → v2.** Die bestehende
+   Testsuite (`tests/model/test_store_migration.py`) deckte nur eine
+   Alt-Datenbank auf Version 0 und eine frische auf der jeweils neuesten
+   Version ab; keine Datenbank auf genau Version 1 (`signal.exported`
+   vorhanden, `device.exported_at`/`updated_at` noch nicht) wurde je
+   geöffnet. Diese Phase hatte schon einmal eine Schema-Änderung ohne
+   Migration ausgeliefert (siehe die Schema-Migration-Notiz in Task 2) —
+   der Zwischenschritt verdient deshalb einen direkten Test statt nur einer
+   aus der schleifenbasierten `_migrate`-Logik abgeleiteten Vermutung. Neue
+   Tests in `tests/model/test_store_migration.py`:
+   `test_opening_a_v1_database_only_runs_the_v2_migration` und
+   `test_reopening_an_already_v2_database_is_a_noop`, mit einer neuen
+   `build_v1_database`-Hilfsfunktion nach demselben Muster wie
+   `build_old_database`.
+3. **Minor — doppelte Migrations-Absicherung.** `_migrate_to_v1` und
+   `_migrate_to_v2` lasen beide `PRAGMA table_info`, prüften auf eine
+   fehlende Spalte und führten bedingt ein `ALTER TABLE` aus — zweimal von
+   Hand hingeschrieben statt einmal geteilt, und bei einer zweiten
+   Schema-Änderung in einer Phase ist eine dritte wahrscheinlich. Extrahiert
+   nach `_add_column_if_missing(db, table, column, ddl) -> bool` in
+   `model/store.py`; der Rückgabewert (wurde die Spalte neu angelegt?)
+   erlaubt `_migrate_to_v1` weiterhin, seinen Backfill nur bei einer echten
+   Alt-Datenbank auszuführen.
+4. **Minor — `preview` verlangt einen Parameter, den es nie benutzt.**
+   `bridge_ip` ist auf `/api/export/preview` Pflicht, taucht aber in keinem
+   Feld der Antwort auf — vertretbar (derselbe 422-Test wie bei `download`,
+   dieselbe Signatur wie bei `download`), aber ein künftiger Aufrufer würde
+   sich fragen, warum. Der Docstring von `preview` (wird zur
+   OpenAPI-Beschreibung) sagt das jetzt in einem zusätzlichen Satz
+   ausdrücklich: `bridge_ip` taucht bewusst in keinem Feld von
+   `ExportPreviewOut` auf, obwohl es Pflichtparameter ist.
+
+Drei neue Tests insgesamt: einer in `tests/api/test_export_api.py`
+(`test_a_failure_partway_through_the_archive_marks_no_device`) und zwei in
+`tests/model/test_store_migration.py`
+(`test_opening_a_v1_database_only_runs_the_v2_migration`,
+`test_reopening_an_already_v2_database_is_a_noop`) — **Expected: PASS, 398
+Tests** in der gesamten Suite (395 vor diesem Review-Fix plus die drei
+neuen).
+
+```bash
+git add src tests docs
+git commit -m "fix(api): Export erst nach fertigem Archiv vermerken"
 ```
 
 ---
@@ -853,6 +1096,7 @@ Installation beantwortbar wird.
 - Create: `src/loxmatter/api/diagnostics.py`
 - Modify: `src/loxmatter/loxone/sender.py` (Mitschnitt)
 - Modify: `src/loxmatter/loxone/server.py` (Kommando-Log)
+- Modify: `src/loxmatter/cli.py` (`--matter-data-dir`-Option, Grundlage für die Sicherung)
 - Create: `tests/api/test_diagnostics.py`
 
 **Interfaces:**
@@ -878,6 +1122,22 @@ Der Endpunkt liefert den Inhalt des matter-server-Datenverzeichnisses als Archiv
 zu übernehmen. Der Download gehört deshalb hinter das Token aus Task 8, und die
 Oberfläche muss danebenschreiben, was da heruntergeladen wird — nicht nur einen
 Knopf mit „Backup" zeigen.
+
+**Die Compose-Verdrahtung bleibt bis Task 8 auskommentiert (Review-Fix Critical,
+2026-09-02).** `--matter-data-dir` in `cli.py` ist harmlos — eine Option, die per
+Default aus ist und die Route erst mit echten Daten füttert, wenn jemand sie
+ausdrücklich setzt. Der Volume-Mount `./data:/matter-data:ro` in
+`deploy/testhost/docker-compose.yml`, der genau das täte, wäre das Gegenteil: dieser
+Dienst läuft dort mit `network_mode: host`, absichtlich, damit der Miniserver ihn
+erreicht — und das bedeutet, jeder im selben Netz erreicht ihn ebenfalls. Ohne den
+Token-Schutz aus Task 8 macht diese eine Zeile im Compose-File aus einer
+theoretischen Schwäche eine tatsächlich ausnutzbare: `GET
+/api/diagnostics/fabric-backup` ist bis dahin vollkommen ungeschützt (siehe deren
+Docstring). Diese Task liefert deshalb nur den Code-Pfad und die CLI-Option; die
+Volume-Zeile und `--matter-data-dir` im `command:` bleiben in
+`deploy/testhost/docker-compose.yml` auskommentiert, mit Verweis auf Task 8, bis
+dessen Token-Schutz steht. Task 8 aktiviert beide Zeilen wieder — siehe dessen
+Schritt 3.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -999,6 +1259,24 @@ zu tun ist — ein roter Punkt ohne Erklärung verschiebt das Rätsel nur.
 Run: `uv run pytest tests/api/test_diagnostics.py -v`
 Expected: PASS, 8 Tests
 
+**Review-Fix (2026-09-02), ein Critical- und ein Important-Befund:** die
+`fabric-backup`-Route hing anfangs ungeschützt an einem Compose-Mount, der sie mit
+echten Daten fütterte, ohne dass der Token-Schutz aus Task 8 schon stand — siehe oben,
+"Die Compose-Verdrahtung bleibt bis Task 8 auskommentiert". Dazu waren beide
+503-Zweige der Route (`matter_data_dir is None`, `not matter_data_dir.is_dir()`)
+ungetestet. Sechs neue Tests in `tests/api/test_diagnostics.py`:
+`test_command_log_does_not_record_diagnostics_polling`,
+`test_command_log_never_carries_a_query_string`,
+`test_a_check_that_raises_unexpectedly_fails_gracefully` (Systemcheck-Robustheit,
+bereits vor diesem Review-Fix ergänzt) sowie
+`test_fabric_backup_is_503_without_a_configured_directory`,
+`test_fabric_backup_is_503_when_the_configured_directory_is_missing` und
+`test_fabric_backup_is_503_when_the_configured_path_is_a_file` (die beiden 503-Zweige
+plus der bislang unbetrachtete Fall "Pfad existiert, ist aber keine Datei").
+
+Run: `uv run pytest tests/api/test_diagnostics.py -v`
+Expected: PASS, 14 Tests (8 aus diesem Plan-Entwurf plus die sechs oben)
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -1106,8 +1384,12 @@ angezeigt, aber nicht editierbar** — mit einem kurzen Hinweis, warum: er ist d
 Verdrahtung in Loxone. Nicht exportierbare Werte bekommen statt der Checkbox den Grund
 angezeigt (Spec 6.6).
 
-**Ansicht Export.** Miniserver-IP und Port eintragen, Vorschau ansehen, ZIP herunterladen.
-Pro Gerät sichtbar, wann zuletzt exportiert wurde.
+**Ansicht Export.** Die IP **dieser Brücke** (aus Sicht des Miniservers, also der Wert,
+der zur `Address` des virtuellen UDP-Eingangs wird) und die Ports eintragen, Vorschau
+ansehen, ZIP herunterladen. Pro Gerät sichtbar, wann zuletzt exportiert wurde.
+
+> Diese Zeile sagte bis zum 2026-09-03 „Miniserver-IP", und die Oberfläche übernahm die
+> Beschriftung; korrigiert in Fix 1 der Nachbesserung (siehe Spec 8, Ansicht 3).
 
 **Ansicht System.** Der Systemcheck als Liste grüner und roter Zeilen, darunter der
 UDP-Mitschnitt und das Kommando-Log.
@@ -1116,10 +1398,67 @@ Die Live-Werte kommen über den WebSocket aus Task 3. Bricht er ab, zeigt die Ob
 das an und verbindet sich neu — eine Oberfläche, die eingefrorene Werte als aktuell
 darstellt, ist schlimmer als eine, die sagt, dass sie die Verbindung verloren hat.
 
+**Review-Fix, 2026-09-02 — vier Befunde, zwei davon mit Testfolgen:**
+
+**Important #1 — die WebSocket-Absicherung hatte keinen Regressionstest.** Beim Bau
+dieser Task stellte sich heraus, dass `uvicorn` allein (ohne das `"standard"`-Extra)
+keine WebSocket-Implementierung mitbringt — ein echter `uvicorn`-Prozess beantwortete
+`GET /api/live` mit `404 Unsupported upgrade request`, während die komplette Testsuite
+grün blieb, weil `tests/api/test_live.py` ausschließlich über den In-Prozess-ASGI-Pfad
+(`_InProcessWebSocket` in `tests/api/conftest.py`) läuft und uvicorns eigene
+HTTP/WebSocket-Weiche damit nie durchquert. `websockets>=12` wurde deshalb als eigene
+Zeile zu `pyproject.toml` hinzugefügt (mit Begründungskommentar dort) — seither die
+einzige Absicherung dagegen, und eine, die eine spätere Abhängigkeits-Aktualisierung,
+ein Aufräumen ("importiert ja niemand `websockets` direkt") oder ein Wechsel auf
+blosses `uvicorn` lautlos wieder einreißen könnte, ohne dass `uv run pytest` es
+bemerkt. Neu: `tests/api/test_live_smoke.py` startet dafür einen ECHTEN
+`uvicorn.Server` auf `127.0.0.1`, Port `0` (kollidiert nie, verlässt nie die Maschine),
+und führt darüber einen echten WebSocket-Handshake nach RFC 6455 gegen `/api/live` aus
+— über ein rohes TCP-Socket, bewusst ohne eine WebSocket-Client-Bibliothek zu benutzen
+(sonst würde ein aus dem Environment entferntes `websockets` schon den Testclient an
+einem `ImportError` scheitern lassen, nicht den eigentlich untersuchten Server). Als
+`@pytest.mark.slow` markiert (registriert in `pyproject.toml`), aber ohne
+Default-Ausschluss — läuft mit, kostet aber unter einer Sekunde.
+
+**Important #2 — eine abgebrochene Verbindung sprach Englisch.** `requestJson` in
+`app.js` erzeugte einen deutschen Ausweichtext nur, wenn der Server überhaupt
+geantwortet hat. Wirft `fetch()` selbst (Verbindung abgelehnt, Brücken-Prozess unten,
+Netz nicht erreichbar), lief der rohe Browsertext ("Failed to fetch") unverändert bis
+in die Oberfläche durch — Englisch und Browser-Jargon, ausgerechnet in dem Werkzeug,
+dessen Zweck es ist, einen Fehlschlag ehrlich zu zeigen (Spec 8.1). `requestJson`
+fängt diesen Fall jetzt in einem eigenen `try`/`catch` um den `fetch()`-Aufruf ab und
+wirft stattdessen einen deutschen Text, der sagt, dass die Brücke nicht erreichbar ist
+und möglicherweise nicht läuft.
+
+**Minor #3 — die Sperrliste sah nur die Auslieferung, nicht das JavaScript.**
+`test_the_page_does_not_promise_what_the_spec_excludes` (Spec 8.2) durchsuchte nur die
+ausgelieferte `index.html` nach "szene", "zeitplan", "automatisierung", "favorit". Die
+vier Wörter fehlen heute auch in `app.js`, war also kein falsches Grün — aber ein
+künftiges Feature, dessen deutsche Texte nur in JavaScript entstehen, wäre daran
+vorbeigekommen. Der Test lädt jetzt zusätzlich `/static/app.js` und prüft dieselbe
+Sperrliste dagegen.
+
+**Minor #4 — eine nie erfolgreiche erste Verbindung sah wie "verbindet noch" aus.**
+Scheiterte der allererste WebSocket-Handshake dauerhaft, blieb `socketEverConnected`
+auf `false` — weder der rote Banner noch der schärfere Kopfzeilentext (beide an
+`socketEverConnected` geknüpft) erschienen je, die Kopfzeile blieb unbegrenzt bei der
+neutralen "Verbinde…"-Formulierung stehen, während im Hintergrund still weiterversucht
+wurde. Kein Datenrisiko (es gibt ja noch keine Live-Werte, die veraltet wirken
+könnten), aber ein schwächeres Diagnosesignal als der Fall der verlorenen Verbindung.
+`app.js` zählt jetzt erfolglose Versuche der allerersten Verbindung
+(`initialConnectFailures`, gedeckelt bei
+`INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3`) und
+`connectionStatusText()` (die Kopfzeilenlogik, jetzt eine eigene Funktion statt einer
+verschachtelten Bedingung in `index.html`) schaltet danach auf einen klaren Text um,
+der sagt, dass keine Verbindung zustande kam.
+
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `uv run pytest tests/api/test_web.py -v`
-Expected: PASS, 5 Tests
+Run: `uv run pytest tests/api/test_web.py tests/api/test_live_smoke.py -v`
+Expected: PASS, 6 Tests (5 aus `test_web.py`, unverändert in der Zahl seit der
+ursprünglichen Task 7 — Review-Fix Minor #3 hat eine bestehende Assertion erweitert,
+keinen neuen Test hinzugefügt — dazu 1 neuer Test in `test_live_smoke.py` aus dem
+Review-Fix vom 2026-09-02, Important #1)
 
 - [ ] **Step 6: Von Hand ansehen**
 
@@ -1213,6 +1552,17 @@ Der `loxmatter`-Dienst in `deploy/testhost/docker-compose.yml` veröffentlicht j
 Port, der eine Bedienoberfläche trägt. Vermerke das dort und im README, zusammen mit dem
 Hinweis zum Token.
 
+**Die Fabric-Sicherung wieder einhängen (Review-Fix Critical, 2026-09-02).** Task 6
+kommentierte die Volume-Zeile `./data:/matter-data:ro` und `--matter-data-dir
+/matter-data` im `command:` des `loxmatter`-Dienstes bewusst aus, mit Verweis genau
+hierher — ohne Token wäre `GET /api/diagnostics/fabric-backup` sonst für jeden im
+selben Netz erreichbar gewesen (siehe Task 6, "Die Compose-Verdrahtung bleibt bis
+Task 8 auskommentiert"). Jetzt, wo `build_api_guard` steht: beide Zeilen wieder
+einkommentieren, den Erklärkommentar dort auf "aktiv seit Task 8" umschreiben statt
+ihn ersatzlos zu streichen (die Begründung, warum das vorher gefährlich war, bleibt
+für den nächsten Leser wertvoll), und danach von Hand bestätigen, dass
+`/api/diagnostics/fabric-backup` ohne `Authorization`-Header mit 401 antwortet.
+
 - [ ] **Step 4: Vollständige Prüfung**
 
 ```bash
@@ -1226,6 +1576,15 @@ uv run pytest -v && uv run ruff check . && uv run ruff format --check . && uv ru
 Mit laufendem matter-server:
 
 1. Ein Gerät über die Oberfläche **einlernen** — Pairing-Code eingeben, Gerät erscheint.
+
+   **Erwartet, kein Fehler: das frisch eingelernte Gerät zeigt „online" und grün, aber
+   bei jedem Signal einen Strich** (Spec 12.3, ergänzt 2026-09-03).
+   `BridgeMatterClient.subscribe()` läuft genau einmal beim Start der Brücke und meldet
+   nur die damals bekannten (Node, Pfad)-Paare an; der Online-Status dagegen kommt aus
+   dem NODE_ADDED-Ereignis und ist sofort da. Für Schritt 2 deshalb **die Brücke einmal
+   neu starten** — danach kennt `subscribe()` den neuen Node und die Werte laufen ein.
+   Die Erfolgsmeldung in der Oberfläche sagt dasselbe. Das ist ein bekannter offener
+   Punkt, keine Abweichung, die in die Spec nachgetragen werden müsste.
 2. In der Signalansicht die Live-Werte sehen und einen Titel ändern; prüfen, dass der
    Schlüssel unverändert bleibt.
 3. Das Gerät über die Oberfläche **schalten** und die Reaktion am Gerät beobachten.

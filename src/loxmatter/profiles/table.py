@@ -41,6 +41,29 @@ class Profile:
     exportability: Exportability
 
 
+_EXPORTABLE_KINDS = (Exportability.ANALOG, Exportability.DIGITAL)
+
+
+def is_exportable(exportability: Exportability) -> bool:
+    """Ob ein Signal mit dieser Exportability ueberhaupt zu einem
+    Loxone-Eingang werden kann - analog oder digital, sonst nicht (Spec 6.6:
+    Text, Listen/Strukturen und Nullwerte passen nicht).
+
+    Einzige Quelle fuer diese Regel (Review-Fix Important #2, 2026-09-02):
+    vorher bildete `Store.register_signals` sie fuer das Default von
+    `exported` als ``exportability is not Exportability.NONE`` nach - das
+    schliesst TEXT faelschlich mit ein - waehrend `api.devices` unabhaengig
+    davon ``in (ANALOG, DIGITAL)`` rechnete. Zwei Kopien derselben Regel,
+    die auseinanderliefen, ohne dass ein Fehler es meldete. Jetzt gibt es
+    nur noch diese eine Funktion; `Store.register_signals` (Default von
+    `exported`), `api.devices._signal_out`/`_device_out` (`exportable`/
+    `exportable_count`) und die Migration auf Schema-Version 1
+    (`model.store._migrate_to_v1`, Ruecknachtraeglicher Backfill der
+    Bestandszeilen) rufen sie alle auf.
+    """
+    return exportability in _EXPORTABLE_KINDS
+
+
 def classify(value: object) -> Exportability:
     """Entscheidet allein am Wert, ob Loxone ihn aufnehmen kann."""
     if isinstance(value, bool):

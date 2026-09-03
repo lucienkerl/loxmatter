@@ -28,7 +28,7 @@ from loxmatter.export.documents import (
 from loxmatter.export.signals import to_inputs
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.sender import UdpSender
-from loxmatter.loxone.server import build_app
+from loxmatter.loxone.server import build_app, normalize_api_token
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 from loxmatter.matter.discovery import (
     extract_signals,
@@ -38,7 +38,7 @@ from loxmatter.matter.discovery import (
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store
-from loxmatter.profiles.table import Exportability
+from loxmatter.profiles.table import is_exportable
 
 logger = logging.getLogger(__name__)
 
@@ -356,12 +356,61 @@ def export(
         )
 
     # Text zaehlt mit: der virtuelle Texteingang ist ein eigener Vorlagentyp
-    # und kommt in einer spaeteren Ausbaustufe (Spec 6.6).
-    unexportable = (Exportability.NONE, Exportability.TEXT)
-    skipped = sum(1 for s in stored if s.exportability in unexportable)
+    # und kommt in einer spaeteren Ausbaustufe (Spec 6.6). Die Entscheidung
+    # faellt `profiles.table.is_exportable` und sonst niemand (Review-Fix
+    # Fix 8, 2026-09-03) - vorher stand hier eine von Hand kopierte
+    # Umkehrung `(Exportability.NONE, Exportability.TEXT)`, eine zweite in
+    # `api/export.py`, und beide neben genau dem Helfer, der diese
+    # Verdopplung schon einmal beenden sollte.
+    skipped = sum(1 for s in stored if not is_exportable(s.exportability))
     typer.echo(f"{viu.name}: {len(inputs)} Eingänge")
     typer.echo(f"{vo.name}: {len(commands)} Ausgangsbefehle")
     typer.echo(f"{skipped} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)")
+
+    # exported_at (Task 5, Phase 5): `GET /api/export/status` der WebUI muss
+    # "wann zuletzt exportiert" unabhaengig davon beantworten, ob der letzte
+    # Export per CLI oder per API lief - beide schreiben dieselbe Datenbank
+    # (siehe Store.mark_exported). Oben bereits geschlossen, hier bewusst
+    # erst NACH beiden erfolgreichen write_bytes-Aufrufen wieder geoeffnet:
+    # ein fehlgeschlagener Schreibvorgang (siehe die beiden _fail-Aufrufe
+    # oben, die das Kommando vorher beenden) darf das Geraet nicht
+    # faelschlich als exportiert markieren.
+    store = Store(resolved_store_path)
+    try:
+        store.mark_exported(device_id)
+    finally:
+        store.close()
+
+
+def _warn_if_missing_api_token(api_token: str | None) -> None:
+    """Warnt beim Start deutlich, wenn kein API-Token gesetzt ist (Task 8,
+    Phase 5, Spec 9).
+
+    Eigene Funktion statt einer Zeile inline in `run`/`_run`, damit ein Test
+    sie ohne laufenden Server aufrufen kann (`asyncio.run(_run(...))` startet
+    `uvicorn.Server.serve()`, das in einer Testsuite ohne Netzwerkzugriff
+    nicht laufen soll — siehe `tests/api/test_security.py`).
+
+    Aufgerufen aus `run` (synchron, vor `asyncio.run`), nicht aus `_run`
+    selbst: so erscheint die Warnung garantiert genau einmal beim Start,
+    bevor irgendein `await` die Kontrolle abgibt, unabhängig davon, wie
+    `_run` seinen Ablauf künftig ändert.
+
+    Die Entscheidung „gesetzt oder nicht" trifft `normalize_api_token`
+    (`loxone.server`) — dieselbe Funktion, die auch `build_api_guard`
+    benutzt, damit Warnung und Wächter nicht auseinanderlaufen können
+    (Review-Fix Fix 2, 2026-09-03). Ein Token aus reinem Leerraum galt dem
+    Wächter vorher als echtes Geheimnis, während diese Warnung ausblieb:
+    der Dienst war gesperrt und sagte nichts dazu."""
+    if normalize_api_token(api_token) is None:
+        logger.warning(
+            "Kein API-Token gesetzt — die Oberfläche ist für jeden erreichbar, "
+            "der den Port erreicht, einschließlich Einlernen und Entfernen von "
+            "Geräten, und die Fabric-Sicherung "
+            "(GET /api/diagnostics/fabric-backup) wird deshalb gar nicht erst "
+            "ausgeliefert. Setze LOXMATTER_API_TOKEN oder --api-token, z. B. "
+            "mit `openssl rand -hex 32` erzeugt."
+        )
 
 
 @app.command()
@@ -370,8 +419,37 @@ def run(
     miniserver: str = typer.Option(..., help="IP des Miniservers"),
     port: int = typer.Option(7000, help="UDP-Port, auf dem der Miniserver lauscht"),
     listen: int = typer.Option(8080, help="Port für die HTTP-Kommandos aus Loxone"),
+    host: str = typer.Option(
+        "0.0.0.0",
+        help="Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der "
+        "Miniserver den Dienst erreichen muss — siehe --api-token für die "
+        "dazugehörige Absicherung der `/api`-Routen (Spec 9, Task 8).",
+    ),
+    api_token: str | None = typer.Option(
+        None,
+        "--api-token",
+        envvar="LOXMATTER_API_TOKEN",
+        help="Schützt die `/api`-Routen der WebUI (Einlernen, Entfernen, "
+        "Fabric-Sicherung) mit `Authorization: Bearer <Token>`. `/cmd` und "
+        "/resync` bleiben immer offen — der Miniserver kann keinen Header "
+        "mitschicken (Spec 9, Task 8). Ohne Token erscheint beim Start eine "
+        "Warnung im Log, und `GET /api/diagnostics/fabric-backup` wird gar "
+        "nicht erst ausgeliefert (403). Nur Zeichen verwenden, die in einem "
+        "HTTP-Header stehen dürfen — keine Leerzeichen, kein Komma, ASCII; "
+        "`openssl rand -hex 32` erfüllt das. Alternative über die "
+        "Umgebungsvariable LOXMATTER_API_TOKEN.",
+    ),
     store_path: Path | None = typer.Option(  # noqa: B008
         None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
+    ),
+    matter_data_dir: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--matter-data-dir",
+        help="matter-server-Datenverzeichnis (storage-path), read-only in diesen "
+        "Dienst eingehängt — Grundlage für `GET /api/diagnostics/fabric-backup` "
+        "(Spec 4.1, Task 6, Phase 5). Ohne Angabe antwortet die Route mit 503 "
+        "statt einer Sicherung. Siehe deploy/testhost/docker-compose.yml für die "
+        "dazugehörige Volume-Einhängung.",
     ),
 ) -> None:
     """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein.
@@ -400,10 +478,20 @@ def run(
     except (OSError, sqlite3.Error) as exc:
         _fail(f"Datenbank {resolved_store_path} konnte nicht geöffnet werden: {exc}")
 
-    asyncio.run(_run(store, url, miniserver, port, listen))
+    _warn_if_missing_api_token(api_token)
+    asyncio.run(_run(store, url, miniserver, port, listen, matter_data_dir, host, api_token))
 
 
-async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) -> None:
+async def _run(
+    store: Store,
+    url: str,
+    miniserver: str,
+    port: int,
+    listen: int,
+    matter_data_dir: Path | None = None,
+    host: str = "0.0.0.0",  # Standard wie in `run` — der Miniserver muss den Dienst erreichen
+    api_token: str | None = None,
+) -> None:
     """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
 
     `store` kommt bereits geöffnet herein (siehe `run` oben). `UdpSender`,
@@ -459,7 +547,18 @@ async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) 
         await runtime.resend_all()
 
         config = uvicorn.Config(
-            build_app(store, invoke, runtime), host="0.0.0.0", port=listen, log_level="info"
+            build_app(
+                store,
+                invoke,
+                runtime,
+                client=client,
+                sender=sender,
+                matter_data_dir=matter_data_dir,
+                api_token=api_token,
+            ),
+            host=host,
+            port=listen,
+            log_level="info",
         )
         await uvicorn.Server(config).serve()
     finally:

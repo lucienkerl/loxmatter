@@ -38,3 +38,70 @@ braucht einen erreichbaren matter-server (Standardadresse
 `ws://localhost:5580/ws`, per `--url` änderbar) — läuft und wurde gegen
 echte Hardware erprobt, siehe [`deploy/testhost/`](deploy/testhost/) für die
 Testumgebung.
+
+## Dauerhaft betreiben: `loxmatter run`
+
+```bash
+uv run loxmatter run --miniserver 192.168.1.10
+```
+
+Verbindet dauerhaft mit matter-server und Miniserver und startet einen
+HTTP-Dienst (Standardport 8080, `--listen`), der zwei Dinge gleichzeitig
+ausliefert:
+
+- `/cmd` und `/resync` für den Miniserver (virtuelle Ausgänge) — unverändert
+  seit Phase 4.
+- `/` und `/api/*` für eine Bedienoberfläche im Browser: Geräte einlernen,
+  ansehen, benennen, schalten, Vorlagen exportieren, Diagnose.
+
+Der Dienst bindet standardmäßig auf `0.0.0.0` (`--host`), damit der
+Miniserver ihn erreicht — dieselbe Erreichbarkeit gilt fürs restliche
+Netz. **Die `/api`-Routen sind deshalb mit `--api-token` bzw. der
+Umgebungsvariable `LOXMATTER_API_TOKEN` absicherbar**
+(`Authorization: Bearer <Token>`). `/cmd` und `/resync` bleiben davon *immer*
+unberührt — der Miniserver kann keinen Header mitschicken, das ist eine
+bewusste Grenze: wer den Port erreicht, kann ein Gerät weiterhin schalten,
+aber nicht mehr einlernen, entfernen oder die Fabric-Sicherung
+herunterladen. „Wer den Port erreicht" ist dabei weiter zu verstehen, als es
+klingt: `/cmd/{key}/{value}` ist ein GET ohne Ursprungsprüfung, den auch eine
+beliebige Webseite auslösen kann, die jemand aus diesem Netz im Browser
+öffnet (`<img src="http://…/cmd/…">`) — ein Fuß im LAN ist dafür nicht
+nötig. Ohne gesetztes Token startet der Dienst trotzdem — mit einer
+deutlichen Warnung im Log. Details und Begründung: [Spec, Abschnitt
+9](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#9-fehlerbehandlung).
+
+**So bedienen Sie das Token.** Die mitgelieferte Browser-Oberfläche kann es
+mitschicken: oben rechts steht ein Feld dafür (Typ `password`, damit es
+nicht über der Schulter mitlesbar ist). Eingetragen wird es im
+`localStorage` des Browsers gehalten und bei jedem Aufruf als
+`Authorization: Bearer <Token>` an denselben Ursprung geschickt, von dem die
+Seite geladen wurde — nie in einer URL, nie als Query-Parameter (der stünde
+in Server-Logs, Proxy-Logs und der Browser-History). Angezeigt wird es nach
+dem Speichern nicht mehr, nur noch „Token gesetzt" mit einem Knopf zum
+Ersetzen und einem zum Löschen. Antwortet ein Aufruf mit 401, sagt die
+Oberfläche das im Klartext und klappt das Feld auf, statt einen rohen
+Fehlertext zu zeigen.
+
+Die Live-Werte-Route `/api/live` ist ein Sonderfall: ein Browser-`WebSocket`
+kann keine eigenen Kopfzeilen setzen. Die Oberfläche schickt das Token dort
+deshalb als Subprotokoll (`new WebSocket(url, ["bearer", token])`), was der
+Browser als `Sec-WebSocket-Protocol: bearer, <Token>` überträgt; der
+`Authorization`-Header bleibt der Hauptweg für alles andere. Daraus folgt
+eine Anforderung an das Token selbst: **es muss in einem HTTP-Header und in
+einem Subprotokoll übertragbar sein — keine Leerzeichen, kein Komma, kein
+Nicht-ASCII.** `openssl rand -hex 32` liefert nur `[0-9a-f]` und ist der
+empfohlene Weg zu einem Token. Ein Token, das nur aus Leerraum besteht (ein
+versehentlicher Zeilenumbruch in einer `.env`), gilt als „nicht gesetzt".
+
+**Ohne Token wird die Fabric-Sicherung nicht ausgeliefert.** `GET
+/api/diagnostics/fabric-backup` antwortet dann mit 403 statt mit den
+Fabric-Zugangsdaten — sie sind der einzige unersetzliche Zustand der
+Installation, und wer sie herunterlädt, kann die Matter-Fabric übernehmen.
+Alle übrigen `/api`-Routen bleiben ohne Token unverändert offen. Das ist
+kein Ersatz für ein Token, sondern die Absicherung des einen Falls, dessen
+Schaden nicht rückgängig zu machen ist.
+
+Ein lauffähiges Beispiel steht in
+[`deploy/testhost/docker-compose.yml`](deploy/testhost/docker-compose.yml);
+`deploy/testhost/README.md` führt `LOXMATTER_API_TOKEN` unter den Variablen
+auf, die beim Einrichten gesetzt werden.

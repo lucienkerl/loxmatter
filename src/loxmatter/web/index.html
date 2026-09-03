@@ -1,0 +1,457 @@
+<!doctype html>
+<!--
+  loxmatter - Inbetriebnahme- und Diagnosewerkzeug fuer die Matter-Loxone-
+  Bruecke (Spec 8). Vier Ansichten, umgeschaltet ueber Alpine.js, ohne
+  Seitenwechsel und ohne Build-Schritt.
+
+  Enthaelt eine vendorte Kopie von Alpine.js, Version 3.17.1 (MIT-Lizenz,
+  (c) Caleb Porzio), bezogen als eigenstaendige, sich selbst startende
+  Distribution (kein Modul, kein Bundler noetig) des npm-Pakets "alpinejs"
+  ueber jsDelivr (das oeffentliche Auslieferungsnetz fuer npm-Pakete) am
+  2026-09-02, unveraendert unter web/vendor/alpine.min.js abgelegt - SHA-256
+  b30997fc126d808b1a9b20ab3f504ded88df957818c02d6249bba3ec114eb0ec.
+
+  Bewusst KEIN Netzwerkverweis in dieser Datei: die Bruecke laeuft in
+  Installationen ohne Internetzugang, und eine Oberflaeche, die dort auf
+  ein entferntes Skript wartet, bleibt weiss.
+-->
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>loxmatter</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <!--
+    Hier steht mit Absicht KEIN `x-init="init()"` (Review-Fix Fix 2,
+    2026-09-03). Alpine 3 ruft die Methode `init()` eines mit `x-data`
+    erzeugten Datenobjekts von sich aus genau einmal auf. Ein zusaetzliches
+    `x-init="init()"` ruft sie ein zweites Mal - und `init()` oeffnet den
+    Live-WebSocket. Jeder offene Tab hielt dadurch ZWEI Verbindungen, von
+    denen nur die zuletzt geoeffnete in `this.socket` steht. Die andere
+    bekommt trotzdem jeden Wert, belegt im Backend eine Queue samt zwei
+    asyncio-Tasks und einen Beobachter und ist fuer `restartLive()`
+    unsichtbar (das schliesst nur `this.socket`) - sie stirbt erst mit dem
+    Tab. Wer hier ein `x-init` ergaenzen moechte: dafuer gibt es keinen
+    Grund, `init()` laeuft bereits.
+  -->
+  <body x-data="app()">
+    <header class="app-header">
+      <h1>loxmatter</h1>
+      <div class="header-right">
+        <!--
+          Zugang: ein Feld fuer das API-Token, kein Login-Bildschirm und keine
+          Sitzungsverwaltung (Review-Fix Fix 1b, 2026-09-03). Steht in der
+          Kopfzeile, weil eine 401 in jeder der vier Ansichten auftreten kann
+          und der Hinweis darauf hierher fuehrt. Das gespeicherte Token wird
+          nie wieder angezeigt - nur „gesetzt" oder „kein Token".
+        -->
+        <div class="token-box">
+          <span class="badge" :class="tokenIsSet ? 'ok' : 'warn'" x-text="tokenStatusText()"></span>
+          <template x-if="!tokenEditing">
+            <span class="row">
+              <button @click="startTokenEdit()" x-text="tokenIsSet ? 'Ersetzen' : 'Token eingeben'">
+              </button>
+              <button class="danger" x-show="tokenIsSet" @click="clearToken()">Löschen</button>
+            </span>
+          </template>
+          <template x-if="tokenEditing">
+            <span class="row">
+              <input
+                type="password"
+                class="token-input"
+                placeholder="API-Token"
+                autocomplete="off"
+                x-model="tokenDraft"
+                @keydown.enter="saveToken()"
+              />
+              <button class="primary" @click="saveToken()">Speichern</button>
+              <button @click="cancelTokenEdit()">Abbrechen</button>
+            </span>
+          </template>
+        </div>
+        <div class="connection-status">
+          <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
+          <span x-text="connectionStatusText()"></span>
+        </div>
+      </div>
+    </header>
+
+    <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
+
+    <div class="banner danger" x-show="!socketConnected && socketEverConnected" x-cloak>
+      Die Live-Verbindung wurde unterbrochen. Angezeigte Werte können inzwischen veraltet sein,
+      bis die Verbindung wiederhergestellt ist.
+    </div>
+
+    <nav class="tabs">
+      <button :class="{ active: view === 'devices' }" @click="selectView('devices')">Geräte</button>
+      <button :class="{ active: view === 'signals' }" @click="selectView('signals')">Signale</button>
+      <button :class="{ active: view === 'export' }" @click="selectView('export')">Export</button>
+      <button :class="{ active: view === 'system' }" @click="selectView('system')">System</button>
+    </nav>
+
+    <main>
+      <!-- ================================================================
+           Ansicht 1: Geräte
+           ================================================================ -->
+      <section x-show="view === 'devices'">
+        <div class="card">
+          <h2>Neues Gerät einlernen</h2>
+          <div class="row">
+            <input
+              type="text"
+              x-model="commissionCode"
+              placeholder="Pairing-Code (11-stellig oder MT:…)"
+            />
+            <input
+              type="text"
+              x-model="commissionThreadDataset"
+              placeholder="Thread-Datensatz (nur bei Thread-Geräten)"
+            />
+            <button class="primary" @click="commissionDevice()" :disabled="commissionBusy">
+              Einlernen
+            </button>
+          </div>
+          <p class="hint">
+            Hängt das Gerät schon in Apple, Google oder einer DIRIGERA, funktioniert der
+            aufgedruckte Code hier nicht mehr – dort einen zusätzlichen Multi-Admin-Code erzeugen
+            und stattdessen diesen eingeben.
+          </p>
+          <p
+            x-show="commissionMessage"
+            x-cloak
+            :class="commissionMessageIsError ? 'banner danger' : 'banner ok'"
+            x-text="commissionMessage"
+          ></p>
+        </div>
+
+        <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
+        <p x-show="deviceActionError" x-cloak class="banner danger" x-text="deviceActionError"></p>
+        <p
+          x-show="commandMessage"
+          x-cloak
+          :class="commandMessageIsError ? 'banner danger' : 'banner ok'"
+          x-text="commandMessage"
+        ></p>
+
+        <p x-show="devices.length === 0 && !devicesError" class="hint">
+          Noch kein Gerät eingelernt.
+        </p>
+
+        <template x-for="device in devices" :key="device.id">
+          <div class="card">
+            <div class="row">
+              <span class="dot" :class="isOnline(device) ? 'online' : 'offline'"></span>
+              <input
+                type="text"
+                :value="device.label"
+                @input="labelDrafts[device.id] = $event.target.value"
+                @change="saveLabel(device)"
+              />
+              <span
+                class="muted"
+                x-text="device.signal_count + ' Signale, ' + device.exportable_count + ' exportierbar'"
+              ></span>
+              <button
+                @click="toggleExpanded(device)"
+                x-text="expandedDeviceId === device.id ? 'Einklappen' : 'Details'"
+              ></button>
+              <button class="danger" @click="removeDevice(device)">Entfernen</button>
+            </div>
+
+            <div class="device-controls" x-show="expandedDeviceId === device.id" x-cloak>
+              <h3>Bedienung</h3>
+              <p class="hint" x-show="commandsFor(device.id).length === 0">
+                Keine bekannten Ausgangsbefehle für dieses Gerät.
+              </p>
+              <div class="row">
+                <template x-for="command in commandsFor(device.id)" :key="command.key">
+                  <span class="row">
+                    <button
+                      x-show="!command.takes_value"
+                      @click="executeCommand(device, command)"
+                      :disabled="commandBusyKey === command.key"
+                      x-text="command.slug"
+                    ></button>
+                    <span x-show="command.takes_value" class="row">
+                      <span x-text="command.slug"></span>
+                      <input
+                        type="number"
+                        style="width: 5.5rem"
+                        placeholder="Wert"
+                        @input="commandValueDrafts[command.key] = $event.target.value"
+                      />
+                      <button
+                        @click="executeCommand(device, command)"
+                        :disabled="commandBusyKey === command.key"
+                      >
+                        Senden
+                      </button>
+                    </span>
+                  </span>
+                </template>
+              </div>
+              <p class="hint" x-show="hiddenRawCommandsFor(device.id) > 0">
+                <span x-text="hiddenRawCommandsFor(device.id)"></span>
+                weitere Kommandos vorhanden, aber nicht benannt.
+              </p>
+
+              <h3>Signale (Anfang der Liste)</h3>
+              <p class="hint">
+                Keine Rangfolge: die ersten
+                <span x-text="SIGNAL_PREVIEW_LIMIT"></span> exportierbaren Signale in
+                derselben Reihenfolge wie in der Ansicht „Signale“ (Endpunkt, dann
+                Cluster-Nummer). Das ist nicht dasselbe wie „die wichtigsten“ – bei einer
+                Steckdose stehen hier eher Netzwerk- und Geräteangaben als Ein/Aus und
+                Leistung.
+              </p>
+              <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
+                <div class="signal-row">
+                  <span x-text="signal.title"></span>
+                  <span class="key" x-text="signal.key"></span>
+                  <span
+                    class="value"
+                    x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                  ></span>
+                  <span></span>
+                </div>
+              </template>
+              <p class="hint" x-show="remainingSignalCount(device.id) > 0">
+                <span x-text="remainingSignalCount(device.id)"></span>
+                weitere in der Ansicht „Signale“.
+              </p>
+            </div>
+          </div>
+        </template>
+      </section>
+
+      <!-- ================================================================
+           Ansicht 2: Signale
+           ================================================================ -->
+      <section x-show="view === 'signals'" x-cloak>
+        <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
+        <p class="hint">
+          Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier
+          nicht ändern – ein Klick würde dort einen Baustein still lahmlegen.
+        </p>
+
+        <template x-for="device in devices" :key="'signals-' + device.id">
+          <div class="card">
+            <h2 x-text="device.label"></h2>
+            <button
+              x-show="!signalsByDevice[device.id]"
+              @click="loadSignals(device.id)"
+            >
+              Signale laden
+            </button>
+
+            <template x-for="signal in signalsByDevice[device.id] || []" :key="signal.key">
+              <div class="device-controls">
+                <div class="row">
+                  <span
+                    class="key"
+                    title="Verdrahtung in Loxone – nicht änderbar."
+                    x-text="signal.key"
+                  ></span>
+                  <input
+                    type="text"
+                    :value="signal.title"
+                    @input="titleDrafts[signal.key] = $event.target.value"
+                    @change="saveTitle(signal)"
+                  />
+                  <span class="hint" x-text="signal.path"></span>
+                  <span
+                    class="value"
+                    x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                  ></span>
+                  <label x-show="signal.exportable">
+                    <input
+                      type="checkbox"
+                      :checked="signal.exported"
+                      @change="toggleExported(signal)"
+                    />
+                    exportieren
+                  </label>
+                  <span class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></span>
+                </div>
+                <div class="row" x-show="signal.kind === 'attribute'">
+                  <input
+                    type="text"
+                    placeholder="Rohwert schreiben"
+                    @input="rawWriteDrafts[signal.key] = $event.target.value"
+                  />
+                  <button
+                    @click="writeRaw(signal)"
+                    :disabled="rawWriteBusyKey === signal.key"
+                  >
+                    Schreiben
+                  </button>
+                  <span
+                    x-show="rawWriteMessages[signal.key]"
+                    :class="rawWriteMessageClass(signal)"
+                    x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
+                  ></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </section>
+
+      <!-- ================================================================
+           Ansicht 3: Export
+           ================================================================ -->
+      <section x-show="view === 'export'" x-cloak>
+        <div class="card">
+          <h2>Vorlagen exportieren</h2>
+          <div class="row">
+            <label
+              >IP dieser Brücke
+              <input type="text" x-model="exportBridgeIp" placeholder="z. B. 192.168.1.20"
+            /></label>
+            <label>UDP-Port <input type="number" x-model.number="exportPort" /></label>
+            <label>
+              HTTP-Port (Kommandos)
+              <input type="number" x-model.number="exportListenPort" />
+            </label>
+          </div>
+          <p class="hint">
+            Gemeint ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der
+            Miniserver ihn sieht. <strong>Nicht</strong> die Adresse des Miniservers. Der
+            virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die
+            Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span>
+            auf. Steht hier die Miniserver-IP, sehen die Vorlagen richtig aus, bleiben aber
+            stumm – ohne jede Fehlermeldung.
+          </p>
+          <div class="row">
+            <label><input type="checkbox" x-model="exportIncludeSystem" /> Systemvorlagen einschließen</label>
+            <label
+              ><input type="checkbox" x-model="exportOnlyPending" /> nur noch nicht exportierte
+              Geräte</label
+            >
+          </div>
+          <p class="hint">
+            Der Filter gilt für die Vorschau <strong>und</strong> für das ZIP: ist er gesetzt,
+            enthält der Download nur die Geräte aus der Tabelle unten, und nur diese gelten
+            danach als exportiert.
+          </p>
+          <div class="row">
+            <button class="primary" @click="previewExport()" :disabled="exportBusy">
+              Vorschau ansehen
+            </button>
+            <!--
+              Ein `<a href>` kann keinen `Authorization`-Header tragen und
+              wuerde bei gesetztem Token die Seite durch die rohe
+              401-Antwort ersetzen - deshalb ein Knopf, der die Datei ueber
+              `fetch()` holt (siehe `downloadExport` in app.js).
+            -->
+            <button class="primary" @click="downloadExport()">ZIP herunterladen</button>
+          </div>
+          <p x-show="exportError" x-cloak class="banner danger" x-text="exportError"></p>
+        </div>
+
+        <div class="card" x-show="exportPreview" x-cloak>
+          <h2>Vorschau</h2>
+          <div style="overflow-x: auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Gerät</th>
+                  <th>VIU-Datei</th>
+                  <th>VO-Datei</th>
+                  <th>Eingänge</th>
+                  <th>Befehle</th>
+                  <th>Übersprungen</th>
+                  <th>Zuletzt exportiert</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="device in previewDevices()" :key="device.device_id">
+                  <tr>
+                    <td x-text="device.label"></td>
+                    <td class="key" x-text="device.viu_filename"></td>
+                    <td class="key" x-text="device.vo_filename"></td>
+                    <td x-text="device.inputs"></td>
+                    <td x-text="device.commands"></td>
+                    <td x-text="device.skipped"></td>
+                    <td x-text="formatTimestamp(exportedAtFor(device.device_id))"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <p class="hint" x-show="exportPreview && exportPreview.system_files.length > 0">
+            Systemvorlagen: <span x-text="exportPreview ? exportPreview.system_files.join(', ') : ''"></span>
+          </p>
+        </div>
+      </section>
+
+      <!-- ================================================================
+           Ansicht 4: System
+           ================================================================ -->
+      <section x-show="view === 'system'" x-cloak>
+        <div class="card">
+          <div class="row">
+            <h2 style="margin: 0">Systemcheck</h2>
+            <button @click="loadSystem()" :disabled="diagnosticsBusy">Aktualisieren</button>
+          </div>
+          <p x-show="systemError" x-cloak class="banner danger" x-text="systemError"></p>
+          <ul class="system-check-list">
+            <template x-for="check in systemChecks" :key="check.name">
+              <li>
+                <span class="badge" :class="check.ok ? 'ok' : 'danger'" x-text="check.ok ? 'OK' : 'Fehler'"></span>
+                <strong x-text="check.name"></strong>
+                <span x-text="check.detail"></span>
+              </li>
+            </template>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h2>UDP-Mitschnitt</h2>
+          <p class="hint">Tatsächlich über den Draht geschickte Datagramme, jüngste zuletzt.</p>
+          <div class="log-list">
+            <template x-for="(entry, index) in datagrams" :key="index">
+              <div
+                class="entry"
+                x-text="entry.timestamp + '  ' + entry.key + ' = ' + entry.value"
+              ></div>
+            </template>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Kommando-Log</h2>
+          <p class="hint">Eingehende HTTP-Aufrufe mit ihrem Ergebnis.</p>
+          <div class="log-list">
+            <template x-for="(entry, index) in commandLog" :key="index">
+              <div
+                class="entry"
+                x-text="entry.timestamp + '  ' + entry.method + ' ' + entry.path + ' -> ' + entry.status"
+              ></div>
+            </template>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Sicherung</h2>
+          <p class="hint">
+            Sicherung der Fabric-Zugangsdaten (matter-server-Datenverzeichnis) als ZIP-Datei –
+            der einzige unersetzliche Zustand dieser Installation. Geht er verloren, muss jedes
+            Gerät neu eingelernt werden.
+          </p>
+          <p class="hint">
+            Setzt ein API-Token voraus: läuft die Brücke ohne Token, wird die Sicherung gar nicht
+            erst ausgeliefert – wer sie herunterladen kann, kann die Matter-Fabric übernehmen.
+          </p>
+          <button @click="downloadFabricBackup()">Sicherung herunterladen</button>
+          <p x-show="backupError" x-cloak class="banner danger" x-text="backupError"></p>
+        </div>
+      </section>
+    </main>
+
+    <script defer src="/static/app.js"></script>
+    <script defer src="/static/vendor/alpine.min.js"></script>
+  </body>
+</html>

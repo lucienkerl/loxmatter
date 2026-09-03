@@ -414,3 +414,22 @@ async def test_seed_from_snapshot_skips_an_unknown_node_without_aborting(environ
 
     assert seeded == 110
     assert sender.sent == []
+
+
+async def test_last_values_for_returns_only_that_devices_keys(environment):
+    """Fuer die Geraete-API (Task 2, Phase 5): `last_values_for` darf Werte
+    eines anderen Geraets nicht mit einsammeln - auch nicht, wenn dessen
+    device_id als Ziffernfolge die eigene device_id als Praefix enthaelt."""
+    runtime, _, _, device_id, button_device_id = environment
+    await runtime.on_attribute(device_id, "2/144/4", 230000)
+    await runtime.set_online(button_device_id, True)
+
+    values = runtime.last_values_for(device_id)
+
+    assert values == {f"d{device_id}_2_voltage": pytest.approx(230.0)}
+    assert f"d{button_device_id}_online" not in values
+
+
+async def test_last_values_for_is_empty_before_anything_is_known(environment):
+    runtime, _, _, device_id, _ = environment
+    assert runtime.last_values_for(device_id) == {}

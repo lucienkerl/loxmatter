@@ -25,25 +25,40 @@ Thread gebunden, und dieses Modul weicht davon bewusst nicht ab.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
-from loxmatter.profiles.table import Exportability, lookup
+from loxmatter.profiles.table import Exportability, is_exportable, lookup
+from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
 
+# Schema-Version dieses Moduls, verwaltet ueber `PRAGMA user_version` (Review-Fix
+# Important #1, 2026-09-02). `CREATE TABLE IF NOT EXISTS` allein erreicht eine
+# bereits bestehende Tabelle nie mit einer neuen Spalte - eine Datenbank, die vor
+# dem `exported`-Feld angelegt wurde, blieb bislang ohne Migration dauerhaft ohne
+# diese Spalte, und `Store.signals()` scheiterte mit `IndexError`. Version 0 ist
+# "vor dieser Migrationslogik" (jede bestehende Datenbank, `PRAGMA user_version`
+# noch nie gesetzt); Version 1 fuegt `signal.exported` hinzu und befuellt
+# Bestandszeilen zurueckwirkend, siehe `_migrate_to_v1`. Version 2 (Task 5,
+# Phase 5) fuegt `device.exported_at` und `device.updated_at` hinzu, siehe
+# `_migrate_to_v2`.
+_SCHEMA_VERSION = 2
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    unique_id  TEXT NOT NULL,
-    node_id    INTEGER NOT NULL,
-    label      TEXT NOT NULL,
-    udp_port   INTEGER NOT NULL,
-    active     INTEGER NOT NULL DEFAULT 1
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    unique_id   TEXT NOT NULL,
+    node_id     INTEGER NOT NULL,
+    label       TEXT NOT NULL,
+    udp_port    INTEGER NOT NULL,
+    active      INTEGER NOT NULL DEFAULT 1,
+    exported_at TEXT,
+    updated_at  TEXT
 );
 CREATE TABLE IF NOT EXISTS signal (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,6 +71,7 @@ CREATE TABLE IF NOT EXISTS signal (
     title         TEXT NOT NULL,
     unit          TEXT NOT NULL,
     exportability TEXT NOT NULL,
+    exported      INTEGER NOT NULL DEFAULT 1,
     UNIQUE (device_id, endpoint, cluster_id, element_id, kind)
 );
 CREATE TABLE IF NOT EXISTS command (
@@ -73,6 +89,120 @@ CREATE TABLE IF NOT EXISTS command (
 """
 
 
+def _add_column_if_missing(db: sqlite3.Connection, table: str, column: str, ddl: str) -> bool:
+    """Fuegt `column` zu `table` hinzu, falls sie fehlt - gemeinsame Absicherung
+    fuer `_migrate_to_v1` und `_migrate_to_v2` (Review-Fix Minor #3, 2026-09-02:
+    beide pruefen `PRAGMA table_info`, dieselbe Falle, dieselbe Idee, zuvor
+    zweimal von Hand hingeschrieben statt einmal geteilt).
+
+    Die Falle, gegen die der Spaltencheck schuetzt: eine frisch angelegte
+    Datenbank hat eine neue Spalte durch `_SCHEMA`s `CREATE TABLE IF NOT
+    EXISTS` bereits, waehrend `PRAGMA user_version` bei ihr ebenfalls noch auf
+    0 steht (siehe `_migrate`). `ALTER TABLE ... ADD COLUMN` liefe dort gegen
+    eine schon vorhandene Spalte und scheiterte mit "duplicate column".
+
+    Gibt zurueck, ob die Spalte neu hinzugefuegt wurde (`False`, wenn sie
+    schon da war) - `_migrate_to_v1` braucht das, um seinen Backfill nur bei
+    einer echten Alt-Datenbank auszufuehren, nicht bei einer frischen."""
+    columns = {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}
+    if column in columns:
+        return False
+    db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    return True
+
+
+def _migrate_to_v1(db: sqlite3.Connection) -> None:
+    """Fuegt `signal.exported` hinzu und befuellt bestehende Zeilen anhand
+    ihrer `exportability` (Review-Fix Important #1 und #2, 2026-09-02) -
+    dieselbe Regel wie bei einem frisch registrierten Signal, siehe
+    `profiles.table.is_exportable`.
+
+    Der Backfill laeuft nur, wenn `_add_column_if_missing` die Spalte
+    tatsaechlich neu angelegt hat - bei einer frisch erzeugten Datenbank
+    (Spalte schon durch `_SCHEMA` da) gibt es keine Bestandszeilen, die
+    rueckwirkend befuellt werden muessten.
+    """
+    if not _add_column_if_missing(db, "signal", "exported", "INTEGER NOT NULL DEFAULT 1"):
+        return
+    # Aus `is_exportable` abgeleitet statt hier ein drittes Mal von Hand
+    # aufgezaehlt (Review-Fix Fix 8, 2026-09-03, zusammen mit den beiden
+    # Kopien in `cli.py` und `api/export.py`): eine SQL-Abfrage braucht
+    # die Werte als Liste, nicht die Funktion - die Liste selbst kommt
+    # jetzt trotzdem aus derselben einen Quelle.
+    exportable_values = tuple(e.value for e in Exportability if is_exportable(e))
+    placeholders = ", ".join("?" for _ in exportable_values)
+    db.execute(
+        f"UPDATE signal SET exported = CASE WHEN exportability IN ({placeholders})"
+        " THEN 1 ELSE 0 END",
+        exportable_values,
+    )
+
+
+def _migrate_to_v2(db: sqlite3.Connection) -> None:
+    """Fuegt `device.exported_at` und `device.updated_at` hinzu (Task 5,
+    Phase 5) - Grundlage fuer `GET /api/export/status`: wann ein Geraet
+    zuletzt exportiert wurde, und ob sich seither etwas geaendert hat.
+
+    Beide Spalten bleiben bei einer bereits bestehenden Zeile NULL statt
+    rueckwirkend befuellt zu werden - anders als bei `_migrate_to_v1` gibt es
+    hier keinen Bestandswert, aus dem sich ein sinnvoller Zeitpunkt ableiten
+    liesse. `NULL` bedeutet fuer `exported_at` "noch nie exportiert" (dieselbe
+    Bedeutung wie bei einem frisch registrierten Geraet) und fuer
+    `updated_at` "unbekannt" - `api.export._status_for` behandelt ein
+    unbekanntes `updated_at` als "seither geaendert", die vorsichtigere der
+    beiden moeglichen Annahmen.
+
+    Jede Spalte einzeln ueber `_add_column_if_missing` geprueft, weil eine
+    Datenbank, die genau auf Version 1 steht (`signal.exported` vorhanden,
+    beide Spalten hier noch nicht), von einer echten Alt-Datenbank (Version
+    0, laeuft `_migrate_to_v1` und `_migrate_to_v2` nacheinander in
+    demselben Lauf) nicht zu unterscheiden sein muss - beide landen hier mit
+    fehlenden Spalten und bekommen sie angelegt."""
+    _add_column_if_missing(db, "device", "exported_at", "TEXT")
+    _add_column_if_missing(db, "device", "updated_at", "TEXT")
+
+
+# Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
+# Erweiterung fuer eine spaetere Schema-Aenderung: einfach anhaengen, mit der
+# naechsten Versionsnummer als Schluessel.
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migrate_to_v1,
+    2: _migrate_to_v2,
+}
+
+
+def _migrate(db: sqlite3.Connection) -> None:
+    """Bringt eine geoeffnete Datenbank auf `_SCHEMA_VERSION`.
+
+    Laeuft in einer Transaktion: scheitert eine Migration, bleibt die
+    Datenbank unveraendert (Review-Fix Important #1) - `ALTER TABLE ADD
+    COLUMN` ist in SQLite vollstaendig transaktional, weshalb ein expliziter
+    Rollback die schon ausgefuehrten Schritte dieses Laufs wieder rueckgaengig
+    macht. `PRAGMA user_version` selbst ist ebenfalls Teil dieser Transaktion
+    und wird deshalb nur bei vollstaendigem Erfolg auf `_SCHEMA_VERSION`
+    gesetzt - ein Absturz mitten in einer Migration hinterlaesst also nicht
+    eine halb angewandte Aenderung unter einer bereits erhoehten Version, die
+    ein spaeterer Start faelschlich fuer erledigt haelt.
+
+    Bereits auf dem neuesten Stand (der Normalfall bei jedem Start ausser dem
+    allerersten nach einer Schema-Aenderung): kein Schreibzugriff, echtes
+    No-op.
+    """
+    version = int(db.execute("PRAGMA user_version").fetchone()[0])
+    if version >= _SCHEMA_VERSION:
+        return
+    db.execute("BEGIN")
+    try:
+        for target_version in range(version + 1, _SCHEMA_VERSION + 1):
+            _MIGRATIONS[target_version](db)
+        db.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+    except BaseException:
+        db.rollback()
+        raise
+    else:
+        db.commit()
+
+
 @dataclass(frozen=True)
 class StoredSignal:
     key: str
@@ -80,6 +210,24 @@ class StoredSignal:
     title: str
     unit: str
     exportability: Exportability
+    # Beide Felder unten sind bereits Spalten der `signal`-Tabelle - kein
+    # Bruch der Schluessel-Opazitaet aus Spec 6.2 (der Schluessel selbst
+    # bleibt unangetastet), sondern nur ihre Offenlegung im Dataclass.
+    #
+    # device_id (Task 2, Phase 5): die Geraete-API loest ein Signal ueber
+    # `signal_by_key` OHNE Geraete-Kontext im Pfad auf (`PATCH
+    # /api/signals/{key}`) und braucht trotzdem die zugehoerige device_id,
+    # um z. B. einen Live-Wert nachzuschlagen. Den device_id aus dem
+    # Schluessel-String zu parsen waere ein Bruch von "Keys sind opak"
+    # (Spec 6.2) durch die Hintertuer - store.py kennt die device_id ohnehin
+    # aus der Zeile, sie muss nur mitgegeben werden.
+    device_id: int
+    # exported (Spec 5, Datenmodell): ob dieses Signal in den naechsten
+    # Export einfliessen soll - vom Nutzer umschaltbar (`PATCH
+    # /api/signals/{key}`), unabhaengig von `exportability`. Ein technisch
+    # nicht abbildbares Signal (siehe Spec 6.6) hat hier nie eine editierbare
+    # Checkbox, siehe `exportable` in `api.models.SignalOut`.
+    exported: bool
 
 
 @dataclass(frozen=True)
@@ -91,6 +239,39 @@ class StoredCommand:
     cluster_id: int
     command_id: int
     takes_value: bool
+    # device_id (Review-Fix Important #1, 2026-09-02): dieselbe Begruendung
+    # wie bei `StoredSignal.device_id` oben - `resolve_command` loest einen
+    # Kommando-Schluessel OHNE Geraete-Kontext im Pfad auf (`POST
+    # /api/commands/{key}`), und die aufrufende Route braucht trotzdem die
+    # device_id, um zu pruefen, ob das zugehoerige Geraet noch aktiv ist.
+    device_id: int
+
+
+@dataclass(frozen=True)
+class StoredDevice:
+    """Eine Zeile aus `device` (Spec 5) - fuer die Geraete-API (Task 2, Phase 5).
+
+    Traegt bewusst keinen `online`-Status: Erreichbarkeit ist Laufzeit-
+    Zustand (`Runtime`, gespeist aus Matter-Subscriptions), keine
+    gespeicherte Eigenschaft. Ein hier eingefrorenes `online`-Feld koennte
+    beim Neustart der Bruecke veraltet sein, bis die naechste Subscription
+    eintrifft.
+    """
+
+    id: int
+    node_id: int
+    unique_id: str
+    label: str
+    # exported_at/updated_at (Task 5, Phase 5) - Grundlage fuer `GET
+    # /api/export/status`. Beide sind ISO-8601-Zeitstempel als Text, `None`
+    # bedeutet "noch nie exportiert" bzw. "seit der Registrierung nicht mehr
+    # angefasst" (siehe `_migrate_to_v2` fuer den Fall einer Alt-Datenbank).
+    # `updated_at` ist absichtlich grob: es unterscheidet nicht, WAS sich am
+    # Geraet geaendert hat (Label, ein Signaltitel, eine neu entdeckte
+    # Signal-Liste, ...), nur DASS sich seit dem letzten Export etwas
+    # geaendert haben koennte - fuer "seither geaendert: ja/nein" reicht das.
+    exported_at: str | None
+    updated_at: str | None
 
 
 class UnknownCommandError(KeyError):
@@ -105,15 +286,78 @@ class UnknownCommandError(KeyError):
         return str(self.args[0])
 
 
+class UnknownDeviceError(KeyError):
+    """Wie `UnknownCommandError`, fuer ein unbekanntes oder bereits
+    entferntes (`forget_device`) Geraet - dieselbe Begruendung: die
+    Geraete-API (Task 2) macht daraus einen HTTP-404-Koerper, der die
+    `repr()`-Anfuehrungszeichen von `KeyError.__str__` nicht tragen soll."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
+
+
 class Store:
     def __init__(self, path: Path | str) -> None:
         self._db = sqlite3.connect(str(path))
         self._db.row_factory = sqlite3.Row
         self._db.executescript(_SCHEMA)
         self._db.commit()
+        _migrate(self._db)
 
     def close(self) -> None:
         self._db.close()
+
+    def check_writable(self) -> None:
+        """Prueft, ob die Datenbank JETZT tatsaechlich beschreibbar ist -
+        nicht nur laut Dateisystem-Bits, sondern durch einen echten,
+        sofort zurueckgerollten Schreibversuch. Wirft (typischerweise
+        `sqlite3.OperationalError`) bei einer schreibgeschuetzten Ablage,
+        einer vollen Platte oder einer exklusiv durch einen anderen Prozess
+        gesperrten Datenbank; aendert bei Erfolg nichts an den Daten.
+
+        Fuer den Systemcheck der Diagnose (Spec 10.5, siehe
+        `api.diagnostics._check_store`) - der einzige Aufrufer bislang.
+
+        **Vorab: eine eventuell schon offene, implizite Transaktion wird
+        zurueckgerollt (Review-Fix Important, 2026-09-02).** Ein paar
+        schreibende Methoden dieser Klasse (`rename_device`,
+        `mark_exported`, `set_title`, `set_exported`) legen kein eigenes
+        try/except um ihr `UPDATE ...` plus `commit()` - anders als z. B.
+        `register_signals`, das bei `ValueError`/`sqlite3.Error`
+        ausdruecklich zurueckrollt. Scheitert dort das `UPDATE` selbst oder
+        sogar erst das `commit()` (z. B. volle Platte), bleibt die von
+        Python VOR dem `UPDATE` automatisch eroeffnete Transaktion auf
+        dieser Verbindung offen. Ein zweites, direkt darauf folgendes
+        `BEGIN IMMEDIATE` wuerde dann IMMER mit `sqlite3.OperationalError:
+        cannot start a transaction within a transaction` scheitern -
+        unabhaengig davon, ob die Datenbank inzwischen wieder beschreibbar
+        ist. Ohne die Behandlung hier wuerde der Systemcheck genau diesen
+        Fall faelschlich als "nicht beschreibbar" melden, obwohl die
+        Datenbank selbst in Ordnung sein kann.
+
+        Das Zurueckrollen ist hier unbedenklich: jede Store-Instanz gehoert
+        genau einem Thread und einer Event-Loop, und jede schreibende
+        Methode ist rein synchron - sie haengt nie mitten in ihrer eigenen
+        Transaktion an einem `await`. Eine zum Zeitpunkt DIESES Aufrufs
+        vorgefundene offene Transaktion kann deshalb nie eine tatsaechlich
+        noch laufende, legitime Transaktion sein - sie ist immer der Rest
+        eines bereits fehlgeschlagenen, nie committeten Schreibversuchs,
+        dessen Ausnahme schon an dessen eigenen Aufrufer weitergereicht
+        wurde. Sie zurueckzurollen verwirft deshalb garantiert keine
+        erfolgreich geschriebenen Daten."""
+        if self._db.in_transaction:
+            self._db.rollback()
+        self._db.execute("BEGIN IMMEDIATE")
+        self._db.rollback()
+
+    @staticmethod
+    def _now() -> str:
+        """Duenne Bruecke zu `loxmatter.timestamps.now_iso` (Review-Fix
+        Minor, 2026-09-02 - siehe dort fuer die Begruendung, warum diese
+        Funktion nicht mehr eigenstaendig implementiert ist). Bleibt als
+        eigene Methode erhalten, weil `self._now()` bereits an vielen
+        Stellen dieser Klasse verdrahtet ist."""
+        return now_iso()
 
     def _device_identity(self, snapshot: NodeSnapshot) -> str:
         """Faellt auf die Node-ID zurueck: manche Geraete melden keine UniqueID (Spec 7.2)."""
@@ -129,8 +373,9 @@ class Store:
 
         label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or identity
         cur = self._db.execute(
-            "INSERT INTO device (unique_id, node_id, label, udp_port) VALUES (?, ?, ?, ?)",
-            (identity, snapshot.node_id, label, DEFAULT_UDP_PORT),
+            "INSERT INTO device (unique_id, node_id, label, udp_port, updated_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (identity, snapshot.node_id, label, DEFAULT_UDP_PORT, self._now()),
         )
         self._db.commit()
         device_id = cur.lastrowid
@@ -147,6 +392,65 @@ class Store:
         if row is None:
             raise KeyError(f"unbekanntes Geraet {device_id}")
         return int(row["udp_port"])
+
+    @staticmethod
+    def _as_device(row: sqlite3.Row) -> StoredDevice:
+        return StoredDevice(
+            id=int(row["id"]),
+            node_id=int(row["node_id"]),
+            unique_id=str(row["unique_id"]),
+            label=str(row["label"]),
+            exported_at=row["exported_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def devices(self) -> list[StoredDevice]:
+        """Alle aktiven Geraete (Task 2, Phase 5) - fuer `GET /api/devices`.
+
+        Ein entferntes Geraet (`forget_device`) taucht hier nicht mehr auf,
+        genau wie bei `device_id_for_node`."""
+        rows = self._db.execute("SELECT * FROM device WHERE active = 1 ORDER BY id").fetchall()
+        return [self._as_device(r) for r in rows]
+
+    def device(self, device_id: int) -> StoredDevice:
+        """Ein einzelnes aktives Geraet - `UnknownDeviceError`, wenn es nie
+        registriert wurde oder inzwischen entfernt ist."""
+        row = self._db.execute(
+            "SELECT * FROM device WHERE id = ? AND active = 1", (device_id,)
+        ).fetchone()
+        if row is None:
+            raise UnknownDeviceError(f"unbekanntes Geraet {device_id}")
+        return self._as_device(row)
+
+    def rename_device(self, device_id: int, label: str) -> None:
+        """Setzt das Label eines Geraets (`PATCH /api/devices/{device_id}`).
+
+        Wie `set_title` ohne vorherige Existenzpruefung - der Aufrufer (die
+        API-Route) prueft ueber `device()` selbst und meldet ein unbekanntes
+        Geraet als 404, bevor diese Methode ueberhaupt aufgerufen wird.
+
+        Setzt `updated_at` (Task 5, Phase 5): eine Umbenennung landet im
+        naechsten Export als neuer `Title` in der Vorlage - `GET
+        /api/export/status` soll das Geraet danach als "seither geaendert"
+        fuehren, auch wenn kein Signal betroffen ist."""
+        self._db.execute(
+            "UPDATE device SET label = ?, updated_at = ? WHERE id = ?",
+            (label, self._now(), device_id),
+        )
+        self._db.commit()
+
+    def mark_exported(self, device_id: int) -> None:
+        """Setzt `exported_at` auf jetzt (Task 5, Phase 5).
+
+        Aufgerufen sowohl von `api.export.download` als auch von `cli.py`s
+        `export`-Kommando - beide schreiben in dieselbe Datenbank (siehe
+        Modul-Docstring von `api/export.py`), und `GET /api/export/status`
+        soll "wann zuletzt exportiert" unabhaengig davon beantworten, ueber
+        welchen der beiden Wege der letzte Export lief. Ohne diesen Aufruf
+        im CLI-Kommando zeigte die WebUI nach einem `loxmatter export`
+        weiterhin "nie exportiert" an."""
+        self._db.execute("UPDATE device SET exported_at = ? WHERE id = ?", (self._now(), device_id))
+        self._db.commit()
 
     def device_id_for_node(self, node_id: int) -> int | None:
         """Bildet eine Matter-Node-ID auf die zugehoerige, stabile `device_id` ab.
@@ -231,10 +535,27 @@ class Store:
 
                 key = self._assign_key(device_id, ref, profile.slug, taken)
                 taken.add(key)
+                # exported startet gleich `exportable` (Task 2, Phase 5): ein
+                # frisch entdecktes Signal, das ueberhaupt auf einen
+                # Loxone-Eingang passt, soll ohne einen manuellen Zwischen-
+                # schritt in der WebUI auch tatsaechlich exportiert werden -
+                # das entspricht dem bisherigen Verhalten von `loxmatter
+                # export`, das jedes exportierbare Signal ungefragt mitnahm.
+                # Einmal gesetzt, bleibt der Wert wie `title` Nutzereigentum:
+                # der UPDATE-Zweig oben (bereits bekanntes Signal) fasst
+                # `exported` bewusst nicht an.
+                #
+                # `is_exportable` statt der frueheren, hier direkt notierten
+                # ``is not Exportability.NONE`` (Review-Fix Important #2,
+                # 2026-09-02): das schloss TEXT faelschlich als "exported"
+                # ein, obwohl `api.devices` TEXT unabhaengig davon schon
+                # immer als nicht exportierbar fuehrte - siehe
+                # `profiles.table.is_exportable`.
+                exported = is_exportable(profile.exportability)
                 self._db.execute(
                     "INSERT INTO signal "
                     "(device_id, endpoint, cluster_id, element_id, kind, key, title, unit,"
-                    " exportability) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " exportability, exported) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         device_id,
                         ref.endpoint,
@@ -245,8 +566,17 @@ class Store:
                         profile.slug,
                         profile.unit,
                         profile.exportability.value,
+                        int(exported),
                     ),
                 )
+            # Geraet als "seither geaendert" markieren (Task 5, Phase 5): ein
+            # neu entdecktes oder in `unit`/`exportability` korrigiertes
+            # Signal soll `GET /api/export/status` erreichen, auch wenn
+            # `register_signals` selbst keinen einzigen neuen Schluessel
+            # vergeben hat (reines Refresh eines schon bekannten Geraets).
+            self._db.execute(
+                "UPDATE device SET updated_at = ? WHERE id = ?", (self._now(), device_id)
+            )
         except (ValueError, sqlite3.Error):
             self._db.rollback()
             raise
@@ -254,8 +584,44 @@ class Store:
         return self.signals(device_id)
 
     def set_title(self, key: str, title: str) -> None:
+        self._touch_owning_device(key)
         self._db.execute("UPDATE signal SET title = ? WHERE key = ?", (title, key))
         self._db.commit()
+
+    def set_exported(self, key: str, exported: bool) -> None:
+        """Setzt das Export-Flag eines Signals (`PATCH /api/signals/{key}`,
+        Task 2). Wie `set_title` ohne Existenzpruefung - siehe dort."""
+        self._touch_owning_device(key)
+        self._db.execute("UPDATE signal SET exported = ? WHERE key = ?", (int(exported), key))
+        self._db.commit()
+
+    def _touch_owning_device(self, signal_key: str) -> None:
+        """Setzt `updated_at` des Geraets, zu dem `signal_key` gehoert (Task
+        5, Phase 5) - `set_title`/`set_exported` bekommen keine `device_id`
+        (siehe deren Docstrings), deshalb die Unterabfrage. Ein unbekannter
+        Schluessel trifft keine Zeile und bleibt ein stilles No-op, genau wie
+        das anschliessende `UPDATE signal` in beiden Aufrufern - der Aufrufer
+        (die API-Route) prueft Existenz bereits vorher (siehe
+        `api.devices.rename_signal`)."""
+        self._db.execute(
+            "UPDATE device SET updated_at = ?"
+            " WHERE id = (SELECT device_id FROM signal WHERE key = ?)",
+            (self._now(), signal_key),
+        )
+
+    @staticmethod
+    def _as_signal(row: sqlite3.Row) -> StoredSignal:
+        return StoredSignal(
+            key=row["key"],
+            ref=SignalRef(
+                row["endpoint"], row["cluster_id"], row["element_id"], SignalKind(row["kind"])
+            ),
+            title=row["title"],
+            unit=row["unit"],
+            exportability=Exportability(row["exportability"]),
+            device_id=int(row["device_id"]),
+            exported=bool(row["exported"]),
+        )
 
     def signals(self, device_id: int) -> list[StoredSignal]:
         rows = self._db.execute(
@@ -263,18 +629,16 @@ class Store:
             " ORDER BY endpoint, cluster_id, element_id, kind",
             (device_id,),
         ).fetchall()
-        return [
-            StoredSignal(
-                key=r["key"],
-                ref=SignalRef(
-                    r["endpoint"], r["cluster_id"], r["element_id"], SignalKind(r["kind"])
-                ),
-                title=r["title"],
-                unit=r["unit"],
-                exportability=Exportability(r["exportability"]),
-            )
-            for r in rows
-        ]
+        return [self._as_signal(r) for r in rows]
+
+    def signal_by_key(self, key: str) -> StoredSignal | None:
+        """Ein einzelnes Signal ueber seinen Schluessel - fuer `PATCH
+        /api/signals/{key}` (Task 2), die keinen Geraete-Pfadparameter hat
+        und deshalb nicht ueber `signals(device_id)` gehen kann. `None` statt
+        einer Ausnahme, analog zu `device_id_for_node` - der Aufrufer
+        entscheidet, ob das ein 404 ist."""
+        row = self._db.execute("SELECT * FROM signal WHERE key = ?", (key,)).fetchone()
+        return self._as_signal(row) if row is not None else None
 
     def _existing_command_keys(self, device_id: int) -> set[str]:
         rows = self._db.execute(
@@ -359,6 +723,13 @@ class Store:
                         int(command.takes_value),
                     ),
                 )
+            # Wie am Ende von `register_signals` (Task 5, Phase 5): auch ein
+            # reines Refresh ohne neuen Schluessel zaehlt als "seither
+            # geaendert", z. B. wenn `clusters.yaml` einem Kommando
+            # nachtraeglich `takes_value` zuweist.
+            self._db.execute(
+                "UPDATE device SET updated_at = ? WHERE id = ?", (self._now(), device_id)
+            )
         except (ValueError, sqlite3.Error):
             self._db.rollback()
             raise
@@ -388,4 +759,5 @@ class Store:
             cluster_id=int(row["cluster_id"]),
             command_id=int(row["command_id"]),
             takes_value=bool(row["takes_value"]),
+            device_id=int(row["device_id"]),
         )

@@ -149,3 +149,44 @@ async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
     assert response.status_code == 502
     assert "Traceback" not in response.text
     store.close()
+
+
+async def test_a_crashing_route_still_appears_in_the_command_log_and_still_raises(tmp_path):
+    """Review-Fix Important #2 (2026-09-02): `_record_command` rief
+    `call_next` bislang UNGESCHUETZT auf - eine unbehandelte Ausnahme aus
+    einer Route (kein `HTTPException`, ein echter Programmfehler) verliess
+    `call_next`, bevor das try/except um das Anhaengen an den Ringpuffer je
+    erreicht wurde. Der Aufruf, der den Dienst zu Fall bringt, fehlte
+    deshalb ausgerechnet dort, wo ein Diagnostiker ihn am dringendsten
+    braucht (`GET /api/diagnostics/commands`). Diese Route hier (`/__boom__`)
+    steht fuer genau so einen Programmfehler - keine der bestehenden Routen
+    wirft unbehandelt, `/cmd` und `/resync` fangen jede `Exception` bereits
+    zu einem sauberen 502 ab (siehe die beiden Tests oben)."""
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    snap = NodeSnapshot.from_raw(raw["node_id"], raw)
+    store = Store(tmp_path / "t.sqlite")
+    device_id = store.register_device(snap)
+    store.register_signals(device_id, snap)
+    store.register_commands(device_id, extract_commands(snap), snap.node_id)
+
+    async def invoke(call):
+        return None
+
+    app = build_app(store, invoke, Runtime(store, FakeSender()))
+
+    @app.get("/__boom__")
+    async def boom() -> None:
+        raise RuntimeError("Simulierter Programmfehler in einer Route")
+
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
+        with pytest.raises(RuntimeError, match="Simulierter Programmfehler"):
+            await c.get("/__boom__")
+        entries = (await c.get("/api/diagnostics/commands")).json()
+    store.close()
+
+    boom_entries = [e for e in entries if e["path"] == "/__boom__"]
+    assert len(boom_entries) == 1
+    # Kein echter HTTP-Statuscode (siehe `_CRASHED_STATUS` in server.py) -
+    # unterscheidbar von jeder Antwort, die die Route tatsaechlich sendet.
+    assert boom_entries[0]["status"] == 0

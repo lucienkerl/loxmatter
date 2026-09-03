@@ -78,15 +78,62 @@ services:
     # Ausgangsbefehle (--listen, Default 8080) ohne weitere Portfreigabe vom
     # Miniserver aus erreichbar - das ist der hier geforderte
     # "veroeffentlichte" HTTP-Port.
+    #
+    # Seit Phase 5 traegt genau dieser Port zusaetzlich die Bedienoberflaeche
+    # (`/api/*`, `/`) - derselbe FastAPI-Dienst, dasselbe `--listen`. Wer
+    # `http://<Host>:8080/` im Browser oeffnet, sieht die WebUI zum
+    # Einlernen, Ansehen und Bedienen von Geraeten. Seit Task 8 (Phase 5)
+    # ist `/api/*` durch `LOXMATTER_API_TOKEN` unten geschuetzt - `/cmd` und
+    # `/resync` fuer den Miniserver bleiben bewusst offen (siehe dort).
     network_mode: host
     volumes:
       - loxmatter-store:/data
+      # Aktiv seit Task 8 (Phase 5): der Read-only-Einblick in matter-
+      # server's eigenes Datenverzeichnis - Grundlage fuer `GET
+      # /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5) - war
+      # bis hierher BEWUSST AUSKOMMENTIERT (Review-Fix Critical,
+      # 2026-09-02), weil dieser Dienst mit `network_mode: host` laeuft
+      # (siehe oben, Begruendung) und das Netz ihn deshalb genauso erreicht
+      # wie den Miniserver: ohne Token waere `/api/diagnostics/fabric-
+      # backup` vollkommen ungeschuetzt gewesen, mit dieser Zeile eingehaengt
+      # also der Download der kompletten, unersetzlichen Fabric-Credentials
+      # (Spec 4.1) fuer jeden im selben Netz erreichbar, nicht nur
+      # theoretisch moeglich. Task 8 liefert jetzt `build_api_guard` (siehe
+      # `src/loxmatter/loxone/server.py`) UND setzt unten `LOXMATTER_API_TOKEN`
+      # - beides zusammen macht diese Einhaengung vertretbar.
+      #
+      # Seit der Nachbesserung vom 2026-09-03 kann diese Kombination auch
+      # nicht mehr still auseinanderfallen: `GET
+      # /api/diagnostics/fabric-backup` verweigert ohne gesetztes Token die
+      # Auslieferung (403, siehe `api/diagnostics.py`). Wer
+      # `LOXMATTER_API_TOKEN` unten entfernt, waehrend diese Zeile aktiv
+      # bleibt, stellt also nicht mehr den vor Task 8 gefaehrlichen Zustand
+      # her - er verliert nur die Sicherung. Beide Zeilen gehoeren
+      # trotzdem zusammen: OHNE Token ist die Einhaengung wirkungslos.
+      - ./data:/matter-data:ro
     environment:
       # Eigener, fester Ort statt des Nutzer-Home-Defaults (siehe
       # `_resolve_store_path` in src/loxmatter/cli.py) - das eingehaengte
       # Volume ueberlebt ein `docker compose down`/`up`, ein Nutzer-Home im
       # Container tut das nicht.
       LOXMATTER_STORE: /data/loxmatter.sqlite
+      # Schuetzt saemtliche `/api`-Routen (Einlernen, Entfernen, Fabric-
+      # Sicherung) mit `Authorization: Bearer <Token>` - siehe
+      # `build_api_guard` in src/loxmatter/loxone/server.py und README.md.
+      # `/cmd`/`/resync` bleiben davon unberuehrt, der Miniserver braucht
+      # kein Token (siehe dort). Setzen Sie `LOXMATTER_API_TOKEN` in `.env`
+      # auf einen zufaelligen, langen Wert (z. B. `openssl rand -hex 32`).
+      # Fehlt die Variable in `.env`, interpoliert Docker Compose hier einen
+      # leeren String - `typer`s `envvar`-Aufloesung behandelt eine leere
+      # Umgebungsvariable wie eine fehlende (verifiziert: `api_token` wird
+      # dann `None`, nicht `""`), `loxmatter run` startet also unveraendert
+      # OHNE Token-Schutz, mit der deutlichen Warnung "Kein API-Token
+      # gesetzt" im Log - und `GET /api/diagnostics/fabric-backup` liefert
+      # dann nichts mehr aus (403, siehe `api/diagnostics.py`), damit die
+      # oben eingehaengten Fabric-Credentials nicht ungeschuetzt im LAN
+      # stehen. PRUEFEN Sie nach dem ersten Start trotzdem das Log, falls
+      # `.env` das Token versehentlich vergessen haben sollte.
+      LOXMATTER_API_TOKEN: ${LOXMATTER_API_TOKEN}
     command:
       - run
       - --url
@@ -95,6 +142,13 @@ services:
       - ${MINISERVER_IP}
       - --listen
       - "8080"
+      # Aktiv seit Task 8 - siehe Kommentar bei der Volume-Zeile oben:
+      # beide gehoeren zusammen. Ohne die Volume-Zeile bliebe dieses
+      # Argument wirkungslos (die Route saehe kein Verzeichnis und
+      # antwortete mit 503), ohne dieses Argument bliebe die
+      # Volume-Zeile ungenutzt (matter_data_dir waere weiterhin `None`).
+      - --matter-data-dir
+      - /matter-data
     depends_on:
       - matter-server
 
