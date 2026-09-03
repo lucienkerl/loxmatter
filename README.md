@@ -62,6 +62,14 @@ ausliefert:
 - `/` und `/api/*` für eine Bedienoberfläche im Browser: Geräte einlernen,
   ansehen, benennen, schalten, Vorlagen exportieren, Diagnose.
 
+**Die Ansicht „System"** zeigt seit dem Live-Feed (2026-09-03) drei Ströme
+laufend statt nur auf Knopfdruck: Logzeilen, UDP-Mitschnitt und Kommando-Log.
+Die Logzeilen sind dieselben, die auch `docker logs` zeigt — nur ohne
+Shell-Zugriff auf den Host, ab Stufe INFO. Ein Klick auf „Pausieren" hält die
+Anzeige an, ohne die laufende Erfassung zu stoppen; „Heartbeat und Resend
+ausblenden" filtert nur die Anzeige, nicht was ankommt. Details:
+[Live-Feed-Entwurf](docs/superpowers/specs/2026-09-03-diagnose-livefeed-design.md).
+
 **Was eine exportierte Vorlage standardmäßig enthält.** Ein Gerät liefert oft
 weit mehr Signale, als jemand in Loxone haben will — eine Steckdose etwa über
 hundert, meist Thread-Funkzähler, Seriennummern und andere Verwaltungswerte.

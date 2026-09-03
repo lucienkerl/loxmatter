@@ -19,7 +19,7 @@ import logging
 
 import pytest
 
-from loxmatter.api.live import _BoundedQueue
+from loxmatter.api.streaming import BoundedQueue
 from loxmatter.loxone.runtime import Runtime
 
 
@@ -97,12 +97,16 @@ async def test_bounded_queue_drops_oldest_keeps_newest_and_logs_once(caplog):
     aktuellsten Stand. Das Debug-Log meldet sich nur beim UEBERGANG ins
     Verwerfen, nicht bei jedem weiteren Verwurf (sonst flutet eine dauerhaft
     haengende Verbindung das Log, statt sie nur auffindbar zu machen)."""
-    queue = _BoundedQueue(maxsize=3, connection_label="test-client")
-    with caplog.at_level(logging.DEBUG, logger="loxmatter.api.live"):
+    queue = BoundedQueue(maxsize=3, connection_label="test-client")
+    with caplog.at_level(logging.DEBUG, logger="loxmatter.api.streaming"):
         for i in range(5):
-            queue.put(f"k{i}", i)
+            queue.put({"key": f"k{i}", "value": i})
     received = [await queue.get() for _ in range(3)]
-    assert received == [("k2", 2), ("k3", 3), ("k4", 4)]
+    assert received == [
+        {"key": "k2", "value": 2},
+        {"key": "k3", "value": 3},
+        {"key": "k4", "value": 4},
+    ]
     drop_logs = [r for r in caplog.records if "verworfen" in r.getMessage()]
     assert len(drop_logs) == 1
 
@@ -122,8 +126,8 @@ async def test_full_queue_does_not_affect_sender_or_observer_registration(plug_s
         async def close(self) -> None: ...
 
     runtime = Runtime(store, Sender())
-    queue = _BoundedQueue(maxsize=8, connection_label="test-client")
-    runtime.add_observer(lambda key, value: queue.put(key, value))
+    queue = BoundedQueue(maxsize=8, connection_label="test-client")
+    runtime.add_observer(lambda key, value: queue.put({"key": key, "value": value}))
 
     total = 20  # deutlich mehr als die Warteschlangengroesse von 8
     for i in range(total):

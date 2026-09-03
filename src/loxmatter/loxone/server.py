@@ -43,6 +43,19 @@ unveraendert weiter, nur eben ohne diese beiden Diagnose-Faehigkeiten
 (siehe `api.diagnostics.build_diagnostics_router`, dort auch, was `None`
 fuer jeden der beiden Faelle konkret bedeutet).
 
+**`log_handler` ist neu in Task 4 dieser Phase (Diagnose-Livestream,
+Spec 10.5).** Aus demselben Grund optional mit Default `None`: nicht jeder
+Aufrufer hat `diagnostics.logbuffer.install_log_buffer()` bereits
+aufgerufen. `cli.py`s `run()` tut das inzwischen (Task 5, Phase 5; seit
+Nachbesserung Task 7, Fix 1 als dessen allererste Anweisung, VOR `_run()`)
+und reicht den entstandenen Handler als Parameter an `_run()` durch, das ihn
+unveraendert hier bei `build_app()` einreicht - ein Aufrufer, der `build_app`
+direkt nutzt (z. B. ein Test), bekommt weiterhin `None`, solange er nicht
+selbst `install_log_buffer()` aufruft und durchreicht. `None` bedeutet hier "kein
+Log-Zweig im Livestream", nicht "der Livestream insgesamt fehlt" - die
+WebSocket-Route `/api/diagnostics/live` (unten, `build_diagnostics_live_router`)
+antwortet trotzdem, nur ohne Logzeilen darin (siehe dort).
+
 **`api_token` ist neu in Task 8 (Absicherung, Spec 9).** Bis hierher bot
 dieser Dienst nur `/cmd` und `/resync` - erreichbar zu sein bedeutete
 hoechstens, ein Geraet schalten zu koennen. Seit Task 1 (Einlernen) und
@@ -123,11 +136,13 @@ from loxmatter.api.diagnostics import (
     RingBuffer,
     build_diagnostics_router,
 )
+from loxmatter.api.diagnostics_live import build_diagnostics_live_router
 from loxmatter.api.export import build_export_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.settings import build_settings_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
+from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
 from loxmatter.model.store import Store
@@ -273,10 +288,11 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
     `.env.example` und README empfohlene `openssl rand -hex 32` liefert nur
     `[0-9a-f]` und erfuellt das von sich aus.
 
-    Die Route `/api/live` muss das gewaehlte Subprotokoll im Accept
-    zurueckgeben, sonst bricht der Browser den Handshake nach RFC 6455 ab -
-    das erledigt `api.live` (siehe dort; zurueckgegeben wird `"bearer"`,
-    niemals das Token).
+    Die WebSocket-Routen `/api/live` UND `/api/diagnostics/live` muessen das
+    gewaehlte Subprotokoll im Accept zurueckgeben, sonst bricht der Browser
+    den Handshake nach RFC 6455 ab - das erledigt fuer beide dieselbe
+    Funktion `api.streaming.accepted_subprotocol` (siehe dort; zurueckgegeben
+    wird `"bearer"`, niemals das Token).
 
     **Es gibt keinen offenen Zustand mehr.** Bis hierher liess ein Dienst
     ohne konfiguriertes Token jede `/api`-Route durch und begnuegte sich mit
@@ -287,7 +303,8 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
     dann ausschliesslich die Ersteinrichtung unter `/auth/setup`, die
     ausserhalb dieses Waechters haengt (siehe `api/auth.py`).
 
-    Gilt fuer HTTP-Routen UND fuer die WebSocket-Route `/api/live` gleichermassen:
+    Gilt fuer HTTP-Routen UND fuer die WebSocket-Routen `/api/live` und
+    `/api/diagnostics/live` gleichermassen:
     `app.include_router(..., dependencies=[Depends(guard)])` loest diese
     Abhaengigkeit vor JEDER Route des jeweiligen Routers auf, auch vor einem
     WebSocket-Handshake - FastAPI/uvicorn lehnen eine `HTTPException` aus
@@ -304,8 +321,9 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
 
     `HTTPConnection` statt `Request`: es ist der gemeinsame Basistyp von
     `Request` und `WebSocket`, und dieselbe Abhaengigkeit haengt an beiden
-    Sorten von Routen - `/api/live` ist eine WebSocket-Route, in der ein
-    `Request`-Parameter gar nicht aufloesbar waere. Das Cookie reist beim
+    Sorten von Routen - `/api/live` und `/api/diagnostics/live` sind
+    WebSocket-Routen, in denen ein `Request`-Parameter gar nicht aufloesbar
+    waere. Das Cookie reist beim
     WebSocket-Handshake von selbst mit (gleicher Ursprung), weshalb der
     Browser dort seit dem Login kein Subprotokoll mehr braucht."""
     # Einmal beim Bauen normalisiert, nicht bei jeder Anfrage: `None` und ein
@@ -358,6 +376,7 @@ def build_app(
     sender: UdpSender | None = None,
     matter_data_dir: Path | None = None,
     api_token: str | None = None,
+    log_handler: LogBufferHandler | None = None,
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
@@ -420,10 +439,12 @@ def build_app(
         return response
 
     # `dependencies=api_guard` auf jedem der sechs `/api`-Router (Task 8,
-    # Phase 5, siehe `build_api_guard` oben): das schuetzt ausnahmslos jede
-    # Route dieser sechs Router, inklusive der WebSocket-Route `/api/live" -
-    # und ausdruecklich NICHT `/cmd`, `/resync`, `/health`, `/` und
-    # `/static`, die weiter unten ohne `dependencies` eingehaengt werden.
+    # Phase 5, siehe `build_api_guard` oben; sechster seit dem Live-Feed,
+    # `build_diagnostics_live_router`): das schuetzt ausnahmslos jede Route
+    # dieser sechs Router, inklusive der WebSocket-Routen `/api/live` und
+    # `/api/diagnostics/live` - und ausdruecklich NICHT `/cmd`, `/resync`,
+    # `/health`, `/` und `/static`, die weiter unten ohne `dependencies`
+    # eingehaengt werden.
     app.include_router(build_device_router(store, client, runtime), dependencies=api_guard)
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
@@ -440,6 +461,16 @@ def build_app(
             sender,
             matter_data_dir,
         ),
+        dependencies=api_guard,
+    )
+    # Task 4 dieser Phase: der laufende Diagnose-Livestream neben den drei
+    # einmalig abrufbaren Diagnose-Routen oben - siehe
+    # `api.diagnostics_live`-Moduldocstring fuer die Begruendung, warum das
+    # ein EIGENER Router ist statt einer weiteren Route auf
+    # `build_diagnostics_router` (dieselbe `/api/diagnostics`-Vorsilbe,
+    # zwei Router: FastAPI fasst gleiche Praefixe klaglos zusammen).
+    app.include_router(
+        build_diagnostics_live_router(sender, command_log, log_handler),
         dependencies=api_guard,
     )
 

@@ -54,6 +54,44 @@ const INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3;
 // Lebenszeichen, das diese Oberflaeche hat.
 const HEARTBEAT_KEY = "bridge_alive";
 
+// --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------------
+//
+// Obergrenze der gehaltenen Zeilen je Strom (Logs, UDP-Mitschnitt,
+// Kommando-Log). Ohne sie wuerde jeder der drei Ringe waehrend einer langen
+// Sitzung unbegrenzt weiterwachsen - anders als beim Server (dessen drei
+// Ringe von vornherein feste Groessen haben, siehe DATAGRAM_LOG_SIZE,
+// COMMAND_LOG_SIZE, LOG_BUFFER_SIZE) haelt der Browser-Tab sonst jede
+// Zeile seit dem Oeffnen der Ansicht im Speicher. Derselbe Wert wie die
+// Momentaufnahme-Begrenzung je Strom auf der Serverseite waere zu knapp
+// (SNAPSHOT_LIMIT = 50 gilt nur fuer den EINMALIGEN Schub beim Verbinden) -
+// 500 entspricht stattdessen der vollen Ringgroesse je Strom und reicht
+// damit fuer eine laengere Sitzung, ohne den Tab unbegrenzt wachsen zu
+// lassen.
+const DIAGNOSTICS_LINE_LIMIT = 500;
+
+// Woran ein Datagramm als "Rauschen" erkannt wird, das `hideNoise`
+// ausblendet: an `message.forced` (`api/diagnostics_live.py`, gefuellt aus
+// `DatagramLogEntry.forced`, siehe dort) - NICHT mehr an der Ankunftsrate im
+// Browser (Nachbesserung Task 6, 2026-09-03). Die fruehere Heuristik hier
+// nahm an, "kein Geraet dieses Projekts aendert regelmaessig mehrere Signale
+// in derselben Millisekunde" - das widerlegt `Runtime.on_event`
+// (`loxone/runtime.py`) selbst: ein Impuls und sein Zaehler gehen dort ohne
+// jede Wartezeit dazwischen hintereinander raus, wenige Mikrosekunden
+// auseinander, und waren damit IMMER als Schwall markiert. Der Server weiss
+// dagegen bereits verlaesslich, warum ein Datagramm ging - `force=True`
+// steht fuer GENAU zwei Aufrufer, `Runtime.resend_all()` (Full-Resend) und
+// den Heartbeat, niemals fuer eine echte Wertaenderung. Diese Auskunft zu
+// uebernehmen statt sie im Browser aus dem Zeitabstand zu erraten, ist der
+// eigentliche Fix - eine Ankunftsrate kann zwei echte, dicht aufeinander
+// folgende Aenderungen strukturell nicht von einem Schwall unterscheiden.
+
+// Reihenfolge der Python-Logstufen, wie `logging` sie kennt - fuer den
+// Vergleich mit `logLevel` unten ("ab Stufe X zeigen"). Ein Eintrag mit
+// einer hier unbekannten Stufe wird NICHT herausgefiltert (siehe
+// `visibleDiagnosticsLogs`): eine unerwartete Stufe lieber zeigen als eine
+// vielleicht wichtige Zeile stillschweigend verschlucken.
+const LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
+
 // Laufende Nummer fuer Kurzmeldungen. Modulweit statt im Zustand, weil
 // sie nur die Meldungen auseinanderhalten muss und niemanden sonst
 // interessiert.
@@ -264,10 +302,35 @@ function app() {
     // --- System ----------------------------------------------------------
     systemChecks: [],
     systemError: null,
-    datagrams: [],
-    commandLog: [],
     diagnosticsBusy: false,
     backupError: null,
+
+    // --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------
+    // Drei Straeme, gefuellt von genau EINEM WebSocket
+    // (`/api/diagnostics/live`) statt wie bisher einmalig per GET - siehe
+    // `connectDiagnosticsLive`. `datagrams` und `commandLog` hiessen schon
+    // vorher so (frueher durch `loadSystem()` einmalig befuellt); die neue
+    // dritte Sorte (`kind: "log"`) kommt mit dieser Aufgabe dazu.
+    datagrams: [],
+    commandLog: [],
+    diagnosticsLogs: [],
+    diagnosticsSocket: null,
+    diagnosticsConnected: false,
+    // Haelt nur das ANHAENGEN neuer Zeilen an - nicht die Verbindung selbst
+    // (siehe `handleDiagnosticsMessage`). Bewusst KEIN Anzeigefilter wie
+    // `hideNoise`/`logLevel` (Entwurf 4 gilt fuer die beiden, nicht fuer
+    // diese Pause): waehrend der Pause eintreffende Zeilen werden nicht
+    // nachgeholt, wie bei einem angehaltenen `tail -f`.
+    diagnosticsPaused: false,
+    diagnosticsReconnectDelayMs: RECONNECT_DELAY_INITIAL_MS,
+    diagnosticsReconnectTimer: null,
+    // Anzeigefilter (Entwurf 4): wirken NUR auf das, was diese beiden
+    // `visible...`-Funktionen zurueckgeben - die gehaltenen Zeilen selbst
+    // (`datagrams`, `diagnosticsLogs`) bleiben unveraendert. Wer den Filter
+    // ausschaltet, sieht die vorhandenen Zeilen deshalb sofort, statt auf
+    // neue zu warten.
+    hideNoise: true,
+    logLevel: "INFO",
 
     // --- Live-Verbindung (Spec 8.3) --------------------------------------
     liveValues: {},
@@ -488,6 +551,16 @@ function app() {
 
     async selectView(view) {
       this.view = view;
+      // Genau EINE Diagnose-Verbindung, offen nur waehrend "System"
+      // tatsaechlich die aktive Ansicht ist (Falle 3, Aufgabe 6): sie oeffnet
+      // beim Wechsel AUF "system" und schliesst bei jedem anderen Wert -
+      // dasselbe Muster wie `connectLive()`/dessen Aufraeumen fuer den
+      // Wertekanal, nur an die Ansicht statt an den Login gebunden.
+      if (view === "system") {
+        this.connectDiagnosticsLive();
+      } else {
+        this.disconnectDiagnosticsLive();
+      }
       if (view === "signals") {
         // Der vollstaendige Baum, nicht erst nach einem weiteren Klick pro
         // Geraet - die "Signale laden"-Schaltflaeche in index.html bleibt
@@ -1097,18 +1170,17 @@ function app() {
     // System
     // ---------------------------------------------------------------------
 
+    // Laedt nur noch den Systemcheck einmalig per GET - Datagramme,
+    // Kommando-Log und Logzeilen liefert seit Aufgabe 6 laufend der
+    // Diagnose-Kanal (`connectDiagnosticsLive`, oeffnet beim Wechsel auf
+    // diese Ansicht in `selectView`). Fuer den Systemcheck gibt es dagegen
+    // keinen dritten Strom auf `/api/diagnostics/live` - er bleibt ein
+    // einmaliger Abruf, ausgeloest hier und ueber den "Aktualisieren"-Knopf.
     async loadSystem() {
       this.systemError = null;
       this.diagnosticsBusy = true;
       try {
-        const [checks, datagrams, commandLog] = await Promise.all([
-          this.request("GET", "/api/diagnostics/system"),
-          this.request("GET", "/api/diagnostics/datagrams"),
-          this.request("GET", "/api/diagnostics/commands"),
-        ]);
-        this.systemChecks = checks;
-        this.datagrams = datagrams;
-        this.commandLog = commandLog;
+        this.systemChecks = await this.request("GET", "/api/diagnostics/system");
       } catch (error) {
         this.systemError = `Diagnose konnte nicht geladen werden: ${error.message}`;
       } finally {
@@ -1127,6 +1199,228 @@ function app() {
       } catch (error) {
         this.backupError = `Sicherung nicht möglich: ${error.message}`;
       }
+    },
+
+    // ---------------------------------------------------------------------
+    // Live-Diagnose (Aufgabe 6, Spec 10.5)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Oeffnet den Diagnose-Kanal (`/api/diagnostics/live`) - dasselbe
+     * Aufraeum-vor-Neuaufbau-Muster wie `connectLive()` fuer den Wertekanal
+     * (siehe dort fuer die ausfuehrliche Begruendung, hier nicht wiederholt):
+     * ein alter Timer wird zuerst gestoppt, ein alter Socket zuerst aus
+     * `this.diagnosticsSocket` entfernt und DANACH geschlossen, damit dessen
+     * `close`-Ereignis auf ein bereits ausgetauschtes Feld trifft und keine
+     * zweite Wiederverbindung anstoesst.
+     *
+     * Kein Subprotokoll (Review der Aufgabenstellung, siehe
+     * `.superpowers/sdd/task-6-report.md`): anders als im Aufgabentext
+     * angenommen traegt `connectLive()` seit dem WebUI-Login KEIN
+     * `["bearer", token]`-Subprotokoll mehr - das Sitzungs-Cookie reist bei
+     * einem WebSocket zum selben Ursprung von selbst mit (siehe dessen
+     * Kommentar). Dieser Kanal haengt an genau demselben `build_api_guard`
+     * wie `/api/live` (`loxone/server.py`) und braucht deshalb denselben,
+     * einfacheren Weg - ein erfundenes zweites Subprotokoll waere eine
+     * Abweichung vom Vorbild, nicht ein Folgen.
+     *
+     * **Leert alle drei Straeme, BEVOR die neue Verbindung aufgebaut wird**
+     * (Nachbesserung Task 6, 2026-09-03): jede (Wieder-)Verbindung bekommt
+     * von `api/diagnostics_live.py` eine Momentaufnahme von bis zu
+     * `SNAPSHOT_LIMIT` Eintraegen je Strom, in genau derselben
+     * Nachrichtenform wie eine laufende Zeile und ohne eigene Kennzeichnung
+     * als Momentaufnahme. Ohne dieses Leeren haengte sich diese
+     * Momentaufnahme einfach an das bereits Gehaltene an - ein Wechsel weg
+     * von "System" und zurueck, oder jede automatische Wiederverbindung
+     * nach einem Netzhaenger, haette bis zu 150 bereits vorhandene Zeilen
+     * ein zweites Mal angehaengt, auf dem gewoehnlichsten Weg durch die
+     * Oberflaeche. Der einfachere der beiden moeglichen Wege gegenueber
+     * einer serverseitigen Kennzeichnung der Momentaufnahme:
+     * `clearDiagnosticsBuffers()` (dieselbe Funktion, die auch der
+     * "Leeren"-Knopf ruft) macht die Unterscheidung "Momentaufnahme vs.
+     * laufende Zeile" im Browser schlicht ueberfluessig, statt sie dort
+     * nachzubilden - keine neue Nachrichtenform, kein Zusammenfuehren zweier
+     * Quellen beim Anzeigen. Der Preis: eine Wiederverbindung verwirft auch
+     * Zeilen, die aelter sind als die letzten `SNAPSHOT_LIMIT` je Strom (50)
+     * und NICHT durch die folgende Momentaufnahme ersetzt werden - fuer eine
+     * Diagnoseansicht, deren "Leeren"-Knopf genau das ohnehin schon jederzeit
+     * bewusst anbietet, ist das kein neues Risiko, nur derselbe Verlust zu
+     * einem zusaetzlichen Zeitpunkt.
+     */
+    connectDiagnosticsLive() {
+      if (this.diagnosticsReconnectTimer !== null) {
+        window.clearTimeout(this.diagnosticsReconnectTimer);
+        this.diagnosticsReconnectTimer = null;
+      }
+      const previous = this.diagnosticsSocket;
+      this.diagnosticsSocket = null;
+      this.diagnosticsConnected = false;
+      if (previous) {
+        previous.close();
+      }
+      this.clearDiagnosticsBuffers();
+
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const url = `${protocol}//${window.location.host}/api/diagnostics/live`;
+      const socket = new WebSocket(url);
+
+      socket.addEventListener("open", () => {
+        this.diagnosticsConnected = true;
+        this.diagnosticsReconnectDelayMs = RECONNECT_DELAY_INITIAL_MS;
+      });
+
+      socket.addEventListener("message", (event) => {
+        this.handleDiagnosticsMessage(JSON.parse(event.data));
+      });
+
+      // Dieselbe `this.diagnosticsSocket === socket`-Pruefung wie bei
+      // `connectLive()`: nur eine Verbindung, die noch als DIE aktuelle
+      // gilt, darf eine Wiederverbindung ausloesen - eine bewusst
+      // geschlossene (siehe `disconnectDiagnosticsLive`) hat `this.
+      // diagnosticsSocket` da schon nicht mehr gesetzt.
+      socket.addEventListener("close", () => {
+        if (this.diagnosticsSocket === socket) {
+          this.handleDiagnosticsDisconnect();
+        }
+      });
+      socket.addEventListener("error", () => socket.close());
+
+      this.diagnosticsSocket = socket;
+    },
+
+    /**
+     * Schliesst den Diagnose-Kanal und stoppt jede geplante
+     * Wiederverbindung - aufgerufen von `selectView`, sobald "System" nicht
+     * mehr die aktive Ansicht ist (Falle 3: genau eine Verbindung, nur
+     * waehrend die Ansicht offen ist). Setzt `this.diagnosticsSocket` VOR
+     * dem `close()`-Aufruf auf `null`, damit der `close`-Handler oben diese
+     * Trennung nicht mit einer Wiederverbindung beantwortet.
+     */
+    disconnectDiagnosticsLive() {
+      if (this.diagnosticsReconnectTimer !== null) {
+        window.clearTimeout(this.diagnosticsReconnectTimer);
+        this.diagnosticsReconnectTimer = null;
+      }
+      const socket = this.diagnosticsSocket;
+      this.diagnosticsSocket = null;
+      this.diagnosticsConnected = false;
+      if (socket) {
+        socket.close();
+      }
+    },
+
+    /**
+     * Reagiert auf den Abbruch des Diagnose-Kanals - sinngemaess
+     * `handleLiveDisconnect` fuer den Wertekanal (siehe dort), an dieser
+     * Ansicht statt an der Sitzung gemessen: die Ansicht kann laengst
+     * verlassen worden sein, BEVOR dieses `close`-Ereignis eintrifft
+     * (asynchron), und `disconnectDiagnosticsLive` hat `this.
+     * diagnosticsSocket` dann schon geleert - der `close`-Handler oben ruft
+     * diese Funktion in dem Fall gar nicht erst auf. Trifft sie trotzdem auf
+     * eine inzwischen verlassene Ansicht (z. B. ein Wechsel genau waehrend
+     * dieser Aufruf schon laeuft), bricht sie hier ab, statt im Hintergrund
+     * weiterzuversuchen.
+     */
+    async handleDiagnosticsDisconnect() {
+      this.diagnosticsConnected = false;
+      if (this.view !== "system") {
+        return;
+      }
+      // Wie bei `handleLiveDisconnect`: eine 401 mitten im Betrieb heisst,
+      // die Sitzung ist abgelaufen - dann zurueck zum Login statt im
+      // Sekundentakt gegen eine ungueltige Sitzung weiterzuversuchen.
+      await this.loadAuthInfo();
+      if (!this.authenticated) {
+        this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
+        return;
+      }
+      this.scheduleDiagnosticsReconnect();
+    },
+
+    scheduleDiagnosticsReconnect() {
+      if (this.diagnosticsReconnectTimer !== null) {
+        return;
+      }
+      this.diagnosticsReconnectTimer = window.setTimeout(() => {
+        this.diagnosticsReconnectTimer = null;
+        this.connectDiagnosticsLive();
+      }, this.diagnosticsReconnectDelayMs);
+      this.diagnosticsReconnectDelayMs = Math.min(
+        this.diagnosticsReconnectDelayMs * 2,
+        RECONNECT_DELAY_MAX_MS,
+      );
+    },
+
+    /**
+     * Verteilt eine Nachricht des Diagnose-Kanals an ihren Strom, nach
+     * `message.kind` (siehe api/diagnostics_live.py fuer die drei Formen).
+     * Waehrend `diagnosticsPaused` gesetzt ist, wird NICHTS angehaengt -
+     * das ist die Pause selbst, kein Anzeigefilter (siehe deren Kommentar
+     * im Zustand oben).
+     */
+    handleDiagnosticsMessage(message) {
+      if (this.diagnosticsPaused) {
+        return;
+      }
+      if (message.kind === "datagram") {
+        this.appendDiagnosticsEntry(this.datagrams, message);
+      } else if (message.kind === "command") {
+        this.appendDiagnosticsEntry(this.commandLog, message);
+      } else if (message.kind === "log") {
+        this.appendDiagnosticsEntry(this.diagnosticsLogs, message);
+      }
+      // Eine unbekannte `kind` wird still ignoriert statt zu werfen: eine
+      // kuenftige, hier noch unbekannte Nachrichtenart soll die Verbindung
+      // nicht abreissen lassen.
+    },
+
+    /** Haengt an, gedeckelt auf DIAGNOSTICS_LINE_LIMIT je Strom (siehe dort). */
+    appendDiagnosticsEntry(list, entry) {
+      list.push(entry);
+      if (list.length > DIAGNOSTICS_LINE_LIMIT) {
+        list.shift();
+      }
+    },
+
+    /**
+     * Die UDP-Mitschnitt-Zeilen, wie `hideNoise` sie gerade zeigen soll.
+     * Der Filter liest `entry.forced` (`api/diagnostics_live.py`, gefuellt
+     * aus `DatagramLogEntry.forced` - siehe dort fuer die Begruendung,
+     * warum diese Auskunft vom Server kommt statt aus einer im Browser
+     * nachgebauten Zeitheuristik): `True` steht ausschliesslich fuer den
+     * Heartbeat und einen Full-Resend, niemals fuer eine echte
+     * Wertaenderung - auch dann nicht, wenn zwei echte Aenderungen (z. B.
+     * ein Impuls und sein Zaehler, siehe `Runtime.on_event`) binnen
+     * Mikrosekunden hintereinander eintreffen.
+     */
+    visibleDatagrams() {
+      return this.hideNoise ? this.datagrams.filter((entry) => !entry.forced) : this.datagrams;
+    },
+
+    /**
+     * Die Logzeilen ab `logLevel` (siehe LOG_LEVEL_ORDER oben). Eine Zeile
+     * mit einer hier unbekannten Stufe bleibt sichtbar statt stillschweigend
+     * zu verschwinden.
+     */
+    visibleDiagnosticsLogs() {
+      const threshold = LOG_LEVEL_ORDER.indexOf(this.logLevel);
+      return this.diagnosticsLogs.filter((entry) => {
+        const rank = LOG_LEVEL_ORDER.indexOf(entry.level);
+        return rank === -1 || rank >= threshold;
+      });
+    },
+
+    /**
+     * Leert alle drei gehaltenen Straeme auf dieser Seite - nur die Anzeige
+     * in diesem Tab, keine Wirkung auf die Ringe des Servers (die naechste
+     * Momentaufnahme beim erneuten Verbinden zeigt sie unveraendert wieder).
+     * Auch von `connectDiagnosticsLive()` selbst gerufen, VOR jedem
+     * (Wieder-)Aufbau der Verbindung - siehe dortiger Kommentar.
+     */
+    clearDiagnosticsBuffers() {
+      this.datagrams = [];
+      this.commandLog = [];
+      this.diagnosticsLogs = [];
     },
 
     // ---------------------------------------------------------------------

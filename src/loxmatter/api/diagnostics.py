@@ -137,15 +137,115 @@ class RingBuffer[T]:
     ist ohnehin nur die letzten Minuten/Stunden. `collections.deque(maxlen=
     ...)` erledigt das Verwerfen der aeltesten Eintraege bereits nativ in
     O(1); diese Klasse fuegt nur die schmale, absichtlich MINIMALE
-    Oberflaeche hinzu, die die Diagnose-Routen unten brauchen (anhaengen,
-    iterieren, zaehlen) - kein `clear()`, kein Indexzugriff, nichts, das ein
-    Aufrufer nutzen koennte, um Eintraege nachtraeglich zu manipulieren."""
+    Oberflaeche hinzu, die die Diagnose-Routen brauchen (anhaengen,
+    iterieren, zaehlen, beobachten) - kein `clear()`, kein Indexzugriff,
+    nichts, das ein Aufrufer nutzen koennte, um Eintraege nachtraeglich zu
+    manipulieren.
+
+    **Ein Leser, der `for entry in ring:` durchlaufen koennte, waehrend aus
+    einem anderen Thread gleichzeitig angehaengt wird, MUSS zuerst
+    `list(ring)` aufrufen, um eine Momentaufnahme zu bekommen.** `append` ist dank der
+    GIL ein atomarer, einzelner C-Aufruf (siehe
+    `diagnostics.logbuffer`-Moduldocstring) - `__iter__` unten dagegen
+    nicht: er gibt einen lebenden `deque`-Iterator zurueck, und `deque`
+    erkennt eine Mutation waehrend einer laufenden Iteration. Sobald der
+    Ring einmal voll ist, verdraengt jedes weitere `append` den aeltesten
+    Eintrag - genau das ist eine Mutation im Sinne dieser Erkennung, und
+    eine parallel laufende `for`-Schleife bricht dann mit
+    `RuntimeError('deque mutated during iteration')` ab. Solange jeder Ring
+    nur aus einem einzigen Pfad heraus beschrieben wird (bislang der Fall:
+    ein Event-Loop je Ring), tritt das nie auf. `diagnostics.logbuffer.
+    LogBufferHandler` ist der erste Schreiber, der aus BELIEBIGEN Threads
+    gleichzeitig anhaengen kann - fuer einen Ring, den er fuellt, ist eine
+    blosse `for`-Schleife deshalb nicht mehr sicher; `list(ring)` dagegen
+    schon, weil auch das ein einziger, atomarer C-Aufruf ist.
+
+    **Beobachter (Task 4, Phase 5, Spec 10.5).** `add_observer`/
+    `remove_observer` benachrichtigen bei jedem `append` - dieselbe
+    Anmelde-/Abmelde-Form wie `LogBufferHandler.add_observer`, absichtlich
+    HIER statt in einer weiteren, eigenen Klasse: der Kommando-Log-Ring in
+    `loxone.server` braucht eine Beobachterkette (fuer `api.diagnostics_
+    live`), hat aber - anders als `LogBufferHandler` - keinen eigenen
+    Besitzer-Typ, an dem sie sonst haengen koennte (er ist dort eine blosse
+    lokale Variable). `UdpSender.add_datagram_observer`/
+    `remove_datagram_observer` sind seit Nachbesserung Task 7 (Fix 2) KEINE
+    zweite, eigene Umsetzung derselben Mechanik mehr, sondern duenne
+    Weiterleitungen genau auf `add_observer`/`remove_observer` hier - siehe
+    `loxone.sender`-Moduldocstring, Abschnitt "Beobachterkette". Ein
+    Beobachterfehler wird deshalb an EINER Stelle geloggt und uebersprungen
+    (unten in `append`), nicht mehr an zwei verschiedenen - anders als bei
+    `LogBufferHandler` gibt es hier kein Rekursionsrisiko durch die eigene
+    Fehlerprotokollierung, weil kein Ring dieses Projekts Logzeilen selbst
+    erzeugt.
+
+    **Warnung fuer kuenftige Aufrufer:** `LogBufferHandler.entries` ist
+    ebenfalls ein `RingBuffer`, oeffentlich lesbar fuer die Momentaufnahme -
+    `add_observer` NIEMALS direkt auf `log_handler.entries` aufrufen. Ein
+    dort registrierter Beobachter liefe synchron innerhalb von
+    `LogBufferHandler.emit()`, waehrend `logging.Handler.lock` gehalten
+    wird und OHNE die dortige Wiedereintrittssperre - protokolliert dieser
+    Beobachter selbst ueber denselben Logger, ist das eine echte,
+    unbegrenzte Rekursion (siehe `diagnostics.logbuffer`-Moduldocstring).
+    `LogBufferHandler.add_observer` ist der einzige sichere Weg, neue
+    Logzeilen zu beobachten.
+
+    **Diese Warnung gilt NICHT spiegelbildlich fuer `UdpSender.datagram_log`
+    - eine fruehere Fassung dieses Docstrings behauptete das
+    faelschlich** (Review-Fix Kleinigkeit #3, 2026-09-03; als falsch erkannt
+    und richtiggestellt in der Nachbesserung Task 7, Fix 2). Seit
+    `UdpSender.add_datagram_observer` eine duenne Weiterleitung auf
+    `self._datagram_log.add_observer` ist (siehe oben), sind `sender.
+    add_datagram_observer(cb)` und `sender.datagram_log.add_observer(cb)`
+    DERSELBE Aufruf auf demselben Ring - es gibt keinen "unsicheren" und
+    keinen "sicheren" Weg mehr, zwischen denen zu unterscheiden waere. Ein
+    dort registrierter Beobachter laeuft so oder so synchron innerhalb von
+    `UdpSender.send`s `async with self._lock` (siehe dort) - ein langsamer
+    oder haengender Beobachter bremst dadurch jeden nachfolgenden Versand
+    ueber denselben `UdpSender`, unabhaengig davon, ueber welchen der beiden
+    (identischen) Wege er sich angemeldet hat. `UdpSender.
+    add_datagram_observer`/`remove_datagram_observer` bleiben trotzdem als
+    eigene, oeffentliche Methoden bestehen - nicht aus Sicherheitsgruenden,
+    sondern damit der Typ `DatagramLogEntry` in ihrer Signatur sichtbar
+    bleibt und ein Aufrufer nicht wissen muss, dass der Mitschnitt intern
+    ein `RingBuffer` ist (siehe `loxone.sender`-Moduldocstring)."""
 
     def __init__(self, maxlen: int = 500) -> None:
         self._items: collections.deque[T] = collections.deque(maxlen=maxlen)
+        self._observers: list[Callable[[T], None]] = []
 
     def append(self, item: T) -> None:
         self._items.append(item)
+        for observer in list(self._observers):
+            # Kopie der Liste iterieren - ein Beobachter, der sich selbst
+            # waehrend seines Aufrufs abmeldet, darf die laufende
+            # Benachrichtigung der uebrigen nicht stoeren (dasselbe Muster
+            # wie `Runtime._notify_observers`; `UdpSender.
+            # add_datagram_observer`/`remove_datagram_observer` haengen seit
+            # Nachbesserung Task 7, Fix 2 direkt an DIESEM `append`, keine
+            # eigene Kopie mehr).
+            try:
+                observer(item)
+            except Exception:
+                logger.exception(
+                    "Beobachter fuer einen neuen Ringpuffer-Eintrag ist fehlgeschlagen - "
+                    "wird uebersprungen"
+                )
+
+    def add_observer(self, callback: Callable[[T], None]) -> None:
+        """Meldet einen Beobachter an, der jeden NEUEN Eintrag sieht - nicht
+        die bereits vorhandenen (siehe Klassendocstring). Der Beobachter
+        darf nicht blockieren: `append` laeuft im Aufrufpfad des
+        jeweiligen Schreibers (siehe dort)."""
+        self._observers.append(callback)
+
+    def remove_observer(self, callback: Callable[[T], None]) -> None:
+        """Meldet einen Beobachter wieder ab. Ein unbekannter Beobachter
+        (z. B. doppelt abgemeldet) ist kein Fehler, sondern wird still
+        ignoriert - dieselbe Regel wie bei `Runtime.remove_observer`."""
+        try:
+            self._observers.remove(callback)
+        except ValueError:
+            pass
 
     def __iter__(self) -> Iterator[T]:
         return iter(self._items)
@@ -161,11 +261,25 @@ class DatagramLogEntry:
 
     `value` ist bereits die fertige Textform (siehe `loxone.values.
     format_value`), nicht der rohe `float | bool`-Wert - dieselbe Form, die
-    auch tatsaechlich auf der Leitung stand."""
+    auch tatsaechlich auf der Leitung stand.
+
+    `forced` uebernimmt unveraendert das `force`-Argument, mit dem `send()`
+    aufgerufen wurde (Nachbesserung Task 6, 2026-09-03): `True` heisst
+    "gesendet, obwohl sich der Wert nicht geaendert hat" - das trifft in
+    diesem Projekt auf GENAU zwei Aufrufer zu, `Runtime.resend_all()` und
+    den Heartbeat (`Runtime._heartbeat_loop`). `False` heisst dagegen "eine
+    echte Wertaenderung" - ein Impuls (`Runtime.on_event`) und sein Zaehler
+    zaehlen dazu, auch wenn beide binnen Mikrosekunden hintereinander
+    gesendet werden. Genau diese Unterscheidung ersetzt die fruehere
+    Rauschfilter-Heuristik der WebUI (`app.js`, `DATAGRAM_BURST_GAP_MS`),
+    die ausschliesslich an der Ankunftsrate im Browser gemessen hatte und
+    damit jeden schnell aufeinanderfolgenden, aber echten Wertewechsel
+    faelschlich als Rauschen einstufte."""
 
     key: str
     value: str
     timestamp: str
+    forced: bool
 
 
 @dataclass(frozen=True)

@@ -184,6 +184,38 @@ async def test_no_secret_travels_in_a_url_or_local_storage(api):
         assert forbidden not in script
 
 
+async def test_reconnecting_the_diagnostics_channel_clears_the_three_buffers_first(api):
+    """Nachbesserung Task 6 (2026-09-03): jede (Wieder-)Verbindung des
+    Diagnose-Kanals (`/api/diagnostics/live`) bekommt vom Server eine
+    Momentaufnahme von bis zu `SNAPSHOT_LIMIT` Eintraegen je Strom, in
+    GENAU derselben Nachrichtenform wie eine laufende Zeile - ohne
+    Kennzeichnung als Momentaufnahme (siehe `api/diagnostics_live.py`).
+    Ohne ein Leeren der drei gehaltenen Straeme VOR jedem (Wieder-)Aufbau
+    haengte sich diese Momentaufnahme einfach an das bereits Gehaltene an:
+    ein Wechsel weg von "System" und zurueck, oder jede automatische
+    Wiederverbindung nach einem Netzhaenger, haette bis zu 150 bereits
+    vorhandene Zeilen ein zweites Mal angehaengt.
+
+    **Was dieser Test belegt und was nicht.** Ohne Browser-Engine laesst sich
+    hier nicht ausfuehren, dass `connectDiagnosticsLive()` zur Laufzeit
+    tatsaechlich `this.datagrams`/`this.commandLog`/`this.diagnosticsLogs`
+    leert, oder dass ein Wechsel der Ansicht diese Funktion ueberhaupt
+    aufruft. Belegt wird nur, dass der AUSGELIEFERTE Quelltext innerhalb des
+    Rumpfs von `connectDiagnosticsLive()` `clearDiagnosticsBuffers()` ruft -
+    und zwar VOR dem Aufbau des neuen `WebSocket`, nicht erst danach (sonst
+    liefe die Momentaufnahme der alten Verbindung dem Leeren noch in die
+    Quere)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    start = script.index("connectDiagnosticsLive() {")
+    end = script.index("disconnectDiagnosticsLive() {", start)
+    body = script[start:end]
+
+    assert "clearDiagnosticsBuffers()" in body
+    assert body.index("clearDiagnosticsBuffers()") < body.index("new WebSocket(")
+
+
 async def test_the_browser_and_the_server_agree_on_the_download_filenames(api):
     """Seit die beiden Downloads ueber `fetch` statt ueber einen Link laufen,
     vergibt der Browser den Dateinamen selbst - der Server schickt seinen
@@ -301,6 +333,118 @@ async def test_the_export_preview_shows_how_many_signals_are_held_back(api):
     page = (await client.get("/")).text
     assert "Als Experte zurückgehalten" in page
     assert 'x-text="device.hidden_count"' in page
+
+
+# ---------------------------------------------------------------------------
+# Live-Diagnose (Aufgabe 6, Spec 10.5): die Ansicht „System" holt Logs,
+# UDP-Mitschnitt und Kommando-Log seither laufend ueber
+# `/api/diagnostics/live` statt einmalig per GET. Wie bei den uebrigen
+# Markup-Tests dieser Datei gilt: ohne Browser-Engine ist nur nachweisbar,
+# dass etwas ausgeliefert wird - nicht, dass es zur Laufzeit funktioniert.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_system_view_connects_to_the_diagnostics_live_socket(api):
+    """Aufgabe 6, Schritt 1+2: der Diagnose-Kanal folgt demselben Muster wie
+    `connectLive()` fuer den Wertekanal, oeffnet aber nur beim Wechsel auf
+    „System" und schliesst beim Verlassen - `selectView` (app.js) ist dafuer
+    die einzige Stelle.
+
+    **Was dieser Test belegt und was nicht.** Belegt wird, dass `app.js`
+    tatsaechlich `/api/diagnostics/live` anspricht und dass `selectView`
+    sowohl den oeffnenden als auch den schliessenden Aufruf enthaelt. NICHT
+    belegt wird, dass ein echter Seitenaufruf am Ende genau eine Verbindung
+    haelt, dass sie beim Verlassen der Ansicht tatsaechlich schliesst, oder
+    dass keine Wiederverbindung mehr geplant wird, nachdem sie geschlossen
+    wurde - dafuer braeuchte es eine Browser-Engine, die es in dieser Suite
+    nicht gibt (siehe `test_the_page_does_not_call_init_a_second_time`)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "/api/diagnostics/live" in script
+    select_view_start = script.index("async selectView(view)")
+    select_view_body = script[select_view_start : select_view_start + 800]
+    assert "connectDiagnosticsLive()" in select_view_body
+    assert "disconnectDiagnosticsLive()" in select_view_body
+
+
+async def test_the_system_view_offers_the_four_diagnostics_controls(api):
+    """Aufgabenstellung, Schritt 3: „Drei Bereiche, darüber die vier
+    Bedienelemente aus dem Entwurf" - Pause/Fortsetzen, der Rauschfilter,
+    die Log-Stufe und eine Möglichkeit, die gehaltenen Zeilen zu leeren.
+
+    Belegt nur, dass Markup und Skript die vier Bindungen tragen - nicht,
+    dass ein Klick im Browser tatsaechlich etwas umschaltet (siehe
+    Testdocstring oben)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert 'x-model="hideNoise"' in page
+    assert "Heartbeat und Full-Resend ausblenden" in page
+    assert 'x-model="logLevel"' in page
+    assert "Log-Stufe" in page
+    assert "diagnosticsPaused = !diagnosticsPaused" in page
+    assert "Pausieren" in page and "Fortsetzen" in page
+    assert "clearDiagnosticsBuffers()" in page
+    assert "Leeren" in page
+    # Vorgaben aus der Aufgabenstellung (Schritt 2): Filter aus, Log-Stufe
+    # "INFO".
+    assert "hideNoise: true" in script
+    assert 'logLevel: "INFO"' in script
+
+
+async def test_the_diagnostics_filter_only_affects_display_not_held_lines(api):
+    """Entwurf 4 (Aufgabenstellung): ein Filter darf nur die Anzeige
+    betreffen, nicht die gehaltenen Zeilen - wer ihn ausschaltet, muss die
+    vorhandenen Zeilen sofort sehen, nicht auf neue warten. Umgesetzt als
+    zwei getrennte Dinge in `app.js`: `datagrams`/`diagnosticsLogs` halten
+    JEDE eingetroffene Zeile, `visibleDatagrams()`/`visibleDiagnosticsLogs()`
+    filtern erst beim Anzeigen daraus.
+
+    Belegt wird, dass das Markup tatsaechlich an die filternden Funktionen
+    bindet statt an die rohen Listen, und dass diese Funktionen die rohen
+    Listen unveraendert lassen (kein `datagrams =`/`diagnosticsLogs =`
+    innerhalb ihres Rumpfs). NICHT belegt wird, dass ein Umschalten im
+    Browser die Anzeige tatsaechlich ohne Verzoegerung aktualisiert - dafuer
+    braeuchte es eine Browser-Engine."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert "in visibleDatagrams()" in page
+    assert "in visibleDiagnosticsLogs()" in page
+    for name in ("visibleDatagrams", "visibleDiagnosticsLogs"):
+        start = script.index(f"    {name}(")
+        body = script[start : script.index("},", start)]
+        assert "datagrams =" not in body
+        assert "diagnosticsLogs =" not in body
+
+
+async def test_the_noise_rule_is_written_down(api):
+    """Die Aufgabenstellung ueberlaesst bewusst, woran „Rauschen" (der
+    Heartbeat und ein Full-Resend) erkannt wird - verlangt aber, dass die
+    gewaehlte Regel als Kommentar nachlesbar ist, nicht nur implizit im Code
+    steckt: „ein Filter, dessen Kriterium niemand nachlesen kann, ist beim
+    naechsten Zweifel wertlos."
+
+    Seit der Nachbesserung (Task 6, 2026-09-03) liegt das Kriterium NICHT
+    mehr im Browser: eine fruehere Regel ueber die Ankunftsrate markierte
+    jeden schnell aufeinanderfolgenden, aber echten Wertewechsel (z. B.
+    Impuls und Zaehler aus `Runtime.on_event`) faelschlich als Rauschen -
+    das gewaehlte Kriterium ist stattdessen das vom Server mitgeschickte
+    `forced`-Feld (`DatagramLogEntry.forced`).
+
+    Belegt nur, dass ein solcher Kommentar existiert und Feld, Quelle und
+    die widerlegte fruehere Regel beim Namen nennt - nicht, dass die
+    Unterscheidung zur Laufzeit korrekt zwischen Rauschen und echten
+    Aenderungen trennt (siehe dafuer `tests/loxone/test_sender.py`,
+    `test_the_forced_field_reflects_why_a_datagram_was_sent_not_when`, und
+    `tests/api/test_diagnostics_live.py`,
+    `test_a_datagram_message_carries_why_it_was_sent`)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "message.forced" in script
+    assert "DatagramLogEntry.forced" in script
+    assert "Schwall" in script
+    assert "Full-Resend" in script
 
 
 async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
