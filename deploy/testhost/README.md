@@ -261,6 +261,44 @@ wurde das mit einem echten Reboot geprüft. Nach dem Neustart meldete
 die Ersteinrichtung, nicht vor jeden `docker compose up -d`; ob er nötig ist, zeigt
 `rfkill list bluetooth` (siehe Schritt 2 oben).
 
+## OTBR-Wächter einrichten
+
+Der OTBR-Agent bricht ab, wenn das Funkmodul nicht mehr antwortet — ein
+RCP-Timeout, meist USB-Aussetzer oder Stromversorgung. Der **Container** läuft
+dabei weiter, weil sein Einstiegsskript nicht der Agent ist; `restart:
+unless-stopped` greift deshalb nicht, und das Image bringt keinen Aufpasser
+mit.
+
+Am 3. September 2026 blieb ein solcher Ausfall sechseinhalb Stunden unbemerkt.
+Kein Gerät war in dieser Zeit erreichbar. Die letzten Zeilen des Agenten vor
+seinem Abbruch:
+
+```
+[W] P-RadioSpinel-: radio tx timeout
+[C] P-RadioSpinel-: Failed to communicate with RCP - no response from RCP during initialization
+[C] Platform------: HandleRcpTimeout() at radio_spinel.cpp:2054: RadioSpinelNoResponse
+```
+
+Einrichten mit `crontab -e` und dieser Zeile:
+
+```
+*/5 * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
+```
+
+Das Skript prüft, ob eine Thread-Schnittstelle (`wpan*`) mit einer
+Mesh-Adresse existiert — dieselbe Prüfung, die auch die Ansicht „System"
+anzeigt. Fehlt sie, startet es den `otbr`-Dienst neu und wartet bis zu 60
+Sekunden auf das Netz. Solange alles läuft, schreibt es nichts; die Logdatei
+enthält also genau die Vorfälle.
+
+**Es startet bewusst nicht in Schleife neu.** Hängt das Funkmodul selbst,
+brächte ein Neustart im Minutentakt nichts und flutete nur das Log. Dann muss
+jemand hinsehen — und findet im Log, was war, samt der letzten Zeilen aus dem
+OTBR-Log.
+
+Zusätzlich lohnt eine Meldung in Loxone: `d<n>_online` geht bei einem solchen
+Ausfall auf 0, und dieser Wert liegt ohnehin schon im Miniserver.
+
 ## start-stop-daemon haengt auf dem Pi-Kernel (neu gegenüber der VM)
 
 Das OTBR-"test"-Image (siehe "Historie: die VM" für die Image-Variante) startet
