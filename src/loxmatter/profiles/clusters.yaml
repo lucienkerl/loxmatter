@@ -79,8 +79,16 @@ clusters:
   145:
     name: energy
     attributes:
-      1: {slug: energy_imported, unit: "kWh", scale: 0.000001}
-      2: {slug: energy_exported, unit: "kWh", scale: 0.000001}
+      # CumulativeEnergyImported/-Exported. Matter liefert beide als
+      # EnergyMeasurementStruct - Wert plus Zeitstempel -, nicht als Zahl.
+      # `field: 0` ist EnergyMeasurementStruct.energy, gegen
+      # chip.clusters.Objects belegt; die ZEITSTEMPEL bleiben absichtlich
+      # weg, sie haben in Loxone keine Verwendung.
+      #
+      # Matter zaehlt in mWh (Matter Application Cluster Specification),
+      # Loxone will kWh (Hauptdokument 7.3): 1 kWh = 1e6 mWh.
+      1: {slug: energy_imported, field: 0, unit: "kWh", scale: 0.000001}
+      2: {slug: energy_exported, field: 0, unit: "kWh", scale: 0.000001}
   59:
     name: switch
     attributes:

@@ -4,6 +4,7 @@ from loxmatter.matter.models import SignalKind, SignalRef
 from loxmatter.profiles.table import (
     Exportability,
     classify,
+    is_exportable,
     lookup,
     names_element,
     scale_factor,
@@ -144,3 +145,51 @@ def test_a_signal_the_catalog_does_not_know_falls_back_to_the_slug():
     profile = lookup(ref, 1)
     assert profile.slug == "c4711_a3"
     assert profile.title == "c4711_a3"
+
+
+_ENERGY = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
+
+
+def test_a_struct_member_becomes_an_analog_signal():
+    """Matter liefert den Zaehlerstand als Struktur aus Wert und
+    Zeitstempeln. Ohne das Herausziehen faellt er als 'nicht abbildbar'
+    durch - und das ist der Wert, wegen dem man eine messende Steckdose
+    kauft."""
+    raw = {"0": 12_345_678, "1": 1_700_000_000, "2": 1_700_003_600}
+    assert lookup(_ENERGY, raw).exportability is Exportability.ANALOG
+    assert lookup(_ENERGY, raw).slug == "energy_imported"
+
+
+def test_a_struct_without_the_named_member_stays_unexportable():
+    """Nicht raten. Eine erfundene Zahl an einem echten Energiebaustein
+    waere schlimmer als ein fehlender Wert."""
+    assert lookup(_ENERGY, {"1": 1_700_000_000}).exportability is Exportability.NONE
+
+
+def test_a_struct_member_that_is_not_a_number_stays_unexportable():
+    """Abweichung vom Aufgabenzettel: der extrahierte Wert laeuft durch das
+    unveraenderte `classify` (Aufgabenvorgabe), und das stuft eine
+    Zeichenkette als TEXT ein, nicht als NONE - beides zaehlt aber laut
+    `is_exportable` (Spec 6.6) als nicht exportierbar. Die urspruengliche
+    Zusicherung `is Exportability.NONE` waere nur erfuellbar gewesen, wenn
+    `struct_member` selbst zwischen Zahl und Text unterschieden haette -
+    das ist Aufgabe von `classify`, nicht von `struct_member`, sonst gaebe
+    es die Einstufungslogik zweimal."""
+    assert not is_exportable(lookup(_ENERGY, {"0": "viel"}).exportability)
+
+
+def test_a_null_value_stays_unexportable_even_with_a_field():
+    assert lookup(_ENERGY, None).exportability is Exportability.NONE
+
+
+def test_an_integer_key_is_accepted_as_well_as_a_string_key():
+    """Die Zeichenkette ist, was matter-server heute liefert; eine andere
+    Serialisierung derselben Struktur waere mit Zahl genauso plausibel."""
+    assert lookup(_ENERGY, {0: 5_000_000}).exportability is Exportability.ANALOG
+
+
+def test_a_cluster_without_a_field_entry_still_sees_the_whole_value():
+    """Nur ein Cluster, den die Tabelle kennt, darf ein Element benennen.
+    Eine unbekannte Struktur bleibt unbekannt."""
+    ref = SignalRef(1, 4711, 0, SignalKind.ATTRIBUTE)
+    assert lookup(ref, {"0": 5}).exportability is Exportability.NONE

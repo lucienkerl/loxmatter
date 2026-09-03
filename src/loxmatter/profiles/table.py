@@ -104,6 +104,48 @@ def names_element(ref: SignalRef) -> bool:
     return ref.element_id in (cluster.get(section) or {})
 
 
+def struct_field(ref: SignalRef) -> int | None:
+    """Die Feldnummer, die aus einer Struktur zu ziehen ist - oder None.
+
+    Nur fuer Attribute eines Clusters, den die Tabelle kennt und bei dem
+    der Eintrag ein `field` traegt.
+    """
+    if ref.kind is SignalKind.EVENT:
+        return None
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return None
+    entry = (cluster.get("attributes") or {}).get(ref.element_id)
+    if not entry:
+        return None
+    field = entry.get("field")
+    return int(field) if field is not None else None
+
+
+def struct_member(ref: SignalRef, raw: object) -> object:
+    """Der Wert, auf dem klassifiziert und gerechnet wird.
+
+    Ohne `field`-Eintrag unveraendert `raw`. Mit `field` das benannte
+    Element der Struktur - und `None`, wenn der Wert keine Struktur ist
+    oder das Element fehlt. Dann bleibt das Signal nicht exportierbar; es
+    wird NICHT geraten (Entwurf 2026-09-03, 5).
+
+    matter-server liefert Strukturen als Woerterbuch mit dem Feld-Tag als
+    Zeichenkette (`{"0": ...}`); die Zahl wird ebenso akzeptiert.
+
+    Diese eine Funktion ist die gemeinsame Quelle fuer `lookup` (Einstufung
+    beim Einlernen) und `loxone.values.to_loxone_value` (Laufzeit). Zwei
+    Kopien wuerden auseinanderlaufen und die Oberflaeche einen Wert melden
+    lassen, den der Export nicht kennt.
+    """
+    field = struct_field(ref)
+    if field is None:
+        return raw
+    if not isinstance(raw, dict):
+        return None
+    return raw.get(str(field), raw.get(field))
+
+
 def lookup(ref: SignalRef, value: object) -> Profile:
     """Liefert Name(n), Einheit und Exportierbarkeit fuer ein Signal.
 
@@ -140,7 +182,7 @@ def lookup(ref: SignalRef, value: object) -> Profile:
             slug=entry["slug"],
             title=entry["slug"],
             unit=entry.get("unit", ""),
-            exportability=classify(value),
+            exportability=classify(struct_member(ref, value)),
         )
     slug = f"c{ref.cluster_id}_a{ref.element_id}"
     return Profile(

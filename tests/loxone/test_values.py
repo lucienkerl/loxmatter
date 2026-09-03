@@ -91,3 +91,17 @@ def test_format_never_renders_scientific_notation_for_negative_values():
     """Gegenstueck zu test_no_value_formats_to_scientific_notation, mit negativem Vorzeichen."""
     assert "e" not in format_value(-0.000001).lower()
     assert "e" not in format_value(-1234567.89).lower()
+
+
+def test_the_energy_counter_arrives_in_kilowatt_hours():
+    """Matter zaehlt in mWh, Loxone will kWh (Hauptdokument 7.3)."""
+    ref = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
+    raw = {"0": 2_500_000_000, "1": 1_700_000_000}
+    assert to_loxone_value(ref, raw) == pytest.approx(2500.0)
+
+
+def test_a_struct_without_the_named_member_yields_none_at_runtime():
+    """Laufzeit und Zerlegung muessen dieselbe Entscheidung treffen - sonst
+    meldet die Oberflaeche einen Wert, den der Export nicht kennt."""
+    ref = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
+    assert to_loxone_value(ref, {"1": 1_700_000_000}) is None

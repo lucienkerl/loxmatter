@@ -15,13 +15,14 @@ Dauerverbraucher sind oft der Grund, eine messende Steckdose einzubauen.
 from __future__ import annotations
 
 from loxmatter.matter.models import SignalRef
-from loxmatter.profiles.table import Exportability, classify, scale_factor
+from loxmatter.profiles.table import Exportability, classify, scale_factor, struct_member
 
 MAX_DECIMALS = 6
 
 
 def to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None:
     """Skalierter Wert, oder None wenn Loxone ihn nicht aufnehmen kann."""
+    raw = struct_member(ref, raw)
     kind = classify(raw)
     if kind is Exportability.DIGITAL:
         return bool(raw)
