@@ -239,7 +239,7 @@ def test_migrating_an_old_database_sets_the_schema_version(tmp_path):
     store = Store(path)
     store.close()
 
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
 
 def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
@@ -254,7 +254,7 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
     first = Store(path)
     first.set_exported("d1_1_power", True)
     first.close()
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
     second = Store(path)
     try:
@@ -263,14 +263,14 @@ def test_reopening_an_already_migrated_store_is_a_noop(tmp_path):
         second.close()
 
     assert power.exported is True
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
 
 def test_a_fresh_database_is_already_at_the_latest_version(tmp_path):
     path = tmp_path / "fresh.sqlite"
     store = Store(path)
     store.close()
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
 
 def test_migration_failure_leaves_the_database_unchanged(tmp_path, monkeypatch):
@@ -312,7 +312,7 @@ def test_migrating_an_old_database_adds_exported_at_and_updated_at_as_null(tmp_p
 
     assert device.exported_at is None
     assert device.updated_at is None
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
 
 def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
@@ -321,8 +321,9 @@ def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
     `updated_at` noch nicht), oeffnet sich fehlerfrei und landet auf der
     aktuellen Version - `_migrate_to_v1` darf dabei NICHT erneut laufen
     (sonst scheiterte `ALTER TABLE signal ADD COLUMN exported` mit
-    "duplicate column", weil die Spalte schon da ist); `_migrate_to_v2` und
-    `_migrate_to_v3` laufen beide, in dieser Reihenfolge.
+    "duplicate column", weil die Spalte schon da ist); `_migrate_to_v2`,
+    `_migrate_to_v3` und `_migrate_to_v4` laufen alle drei, in dieser
+    Reihenfolge.
 
     `signal.key` bleibt dabei unangetastet (Hauptdokument 6.2) - `title`
     und `exported` dagegen nicht mehr: Cluster 6 (OnOff) ist der Tabelle
@@ -340,7 +341,7 @@ def test_opening_a_v1_database_only_runs_the_v2_migration(tmp_path):
     finally:
         store.close()
 
-    assert user_version(path) == 3
+    assert user_version(path) == 4
     assert device.exported_at is None
     assert device.updated_at is None
     assert signal.key == "d1_1_power"
@@ -356,7 +357,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
 
     first = Store(path)
     first.close()
-    assert user_version(path) == 3
+    assert user_version(path) == 4
 
     second = Store(path)
     try:
@@ -364,7 +365,7 @@ def test_reopening_an_already_v2_database_is_a_noop(tmp_path):
     finally:
         second.close()
 
-    assert user_version(path) == 3
+    assert user_version(path) == 4
     assert device.exported_at is None
     assert device.updated_at is None
 
@@ -759,6 +760,29 @@ def test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures(
     try:
         counts = {
             d.label: len([s for s in store.signals(d.id) if s.exported]) for d in store.devices()
+        }
+    finally:
+        store.close()
+
+    assert sorted(counts.values()) == [5, 17]
+
+
+def test_the_v4_migration_backfills_functional_independently_of_exported(tmp_path):
+    """Ergaenzt die Gegenprobe oben um die neue Spalte (`_migrate_to_v4`,
+    Aufgabe 8): `functional` wird ueber dieselbe Ersatzregel wie `exported`
+    in `_migrate_to_v3` hergeleitet (`_endpoint0_device_types`), landet aber
+    in einer EIGENEN Spalte - fuer beide eingecheckten Abbilder ist hier
+    jedes exportierte Signal auch funktional und umgekehrt, weshalb dieselben
+    zwei Zahlen wie oben herauskommen muessen, obwohl `_migrate_to_v4` sie
+    unabhaengig von `exported` neu berechnet."""
+    path = tmp_path / "both-functional.sqlite"
+    _build_store_at_schema_v2(path, device_id=1, image="ikea_grillplats_plug.json")
+    _build_store_at_schema_v2(path, device_id=2, image="ikea_bilresa_button.json")
+
+    store = Store(path)  # oeffnet und migriert (v2 -> v3 -> v4)
+    try:
+        counts = {
+            d.label: len([s for s in store.signals(d.id) if s.functional]) for d in store.devices()
         }
     finally:
         store.close()

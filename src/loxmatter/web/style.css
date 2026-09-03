@@ -362,6 +362,14 @@ button:disabled {
   border-top: 1px dashed var(--border);
 }
 
+/* Signale-Ansicht (Aufgabe 8): der globale Schalter zwischen den Hinweisen
+ * oben und den ersten Geraetekarten braucht etwas Luft, sonst klebt er am
+ * ersten Kartenrand - derselbe Zwischenraum wie zwischen zwei Karten
+ * (`.card { margin-bottom: 1rem }`), keine neue Farbe oder Groesse. */
+.signal-group-toggle {
+  margin-bottom: 1rem;
+}
+
 footer.hint-block {
   margin-top: 0.4rem;
 }

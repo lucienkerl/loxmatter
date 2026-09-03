@@ -205,6 +205,51 @@ async def test_the_page_does_not_call_init_a_second_time(api):
     assert "x-init" not in markup
 
 
+async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
+    """Aufgabe 8: die Signalliste soll sich in „Funktional“ (offen) und
+    „Experte“ (zugeklappt, mit Anzahl, plus Schalter) gliedern, statt alle
+    159 Signale eines Geraets flach untereinander zu zeigen.
+
+    **Was dieser Test belegt und was nicht.** Belegt wird nur, dass die
+    ausgelieferten Dateien (`index.html`, `app.js`) die dafuer noetigen
+    Bausteine enthalten: beide Ueberschriften, den Schaltertext und - im
+    Skript - dass beide Listen tatsaechlich ueber `signal.functional`
+    unterschieden werden statt ueber eine zweite, in JavaScript
+    nachgebaute Relevanz-Regel. NICHT belegt wird, dass Alpine daraus zur
+    Laufzeit tatsaechlich zwei getrennte, korrekt gefilterte Bloecke
+    macht, dass der Schalter beim Klicken etwas umschaltet, oder dass die
+    Gliederung fuer ein echtes Geraet richtig aussieht - dafuer braeuchte
+    es eine Browser-Engine, die es in dieser Suite nicht gibt (siehe
+    `test_the_page_does_not_call_init_a_second_time` oben)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert "Funktional" in page
+    assert "Experte" in page
+    assert "Experten-Signale anzeigen" in page
+    # Beide Listen lesen nur das von der API mitgelieferte Feld, keine
+    # eigene JavaScript-Fassung von `profiles.relevance.is_functional`.
+    assert "signal.functional" in script
+
+
+async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api):
+    """Review-Fix Fix 9 (2026-09-03) hatte die Ueberschrift „Wichtigste
+    Werte“ absichtlich in „Signale (Anfang der Liste)“ umbenannt, weil die
+    gezeigten Signale damals nur nach `exportable` gefiltert waren - bei
+    der Testvorlage NetworkCommissioning und BasicInformation statt Ein/Aus
+    und Leistung. Seit `signal.functional` das echte Auswahlkriterium
+    mitliefert, ist die alte, ehrlichere Formulierung wieder zutreffend.
+
+    Belegt nur, dass die neue Beschriftung ausgeliefert wird und die alte
+    verschwunden ist - nicht, dass die damit beworbenen Signale zur
+    Laufzeit tatsaechlich die funktionalen sind (siehe Testdocstring
+    oben)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "Funktionale Signale" in page
+    assert "Signale (Anfang der Liste)" not in page
+
+
 async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
     """Der Wert dieses Feldes wird zur `Address` des virtuellen
     UDP-Eingangs und zum Rumpf der Kommando-URLs (`http://<ip>:<listen>`) -

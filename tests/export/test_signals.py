@@ -23,6 +23,7 @@ def signal(
     unit="",
     device_id=1,
     exported=True,
+    functional=True,
 ):
     return StoredSignal(
         key=key,
@@ -32,6 +33,7 @@ def signal(
         exportability=exportability,
         device_id=device_id,
         exported=exported,
+        functional=functional,
     )
 
 

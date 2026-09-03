@@ -44,6 +44,17 @@ async def test_signal_tree_marks_what_cannot_be_exported(api):
     assert unexportable["reason"]
 
 
+async def test_the_signal_payload_says_whether_a_signal_is_functional(api):
+    """Die Oberflaeche muss die beiden Bloecke trennen koennen, ohne die
+    Regel ein zweites Mal in JavaScript nachzubauen (Aufgabe 8)."""
+    client, _, device_id, _ = api
+    rows = (await client.get(f"/api/devices/{device_id}/signals")).json()
+    onoff = next(r for r in rows if r["key"].endswith("_onoff"))
+    counter = next(r for r in rows if "_c53_" in r["key"])
+    assert onoff["functional"] is True
+    assert counter["functional"] is False
+
+
 async def test_signal_carries_its_immutable_key_and_editable_title(api):
     client, _, device_id, _ = api
     signals = (await client.get(f"/api/devices/{device_id}/signals")).json()

@@ -242,13 +242,19 @@ function app() {
     commissionMessageIsError: false,
 
     // --- Signale (geteilt mit der Geraete-Ansicht: dieselbe Liste dient
-    // dort als "wichtigste Live-Werte") ------------------------------------
+    // dort als Kurzfassung der funktionalen Signale) -----------------------
     signalsByDevice: {},
     signalsError: null,
     titleDrafts: {},
     rawWriteDrafts: {},
     rawWriteBusyKey: null,
     rawWriteMessages: {},
+    // Experte-Block (Aufgabe 8): standardmaessig zugeklappt, ein einziger
+    // globaler Schalter statt Zustand je Geraet - die Ansicht "Signale"
+    // zeigt ohnehin alle Geraete auf einmal untereinander, ein Zustand pro
+    // Karte wuerde hier keinen zusaetzlichen Nutzen bringen, nur zusaetzliche
+    // Klicks.
+    showExpertSignals: false,
 
     // --- Export --------------------------------------------------------
     exportBridgeIp: "",
@@ -494,37 +500,53 @@ function app() {
       return status ? status.exported_at : null;
     },
 
-    // Kurzliste fuer die Geraete-Ansicht: nur, was nach Loxone exportiert
-    // werden koennte, und davon nur die ersten paar - der vollstaendige
-    // Baum steht in der Signale-Ansicht. Ohne diese Deckelung waere sie bei
-    // einem Geraet mit hundert exportierbaren Signalen (kein Einzelfall,
-    // siehe IKEA-GRILLPLATS-Testvorlage) keine Kurzliste mehr, sondern
-    // derselbe volle Baum ein zweites Mal.
+    // Kurzliste fuer die Geraete-Ansicht: nur die funktionalen Signale
+    // (`signal.functional`, aus `profiles.relevance.is_functional` -
+    // Aufgabe 8), und davon nur die ersten paar - der vollstaendige Baum
+    // (inklusive Experte-Block) steht in der Signale-Ansicht. Die Deckelung
+    // bleibt trotzdem bestehen, auch wenn die funktionale Menge fuer die
+    // beiden bislang bekannten Geraete klein ist (5 bzw. 17): ein Geraet mit
+    // mehr funktionalen Signalen als hier Platz haben, ist von dieser Regel
+    // nicht ausgeschlossen.
     //
-    // Frueher hiessen diese drei Helfer `KEY_SIGNAL_LIMIT`/`keySignalsFor`/
-    // `remainingKeySignalCount` und die Ueberschrift daneben "Wichtigste
-    // Werte" (Review-Fix Fix 9, 2026-09-03). Beides versprach eine
-    // Rangfolge, die es nicht gibt: `GET /api/devices/{id}/signals` liefert
-    // die Zeilen in `Store.signals`-Reihenfolge (ORDER BY endpoint,
-    // cluster_id, element_id, kind), ein `slice(0, 6)` darauf ergibt "die
-    // sechs mit der kleinsten Cluster-Nummer" - fuer die Steckdose aus der
-    // Testvorlage NetworkCommissioning und BasicInformation, nicht Ein/Aus
-    // und nicht die Leistung. Eine echte Rangfolge braeuchte eine
-    // Bewertung je Cluster, also eine weitere Tabelle; die gibt es nicht,
-    // und sie zu erfinden waere schlechter als ein ehrlicher Name.
-    SIGNAL_PREVIEW_LIMIT: 6,
+    // Frueher hiessen diese drei Helfer `exportableSignalsFor`/
+    // `firstSignalsFor`/`remainingSignalCount`, gefiltert auf `exportable`
+    // statt auf `functional`, und die Ueberschrift daneben hiess "Signale
+    // (Anfang der Liste)" (Review-Fix Fix 9, 2026-09-03): `exportable`
+    // beantwortet nur, ob ein Wert TECHNISCH auf einen Loxone-Eingang
+    // passt, nicht, ob ihn jemand WILL - eine Steckdose hat 110
+    // exportierbare Signale, darunter Netzwerk- und Geraeteangaben, aber
+    // nur 5 funktionale. Seit `signal.functional` das direkt beantwortet
+    // (statt einer geratenen Reihenfolge), ist die Kurzliste wieder ehrlich
+    // benennbar.
+    FUNCTIONAL_PREVIEW_LIMIT: 6,
 
-    exportableSignalsFor(deviceId) {
+    functionalSignalsFor(deviceId) {
       const signals = this.signalsByDevice[deviceId];
-      return signals ? signals.filter((signal) => signal.exportable) : [];
+      return signals ? signals.filter((signal) => signal.functional) : [];
     },
 
     firstSignalsFor(deviceId) {
-      return this.exportableSignalsFor(deviceId).slice(0, this.SIGNAL_PREVIEW_LIMIT);
+      return this.functionalSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT);
     },
 
     remainingSignalCount(deviceId) {
-      return Math.max(0, this.exportableSignalsFor(deviceId).length - this.SIGNAL_PREVIEW_LIMIT);
+      return Math.max(
+        0,
+        this.functionalSignalsFor(deviceId).length - this.FUNCTIONAL_PREVIEW_LIMIT,
+      );
+    },
+
+    // Signale-Ansicht (Aufgabe 8): "Funktional" zeigt sofort, was
+    // `is_functional` als gewollt einstuft; "Experte" bleibt zugeklappt,
+    // bis `showExpertSignals` das global fuer alle Geraetekarten umschaltet
+    // - dieselbe Datengrundlage wie oben, nur ungefiltert nach der
+    // jeweils anderen Bedingung. Keine der beiden Listen bildet die
+    // Relevanz-Regel selbst nach: beide lesen nur `signal.functional`, das
+    // die API bereits fertig mitliefert (`api.devices._signal_out`).
+    expertSignalsFor(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      return signals ? signals.filter((signal) => !signal.functional) : [];
     },
 
     liveValueOf(signal) {

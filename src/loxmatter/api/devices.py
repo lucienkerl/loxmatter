@@ -91,6 +91,15 @@ class RuntimeValues(Protocol):
 
 
 def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> SignalOut:
+    """`functional` kommt unveraendert aus `StoredSignal.functional` -
+    `profiles.relevance.is_functional` braucht die Geraetetypen je Endpunkt
+    (`device_types_by_endpoint`), die diese Funktion hier gar nicht sieht
+    (nur `signal` und die aktuellen Werte). `Store.register_signals`
+    berechnet das Ergebnis bereits einmalig bei der Registrierung, mit dem
+    echten Geraeteabbild zur Hand, und schreibt es in die Zeile - siehe dort
+    und `_migrate_to_v4` fuer Bestandsgeraete. Eine zweite Berechnung hier
+    (oder gar in der Oberflaeche) wuerde dieselbe Regel ein zweites Mal
+    nachbilden, ohne das Abbild zu haben, das sie eigentlich braucht."""
     exportable = is_exportable(signal.exportability)
     reason = None if exportable else _UNEXPORTABLE_REASONS.get(signal.exportability)
     return SignalOut(
@@ -103,6 +112,7 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
         exportable=exportable,
         reason=reason,
         exported=signal.exported,
+        functional=signal.functional,
     )
 
 
