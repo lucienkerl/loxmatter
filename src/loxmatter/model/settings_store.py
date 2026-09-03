@@ -33,7 +33,6 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT
 from loxmatter.timestamps import now_iso
 
 _BRIDGE_IP_KEY = "bridge_ip"
@@ -52,8 +51,8 @@ _ALL_KEYS = (
 @dataclass(frozen=True)
 class BridgeSettings:
     """`bridge_ip`/`saved_at` sind `None`, solange niemand gespeichert hat -
-    die Ports fallen in dem Fall auf dieselben Vorgaben zurueck wie der
-    bisherige Export-Tab (`DEFAULT_UDP_PORT`/`DEFAULT_LISTEN_PORT`)."""
+    die Ports fallen in dem Fall auf die Vorgabewerte zurueck, die beim
+    Erzeugen des Stores gesetzt wurden."""
 
     bridge_ip: str | None
     udp_port: int
@@ -65,8 +64,12 @@ class BridgeSettingsStore:
     """Zugriff auf `setting` ueber die Verbindung des Stores - wie
     `AuthStore`, nur fuer andere Schluessel."""
 
-    def __init__(self, db: sqlite3.Connection) -> None:
+    def __init__(
+        self, db: sqlite3.Connection, *, default_udp_port: int, default_listen_port: int
+    ) -> None:
         self._db = db
+        self._default_udp_port = default_udp_port
+        self._default_listen_port = default_listen_port
 
     def get(self) -> BridgeSettings:
         rows = self._db.execute(
@@ -79,10 +82,10 @@ class BridgeSettingsStore:
             bridge_ip=values.get(_BRIDGE_IP_KEY),
             udp_port=int(values[_BRIDGE_UDP_PORT_KEY])
             if _BRIDGE_UDP_PORT_KEY in values
-            else DEFAULT_UDP_PORT,
+            else self._default_udp_port,
             listen_port=int(values[_BRIDGE_LISTEN_PORT_KEY])
             if _BRIDGE_LISTEN_PORT_KEY in values
-            else DEFAULT_LISTEN_PORT,
+            else self._default_listen_port,
             saved_at=values.get(_BRIDGE_SETTINGS_SAVED_AT_KEY),
         )
 
