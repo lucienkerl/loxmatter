@@ -289,7 +289,11 @@ def _ensure_ca(tls_dir: Path) -> tuple[x509.Certificate, rsa.RSAPrivateKey]:
     if certificate is not None and key_path.exists():
         try:
             key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
+            # OSError: Datei nicht lesbar. ValueError: syntaktisch ungueltig.
+            # TypeError: Schluessel ist passwortgeschuetzt ("Password was not given
+            # but private key is encrypted"). Alle drei Faelle bedeuten, dass wir
+            # den Schluessel nicht laden koennen, und eine neue CA muss erzeugt werden.
             key = None
         if key is not None and certificate.not_valid_after_utc > _now():
             return certificate, key  # type: ignore[return-value]

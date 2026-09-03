@@ -215,3 +215,40 @@ def test_the_real_address_lookup_returns_no_loopback(tmp_path):
     (kein Netz) - was er nicht darf, ist Loopback zurueckgeben."""
     for address in tls.local_ipv4_addresses():
         assert not address.startswith("127.")
+
+
+def test_a_password_protected_ca_key_does_not_crash_the_startup(tmp_path):
+    """Ein passwortgeschuetzter CA-Schluessel loest TypeError aus, der
+    bisher nicht gefangen wurde. Das Modul muss ihn abfangen wie jeden
+    anderen Fehler beim Laden des Schluessels, um die Zusage einzuloesen:
+    prepare_tls darf niemals wirft (TLS darf den Start nicht verhindern).
+    Stattdessen wird die CA regeneriert.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    # Gültiges Material erzeugen
+    material = ensure_tls_material(tmp_path)
+    original_ca_serial = _serial(tmp_path / "ca.crt")
+    assert material.ca_certificate.exists()
+    assert material.private_key.exists()
+
+    # CA-Schlüssel durch einen passwortgeschützten ersetzen
+    encrypted_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    encrypted_key_bytes = encrypted_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.BestAvailableEncryption(b"password"),
+    )
+    ca_key_path = tmp_path / "ca.key"
+    ca_key_path.write_bytes(encrypted_key_bytes)
+
+    # prepare_tls darf nicht werfen - der TypeError muss abgefangen werden
+    state = prepare_tls(tmp_path, 8443)
+
+    # Das System hat sich erholt und eine neue CA erzeugt
+    assert state.material is not None
+    assert state.port == 8443
+    assert state.error is None
+    # Die CA wurde regeneriert, weil der alte Schluessel nicht geladen werden konnte
+    assert _serial(tmp_path / "ca.crt") != original_ca_serial
