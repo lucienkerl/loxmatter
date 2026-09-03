@@ -73,6 +73,16 @@
         <div class="connection-status">
           <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
           <span x-text="connectionStatusText()"></span>
+          <!--
+            Das Lebenszeichen (2026-09-03). Die Bruecke schickt alle 30 s
+            einen Heartbeat, auch wenn sich an keinem Geraet etwas aendert.
+            Ohne diese Anzeige war eine ruhige Anlage - eine Steckdose ohne
+            Last meldet weder Strom noch Leistung - von einer abgestuerzten
+            nicht zu unterscheiden.
+          -->
+          <span class="heartbeat" x-show="lastHeartbeatAt" x-cloak>
+            · Lebenszeichen <span x-text="heartbeatText()"></span>
+          </span>
         </div>
       </div>
     </header>
@@ -128,12 +138,6 @@
 
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
         <p x-show="deviceActionError" x-cloak class="banner danger" x-text="deviceActionError"></p>
-        <p
-          x-show="commandMessage"
-          x-cloak
-          :class="commandMessageIsError ? 'banner danger' : 'banner ok'"
-          x-text="commandMessage"
-        ></p>
 
         <p x-show="devices.length === 0 && !devicesError" class="hint">
           Noch kein Gerät eingelernt.
@@ -163,7 +167,13 @@
 
             <div class="device-controls" x-show="expandedDeviceId === device.id" x-cloak>
               <h3>Bedienung</h3>
-              <p class="hint" x-show="commandsFor(device.id).length === 0">
+              <p class="hint" x-show="!controlsLoaded(device.id)">
+                Bedienelemente noch nicht geladen – siehe Meldung oben.
+              </p>
+              <p
+                class="hint"
+                x-show="controlsLoaded(device.id) && commandsFor(device.id).length === 0"
+              >
                 Keine bekannten Ausgangsbefehle für dieses Gerät.
               </p>
               <div class="row">
@@ -216,7 +226,17 @@
                     class="value"
                     x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                   ></span>
-                  <span></span>
+                  <!--
+                    Auch hier, nicht nur in der Ansicht "Signale"
+                    (2026-09-03): die Geraete-Ansicht ist die, auf die man
+                    schaut, wenn man wissen will, ob sich etwas tut.
+                  -->
+                  <span
+                    class="hint"
+                    x-show="signalSeenText(signal)"
+                    x-cloak
+                    x-text="signalSeenText(signal)"
+                  ></span>
                 </div>
               </template>
               <p class="hint" x-show="remainingSignalCount(device.id) > 0">
@@ -305,6 +325,20 @@
                             <span
                               class="value"
                               x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                            ></span>
+                            <!--
+                              Wann dieser Wert zuletzt ueber die Live-
+                              Verbindung kam (2026-09-03). Steht hier nichts,
+                              hat sich das Signal seit dem Laden der Seite
+                              nicht geaendert - was bei einer Steckdose ohne
+                              Last der Normalfall ist und ohne diese Angabe
+                              wie ein Fehler aussieht.
+                            -->
+                            <span
+                              class="hint"
+                              x-show="signalSeenText(signal)"
+                              x-cloak
+                              x-text="signalSeenText(signal)"
                             ></span>
                             <label x-show="signal.exportable">
                               <input
@@ -507,6 +541,24 @@
         </div>
       </section>
     </main>
+
+    <!--
+      Kurzmeldungen als Overlay. `position: fixed` heisst: sie stehen
+      ausserhalb des Textflusses und verschieben nichts. Die vorherige
+      Fassung blendete eine Zeile ueber der Geraeteliste ein, wodurch beim
+      Schalten die ganze Seite sprang und der naechste Klick daneben ging.
+    -->
+    <div class="toasts" aria-live="polite">
+      <template x-for="toast in toasts" :key="toast.id">
+        <div
+          class="toast"
+          :class="toast.isError ? 'toast-error' : 'toast-ok'"
+          @click="dismissToast(toast.id)"
+          title="Zum Ausblenden anklicken"
+          x-text="toast.text"
+        ></div>
+      </template>
+    </div>
 
     <script defer src="/static/app.js"></script>
     <script defer src="/static/vendor/alpine.min.js"></script>

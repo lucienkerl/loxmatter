@@ -61,6 +61,17 @@ const TOKEN_STORAGE_KEY = "loxmatter_token";
 // `loxone.server.build_api_guard`).
 const WEBSOCKET_BEARER_MARKER = "bearer";
 
+// Der Heartbeat-Schluessel der Bruecke (siehe loxone/runtime.py,
+// HEARTBEAT_KEY). Er gehoert zu keinem Geraet und kommt auch dann, wenn
+// sich an keinem etwas aendert - damit ist er das einzige verlaessliche
+// Lebenszeichen, das diese Oberflaeche hat.
+const HEARTBEAT_KEY = "bridge_alive";
+
+// Laufende Nummer fuer Kurzmeldungen. Modulweit statt im Zustand, weil
+// sie nur die Meldungen auseinanderhalten muss und niemanden sonst
+// interessiert.
+let toastCounter = 0;
+
 /**
  * Liest das gespeicherte Token - `null`, wenn keins gesetzt ist.
  *
@@ -229,8 +240,18 @@ function app() {
     controlsByDevice: {},
     commandValueDrafts: {},
     commandBusyKey: null,
-    commandMessage: null,
-    commandMessageIsError: false,
+    // Kurzmeldungen als Overlay statt im Textfluss (2026-09-03): eine
+    // eingeblendete Zeile im Fluss verschiebt alles darunter, und wer
+    // gerade einen zweiten Befehl anklicken will, trifft daneben.
+    toasts: [],
+    // Wann ein Schluessel zuletzt ueber die Live-Verbindung kam. Macht den
+    // Unterschied sichtbar zwischen "nichts aendert sich" und "nichts
+    // kommt an" - bei einer Steckdose ohne Last sieht beides gleich aus.
+    liveSeenAt: {},
+    lastHeartbeatAt: null,
+    // Tickt jede Sekunde, damit die "vor ..."-Angaben mitlaufen. Ohne
+    // dieses Feld saehe Alpine keinen Grund, sie neu zu zeichnen.
+    nowTick: Date.now(),
     labelDrafts: {},
     deviceActionError: null,
 
@@ -296,6 +317,9 @@ function app() {
     // `restartLive()` nicht mehr erreichbar (das schliesst `this.socket`)
     // und lief bis zum Schliessen des Tabs weiter.
     async init() {
+      window.setInterval(() => {
+        this.nowTick = Date.now();
+      }, 1000);
       await this.loadDevices();
       this.connectLive();
     },
@@ -401,9 +425,29 @@ function app() {
       // nach dem Eintragen des Tokens stehen bliebe, waere schlicht falsch.
       this.backupError = null;
       this.exportError = null;
+      this.deviceActionError = null;
+      this.signalsError = null;
+      // Und die geraeteweisen Zwischenspeicher (2026-09-03). Bei einer 401
+      // legt `loadControls`/`loadSignals` gar keinen Eintrag an - der
+      // Zwischenspeicher bleibt leer, und ein leerer Eintrag ist von
+      // "dieses Geraet hat keine Befehle" nicht zu unterscheiden. Ohne
+      // dieses Leeren zeigte die Bedienung nach dem Eintragen des Tokens
+      // dauerhaft "Keine bekannten Ausgangsbefehle", obwohl es drei gibt,
+      // und nur ein Neuladen der Seite half. Genau die Sorte
+      // stillschweigend falscher Zustand, die Spec 8.1 ausschliessen will.
+      this.controlsByDevice = {};
+      this.signalsByDevice = {};
       this.restartLive();
       await this.loadDevices();
       await this.selectView(this.view);
+      // Ein aufgeklapptes Geraet haengt an keiner Ansicht - `selectView`
+      // holt seine Bedienelemente nicht mit.
+      if (this.expandedDeviceId !== null) {
+        await Promise.all([
+          this.loadControls(this.expandedDeviceId),
+          this.loadSignals(this.expandedDeviceId),
+        ]);
+      }
     },
 
     // ---------------------------------------------------------------------
@@ -447,10 +491,20 @@ function app() {
     // 8.3) - fehlt er (noch keine Nachricht fuer dieses Geraet
     // eingetroffen), gilt der zuletzt geladene Stand aus `GET
     // /api/devices`.
+    // KEIN `hasOwnProperty` hier (2026-09-03). Alpines Reaktivitaet
+    // erfasst eine Abhaengigkeit nur bei einem echten Property-ZUGRIFF;
+    // `Object.prototype.hasOwnProperty.call(obj, key)` laeuft daran vorbei.
+    // Folge in der ausgelieferten Fassung: die erste Nachricht fuer einen
+    // Schluessel, den `liveValues` noch nicht kannte, veraenderte die
+    // Anzeige NICHT - erst ein spaeteres Neuzeichnen aus anderem Grund
+    // holte sie nach. Von aussen sah das aus, als kaeme ueber die
+    // Live-Verbindung nichts an, obwohl der Wert laengst im Zustand stand.
+    // Ein direkter Zugriff mit `=== undefined` wird dagegen erfasst.
     isOnline(device) {
       const liveKey = `d${device.id}_online`;
-      if (Object.prototype.hasOwnProperty.call(this.liveValues, liveKey)) {
-        return Boolean(this.liveValues[liveKey]);
+      const live = this.liveValues[liveKey];
+      if (live !== undefined) {
+        return Boolean(live);
       }
       return device.online;
     },
@@ -478,6 +532,19 @@ function app() {
 
     controlsFor(deviceId) {
       return this.controlsByDevice[deviceId] || null;
+    },
+
+    /**
+     * Ob die Bedienelemente dieses Geraets ueberhaupt geladen werden
+     * konnten. Ohne diese Unterscheidung rendert die Oberflaeche einen
+     * fehlgeschlagenen Abruf als "Keine bekannten Ausgangsbefehle" - eine
+     * Aussage ueber das Geraet, wo in Wahrheit eine ueber die Verbindung
+     * faellig waere (Spec 8.1: ein Fehlschlag darf nicht als harmloser
+     * Zustand erscheinen).
+     */
+    controlsLoaded(deviceId) {
+      // Direkter Zugriff, kein `hasOwnProperty` - siehe `isOnline`.
+      return this.controlsByDevice[deviceId] !== undefined;
     },
 
     // Die drei folgenden Helfer bestehen einzig, damit `index.html` kein
@@ -566,10 +633,10 @@ function app() {
     },
 
     liveValueOf(signal) {
-      if (Object.prototype.hasOwnProperty.call(this.liveValues, signal.key)) {
-        return this.liveValues[signal.key];
-      }
-      return signal.value;
+      // Direkter Zugriff, kein `hasOwnProperty` - siehe `isOnline`. Genau
+      // hier war der Fehler am sichtbarsten: die Werte bewegten sich nicht.
+      const live = this.liveValues[signal.key];
+      return live === undefined ? signal.value : live;
     },
 
     async saveLabel(device) {
@@ -623,19 +690,76 @@ function app() {
     },
 
     async executeCommand(device, command) {
-      this.commandMessage = null;
       this.commandBusyKey = command.key;
       const value = command.takes_value ? this.commandValueDrafts[command.key] ?? "" : "1";
       try {
         await this.request("POST", `/api/commands/${command.key}`, { value: String(value) });
-        this.commandMessage = `"${command.slug}" wurde an ${device.label} gesendet.`;
-        this.commandMessageIsError = false;
+        this.showToast(`"${command.slug}" wurde an ${device.label} gesendet.`);
       } catch (error) {
-        this.commandMessage = `"${command.slug}" ist fehlgeschlagen: ${error.message}`;
-        this.commandMessageIsError = true;
+        this.showToast(`"${command.slug}" ist fehlgeschlagen: ${error.message}`, true);
       } finally {
         this.commandBusyKey = null;
       }
+    },
+
+    // ---------------------------------------------------------------------
+    // Kurzmeldungen (2026-09-03)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Zeigt eine Meldung als Overlay am unteren Rand. Bewusst NICHT im
+     * Textfluss: die vorherige Fassung blendete eine Zeile ueber der
+     * Geraeteliste ein, wodurch beim Schalten die ganze Seite sprang und
+     * der naechste Klick daneben ging.
+     *
+     * Fehler bleiben deutlich laenger stehen als Erfolge - eine
+     * Erfolgsmeldung hat man gesehen, sobald das Geraet reagiert, eine
+     * Fehlermeldung will man lesen.
+     */
+    showToast(text, isError = false) {
+      const id = ++toastCounter;
+      this.toasts.push({ id, text, isError });
+      window.setTimeout(() => this.dismissToast(id), isError ? 12000 : 4000);
+    },
+
+    dismissToast(id) {
+      this.toasts = this.toasts.filter((toast) => toast.id !== id);
+    },
+
+    // ---------------------------------------------------------------------
+    // Lebenszeichen (2026-09-03)
+    // ---------------------------------------------------------------------
+
+    /**
+     * "vor 3 s", "vor 12 min" - oder null, wenn dieser Schluessel ueber die
+     * Live-Verbindung noch nie kam. Liest `nowTick`, damit Alpine die
+     * Angabe jede Sekunde neu zeichnet.
+     */
+    sinceText(timestamp) {
+      if (!timestamp) {
+        return null;
+      }
+      const seconds = Math.max(0, Math.round((this.nowTick - timestamp) / 1000));
+      if (seconds < 60) {
+        return `vor ${seconds} s`;
+      }
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) {
+        return `vor ${minutes} min`;
+      }
+      return `vor ${Math.round(minutes / 60)} h`;
+    },
+
+    /** Wann zuletzt IRGENDETWAS ueber die Leitung kam - der Heartbeat
+     * eingeschlossen. Das ist die Angabe, die "nichts aendert sich" von
+     * "nichts kommt an" unterscheidet. */
+    heartbeatText() {
+      return this.sinceText(this.lastHeartbeatAt);
+    },
+
+    /** Wann dieses eine Signal zuletzt einen Wert lieferte. */
+    signalSeenText(signal) {
+      return this.sinceText(this.liveSeenAt[signal.key]);
     },
 
     async commissionDevice() {
@@ -935,6 +1059,14 @@ function app() {
       socket.addEventListener("message", (event) => {
         const message = JSON.parse(event.data);
         this.liveValues[message.key] = message.value;
+        const now = Date.now();
+        this.liveSeenAt[message.key] = now;
+        // Der Heartbeat gehoert zu keinem Geraet (Spec 6.5) und ist genau
+        // deshalb das ehrliche Lebenszeichen: er kommt auch dann, wenn
+        // sich an keinem Geraet etwas aendert.
+        if (message.key === HEARTBEAT_KEY) {
+          this.lastHeartbeatAt = now;
+        }
       });
 
       // Sowohl ein sauberes Schliessen als auch ein Verbindungsfehler
