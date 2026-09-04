@@ -115,23 +115,17 @@ def _default_session_factory() -> Any:
 def validated_dataset(body: str, url: str) -> str:
     """Prueft eine Zeichenkette darauf, ob sie ein Thread-Datensatz sein kann.
 
-    Oeffentlich, nicht modulprivat: `api/devices.py` prueft damit auch den
-    von Hand in die Oberflaeche eingetragenen Datensatz, damit fuer beide
-    Wege - geholt und eingetippt - dieselbe Regel gilt. Eine zweite,
-    nur aehnliche Pruefung dort waere genau die Doppelung, die frueher oder
-    spaeter auseinanderlaeuft.
+    Oeffentlich, nicht modulprivat: zwei Aufrufer, eine Regel -
+    `fetch_active_dataset` unten mit der Antwort des Border Routers, und
+    `api/devices.py` mit dem von Hand in die Oberflaeche eingetragenen
+    Datensatz. Eine zweite, nur aehnliche Pruefung dort waere genau die
+    Doppelung, die frueher oder spaeter auseinanderlaeuft.
 
-    `url` benennt in den Fehlermeldungen die Herkunft der geprueften
-    Zeichenkette. Der Datensatz selbst taucht dort NIE auf - er enthaelt den
-    Netzwerkschluessel des Thread-Netzes.
-    """
-    """Prueft eine Antwort auf die Gestalt eines Thread-Datensatzes.
-
-    Zwei Aufrufer: `fetch_active_dataset` unten mit der Antwort des Border
-    Routers, und `api/devices.py` mit dem von Hand eingetragenen Datensatz -
-    absichtlich dieselbe Funktion, damit es die Regel nur einmal gibt.
-    `url` ist deshalb nur die HERKUNFT fuer die Meldung, nicht zwingend eine
-    Adresse; die Route dort schreibt ihre Meldung ohnehin selbst.
+    `url` benennt in den Fehlermeldungen allein die HERKUNFT der geprueften
+    Zeichenkette und ist deshalb nicht zwingend eine Adresse; die Route in
+    `api/devices.py` formuliert ihre Meldung an den Bedienenden ohnehin
+    selbst. Der Datensatz selbst taucht in KEINER Meldung dieser Funktion
+    auf - er enthaelt den Netzwerkschluessel des Thread-Netzes.
     """
     dataset = body.strip()
     if not dataset:
