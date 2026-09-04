@@ -137,6 +137,35 @@ async def test_exporting_a_signal_can_be_turned_off(api):
     assert next(s for s in store.signals(device_id) if s.key == key).exported is False
 
 
+async def test_the_signal_payload_says_whether_resend_is_flagged(api):
+    """Periodischer Resend als Opt-in (Entwurf 2026-09-04) - Vorgabewert aus."""
+    client, _, device_id, _ = api
+    signals = (await client.get(f"/api/devices/{device_id}/signals")).json()
+    assert signals
+    assert all(s["resend"] is False for s in signals)
+
+
+async def test_resend_can_be_turned_on_through_the_api(api):
+    client, store, device_id, _ = api
+    key = store.signals(device_id)[0].key
+    response = await client.patch(f"/api/signals/{key}", json={"resend": True})
+    assert response.status_code == 200
+    assert response.json()["resend"] is True
+    assert next(s for s in store.signals(device_id) if s.key == key).resend is True
+
+
+async def test_resend_and_exported_are_independent_fields(api):
+    client, store, device_id, _ = api
+    key = store.signals(device_id)[0].key
+    await client.patch(f"/api/signals/{key}", json={"exported": False})
+
+    response = await client.patch(f"/api/signals/{key}", json={"resend": True})
+
+    body = response.json()
+    assert body["resend"] is True
+    assert body["exported"] is False
+
+
 async def test_signal_route_404s_once_its_device_has_been_removed(api):
     """Review-Fix Important #4, 2026-09-02: `rename_signal` loeste bisher
     ausschliesslich ueber `signal_by_key` auf, ohne wie jede geraete-gebundene

@@ -130,6 +130,7 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
         reason=reason,
         exported=signal.exported,
         functional=signal.functional,
+        resend=signal.resend,
     )
 
 
@@ -238,6 +239,8 @@ def build_device_router(
             store.set_title(key, patch.title)
         if patch.exported is not None:
             store.set_exported(key, patch.exported)
+        if patch.resend is not None:
+            store.set_resend(key, patch.resend)
 
         updated = store.signal_by_key(key)
         assert updated is not None  # eben noch gefunden, in derselben Anfrage nicht geloescht
