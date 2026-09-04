@@ -441,6 +441,30 @@ async def test_the_rejected_dataset_never_appears_in_the_message(api):
     assert "NetworkKey" not in detail
 
 
+async def test_a_hand_entered_dataset_with_an_odd_length_yields_422(api):
+    """Genau der Fall, fuer den das `strip()` gebaut wurde, einen Schritt
+    weiter: beim Kopieren der Ausgabe von `ot-ctl dataset active -x` geht am
+    Zeilenende ein Zeichen verloren, uebrig bleiben 221 statt 222 Hex-Zeichen.
+    Jedes davon ist Hex, die Zeichenklassen-Pruefung liess das durch - bei
+    matter-server scheiterte dann `bytes.fromhex`, und dieser Fehler kommt als
+    `UnknownError` zurueck, nicht als `MatterUnavailableError`. Der `except`
+    der Route griff nicht, und die Antwort war 500 "Internal Server Error" -
+    genau das Ergebnis, das die Pruefung abschaffen sollte."""
+    client, _, _, fake_client = api
+
+    response = await client.post(
+        "/api/devices/commission",
+        json={"code": "MT:ABC123", "thread_dataset": "0e08AAA"},
+    )
+
+    assert response.status_code == 422
+    # Auch hier VOR dem Einlernen: der aufgedruckte Pairing-Code bleibt heil.
+    assert fake_client.datasets == []
+    assert fake_client.commissioned == []
+    # Der Datensatz ist ein Credential und gehoert nicht in die Antwort.
+    assert "0e08AAA" not in response.json()["detail"]
+
+
 async def test_a_hand_entered_dataset_may_carry_a_trailing_newline(api):
     """Ein aus dem Terminal kopierter Datensatz bringt fast immer einen
     Zeilenumbruch mit. `validated_dataset` schneidet ihn ab, statt ihn abzulehnen -

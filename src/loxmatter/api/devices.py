@@ -344,7 +344,9 @@ def build_device_router(
                     detail=(
                         "Der eingetragene Thread-Datensatz ist keiner. Erwartet wird das "
                         "Hex-TLV des aktiven Datensatzes - eine einzige Zeile aus 0-9 und "
-                        "a-f, so wie `ot-ctl dataset active -x` sie ausgibt. Eine "
+                        "a-f in gerader Anzahl, so wie `ot-ctl dataset active -x` sie "
+                        "ausgibt; fehlt am Ende ein Zeichen, ist die Zeile beim Kopieren "
+                        "abgeschnitten worden. Eine "
                         "JSON-Struktur, Anfuehrungszeichen oder Text darin gehoeren nicht "
                         "hinein. Der Wert selbst steht bewusst nicht in dieser Meldung: "
                         "er enthaelt den Netzwerkschluessel des Thread-Netzes."

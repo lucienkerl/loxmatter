@@ -140,6 +140,23 @@ def validated_dataset(body: str, url: str) -> str:
             f"{url} hat keinen Thread-Datensatz geliefert, sondern {len(dataset)} Zeichen, "
             "die kein Hex sind - antwortet dort wirklich ein Border Router?"
         )
+    if len(dataset) % 2 != 0:
+        # Auch hier nicht die Zeichenkette selbst, nur ihre Laenge: jedes
+        # Zeichen fuer sich ist Hex, es koennte also durchaus ein - um genau
+        # ein Zeichen beschnittener - echter Datensatz sein.
+        #
+        # Ohne diese Pruefung reicht `set_thread_dataset` das weiter, und
+        # matter-servers `bytes.fromhex` scheitert dort mit "odd-length
+        # string". Das kommt als `UnknownError` zurueck - ein `MatterError`,
+        # aber kein `MatterUnavailableError`, an dessen `except` in
+        # `api/devices.py` es also vorbeifaellt: HTTP 500 statt einer Meldung,
+        # die sagt, was zu tun ist.
+        raise ThreadDatasetUnavailableError(
+            f"{url} hat {len(dataset)} Hex-Zeichen geliefert - ein Thread-Datensatz hat "
+            "immer eine gerade Anzahl, weil er aus Bytes besteht. Es fehlt ein Zeichen "
+            "oder eines ist zu viel; beim Kopieren aus dem Terminal wird gern das letzte "
+            "abgeschnitten."
+        )
     return dataset
 
 

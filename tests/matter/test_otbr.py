@@ -131,6 +131,24 @@ async def test_a_response_that_is_not_hex_is_refused() -> None:
         await fetch_active_dataset(session_factory=lambda: session)
 
 
+async def test_an_odd_number_of_hex_characters_is_refused() -> None:
+    """Ein Hex-TLV besteht aus Bytes - eine ungerade Zahl von Hex-Zeichen kann
+    keines sein. Jedes Zeichen fuer sich ist Hex, die Zeichenklassen-Pruefung
+    liess das also durch; bei matter-server scheiterte dann `bytes.fromhex`
+    mit "odd-length string", und das kommt als `UnknownError` zurueck - kein
+    `MatterUnavailableError`, also 500 statt einer brauchbaren Meldung."""
+    session = FakeSession(body=FAKE_DATASET[:-1])
+
+    with pytest.raises(ThreadDatasetUnavailableError) as excinfo:
+        await fetch_active_dataset(session_factory=lambda: session)
+
+    message = str(excinfo.value)
+    # Die Laenge nennt die Meldung, den Datensatz nie: er enthaelt den
+    # Netzwerkschluessel des Thread-Netzes, und auch ein Teil davon ist zu viel.
+    assert str(len(FAKE_DATASET) - 1) in message
+    assert FAKE_DATASET[:12] not in message
+
+
 async def test_an_empty_response_is_refused() -> None:
     session = FakeSession(body="   \n")
 
