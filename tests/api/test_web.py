@@ -30,6 +30,8 @@ ohne eine zweite Fixture auskommt.
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from xml.etree import ElementTree
 
 import httpx2 as httpx
 import pytest
@@ -40,6 +42,8 @@ from loxmatter.api.export import ARCHIVE_NAME
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+
+WEB_DIR = Path(__file__).resolve().parents[2] / "src" / "loxmatter" / "web"
 
 
 def _without_comments(markup: str) -> str:
@@ -132,6 +136,19 @@ async def test_the_page_carries_an_icon_that_is_actually_ausgeliefert(api):
     response = await client.get("/static/favicon.svg")
     assert response.status_code == 200
     assert "svg" in response.headers["content-type"]
+
+
+def test_the_icons_are_well_formed_xml():
+    """Ein SVG, das nicht als XML parst, zeigt KEIN Browser an - er blendet es
+    still als kaputtes Bild aus, ohne Meldung irgendwo.
+
+    Genau das ist beim ersten Anlauf passiert: der Kopfkommentar in icon.svg
+    nannte die Akzentfarbe `--accent` beim CSS-Namen, und zwei aufeinander-
+    folgende Bindestriche sind in einem XML-Kommentar verboten. Die Datei war
+    auf GitHub und im Browser-Tab gleichermassen unsichtbar. Ein Blick in die
+    Datei verraet das nicht, ein Parser schon."""
+    for name in ("icon.svg", "favicon.svg"):
+        ElementTree.parse(WEB_DIR / name)
 
 
 async def test_static_files_do_not_escape_their_directory(api):

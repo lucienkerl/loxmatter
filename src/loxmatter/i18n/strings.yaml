@@ -992,15 +992,6 @@ web.export.projectsync_bridge_ip_hint_prefix:
 web.export.projectsync_bridge_ip_hint_suffix:
   en: " first."
   de: " die Brücken-IP hinterlegen."
-web.export.projectsync_miniserver_ip_label:
-  en: "IP of the Miniserver"
-  de: "IP des Miniservers"
-web.export.projectsync_miniserver_ip_hint:
-  en: "(only needed with multiple Miniservers in the file)"
-  de: "(nur nötig bei mehreren Miniservern in der Datei)"
-web.export.projectsync_ip_placeholder:
-  en: "e.g. 10.0.0.10"
-  de: "z. B. 10.0.0.10"
 web.export.projectsync_file_label:
   en: "Project file (.Loxone)"
   de: "Projektdatei (.Loxone)"
@@ -1010,6 +1001,15 @@ web.export.projectsync_busy:
 web.export.projectsync_upload_failed:
   en: "Upload failed: {message}"
   de: "Hochladen fehlgeschlagen: {message}"
+web.export.projectsync_miniserver_select_label:
+  en: "Miniserver"
+  de: "Miniserver"
+web.export.projectsync_miniserver_select_placeholder:
+  en: "Please choose…"
+  de: "Bitte wählen …"
+web.export.projectsync_multiple_miniservers_hint:
+  en: "This project file contains multiple Miniservers – please choose the one you want."
+  de: "Diese Projektdatei enthält mehrere Miniserver – bitte den gewünschten auswählen."
 web.export.projectsync_all_current:
   en: "Everything is up to date – no changes needed."
   de: "Alles aktuell – keine Änderungen nötig."

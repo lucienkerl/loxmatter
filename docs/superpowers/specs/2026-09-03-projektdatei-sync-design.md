@@ -282,15 +282,25 @@ hochgeladenen `.Loxone`-Datei, plus Query-Parameter `bridge_ip`/`port`/
 `listen` (wie bei `/api/export/download`) und optional `miniserver_ip`
 (Abschnitt 3.5) — nur nötig, wenn die Datei mehr als einen Miniserver
 konfiguriert. Antwort: strukturierter Diff-Plan (Abschnitt 5) plus zwei
-Datei-Varianten (`patched_conservative`, `patched_with_new_devices`).
+Datei-Varianten (`patched_conservative`, `patched_with_new_devices`) — ODER,
+bei mehreren Miniservern ohne gewählten `miniserver_ip` (Nachtrag nach dem
+Review, 2026-09-05), `needs_miniserver_selection=True` plus
+`available_miniservers` (Titel + `IntAddr` jedes gefundenen Miniservers)
+statt eines Plans. Beides eine normale 200-Antwort, kein Fehler — nur der
+"gar keiner konfiguriert"-Fall bleibt eine echte 400 (Abschnitt 8).
 
 **WebUI:** primärer Punkt im Export-Bereich (auf Nutzerwunsch, ursprünglich
-unter „System" geplant). Optionales Feld „IP des Miniservers", darunter
-Datei-Upload, danach der Plan als Liste — nach Geräten gruppiert (Eingänge/
-Ausgänge je Gerät, analog zur späteren Loxone-Struktur), je Signal eine
-Zeile mit Status-Badge (unverändert/aktualisiert/neu/verwaist) und bei
-`updated` die Attribut-Differenz. Der Experimentell-Haken schaltet, welche
-der beiden mitgelieferten Datei-Varianten der Download-Button anbietet. Der
+unter „System" geplant). Datei-Upload, danach entweder direkt der Plan, oder
+— bei mehreren Miniservern in der Datei — ein Auswahlfeld mit den gefundenen
+Miniservern (Nutzerwunsch: auswählen statt die IP von Hand abzutippen,
+ersetzt das frühere Textfeld). Die Datei bleibt dafür im Speicher des
+Browsers (kein erneuter Datei-Dialog nötig); die Auswahl löst denselben
+Upload ein zweites Mal aus, diesmal mit gesetztem `miniserver_ip`. Danach
+der Plan als Liste — nach Geräten gruppiert (Eingänge/Ausgänge je Gerät,
+analog zur späteren Loxone-Struktur), je Signal eine Zeile mit Status-Badge
+(unverändert/aktualisiert/neu/verwaist/mögliches Duplikat) und bei `updated`
+die Attribut-Differenz. Der Experimentell-Haken schaltet, welche der beiden
+mitgelieferten Datei-Varianten der Download-Button anbietet. Der
 Download-Button ist erst nach dem Hochladen (= der Plan wurde gesehen) aktiv.
 
 ## 8. Fehlerbehandlung
