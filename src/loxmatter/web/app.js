@@ -1400,6 +1400,40 @@ function app() {
       );
     },
 
+    /**
+     * Gruppiert den flachen Plan nach Gerät und dort nochmal nach Ein-/
+     * Ausgang - genau die Verschachtelung, in der die Signale hinterher als
+     * virtuelle Ein-/Ausgänge in Loxone Config landen (ein Container je
+     * Gerät, `Eingänge` und `Ausgänge` als eigene Gruppen darunter), statt
+     * einer einzigen langen, unsortierten Liste.
+     *
+     * Verwaiste Einträge (`device_id === -1`, siehe `PlanEntry` in `diff.py`
+     * - gehören zu keinem aktuell bekannten Gerät mehr) bekommen eine eigene
+     * Gruppe ohne echten Gerätenamen und stehen bewusst am Ende, unabhängig
+     * von ihrer Position im flachen Plan.
+     */
+    projectSyncGroupedEntries(entries) {
+      const groups = [];
+      const byDeviceId = new Map();
+      for (const entry of entries || []) {
+        let group = byDeviceId.get(entry.device_id);
+        if (!group) {
+          group = {
+            deviceId: entry.device_id,
+            deviceLabel:
+              entry.device_id === -1 ? "Nicht mehr zugeordnet" : entry.device_label || "—",
+            inputs: [],
+            outputs: [],
+          };
+          byDeviceId.set(entry.device_id, group);
+          groups.push(group);
+        }
+        (entry.kind === "input" ? group.inputs : group.outputs).push(entry);
+      }
+      groups.sort((a, b) => (a.deviceId === -1 ? 1 : 0) - (b.deviceId === -1 ? 1 : 0));
+      return groups;
+    },
+
     /** Deutsche Beschriftung fuer die Attributnamen aus `entry.changes` -
      * dieselben Schluessel wie `MANAGED_INPUT_CMD_ATTRS`/
      * `MANAGED_OUTPUT_CMD_ATTRS` in `projectsync/schema.py`. Unbekannte
