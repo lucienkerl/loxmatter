@@ -460,3 +460,509 @@ api.server.fail_login_required:
 api.server.fail_resync:
   en: "Full resend failed: {exc}"
   de: "Full-Resend fehlgeschlagen: {exc}"
+
+# --- web.nav — Reiterleiste ---
+web.nav.devices:
+  en: "Devices"
+  de: "Geräte"
+web.nav.signals:
+  en: "Signals"
+  de: "Signale"
+web.nav.export:
+  en: "Export"
+  de: "Export"
+web.nav.system:
+  en: "System"
+  de: "System"
+web.nav.settings:
+  en: "Settings"
+  de: "Einstellungen"
+
+# --- web.header / web.connection — Kopfzeile, Verbindungsstatus ---
+web.header.logout:
+  en: "Log out"
+  de: "Abmelden"
+web.header.heartbeat_prefix:
+  en: "· Heartbeat"
+  de: "· Lebenszeichen"
+web.connection.lost_banner:
+  en: "The live connection was interrupted. Displayed values may be outdated until the connection is restored."
+  de: "Die Live-Verbindung wurde unterbrochen. Angezeigte Werte können inzwischen veraltet sein, bis die Verbindung wiederhergestellt ist."
+web.header.toast_dismiss_tooltip:
+  en: "Click to dismiss"
+  de: "Zum Ausblenden anklicken"
+web.connection.live:
+  en: "Live connection active"
+  de: "Live-Verbindung aktiv"
+web.connection.lost_reconnecting:
+  en: "Connection lost – reconnecting…"
+  de: "Verbindung verloren – verbinde neu…"
+web.connection.never_connected:
+  en: "Cannot connect to the bridge – still trying…"
+  de: "Keine Verbindung zur Brücke möglich – verbinde weiter…"
+web.connection.connecting:
+  en: "Connecting…"
+  de: "Verbinde…"
+web.header.time_ago_seconds:
+  en: "{seconds}s ago"
+  de: "vor {seconds} s"
+web.header.time_ago_minutes:
+  en: "{minutes}m ago"
+  de: "vor {minutes} min"
+web.header.time_ago_hours:
+  en: "{hours}h ago"
+  de: "vor {hours} h"
+web.header.last_updated:
+  en: "Last updated {text}"
+  de: "Zuletzt aktualisiert {text}"
+web.header.unchanged_since_load:
+  en: "Unchanged since the page loaded"
+  de: "Seit dem Laden der Seite unveraendert"
+
+# --- web.auth — Ersteinrichtung, Anmeldung ---
+web.auth.setup_heading:
+  en: "Set up loxmatter"
+  de: "loxmatter einrichten"
+web.auth.setup_warning:
+  en: |
+    No password has been set for this bridge yet. Until it is, <strong>anyone on the network</strong> can take it over by filling out this form. Complete setup now, not later.
+  de: |
+    Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, kann <strong>jeder im Netz</strong> sie übernehmen, indem er dieses Formular ausfüllt. Schließe die Einrichtung deshalb jetzt ab und nicht später.
+web.auth.password_label:
+  en: "Password"
+  de: "Passwort"
+web.auth.password_repeat_label:
+  en: "Repeat password"
+  de: "Passwort wiederholen"
+web.auth.password_hint:
+  en: "At least 8 characters, ideally randomly generated rather than made up — the fabric backup sits behind this login too. This service speaks HTTP without encryption; use a password you don't use anywhere else."
+  de: "Mindestens 8 Zeichen, am besten zufällig erzeugt statt ausgedacht – hinter dieser Anmeldung liegt auch die Fabric-Sicherung. Dieser Dienst spricht HTTP ohne Verschlüsselung; nimm ein Passwort, das du nirgendwo sonst benutzt."
+web.auth.setup_submit:
+  en: "Set password"
+  de: "Passwort vergeben"
+web.auth.login_submit:
+  en: "Log in"
+  de: "Anmelden"
+web.auth.session_expired:
+  en: "The session has expired – please log in again."
+  de: "Die Sitzung ist abgelaufen – bitte erneut anmelden."
+web.auth.password_mismatch:
+  en: "The two entries do not match."
+  de: "Die beiden Eingaben stimmen nicht überein."
+
+# --- web.devices — Geraeteliste, Einlernen, Bedienung ---
+web.devices.commission_heading:
+  en: "Commission a new device"
+  de: "Neues Gerät einlernen"
+web.devices.code_placeholder:
+  en: "Pairing code (11 digits or MT:…)"
+  de: "Pairing-Code (11-stellig oder MT:…)"
+web.devices.thread_dataset_placeholder:
+  en: "Thread dataset (Thread devices only)"
+  de: "Thread-Datensatz (nur bei Thread-Geräten)"
+web.devices.commission_submit:
+  en: "Commission"
+  de: "Einlernen"
+web.devices.commission_hint:
+  en: "If the device is already paired with Apple, Google, or a DIRIGERA, the printed code no longer works here — generate an additional multi-admin code there and enter that instead."
+  de: "Hängt das Gerät schon in Apple, Google oder einer DIRIGERA, funktioniert der aufgedruckte Code hier nicht mehr – dort einen zusätzlichen Multi-Admin-Code erzeugen und stattdessen diesen eingeben."
+web.devices.empty:
+  en: "No device commissioned yet."
+  de: "Noch kein Gerät eingelernt."
+web.devices.changed_since_export:
+  en: "Changed since export"
+  de: "Geändert seit Export"
+web.devices.offline:
+  en: "Offline"
+  de: "Offline"
+web.devices.remove:
+  en: "Remove"
+  de: "Entfernen"
+web.devices.values_heading:
+  en: "Values"
+  de: "Werte"
+web.devices.signals_loading:
+  en: "Loading signals…"
+  de: "Signale werden geladen…"
+web.devices.no_functional_signals:
+  en: "No functional signals for this device."
+  de: "Keine funktionalen Signale für dieses Gerät."
+web.devices.more_in_signals_view:
+  en: "more in the Signals view."
+  de: "weitere in der Ansicht „Signale“."
+web.devices.controls_heading:
+  en: "Controls"
+  de: "Bedienung"
+web.devices.controls_loading:
+  en: "Loading controls…"
+  de: "Bedienelemente werden geladen…"
+web.devices.no_known_commands:
+  en: "No known output commands for this device."
+  de: "Keine bekannten Ausgangsbefehle für dieses Gerät."
+web.devices.value_placeholder:
+  en: "Value"
+  de: "Wert"
+web.devices.send:
+  en: "Send"
+  de: "Senden"
+web.devices.more_commands_unnamed:
+  en: "more commands exist, but are unnamed."
+  de: "weitere Kommandos vorhanden, aber nicht benannt."
+web.devices.export:
+  en: "Export"
+  de: "Exportieren"
+web.devices.export_hint_prefix:
+  en: "First set it in "
+  de: "Erst in "
+web.settings.miniserver_link:
+  en: "Settings → Miniserver connection"
+  de: "Einstellungen → Verbindung zum Miniserver"
+web.devices.export_hint_suffix:
+  en: "."
+  de: " hinterlegen."
+web.export.settings_hint_prefix:
+  en: "Managed in "
+  de: "Wird in "
+web.export.settings_hint_suffix:
+  en: "."
+  de: " verwaltet."
+web.devices.list_load_error:
+  en: "Could not load device list: {message}"
+  de: "Geraeteliste konnte nicht geladen werden: {message}"
+web.devices.controls_load_error:
+  en: "Could not load controls: {message}"
+  de: "Bedienelemente konnten nicht geladen werden: {message}"
+web.devices.export_never:
+  en: "Not exported yet"
+  de: "Noch nicht exportiert"
+web.devices.export_last:
+  en: "Last exported on {timestamp}"
+  de: "Zuletzt exportiert am {timestamp}"
+web.devices.label_save_error:
+  en: "Could not save name: {message}"
+  de: "Name konnte nicht gespeichert werden: {message}"
+web.devices.remove_error:
+  en: "Could not remove device: {message}"
+  de: "Gerät konnte nicht entfernt werden: {message}"
+web.devices.command_sent:
+  en: "\"{slug}\" was sent to {label}."
+  de: "\"{slug}\" wurde an {label} gesendet."
+web.devices.command_failed:
+  en: "\"{slug}\" failed: {message}"
+  de: "\"{slug}\" ist fehlgeschlagen: {message}"
+web.devices.exported_toast:
+  en: "{label} was exported."
+  de: "{label} wurde exportiert."
+web.devices.export_failed:
+  en: "Export failed: {message}"
+  de: "Export fehlgeschlagen: {message}"
+web.export.bridge_ip_missing:
+  en: "Please set the bridge IP in Settings → Miniserver connection first."
+  de: "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen."
+web.devices.remove_confirm:
+  en: |
+    Really remove device "{label}"? This cannot be undone.
+
+    Orphaned afterwards in Loxone:
+    • every virtual input/output with the key prefix "d{id}_"
+    • the imported templates "VIU_d{id}_….xml" and "VO_d{id}_….xml"
+
+    Delete these by hand in Loxone Config.
+  de: |
+    Gerät "{label}" wirklich entfernen? Das kann nicht rückgängig gemacht werden.
+
+    In Loxone bleiben danach verwaist:
+    • alle virtuellen Ein- und Ausgänge mit dem Schlüssel-Präfix "d{id}_"
+    • die importierten Vorlagen "VIU_d{id}_….xml" und "VO_d{id}_….xml"
+
+    Diese in Loxone Config von Hand löschen.
+web.devices.commission_code_required:
+  en: "Please enter a pairing code first."
+  de: "Bitte zuerst einen Pairing-Code eingeben."
+web.devices.commission_success:
+  en: |
+    {label} was commissioned. Live values only appear after a restart of the bridge – until then the device shows "online" but every signal shows "-" (known limitation, Spec 12.3). Exporting the templates already works independently of this.
+  de: |
+    {label} wurde eingelernt. Live-Werte erscheinen erst nach einem Neustart der Brücke – bis dahin zeigt das Gerät zwar „online“, aber jedes Signal „-“ (bekannte Grenze, Spec 12.3). Der Export der Vorlagen funktioniert davon unabhängig schon jetzt.
+web.devices.commission_failed:
+  en: "Commissioning failed: {message}"
+  de: "Einlernen fehlgeschlagen: {message}"
+
+# --- web.signals — Signalansicht ---
+web.signals.key_hint:
+  en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
+  de: "Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
+web.signals.functional_vs_expert_explanation:
+  en: "\"Functional\" are the signals that belong to the recognized device type (on/off, power, and similar) – \"Expert\" is everything else (network, device, and diagnostic values, technical counters). Both sections keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
+  de: "„Funktional“ sind die Signale, die zum erkannten Gerätetyp gehören (Ein/Aus, Leistung und Ähnliches) – „Experte“ alles andere (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Blöcke behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
+web.signals.show_expert:
+  en: "Show expert signals"
+  de: "Experten-Signale anzeigen"
+web.signals.load_button:
+  en: "Load signals"
+  de: "Signale laden"
+web.signals.none_functional:
+  en: "No signal of this device is considered functional."
+  de: "Kein Signal dieses Geräts gilt als funktional."
+web.signals.expert_collapsed_hint:
+  en: "Collapsed – {count} signals without a recognized meaning for this device type. \"Show expert signals\" above reveals them for all devices."
+  de: "Zugeklappt – {count} Signale ohne erkannte Bedeutung für diesen Gerätetyp. „Experten-Signale anzeigen“ oben blendet sie für alle Geräte ein."
+web.signals.key_tooltip:
+  en: "Wiring in Loxone – not changeable."
+  de: "Verdrahtung in Loxone – nicht änderbar."
+web.signals.export_checkbox:
+  en: "export"
+  de: "exportieren"
+web.signals.raw_write_placeholder:
+  en: "Write raw value"
+  de: "Rohwert schreiben"
+web.signals.raw_write_submit:
+  en: "Write"
+  de: "Schreiben"
+web.signals.group_functional:
+  en: "Functional"
+  de: "Funktional"
+web.signals.group_expert:
+  en: "Expert"
+  de: "Experte"
+web.signals.load_error:
+  en: "Could not load signals: {message}"
+  de: "Signale konnten nicht geladen werden: {message}"
+web.signals.title_save_error:
+  en: "Could not save title: {message}"
+  de: "Titel konnte nicht gespeichert werden: {message}"
+web.signals.export_flag_error:
+  en: "Could not change export flag: {message}"
+  de: "Export-Kennzeichen konnte nicht geaendert werden: {message}"
+web.signals.write_success:
+  en: "Written."
+  de: "Geschrieben."
+
+# --- web.export — Export-Tab ---
+web.export.heading:
+  en: "Export templates"
+  de: "Vorlagen exportieren"
+web.bridge_ip_label:
+  en: "IP of this bridge"
+  de: "IP dieser Brücke"
+web.export.udp_port_label:
+  en: "UDP port"
+  de: "UDP-Port"
+web.export.http_port_label:
+  en: "HTTP port (commands)"
+  de: "HTTP-Port (Kommandos)"
+web.export.include_system:
+  en: "Include system templates"
+  de: "Systemvorlagen einschließen"
+web.export.only_pending:
+  en: "only devices not yet exported"
+  de: "nur noch nicht exportierte Geräte"
+web.export.filter_explanation:
+  en: |
+    The filter applies to the preview <strong>and</strong> to the ZIP: when set, the download contains only the devices from the table below, and only those then count as exported.
+  de: |
+    Der Filter gilt für die Vorschau <strong>und</strong> für das ZIP: ist er gesetzt, enthält der Download nur die Geräte aus der Tabelle unten, und nur diese gelten danach als exportiert.
+web.export.preview_button:
+  en: "View preview"
+  de: "Vorschau ansehen"
+web.export.download_button:
+  en: "Download ZIP"
+  de: "ZIP herunterladen"
+web.export.preview_heading:
+  en: "Preview"
+  de: "Vorschau"
+web.export.col_device:
+  en: "Device"
+  de: "Gerät"
+web.export.col_viu:
+  en: "VIU file"
+  de: "VIU-Datei"
+web.export.col_vo:
+  en: "VO file"
+  de: "VO-Datei"
+web.export.col_inputs:
+  en: "Inputs"
+  de: "Eingänge"
+web.export.col_commands:
+  en: "Commands"
+  de: "Befehle"
+web.export.col_skipped:
+  en: "Skipped"
+  de: "Übersprungen"
+web.export.col_expert_withheld:
+  en: "Held back as expert"
+  de: "Als Experte zurückgehalten"
+web.export.col_last_exported:
+  en: "Last exported"
+  de: "Zuletzt exportiert"
+web.export.expert_withheld_explanation:
+  en: "\"Held back as expert\" signals would be technically exportable but don't belong to the device type by default (Signals view, \"Expert\" section) – each one can be enabled individually there."
+  de: "„Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber standardmäßig nicht zum Gerätetyp gehören (Ansicht „Signale“, Block „Experte“) – dort lässt sich jedes einzeln freischalten."
+web.export.system_files_prefix:
+  en: "System templates: "
+  de: "Systemvorlagen: "
+web.export.status_load_error:
+  en: "Could not load export status: {message}"
+  de: "Export-Status konnte nicht geladen werden: {message}"
+web.export.preview_failed:
+  en: "Preview failed: {message}"
+  de: "Vorschau fehlgeschlagen: {message}"
+web.export.download_failed:
+  en: "Download failed: {message}"
+  de: "Download fehlgeschlagen: {message}"
+
+# --- web.system — Systemcheck, Live-Diagnose, Sicherung ---
+web.system.checks_heading:
+  en: "System check"
+  de: "Systemcheck"
+web.system.refresh:
+  en: "Refresh"
+  de: "Aktualisieren"
+web.system.check_ok:
+  en: "OK"
+  de: "OK"
+web.system.check_error:
+  en: "Error"
+  de: "Fehler"
+web.system.live_heading:
+  en: "Live diagnostics"
+  de: "Live-Diagnose"
+web.system.diag_disconnected:
+  en: "Connection lost – reconnecting…"
+  de: "Verbindung getrennt – verbinde neu…"
+web.system.resume:
+  en: "Resume"
+  de: "Fortsetzen"
+web.system.pause:
+  en: "Pause"
+  de: "Pausieren"
+web.system.hide_noise:
+  en: "Hide heartbeat and full-resend"
+  de: "Heartbeat und Full-Resend ausblenden"
+web.system.log_level_label:
+  en: "Log level"
+  de: "Log-Stufe"
+web.system.log_level_info:
+  en: "Info"
+  de: "Info"
+web.system.log_level_warn:
+  en: "Warning"
+  de: "Warnung"
+web.system.log_level_critical:
+  en: "Critical"
+  de: "Kritisch"
+web.system.clear:
+  en: "Clear"
+  de: "Leeren"
+web.system.pause_clear_explanation:
+  en: |
+    "Pause" only stops new lines from being appended, not the connection itself – lines arriving during the pause are not caught up afterwards, like a paused <span class="key">tail -f</span>. "Clear" only affects this page, not the bridge's own ring buffers.
+  de: |
+    „Pausieren“ haelt nur das Anhaengen neuer Zeilen an, nicht die Verbindung selbst – waehrend der Pause eintreffende Zeilen werden nicht nachgeholt, wie bei einem angehaltenen <span class="key">tail -f</span>. „Leeren“ wirkt nur auf diese Seite, nicht auf die Ringe der Brücke.
+web.system.logs_heading:
+  en: "Logs"
+  de: "Logs"
+web.system.logs_hint:
+  en: "The bridge's log lines, live – newest on top, auto-scrolling."
+  de: "Protokollzeilen der Brücke, laufend – jüngste oben, folgt automatisch."
+web.system.udp_heading:
+  en: "UDP capture"
+  de: "UDP-Mitschnitt"
+web.system.udp_hint:
+  en: "Datagrams actually sent over the wire, live – newest on top, auto-scrolling."
+  de: "Tatsächlich über den Draht geschickte Datagramme, laufend – jüngste oben, folgt automatisch."
+web.system.command_log_heading:
+  en: "Command log"
+  de: "Kommando-Log"
+web.system.command_log_hint:
+  en: "Incoming HTTP calls with their result, live."
+  de: "Eingehende HTTP-Aufrufe mit ihrem Ergebnis, laufend."
+web.system.backup_heading:
+  en: "Backup"
+  de: "Sicherung"
+web.system.backup_explanation:
+  en: "Backup of the fabric credentials (matter-server data directory) as a ZIP file – the only irreplaceable state of this installation. If it's lost, every device must be recommissioned."
+  de: "Sicherung der Fabric-Zugangsdaten (matter-server-Datenverzeichnis) als ZIP-Datei – der einzige unersetzliche Zustand dieser Installation. Geht er verloren, muss jedes Gerät neu eingelernt werden."
+web.system.backup_access_note:
+  en: "Only accessible after logging in, like every other function on this page: whoever can download it can take over the Matter fabric."
+  de: "Nur nach Anmeldung abrufbar, wie jede andere Funktion dieser Seite: wer sie herunterladen kann, kann die Matter-Fabric übernehmen."
+web.system.backup_download:
+  en: "Download backup"
+  de: "Sicherung herunterladen"
+web.system.load_error:
+  en: "Could not load diagnostics: {message}"
+  de: "Diagnose konnte nicht geladen werden: {message}"
+web.system.backup_error:
+  en: "Backup not possible: {message}"
+  de: "Sicherung nicht möglich: {message}"
+
+# --- web.settings — Einstellungen-Tab ---
+web.settings.connection_heading:
+  en: "Miniserver connection"
+  de: "Verbindung zum Miniserver"
+web.settings.connection_explanation:
+  en: |
+    This means the address of the machine loxmatter runs on – as the Miniserver sees it. <strong>Not</strong> the Miniserver's address. The virtual input only accepts datagrams from this address, and the output commands call it as <span class="key">http://&lt;this IP&gt;:HTTP-port</span>. If the Miniserver's IP is entered here, the templates look correct but stay silent – with no error message.
+  de: |
+    Gemeint ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der Miniserver ihn sieht. <strong>Nicht</strong> die Adresse des Miniservers. Der virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span> auf. Steht hier die Miniserver-IP, sehen die Vorlagen richtig aus, bleiben aber stumm – ohne jede Fehlermeldung.
+web.settings.bridge_ip_placeholder:
+  en: "e.g. 192.168.1.20"
+  de: "z. B. 192.168.1.20"
+web.settings.udp_port_label:
+  en: "UDP port (virtual input)"
+  de: "UDP-Port (virtueller Eingang)"
+web.settings.http_port_label:
+  en: "HTTP port (receiving commands)"
+  de: "HTTP-Port (Befehle empfangen)"
+web.settings.save:
+  en: "Save"
+  de: "Speichern"
+web.settings.last_saved_prefix:
+  en: "Last saved: "
+  de: "Zuletzt gespeichert: "
+web.settings.never_saved:
+  en: "Not saved yet."
+  de: "Noch nicht gespeichert."
+web.settings.more_settings_heading:
+  en: "More settings"
+  de: "Weitere Einstellungen"
+web.settings.load_error:
+  en: "Could not load settings: {message}"
+  de: "Einstellungen konnten nicht geladen werden: {message}"
+web.settings.bridge_ip_required:
+  en: "Please enter the IP of this bridge."
+  de: "Bitte die IP dieser Brücke eingeben."
+web.settings.saved_toast:
+  en: "Settings saved."
+  de: "Einstellungen gespeichert."
+web.settings.save_error:
+  en: "Could not save settings: {message}"
+  de: "Einstellungen konnten nicht gespeichert werden: {message}"
+web.settings.language_heading:
+  en: "Language"
+  de: "Sprache"
+web.settings.language_en:
+  en: "English"
+  de: "Englisch"
+web.settings.language_de:
+  en: "German"
+  de: "Deutsch"
+
+# --- web.format — gemeinsame Formatierungshelfer ---
+web.format.never:
+  en: "never"
+  de: "noch nie"
+web.format.true:
+  en: "true"
+  de: "wahr"
+web.format.false:
+  en: "false"
+  de: "falsch"
+
+# --- web.errors — Netzwerk-/generische Fehler ---
+web.errors.http_status:
+  en: "HTTP {status}"
+  de: "HTTP {status}"
+web.errors.bridge_unreachable:
+  en: "The bridge is unreachable – it may not be running."
+  de: "Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht."

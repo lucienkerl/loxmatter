@@ -102,3 +102,32 @@ def test_raw_template_falls_back_to_english_when_german_is_missing():
 def test_raw_template_raises_for_an_unknown_key():
     with pytest.raises(KeyError):
         i18n.raw_template("test.does_not_exist")
+
+
+# -----------------------------------------------------------------------------
+# web.* - Regressionstests fuer die vollstaendige WebUI-Uebersetzungstabelle
+# (Aufgabe 9): sie sollen ein versehentlich unvollstaendiges oder kaputtes
+# Einfuegen abfangen, nicht jede einzelne Zeichenkette pruefen - das macht
+# die Bindungs-Aufgabe 10+ ueber Text-Pattern-Matching auf den ausgelieferten
+# Quelltext.
+# -----------------------------------------------------------------------------
+
+
+def test_web_namespace_has_no_missing_english_fallback_gaps():
+    """Jeder web.*-Schluessel muss mindestens 'en' tragen - raw_template()
+    wirft KeyError, wenn selbst 'en' fehlt (siehe dessen Implementierung,
+    hinzugefuegt beim Bugfix vor dieser Aufgabe: GET /api/i18n stuerzte
+    zuvor an genau dieser Stelle ab, weil t() hier - mit .format() und
+    ohne Platzhalterwerte - bei JEDEM web.*-Schluessel mit einem
+    {platzhalter} eine KeyError geworfen haette. raw_template() ist die
+    richtige Funktion fuer diese Pruefung: sie prueft nur "gibt es
+    ueberhaupt einen en-Eintrag", nicht "sind alle Platzhalter befuellt" -
+    letzteres ist client-seitig app.js's Aufgabe, nie serverseitig."""
+    for key in i18n.strings_with_prefix("web."):
+        assert i18n.raw_template(key)  # wirft nur, wenn 'en' fehlt - keine .format()-Falle
+
+
+def test_web_namespace_key_count_is_substantial():
+    """Grobe Bewahrung gegen ein versehentlich unvollstaendiges Einfuegen -
+    kein exakter Schwellwert, nur ein Mindestmass."""
+    assert len(i18n.strings_with_prefix("web.")) > 100
