@@ -1519,11 +1519,11 @@ async def test_the_settings_tab_has_a_language_toggle(api):
 
     assert "x-text=\"t('web.settings.language_heading')\"" in markup
 
-    assert ':class="{ active: language === \'en\' }"' in markup
+    assert ":class=\"{ active: language === 'en' }\"" in markup
     assert "@click=\"setLanguage('en')\"" in markup
     assert "x-text=\"t('web.settings.language_en')\"" in markup
 
-    assert ':class="{ active: language === \'de\' }"' in markup
+    assert ":class=\"{ active: language === 'de' }\"" in markup
     assert "@click=\"setLanguage('de')\"" in markup
     assert "x-text=\"t('web.settings.language_de')\"" in markup
 
@@ -1544,3 +1544,29 @@ async def test_app_js_defines_set_language(api):
     body = script[start:end]
     assert 'await this.request("PATCH", "/api/language", { language });' in body
     assert "window.location.reload();" in body
+
+
+async def test_set_language_handles_request_failures_like_save_settings(api):
+    """Review-Fix Important (Whole-Branch-Review, 2026-09-04): jede andere
+    Aktion in app.js (`saveSettings`, `exportDevice`, `commissionDevice`,
+    `sendCommand`, ...) kapselt `this.request(...)` in try/catch und
+    zeigt einen Fehler ueber ein bestehendes Fehlerfeld an -
+    `setLanguage` war bislang die einzige Ausnahme: ein Fehlschlag (z. B.
+    400/502, `this.request` wirft erneut ausser bei 401) wurde zu einer
+    unbehandelten Promise-Ablehnung ohne jede Rueckmeldung. Dieser Test
+    haelt fest, dass `setLanguage` jetzt dasselbe try/catch/finally-Muster
+    wie `saveSettings` verwendet (settingsBusy-Wache eingeschlossen)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    start = script.index("async setLanguage(language) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+    assert "try {" in body
+    assert "} catch (error) {" in body
+    assert "} finally {" in body
+    assert (
+        'this.settingsError = t("web.settings.language_error", { message: error.message });' in body
+    )
+    assert "this.settingsBusy = true;" in body
+    assert "this.settingsBusy = false;" in body

@@ -1130,13 +1130,31 @@ function app() {
      * und laedt danach die ganze Seite neu - bestaetigte, einfachere Variante
      * aus dem Entwurfsgespraech (Spec Abschnitt 7): kein Sonderfall fuer
      * bereits angezeigte Toasts oder WebSocket-Zustaende, die sonst in der
-     * alten Sprache stehen blieben. */
+     * alten Sprache stehen blieben.
+     *
+     * try/catch/finally um `this.request(...)` - dieselbe Form wie
+     * `saveSettings()` oben (Review-Fix Important, Whole-Branch-Review
+     * 2026-09-04): `this.request` wirft erneut bei jedem Fehler ausser 401,
+     * ohne dieses try/catch waere ein Fehlschlag (z. B. 400/502) eine
+     * unbehandelte Promise-Ablehnung ohne jede Rueckmeldung fuer den
+     * Nutzer. `settingsBusy` verhindert ausserdem, dass ein schneller
+     * Doppelklick zwei gleichzeitige PATCH-Aufrufe abfeuert - wird mit
+     * `saveSettings()` geteilt, beide Aktionen leben in derselben
+     * Einstellungen-Karte. */
     async setLanguage(language) {
       if (language === this.language) {
         return;
       }
-      await this.request("PATCH", "/api/language", { language });
-      window.location.reload();
+      this.settingsError = null;
+      this.settingsBusy = true;
+      try {
+        await this.request("PATCH", "/api/language", { language });
+        window.location.reload();
+      } catch (error) {
+        this.settingsError = t("web.settings.language_error", { message: error.message });
+      } finally {
+        this.settingsBusy = false;
+      }
     },
 
     async previewExport() {

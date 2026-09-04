@@ -734,14 +734,17 @@
             <button
               :class="{ active: language === 'en' }"
               @click="setLanguage('en')"
+              :disabled="settingsBusy"
               x-text="t('web.settings.language_en')"
             ></button>
             <button
               :class="{ active: language === 'de' }"
               @click="setLanguage('de')"
+              :disabled="settingsBusy"
               x-text="t('web.settings.language_de')"
             ></button>
           </nav>
+          <p x-show="settingsError" x-cloak class="banner danger" x-text="settingsError"></p>
         </div>
       </section>
     </main>

@@ -947,6 +947,9 @@ web.settings.language_en:
 web.settings.language_de:
   en: "German"
   de: "Deutsch"
+web.settings.language_error:
+  en: "Could not change language: {message}"
+  de: "Sprache konnte nicht geändert werden: {message}"
 
 # --- web.format — gemeinsame Formatierungshelfer ---
 web.format.never:
