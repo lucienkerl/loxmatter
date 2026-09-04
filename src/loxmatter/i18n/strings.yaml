@@ -266,3 +266,24 @@ api.errors.subscribe_already_called:
 api.errors.commissioning_failed:
   en: "Commissioning failed: {exc}"
   de: "Einlernen fehlgeschlagen: {exc}"
+api.errors.device_unreachable:
+  en: "device unreachable: {exc}"
+  de: "Geraet nicht erreichbar: {exc}"
+api.errors.command_belongs_to_removed_device:
+  en: "command {command_key!r} belongs to device {device_id}, which was removed"
+  de: "Kommando {command_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+api.errors.unknown_signal_key:
+  en: "unknown signal key {signal_key!r}"
+  de: "unbekannter Signal-Schluessel {signal_key!r}"
+api.errors.signal_belongs_to_removed_device:
+  en: "signal {signal_key!r} belongs to device {device_id}, which was removed"
+  de: "Signal {signal_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+api.control.fail_not_writable:
+  en: "The writability of attribute {signal_key!r} cannot be confirmed, so it is not on the allow-list of writable attributes. If it really is writable, it can be added there."
+  de: "Die Beschreibbarkeit von Attribut {signal_key!r} laesst sich nicht bestaetigen, es steht deshalb nicht auf der Erlaubnisliste beschreibbarer Attribute. Ist es tatsaechlich beschreibbar, kann es dort ergaenzt werden."
+api.control.fail_not_wired:
+  en: "Attribute {signal_key!r} is writable, but raw writing is not yet connected to matter-server."
+  de: "Attribut {signal_key!r} ist beschreibbar, aber das rohe Schreiben ist noch nicht an matter-server angebunden."
+api.devices.fail_no_matter_client:
+  en: "No matter-server client configured — the bridge is running without a Matter connection"
+  de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"

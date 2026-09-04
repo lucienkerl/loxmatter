@@ -74,6 +74,7 @@ from typing import Protocol
 
 from fastapi import APIRouter, HTTPException
 
+from loxmatter import i18n
 from loxmatter.api.models import (
     CommissionRequest,
     DeviceOut,
@@ -179,8 +180,7 @@ def build_device_router(
         if client is None:
             raise HTTPException(
                 status_code=503,
-                detail="Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung"
-                " zu matter-server",
+                detail=i18n.t("api.devices.fail_no_matter_client"),
             )
         return client
 
@@ -226,13 +226,19 @@ def build_device_router(
         """
         stored = store.signal_by_key(key)
         if stored is None:
-            raise HTTPException(status_code=404, detail=f"unbekannter Signal-Schluessel {key!r}")
+            raise HTTPException(
+                status_code=404, detail=i18n.t("api.errors.unknown_signal_key", signal_key=key)
+            )
         try:
             store.device(stored.device_id)
         except UnknownDeviceError as exc:
             raise HTTPException(
                 status_code=404,
-                detail=f"Signal {key!r} gehoert zu Geraet {stored.device_id}, das entfernt wurde",
+                detail=i18n.t(
+                    "api.errors.signal_belongs_to_removed_device",
+                    signal_key=key,
+                    device_id=stored.device_id,
+                ),
             ) from exc
         if patch.title is not None:
             store.set_title(key, patch.title)
