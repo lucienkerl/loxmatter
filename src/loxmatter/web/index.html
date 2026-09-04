@@ -429,6 +429,14 @@
                               />
                               exportieren
                             </label>
+                            <label>
+                              <input
+                                type="checkbox"
+                                :checked="signal.resend"
+                                @change="toggleResend(signal)"
+                              />
+                              periodisch erneut senden
+                            </label>
                             <span
                               class="badge warn"
                               x-show="!signal.exportable"
@@ -729,8 +737,23 @@
         </div>
 
         <div class="card">
-          <h2>Weitere Einstellungen</h2>
-          <p class="hint">Hier entstehen künftig weitere Einstellungen, sobald sie gebraucht werden.</p>
+          <h2>Periodischer Resend</h2>
+          <p class="hint">
+            Markierte Signale (Haken „periodisch erneut senden" in der Signalliste) werden in
+            diesem Takt zwangsweise erneut gesendet, auch ohne Änderung - unabhängig davon
+            läuft ein voller Restore weiterhin einmalig beim Bridge-Start und über
+            „Erneut synchronisieren" im Bereich Diagnose.
+          </p>
+          <div class="row">
+            <label
+              >Intervall in Sekunden
+              <input type="number" x-model.number="resendIntervalDraft" />
+            </label>
+            <button class="primary" @click="saveResendInterval()" :disabled="resendIntervalBusy">
+              Speichern
+            </button>
+          </div>
+          <p x-show="resendIntervalError" x-cloak class="banner danger" x-text="resendIntervalError"></p>
         </div>
       </section>
     </main>

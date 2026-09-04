@@ -291,6 +291,26 @@ async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
     assert "signal.functional" in script
 
 
+async def test_the_signal_row_offers_a_resend_checkbox(api):
+    """Periodischer Resend als Opt-in (Entwurf 2026-09-04) - dieselbe Art
+    Beleg wie beim Funktional/Experte-Test oben: nur, dass die Bausteine
+    ausgeliefert werden und `signal.resend` lesen/schreiben, nicht dass
+    Alpine sie zur Laufzeit korrekt rendert (siehe dortiger Docstring)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    page = (await client.get("/")).text
+    assert "toggleResend" in script
+    assert "signal.resend" in page
+
+
+async def test_the_settings_view_offers_a_resend_interval_field(api):
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert "resendIntervalDraft" in page
+    assert "saveResendInterval" in script
+
+
 async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api):
     """Review-Fix Fix 9 (2026-09-03) hatte die Ueberschrift „Wichtigste
     Werte“ absichtlich in „Signale (Anfang der Liste)“ umbenannt, weil die
