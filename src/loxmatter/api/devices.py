@@ -208,7 +208,7 @@ def build_device_router(
 
     @router.patch("/signals/{key}")
     async def rename_signal(key: str, patch: SignalPatch) -> SignalOut:
-        """Aendert Titel und Export-Flag. Der Schluessel bleibt unberuehrt.
+        """Aendert Titel, Export- und Resend-Flag. Der Schluessel bleibt unberuehrt.
 
         Spec 6.2: der Schluessel ist die Verdrahtung in Loxone. Waere er hier
         aenderbar, koennte ein Klick in der Oberflaeche einen Baustein im Haus

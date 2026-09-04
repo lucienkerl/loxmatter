@@ -502,13 +502,35 @@ class Runtime:
         Abschnitt 4/6) statt einer beim Start fixierten Konstante: dieser
         Takt liest sie bei JEDEM Poll frisch, alle `resend_poll_seconds`
         (Default 5s) - eine Aenderung ueber die WebUI wirkt sich damit binnen
-        weniger Sekunden aus, ohne Prozess-Neustart."""
+        weniger Sekunden aus, ohne Prozess-Neustart.
+
+        Zwei getrennte Fehlerpfade (Nachbesserung, finaler Review): ein
+        Fehler beim Lesen des Intervalls (z. B. eine kurzzeitig gesperrte
+        Datenbank) darf `last_resend` NICHT weiterschieben - sonst saehe ein
+        eigentlich faelliger Resend im naechsten Poll faelschlich wie gerade
+        erst erledigt aus. Ein Fehler bei `resend_marked()` selbst schiebt
+        `last_resend` dagegen weiter, wie schon zuvor: ein dauerhaft
+        kaputter Sender soll nicht bei JEDEM Poll erneut anlaufen, sondern
+        wieder ein volles Intervall abwarten. Ohne die Trennung in zwei
+        try/except-Bloecke wuerde ein Fehler beim Intervall-Lesen die
+        gesamte Schleife unbeobachtet sterben lassen (`Runtime.stop()`s
+        `asyncio.gather(..., return_exceptions=True)` schluckt das beim
+        naechsten Beenden zusaetzlich, ohne je etwas geloggt zu haben)."""
         loop = asyncio.get_running_loop()
         last_resend = loop.time()
         while True:
             await asyncio.sleep(self._resend_poll_seconds)
-            interval = self._store.resend_settings.get_interval_seconds()
-            if loop.time() - last_resend < interval:
+            try:
+                interval = self._store.resend_settings.get_interval_seconds()
+                due = loop.time() - last_resend >= interval
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Resend-Intervall konnte nicht gelesen werden - Schleife laeuft weiter"
+                )
+                continue
+            if not due:
                 continue
             try:
                 await self.resend_marked()

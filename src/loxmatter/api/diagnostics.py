@@ -266,8 +266,9 @@ class DatagramLogEntry:
     `forced` uebernimmt unveraendert das `force`-Argument, mit dem `send()`
     aufgerufen wurde (Nachbesserung Task 6, 2026-09-03): `True` heisst
     "gesendet, obwohl sich der Wert nicht geaendert hat" - das trifft in
-    diesem Projekt auf GENAU zwei Aufrufer zu, `Runtime.resend_all()` und
-    den Heartbeat (`Runtime._heartbeat_loop`). `False` heisst dagegen "eine
+    diesem Projekt auf GENAU drei Aufrufer zu, `Runtime.resend_all()`,
+    `Runtime.resend_marked()` und den Heartbeat (`Runtime._heartbeat_loop`).
+    `False` heisst dagegen "eine
     echte Wertaenderung" - ein Impuls (`Runtime.on_event`) und sein Zaehler
     zaehlen dazu, auch wenn beide binnen Mikrosekunden hintereinander
     gesendet werden. Genau diese Unterscheidung ersetzt die fruehere

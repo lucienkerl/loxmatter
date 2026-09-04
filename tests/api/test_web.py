@@ -295,12 +295,28 @@ async def test_the_signal_row_offers_a_resend_checkbox(api):
     """Periodischer Resend als Opt-in (Entwurf 2026-09-04) - dieselbe Art
     Beleg wie beim Funktional/Experte-Test oben: nur, dass die Bausteine
     ausgeliefert werden und `signal.resend` lesen/schreiben, nicht dass
-    Alpine sie zur Laufzeit korrekt rendert (siehe dortiger Docstring)."""
+    Alpine sie zur Laufzeit korrekt rendert (siehe dortiger Docstring).
+
+    Zusaetzlich (finaler Review, Important #3): das umschliessende `<label>`
+    der Checkbox selbst muss dasselbe `x-show="signal.exportable"` tragen
+    wie das „exportieren“-Label direkt darueber - sonst bleibt die Checkbox
+    auch fuer nicht-exportierbare Signale sichtbar, obwohl `resend_marked()`
+    dort (`_last_values` bleibt fuer sie leer, siehe `Runtime._cache_attribute`)
+    nie etwas bewirken kann. Der Substring-Test allein wuerde das nicht
+    belegen - `x-show="signal.exportable"` steht bereits beim „exportieren“-
+    Label - deshalb wird hier gezielt das `<label>` extrahiert, das die
+    Resend-Checkbox umschliesst, und NUR darin nach dem Guard gesucht."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     page = (await client.get("/")).text
     assert "toggleResend" in script
     assert "signal.resend" in page
+
+    resend_idx = page.index('signal.resend')
+    label_start = page.rindex("<label", 0, resend_idx)
+    label_end = page.index("</label>", resend_idx) + len("</label>")
+    resend_label = page[label_start:label_end]
+    assert 'x-show="signal.exportable"' in resend_label
 
 
 async def test_the_settings_view_offers_a_resend_interval_field(api):

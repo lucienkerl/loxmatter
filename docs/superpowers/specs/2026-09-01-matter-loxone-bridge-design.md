@@ -446,7 +446,11 @@ UDP ist zustandslos. Nach einem Miniserver-Neustart stehen alle Eingänge auf `D
 bis das nächste Update eintrifft — bei einem Temperatursensor potenziell Stunden.
 
 - **Periodischer Full-Resend** aller aktuellen Werte, Default alle 5 min, gestaffelt auf
-  ca. 50 Datagramme/s.
+  ca. 50 Datagramme/s. **Seit dem Entwurf periodischer Resend
+  (2026-09-04) gilt das nur noch für `/resync` und den Brücken-Start** — der
+  periodische Timer selbst resent nur noch einzeln markierte Signale, mit
+  einem eigenen, über die WebUI konfigurierbaren Intervall. Details:
+  [Entwurf periodischer Resend](2026-09-04-periodischer-resend-design.md).
 - **`/resync`-Endpoint**, als fertiger `VirtualOutCmd` mitexportiert. Im Config-Projekt
   an den Systemstart-Baustein gehängt, sind nach jedem Neustart sofort alle Werte da.
 

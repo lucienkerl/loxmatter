@@ -307,6 +307,36 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
     assert key in sender.keys()
 
 
+async def test_resend_loop_survives_a_failing_interval_read(environment, monkeypatch):
+    """Ein Fehler beim Lesen des Intervalls (z. B. eine kurzzeitig gesperrte
+    Datenbank) darf die Schleife nicht unbeobachtet sterben lassen (finaler
+    Review, Important #1)."""
+    _, sender, store, device_id, _ = environment
+    key = f"d{device_id}_2_voltage"
+    store.set_resend(key, True)
+
+    calls = {"n": 0}
+
+    def flaky_get_interval() -> float:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("Datenbank kurzzeitig gesperrt")
+        return 0.01
+
+    monkeypatch.setattr(store.resend_settings, "get_interval_seconds", flaky_get_interval)
+
+    runtime = Runtime(store, sender, resend_poll_seconds=0.02)
+    await runtime.on_attribute(device_id, "2/144/4", 230000)
+    sender.sent.clear()
+
+    await runtime.start()
+    await asyncio.sleep(0.09)
+    await runtime.stop()
+
+    assert calls["n"] >= 2  # die Schleife hat den ersten Fehler ueberlebt und weiter gepollt
+    assert key in sender.keys()  # und danach tatsaechlich resent, sobald das Lesen wieder klappt
+
+
 async def test_heartbeat_toggles(environment):
     """Spec 6.5: bridge_alive deckt "Container tot" und "Netz weg" gleichermassen ab."""
     _, sender, store, _, _ = environment

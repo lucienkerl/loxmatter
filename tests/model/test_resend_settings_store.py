@@ -57,6 +57,21 @@ def test_set_interval_rejects_a_value_below_the_minimum(tmp_path):
         store.close()
 
 
+def test_an_unparsable_stored_value_falls_back_to_the_default(tmp_path):
+    """Kann nur durch eine manuelle Aenderung der Datenbank entstehen (der
+    einzige Schreibpfad, set_interval_seconds, validiert vorher) - aber
+    get_interval_seconds soll trotzdem nie werfen (finaler Review)."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        store._db.execute(
+            "INSERT INTO setting (key, value) VALUES ('resend_interval_seconds', 'nicht-numerisch')"
+        )
+        store._db.commit()
+        assert store.resend_settings.get_interval_seconds() == DEFAULT_RESEND_INTERVAL_SECONDS
+    finally:
+        store.close()
+
+
 def test_interval_survives_reopening_the_same_database(tmp_path):
     path = tmp_path / "t.sqlite"
     store = Store(path)

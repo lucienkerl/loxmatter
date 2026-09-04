@@ -1106,6 +1106,10 @@ function app() {
 
     async saveResendInterval() {
       this.resendIntervalError = null;
+      if (!Number.isFinite(this.resendIntervalDraft) || this.resendIntervalDraft < 10) {
+        this.resendIntervalError = "Bitte ein Intervall von mindestens 10 Sekunden eingeben.";
+        return;
+      }
       this.resendIntervalBusy = true;
       try {
         this.resendInterval = await this.request("PATCH", "/api/settings/resend-interval", {

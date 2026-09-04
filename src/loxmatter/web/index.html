@@ -429,7 +429,7 @@
                               />
                               exportieren
                             </label>
-                            <label>
+                            <label x-show="signal.exportable">
                               <input
                                 type="checkbox"
                                 :checked="signal.resend"
@@ -747,7 +747,7 @@
           <div class="row">
             <label
               >Intervall in Sekunden
-              <input type="number" x-model.number="resendIntervalDraft" />
+              <input type="number" min="10" x-model.number="resendIntervalDraft" />
             </label>
             <button class="primary" @click="saveResendInterval()" :disabled="resendIntervalBusy">
               Speichern

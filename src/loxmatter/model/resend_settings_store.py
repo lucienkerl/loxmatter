@@ -46,13 +46,23 @@ class ResendSettingsStore:
 
     def get_interval_seconds(self) -> float:
         """Der gespeicherte Wert - `DEFAULT_RESEND_INTERVAL_SECONDS`, solange
-        nichts gespeichert ist. Wirft nie."""
+        nichts gespeichert ist ODER der gespeicherte Wert nicht mehr als Zahl
+        lesbar ist (z. B. nach einer manuellen Aenderung der Datenbank von
+        aussen). Dieser eine Fall faellt bewusst still auf den Vorgabewert
+        zurueck, statt den Aufrufer (den periodischen Timer in
+        `Runtime._resend_loop`) daran scheitern zu lassen. Ein echter
+        Datenbankfehler (z. B. eine gesperrte Datei) wird davon NICHT
+        abgefangen und wirft weiterhin - `_resend_loop` hat dafuer einen
+        eigenen Fehlerpfad (siehe dort), der genau das erwartet."""
         row = self._db.execute(
             "SELECT value FROM setting WHERE key = ?", (_INTERVAL_KEY,)
         ).fetchone()
         if row is None:
             return DEFAULT_RESEND_INTERVAL_SECONDS
-        return float(row["value"])
+        try:
+            return float(row["value"])
+        except (ValueError, TypeError):
+            return DEFAULT_RESEND_INTERVAL_SECONDS
 
     def set_interval_seconds(self, seconds: float) -> None:
         if seconds < MIN_RESEND_INTERVAL_SECONDS:
