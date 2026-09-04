@@ -84,6 +84,31 @@ def _flag(value: bool) -> str:
     return "true" if value else "false"
 
 
+def virtual_in_udp_cmd_attributes(entry: LoxoneInput) -> list[tuple[str, str]]:
+    """Attribute eines einzelnen `VirtualInUdpCmd` — isoliert aus
+    `render_virtual_in_udp`, damit `projectsync.schema` dieselbe, bereits
+    gegen einen echten Import verifizierte Attributliste fuer neu in die
+    Projektdatei eingefuegte Objekte wiederverwenden kann, statt sie ein
+    zweites Mal zu erfinden."""
+    return [
+        ("Title", entry.title),
+        ("Comment", entry.comment),
+        ("Address", ""),
+        ("Check", f"{entry.key}:{entry.check_suffix}"),
+        ("Signed", "true"),
+        ("Analog", _flag(entry.analog)),
+        ("SourceValLow", "0"),
+        ("DestValLow", "0"),
+        ("SourceValHigh", "100"),
+        ("DestValHigh", "100"),
+        ("DefVal", "0"),
+        ("MinVal", "-2147483647"),
+        ("MaxVal", "2147483647"),
+        ("Unit", entry.unit_format),
+        ("HintText", ""),
+    ]
+
+
 def render_virtual_in_udp(
     device_label: str,
     bridge_ip: str,
@@ -91,29 +116,7 @@ def render_virtual_in_udp(
     inputs: Sequence[LoxoneInput],
 ) -> bytes:
     info = ("Info", [("templateType", "1"), ("minVersion", _MIN_VERSION)])
-    children = [
-        (
-            "VirtualInUdpCmd",
-            [
-                ("Title", entry.title),
-                ("Comment", entry.comment),
-                ("Address", ""),
-                ("Check", f"{entry.key}:{entry.check_suffix}"),
-                ("Signed", "true"),
-                ("Analog", _flag(entry.analog)),
-                ("SourceValLow", "0"),
-                ("DestValLow", "0"),
-                ("SourceValHigh", "100"),
-                ("DestValHigh", "100"),
-                ("DefVal", "0"),
-                ("MinVal", "-2147483647"),
-                ("MaxVal", "2147483647"),
-                ("Unit", entry.unit_format),
-                ("HintText", ""),
-            ],
-        )
-        for entry in inputs
-    ]
+    children = [("VirtualInUdpCmd", virtual_in_udp_cmd_attributes(entry)) for entry in inputs]
     return render_document(
         "VirtualInUdp",
         [
@@ -126,7 +129,7 @@ def render_virtual_in_udp(
     )
 
 
-def _virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]:
+def virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]:
     """Die Attribute eines virtuellen Ausgangs, in der Form, die Loxone Config
     selbst schreibt.
 
@@ -190,7 +193,7 @@ def render_virtual_out(
     commands: Sequence[LoxoneCommand],
 ) -> bytes:
     info = ("Info", [("templateType", "3"), ("minVersion", _MIN_VERSION)])
-    children = [("VirtualOutCmd", _virtual_out_cmd_attributes(command)) for command in commands]
+    children = [("VirtualOutCmd", virtual_out_cmd_attributes(command)) for command in commands]
     return render_document(
         "VirtualOut",
         [

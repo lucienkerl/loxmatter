@@ -254,3 +254,39 @@ class BridgeSettingsIn(BaseModel):
     bridge_ip: str = Field(min_length=1)
     udp_port: int
     listen_port: int
+
+
+class ProjectSyncEntryOut(BaseModel):
+    """Eine Zeile im Diff-Plan von `POST /api/export/project-sync` (Entwurf
+    Abschnitt 5/7). `changes` ist ausserhalb von `status == "updated"` immer
+    leer."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: str
+    device_id: int
+    device_label: str
+    key: str
+    title: str
+    status: str
+    changes: dict[str, list[str]]
+
+
+class ProjectSyncPlanOut(BaseModel):
+    """Antwort von `POST /api/export/project-sync` - Plan und beide
+    gepatchten Datei-Varianten in einer Antwort (Entwurf Abschnitt 4/7): kein
+    zweiter Server-Roundtrip, der "Bestaetigen"-Schritt ist rein
+    clientseitig."""
+
+    model_config = ConfigDict(frozen=True)
+
+    entries: list[ProjectSyncEntryOut]
+    has_changes: bool
+    patched_conservative_base64: str
+    # `None`, wenn die experimentelle Variante fuer diese Datei nicht gebaut
+    # werden konnte (z. B. fehlender `VirtualInCaption`-Abschnitt, Entwurf
+    # Abschnitt 8). Der Plan und die konservative Variante bleiben davon
+    # unberuehrt - die Oberflaeche zeigt dann nur den Grund statt des
+    # Download-Angebots.
+    patched_with_new_devices_base64: str | None
+    new_devices_unavailable_reason: str | None

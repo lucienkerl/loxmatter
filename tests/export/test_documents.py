@@ -19,6 +19,8 @@ from loxmatter.export.documents import (
     filename_for,
     render_virtual_in_udp,
     render_virtual_out,
+    virtual_in_udp_cmd_attributes,
+    virtual_out_cmd_attributes,
 )
 from loxmatter.export.signals import LoxoneInput
 
@@ -175,3 +177,19 @@ def test_same_label_on_different_device_ids_never_collides():
     assert first != second
     assert first == "VIU_d1_Wohnzimmerlampe.xml"
     assert second == "VIU_d2_Wohnzimmerlampe.xml"
+
+
+def test_virtual_in_udp_cmd_attributes_matches_rendered_output():
+    entry = LoxoneInput("d1_1_temp", "Temperatur", "Wohnzimmer · 1/1026/0", True, "<v.1> °C")
+    attrs = dict(virtual_in_udp_cmd_attributes(entry))
+    assert attrs["Title"] == "Temperatur"
+    assert attrs["Check"] == "d1_1_temp:\\v"
+    assert attrs["Analog"] == "true"
+    assert attrs["Unit"] == "<v.1> °C"
+
+
+def test_virtual_out_cmd_attributes_is_importable():
+    command = LoxoneCommand("d1_1_on", "on", "/cmd/d1_1_on/1", False)
+    attrs = dict(virtual_out_cmd_attributes(command))
+    assert attrs["CmdOn"] == "/cmd/d1_1_on/1"
+    assert attrs["Analog"] == "true"

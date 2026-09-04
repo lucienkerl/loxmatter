@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from loxmatter.export.xml import render_document
+from loxmatter.export.xml import escape_attr_value, render_attrs, render_document
 
 
 def test_document_starts_with_utf8_bom():
@@ -73,3 +73,11 @@ def test_children_are_rendered_as_self_closing_elements():
     assert text.count("<VirtualInUdpCmd ") == 2
     assert text.count("/>") == 2
     assert text.rstrip().endswith("</VirtualInUdp>")
+
+
+def test_escape_attr_value_is_importable_and_escapes_quotes():
+    assert escape_attr_value('a"b&c<d>e') == "a&quot;b&amp;c&lt;d&gt;e"
+
+
+def test_render_attrs_is_importable():
+    assert render_attrs([("A", "1"), ("B", 'x"y')]) == 'A="1" B="x&quot;y"'

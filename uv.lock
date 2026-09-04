@@ -593,6 +593,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "fastapi" },
     { name = "python-matter-server" },
+    { name = "python-multipart" },
     { name = "pyyaml" },
     { name = "typer" },
     { name = "uvicorn" },
@@ -614,6 +615,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "python-matter-server", specifier = ">=8.1.2" },
+    { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", specifier = ">=0.30" },
@@ -1137,6 +1139,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/55/0e/ea175a671bd3324da7a51374639e7ada1c85b2746b72238948139d1014c4/python_matter_server-8.1.2.tar.gz", hash = "sha256:9af42cafe3331a843fa6bed52bbf59381350660a7764a97ed5b9e66f46af0b14", size = 153831, upload-time = "2025-12-15T14:56:47.81Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/01/da/b1c4c3b5626470354c1a199124f65b07526f84f4063b28f2d490611d28a7/python_matter_server-8.1.2-py3-none-any.whl", hash = "sha256:eccd1ef6deccd7dbcba21835e727d701d75e12c98a62cd30bf765e53cf3afe16", size = 169131, upload-time = "2025-12-15T14:56:46.695Z" },
+]
+
+[[package]]
+name = "python-multipart"
+version = "0.0.32"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/42/55c32bb9b12693c092ad250a0e82edb5b31ddeda6eb772de5f308b3804ad/python_multipart-0.0.32.tar.gz", hash = "sha256:be54b7f3fa167bb83e4fcd936b887b708f4e57fe75911c02aebf53efaf8d938e", size = 46881, upload-time = "2026-06-04T16:18:58.647Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/04/e8135ebd1ad02c56ec633277529b2602ff99ff634be76cdba5744cf554fd/python_multipart-0.0.32-py3-none-any.whl", hash = "sha256:ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23", size = 30042, upload-time = "2026-06-04T16:18:57.319Z" },
 ]
 
 [[package]]
