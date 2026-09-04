@@ -659,8 +659,8 @@ api.errors.unknown_device:
   en: "unknown device {device_id}"
   de: "unbekanntes Geraet {device_id}"
 api.errors.unknown_command:
-  en: "unknown command key {key!r}"
-  de: "unbekannter Kommando-Schluessel {key!r}"
+  en: "unknown command key {command_key!r}"
+  de: "unbekannter Kommando-Schluessel {command_key!r}"
 api.errors.value_not_a_number:
   en: "value {value!r} is not a number"
   de: "Wert {value!r} ist keine Zahl"
@@ -718,7 +718,7 @@ Change (around line 1178):
 ```
 to:
 ```python
-            raise UnknownCommandError(i18n.t("api.errors.unknown_command", key=key))
+            raise UnknownCommandError(i18n.t("api.errors.unknown_command", command_key=key))
 ```
 
 Edit `src/loxmatter/commands/translate.py`. Add the import:
@@ -924,20 +924,20 @@ api.errors.device_unreachable:
   en: "device unreachable: {exc}"
   de: "Geraet nicht erreichbar: {exc}"
 api.errors.command_belongs_to_removed_device:
-  en: "command {key!r} belongs to device {device_id}, which was removed"
-  de: "Kommando {key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+  en: "command {command_key!r} belongs to device {device_id}, which was removed"
+  de: "Kommando {command_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
 api.errors.unknown_signal_key:
-  en: "unknown signal key {key!r}"
-  de: "unbekannter Signal-Schluessel {key!r}"
+  en: "unknown signal key {signal_key!r}"
+  de: "unbekannter Signal-Schluessel {signal_key!r}"
 api.errors.signal_belongs_to_removed_device:
-  en: "signal {key!r} belongs to device {device_id}, which was removed"
-  de: "Signal {key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+  en: "signal {signal_key!r} belongs to device {device_id}, which was removed"
+  de: "Signal {signal_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
 api.control.fail_not_writable:
-  en: "The writability of attribute {key!r} cannot be confirmed, so it is not on the allow-list of writable attributes. If it really is writable, it can be added there."
-  de: "Die Beschreibbarkeit von Attribut {key!r} laesst sich nicht bestaetigen, es steht deshalb nicht auf der Erlaubnisliste beschreibbarer Attribute. Ist es tatsaechlich beschreibbar, kann es dort ergaenzt werden."
+  en: "The writability of attribute {signal_key!r} cannot be confirmed, so it is not on the allow-list of writable attributes. If it really is writable, it can be added there."
+  de: "Die Beschreibbarkeit von Attribut {signal_key!r} laesst sich nicht bestaetigen, es steht deshalb nicht auf der Erlaubnisliste beschreibbarer Attribute. Ist es tatsaechlich beschreibbar, kann es dort ergaenzt werden."
 api.control.fail_not_wired:
-  en: "Attribute {key!r} is writable, but raw writing is not yet connected to matter-server."
-  de: "Attribut {key!r} ist beschreibbar, aber das rohe Schreiben ist noch nicht an matter-server angebunden."
+  en: "Attribute {signal_key!r} is writable, but raw writing is not yet connected to matter-server."
+  de: "Attribut {signal_key!r} ist beschreibbar, aber das rohe Schreiben ist noch nicht an matter-server angebunden."
 api.devices.fail_no_matter_client:
   en: "No matter-server client configured — the bridge is running without a Matter connection"
   de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
@@ -965,7 +965,7 @@ Edit `src/loxmatter/api/control.py`. Add `from loxmatter import i18n` next to th
                 status_code=404,
                 detail=i18n.t(
                     "api.errors.command_belongs_to_removed_device",
-                    key=key,
+                    command_key=key,
                     device_id=stored.device_id,
                 ),
             ) from exc
@@ -993,7 +993,7 @@ Edit `src/loxmatter/api/control.py`. Add `from loxmatter import i18n` next to th
         stored = store.signal_by_key(key)
         if stored is None:
             raise HTTPException(
-                status_code=404, detail=i18n.t("api.errors.unknown_signal_key", key=key)
+                status_code=404, detail=i18n.t("api.errors.unknown_signal_key", signal_key=key)
             )
 ```
 
@@ -1011,11 +1011,13 @@ Edit `src/loxmatter/api/control.py`. Add `from loxmatter import i18n` next to th
                 status_code=404,
                 detail=i18n.t(
                     "api.errors.signal_belongs_to_removed_device",
-                    key=key,
+                    signal_key=key,
                     device_id=stored.device_id,
                 ),
             ) from exc
 ```
+
+Note: `t()`'s own first parameter is itself named `key` (the translation lookup key, e.g. `"api.errors.unknown_signal_key"`) — calling `i18n.t("some.key", key=...)` collides with it (`TypeError: t() got multiple values for argument 'key'`), which is why every placeholder above is named `signal_key`/`command_key`, never bare `key`. Task 2's implementer already hit and fixed this exact collision for `api.errors.unknown_command`; apply the same care here.
 
 ```python
             raise HTTPException(
@@ -1032,7 +1034,7 @@ Edit `src/loxmatter/api/control.py`. Add `from loxmatter import i18n` next to th
 ```python
             raise HTTPException(
                 status_code=400,
-                detail=i18n.t("api.control.fail_not_writable", key=key),
+                detail=i18n.t("api.control.fail_not_writable", signal_key=key),
             )
 ```
 
@@ -1049,7 +1051,7 @@ Edit `src/loxmatter/api/control.py`. Add `from loxmatter import i18n` next to th
 ```python
         raise HTTPException(
             status_code=501,
-            detail=i18n.t("api.control.fail_not_wired", key=key),
+            detail=i18n.t("api.control.fail_not_wired", signal_key=key),
         )
 ```
 
@@ -1086,7 +1088,7 @@ Edit `src/loxmatter/api/devices.py`. Add `from loxmatter import i18n` next to th
         stored = store.signal_by_key(key)
         if stored is None:
             raise HTTPException(
-                status_code=404, detail=i18n.t("api.errors.unknown_signal_key", key=key)
+                status_code=404, detail=i18n.t("api.errors.unknown_signal_key", signal_key=key)
             )
 ```
 
@@ -1104,11 +1106,13 @@ Edit `src/loxmatter/api/devices.py`. Add `from loxmatter import i18n` next to th
                 status_code=404,
                 detail=i18n.t(
                     "api.errors.signal_belongs_to_removed_device",
-                    key=key,
+                    signal_key=key,
                     device_id=stored.device_id,
                 ),
             ) from exc
 ```
+
+(same `key`-collision note as above applies to both calls here too — `signal_key=key`, never bare `key=key`)
 
 (the remaining `HTTPException(status_code=..., detail=str(exc))` call sites in both files — `_require_device`, `commission_device`'s three except-branches, `remove_device` — forward exceptions already migrated in Task 2; leave them untouched)
 
