@@ -64,3 +64,10 @@ def test_set_language_rejects_an_unsupported_value():
 
 def test_supported_languages_are_exactly_en_and_de():
     assert i18n.SUPPORTED_LANGUAGES == frozenset({"en", "de"})
+
+
+def test_strings_with_prefix_returns_only_matching_keys():
+    keys = i18n.strings_with_prefix("test.")
+    assert "test.greeting" in keys
+    assert "test.english_only" in keys
+    assert not any(not k.startswith("test.") for k in keys)

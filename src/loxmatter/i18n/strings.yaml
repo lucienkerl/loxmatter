@@ -217,3 +217,11 @@ cli.fake_miniserver.report_all_seen:
 cli.fake_miniserver.report_silent_header:
   en: "{count} signals from {template} never seen:"
   de: "{count} Signale aus {template} nie gesehen:"
+
+# api.language - Phase B+C, Spec-Abschnitt 5 (src/loxmatter/api/language.py).
+# Erster Eintrag eines neuen api.*-Namensraums, den diese und spaetere
+# Aufgaben dieser Phase weiter fuellen (bestehende API-Fehlermeldungen sind
+# noch nicht migriert - das folgt in den naechsten Aufgaben).
+api.language.fail_unsupported:
+  en: "Unsupported language '{language}' — expected: {supported}."
+  de: "Nicht unterstützte Sprache '{language}' — erwartet: {supported}."

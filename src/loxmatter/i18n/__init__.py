@@ -83,3 +83,11 @@ def t(key: str, **values: Any) -> str:
     entry = _STRINGS[key]
     template = entry.get(_current_language, entry["en"])
     return template.format(**values)
+
+
+def strings_with_prefix(prefix: str) -> list[str]:
+    """Alle Schluessel, die mit `prefix` beginnen - fuer `api/language.py`s
+    `GET /api/i18n`, das nur den `web.*`-Namensraum an den Client
+    ausliefert, nicht die gesamte Tabelle (CLI-Hilfetexte, API-
+    Fehlermeldungen etc. gehen den Browser nichts an)."""
+    return [key for key in _STRINGS if key.startswith(prefix)]

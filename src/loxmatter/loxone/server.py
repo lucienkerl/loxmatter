@@ -128,6 +128,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.requests import HTTPConnection
 from starlette.responses import Response as StarletteResponse
 
+from loxmatter import i18n
 from loxmatter.api.auth import build_auth_router
 from loxmatter.api.control import build_control_router
 from loxmatter.api.devices import RuntimeValues, build_device_router
@@ -138,6 +139,7 @@ from loxmatter.api.diagnostics import (
 )
 from loxmatter.api.diagnostics_live import build_diagnostics_live_router
 from loxmatter.api.export import build_export_router
+from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.settings import build_settings_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
@@ -382,6 +384,27 @@ def build_app(
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
     api_guard = [Depends(build_api_guard(api_token, store))]
 
+    @app.middleware("http")
+    async def _sync_language(
+        request: Request, call_next: Callable[[Request], Awaitable[StarletteResponse]]
+    ) -> StarletteResponse:
+        """Liest die gespeicherte Spracheinstellung bei JEDER Anfrage frisch
+        (Spec-Abschnitt 4) - registriert als ALLERERSTE Middleware, damit sie
+        vor `_record_command` und vor jeder Route (einschliesslich des
+        Anmelde-Waechters, dessen 401-Text ebenfalls uebersetzt ist) laeuft.
+        Middleware-Registrierungsreihenfolge in Starlette: die zuerst per
+        `@app.middleware("http")` registrierte Funktion wird zur AEUSSEREN
+        Schicht und sieht eine Anfrage deshalb zuerst - siehe die
+        ausfuehrliche Herleitung im Implementierungsplan dieser Aufgabe,
+        Abschnitt "Middleware-Registrierungsreihenfolge".
+
+        `store.locale.get_language()` wirft nie (Phase A) - kein try/except
+        noetig, anders als `_append_command_log` weiter unten, das einen
+        echten Fehlschlag beim Schreiben in einen fremden Ringpuffer
+        abfaengt."""
+        i18n.set_language(store.locale.get_language())
+        return await call_next(request)
+
     def _append_command_log(*, method: str, path: str, status: int) -> None:
         """Haengt einen Eintrag an - in ein eigenes try/except gekapselt, ein
         Fehler beim Mitschreiben selbst darf weder die Antwort noch (im
@@ -448,6 +471,7 @@ def build_app(
     app.include_router(build_device_router(store, client, runtime), dependencies=api_guard)
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
+    app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
     # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
     # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst
@@ -479,6 +503,10 @@ def build_app(
     # vier Routen erreichen koennen, sonst gibt es keinen Weg hinein
     # (siehe api/auth.py, Moduldocstring).
     app.include_router(build_auth_router(store))
+    # Siehe api/language.py-Moduldocstring: die Ersteinrichtungs-/
+    # Anmeldeseite braucht diese Uebersetzungen, um sich ueberhaupt
+    # anzuzeigen, bevor jemand angemeldet sein kann.
+    app.include_router(build_i18n_router(store))
 
     # Task 7, Phase 5: die WebUI selbst. `StaticFiles` weist einen Zugriff,
     # der ueber `_WEB_DIR` hinaus will (z. B. `/static/../../../etc/passwd`),
