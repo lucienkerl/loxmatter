@@ -1,4 +1,4 @@
-# loxmatter 🌉
+# <img src="src/loxmatter/web/icon.svg" alt="" width="28" height="28" align="top" /> loxmatter
 
 ![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)

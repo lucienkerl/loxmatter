@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="loxmatter">
+  <!--
+    loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+    Copyright (C) 2026 Lucien Kerl - GNU General Public License v3 oder
+    spaeter, siehe LICENSE.
+
+    Dasselbe Zeichen wie icon.svg, aber fuer die Groesse eines Browser-Tabs
+    nachgezogen: kuerzere Speichen, dickere Striche, groessere Punkte. Ohne
+    diese Anpassung fliessen die sechs Aussenpunkte bei 16 px zu einem Fleck
+    zusammen. Wer eine Kante verschiebt, muss beide Dateien anfassen.
+  -->
+  <rect width="512" height="512" rx="112" fill="#a15a2c"/>
+  <g stroke="#f6ece3" stroke-width="34" stroke-linecap="round">
+    <path d="M256 256 L386 256"/>
+    <path d="M256 256 L321 368"/>
+    <path d="M256 256 L191 368"/>
+    <path d="M256 256 L126 256"/>
+    <path d="M256 256 L191 144"/>
+    <path d="M256 256 L321 144"/>
+  </g>
+  <g fill="#f6ece3">
+    <circle cx="256" cy="256" r="58"/>
+    <circle cx="386" cy="256" r="34"/>
+    <circle cx="321" cy="368" r="34"/>
+    <circle cx="191" cy="368" r="34"/>
+    <circle cx="126" cy="256" r="34"/>
+    <circle cx="191" cy="144" r="34"/>
+    <circle cx="321" cy="144" r="34"/>
+  </g>
+</svg>

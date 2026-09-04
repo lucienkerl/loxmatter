@@ -116,6 +116,18 @@ async def test_the_page_does_not_promise_what_the_spec_excludes(api):
         assert absent not in script
 
 
+async def test_the_page_carries_an_icon_that_is_actually_ausgeliefert(api):
+    """Ein `link rel="icon"` ins Leere faellt niemandem auf - der Browser zeigt
+    dann still sein Standardblatt. Deshalb hier beides in einem Test: dass die
+    Seite das Icon nennt UND dass unter dem genannten Pfad etwas liegt."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert 'href="/static/favicon.svg"' in page
+    response = await client.get("/static/favicon.svg")
+    assert response.status_code == 200
+    assert "svg" in response.headers["content-type"]
+
+
 async def test_static_files_do_not_escape_their_directory(api):
     client, _, _ = api
     response = await client.get("/static/../../../etc/passwd")

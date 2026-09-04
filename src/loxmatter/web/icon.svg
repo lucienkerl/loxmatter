@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="loxmatter">
+  <!--
+    loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+    Copyright (C) 2026 Lucien Kerl - GNU General Public License v3 oder
+    spaeter, siehe LICENSE.
+
+    Das Zeichen: ein Knoten mit sechs Nachbarn - loxmatter als der Punkt, an
+    dem das Thread-Netz zusammenlaeuft. Farben aus style.css, nur umgekehrt
+    aufgetragen: `--accent` (#a15a2c) als Flaeche statt als Strich, damit das
+    Icon nicht wie eine weitere Karte der Oberflaeche aussieht.
+
+    Diese Fassung ist die grosse: fuer die README, Repository-Bilder und
+    alles ab etwa 32 px. Darunter greift favicon.svg mit kraeftigeren
+    Strichen - die sechs Aussenpunkte dieser Fassung fliessen bei 16 px
+    ineinander.
+  -->
+  <rect width="512" height="512" rx="112" fill="#a15a2c"/>
+  <g stroke="#f6ece3" stroke-width="22" stroke-linecap="round">
+    <path d="M256 256 L406 256"/>
+    <path d="M256 256 L331 386"/>
+    <path d="M256 256 L181 386"/>
+    <path d="M256 256 L106 256"/>
+    <path d="M256 256 L181 126"/>
+    <path d="M256 256 L331 126"/>
+  </g>
+  <g fill="#f6ece3">
+    <circle cx="256" cy="256" r="46"/>
+    <circle cx="406" cy="256" r="25"/>
+    <circle cx="331" cy="386" r="25"/>
+    <circle cx="181" cy="386" r="25"/>
+    <circle cx="106" cy="256" r="25"/>
+    <circle cx="181" cy="126" r="25"/>
+    <circle cx="331" cy="126" r="25"/>
+  </g>
+</svg>
