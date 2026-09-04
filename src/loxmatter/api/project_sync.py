@@ -25,8 +25,11 @@ vergaebe fuer dasselbe Geraet einen zweiten Satz Signalschluessel).
 
 **Ein Fehlerpfad als 400.** `ProjectFormatError` - die hochgeladene Datei ist
 kein gueltiges/erkennbares Loxone-Projekt (kein `ControlList`, unabgeschlossenes
-Tag, keine UTF-8-Textdatei) - wird zur verstaendlichen 400 mit der deutschen
-Meldung, die die Exception schon traegt. Kein Serverfehler, kein nackter 500.
+Tag, keine UTF-8-Textdatei), ODER (`AmbiguousMiniserverError`, eine Subklasse
+davon) es ist nicht eindeutig, gegen welchen der in der Datei konfigurierten
+Miniserver abgeglichen werden soll - wird zur verstaendlichen 400 mit der
+deutschen Meldung, die die Exception schon traegt. Kein Serverfehler, kein
+nackter 500.
 
 `patch.MissingCaptionError` gehoert ausdruecklich NICHT dazu: ein ansonsten
 wohlgeformtes Projekt, dem nur der `VirtualInCaption`- bzw.
@@ -77,6 +80,13 @@ def build_project_sync_router(store: Store) -> APIRouter:
             description="HTTP-Port in den Kommando-URLs neuer Ausgaenge - muss mit dem"
             " --listen von `loxmatter run` uebereinstimmen, wie bei /api/export/download.",
         ),
+        miniserver_ip: str | None = Query(
+            None,
+            description="Interne IP des Miniservers (`LoxLIVE.IntAddr` in der Projektdatei,"
+            " dieselbe IP wie bei `loxmatter run --miniserver`). Nur noetig, wenn die"
+            " hochgeladene Datei mehr als einen Miniserver konfiguriert - bei genau einem"
+            " wird er automatisch verwendet.",
+        ),
     ) -> ProjectSyncPlanOut:
         """Baut Diff-Plan und beide gepatchten Datei-Varianten im Speicher -
         schreibt nirgends auf die Platte und markiert kein Geraet als
@@ -85,7 +95,14 @@ def build_project_sync_router(store: Store) -> APIRouter:
         Abschnitt 4)."""
         raw = await file.read()
         try:
-            result = run_sync(raw, store, bridge_ip=bridge_ip, port=port, listen=listen)
+            result = run_sync(
+                raw,
+                store,
+                bridge_ip=bridge_ip,
+                port=port,
+                listen=listen,
+                miniserver_ip=miniserver_ip,
+            )
         except ProjectFormatError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

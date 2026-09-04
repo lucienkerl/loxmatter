@@ -377,6 +377,12 @@ function app() {
       includeNewDevices: false,
       busy: false,
       error: "",
+      // Nur noetig, wenn die hochgeladene Datei mehr als einen Miniserver
+      // konfiguriert (`LoxLIVE.IntAddr`) - bei genau einem wird er
+      // automatisch verwendet, siehe `api.project_sync`s `miniserver_ip`.
+      // Leer bleibt leer: `uploadProjectFile` haengt das Feld nur an, wenn
+      // hier etwas drinsteht.
+      miniserverIp: "",
     },
 
     // --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------
@@ -1342,6 +1348,9 @@ function app() {
           port: String(this.bridgeSettings.udp_port),
           listen: String(this.bridgeSettings.listen_port),
         });
+        if (this.projectSync.miniserverIp.trim()) {
+          params.set("miniserver_ip", this.projectSync.miniserverIp.trim());
+        }
         this.projectSync.plan = await this.upload(`/api/export/project-sync?${params}`, formData);
       } catch (error) {
         this.projectSync.error = `Hochladen fehlgeschlagen: ${error.message}`;
@@ -1373,31 +1382,49 @@ function app() {
       return labels[status] || status;
     },
 
-    /** Badge-Farbe fuer `projectSyncStatusLabel` - dieselben drei Klassen
-     * (`ok`/`warn`/`danger`), die `.badge` in `style.css` schon fuer den
-     * Systemcheck kennt. `conflict` ist der einzige Fall, in dem eine
-     * bestehende Attribut-Menge NICHT dem erwarteten Schema entspricht und
-     * deshalb unangetastet bleibt (siehe `patch.py`) - daher `danger` statt
-     * nur `warn`. */
+    /** Badge-Farbe fuer `projectSyncStatusLabel`. Vier eigenstaendige Faelle
+     * statt vorher drei (Nutzerwunsch nach dem Review: neu/aktualisiert
+     * muessen sich auf den ersten Blick unterscheiden lassen, nicht beide
+     * als `warn` zusammenfallen) - `ok` (gruen) fuer alles Neue ist dieselbe
+     * Farbsprache wie ein hinzugefuegter Diff in einer Versionsverwaltung,
+     * `warn` bleibt exklusiv fuer `updated`, `off` (dieselbe neutrale Farbe
+     * wie eine Geraetekarte im Zustand "offline") fuer `orphaned`, `danger`
+     * fuer `conflict`. `unchanged` braucht hier kein Badge mehr - es
+     * erscheint nur noch als schlichter Chip, siehe `projectSyncSplit
+     * BySignificance`. */
     projectSyncStatusBadgeClass(status) {
       if (status === "conflict") {
         return "danger";
       }
-      if (status === "unchanged") {
-        return "ok";
+      if (status === "orphaned") {
+        return "off";
       }
-      return "warn";
+      if (status === "updated") {
+        return "warn";
+      }
+      return "ok";
     },
 
-    /** Fuer die "Alles aktuell"-Meldung (Review-Fix Important #5): `orphaned`-
-     * und `conflict`-Eintraege sind informativ und werden nie gepatcht
-     * (siehe `SyncPlan.has_changes` in `diff.py`, das genau diese beiden
-     * Status bewusst ausklammert), muessen aber trotzdem sichtbar bleiben,
-     * auch wenn `has_changes` deshalb `false` ist. */
-    projectSyncHasInformationalEntries(entries) {
-      return (entries || []).some(
-        (entry) => entry.status === "orphaned" || entry.status === "conflict",
-      );
+    /** Ordnet einen Plan-Status einem von fuenf Sammel-Eimern zu - dieselbe
+     * Einteilung liegt sowohl den Zaehlern je Geraet (`projectSyncGrouped
+     * Entries`) als auch der Gesamt-Uebersicht oben (`projectSyncOverall
+     * Counts`) und der CSS-Klasse jeder Eintragszeile (`is-<bucket>`)
+     * zugrunde - eine einzige Zuordnung statt mehrerer, die auseinanderlaufen
+     * koennten. */
+    projectSyncStatusBucket(status) {
+      if (status === "new_signal" || status === "new_device") {
+        return "new";
+      }
+      if (status === "updated") {
+        return "updated";
+      }
+      if (status === "orphaned") {
+        return "orphaned";
+      }
+      if (status === "conflict") {
+        return "conflict";
+      }
+      return "unchanged";
     },
 
     /**
@@ -1411,6 +1438,14 @@ function app() {
      * - gehören zu keinem aktuell bekannten Gerät mehr) bekommen eine eigene
      * Gruppe ohne echten Gerätenamen und stehen bewusst am Ende, unabhängig
      * von ihrer Position im flachen Plan.
+     *
+     * Jede Gruppe trägt zusätzlich `counts` (je Status-Eimer, für die
+     * Zähl-Chips im aufklappbaren Kartenkopf) und `needsAttention` (alles
+     * außer `unchanged` - steuert, ob die Karte beim ersten Anzeigen schon
+     * aufgeklappt ist). `sections` bündelt Ein-/Ausgänge bereits vorsortiert
+     * in "braucht einen Blick" vs. "unverändert, eingeklappt" (`projectSync
+     * SplitBySignificance`) - einmal hier berechnet statt bei jedem
+     * Render erneut im Template.
      */
     projectSyncGroupedEntries(entries) {
       const groups = [];
@@ -1424,14 +1459,85 @@ function app() {
               entry.device_id === -1 ? "Nicht mehr zugeordnet" : entry.device_label || "—",
             inputs: [],
             outputs: [],
+            counts: { new: 0, updated: 0, unchanged: 0, orphaned: 0, conflict: 0 },
           };
           byDeviceId.set(entry.device_id, group);
           groups.push(group);
         }
         (entry.kind === "input" ? group.inputs : group.outputs).push(entry);
+        group.counts[this.projectSyncStatusBucket(entry.status)] += 1;
       }
       groups.sort((a, b) => (a.deviceId === -1 ? 1 : 0) - (b.deviceId === -1 ? 1 : 0));
+      for (const group of groups) {
+        group.needsAttention =
+          group.counts.new + group.counts.updated + group.counts.orphaned + group.counts.conflict >
+          0;
+        group.sections = [
+          { label: "Eingänge", ...this.projectSyncSplitBySignificance(group.inputs) },
+          { label: "Ausgänge", ...this.projectSyncSplitBySignificance(group.outputs) },
+        ];
+      }
       return groups;
+    },
+
+    /** Trennt eine Liste von Einträgen in `attention` (alles außer
+     * `unchanged` - wird immer als eigene Zeile mit Status und ggf. Diff
+     * gezeigt) und `unchanged` (wird nur noch als schlichter Chip hinter
+     * einer eingeklappten Zusammenfassung gezeigt, siehe `index.html`) -
+     * bei einer echten, seit Jahren gewachsenen Datei sind das schnell
+     * Dutzende Signale, die längst stimmen und beim Überblick nur stören
+     * würden (Nutzerwunsch: "schneller und sauberer Überblick"). */
+    projectSyncSplitBySignificance(items) {
+      const attention = [];
+      const unchanged = [];
+      for (const entry of items) {
+        (entry.status === "unchanged" ? unchanged : attention).push(entry);
+      }
+      return { attention, unchanged };
+    },
+
+    /** Gesamtzahl je Status-Eimer über den kompletten Plan - Grundlage der
+     * Übersichtszeile ganz oben, bevor man sich durch die einzelnen
+     * Geräte-Karten klickt. */
+    projectSyncOverallCounts(entries) {
+      const counts = { new: 0, updated: 0, unchanged: 0, orphaned: 0, conflict: 0 };
+      for (const entry of entries || []) {
+        counts[this.projectSyncStatusBucket(entry.status)] += 1;
+      }
+      return counts;
+    },
+
+    /** Fuer die "Alles aktuell"-Meldung (Review-Fix Important #5): `orphaned`-
+     * und `conflict`-Eintraege sind informativ und werden nie gepatcht
+     * (siehe `SyncPlan.has_changes` in `diff.py`, das genau diese beiden
+     * Status bewusst ausklammert), muessen aber trotzdem sichtbar bleiben,
+     * auch wenn `has_changes` deshalb `false` ist. */
+    projectSyncHasInformationalEntries(entries) {
+      return (entries || []).some(
+        (entry) => entry.status === "orphaned" || entry.status === "conflict",
+      );
+    },
+
+    /** Kurzer Erklärsatz unter dem Titel einer Eintragszeile - macht
+     * `new_device` (kompletter neuer Container) und `new_signal` (nur ein
+     * neues Kommando in einem bestehenden Container) auf einen Blick
+     * unterscheidbar, ohne dass der Anwender erst den Unterschied der beiden
+     * Badge-Texte nachschlagen muss (Nutzerwunsch: sehen, "welche Knoten +
+     * Befehle" neu dazukommen). */
+    projectSyncEntryNote(entry) {
+      if (entry.status === "new_device") {
+        return "Neuer virtueller Ein-/Ausgang wird für dieses Gerät angelegt.";
+      }
+      if (entry.status === "new_signal") {
+        return "Neues Signal wird im bestehenden Ein-/Ausgang ergänzt.";
+      }
+      if (entry.status === "orphaned") {
+        return "Gehört zu keinem bekannten Gerät mehr.";
+      }
+      if (entry.status === "conflict") {
+        return "Unerwartete Struktur in der Datei.";
+      }
+      return "";
     },
 
     /** Deutsche Beschriftung fuer die Attributnamen aus `entry.changes` -
@@ -1452,21 +1558,20 @@ function app() {
     },
 
     /**
-     * Formatiert `entry.changes` (nur bei `status === "updated"` befuellt,
-     * sonst leer - siehe `ProjectSyncEntryOut` in `api/models.py`) als
-     * mehrzeiligen Text fuer die Plan-Tabelle, ein Attribut pro Zeile in der
-     * Form `Titel: "Alt" → "Neu"` (Review-Fix Important #6). Reines
-     * `x-text` statt `x-html`: die Werte stammen aus der hochgeladenen
-     * Projektdatei und sind nicht vertrauenswuerdig.
+     * Wandelt `entry.changes` (nur bei `status === "updated"` befuellt,
+     * sonst leer - siehe `ProjectSyncEntryOut` in `api/models.py`) in eine
+     * Liste aus `{label, oldValue, newValue}` fuer die Diff-Zeilen im
+     * Template (Review-Fix Important #6, jetzt strukturiert statt als ein
+     * einzelner Fliesstext, damit Alt- und Neu-Wert getrennt gestylt werden
+     * koennen). Reines `x-text` im Template, nie `x-html`: die Werte stammen
+     * aus der hochgeladenen Projektdatei und sind nicht vertrauenswuerdig.
      */
-    projectSyncChangesText(entry) {
+    projectSyncChangeList(entry) {
       const changes = entry.changes || {};
-      return Object.entries(changes)
-        .map(([attr, values]) => {
-          const [oldValue, newValue] = values;
-          return `${this.projectSyncAttrLabel(attr)}: "${oldValue}" → "${newValue}"`;
-        })
-        .join("\n");
+      return Object.entries(changes).map(([attr, values]) => {
+        const [oldValue, newValue] = values;
+        return { label: this.projectSyncAttrLabel(attr), oldValue, newValue };
+      });
     },
 
     /**

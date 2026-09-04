@@ -19,6 +19,16 @@ nach dem in der Referenzdatei beobachteten Schema (Entwurf Abschnitt 3-6),
 NICHT die echte vom Anwender gelieferte Datei (bleibt aus Datenschutzgruenden
 ausserhalb des Repos, siehe Entwurf Abschnitt 9).
 
+**Korrektur nach echtem Praxistest (2026-09-04):** `<ControlList>` hat in
+einer echten Datei genau EIN Kind (`<C Type="Document">`), und jeder darin
+konfigurierte Miniserver bekommt einen eigenen `<C Type="LoxLIVE">`-Block -
+`VirtualInCaption`/`VirtualOutCaption` haengen an DIESEM, nicht an
+`ControlList` direkt (siehe `projectsync.index`-Moduldocstring fuer die
+volle Herleitung). Diese Fixture bildet das jetzt nach: EIN `LoxLIVE`-Block
+(`IntAddr="10.0.0.10"`), damit alle bestehenden Tests ohne `miniserver_ip`
+weiterlaufen - ein zweiter, mehrdeutiger Fall hat seine eigene, kleinere
+Fixture in `tests/projectsync/test_index.py`.
+
 Enthaelt fuer Geraet 1 (``d1_...``) ein bereits bestehendes Eingangssignal
 (``d1_1_onoff``, Titel weicht bewusst vom Soll ab - deckt den `updated`-Fall
 ab), das dazugehoerige Online-Signal (``d1_online`` - `export.signals.
@@ -36,48 +46,53 @@ import pytest
 SAMPLE_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
-    '\t<C Type="VirtualInCaption" IName="C1" U="1000-0000-0000-aaaaaaaaaaaaaaaa">\r\n'
-    '\t\t<C Type="VirtualUdpIn" IName="VUI1" U="1000-0001-0000-aaaaaaaaaaaaaaaa"'
+    '\t<C Type="Document" U="2000-0000-0000-aaaaaaaaaaaaaaaa" Title="Testprojekt">\r\n'
+    '\t\t<C Type="LoxLIVE" U="2000-0001-0000-aaaaaaaaaaaaaaaa" Title="Testserver"'
+    ' IntAddr="10.0.0.10" Serial="504F00000000">\r\n'
+    '\t\t\t<C Type="VirtualInCaption" IName="C1" U="1000-0000-0000-aaaaaaaaaaaaaaaa">\r\n'
+    '\t\t\t\t<C Type="VirtualUdpIn" IName="VUI1" U="1000-0001-0000-aaaaaaaaaaaaaaaa"'
     ' Title="Matter — Altes Geraet" WF="16384" Address="10.0.0.5" Port="7000">\r\n'
-    '\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" U="1000-0002-0000-aaaaaaaaaaaaaaaa"'
+    '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" U="1000-0002-0000-aaaaaaaaaaaaaaaa"'
     ' Title="Alter Titel" Nio="2" WF="16384" Check="d1_1_onoff:\\v" Signed="true"'
     ' Analog="true" SourceValHigh="100" DestValHigh="100" MinVal="-10000" MaxVal="10000"'
     ' MinChange="0.25" MinTime="1000">\r\n'
-    '\t\t\t\t<Co K="AQ" U="1000-0003-0000-bbbbbbbbbbbbbbbb"/>\r\n'
-    '\t\t\t\t<Co K="Q" U="1000-0004-0000-bbbbbbbbbbbbbbbb"/>\r\n'
-    '\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
-    '\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
-    "\t\t\t</C>\r\n"
-    '\t\t\t<C Type="VirtualUdpInCmd" IName="VCI3" U="1000-000e-0000-aaaaaaaaaaaaaaaa"'
+    '\t\t\t\t\t\t<Co K="AQ" U="1000-0003-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<Co K="Q" U="1000-0004-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
+    '\t\t\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI3" U="1000-000e-0000-aaaaaaaaaaaaaaaa"'
     ' Title="Altes Geraet erreichbar" Nio="2" WF="16384" Check="d1_online:\\v" Signed="true"'
     ' Analog="true" SourceValHigh="100" DestValHigh="100" MinVal="-10000" MaxVal="10000"'
     ' MinChange="0.25" MinTime="1000">\r\n'
-    '\t\t\t\t<Co K="AQ" U="1000-000f-0000-bbbbbbbbbbbbbbbb"/>\r\n'
-    '\t\t\t\t<Co K="Q" U="1000-0010-0000-bbbbbbbbbbbbbbbb"/>\r\n'
-    '\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
-    '\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
-    "\t\t\t</C>\r\n"
-    '\t\t\t<C Type="VirtualUdpInCmd" IName="VCI2" U="1000-0007-0000-aaaaaaaaaaaaaaaa"'
+    '\t\t\t\t\t\t<Co K="AQ" U="1000-000f-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<Co K="Q" U="1000-0010-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
+    '\t\t\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI2" U="1000-0007-0000-aaaaaaaaaaaaaaaa"'
     ' Title="Verwaist" Nio="2" WF="16384" Check="d9_9_verwaist:\\v" Signed="true"'
     ' Analog="true" SourceValHigh="100" DestValHigh="100" MinVal="-10000" MaxVal="10000"'
     ' MinChange="0.25" MinTime="1000">\r\n'
-    '\t\t\t\t<Co K="AQ" U="1000-0008-0000-bbbbbbbbbbbbbbbb"/>\r\n'
-    '\t\t\t\t<Co K="Q" U="1000-0009-0000-bbbbbbbbbbbbbbbb"/>\r\n'
-    '\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
-    '\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    '\t\t\t\t\t\t<Co K="AQ" U="1000-0008-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<Co K="Q" U="1000-0009-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
+    '\t\t\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    "\t\t\t\t</C>\r\n"
     "\t\t\t</C>\r\n"
-    "\t\t</C>\r\n"
-    "\t</C>\r\n"
-    '\t<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">\r\n'
-    '\t\t<C Type="VirtualOut" IName="VQ1" U="1000-000b-0000-aaaaaaaaaaaaaaaa"'
+    '\t\t\t<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">\r\n'
+    '\t\t\t\t<C Type="VirtualOut" IName="VQ1" U="1000-000b-0000-aaaaaaaaaaaaaaaa"'
     ' Title="Matter — Altes Geraet" WF="16384" Address="http://10.0.0.9:8080"'
     ' CloseAfterSend="true" CmdSep=";">\r\n'
-    '\t\t\t<C Type="VirtualOutCmd" IName="VQC1" U="1000-000c-0000-aaaaaaaaaaaaaaaa"'
+    '\t\t\t\t\t<C Type="VirtualOutCmd" IName="VQC1" U="1000-000c-0000-aaaaaaaaaaaaaaaa"'
     ' Title="on" Nio="1" WF="16384" CmdOn="/cmd/d1_1_on/1" CmdOnMethod="1"'
     ' SourceValHigh="10" DestValHigh="10" Tx="false">\r\n'
-    '\t\t\t\t<Co K="I" U="1000-000d-0000-bbbbbbbbbbbbbbbb"/>\r\n'
-    '\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
-    '\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    '\t\t\t\t\t\t<Co K="I" U="1000-000d-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
+    '\t\t\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    "\t\t\t\t</C>\r\n"
     "\t\t\t</C>\r\n"
     "\t\t</C>\r\n"
     "\t</C>\r\n"

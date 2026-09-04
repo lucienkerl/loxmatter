@@ -198,6 +198,30 @@ main {
   background: var(--danger);
 }
 
+/* Dieselben fuenf Status-Eimer wie `projectSyncStatusBucket` in app.js -
+   ein Punkt in derselben Farbe wie der linke Rahmen der zugehoerigen
+   `.projectsync-entry`, fuer die Zaehl-Chips in der Gesamt-Uebersicht und
+   im Kartenkopf jedes Geraets (Projektdatei-Sync, Abschnitt weiter unten). */
+.dot.is-new {
+  background: var(--ok);
+}
+
+.dot.is-updated {
+  background: var(--warn);
+}
+
+.dot.is-orphaned {
+  background: var(--off);
+}
+
+.dot.is-conflict {
+  background: var(--danger);
+}
+
+.dot.is-unchanged {
+  background: var(--text-muted);
+}
+
 .key {
   font-family: var(--mono);
   font-size: 0.8rem;
@@ -319,6 +343,14 @@ button:disabled {
 .badge.warn {
   background: var(--warn-bg);
   color: var(--warn);
+}
+
+/* Projektdatei-Sync (Abschnitt weiter unten): `orphaned` bekommt dieselbe
+   neutrale Farbe wie eine offline-Geraetekarte - kein Fehler, nur "gehoert
+   zu nichts Bekanntem mehr". */
+.badge.off {
+  background: var(--off-bg);
+  color: var(--off);
 }
 
 .banner {
@@ -641,23 +673,101 @@ footer.hint-block {
   padding: 0.35rem 0.7rem;
 }
 
-/* Projektdatei-Sync: der Plan gruppiert nach Geraet und darunter nach Ein-/
- * Ausgang (`projectSyncGroupedEntries` in app.js), ein Abbild derselben
- * Verschachtelung, in der die Signale nachher in Loxone Config als virtuelle
- * Ein-/Ausgaenge stehen - der linke Rahmen wirkt wie ein Baum-Einzug, an
- * `.device-card`s farbigem Rand oben orientiert, hier aber neutral, weil ein
- * Plan-Eintrag keinen Online/Offline-Zustand hat. */
+/* Projektdatei-Sync (ueberarbeitet nach Nutzerwunsch: "schneller und
+ * sauberer Ueberblick"): eine Gesamt-Uebersicht (`.projectsync-summary`)
+ * ueber allem, darunter je Geraet eine aufklappbare Karte
+ * (`.projectsync-device`, ein natives `<details>`) statt einer langen
+ * flachen Tabelle - Aufbau und Gruppierung in `projectSyncGroupedEntries`
+ * (app.js), ein Abbild derselben Verschachtelung, in der die Signale
+ * nachher in Loxone Config als virtuelle Ein-/Ausgaenge stehen. */
+
+.projectsync-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.1rem;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.9rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+
+.projectsync-tally-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-muted);
+}
+
+.projectsync-tally-item strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
 .projectsync-device {
-  border-left: 2px solid var(--border);
-  padding-left: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
 }
 
 .projectsync-device + .projectsync-device {
-  margin-top: 1.2rem;
+  margin-top: 0.6rem;
 }
 
-.projectsync-io-group {
-  margin-top: 0.6rem;
+/* `<details>`/`<summary>` tragen von Haus aus einen browserabhaengigen
+   Aufklapp-Marker (Firefox: Dreieck davor, WebKit: eigenes Symbol) - beide
+   werden hier abgeschaltet und durch dasselbe Pfeil-Icon wie der Rest der
+   Oberflaeche ersetzt (`.chevron` unten), das sich beim Aufklappen dreht. */
+.projectsync-device summary {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.9rem;
+  cursor: pointer;
+  list-style: none;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.projectsync-device summary::-webkit-details-marker {
+  display: none;
+}
+
+.projectsync-device summary .chevron {
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.projectsync-device[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.projectsync-device[open] summary .chevron {
+  transform: rotate(90deg);
+}
+
+.projectsync-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  font-weight: 400;
+  font-size: 0.82rem;
+  margin-left: auto;
+  margin-right: 0.6rem;
+}
+
+.projectsync-tally .is-unchanged {
+  color: var(--text-muted);
+}
+
+.projectsync-device-body {
+  padding: 0.8rem 0.9rem;
+}
+
+.projectsync-io-group + .projectsync-io-group {
+  margin-top: 0.9rem;
 }
 
 .projectsync-io-label {
@@ -666,5 +776,134 @@ footer.hint-block {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.4rem;
+}
+
+/* Eine Zeile fuer alles ausser `unchanged` (`projectSyncSplitBySignificance`
+   trennt das vorher) - der linke Rahmen traegt dieselbe Farbe wie der
+   zugehoerige Zaehl-Punkt (`.dot.is-*`), fuer denselben Wiedererkennungs-
+   effekt beim schnellen Ueberfliegen wie der farbige Rand einer
+   Geraetekarte (`.device-card::before`). */
+.projectsync-entry {
+  border-left: 3px solid var(--border);
+  padding: 0.35rem 0 0.35rem 0.65rem;
+}
+
+.projectsync-entry + .projectsync-entry {
+  margin-top: 0.5rem;
+}
+
+.projectsync-entry.is-new {
+  border-left-color: var(--ok);
+}
+
+.projectsync-entry.is-updated {
+  border-left-color: var(--warn);
+}
+
+.projectsync-entry.is-orphaned {
+  border-left-color: var(--off);
+  opacity: 0.85;
+}
+
+.projectsync-entry.is-conflict {
+  border-left-color: var(--danger);
+}
+
+.projectsync-entry-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.projectsync-entry-title {
+  font-weight: 500;
+}
+
+.projectsync-entry-note {
+  margin: 0.2rem 0 0;
+}
+
+/* Attribut-Differenz eines `updated`-Eintrags (Review-Fix Important #6,
+   jetzt strukturiert statt Fliesstext): Alt-Wert durchgestrichen/gedaempft,
+   Neu-Wert kraeftig - dieselbe Farbsprache wie ein hinzugefuegter/entfernter
+   Diff in einer Versionsverwaltung, fuer ein technisches Publikum die
+   vertrauteste Art, "davor -> danach" zu lesen. */
+.projectsync-diff {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.projectsync-diff li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.projectsync-diff-label {
+  color: var(--text-muted);
+  min-width: 6.5rem;
+}
+
+.projectsync-diff-old {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.projectsync-diff-arrow {
+  color: var(--text-muted);
+}
+
+.projectsync-diff-new {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Unveraenderte Signale: eingeklappt hinter einer Zaehl-Zusammenfassung,
+   danach nur noch schlichte Chips ohne Status-Badge - sie sind bereits
+   korrekt und sollen den Blick auf das Neue/Geaenderte oben nicht
+   verstellen. Derselbe `.value-chip`-Baustein wie im Geraete-Dashboard
+   (Aufgabe 8), hier fuer denselben Zweck wiederverwendet: viele kleine,
+   gleich aussehende Fakten kompakt nebeneinander. */
+.projectsync-unchanged-disclosure {
+  margin-top: 0.6rem;
+}
+
+.projectsync-unchanged-disclosure summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.projectsync-unchanged-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.projectsync-unchanged-disclosure summary:hover {
+  color: var(--text);
+}
+
+.projectsync-unchanged-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.projectsync-unchanged-chips .value-chip {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
 }

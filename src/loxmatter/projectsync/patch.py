@@ -168,16 +168,21 @@ def _new_device_edit(
     strukturell falsch, nicht nur unschoen.
 
     Fehlt der passende `VirtualInCaption`/`VirtualOutCaption`-Abschnitt
-    komplett (ein Projekt, das noch nie einen virtuellen Ein- bzw. Ausgang
-    dieser Art hatte), legt diese Funktion ihn selbst mit an - als
-    zusaetzliches Top-Level-Objekt direkt vor `</ControlList>` (Entwurf
-    Abschnitt 8: Sonderfall der Neuanlage, ebenfalls hinter dem
-    Experimentell-Haken, den `apply_plan` bereits durch `include_new_devices`
-    absichert). Die Position ist bewusst das Dateiende: unter den vielen
-    moeglichen Nachbar-Objekttypen einer echten Projektdatei (Place,
-    Category, User, ...) kennt dieses Projekt keine "richtige" Reihenfolge -
-    anhaengen statt raten, derselbe Grundsatz wie ueberall sonst in diesem
-    Modul."""
+    komplett (ein Miniserver, der noch nie einen virtuellen Ein- bzw.
+    Ausgang dieser Art hatte), legt diese Funktion ihn selbst mit an - als
+    zusaetzliches Kind-Objekt direkt vor dem schliessenden Tag des
+    ausgewaehlten `LoxLIVE`-Blocks (`index.target_loxlive`, Entwurf Abschnitt
+    8: Sonderfall der Neuanlage, ebenfalls hinter dem Experimentell-Haken,
+    den `apply_plan` bereits durch `include_new_devices` absichert).
+    Bewusst NICHT auf Ebene des `<ControlList>`-Wurzelelements (frueherer
+    Fehler, an einer echten Referenzdatei gefunden: `VirtualInCaption`/
+    `VirtualOutCaption` haengen dort niemals direkt, sondern immer unter
+    genau dem `LoxLIVE`-Block ihres Miniservers) und bewusst ans ENDE des
+    `LoxLIVE`-Inhalts, nicht an eine bestimmte Stelle dazwischen: unter den
+    vielen moeglichen Geschwister-Objekttypen (`InputCaption`,
+    `OutputCaption`, `WeatherCaption`, ...) kennt dieses Projekt keine
+    "richtige" Reihenfolge - anhaengen statt raten, derselbe Grundsatz wie
+    ueberall sonst in diesem Modul."""
     first = entries[0]
     is_input = first.kind == "input"
     kind = "input" if is_input else "output"
@@ -227,7 +232,10 @@ def _new_device_edit(
     caption_u = new_unique_id(index.all_u_values)
     caption_open = new_caption_open_tag(kind, caption_iname, caption_u)
     full_xml = f"{caption_open}{device_xml}</C>"
-    pos = index.root_close_start
+    # `target_loxlive.inner_end` ist bereits als nicht-`None` validiert
+    # (siehe `build_index`'s Pruefung direkt nach `_resolve_target_loxlive`).
+    assert index.target_loxlive.inner_end is not None  # fuer mypy
+    pos = index.target_loxlive.inner_end
     return _Edit(pos, pos, full_xml), created_count + 1  # + die neue Caption selbst.
 
 

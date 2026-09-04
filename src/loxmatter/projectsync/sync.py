@@ -43,8 +43,18 @@ class ProjectSyncResult:
 
 
 def run_sync(
-    raw: bytes, store: Store, *, bridge_ip: str, port: int, listen: int
+    raw: bytes,
+    store: Store,
+    *,
+    bridge_ip: str,
+    port: int,
+    listen: int,
+    miniserver_ip: str | None = None,
 ) -> ProjectSyncResult:
+    """`miniserver_ip` waehlt den `LoxLIVE`-Block (= Miniserver), gegen den
+    abgeglichen wird, wenn die Projektdatei mehrere konfiguriert hat (siehe
+    `index.build_index`/`index.AmbiguousMiniserverError`) - bei genau einem
+    Miniserver in der Datei bleibt sie optional."""
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -55,7 +65,14 @@ def run_sync(
             "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine "
             "Loxone-Projektdatei wird als UTF-8 gespeichert."
         ) from exc
-    index = build_index(text)
+    # `AmbiguousMiniserverError` (Subklasse von `ProjectFormatError`) bleibt
+    # hier bewusst unbehandelt und propagiert bis zu `api.project_sync`s
+    # `except ProjectFormatError` -> HTTP 400: ohne eindeutigen Miniserver
+    # gibt es fuer KEINE der beiden Varianten (konservativ oder
+    # experimentell) einen Ort, gegen den ueberhaupt abgeglichen werden
+    # koennte - anders als eine fehlende Caption (siehe unten) ist das keine
+    # Grenze nur des experimentellen Pfades.
+    index = build_index(text, miniserver_ip)
     devices = store.devices()
     signals_by_device: dict[int, Sequence[StoredSignal]] = {
         device.id: store.signals(device.id) for device in devices

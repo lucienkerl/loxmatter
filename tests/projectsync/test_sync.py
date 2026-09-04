@@ -39,8 +39,13 @@ def _plug_store(tmp_path):
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
-    '\t<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">'
+    '\t<C Type="Document" U="2000-0000-0000-aaaaaaaaaaaaaaaa" Title="Testprojekt">\r\n'
+    '\t\t<C Type="LoxLIVE" U="2000-0001-0000-aaaaaaaaaaaaaaaa" Title="Testserver"'
+    ' IntAddr="10.0.0.10" Serial="504F00000000">\r\n'
+    '\t\t\t<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">'
     "</C>\r\n"
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
     "</ControlList>\r\n"
 )
 
@@ -121,12 +126,16 @@ def test_run_sync_raises_project_format_error_for_non_utf8_upload(tmp_path):
 NO_U_ATTR_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
-    '\t<C Type="VirtualInCaption" IName="C1">\r\n'
-    '\t\t<C Type="VirtualUdpIn" IName="VUI1" Title="Matter — Steckdose" WF="16384"'
+    '\t<C Type="Document">\r\n'
+    '\t\t<C Type="LoxLIVE" Title="Testserver" IntAddr="10.0.0.10">\r\n'
+    '\t\t\t<C Type="VirtualInCaption" IName="C1">\r\n'
+    '\t\t\t\t<C Type="VirtualUdpIn" IName="VUI1" Title="Matter — Steckdose" WF="16384"'
     ' Address="10.0.0.5" Port="7000">\r\n'
-    '\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" Title="Ein/Aus" Nio="2" WF="16384"'
+    '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" Title="Ein/Aus" Nio="2" WF="16384"'
     ' Check="d1_1_onoff:\\v" Analog="true">\r\n'
-    '\t\t\t\t<IoData Cr="x" Pr="y"/>\r\n'
+    '\t\t\t\t\t\t<IoData Cr="x" Pr="y"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    "\t\t\t\t</C>\r\n"
     "\t\t\t</C>\r\n"
     "\t\t</C>\r\n"
     "\t</C>\r\n"

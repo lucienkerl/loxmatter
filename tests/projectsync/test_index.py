@@ -1,4 +1,48 @@
-from loxmatter.projectsync.index import ProjectFormatError, build_index
+from loxmatter.projectsync.index import AmbiguousMiniserverError, ProjectFormatError, build_index
+
+# Zwei `LoxLIVE`-Bloecke (zwei konfigurierte Miniserver in einem Projekt) mit
+# je einem eigenen, disjunkten Eingangssignal - beweist, dass `build_index`
+# nach Aufloesung wirklich nur im GEWAEHLTEN Block sucht, nicht in beiden.
+TWO_LOXLIVE_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="Document" U="2000-0000-0000-aaaaaaaaaaaaaaaa" Title="Testprojekt">\r\n'
+    '\t\t<C Type="LoxLIVE" U="2000-0001-0000-aaaaaaaaaaaaaaaa" Title="Erster Miniserver"'
+    ' IntAddr="10.0.0.10" Serial="504F00000001">\r\n'
+    '\t\t\t<C Type="VirtualInCaption" IName="C1" U="1000-0000-0000-aaaaaaaaaaaaaaaa">\r\n'
+    '\t\t\t\t<C Type="VirtualUdpIn" IName="VUI1" U="1000-0001-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Geraet A" WF="16384" Address="10.0.0.5" Port="7000">\r\n'
+    '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" U="1000-0002-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="A" Nio="2" WF="16384" Check="d1_1_onoff:\\v" Analog="true">\r\n'
+    '\t\t\t\t\t\t<IoData Cr="x" Pr="y"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    "\t\t\t\t</C>\r\n"
+    "\t\t\t</C>\r\n"
+    "\t\t</C>\r\n"
+    '\t\t<C Type="LoxLIVE" U="2000-0002-0000-aaaaaaaaaaaaaaaa" Title="Zweiter Miniserver"'
+    ' IntAddr="10.0.0.20" Serial="504F00000002">\r\n'
+    '\t\t\t<C Type="VirtualInCaption" IName="C2" U="1000-0003-0000-aaaaaaaaaaaaaaaa">\r\n'
+    '\t\t\t\t<C Type="VirtualUdpIn" IName="VUI2" U="1000-0004-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Geraet B" WF="16384" Address="10.0.0.5" Port="7000">\r\n'
+    '\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI2" U="1000-0005-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="B" Nio="2" WF="16384" Check="d2_1_onoff:\\v" Analog="true">\r\n'
+    '\t\t\t\t\t\t<IoData Cr="x" Pr="y"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    "\t\t\t\t</C>\r\n"
+    "\t\t\t</C>\r\n"
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+# Ein `Document`, das gar keinen `LoxLIVE`-Block enthaelt - ein technisch
+# gueltiges, aber leeres/frisch angelegtes Projekt.
+NO_LOXLIVE_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="Document" U="2000-0000-0000-aaaaaaaaaaaaaaaa" Title="Testprojekt"/>\r\n'
+    "</ControlList>\r\n"
+)
 
 
 def test_finds_both_captions(sample_project):
@@ -48,3 +92,59 @@ def test_rejects_file_without_control_list():
 
     with pytest.raises(ProjectFormatError):
         build_index("<NotAProject/>")
+
+
+def test_single_loxlive_is_auto_selected_without_ip(sample_project):
+    """Genau ein `LoxLIVE`-Block in der Datei: er wird automatisch gewaehlt,
+    `miniserver_ip` bleibt optional (Entwurf, Abschnitt zur Miniserver-
+    Zuordnung)."""
+    index = build_index(sample_project)
+    assert index.target_loxlive.type == "LoxLIVE"
+    assert index.target_loxlive.attrs["IntAddr"] == "10.0.0.10"
+
+
+def test_single_loxlive_matching_ip_is_selected(sample_project):
+    index = build_index(sample_project, "10.0.0.10")
+    assert index.target_loxlive.attrs["IntAddr"] == "10.0.0.10"
+
+
+def test_single_loxlive_mismatched_ip_raises(sample_project):
+    """Eine explizit mitgegebene, aber nicht passende IP deutet eher auf die
+    falsche Datei hin als auf einen Grund, sie zu ignorieren - auch bei nur
+    einem `LoxLIVE`-Block in der Datei muss sie darum passen."""
+    import pytest
+
+    with pytest.raises(AmbiguousMiniserverError, match="10.0.0.99"):
+        build_index(sample_project, "10.0.0.99")
+
+
+def test_multi_loxlive_without_ip_raises():
+    import pytest
+
+    with pytest.raises(AmbiguousMiniserverError, match="mehrere Miniserver"):
+        build_index(TWO_LOXLIVE_PROJECT)
+
+
+def test_multi_loxlive_with_matching_ip_scopes_to_that_block_only():
+    """Der Abgleich darf nur im gewaehlten `LoxLIVE`-Block suchen - sonst
+    koennte er im falschen Miniserver-Bereich einer Mehr-Miniserver-Datei
+    landen und dort faelschlich ein Signal finden, das eigentlich zum
+    ANDEREN Miniserver gehoert."""
+    index = build_index(TWO_LOXLIVE_PROJECT, "10.0.0.20")
+    assert index.target_loxlive.attrs["Title"] == "Zweiter Miniserver"
+    assert "d2_1_onoff" in index.input_cmds
+    assert "d1_1_onoff" not in index.input_cmds
+
+
+def test_multi_loxlive_with_non_matching_ip_raises():
+    import pytest
+
+    with pytest.raises(AmbiguousMiniserverError, match="10.0.0.99"):
+        build_index(TWO_LOXLIVE_PROJECT, "10.0.0.99")
+
+
+def test_no_loxlive_raises():
+    import pytest
+
+    with pytest.raises(AmbiguousMiniserverError, match="keinen einzigen konfigurierten Miniserver"):
+        build_index(NO_LOXLIVE_PROJECT)
