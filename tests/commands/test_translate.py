@@ -16,6 +16,7 @@
 
 import pytest
 
+from loxmatter import i18n
 from loxmatter.commands.translate import (
     _PAYLOAD_BUILDERS,
     MatterCall,
@@ -59,16 +60,33 @@ def test_level_is_clamped_not_wrapped():
     assert to_matter_call(cmd(8, 4, takes_value=True), "-3").payload["level"] == 0
 
 
+def test_non_numeric_value_raises_a_clear_error():
+    with pytest.raises(UnsupportedValueError, match="is not a number"):
+        to_matter_call(cmd(8, 4, takes_value=True), "hell")
+
+
 def test_non_numeric_value_raises_in_german():
+    """Deutsches Gegenstueck zu `test_non_numeric_value_raises_a_clear_error`
+    oben."""
+    i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="keine Zahl"):
         to_matter_call(cmd(8, 4, takes_value=True), "hell")
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
-def test_non_finite_value_raises_in_german(value: str):
+def test_non_finite_value_raises_a_clear_error(value: str):
     """`float()` akzeptiert "nan"/"inf" anstandslos - das darf nicht bis zu
     `round()` durchrutschen, wo es als englischer `ValueError` explodiert,
-    statt als `UnsupportedValueError` mit deutscher Meldung."""
+    statt als `UnsupportedValueError` mit klarer Meldung."""
+    with pytest.raises(UnsupportedValueError, match="is not a number"):
+        to_matter_call(cmd(8, 4, takes_value=True), value)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
+def test_non_finite_value_raises_in_german(value: str):
+    """Deutsches Gegenstueck zu `test_non_finite_value_raises_a_clear_error`
+    oben."""
+    i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="keine Zahl"):
         to_matter_call(cmd(8, 4, takes_value=True), value)
 
@@ -80,6 +98,14 @@ def test_color_temperature_converts_kelvin_to_mireds():
 
 def test_unknown_cluster_command_raises_rather_than_guessing():
     """Lieber ein klarer Fehler als ein Kommando mit erfundener Nutzlast."""
+    with pytest.raises(UnsupportedValueError, match="is not supported"):
+        to_matter_call(cmd(64999, 3, takes_value=True), "1")
+
+
+def test_unknown_cluster_command_raises_rather_than_guessing_in_german():
+    """Deutsches Gegenstueck zu
+    `test_unknown_cluster_command_raises_rather_than_guessing` oben."""
+    i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(64999, 3, takes_value=True), "1")
 
@@ -90,6 +116,14 @@ def test_known_cluster_with_unknown_command_raises():
     verlaesslich belegt. Der Fehler darf nicht nur beim voellig unbekannten
     Cluster greifen, sondern auch bei einem bekannten Cluster mit unbekanntem
     Kommando."""
+    with pytest.raises(UnsupportedValueError, match="is not supported"):
+        to_matter_call(cmd(768, 6, takes_value=True), "255,0,0")
+
+
+def test_known_cluster_with_unknown_command_raises_in_german():
+    """Deutsches Gegenstueck zu `test_known_cluster_with_unknown_command_raises`
+    oben."""
+    i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(768, 6, takes_value=True), "255,0,0")
 
@@ -99,6 +133,14 @@ def test_onoff_cluster_with_unknown_command_raises():
     Dispatch darf nicht schon beim Cluster stehen bleiben - sonst bekaeme ein
     unbekanntes OnOff-Kommando eine erfundene leere Nutzlast statt eines
     Fehlers."""
+    with pytest.raises(UnsupportedValueError, match="is not supported"):
+        to_matter_call(cmd(6, 99, takes_value=True), "1")
+
+
+def test_onoff_cluster_with_unknown_command_raises_in_german():
+    """Deutsches Gegenstueck zu `test_onoff_cluster_with_unknown_command_raises`
+    oben."""
+    i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(6, 99, takes_value=True), "1")
 
@@ -122,5 +164,13 @@ def test_level_cluster_with_unknown_command_raises():
     `clusters.yaml` auftauchen koennen - ihnen faelschlich eine
     MoveToLevelWithOnOff-Nutzlast (level/transitionTime) unterzuschieben waere
     genau der Fehler, den dieses Modul verhindern soll."""
+    with pytest.raises(UnsupportedValueError, match="is not supported"):
+        to_matter_call(cmd(8, 1, takes_value=True), "50")
+
+
+def test_level_cluster_with_unknown_command_raises_in_german():
+    """Deutsches Gegenstueck zu `test_level_cluster_with_unknown_command_raises`
+    oben."""
+    i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(8, 1, takes_value=True), "50")

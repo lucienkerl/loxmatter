@@ -47,6 +47,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from loxmatter import i18n
 from loxmatter.commands.color import kelvin_to_mireds
 from loxmatter.model.store import StoredCommand
 
@@ -81,14 +82,14 @@ def _as_number(value: str) -> float:
     try:
         result = float(value)
     except ValueError as exc:
-        raise UnsupportedValueError(f"Wert {value!r} ist keine Zahl") from exc
+        raise UnsupportedValueError(i18n.t("api.errors.value_not_a_number", value=value)) from exc
     if not math.isfinite(result):
         # float() liest "nan"/"inf"/"-inf" anstandslos ein. Liesse man das
         # durch, wuerde spaeter `round()` mit einem englischen `ValueError`
         # abstuerzen (nan) oder `kelvin_to_mireds` seine <=0-Pruefung
         # unbemerkt umgehen (nan ist nie <= 0) - beides ist hier keine Zahl,
         # die ein Kommando tragen kann.
-        raise UnsupportedValueError(f"Wert {value!r} ist keine Zahl")
+        raise UnsupportedValueError(i18n.t("api.errors.value_not_a_number", value=value))
     return result
 
 
@@ -130,7 +131,11 @@ def to_matter_call(command: StoredCommand, value: str) -> MatterCall:
     build_payload = _PAYLOAD_BUILDERS.get((command.cluster_id, command.command_id))
     if build_payload is None:
         raise UnsupportedValueError(
-            f"Cluster {command.cluster_id} Kommando {command.command_id} wird nicht unterstuetzt"
+            i18n.t(
+                "api.errors.command_unsupported",
+                cluster_id=command.cluster_id,
+                command_id=command.command_id,
+            )
         )
 
     return MatterCall(

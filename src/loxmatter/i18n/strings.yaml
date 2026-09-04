@@ -225,3 +225,44 @@ cli.fake_miniserver.report_silent_header:
 api.language.fail_unsupported:
   en: "Unsupported language '{language}' — expected: {supported}."
   de: "Nicht unterstützte Sprache '{language}' — erwartet: {supported}."
+
+# api.errors — cross-module exceptions surfaced via HTTPException(detail=str(exc))
+api.errors.unknown_device:
+  en: "unknown device {device_id}"
+  de: "unbekanntes Geraet {device_id}"
+api.errors.unknown_command:
+  # Platzhalter heisst bewusst nicht "key" - i18n.t()s eigener erster
+  # Parameter heisst so, "key=..." als Keyword-Argument wuerde mit einem
+  # "TypeError: got multiple values for argument 'key'" kollidieren.
+  en: "unknown command key {command_key!r}"
+  de: "unbekannter Kommando-Schluessel {command_key!r}"
+api.errors.value_not_a_number:
+  en: "value {value!r} is not a number"
+  de: "Wert {value!r} ist keine Zahl"
+api.errors.command_unsupported:
+  en: "Cluster {cluster_id} command {command_id} is not supported"
+  de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
+api.errors.listener_stopped_early:
+  en: "Listener stopped before reporting readiness"
+  de: "Listener wurde beendet, bevor er Bereitschaft meldete"
+api.errors.listener_timeout:
+  en: "matter-server did not report readiness after {timeout:.0f}s"
+  de: "matter-server hat nach {timeout:.0f}s keine Bereitschaft gemeldet"
+api.errors.not_connected:
+  en: "not connected to matter-server"
+  de: "nicht verbunden mit matter-server"
+api.errors.unknown_node:
+  en: "unknown node {node_id}"
+  de: "unbekannter Node {node_id}"
+api.errors.matter_server_unreachable:
+  en: "matter-server unreachable: {exc}"
+  de: "matter-server nicht erreichbar: {exc}"
+api.errors.command_unknown_to_sdk:
+  en: "Cluster {cluster_id} command {command_id} is unknown to the chip SDK"
+  de: "Cluster {cluster_id} Kommando {command_id} ist der chip-SDK unbekannt"
+api.errors.subscribe_already_called:
+  en: "subscribe() has already been called"
+  de: "subscribe() wurde bereits aufgerufen"
+api.errors.commissioning_failed:
+  en: "Commissioning failed: {exc}"
+  de: "Einlernen fehlgeschlagen: {exc}"
