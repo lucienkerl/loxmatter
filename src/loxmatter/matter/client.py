@@ -96,7 +96,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
@@ -209,6 +209,15 @@ class BridgeMatterClient:
         # jedem connect() zurueckgesetzt: eine neue Verbindung kann einen
         # neu gestarteten matter-server treffen, und der hat sie vergessen.
         self._thread_dataset_set = False
+        # subscribe()/follow_node()-Zustand. Die Menge der bereits angelegten
+        # Attribut-Abonnements ist die einzige Quelle dafuer, was "neu" heisst
+        # - ein zweites Abonnement fuer denselben (Node, Pfad) wuerde jeden
+        # Wert doppelt zustellen. Queue, Handler und die device_id-Aufloesung
+        # bleiben nach subscribe() erreichbar, weil follow_node sie braucht.
+        self._subscribed_paths: set[tuple[int, str]] = set()
+        self._queue: asyncio.Queue[_QueueItem] | None = None
+        self._handler: RuntimeEventHandler | None = None
+        self._resolve_device_id: Callable[[int], int | None] | None = None
 
     def _default_session_factory(self, session: Any) -> Any:
         # Lazy importiert, damit Tests matter_server nie laden müssen.
@@ -303,6 +312,10 @@ class BridgeMatterClient:
         self._listener_task = None
         self._dispatch_task = None
         self._unsubscribers = []
+        self._subscribed_paths = set()
+        self._queue = None
+        self._handler = None
+        self._resolve_device_id = None
         if http_session is None:
             # Invariante: Ist _upstream gesetzt, ist auch _http_session gesetzt
             # (beide werden nur gemeinsam in connect() gesetzt). Als expliziter
@@ -490,6 +503,55 @@ class BridgeMatterClient:
         command = command_cls(**call.payload)
         await upstream.send_device_command(call.node_id, call.endpoint, command)
 
+    def _subscribe_attribute_paths(
+        self,
+        upstream: Any,
+        queue: asyncio.Queue[_QueueItem],
+        node_id: int,
+        paths: Iterable[str],
+    ) -> int:
+        """Legt je ein Attribut-Abonnement pro noch nicht abonniertem
+        (Node, Pfad)-Paar an und liefert deren Anzahl.
+
+        Eine Stelle fuer beide Aufrufer (`subscribe` und `follow_node`): zwei
+        Stellen, die dasselbe Registrierungsschema nachbilden, driften ueber
+        kurz oder lang auseinander - und das faellt hier nicht auf, weil ein
+        fehlendes Abonnement kein Fehler ist, sondern Stille.
+
+        `queue` kommt als Parameter statt aus `self._queue`, damit `subscribe`
+        sie uebergeben kann, bevor sie im Feld steht - und damit hier keine
+        Nicht-`None`-Pruefung noetig ist, deren Einengung ueber die Closure
+        unten ohnehin nicht traegt.
+        """
+        # Lazy importiert wie ueberall in dieser Datei: Tests mit einem
+        # Fake-Upstream sollen matter_server nie laden muessen.
+        from matter_server.common.models import EventType
+
+        added = 0
+        for path in paths:
+            if (node_id, path) in self._subscribed_paths:
+                continue
+
+            # default-Argumente binden node_id/path pro Schleifendurchlauf,
+            # statt den Namen aus dem umschliessenden Scope zu spaet
+            # auszuwerten (klassische Closure-Falle in einer Schleife).
+            def on_attribute_event(
+                _event: Any, data: Any, node_id: int = node_id, path: str = path
+            ) -> None:
+                queue.put_nowait(_AttributeUpdate(node_id, path, data))
+
+            self._unsubscribers.append(
+                upstream.subscribe_events(
+                    on_attribute_event,
+                    event_filter=EventType.ATTRIBUTE_UPDATED,
+                    node_filter=node_id,
+                    attr_path_filter=path,
+                )
+            )
+            self._subscribed_paths.add((node_id, path))
+            added += 1
+        return added
+
     async def subscribe(
         self,
         resolve_device_id: Callable[[int], int | None],
@@ -538,32 +600,83 @@ class BridgeMatterClient:
                 # MatterClient._handle_event_message.
                 queue.put_nowait(_AvailabilityUpdate(data, False))
 
-        unsubscribers = [upstream.subscribe_events(on_node_or_availability_event)]
+        self._unsubscribers = [upstream.subscribe_events(on_node_or_availability_event)]
+        self._subscribed_paths = set()
+        self._queue = queue
+        self._handler = handler
+        self._resolve_device_id = resolve_device_id
 
         # Attribut-Updates: siehe Modul-Docstring, warum das nur pro bekanntem
-        # (Node, Pfad)-Paar geht. default-Argumente binden node_id/path pro
-        # Schleifendurchlauf, statt den Namen aus dem umschließenden Scope zu
-        # spät auszuwerten (klassische Closure-Falle in einer Schleife).
+        # (Node, Pfad)-Paar geht. Was nach diesem Aufruf dazukommt, holt
+        # `follow_node` nach.
         for node in upstream.get_nodes():
-            for path in node.node_data.attributes:
+            self._subscribe_attribute_paths(
+                upstream, queue, node.node_id, node.node_data.attributes
+            )
 
-                def on_attribute_event(
-                    _event: Any, data: Any, node_id: int = node.node_id, path: str = path
-                ) -> None:
-                    queue.put_nowait(_AttributeUpdate(node_id, path, data))
-
-                unsubscribers.append(
-                    upstream.subscribe_events(
-                        on_attribute_event,
-                        event_filter=EventType.ATTRIBUTE_UPDATED,
-                        node_filter=node.node_id,
-                        attr_path_filter=path,
-                    )
-                )
-
-        self._unsubscribers = unsubscribers
         self._dispatch_task = asyncio.create_task(
             self._dispatch_loop(queue, resolve_device_id, handler)
+        )
+
+    async def follow_node(self, node_id: int) -> None:
+        """Zieht die Attribut-Abonnements eines Node nach.
+
+        Zwei Aufrufer, ein Vorgang: die Einlern-Route (`api/devices.py`) nach
+        dem Registrieren eines neuen Geraets, und `_dispatch_loop` bei
+        `NODE_ADDED`/`NODE_UPDATED` fuer ein Geraet, das nachtraeglich neue
+        Pfade meldet.
+
+        **Warum die Route nicht einfach auf das Ereignis warten kann:**
+        matter-server meldet `NODE_ADDED` noch WAEHREND `commission_with_code`
+        laeuft (`device_controller._setup_node` signalisiert es vor der
+        Rueckkehr des Aufrufs). Zu diesem Zeitpunkt kennt der Store den Node
+        noch nicht, `resolve_device_id` liefert `None`, und fuer ein ruhig im
+        Netz stehendes Geraet folgt keine zweite Meldung. Am 2026-09-04 am
+        laufenden Stack aufgezeichnet: Node 8 war um 11:15:33 fertig
+        eingelernt, samt "Subscription succeeded" - alles davon vor der
+        Rueckkehr an die Route.
+
+        Der leere Diff ist der Regelfall und kostet nichts: `NODE_UPDATED`
+        feuert auch bei jedem Wechsel der Erreichbarkeit und nach jeder
+        Re-Subscription, und fuer ein Geraet ohne neue Pfade endet der
+        Vorgang hier, bevor der Handler (und damit der Store) ueberhaupt
+        angefasst wird.
+
+        Vor `subscribe()` aufgerufen tut die Methode nichts, statt zu werfen:
+        die Einlern-Route ruft sie bedingungslos, und ein Aufbau ohne
+        Subscription soll daran nicht scheitern.
+        """
+        queue = self._queue
+        handler = self._handler
+        resolve_device_id = self._resolve_device_id
+        if queue is None or handler is None or resolve_device_id is None:
+            logger.debug(
+                "follow_node(%s) ohne vorheriges subscribe() - nichts nachzuziehen", node_id
+            )
+            return
+
+        upstream = self._require_upstream()
+        node = next((n for n in upstream.get_nodes() if n.node_id == node_id), None)
+        if node is None:
+            logger.info(
+                "Node %s ist matter-server nicht bekannt - keine Abonnements nachgezogen", node_id
+            )
+            return
+
+        attributes = node.node_data.attributes
+        if self._subscribe_attribute_paths(upstream, queue, node_id, attributes) == 0:
+            return
+
+        device_id = resolve_device_id(node_id)
+        if device_id is None:
+            # Die Abonnements bleiben bestehen: sobald die Einlern-Route das
+            # Geraet registriert und erneut nachzieht, greift der Zweig unten.
+            logger.debug("Node %s ist keinem Geraet zugeordnet - nur abonniert", node_id)
+            return
+
+        await handler.on_node_snapshot(
+            device_id,
+            NodeSnapshot.from_raw(node_id, {"attributes": attributes, "available": node.available}),
         )
 
     async def _dispatch_loop(

@@ -24,6 +24,7 @@ from matter_server.common.models import EventType, MatterNodeEvent
 from loxmatter.commands.translate import MatterCall
 from loxmatter.matter import client as client_module
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
+from loxmatter.matter.models import NodeSnapshot
 
 
 class FakeNode:
@@ -91,6 +92,12 @@ class FakeUpstream:
 
     def get_nodes(self) -> list[FakeNode]:
         return self._nodes
+
+    def add_node(self, node: FakeNode) -> None:
+        """Ein Geraet, das erst nach start_listening() dazukommt - beim
+        echten MatterClient fuellt das NODE_ADDED-Ereignis den Node-Cache
+        entsprechend. Genau der Fall, den `follow_node` abdeckt."""
+        self._nodes.append(node)
 
     # --- ab hier: Nachbildung von MatterClient.subscribe_events()/
     # send_device_command() fuer Task 8. subscribe_events() bildet das reale
@@ -451,6 +458,7 @@ class FakeHandler:
         self.attribute_calls: list[tuple[int, str, object]] = []
         self.event_calls: list[tuple[int, str]] = []
         self.availability_calls: list[tuple[int, bool]] = []
+        self.snapshot_calls: list[tuple[int, NodeSnapshot]] = []
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
         self.attribute_calls.append((device_id, path, raw))
@@ -460,6 +468,9 @@ class FakeHandler:
 
     async def set_online(self, device_id: int, online: bool) -> None:
         self.availability_calls.append((device_id, online))
+
+    async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None:
+        self.snapshot_calls.append((device_id, snapshot))
 
 
 def make_connected_pair(
@@ -480,9 +491,28 @@ def make_connected_pair(
 async def _settle() -> None:
     """Lässt den Dispatch-Task von subscribe() der Queue hinterherlaufen —
     put_nowait() aus einem synchronen Callback und dessen Verarbeitung im
-    Hintergrund-Task liegen sonst in verschiedenen Event-Loop-Durchläufen."""
-    for _ in range(3):
+    Hintergrund-Task liegen sonst in verschiedenen Event-Loop-Durchläufen.
+
+    Sechs Durchläufe statt drei, seit ein NODE_ADDED/NODE_UPDATED zwei
+    Einträge erzeugt (Erreichbarkeit und Nachziehen) und das Nachziehen
+    selbst noch einmal auf den Handler wartet."""
+    for _ in range(6):
         await asyncio.sleep(0)
+
+
+def _attribute_subscriptions(upstream: FakeUpstream) -> list[str]:
+    """Die Schluessel der aktiven Attribut-Abonnements, je einer pro
+    (Node, Pfad), in der Form `attribute_updated/<node>/<pfad>`.
+
+    Liest `_subscribers` der Attrappe absichtlich direkt: sie bildet damit
+    exakt das Schluessel-Matching von `MatterClient._signal_event()` nach,
+    und genau dieses Registrierungsschema soll hier geprueft werden."""
+    prefix = f"{EventType.ATTRIBUTE_UPDATED.value}/"
+    return sorted(
+        key
+        for key, callbacks in upstream._subscribers.items()
+        if key.startswith(prefix) and callbacks
+    )
 
 
 # --- send_command() ---------------------------------------------------
@@ -658,3 +688,122 @@ async def test_disconnect_stops_delivering_updates():
     await _settle()
 
     assert handler.attribute_calls == []
+
+
+# --- follow_node() ----------------------------------------------------
+
+
+async def test_follow_node_subscribes_a_node_that_did_not_exist_at_subscribe_time():
+    """Der gemeldete Fall: ein Geraet, das erst nach `subscribe()` eingelernt
+    wurde, hatte kein einziges Attribut-Abonnement - seine Signale standen
+    bis zum naechsten Neustart der Bruecke auf "-"."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda node_id: {12: 5, 8: 9}.get(node_id), handler)
+
+    upstream.add_node(FakeNode(8, {"1/6/0": True}))
+    await bridge.follow_node(8)
+    upstream.emit(EventType.ATTRIBUTE_UPDATED, False, node_id=8, attribute_path="1/6/0")
+    await _settle()
+
+    assert handler.attribute_calls == [(9, "1/6/0", False)]
+
+
+async def test_follow_node_does_not_subscribe_the_same_path_twice():
+    """Ein zweites Abonnement fuer denselben Pfad wuerde jeden Wert doppelt
+    zustellen - `on_attribute` liefe zweimal, und bei einem Ereignissignal
+    zaehlte der Zaehler doppelt hoch."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda _node_id: 5, handler)
+
+    await bridge.follow_node(12)
+    upstream.emit(EventType.ATTRIBUTE_UPDATED, False, node_id=12, attribute_path="1/6/0")
+    await _settle()
+
+    assert handler.attribute_calls == [(5, "1/6/0", False)]
+
+
+async def test_follow_node_only_subscribes_the_paths_that_are_new():
+    node = FakeNode(12, {"1/6/0": True})
+    bridge, upstream = make_connected_pair([node])
+    await bridge.connect()
+    await bridge.subscribe(lambda _node_id: 5, FakeHandler())
+
+    node.node_data.attributes["1/8/0"] = 254
+    await bridge.follow_node(12)
+
+    assert _attribute_subscriptions(upstream) == [
+        "attribute_updated/12/1/6/0",
+        "attribute_updated/12/1/8/0",
+    ]
+
+
+async def test_follow_node_without_new_paths_leaves_the_handler_alone():
+    """Der Regelfall im Betrieb: `NODE_UPDATED` feuert auch bei einem Wechsel
+    der Erreichbarkeit und nach jeder Re-Subscription. Fuer ein Geraet ohne
+    neue Pfade ist der Diff leer, und der Vorgang endet vor dem Handler -
+    sonst schriebe jede dieser Meldungen ueber hundert UPDATE-Anweisungen in
+    die Datenbank."""
+    bridge, _upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda _node_id: 5, handler)
+
+    await bridge.follow_node(12)
+
+    assert handler.snapshot_calls == []
+
+
+async def test_follow_node_hands_the_snapshot_to_the_handler():
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda node_id: {8: 42}.get(node_id), handler)
+
+    upstream.add_node(FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": True}))
+    await bridge.follow_node(8)
+
+    assert [(device_id, snap.node_id) for device_id, snap in handler.snapshot_calls] == [(42, 8)]
+    assert handler.snapshot_calls[0][1].vendor_name == "IKEA of Sweden"
+
+
+async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node():
+    """Die Abonnements entstehen trotzdem - nur der Handler bleibt aussen
+    vor, weil es kein Geraet gibt, dem die Werte gehoerten. Sobald die
+    Einlern-Route das Geraet registriert und erneut nachzieht, greift der
+    Handler-Zweig."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda _node_id: None, handler)
+
+    upstream.add_node(FakeNode(8, {"1/6/0": True}))
+    await bridge.follow_node(8)
+
+    assert "attribute_updated/8/1/6/0" in _attribute_subscriptions(upstream)
+    assert handler.snapshot_calls == []
+
+
+async def test_follow_node_before_subscribe_does_nothing():
+    """Kein Werfen: die Einlern-Route ruft `follow_node` bedingungslos auf,
+    und ein Aufbau ohne Subscription soll daran nicht scheitern."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
+    await bridge.connect()
+
+    await bridge.follow_node(12)
+
+    assert _attribute_subscriptions(upstream) == []
+
+
+async def test_follow_node_for_an_unknown_node_does_nothing():
+    bridge, _upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda _node_id: 5, handler)
+
+    await bridge.follow_node(999)
+
+    assert handler.snapshot_calls == []
