@@ -50,6 +50,7 @@ from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.auth_store import AuthStore
 from loxmatter.model.locale_store import LocaleStore
+from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 from loxmatter.profiles.relevance import (
     ROOT_NODE_DEVICE_TYPE,
@@ -741,6 +742,8 @@ class Store:
         )
         # Sicht auf dieselbe Verbindung - siehe `locale_store.py`.
         self.locale = LocaleStore(self._db)
+        # Sicht auf dieselbe Verbindung - siehe `resend_settings_store.py`.
+        self.resend_settings = ResendSettingsStore(self._db)
 
     def close(self) -> None:
         self._db.close()
