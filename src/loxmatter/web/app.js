@@ -1079,7 +1079,7 @@ function app() {
         }
         this.exportStatusByDevice = byDevice;
       } catch (error) {
-        this.exportError = `Export-Status konnte nicht geladen werden: ${error.message}`;
+        this.exportError = t("web.export.status_load_error", { message: error.message });
       }
     },
 
@@ -1129,8 +1129,7 @@ function app() {
     async previewExport() {
       this.exportError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.exportError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.exportError = t("web.export.bridge_ip_missing");
         return;
       }
       this.exportBusy = true;
@@ -1142,7 +1141,7 @@ function app() {
         this.exportPreview = await this.request("GET", `/api/export/preview?${params}`);
         await this.loadExportStatus();
       } catch (error) {
-        this.exportError = `Vorschau fehlgeschlagen: ${error.message}`;
+        this.exportError = t("web.export.preview_failed", { message: error.message });
       } finally {
         this.exportBusy = false;
       }
@@ -1196,14 +1195,13 @@ function app() {
     async downloadExport() {
       this.exportError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.exportError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.exportError = t("web.export.bridge_ip_missing");
         return;
       }
       try {
         await this.download(this.downloadUrl(), "loxmatter-export.zip");
       } catch (error) {
-        this.exportError = `Download fehlgeschlagen: ${error.message}`;
+        this.exportError = t("web.export.download_failed", { message: error.message });
         return;
       }
       // Ein Download IST ein Export (siehe `api/export.py`, Entscheidung 1):

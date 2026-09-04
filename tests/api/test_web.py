@@ -347,7 +347,7 @@ async def test_the_export_preview_shows_how_many_signals_are_held_back(api):
     Browser-Engine, siehe `test_the_page_does_not_call_init_a_second_time`)."""
     client, _, _ = api
     page = (await client.get("/")).text
-    assert "Als Experte zurückgehalten" in page
+    assert "x-text=\"t('web.export.col_expert_withheld')\"" in page
     assert 'x-text="device.hidden_count"' in page
 
 
@@ -478,7 +478,12 @@ async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
     editierbar in Einstellungen (`settingsDraft.bridge_ip`) - dort tippt
     jemand tatsaechlich hinein, dort waere eine falsche Beschriftung am
     teuersten - und schreibgeschuetzt im Export-Tab (`bridgeSettings.
-    bridge_ip`), das denselben Wert nur noch anzeigt."""
+    bridge_ip`), das denselben Wert nur noch anzeigt.
+
+    Die Einstellungen-Ansicht traegt ihr Label noch als festes deutsches
+    Literal (Aufgabe 15 uebersetzt sie erst); der Export-Tab traegt seit
+    Aufgabe 13 `t('web.bridge_ip_label')` - denselben Schluessel, den Aufgabe
+    15 dort ebenfalls verwenden wird."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
@@ -488,7 +493,8 @@ async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
 
     readonly_label = _label_around(markup, ':value="bridgeSettings.bridge_ip')
     assert "Miniserver" not in readonly_label, readonly_label
-    assert "IP dieser Brücke" in readonly_label, readonly_label
+    assert "x-text=\"t('web.bridge_ip_label')\"" in readonly_label, readonly_label
+    assert "IP dieser Brücke" not in readonly_label, readonly_label
 
 
 async def test_the_age_is_a_tooltip_and_the_change_is_a_highlight(api):
@@ -702,9 +708,7 @@ async def test_the_nav_tabs_bind_to_translation_keys_without_altering_click_hand
     client, _, _ = api
     page = (await client.get("/")).text
     for view_key in ("devices", "signals", "export", "system", "settings"):
-        assert (
-            f"@click=\"selectView('{view_key}')\" x-text=\"t('web.nav.{view_key}')\"" in page
-        )
+        assert f"@click=\"selectView('{view_key}')\" x-text=\"t('web.nav.{view_key}')\"" in page
 
 
 async def test_the_header_logout_and_connection_banner_are_translated(api):
@@ -714,7 +718,7 @@ async def test_the_header_logout_and_connection_banner_are_translated(api):
     assert ">Abmelden<" not in markup
     assert "x-text=\"t('web.connection.lost_banner')\"" in markup
     assert "Die Live-Verbindung wurde unterbrochen" not in markup
-    assert ':title="t(\'web.header.toast_dismiss_tooltip\')"' in markup
+    assert ":title=\"t('web.header.toast_dismiss_tooltip')\"" in markup
     assert "Zum Ausblenden anklicken" not in markup
     assert "x-text=\"t('web.header.heartbeat_prefix')\"" in markup
     assert "Lebenszeichen" not in markup
@@ -752,8 +756,7 @@ async def test_the_relative_time_and_header_helpers_are_translated(api):
     assert 'return t("web.header.time_ago_seconds", { seconds });' in since_body
     assert 'return t("web.header.time_ago_minutes", { minutes });' in since_body
     assert (
-        'return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });'
-        in since_body
+        'return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });' in since_body
     )
     assert "`vor" not in since_body
 
@@ -826,9 +829,7 @@ async def test_formatting_helpers_translate_and_the_locale_follows_the_language(
     format_value_start = script.index("formatValue(value) {")
     ts_body = script[format_ts_start:format_value_start]
     assert 'return t("web.format.never");' in ts_body
-    assert (
-        'toLocaleString(this.language === "de" ? "de-DE" : "en-US")' in ts_body
-    )
+    assert 'toLocaleString(this.language === "de" ? "de-DE" : "en-US")' in ts_body
     assert 'toLocaleString("de-DE")' not in ts_body
     assert "noch nie" not in ts_body
 
@@ -847,9 +848,9 @@ async def test_the_commissioning_card_is_translated(api):
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.devices.commission_heading')\"" in markup
     assert "Neues Gerät einlernen" not in markup
-    assert ':placeholder="t(\'web.devices.code_placeholder\')"' in markup
+    assert ":placeholder=\"t('web.devices.code_placeholder')\"" in markup
     assert "Pairing-Code (11-stellig" not in markup
-    assert ':placeholder="t(\'web.devices.thread_dataset_placeholder\')"' in markup
+    assert ":placeholder=\"t('web.devices.thread_dataset_placeholder')\"" in markup
     assert "Thread-Datensatz" not in markup
     assert "x-text=\"t('web.devices.commission_submit')\"" in markup
     assert ">Einlernen<" not in markup
@@ -885,7 +886,7 @@ async def test_the_device_card_static_text_is_translated(api):
     assert "Bedienelemente werden geladen" not in markup
     assert "x-text=\"t('web.devices.no_known_commands')\"" in markup
     assert "Keine bekannten Ausgangsbefehle" not in markup
-    assert ':placeholder="t(\'web.devices.value_placeholder\')"' in markup
+    assert ":placeholder=\"t('web.devices.value_placeholder')\"" in markup
     assert 'placeholder="Wert"' not in markup
     assert "x-text=\"t('web.devices.send')\"" in markup
     assert ">Senden<" not in markup
@@ -926,7 +927,7 @@ async def test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_t
     assert "Erst in " not in devices_markup
     assert "Einstellungen → Verbindung zum Miniserver" not in devices_markup
     assert " hinterlegen." not in devices_markup
-    assert '@click.prevent="selectView(\'settings\')"' in devices_markup
+    assert "@click.prevent=\"selectView('settings')\"" in devices_markup
 
 
 async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
@@ -936,7 +937,10 @@ async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
     vorher die Template-Strings."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    assert 'this.devicesError = t("web.devices.list_load_error", { message: error.message });' in script
+    assert (
+        'this.devicesError = t("web.devices.list_load_error", { message: error.message });'
+        in script
+    )
     assert "Geraeteliste konnte nicht geladen werden" not in script
     assert (
         'this.deviceActionError = t("web.devices.controls_load_error", { message: error.message });'
@@ -1014,9 +1018,15 @@ async def test_the_commissioning_flow_messages_are_translated(api):
     body = script[commission_start:commission_end]
     assert 'this.commissionMessage = t("web.devices.commission_code_required");' in body
     assert "Bitte zuerst einen Pairing-Code eingeben." not in body
-    assert 'this.commissionMessage = t("web.devices.commission_success", { label: device.label });' in body
+    assert (
+        'this.commissionMessage = t("web.devices.commission_success", { label: device.label });'
+        in body
+    )
     assert "wurde eingelernt" not in body
-    assert 'this.commissionMessage = t("web.devices.commission_failed", { message: error.message });' in body
+    assert (
+        'this.commissionMessage = t("web.devices.commission_failed", { message: error.message });'
+        in body
+    )
     assert "Einlernen fehlgeschlagen" not in body
 
 
@@ -1060,11 +1070,11 @@ async def test_the_signal_view_static_text_is_translated(api):
         in markup
     )
     assert "Zugeklappt" not in markup
-    assert ':title="t(\'web.signals.key_tooltip\')"' in markup
+    assert ":title=\"t('web.signals.key_tooltip')\"" in markup
     assert "Verdrahtung in Loxone – nicht änderbar." not in markup
     assert "x-text=\"t('web.signals.export_checkbox')\"" in markup
     assert ">exportieren<" not in markup
-    assert ':placeholder="t(\'web.signals.raw_write_placeholder\')"' in markup
+    assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in markup
     assert "Rohwert schreiben" not in markup
     assert "x-text=\"t('web.signals.raw_write_submit')\"" in markup
     assert ">Schreiben<" not in markup
@@ -1136,3 +1146,142 @@ async def test_the_signal_view_dynamic_errors_and_success_are_translated(api):
         "this.rawWriteMessages[signal.key] = { text: error.message, isError: true };"
         in write_raw_body
     )
+
+
+async def test_the_export_tab_static_text_is_translated(api):
+    """Aufgabe 13, Schritt 3: die Ueberschrift, die IP-/Port-Labels, der
+    Einstellungen-verwaltet-Hinweis (dasselbe Praefix/Link/Suffix-Muster wie
+    Aufgabe 11s Bruecken-IP-Hinweis, hier mit `web.export.settings_hint_*`
+    und dem geteilten `web.settings.miniserver_link`), die beiden
+    Checkbox-Labels, die Filtererklaerung (per `x-html`, sie enthaelt ein
+    eingebettetes `<strong>`), die beiden Knoepfe, die Vorschau-Ueberschrift,
+    alle acht Spaltenkoepfe, die Experte-zurueckgehalten-Erklaerung und das
+    Systemvorlagen-Praefix tragen jetzt `t(...)` statt fester deutscher
+    Literale - keiner der frueheren Literale bleibt im Markup. Der
+    dynamische `x-text`, der `exportPreview.system_files` anhaengt, bleibt
+    unveraendert neben dem uebersetzten Praefix stehen."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    assert "x-text=\"t('web.export.heading')\"" in markup
+    assert ">Vorlagen exportieren<" not in markup
+
+    assert "x-text=\"t('web.export.udp_port_label')\"" in markup
+    assert ">UDP-Port<" not in markup
+    assert "x-text=\"t('web.export.http_port_label')\"" in markup
+    assert "HTTP-Port (Kommandos)" not in markup
+
+    assert "x-text=\"t('web.export.settings_hint_prefix')\"" in markup
+    assert "x-text=\"t('web.export.settings_hint_suffix')\"" in markup
+    assert "Wird in" not in markup
+    assert "verwaltet." not in markup
+    # Der Link selbst bleibt unveraendert (derselbe `@click`-Handler,
+    # jetzt mit dem geteilten Schluessel aus Aufgabe 11 uebersetzt).
+    export_hint_start = markup.index("web.export.settings_hint_prefix")
+    export_hint_end = markup.index("web.export.settings_hint_suffix")
+    export_hint = markup[export_hint_start:export_hint_end]
+    assert "@click.prevent=\"selectView('settings')\"" in export_hint
+    assert "x-text=\"t('web.settings.miniserver_link')\"" in export_hint
+    assert "Einstellungen → Verbindung zum Miniserver" not in export_hint
+
+    assert "x-text=\"t('web.export.include_system')\"" in markup
+    assert "Systemvorlagen einschließen" not in markup
+    assert "x-text=\"t('web.export.only_pending')\"" in markup
+    assert "nur noch nicht exportierte" not in markup
+
+    assert "x-html=\"t('web.export.filter_explanation')\"" in markup
+    assert "Der Filter gilt für die Vorschau" not in markup
+
+    assert "x-text=\"t('web.export.preview_button')\"" in markup
+    assert ">Vorschau ansehen<" not in markup
+    assert "x-text=\"t('web.export.download_button')\"" in markup
+    assert ">ZIP herunterladen<" not in markup
+
+    assert "x-text=\"t('web.export.preview_heading')\"" in markup
+    assert ">Vorschau<" not in markup
+
+    for key in (
+        "col_device",
+        "col_viu",
+        "col_vo",
+        "col_inputs",
+        "col_commands",
+        "col_skipped",
+        "col_expert_withheld",
+        "col_last_exported",
+    ):
+        assert f"x-text=\"t('web.export.{key}')\"" in markup
+    for literal in (
+        "Gerät<",
+        "VIU-Datei<",
+        "VO-Datei<",
+        "Eingänge<",
+        "Befehle<",
+        "Zuletzt exportiert<",
+    ):
+        assert f">{literal}" not in markup
+    assert "Übersprungen" not in markup
+
+    assert "x-text=\"t('web.export.expert_withheld_explanation')\"" in markup
+    assert "„Als Experte zurückgehalten“ sind Signale" not in markup
+
+    assert "x-text=\"t('web.export.system_files_prefix')\"" in markup
+    assert "Systemvorlagen:" not in markup
+    assert "x-text=\"exportPreview ? exportPreview.system_files.join(', ') : ''\"" in markup
+
+
+async def test_the_export_tab_filter_explanation_html_renders_the_bold_tag(api):
+    """Aufgabe 13, Schritt 3 (Nachbesserung): `web.export.filter_explanation`
+    enthaelt ein eingebettetes `<strong>und</strong>` - die Bindung muss
+    `x-html` sein, sonst zeigt der Browser die spitzen Klammern als Text
+    statt fett darzustellen. `GET /api/i18n` liefert die rohen Vorlagen (per
+    `i18n.raw_template`, siehe `api/language.py`), die `app.js`s `t()` in
+    diesen HTML-Block einsetzt - belegt hier nur, dass das rohe `<strong>`
+    darin ankommt; die tatsaechliche Fettdarstellung ist Teil der manuellen
+    Browserpruefung."""
+    client, _, _ = api
+    body = (await client.get("/api/i18n")).json()
+    template = body["strings"]["web.export.filter_explanation"]
+    assert "<strong>" in template and "</strong>" in template
+
+
+async def test_the_export_tab_dynamic_errors_are_translated(api):
+    """Aufgabe 13, Schritt 4: der Status-Ladefehler, die verbleibenden zwei
+    von drei Kopien der Brücken-IP-Pruefung (`previewExport`,
+    `downloadExport` - die dritte in `exportDevice` gehoert Aufgabe 11 und
+    ist bereits uebersetzt, siehe
+    `test_the_device_card_export_bridge_ip_validation_is_translated`),
+    der Vorschau-Fehler und der Download-Fehler tragen jetzt `t(...)`."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    load_status_start = script.index("async loadExportStatus() {")
+    load_status_end = script.index("\n    },", load_status_start)
+    load_status_body = script[load_status_start:load_status_end]
+    assert (
+        'this.exportError = t("web.export.status_load_error", { message: error.message });'
+        in load_status_body
+    )
+    assert "Export-Status konnte nicht geladen werden" not in load_status_body
+
+    preview_start = script.index("async previewExport() {")
+    preview_end = script.index("\n    },", preview_start)
+    preview_body = script[preview_start:preview_end]
+    assert 'this.exportError = t("web.export.bridge_ip_missing");' in preview_body
+    assert (
+        'this.exportError = t("web.export.preview_failed", { message: error.message });'
+        in preview_body
+    )
+    assert "Brücken-IP hinterlegen" not in preview_body
+    assert "Vorschau fehlgeschlagen" not in preview_body
+
+    download_start = script.index("async downloadExport() {")
+    download_end = script.index("\n    },", download_start)
+    download_body = script[download_start:download_end]
+    assert 'this.exportError = t("web.export.bridge_ip_missing");' in download_body
+    assert (
+        'this.exportError = t("web.export.download_failed", { message: error.message });'
+        in download_body
+    )
+    assert "Brücken-IP hinterlegen" not in download_body
+    assert "Download fehlgeschlagen" not in download_body

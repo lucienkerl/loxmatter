@@ -464,64 +464,77 @@
            ================================================================ -->
       <section x-show="view === 'export'" x-cloak>
         <div class="card">
-          <h2>Vorlagen exportieren</h2>
+          <h2 x-text="t('web.export.heading')"></h2>
           <div class="row">
             <label
-              >IP dieser Brücke
+              ><span x-text="t('web.bridge_ip_label')"></span>
               <input type="text" :value="bridgeSettings.bridge_ip || ''" readonly
             /></label>
-            <label>UDP-Port <input type="number" :value="bridgeSettings.udp_port" readonly /></label>
+            <label
+              ><span x-text="t('web.export.udp_port_label')"></span>
+              <input type="number" :value="bridgeSettings.udp_port" readonly
+            /></label>
             <label>
-              HTTP-Port (Kommandos)
+              <span x-text="t('web.export.http_port_label')"></span>
               <input type="number" :value="bridgeSettings.listen_port" readonly />
             </label>
           </div>
           <p class="hint">
-            Wird in
-            <a href="#" @click.prevent="selectView('settings')">Einstellungen → Verbindung zum Miniserver</a>
-            verwaltet.
+            <span x-text="t('web.export.settings_hint_prefix')"></span>
+            <a
+              href="#"
+              @click.prevent="selectView('settings')"
+              x-text="t('web.settings.miniserver_link')"
+            ></a>
+            <span x-text="t('web.export.settings_hint_suffix')"></span>
           </p>
           <div class="row">
-            <label><input type="checkbox" x-model="exportIncludeSystem" /> Systemvorlagen einschließen</label>
             <label
-              ><input type="checkbox" x-model="exportOnlyPending" /> nur noch nicht exportierte
-              Geräte</label
-            >
+              ><input type="checkbox" x-model="exportIncludeSystem" />
+              <span x-text="t('web.export.include_system')"></span
+            ></label>
+            <label
+              ><input type="checkbox" x-model="exportOnlyPending" />
+              <span x-text="t('web.export.only_pending')"></span
+            ></label>
           </div>
-          <p class="hint">
-            Der Filter gilt für die Vorschau <strong>und</strong> für das ZIP: ist er gesetzt,
-            enthält der Download nur die Geräte aus der Tabelle unten, und nur diese gelten
-            danach als exportiert.
-          </p>
+          <p class="hint" x-html="t('web.export.filter_explanation')"></p>
           <div class="row">
-            <button class="primary" @click="previewExport()" :disabled="exportBusy">
-              Vorschau ansehen
-            </button>
+            <button
+              class="primary"
+              @click="previewExport()"
+              :disabled="exportBusy"
+              x-text="t('web.export.preview_button')"
+            ></button>
             <!--
               Ein `<a href>` wuerde eine Fehlerantwort (401 nach abgelaufener
               Sitzung, 422 bei leerem Pflichtfeld) als rohen Text anzeigen
               statt in der Oberflaeche - deshalb ein Knopf, der die Datei
               ueber `fetch()` holt (siehe `downloadExport` in app.js).
             -->
-            <button class="primary" @click="downloadExport()">ZIP herunterladen</button>
+            <button
+              class="primary"
+              @click="downloadExport()"
+              x-text="t('web.export.download_button')"
+            ></button>
           </div>
           <p x-show="exportError" x-cloak class="banner danger" x-text="exportError"></p>
         </div>
 
         <div class="card" x-show="exportPreview" x-cloak>
-          <h2>Vorschau</h2>
+          <h2 x-text="t('web.export.preview_heading')"></h2>
           <div style="overflow-x: auto">
             <table>
               <thead>
                 <tr>
-                  <th>Gerät</th>
-                  <th>VIU-Datei</th>
-                  <th>VO-Datei</th>
-                  <th>Eingänge</th>
-                  <th>Befehle</th>
-                  <th>Übersprungen</th>
-                  <th>Als Experte zurückgehalten</th>
-                  <th>Zuletzt exportiert</th>
+                  <th x-text="t('web.export.col_device')"></th>
+                  <th x-text="t('web.export.col_viu')"></th>
+                  <th x-text="t('web.export.col_vo')"></th>
+                  <th x-text="t('web.export.col_inputs')"></th>
+                  <th x-text="t('web.export.col_commands')"></th>
+                  <th x-text="t('web.export.col_skipped')"></th>
+                  <th x-text="t('web.export.col_expert_withheld')"></th>
+                  <th x-text="t('web.export.col_last_exported')"></th>
                 </tr>
               </thead>
               <tbody>
@@ -540,13 +553,9 @@
               </tbody>
             </table>
           </div>
-          <p class="hint">
-            „Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber
-            standardmäßig nicht zum Gerätetyp gehören (Ansicht „Signale“, Block „Experte“) – dort
-            lässt sich jedes einzeln freischalten.
-          </p>
+          <p class="hint" x-text="t('web.export.expert_withheld_explanation')"></p>
           <p class="hint" x-show="exportPreview && exportPreview.system_files.length > 0">
-            Systemvorlagen: <span x-text="exportPreview ? exportPreview.system_files.join(', ') : ''"></span>
+            <span x-text="t('web.export.system_files_prefix')"></span><span x-text="exportPreview ? exportPreview.system_files.join(', ') : ''"></span>
           </p>
         </div>
       </section>
