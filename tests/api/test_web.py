@@ -1630,3 +1630,166 @@ async def test_set_language_handles_request_failures_like_save_settings(api):
     )
     assert "this.settingsBusy = true;" in body
     assert "this.settingsBusy = false;" in body
+
+
+async def test_the_projectsync_card_static_text_is_translated(api):
+    """Aufgabe 16 (Projektdatei-Sync-Karte): die Ueberschrift, der Einfuehr-
+    ungstext, der Bruecken-IP-Hinweis (Praefix/Link/Suffix - derselbe Aufbau
+    wie Aufgabe 11/13, hier mit `web.export.projectsync_bridge_ip_hint_*`
+    und dem geteilten `web.settings.miniserver_link`), das Miniserver-IP-
+    Label samt Klammerhinweis und Platzhalter, das Dateifeld-Label, der
+    Verarbeitungs-Hinweis, die "Alles aktuell"-Meldung, die fuenf
+    Gesamt-Tally-Beschriftungen, die abweichende "alles aktuell"-Kurzform
+    je Geraetekarte, die vereinfachte Disclosure (ein einziger `t(...)`-
+    Aufruf mit `{count}` statt zwei Elementen), das Checkbox-Label und der
+    Download-Knopf tragen jetzt `t(...)` statt fester deutscher Literale -
+    keiner der frueheren Literale bleibt im Markup."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    assert "x-text=\"t('web.export.projectsync_heading')\"" in markup
+    assert ">Projektdatei-Sync<" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_intro')\"" in markup
+    assert "vorhandene virtuelle Ein-/Ausgänge werden" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_bridge_ip_hint_prefix')\"" in markup
+    assert "x-text=\"t('web.export.projectsync_bridge_ip_hint_suffix')\"" in markup
+    bridge_hint_start = markup.index("web.export.projectsync_bridge_ip_hint_prefix")
+    bridge_hint_end = markup.index("web.export.projectsync_bridge_ip_hint_suffix")
+    bridge_hint = markup[bridge_hint_start:bridge_hint_end]
+    assert "@click.prevent=\"selectView('settings')\"" in bridge_hint
+    assert "x-text=\"t('web.settings.miniserver_link')\"" in bridge_hint
+    assert "Einstellungen → Verbindung zum Miniserver" not in bridge_hint
+    assert "die Brücken-IP hinterlegen" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_miniserver_ip_label')\"" in markup
+    assert ">IP des Miniservers<" not in markup
+    assert "x-text=\"t('web.export.projectsync_miniserver_ip_hint')\"" in markup
+    assert "nur nötig bei mehreren Miniservern" not in markup
+    assert ":placeholder=\"t('web.export.projectsync_ip_placeholder')\"" in markup
+    assert "z. B. 10.0.0.10" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_file_label')\"" in markup
+    assert "Projektdatei (.Loxone)<" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_busy')\"" in markup
+    assert "Wird verarbeitet …" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_all_current')\"" in markup
+    assert "Alles aktuell – keine Änderungen nötig." not in markup
+
+    for key in (
+        "projectsync_tally_new",
+        "projectsync_tally_updated",
+        "projectsync_tally_orphaned",
+        "projectsync_tally_conflict",
+        "projectsync_tally_unchanged",
+    ):
+        assert f"x-text=\"t('web.export.{key}')\"" in markup
+    assert "&nbsp;neu" not in markup
+    assert "&nbsp;aktualisiert" not in markup
+    assert "&nbsp;verwaist" not in markup
+    assert "&nbsp;Konflikt" not in markup
+    assert "&nbsp;unverändert" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_group_all_current')\"" in markup
+    assert ">alles aktuell<" not in markup
+
+    assert (
+        "x-text=\"t('web.export.projectsync_unchanged_disclosure', "
+        '{ count: section.unchanged.length })"' in markup
+    )
+    assert "unveränderte Signale anzeigen" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_new_devices_checkbox')\"" in markup
+    assert "Neue Geräte-Container ebenfalls anlegen" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_download_button')\"" in markup
+    assert "Gepatchte Datei herunterladen<" not in markup
+
+
+async def test_the_projectsync_card_dynamic_strings_are_translated(api):
+    """Aufgabe 16 (Projektdatei-Sync-Karte): der Bruecken-IP-Fehler in
+    `uploadProjectFile` (teilt sich `web.export.bridge_ip_missing` mit
+    Aufgabe 11/13), der Hochladen-fehlgeschlagen-Fehler, die sieben-
+    eintragige `projectSyncStatusLabel`-Tabelle, das verwaiste-Geraet-
+    Fallback-Label in `projectSyncGroupedEntries`, die beiden
+    Ein-/Ausgang-Sektionsbeschriftungen, die fuenf `projectSyncEntryNote`-
+    Rueckgaben und die sechs-eintragige `projectSyncAttrLabel`-Tabelle
+    tragen jetzt `t(...)` statt fester deutscher Literale."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    upload_start = script.index("async uploadProjectFile(event) {")
+    upload_end = script.index("\n    },", script.index('input.value = "";', upload_start))
+    upload_body = script[upload_start:upload_end]
+    assert 'this.projectSync.error = t("web.export.bridge_ip_missing");' in upload_body
+    assert "die Brücken-IP hinterlegen" not in upload_body
+    assert (
+        'this.projectSync.error = t("web.export.projectsync_upload_failed", '
+        "{ message: error.message });" in upload_body
+    )
+    assert "Hochladen fehlgeschlagen" not in upload_body
+
+    status_label_start = script.index("projectSyncStatusLabel(status) {")
+    status_label_end = script.index("\n    },", status_label_start)
+    status_label_body = script[status_label_start:status_label_end]
+    assert 'unchanged: t("web.export.projectsync_status_unchanged"),' in status_label_body
+    assert 'updated: t("web.export.projectsync_status_updated"),' in status_label_body
+    assert 'new_signal: t("web.export.projectsync_status_new_signal"),' in status_label_body
+    assert 'new_device: t("web.export.projectsync_status_new_device"),' in status_label_body
+    assert 'orphaned: t("web.export.projectsync_status_orphaned"),' in status_label_body
+    assert 'conflict: t("web.export.projectsync_status_conflict"),' in status_label_body
+    assert (
+        'possible_duplicate: t("web.export.projectsync_status_possible_duplicate"),'
+        in status_label_body
+    )
+    assert '"Unverändert"' not in status_label_body
+    assert '"Aktualisiert"' not in status_label_body
+    assert '"Neues Signal"' not in status_label_body
+    assert '"Neues Gerät"' not in status_label_body
+    assert "wird nicht verändert" not in status_label_body
+    assert "wird übersprungen" not in status_label_body
+
+    grouped_start = script.index("projectSyncGroupedEntries(entries) {")
+    grouped_end = script.index("\n    },", grouped_start)
+    grouped_body = script[grouped_start:grouped_end]
+    assert (
+        't("web.export.projectsync_unassigned_device_label")\n                : entry.device_label'
+        in grouped_body
+    )
+    assert "Nicht mehr zugeordnet" not in grouped_body
+    assert 'label: t("web.export.projectsync_section_inputs"),' in grouped_body
+    assert 'label: t("web.export.projectsync_section_outputs"),' in grouped_body
+    assert '"Eingänge"' not in grouped_body
+    assert '"Ausgänge"' not in grouped_body
+
+    note_start = script.index("projectSyncEntryNote(entry) {")
+    note_end = script.index("\n    },", note_start)
+    note_body = script[note_start:note_end]
+    assert 'return t("web.export.projectsync_note_new_device");' in note_body
+    assert 'return t("web.export.projectsync_note_new_signal");' in note_body
+    assert 'return t("web.export.projectsync_note_orphaned");' in note_body
+    assert 'return t("web.export.projectsync_note_conflict");' in note_body
+    assert 'return t("web.export.projectsync_note_possible_duplicate");' in note_body
+    assert "Neuer virtueller Ein-/Ausgang" not in note_body
+    assert "Neues Signal wird im bestehenden" not in note_body
+    assert "Gehört zu keinem bekannten Gerät mehr." not in note_body
+    assert "Unerwartete Struktur in der Datei." not in note_body
+    assert "Ein bestehender Befehl trägt bereits diesen Titel" not in note_body
+
+    attr_label_start = script.index("projectSyncAttrLabel(attr) {")
+    attr_label_end = script.index("\n    },", attr_label_start)
+    attr_label_body = script[attr_label_start:attr_label_end]
+    assert 'Title: t("web.export.projectsync_attr_title"),' in attr_label_body
+    assert 'Check: t("web.export.projectsync_attr_check"),' in attr_label_body
+    assert 'Analog: t("web.export.projectsync_attr_analog"),' in attr_label_body
+    assert 'Unit: t("web.export.projectsync_attr_unit"),' in attr_label_body
+    assert 'CmdOn: t("web.export.projectsync_attr_cmd_on"),' in attr_label_body
+    assert 'CmdOff: t("web.export.projectsync_attr_cmd_off"),' in attr_label_body
+    assert '"Titel"' not in attr_label_body
+    assert '"Prüfbefehl"' not in attr_label_body
+    assert '"Einheit"' not in attr_label_body
+    assert '"Befehl Ein"' not in attr_label_body
+    assert '"Befehl Aus"' not in attr_label_body

@@ -496,30 +496,31 @@
           Bruecke.
         -->
         <div class="card">
-          <h2>Projektdatei-Sync</h2>
-          <p class="hint">
-            Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden
-            aktualisiert, neue Signale ergänzt. Nichts wird heruntergeladen, bevor du den Plan
-            gesehen hast.
-          </p>
+          <h2 x-text="t('web.export.projectsync_heading')"></h2>
+          <p class="hint" x-text="t('web.export.projectsync_intro')"></p>
           <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
-            Bitte zuerst in
-            <a href="#" @click.prevent="selectView('settings')">Einstellungen → Verbindung zum Miniserver</a>
-            die Brücken-IP hinterlegen.
+            <span x-text="t('web.export.projectsync_bridge_ip_hint_prefix')"></span>
+            <a
+              href="#"
+              @click.prevent="selectView('settings')"
+              x-text="t('web.settings.miniserver_link')"
+            ></a>
+            <span x-text="t('web.export.projectsync_bridge_ip_hint_suffix')"></span>
           </p>
           <div class="row">
             <label
-              >IP des Miniservers <span class="hint">(nur nötig bei mehreren Miniservern in der Datei)</span>
+              ><span x-text="t('web.export.projectsync_miniserver_ip_label')"></span>
+              <span class="hint" x-text="t('web.export.projectsync_miniserver_ip_hint')"></span>
               <input
                 type="text"
-                placeholder="z. B. 10.0.0.10"
+                :placeholder="t('web.export.projectsync_ip_placeholder')"
                 x-model="projectSync.miniserverIp"
                 :disabled="projectSync.busy"
             /></label>
           </div>
           <div class="row">
             <label
-              >Projektdatei (.Loxone)
+              ><span x-text="t('web.export.projectsync_file_label')"></span>
               <input
                 type="file"
                 accept=".Loxone,.xml"
@@ -527,7 +528,7 @@
                 :disabled="projectSync.busy"
             /></label>
           </div>
-          <p x-show="projectSync.busy" x-cloak class="hint">Wird verarbeitet …</p>
+          <p x-show="projectSync.busy" x-cloak class="hint" x-text="t('web.export.projectsync_busy')"></p>
           <p x-show="projectSync.error" x-cloak class="banner danger" x-text="projectSync.error"></p>
 
           <template x-if="projectSync.plan">
@@ -548,9 +549,8 @@
               <p
                 x-show="!projectSync.plan.has_changes && !projectSyncHasInformationalEntries(projectSync.plan.entries)"
                 class="hint"
-              >
-                Alles aktuell – keine Änderungen nötig.
-              </p>
+                x-text="t('web.export.projectsync_all_current')"
+              ></p>
               <!--
                 Ueberarbeitet nach Nutzerwunsch ("schneller und sauberer
                 Ueberblick"): eine Gesamt-Uebersicht ganz oben, darunter je
@@ -573,23 +573,23 @@
                 <div class="projectsync-summary" x-data="{ counts: projectSyncOverallCounts(projectSync.plan.entries) }">
                   <span class="projectsync-tally-item is-new" x-show="counts.new > 0">
                     <span class="dot is-new"></span>
-                    <strong x-text="counts.new"></strong>&nbsp;neu
+                    <strong x-text="counts.new"></strong>&nbsp;<span x-text="t('web.export.projectsync_tally_new')"></span>
                   </span>
                   <span class="projectsync-tally-item is-updated" x-show="counts.updated > 0">
                     <span class="dot is-updated"></span>
-                    <strong x-text="counts.updated"></strong>&nbsp;aktualisiert
+                    <strong x-text="counts.updated"></strong>&nbsp;<span x-text="t('web.export.projectsync_tally_updated')"></span>
                   </span>
                   <span class="projectsync-tally-item is-orphaned" x-show="counts.orphaned > 0">
                     <span class="dot is-orphaned"></span>
-                    <strong x-text="counts.orphaned"></strong>&nbsp;verwaist
+                    <strong x-text="counts.orphaned"></strong>&nbsp;<span x-text="t('web.export.projectsync_tally_orphaned')"></span>
                   </span>
                   <span class="projectsync-tally-item is-conflict" x-show="counts.conflict > 0">
                     <span class="dot is-conflict"></span>
-                    <strong x-text="counts.conflict"></strong>&nbsp;Konflikt
+                    <strong x-text="counts.conflict"></strong>&nbsp;<span x-text="t('web.export.projectsync_tally_conflict')"></span>
                   </span>
                   <span class="projectsync-tally-item is-unchanged" x-show="counts.unchanged > 0">
                     <span class="dot is-unchanged"></span>
-                    <strong x-text="counts.unchanged"></strong>&nbsp;unverändert
+                    <strong x-text="counts.unchanged"></strong>&nbsp;<span x-text="t('web.export.projectsync_tally_unchanged')"></span>
                   </span>
                 </div>
 
@@ -617,9 +617,11 @@
                           <span class="dot is-conflict"></span>
                           <span x-text="group.counts.conflict"></span>
                         </span>
-                        <span class="projectsync-tally-item is-unchanged" x-show="!group.needsAttention">
-                          alles aktuell
-                        </span>
+                        <span
+                          class="projectsync-tally-item is-unchanged"
+                          x-show="!group.needsAttention"
+                          x-text="t('web.export.projectsync_group_all_current')"
+                        ></span>
                       </span>
                       <svg class="icon chevron"><use href="#i-chevron"></use></svg>
                     </summary>
@@ -669,8 +671,9 @@
                                (Nutzerwunsch: "schneller und sauberer Ueberblick"). -->
                           <details class="projectsync-unchanged-disclosure" x-show="section.unchanged.length > 0">
                             <summary>
-                              <span x-text="section.unchanged.length"></span>
-                              unveränderte Signale anzeigen
+                              <span
+                                x-text="t('web.export.projectsync_unchanged_disclosure', { count: section.unchanged.length })"
+                              ></span>
                             </summary>
                             <div class="projectsync-unchanged-chips">
                               <template x-for="entry in section.unchanged" :key="entry.kind + entry.key">
@@ -704,13 +707,14 @@
                     x-model="projectSync.includeNewDevices"
                     :disabled="!!projectSync.plan.new_devices_unavailable_reason"
                   />
-                  Neue Geräte-Container ebenfalls anlegen (experimentell, noch nicht gegen Loxone
-                  Config validiert)
+                  <span x-text="t('web.export.projectsync_new_devices_checkbox')"></span>
                 </label>
               </div>
-              <button class="primary" @click="downloadPatchedProject()">
-                Gepatchte Datei herunterladen
-              </button>
+              <button
+                class="primary"
+                @click="downloadPatchedProject()"
+                x-text="t('web.export.projectsync_download_button')"
+              ></button>
             </div>
           </template>
         </div>

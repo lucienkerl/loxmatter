@@ -1454,8 +1454,7 @@ function app() {
       }
       this.projectSync.error = "";
       if (!this.bridgeSettings.bridge_ip) {
-        this.projectSync.error =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.projectSync.error = t("web.export.bridge_ip_missing");
         input.value = "";
         return;
       }
@@ -1475,7 +1474,7 @@ function app() {
         }
         this.projectSync.plan = await this.upload(`/api/export/project-sync?${params}`, formData);
       } catch (error) {
-        this.projectSync.error = `Hochladen fehlgeschlagen: ${error.message}`;
+        this.projectSync.error = t("web.export.projectsync_upload_failed", { message: error.message });
       } finally {
         this.projectSync.busy = false;
         // Loescht die Dateiauswahl im Eingabefeld selbst - ohne das loest
@@ -1494,13 +1493,13 @@ function app() {
      * dem Bildschirm landen. */
     projectSyncStatusLabel(status) {
       const labels = {
-        unchanged: "Unverändert",
-        updated: "Aktualisiert",
-        new_signal: "Neues Signal",
-        new_device: "Neues Gerät",
-        orphaned: "Verwaist – wird nicht verändert",
-        conflict: "Konflikt – wird übersprungen",
-        possible_duplicate: "Mögliches Duplikat – wird übersprungen",
+        unchanged: t("web.export.projectsync_status_unchanged"),
+        updated: t("web.export.projectsync_status_updated"),
+        new_signal: t("web.export.projectsync_status_new_signal"),
+        new_device: t("web.export.projectsync_status_new_device"),
+        orphaned: t("web.export.projectsync_status_orphaned"),
+        conflict: t("web.export.projectsync_status_conflict"),
+        possible_duplicate: t("web.export.projectsync_status_possible_duplicate"),
       };
       return labels[status] || status;
     },
@@ -1583,7 +1582,9 @@ function app() {
           group = {
             deviceId: entry.device_id,
             deviceLabel:
-              entry.device_id === -1 ? "Nicht mehr zugeordnet" : entry.device_label || "—",
+              entry.device_id === -1
+                ? t("web.export.projectsync_unassigned_device_label")
+                : entry.device_label || "—",
             inputs: [],
             outputs: [],
             counts: { new: 0, updated: 0, unchanged: 0, orphaned: 0, conflict: 0 },
@@ -1600,8 +1601,14 @@ function app() {
           group.counts.new + group.counts.updated + group.counts.orphaned + group.counts.conflict >
           0;
         group.sections = [
-          { label: "Eingänge", ...this.projectSyncSplitBySignificance(group.inputs) },
-          { label: "Ausgänge", ...this.projectSyncSplitBySignificance(group.outputs) },
+          {
+            label: t("web.export.projectsync_section_inputs"),
+            ...this.projectSyncSplitBySignificance(group.inputs),
+          },
+          {
+            label: t("web.export.projectsync_section_outputs"),
+            ...this.projectSyncSplitBySignificance(group.outputs),
+          },
         ];
       }
       return groups;
@@ -1657,19 +1664,19 @@ function app() {
      * Neuanlage. */
     projectSyncEntryNote(entry) {
       if (entry.status === "new_device") {
-        return "Neuer virtueller Ein-/Ausgang wird für dieses Gerät angelegt.";
+        return t("web.export.projectsync_note_new_device");
       }
       if (entry.status === "new_signal") {
-        return "Neues Signal wird im bestehenden Ein-/Ausgang ergänzt.";
+        return t("web.export.projectsync_note_new_signal");
       }
       if (entry.status === "orphaned") {
-        return "Gehört zu keinem bekannten Gerät mehr.";
+        return t("web.export.projectsync_note_orphaned");
       }
       if (entry.status === "conflict") {
-        return "Unerwartete Struktur in der Datei.";
+        return t("web.export.projectsync_note_conflict");
       }
       if (entry.status === "possible_duplicate") {
-        return "Ein bestehender Befehl trägt bereits diesen Titel, aber unter einem anderen Schlüssel (z. B. durch eine beschädigte Check-/CmdOn-Kennung) – wird nicht automatisch angelegt, um keine Dopplung zu erzeugen. Bitte in Loxone Config manuell prüfen.";
+        return t("web.export.projectsync_note_possible_duplicate");
       }
       return "";
     },
@@ -1681,12 +1688,12 @@ function app() {
      * verschwinden. */
     projectSyncAttrLabel(attr) {
       const labels = {
-        Title: "Titel",
-        Check: "Prüfbefehl",
-        Analog: "Analog",
-        Unit: "Einheit",
-        CmdOn: "Befehl Ein",
-        CmdOff: "Befehl Aus",
+        Title: t("web.export.projectsync_attr_title"),
+        Check: t("web.export.projectsync_attr_check"),
+        Analog: t("web.export.projectsync_attr_analog"),
+        Unit: t("web.export.projectsync_attr_unit"),
+        CmdOn: t("web.export.projectsync_attr_cmd_on"),
+        CmdOff: t("web.export.projectsync_attr_cmd_off"),
       };
       return labels[attr] || attr;
     },
