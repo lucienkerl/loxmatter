@@ -505,3 +505,113 @@ async def test_the_highlight_cannot_change_the_width_of_a_cell(api):
     assert "padding" not in highlight
     assert "border-radius" in base
     assert "border-radius" not in highlight
+
+
+# ---------------------------------------------------------------------------
+# Uebersetzungsmechanismus (Aufgabe 8). Diese Aufgabe uebersetzt noch KEINEN
+# eigenen WebUI-Text (das ist Aufgabe 9+) - sie baut nur die Leitung:
+# `t()` als globale, top-level Funktion in app.js (erreichbar auch aus
+# requestJson/requestDownload, die keinen `this`-Zugriff auf das
+# Alpine-Bauteil haben), `stringsReady`/`language`/`loadI18n()` als
+# reaktive Bestandteile des `app()`-Objekts, und drei zusaetzliche
+# stringsReady-Gatter in index.html nach demselben Muster wie das
+# bestehende authReady.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_translation_helper_is_a_global_top_level_function(api):
+    """`t()` darf keine Methode von app() sein - `requestJson`/
+    `requestDownload` (app.js, vor `function app()`) haben keinen Zugriff
+    auf `this` des Alpine-Bauteils, brauchen aber selbst uebersetzten Text
+    (spaetere Aufgaben). Deshalb liegt `t()` als Top-Level-Funktion vor
+    `function app()`, gestuetzt auf die ebenfalls modul-globale,
+    nicht-reaktive Variable `translationStrings` - keins von beidem ein
+    Feld des app()-Objekts.
+
+    Belegt nur, dass der ausgelieferte Quelltext diese Bausteine in dieser
+    Reihenfolge enthaelt - nicht, dass Alpine `t(...)` zur Laufzeit
+    tatsaechlich ueber den umgebenden Skript-Scope aufloest (dafuer
+    braeuchte es eine Browser-Engine)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "function t(key" in script
+    assert "let translationStrings" in script
+    app_index = script.index("function app()")
+    assert script.index("let translationStrings") < app_index
+    assert script.index("function t(key") < app_index
+
+
+async def test_strings_ready_and_language_are_reactive_fields_on_app(api):
+    """Anders als t()/translationStrings BLEIBEN stringsReady/language
+    Felder auf dem app()-Objekt - die muessen reaktiv sein, damit
+    x-if="stringsReady && ..." in index.html tatsaechlich neu rendert,
+    sobald loadI18n() fertig ist."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    app_body = script[script.index("function app()") :]
+    assert "stringsReady: false" in app_body
+    assert 'language: "en"' in app_body
+    assert "async loadI18n()" in app_body
+
+
+async def test_load_i18n_sets_the_document_language_via_dom_assignment(api):
+    """<html lang> (index.html) liegt AUSSERHALB des x-data-Bereichs (der
+    erst bei <body> beginnt) - eine Alpine-Direktive koennte dort nicht
+    binden. Gesetzt wird es deshalb per gewoehnlicher DOM-Zuweisung
+    innerhalb von loadI18n(), nicht ueber :lang="..." in index.html."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    page = (await client.get("/")).text
+    load_i18n_start = script.index("async loadI18n()")
+    load_i18n_end = script.index("},", load_i18n_start)
+    body = script[load_i18n_start:load_i18n_end]
+    assert "document.documentElement.lang = " in body
+    assert ':lang="' not in page
+
+
+async def test_init_loads_translations_and_auth_info_in_parallel(api):
+    """Beide sind unabhaengige, ungeschuetzte Aufrufe, die dieselben
+    Auth-Bildschirm-Vorlagen gaten - init() muss sie parallel starten,
+    nicht nacheinander."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    init_start = script.index("async init()")
+    body = script[init_start : init_start + 800]
+    assert "Promise.all([this.loadI18n(), this.loadAuthInfo()])" in body
+
+
+async def test_the_three_main_screens_also_wait_for_translations(api):
+    """Nach demselben Muster wie authReady (verhindert das Aufblitzen des
+    falschen Bildschirms, bis /auth-info geantwortet hat): stringsReady
+    gated zusaetzlich alle drei Hauptbereiche (Ersteinrichtung, Anmeldung,
+    App), damit keiner davon mit unuebersetzten {key}-Texten aufblitzt,
+    bevor GET /api/i18n geantwortet hat."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert 'x-if="stringsReady && authReady && !authenticated && !passwordSet"' in page
+    assert 'x-if="stringsReady && authReady && !authenticated && passwordSet"' in page
+    assert 'x-if="stringsReady && authenticated"' in page
+
+
+async def test_get_i18n_returns_a_real_web_namespace_key(api):
+    """Der Uebersetzungsmechanismus braucht mindestens einen echten
+    web.*-Schluessel, um GET /api/i18n end-to-end zu pruefen, ohne von der
+    noch nicht geschriebenen Tabelle aus Aufgabe 9 abzuhaengen - siehe
+    strings.yaml, web.test.smoke (eine bewusst test-only benannte
+    Schablone, analog zu test.* aus Phase A).
+
+    Bewusst OHNE {platzhalter} in diesem Schluessel (siehe Kommentar bei
+    web.test.smoke in strings.yaml sowie den Aufgabe-8-Bericht): der
+    urspruengliche Plan sah "smoke test {value}" vor, aber
+    `api/language.py:_web_strings()` ruft `i18n.t(key)` fuer jeden
+    web.*-Schluessel OHNE Werte auf - ein Platzhalter dort wirft `KeyError`
+    und reisst die GESAMTE Antwort mit sich (bestaetigt an vier bereits
+    zusammengefuehrten Tests in tests/api/test_language.py, die dadurch
+    ploetzlich fehlschlugen). Der eigentliche Fehler liegt in Dateien
+    ausserhalb des Kreises dieser Aufgabe und ist hier nicht behoben."""
+    client, _, _ = api
+    response = await client.get("/api/i18n")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["language"] == "en"
+    assert body["strings"]["web.test.smoke"] == "smoke test"

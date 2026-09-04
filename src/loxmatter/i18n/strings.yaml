@@ -16,6 +16,30 @@ test.greeting:
 test.english_only:
   en: "English only"
 
+# web.test.smoke: eine bewusst test-only benannte Schablone (analog zu
+# test.* oben), damit die WebUI-Uebersetzungsleitung (Aufgabe 8) sich
+# selbst gegen GET /api/i18n pruefen kann, ohne von der noch nicht
+# geschriebenen echten web.*-Tabelle (Aufgabe 9, ~150 Schluessel)
+# abzuhaengen.
+#
+# BEWUSST OHNE {platzhalter} (Abweichung vom urspruenglichen Entwurf des
+# Implementierungsplans, der hier "{value}" vorsah - siehe Aufgabe-8-
+# Bericht): `api/language.py:_web_strings()` ruft fuer jeden web.*-
+# Schluessel `i18n.t(key)` OHNE Werte auf. `i18n.t()` interpoliert serverseitig
+# via `str.format(**values)` - ein Schluessel mit einem Platzhalter wirft dort
+# `KeyError`, und das reisst die GESAMTE `GET /api/i18n`-Antwort mit sich
+# (ein einzelner dict-comprehension-Aufruf), nicht nur den einen Schluessel.
+# Mit "{value}" bricht das bereits VIER laengst zusammengefuehrte Tests in
+# tests/api/test_language.py (test_get_i18n_works_without_a_session u. a.) -
+# kein hypothetisches Zukunftsproblem, sondern eine sofortige Regression.
+# Der eigentliche Fehler liegt in api/language.py/i18n/__init__.py (beide
+# ausserhalb des Dateikreises dieser Aufgabe) und muss vor oder waehrend
+# Aufgabe 9 behoben werden, sobald dort echte web.*-Schluessel mit
+# Platzhaltern dazukommen - siehe Aufgabe-8-Bericht.
+web.test.smoke:
+  en: "smoke test"
+  de: "Rauchtest"
+
 cli.app.help:
   en: "Matter → Loxone bridge"
   de: "Matter → Loxone Bridge"

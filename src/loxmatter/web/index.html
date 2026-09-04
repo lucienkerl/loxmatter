@@ -75,7 +75,7 @@
     </svg>
     <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
-    <template x-if="authReady && !authenticated && !passwordSet">
+    <template x-if="stringsReady && authReady && !authenticated && !passwordSet">
       <main class="auth-screen">
         <h1>loxmatter einrichten</h1>
         <p class="banner warn">
@@ -105,7 +105,7 @@
       </main>
     </template>
 
-    <template x-if="authReady && !authenticated && passwordSet">
+    <template x-if="stringsReady && authReady && !authenticated && passwordSet">
       <main class="auth-screen">
         <h1>loxmatter</h1>
         <label>
@@ -122,7 +122,7 @@
          um Kopfzeile, Banner, Reiter und Hauptbereich, statt vier Geschwister
          direkt ins `<template>` zu haengen (das liesse Alpine nur das erste
          davon beachten). -->
-    <template x-if="authenticated">
+    <template x-if="stringsReady && authenticated">
     <div>
     <header class="app-header">
       <h1>loxmatter</h1>

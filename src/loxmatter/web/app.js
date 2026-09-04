@@ -228,6 +228,30 @@ async function requestDownload(path, filename) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
+// Modul-global, absichtlich NICHT auf dem app()-Objekt (siehe
+// Implementierungsplan, Task 8: "t() muss global aufrufbar sein") - jede
+// Funktion in dieser Datei erreicht sie, auch requestJson/requestDownload,
+// die keinen Zugriff auf `this` des Alpine-Bauteils haben. Nicht reaktiv,
+// weil sie es nicht sein muss: ein Sprachwechsel laedt die ganze Seite neu.
+let translationStrings = {};
+
+/** Uebersetzungshelfer - liefert den zu key gehoerenden Text in der
+ * aktuellen Sprache, mit {platzhalter} aus values ersetzt. Fehlt der
+ * Schluessel (z. B. eine noch nicht neu geladene Seite nach einem
+ * Deployment mit neuen Schluesseln), liefert t() den Schluessel selbst
+ * zurueck statt abzustuerzen - sichtbar falsch statt einer kaputten
+ * Seite, dieselbe Haltung wie ueberall sonst in diesem Projekt
+ * ("ein Klick, der nichts bewirkt, muss als klare Absage ankommen"). */
+function t(key, values = {}) {
+  const template = translationStrings[key];
+  if (template === undefined) {
+    return key;
+  }
+  return template.replace(/\{(\w+)\}/g, (match, name) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match
+  );
+}
+
 function app() {
   return {
     // --- Ansicht ---------------------------------------------------------
@@ -244,6 +268,15 @@ function app() {
     passwordRepeatDraft: "",
     authBusy: false,
     authError: null,
+
+    // --- Uebersetzung -------------------------------------------------------
+    // Nach demselben Muster wie authReady: bis GET /api/i18n geantwortet hat,
+    // zeigt die Seite nichts - siehe stringsReady in den beiden
+    // auth-screen-templates in index.html. Die eigentliche Tabelle liegt
+    // NICHT hier, sondern im modul-globalen translationStrings (siehe t()
+    // oben) - dieses Feld existiert nur fuer x-if="stringsReady && ...".
+    stringsReady: false,
+    language: "en",
 
     // --- Geraete -----------------------------------------------------------
     devices: [],
@@ -370,7 +403,7 @@ function app() {
       window.setInterval(() => {
         this.nowTick = Date.now();
       }, 1000);
-      await this.loadAuthInfo();
+      await Promise.all([this.loadI18n(), this.loadAuthInfo()]);
       if (this.authenticated) {
         await this.startApp();
       }
@@ -438,6 +471,22 @@ function app() {
         this.authError = error.message;
       } finally {
         this.authReady = true;
+      }
+    },
+
+    /** Laedt die aktuelle Sprache und die web.*-Uebersetzungstabelle - der
+     * erste Aufruf jeder Seite, wie loadAuthInfo(), aber unabhaengig davon
+     * (siehe init(), das beide parallel startet): GET /api/i18n ist
+     * ungeschuetzt, die Ersteinrichtungs-/Anmeldeseite braucht diese Texte,
+     * bevor sich jemand angemeldet hat. */
+    async loadI18n() {
+      try {
+        const info = await requestJson("GET", "/api/i18n");
+        this.language = info.language;
+        translationStrings = info.strings;
+        document.documentElement.lang = info.language;
+      } finally {
+        this.stringsReady = true;
       }
     },
 
