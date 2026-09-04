@@ -380,6 +380,17 @@ def _check_thread_credentials(client: BridgeMatterClient | None) -> tuple[bool, 
     nicht mehr die Vorbedingung fuers Einlernen, sondern die Antwort auf die
     Frage "steht dieser Stack fuer ein Thread-Geraet bereit?" - beantwortet,
     bevor jemand vor einem Geraet im Pairing-Modus steht.
+
+    **Und deshalb eine Zustandszeile, kein Alarm.** Fehlende Zugangsdaten
+    sind der gesunde Regelzustand: nach jedem Neustart des Pi startet
+    matter-server ohne sie, niemand lernt etwas ein, und der Zustand loest
+    sich beim naechsten Einlernen von selbst auf. Ein Punkt, der dabei
+    dauerhaft rot stuende und dessen Text erklaert, dass nichts zu tun ist,
+    entwertet die roten Punkte daneben - dieselbe Ueberlegung, die den
+    `client is None`-Fall unten bewusst gruen laesst. Der Alarm, der
+    wirklich Handlung verlangt, sitzt im Punkt `thread`: er wird rot, wenn
+    gar kein Border Router laeuft - und dann bleibt auch das naechste
+    Einlernen ohne Datensatz.
     """
     if client is None or not client.connected:
         # Bewusst gruen: dass matter-server fehlt, sagt der Check daneben
@@ -390,13 +401,15 @@ def _check_thread_credentials(client: BridgeMatterClient | None) -> tuple[bool, 
             "Nicht feststellbar ohne Verbindung zu matter-server - siehe den Punkt matter-server."
         )
     if not client.thread_dataset_set:
-        return False, (
-            "matter-server hat keine Thread-Zugangsdaten. Sie ueberleben dort keinen "
-            "Neustart des Dienstes (sie liegen nur im Arbeitsspeicher) - ein "
-            "Thread-Geraet laesst sich ohne sie nicht einlernen, ein WiFi-Geraet "
-            "dagegen schon. Das naechste Einlernen holt sie automatisch vom Border "
-            "Router auf diesem Host; laeuft dort keiner, traegt man den Datensatz beim "
-            "Einlernen von Hand ein."
+        # Gruen, obwohl die Daten fehlen: das ist der Zustand nach jedem
+        # Neustart von matter-server, und er verlangt fuer sich genommen
+        # keine Handlung (siehe Docstring).
+        return True, (
+            "Noch nicht gesetzt - matter-server haelt sie nur im Arbeitsspeicher und "
+            "vergisst sie bei jedem Neustart des Dienstes. Das ist kein Fehler: das "
+            "naechste Einlernen holt sie automatisch vom Border Router auf diesem Host. "
+            "Laeuft dort keiner, sagt das der Punkt thread daneben - dann traegt man "
+            "den Datensatz beim Einlernen von Hand ein."
         )
     return True, "Gesetzt - ein Thread-Geraet kann eingelernt werden."
 

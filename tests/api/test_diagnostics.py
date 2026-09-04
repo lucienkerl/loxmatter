@@ -453,8 +453,17 @@ def test_both_checks_stay_quiet_where_they_cannot_look(monkeypatch, tmp_path):
 # gemeldet - kein Check, keine Zeile in der Oberflaeche. Sichtbar wurde es
 # erst, als drei Einlernversuche hintereinander mit "Commission with code
 # failed for node N" scheiterten, und selbst dann nannte die Meldung die
-# Ursache nicht. Dieser Check macht den Zustand sichtbar, BEVOR jemand vor
-# einem Geraet im Pairing-Modus steht.
+# Ursache nicht.
+#
+# Dieser Punkt macht den Zustand sichtbar - er ist aber KEIN Alarm mehr. Seit
+# das Einlernen sich den Datensatz selbst beim Border Router holt (siehe
+# `api/devices.py`), ist "nicht gesetzt" der voellig gesunde Regelzustand
+# nach jedem Neustart des Pi: matter-server startet ohne die Daten, niemand
+# lernt etwas ein, und der Zustand loest sich beim naechsten Einlernen von
+# selbst auf. Ein Punkt, der dabei dauerhaft rot stuende und dessen Text
+# erklaert, dass nichts zu tun ist, entwertet die roten Punkte daneben. Der
+# Alarm, der wirklich Handlung verlangt, sitzt im Punkt `thread`: er wird
+# rot, wenn gar kein Border Router laeuft.
 # ---------------------------------------------------------------------------
 
 
@@ -464,13 +473,18 @@ def test_thread_credentials_check_is_green_when_matter_server_has_them():
     assert detail
 
 
-def test_thread_credentials_check_is_red_when_matter_server_lost_them():
+def test_thread_credentials_check_stays_green_when_matter_server_lacks_them():
+    """Der gesunde Regelzustand nach jedem Neustart des Pi - kein Alarm,
+    sondern eine Zustandszeile. Sie muss trotzdem zwei Dinge sagen: dass das
+    naechste Einlernen die Daten automatisch vom Border Router holt, und wo
+    der Punkt sitzt, der rot wird, wenn dort gar keiner laeuft."""
     ok, detail = _check_thread_credentials(_ClientWithThreadDataset(False))
-    assert not ok
-    # Ein roter Punkt ohne Hinweis hilft niemandem (siehe
-    # `test_a_failing_check_says_what_to_do`) - und dieser hier muss sagen,
-    # dass ein Neustart des Dienstes die Ursache ist.
-    assert "Neustart" in detail
+    assert ok
+    assert "Einlernen" in detail
+    assert "Border Router" in detail
+    # Verweist auf den Nachbarpunkt `thread` - genau den Namen, unter dem er
+    # in `GET /api/diagnostics/system` steht.
+    assert "thread" in detail
 
 
 def test_thread_credentials_check_stays_quiet_without_a_matter_connection():
