@@ -285,6 +285,41 @@ class Runtime:
                     count += 1
         return count
 
+    async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None:
+        """Zieht ein Geraet nach, dessen Attributpfade sich geaendert haben -
+        gerufen aus `BridgeMatterClient.follow_node`.
+
+        Drei Schritte, deren Reihenfolge nicht beliebig ist:
+
+        1. `register_signals` legt die Zeilen fuer neue Pfade an. Die Methode
+           ist ausdruecklich fuer erneute Aufrufe gebaut (siehe dortiger
+           Docstring): Schluessel und Titel bleiben, `exported` bleibt bei
+           bekannten Signalen unangetastet, `unit`/`exportability`/
+           `functional` werden nachgezogen.
+        2. `invalidate_index` verwirft den Signal-Cache dieses Geraets.
+           **Ohne diesen Schritt waere der ganze Vorgang wirkungslos**:
+           `_signal_for` liest die Signale eines Geraets genau einmal und
+           merkt sich das in `_indexed`; ein eben angelegtes Signal existierte
+           dann in der Datenbank, aber jedes Update dazu liefe fuer den Rest
+           des Prozesses ins Leere - ohne Fehler, nur mit einem
+           `debug`-Eintrag. Der Docstring von `invalidate_index` verlangt
+           diesen Aufruf seit Phase 4; dies ist sein erster Aufrufer.
+        3. Werte saeen, ueber denselben `_cache_attribute`-Weg wie
+           `seed_from_snapshot` - und aus demselben Grund: ein Stecker ohne
+           Last meldet nie eine sich aendernde Spannung, sein Wert entstuende
+           also sonst nie.
+
+        Sendet selbst nichts, genau wie `seed_from_snapshot` (siehe dort).
+        Zusaetzlicher Grund hier: ein frisch angelegtes Signal hat in Loxone
+        noch gar keinen virtuellen Eingang - der entsteht erst, wenn die
+        Vorlage exportiert und importiert wurde.
+        """
+        self._store.register_signals(device_id, snapshot)
+        self.invalidate_index(device_id)
+        self._cache_online(device_id, snapshot.available)
+        for path, raw in snapshot.attributes.items():
+            self._cache_attribute(device_id, path, raw)
+
     async def on_event(self, device_id: int, path: str) -> None:
         signal = self._signal_for(device_id, path, SignalKind.EVENT)
         if signal is None:

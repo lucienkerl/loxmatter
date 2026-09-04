@@ -134,11 +134,18 @@ class CommissioningError(RuntimeError):
 class RuntimeEventHandler(Protocol):
     """Was `subscribe()` von seinem Aufrufer braucht — `Runtime`
     (loxone/runtime.py) erfüllt das bereits unverändert, `_run()` kann sie
-    also direkt als `handler` übergeben, ohne einen Adapter zu schreiben."""
+    also direkt als `handler` übergeben, ohne einen Adapter zu schreiben.
+
+    `on_node_snapshot` kam mit dem Nachziehen der Abonnements dazu
+    (`follow_node`): der Client sieht ein Gerät mit Pfaden, für die es noch
+    keine Signalzeile gibt, und kann selbst nichts damit anfangen — er kennt
+    den `Store` nicht und soll ihn nicht kennen. Der Handler dagegen hat
+    ihn."""
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None: ...
     async def on_event(self, device_id: int, path: str) -> None: ...
     async def set_online(self, device_id: int, online: bool) -> None: ...
+    async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None: ...
 
 
 @dataclass(frozen=True)

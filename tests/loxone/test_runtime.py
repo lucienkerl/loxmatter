@@ -297,7 +297,9 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
         # wuerde "bridge_alive" diese Pruefung faelschlich zum Scheitern
         # bringen, obwohl der Resend selbst (worum es hier geht) noch gar
         # nicht gelaufen ist.
-        assert [k for k in sender.keys() if k != "bridge_alive"] == []  # 10s-Intervall (simuliert) ist noch lange nicht um
+        assert [
+            k for k in sender.keys() if k != "bridge_alive"
+        ] == []  # 10s-Intervall (simuliert) ist noch lange nicht um
 
         interval["seconds"] = 0.01
         await asyncio.sleep(0.09)
@@ -580,3 +582,74 @@ async def test_last_values_for_returns_only_that_devices_keys(environment):
 async def test_last_values_for_is_empty_before_anything_is_known(environment):
     runtime, _, _, device_id, _ = environment
     assert runtime.last_values_for(device_id) == {}
+
+
+async def test_on_node_snapshot_registers_a_new_signal_and_lets_it_through(
+    environment, monkeypatch
+):
+    """Der Kern des Nachziehens: ein Pfad, den der Store beim Einlernen noch
+    nicht kannte, muss danach eine Signalzeile haben UND durch den
+    Signal-Cache der Laufzeit kommen. Genau hier faengt der Test den
+    vergessenen `invalidate_index`-Aufruf - ohne ihn legt `register_signals`
+    die Zeile zwar an, aber `_signal_for` bleibt bei seinem einmal geladenen
+    Stand und jedes Update auf den neuen Pfad laeuft fuer den Rest des
+    Prozesses ins Leere."""
+    runtime, sender, _, device_id, _ = environment
+    new_ref = SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)
+    key = f"d{device_id}_9_c1234_a5"
+
+    def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
+        return [*extract_signals(snapshot), new_ref]
+
+    # Erst indizieren lassen, wie im Betrieb: die Laufzeit hat das Geraet
+    # schon einmal gesehen, bevor der neue Pfad auftaucht.
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.sent == []
+
+    monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
+    await runtime.on_node_snapshot(device_id, _plug_snapshot())
+
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+    assert sender.keys() == [key]
+
+
+async def test_on_node_snapshot_seeds_the_values_without_sending(environment):
+    """Dieselbe Begruendung wie bei `seed_from_snapshot`: der Cache fuellt
+    sich, gesendet wird nichts. Ein frisch angelegtes Signal hat in Loxone
+    ohnehin noch keinen virtuellen Eingang - der entsteht erst mit dem
+    Export der Vorlage."""
+    runtime, sender, _, device_id, _ = environment
+
+    await runtime.on_node_snapshot(device_id, _plug_snapshot())
+
+    assert runtime._last_values[f"d{device_id}_online"] is True
+    assert len(runtime._last_values) == 111
+    assert sender.sent == []
+
+
+async def test_on_node_snapshot_keeps_the_key_and_the_export_flag(environment):
+    """`register_signals` ist ausdruecklich fuer erneute Aufrufe gebaut
+    (siehe dortiger Docstring). Wuerde das Nachziehen Schluessel neu vergeben
+    oder `exported` zuruecksetzen, zerstoerte jeder Wiederaufruf die
+    Verdrahtung in der Loxone-Konfiguration."""
+    runtime, _, store, device_id, _ = environment
+    before = store.signals(device_id)[0]
+    store.set_exported(before.key, not before.exported)
+    expected = not before.exported
+
+    await runtime.on_node_snapshot(device_id, _plug_snapshot())
+
+    after = store.signal_by_key(before.key)
+    assert after is not None
+    assert after.exported is expected
+
+
+async def test_on_node_snapshot_seeds_an_unavailable_node_as_offline(environment):
+    runtime, _, _, device_id, _ = environment
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    raw = dict(raw)
+    raw["available"] = False
+
+    await runtime.on_node_snapshot(device_id, NodeSnapshot.from_raw(raw["node_id"], raw))
+
+    assert runtime._last_values[f"d{device_id}_online"] is False
