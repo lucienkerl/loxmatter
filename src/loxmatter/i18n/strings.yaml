@@ -16,6 +16,30 @@ test.greeting:
 test.english_only:
   en: "English only"
 
+# web.test.smoke: eine bewusst test-only benannte Schablone (analog zu
+# test.* oben), damit die WebUI-Uebersetzungsleitung (Aufgabe 8) sich
+# selbst gegen GET /api/i18n pruefen kann, ohne von der noch nicht
+# geschriebenen echten web.*-Tabelle (Aufgabe 9, ~150 Schluessel)
+# abzuhaengen.
+#
+# BEWUSST OHNE {platzhalter} (Abweichung vom urspruenglichen Entwurf des
+# Implementierungsplans, der hier "{value}" vorsah - siehe Aufgabe-8-
+# Bericht): `api/language.py:_web_strings()` ruft fuer jeden web.*-
+# Schluessel `i18n.t(key)` OHNE Werte auf. `i18n.t()` interpoliert serverseitig
+# via `str.format(**values)` - ein Schluessel mit einem Platzhalter wirft dort
+# `KeyError`, und das reisst die GESAMTE `GET /api/i18n`-Antwort mit sich
+# (ein einzelner dict-comprehension-Aufruf), nicht nur den einen Schluessel.
+# Mit "{value}" bricht das bereits VIER laengst zusammengefuehrte Tests in
+# tests/api/test_language.py (test_get_i18n_works_without_a_session u. a.) -
+# kein hypothetisches Zukunftsproblem, sondern eine sofortige Regression.
+# Der eigentliche Fehler liegt in api/language.py/i18n/__init__.py (beide
+# ausserhalb des Dateikreises dieser Aufgabe) und muss vor oder waehrend
+# Aufgabe 9 behoben werden, sobald dort echte web.*-Schluessel mit
+# Platzhaltern dazukommen - siehe Aufgabe-8-Bericht.
+web.test.smoke:
+  en: "smoke test"
+  de: "Rauchtest"
+
 cli.app.help:
   en: "Matter → Loxone bridge"
   de: "Matter → Loxone Bridge"
@@ -217,3 +241,955 @@ cli.fake_miniserver.report_all_seen:
 cli.fake_miniserver.report_silent_header:
   en: "{count} signals from {template} never seen:"
   de: "{count} Signale aus {template} nie gesehen:"
+
+# api.language - Phase B+C, Spec-Abschnitt 5 (src/loxmatter/api/language.py).
+# Erster Eintrag eines neuen api.*-Namensraums, den diese und spaetere
+# Aufgaben dieser Phase weiter fuellen (bestehende API-Fehlermeldungen sind
+# noch nicht migriert - das folgt in den naechsten Aufgaben).
+api.language.fail_unsupported:
+  en: "Unsupported language '{language}' — expected: {supported}."
+  de: "Nicht unterstützte Sprache '{language}' — erwartet: {supported}."
+
+# api.errors — cross-module exceptions surfaced via HTTPException(detail=str(exc))
+api.errors.unknown_device:
+  en: "unknown device {device_id}"
+  de: "unbekanntes Geraet {device_id}"
+api.errors.unknown_command:
+  # Platzhalter heisst bewusst nicht "key" - i18n.t()s eigener erster
+  # Parameter heisst so, "key=..." als Keyword-Argument wuerde mit einem
+  # "TypeError: got multiple values for argument 'key'" kollidieren.
+  en: "unknown command key {command_key!r}"
+  de: "unbekannter Kommando-Schluessel {command_key!r}"
+api.errors.value_not_a_number:
+  en: "value {value!r} is not a number"
+  de: "Wert {value!r} ist keine Zahl"
+api.errors.command_unsupported:
+  en: "Cluster {cluster_id} command {command_id} is not supported"
+  de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
+api.errors.listener_stopped_early:
+  en: "Listener stopped before reporting readiness"
+  de: "Listener wurde beendet, bevor er Bereitschaft meldete"
+api.errors.listener_timeout:
+  en: "matter-server did not report readiness after {timeout:.0f}s"
+  de: "matter-server hat nach {timeout:.0f}s keine Bereitschaft gemeldet"
+api.errors.not_connected:
+  en: "not connected to matter-server"
+  de: "nicht verbunden mit matter-server"
+api.errors.unknown_node:
+  en: "unknown node {node_id}"
+  de: "unbekannter Node {node_id}"
+api.errors.matter_server_unreachable:
+  en: "matter-server unreachable: {exc}"
+  de: "matter-server nicht erreichbar: {exc}"
+api.errors.command_unknown_to_sdk:
+  en: "Cluster {cluster_id} command {command_id} is unknown to the chip SDK"
+  de: "Cluster {cluster_id} Kommando {command_id} ist der chip-SDK unbekannt"
+api.errors.subscribe_already_called:
+  en: "subscribe() has already been called"
+  de: "subscribe() wurde bereits aufgerufen"
+api.errors.commissioning_failed:
+  en: "Commissioning failed: {exc}"
+  de: "Einlernen fehlgeschlagen: {exc}"
+api.errors.device_unreachable:
+  en: "device unreachable: {exc}"
+  de: "Geraet nicht erreichbar: {exc}"
+api.errors.command_belongs_to_removed_device:
+  en: "command {command_key!r} belongs to device {device_id}, which was removed"
+  de: "Kommando {command_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+api.errors.unknown_signal_key:
+  en: "unknown signal key {signal_key!r}"
+  de: "unbekannter Signal-Schluessel {signal_key!r}"
+api.errors.signal_belongs_to_removed_device:
+  en: "signal {signal_key!r} belongs to device {device_id}, which was removed"
+  de: "Signal {signal_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+
+# Die fuenf Meldungen von `ThreadDatasetUnavailableError` (matter/otbr.py).
+# KEINE davon darf den Datensatz selbst enthalten - er traegt den
+# Netzwerkschluessel des Thread-Netzes und gehoert weder in eine Antwort
+# noch in ein Log (siehe deploy/testhost/README.md). Genannt werden
+# ausschliesslich Herkunft ({url}), HTTP-Status und Laenge; das gilt fuer
+# BEIDE Sprachen und ist beim Uebersetzen der Grund, warum hier nirgends
+# ein {dataset} auftaucht.
+#
+# {url} ist nicht zwingend eine Adresse: `validated_dataset` prueft auch
+# den von Hand eingetragenen Datensatz und benennt dessen Herkunft dann
+# ueber `api.devices.manual_dataset_origin`.
+api.errors.thread_dataset_empty:
+  en: "{url} returned an empty Thread dataset — has the Border Router formed a network at all? (`ot-ctl state` should say `leader` or `router`.)"
+  de: "{url} hat einen leeren Thread-Datensatz geliefert – hat der Border Router überhaupt ein Netz gebildet? (`ot-ctl state` sollte `leader` oder `router` sagen.)"
+api.errors.thread_dataset_not_hex:
+  en: "{url} did not return a Thread dataset, but {length} characters that are not hexadecimal — is a Border Router really answering there?"
+  de: "{url} hat keinen Thread-Datensatz geliefert, sondern {length} Zeichen, die kein Hex sind – antwortet dort wirklich ein Border Router?"
+api.errors.thread_dataset_odd_length:
+  en: "{url} returned {length} hex characters — a Thread dataset always has an even number of them, because it consists of bytes. One character is missing, or one too many; copying from a terminal tends to clip the last one."
+  de: "{url} hat {length} Hex-Zeichen geliefert – ein Thread-Datensatz hat immer eine gerade Anzahl, weil er aus Bytes besteht. Es fehlt ein Zeichen oder eines ist zu viel; beim Kopieren aus dem Terminal wird gern das letzte abgeschnitten."
+api.errors.thread_dataset_unreachable:
+  en: "{url} is unreachable ({exc}) — is the Border Router running on this host, and is its REST interface switched on?"
+  de: "{url} ist nicht erreichbar ({exc}) – läuft der Border Router auf diesem Host, und ist seine REST-Schnittstelle aktiv?"
+api.errors.thread_dataset_http_status:
+  en: "{url} answered with HTTP {status} instead of a Thread dataset — that is what OTBR replies for as long as no active network exists."
+  de: "{url} hat mit HTTP {status} geantwortet statt mit einem Thread-Datensatz – OTBR antwortet so, solange kein aktives Netz existiert."
+api.control.fail_not_writable:
+  en: "The writability of attribute {signal_key!r} cannot be confirmed, so it is not on the allow-list of writable attributes. If it really is writable, it can be added there."
+  de: "Die Beschreibbarkeit von Attribut {signal_key!r} laesst sich nicht bestaetigen, es steht deshalb nicht auf der Erlaubnisliste beschreibbarer Attribute. Ist es tatsaechlich beschreibbar, kann es dort ergaenzt werden."
+api.control.fail_not_wired:
+  en: "Attribute {signal_key!r} is writable, but raw writing is not yet connected to matter-server."
+  de: "Attribut {signal_key!r} ist beschreibbar, aber das rohe Schreiben ist noch nicht an matter-server angebunden."
+api.devices.fail_no_matter_client:
+  en: "No matter-server client configured — the bridge is running without a Matter connection"
+  de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
+api.devices.manual_dataset_origin:
+  # Steht als {url} in den Meldungen von `otbr.validated_dataset`, wenn der
+  # Datensatz nicht vom Border Router kam, sondern aus dem Formular. Landet
+  # ausschliesslich im Log - die Antwort an den Browser formuliert
+  # `api.devices.fail_manual_thread_dataset` unten selbst.
+  en: "The input field"
+  de: "Das Eingabefeld"
+api.devices.fail_manual_thread_dataset:
+  # Nennt den abgelehnten Wert bewusst NICHT: er enthaelt den
+  # Netzwerkschluessel des Thread-Netzes. Gilt fuer beide Sprachen.
+  en: "What was entered is not a Thread dataset. Expected is the hex TLV of the active dataset — a single line of 0-9 and a-f with an even number of characters, exactly as `ot-ctl dataset active -x` prints it; if a character is missing at the end, the line was clipped while copying. A JSON structure, quotation marks, or prose do not belong in here. The value itself is deliberately left out of this message: it contains the network key of the Thread network."
+  de: "Der eingetragene Thread-Datensatz ist keiner. Erwartet wird das Hex-TLV des aktiven Datensatzes – eine einzige Zeile aus 0-9 und a-f in gerader Anzahl, so wie `ot-ctl dataset active -x` sie ausgibt; fehlt am Ende ein Zeichen, ist die Zeile beim Kopieren abgeschnitten worden. Eine JSON-Struktur, Anführungszeichen oder Text darin gehören nicht hinein. Der Wert selbst steht bewusst nicht in dieser Meldung: er enthält den Netzwerkschlüssel des Thread-Netzes."
+api.devices.commissioning_thread_cause:
+  # {detail} ist die Meldung von matter-server selbst, {reason} der Grund,
+  # aus dem der Datensatz nicht zu holen war (eine der
+  # api.errors.thread_dataset_*-Zeilen oben).
+  en: "{detail} Likely cause: matter-server holds no Thread credentials, and this bridge could not obtain any either ({reason}). A Thread device cannot be commissioned without them — a Wi-Fi device can, in which case the cause lies elsewhere. Remedy: make the Border Router reachable, or enter the Thread dataset by hand in the field below."
+  de: "{detail} Mögliche Ursache: matter-server hat keine Thread-Zugangsdaten, und diese Brücke konnte auch keine holen ({reason}). Ein Thread-Gerät lässt sich ohne sie nicht einlernen – ein WiFi-Gerät dagegen schon, dann liegt es woanders. Abhilfe: den Border Router erreichbar machen, oder den Thread-Datensatz von Hand in das Feld darunter eintragen."
+api.auth.fail_password_too_short:
+  en: "The password must be at least {min_length} characters long."
+  de: "Das Passwort muss mindestens {min_length} Zeichen haben."
+api.auth.fail_too_many_attempts:
+  en: "Too many failed attempts – try again in {wait} seconds."
+  de: "Zu viele Fehlversuche – in {wait} Sekunden wieder möglich."
+api.auth.fail_already_set_up:
+  en: "A password has already been set for this service – initial setup is therefore permanently complete. Forgot the password? In the reference deployment, `docker compose exec loxmatter loxmatter set-password` resets it; for a source install, `uv run loxmatter set-password`."
+  de: "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-Deployment setzt `docker compose exec loxmatter loxmatter set-password` es neu; bei einer Installation aus dem Quellcode `uv run loxmatter set-password`."
+api.auth.fail_no_password_set:
+  en: "No password has been set for this service yet – please complete initial setup first."
+  de: "Für diesen Dienst ist noch kein Passwort vergeben – bitte zuerst die Ersteinrichtung abschließen."
+api.auth.fail_wrong_password:
+  en: "Wrong password."
+  de: "Falsches Passwort."
+
+# api.diagnostics — Systemcheck-Zeilen (api/diagnostics.py) und die beiden
+# 503-Fehler der Fabric-Sicherung (Task 5, Phase i18n).
+api.diagnostics.check_failed:
+  en: "This check itself failed ({exc}) — that is a bug in the check, not necessarily in the checked system. The full traceback is in the server log."
+  de: "Diese Pruefung selbst ist fehlgeschlagen ({exc}) - das ist ein Fehler in der Pruefung, nicht zwangslaeufig im gepruerften System. Der volle Traceback steht im Server-Log."
+api.diagnostics.matter_server_not_configured:
+  en: "No matter-server client configured — the bridge is running without a Matter connection. This is always set for `loxmatter run`; if it's missing here, this service was started with an incomplete setup."
+  de: "Kein matter-server-Client konfiguriert - die Bruecke laeuft ohne Matter-Anbindung. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+api.diagnostics.matter_server_not_connected:
+  en: "No active connection to matter-server. Is the service running (e.g. `docker compose ps matter-server`)? Is the --url address from `loxmatter run` still reachable?"
+  de: "Keine aktive Verbindung zu matter-server. Laeuft der Dienst (z. B. `docker compose ps matter-server`)? Ist die --url-Adresse aus `loxmatter run` noch erreichbar?"
+api.diagnostics.connected:
+  en: "Connected."
+  de: "Verbunden."
+# Der Punkt `thread-credentials` - eine Zustandszeile, kein Alarm (die
+# Begruendung steht bei `_check_thread_credentials` in api/diagnostics.py).
+# Der Verweis auf den Nachbarpunkt nennt dessen feste Kennung `thread`, die
+# in beiden Sprachen gleich bleibt.
+api.diagnostics.thread_credentials_not_determinable:
+  en: "Not determinable without a connection to matter-server — see the matter-server check."
+  de: "Nicht feststellbar ohne Verbindung zu matter-server – siehe den Punkt matter-server."
+api.diagnostics.thread_credentials_not_set:
+  en: "Not set yet — matter-server keeps them in memory only and forgets them on every restart of the service. That is not a fault: the next commissioning fetches them from the Border Router on this host automatically. If none is running there, the thread check next to this one says so — the dataset is then entered by hand while commissioning."
+  de: "Noch nicht gesetzt – matter-server hält sie nur im Arbeitsspeicher und vergisst sie bei jedem Neustart des Dienstes. Das ist kein Fehler: das nächste Einlernen holt sie automatisch vom Border Router auf diesem Host. Läuft dort keiner, sagt das der Punkt thread daneben – dann trägt man den Datensatz beim Einlernen von Hand ein."
+api.diagnostics.thread_credentials_set:
+  en: "Set — a Thread device can be commissioned."
+  de: "Gesetzt – ein Thread-Gerät kann eingelernt werden."
+api.diagnostics.store_not_writable:
+  en: "The signal-key database is not writable ({exc}). Check the disk space and file permissions of the mounted data volume — without write access, no new device can be commissioned and no export can be recorded."
+  de: "Die Signalschluessel-Datenbank ist nicht beschreibbar ({exc}). Pruefen Sie Speicherplatz und Dateirechte des eingehaengten Datenvolumes - ohne Schreibzugriff kann kein neues Geraet eingelernt und kein Export vermerkt werden."
+api.diagnostics.writable:
+  en: "Writable."
+  de: "Beschreibbar."
+api.diagnostics.no_ipv6_support:
+  en: "This Python installation was built without IPv6 support."
+  de: "Diese Python-Installation wurde ohne IPv6-Unterstuetzung gebaut."
+api.diagnostics.ipv6_not_determinable:
+  en: "Not determinable: /proc/net/if_inet6 does not exist on this system (not Linux). In the container, the bridge runs under Linux, where this check applies."
+  de: "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht (kein Linux). Im Container laeuft die Bruecke unter Linux, dort greift die Pruefung."
+api.diagnostics.no_routed_ipv6:
+  en: "No routed IPv6 address found — only link-local or loopback. Matter/Thread devices are therefore unreachable. Is the Thread Border Router running, and is it announcing its prefix?"
+  de: "Keine geroutete IPv6-Adresse gefunden - nur link-lokale oder Loopback. Matter/Thread-Geraete sind damit nicht erreichbar. Laeuft der Thread-Border-Router, und kuendigt er sein Praefix an?"
+api.diagnostics.ipv6_address_on_interface:
+  en: "{address} on {interface}"
+  de: "{address} auf {interface}"
+api.diagnostics.ipv6_more_addresses:
+  en: " (and {count} more)"
+  de: " (und {count} weitere)"
+api.diagnostics.routed_ipv6_found:
+  en: "Routed IPv6 addresses present: {shown}{more}."
+  de: "Geroutete IPv6-Adressen vorhanden: {shown}{more}."
+api.diagnostics.thread_not_determinable:
+  en: "Not determinable: /proc/net/if_inet6 does not exist on this system (not Linux)."
+  de: "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht (kein Linux)."
+api.diagnostics.no_thread_interface:
+  en: "No Thread interface ({prefix}*) with a mesh address found. Is the OTBR agent running? It aborts on an RCP timeout — when the radio module stops responding — without the container ending, and is then not restarted by anyone. `docker compose restart otbr` brings it back."
+  de: "Keine Thread-Schnittstelle ({prefix}*) mit einer Mesh-Adresse gefunden. Laeuft der OTBR-Agent? Er bricht bei einem RCP-Timeout ab - wenn das Funkmodul nicht mehr antwortet -, ohne dass der Container endet, und wird dann von niemandem neu gestartet. `docker compose restart otbr` holt ihn zurueck."
+api.diagnostics.thread_found:
+  en: "Thread interface {interface} has {count} mesh address(es), e.g. {example}."
+  de: "Thread-Schnittstelle {interface} hat {count} Mesh-Adresse(n), z. B. {example}."
+api.diagnostics.no_udp_sender:
+  en: "No UDP sender configured — the bridge is not sending values to the Miniserver. This is always set for `loxmatter run`; if it's missing here, this service was started with an incomplete setup."
+  de: "Kein UDP-Sender konfiguriert - die Bruecke sendet keine Werte an den Miniserver. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+api.diagnostics.no_network_path:
+  en: "No network path to {host}:{port} found ({exc}). Is the Miniserver switched on and reachable on the same network? Do the IP and port match `loxmatter run --miniserver`/`--port`?"
+  de: "Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port aus `loxmatter run --miniserver`/`--port`?"
+api.diagnostics.network_path_exists:
+  en: "A network path to {host}:{port} exists. This only confirms routing, not actual delivery — the Miniserver does not evaluate UDP responses."
+  de: "Ein Netzwerkpfad zu {host}:{port} existiert. Das bestaetigt nur Routing, keine tatsaechliche Zustellung - der Miniserver wertet UDP-Antworten nicht aus."
+api.diagnostics.fabric_backup_not_mounted:
+  en: "The matter-server data directory is not mounted for this service — a backup therefore cannot be created. See the deployment (docker-compose.yml, --matter-data-dir)."
+  de: "Das matter-server-Datenverzeichnis ist fuer diesen Dienst nicht eingehaengt - eine Sicherung kann deshalb nicht erstellt werden. Siehe die Bereitstellung (docker-compose.yml, --matter-data-dir)."
+api.diagnostics.fabric_backup_dir_missing:
+  en: "The configured matter-server data directory does not exist or is not a directory. Check the mount."
+  de: "Das konfigurierte matter-server-Datenverzeichnis existiert nicht oder ist kein Verzeichnis. Pruefen Sie die Einhaengung."
+export.comment_generated:
+  en: "generated by loxmatter"
+  de: "erzeugt von loxmatter"
+export.system.bridge_alive_title:
+  en: "Bridge reachable"
+  de: "Bridge erreichbar"
+export.system.bridge_alive_comment:
+  en: "Watchdog: toggles as long as the bridge is running"
+  de: "Watchdog: toggelt, solange die Bridge laeuft"
+export.system.resync_title:
+  en: "Resend all values"
+  de: "Alle Werte neu senden"
+export.signals.pulse_comment_suffix:
+  en: "{comment} · pulse"
+  de: "{comment} · Impuls"
+export.signals.counter_title_suffix:
+  en: "{title} counter"
+  de: "{title} Zähler"
+export.signals.counter_comment_suffix:
+  en: "{comment} · counter"
+  de: "{comment} · Zähler"
+export.signals.online_title:
+  en: "{device_label} reachable"
+  de: "{device_label} erreichbar"
+api.export.readme_text:
+  en: |
+    IMPORT INSTRUCTIONS
+    ====================
+
+    This ZIP file contains Loxone templates generated by loxmatter.
+
+    1. Files starting with "VIU_" belong in Loxone Config under:
+         Templates\VirtualIn\
+
+    2. Files starting with "VO_" belong under:
+         Templates\VirtualOut\
+
+    3. Import into Loxone Config: in the project tree, right-click the
+       relevant folder (Virtual Inputs or Virtual Outputs) ->
+       "Import Template" -> select the file.
+
+    4. VIU_Matter_System.xml and VO_Matter_System.xml (if included in this
+       ZIP file) do not belong to any single device. They are only needed
+       ONCE per project — do not import them again with every further
+       export.
+  de: |
+    IMPORT-ANLEITUNG
+    =================
+
+    Diese ZIP-Datei enthaelt Loxone-Vorlagen, erzeugt von loxmatter.
+
+    1. Dateien, die mit "VIU_" beginnen, gehoeren in Loxone Config nach:
+         Templates\VirtualIn\
+
+    2. Dateien, die mit "VO_" beginnen, gehoeren nach:
+         Templates\VirtualOut\
+
+    3. Import in Loxone Config: im Projektbaum Rechtsklick auf den
+       jeweiligen Ordner (Virtuelle Eingaenge bzw. Virtuelle Ausgaenge) ->
+       "Vorlage importieren" -> die Datei auswaehlen.
+
+    4. VIU_Matter_System.xml und VO_Matter_System.xml (falls in dieser
+       ZIP-Datei enthalten) gehoeren zu keinem einzelnen Geraet. Sie werden
+       nur EINMAL pro Projekt gebraucht - nicht bei jedem weiteren Export
+       erneut importieren.
+api.server.fail_login_required:
+  en: "Sign-in required — please open the interface and log in. Scripts use `Authorization: Bearer <Token>` with the value set under LOXMATTER_API_TOKEN."
+  de: "Anmeldung erforderlich – bitte die Oberfläche öffnen und anmelden. Skripte verwenden `Authorization: Bearer <Token>` mit dem unter LOXMATTER_API_TOKEN gesetzten Wert."
+api.server.fail_resync:
+  en: "Full resend failed: {exc}"
+  de: "Full-Resend fehlgeschlagen: {exc}"
+
+# --- web.nav — Reiterleiste ---
+web.nav.devices:
+  en: "Devices"
+  de: "Geräte"
+web.nav.signals:
+  en: "Signals"
+  de: "Signale"
+web.nav.export:
+  en: "Export"
+  de: "Export"
+web.nav.system:
+  en: "System"
+  de: "System"
+web.nav.settings:
+  en: "Settings"
+  de: "Einstellungen"
+
+# --- web.header / web.connection — Kopfzeile, Verbindungsstatus ---
+web.header.logout:
+  en: "Log out"
+  de: "Abmelden"
+web.header.heartbeat_prefix:
+  en: "· Heartbeat"
+  de: "· Lebenszeichen"
+web.connection.lost_banner:
+  en: "The live connection was interrupted. Displayed values may be outdated until the connection is restored."
+  de: "Die Live-Verbindung wurde unterbrochen. Angezeigte Werte können inzwischen veraltet sein, bis die Verbindung wiederhergestellt ist."
+web.header.toast_dismiss_tooltip:
+  en: "Click to dismiss"
+  de: "Zum Ausblenden anklicken"
+web.connection.live:
+  en: "Live connection active"
+  de: "Live-Verbindung aktiv"
+web.connection.lost_reconnecting:
+  en: "Connection lost – reconnecting…"
+  de: "Verbindung verloren – verbinde neu…"
+web.connection.never_connected:
+  en: "Cannot connect to the bridge – still trying…"
+  de: "Keine Verbindung zur Brücke möglich – verbinde weiter…"
+web.connection.connecting:
+  en: "Connecting…"
+  de: "Verbinde…"
+web.header.time_ago_seconds:
+  en: "{seconds}s ago"
+  de: "vor {seconds} s"
+web.header.time_ago_minutes:
+  en: "{minutes}m ago"
+  de: "vor {minutes} min"
+web.header.time_ago_hours:
+  en: "{hours}h ago"
+  de: "vor {hours} h"
+web.header.last_updated:
+  en: "Last updated {text}"
+  de: "Zuletzt aktualisiert {text}"
+web.header.unchanged_since_load:
+  en: "Unchanged since the page loaded"
+  de: "Seit dem Laden der Seite unveraendert"
+
+# --- web.auth — Ersteinrichtung, Anmeldung ---
+web.auth.setup_heading:
+  en: "Set up loxmatter"
+  de: "loxmatter einrichten"
+web.auth.setup_warning:
+  en: |
+    No password has been set for this bridge yet. Until it is, <strong>anyone on the network</strong> can take it over by filling out this form. Complete setup now, not later.
+  de: |
+    Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, kann <strong>jeder im Netz</strong> sie übernehmen, indem er dieses Formular ausfüllt. Schließe die Einrichtung deshalb jetzt ab und nicht später.
+web.auth.password_label:
+  en: "Password"
+  de: "Passwort"
+web.auth.password_repeat_label:
+  en: "Repeat password"
+  de: "Passwort wiederholen"
+web.auth.password_hint:
+  en: "At least 8 characters, ideally randomly generated rather than made up — the fabric backup sits behind this login too. This service speaks HTTP without encryption; use a password you don't use anywhere else."
+  de: "Mindestens 8 Zeichen, am besten zufällig erzeugt statt ausgedacht – hinter dieser Anmeldung liegt auch die Fabric-Sicherung. Dieser Dienst spricht HTTP ohne Verschlüsselung; nimm ein Passwort, das du nirgendwo sonst benutzt."
+web.auth.setup_submit:
+  en: "Set password"
+  de: "Passwort vergeben"
+web.auth.login_submit:
+  en: "Log in"
+  de: "Anmelden"
+web.auth.session_expired:
+  en: "The session has expired – please log in again."
+  de: "Die Sitzung ist abgelaufen – bitte erneut anmelden."
+web.auth.password_mismatch:
+  en: "The two entries do not match."
+  de: "Die beiden Eingaben stimmen nicht überein."
+
+# --- web.devices — Geraeteliste, Einlernen, Bedienung ---
+web.devices.commission_heading:
+  en: "Commission a new device"
+  de: "Neues Gerät einlernen"
+web.devices.code_placeholder:
+  en: "Pairing code (11 digits or MT:…)"
+  de: "Pairing-Code (11-stellig oder MT:…)"
+web.devices.thread_dataset_placeholder:
+  # Nicht mehr "nur bei Thread-Geraeten": die Bruecke holt den Datensatz
+  # beim Einlernen selbst vom Border Router auf diesem Host, das Feld
+  # bleibt nur noch fuer ein FREMDES Thread-Netz noetig (siehe
+  # web.devices.thread_dataset_hint).
+  en: "Thread dataset (only for a different Thread network)"
+  de: "Thread-Datensatz (nur für ein fremdes Thread-Netz)"
+web.devices.commission_submit:
+  en: "Commission"
+  de: "Einlernen"
+web.devices.commission_hint:
+  en: "If the device is already paired with Apple, Google, or a DIRIGERA, the printed code no longer works here — generate an additional multi-admin code there and enter that instead."
+  de: "Hängt das Gerät schon in Apple, Google oder einer DIRIGERA, funktioniert der aufgedruckte Code hier nicht mehr – dort einen zusätzlichen Multi-Admin-Code erzeugen und stattdessen diesen eingeben."
+web.devices.thread_dataset_hint:
+  en: "You normally do not need the Thread dataset: the bridge fetches it from the Border Router on this host while commissioning. The field is only needed if the device is meant to join a Thread network other than the local one."
+  de: "Den Thread-Datensatz brauchen Sie normalerweise nicht: die Brücke holt ihn beim Einlernen selbst vom Border Router auf diesem Host. Nötig ist das Feld nur, wenn das Gerät in ein anderes Thread-Netz soll als das hiesige."
+web.devices.empty:
+  en: "No device commissioned yet."
+  de: "Noch kein Gerät eingelernt."
+web.devices.changed_since_export:
+  en: "Changed since export"
+  de: "Geändert seit Export"
+web.devices.offline:
+  en: "Offline"
+  de: "Offline"
+web.devices.remove:
+  en: "Remove"
+  de: "Entfernen"
+web.devices.values_heading:
+  en: "Values"
+  de: "Werte"
+web.devices.signals_loading:
+  en: "Loading signals…"
+  de: "Signale werden geladen…"
+web.devices.no_functional_signals:
+  en: "No functional signals for this device."
+  de: "Keine funktionalen Signale für dieses Gerät."
+web.devices.more_in_signals_view:
+  en: "more in the Signals view."
+  de: "weitere in der Ansicht „Signale“."
+web.devices.controls_heading:
+  en: "Controls"
+  de: "Bedienung"
+web.devices.controls_loading:
+  en: "Loading controls…"
+  de: "Bedienelemente werden geladen…"
+web.devices.no_known_commands:
+  en: "No known output commands for this device."
+  de: "Keine bekannten Ausgangsbefehle für dieses Gerät."
+web.devices.value_placeholder:
+  en: "Value"
+  de: "Wert"
+web.devices.send:
+  en: "Send"
+  de: "Senden"
+web.devices.more_commands_unnamed:
+  en: "more commands exist, but are unnamed."
+  de: "weitere Kommandos vorhanden, aber nicht benannt."
+web.devices.export:
+  en: "Export"
+  de: "Exportieren"
+web.devices.export_hint_prefix:
+  en: "First set it in "
+  de: "Erst in "
+web.settings.miniserver_link:
+  en: "Settings → Miniserver connection"
+  de: "Einstellungen → Verbindung zum Miniserver"
+web.devices.export_hint_suffix:
+  en: "."
+  de: " hinterlegen."
+web.export.settings_hint_prefix:
+  en: "Managed in "
+  de: "Wird in "
+web.export.settings_hint_suffix:
+  en: "."
+  de: " verwaltet."
+web.devices.list_load_error:
+  en: "Could not load device list: {message}"
+  de: "Geraeteliste konnte nicht geladen werden: {message}"
+web.devices.controls_load_error:
+  en: "Could not load controls: {message}"
+  de: "Bedienelemente konnten nicht geladen werden: {message}"
+web.devices.export_never:
+  en: "Not exported yet"
+  de: "Noch nicht exportiert"
+web.devices.export_last:
+  en: "Last exported on {timestamp}"
+  de: "Zuletzt exportiert am {timestamp}"
+web.devices.label_save_error:
+  en: "Could not save name: {message}"
+  de: "Name konnte nicht gespeichert werden: {message}"
+web.devices.remove_error:
+  en: "Could not remove device: {message}"
+  de: "Gerät konnte nicht entfernt werden: {message}"
+web.devices.command_sent:
+  en: "\"{slug}\" was sent to {label}."
+  de: "\"{slug}\" wurde an {label} gesendet."
+web.devices.command_failed:
+  en: "\"{slug}\" failed: {message}"
+  de: "\"{slug}\" ist fehlgeschlagen: {message}"
+web.devices.exported_toast:
+  en: "{label} was exported."
+  de: "{label} wurde exportiert."
+web.devices.export_failed:
+  en: "Export failed: {message}"
+  de: "Export fehlgeschlagen: {message}"
+web.export.bridge_ip_missing:
+  en: "Please set the bridge IP in Settings → Miniserver connection first."
+  de: "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen."
+web.devices.remove_confirm:
+  en: |
+    Really remove device "{label}"? This cannot be undone.
+
+    Orphaned afterwards in Loxone:
+    • every virtual input/output with the key prefix "d{id}_"
+    • the imported templates "VIU_d{id}_….xml" and "VO_d{id}_….xml"
+
+    Delete these by hand in Loxone Config.
+  de: |
+    Gerät "{label}" wirklich entfernen? Das kann nicht rückgängig gemacht werden.
+
+    In Loxone bleiben danach verwaist:
+    • alle virtuellen Ein- und Ausgänge mit dem Schlüssel-Präfix "d{id}_"
+    • die importierten Vorlagen "VIU_d{id}_….xml" und "VO_d{id}_….xml"
+
+    Diese in Loxone Config von Hand löschen.
+web.devices.commission_code_required:
+  en: "Please enter a pairing code first."
+  de: "Bitte zuerst einen Pairing-Code eingeben."
+web.devices.commission_success:
+  # Die frueher hier genannte Grenze ("erst nach einem Neustart der
+  # Bruecke", Spec 12.3) gibt es nicht mehr: die Einlern-Route ruft
+  # `follow_node` auf und saet die Werte des neuen Geraets sofort. Uebrig
+  # bleibt der andere, weiterhin richtige Hinweis - im Miniserver kommen
+  # die Werte erst nach Export und Import an, weil es dort bis dahin
+  # keinen virtuellen Eingang gibt.
+  en: |
+    {label} was commissioned and delivers live values from now on – no restart of the bridge needed. They reach the Miniserver as soon as you have exported the templates and imported them into Loxone Config.
+  de: |
+    {label} wurde eingelernt und liefert ab sofort Live-Werte – ohne Neustart der Brücke. Im Miniserver kommen sie an, sobald Sie die Vorlagen exportiert und in Loxone Config importiert haben.
+web.devices.commission_failed:
+  en: "Commissioning failed: {message}"
+  de: "Einlernen fehlgeschlagen: {message}"
+
+# --- web.signals — Signalansicht ---
+web.signals.key_hint:
+  en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
+  de: "Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
+web.signals.functional_vs_expert_explanation:
+  en: "\"Functional\" are the signals that belong to the recognized device type (on/off, power, and similar) – \"Expert\" is everything else (network, device, and diagnostic values, technical counters). Both sections keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
+  de: "„Funktional“ sind die Signale, die zum erkannten Gerätetyp gehören (Ein/Aus, Leistung und Ähnliches) – „Experte“ alles andere (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Blöcke behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
+web.signals.show_expert:
+  en: "Show expert signals"
+  de: "Experten-Signale anzeigen"
+web.signals.load_button:
+  en: "Load signals"
+  de: "Signale laden"
+web.signals.none_functional:
+  en: "No signal of this device is considered functional."
+  de: "Kein Signal dieses Geräts gilt als funktional."
+web.signals.expert_collapsed_hint:
+  en: "Collapsed – {count} signals without a recognized meaning for this device type. \"Show expert signals\" above reveals them for all devices."
+  de: "Zugeklappt – {count} Signale ohne erkannte Bedeutung für diesen Gerätetyp. „Experten-Signale anzeigen“ oben blendet sie für alle Geräte ein."
+web.signals.key_tooltip:
+  en: "Wiring in Loxone – not changeable."
+  de: "Verdrahtung in Loxone – nicht änderbar."
+web.signals.export_checkbox:
+  en: "export"
+  de: "exportieren"
+web.signals.resend_checkbox:
+  en: "resend periodically"
+  de: "periodisch erneut senden"
+web.signals.raw_write_placeholder:
+  en: "Write raw value"
+  de: "Rohwert schreiben"
+web.signals.raw_write_submit:
+  en: "Write"
+  de: "Schreiben"
+web.signals.group_functional:
+  en: "Functional"
+  de: "Funktional"
+web.signals.group_expert:
+  en: "Expert"
+  de: "Experte"
+web.signals.load_error:
+  en: "Could not load signals: {message}"
+  de: "Signale konnten nicht geladen werden: {message}"
+web.signals.title_save_error:
+  en: "Could not save title: {message}"
+  de: "Titel konnte nicht gespeichert werden: {message}"
+web.signals.export_flag_error:
+  en: "Could not change export flag: {message}"
+  de: "Export-Kennzeichen konnte nicht geaendert werden: {message}"
+web.signals.resend_toggle_error:
+  en: "Could not change resend flag: {message}"
+  de: "Resend-Kennzeichen konnte nicht geaendert werden: {message}"
+web.signals.write_success:
+  en: "Written."
+  de: "Geschrieben."
+
+# --- web.export — Export-Tab ---
+web.export.heading:
+  en: "Export templates"
+  de: "Vorlagen exportieren"
+web.bridge_ip_label:
+  en: "IP of this bridge"
+  de: "IP dieser Brücke"
+web.export.udp_port_label:
+  en: "UDP port"
+  de: "UDP-Port"
+web.export.http_port_label:
+  en: "HTTP port (commands)"
+  de: "HTTP-Port (Kommandos)"
+web.export.include_system:
+  en: "Include system templates"
+  de: "Systemvorlagen einschließen"
+web.export.only_pending:
+  en: "only devices not yet exported"
+  de: "nur noch nicht exportierte Geräte"
+web.export.filter_explanation:
+  en: |
+    The filter applies to the preview <strong>and</strong> to the ZIP: when set, the download contains only the devices from the table below, and only those then count as exported.
+  de: |
+    Der Filter gilt für die Vorschau <strong>und</strong> für das ZIP: ist er gesetzt, enthält der Download nur die Geräte aus der Tabelle unten, und nur diese gelten danach als exportiert.
+web.export.preview_button:
+  en: "View preview"
+  de: "Vorschau ansehen"
+web.export.download_button:
+  en: "Download ZIP"
+  de: "ZIP herunterladen"
+web.export.preview_heading:
+  en: "Preview"
+  de: "Vorschau"
+web.export.col_device:
+  en: "Device"
+  de: "Gerät"
+web.export.col_viu:
+  en: "VIU file"
+  de: "VIU-Datei"
+web.export.col_vo:
+  en: "VO file"
+  de: "VO-Datei"
+web.export.col_inputs:
+  en: "Inputs"
+  de: "Eingänge"
+web.export.col_commands:
+  en: "Commands"
+  de: "Befehle"
+web.export.col_skipped:
+  en: "Skipped"
+  de: "Übersprungen"
+web.export.col_expert_withheld:
+  en: "Held back as expert"
+  de: "Als Experte zurückgehalten"
+web.export.col_last_exported:
+  en: "Last exported"
+  de: "Zuletzt exportiert"
+web.export.expert_withheld_explanation:
+  en: "\"Held back as expert\" signals would be technically exportable but don't belong to the device type by default (Signals view, \"Expert\" section) – each one can be enabled individually there."
+  de: "„Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber standardmäßig nicht zum Gerätetyp gehören (Ansicht „Signale“, Block „Experte“) – dort lässt sich jedes einzeln freischalten."
+web.export.system_files_prefix:
+  en: "System templates: "
+  de: "Systemvorlagen: "
+web.export.status_load_error:
+  en: "Could not load export status: {message}"
+  de: "Export-Status konnte nicht geladen werden: {message}"
+web.export.preview_failed:
+  en: "Preview failed: {message}"
+  de: "Vorschau fehlgeschlagen: {message}"
+web.export.download_failed:
+  en: "Download failed: {message}"
+  de: "Download fehlgeschlagen: {message}"
+
+# --- web.system — Systemcheck, Live-Diagnose, Sicherung ---
+web.system.checks_heading:
+  en: "System check"
+  de: "Systemcheck"
+web.system.refresh:
+  en: "Refresh"
+  de: "Aktualisieren"
+web.system.check_ok:
+  en: "OK"
+  de: "OK"
+web.system.check_error:
+  en: "Error"
+  de: "Fehler"
+web.system.live_heading:
+  en: "Live diagnostics"
+  de: "Live-Diagnose"
+web.system.diag_disconnected:
+  en: "Connection lost – reconnecting…"
+  de: "Verbindung getrennt – verbinde neu…"
+web.system.resume:
+  en: "Resume"
+  de: "Fortsetzen"
+web.system.pause:
+  en: "Pause"
+  de: "Pausieren"
+web.system.hide_noise:
+  en: "Hide heartbeat and full-resend"
+  de: "Heartbeat und Full-Resend ausblenden"
+web.system.log_level_label:
+  en: "Log level"
+  de: "Log-Stufe"
+web.system.log_level_info:
+  en: "Info"
+  de: "Info"
+web.system.log_level_warn:
+  en: "Warning"
+  de: "Warnung"
+web.system.log_level_critical:
+  en: "Critical"
+  de: "Kritisch"
+web.system.clear:
+  en: "Clear"
+  de: "Leeren"
+web.system.pause_clear_explanation:
+  en: |
+    "Pause" only stops new lines from being appended, not the connection itself – lines arriving during the pause are not caught up afterwards, like a paused <span class="key">tail -f</span>. "Clear" only affects this page, not the bridge's own ring buffers.
+  de: |
+    „Pausieren“ haelt nur das Anhaengen neuer Zeilen an, nicht die Verbindung selbst – waehrend der Pause eintreffende Zeilen werden nicht nachgeholt, wie bei einem angehaltenen <span class="key">tail -f</span>. „Leeren“ wirkt nur auf diese Seite, nicht auf die Ringe der Brücke.
+web.system.logs_heading:
+  en: "Logs"
+  de: "Logs"
+web.system.logs_hint:
+  en: "The bridge's log lines, live – newest on top, auto-scrolling."
+  de: "Protokollzeilen der Brücke, laufend – jüngste oben, folgt automatisch."
+web.system.udp_heading:
+  en: "UDP capture"
+  de: "UDP-Mitschnitt"
+web.system.udp_hint:
+  en: "Datagrams actually sent over the wire, live – newest on top, auto-scrolling."
+  de: "Tatsächlich über den Draht geschickte Datagramme, laufend – jüngste oben, folgt automatisch."
+web.system.command_log_heading:
+  en: "Command log"
+  de: "Kommando-Log"
+web.system.command_log_hint:
+  en: "Incoming HTTP calls with their result, live."
+  de: "Eingehende HTTP-Aufrufe mit ihrem Ergebnis, laufend."
+web.system.backup_heading:
+  en: "Backup"
+  de: "Sicherung"
+web.system.backup_explanation:
+  en: "Backup of the fabric credentials (matter-server data directory) as a ZIP file – the only irreplaceable state of this installation. If it's lost, every device must be recommissioned."
+  de: "Sicherung der Fabric-Zugangsdaten (matter-server-Datenverzeichnis) als ZIP-Datei – der einzige unersetzliche Zustand dieser Installation. Geht er verloren, muss jedes Gerät neu eingelernt werden."
+web.system.backup_access_note:
+  en: "Only accessible after logging in, like every other function on this page: whoever can download it can take over the Matter fabric."
+  de: "Nur nach Anmeldung abrufbar, wie jede andere Funktion dieser Seite: wer sie herunterladen kann, kann die Matter-Fabric übernehmen."
+web.system.backup_download:
+  en: "Download backup"
+  de: "Sicherung herunterladen"
+web.system.load_error:
+  en: "Could not load diagnostics: {message}"
+  de: "Diagnose konnte nicht geladen werden: {message}"
+web.system.backup_error:
+  en: "Backup not possible: {message}"
+  de: "Sicherung nicht möglich: {message}"
+
+# --- web.settings — Einstellungen-Tab ---
+web.settings.connection_heading:
+  en: "Miniserver connection"
+  de: "Verbindung zum Miniserver"
+web.settings.connection_explanation:
+  en: |
+    This means the address of the machine loxmatter runs on – as the Miniserver sees it. <strong>Not</strong> the Miniserver's address. The virtual input only accepts datagrams from this address, and the output commands call it as <span class="key">http://&lt;this IP&gt;:HTTP-port</span>. If the Miniserver's IP is entered here, the templates look correct but stay silent – with no error message.
+  de: |
+    Gemeint ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der Miniserver ihn sieht. <strong>Nicht</strong> die Adresse des Miniservers. Der virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span> auf. Steht hier die Miniserver-IP, sehen die Vorlagen richtig aus, bleiben aber stumm – ohne jede Fehlermeldung.
+web.settings.bridge_ip_placeholder:
+  en: "e.g. 192.168.1.20"
+  de: "z. B. 192.168.1.20"
+web.settings.udp_port_label:
+  en: "UDP port (virtual input)"
+  de: "UDP-Port (virtueller Eingang)"
+web.settings.http_port_label:
+  en: "HTTP port (receiving commands)"
+  de: "HTTP-Port (Befehle empfangen)"
+web.settings.save:
+  en: "Save"
+  de: "Speichern"
+web.settings.last_saved_prefix:
+  en: "Last saved: "
+  de: "Zuletzt gespeichert: "
+web.settings.never_saved:
+  en: "Not saved yet."
+  de: "Noch nicht gespeichert."
+web.settings.load_error:
+  en: "Could not load settings: {message}"
+  de: "Einstellungen konnten nicht geladen werden: {message}"
+web.settings.bridge_ip_required:
+  en: "Please enter the IP of this bridge."
+  de: "Bitte die IP dieser Brücke eingeben."
+web.settings.saved_toast:
+  en: "Settings saved."
+  de: "Einstellungen gespeichert."
+web.settings.save_error:
+  en: "Could not save settings: {message}"
+  de: "Einstellungen konnten nicht gespeichert werden: {message}"
+web.settings.language_heading:
+  en: "Language"
+  de: "Sprache"
+web.settings.language_en:
+  en: "English"
+  de: "Englisch"
+web.settings.language_de:
+  en: "German"
+  de: "Deutsch"
+web.settings.language_error:
+  en: "Could not change language: {message}"
+  de: "Sprache konnte nicht geändert werden: {message}"
+web.settings.resend_heading:
+  en: "Periodic resend"
+  de: "Periodischer Resend"
+web.settings.resend_explanation:
+  en: |
+    Marked signals (the "resend periodically" checkbox in the signal list) are forcibly resent at this interval, even without a change – independently of that, a full restore still runs once at bridge startup and via "Resync" in the System section.
+  de: |
+    Markierte Signale (Haken „periodisch erneut senden" in der Signalliste) werden in diesem Takt zwangsweise erneut gesendet, auch ohne Änderung - unabhängig davon läuft ein voller Restore weiterhin einmalig beim Bridge-Start und über „Erneut synchronisieren" im Bereich Diagnose.
+web.settings.resend_interval_label:
+  en: "Interval in seconds"
+  de: "Intervall in Sekunden"
+web.settings.resend_interval_invalid:
+  en: "Please enter an interval of at least 10 seconds."
+  de: "Bitte ein Intervall von mindestens 10 Sekunden eingeben."
+web.settings.resend_load_error:
+  en: "Could not load resend interval: {message}"
+  de: "Resend-Intervall konnte nicht geladen werden: {message}"
+web.settings.resend_saved_toast:
+  en: "Resend interval saved."
+  de: "Resend-Intervall gespeichert."
+web.settings.resend_save_error:
+  en: "Could not save resend interval: {message}"
+  de: "Resend-Intervall konnte nicht gespeichert werden: {message}"
+
+# --- web.export.projectsync — Projektdatei-Sync-Karte ---
+web.export.projectsync_heading:
+  en: "Project file sync"
+  de: "Projektdatei-Sync"
+web.export.projectsync_intro:
+  en: |
+    Upload an existing Loxone project file – existing virtual inputs/outputs are updated, new signals are added. Nothing is downloaded before you have seen the plan.
+  de: |
+    Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden aktualisiert, neue Signale ergänzt. Nichts wird heruntergeladen, bevor du den Plan gesehen hast.
+web.export.projectsync_bridge_ip_hint_prefix:
+  en: "Please set the bridge IP in "
+  de: "Bitte zuerst in "
+web.export.projectsync_bridge_ip_hint_suffix:
+  en: " first."
+  de: " die Brücken-IP hinterlegen."
+web.export.projectsync_file_label:
+  en: "Project file (.Loxone)"
+  de: "Projektdatei (.Loxone)"
+web.export.projectsync_busy:
+  en: "Processing…"
+  de: "Wird verarbeitet …"
+web.export.projectsync_upload_failed:
+  en: "Upload failed: {message}"
+  de: "Hochladen fehlgeschlagen: {message}"
+web.export.projectsync_miniserver_select_label:
+  en: "Miniserver"
+  de: "Miniserver"
+web.export.projectsync_miniserver_select_placeholder:
+  en: "Please choose…"
+  de: "Bitte wählen …"
+web.export.projectsync_multiple_miniservers_hint:
+  en: "This project file contains multiple Miniservers – please choose the one you want."
+  de: "Diese Projektdatei enthält mehrere Miniserver – bitte den gewünschten auswählen."
+web.export.projectsync_all_current:
+  en: "Everything is up to date – no changes needed."
+  de: "Alles aktuell – keine Änderungen nötig."
+web.export.projectsync_status_unchanged:
+  en: "Unchanged"
+  de: "Unverändert"
+web.export.projectsync_status_updated:
+  en: "Updated"
+  de: "Aktualisiert"
+web.export.projectsync_status_new_signal:
+  en: "New signal"
+  de: "Neues Signal"
+web.export.projectsync_status_new_device:
+  en: "New device"
+  de: "Neues Gerät"
+web.export.projectsync_status_orphaned:
+  en: "Orphaned – left unchanged"
+  de: "Verwaist – wird nicht verändert"
+web.export.projectsync_status_conflict:
+  en: "Conflict – skipped"
+  de: "Konflikt – wird übersprungen"
+web.export.projectsync_status_possible_duplicate:
+  en: "Possible duplicate – skipped"
+  de: "Mögliches Duplikat – wird übersprungen"
+web.export.projectsync_tally_new:
+  en: "new"
+  de: "neu"
+web.export.projectsync_tally_updated:
+  en: "updated"
+  de: "aktualisiert"
+web.export.projectsync_tally_orphaned:
+  en: "orphaned"
+  de: "verwaist"
+web.export.projectsync_tally_conflict:
+  en: "conflict"
+  de: "Konflikt"
+web.export.projectsync_tally_unchanged:
+  en: "unchanged"
+  de: "unverändert"
+web.export.projectsync_group_all_current:
+  en: "all up to date"
+  de: "alles aktuell"
+web.export.projectsync_unassigned_device_label:
+  en: "No longer assigned"
+  de: "Nicht mehr zugeordnet"
+web.export.projectsync_section_inputs:
+  en: "Inputs"
+  de: "Eingänge"
+web.export.projectsync_section_outputs:
+  en: "Outputs"
+  de: "Ausgänge"
+web.export.projectsync_unchanged_disclosure:
+  en: "{count} show unchanged signals"
+  de: "{count} unveränderte Signale anzeigen"
+web.export.projectsync_note_new_device:
+  en: "A new virtual input/output is created for this device."
+  de: "Neuer virtueller Ein-/Ausgang wird für dieses Gerät angelegt."
+web.export.projectsync_note_new_signal:
+  en: "A new signal is added to the existing input/output."
+  de: "Neues Signal wird im bestehenden Ein-/Ausgang ergänzt."
+web.export.projectsync_note_orphaned:
+  en: "No longer belongs to any known device."
+  de: "Gehört zu keinem bekannten Gerät mehr."
+web.export.projectsync_note_conflict:
+  en: "Unexpected structure in the file."
+  de: "Unerwartete Struktur in der Datei."
+web.export.projectsync_note_possible_duplicate:
+  en: "An existing command already carries this title, but under a different key (e.g. because of a damaged Check/CmdOn identifier) – not created automatically, to avoid a duplicate. Please check manually in Loxone Config."
+  de: "Ein bestehender Befehl trägt bereits diesen Titel, aber unter einem anderen Schlüssel (z. B. durch eine beschädigte Check-/CmdOn-Kennung) – wird nicht automatisch angelegt, um keine Dopplung zu erzeugen. Bitte in Loxone Config manuell prüfen."
+web.export.projectsync_attr_title:
+  en: "Title"
+  de: "Titel"
+web.export.projectsync_attr_check:
+  en: "Check command"
+  de: "Prüfbefehl"
+web.export.projectsync_attr_analog:
+  en: "Analog"
+  de: "Analog"
+web.export.projectsync_attr_unit:
+  en: "Unit"
+  de: "Einheit"
+web.export.projectsync_attr_cmd_on:
+  en: "Command on"
+  de: "Befehl Ein"
+web.export.projectsync_attr_cmd_off:
+  en: "Command off"
+  de: "Befehl Aus"
+web.export.projectsync_new_devices_checkbox:
+  en: "Also create new device containers (experimental, not yet validated against Loxone Config)"
+  de: "Neue Geräte-Container ebenfalls anlegen (experimentell, noch nicht gegen Loxone Config validiert)"
+web.export.projectsync_download_button:
+  en: "Download patched file"
+  de: "Gepatchte Datei herunterladen"
+
+# --- web.format — gemeinsame Formatierungshelfer ---
+web.format.never:
+  en: "never"
+  de: "noch nie"
+web.format.true:
+  en: "true"
+  de: "wahr"
+web.format.false:
+  en: "false"
+  de: "falsch"
+
+# --- web.errors — Netzwerk-/generische Fehler ---
+web.errors.http_status:
+  en: "HTTP {status}"
+  de: "HTTP {status}"
+web.errors.bridge_unreachable:
+  en: "The bridge is unreachable – it may not be running."
+  de: "Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht."

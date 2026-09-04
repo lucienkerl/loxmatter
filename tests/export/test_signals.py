@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from loxmatter import i18n
 from loxmatter.export.signals import to_inputs
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store, StoredSignal
@@ -94,6 +95,30 @@ def test_event_becomes_a_pulse_and_a_counter():
     assert counter.unit_format == ""
 
 
+def test_event_pulse_and_counter_title_and_comment_follow_the_current_language():
+    def build():
+        return to_inputs(
+            [signal("d3_1_press", kind=SignalKind.EVENT, exportability=Exportability.DIGITAL)],
+            3,
+            "Taster",
+        )
+
+    inputs = build()
+    pulse = next(i for i in inputs if i.key == "d3_1_press")
+    counter = next(i for i in inputs if i.key == "d3_1_press_n")
+    assert pulse.comment == "Taster · 1/6/0 · pulse"
+    assert counter.title == "d3_1_press counter"
+    assert counter.comment == "Taster · 1/6/0 · counter"
+
+    i18n.set_language("de")
+    inputs = build()
+    pulse = next(i for i in inputs if i.key == "d3_1_press")
+    counter = next(i for i in inputs if i.key == "d3_1_press_n")
+    assert pulse.comment == "Taster · 1/6/0 · Impuls"
+    assert counter.title == "d3_1_press Zähler"
+    assert counter.comment == "Taster · 1/6/0 · Zähler"
+
+
 def test_non_exportable_signals_are_skipped():
     """Spec 6.6: Listen und Strukturen werden nie zu Loxone-Objekten."""
     inputs = to_inputs([signal("d1_1_parts", exportability=Exportability.NONE)], 1, "X")
@@ -114,6 +139,15 @@ def test_online_signal_is_added_once_per_device():
     # Ein Zustand, kein Impuls - also analog, aus demselben Grund wie
     # `onoff` (siehe test_a_boolean_state_becomes_an_analog_input).
     assert online.analog is True
+
+
+def test_online_title_follows_the_current_language():
+    online = next(i for i in to_inputs([], 7, "Leer") if i.key == "d7_online")
+    assert online.title == "Leer reachable"
+
+    i18n.set_language("de")
+    online = next(i for i in to_inputs([], 7, "Leer") if i.key == "d7_online")
+    assert online.title == "Leer erreichbar"
 
 
 def test_unit_no_longer_lands_in_the_comment():

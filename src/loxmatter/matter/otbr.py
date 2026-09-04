@@ -63,6 +63,8 @@ import os
 from collections.abc import Callable
 from typing import Any, Final
 
+from loxmatter import i18n
+
 # OTBRs REST-Schnittstelle auf demselben Host. Nicht konfigurierbar ueber
 # einen CLI-Schalter, sondern ueber die Umgebung (siehe `_base_url`): der
 # Regelfall braucht keine Angabe, und ein Schalter waere ein weiterer
@@ -129,16 +131,13 @@ def validated_dataset(body: str, url: str) -> str:
     """
     dataset = body.strip()
     if not dataset:
-        raise ThreadDatasetUnavailableError(
-            f"{url} hat einen leeren Thread-Datensatz geliefert - hat der Border Router "
-            "ein Netz gebildet? (`ot-ctl state` sollte `leader` oder `router` sagen)"
-        )
+        raise ThreadDatasetUnavailableError(i18n.t("api.errors.thread_dataset_empty", url=url))
     if not set(dataset) <= _HEX_DIGITS:
         # Zeigt bewusst NICHT die Antwort selbst: waere sie doch ein
-        # Datensatz, stuende damit ein Credential im Log.
+        # Datensatz, stuende damit ein Credential im Log. Die Vorlage in
+        # `strings.yaml` nennt deshalb in BEIDEN Sprachen nur die Laenge.
         raise ThreadDatasetUnavailableError(
-            f"{url} hat keinen Thread-Datensatz geliefert, sondern {len(dataset)} Zeichen, "
-            "die kein Hex sind - antwortet dort wirklich ein Border Router?"
+            i18n.t("api.errors.thread_dataset_not_hex", url=url, length=len(dataset))
         )
     if len(dataset) % 2 != 0:
         # Auch hier nicht die Zeichenkette selbst, nur ihre Laenge: jedes
@@ -152,10 +151,7 @@ def validated_dataset(body: str, url: str) -> str:
         # `api/devices.py` es also vorbeifaellt: HTTP 500 statt einer Meldung,
         # die sagt, was zu tun ist.
         raise ThreadDatasetUnavailableError(
-            f"{url} hat {len(dataset)} Hex-Zeichen geliefert - ein Thread-Datensatz hat "
-            "immer eine gerade Anzahl, weil er aus Bytes besteht. Es fehlt ein Zeichen "
-            "oder eines ist zu viel; beim Kopieren aus dem Terminal wird gern das letzte "
-            "abgeschnitten."
+            i18n.t("api.errors.thread_dataset_odd_length", url=url, length=len(dataset))
         )
     return dataset
 
@@ -186,15 +182,13 @@ async def fetch_active_dataset(
             # Router ist fuer den Aufrufer derselbe Fall wie ein
             # antwortender ohne Netz - ein Grund, kein Absturz.
             raise ThreadDatasetUnavailableError(
-                f"{url} ist nicht erreichbar ({exc}) - laeuft der Border Router auf "
-                "diesem Host, und ist seine REST-Schnittstelle aktiv?"
+                i18n.t("api.errors.thread_dataset_unreachable", url=url, exc=exc)
             ) from exc
     finally:
         await session.close()
 
     if status != 200:
         raise ThreadDatasetUnavailableError(
-            f"{url} hat mit HTTP {status} geantwortet statt mit einem Thread-Datensatz - "
-            "OTBR antwortet so, solange kein aktives Netz existiert."
+            i18n.t("api.errors.thread_dataset_http_status", url=url, status=status)
         )
     return validated_dataset(body, url)

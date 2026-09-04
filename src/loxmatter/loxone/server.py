@@ -117,6 +117,7 @@ dort, wo ein Diagnostiker ihn am dringendsten braucht."""
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -128,6 +129,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.requests import HTTPConnection
 from starlette.responses import Response as StarletteResponse
 
+from loxmatter import i18n
 from loxmatter.api.auth import build_auth_router
 from loxmatter.api.control import build_control_router
 from loxmatter.api.devices import RuntimeValues, ThreadDatasetSource, build_device_router
@@ -138,6 +140,7 @@ from loxmatter.api.diagnostics import (
 )
 from loxmatter.api.diagnostics_live import build_diagnostics_live_router
 from loxmatter.api.export import build_export_router
+from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.settings import build_settings_router
@@ -347,11 +350,7 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
                 return
         raise HTTPException(
             status_code=401,
-            detail=(
-                "Anmeldung erforderlich – bitte die Oberfläche öffnen und anmelden. "
-                "Skripte verwenden `Authorization: Bearer <Token>` mit dem unter "
-                "LOXMATTER_API_TOKEN gesetzten Wert."
-            ),
+            detail=i18n.t("api.server.fail_login_required"),
         )
 
     return guard
@@ -440,10 +439,48 @@ def build_app(
             )
         return response
 
-    # `dependencies=api_guard` auf jedem der acht `/api`-Router (Task 8,
+    @app.middleware("http")
+    async def _sync_language(
+        request: Request, call_next: Callable[[Request], Awaitable[StarletteResponse]]
+    ) -> StarletteResponse:
+        """Liest die gespeicherte Spracheinstellung bei JEDER Anfrage frisch
+        (Spec-Abschnitt 4) - registriert als ALLERLETZTE Middleware, damit sie
+        vor `_record_command` und vor jeder Route (einschliesslich des
+        Anmelde-Waechters, dessen 401-Text ebenfalls uebersetzt ist) laeuft.
+        Middleware-Registrierungsreihenfolge in Starlette (per
+        `@app.middleware("http")`, aequivalent zu `add_middleware`): Starlette
+        fuegt jede neu registrierte Schicht VORNE in `app.user_middleware` ein
+        (`insert(0, ...)`) und baut den tatsaechlichen Stack anschliessend aus
+        `reversed(user_middleware)` auf - die ZULETZT registrierte Funktion
+        landet dadurch auf Index 0 und wird zur AEUSSEREN Schicht, sieht eine
+        Anfrage also zuerst (durch `Middleware.__call__` von aussen nach innen
+        durchgereicht). Verifiziert per `TestClient`-Probe (zwei Middlewares,
+        Aufrufreihenfolge geloggt): die zuletzt per `@app.middleware("http")`
+        dekorierte Funktion lief zuerst. Ein Test unten
+        (`test_sync_language_is_the_outermost_middleware` in
+        `tests/loxone/test_server.py`) haelt genau diese Reihenfolge fest -
+        siehe auch die korrigierte Herleitung im Implementierungsplan dieser
+        Aufgabe, Abschnitt "Middleware-Registrierungsreihenfolge".
+
+        `store.locale.get_language()` wirft nie (Phase A) - kein try/except
+        noetig, anders als `_append_command_log` weiter oben, das einen
+        echten Fehlschlag beim Schreiben in einen fremden Ringpuffer
+        abfaengt.
+
+        Ausnahme: ist `LOXMATTER_LANG` gesetzt (CLI-Override, siehe
+        `cli.py`), ueberschreibt diese Middleware die Prozess-Sprache NICHT
+        aus dem Store - sonst wuerde der allererste eingehende Request den
+        vom CLI-Bootstrap gesetzten Override sofort wieder verwerfen (Review-
+        Fix Important, 2026-09-04)."""
+        if os.environ.get("LOXMATTER_LANG") is None:
+            i18n.set_language(store.locale.get_language())
+        return await call_next(request)
+
+    # `dependencies=api_guard` auf jedem der neun `/api`-Router (Task 8,
     # Phase 5, siehe `build_api_guard` oben; achter seit `POST
-    # /api/export/project-sync`, Task 11, Phase 6): das schuetzt ausnahmslos
-    # jede Route dieser acht Router, inklusive der WebSocket-Routen
+    # /api/export/project-sync`, Task 11, Phase 6, neunter seit
+    # `build_language_router`, dieser Aufgabe): das schuetzt ausnahmslos
+    # jede Route dieser neun Router, inklusive der WebSocket-Routen
     # `/api/live` und `/api/diagnostics/live` - und ausdruecklich NICHT
     # `/cmd`, `/resync`, `/health`, `/` und `/static`, die weiter unten ohne
     # `dependencies` eingehaengt werden.
@@ -454,6 +491,7 @@ def build_app(
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
+    app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
     # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
     # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst
@@ -485,6 +523,10 @@ def build_app(
     # vier Routen erreichen koennen, sonst gibt es keinen Weg hinein
     # (siehe api/auth.py, Moduldocstring).
     app.include_router(build_auth_router(store))
+    # Siehe api/language.py-Moduldocstring: die Ersteinrichtungs-/
+    # Anmeldeseite braucht diese Uebersetzungen, um sich ueberhaupt
+    # anzuzeigen, bevor jemand angemeldet sein kann.
+    app.include_router(build_i18n_router(store))
 
     # Task 7, Phase 5: die WebUI selbst. `StaticFiles` weist einen Zugriff,
     # der ueber `_WEB_DIR` hinaus will (z. B. `/static/../../../etc/passwd`),
@@ -516,7 +558,7 @@ def build_app(
             # "Full-Resend fehlgeschlagen: <Meldung>" ohne Traceback ist.
             logger.exception("Full-Resend ueber /resync fehlgeschlagen")
             raise HTTPException(
-                status_code=502, detail=f"Full-Resend fehlgeschlagen: {exc}"
+                status_code=502, detail=i18n.t("api.server.fail_resync", exc=exc)
             ) from exc
         # Englischer Schluessel im Wire-Format (Review-Fix M9, 2026-09-02):
         # Bezeichner in Antworten sind wie Code-Bezeichner Englisch, auch
@@ -548,7 +590,9 @@ def build_app(
             # und der Unterschied zwischen "Zigbee-Mesh weg" und "Tippfehler
             # im Invoker" ginge verloren.
             logger.exception("Matter-Aufruf fuer Schluessel %r fehlgeschlagen", key)
-            raise HTTPException(status_code=502, detail=f"Geraet nicht erreichbar: {exc}") from exc
+            raise HTTPException(
+                status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
+            ) from exc
 
         return {"status": "ok", "key": key}
 

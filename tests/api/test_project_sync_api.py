@@ -69,6 +69,27 @@ NO_VIRTUAL_IN_CAPTION_PROJECT = (
 )
 
 
+# Zwei `LoxLIVE`-Bloecke - loest `AmbiguousMiniserverError` mit `candidates`
+# aus, wenn `miniserver_ip` fehlt (siehe `tests/projectsync/test_index.py`,
+# `test_multi_loxlive_without_ip_carries_candidates_for_a_selection_field`,
+# fuer dieselbe Fixture auf Ebene von `index.build_index`).
+TWO_LOXLIVE_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="Document" U="2000-0000-0000-aaaaaaaaaaaaaaaa" Title="Testprojekt">\r\n'
+    '\t\t<C Type="LoxLIVE" U="2000-0001-0000-aaaaaaaaaaaaaaaa" Title="Erster Miniserver"'
+    ' IntAddr="10.0.0.10" Serial="504F00000001">\r\n'
+    '\t\t\t<C Type="VirtualInCaption" IName="C1" U="1000-0000-0000-aaaaaaaaaaaaaaaa"></C>\r\n'
+    "\t\t</C>\r\n"
+    '\t\t<C Type="LoxLIVE" U="2000-0002-0000-aaaaaaaaaaaaaaaa" Title="Zweiter Miniserver"'
+    ' IntAddr="10.0.0.20" Serial="504F00000002">\r\n'
+    '\t\t\t<C Type="VirtualInCaption" IName="C2" U="1000-0003-0000-aaaaaaaaaaaaaaaa"></C>\r\n'
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
 @pytest.fixture
 async def api(tmp_path, no_invoke, fake_runtime) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
     store = Store(tmp_path / "t.sqlite")
@@ -111,6 +132,49 @@ async def test_project_sync_rejects_invalid_file(api):
         files={"file": ("kaputt.Loxone", b"kein xml", "application/xml")},
     )
     assert response.status_code == 400
+
+
+async def test_project_sync_offers_a_selection_for_multiple_miniservers(api):
+    """Nutzerwunsch nach dem Review: bei mehreren Miniservern in der Datei
+    soll die WebUI ein Auswahlfeld zeigen koennen statt den Anwender die IP
+    von Hand eintippen zu lassen - das braucht eine normale 200-Antwort mit
+    den gefundenen Miniservern, keinen Fehler."""
+    client, _store = api
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5"},
+        files={
+            "file": ("mehrere_ms.Loxone", TWO_LOXLIVE_PROJECT.encode("utf-8"), "application/xml")
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["needs_miniserver_selection"] is True
+    assert body["available_miniservers"] == [
+        {"title": "Erster Miniserver", "int_addr": "10.0.0.10"},
+        {"title": "Zweiter Miniserver", "int_addr": "10.0.0.20"},
+    ]
+    # Alle plan-spezifischen Felder bleiben leer - es gibt (noch) keinen Plan.
+    assert body["entries"] == []
+    assert body["patched_conservative_base64"] is None
+
+
+async def test_project_sync_with_selected_miniserver_returns_the_plan(api):
+    """Derselbe Upload, diesmal mit der aus dem Auswahlfeld gewaehlten IP -
+    liefert den normalen Plan, kein Auswahlfeld mehr."""
+    client, _store = api
+    response = await client.post(
+        "/api/export/project-sync",
+        params={"bridge_ip": "10.0.0.5", "miniserver_ip": "10.0.0.10"},
+        files={
+            "file": ("mehrere_ms.Loxone", TWO_LOXLIVE_PROJECT.encode("utf-8"), "application/xml")
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["needs_miniserver_selection"] is False
+    assert body["available_miniservers"] == []
+    assert body["patched_conservative_base64"] is not None
 
 
 async def test_project_sync_requires_authentication(tmp_path, no_invoke, fake_runtime):

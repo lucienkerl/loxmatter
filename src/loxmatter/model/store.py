@@ -45,6 +45,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from loxmatter import i18n
 from loxmatter.export.commands import DeviceCommand
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
@@ -860,7 +861,7 @@ class Store:
             "SELECT * FROM device WHERE id = ? AND active = 1", (device_id,)
         ).fetchone()
         if row is None:
-            raise UnknownDeviceError(f"unbekanntes Geraet {device_id}")
+            raise UnknownDeviceError(i18n.t("api.errors.unknown_device", device_id=device_id))
         return self._as_device(row)
 
     def rename_device(self, device_id: int, label: str) -> None:
@@ -1224,7 +1225,7 @@ class Store:
     def resolve_command(self, key: str) -> StoredCommand:
         row = self._db.execute("SELECT * FROM command WHERE key = ?", (key,)).fetchone()
         if row is None:
-            raise UnknownCommandError(f"unbekannter Kommando-Schluessel {key!r}")
+            raise UnknownCommandError(i18n.t("api.errors.unknown_command", command_key=key))
         return self._as_command(row)
 
     @staticmethod

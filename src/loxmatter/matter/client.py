@@ -107,6 +107,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
+from loxmatter import i18n
 from loxmatter.commands.translate import MatterCall
 from loxmatter.matter.models import NodeSnapshot
 
@@ -284,13 +285,10 @@ class BridgeMatterClient:
                 # unverändert weiter (z. B. CannotConnect) — Aufrufer wie
                 # die CLI können sie damit weiterhin gezielt behandeln.
                 listener_task.result()
-                msg = "Listener wurde beendet, bevor er Bereitschaft meldete"
+                msg = i18n.t("api.errors.listener_stopped_early")
                 raise MatterUnavailableError(msg)
 
-            msg = (
-                f"matter-server hat nach {LISTENER_READY_TIMEOUT_SECONDS:.0f}s "
-                "keine Bereitschaft gemeldet"
-            )
+            msg = i18n.t("api.errors.listener_timeout", timeout=LISTENER_READY_TIMEOUT_SECONDS)
             raise MatterUnavailableError(msg)
         except BaseException:
             await _cancel_and_await(listener_task)
@@ -379,7 +377,7 @@ class BridgeMatterClient:
 
     def _require_upstream(self) -> Any:
         if self._upstream is None:
-            raise MatterUnavailableError("nicht verbunden mit matter-server")
+            raise MatterUnavailableError(i18n.t("api.errors.not_connected"))
         return self._upstream
 
     async def snapshots(self) -> list[NodeSnapshot]:
@@ -404,7 +402,7 @@ class BridgeMatterClient:
         for candidate in await self.snapshots():
             if candidate.node_id == node_id:
                 return candidate
-        raise MatterUnavailableError(f"unbekannter Node {node_id}")
+        raise MatterUnavailableError(i18n.t("api.errors.unknown_node", node_id=node_id))
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
         """Lernt ein Geraet ueber seinen Pairing-Code ein.
@@ -435,10 +433,10 @@ class BridgeMatterClient:
             # CommissioningError (Review-Fix, siehe Task-1-Report). Fängt
             # diesen Zweig VOR dem generischen except Exception unten ab,
             # sonst würde er dort mitgefangen.
-            msg = f"matter-server nicht erreichbar: {exc}"
+            msg = i18n.t("api.errors.matter_server_unreachable", exc=exc)
             raise MatterUnavailableError(msg) from exc
         except Exception as exc:
-            raise CommissioningError(f"Einlernen fehlgeschlagen: {exc}") from exc
+            raise CommissioningError(i18n.t("api.errors.commissioning_failed", exc=exc)) from exc
         return NodeSnapshot.from_raw(
             node.node_id, {"attributes": node.attributes, "available": node.available}
         )
@@ -523,7 +521,11 @@ class BridgeMatterClient:
         command_cls = cluster_commands.get(call.command_id) if cluster_commands else None
         if command_cls is None:
             raise MatterUnavailableError(
-                f"Cluster {call.cluster_id} Kommando {call.command_id} ist der chip-SDK unbekannt"
+                i18n.t(
+                    "api.errors.command_unknown_to_sdk",
+                    cluster_id=call.cluster_id,
+                    command_id=call.command_id,
+                )
             )
         command = command_cls(**call.payload)
         await upstream.send_device_command(call.node_id, call.endpoint, command)
@@ -603,7 +605,7 @@ class BridgeMatterClient:
         """
         upstream = self._require_upstream()
         if self._dispatch_task is not None:
-            raise MatterUnavailableError("subscribe() wurde bereits aufgerufen")
+            raise MatterUnavailableError(i18n.t("api.errors.subscribe_already_called"))
 
         # Lazy importiert wie _default_session_factory: Tests mit einem
         # Fake-Upstream sollen matter_server nie laden müssen.

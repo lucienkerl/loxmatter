@@ -54,6 +54,7 @@ import httpx2 as httpx
 import pytest
 from conftest import authenticate, load_snapshot
 
+from loxmatter import i18n
 from loxmatter.api import diagnostics
 from loxmatter.api.diagnostics import RingBuffer, _check_thread_credentials
 from loxmatter.export.commands import extract_commands
@@ -262,7 +263,34 @@ async def test_fabric_backup_is_503_without_a_configured_directory(
     store.close()
 
     assert response.status_code == 503
-    assert "matter-data-dir" in response.json()["detail"]
+    assert response.json()["detail"] == (
+        "The matter-server data directory is not mounted for this service — a backup "
+        "therefore cannot be created. See the deployment (docker-compose.yml, "
+        "--matter-data-dir)."
+    )
+
+
+async def test_fabric_backup_is_503_without_a_configured_directory_in_german(
+    no_invoke, fake_runtime, fake_client, tmp_path
+):
+    """Deutscher Begleittest zu
+    test_fabric_backup_is_503_without_a_configured_directory."""
+    store = Store(tmp_path / "t.sqlite")
+    app = build_app(
+        store, no_invoke, fake_runtime(store), client=fake_client, api_token=_BACKUP_TOKEN
+    )
+    store.locale.set_language("de")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/diagnostics/fabric-backup", headers=_BACKUP_HEADERS)
+    store.close()
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Das matter-server-Datenverzeichnis ist fuer diesen Dienst nicht "
+        "eingehaengt - eine Sicherung kann deshalb nicht erstellt werden. "
+        "Siehe die Bereitstellung (docker-compose.yml, --matter-data-dir)."
+    )
 
 
 async def test_fabric_backup_is_503_when_the_configured_directory_is_missing(
@@ -287,6 +315,38 @@ async def test_fabric_backup_is_503_when_the_configured_directory_is_missing(
     store.close()
 
     assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "The configured matter-server data directory does not exist or is not a "
+        "directory. Check the mount."
+    )
+
+
+async def test_fabric_backup_is_503_when_the_configured_directory_is_missing_in_german(
+    no_invoke, fake_runtime, fake_client, tmp_path
+):
+    """Deutscher Begleittest zu
+    test_fabric_backup_is_503_when_the_configured_directory_is_missing."""
+    store = Store(tmp_path / "t.sqlite")
+    missing = tmp_path / "existiert-nicht"
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        matter_data_dir=missing,
+        api_token=_BACKUP_TOKEN,
+    )
+    store.locale.set_language("de")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/diagnostics/fabric-backup", headers=_BACKUP_HEADERS)
+    store.close()
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Das konfigurierte matter-server-Datenverzeichnis existiert nicht "
+        "oder ist kein Verzeichnis. Pruefen Sie die Einhaengung."
+    )
 
 
 async def test_fabric_backup_is_503_when_the_configured_path_is_a_file(
@@ -320,6 +380,27 @@ async def test_a_failing_check_says_what_to_do(api_without_matter):
     checks = (await client.get("/api/diagnostics/system")).json()
     failing = next(c for c in checks if not c["ok"])
     assert len(failing["detail"]) > 20
+    matter_check = next(c for c in checks if c["name"] == "matter-server")
+    assert matter_check["ok"] is False
+    assert matter_check["detail"] == (
+        "No matter-server client configured — the bridge is running without a Matter "
+        "connection. This is always set for `loxmatter run`; if it's missing here, this "
+        "service was started with an incomplete setup."
+    )
+
+
+async def test_a_failing_check_says_what_to_do_in_german(api_without_matter):
+    """Deutscher Begleittest zu test_a_failing_check_says_what_to_do."""
+    client, store, _ = api_without_matter
+    store.locale.set_language("de")
+    checks = (await client.get("/api/diagnostics/system")).json()
+    matter_check = next(c for c in checks if c["name"] == "matter-server")
+    assert matter_check["ok"] is False
+    assert matter_check["detail"] == (
+        "Kein matter-server-Client konfiguriert - die Bruecke laeuft ohne Matter-"
+        "Anbindung. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, "
+        "wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+    )
 
 
 async def test_command_log_does_not_record_diagnostics_polling(api):
@@ -363,6 +444,33 @@ async def test_a_check_that_raises_unexpectedly_fails_gracefully(api, monkeypatc
     store_check = next(c for c in checks if c["name"] == "store")
     assert store_check["ok"] is False
     assert len(store_check["detail"]) > 20
+    assert store_check["detail"] == (
+        "This check itself failed (Simulierter Programmfehler in der Pruefung selbst) "
+        "— that is a bug in the check, not necessarily in the checked system. The full "
+        "traceback is in the server log."
+    )
+
+
+async def test_a_check_that_raises_unexpectedly_fails_gracefully_in_german(api, monkeypatch):
+    """Deutscher Begleittest zu test_a_check_that_raises_unexpectedly_fails_gracefully."""
+    client, store, _ = api
+
+    def _broken_check_writable() -> None:
+        raise RuntimeError("Simulierter Programmfehler in der Pruefung selbst")
+
+    monkeypatch.setattr(store, "check_writable", _broken_check_writable)
+    store.locale.set_language("de")
+
+    response = await client.get("/api/diagnostics/system")
+    assert response.status_code == 200
+    checks = response.json()
+    store_check = next(c for c in checks if c["name"] == "store")
+    assert store_check["ok"] is False
+    assert store_check["detail"] == (
+        "Diese Pruefung selbst ist fehlgeschlagen (Simulierter Programmfehler in der "
+        "Pruefung selbst) - das ist ein Fehler in der Pruefung, nicht zwangslaeufig im "
+        "gepruerften System. Der volle Traceback steht im Server-Log."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -405,9 +513,34 @@ def test_ipv6_accepts_a_unique_local_address(monkeypatch, tmp_path):
     ok, detail = diagnostics._check_ipv6()
     assert ok is True
     assert "fd27" in detail
+    assert "on wpan0" in detail
+
+
+def test_ipv6_accepts_a_unique_local_address_in_german(monkeypatch, tmp_path):
+    """Deutscher Begleittest zu test_ipv6_accepts_a_unique_local_address.
+    `_check_ipv6` ist eine reine Funktion ohne HTTP-Aufruf, daher genuegt hier
+    `i18n.set_language` direkt."""
+    i18n.set_language("de")
+    _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITH_THREAD)
+    ok, detail = diagnostics._check_ipv6()
+    assert ok is True
+    assert "fd27" in detail
+    assert "auf wpan0" in detail
 
 
 def test_ipv6_fails_when_only_link_local_and_loopback_remain(monkeypatch, tmp_path):
+    _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITHOUT_THREAD)
+    ok, detail = diagnostics._check_ipv6()
+    assert ok is False
+    assert "link-local" in detail
+
+
+def test_ipv6_fails_when_only_link_local_and_loopback_remain_in_german(monkeypatch, tmp_path):
+    """Deutscher Begleittest zu
+    test_ipv6_fails_when_only_link_local_and_loopback_remain. `_check_ipv6`
+    ist eine reine Funktion ohne HTTP-Aufruf, daher genuegt hier
+    `i18n.set_language` direkt - keine Middleware liest die Sprache neu ein."""
+    i18n.set_language("de")
     _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITHOUT_THREAD)
     ok, detail = diagnostics._check_ipv6()
     assert ok is False
@@ -419,6 +552,19 @@ def test_thread_check_finds_the_mesh_interface(monkeypatch, tmp_path):
     ok, detail = diagnostics._check_thread()
     assert ok is True
     assert "wpan0" in detail
+    assert "mesh address" in detail
+
+
+def test_thread_check_finds_the_mesh_interface_in_german(monkeypatch, tmp_path):
+    """Deutscher Begleittest zu test_thread_check_finds_the_mesh_interface.
+    `_check_thread` ist eine reine Funktion ohne HTTP-Aufruf, daher genuegt
+    hier `i18n.set_language` direkt."""
+    i18n.set_language("de")
+    _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITH_THREAD)
+    ok, detail = diagnostics._check_thread()
+    assert ok is True
+    assert "wpan0" in detail
+    assert "Mesh-Adresse" in detail
 
 
 def test_thread_check_fails_when_the_interface_is_gone(monkeypatch, tmp_path):
@@ -432,12 +578,37 @@ def test_thread_check_fails_when_the_interface_is_gone(monkeypatch, tmp_path):
     assert ok is False
     assert "OTBR" in detail
     assert "restart" in detail
+    assert "No Thread interface" in detail
+
+
+def test_thread_check_fails_when_the_interface_is_gone_in_german(monkeypatch, tmp_path):
+    """Deutscher Begleittest zu test_thread_check_fails_when_the_interface_is_gone.
+    `_check_thread` ist eine reine Funktion ohne HTTP-Aufruf, daher genuegt
+    hier `i18n.set_language` direkt."""
+    i18n.set_language("de")
+    _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITHOUT_THREAD)
+    ok, detail = diagnostics._check_thread()
+    assert ok is False
+    assert "OTBR" in detail
+    assert "restart" in detail
+    assert "Keine Thread-Schnittstelle" in detail
 
 
 def test_both_checks_stay_quiet_where_they_cannot_look(monkeypatch, tmp_path):
     """Auf einem Nicht-Linux-System gibt es /proc/net/if_inet6 nicht. Das ist
     kein Fehler des Aufbaus, sondern eine Grenze der Pruefung - ein roter
     Punkt dafuer waere eine Falschmeldung auf jedem Entwicklungsrechner."""
+    _with_if_inet6(monkeypatch, tmp_path, None)
+    for ok, detail in (diagnostics._check_ipv6(), diagnostics._check_thread()):
+        assert ok is True
+        assert "Not determinable" in detail
+
+
+def test_both_checks_stay_quiet_where_they_cannot_look_in_german(monkeypatch, tmp_path):
+    """Deutscher Begleittest zu test_both_checks_stay_quiet_where_they_cannot_look.
+    Beide Pruefungen sind reine Funktionen ohne HTTP-Aufruf, daher genuegt
+    hier `i18n.set_language` direkt."""
+    i18n.set_language("de")
     _with_if_inet6(monkeypatch, tmp_path, None)
     for ok, detail in (diagnostics._check_ipv6(), diagnostics._check_thread()):
         assert ok is True
@@ -477,13 +648,32 @@ def test_thread_credentials_check_stays_green_when_matter_server_lacks_them():
     """Der gesunde Regelzustand nach jedem Neustart des Pi - kein Alarm,
     sondern eine Zustandszeile. Sie muss trotzdem zwei Dinge sagen: dass das
     naechste Einlernen die Daten automatisch vom Border Router holt, und wo
-    der Punkt sitzt, der rot wird, wenn dort gar keiner laeuft."""
+    der Punkt sitzt, der rot wird, wenn dort gar keiner laeuft.
+
+    Geprueft wird in der Standardsprache (Englisch); die deutsche Fassung
+    steht im Test darunter - dasselbe Paar-Muster wie bei den
+    IPv6-/Thread-Pruefungen weiter oben."""
     ok, detail = _check_thread_credentials(_ClientWithThreadDataset(False))
+    assert ok
+    assert "commissioning" in detail
+    assert "Border Router" in detail
+    # Verweist auf den Nachbarpunkt `thread` - genau den Namen, unter dem er
+    # in `GET /api/diagnostics/system` steht. Der ist eine feste Kennung und
+    # bleibt deshalb in beiden Sprachen gleich.
+    assert "thread" in detail
+
+
+def test_thread_credentials_check_says_the_same_in_german():
+    """Die Zeile ist ein Oberflaechentext und wechselt mit der Sprache. Kein
+    HTTP-Aufruf noetig - der Check ist eine reine Funktion, deshalb hier
+    `i18n.set_language` direkt."""
+    i18n.set_language("de")
+
+    ok, detail = _check_thread_credentials(_ClientWithThreadDataset(False))
+
     assert ok
     assert "Einlernen" in detail
     assert "Border Router" in detail
-    # Verweist auf den Nachbarpunkt `thread` - genau den Namen, unter dem er
-    # in `GET /api/diagnostics/system` steht.
     assert "thread" in detail
 
 
@@ -493,10 +683,25 @@ def test_thread_credentials_check_stays_quiet_without_a_matter_connection():
     rote Punkte fuer dieselbe Ursache verteilen die Aufmerksamkeit."""
     ok, detail = _check_thread_credentials(None)
     assert ok
-    assert "feststellbar" in detail
+    assert "Not determinable" in detail
+    assert "matter-server" in detail
+
+
+def test_thread_credentials_check_stays_quiet_without_a_matter_connection_in_german():
+    i18n.set_language("de")
+
+    ok, detail = _check_thread_credentials(None)
+
+    assert ok
+    assert "Nicht feststellbar" in detail
+    assert "matter-server" in detail
 
 
 async def test_the_system_check_carries_the_thread_credentials_line(api):
+    """Der Name des Punktes ist eine feste Kennung, keine Uebersetzung -
+    genau wie "matter-server", "store", "ipv6", "thread" und "miniserver"
+    daneben. Er wandert deshalb NICHT mit der Sprache, und ein Log oder ein
+    Fehlerbericht bleibt ueber Sprachgrenzen hinweg lesbar."""
     client, _, _ = api
     checks = (await client.get("/api/diagnostics/system")).json()
-    assert "thread-zugangsdaten" in {c["name"] for c in checks}
+    assert "thread-credentials" in {c["name"] for c in checks}

@@ -110,7 +110,7 @@ let toastCounter = 0;
  */
 class UnauthorizedError extends Error {
   constructor() {
-    super("Die Sitzung ist abgelaufen – bitte erneut anmelden.");
+    super(t("web.auth.session_expired"));
     this.name = "UnauthorizedError";
   }
 }
@@ -129,7 +129,7 @@ async function readErrorDetail(response) {
   } catch {
     // Antwort war kein JSON - der generische Text unten reicht dann.
   }
-  return `HTTP ${response.status}`;
+  return t("web.errors.http_status", { status: response.status });
 }
 
 /**
@@ -163,7 +163,7 @@ async function requestJson(method, path, body) {
     // Werkzeug, dessen Zweck es gerade ist, einen Fehlschlag ehrlich UND
     // verstaendlich zu zeigen (Spec 8.1). Review-Fix Important #2,
     // 2026-09-02.
-    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+    throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401 && !path.startsWith("/auth/")) {
     // Nicht der rohe Servertext: eine 401 mitten im Betrieb heisst, die
@@ -203,7 +203,7 @@ async function requestDownload(path, filename) {
   try {
     response = await fetch(path, { credentials: "same-origin" });
   } catch {
-    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+    throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401) {
     throw new UnauthorizedError();
@@ -228,6 +228,31 @@ async function requestDownload(path, filename) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
+// Modul-global, absichtlich NICHT auf dem app()-Objekt (siehe
+// Implementierungsplan, Task 8: "t() muss global aufrufbar sein") - jede
+// Funktion in dieser Datei erreicht sie, auch requestJson/requestDownload/
+// requestUpload, die keinen Zugriff auf `this` des Alpine-Bauteils haben.
+// Nicht reaktiv, weil sie es nicht sein muss: ein Sprachwechsel laedt die
+// ganze Seite neu.
+let translationStrings = {};
+
+/** Uebersetzungshelfer - liefert den zu key gehoerenden Text in der
+ * aktuellen Sprache, mit {platzhalter} aus values ersetzt. Fehlt der
+ * Schluessel (z. B. eine noch nicht neu geladene Seite nach einem
+ * Deployment mit neuen Schluesseln), liefert t() den Schluessel selbst
+ * zurueck statt abzustuerzen - sichtbar falsch statt einer kaputten
+ * Seite, dieselbe Haltung wie ueberall sonst in diesem Projekt
+ * ("ein Klick, der nichts bewirkt, muss als klare Absage ankommen"). */
+function t(key, values = {}) {
+  const template = translationStrings[key];
+  if (template === undefined) {
+    return key;
+  }
+  return template.replace(/\{(\w+)\}/g, (match, name) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match
+  );
+}
+
 /**
  * Laedt eine Datei per multipart/form-data hoch und erwartet JSON zurueck -
  * eigene Funktion statt `requestJson`, weil ein Datei-Upload kein
@@ -244,7 +269,7 @@ async function requestUpload(path, formData) {
       body: formData,
     });
   } catch {
-    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+    throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401) {
     throw new UnauthorizedError();
@@ -289,6 +314,15 @@ function app() {
     passwordRepeatDraft: "",
     authBusy: false,
     authError: null,
+
+    // --- Uebersetzung -------------------------------------------------------
+    // Nach demselben Muster wie authReady: bis GET /api/i18n geantwortet hat,
+    // zeigt die Seite nichts - siehe stringsReady in den beiden
+    // auth-screen-templates in index.html. Die eigentliche Tabelle liegt
+    // NICHT hier, sondern im modul-globalen translationStrings (siehe t()
+    // oben) - dieses Feld existiert nur fuer x-if="stringsReady && ...".
+    stringsReady: false,
+    language: "en",
 
     // --- Geraete -----------------------------------------------------------
     devices: [],
@@ -376,17 +410,23 @@ function app() {
     // wie der Rest von `plan` unveraendert aus der API-Antwort, keine
     // eigene camelCase-Kopie.
     projectSync: {
+      // Das tatsaechliche `File`-Objekt, nicht nur sein Name (Nutzerwunsch
+      // nach dem Review: ein Auswahlfeld statt eine IP von Hand einzutippen)
+      // - so kann `confirmProjectSyncMiniserver` dieselbe Datei ein zweites
+      // Mal hochladen, sobald der Anwender den Miniserver gewaehlt hat,
+      // ganz ohne erneuten Datei-Dialog.
       file: null,
       plan: null,
       includeNewDevices: false,
       busy: false,
       error: "",
-      // Nur noetig, wenn die hochgeladene Datei mehr als einen Miniserver
-      // konfiguriert (`LoxLIVE.IntAddr`) - bei genau einem wird er
-      // automatisch verwendet, siehe `api.project_sync`s `miniserver_ip`.
-      // Leer bleibt leer: `uploadProjectFile` haengt das Feld nur an, wenn
-      // hier etwas drinsteht.
-      miniserverIp: "",
+      // Traegt die Datei mehr als einen Miniserver, antwortet `/api/export/
+      // project-sync` beim ersten Versuch (ohne `miniserver_ip`) mit
+      // `needs_miniserver_selection=true` statt einem Plan - `index.html`
+      // zeigt dann dieses Auswahlfeld statt der Plan-Ansicht.
+      needsMiniserverSelection: false,
+      availableMiniservers: [],
+      selectedMiniserverIp: "",
     },
 
     // --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------
@@ -448,7 +488,7 @@ function app() {
       window.setInterval(() => {
         this.nowTick = Date.now();
       }, 1000);
-      await this.loadAuthInfo();
+      await Promise.all([this.loadI18n(), this.loadAuthInfo()]);
       if (this.authenticated) {
         await this.startApp();
       }
@@ -529,6 +569,31 @@ function app() {
       }
     },
 
+    /** Laedt die aktuelle Sprache und die web.*-Uebersetzungstabelle - der
+     * erste Aufruf jeder Seite, wie loadAuthInfo(), aber unabhaengig davon
+     * (siehe init(), das beide parallel startet): GET /api/i18n ist
+     * ungeschuetzt, die Ersteinrichtungs-/Anmeldeseite braucht diese Texte,
+     * bevor sich jemand angemeldet hat. */
+    async loadI18n() {
+      try {
+        const info = await requestJson("GET", "/api/i18n");
+        this.language = info.language;
+        translationStrings = info.strings;
+        document.documentElement.lang = info.language;
+      } catch (error) {
+        // Einzige bewusste Ausnahme von "keine console.*-Aufrufe in dieser
+        // Datei" (siehe Kopfkommentar): es gibt keinen Oberflaechen-Platz fuer
+        // "Uebersetzungen konnten nicht geladen werden" wie es ihn fuer
+        // authError gibt - ohne dieses Log waere ein Fehlschlag hier komplett
+        // unsichtbar. stringsReady wird trotzdem gesetzt (siehe finally): t()
+        // faellt fuer jeden noch nicht geladenen Schluessel selbst auf den
+        // rohen Schluesseltext zurueck, statt die Seite fuer immer zu blockieren.
+        console.error("Uebersetzungen konnten nicht geladen werden:", error);
+      } finally {
+        this.stringsReady = true;
+      }
+    },
+
     /**
      * Alles, was eine angemeldete Sitzung voraussetzt. Getrennt von `init`,
      * weil es nach dem Login ein zweites Mal laufen muss - dann ohne
@@ -574,7 +639,7 @@ function app() {
 
     async submitSetup() {
       if (this.passwordDraft !== this.passwordRepeatDraft) {
-        this.authError = "Die beiden Eingaben stimmen nicht überein.";
+        this.authError = t("web.auth.password_mismatch");
         return;
       }
       await this.submitPassword("/auth/setup");
@@ -684,7 +749,7 @@ function app() {
       try {
         this.devices = await this.request("GET", "/api/devices");
       } catch (error) {
-        this.devicesError = `Geraeteliste konnte nicht geladen werden: ${error.message}`;
+        this.devicesError = t("web.devices.list_load_error", { message: error.message });
       }
     },
 
@@ -718,7 +783,7 @@ function app() {
           `/api/devices/${deviceId}/controls`,
         );
       } catch (error) {
-        this.deviceActionError = `Bedienelemente konnten nicht geladen werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.controls_load_error", { message: error.message });
       }
     },
 
@@ -772,9 +837,9 @@ function app() {
     exportHintFor(deviceId) {
       const status = this.exportStatusFor(deviceId);
       if (!status || !status.exported_at) {
-        return "Noch nicht exportiert";
+        return t("web.devices.export_never");
       }
-      return `Zuletzt exportiert am ${this.formatTimestamp(status.exported_at)}`;
+      return t("web.devices.export_last", { timestamp: this.formatTimestamp(status.exported_at) });
     },
 
     // Klassen fuer den Farbstreifen der Kachel (style.css, `.device-card`) -
@@ -847,8 +912,8 @@ function app() {
     // leer-Hinweis) ist fuer beide Gruppen identisch.
     signalGroupsFor(deviceId) {
       return [
-        { key: "functional", title: "Funktional", collapsible: false, signals: this.functionalSignalsFor(deviceId) },
-        { key: "expert", title: "Experte", collapsible: true, signals: this.expertSignalsFor(deviceId) },
+        { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },
+        { key: "expert", title: t("web.signals.group_expert"), collapsible: true, signals: this.expertSignalsFor(deviceId) },
       ];
     },
 
@@ -869,7 +934,7 @@ function app() {
         const updated = await this.request("PATCH", `/api/devices/${device.id}`, { label });
         Object.assign(device, updated);
       } catch (error) {
-        this.deviceActionError = `Name konnte nicht gespeichert werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.label_save_error", { message: error.message });
       }
     },
 
@@ -885,13 +950,7 @@ function app() {
     // Der Praefix mit der Geraete-ID ist eindeutig (siehe `filename_for`)
     // und reicht, um die Datei in Loxone Config wiederzufinden.
     async removeDevice(device) {
-      const confirmed = window.confirm(
-        `Gerät "${device.label}" wirklich entfernen? Das kann nicht rückgängig gemacht werden.\n\n` +
-          "In Loxone bleiben danach verwaist:\n" +
-          `• alle virtuellen Ein- und Ausgänge mit dem Schlüssel-Präfix "d${device.id}_"\n` +
-          `• die importierten Vorlagen "VIU_d${device.id}_….xml" und "VO_d${device.id}_….xml"\n\n` +
-          "Diese in Loxone Config von Hand löschen.",
-      );
+      const confirmed = window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device.id }));
       if (!confirmed) {
         return;
       }
@@ -902,7 +961,7 @@ function app() {
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
       } catch (error) {
-        this.deviceActionError = `Gerät konnte nicht entfernt werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.remove_error", { message: error.message });
       }
     },
 
@@ -911,9 +970,9 @@ function app() {
       const value = command.takes_value ? this.commandValueDrafts[command.key] ?? "" : "1";
       try {
         await this.request("POST", `/api/commands/${command.key}`, { value: String(value) });
-        this.showToast(`"${command.slug}" wurde an ${device.label} gesendet.`);
+        this.showToast(t("web.devices.command_sent", { slug: command.slug, label: device.label }));
       } catch (error) {
-        this.showToast(`"${command.slug}" ist fehlgeschlagen: ${error.message}`, true);
+        this.showToast(t("web.devices.command_failed", { slug: command.slug, message: error.message }), true);
       } finally {
         this.commandBusyKey = null;
       }
@@ -958,13 +1017,13 @@ function app() {
       }
       const seconds = Math.max(0, Math.round((this.nowTick - timestamp) / 1000));
       if (seconds < 60) {
-        return `vor ${seconds} s`;
+        return t("web.header.time_ago_seconds", { seconds });
       }
       const minutes = Math.round(seconds / 60);
       if (minutes < 60) {
-        return `vor ${minutes} min`;
+        return t("web.header.time_ago_minutes", { minutes });
       }
-      return `vor ${Math.round(minutes / 60)} h`;
+      return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
     },
 
     /** Wann zuletzt IRGENDETWAS ueber die Leitung kam - der Heartbeat
@@ -997,14 +1056,14 @@ function app() {
     signalAgeTitle(signal) {
       const text = this.signalSeenText(signal);
       return text
-        ? `Zuletzt aktualisiert ${text}`
-        : "Seit dem Laden der Seite unveraendert";
+        ? t("web.header.last_updated", { text })
+        : t("web.header.unchanged_since_load");
     },
 
     async commissionDevice() {
       this.commissionMessage = null;
       if (!this.commissionCode.trim()) {
-        this.commissionMessage = "Bitte zuerst einen Pairing-Code eingeben.";
+        this.commissionMessage = t("web.devices.commission_code_required");
         this.commissionMessageIsError = true;
         return;
       }
@@ -1021,30 +1080,40 @@ function app() {
         // bis irgendwann die Ansicht neu betreten wuerde.
         await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);
         // Der frühere Satz "Live-Werte erst nach einem Neustart der Brücke"
-        // ist entfallen, weil die Grenze entfallen ist: die Einlern-Route
-        // ruft `follow_node` auf, das die Attribut-Abonnements dieses Geräts
-        // anlegt und seine Werte säet (Entwurf vom 2026-09-04). Einen Hinweis
-        // braucht es hier trotzdem, nur einen anderen: dass die Werte im
-        // Miniserver erst nach dem Export und dem Import in Loxone Config
-        // ankommen, denn bis dahin gibt es dort keinen virtuellen Eingang.
-        this.commissionMessage =
-          `${device.label} wurde eingelernt und liefert ab sofort Live-Werte – ohne ` +
-          "Neustart der Brücke. Im Miniserver kommen sie an, sobald Sie die Vorlagen " +
-          "exportiert und in Loxone Config importiert haben.";
+        // ist entfallen, weil die Grenze selbst entfallen ist: die
+        // Einlern-Route ruft inzwischen `follow_node` auf, das die
+        // Attribut-Abonnements dieses Geräts anlegt und seine Werte säet
+        // (Entwurf vom 2026-09-04). Einen Hinweis braucht es hier trotzdem,
+        // nur einen anderen: dass die Werte im Miniserver erst nach dem
+        // Export und dem Import in Loxone Config ankommen, denn bis dahin
+        // gibt es dort keinen virtuellen Eingang. Der Satz selbst steht in
+        // strings.yaml unter `web.devices.commission_success`.
+        this.commissionMessage = t("web.devices.commission_success", { label: device.label });
         this.commissionMessageIsError = false;
         this.commissionCode = "";
         this.commissionThreadDataset = "";
       } catch (error) {
-        // Ohne die Pruefung stand hier "Einlernen fehlgeschlagen: Einlernen
-        // fehlgeschlagen: ..." - der Server sagt es fuer eine Ablehnung durch
-        // das Geraet bereits selbst (`CommissioningError` in
-        // matter/client.py), und die doppelte Ueberschrift schob die
-        // eigentliche Auskunft nach hinten. Eigene Vorsilbe nur noch dort, wo
-        // die Meldung ohne sie ohne Bezug daherkaeme (z. B. "HTTP 502").
+        // Ohne die Fallunterscheidung stand die Überschrift dieser Meldung
+        // doppelt in der Oberfläche: eine 422 dieser Route trägt bereits
+        // einen vollständig gerahmten Satz, den der Server selbst gebildet
+        // hat (`api.errors.commissioning_failed`, gesetzt in
+        // matter/client.py) – ein zweiter Rahmen hier schob die eigentliche
+        // Auskunft nach hinten.
+        //
+        // Unterschieden wird am HTTP-Status, nicht am Text. Ein Vergleich
+        // auf den Anfang der Servermeldung kennt immer nur eine der beiden
+        // Sprachen: läuft die Brücke auf Englisch, griffe er nie, und die
+        // Dopplung wäre still zurück – ganz abgesehen davon, dass ein
+        // Meldungstext sich jederzeit ändern darf. Der Status dagegen ist
+        // derselbe, in welcher Sprache der Server auch antwortet. Er hängt
+        // seit `requestJson` an jedem Fehlerobjekt (siehe dort).
+        //
+        // Jeder andere Fehlschlag (502, 503, ein Netzfehler ganz ohne
+        // Antwort) bringt keinen eigenen Rahmen mit und bekommt hier einen –
+        // ohne ihn stünde in der Oberfläche bloß "HTTP 502".
         const message = String(error.message ?? "");
-        this.commissionMessage = message.startsWith("Einlernen fehlgeschlagen")
-          ? message
-          : `Einlernen fehlgeschlagen: ${message}`;
+        this.commissionMessage =
+          error.status === 422 ? message : t("web.devices.commission_failed", { message });
         this.commissionMessageIsError = true;
       } finally {
         this.commissionBusy = false;
@@ -1063,7 +1132,7 @@ function app() {
           `/api/devices/${deviceId}/signals`,
         );
       } catch (error) {
-        this.signalsError = `Signale konnten nicht geladen werden: ${error.message}`;
+        this.signalsError = t("web.signals.load_error", { message: error.message });
       }
     },
 
@@ -1076,7 +1145,7 @@ function app() {
         const updated = await this.request("PATCH", `/api/signals/${signal.key}`, { title });
         Object.assign(signal, updated);
       } catch (error) {
-        this.signalsError = `Titel konnte nicht gespeichert werden: ${error.message}`;
+        this.signalsError = t("web.signals.title_save_error", { message: error.message });
       }
     },
 
@@ -1087,7 +1156,7 @@ function app() {
         });
         Object.assign(signal, updated);
       } catch (error) {
-        this.signalsError = `Export-Kennzeichen konnte nicht geaendert werden: ${error.message}`;
+        this.signalsError = t("web.signals.export_flag_error", { message: error.message });
       }
     },
 
@@ -1098,7 +1167,7 @@ function app() {
         });
         Object.assign(signal, updated);
       } catch (error) {
-        this.signalsError = `Resend-Kennzeichen konnte nicht geaendert werden: ${error.message}`;
+        this.signalsError = t("web.signals.resend_toggle_error", { message: error.message });
       }
     },
 
@@ -1110,7 +1179,7 @@ function app() {
       this.rawWriteBusyKey = signal.key;
       try {
         await this.request("POST", `/api/signals/${signal.key}/write`, { value: String(value) });
-        this.rawWriteMessages[signal.key] = { text: "Geschrieben.", isError: false };
+        this.rawWriteMessages[signal.key] = { text: t("web.signals.write_success"), isError: false };
       } catch (error) {
         this.rawWriteMessages[signal.key] = { text: error.message, isError: true };
       } finally {
@@ -1137,7 +1206,7 @@ function app() {
         }
         this.exportStatusByDevice = byDevice;
       } catch (error) {
-        this.exportError = `Export-Status konnte nicht geladen werden: ${error.message}`;
+        this.exportError = t("web.export.status_load_error", { message: error.message });
       }
     },
 
@@ -1159,14 +1228,14 @@ function app() {
           listen_port: this.bridgeSettings.listen_port,
         };
       } catch (error) {
-        this.settingsError = `Einstellungen konnten nicht geladen werden: ${error.message}`;
+        this.settingsError = t("web.settings.load_error", { message: error.message });
       }
     },
 
     async saveSettings() {
       this.settingsError = null;
       if (!this.settingsDraft.bridge_ip.trim()) {
-        this.settingsError = "Bitte die IP dieser Brücke eingeben.";
+        this.settingsError = t("web.settings.bridge_ip_required");
         return;
       }
       this.settingsBusy = true;
@@ -1176,9 +1245,40 @@ function app() {
           udp_port: Number(this.settingsDraft.udp_port),
           listen_port: Number(this.settingsDraft.listen_port),
         });
-        this.showToast("Einstellungen gespeichert.");
+        this.showToast(t("web.settings.saved_toast"));
       } catch (error) {
-        this.settingsError = `Einstellungen konnten nicht gespeichert werden: ${error.message}`;
+        this.settingsError = t("web.settings.save_error", { message: error.message });
+      } finally {
+        this.settingsBusy = false;
+      }
+    },
+
+    /** Setzt die gemeinsame Spracheinstellung (PATCH /api/language, Aufgabe 1)
+     * und laedt danach die ganze Seite neu - bestaetigte, einfachere Variante
+     * aus dem Entwurfsgespraech (Spec Abschnitt 7): kein Sonderfall fuer
+     * bereits angezeigte Toasts oder WebSocket-Zustaende, die sonst in der
+     * alten Sprache stehen blieben.
+     *
+     * try/catch/finally um `this.request(...)` - dieselbe Form wie
+     * `saveSettings()` oben (Review-Fix Important, Whole-Branch-Review
+     * 2026-09-04): `this.request` wirft erneut bei jedem Fehler ausser 401,
+     * ohne dieses try/catch waere ein Fehlschlag (z. B. 400/502) eine
+     * unbehandelte Promise-Ablehnung ohne jede Rueckmeldung fuer den
+     * Nutzer. `settingsBusy` verhindert ausserdem, dass ein schneller
+     * Doppelklick zwei gleichzeitige PATCH-Aufrufe abfeuert - wird mit
+     * `saveSettings()` geteilt, beide Aktionen leben in derselben
+     * Einstellungen-Karte. */
+    async setLanguage(language) {
+      if (language === this.language) {
+        return;
+      }
+      this.settingsError = null;
+      this.settingsBusy = true;
+      try {
+        await this.request("PATCH", "/api/language", { language });
+        window.location.reload();
+      } catch (error) {
+        this.settingsError = t("web.settings.language_error", { message: error.message });
       } finally {
         this.settingsBusy = false;
       }
@@ -1190,14 +1290,14 @@ function app() {
         this.resendInterval = await this.request("GET", "/api/settings/resend-interval");
         this.resendIntervalDraft = this.resendInterval.interval_seconds;
       } catch (error) {
-        this.resendIntervalError = `Resend-Intervall konnte nicht geladen werden: ${error.message}`;
+        this.resendIntervalError = t("web.settings.resend_load_error", { message: error.message });
       }
     },
 
     async saveResendInterval() {
       this.resendIntervalError = null;
       if (!Number.isFinite(this.resendIntervalDraft) || this.resendIntervalDraft < 10) {
-        this.resendIntervalError = "Bitte ein Intervall von mindestens 10 Sekunden eingeben.";
+        this.resendIntervalError = t("web.settings.resend_interval_invalid");
         return;
       }
       this.resendIntervalBusy = true;
@@ -1205,9 +1305,9 @@ function app() {
         this.resendInterval = await this.request("PATCH", "/api/settings/resend-interval", {
           interval_seconds: Number(this.resendIntervalDraft),
         });
-        this.showToast("Resend-Intervall gespeichert.");
+        this.showToast(t("web.settings.resend_saved_toast"));
       } catch (error) {
-        this.resendIntervalError = `Resend-Intervall konnte nicht gespeichert werden: ${error.message}`;
+        this.resendIntervalError = t("web.settings.resend_save_error", { message: error.message });
       } finally {
         this.resendIntervalBusy = false;
       }
@@ -1216,8 +1316,7 @@ function app() {
     async previewExport() {
       this.exportError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.exportError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.exportError = t("web.export.bridge_ip_missing");
         return;
       }
       this.exportBusy = true;
@@ -1229,7 +1328,7 @@ function app() {
         this.exportPreview = await this.request("GET", `/api/export/preview?${params}`);
         await this.loadExportStatus();
       } catch (error) {
-        this.exportError = `Vorschau fehlgeschlagen: ${error.message}`;
+        this.exportError = t("web.export.preview_failed", { message: error.message });
       } finally {
         this.exportBusy = false;
       }
@@ -1283,14 +1382,13 @@ function app() {
     async downloadExport() {
       this.exportError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.exportError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.exportError = t("web.export.bridge_ip_missing");
         return;
       }
       try {
         await this.download(this.downloadUrl(), "loxmatter-export.zip");
       } catch (error) {
-        this.exportError = `Download fehlgeschlagen: ${error.message}`;
+        this.exportError = t("web.export.download_failed", { message: error.message });
         return;
       }
       // Ein Download IST ein Export (siehe `api/export.py`, Entscheidung 1):
@@ -1309,8 +1407,7 @@ function app() {
     async exportDevice(device) {
       this.deviceActionError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.deviceActionError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.deviceActionError = t("web.export.bridge_ip_missing");
         return;
       }
       const params = new URLSearchParams({
@@ -1321,9 +1418,9 @@ function app() {
       });
       try {
         await this.download(`/api/export/download?${params}`, `loxmatter-d${device.id}-export.zip`);
-        this.showToast(`${device.label} wurde exportiert.`);
+        this.showToast(t("web.devices.exported_toast", { label: device.label }));
       } catch (error) {
-        this.deviceActionError = `Export fehlgeschlagen: ${error.message}`;
+        this.deviceActionError = t("web.devices.export_failed", { message: error.message });
         return;
       }
       await this.loadExportStatus();
@@ -1345,7 +1442,7 @@ function app() {
       try {
         this.systemChecks = await this.request("GET", "/api/diagnostics/system");
       } catch (error) {
-        this.systemError = `Diagnose konnte nicht geladen werden: ${error.message}`;
+        this.systemError = t("web.system.load_error", { message: error.message });
       } finally {
         this.diagnosticsBusy = false;
       }
@@ -1360,7 +1457,7 @@ function app() {
       try {
         await this.download("/api/diagnostics/fabric-backup", "matter-fabric-backup.zip");
       } catch (error) {
-        this.backupError = `Sicherung nicht möglich: ${error.message}`;
+        this.backupError = t("web.system.backup_error", { message: error.message });
       }
     },
 
@@ -1369,28 +1466,23 @@ function app() {
     // ---------------------------------------------------------------------
 
     /**
-     * Laedt die hochgeladene Loxone-Projektdatei zu `/api/export/project-sync`
-     * hoch und zeigt die Antwort (Plan + beide gepatchten Dateien) an.
-     * Dieselbe IP-Pruefung wie `downloadExport`/`exportDevice`: ohne sie
-     * ersetzte ein Klick bei leerem IP-Feld die Seite durch die rohe
-     * 422-Fehlerantwort des Backends (Pflichtparameter `bridge_ip`).
+     * Schickt `file` an `/api/export/project-sync`, optional mit einer
+     * bereits gewaehlten `miniserverIp`. Gemeinsamer Kern von
+     * `uploadProjectFile` (erster Versuch, ohne IP) und
+     * `confirmProjectSyncMiniserver` (zweiter Versuch, nachdem der Anwender
+     * im Auswahlfeld einen Miniserver gewaehlt hat) - beide zeigen dieselbe
+     * Antwort an, nur der Aufrufer entscheidet, ob eine IP schon feststeht.
+     *
+     * `needs_miniserver_selection=true` in der Antwort (Nutzerwunsch nach
+     * dem Review: auswaehlen statt die IP von Hand abzutippen) heisst: die
+     * Datei traegt mehr als einen Miniserver, `index.html` zeigt dann das
+     * Auswahlfeld statt eines Plans - kein Fehler, `projectSync.error`
+     * bleibt leer.
      */
-    async uploadProjectFile(event) {
-      const input = event.target;
-      const file = input.files && input.files[0];
-      if (!file) {
-        return;
-      }
+    async _syncProjectFile(file, miniserverIp) {
       this.projectSync.error = "";
-      if (!this.bridgeSettings.bridge_ip) {
-        this.projectSync.error =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
-        input.value = "";
-        return;
-      }
       this.projectSync.busy = true;
       this.projectSync.plan = null;
-      this.projectSync.file = file.name;
       try {
         const formData = new FormData();
         formData.append("file", file);
@@ -1399,20 +1491,70 @@ function app() {
           port: String(this.bridgeSettings.udp_port),
           listen: String(this.bridgeSettings.listen_port),
         });
-        if (this.projectSync.miniserverIp.trim()) {
-          params.set("miniserver_ip", this.projectSync.miniserverIp.trim());
+        if (miniserverIp) {
+          params.set("miniserver_ip", miniserverIp);
         }
-        this.projectSync.plan = await this.upload(`/api/export/project-sync?${params}`, formData);
+        const result = await this.upload(`/api/export/project-sync?${params}`, formData);
+        if (result.needs_miniserver_selection) {
+          this.projectSync.needsMiniserverSelection = true;
+          this.projectSync.availableMiniservers = result.available_miniservers;
+        } else {
+          this.projectSync.needsMiniserverSelection = false;
+          this.projectSync.availableMiniservers = [];
+          this.projectSync.plan = result;
+        }
       } catch (error) {
-        this.projectSync.error = `Hochladen fehlgeschlagen: ${error.message}`;
+        this.projectSync.error = t("web.export.projectsync_upload_failed", { message: error.message });
       } finally {
         this.projectSync.busy = false;
-        // Loescht die Dateiauswahl im Eingabefeld selbst - ohne das loest
-        // ein erneuter Upload DERSELBEN Datei kein `change`-Ereignis mehr
-        // aus, weil sich der Wert des Feldes aus Sicht des Browsers nicht
-        // geaendert hat.
-        input.value = "";
       }
+    },
+
+    /**
+     * Laedt die hochgeladene Loxone-Projektdatei zu `/api/export/project-sync`
+     * hoch und zeigt die Antwort (Plan + beide gepatchten Dateien, oder das
+     * Miniserver-Auswahlfeld) an. Dieselbe IP-Pruefung wie `downloadExport`/
+     * `exportDevice`: ohne sie ersetzte ein Klick bei leerem IP-Feld die
+     * Seite durch die rohe 422-Fehlerantwort des Backends (Pflichtparameter
+     * `bridge_ip`).
+     */
+    async uploadProjectFile(event) {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      if (!file) {
+        return;
+      }
+      if (!this.bridgeSettings.bridge_ip) {
+        this.projectSync.error = t("web.export.bridge_ip_missing");
+        input.value = "";
+        return;
+      }
+      // Wird aufgehoben, falls ein vorheriger Upload schon eine Auswahl
+      // verlangt hatte - eine neu ausgewaehlte Datei faengt wieder bei null
+      // an, unabhaengig davon, ob die vorherige mehrere Miniserver hatte.
+      this.projectSync.file = file;
+      this.projectSync.needsMiniserverSelection = false;
+      this.projectSync.availableMiniservers = [];
+      this.projectSync.selectedMiniserverIp = "";
+      await this._syncProjectFile(file, null);
+      // Loescht die Dateiauswahl im Eingabefeld selbst - ohne das loest
+      // ein erneuter Upload DERSELBEN Datei kein `change`-Ereignis mehr
+      // aus, weil sich der Wert des Feldes aus Sicht des Browsers nicht
+      // geaendert hat.
+      input.value = "";
+    },
+
+    /**
+     * Zweiter Versuch, nachdem der Anwender im Auswahlfeld einen Miniserver
+     * gewaehlt hat - dieselbe Datei (`projectSync.file`, noch im Speicher
+     * des Browsers) geht ein zweites Mal raus, diesmal mit `miniserver_ip`
+     * gesetzt, kein erneuter Datei-Dialog noetig.
+     */
+    async confirmProjectSyncMiniserver() {
+      if (!this.projectSync.selectedMiniserverIp || !this.projectSync.file) {
+        return;
+      }
+      await this._syncProjectFile(this.projectSync.file, this.projectSync.selectedMiniserverIp);
     },
 
     /** Deutsche Kurzbezeichnung fuer die `PlanStatus`-Werte aus
@@ -1423,13 +1565,13 @@ function app() {
      * dem Bildschirm landen. */
     projectSyncStatusLabel(status) {
       const labels = {
-        unchanged: "Unverändert",
-        updated: "Aktualisiert",
-        new_signal: "Neues Signal",
-        new_device: "Neues Gerät",
-        orphaned: "Verwaist – wird nicht verändert",
-        conflict: "Konflikt – wird übersprungen",
-        possible_duplicate: "Mögliches Duplikat – wird übersprungen",
+        unchanged: t("web.export.projectsync_status_unchanged"),
+        updated: t("web.export.projectsync_status_updated"),
+        new_signal: t("web.export.projectsync_status_new_signal"),
+        new_device: t("web.export.projectsync_status_new_device"),
+        orphaned: t("web.export.projectsync_status_orphaned"),
+        conflict: t("web.export.projectsync_status_conflict"),
+        possible_duplicate: t("web.export.projectsync_status_possible_duplicate"),
       };
       return labels[status] || status;
     },
@@ -1512,7 +1654,9 @@ function app() {
           group = {
             deviceId: entry.device_id,
             deviceLabel:
-              entry.device_id === -1 ? "Nicht mehr zugeordnet" : entry.device_label || "—",
+              entry.device_id === -1
+                ? t("web.export.projectsync_unassigned_device_label")
+                : entry.device_label || "—",
             inputs: [],
             outputs: [],
             counts: { new: 0, updated: 0, unchanged: 0, orphaned: 0, conflict: 0 },
@@ -1529,8 +1673,14 @@ function app() {
           group.counts.new + group.counts.updated + group.counts.orphaned + group.counts.conflict >
           0;
         group.sections = [
-          { label: "Eingänge", ...this.projectSyncSplitBySignificance(group.inputs) },
-          { label: "Ausgänge", ...this.projectSyncSplitBySignificance(group.outputs) },
+          {
+            label: t("web.export.projectsync_section_inputs"),
+            ...this.projectSyncSplitBySignificance(group.inputs),
+          },
+          {
+            label: t("web.export.projectsync_section_outputs"),
+            ...this.projectSyncSplitBySignificance(group.outputs),
+          },
         ];
       }
       return groups;
@@ -1586,19 +1736,19 @@ function app() {
      * Neuanlage. */
     projectSyncEntryNote(entry) {
       if (entry.status === "new_device") {
-        return "Neuer virtueller Ein-/Ausgang wird für dieses Gerät angelegt.";
+        return t("web.export.projectsync_note_new_device");
       }
       if (entry.status === "new_signal") {
-        return "Neues Signal wird im bestehenden Ein-/Ausgang ergänzt.";
+        return t("web.export.projectsync_note_new_signal");
       }
       if (entry.status === "orphaned") {
-        return "Gehört zu keinem bekannten Gerät mehr.";
+        return t("web.export.projectsync_note_orphaned");
       }
       if (entry.status === "conflict") {
-        return "Unerwartete Struktur in der Datei.";
+        return t("web.export.projectsync_note_conflict");
       }
       if (entry.status === "possible_duplicate") {
-        return "Ein bestehender Befehl trägt bereits diesen Titel, aber unter einem anderen Schlüssel (z. B. durch eine beschädigte Check-/CmdOn-Kennung) – wird nicht automatisch angelegt, um keine Dopplung zu erzeugen. Bitte in Loxone Config manuell prüfen.";
+        return t("web.export.projectsync_note_possible_duplicate");
       }
       return "";
     },
@@ -1610,12 +1760,12 @@ function app() {
      * verschwinden. */
     projectSyncAttrLabel(attr) {
       const labels = {
-        Title: "Titel",
-        Check: "Prüfbefehl",
-        Analog: "Analog",
-        Unit: "Einheit",
-        CmdOn: "Befehl Ein",
-        CmdOff: "Befehl Aus",
+        Title: t("web.export.projectsync_attr_title"),
+        Check: t("web.export.projectsync_attr_check"),
+        Analog: t("web.export.projectsync_attr_analog"),
+        Unit: t("web.export.projectsync_attr_unit"),
+        CmdOn: t("web.export.projectsync_attr_cmd_on"),
+        CmdOff: t("web.export.projectsync_attr_cmd_off"),
       };
       return labels[attr] || attr;
     },
@@ -1806,7 +1956,7 @@ function app() {
       // Sekundentakt gegen eine ungueltige Sitzung weiterzuversuchen.
       await this.loadAuthInfo();
       if (!this.authenticated) {
-        this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
+        this.authError = t("web.auth.session_expired");
         return;
       }
       this.scheduleDiagnosticsReconnect();
@@ -2054,7 +2204,7 @@ function app() {
       this.socketConnected = false;
       await this.loadAuthInfo();
       if (!this.authenticated) {
-        this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
+        this.authError = t("web.auth.session_expired");
         return;
       }
       this.scheduleReconnect();
@@ -2090,15 +2240,15 @@ function app() {
     // `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE` oben).
     connectionStatusText() {
       if (this.socketConnected) {
-        return "Live-Verbindung aktiv";
+        return t("web.connection.live");
       }
       if (this.socketEverConnected) {
-        return "Verbindung verloren – verbinde neu…";
+        return t("web.connection.lost_reconnecting");
       }
       if (this.initialConnectFailures >= INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE) {
-        return "Keine Verbindung zur Brücke möglich – verbinde weiter…";
+        return t("web.connection.never_connected");
       }
-      return "Verbinde…";
+      return t("web.connection.connecting");
     },
 
     // ---------------------------------------------------------------------
@@ -2107,10 +2257,10 @@ function app() {
 
     formatTimestamp(isoTimestamp) {
       if (!isoTimestamp) {
-        return "noch nie";
+        return t("web.format.never");
       }
       try {
-        return new Date(isoTimestamp).toLocaleString("de-DE");
+        return new Date(isoTimestamp).toLocaleString(this.language === "de" ? "de-DE" : "en-US");
       } catch {
         return isoTimestamp;
       }
@@ -2121,7 +2271,7 @@ function app() {
         return "-";
       }
       if (typeof value === "boolean") {
-        return value ? "wahr" : "falsch";
+        return value ? t("web.format.true") : t("web.format.false");
       }
       return String(value);
     },

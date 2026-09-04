@@ -34,6 +34,7 @@ from typing import Any, Self
 
 import pytest
 
+from loxmatter import i18n
 from loxmatter.matter.otbr import (
     DEFAULT_OTBR_URL,
     ThreadDatasetUnavailableError,
@@ -145,6 +146,24 @@ async def test_an_odd_number_of_hex_characters_is_refused() -> None:
     message = str(excinfo.value)
     # Die Laenge nennt die Meldung, den Datensatz nie: er enthaelt den
     # Netzwerkschluessel des Thread-Netzes, und auch ein Teil davon ist zu viel.
+    assert str(len(FAKE_DATASET) - 1) in message
+    assert FAKE_DATASET[:12] not in message
+
+
+async def test_the_dataset_stays_out_of_the_message_in_german_too() -> None:
+    """Die Meldungen dieses Moduls laufen seit der i18n-Phase durch
+    `i18n.t()`. Der Grund, aus dem sie nur Laenge, Adresse und Status
+    nennen, gilt sprachunabhaengig: der Datensatz traegt den
+    Netzwerkschluessel des Thread-Netzes. Eine Uebersetzung, die ihn
+    einsetzte, waere ein Leck - deshalb prueft das die zweite Sprache
+    ausdruecklich mit."""
+    i18n.set_language("de")
+    session = FakeSession(body=FAKE_DATASET[:-1])
+
+    with pytest.raises(ThreadDatasetUnavailableError) as excinfo:
+        await fetch_active_dataset(session_factory=lambda: session)
+
+    message = str(excinfo.value)
     assert str(len(FAKE_DATASET) - 1) in message
     assert FAKE_DATASET[:12] not in message
 

@@ -125,6 +125,33 @@ def test_multi_loxlive_without_ip_raises():
         build_index(TWO_LOXLIVE_PROJECT)
 
 
+def test_multi_loxlive_without_ip_carries_candidates_for_a_selection_field():
+    """`candidates` ist der Grund, warum die API bei mehreren Miniservern
+    statt einer reinen Fehlermeldung ein Auswahlfeld anbieten kann
+    (Nutzerwunsch nach dem Review: auswaehlen statt die IP abzutippen)."""
+    import pytest
+
+    from loxmatter.projectsync.index import MiniserverCandidate
+
+    with pytest.raises(AmbiguousMiniserverError) as exc_info:
+        build_index(TWO_LOXLIVE_PROJECT)
+    assert exc_info.value.candidates == [
+        MiniserverCandidate(title="Erster Miniserver", int_addr="10.0.0.10"),
+        MiniserverCandidate(title="Zweiter Miniserver", int_addr="10.0.0.20"),
+    ]
+
+
+def test_no_loxlive_carries_no_candidates():
+    """Ohne einen einzigen `LoxLIVE`-Block gibt es nichts zur Auswahl - die
+    API muss diesen Fall weiterhin als echte 400 behandeln, kein leeres
+    Auswahlfeld anbieten."""
+    import pytest
+
+    with pytest.raises(AmbiguousMiniserverError) as exc_info:
+        build_index(NO_LOXLIVE_PROJECT)
+    assert exc_info.value.candidates == []
+
+
 def test_multi_loxlive_with_matching_ip_scopes_to_that_block_only():
     """Der Abgleich darf nur im gewaehlten `LoxLIVE`-Block suchen - sonst
     koennte er im falschen Miniserver-Bereich einer Mehr-Miniserver-Datei

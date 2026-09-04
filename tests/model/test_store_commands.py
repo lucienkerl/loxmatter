@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from loxmatter import i18n
 from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.models import NodeSnapshot
 from loxmatter.model.store import Store
@@ -56,12 +57,22 @@ def test_plug_commands_are_resolvable_by_their_exported_key(store):
     assert resolved.node_id == snap.node_id
 
 
-def test_unknown_key_raises_with_a_german_message(store):
+def test_unknown_key_raises_with_a_clear_message(store):
     registered(store, "ikea_grillplats_plug.json")
-    with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel") as excinfo:
+    with pytest.raises(KeyError, match="unknown command key") as excinfo:
         store.resolve_command("d1_1_gibtsnicht")
     # Review-Fix Minor: str(KeyError(...)) haengt sonst repr()-Anfuehrungszeichen
     # um die ganze Nachricht — das wuerde Task 6s HTTP-Body verunstalten.
+    assert str(excinfo.value) == "unknown command key 'd1_1_gibtsnicht'"
+
+
+def test_unknown_key_raises_with_a_german_message(store):
+    """Deutsches Gegenstueck zu `test_unknown_key_raises_with_a_clear_message`
+    oben."""
+    i18n.set_language("de")
+    registered(store, "ikea_grillplats_plug.json")
+    with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel") as excinfo:
+        store.resolve_command("d1_1_gibtsnicht")
     assert str(excinfo.value) == "unbekannter Kommando-Schluessel 'd1_1_gibtsnicht'"
 
 

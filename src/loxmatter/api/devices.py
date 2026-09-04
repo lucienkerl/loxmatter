@@ -76,6 +76,7 @@ from typing import Protocol
 
 from fastapi import APIRouter, HTTPException
 
+from loxmatter import i18n
 from loxmatter.api.models import (
     CommissionRequest,
     DeviceOut,
@@ -106,7 +107,13 @@ ThreadDatasetSource = Callable[[], Awaitable[str]]
 # Meldungen voran. Der geholte nennt dort die URL des Border Routers, der von
 # Hand eingetragene diese Zeile; sie landet ausschliesslich im Log, nie in der
 # Antwort (siehe `commission_device`).
-_MANUAL_DATASET_ORIGIN = "Das Eingabefeld"
+#
+# Ein Schluessel statt eines fertigen Satzes, und aufgeloest erst zur
+# Aufrufzeit: die Meldungen von `validated_dataset` laufen seit der
+# i18n-Phase durch `i18n.t()`, ein fest deutscher Brocken mitten in einem
+# englischen Satz waere die halbe Uebersetzung. Beim Import steht die
+# Sprache ausserdem noch gar nicht fest (cli.py setzt sie erst danach).
+_MANUAL_DATASET_ORIGIN_KEY = "api.devices.manual_dataset_origin"
 
 # Warum ein Signal nicht exportierbar ist (Spec 6.6) - nur fuer die beiden
 # Faelle, die `Exportability` von ANALOG/DIGITAL unterscheidet. `NONE` deckt
@@ -206,12 +213,10 @@ def _commissioning_detail(exc: CommissioningError, missing_dataset_reason: str |
     detail = str(exc)
     if missing_dataset_reason is None:
         return detail
-    return (
-        f"{detail} Moegliche Ursache: matter-server hat keine Thread-Zugangsdaten, und "
-        f"diese Bruecke konnte auch keine holen ({missing_dataset_reason}). Ein "
-        "Thread-Geraet laesst sich ohne sie nicht einlernen - ein WiFi-Geraet dagegen "
-        "schon, dann liegt es woanders. Abhilfe: den Border Router erreichbar machen, "
-        "oder den Thread-Datensatz von Hand in das Feld darunter eintragen."
+    return i18n.t(
+        "api.devices.commissioning_thread_cause",
+        detail=detail,
+        reason=missing_dataset_reason,
     )
 
 
@@ -234,8 +239,7 @@ def build_device_router(
         if client is None:
             raise HTTPException(
                 status_code=503,
-                detail="Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung"
-                " zu matter-server",
+                detail=i18n.t("api.devices.fail_no_matter_client"),
             )
         return client
 
@@ -281,13 +285,19 @@ def build_device_router(
         """
         stored = store.signal_by_key(key)
         if stored is None:
-            raise HTTPException(status_code=404, detail=f"unbekannter Signal-Schluessel {key!r}")
+            raise HTTPException(
+                status_code=404, detail=i18n.t("api.errors.unknown_signal_key", signal_key=key)
+            )
         try:
             store.device(stored.device_id)
         except UnknownDeviceError as exc:
             raise HTTPException(
                 status_code=404,
-                detail=f"Signal {key!r} gehoert zu Geraet {stored.device_id}, das entfernt wurde",
+                detail=i18n.t(
+                    "api.errors.signal_belongs_to_removed_device",
+                    signal_key=key,
+                    device_id=stored.device_id,
+                ),
             ) from exc
         if patch.title is not None:
             store.set_title(key, patch.title)
@@ -328,7 +338,9 @@ def build_device_router(
             # also 500 "Internal Server Error", die nichtssagendste aller
             # Antworten.
             try:
-                dataset = validated_dataset(request.thread_dataset, _MANUAL_DATASET_ORIGIN)
+                dataset = validated_dataset(
+                    request.thread_dataset, i18n.t(_MANUAL_DATASET_ORIGIN_KEY)
+                )
             except ThreadDatasetUnavailableError as exc:
                 # 422 wie beim abgelehnten Pairing-Code: die Anfrage ist
                 # wohlgeformt, ihr Inhalt aber nicht verwendbar. Der Grund
@@ -341,16 +353,7 @@ def build_device_router(
                 logger.warning("Eingetragener Thread-Datensatz abgelehnt: %s", exc)
                 raise HTTPException(
                     status_code=422,
-                    detail=(
-                        "Der eingetragene Thread-Datensatz ist keiner. Erwartet wird das "
-                        "Hex-TLV des aktiven Datensatzes - eine einzige Zeile aus 0-9 und "
-                        "a-f in gerader Anzahl, so wie `ot-ctl dataset active -x` sie "
-                        "ausgibt; fehlt am Ende ein Zeichen, ist die Zeile beim Kopieren "
-                        "abgeschnitten worden. Eine "
-                        "JSON-Struktur, Anfuehrungszeichen oder Text darin gehoeren nicht "
-                        "hinein. Der Wert selbst steht bewusst nicht in dieser Meldung: "
-                        "er enthaelt den Netzwerkschluessel des Thread-Netzes."
-                    ),
+                    detail=i18n.t("api.devices.fail_manual_thread_dataset"),
                 ) from exc
             try:
                 await active_client.set_thread_dataset(dataset)

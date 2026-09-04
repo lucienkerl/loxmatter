@@ -6,8 +6,13 @@
 
     Das Zeichen: ein Knoten mit sechs Nachbarn - loxmatter als der Punkt, an
     dem das Thread-Netz zusammenlaeuft. Farben aus style.css, nur umgekehrt
-    aufgetragen: `--accent` (#a15a2c) als Flaeche statt als Strich, damit das
-    Icon nicht wie eine weitere Karte der Oberflaeche aussieht.
+    aufgetragen: die Akzentfarbe `accent` (#a15a2c) als Flaeche statt als
+    Strich, damit das Icon nicht wie eine weitere Karte der Oberflaeche
+    aussieht.
+
+    Keine zwei aufeinanderfolgenden Bindestriche in diesen Kommentaren:
+    XML verbietet sie, und ein SVG, das nicht parst, zeigt der Browser
+    ueberhaupt nicht - stillschweigend, als kaputtes Bild.
 
     Diese Fassung ist die grosse: fuer die README, Repository-Bilder und
     alles ab etwa 32 px. Darunter greift favicon.svg mit kraeftigeren
