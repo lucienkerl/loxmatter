@@ -214,7 +214,17 @@ def _next_obj_edit(index: ProjectIndex, created_count: int) -> _Edit | None:
     span = _attr_span(index.text, 0, index.root_open_end, "NextObj")
     if span is None:
         return None
-    new_value = str(int(index.root_attrs["NextObj"]) + created_count)
+    try:
+        current = int(index.root_attrs["NextObj"])
+    except ValueError:
+        # `NextObj` ist laut Entwurf Abschnitt 6/10 ohnehin nur eine
+        # unverifizierte, konservative Bestleistung - kein belegtes
+        # Verhalten. Ein Wert, der nicht als Dezimalzahl lesbar ist, ist
+        # darum kein Grund, den ganzen (sonst gueltigen) Patch scheitern zu
+        # lassen: die eigentlichen Signal-/Geraete-Edits bleiben unberuehrt,
+        # nur dieses eine Attribut wird nicht angefasst.
+        return None
+    new_value = str(current + created_count)
     return _Edit(span[0], span[1], f'NextObj="{new_value}"')
 
 

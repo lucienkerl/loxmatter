@@ -407,6 +407,28 @@ def test_new_signal_without_any_existing_u_id_raises_project_format_error():
         )
 
 
+def test_next_obj_edit_is_skipped_when_next_obj_is_not_numeric(sample_project):
+    """Finding N1 aus dem Re-Review: `_next_obj_edit` rief bislang
+    ungeschuetzt `int(index.root_attrs["NextObj"])` auf - ein nicht-dezimaler
+    Wert warf einen nackten `ValueError`, unbehandelt eine HTTP 500. `NextObj`
+    ist laut Entwurf Abschnitt 6/10 ohnehin nur eine unverifizierte,
+    konservative Bestleistung, kein belegtes Verhalten - ein kaputter Wert
+    darf darum nicht den ganzen (sonst gueltigen) Patch scheitern lassen,
+    sondern nur diese eine Attribut-Aenderung ueberspringen."""
+    bad_project = sample_project.replace('NextObj="100"', 'NextObj="not-a-number"')
+    index = build_index(bad_project)
+    device = _device(2, "Neues Geraet")
+    signals = [_signal("d2_1_onoff", 2)]
+    patched = _patch(index, device, signals, include_new_devices=True)
+
+    # Das kaputte Attribut bleibt unangetastet ...
+    assert 'NextObj="not-a-number"' in patched
+    # ... aber die eigentliche Neuanlage hat trotzdem stattgefunden (der
+    # `created_count > 0`-Zweig in `_next_obj_edit` wurde also wirklich
+    # erreicht, nicht nur der fruehe `created_count == 0`-Ausstieg).
+    assert 'Check="d2_1_onoff:\\v"' in patched
+
+
 def test_new_device_without_virtual_in_caption_raises_clear_error():
     """`include_new_devices=True` fuer ein Geraet, das einen komplett neuen
     Eingangs-Container braucht, in einem Projekt ohne jeden bestehenden
