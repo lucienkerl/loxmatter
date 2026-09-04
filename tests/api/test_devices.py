@@ -21,18 +21,25 @@ from conftest import authenticate, load_snapshot
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.client import CommissioningError, MatterUnavailableError
+from loxmatter.matter.otbr import ThreadDatasetUnavailableError
 from loxmatter.model.store import Store
 
 
 @pytest.fixture
-async def api(tmp_path, no_invoke, fake_runtime, fake_client):
+async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
     store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
 
-    app = build_app(store, no_invoke, fake_runtime(store), client=fake_client)
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        thread_dataset_source=fake_otbr,
+    )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         await authenticate(store, c)
@@ -295,3 +302,143 @@ async def test_removal_without_a_matter_client_yields_503(tmp_path, no_invoke, f
         response = await c.delete(f"/api/devices/{device_id}")
     assert response.status_code == 503
     store.close()
+
+
+# ---------------------------------------------------------------------------
+# Erreichbarkeit eines frisch eingelernten Geraets
+#
+# Der aufgezeichnete Ernstfall vom 2026-09-04: ein gerade eingelerntes Geraet
+# stand in der Oberflaeche auf "offline" und blieb es, obwohl matter-server
+# es sauber interviewt und eine Subscription darauf aufgebaut hatte
+# ("Subscription succeeded with report interval [1, 60]").
+#
+# Die Ursache liegt in der Reihenfolge: matter-server meldet `NODE_ADDED`
+# schon WAEHREND `commission_with_code` laeuft (siehe dort
+# `device_controller._setup_node`, `signal_event(EventType.NODE_ADDED, ...)`
+# noch vor der Rueckkehr des Aufrufs). Zu diesem Zeitpunkt kennt der Store den
+# Node noch nicht - `store.register_device` laeuft erst danach -, und
+# `BridgeMatterClient._dispatch_loop` verwirft die Meldung folgerichtig
+# ("Aktualisierung fuer unbekannte Node ... verworfen"). Danach kommt fuer ein
+# ruhig im Netz stehendes Geraet keine weitere `NODE_ADDED`/`NODE_UPDATED`-
+# Meldung mehr, und `_device_out` liest `d<id>_online` als fehlend, also als
+# `False`. Erst ein Neustart der Bruecke setzte den Wert - ueber
+# `Runtime.seed_from_snapshot`.
+#
+# Das Einlernen muss den Wert deshalb selbst saeen, aus genau dem Abbild, das
+# es ohnehin schon in der Hand haelt.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_freshly_commissioned_device_is_online_right_away(api):
+    client, _, _, _ = api
+    response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
+    assert response.status_code == 201
+    assert response.json()["online"] is True
+
+
+async def test_the_online_state_of_a_new_device_outlives_its_own_response(api):
+    """Nicht nur in der Antwort auf das Einlernen selbst: der Wert muss in der
+    Runtime stehen, sonst faellt die Kachel beim naechsten Laden der Seite
+    zurueck auf "offline" - genau das Bild, das gemeldet wurde."""
+    client, _, _, _ = api
+    new_device = (await client.post("/api/devices/commission", json={"code": "MT:X"})).json()
+
+    listed = {device["id"]: device for device in (await client.get("/api/devices")).json()}
+
+    assert listed[new_device["id"]]["online"] is True
+
+
+async def test_a_new_device_that_matter_server_cannot_reach_stays_offline(api):
+    """Der Wert wird gesaet, nicht behauptet: meldet matter-server den Node als
+    nicht erreichbar, sagt die Kachel das auch."""
+    client, _, _, fake_client = api
+    fake_client.available = False
+
+    response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
+
+    assert response.json()["online"] is False
+
+
+# ---------------------------------------------------------------------------
+# Thread-Zugangsdaten beim Einlernen
+#
+# matter-server haelt sie nur im Arbeitsspeicher und vergisst sie bei jedem
+# Neustart (siehe `loxmatter/matter/otbr.py`). Das Eingabefeld der
+# Oberflaeche allein hat das nicht aufgefangen: es ist optional und wird nach
+# jedem Einlernen geleert, also war es beim naechsten Mal leer - und ein
+# Thread-Geraet scheiterte mit "Commission with code failed for node N",
+# waehrend der eigentliche Grund ("Required network information not provided")
+# nur im Log von matter-server stand.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_missing_thread_dataset_is_fetched_from_the_border_router(api, fake_otbr):
+    client, _, _, fake_client = api
+    fake_client.thread_dataset_set = False
+
+    response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
+
+    assert response.status_code == 201
+    assert fake_client.datasets == [fake_otbr.dataset]
+    # Reihenfolge, nicht nur Vorkommen: nach dem Einlernen gesetzt waere der
+    # Datensatz fuer genau dieses Geraet zu spaet.
+    assert fake_client.order == ["dataset", "commission"]
+
+
+async def test_a_dataset_from_the_request_wins_over_the_border_router(api, fake_otbr):
+    """Der manuelle Weg bleibt: wer einen Datensatz eintraegt - etwa fuer ein
+    Thread-Netz, das nicht von diesem Border Router kommt -, bekommt seinen,
+    nicht den vom Host."""
+    client, _, _, fake_client = api
+    fake_client.thread_dataset_set = False
+
+    response = await client.post(
+        "/api/devices/commission", json={"code": "MT:ABC123", "thread_dataset": "0e08AAAA"}
+    )
+
+    assert response.status_code == 201
+    assert fake_client.datasets == ["0e08AAAA"]
+    assert fake_otbr.calls == 0
+
+
+async def test_a_server_that_already_has_the_credentials_is_left_alone(api, fake_otbr):
+    client, _, _, fake_client = api
+    fake_client.thread_dataset_set = True
+
+    response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
+
+    assert response.status_code == 201
+    assert fake_otbr.calls == 0
+    assert fake_client.datasets == []
+
+
+async def test_commissioning_goes_ahead_when_no_border_router_answers(api, fake_otbr):
+    """Ein WiFi-Geraet braucht gar keinen Thread-Datensatz. Ein fehlender
+    Border Router darf das Einlernen deshalb nicht abbrechen - er ist ein
+    Hinweis, kein Fehler."""
+    client, _, _, _ = api
+    fake_otbr.fail_with = ThreadDatasetUnavailableError("kein Border Router erreichbar")
+
+    response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
+
+    assert response.status_code == 201
+
+
+async def test_a_failure_without_thread_credentials_names_the_likely_cause(api, fake_otbr):
+    """Der Kern des gemeldeten Problems: die Oberflaeche zeigte nur
+    "Commission with code failed for node 7" - ohne den einen Satz, der sagt,
+    woran es lag."""
+    client, _, _, fake_client = api
+    fake_client.thread_dataset_set = False
+    fake_otbr.fail_with = ThreadDatasetUnavailableError("kein Border Router erreichbar")
+    fake_client.fail_commission_with = CommissioningError(
+        "Einlernen fehlgeschlagen: Commission with code failed for node 7."
+    )
+
+    response = await client.post("/api/devices/commission", json={"code": "MT:ABC123"})
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "Commission with code failed for node 7." in detail
+    assert "Thread" in detail
+    assert "kein Border Router erreichbar" in detail

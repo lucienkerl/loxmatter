@@ -1038,7 +1038,16 @@ function app() {
         this.commissionCode = "";
         this.commissionThreadDataset = "";
       } catch (error) {
-        this.commissionMessage = `Einlernen fehlgeschlagen: ${error.message}`;
+        // Ohne die Pruefung stand hier "Einlernen fehlgeschlagen: Einlernen
+        // fehlgeschlagen: ..." - der Server sagt es fuer eine Ablehnung durch
+        // das Geraet bereits selbst (`CommissioningError` in
+        // matter/client.py), und die doppelte Ueberschrift schob die
+        // eigentliche Auskunft nach hinten. Eigene Vorsilbe nur noch dort, wo
+        // die Meldung ohne sie ohne Bezug daherkaeme (z. B. "HTTP 502").
+        const message = String(error.message ?? "");
+        this.commissionMessage = message.startsWith("Einlernen fehlgeschlagen")
+          ? message
+          : `Einlernen fehlgeschlagen: ${message}`;
         this.commissionMessageIsError = true;
       } finally {
         this.commissionBusy = false;

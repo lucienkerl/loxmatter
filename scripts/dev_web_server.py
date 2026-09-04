@@ -71,6 +71,15 @@ class _SeededRuntime:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
 
+    async def set_online(self, device_id: int, online: bool) -> None:
+        """Wie `Runtime.set_online`, nur ohne UDP-Versand: haelt den Wert
+        unter demselben Schluessel, den die Geraetekarte liest. Gebraucht,
+        seit das Einlernen die Erreichbarkeit eines frisch eingelernten
+        Geraets selbst saeet (`api/devices.py`) - dieser Dienst lernt zwar
+        nie etwas ein (kein Matter-Client), muss `RuntimeValues` aber
+        vollstaendig erfuellen."""
+        self._values[f"d{device_id}_online"] = online
+
     def add_observer(self, callback: Callable[[str, object], None]) -> None:
         return None
 

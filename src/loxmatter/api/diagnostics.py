@@ -364,6 +364,43 @@ def _check_matter_server(client: BridgeMatterClient | None) -> tuple[bool, str]:
     return True, "Verbunden."
 
 
+def _check_thread_credentials(client: BridgeMatterClient | None) -> tuple[bool, str]:
+    """Ob matter-server die Thread-Zugangsdaten gerade hat.
+
+    Der Check, der den Ausfall vom 2026-09-04 gezeigt haette: matter-server
+    war am Vortag um 12:55 neu gestartet worden und hatte sie damit verloren
+    - er haelt sie ausschliesslich im Arbeitsspeicher (siehe
+    `matter/otbr.py`). Nichts hat es gemeldet. Sichtbar wurde es erst, als
+    drei Einlernversuche hintereinander scheiterten, und auch dann nannte
+    die Meldung in der Oberflaeche ("Commission with code failed for node
+    7") die Ursache nicht - die stand nur im Log von matter-server.
+
+    Seit dem Fix holt sich das Einlernen den Datensatz beim Border Router
+    selbst (siehe `api/devices.py`), dieser Punkt ist also im Regelfall
+    nicht mehr die Vorbedingung fuers Einlernen, sondern die Antwort auf die
+    Frage "steht dieser Stack fuer ein Thread-Geraet bereit?" - beantwortet,
+    bevor jemand vor einem Geraet im Pairing-Modus steht.
+    """
+    if client is None or not client.connected:
+        # Bewusst gruen: dass matter-server fehlt, sagt der Check daneben
+        # (`_check_matter_server`) bereits deutlich. Zwei rote Punkte fuer
+        # dieselbe Ursache verteilen die Aufmerksamkeit auf zwei Stellen,
+        # von denen nur eine etwas zu tun gibt.
+        return True, (
+            "Nicht feststellbar ohne Verbindung zu matter-server - siehe den Punkt matter-server."
+        )
+    if not client.thread_dataset_set:
+        return False, (
+            "matter-server hat keine Thread-Zugangsdaten. Sie ueberleben dort keinen "
+            "Neustart des Dienstes (sie liegen nur im Arbeitsspeicher) - ein "
+            "Thread-Geraet laesst sich ohne sie nicht einlernen, ein WiFi-Geraet "
+            "dagegen schon. Das naechste Einlernen holt sie automatisch vom Border "
+            "Router auf diesem Host; laeuft dort keiner, traegt man den Datensatz beim "
+            "Einlernen von Hand ein."
+        )
+    return True, "Gesetzt - ein Thread-Geraet kann eingelernt werden."
+
+
 def _check_store(store: Store) -> tuple[bool, str]:
     # sqlite3.Error, nicht blind `Exception` - eine unerwartete Fehlerart
     # (ein echter Bug statt einer nicht beschreibbaren Datenbank) faellt
@@ -582,6 +619,7 @@ def build_diagnostics_router(
     async def system() -> list[SystemCheckOut]:
         return [
             _run_check("matter-server", lambda: _check_matter_server(client)),
+            _run_check("thread-zugangsdaten", lambda: _check_thread_credentials(client)),
             _run_check("store", lambda: _check_store(store)),
             _run_check("ipv6", _check_ipv6),
             _run_check("thread", _check_thread),

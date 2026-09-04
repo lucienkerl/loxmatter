@@ -157,6 +157,13 @@ class FakeRuntime:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
 
+    async def set_online(self, device_id: int, online: bool) -> None:
+        """Wie `Runtime.set_online`, ohne den UDP-Versand: haelt den Wert
+        unter demselben Schluessel, den `_device_out` liest. Gebraucht,
+        seit das Einlernen die Erreichbarkeit eines neuen Geraets selbst
+        saeet (siehe `api/devices.py`)."""
+        self._values[f"d{device_id}_online"] = online
+
 
 @pytest.fixture
 def fake_runtime():
@@ -187,11 +194,25 @@ class FakeMatterClient:
         # ohne diese Datei anzufassen (siehe conftest-Moduldocstring,
         # "Erweiterung fuer spaetere Tasks").
         self.connected = True
+        # Was `commission_with_code` als Erreichbarkeit des frisch
+        # eingelernten Nodes meldet - beim echten Client kommt sie aus
+        # `MatterNodeData.available`. Ein Test, der ein Geraet simulieren
+        # will, das matter-server nicht erreicht, setzt es auf `False`.
+        self.available = True
+        # Spiegelt `BridgeMatterClient.thread_dataset_set`: ob matter-server
+        # die Thread-Zugangsdaten gerade hat. `False` als Vorgabe, weil das
+        # der Zustand nach jedem Neustart des Dienstes ist - genau der, in
+        # dem das Einlernen eines Thread-Geraets bisher scheiterte.
+        self.thread_dataset_set = False
+        # Die Reihenfolge der Aufrufe: der Datensatz muss VOR dem Einlernen
+        # gesetzt sein, sonst kommt er fuer dieses Geraet zu spaet.
+        self.order: list[str] = []
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
         if self.fail_commission_with is not None:
             raise self.fail_commission_with
         self.commissioned.append(code)
+        self.order.append("commission")
         node_id = self._next_node_id
         self._next_node_id += 1
         return NodeSnapshot(
@@ -200,6 +221,7 @@ class FakeMatterClient:
             product_name="Geraet",
             unique_id=f"fake-{node_id}",
             attributes={},
+            available=self.available,
         )
 
     async def remove_node(self, node_id: int) -> None:
@@ -209,11 +231,39 @@ class FakeMatterClient:
 
     async def set_thread_dataset(self, dataset: str) -> None:
         self.datasets.append(dataset)
+        self.order.append("dataset")
+        self.thread_dataset_set = True
 
 
 @pytest.fixture
 def fake_client():
     return FakeMatterClient()
+
+
+class FakeThreadDatasetSource:
+    """Steht fuer `loxmatter.matter.otbr.fetch_active_dataset` - die Quelle,
+    aus der sich das Einlernen den Thread-Datensatz holt, wenn matter-server
+    ihn nicht (mehr) hat. Zaehlt die Aufrufe, damit ein Test belegen kann,
+    dass der Border Router NICHT gefragt wurde."""
+
+    def __init__(self) -> None:
+        # Gestalt wie ein echter (Hex-TLV), aber ohne jeden Bezug zu einem
+        # existierenden Netz - ein echter Datensatz ist ein Credential und
+        # gehoert weder ins Repository noch in ein Log.
+        self.dataset = "0e08000000000001" + "00" * 24
+        self.calls = 0
+        self.fail_with: Exception | None = None
+
+    async def __call__(self) -> str:
+        self.calls += 1
+        if self.fail_with is not None:
+            raise self.fail_with
+        return self.dataset
+
+
+@pytest.fixture
+def fake_otbr():
+    return FakeThreadDatasetSource()
 
 
 @pytest.fixture

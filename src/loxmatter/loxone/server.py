@@ -130,7 +130,7 @@ from starlette.responses import Response as StarletteResponse
 
 from loxmatter.api.auth import build_auth_router
 from loxmatter.api.control import build_control_router
-from loxmatter.api.devices import RuntimeValues, build_device_router
+from loxmatter.api.devices import RuntimeValues, ThreadDatasetSource, build_device_router
 from loxmatter.api.diagnostics import (
     CommandLogEntry,
     RingBuffer,
@@ -378,6 +378,7 @@ def build_app(
     matter_data_dir: Path | None = None,
     api_token: str | None = None,
     log_handler: LogBufferHandler | None = None,
+    thread_dataset_source: ThreadDatasetSource | None = None,
 ) -> FastAPI:
     app = FastAPI(title="loxmatter", docs_url=None, redoc_url=None)
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
@@ -446,7 +447,10 @@ def build_app(
     # `/api/live` und `/api/diagnostics/live` - und ausdruecklich NICHT
     # `/cmd`, `/resync`, `/health`, `/` und `/static`, die weiter unten ohne
     # `dependencies` eingehaengt werden.
-    app.include_router(build_device_router(store, client, runtime), dependencies=api_guard)
+    app.include_router(
+        build_device_router(store, client, runtime, thread_dataset_source),
+        dependencies=api_guard,
+    )
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)

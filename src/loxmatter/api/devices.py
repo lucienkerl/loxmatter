@@ -70,6 +70,8 @@ Tatsache.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from fastapi import APIRouter, HTTPException
@@ -84,8 +86,17 @@ from loxmatter.api.models import (
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.signals import to_inputs
 from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
+from loxmatter.matter.otbr import ThreadDatasetUnavailableError, fetch_active_dataset
 from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDeviceError
 from loxmatter.profiles.table import Exportability, is_exportable
+
+logger = logging.getLogger(__name__)
+
+# Woher der Thread-Datensatz kommt, wenn matter-server ihn nicht (mehr) hat.
+# Ein eigener Typ statt des blanken Aufrufs, damit `build_app` ihn in Tests
+# durch eine Quelle ohne Netzwerk ersetzen kann - dasselbe Seam-Muster wie
+# `session_factory` in `matter/client.py`.
+ThreadDatasetSource = Callable[[], Awaitable[str]]
 
 # Warum ein Signal nicht exportierbar ist (Spec 6.6) - nur fuer die beiden
 # Faelle, die `Exportability` von ANALOG/DIGITAL unterscheidet. `NONE` deckt
@@ -100,11 +111,17 @@ _UNEXPORTABLE_REASONS: dict[Exportability, str] = {
 
 class RuntimeValues(Protocol):
     """Was diese Route von `runtime` braucht - `loxone.runtime.Runtime`
-    erfuellt das bereits unveraendert (siehe dort `last_values_for`), ein
-    Test kann es mit einem einfachen Double erfuellen, ohne eine echte
-    `Runtime` samt Sender aufzubauen."""
+    erfuellt das bereits unveraendert (siehe dort `last_values_for` und
+    `set_online`), ein Test kann es mit einem einfachen Double erfuellen,
+    ohne eine echte `Runtime` samt Sender aufzubauen.
+
+    `set_online` kam dazu, als das Einlernen die Erreichbarkeit eines frisch
+    eingelernten Geraets selbst saeen musste (siehe `commission_device`) -
+    lesen allein reicht dafuer nicht."""
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]: ...
+
+    async def set_online(self, device_id: int, online: bool) -> None: ...
 
 
 def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> SignalOut:
@@ -165,10 +182,37 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     )
 
 
+def _commissioning_detail(exc: CommissioningError, missing_dataset_reason: str | None) -> str:
+    """Die Meldung, die in der Oberflaeche ankommt.
+
+    Ohne den Zusatz stand dort nur, was matter-server selbst sagt -
+    "Commission with code failed for node 7." Der eigentliche Grund
+    ("Required network information not provided in commissioning
+    parameters") steht ausschliesslich im Log von matter-server, und ohne
+    Zugriff darauf ist die Meldung nicht deutbar: BLE, Pairing-Code und die
+    gesicherte Sitzung zum Geraet waren allesamt in Ordnung, es fehlte nur
+    das Netz, in das das Geraet gehoert haette.
+    """
+    detail = str(exc)
+    if missing_dataset_reason is None:
+        return detail
+    return (
+        f"{detail} Moegliche Ursache: matter-server hat keine Thread-Zugangsdaten, und "
+        f"diese Bruecke konnte auch keine holen ({missing_dataset_reason}). Ein "
+        "Thread-Geraet laesst sich ohne sie nicht einlernen - ein WiFi-Geraet dagegen "
+        "schon, dann liegt es woanders. Abhilfe: den Border Router erreichbar machen, "
+        "oder den Thread-Datensatz von Hand in das Feld darunter eintragen."
+    )
+
+
 def build_device_router(
-    store: Store, client: BridgeMatterClient | None, runtime: RuntimeValues
+    store: Store,
+    client: BridgeMatterClient | None,
+    runtime: RuntimeValues,
+    thread_dataset_source: ThreadDatasetSource | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api")
+    fetch_dataset = thread_dataset_source or fetch_active_dataset
 
     def _require_device(device_id: int) -> StoredDevice:
         try:
@@ -251,11 +295,39 @@ def build_device_router(
     async def commission_device(request: CommissionRequest) -> DeviceOut:
         active_client = _require_client()
 
+        # Warum das hier ueberhaupt steht: matter-server haelt die
+        # Thread-Zugangsdaten NUR im Arbeitsspeicher und vergisst sie bei
+        # jedem Neustart (die ganze Begruendung samt aufgezeichnetem
+        # Ernstfall steht in `matter/otbr.py`). Das Eingabefeld allein hat
+        # das nicht aufgefangen - es ist optional und wird nach jedem
+        # Einlernen geleert, war beim naechsten Mal also leer.
+        missing_dataset_reason: str | None = None
+
         if request.thread_dataset is not None:
+            # Ein von Hand eingetragener Datensatz sticht den vom Host: er
+            # ist der Weg fuer ein Thread-Netz, das nicht von diesem Border
+            # Router kommt.
             try:
                 await active_client.set_thread_dataset(request.thread_dataset)
             except MatterUnavailableError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
+        elif not active_client.thread_dataset_set:
+            try:
+                dataset = await fetch_dataset()
+            except ThreadDatasetUnavailableError as exc:
+                # KEIN Abbruch: ein WiFi-Geraet braucht gar keinen
+                # Thread-Datensatz, und ein Aufbau ohne eigenen Border Router
+                # ist damit weiterhin bedienbar. Der Grund wird nur gemerkt,
+                # fuer den Fall, dass das Einlernen gleich scheitert - dann
+                # ist er die wahrscheinliche Ursache und gehoert in die
+                # Meldung.
+                missing_dataset_reason = str(exc)
+                logger.warning("Kein Thread-Datensatz verfuegbar, Einlernen laeuft ohne: %s", exc)
+            else:
+                try:
+                    await active_client.set_thread_dataset(dataset)
+                except MatterUnavailableError as exc:
+                    raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         try:
             snapshot = await active_client.commission_with_code(request.code)
@@ -263,7 +335,9 @@ def build_device_router(
             # 422: die Anfrage selbst war wohlgeformt, aber das Geraet hat das
             # Einlernen abgelehnt (falscher Code, schon in einem anderen
             # Oekosystem, Timeout beim Interview) - siehe CommissioningError.
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=422, detail=_commissioning_detail(exc, missing_dataset_reason)
+            ) from exc
         except MatterUnavailableError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -273,6 +347,30 @@ def build_device_router(
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
         store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+
+        # Die Erreichbarkeit des neuen Geraets MUSS hier gesaet werden, aus
+        # `snapshot.available` - genau wie `Runtime.seed_from_snapshot` es
+        # beim Start der Bruecke fuer die bereits bekannten Geraete tut.
+        #
+        # Der Grund ist eine Reihenfolge, die sich von hier aus nicht
+        # beeinflussen laesst (aufgezeichnet am 2026-09-04): matter-server
+        # meldet `NODE_ADDED` bereits WAEHREND `commission_with_code` laeuft
+        # (`device_controller._setup_node` ruft `signal_event(
+        # EventType.NODE_ADDED, ...)` noch vor der Rueckkehr des Aufrufs).
+        # Zu diesem Zeitpunkt hat `register_device` oben dem Node noch keine
+        # device_id gegeben, und `BridgeMatterClient._dispatch_loop` verwirft
+        # die Meldung folgerichtig ("Aktualisierung fuer unbekannte Node ...
+        # verworfen") - die eine Gelegenheit, bei der `d<id>_online` von
+        # selbst entstanden waere, ist damit vorbei, bevor diese Route
+        # ueberhaupt wieder an die Reihe kommt.
+        #
+        # Fuer ein ruhig im Netz stehendes Geraet folgt danach keine weitere
+        # `NODE_ADDED`/`NODE_UPDATED`-Meldung, und `_device_out` liest einen
+        # fehlenden Schluessel als `False`. Das Geraet stand deshalb nach dem
+        # Einlernen auf "offline" und blieb es bis zum naechsten Neustart der
+        # Bruecke - obwohl matter-server es laengst interviewt und eine
+        # Subscription darauf aufgebaut hatte.
+        await runtime.set_online(device_id, snapshot.available)
         return _device_out(store.device(device_id), store, runtime)
 
     @router.delete("/devices/{device_id}", status_code=204)

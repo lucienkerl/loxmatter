@@ -55,11 +55,20 @@ import pytest
 from conftest import authenticate, load_snapshot
 
 from loxmatter.api import diagnostics
-from loxmatter.api.diagnostics import RingBuffer
+from loxmatter.api.diagnostics import RingBuffer, _check_thread_credentials
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
+
+
+class _ClientWithThreadDataset:
+    """Steht fuer `BridgeMatterClient` - nur die zwei Eigenschaften, die
+    `_check_thread_credentials` liest."""
+
+    def __init__(self, thread_dataset_set: bool, connected: bool = True) -> None:
+        self.thread_dataset_set = thread_dataset_set
+        self.connected = connected
 
 
 def _matter_data_dir(tmp_path: Path) -> Path:
@@ -433,3 +442,47 @@ def test_both_checks_stay_quiet_where_they_cannot_look(monkeypatch, tmp_path):
     for ok, detail in (diagnostics._check_ipv6(), diagnostics._check_thread()):
         assert ok is True
         assert "Nicht feststellbar" in detail
+
+
+# ---------------------------------------------------------------------------
+# Thread-Zugangsdaten im matter-server
+#
+# Der aufgezeichnete Ernstfall vom 2026-09-04: matter-server war am Vortag neu
+# gestartet und hatte damit die Thread-Zugangsdaten verloren (er haelt sie nur
+# im Arbeitsspeicher, siehe `loxmatter/matter/otbr.py`). Nichts hat es
+# gemeldet - kein Check, keine Zeile in der Oberflaeche. Sichtbar wurde es
+# erst, als drei Einlernversuche hintereinander mit "Commission with code
+# failed for node N" scheiterten, und selbst dann nannte die Meldung die
+# Ursache nicht. Dieser Check macht den Zustand sichtbar, BEVOR jemand vor
+# einem Geraet im Pairing-Modus steht.
+# ---------------------------------------------------------------------------
+
+
+def test_thread_credentials_check_is_green_when_matter_server_has_them():
+    ok, detail = _check_thread_credentials(_ClientWithThreadDataset(True))
+    assert ok
+    assert detail
+
+
+def test_thread_credentials_check_is_red_when_matter_server_lost_them():
+    ok, detail = _check_thread_credentials(_ClientWithThreadDataset(False))
+    assert not ok
+    # Ein roter Punkt ohne Hinweis hilft niemandem (siehe
+    # `test_a_failing_check_says_what_to_do`) - und dieser hier muss sagen,
+    # dass ein Neustart des Dienstes die Ursache ist.
+    assert "Neustart" in detail
+
+
+def test_thread_credentials_check_stays_quiet_without_a_matter_connection():
+    """Ohne Verbindung ist der Zustand nicht feststellbar - das ist die
+    Aussage des matter-server-Checks daneben, nicht die dieses hier. Zwei
+    rote Punkte fuer dieselbe Ursache verteilen die Aufmerksamkeit."""
+    ok, detail = _check_thread_credentials(None)
+    assert ok
+    assert "feststellbar" in detail
+
+
+async def test_the_system_check_carries_the_thread_credentials_line(api):
+    client, _, _ = api
+    checks = (await client.get("/api/diagnostics/system")).json()
+    assert "thread-zugangsdaten" in {c["name"] for c in checks}

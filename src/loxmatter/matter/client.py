@@ -196,6 +196,12 @@ class BridgeMatterClient:
         # upstream.subscribe_events() je Registrierung zurueckgibt.
         self._dispatch_task: asyncio.Task[None] | None = None
         self._unsubscribers: list[Callable[[], None]] = []
+        # Ob DIESE Verbindung matter-server den Thread-Datensatz schon
+        # uebergeben hat - siehe `thread_dataset_set` fuer die Begruendung,
+        # warum das nicht aus `server_info` allein ablesbar ist. Wird bei
+        # jedem connect() zurueckgesetzt: eine neue Verbindung kann einen
+        # neu gestarteten matter-server treffen, und der hat sie vergessen.
+        self._thread_dataset_set = False
 
     def _default_session_factory(self, session: Any) -> Any:
         # Lazy importiert, damit Tests matter_server nie laden müssen.
@@ -271,6 +277,7 @@ class BridgeMatterClient:
         self._http_session = http_session
         self._upstream = upstream
         self._listener_task = listener_task
+        self._thread_dataset_set = False
 
     async def disconnect(self) -> None:
         if self._upstream is None:
@@ -395,14 +402,49 @@ class BridgeMatterClient:
         """Entfernt ein Geraet aus der Fabric."""
         await self._require_upstream().remove_node(node_id)
 
+    @property
+    def thread_dataset_set(self) -> bool:
+        """Ob matter-server die Thread-Zugangsdaten gerade hat.
+
+        Zwei Quellen, weil keine allein reicht:
+
+        - `server_info.thread_credentials_set` sagt, was matter-server BEIM
+          VERBINDUNGSAUFBAU gemeldet hat. Der Dienst schickt zwar bei jeder
+          Aenderung ein `SERVER_INFO_UPDATED`-Ereignis
+          (`device_controller.set_thread_operational_dataset` loest es aus),
+          aber `MatterClient._handle_event_message` kennt dafuer keinen
+          Zweig - das Abbild bleibt also fuer die Dauer der Verbindung
+          stehen, auch nachdem diese Bruecke den Datensatz selbst gesetzt
+          hat. Geprueft gegen die installierte Fassung, nicht vermutet.
+        - `_thread_dataset_set` sind die eigenen, erfolgreichen Aufrufe von
+          `set_thread_dataset()` auf DIESER Verbindung.
+
+        Die Angabe ist bewusst konservativ: `False` heisst "nicht belegbar",
+        nicht "sicher nicht gesetzt". Der Aufrufer holt dann einen Datensatz
+        und setzt ihn erneut - das ist idempotent und kostet einen
+        HTTP-Aufruf, waehrend die umgekehrte Verwechslung ein Thread-Geraet
+        erst nach 40 Sekunden mit "Commission with code failed" scheitern
+        liesse.
+        """
+        if self._thread_dataset_set:
+            return True
+        info = getattr(self._upstream, "server_info", None)
+        return bool(getattr(info, "thread_credentials_set", False))
+
     async def set_thread_dataset(self, dataset: str) -> None:
         """Uebergibt matter-server die Thread-Zugangsdaten.
 
         Ohne diesen Schritt scheitert das Einlernen eines Thread-Geraets mit
         "Required network information not provided" - der Controller findet
         das Geraet per BLE, kann ihm aber kein Netz nennen.
+
+        matter-server haelt sie ausschliesslich im Arbeitsspeicher (siehe
+        `matter/otbr.py` fuer den ganzen Vorgang und den Ernstfall dazu):
+        jeder Neustart des Dienstes loescht sie wieder, und diese Bruecke
+        muss sie danach erneut uebergeben.
         """
         await self._require_upstream().set_thread_operational_dataset(dataset)
+        self._thread_dataset_set = True
 
     async def send_command(self, call: MatterCall) -> None:
         """Führt einen übersetzten `MatterCall` über den Upstream aus.

@@ -44,6 +44,11 @@ class FakeUpstream:
         self.removed: list[int] = []
         self.datasets: list[str] = []
         self.fail_with: Exception | None = None
+        # Steht fuer `MatterClient.server_info` - beim echten Client das
+        # Abbild der `ServerInfoMessage`, die matter-server beim
+        # Verbindungsaufbau schickt. `None`, solange kein Test etwas
+        # anderes sagt, genau wie vor dem ersten `connect()`.
+        self.server_info: object | None = None
 
     async def connect(self) -> None: ...
     async def disconnect(self) -> None: ...
@@ -165,3 +170,90 @@ async def test_thread_dataset_reaches_upstream(client):
     await bridge.set_thread_dataset("0e08...")
     assert upstream.datasets == ["0e08..."]
     await bridge.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Ob matter-server die Thread-Zugangsdaten ueberhaupt hat
+#
+# Der Dienst haelt sie NUR im Arbeitsspeicher (`_thread_credentials_set: bool
+# = False` im Konstruktor von `matter_server/server/device_controller.py`) und
+# nennt ihren Zustand beim Verbindungsaufbau in
+# `ServerInfoMessage.thread_credentials_set`. Sein Client aktualisiert dieses
+# Abbild NIE wieder: der Server sendet zwar `SERVER_INFO_UPDATED`, aber
+# `MatterClient._handle_event_message` kennt dafuer keinen Zweig (geprueft
+# gegen die installierte Fassung, nicht vermutet). Das Abbild allein bliebe
+# deshalb bis zum Verbindungsende `False` - auch unmittelbar nachdem diese
+# Bruecke den Datensatz selbst gesetzt hat. `thread_dataset_set` fuehrt darum
+# zusaetzlich Buch ueber die eigenen Aufrufe.
+# ---------------------------------------------------------------------------
+
+
+class FakeServerInfo:
+    """Steht fuer `matter_server.common.models.ServerInfoMessage` - nur das
+    eine Feld, das hier zaehlt."""
+
+    def __init__(self, thread_credentials_set: bool) -> None:
+        self.thread_credentials_set = thread_credentials_set
+
+
+async def test_reports_the_thread_state_matter_server_announced_on_connect(client):
+    bridge, upstream = client
+    upstream.server_info = FakeServerInfo(thread_credentials_set=True)
+    await bridge.connect()
+
+    assert bridge.thread_dataset_set is True
+
+    await bridge.disconnect()
+
+
+async def test_a_server_without_thread_credentials_is_reported_as_such(client):
+    bridge, upstream = client
+    upstream.server_info = FakeServerInfo(thread_credentials_set=False)
+    await bridge.connect()
+
+    assert bridge.thread_dataset_set is False
+
+    await bridge.disconnect()
+
+
+async def test_setting_the_thread_dataset_is_remembered_for_this_connection(client):
+    """Ohne eigenes Buchfuehren wuerde die Bruecke den Datensatz vor JEDEM
+    Einlernen erneut holen und setzen, obwohl sie ihn selbst gerade gesetzt
+    hat - `server_info` bleibt `False` (siehe oben)."""
+    bridge, upstream = client
+    upstream.server_info = FakeServerInfo(thread_credentials_set=False)
+    await bridge.connect()
+
+    await bridge.set_thread_dataset("0e08")
+
+    assert upstream.datasets == ["0e08"]
+    assert bridge.thread_dataset_set is True
+
+    await bridge.disconnect()
+
+
+async def test_a_new_connection_forgets_what_the_previous_one_had_set(client):
+    """Der entscheidende Fall: genau das Vergessen, das matter-server bei
+    einem Neustart selbst vollzieht. Bliebe die Merkung ueber die Verbindung
+    hinaus bestehen, hielte die Bruecke einen Datensatz fuer gesetzt, den es
+    auf der anderen Seite nicht mehr gibt - und das Einlernen scheiterte
+    wieder mit "Required network information not provided"."""
+    bridge, upstream = client
+    upstream.server_info = FakeServerInfo(thread_credentials_set=False)
+    await bridge.connect()
+    await bridge.set_thread_dataset("0e08")
+    await bridge.disconnect()
+
+    await bridge.connect()
+
+    assert bridge.thread_dataset_set is False
+
+    await bridge.disconnect()
+
+
+async def test_a_client_without_a_connection_reports_no_thread_credentials(client):
+    """Ohne Verbindung gibt es keine Zusicherung - und die Diagnose soll das
+    sagen duerfen, ohne eine Ausnahme fangen zu muessen."""
+    bridge, _ = client
+
+    assert bridge.thread_dataset_set is False

@@ -195,7 +195,7 @@
             <input
               type="text"
               x-model="commissionThreadDataset"
-              placeholder="Thread-Datensatz (nur bei Thread-Geräten)"
+              placeholder="Thread-Datensatz (nur für ein fremdes Thread-Netz)"
             />
             <button class="primary" @click="commissionDevice()" :disabled="commissionBusy">
               Einlernen
@@ -205,6 +205,11 @@
             Hängt das Gerät schon in Apple, Google oder einer DIRIGERA, funktioniert der
             aufgedruckte Code hier nicht mehr – dort einen zusätzlichen Multi-Admin-Code erzeugen
             und stattdessen diesen eingeben.
+          </p>
+          <p class="hint">
+            Den Thread-Datensatz brauchen Sie normalerweise nicht: die Brücke holt ihn beim
+            Einlernen selbst vom Border Router auf diesem Host. Nötig ist das Feld nur, wenn das
+            Gerät in ein anderes Thread-Netz soll als das hiesige.
           </p>
           <p
             x-show="commissionMessage"
