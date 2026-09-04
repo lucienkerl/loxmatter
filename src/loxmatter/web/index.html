@@ -163,27 +163,26 @@
            ================================================================ -->
       <section x-show="view === 'devices'">
         <div class="card">
-          <h2>Neues Gerät einlernen</h2>
+          <h2 x-text="t('web.devices.commission_heading')"></h2>
           <div class="row">
             <input
               type="text"
               x-model="commissionCode"
-              placeholder="Pairing-Code (11-stellig oder MT:…)"
+              :placeholder="t('web.devices.code_placeholder')"
             />
             <input
               type="text"
               x-model="commissionThreadDataset"
-              placeholder="Thread-Datensatz (nur bei Thread-Geräten)"
+              :placeholder="t('web.devices.thread_dataset_placeholder')"
             />
-            <button class="primary" @click="commissionDevice()" :disabled="commissionBusy">
-              Einlernen
-            </button>
+            <button
+              class="primary"
+              @click="commissionDevice()"
+              :disabled="commissionBusy"
+              x-text="t('web.devices.commission_submit')"
+            ></button>
           </div>
-          <p class="hint">
-            Hängt das Gerät schon in Apple, Google oder einer DIRIGERA, funktioniert der
-            aufgedruckte Code hier nicht mehr – dort einen zusätzlichen Multi-Admin-Code erzeugen
-            und stattdessen diesen eingeben.
-          </p>
+          <p class="hint" x-text="t('web.devices.commission_hint')"></p>
           <p
             x-show="commissionMessage"
             x-cloak
@@ -195,9 +194,11 @@
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>
         <p x-show="deviceActionError" x-cloak class="banner danger" x-text="deviceActionError"></p>
 
-        <p x-show="devices.length === 0 && !devicesError" class="hint">
-          Noch kein Gerät eingelernt.
-        </p>
+        <p
+          x-show="devices.length === 0 && !devicesError"
+          class="hint"
+          x-text="t('web.devices.empty')"
+        ></p>
 
         <template x-for="device in devices" :key="device.id">
           <div class="card device-card" :class="deviceCardClass(device)">
@@ -213,24 +214,31 @@
               />
               <span class="status-pill warn" x-show="isOnline(device) && changedSinceExport(device.id)">
                 <svg class="icon"><use href="#i-warn"></use></svg>
-                Geändert seit Export
+                <span x-text="t('web.devices.changed_since_export')"></span>
               </span>
               <span class="status-pill off" x-show="!isOnline(device)">
                 <svg class="icon"><use href="#i-offline"></use></svg>
-                Offline
+                <span x-text="t('web.devices.offline')"></span>
               </span>
-              <button class="danger" @click="removeDevice(device)">Entfernen</button>
+              <button
+                class="danger"
+                @click="removeDevice(device)"
+                x-text="t('web.devices.remove')"
+              ></button>
             </div>
 
             <div class="device-controls">
-              <h3>Werte</h3>
-              <p class="hint" x-show="!signalsByDevice[device.id]">Signale werden geladen…</p>
+              <h3 x-text="t('web.devices.values_heading')"></h3>
+              <p
+                class="hint"
+                x-show="!signalsByDevice[device.id]"
+                x-text="t('web.devices.signals_loading')"
+              ></p>
               <p
                 class="hint"
                 x-show="signalsByDevice[device.id] && firstSignalsFor(device.id).length === 0"
-              >
-                Keine funktionalen Signale für dieses Gerät.
-              </p>
+                x-text="t('web.devices.no_functional_signals')"
+              ></p>
               <div class="value-chips" x-show="signalsByDevice[device.id]">
                 <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
                   <span class="value-chip">
@@ -253,21 +261,22 @@
               </div>
               <p class="hint" x-show="remainingSignalCount(device.id) > 0">
                 <span x-text="remainingSignalCount(device.id)"></span>
-                weitere in der Ansicht „Signale“.
+                <span x-text="t('web.devices.more_in_signals_view')"></span>
               </p>
             </div>
 
             <div class="device-controls">
-              <h3>Bedienung</h3>
-              <p class="hint" x-show="!controlsLoaded(device.id)">
-                Bedienelemente werden geladen…
-              </p>
+              <h3 x-text="t('web.devices.controls_heading')"></h3>
+              <p
+                class="hint"
+                x-show="!controlsLoaded(device.id)"
+                x-text="t('web.devices.controls_loading')"
+              ></p>
               <p
                 class="hint"
                 x-show="controlsLoaded(device.id) && commandsFor(device.id).length === 0"
-              >
-                Keine bekannten Ausgangsbefehle für dieses Gerät.
-              </p>
+                x-text="t('web.devices.no_known_commands')"
+              ></p>
               <div class="row">
                 <template x-for="command in commandsFor(device.id)" :key="command.key">
                   <span class="row">
@@ -282,22 +291,21 @@
                       <input
                         type="number"
                         style="width: 5.5rem"
-                        placeholder="Wert"
+                        :placeholder="t('web.devices.value_placeholder')"
                         @input="commandValueDrafts[command.key] = $event.target.value"
                       />
                       <button
                         @click="executeCommand(device, command)"
                         :disabled="commandBusyKey === command.key || !isOnline(device)"
-                      >
-                        Senden
-                      </button>
+                        x-text="t('web.devices.send')"
+                      ></button>
                     </span>
                   </span>
                 </template>
               </div>
               <p class="hint" x-show="hiddenRawCommandsFor(device.id) > 0">
                 <span x-text="hiddenRawCommandsFor(device.id)"></span>
-                weitere Kommandos vorhanden, aber nicht benannt.
+                <span x-text="t('web.devices.more_commands_unnamed')"></span>
               </p>
             </div>
 
@@ -309,12 +317,17 @@
                   class="primary"
                   @click="exportDevice(device)"
                   :disabled="!bridgeSettings.bridge_ip"
-                >
-                  Exportieren
-                </button>
+                  x-text="t('web.devices.export')"
+                ></button>
               </div>
               <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
-                Erst in <a href="#" @click.prevent="selectView('settings')">Einstellungen → Verbindung zum Miniserver</a> hinterlegen.
+                <span x-text="t('web.devices.export_hint_prefix')"></span>
+                <a
+                  href="#"
+                  @click.prevent="selectView('settings')"
+                  x-text="t('web.settings.miniserver_link')"
+                ></a>
+                <span x-text="t('web.devices.export_hint_suffix')"></span>
               </p>
             </div>
           </div>

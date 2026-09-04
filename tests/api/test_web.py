@@ -318,10 +318,16 @@ async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api
     Belegt nur, dass die aktuelle Beschriftung ausgeliefert wird und die
     alte verschwunden ist - nicht, dass die damit gezeigten Signale zur
     Laufzeit tatsaechlich die funktionalen sind (siehe Testdocstring
-    oben)."""
+    oben).
+
+    Aufgabe 11: die Ueberschrift traegt seither `x-text="t('web.devices.
+    values_heading')"` statt des festen Literals "Werte" - siehe
+    `test_the_device_card_static_text_is_translated` fuer die Bindung
+    selbst; hier bleibt nur der Beleg, dass die beiden ueberholten
+    Formulierungen nicht zurueckgekehrt sind."""
     client, _, _ = api
     page = (await client.get("/")).text
-    assert "<h3>Werte</h3>" in page
+    assert "x-text=\"t('web.devices.values_heading')\"" in page
     assert "Signale (Anfang der Liste)" not in page
     assert "Funktionale Signale" not in page
 
@@ -827,3 +833,200 @@ async def test_formatting_helpers_translate_and_the_locale_follows_the_language(
     assert 'value ? t("web.format.true") : t("web.format.false");' in value_body
     assert '"wahr"' not in value_body
     assert '"falsch"' not in value_body
+
+
+async def test_the_commissioning_card_is_translated(api):
+    """Aufgabe 11, Schritt 3: Ueberschrift, beide Platzhalter, der
+    Absende-Knopf und der Hinweistext der Einlernen-Karte tragen jetzt
+    `t(...)`, keiner der frueheren deutschen Literale bleibt im Markup."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "x-text=\"t('web.devices.commission_heading')\"" in markup
+    assert "Neues Gerät einlernen" not in markup
+    assert ':placeholder="t(\'web.devices.code_placeholder\')"' in markup
+    assert "Pairing-Code (11-stellig" not in markup
+    assert ':placeholder="t(\'web.devices.thread_dataset_placeholder\')"' in markup
+    assert "Thread-Datensatz" not in markup
+    assert "x-text=\"t('web.devices.commission_submit')\"" in markup
+    assert ">Einlernen<" not in markup
+    assert "x-text=\"t('web.devices.commission_hint')\"" in markup
+    assert "Hängt das Gerät schon in Apple" not in markup
+    assert "x-text=\"t('web.devices.empty')\"" in markup
+    assert "Noch kein Gerät eingelernt." not in markup
+
+
+async def test_the_device_card_static_text_is_translated(api):
+    """Aufgabe 11, Schritt 3: Statuspillen, Entfernen-Knopf, die beiden
+    Werte-/Bedienungs-Abschnittsueberschriften mit ihren Ladehinweisen und
+    Leerzustaenden, der Wert-Platzhalter, der Senden-Knopf und der
+    Exportieren-Knopf der Geraetekarte - jeweils als reiner `x-text`, weil
+    keiner dieser Schluessel eingebettetes HTML traegt."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "x-text=\"t('web.devices.changed_since_export')\"" in markup
+    assert "Geändert seit Export" not in markup
+    assert "x-text=\"t('web.devices.offline')\"" in markup
+    assert ">Offline<" not in markup
+    assert "x-text=\"t('web.devices.remove')\"" in markup
+    assert ">Entfernen<" not in markup
+    assert "x-text=\"t('web.devices.values_heading')\"" in markup
+    assert ">Werte<" not in markup
+    assert "x-text=\"t('web.devices.signals_loading')\"" in markup
+    assert "Signale werden geladen" not in markup
+    assert "x-text=\"t('web.devices.no_functional_signals')\"" in markup
+    assert "Keine funktionalen Signale" not in markup
+    assert "x-text=\"t('web.devices.controls_heading')\"" in markup
+    assert ">Bedienung<" not in markup
+    assert "x-text=\"t('web.devices.controls_loading')\"" in markup
+    assert "Bedienelemente werden geladen" not in markup
+    assert "x-text=\"t('web.devices.no_known_commands')\"" in markup
+    assert "Keine bekannten Ausgangsbefehle" not in markup
+    assert ':placeholder="t(\'web.devices.value_placeholder\')"' in markup
+    assert 'placeholder="Wert"' not in markup
+    assert "x-text=\"t('web.devices.send')\"" in markup
+    assert ">Senden<" not in markup
+    assert "x-text=\"t('web.devices.export')\"" in markup
+    assert ">Exportieren<" not in markup
+
+
+async def test_the_remaining_count_hints_keep_their_dynamic_span_and_translate_the_rest(api):
+    """Aufgabe 11, Schritt 3: die beiden "N weitere..."-Hinweise bestehen aus
+    einem dynamischen Zaehler-`<span>` (`remainingSignalCount`/
+    `hiddenRawCommandsFor`) gefolgt von statischem Text - nur der statische
+    Teil wandert auf `t(...)`, der Zaehler-Ausdruck bleibt unveraendert."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert '<span x-text="remainingSignalCount(device.id)"></span>' in markup
+    assert "x-text=\"t('web.devices.more_in_signals_view')\"" in markup
+    assert "weitere in der Ansicht" not in markup
+    assert '<span x-text="hiddenRawCommandsFor(device.id)"></span>' in markup
+    assert "x-text=\"t('web.devices.more_commands_unnamed')\"" in markup
+    assert "weitere Kommandos vorhanden" not in markup
+
+
+async def test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_to_x_html(api):
+    """Aufgabe 11, Schritt 3 (das neue Muster dieser Aufgabe): der Hinweis
+    "Erst in Einstellungen -> ... hinterlegen." enthaelt einen echten Link mit
+    eigenem `@click.prevent`, der beim Uebersetzen NICHT in einen `x-html`-
+    Block verschwinden darf - sonst liesse sich der Klick-Handler nicht mehr
+    binden. Drei eigene Elemente (Praefix, Link, Suffix) je mit eigenem
+    `x-text` halten den Handler unangetastet."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    device_section_start = markup.index("x-show=\"view === 'devices'\"")
+    device_section_end = markup.index("x-show=\"view === 'signals'\"")
+    devices_markup = markup[device_section_start:device_section_end]
+    assert "x-text=\"t('web.devices.export_hint_prefix')\"" in devices_markup
+    assert "x-text=\"t('web.settings.miniserver_link')\"" in devices_markup
+    assert "x-text=\"t('web.devices.export_hint_suffix')\"" in devices_markup
+    assert "Erst in " not in devices_markup
+    assert "Einstellungen → Verbindung zum Miniserver" not in devices_markup
+    assert " hinterlegen." not in devices_markup
+    assert '@click.prevent="selectView(\'settings\')"' in devices_markup
+
+
+async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
+    """Aufgabe 11, Schritt 4: die Lade-/Speicher-/Entfernen-Fehler, die
+    Export-Hinweise (`exportHintFor`) und die beiden Kommando-Toasts der
+    Geraeteliste tragen jetzt `t(...)` mit denselben Platzhaltern wie
+    vorher die Template-Strings."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert 'this.devicesError = t("web.devices.list_load_error", { message: error.message });' in script
+    assert "Geraeteliste konnte nicht geladen werden" not in script
+    assert (
+        'this.deviceActionError = t("web.devices.controls_load_error", { message: error.message });'
+        in script
+    )
+    assert "Bedienelemente konnten nicht geladen werden" not in script
+    assert 'return t("web.devices.export_never");' in script
+    assert "Noch nicht exportiert" not in script
+    assert (
+        'return t("web.devices.export_last", { timestamp: this.formatTimestamp(status.exported_at) });'
+        in script
+    )
+    assert "Zuletzt exportiert am" not in script
+    assert (
+        'this.deviceActionError = t("web.devices.label_save_error", { message: error.message });'
+        in script
+    )
+    assert "Name konnte nicht gespeichert werden" not in script
+    assert (
+        'this.deviceActionError = t("web.devices.remove_error", { message: error.message });'
+        in script
+    )
+    assert "Gerät konnte nicht entfernt werden" not in script
+    execute_start = script.index("async executeCommand(device, command) {")
+    execute_end = script.index("\n    },", execute_start)
+    execute_body = script[execute_start:execute_end]
+    assert (
+        'this.showToast(t("web.devices.command_sent", { slug: command.slug, label: device.label }));'
+        in execute_body
+    )
+    assert "wurde an" not in execute_body
+    assert (
+        'this.showToast(t("web.devices.command_failed", { slug: command.slug, message: error.message }), true);'
+        in execute_body
+    )
+    assert "ist fehlgeschlagen" not in execute_body
+
+    export_device_start = script.index("async exportDevice(device) {")
+    export_device_end = script.index("\n    },", export_device_start)
+    export_device_body = script[export_device_start:export_device_end]
+    assert (
+        'this.showToast(t("web.devices.exported_toast", { label: device.label }));'
+        in export_device_body
+    )
+    assert "wurde exportiert." not in export_device_body
+    assert (
+        'this.deviceActionError = t("web.devices.export_failed", { message: error.message });'
+        in export_device_body
+    )
+    assert "Export fehlgeschlagen" not in export_device_body
+
+
+async def test_the_device_card_export_bridge_ip_validation_is_translated(api):
+    """Aufgabe 11, Schritt 4: die Brücken-IP-Pruefung in `exportDevice`
+    (Geraetekarte) teilt sich den Schluessel `web.export.bridge_ip_missing`
+    mit Vorschau/Download (Aufgabe 13) - hier wird nur die Kopie in
+    `exportDevice` selbst geprueft."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    export_start = script.index("async exportDevice(device) {")
+    export_end = script.index("\n    },", export_start)
+    body = script[export_start:export_end]
+    assert 'this.deviceActionError = t("web.export.bridge_ip_missing");' in body
+    assert "Brücken-IP hinterlegen" not in body
+
+
+async def test_the_commissioning_flow_messages_are_translated(api):
+    """Aufgabe 11, Schritt 4: die leere-Code-Pruefung, die Erfolgsmeldung
+    (ein einziger `t(...)`-Aufruf statt vier zusammengesetzter Literale) und
+    die Fehlschlag-Meldung von `commissionDevice`."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    commission_start = script.index("async commissionDevice() {")
+    commission_end = script.index("\n    },", script.index("this.commissionBusy = false;"))
+    body = script[commission_start:commission_end]
+    assert 'this.commissionMessage = t("web.devices.commission_code_required");' in body
+    assert "Bitte zuerst einen Pairing-Code eingeben." not in body
+    assert 'this.commissionMessage = t("web.devices.commission_success", { label: device.label });' in body
+    assert "wurde eingelernt" not in body
+    assert 'this.commissionMessage = t("web.devices.commission_failed", { message: error.message });' in body
+    assert "Einlernen fehlgeschlagen" not in body
+
+
+async def test_the_remove_confirm_dialog_text_comes_from_t(api):
+    """Aufgabe 11, Schritt 4: der native `window.confirm(...)` in
+    `removeDevice` traegt jetzt einen einzigen `t(...)`-Aufruf mit `label`
+    und `id` statt der handgebauten Vorlagen-Zeichenkette - der Dialog
+    selbst laesst sich ohne Browser-Engine nicht pruefen, wohl aber, dass
+    sein Text jetzt aus der Uebersetzungstabelle kommt."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert (
+        'window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device.id }))'
+        in script
+    )
+    assert "wirklich entfernen? Das kann nicht rückgängig gemacht werden" not in script
+    assert "In Loxone bleiben danach verwaist" not in script

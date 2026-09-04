@@ -653,7 +653,7 @@ function app() {
       try {
         this.devices = await this.request("GET", "/api/devices");
       } catch (error) {
-        this.devicesError = `Geraeteliste konnte nicht geladen werden: ${error.message}`;
+        this.devicesError = t("web.devices.list_load_error", { message: error.message });
       }
     },
 
@@ -687,7 +687,7 @@ function app() {
           `/api/devices/${deviceId}/controls`,
         );
       } catch (error) {
-        this.deviceActionError = `Bedienelemente konnten nicht geladen werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.controls_load_error", { message: error.message });
       }
     },
 
@@ -741,9 +741,9 @@ function app() {
     exportHintFor(deviceId) {
       const status = this.exportStatusFor(deviceId);
       if (!status || !status.exported_at) {
-        return "Noch nicht exportiert";
+        return t("web.devices.export_never");
       }
-      return `Zuletzt exportiert am ${this.formatTimestamp(status.exported_at)}`;
+      return t("web.devices.export_last", { timestamp: this.formatTimestamp(status.exported_at) });
     },
 
     // Klassen fuer den Farbstreifen der Kachel (style.css, `.device-card`) -
@@ -838,7 +838,7 @@ function app() {
         const updated = await this.request("PATCH", `/api/devices/${device.id}`, { label });
         Object.assign(device, updated);
       } catch (error) {
-        this.deviceActionError = `Name konnte nicht gespeichert werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.label_save_error", { message: error.message });
       }
     },
 
@@ -854,13 +854,7 @@ function app() {
     // Der Praefix mit der Geraete-ID ist eindeutig (siehe `filename_for`)
     // und reicht, um die Datei in Loxone Config wiederzufinden.
     async removeDevice(device) {
-      const confirmed = window.confirm(
-        `Gerät "${device.label}" wirklich entfernen? Das kann nicht rückgängig gemacht werden.\n\n` +
-          "In Loxone bleiben danach verwaist:\n" +
-          `• alle virtuellen Ein- und Ausgänge mit dem Schlüssel-Präfix "d${device.id}_"\n` +
-          `• die importierten Vorlagen "VIU_d${device.id}_….xml" und "VO_d${device.id}_….xml"\n\n` +
-          "Diese in Loxone Config von Hand löschen.",
-      );
+      const confirmed = window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device.id }));
       if (!confirmed) {
         return;
       }
@@ -871,7 +865,7 @@ function app() {
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
       } catch (error) {
-        this.deviceActionError = `Gerät konnte nicht entfernt werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.remove_error", { message: error.message });
       }
     },
 
@@ -880,9 +874,9 @@ function app() {
       const value = command.takes_value ? this.commandValueDrafts[command.key] ?? "" : "1";
       try {
         await this.request("POST", `/api/commands/${command.key}`, { value: String(value) });
-        this.showToast(`"${command.slug}" wurde an ${device.label} gesendet.`);
+        this.showToast(t("web.devices.command_sent", { slug: command.slug, label: device.label }));
       } catch (error) {
-        this.showToast(`"${command.slug}" ist fehlgeschlagen: ${error.message}`, true);
+        this.showToast(t("web.devices.command_failed", { slug: command.slug, message: error.message }), true);
       } finally {
         this.commandBusyKey = null;
       }
@@ -973,7 +967,7 @@ function app() {
     async commissionDevice() {
       this.commissionMessage = null;
       if (!this.commissionCode.trim()) {
-        this.commissionMessage = "Bitte zuerst einen Pairing-Code eingeben.";
+        this.commissionMessage = t("web.devices.commission_code_required");
         this.commissionMessageIsError = true;
         return;
       }
@@ -998,16 +992,12 @@ function app() {
         // keinen einzigen Attributwert. Ohne diesen Hinweis sieht der
         // Anwender ein gruenes Geraet, dessen Signale alle auf "-" stehen,
         // und sucht den Fehler bei sich.
-        this.commissionMessage =
-          `${device.label} wurde eingelernt. Live-Werte erscheinen erst nach einem ` +
-          "Neustart der Brücke – bis dahin zeigt das Gerät zwar „online“, aber jedes " +
-          "Signal „-“ (bekannte Grenze, Spec 12.3). Der Export der Vorlagen " +
-          "funktioniert davon unabhängig schon jetzt.";
+        this.commissionMessage = t("web.devices.commission_success", { label: device.label });
         this.commissionMessageIsError = false;
         this.commissionCode = "";
         this.commissionThreadDataset = "";
       } catch (error) {
-        this.commissionMessage = `Einlernen fehlgeschlagen: ${error.message}`;
+        this.commissionMessage = t("web.devices.commission_failed", { message: error.message });
         this.commissionMessageIsError = true;
       } finally {
         this.commissionBusy = false;
@@ -1232,8 +1222,7 @@ function app() {
     async exportDevice(device) {
       this.deviceActionError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.deviceActionError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.deviceActionError = t("web.export.bridge_ip_missing");
         return;
       }
       const params = new URLSearchParams({
@@ -1244,9 +1233,9 @@ function app() {
       });
       try {
         await this.download(`/api/export/download?${params}`, `loxmatter-d${device.id}-export.zip`);
-        this.showToast(`${device.label} wurde exportiert.`);
+        this.showToast(t("web.devices.exported_toast", { label: device.label }));
       } catch (error) {
-        this.deviceActionError = `Export fehlgeschlagen: ${error.message}`;
+        this.deviceActionError = t("web.devices.export_failed", { message: error.message });
         return;
       }
       await this.loadExportStatus();
