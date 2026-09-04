@@ -228,9 +228,8 @@ def _new_device_edit(
         assert caption is not None and caption.inner_end is not None  # fuer mypy
         return _Edit(caption.inner_end, caption.inner_end, device_xml), created_count
 
-    caption_iname = new_iname("C", index.all_inames)
     caption_u = new_unique_id(index.all_u_values)
-    caption_open = new_caption_open_tag(kind, caption_iname, caption_u)
+    caption_open = new_caption_open_tag(kind, caption_u)
     full_xml = f"{caption_open}{device_xml}</C>"
     # `target_loxlive.inner_end` ist bereits als nicht-`None` validiert
     # (siehe `build_index`'s Pruefung direkt nach `_resolve_target_loxlive`).

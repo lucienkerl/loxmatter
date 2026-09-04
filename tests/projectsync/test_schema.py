@@ -32,21 +32,26 @@ def test_desired_output_cmd_attrs_omits_cmdoff_when_there_is_none():
 
 
 def test_new_caption_open_tag_builds_input_caption():
-    tag = new_caption_open_tag("input", "C3", "u-new")
-    assert tag == '<C Type="VirtualInCaption" IName="C3" U="u-new">'
+    tag = new_caption_open_tag("input", "u-new")
+    assert (
+        tag == '<C Type="VirtualInCaption" V="178" U="u-new" Title="Virtuelle Eingänge" WF="16384">'
+    )
     assert not tag.endswith("/>")
 
 
 def test_new_caption_open_tag_builds_output_caption():
-    tag = new_caption_open_tag("output", "C4", "u-new")
-    assert tag == '<C Type="VirtualOutCaption" IName="C4" U="u-new">'
+    tag = new_caption_open_tag("output", "u-new")
+    assert (
+        tag
+        == '<C Type="VirtualOutCaption" V="178" U="u-new" Title="Virtuelle Ausgänge" WF="16384">'
+    )
 
 
 def test_new_caption_open_tag_rejects_unknown_kind():
     import pytest
 
     with pytest.raises(ValueError, match="input.*output"):
-        new_caption_open_tag("bogus", "C5", "u-new")
+        new_caption_open_tag("bogus", "u-new")
 
 
 def test_desired_output_cmd_attrs_includes_cmdoff_for_paired_commands():
@@ -67,6 +72,10 @@ def test_new_input_cmd_open_tag_is_a_valid_non_self_closing_start_tag():
     assert 'Check="d2_1_temp:\\v"' in tag
     assert 'IName="VCI9"' in tag
     assert 'U="u-new"' in tag
+    # An der echten Referenzdatei geprueft: ALLE <C>-Objekte tragen ein
+    # `V`-Attribut (Entwurf Abschnitt 6, Korrektur nach echtem Praxistest) -
+    # ohne ihn blieb ein neu angelegtes Kommando in Loxone Config unsichtbar.
+    assert 'V="178"' in tag
 
 
 def test_new_output_cmd_open_tag_contains_command_path():
@@ -74,6 +83,7 @@ def test_new_output_cmd_open_tag_contains_command_path():
     tag = new_output_cmd_open_tag(command, "VQC9", "u-new")
     assert 'CmdOn="/cmd/d2_1_on/1"' in tag
     assert 'IName="VQC9"' in tag
+    assert 'V="178"' in tag
 
 
 def test_sibling_iodata_attrs_reads_from_an_existing_cmd(sample_project):
@@ -119,6 +129,7 @@ def test_new_input_container_open_tag_carries_bridge_address():
     assert 'Title="Matter — Neues Geraet"' in tag
     assert 'Address="10.0.0.5"' in tag
     assert 'Port="7000"' in tag
+    assert 'V="178"' in tag
     assert not tag.endswith("/>")
 
 
@@ -126,4 +137,5 @@ def test_new_output_container_open_tag_carries_base_url():
     tag = new_output_container_open_tag("Neues Geraet", "http://10.0.0.5:8080", "VQ9", "u-new")
     assert 'Type="VirtualOut"' in tag
     assert 'Address="http://10.0.0.5:8080"' in tag
+    assert 'V="178"' in tag
     assert not tag.endswith("/>")

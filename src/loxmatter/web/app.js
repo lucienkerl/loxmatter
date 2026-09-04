@@ -1366,10 +1366,10 @@ function app() {
 
     /** Deutsche Kurzbezeichnung fuer die `PlanStatus`-Werte aus
      * `projectsync/diff.py` (`unchanged`, `updated`, `new_signal`,
-     * `new_device`, `orphaned`, `conflict`) - die Rohwerte sind Englisch
-     * (Bezeichner-Konvention dieses Projekts, siehe Kommentar am Kopf
-     * dieser Datei), duerfen aber nicht unuebersetzt auf dem Bildschirm
-     * landen. */
+     * `new_device`, `orphaned`, `conflict`, `possible_duplicate`) - die
+     * Rohwerte sind Englisch (Bezeichner-Konvention dieses Projekts, siehe
+     * Kommentar am Kopf dieser Datei), duerfen aber nicht unuebersetzt auf
+     * dem Bildschirm landen. */
     projectSyncStatusLabel(status) {
       const labels = {
         unchanged: "Unverändert",
@@ -1378,6 +1378,7 @@ function app() {
         new_device: "Neues Gerät",
         orphaned: "Verwaist – wird nicht verändert",
         conflict: "Konflikt – wird übersprungen",
+        possible_duplicate: "Mögliches Duplikat – wird übersprungen",
       };
       return labels[status] || status;
     },
@@ -1389,11 +1390,12 @@ function app() {
      * Farbsprache wie ein hinzugefuegter Diff in einer Versionsverwaltung,
      * `warn` bleibt exklusiv fuer `updated`, `off` (dieselbe neutrale Farbe
      * wie eine Geraetekarte im Zustand "offline") fuer `orphaned`, `danger`
-     * fuer `conflict`. `unchanged` braucht hier kein Badge mehr - es
-     * erscheint nur noch als schlichter Chip, siehe `projectSyncSplit
-     * BySignificance`. */
+     * fuer `conflict` UND `possible_duplicate` (beide werden nie automatisch
+     * angelegt/uebernommen, beide verdienen dieselbe "hinschauen"-Farbe).
+     * `unchanged` braucht hier kein Badge mehr - es erscheint nur noch als
+     * schlichter Chip, siehe `projectSyncSplitBySignificance`. */
     projectSyncStatusBadgeClass(status) {
-      if (status === "conflict") {
+      if (status === "conflict" || status === "possible_duplicate") {
         return "danger";
       }
       if (status === "orphaned") {
@@ -1410,7 +1412,10 @@ function app() {
      * Entries`) als auch der Gesamt-Uebersicht oben (`projectSyncOverall
      * Counts`) und der CSS-Klasse jeder Eintragszeile (`is-<bucket>`)
      * zugrunde - eine einzige Zuordnung statt mehrerer, die auseinanderlaufen
-     * koennten. */
+     * koennten. `possible_duplicate` teilt sich den `conflict`-Eimer: beide
+     * sind "etwas stimmt hier nicht, bitte pruefen", nur der Beschriftungs-
+     * und Erklaertext (`projectSyncStatusLabel`/`projectSyncEntryNote`)
+     * unterscheidet sie fuer den Anwender. */
     projectSyncStatusBucket(status) {
       if (status === "new_signal" || status === "new_device") {
         return "new";
@@ -1421,7 +1426,7 @@ function app() {
       if (status === "orphaned") {
         return "orphaned";
       }
-      if (status === "conflict") {
+      if (status === "conflict" || status === "possible_duplicate") {
         return "conflict";
       }
       return "unchanged";
@@ -1507,14 +1512,14 @@ function app() {
       return counts;
     },
 
-    /** Fuer die "Alles aktuell"-Meldung (Review-Fix Important #5): `orphaned`-
-     * und `conflict`-Eintraege sind informativ und werden nie gepatcht
-     * (siehe `SyncPlan.has_changes` in `diff.py`, das genau diese beiden
+    /** Fuer die "Alles aktuell"-Meldung (Review-Fix Important #5): `orphaned`,
+     * `conflict` und `possible_duplicate` sind informativ und werden nie
+     * gepatcht (siehe `SyncPlan.has_changes` in `diff.py`, das genau diese
      * Status bewusst ausklammert), muessen aber trotzdem sichtbar bleiben,
      * auch wenn `has_changes` deshalb `false` ist. */
     projectSyncHasInformationalEntries(entries) {
-      return (entries || []).some(
-        (entry) => entry.status === "orphaned" || entry.status === "conflict",
+      return (entries || []).some((entry) =>
+        ["orphaned", "conflict", "possible_duplicate"].includes(entry.status),
       );
     },
 
@@ -1523,7 +1528,11 @@ function app() {
      * neues Kommando in einem bestehenden Container) auf einen Blick
      * unterscheidbar, ohne dass der Anwender erst den Unterschied der beiden
      * Badge-Texte nachschlagen muss (Nutzerwunsch: sehen, "welche Knoten +
-     * Befehle" neu dazukommen). */
+     * Befehle" neu dazukommen). `possible_duplicate` (Anwenderbericht "zwei
+     * mal onoff drin"): ein bestehender Befehl mit demselben Titel wurde
+     * gefunden, aber unter einem anderen Schluessel - eher ein beschaedigtes
+     * altes Objekt als ein wirklich neues Signal, deshalb keine automatische
+     * Neuanlage. */
     projectSyncEntryNote(entry) {
       if (entry.status === "new_device") {
         return "Neuer virtueller Ein-/Ausgang wird für dieses Gerät angelegt.";
@@ -1536,6 +1545,9 @@ function app() {
       }
       if (entry.status === "conflict") {
         return "Unerwartete Struktur in der Datei.";
+      }
+      if (entry.status === "possible_duplicate") {
+        return "Ein bestehender Befehl trägt bereits diesen Titel, aber unter einem anderen Schlüssel (z. B. durch eine beschädigte Check-/CmdOn-Kennung) – wird nicht automatisch angelegt, um keine Dopplung zu erzeugen. Bitte in Loxone Config manuell prüfen.";
       }
       return "";
     },

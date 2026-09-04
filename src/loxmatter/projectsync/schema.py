@@ -81,12 +81,21 @@ def desired_output_cmd_attrs(command: LoxoneCommand) -> dict[str, str]:
 def new_input_cmd_open_tag(entry: LoxoneInput, iname: str, u: str) -> str:
     """Start-Tag eines frisch angelegten `VirtualUdpInCmd`, auf denselben
     Attributen wie die bereits verifizierte Vorlagendatei (`export.documents.
-    virtual_in_udp_cmd_attributes`), ergaenzt um `Type`/`IName`/`U`/`Nio`/`WF`,
-    die eine Projektdatei zusaetzlich braucht (an der Referenzdatei
-    beobachtet, Entwurf Abschnitt 6)."""
+    virtual_in_udp_cmd_attributes`), ergaenzt um `Type`/`IName`/`V`/`U`/`Nio`/
+    `WF`, die eine Projektdatei zusaetzlich braucht.
+
+    **`V="178"` (Korrektur nach echtem Praxistest, 2026-09-05):** eine
+    frueher fehlende Pflichtangabe - gegen die echte Referenzdatei geprueft,
+    tragen dort ALLE 3710 `<C>`-Objekte ohne Ausnahme ein `V`-Attribut (fast
+    immer `"178"`, nur das `Document`-Wurzelobjekt selbst traegt die volle
+    Loxone-Config-Versionsnummer). Ohne `V` legte `_new_device_edit` zwar den
+    Geraete-Container sichtbar an, dessen Kommando-Kinder blieben in Loxone
+    Config aber leer - der vom Anwender gemeldete Fehler, der zur
+    Ueberpruefung gegen die echte Datei gefuehrt hat."""
     attrs = [
         ("Type", "VirtualUdpInCmd"),
         ("IName", iname),
+        ("V", "178"),
         ("U", u),
         *virtual_in_udp_cmd_attributes(entry),
         ("Nio", "2"),
@@ -97,10 +106,11 @@ def new_input_cmd_open_tag(entry: LoxoneInput, iname: str, u: str) -> str:
 
 def new_output_cmd_open_tag(command: LoxoneCommand, iname: str, u: str) -> str:
     """Wie `new_input_cmd_open_tag`, fuer `VirtualOutCmd` - auf
-    `export.documents.virtual_out_cmd_attributes`."""
+    `export.documents.virtual_out_cmd_attributes`, ebenfalls mit `V="178"`."""
     attrs = [
         ("Type", "VirtualOutCmd"),
         ("IName", iname),
+        ("V", "178"),
         ("U", u),
         *virtual_out_cmd_attributes(command),
         ("Nio", "1"),
@@ -113,10 +123,13 @@ def new_input_container_open_tag(
     device_label: str, bridge_ip: str, port: int, iname: str, u: str
 ) -> str:
     """Start-Tag eines frisch angelegten `VirtualUdpIn`-Geraete-Containers -
-    nur fuer den Experimentell-Pfad (Entwurf Abschnitt 3.4)."""
+    nur fuer den Experimentell-Pfad (Entwurf Abschnitt 3.4). Traegt seit der
+    Korrektur oben ebenfalls `V="178"`, wie jeder andere `<C>`-Knoten in der
+    echten Referenzdatei."""
     attrs = [
         ("Type", "VirtualUdpIn"),
         ("IName", iname),
+        ("V", "178"),
         ("U", u),
         ("Title", f"Matter — {device_label}"),
         ("WF", "16384"),
@@ -131,6 +144,7 @@ def new_output_container_open_tag(device_label: str, base_url: str, iname: str, 
     attrs = [
         ("Type", "VirtualOut"),
         ("IName", iname),
+        ("V", "178"),
         ("U", u),
         ("Title", f"Matter — {device_label}"),
         ("WF", "16384"),
@@ -141,17 +155,32 @@ def new_output_container_open_tag(device_label: str, base_url: str, iname: str, 
     return f"<C {render_attrs(attrs)}>"
 
 
-def new_caption_open_tag(kind: str, iname: str, u: str) -> str:
+def new_caption_open_tag(kind: str, u: str) -> str:
     """Start-Tag eines frisch angelegten `VirtualInCaption`/`VirtualOutCaption`
     - nur, wenn die Projektdatei noch nie einen virtuellen Ein- bzw. Ausgang
     dieser Art hatte (Entwurf Abschnitt 8: Sonderfall der Neuanlage, ebenfalls
-    hinter dem Experimentell-Haken). `IName` folgt dem an der Referenzdatei
-    beobachteten Muster `C<n>` - ein eigener Namensraum, getrennt von den
-    Geraete-Containern (`VUI`/`VQ`) und ihren Kommandos (`VCI`/`VQC`)."""
+    hinter dem Experimentell-Haken).
+
+    **Korrektur nach echtem Praxistest (2026-09-05):** alle vier
+    `VirtualInCaption`/`VirtualOutCaption`-Objekte in der echten
+    Referenzdatei tragen KEIN `IName` (anders als urspruenglich angenommen -
+    das `C<n>`-Namensmuster gehoert zu anderen Objekttypen), dafuer aber
+    `V="178"` und ein festes `Title` (`"Virtuelle Eingänge"`/`"Virtuelle
+    Ausgänge"`, so wie Loxone Config selbst neu angelegte Captions
+    beschriftet) plus `WF="16384"`, wie die Geraete-Container darunter. Kein
+    `iname`-Parameter mehr - eine Caption braucht keinen."""
     if kind not in ("input", "output"):
         raise ValueError(f"Unbekannte Art {kind!r} - erwartet 'input' oder 'output'.")
     type_name = "VirtualInCaption" if kind == "input" else "VirtualOutCaption"
-    return f"<C {render_attrs([('Type', type_name), ('IName', iname), ('U', u)])}>"
+    title = "Virtuelle Eingänge" if kind == "input" else "Virtuelle Ausgänge"
+    attrs = [
+        ("Type", type_name),
+        ("V", "178"),
+        ("U", u),
+        ("Title", title),
+        ("WF", "16384"),
+    ]
+    return f"<C {render_attrs(attrs)}>"
 
 
 def sibling_iodata_attrs(text: str, element: Element) -> dict[str, str] | None:
