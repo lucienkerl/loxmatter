@@ -404,6 +404,57 @@ async def test_a_dataset_from_the_request_wins_over_the_border_router(api, fake_
     assert fake_otbr.calls == 0
 
 
+async def test_a_hand_entered_dataset_that_is_no_dataset_yields_422(api):
+    """Der vom Border Router geholte Datensatz laeuft durch dieselbe Pruefung
+    (`otbr._validated`), der von Hand eingetragene lief bisher ungeprueft
+    durch. Wer ihn als JSON-Struktur oder mit Zeilenumbruechen einfuegt,
+    loeste bei matter-server ein `bytes.fromhex`-Scheitern aus - das kommt
+    als `FailedCommand` zurueck, nicht als `MatterUnavailableError`, und
+    landete damit als 500 "Internal Server Error" in der Oberflaeche."""
+    client, _, _, fake_client = api
+
+    response = await client.post(
+        "/api/devices/commission",
+        json={"code": "MT:ABC123", "thread_dataset": '{"NetworkKey": "cafebabe"}'},
+    )
+
+    assert response.status_code == 422
+    # Und zwar VOR dem Einlernen: ein verbrauchter Pairing-Code waere ein
+    # teurer Preis fuer einen Tippfehler im Eingabefeld.
+    assert fake_client.datasets == []
+    assert fake_client.commissioned == []
+
+
+async def test_the_rejected_dataset_never_appears_in_the_message(api):
+    """Der Datensatz enthaelt den Netzwerkschluessel des Thread-Netzes - er
+    gehoert weder in ein Log noch in eine Fehlermeldung (siehe
+    `matter/otbr.py`)."""
+    client, _, _, _ = api
+
+    response = await client.post(
+        "/api/devices/commission",
+        json={"code": "MT:ABC123", "thread_dataset": '{"NetworkKey": "cafebabe"}'},
+    )
+
+    detail = response.json()["detail"]
+    assert "cafebabe" not in detail
+    assert "NetworkKey" not in detail
+
+
+async def test_a_hand_entered_dataset_may_carry_a_trailing_newline(api):
+    """Ein aus dem Terminal kopierter Datensatz bringt fast immer einen
+    Zeilenumbruch mit. `_validated` schneidet ihn ab, statt ihn abzulehnen -
+    matter-server bekommt den bereinigten Datensatz."""
+    client, _, _, fake_client = api
+
+    response = await client.post(
+        "/api/devices/commission", json={"code": "MT:ABC123", "thread_dataset": "0e08AAAA\n"}
+    )
+
+    assert response.status_code == 201
+    assert fake_client.datasets == ["0e08AAAA"]
+
+
 async def test_a_server_that_already_has_the_credentials_is_left_alone(api, fake_otbr):
     client, _, _, fake_client = api
     fake_client.thread_dataset_set = True

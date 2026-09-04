@@ -86,7 +86,11 @@ from loxmatter.api.models import (
 from loxmatter.export.commands import extract_commands
 from loxmatter.export.signals import to_inputs
 from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
-from loxmatter.matter.otbr import ThreadDatasetUnavailableError, fetch_active_dataset
+from loxmatter.matter.otbr import (
+    ThreadDatasetUnavailableError,
+    _validated,
+    fetch_active_dataset,
+)
 from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDeviceError
 from loxmatter.profiles.table import Exportability, is_exportable
 
@@ -97,6 +101,12 @@ logger = logging.getLogger(__name__)
 # durch eine Quelle ohne Netzwerk ersetzen kann - dasselbe Seam-Muster wie
 # `session_factory` in `matter/client.py`.
 ThreadDatasetSource = Callable[[], Awaitable[str]]
+
+# Woher der gepruefte Datensatz kam - `_validated` stellt diese Angabe seinen
+# Meldungen voran. Der geholte nennt dort die URL des Border Routers, der von
+# Hand eingetragene diese Zeile; sie landet ausschliesslich im Log, nie in der
+# Antwort (siehe `commission_device`).
+_MANUAL_DATASET_ORIGIN = "Das Eingabefeld"
 
 # Warum ein Signal nicht exportierbar ist (Spec 6.6) - nur fuer die beiden
 # Faelle, die `Exportability` von ANALOG/DIGITAL unterscheidet. `NONE` deckt
@@ -307,8 +317,41 @@ def build_device_router(
             # Ein von Hand eingetragener Datensatz sticht den vom Host: er
             # ist der Weg fuer ein Thread-Netz, das nicht von diesem Border
             # Router kommt.
+            #
+            # Geprueft wird er auf demselben Weg wie der geholte - `_validated`
+            # aus `matter/otbr.py`, absichtlich dieselbe Funktion und keine
+            # zweite Nachbildung derselben Regel (deshalb der Import eines
+            # modul-privaten Namens). Ungeprueft durchgereicht loeste ein mit
+            # Zeilenumbruch oder als JSON-Struktur eingefuegter Datensatz bei
+            # matter-server ein `bytes.fromhex`-Scheitern aus, das als
+            # `FailedCommand` zurueckkommt - keine `MatterUnavailableError`,
+            # also 500 "Internal Server Error", die nichtssagendste aller
+            # Antworten.
             try:
-                await active_client.set_thread_dataset(request.thread_dataset)
+                dataset = _validated(request.thread_dataset, _MANUAL_DATASET_ORIGIN)
+            except ThreadDatasetUnavailableError as exc:
+                # 422 wie beim abgelehnten Pairing-Code: die Anfrage ist
+                # wohlgeformt, ihr Inhalt aber nicht verwendbar. Der Grund
+                # steht in der Antwort, der Datensatz selbst NICHT - er
+                # enthaelt den Netzwerkschluessel des Thread-Netzes (siehe
+                # `matter/otbr.py`). Auch `str(exc)` bleibt draussen: seine
+                # Formulierung fragt nach dem Border Router, und der hat mit
+                # einem Eingabefeld nichts zu tun. Ins Log darf er, dort
+                # nennt er die Laenge.
+                logger.warning("Eingetragener Thread-Datensatz abgelehnt: %s", exc)
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "Der eingetragene Thread-Datensatz ist keiner. Erwartet wird das "
+                        "Hex-TLV des aktiven Datensatzes - eine einzige Zeile aus 0-9 und "
+                        "a-f, so wie `ot-ctl dataset active -x` sie ausgibt. Eine "
+                        "JSON-Struktur, Anfuehrungszeichen oder Text darin gehoeren nicht "
+                        "hinein. Der Wert selbst steht bewusst nicht in dieser Meldung: "
+                        "er enthaelt den Netzwerkschluessel des Thread-Netzes."
+                    ),
+                ) from exc
+            try:
+                await active_client.set_thread_dataset(dataset)
             except MatterUnavailableError as exc:
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
         elif not active_client.thread_dataset_set:
