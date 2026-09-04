@@ -478,3 +478,20 @@ async def test_the_new_node_is_followed_only_after_it_is_registered(api):
     assert fake_client.order == ["commission", "follow"]
     new_device_id = response.json()["id"]
     assert fake_client.followed_resolved == [new_device_id]
+
+
+async def test_the_route_forces_the_seeding_of_the_new_node(api):
+    """Die Route zieht nach, NACHDEM die Dispatch-Schleife dasselbe schon
+    getan hat: matter-server meldet `NODE_ADDED` bereits waehrend
+    `commission_with_code` laeuft, und der Dispatch-Task abonniert dabei
+    jeden Pfad des neuen Node. Der Nachzug der Route findet deshalb einen
+    leeren Diff vor - ohne `seed_even_without_new_paths` endet er vor dem
+    Handler, und die Startwerte des Geraets wuerden nie gesaet (siehe
+    `BridgeMatterClient.follow_node` und
+    `test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_first`
+    in tests/matter/test_client.py)."""
+    client, _, _, fake_client = api
+
+    await client.post("/api/devices/commission", json={"code": "MT:X"})
+
+    assert fake_client.followed_forced == [True]

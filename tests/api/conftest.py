@@ -215,6 +215,13 @@ class FakeMatterClient:
         # setzt ihn; ohne ihn zeichnet `follow_node` nur den Aufruf auf.
         self.store: Store | None = None
         self.followed_resolved: list[int | None] = []
+        # Ob der jeweilige Aufruf das Saeen erzwungen hat
+        # (`seed_even_without_new_paths`). Fuer die Route ist das kein
+        # Beiwerk: zu dem Zeitpunkt, an dem sie nachzieht, hat die
+        # Dispatch-Schleife die Pfade des neuen Node laengst abonniert - ohne
+        # den Schalter faende sie einen leeren Diff und saete nie (siehe
+        # `BridgeMatterClient.follow_node`).
+        self.followed_forced: list[bool] = []
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
         if self.fail_commission_with is not None:
@@ -242,8 +249,9 @@ class FakeMatterClient:
         self.order.append("dataset")
         self.thread_dataset_set = True
 
-    async def follow_node(self, node_id: int) -> None:
+    async def follow_node(self, node_id: int, *, seed_even_without_new_paths: bool = False) -> None:
         self.followed.append(node_id)
+        self.followed_forced.append(seed_even_without_new_paths)
         self.order.append("follow")
         # Der eigentliche Nachweis: das echte
         # `BridgeMatterClient.follow_node` loest die Node-ID ueber den Store

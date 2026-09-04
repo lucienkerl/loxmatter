@@ -772,9 +772,13 @@ async def test_follow_node_hands_the_snapshot_to_the_handler():
 
 async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node():
     """Die Abonnements entstehen trotzdem - nur der Handler bleibt aussen
-    vor, weil es kein Geraet gibt, dem die Werte gehoerten. Sobald die
-    Einlern-Route das Geraet registriert und erneut nachzieht, greift der
-    Handler-Zweig."""
+    vor, weil es kein Geraet gibt, dem die Werte gehoerten.
+
+    Dass das Saeen danach noch nachgeholt wird, belegt NICHT dieser Test,
+    sondern `test_the_commissioning_route_still_seeds_after_the_dispatch_
+    loop_was_first` weiter unten: ein blosses zweites `follow_node` faende
+    keinen einzigen neuen Pfad mehr und kaeme gar nicht bis zum Handler -
+    genau dafuer gibt es `seed_even_without_new_paths`."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
@@ -784,6 +788,64 @@ async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node
     await bridge.follow_node(8)
 
     assert "attribute_updated/8/1/6/0" in _attribute_subscriptions(upstream)
+    assert handler.snapshot_calls == []
+
+
+async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_first():
+    """Der Ablauf eines echten Einlernens, in seiner tatsaechlichen
+    Reihenfolge (belegt gegen die installierte python-matter-server):
+
+    1. Die Einlern-Route wartet noch auf `commission_with_code`.
+    2. matter-server schickt `NODE_ADDED` ueber denselben Websocket, bevor
+       das Kommando-Ergebnis kommt - der Node samt aller Attribute steht
+       damit bereits im Cache des Upstream.
+    3. Die Dispatch-Schleife zieht nach und abonniert JEDEN Pfad des Node.
+       Der Store kennt ihn noch nicht, `resolve_device_id` liefert `None`,
+       der Handler bleibt aussen vor.
+    4. Die Route kehrt zurueck, registriert das Geraet - und findet beim
+       Nachziehen einen leeren Diff vor.
+
+    Ohne `seed_even_without_new_paths` endet Schritt 4 vor dem Handler, und
+    das Saeen findet nie statt: matter-server unterdrueckt unveraenderte
+    Werte, also bliebe jeder statische Pfad (Spannung ohne Last,
+    Batteriestand, der Aus-Zustand einer Steckdose) bis zu seiner ersten
+    Aenderung ein Strich - bei manchen fuer immer."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+    # Steht fuer `Store.device_id_for_node`: kennt den neuen Node erst,
+    # nachdem `register_device` gelaufen ist - also erst in Schritt 4.
+    known: dict[int, int] = {}
+    await bridge.subscribe(known.get, handler)
+
+    new_node = FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": False})
+    upstream.add_node(new_node)
+    upstream.emit(EventType.NODE_ADDED, new_node, node_id=8)
+    await _settle()
+
+    assert "attribute_updated/8/1/6/0" in _attribute_subscriptions(upstream)
+    assert handler.snapshot_calls == []
+
+    known[8] = 42
+    await bridge.follow_node(8, seed_even_without_new_paths=True)
+
+    assert [(device_id, snap.node_id) for device_id, snap in handler.snapshot_calls] == [(42, 8)]
+    assert handler.snapshot_calls[0][1].attributes == {"0/40/1": "IKEA of Sweden", "1/6/0": False}
+
+
+async def test_forced_seeding_still_invents_no_device_id():
+    """Geforct wird das Saeen, nicht das Erfinden einer device_id: kennt der
+    Store den Node nicht, bleibt der Handler auch mit dem Schalter aussen
+    vor - eine Signalzeile unter einer ausgedachten device_id waere in
+    Loxone eine falsch verdrahtete Zeile, kein fehlender Wert."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda _node_id: None, handler)
+
+    upstream.add_node(FakeNode(8, {"1/6/0": True}))
+    await bridge.follow_node(8, seed_even_without_new_paths=True)
+
     assert handler.snapshot_calls == []
 
 

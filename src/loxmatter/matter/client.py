@@ -65,8 +65,12 @@ Dispatch-Schleife bei `NODE_ADDED`/`NODE_UPDATED` und zusätzlich von der
 Einlern-Route. Das „zusätzlich" ist nicht Gürtel-und-Hosenträger: das
 `NODE_ADDED` eines gerade eingelernten Geräts kommt nachweislich, BEVOR
 `commission_with_code` zurückkehrt und der Store dem Node eine device_id
-geben kann — die Meldung wird deshalb verworfen, und eine zweite folgt
-für ein ruhig im Netz stehendes Gerät nicht. Siehe
+geben kann — die Werte dieser Meldung gehen deshalb ins Leere, und eine
+zweite folgt für ein ruhig im Netz stehendes Gerät nicht. Der Dispatch-Task
+hat zu diesem Zeitpunkt aber bereits jeden Pfad abonniert; der Nachzug der
+Route findet also einen leeren Diff vor und säet nur deshalb trotzdem, weil
+sie ihn mit `seed_even_without_new_paths=True` anfordert (die ganze
+Begründung steht bei `follow_node`). Siehe
 docs/superpowers/specs/2026-09-04-live-werte-neuer-geraete-design.md.
 
 commission_with_code()/remove_node()/set_thread_dataset() — belegt gegen die
@@ -638,29 +642,58 @@ class BridgeMatterClient:
             self._dispatch_loop(queue, resolve_device_id, handler)
         )
 
-    async def follow_node(self, node_id: int) -> None:
+    async def follow_node(self, node_id: int, *, seed_even_without_new_paths: bool = False) -> None:
         """Zieht die Attribut-Abonnements eines Node nach.
 
         Zwei Aufrufer, ein Vorgang: die Einlern-Route (`api/devices.py`) nach
-        dem Registrieren eines neuen Geraets, und `_dispatch_loop` bei
-        `NODE_ADDED`/`NODE_UPDATED` fuer ein Geraet, das nachtraeglich neue
+        dem Registrieren eines neuen Geräts, und `_dispatch_loop` bei
+        `NODE_ADDED`/`NODE_UPDATED` für ein Gerät, das nachträglich neue
         Pfade meldet.
 
         **Warum die Route nicht einfach auf das Ereignis warten kann:**
-        matter-server meldet `NODE_ADDED` noch WAEHREND `commission_with_code`
-        laeuft (`device_controller._setup_node` signalisiert es vor der
-        Rueckkehr des Aufrufs). Zu diesem Zeitpunkt kennt der Store den Node
-        noch nicht, `resolve_device_id` liefert `None`, und fuer ein ruhig im
-        Netz stehendes Geraet folgt keine zweite Meldung. Am 2026-09-04 am
+        matter-server meldet `NODE_ADDED` noch WÄHREND `commission_with_code`
+        läuft (`device_controller._setup_node` signalisiert es vor der
+        Rückkehr des Aufrufs). Zu diesem Zeitpunkt kennt der Store den Node
+        noch nicht, `resolve_device_id` liefert `None`, und für ein ruhig im
+        Netz stehendes Gerät folgt keine zweite Meldung. Am 2026-09-04 am
         laufenden Stack aufgezeichnet: Node 8 war um 11:15:33 fertig
         eingelernt, samt "Subscription succeeded" - alles davon vor der
-        Rueckkehr an die Route.
+        Rückkehr an die Route.
 
         Der leere Diff ist der Regelfall und kostet nichts: `NODE_UPDATED`
         feuert auch bei jedem Wechsel der Erreichbarkeit und nach jeder
-        Re-Subscription, und fuer ein Geraet ohne neue Pfade endet der
-        Vorgang hier, bevor der Handler (und damit der Store) ueberhaupt
-        angefasst wird.
+        Re-Subscription, und für ein Gerät ohne neue Pfade endet der Vorgang
+        vor dem Handler (und damit vor dem Store).
+
+        **`seed_even_without_new_paths` überspringt genau diesen frühen
+        Ausstieg** — und ohne den Schalter fände das Säen eines frisch
+        eingelernten Geräts nie statt. Der Ablauf, der das erzwingt:
+
+        1. Die Route wartet noch auf `commission_with_code`.
+        2. matter-server schickt `NODE_ADDED` über denselben Websocket, BEVOR
+           das Kommando-Ergebnis kommt; `MatterClient._handle_event_message`
+           legt den Node samt vollständiger `attributes` in seinen Cache und
+           ruft erst danach die Rückrufe auf.
+        3. Der Dispatch-Task läuft, während die Route noch wartet: sein
+           `follow_node` findet den Node im Cache und abonniert ALLE seine
+           Pfade. `resolve_device_id` liefert `None` (der Store kennt den
+           Node noch nicht), der Handler bleibt also außen vor.
+        4. Die Route kehrt zurück, registriert das Gerät und zieht nach —
+           jetzt ist der Diff leer, `added == 0`, und der frühe Ausstieg
+           käme vor `resolve_device_id`.
+
+        Für den Aufruf aus der Route gilt der Zweck des frühen Ausstiegs
+        (keine Store-Schreiblast durch die häufigen `NODE_UPDATED`) nicht: er
+        geschieht einmal pro Einlernen, und das Säen ist dort der eigentliche
+        Sinn des Aufrufs. Ohne es zeigt ein frisch eingelerntes Gerät für
+        jeden statischen Pfad — Spannung ohne Last, Batteriestand, der
+        Aus-Zustand einer Steckdose — weiterhin einen Strich, bis der Wert
+        sich zum ersten Mal ändert; bei manchen nie, weil matter-server
+        unveränderte Werte unterdrückt.
+
+        Geforct wird dabei das Säen, nicht das Erfinden einer device_id:
+        kennt der Store den Node nicht, bleibt der Handler auch mit dem
+        Schalter außen vor.
 
         Vor `subscribe()` aufgerufen tut die Methode nichts, statt zu werfen:
         die Einlern-Route ruft sie bedingungslos, und ein Aufbau ohne
@@ -684,14 +717,17 @@ class BridgeMatterClient:
             return
 
         attributes = node.node_data.attributes
-        if self._subscribe_attribute_paths(upstream, queue, node_id, attributes) == 0:
+        added = self._subscribe_attribute_paths(upstream, queue, node_id, attributes)
+        if added == 0 and not seed_even_without_new_paths:
             return
 
         device_id = resolve_device_id(node_id)
         if device_id is None:
             # Die Abonnements bleiben bestehen: sobald die Einlern-Route das
-            # Geraet registriert und erneut nachzieht, greift der Zweig unten.
-            logger.debug("Node %s ist keinem Geraet zugeordnet - nur abonniert", node_id)
+            # Gerät registriert und mit `seed_even_without_new_paths` erneut
+            # nachzieht, greift der Zweig unten — dann ist der Diff leer, und
+            # nur der Schalter führt überhaupt noch bis hierher.
+            logger.debug("Node %s ist keinem Gerät zugeordnet - nur abonniert", node_id)
             return
 
         await handler.on_node_snapshot(

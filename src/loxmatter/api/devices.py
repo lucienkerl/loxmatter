@@ -379,7 +379,18 @@ def build_device_router(
         # Attribut-Abonnements fuer dieses Geraet an und saeet seine Werte,
         # damit die Signale sofort Zahlen zeigen statt Striche - frueher
         # brauchte es dafuer einen Neustart der Bruecke.
-        await active_client.follow_node(snapshot.node_id)
+        #
+        # `seed_even_without_new_paths`, weil die Abonnements zu diesem
+        # Zeitpunkt in aller Regel schon stehen: derselbe `NODE_ADDED`-Lauf,
+        # der oben die Erreichbarkeit verloren hat, hat die
+        # Dispatch-Schleife von `BridgeMatterClient` bereits jeden Pfad
+        # dieses Node abonnieren lassen - nur eben ohne device_id, also ohne
+        # zu saeen. Ohne den Schalter faende dieser Aufruf hier einen leeren
+        # Diff vor und kehrte um, bevor er saet; die Startwerte kaemen dann
+        # nie an, und ein statischer Pfad (Spannung ohne Last, Batteriestand,
+        # der Aus-Zustand einer Steckdose) bliebe ein Strich, weil
+        # matter-server unveraenderte Werte unterdrueckt.
+        await active_client.follow_node(snapshot.node_id, seed_even_without_new_paths=True)
         return _device_out(store.device(device_id), store, runtime)
 
     @router.delete("/devices/{device_id}", status_code=204)
