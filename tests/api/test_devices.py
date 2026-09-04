@@ -381,8 +381,10 @@ async def test_a_missing_thread_dataset_is_fetched_from_the_border_router(api, f
     assert response.status_code == 201
     assert fake_client.datasets == [fake_otbr.dataset]
     # Reihenfolge, nicht nur Vorkommen: nach dem Einlernen gesetzt waere der
-    # Datensatz fuer genau dieses Geraet zu spaet.
-    assert fake_client.order == ["dataset", "commission"]
+    # Datensatz fuer genau dieses Geraet zu spaet. "follow" kommt zuletzt
+    # dazu (Task 4): das Nachziehen der Abonnements setzt die bereits
+    # vergebene device_id voraus.
+    assert fake_client.order == ["dataset", "commission", "follow"]
 
 
 async def test_a_dataset_from_the_request_wins_over_the_border_router(api, fake_otbr):
@@ -442,3 +444,30 @@ async def test_a_failure_without_thread_credentials_names_the_likely_cause(api, 
     assert "Commission with code failed for node 7." in detail
     assert "Thread" in detail
     assert "kein Border Router erreichbar" in detail
+
+
+async def test_commissioning_follows_the_new_node(api):
+    """Ohne diesen Aufruf haette das frisch eingelernte Geraet kein einziges
+    Attribut-Abonnement: `subscribe()` lief einmal beim Start der Bruecke,
+    und das `NODE_ADDED` zu diesem Geraet kam nachweislich schon, bevor der
+    Store ihm eine device_id geben konnte."""
+    client, store, _, fake_client = api
+
+    new_device = (await client.post("/api/devices/commission", json={"code": "MT:X"})).json()
+
+    assert fake_client.followed == [store.device(new_device["id"]).node_id]
+
+
+async def test_the_new_node_is_followed_only_after_it_is_registered(api):
+    """Die Reihenfolge ist der ganze Grund fuer diesen Aufruf: wuerde die
+    Route frueher nachziehen, liefe `resolve_device_id` erneut ins Leere -
+    genau das Wettrennen, das `NODE_ADDED` schon verloren hat."""
+    client, _, _, fake_client = api
+    # Der Thread-Datensatz ist hier nicht das Thema dieses Tests (siehe
+    # test_a_missing_thread_dataset_is_fetched_from_the_border_router dafuer)
+    # - ohne diese Zeile stuende zusaetzlich "dataset" am Anfang der Liste.
+    fake_client.thread_dataset_set = True
+
+    await client.post("/api/devices/commission", json={"code": "MT:X"})
+
+    assert fake_client.order == ["commission", "follow"]

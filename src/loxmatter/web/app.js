@@ -1020,20 +1020,17 @@ function app() {
         // dieses Nachladen zeigte sie "Signale werden geladen…" dauerhaft,
         // bis irgendwann die Ansicht neu betreten wuerde.
         await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);
-        // Der Satz zur Subscription ist kein Schmuck (Review-Fix Fix 3,
-        // 2026-09-03, siehe Spec 12.3): `BridgeMatterClient.subscribe()`
-        // laeuft genau einmal beim Start der Bruecke und meldet nur die
-        // damals bekannten (Node, Pfad)-Paare an. Ein gerade eingelerntes
-        // Geraet geht ueber das NODE_ADDED-Ereignis sofort auf "online"
-        // und erscheint gruen - bekommt aber bis zum naechsten Neustart
-        // keinen einzigen Attributwert. Ohne diesen Hinweis sieht der
-        // Anwender ein gruenes Geraet, dessen Signale alle auf "-" stehen,
-        // und sucht den Fehler bei sich.
+        // Der frühere Satz "Live-Werte erst nach einem Neustart der Brücke"
+        // ist entfallen, weil die Grenze entfallen ist: die Einlern-Route
+        // ruft `follow_node` auf, das die Attribut-Abonnements dieses Geräts
+        // anlegt und seine Werte säet (Entwurf vom 2026-09-04). Einen Hinweis
+        // braucht es hier trotzdem, nur einen anderen: dass die Werte im
+        // Miniserver erst nach dem Export und dem Import in Loxone Config
+        // ankommen, denn bis dahin gibt es dort keinen virtuellen Eingang.
         this.commissionMessage =
-          `${device.label} wurde eingelernt. Live-Werte erscheinen erst nach einem ` +
-          "Neustart der Brücke – bis dahin zeigt das Gerät zwar „online“, aber jedes " +
-          "Signal „-“ (bekannte Grenze, Spec 12.3). Der Export der Vorlagen " +
-          "funktioniert davon unabhängig schon jetzt.";
+          `${device.label} wurde eingelernt und liefert ab sofort Live-Werte – ohne ` +
+          "Neustart der Brücke. Im Miniserver kommen sie an, sobald Sie die Vorlagen " +
+          "exportiert und in Loxone Config importiert haben.";
         this.commissionMessageIsError = false;
         this.commissionCode = "";
         this.commissionThreadDataset = "";

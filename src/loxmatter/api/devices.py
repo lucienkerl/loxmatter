@@ -371,6 +371,15 @@ def build_device_router(
         # Bruecke - obwohl matter-server es laengst interviewt und eine
         # Subscription darauf aufgebaut hatte.
         await runtime.set_online(device_id, snapshot.available)
+
+        # Erst jetzt, nach `register_device`: `follow_node` loest die Node-ID
+        # ueber den Store auf, und vorher gaebe es dort nichts aufzuloesen -
+        # dasselbe Wettrennen, das `NODE_ADDED` bereits verloren hat (siehe
+        # den Kommentar oben und den Docstring von `follow_node`). Legt die
+        # Attribut-Abonnements fuer dieses Geraet an und saeet seine Werte,
+        # damit die Signale sofort Zahlen zeigen statt Striche - frueher
+        # brauchte es dafuer einen Neustart der Bruecke.
+        await active_client.follow_node(snapshot.node_id)
         return _device_out(store.device(device_id), store, runtime)
 
     @router.delete("/devices/{device_id}", status_code=204)

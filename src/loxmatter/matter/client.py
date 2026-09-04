@@ -58,13 +58,16 @@ schließt `node_id`/`path` als Closure ein. Node-Events und
 Erreichbarkeit laufen dagegen über je eine einzige Wildcard-Subscription,
 weil ihre `data` bereits alles Nötige trägt.
 
-Bekannte Grenze: Attribute eines Geräts, das ERST NACH diesem Aufruf neu
-kommissioniert wird oder nachträglich neue Attributpfade meldet, werden
-nicht automatisch mit abonniert — es gibt (noch) keinen erneuten
-Subscription-Abgleich bei `NODE_ADDED`. Für die anvisierte Nutzung (`connect()`
-liest den vollen Node-Cache, danach einmalig `subscribe()`) ist das
-hinnehmbar, gehört aber in die Spec als offener Punkt, nicht in ein
-stilles Vergessen — siehe Task-8-Report.
+Was nach `subscribe()` dazukommt, holt `follow_node()` nach — ein Geraet,
+das erst danach eingelernt wird, ebenso wie ein bekanntes Geraet, das
+nachtraeglich neue Attributpfade meldet. Angestossen wird es aus der
+Dispatch-Schleife bei `NODE_ADDED`/`NODE_UPDATED` und zusaetzlich von der
+Einlern-Route. Das „zusaetzlich" ist nicht Guertel-und-Hosentraeger: das
+`NODE_ADDED` eines gerade eingelernten Geraets kommt nachweislich, BEVOR
+`commission_with_code` zurueckkehrt und der Store dem Node eine device_id
+geben kann — die Meldung wird deshalb verworfen, und eine zweite folgt
+fuer ein ruhig im Netz stehendes Geraet nicht. Siehe
+docs/superpowers/specs/2026-09-04-live-werte-neuer-geraete-design.md.
 
 commission_with_code()/remove_node()/set_thread_dataset() — belegt gegen die
 installierte python-matter-server==8.1.2 (Task 1, Phase 5):

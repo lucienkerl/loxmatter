@@ -207,6 +207,9 @@ class FakeMatterClient:
         # Die Reihenfolge der Aufrufe: der Datensatz muss VOR dem Einlernen
         # gesetzt sein, sonst kommt er fuer dieses Geraet zu spaet.
         self.order: list[str] = []
+        # Die Node-IDs, fuer die die Route das Nachziehen der Abonnements
+        # angestossen hat (`BridgeMatterClient.follow_node`).
+        self.followed: list[int] = []
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
         if self.fail_commission_with is not None:
@@ -233,6 +236,10 @@ class FakeMatterClient:
         self.datasets.append(dataset)
         self.order.append("dataset")
         self.thread_dataset_set = True
+
+    async def follow_node(self, node_id: int) -> None:
+        self.followed.append(node_id)
+        self.order.append("follow")
 
 
 @pytest.fixture
