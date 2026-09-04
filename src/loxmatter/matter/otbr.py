@@ -113,6 +113,14 @@ def _default_session_factory() -> Any:
 
 
 def _validated(body: str, url: str) -> str:
+    """Prueft eine Antwort auf die Gestalt eines Thread-Datensatzes.
+
+    Zwei Aufrufer: `fetch_active_dataset` unten mit der Antwort des Border
+    Routers, und `api/devices.py` mit dem von Hand eingetragenen Datensatz -
+    absichtlich dieselbe Funktion, damit es die Regel nur einmal gibt.
+    `url` ist deshalb nur die HERKUNFT fuer die Meldung, nicht zwingend eine
+    Adresse; die Route dort schreibt ihre Meldung ohnehin selbst.
+    """
     dataset = body.strip()
     if not dataset:
         raise ThreadDatasetUnavailableError(
@@ -148,8 +156,6 @@ async def fetch_active_dataset(
             async with session.get(url, headers=dict(_PLAIN_TEXT)) as response:
                 status = response.status
                 body = await response.text()
-        except ThreadDatasetUnavailableError:
-            raise
         except Exception as exc:
             # `Exception` und nicht nur `aiohttp.ClientError`: dieses Modul
             # importiert aiohttp bewusst nicht selbst (siehe
