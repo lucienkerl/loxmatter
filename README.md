@@ -317,6 +317,29 @@ Ein lauffähiges Beispiel steht in
 `deploy/testhost/README.md` führt `LOXMATTER_API_TOKEN` unter den Variablen
 auf, die beim Einrichten optional gesetzt werden können.
 
+### Sprache: Englisch oder Deutsch
+
+Die Oberfläche liegt standardmäßig auf Englisch, lässt sich aber jederzeit
+auf Deutsch umstellen — dieselbe, gemeinsame Einstellung gilt für CLI, WebUI
+und die Texte in neu erzeugten Export-Vorlagen gleichermaßen:
+
+- **In der Weboberfläche:** Tab „Einstellungen" → zwei Knöpfe EN/DE; die
+  Seite lädt sich danach automatisch neu.
+- **Per CLI:** `uv run loxmatter set-language de` (bzw. `en`) — verlangt wie
+  `set-password` eine bereits vorhandene Datenbank und bricht sonst mit einem
+  klaren Fehler ab; dieselbe Einschränkung bei einer containerisierten
+  Installation gilt entsprechend, siehe [Zugangsschutz](#zugangsschutz)
+  oben.
+- **Für einen einzelnen Aufruf, ohne die gespeicherte Einstellung zu
+  ändern:** die Umgebungsvariable `LOXMATTER_LANG` (z. B. `LOXMATTER_LANG=de
+  uv run loxmatter run --miniserver 192.168.1.10`) — hat Vorrang vor der
+  gespeicherten Einstellung, nur für diesen einen Prozess.
+
+**Achtung:** ein Sprachwechsel wirkt sich nur auf **neu** erzeugte
+Export-Vorlagen aus — dieselbe Eigenschaft wie beim Update-Hinweis zur
+Signalauswahl oben. Eine bereits in Loxone Config importierte Vorlage bleibt
+unverändert in der Sprache, in der sie ursprünglich exportiert wurde.
+
 ## Lizenz
 
 **GNU General Public License, Version 3 oder später** — der vollständige Text
