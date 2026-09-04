@@ -39,6 +39,7 @@ import anyio
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from loxmatter import i18n
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password, verify_password
 from loxmatter.auth.sessions import (
     SESSION_COOKIE,
@@ -92,24 +93,16 @@ class StatusOut(BaseModel):
 _PASSWORD_HASH_LIMITER = anyio.CapacityLimiter(4)
 
 
-# Der 409-Text von `/auth/setup` unten - eigene Konstante statt inline, weil
-# `README.md` und der Release-Hinweis denselben Weg beschreiben und alle drei
-# Stellen nicht auseinanderlaufen sollen. Der Container-Weg zuerst: das
-# Referenz-Deployment (`deploy/testhost/docker-compose.yml`) legt die
-# Datenbank in einem benannten Docker-Volume ab, das nur INNERHALB des
-# Containers unter `LOXMATTER_STORE` erreichbar ist - `uv run loxmatter
-# set-password` auf dem Host trifft dort mangels dieser Umgebungsvariable
-# eine andere, neu angelegte Datei und meldet fälschlich Erfolg, ohne die
-# Bruecke tatsaechlich zu entsperren (Notausgang-Fund, 2026-09-03).
-_ALREADY_SET_UP_DETAIL = (
-    "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung "
-    "ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-"
-    "Deployment setzt `docker compose exec loxmatter loxmatter set-password` "
-    "es neu; bei einer Installation aus dem Quellcode `uv run loxmatter "
-    "set-password`."
-)
-
-
+# Der 409-Text in `api.auth.fail_already_set_up` (`i18n/strings.yaml`) nennt
+# bewusst BEIDE Wiederherstellungswege, nicht nur einen: das Referenz-
+# Deployment (`deploy/testhost/docker-compose.yml`) legt die Datenbank in
+# einem benannten Docker-Volume ab, das nur INNERHALB des Containers unter
+# `LOXMATTER_STORE` erreichbar ist - `uv run loxmatter set-password` auf dem
+# Host trifft dort mangels dieser Umgebungsvariable eine andere, neu
+# angelegte Datei und meldet fälschlich Erfolg, ohne die Bruecke
+# tatsaechlich zu entsperren (Notausgang-Fund, 2026-09-03). README.md und
+# der Release-Hinweis beschreiben denselben Weg und sollen mit diesem Text
+# nicht auseinanderlaufen.
 def build_auth_router(store: Store) -> APIRouter:
     router = APIRouter()
     # Eine Instanz je App, nicht je Anfrage - sonst zaehlte sie nichts.
@@ -117,12 +110,13 @@ def build_auth_router(store: Store) -> APIRouter:
 
     def _require_length(password: str) -> None:
         """Eigene Pruefung statt `Field(min_length=...)` am Modell: die
-        Meldung landet in der Oberflaeche und soll dort auf Deutsch stehen
-        und sagen, was zu tun ist - nicht als pydantic-Fehlerliste."""
+        Meldung landet in der Oberflaeche und soll dort in der eingestellten
+        Sprache stehen und sagen, was zu tun ist - nicht als pydantic-
+        Fehlerliste."""
         if len(password) < MIN_PASSWORD_LENGTH:
             raise HTTPException(
                 status_code=422,
-                detail=(f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben."),
+                detail=i18n.t("api.auth.fail_password_too_short", min_length=MIN_PASSWORD_LENGTH),
             )
 
     def _client_id(request: Request) -> str:
@@ -217,7 +211,7 @@ def build_auth_router(store: Store) -> APIRouter:
         if wait:
             raise HTTPException(
                 status_code=429,
-                detail=f"Zu viele Fehlversuche – in {wait} Sekunden wieder möglich.",
+                detail=i18n.t("api.auth.fail_too_many_attempts", wait=wait),
             )
         _require_length(body.password)
         if store.auth.password_hash() is not None:
@@ -232,7 +226,7 @@ def build_auth_router(store: Store) -> APIRouter:
             # "Passwort vergeben" klickt, damit auch aus dem LOGIN aus -
             # ohne dass er je ein falsches Passwort eingegeben haette. Die
             # Drosselungs-*Pruefung* oben bleibt unveraendert bestehen.
-            raise HTTPException(status_code=409, detail=_ALREADY_SET_UP_DETAIL)
+            raise HTTPException(status_code=409, detail=i18n.t("api.auth.fail_already_set_up"))
         throttle.record_failure(client)
         hashed = await anyio.to_thread.run_sync(
             hash_password, body.password, limiter=_PASSWORD_HASH_LIMITER
@@ -244,7 +238,7 @@ def build_auth_router(store: Store) -> APIRouter:
             # der Fehlversuch steht bereits vor dem `await` oben zu Buche -
             # ein weiterer hier waere eine Doppelbuchung fuer denselben
             # Versuch.
-            raise HTTPException(status_code=409, detail=_ALREADY_SET_UP_DETAIL)
+            raise HTTPException(status_code=409, detail=i18n.t("api.auth.fail_already_set_up"))
         throttle.record_success(client)
         _start_session(response)
         return StatusOut(status="ok")
@@ -256,7 +250,7 @@ def build_auth_router(store: Store) -> APIRouter:
         if wait:
             raise HTTPException(
                 status_code=429,
-                detail=f"Zu viele Fehlversuche – in {wait} Sekunden wieder möglich.",
+                detail=i18n.t("api.auth.fail_too_many_attempts", wait=wait),
             )
         stored = store.auth.password_hash()
         if stored is None:
@@ -265,10 +259,7 @@ def build_auth_router(store: Store) -> APIRouter:
             # nicht (dieselbe Unterscheidung wie in RFC 9110).
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    "Für diesen Dienst ist noch kein Passwort vergeben – bitte zuerst "
-                    "die Ersteinrichtung abschließen."
-                ),
+                detail=i18n.t("api.auth.fail_no_password_set"),
             )
         # Ueber den Thread-Limiter wie `hash_password` oben in `setup`:
         # `hashlib.scrypt` blockiert den Event-Loop synchron, und diese
@@ -306,7 +297,7 @@ def build_auth_router(store: Store) -> APIRouter:
         if not await anyio.to_thread.run_sync(
             verify_password, body.password, stored, limiter=_PASSWORD_HASH_LIMITER
         ):
-            raise HTTPException(status_code=401, detail="Falsches Passwort.")
+            raise HTTPException(status_code=401, detail=i18n.t("api.auth.fail_wrong_password"))
         throttle.record_success(client)
         _start_session(response)
         return StatusOut(status="ok")

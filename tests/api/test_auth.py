@@ -36,7 +36,7 @@ import httpx2 as httpx
 import pytest
 from conftest import load_snapshot
 
-from loxmatter.auth.passwords import hash_password
+from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
 from loxmatter.auth.throttle import FAILURES_BEFORE_THROTTLING
 from loxmatter.loxone.runtime import Runtime
 from loxmatter.loxone.server import build_app
@@ -90,6 +90,28 @@ async def test_setup_is_closed_for_good_once_a_password_is_set(auth_client):
     await client.post("/auth/setup", json={"password": PASSWORT})
     second = await client.post("/auth/setup", json={"password": "ein-anderes-passwort"})
     assert second.status_code == 409
+    assert second.json()["detail"] == (
+        "A password has already been set for this service – initial setup is "
+        "therefore permanently complete. Forgot the password? In the reference "
+        "deployment, `docker compose exec loxmatter loxmatter set-password` resets "
+        "it; for a source install, `uv run loxmatter set-password`."
+    )
+
+
+async def test_setup_is_closed_for_good_once_a_password_is_set_in_german(auth_client):
+    """Deutscher Begleittest zu test_setup_is_closed_for_good_once_a_password_is_set."""
+    client, store = auth_client
+    store.locale.set_language("de")
+    await client.post("/auth/setup", json={"password": PASSWORT})
+    second = await client.post("/auth/setup", json={"password": "ein-anderes-passwort"})
+    assert second.status_code == 409
+    assert second.json()["detail"] == (
+        "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung "
+        "ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-"
+        "Deployment setzt `docker compose exec loxmatter loxmatter set-password` "
+        "es neu; bei einer Installation aus dem Quellcode `uv run loxmatter "
+        "set-password`."
+    )
 
 
 async def test_setup_does_not_hash_once_a_password_is_already_set(auth_client, monkeypatch):
@@ -115,6 +137,21 @@ async def test_setup_rejects_a_short_password(auth_client):
     response = await client.post("/auth/setup", json={"password": "kurz"})
     assert response.status_code == 422
     assert store.auth.password_hash() is None
+    assert response.json()["detail"] == (
+        f"The password must be at least {MIN_PASSWORD_LENGTH} characters long."
+    )
+
+
+async def test_setup_rejects_a_short_password_in_german(auth_client):
+    """Deutscher Begleittest zu test_setup_rejects_a_short_password."""
+    client, store = auth_client
+    store.locale.set_language("de")
+    response = await client.post("/auth/setup", json={"password": "kurz"})
+    assert response.status_code == 422
+    assert store.auth.password_hash() is None
+    assert response.json()["detail"] == (
+        f"Das Passwort muss mindestens {MIN_PASSWORD_LENGTH} Zeichen haben."
+    )
 
 
 async def test_login_with_the_right_password_authenticates(auth_client):
@@ -130,6 +167,18 @@ async def test_login_with_a_wrong_password_is_rejected(auth_client):
     store.auth.set_password_hash(hash_password(PASSWORT))
     response = await client.post("/auth/login", json={"password": "falsch-aber-lang"})
     assert response.status_code == 401
+    assert response.json()["detail"] == "Wrong password."
+    assert (await client.get("/auth-info")).json()["authenticated"] is False
+
+
+async def test_login_with_a_wrong_password_is_rejected_in_german(auth_client):
+    """Deutscher Begleittest zu test_login_with_a_wrong_password_is_rejected."""
+    client, store = auth_client
+    store.auth.set_password_hash(hash_password(PASSWORT))
+    store.locale.set_language("de")
+    response = await client.post("/auth/login", json={"password": "falsch-aber-lang"})
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Falsches Passwort."
     assert (await client.get("/auth-info")).json()["authenticated"] is False
 
 
@@ -139,6 +188,22 @@ async def test_login_before_setup_says_so(auth_client):
     client, _ = auth_client
     response = await client.post("/auth/login", json={"password": PASSWORT})
     assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "No password has been set for this service yet – please complete initial "
+        "setup first."
+    )
+
+
+async def test_login_before_setup_says_so_in_german(auth_client):
+    """Deutscher Begleittest zu test_login_before_setup_says_so."""
+    client, store = auth_client
+    store.locale.set_language("de")
+    response = await client.post("/auth/login", json={"password": PASSWORT})
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Für diesen Dienst ist noch kein Passwort vergeben – bitte zuerst die "
+        "Ersteinrichtung abschließen."
+    )
 
 
 async def test_repeated_wrong_passwords_are_throttled(auth_client):
@@ -148,6 +213,53 @@ async def test_repeated_wrong_passwords_are_throttled(auth_client):
         await client.post("/auth/login", json={"password": "falsch-aber-lang"})
     response = await client.post("/auth/login", json={"password": PASSWORT})
     assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail.startswith("Too many failed attempts")
+    assert detail.endswith("seconds.")
+
+
+async def test_repeated_wrong_passwords_are_throttled_in_german(auth_client):
+    """Deutscher Begleittest zu test_repeated_wrong_passwords_are_throttled."""
+    client, store = auth_client
+    store.auth.set_password_hash(hash_password(PASSWORT))
+    store.locale.set_language("de")
+    for _ in range(FAILURES_BEFORE_THROTTLING):
+        await client.post("/auth/login", json={"password": "falsch-aber-lang"})
+    response = await client.post("/auth/login", json={"password": PASSWORT})
+    assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail.startswith("Zu viele Fehlversuche")
+    assert detail.endswith("wieder möglich.")
+
+
+async def test_setup_is_also_throttled_after_repeated_login_failures(auth_client):
+    """Setup und Login teilen sich dieselbe LoginThrottle (siehe `_client_id`-
+    Docstring) - deckt damit auch den zweiten Aufrufort der 429-Meldung ab,
+    nicht nur den in `/auth/login`."""
+    client, store = auth_client
+    store.auth.set_password_hash(hash_password(PASSWORT))
+    for _ in range(FAILURES_BEFORE_THROTTLING):
+        await client.post("/auth/login", json={"password": "falsch-aber-lang"})
+    response = await client.post("/auth/setup", json={"password": PASSWORT})
+    assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail.startswith("Too many failed attempts")
+    assert detail.endswith("seconds.")
+
+
+async def test_setup_is_also_throttled_after_repeated_login_failures_in_german(auth_client):
+    """Deutscher Begleittest zu
+    test_setup_is_also_throttled_after_repeated_login_failures."""
+    client, store = auth_client
+    store.auth.set_password_hash(hash_password(PASSWORT))
+    store.locale.set_language("de")
+    for _ in range(FAILURES_BEFORE_THROTTLING):
+        await client.post("/auth/login", json={"password": "falsch-aber-lang"})
+    response = await client.post("/auth/setup", json={"password": PASSWORT})
+    assert response.status_code == 429
+    detail = response.json()["detail"]
+    assert detail.startswith("Zu viele Fehlversuche")
+    assert detail.endswith("wieder möglich.")
 
 
 async def test_concurrent_wrong_passwords_are_still_throttled(auth_client):

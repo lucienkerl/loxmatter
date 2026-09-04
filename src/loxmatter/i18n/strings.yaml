@@ -287,3 +287,18 @@ api.control.fail_not_wired:
 api.devices.fail_no_matter_client:
   en: "No matter-server client configured — the bridge is running without a Matter connection"
   de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
+api.auth.fail_password_too_short:
+  en: "The password must be at least {min_length} characters long."
+  de: "Das Passwort muss mindestens {min_length} Zeichen haben."
+api.auth.fail_too_many_attempts:
+  en: "Too many failed attempts – try again in {wait} seconds."
+  de: "Zu viele Fehlversuche – in {wait} Sekunden wieder möglich."
+api.auth.fail_already_set_up:
+  en: "A password has already been set for this service – initial setup is therefore permanently complete. Forgot the password? In the reference deployment, `docker compose exec loxmatter loxmatter set-password` resets it; for a source install, `uv run loxmatter set-password`."
+  de: "Für diesen Dienst ist bereits ein Passwort vergeben – die Ersteinrichtung ist damit dauerhaft abgeschlossen. Passwort vergessen? Im Referenz-Deployment setzt `docker compose exec loxmatter loxmatter set-password` es neu; bei einer Installation aus dem Quellcode `uv run loxmatter set-password`."
+api.auth.fail_no_password_set:
+  en: "No password has been set for this service yet – please complete initial setup first."
+  de: "Für diesen Dienst ist noch kein Passwort vergeben – bitte zuerst die Ersteinrichtung abschließen."
+api.auth.fail_wrong_password:
+  en: "Wrong password."
+  de: "Falsches Passwort."
