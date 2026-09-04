@@ -713,6 +713,9 @@ web.signals.key_tooltip:
 web.signals.export_checkbox:
   en: "export"
   de: "exportieren"
+web.signals.resend_checkbox:
+  en: "resend periodically"
+  de: "periodisch erneut senden"
 web.signals.raw_write_placeholder:
   en: "Write raw value"
   de: "Rohwert schreiben"
@@ -734,6 +737,9 @@ web.signals.title_save_error:
 web.signals.export_flag_error:
   en: "Could not change export flag: {message}"
   de: "Export-Kennzeichen konnte nicht geaendert werden: {message}"
+web.signals.resend_toggle_error:
+  en: "Could not change resend flag: {message}"
+  de: "Resend-Kennzeichen konnte nicht geaendert werden: {message}"
 web.signals.write_success:
   en: "Written."
   de: "Geschrieben."
@@ -923,9 +929,6 @@ web.settings.last_saved_prefix:
 web.settings.never_saved:
   en: "Not saved yet."
   de: "Noch nicht gespeichert."
-web.settings.more_settings_heading:
-  en: "More settings"
-  de: "Weitere Einstellungen"
 web.settings.load_error:
   en: "Could not load settings: {message}"
   de: "Einstellungen konnten nicht geladen werden: {message}"
@@ -950,6 +953,156 @@ web.settings.language_de:
 web.settings.language_error:
   en: "Could not change language: {message}"
   de: "Sprache konnte nicht geändert werden: {message}"
+web.settings.resend_heading:
+  en: "Periodic resend"
+  de: "Periodischer Resend"
+web.settings.resend_explanation:
+  en: |
+    Marked signals (the "resend periodically" checkbox in the signal list) are forcibly resent at this interval, even without a change – independently of that, a full restore still runs once at bridge startup and via "Resync" in the System section.
+  de: |
+    Markierte Signale (Haken „periodisch erneut senden" in der Signalliste) werden in diesem Takt zwangsweise erneut gesendet, auch ohne Änderung - unabhängig davon läuft ein voller Restore weiterhin einmalig beim Bridge-Start und über „Erneut synchronisieren" im Bereich Diagnose.
+web.settings.resend_interval_label:
+  en: "Interval in seconds"
+  de: "Intervall in Sekunden"
+web.settings.resend_interval_invalid:
+  en: "Please enter an interval of at least 10 seconds."
+  de: "Bitte ein Intervall von mindestens 10 Sekunden eingeben."
+web.settings.resend_load_error:
+  en: "Could not load resend interval: {message}"
+  de: "Resend-Intervall konnte nicht geladen werden: {message}"
+web.settings.resend_saved_toast:
+  en: "Resend interval saved."
+  de: "Resend-Intervall gespeichert."
+web.settings.resend_save_error:
+  en: "Could not save resend interval: {message}"
+  de: "Resend-Intervall konnte nicht gespeichert werden: {message}"
+
+# --- web.export.projectsync — Projektdatei-Sync-Karte ---
+web.export.projectsync_heading:
+  en: "Project file sync"
+  de: "Projektdatei-Sync"
+web.export.projectsync_intro:
+  en: |
+    Upload an existing Loxone project file – existing virtual inputs/outputs are updated, new signals are added. Nothing is downloaded before you have seen the plan.
+  de: |
+    Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden aktualisiert, neue Signale ergänzt. Nichts wird heruntergeladen, bevor du den Plan gesehen hast.
+web.export.projectsync_bridge_ip_hint_prefix:
+  en: "Please set the bridge IP in "
+  de: "Bitte zuerst in "
+web.export.projectsync_bridge_ip_hint_suffix:
+  en: " first."
+  de: " die Brücken-IP hinterlegen."
+web.export.projectsync_miniserver_ip_label:
+  en: "IP of the Miniserver"
+  de: "IP des Miniservers"
+web.export.projectsync_miniserver_ip_hint:
+  en: "(only needed with multiple Miniservers in the file)"
+  de: "(nur nötig bei mehreren Miniservern in der Datei)"
+web.export.projectsync_ip_placeholder:
+  en: "e.g. 10.0.0.10"
+  de: "z. B. 10.0.0.10"
+web.export.projectsync_file_label:
+  en: "Project file (.Loxone)"
+  de: "Projektdatei (.Loxone)"
+web.export.projectsync_busy:
+  en: "Processing…"
+  de: "Wird verarbeitet …"
+web.export.projectsync_upload_failed:
+  en: "Upload failed: {message}"
+  de: "Hochladen fehlgeschlagen: {message}"
+web.export.projectsync_all_current:
+  en: "Everything is up to date – no changes needed."
+  de: "Alles aktuell – keine Änderungen nötig."
+web.export.projectsync_status_unchanged:
+  en: "Unchanged"
+  de: "Unverändert"
+web.export.projectsync_status_updated:
+  en: "Updated"
+  de: "Aktualisiert"
+web.export.projectsync_status_new_signal:
+  en: "New signal"
+  de: "Neues Signal"
+web.export.projectsync_status_new_device:
+  en: "New device"
+  de: "Neues Gerät"
+web.export.projectsync_status_orphaned:
+  en: "Orphaned – left unchanged"
+  de: "Verwaist – wird nicht verändert"
+web.export.projectsync_status_conflict:
+  en: "Conflict – skipped"
+  de: "Konflikt – wird übersprungen"
+web.export.projectsync_status_possible_duplicate:
+  en: "Possible duplicate – skipped"
+  de: "Mögliches Duplikat – wird übersprungen"
+web.export.projectsync_tally_new:
+  en: "new"
+  de: "neu"
+web.export.projectsync_tally_updated:
+  en: "updated"
+  de: "aktualisiert"
+web.export.projectsync_tally_orphaned:
+  en: "orphaned"
+  de: "verwaist"
+web.export.projectsync_tally_conflict:
+  en: "conflict"
+  de: "Konflikt"
+web.export.projectsync_tally_unchanged:
+  en: "unchanged"
+  de: "unverändert"
+web.export.projectsync_group_all_current:
+  en: "all up to date"
+  de: "alles aktuell"
+web.export.projectsync_unassigned_device_label:
+  en: "No longer assigned"
+  de: "Nicht mehr zugeordnet"
+web.export.projectsync_section_inputs:
+  en: "Inputs"
+  de: "Eingänge"
+web.export.projectsync_section_outputs:
+  en: "Outputs"
+  de: "Ausgänge"
+web.export.projectsync_unchanged_disclosure:
+  en: "{count} show unchanged signals"
+  de: "{count} unveränderte Signale anzeigen"
+web.export.projectsync_note_new_device:
+  en: "A new virtual input/output is created for this device."
+  de: "Neuer virtueller Ein-/Ausgang wird für dieses Gerät angelegt."
+web.export.projectsync_note_new_signal:
+  en: "A new signal is added to the existing input/output."
+  de: "Neues Signal wird im bestehenden Ein-/Ausgang ergänzt."
+web.export.projectsync_note_orphaned:
+  en: "No longer belongs to any known device."
+  de: "Gehört zu keinem bekannten Gerät mehr."
+web.export.projectsync_note_conflict:
+  en: "Unexpected structure in the file."
+  de: "Unerwartete Struktur in der Datei."
+web.export.projectsync_note_possible_duplicate:
+  en: "An existing command already carries this title, but under a different key (e.g. because of a damaged Check/CmdOn identifier) – not created automatically, to avoid a duplicate. Please check manually in Loxone Config."
+  de: "Ein bestehender Befehl trägt bereits diesen Titel, aber unter einem anderen Schlüssel (z. B. durch eine beschädigte Check-/CmdOn-Kennung) – wird nicht automatisch angelegt, um keine Dopplung zu erzeugen. Bitte in Loxone Config manuell prüfen."
+web.export.projectsync_attr_title:
+  en: "Title"
+  de: "Titel"
+web.export.projectsync_attr_check:
+  en: "Check command"
+  de: "Prüfbefehl"
+web.export.projectsync_attr_analog:
+  en: "Analog"
+  de: "Analog"
+web.export.projectsync_attr_unit:
+  en: "Unit"
+  de: "Einheit"
+web.export.projectsync_attr_cmd_on:
+  en: "Command on"
+  de: "Befehl Ein"
+web.export.projectsync_attr_cmd_off:
+  en: "Command off"
+  de: "Befehl Aus"
+web.export.projectsync_new_devices_checkbox:
+  en: "Also create new device containers (experimental, not yet validated against Loxone Config)"
+  de: "Neue Geräte-Container ebenfalls anlegen (experimentell, noch nicht gegen Loxone Config validiert)"
+web.export.projectsync_download_button:
+  en: "Download patched file"
+  de: "Gepatchte Datei herunterladen"
 
 # --- web.format — gemeinsame Formatierungshelfer ---
 web.format.never:
