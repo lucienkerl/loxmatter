@@ -58,16 +58,16 @@ schließt `node_id`/`path` als Closure ein. Node-Events und
 Erreichbarkeit laufen dagegen über je eine einzige Wildcard-Subscription,
 weil ihre `data` bereits alles Nötige trägt.
 
-Was nach `subscribe()` dazukommt, holt `follow_node()` nach — ein Geraet,
-das erst danach eingelernt wird, ebenso wie ein bekanntes Geraet, das
-nachtraeglich neue Attributpfade meldet. Angestossen wird es aus der
-Dispatch-Schleife bei `NODE_ADDED`/`NODE_UPDATED` und zusaetzlich von der
-Einlern-Route. Das „zusaetzlich" ist nicht Guertel-und-Hosentraeger: das
-`NODE_ADDED` eines gerade eingelernten Geraets kommt nachweislich, BEVOR
-`commission_with_code` zurueckkehrt und der Store dem Node eine device_id
+Was nach `subscribe()` dazukommt, holt `follow_node()` nach — ein Gerät,
+das erst danach eingelernt wird, ebenso wie ein bekanntes Gerät, das
+nachträglich neue Attributpfade meldet. Angestossen wird es aus der
+Dispatch-Schleife bei `NODE_ADDED`/`NODE_UPDATED` und zusätzlich von der
+Einlern-Route. Das „zusätzlich" ist nicht Gürtel-und-Hosenträger: das
+`NODE_ADDED` eines gerade eingelernten Geräts kommt nachweislich, BEVOR
+`commission_with_code` zurückkehrt und der Store dem Node eine device_id
 geben kann — die Meldung wird deshalb verworfen, und eine zweite folgt
-fuer ein ruhig im Netz stehendes Geraet nicht. Siehe
-docs/superpowers/specs/2026-09-04-live-werte-neuer-geraete-design.md.
+für ein ruhig im Netz stehendes Gerät nicht. Siehe
+docs/superpowers/specs/2026-09-04-live-werte-neuer-geräte-design.md.
 
 commission_with_code()/remove_node()/set_thread_dataset() — belegt gegen die
 installierte python-matter-server==8.1.2 (Task 1, Phase 5):
