@@ -443,7 +443,7 @@
                                 :checked="signal.resend"
                                 @change="toggleResend(signal)"
                               />
-                              periodisch erneut senden
+                              <span x-text="t('web.signals.resend_checkbox')"></span>
                             </label>
                             <span
                               class="badge warn"
@@ -1004,21 +1004,19 @@
         </div>
 
         <div class="card">
-          <h2>Periodischer Resend</h2>
-          <p class="hint">
-            Markierte Signale (Haken „periodisch erneut senden" in der Signalliste) werden in
-            diesem Takt zwangsweise erneut gesendet, auch ohne Änderung - unabhängig davon
-            läuft ein voller Restore weiterhin einmalig beim Bridge-Start und über
-            „Erneut synchronisieren" im Bereich Diagnose.
-          </p>
+          <h2 x-text="t('web.settings.resend_heading')"></h2>
+          <p class="hint" x-text="t('web.settings.resend_explanation')"></p>
           <div class="row">
             <label
-              >Intervall in Sekunden
+              ><span x-text="t('web.settings.resend_interval_label')"></span>
               <input type="number" min="10" x-model.number="resendIntervalDraft" />
             </label>
-            <button class="primary" @click="saveResendInterval()" :disabled="resendIntervalBusy">
-              Speichern
-            </button>
+            <button
+              class="primary"
+              @click="saveResendInterval()"
+              :disabled="resendIntervalBusy"
+              x-text="t('web.settings.save')"
+            ></button>
           </div>
           <p x-show="resendIntervalError" x-cloak class="banner danger" x-text="resendIntervalError"></p>
         </div>

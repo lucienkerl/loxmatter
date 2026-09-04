@@ -1793,3 +1793,77 @@ async def test_the_projectsync_card_dynamic_strings_are_translated(api):
     assert '"Einheit"' not in attr_label_body
     assert '"Befehl Ein"' not in attr_label_body
     assert '"Befehl Aus"' not in attr_label_body
+
+
+async def test_the_resend_card_static_text_is_translated(api):
+    """Periodischer-Resend-Karte (Settings-Tab, letzte Karte, direkt nach der
+    Sprachumschaltung) und das dazugehoerige Checkbox-Label in der
+    Signalliste tragen jetzt `t(...)` statt fester deutscher Literale - die
+    Speichern-Schaltflaeche teilt sich absichtlich `web.settings.save` mit
+    der Verbindungs-Karte darueber (dieselbe Bedeutung, kein eigener
+    Schluessel)."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    card_start = markup.rindex('<div class="card">', 0, markup.index("resendIntervalDraft"))
+    card_end = markup.index("</section>", card_start)
+    card = markup[card_start:card_end]
+
+    assert "x-text=\"t('web.settings.resend_heading')\"" in card
+    assert ">Periodischer Resend<" not in card
+
+    assert "x-text=\"t('web.settings.resend_explanation')\"" in card
+    assert "Markierte Signale" not in card
+
+    assert "x-text=\"t('web.settings.resend_interval_label')\"" in card
+    assert "Intervall in Sekunden" not in card
+
+    assert "x-text=\"t('web.settings.save')\"" in card
+    assert ">Speichern<" not in card
+
+    resend_checkbox_label = _label_around(markup, "toggleResend(signal)")
+    assert "x-text=\"t('web.signals.resend_checkbox')\"" in resend_checkbox_label
+    assert "periodisch erneut senden" not in resend_checkbox_label
+
+
+async def test_the_resend_card_dynamic_strings_are_translated(api):
+    """`toggleResend` (Signalliste), sowie `loadResendInterval` und
+    `saveResendInterval` (Settings-Tab) tragen jetzt `t(...)` statt fester
+    deutscher Literale fuer ihre Fehlermeldungen, die Validierung und den
+    Erfolgs-Toast."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    toggle_resend_start = script.index("async toggleResend(signal) {")
+    toggle_resend_end = script.index("\n    },", toggle_resend_start)
+    toggle_resend_body = script[toggle_resend_start:toggle_resend_end]
+    assert (
+        'this.signalsError = t("web.signals.resend_toggle_error", { message: error.message });'
+        in toggle_resend_body
+    )
+    assert "Resend-Kennzeichen konnte nicht geaendert werden" not in toggle_resend_body
+
+    load_interval_start = script.index("async loadResendInterval() {")
+    load_interval_end = script.index("\n    },", load_interval_start)
+    load_interval_body = script[load_interval_start:load_interval_end]
+    assert (
+        'this.resendIntervalError = t("web.settings.resend_load_error", { message: error.message });'
+        in load_interval_body
+    )
+    assert "Resend-Intervall konnte nicht geladen werden" not in load_interval_body
+
+    save_interval_start = script.index("async saveResendInterval() {")
+    save_interval_end = script.index("\n    },", save_interval_start)
+    save_interval_body = script[save_interval_start:save_interval_end]
+    assert (
+        'this.resendIntervalError = t("web.settings.resend_interval_invalid");'
+        in save_interval_body
+    )
+    assert "Bitte ein Intervall von mindestens 10 Sekunden eingeben." not in save_interval_body
+    assert 'this.showToast(t("web.settings.resend_saved_toast"));' in save_interval_body
+    assert "Resend-Intervall gespeichert." not in save_interval_body
+    assert (
+        'this.resendIntervalError = t("web.settings.resend_save_error", { message: error.message });'
+        in save_interval_body
+    )
+    assert "Resend-Intervall konnte nicht gespeichert werden" not in save_interval_body

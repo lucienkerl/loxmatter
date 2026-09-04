@@ -1141,7 +1141,7 @@ function app() {
         });
         Object.assign(signal, updated);
       } catch (error) {
-        this.signalsError = `Resend-Kennzeichen konnte nicht geaendert werden: ${error.message}`;
+        this.signalsError = t("web.signals.resend_toggle_error", { message: error.message });
       }
     },
 
@@ -1264,14 +1264,14 @@ function app() {
         this.resendInterval = await this.request("GET", "/api/settings/resend-interval");
         this.resendIntervalDraft = this.resendInterval.interval_seconds;
       } catch (error) {
-        this.resendIntervalError = `Resend-Intervall konnte nicht geladen werden: ${error.message}`;
+        this.resendIntervalError = t("web.settings.resend_load_error", { message: error.message });
       }
     },
 
     async saveResendInterval() {
       this.resendIntervalError = null;
       if (!Number.isFinite(this.resendIntervalDraft) || this.resendIntervalDraft < 10) {
-        this.resendIntervalError = "Bitte ein Intervall von mindestens 10 Sekunden eingeben.";
+        this.resendIntervalError = t("web.settings.resend_interval_invalid");
         return;
       }
       this.resendIntervalBusy = true;
@@ -1279,9 +1279,9 @@ function app() {
         this.resendInterval = await this.request("PATCH", "/api/settings/resend-interval", {
           interval_seconds: Number(this.resendIntervalDraft),
         });
-        this.showToast("Resend-Intervall gespeichert.");
+        this.showToast(t("web.settings.resend_saved_toast"));
       } catch (error) {
-        this.resendIntervalError = `Resend-Intervall konnte nicht gespeichert werden: ${error.message}`;
+        this.resendIntervalError = t("web.settings.resend_save_error", { message: error.message });
       } finally {
         this.resendIntervalBusy = false;
       }
