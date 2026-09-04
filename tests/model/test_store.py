@@ -430,6 +430,56 @@ def test_exported_flag_survives_reregistration(store):
     assert after.exported is False
 
 
+def test_set_resend_toggles_the_flag_without_touching_the_key(store):
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    target = signals[0]
+    assert target.resend is False  # Vorgabewert (Entwurf, Abschnitt 3)
+
+    store.set_resend(target.key, True)
+    after = next(s for s in store.signals(device_id) if s.key == target.key)
+    assert after.resend is True
+    assert after.key == target.key
+
+
+def test_resend_flag_survives_reregistration(store):
+    """Wie `exported`: einmal vom Nutzer gesetzt, darf ein erneutes
+    `register_signals` das Resend-Flag nicht zuruecksetzen."""
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    target = signals[0]
+
+    store.set_resend(target.key, True)
+    again = store.register_signals(device_id, snap)
+    after = next(s for s in again if s.key == target.key)
+    assert after.resend is True
+
+
+def test_resend_keys_lists_only_flagged_signals(store):
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    marked, other = signals[0], signals[1]
+    store.set_resend(marked.key, True)
+
+    keys = store.resend_keys()
+    assert keys == [marked.key]
+    assert other.key not in keys
+
+
+def test_resend_keys_excludes_signals_of_a_removed_device(store):
+    snap = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snap)
+    signals = store.register_signals(device_id, snap)
+    store.set_resend(signals[0].key, True)
+
+    store.forget_device(device_id)
+
+    assert store.resend_keys() == []
+
+
 def test_store_survives_reopening(tmp_path):
     path = tmp_path / "persist.sqlite"
     snap = load("ikea_grillplats_plug.json")

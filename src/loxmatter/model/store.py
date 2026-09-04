@@ -84,16 +84,10 @@ DEFAULT_LISTEN_PORT = 8080
 # hinzu, siehe `_migrate_to_v4`. Version 5 (WebUI-Login) fuegt die Tabellen
 # `setting` und `session` hinzu, siehe `_migrate_to_v5` - beide sind bei einer
 # frischen Datenbank bereits durch `_SCHEMA` da, die Migration ist deshalb nur
-# fuer Bestandsdatenbanken noetig.
-#
-# **Warum der Login-Umzug die 5 bekommt und nicht die 4.** Beide Vorhaben
-# entstanden parallel und beanspruchten die 4. Eine Datenbank, die Phase 6
-# bereits gesehen hat, steht auf 4 - eine zweite Migration unter derselben
-# Nummer wuerde von `_migrate` stillschweigend uebersprungen, und der Dienst
-# startete ohne die Tabellen, die er zum Anmelden braucht. Die Nummer haengt
-# an der Reihenfolge, in der die Aenderungen zusammengefuehrt wurden, nicht
-# daran, wann sie geschrieben wurden.
-_SCHEMA_VERSION = 5
+# fuer Bestandsdatenbanken noetig. Version 6 (Entwurf periodischer Resend,
+# 2026-09-04) fuegt `signal.resend` hinzu, siehe `_migrate_to_v6` - kein
+# Backfill, jede Bestandszeile startet beim Spalten-Default (0/aus).
+_SCHEMA_VERSION = 6
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
@@ -119,6 +113,7 @@ CREATE TABLE IF NOT EXISTS signal (
     exportability TEXT NOT NULL,
     exported      INTEGER NOT NULL DEFAULT 1,
     functional    INTEGER NOT NULL DEFAULT 1,
+    resend        INTEGER NOT NULL DEFAULT 0,
     UNIQUE (device_id, endpoint, cluster_id, element_id, kind)
 );
 CREATE TABLE IF NOT EXISTS command (
@@ -553,6 +548,18 @@ def _migrate_to_v5(db: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v6(db: sqlite3.Connection) -> None:
+    """Fuegt `signal.resend` hinzu (periodischer Resend als Opt-in, Entwurf
+    2026-09-04) - kein Backfill: jede Bestandszeile startet bei `resend = 0`,
+    genau der Spalten-Default. Anders als `exported` (`_migrate_to_v1`) gibt
+    es hier keinen Bestandswert, aus dem sich ein sinnvoller Vorgabewert
+    ableiten liesse - im Gegenteil ist "aus" hier ausdruecklich die
+    gewuenschte Vorgabe (siehe Entwurf, Abschnitt 3): der periodische
+    Voll-Resend soll nach diesem Update fuer JEDES Signal erst durch eine
+    bewusste Nutzerentscheidung wieder anspringen."""
+    _add_column_if_missing(db, "signal", "resend", "INTEGER NOT NULL DEFAULT 0")
+
+
 # Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
 # Erweiterung fuer eine spaetere Schema-Aenderung: einfach anhaengen, mit der
 # naechsten Versionsnummer als Schluessel.
@@ -562,6 +569,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     3: _migrate_to_v3,
     4: _migrate_to_v4,
     5: _migrate_to_v5,
+    6: _migrate_to_v6,
 }
 
 
@@ -633,6 +641,14 @@ class StoredSignal:
     # (`api.devices._signal_out`) - eine zweite Berechnung der Regel in der
     # API-Schicht oder gar in JavaScript gibt es bewusst nicht.
     functional: bool
+    # resend (Entwurf periodischer Resend, 2026-09-04): ob dieses Signal vom
+    # periodischen Timer erneut gesendet werden soll, auch wenn es sich
+    # nicht geaendert hat - vom Nutzer umschaltbar (`PATCH
+    # /api/signals/{key}`), unabhaengig von `exported`/`functional`. Betrifft
+    # NUR `Runtime.resend_marked()` (den periodischen Timer); `resend_all()`
+    # (fuer `/resync` und den Bridge-Start) ignoriert dieses Feld bewusst und
+    # sendet weiterhin jeden bekannten Wert, siehe dortigen Docstring.
+    resend: bool
 
 
 @dataclass(frozen=True)
@@ -1023,6 +1039,14 @@ class Store:
         self._db.execute("UPDATE signal SET exported = ? WHERE key = ?", (int(exported), key))
         self._db.commit()
 
+    def set_resend(self, key: str, resend: bool) -> None:
+        """Setzt das Resend-Flag eines Signals (`PATCH /api/signals/{key}`,
+        Entwurf periodischer Resend, 2026-09-04). Wie `set_exported` ohne
+        Existenzpruefung - siehe dort."""
+        self._touch_owning_device(key)
+        self._db.execute("UPDATE signal SET resend = ? WHERE key = ?", (int(resend), key))
+        self._db.commit()
+
     def _touch_owning_device(self, signal_key: str) -> None:
         """Setzt `updated_at` des Geraets, zu dem `signal_key` gehoert (Task
         5, Phase 5) - `set_title`/`set_exported` bekommen keine `device_id`
@@ -1050,6 +1074,7 @@ class Store:
             device_id=int(row["device_id"]),
             exported=bool(row["exported"]),
             functional=bool(row["functional"]),
+            resend=bool(row["resend"]),
         )
 
     def signals(self, device_id: int) -> list[StoredSignal]:
@@ -1068,6 +1093,19 @@ class Store:
         entscheidet, ob das ein 404 ist."""
         row = self._db.execute("SELECT * FROM signal WHERE key = ?", (key,)).fetchone()
         return self._as_signal(row) if row is not None else None
+
+    def resend_keys(self) -> list[str]:
+        """Alle Signal-Schluessel mit `resend = true`, ueber alle AKTIVEN
+        Geraete hinweg - fuer `Runtime.resend_marked()` (periodischer Resend
+        als Opt-in, Entwurf 2026-09-04). Ein Signal eines entfernten Geraets
+        (`forget_device`) taucht hier nicht mehr auf, genau wie bei
+        `devices()`."""
+        rows = self._db.execute(
+            "SELECT signal.key FROM signal"
+            " JOIN device ON device.id = signal.device_id"
+            " WHERE signal.resend = 1 AND device.active = 1"
+        ).fetchall()
+        return [str(r["key"]) for r in rows]
 
     def _existing_command_keys(self, device_id: int) -> set[str]:
         rows = self._db.execute(
