@@ -250,6 +250,63 @@ async def test_resend_all_ignores_the_resend_flag_and_sends_everything(environme
     assert sender.keys() == [voltage_key]
 
 
+async def test_resend_loop_never_sends_an_unmarked_signal(environment, monkeypatch):
+    _, sender, store, device_id, _ = environment
+    marked_key = f"d{device_id}_2_voltage"
+    unmarked_key = f"d{device_id}_2_current"
+    store.set_resend(marked_key, True)
+    monkeypatch.setattr(store.resend_settings, "get_interval_seconds", lambda: 0.01)
+
+    runtime = Runtime(store, sender, resend_poll_seconds=0.02)
+    await runtime.on_attribute(device_id, "2/144/4", 230000)
+    await runtime.on_attribute(device_id, "2/144/5", 100)
+    sender.sent.clear()
+
+    await runtime.start()
+    await asyncio.sleep(0.09)
+    await runtime.stop()
+
+    forced = {k for k, _, forced in sender.sent if forced}
+    assert marked_key in forced
+    assert unmarked_key not in forced
+
+
+async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(environment, monkeypatch):
+    """Eine Aenderung ueber die WebUI (`PATCH /api/settings/resend-interval`)
+    wirkt innerhalb weniger Sekunden, ohne Prozess-Neustart (Entwurf,
+    Abschnitt 6). `interval` ist ein veraenderliches Dict statt einer freien
+    Variable, weil die monkeypatch-Lambda unten es per Closure lesen muss,
+    nachdem der Test seinen Wert schon geaendert hat."""
+    _, sender, store, device_id, _ = environment
+    key = f"d{device_id}_2_voltage"
+    store.set_resend(key, True)
+    interval = {"seconds": 10.0}
+    monkeypatch.setattr(store.resend_settings, "get_interval_seconds", lambda: interval["seconds"])
+
+    runtime = Runtime(store, sender, resend_poll_seconds=0.02)
+    await runtime.on_attribute(device_id, "2/144/4", 230000)
+    sender.sent.clear()
+
+    await runtime.start()
+    try:
+        await asyncio.sleep(0.09)
+        # `runtime.start()` startet nebenbei auch die Heartbeat-Schleife
+        # (hier mit dem Default `heartbeat_seconds=30.0`), die schon vor
+        # ihrem eigenen ersten Schlaf einmal sendet (siehe `_heartbeat_loop`)
+        # - unabhaengig vom hier getesteten Resend-Intervall. Ohne den Filter
+        # wuerde "bridge_alive" diese Pruefung faelschlich zum Scheitern
+        # bringen, obwohl der Resend selbst (worum es hier geht) noch gar
+        # nicht gelaufen ist.
+        assert [k for k in sender.keys() if k != "bridge_alive"] == []  # 10s-Intervall (simuliert) ist noch lange nicht um
+
+        interval["seconds"] = 0.01
+        await asyncio.sleep(0.09)
+    finally:
+        await runtime.stop()
+
+    assert key in sender.keys()
+
+
 async def test_heartbeat_toggles(environment):
     """Spec 6.5: bridge_alive deckt "Container tot" und "Netz weg" gleichermassen ab."""
     _, sender, store, _, _ = environment

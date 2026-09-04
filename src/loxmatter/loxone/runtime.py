@@ -73,12 +73,12 @@ class Runtime:
         sender: Sender,
         *,
         heartbeat_seconds: float = 30.0,
-        resend_seconds: float = 300.0,
+        resend_poll_seconds: float = 5.0,
     ) -> None:
         self._store = store
         self._sender = sender
         self._heartbeat_seconds = heartbeat_seconds
-        self._resend_seconds = resend_seconds
+        self._resend_poll_seconds = resend_poll_seconds
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
@@ -494,11 +494,26 @@ class Runtime:
             await asyncio.sleep(self._heartbeat_seconds)
 
     async def _resend_loop(self) -> None:
+        """Schickt periodisch nur die markierten Signale erneut
+        (`resend_marked`) - anders als der einmalige Voll-Restore bei
+        `/resync` und beim Bruecken-Start (`resend_all`, siehe dort). Das
+        Intervall selbst ist eine zur Laufzeit ueber die WebUI aenderbare
+        Einstellung (`store.resend_settings`, Entwurf periodischer Resend,
+        Abschnitt 4/6) statt einer beim Start fixierten Konstante: dieser
+        Takt liest sie bei JEDEM Poll frisch, alle `resend_poll_seconds`
+        (Default 5s) - eine Aenderung ueber die WebUI wirkt sich damit binnen
+        weniger Sekunden aus, ohne Prozess-Neustart."""
+        loop = asyncio.get_running_loop()
+        last_resend = loop.time()
         while True:
-            await asyncio.sleep(self._resend_seconds)
+            await asyncio.sleep(self._resend_poll_seconds)
+            interval = self._store.resend_settings.get_interval_seconds()
+            if loop.time() - last_resend < interval:
+                continue
             try:
-                await self.resend_all()
+                await self.resend_marked()
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("Full-Resend fehlgeschlagen - Schleife laeuft weiter")
+                logger.exception("Markierter Resend fehlgeschlagen - Schleife laeuft weiter")
+            last_resend = loop.time()
