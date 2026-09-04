@@ -167,7 +167,20 @@ class _AvailabilityUpdate:
     available: bool
 
 
-_QueueItem = _AttributeUpdate | _EventUpdate | _AvailabilityUpdate
+@dataclass(frozen=True)
+class _FollowNode:
+    """Anstoss zum Nachziehen der Abonnements eines Node.
+
+    Laeuft ueber dieselbe Queue wie die Wert-Aktualisierungen, statt direkt
+    aus dem synchronen Ereignis-Rueckruf heraus: `follow_node` ist eine
+    Coroutine, und der Rueckruf kann keine erwarten (siehe
+    `on_node_or_availability_event`).
+    """
+
+    node_id: int
+
+
+_QueueItem = _AttributeUpdate | _EventUpdate | _AvailabilityUpdate | _FollowNode
 
 
 async def _cancel_and_await(task: asyncio.Task[Any]) -> None:
@@ -595,6 +608,10 @@ class BridgeMatterClient:
                 )
             elif event in (EventType.NODE_ADDED, EventType.NODE_UPDATED):
                 queue.put_nowait(_AvailabilityUpdate(data.node_id, data.available))
+                # Zusaetzlich zum Erreichbarkeits-Update, nicht statt seiner:
+                # beide Meldungen tragen dieselbe Ursache, aber der eine Weg
+                # setzt `d<id>_online`, der andere zieht Abonnements nach.
+                queue.put_nowait(_FollowNode(data.node_id))
             elif event is EventType.NODE_REMOVED:
                 # data ist hier die blanke Node-ID (kein Node-Objekt) — siehe
                 # MatterClient._handle_event_message.
@@ -688,6 +705,13 @@ class BridgeMatterClient:
         while True:
             item = await queue.get()
             try:
+                if isinstance(item, _FollowNode):
+                    # VOR der device_id-Aufloesung: `follow_node` legt
+                    # Abonnements auch fuer einen Node an, den der Store
+                    # (noch) nicht kennt, und entscheidet selbst, ob der
+                    # Handler etwas zu sehen bekommt.
+                    await self.follow_node(item.node_id)
+                    continue
                 device_id = resolve_device_id(item.node_id)
                 if device_id is None:
                     logger.debug("Aktualisierung fuer unbekannte Node %s verworfen", item.node_id)

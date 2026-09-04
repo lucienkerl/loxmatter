@@ -807,3 +807,39 @@ async def test_follow_node_for_an_unknown_node_does_nothing():
     await bridge.follow_node(999)
 
     assert handler.snapshot_calls == []
+
+
+async def test_a_node_update_with_new_paths_is_followed_automatically():
+    """Der zweite Fall der bekannten Grenze: ein laengst eingelerntes Geraet
+    meldet nach einem Firmware-Update einen Pfad, den es beim Start noch
+    nicht gab. `NODE_UPDATED` feuert bei matter-server genau dann, wenn ein
+    Geraet neu interviewt wurde - der richtige Ausloeser."""
+    node = FakeNode(12, {"1/6/0": True})
+    bridge, upstream = make_connected_pair([node])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda _node_id: 5, handler)
+
+    node.node_data.attributes["1/8/0"] = 254
+    upstream.emit(EventType.NODE_UPDATED, node, node_id=12)
+    await _settle()
+
+    assert "attribute_updated/12/1/8/0" in _attribute_subscriptions(upstream)
+    assert [device_id for device_id, _ in handler.snapshot_calls] == [5]
+
+
+async def test_an_availability_update_without_new_paths_touches_no_handler():
+    """Die haeufigste Ursache fuer `NODE_UPDATED` ueberhaupt. Sie darf keinen
+    Store-Zugriff ausloesen - und muss die Erreichbarkeit trotzdem wie bisher
+    zustellen."""
+    node = FakeNode(12, {"1/6/0": True})
+    bridge, upstream = make_connected_pair([node])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda _node_id: 5, handler)
+
+    upstream.emit(EventType.NODE_UPDATED, node, node_id=12)
+    await _settle()
+
+    assert handler.snapshot_calls == []
+    assert handler.availability_calls == [(5, True)]
