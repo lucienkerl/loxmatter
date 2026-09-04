@@ -449,6 +449,34 @@ async def test_with_wrong_token_is_rejected_too(secured_client):
     assert response.status_code == 401
 
 
+async def test_the_401_detail_explains_how_to_sign_in(secured_client):
+    """Task 6: `build_api_guard`s 401-Text ueber `i18n.t`. Ueber den echten
+    ASGI-App-Pfad (nicht `_call_guard` weiter oben, das `guard` direkt
+    aufruft, ohne die `sync_language`-Middleware zu durchlaufen)."""
+    client, _, _, _ = secured_client
+    response = await client.get("/api/devices")
+    assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "Sign-in required — please open the interface and log in. Scripts use "
+        "`Authorization: Bearer <Token>` with the value set under LOXMATTER_API_TOKEN."
+    )
+
+
+async def test_the_401_detail_is_german_when_the_language_is_de(secured_client):
+    """Deutscher Begleittest zu test_the_401_detail_explains_how_to_sign_in -
+    `store.locale.set_language`, nicht `i18n.set_language` direkt: die
+    sync_language-Middleware liest bei jeder Anfrage aus dem Store neu."""
+    client, _, _, store = secured_client
+    store.locale.set_language("de")
+    response = await client.get("/api/devices")
+    assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "Anmeldung erforderlich – bitte die Oberfläche öffnen und anmelden. "
+        "Skripte verwenden `Authorization: Bearer <Token>` mit dem unter "
+        "LOXMATTER_API_TOKEN gesetzten Wert."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Die Fabric-Sicherung: der eigentliche Grund fuer diese Phase (siehe
 # Spec 4.1). Ein eigener Test, nicht nur einer von vielen /api-Routen, weil

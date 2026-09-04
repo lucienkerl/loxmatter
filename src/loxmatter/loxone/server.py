@@ -348,11 +348,7 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
                 return
         raise HTTPException(
             status_code=401,
-            detail=(
-                "Anmeldung erforderlich – bitte die Oberfläche öffnen und anmelden. "
-                "Skripte verwenden `Authorization: Bearer <Token>` mit dem unter "
-                "LOXMATTER_API_TOKEN gesetzten Wert."
-            ),
+            detail=i18n.t("api.server.fail_login_required"),
         )
 
     return guard
@@ -538,7 +534,7 @@ def build_app(
             # "Full-Resend fehlgeschlagen: <Meldung>" ohne Traceback ist.
             logger.exception("Full-Resend ueber /resync fehlgeschlagen")
             raise HTTPException(
-                status_code=502, detail=f"Full-Resend fehlgeschlagen: {exc}"
+                status_code=502, detail=i18n.t("api.server.fail_resync", exc=exc)
             ) from exc
         # Englischer Schluessel im Wire-Format (Review-Fix M9, 2026-09-02):
         # Bezeichner in Antworten sind wie Code-Bezeichner Englisch, auch
@@ -570,7 +566,9 @@ def build_app(
             # und der Unterschied zwischen "Zigbee-Mesh weg" und "Tippfehler
             # im Invoker" ginge verloren.
             logger.exception("Matter-Aufruf fuer Schluessel %r fehlgeschlagen", key)
-            raise HTTPException(status_code=502, detail=f"Geraet nicht erreichbar: {exc}") from exc
+            raise HTTPException(
+                status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
+            ) from exc
 
         return {"status": "ok", "key": key}
 
