@@ -87,6 +87,14 @@ DEFAULT_LISTEN_PORT = 8080
 # fuer Bestandsdatenbanken noetig. Version 6 (Entwurf periodischer Resend,
 # 2026-09-04) fuegt `signal.resend` hinzu, siehe `_migrate_to_v6` - kein
 # Backfill, jede Bestandszeile startet beim Spalten-Default (0/aus).
+#
+# **Warum der Login-Umzug die 5 bekommt und nicht die 4.** Beide Vorhaben
+# entstanden parallel und beanspruchten die 4. Eine Datenbank, die Phase 6
+# bereits gesehen hat, steht auf 4 - eine zweite Migration unter derselben
+# Nummer wuerde von `_migrate` stillschweigend uebersprungen, und der Dienst
+# startete ohne die Tabellen, die er zum Anmelden braucht. Die Nummer haengt
+# an der Reihenfolge, in der die Aenderungen zusammengefuehrt wurden, nicht
+# daran, wann sie geschrieben wurden.
 _SCHEMA_VERSION = 6
 
 _SCHEMA = """
