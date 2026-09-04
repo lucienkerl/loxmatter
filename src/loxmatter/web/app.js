@@ -110,7 +110,7 @@ let toastCounter = 0;
  */
 class UnauthorizedError extends Error {
   constructor() {
-    super("Die Sitzung ist abgelaufen – bitte erneut anmelden.");
+    super(t("web.auth.session_expired"));
     this.name = "UnauthorizedError";
   }
 }
@@ -129,7 +129,7 @@ async function readErrorDetail(response) {
   } catch {
     // Antwort war kein JSON - der generische Text unten reicht dann.
   }
-  return `HTTP ${response.status}`;
+  return t("web.errors.http_status", { status: response.status });
 }
 
 /**
@@ -163,7 +163,7 @@ async function requestJson(method, path, body) {
     // Werkzeug, dessen Zweck es gerade ist, einen Fehlschlag ehrlich UND
     // verstaendlich zu zeigen (Spec 8.1). Review-Fix Important #2,
     // 2026-09-02.
-    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+    throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401 && !path.startsWith("/auth/")) {
     // Nicht der rohe Servertext: eine 401 mitten im Betrieb heisst, die
@@ -203,7 +203,7 @@ async function requestDownload(path, filename) {
   try {
     response = await fetch(path, { credentials: "same-origin" });
   } catch {
-    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+    throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401) {
     throw new UnauthorizedError();
@@ -543,7 +543,7 @@ function app() {
 
     async submitSetup() {
       if (this.passwordDraft !== this.passwordRepeatDraft) {
-        this.authError = "Die beiden Eingaben stimmen nicht überein.";
+        this.authError = t("web.auth.password_mismatch");
         return;
       }
       await this.submitPassword("/auth/setup");
@@ -927,13 +927,13 @@ function app() {
       }
       const seconds = Math.max(0, Math.round((this.nowTick - timestamp) / 1000));
       if (seconds < 60) {
-        return `vor ${seconds} s`;
+        return t("web.header.time_ago_seconds", { seconds });
       }
       const minutes = Math.round(seconds / 60);
       if (minutes < 60) {
-        return `vor ${minutes} min`;
+        return t("web.header.time_ago_minutes", { minutes });
       }
-      return `vor ${Math.round(minutes / 60)} h`;
+      return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
     },
 
     /** Wann zuletzt IRGENDETWAS ueber die Leitung kam - der Heartbeat
@@ -966,8 +966,8 @@ function app() {
     signalAgeTitle(signal) {
       const text = this.signalSeenText(signal);
       return text
-        ? `Zuletzt aktualisiert ${text}`
-        : "Seit dem Laden der Seite unveraendert";
+        ? t("web.header.last_updated", { text })
+        : t("web.header.unchanged_since_load");
     },
 
     async commissionDevice() {
@@ -1417,7 +1417,7 @@ function app() {
       // Sekundentakt gegen eine ungueltige Sitzung weiterzuversuchen.
       await this.loadAuthInfo();
       if (!this.authenticated) {
-        this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
+        this.authError = t("web.auth.session_expired");
         return;
       }
       this.scheduleDiagnosticsReconnect();
@@ -1665,7 +1665,7 @@ function app() {
       this.socketConnected = false;
       await this.loadAuthInfo();
       if (!this.authenticated) {
-        this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
+        this.authError = t("web.auth.session_expired");
         return;
       }
       this.scheduleReconnect();
@@ -1701,15 +1701,15 @@ function app() {
     // `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE` oben).
     connectionStatusText() {
       if (this.socketConnected) {
-        return "Live-Verbindung aktiv";
+        return t("web.connection.live");
       }
       if (this.socketEverConnected) {
-        return "Verbindung verloren – verbinde neu…";
+        return t("web.connection.lost_reconnecting");
       }
       if (this.initialConnectFailures >= INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE) {
-        return "Keine Verbindung zur Brücke möglich – verbinde weiter…";
+        return t("web.connection.never_connected");
       }
-      return "Verbinde…";
+      return t("web.connection.connecting");
     },
 
     // ---------------------------------------------------------------------
@@ -1718,10 +1718,10 @@ function app() {
 
     formatTimestamp(isoTimestamp) {
       if (!isoTimestamp) {
-        return "noch nie";
+        return t("web.format.never");
       }
       try {
-        return new Date(isoTimestamp).toLocaleString("de-DE");
+        return new Date(isoTimestamp).toLocaleString(this.language === "de" ? "de-DE" : "en-US");
       } catch {
         return isoTimestamp;
       }
@@ -1732,7 +1732,7 @@ function app() {
         return "-";
       }
       if (typeof value === "boolean") {
-        return value ? "wahr" : "falsch";
+        return value ? t("web.format.true") : t("web.format.false");
       }
       return String(value);
     },

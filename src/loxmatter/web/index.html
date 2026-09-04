@@ -77,31 +77,22 @@
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
     <template x-if="stringsReady && authReady && !authenticated && !passwordSet">
       <main class="auth-screen">
-        <h1>loxmatter einrichten</h1>
-        <p class="banner warn">
-          Für diese Brücke ist noch kein Passwort vergeben. Bis das geschehen ist, kann
-          <strong>jeder im Netz</strong> sie übernehmen, indem er dieses Formular ausfüllt.
-          Schließe die Einrichtung deshalb jetzt ab und nicht später.
-        </p>
+        <h1 x-text="t('web.auth.setup_heading')"></h1>
+        <p class="banner warn" x-html="t('web.auth.setup_warning')"></p>
         <label>
-          Passwort
+          <span x-text="t('web.auth.password_label')"></span>
           <input type="password" autocomplete="new-password" x-model="passwordDraft"
                  @keydown.enter="submitSetup()" />
         </label>
         <label>
-          Passwort wiederholen
+          <span x-text="t('web.auth.password_repeat_label')"></span>
           <input type="password" autocomplete="new-password" x-model="passwordRepeatDraft"
                  @keydown.enter="submitSetup()" />
         </label>
-        <p class="hint">
-          Mindestens 8 Zeichen, am besten zufällig erzeugt statt ausgedacht – hinter dieser
-          Anmeldung liegt auch die Fabric-Sicherung. Dieser Dienst spricht HTTP ohne
-          Verschlüsselung; nimm ein Passwort, das du nirgendwo sonst benutzt.
-        </p>
+        <p class="hint" x-text="t('web.auth.password_hint')"></p>
         <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
-        <button class="primary" :disabled="authBusy" @click="submitSetup()">
-          Passwort vergeben
-        </button>
+        <button class="primary" :disabled="authBusy" @click="submitSetup()"
+                x-text="t('web.auth.setup_submit')"></button>
       </main>
     </template>
 
@@ -109,12 +100,13 @@
       <main class="auth-screen">
         <h1>loxmatter</h1>
         <label>
-          Passwort
+          <span x-text="t('web.auth.password_label')"></span>
           <input type="password" autocomplete="current-password" x-model="passwordDraft"
                  @keydown.enter="submitLogin()" />
         </label>
         <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
-        <button class="primary" :disabled="authBusy" @click="submitLogin()">Anmelden</button>
+        <button class="primary" :disabled="authBusy" @click="submitLogin()"
+                x-text="t('web.auth.login_submit')"></button>
       </main>
     </template>
 
@@ -132,9 +124,8 @@
           sondern nur den Weg hinaus. Der Weg hinein sind die beiden
           Bildschirme unter dieser Kopfzeile.
         -->
-        <button class="logout" x-show="authenticated" x-cloak @click="logout()">
-          Abmelden
-        </button>
+        <button class="logout" x-show="authenticated" x-cloak @click="logout()"
+                x-text="t('web.header.logout')"></button>
         <div class="connection-status">
           <span class="dot" :class="socketConnected ? 'online' : 'offline'"></span>
           <span x-text="connectionStatusText()"></span>
@@ -146,7 +137,7 @@
             nicht zu unterscheiden.
           -->
           <span class="heartbeat" x-show="lastHeartbeatAt" x-cloak>
-            · Lebenszeichen <span x-text="heartbeatText()"></span>
+            <span x-text="t('web.header.heartbeat_prefix')"></span> <span x-text="heartbeatText()"></span>
           </span>
         </div>
       </div>
@@ -154,17 +145,16 @@
 
     <p class="banner danger" x-show="authError" x-cloak x-text="authError"></p>
 
-    <div class="banner danger" x-show="!socketConnected && socketEverConnected" x-cloak>
-      Die Live-Verbindung wurde unterbrochen. Angezeigte Werte können inzwischen veraltet sein,
-      bis die Verbindung wiederhergestellt ist.
+    <div class="banner danger" x-show="!socketConnected && socketEverConnected" x-cloak
+         x-text="t('web.connection.lost_banner')">
     </div>
 
     <nav class="tabs">
-      <button :class="{ active: view === 'devices' }" @click="selectView('devices')">Geräte</button>
-      <button :class="{ active: view === 'signals' }" @click="selectView('signals')">Signale</button>
-      <button :class="{ active: view === 'export' }" @click="selectView('export')">Export</button>
-      <button :class="{ active: view === 'system' }" @click="selectView('system')">System</button>
-      <button :class="{ active: view === 'settings' }" @click="selectView('settings')">Einstellungen</button>
+      <button :class="{ active: view === 'devices' }" @click="selectView('devices')" x-text="t('web.nav.devices')"></button>
+      <button :class="{ active: view === 'signals' }" @click="selectView('signals')" x-text="t('web.nav.signals')"></button>
+      <button :class="{ active: view === 'export' }" @click="selectView('export')" x-text="t('web.nav.export')"></button>
+      <button :class="{ active: view === 'system' }" @click="selectView('system')" x-text="t('web.nav.system')"></button>
+      <button :class="{ active: view === 'settings' }" @click="selectView('settings')" x-text="t('web.nav.settings')"></button>
     </nav>
 
     <main>
@@ -749,7 +739,7 @@
           class="toast"
           :class="toast.isError ? 'toast-error' : 'toast-ok'"
           @click="dismissToast(toast.id)"
-          title="Zum Ausblenden anklicken"
+          :title="t('web.header.toast_dismiss_tooltip')"
           x-text="toast.text"
         ></div>
       </template>

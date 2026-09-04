@@ -93,10 +93,16 @@ async def test_alpine_is_served_locally_not_from_a_cdn(api):
 
 
 async def test_the_page_names_all_four_views(api):
+    """Aufgabe 10 bindet die Reiterleiste an `t('web.nav.*')` (Aufgabe 9) statt
+    die deutschen Namen fest ins Markup zu schreiben - der ausgelieferte
+    Quelltext traegt deshalb keinen der alten Literale mehr, sondern die
+    fuenf `x-text`-Bindungen (die Uebersetzung selbst passiert erst zur
+    Laufzeit im Browser, siehe `test_load_i18n_...` in Aufgabe 8)."""
     client, _, _ = api
     page = (await client.get("/")).text
-    for view in ("Geräte", "Signale", "Export", "System"):
-        assert view in page
+    assert ">Geräte<" not in page
+    for key in ("devices", "signals", "export", "system", "settings"):
+        assert f"x-text=\"t('web.nav.{key}')\"" in page
 
 
 async def test_the_page_does_not_promise_what_the_spec_excludes(api):
@@ -142,8 +148,8 @@ async def test_the_interface_offers_setup_and_login_instead_of_a_token_field(api
     client, _, _ = api
     page = (await client.get("/")).text
     assert page.count('type="password"') == 3
-    assert "Passwort vergeben" in page
-    assert "Anmelden" in page
+    assert "x-text=\"t('web.auth.setup_submit')\"" in page
+    assert "x-text=\"t('web.auth.login_submit')\"" in page
     assert "token-box" not in page
     assert "token-input" not in page
 
@@ -646,3 +652,178 @@ async def test_get_i18n_returns_a_real_web_namespace_key(api):
     body = response.json()
     assert body["language"] == "en"
     assert body["strings"]["web.test.smoke"] == "smoke test"
+
+
+# ---------------------------------------------------------------------------
+# Aufgabe 10 - erste inhaltliche WebUI-Uebersetzung: Reiterleiste, Kopfzeile,
+# Verbindungsstatus, Formatierungs-/Fehlerhelfer, Zugangsbildschirme. Die
+# Uebersetzungstabelle selbst (Aufgabe 9) und die Uebersetzungsmaschine
+# (Aufgabe 8) sind bereits gepruefte Bausteine - hier wird nur belegt, dass
+# die ausgelieferten Dateien tatsaechlich an diese Bausteine binden, statt
+# weiter die deutschen Literale zu tragen. Wie bei den uebrigen Markup-Tests
+# dieser Datei gilt: ohne Browser-Engine ist nicht pruefbar, dass Alpine
+# `t(...)` zur Laufzeit korrekt aufloest - nur, dass der Quelltext dafuer die
+# richtige Bindung traegt.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_generic_network_errors_call_the_global_t_from_a_free_function(api):
+    """Aufgabe 10, Schritt 6: der Beleg, dass `t()` auch ausserhalb von
+    `app()` funktioniert - `requestJson`/`requestDownload` haben keinen
+    Zugriff auf `this` des Alpine-Bauteils. Beide trugen denselben deutschen
+    Literal (siehe Inventar §13); beide muessen jetzt denselben
+    `t("web.errors.bridge_unreachable")`-Aufruf tragen, keinen mehr fest im
+    Text."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "Die Brücke ist nicht erreichbar" not in script
+    assert script.count('t("web.errors.bridge_unreachable")') == 2
+    assert 'return t("web.errors.http_status", { status: response.status });' in script
+    assert "`HTTP ${response.status}`" not in script
+
+
+async def test_the_nav_tabs_bind_to_translation_keys_without_altering_click_handlers(api):
+    """Aufgabe 10, Schritt 3: `x-text` ersetzt den Textknoten jedes
+    Reiterknopfs, `@click`/`:class` bleiben unangetastet - ein falsch
+    gebundener Reiter waere im Browser sofort sichtbar, aber dieser Test
+    ohne Browser-Engine kann nur pruefen, dass Handler und Bindung
+    NEBENEINANDER auf demselben Element stehen, nicht dass ein Klick
+    tatsaechlich die Ansicht wechselt."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    for view_key in ("devices", "signals", "export", "system", "settings"):
+        assert (
+            f"@click=\"selectView('{view_key}')\" x-text=\"t('web.nav.{view_key}')\"" in page
+        )
+
+
+async def test_the_header_logout_and_connection_banner_are_translated(api):
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "x-text=\"t('web.header.logout')\"" in markup
+    assert ">Abmelden<" not in markup
+    assert "x-text=\"t('web.connection.lost_banner')\"" in markup
+    assert "Die Live-Verbindung wurde unterbrochen" not in markup
+    assert ':title="t(\'web.header.toast_dismiss_tooltip\')"' in markup
+    assert "Zum Ausblenden anklicken" not in markup
+    assert "x-text=\"t('web.header.heartbeat_prefix')\"" in markup
+    assert "Lebenszeichen" not in markup
+
+
+async def test_connection_status_text_translates_all_four_branches(api):
+    """Aufgabe 10, Schritt 4: `connectionStatusText()` behaelt seine drei
+    Bedingungen unveraendert - nur die vier zurueckgegebenen Literale werden
+    zu `t(...)`-Aufrufen."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("connectionStatusText() {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+    assert 'return t("web.connection.live");' in body
+    assert 'return t("web.connection.lost_reconnecting");' in body
+    assert 'return t("web.connection.never_connected");' in body
+    assert 'return t("web.connection.connecting");' in body
+    assert "Live-Verbindung aktiv" not in body
+    assert "Verbindung verloren" not in body
+    assert "Keine Verbindung zur Brücke" not in body
+    assert '"Verbinde…"' not in body
+
+
+async def test_the_relative_time_and_header_helpers_are_translated(api):
+    """Aufgabe 10, Schritt 4: die drei Alters-Literale in `sinceText()` und
+    die beiden Tooltip-Literale in `signalAgeTitle()` tragen jetzt
+    Platzhalter statt Template-Strings - dieselben Variablennamen wie
+    zuvor (`seconds`/`minutes`/das gerundete Stunden-Objekt/`text`)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    since_start = script.index("sinceText(timestamp) {")
+    since_end = script.index("\n    },", since_start)
+    since_body = script[since_start:since_end]
+    assert 'return t("web.header.time_ago_seconds", { seconds });' in since_body
+    assert 'return t("web.header.time_ago_minutes", { minutes });' in since_body
+    assert (
+        'return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });'
+        in since_body
+    )
+    assert "`vor" not in since_body
+
+    title_start = script.index("signalAgeTitle(signal) {")
+    title_end = script.index("\n    },", title_start)
+    title_body = script[title_start:title_end]
+    assert '? t("web.header.last_updated", { text })' in title_body
+    assert ': t("web.header.unchanged_since_load");' in title_body
+    assert "Zuletzt aktualisiert" not in title_body
+    assert "unveraendert" not in title_body
+
+
+async def test_the_setup_screen_is_fully_translated(api):
+    """Aufgabe 10, Schritt 5: Ueberschrift, Warnbanner (als `x-html`, weil der
+    uebersetzte Text das `<strong>` selbst mitbringt, siehe strings.yaml
+    `web.auth.setup_warning`), beide Feldbeschriftungen, der Hinweistext und
+    der Absende-Knopf - keiner der frueheren deutschen Literale darf mehr im
+    Markup stehen."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "x-text=\"t('web.auth.setup_heading')\"" in markup
+    assert "loxmatter einrichten" not in markup
+    assert "x-html=\"t('web.auth.setup_warning')\"" in markup
+    assert "jeder im Netz" not in markup
+    assert markup.count("x-text=\"t('web.auth.password_label')\"") == 2
+    assert "x-text=\"t('web.auth.password_repeat_label')\"" in markup
+    assert "x-text=\"t('web.auth.password_hint')\"" in markup
+    assert "Mindestens 8 Zeichen" not in markup
+    assert "x-text=\"t('web.auth.setup_submit')\"" in markup
+    assert "Passwort vergeben" not in markup
+
+
+async def test_the_login_screen_is_translated_and_the_product_name_h1_is_untouched(api):
+    """Aufgabe 10, Schritt 5: der Absende-Knopf und das gemeinsame
+    Passwort-Label wandern auf `t(...)`, aber BEIDE `<h1>loxmatter</h1>`
+    (Kopfzeile und Login-Bildschirm) sowie `<title>loxmatter</title>`
+    bleiben unangetastet - das ist der Produktname, keine Textzeichenkette
+    (Aufgabe 9's Scope-Hinweis)."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "x-text=\"t('web.auth.login_submit')\"" in markup
+    assert ">Anmelden<" not in markup
+    assert markup.count("<h1>loxmatter</h1>") == 2
+    assert "<title>loxmatter</title>" in markup
+
+
+async def test_session_expired_and_password_mismatch_are_translated(api):
+    """Aufgabe 10, Schritt 5: die drei identischen "Sitzung abgelaufen"-Stellen
+    (Konstruktor von `UnauthorizedError`, `handleDiagnosticsDisconnect`,
+    `handleLiveDisconnect`) teilen sich denselben Schluessel; der
+    Passwort-Abgleich beim Einrichten bekommt seinen eigenen."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "Die Sitzung ist abgelaufen" not in script
+    assert script.count('t("web.auth.session_expired")') == 3
+    assert 'super(t("web.auth.session_expired"));' in script
+    assert "Die beiden Eingaben stimmen nicht überein" not in script
+    assert 'this.authError = t("web.auth.password_mismatch");' in script
+
+
+async def test_formatting_helpers_translate_and_the_locale_follows_the_language(api):
+    """Aufgabe 10, Schritt 6: `formatTimestamp`/`formatValue` verlieren ihre
+    drei deutschen Literale UND ihr fest verdrahtetes `"de-DE"` - die
+    `toLocaleString`-Gebietsschema muss dem aktiven `language`-Feld folgen,
+    nicht laenger daran vorbei auf Deutsch stehen bleiben, waehrend der Rest
+    der Seite Englisch zeigt."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    format_ts_start = script.index("formatTimestamp(isoTimestamp) {")
+    format_value_start = script.index("formatValue(value) {")
+    ts_body = script[format_ts_start:format_value_start]
+    assert 'return t("web.format.never");' in ts_body
+    assert (
+        'toLocaleString(this.language === "de" ? "de-DE" : "en-US")' in ts_body
+    )
+    assert 'toLocaleString("de-DE")' not in ts_body
+    assert "noch nie" not in ts_body
+
+    value_end = script.index("\n    },", format_value_start)
+    value_body = script[format_value_start:value_end]
+    assert 'value ? t("web.format.true") : t("web.format.false");' in value_body
+    assert '"wahr"' not in value_body
+    assert '"falsch"' not in value_body
