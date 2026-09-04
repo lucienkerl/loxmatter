@@ -280,24 +280,46 @@ class ProjectSyncEntryOut(BaseModel):
     changes: dict[str, list[str]]
 
 
+class ProjectSyncMiniserverOut(BaseModel):
+    """Ein in der hochgeladenen Projektdatei gefundener Miniserver
+    (`projectsync.index.MiniserverCandidate`) - fuellt das Auswahlfeld in der
+    WebUI, wenn die Datei mehr als einen konfiguriert (Nutzerwunsch: den
+    gewuenschten Miniserver auswaehlen statt seine IP von Hand abzutippen)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    title: str
+    int_addr: str
+
+
 class ProjectSyncPlanOut(BaseModel):
     """Antwort von `POST /api/export/project-sync` - Plan und beide
     gepatchten Datei-Varianten in einer Antwort (Entwurf Abschnitt 4/7): kein
     zweiter Server-Roundtrip, der "Bestaetigen"-Schritt ist rein
-    clientseitig."""
+    clientseitig.
+
+    **Zwei Antwortformen** (Nutzerwunsch nach dem Review): traegt die Datei
+    mehr als einen Miniserver und wurde keiner ausgewaehlt, liefert der
+    Endpunkt statt eines Plans `needs_miniserver_selection=True` plus
+    `available_miniservers` - alle anderen Felder bleiben dann leer/`None`.
+    Die WebUI zeigt in diesem Fall ein Auswahlfeld statt des Plans und
+    fragt mit derselben Datei (im Browser bereits vorhanden, kein erneuter
+    Datei-Dialog) und der gewaehlten `miniserver_ip` erneut an."""
 
     model_config = ConfigDict(frozen=True)
 
-    entries: list[ProjectSyncEntryOut]
-    has_changes: bool
-    patched_conservative_base64: str
+    needs_miniserver_selection: bool = False
+    available_miniservers: list[ProjectSyncMiniserverOut] = Field(default_factory=list)
+    entries: list[ProjectSyncEntryOut] = Field(default_factory=list)
+    has_changes: bool = False
+    patched_conservative_base64: str | None = None
     # `None`, wenn die experimentelle Variante fuer diese Datei nicht gebaut
     # werden konnte (z. B. fehlender `VirtualInCaption`-Abschnitt, Entwurf
     # Abschnitt 8). Der Plan und die konservative Variante bleiben davon
     # unberuehrt - die Oberflaeche zeigt dann nur den Grund statt des
     # Download-Angebots.
-    patched_with_new_devices_base64: str | None
-    new_devices_unavailable_reason: str | None
+    patched_with_new_devices_base64: str | None = None
+    new_devices_unavailable_reason: str | None = None
 
 
 class ResendIntervalOut(BaseModel):

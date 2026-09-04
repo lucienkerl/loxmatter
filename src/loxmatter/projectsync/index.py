@@ -37,15 +37,33 @@ Abschnitt zur Miniserver-Zuordnung, fuer die vollstaendige Herleitung)."""
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from loxmatter.projectsync.keys import key_from_check, key_from_cmd_on
 from loxmatter.projectsync.scan import Element, ProjectFormatError, parse_root, scan_children
 
-__all__ = ["AmbiguousMiniserverError", "ProjectFormatError", "ProjectIndex", "build_index"]
+__all__ = [
+    "AmbiguousMiniserverError",
+    "MiniserverCandidate",
+    "ProjectFormatError",
+    "ProjectIndex",
+    "build_index",
+]
 
 _U_ATTR = re.compile(r'\bU="([^"]*)"')
 _INAME_ATTR = re.compile(r'\bIName="([^"]*)"')
+
+
+@dataclass(frozen=True)
+class MiniserverCandidate:
+    """Ein in der Projektdatei gefundener Miniserver (`LoxLIVE`-Block), so
+    wie ihn `AmbiguousMiniserverError.candidates` traegt - genug, um in der
+    WebUI ein Auswahlfeld zu fuellen (Nutzerwunsch: auswaehlen statt die IP
+    von Hand abzutippen), ohne den ganzen `Element`-Baum durchzureichen."""
+
+    title: str
+    int_addr: str
 
 
 class AmbiguousMiniserverError(ProjectFormatError):
@@ -57,7 +75,17 @@ class AmbiguousMiniserverError(ProjectFormatError):
     Mehr-Miniserver-Datei landen. Subklasse von `ProjectFormatError`, damit
     dieselbe Fehlerbehandlung am Upload-Endpunkt greift (klare 400-Antwort
     statt 500) - die Datei selbst ist dabei nicht fehlerhaft, nur die Anfrage
-    unvollstaendig."""
+    unvollstaendig.
+
+    `candidates` traegt die tatsaechlich gefundenen Miniserver, wenn es
+    welche gibt (leer nur im "gar keiner konfiguriert"-Fall, wo es nichts
+    zur Auswahl gibt) - `api.project_sync` nutzt das, um statt einer reinen
+    Fehlermeldung ein Auswahlfeld anzubieten (Nutzerwunsch nach dem
+    Review)."""
+
+    def __init__(self, message: str, candidates: Sequence[MiniserverCandidate] = ()) -> None:
+        super().__init__(message)
+        self.candidates: list[MiniserverCandidate] = list(candidates)
 
 
 @dataclass
@@ -101,6 +129,18 @@ def _describe(loxlives: list[Element]) -> str:
     )
 
 
+def _candidates(loxlives: list[Element]) -> list[MiniserverCandidate]:
+    """Baut `AmbiguousMiniserverError.candidates` aus den gefundenen
+    `LoxLIVE`-Bloecken - nur die, die auch eine `IntAddr` tragen: ohne sie
+    gibt es nichts, das `miniserver_ip` beim naechsten Versuch entgegennehmen
+    koennte, so ein Block waere in der Auswahl also nur ein toter Eintrag."""
+    return [
+        MiniserverCandidate(title=ll.attrs.get("Title", "?"), int_addr=ll.attrs["IntAddr"])
+        for ll in loxlives
+        if ll.attrs.get("IntAddr")
+    ]
+
+
 def _resolve_target_loxlive(loxlives: list[Element], miniserver_ip: str | None) -> Element:
     """Waehlt den EINEN `LoxLIVE`-Block, gegen den dieser Lauf abgleicht.
 
@@ -126,13 +166,15 @@ def _resolve_target_loxlive(loxlives: list[Element], miniserver_ip: str | None) 
         if not matches:
             raise AmbiguousMiniserverError(
                 f"Kein Miniserver mit der IP {miniserver_ip!r} in dieser Projektdatei "
-                f"gefunden. Vorhanden: {_describe(loxlives)}."
+                f"gefunden. Vorhanden: {_describe(loxlives)}.",
+                _candidates(loxlives),
             )
         return matches[0]
     if len(loxlives) > 1:
         raise AmbiguousMiniserverError(
             f"Diese Projektdatei enthaelt mehrere Miniserver: {_describe(loxlives)}. "
-            "Bitte die IP des gewuenschten Miniservers angeben."
+            "Bitte den gewuenschten Miniserver auswaehlen.",
+            _candidates(loxlives),
         )
     return loxlives[0]
 
