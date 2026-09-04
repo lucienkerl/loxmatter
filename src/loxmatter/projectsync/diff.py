@@ -21,7 +21,7 @@ Export) gegen einen `ProjectIndex` und baut den Diff-Plan (Entwurf Abschnitt
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -30,6 +30,7 @@ from loxmatter.export.outputs import to_outputs
 from loxmatter.export.signals import LoxoneInput, to_inputs
 from loxmatter.model.store import StoredCommand, StoredDevice, StoredSignal
 from loxmatter.projectsync.index import ProjectIndex
+from loxmatter.projectsync.scan import Element
 from loxmatter.projectsync.schema import (
     MANAGED_INPUT_CMD_ATTRS,
     MANAGED_OUTPUT_CMD_ATTRS,
@@ -50,6 +51,15 @@ class PlanStatus(StrEnum):
     NEW_DEVICE = "new_device"
     ORPHANED = "orphaned"
     CONFLICT = "conflict"
+    # Ein gewuenschtes Signal hat KEIN Objekt mit passendem Schluessel, aber
+    # ein bestehender Befehl im selben Geraete-Container traegt bereits den
+    # gewuenschten Titel (Entwurf-Nachtrag, gefunden am Anwenderbericht "zwei
+    # mal onoff drin"): eher ein Hinweis auf einen beschaedigten/veralteten
+    # Schluessel in diesem einen Objekt (z. B. `Check`/`CmdOn` von Hand
+    # editiert) als ein wirklich neues Signal. Wird wie ORPHANED/CONFLICT nie
+    # automatisch angelegt - siehe `patch.apply_plan`, das nur UPDATED/
+    # NEW_SIGNAL/NEW_DEVICE explizit behandelt.
+    POSSIBLE_DUPLICATE = "possible_duplicate"
 
 
 @dataclass(frozen=True)
@@ -94,6 +104,28 @@ def _has_required_attrs(attrs: dict[str, str], required: Sequence[str]) -> bool:
     return all(name in attrs for name in required)
 
 
+def _title_collision(cmds: Mapping[str, Element], prefix: str, title: str) -> bool:
+    """Traegt irgendein bereits vorhandener Befehl desselben Geraets (Schluessel
+    beginnt mit `prefix`) genau den gewuenschten Titel, obwohl KEIN Objekt
+    unter dem gewuenschten Schluessel selbst gefunden wurde?
+
+    Deckt den Fall auf, den der Anwender an seiner echten Datei gemeldet hat:
+    ein bestehender kombinierter Ausgangsbefehl "onoff" trug durch einen
+    alten Bug im Export ein beschaedigtes `CmdOn` (`/cmd/d1_1_o/1` statt
+    `/cmd/d1_1_onoff/1`, das fehlende Zeichen) - `key_from_cmd_on` liest
+    daraus den falschen Schluessel `d1_1_o`, das eigentlich gemeinte Objekt
+    taucht also nirgends unter `d1_1_onoff` auf. Ohne diese Pruefung waere
+    das Ergebnis ein zweiter, echter "onoff"-Befehl im selben Container -
+    eine stille Dopplung, kein hilfreicher Neueintrag. `index.input_cmds`/
+    `index.output_cmds` sind bereits nach dem (moeglicherweise falschen)
+    extrahierten Schluessel indiziert, tragen den beschaedigten Eintrag also
+    ohnehin - nur eben unter dem falschen Namen, nicht dem gewuenschten."""
+    return any(
+        key.startswith(prefix) and element.attrs.get("Title") == title
+        for key, element in cmds.items()
+    )
+
+
 def _plan_inputs(
     index: ProjectIndex, device: StoredDevice, entries: Sequence[LoxoneInput]
 ) -> list[PlanEntry]:
@@ -103,7 +135,10 @@ def _plan_inputs(
     for entry in entries:
         existing = index.input_cmds.get(entry.key)
         if existing is None:
-            status = PlanStatus.NEW_SIGNAL if has_existing_container else PlanStatus.NEW_DEVICE
+            if has_existing_container and _title_collision(index.input_cmds, prefix, entry.title):
+                status = PlanStatus.POSSIBLE_DUPLICATE
+            else:
+                status = PlanStatus.NEW_SIGNAL if has_existing_container else PlanStatus.NEW_DEVICE
             plan_entries.append(
                 PlanEntry("input", device.id, device.label, entry.key, entry.title, status)
             )
@@ -133,7 +168,12 @@ def _plan_outputs(
     for command in commands:
         existing = index.output_cmds.get(command.key)
         if existing is None:
-            status = PlanStatus.NEW_SIGNAL if has_existing_container else PlanStatus.NEW_DEVICE
+            if has_existing_container and _title_collision(
+                index.output_cmds, prefix, command.title
+            ):
+                status = PlanStatus.POSSIBLE_DUPLICATE
+            else:
+                status = PlanStatus.NEW_SIGNAL if has_existing_container else PlanStatus.NEW_DEVICE
             plan_entries.append(
                 PlanEntry("output", device.id, device.label, command.key, command.title, status)
             )

@@ -92,6 +92,56 @@ def test_orphaned_object_is_left_untouched(sample_project):
     assert 'Check="d9_9_verwaist:\\v"' in patched
 
 
+# Wie `sample_project`, aber der bestehende Ausgangsbefehl traegt ein
+# beschaedigtes `CmdOn` (fehlendes "n": `/cmd/d1_1_o/1` statt
+# `/cmd/d1_1_onoff/1`) bei korrektem Titel "onoff" - der Anwenderbericht
+# "zwei mal onoff drin" (siehe `test_diff.py`,
+# `test_title_collision_with_mismatched_key_is_possible_duplicate`, fuer
+# dieselbe Fixture auf Ebene von `diff.build_plan`).
+CORRUPTED_ONOFF_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="Document" U="2000-0000-0000-aaaaaaaaaaaaaaaa" Title="Testprojekt">\r\n'
+    '\t\t<C Type="LoxLIVE" U="2000-0001-0000-aaaaaaaaaaaaaaaa" Title="Testserver"'
+    ' IntAddr="10.0.0.10" Serial="504F00000000">\r\n'
+    '\t\t\t<C Type="VirtualOutCaption" IName="C2" U="1000-000a-0000-aaaaaaaaaaaaaaaa">\r\n'
+    '\t\t\t\t<C Type="VirtualOut" IName="VQ1" U="1000-000b-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Matter — Altes Geraet" WF="16384" Address="http://10.0.0.9:8080"'
+    ' CloseAfterSend="true" CmdSep=";">\r\n'
+    '\t\t\t\t\t<C Type="VirtualOutCmd" IName="VQC1" U="1000-000c-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="onoff" Nio="1" WF="16400" CmdOn="/cmd/d1_1_o/1" CmdOnMethod="1" Tx="false">\r\n'
+    '\t\t\t\t\t\t<Co K="I" U="1000-000d-0000-bbbbbbbbbbbbbbbb"/>\r\n'
+    '\t\t\t\t\t\t<IoData Cr="1000-0005-0000-aaaaaaaaaaaaaaaa" Pr="1000-0006-0000-aaaaaaaaaaaaaaaa"/>\r\n'
+    '\t\t\t\t\t\t<Display Unit="&lt;v.1&gt;" StateOnly="true"/>\r\n'
+    "\t\t\t\t\t</C>\r\n"
+    "\t\t\t\t</C>\r\n"
+    "\t\t\t</C>\r\n"
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
+def test_possible_duplicate_is_not_patched_in():
+    """`apply_plan` behandelt `POSSIBLE_DUPLICATE` wie `ORPHANED`/`CONFLICT`:
+    nur UPDATED/NEW_SIGNAL/NEW_DEVICE erzeugen einen Edit (siehe die
+    `if`/`elif`-Kette dort) - ohne diese Pruefung haette der beschaedigte
+    bestehende "onoff"-Befehl einen zweiten, echten "onoff" im selben
+    Container bekommen."""
+    index = build_index(CORRUPTED_ONOFF_PROJECT)
+    device = _device(1, "Altes Geraet")
+    commands = [
+        _command("d1_1_on", "on", 1, 1),
+        _command("d1_1_off", "off", 1, 0),
+    ]
+    patched = _patch(index, device, [], include_new_devices=True, commands=commands)
+    # Der beschaedigte Bestandsbefehl bleibt exakt, wie er war ...
+    assert 'CmdOn="/cmd/d1_1_o/1"' in patched
+    # ... und es kommt KEIN zweiter "onoff" hinzu - nur genau EIN
+    # `Title="onoff"` im ganzen Dokument.
+    assert patched.count('Title="onoff"') == 1
+
+
 def _unchanged_signals() -> list[StoredSignal]:
     """Signale, die exakt dem entsprechen, was in `sample_project` steht - der
     Plan enthaelt damit weder `updated` noch `new_signal`/`new_device` (siehe

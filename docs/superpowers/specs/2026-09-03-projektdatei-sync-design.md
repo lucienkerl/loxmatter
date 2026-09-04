@@ -214,6 +214,18 @@ Zusätzlich, unabhängig von obiger Tabelle: **`orphaned`** — ein
 keinem aktuell bekannten, exportierten Signal mehr entspricht (Gerät entfernt,
 Signal abgewählt). Wird gemeldet, nicht verändert (Abschnitt 2).
 
+**`possible_duplicate`** (Nachtrag nach echtem Praxistest, 2026-09-05): kein
+Objekt mit dem gewünschten Schlüssel gefunden, ABER ein bestehender Befehl im
+selben Gerätecontainer trägt bereits genau den gewünschten Titel. Deutet eher
+auf ein beschädigtes/veraltetes `Check`/`CmdOn` an einem einzelnen bestehenden
+Objekt hin als auf ein wirklich neues Signal — beobachtet an einem
+kombinierten Ausgangsbefehl "onoff", dessen `CmdOn` durch einen alten
+Export-Bug ein Zeichen fehlte (`/cmd/d1_1_o/1` statt `/cmd/d1_1_onoff/1`).
+Ohne diese Prüfung hätte der Sync einen zweiten "onoff"-Befehl im selben
+Container angelegt, statt den beschädigten zu erkennen. Wird wie `orphaned`/
+`conflict` nie automatisch angelegt — der Anwender muss den bestehenden
+Befehl selbst in Loxone Config prüfen/reparieren.
+
 `updated` trägt zusätzlich die konkrete Attribut-Differenz (alter Wert → neuer
 Wert je Attribut), damit der Anwender im Plan sieht, *was* sich ändert, nicht
 nur *dass*.
@@ -248,6 +260,21 @@ bestehenden Containers trägt dasselbe ID-Risiko, aber ein deutlich kleineres
 strukturelles Risiko (kein neuer Container, keine neue Elternstruktur) und
 bleibt deshalb Vorgabe.
 
+**Fehlendes `V`-Attribut (gefunden am echten Praxistest, 2026-09-05).** Der
+erste reale Test zeigte: neu angelegte Geräte-Container erschienen zwar in
+Loxone Config, ihre Kommando-Kinder blieben aber leer. Ursache: JEDES
+`<C>`-Objekt in der echten Referenzdatei trägt ein `V`-Attribut (an allen
+3710 vorkommenden Objekten geprüft, ausnahmslos — praktisch immer `"178"`,
+nur das `Document`-Wurzelobjekt trägt die volle Config-Versionsnummer). Die
+ursprüngliche Attributliste für neu angelegte Container/Cmds/Captions hatte
+dieses Attribut schlicht nicht auf dem Schirm. Behoben: alle fünf
+`new_*_open_tag`-Funktionen (`projectsync/schema.py`) schreiben jetzt
+`V="178"`. Dieselbe Prüfung deckte auch auf, dass eine neu angelegte Caption
+(`VirtualInCaption`/`VirtualOutCaption`, Abschnitt 8: Sonderfall der
+kompletten Neuanlage) fälschlich ein `IName` trug, das echte Captions nicht
+haben, und ein festes `Title` (`"Virtuelle Eingänge"`/`"Virtuelle
+Ausgänge"`) fehlte — ebenfalls korrigiert.
+
 ## 7. API & WebUI
 
 **Endpoint:** `POST /api/export/project-sync`, multipart mit der
@@ -277,6 +304,9 @@ Download-Button ist erst nach dem Hochladen (= der Plan wurde gesehen) aktiv.
   aus (z. B. falscher Objekttyp für den Schlüssel) → als `conflict` markiert,
   wird übersprungen und explizit gemeldet statt still überschrieben oder
   übernommen.
+- Kein Objekt mit passendem Schlüssel gefunden, aber ein bestehender Befehl im
+  selben Container trägt bereits denselben Titel (Abschnitt 5, `possible_
+  duplicate`) → wird übersprungen statt eine stille Dopplung anzulegen.
 - Keine Änderungen nötig → Plan sagt das explizit (Abschnitt 5), kein leerer
   oder verwirrender Zustand.
 
