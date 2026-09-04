@@ -390,18 +390,22 @@ async def test_the_system_view_offers_the_four_diagnostics_controls(api):
 
     Belegt nur, dass Markup und Skript die vier Bindungen tragen - nicht,
     dass ein Klick im Browser tatsaechlich etwas umschaltet (siehe
-    Testdocstring oben)."""
+    Testdocstring oben).
+
+    Seit Aufgabe 14 tragen die Beschriftungen `t(...)`-Aufrufe statt fester
+    deutscher Literale - hier wird nur noch belegt, dass die Bindungen
+    selbst (Attribute, Handler, Vorgabewerte) unveraendert sind."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
     assert 'x-model="hideNoise"' in page
-    assert "Heartbeat und Full-Resend ausblenden" in page
+    assert "x-text=\"t('web.system.hide_noise')\"" in page
     assert 'x-model="logLevel"' in page
-    assert "Log-Stufe" in page
+    assert "x-text=\"t('web.system.log_level_label')\"" in page
     assert "diagnosticsPaused = !diagnosticsPaused" in page
-    assert "Pausieren" in page and "Fortsetzen" in page
+    assert "x-text=\"diagnosticsPaused ? t('web.system.resume') : t('web.system.pause')\"" in page
     assert "clearDiagnosticsBuffers()" in page
-    assert "Leeren" in page
+    assert "x-text=\"t('web.system.clear')\"" in page
     # Vorgaben aus der Aufgabenstellung (Schritt 2): Filter aus, Log-Stufe
     # "INFO".
     assert "hideNoise: true" in script
@@ -1285,3 +1289,126 @@ async def test_the_export_tab_dynamic_errors_are_translated(api):
     )
     assert "Brücken-IP hinterlegen" not in download_body
     assert "Download fehlgeschlagen" not in download_body
+
+
+async def test_the_system_tab_static_text_is_translated(api):
+    """Aufgabe 14, Schritt 3: die beiden Karten-Ueberschriften „Systemcheck"
+    und „Live-Diagnose" mitsamt „Aktualisieren"-Knopf, die drei
+    ternaeren Literale (Systemcheck-Status OK/Fehler, Verbindungsstatus
+    live/getrennt - letzterer nutzt den bereits aus Aufgabe 10 bekannten
+    Schluessel `web.connection.live` fuer den wahren Zweig -, Pausieren/
+    Fortsetzen), das Rauschfilter-Label, die Log-Stufen-Beschriftung samt
+    aller vier `<option>`s (der „Fehler"-Eintrag teilt sich
+    `web.system.check_error` mit dem Systemcheck-Status), der „Leeren"-
+    Knopf, die Pause/Leeren-Erklaerung (als `x-html`, sie enthaelt ein
+    eingebettetes `<span class="key">tail -f</span>`), die Ueberschriften
+    und Hinweistexte der Logs-, UDP- und Kommando-Log-Karten sowie die
+    Sicherungskarte (Ueberschrift, beide Erklaerungsabsaetze, der
+    Download-Knopf) tragen jetzt `t(...)` statt fester deutscher Literale
+    - keiner der frueheren Literale bleibt im Markup."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    assert "x-text=\"t('web.system.checks_heading')\"" in markup
+    assert ">Systemcheck<" not in markup
+    assert "x-text=\"t('web.system.refresh')\"" in markup
+    assert ">Aktualisieren<" not in markup
+
+    assert "x-text=\"check.ok ? t('web.system.check_ok') : t('web.system.check_error')\"" in markup
+    assert "'OK' : 'Fehler'" not in markup
+
+    assert "x-text=\"t('web.system.live_heading')\"" in markup
+    assert ">Live-Diagnose<" not in markup
+    assert (
+        "x-text=\"diagnosticsConnected ? t('web.connection.live') : t('web.system.diag_disconnected')\""
+        in markup
+    )
+    assert "Live-Verbindung aktiv" not in markup
+    assert "Verbindung getrennt" not in markup
+
+    assert "x-text=\"diagnosticsPaused ? t('web.system.resume') : t('web.system.pause')\"" in markup
+    assert "'Fortsetzen' : 'Pausieren'" not in markup
+
+    assert "x-text=\"t('web.system.hide_noise')\"" in markup
+    assert "Heartbeat und Full-Resend ausblenden" not in markup
+
+    assert "x-text=\"t('web.system.log_level_label')\"" in markup
+    assert ">Log-Stufe<" not in markup
+    assert "x-text=\"t('web.system.log_level_info')\"" in markup
+    assert "x-text=\"t('web.system.log_level_warn')\"" in markup
+    assert "x-text=\"t('web.system.check_error')\"" in markup
+    assert "x-text=\"t('web.system.log_level_critical')\"" in markup
+    assert ">Info<" not in markup
+    assert ">Warnung<" not in markup
+    assert ">Fehler<" not in markup
+    assert ">Kritisch<" not in markup
+
+    assert "x-text=\"t('web.system.clear')\"" in markup
+    assert ">Leeren<" not in markup
+
+    assert "x-html=\"t('web.system.pause_clear_explanation')\"" in markup
+    assert "haelt nur das Anhaengen" not in markup
+    assert "wirkt nur auf diese Seite" not in markup
+
+    assert "x-text=\"t('web.system.logs_heading')\"" in markup
+    assert ">Logs<" not in markup
+    assert "x-text=\"t('web.system.logs_hint')\"" in markup
+    assert "Protokollzeilen der Brücke" not in markup
+
+    assert "x-text=\"t('web.system.udp_heading')\"" in markup
+    assert ">UDP-Mitschnitt<" not in markup
+    assert "x-text=\"t('web.system.udp_hint')\"" in markup
+    assert "Tatsächlich über den Draht" not in markup
+
+    assert "x-text=\"t('web.system.command_log_heading')\"" in markup
+    assert ">Kommando-Log<" not in markup
+    assert "x-text=\"t('web.system.command_log_hint')\"" in markup
+    assert "Eingehende HTTP-Aufrufe" not in markup
+
+    assert "x-text=\"t('web.system.backup_heading')\"" in markup
+    assert ">Sicherung<" not in markup
+    assert "x-text=\"t('web.system.backup_explanation')\"" in markup
+    assert "Sicherung der Fabric-Zugangsdaten" not in markup
+    assert "x-text=\"t('web.system.backup_access_note')\"" in markup
+    assert "Nur nach Anmeldung abrufbar" not in markup
+    assert "x-text=\"t('web.system.backup_download')\"" in markup
+    assert ">Sicherung herunterladen<" not in markup
+
+
+async def test_the_system_tab_pause_clear_explanation_html_renders_the_key_span(api):
+    """Aufgabe 14, Schritt 3 (Nachbesserung): `web.system.pause_clear_explanation`
+    enthaelt ein eingebettetes `<span class="key">tail -f</span>` - die
+    Bindung muss `x-html` sein, sonst zeigt der Browser die spitzen Klammern
+    als Text statt das Tastatur-Styling anzuwenden. Belegt hier nur, dass
+    das rohe Markup im ausgelieferten Sprachstring ankommt; die tatsaechliche
+    Darstellung ist Teil der manuellen Browserpruefung."""
+    client, _, _ = api
+    body = (await client.get("/api/i18n")).json()
+    template = body["strings"]["web.system.pause_clear_explanation"]
+    assert '<span class="key">tail -f</span>' in template
+
+
+async def test_the_system_tab_dynamic_errors_are_translated(api):
+    """Aufgabe 14, Schritt 4: der Systemcheck-Ladefehler (`loadSystem`) und
+    der Sicherungs-Fehler (`downloadFabricBackup`) tragen jetzt `t(...)`
+    statt Template-Strings."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    load_system_start = script.index("async loadSystem() {")
+    load_system_end = script.index("\n    },", load_system_start)
+    load_system_body = script[load_system_start:load_system_end]
+    assert (
+        'this.systemError = t("web.system.load_error", { message: error.message });'
+        in load_system_body
+    )
+    assert "Diagnose konnte nicht geladen werden" not in load_system_body
+
+    download_backup_start = script.index("async downloadFabricBackup() {")
+    download_backup_end = script.index("\n    },", download_backup_start)
+    download_backup_body = script[download_backup_start:download_backup_end]
+    assert (
+        'this.backupError = t("web.system.backup_error", { message: error.message });'
+        in download_backup_body
+    )
+    assert "Sicherung nicht möglich" not in download_backup_body

@@ -566,14 +566,18 @@
       <section x-show="view === 'system'" x-cloak>
         <div class="card">
           <div class="row">
-            <h2 style="margin: 0">Systemcheck</h2>
-            <button @click="loadSystem()" :disabled="diagnosticsBusy">Aktualisieren</button>
+            <h2 style="margin: 0" x-text="t('web.system.checks_heading')"></h2>
+            <button @click="loadSystem()" :disabled="diagnosticsBusy" x-text="t('web.system.refresh')"></button>
           </div>
           <p x-show="systemError" x-cloak class="banner danger" x-text="systemError"></p>
           <ul class="system-check-list">
             <template x-for="check in systemChecks" :key="check.name">
               <li>
-                <span class="badge" :class="check.ok ? 'ok' : 'danger'" x-text="check.ok ? 'OK' : 'Fehler'"></span>
+                <span
+                  class="badge"
+                  :class="check.ok ? 'ok' : 'danger'"
+                  x-text="check.ok ? t('web.system.check_ok') : t('web.system.check_error')"
+                ></span>
                 <strong x-text="check.name"></strong>
                 <span x-text="check.detail"></span>
               </li>
@@ -591,22 +595,22 @@
         -->
         <div class="card">
           <div class="row">
-            <h2 style="margin: 0">Live-Diagnose</h2>
+            <h2 style="margin: 0" x-text="t('web.system.live_heading')"></h2>
             <span class="connection-status">
               <span class="dot" :class="diagnosticsConnected ? 'online' : 'offline'"></span>
               <span
-                x-text="diagnosticsConnected ? 'Live-Verbindung aktiv' : 'Verbindung getrennt – verbinde neu…'"
+                x-text="diagnosticsConnected ? t('web.connection.live') : t('web.system.diag_disconnected')"
               ></span>
             </span>
           </div>
           <div class="row">
             <button
               @click="diagnosticsPaused = !diagnosticsPaused"
-              x-text="diagnosticsPaused ? 'Fortsetzen' : 'Pausieren'"
+              x-text="diagnosticsPaused ? t('web.system.resume') : t('web.system.pause')"
             ></button>
             <label>
               <input type="checkbox" x-model="hideNoise" />
-              Heartbeat und Full-Resend ausblenden
+              <span x-text="t('web.system.hide_noise')"></span>
             </label>
             <label>
               <!--
@@ -618,27 +622,22 @@
                 siehe Entwurf, Abschnitt 7, Punkt 2, fuer den (bislang
                 fehlenden) DEBUG-Schalter, der das aendern wuerde.
               -->
-              Log-Stufe
+              <span x-text="t('web.system.log_level_label')"></span>
               <select x-model="logLevel">
-                <option value="INFO">Info</option>
-                <option value="WARNING">Warnung</option>
-                <option value="ERROR">Fehler</option>
-                <option value="CRITICAL">Kritisch</option>
+                <option value="INFO" x-text="t('web.system.log_level_info')"></option>
+                <option value="WARNING" x-text="t('web.system.log_level_warn')"></option>
+                <option value="ERROR" x-text="t('web.system.check_error')"></option>
+                <option value="CRITICAL" x-text="t('web.system.log_level_critical')"></option>
               </select>
             </label>
-            <button @click="clearDiagnosticsBuffers()">Leeren</button>
+            <button @click="clearDiagnosticsBuffers()" x-text="t('web.system.clear')"></button>
           </div>
-          <p class="hint">
-            „Pausieren“ haelt nur das Anhaengen neuer Zeilen an, nicht die Verbindung selbst –
-            waehrend der Pause eintreffende Zeilen werden nicht nachgeholt, wie bei einem
-            angehaltenen <span class="key">tail -f</span>. „Leeren“ wirkt nur auf diese Seite,
-            nicht auf die Ringe der Brücke.
-          </p>
+          <p class="hint" x-html="t('web.system.pause_clear_explanation')"></p>
         </div>
 
         <div class="card">
-          <h2>Logs</h2>
-          <p class="hint">Protokollzeilen der Brücke, laufend – jüngste oben, folgt automatisch.</p>
+          <h2 x-text="t('web.system.logs_heading')"></h2>
+          <p class="hint" x-text="t('web.system.logs_hint')"></p>
           <div class="log-list" x-ref="diagnosticsLogsList">
             <template x-for="(entry, index) in visibleDiagnosticsLogs()" :key="index">
               <div
@@ -650,10 +649,8 @@
         </div>
 
         <div class="card">
-          <h2>UDP-Mitschnitt</h2>
-          <p class="hint">
-            Tatsächlich über den Draht geschickte Datagramme, laufend – jüngste oben, folgt automatisch.
-          </p>
+          <h2 x-text="t('web.system.udp_heading')"></h2>
+          <p class="hint" x-text="t('web.system.udp_hint')"></p>
           <div class="log-list" x-ref="datagramsList">
             <template x-for="(entry, index) in visibleDatagrams()" :key="index">
               <div
@@ -665,8 +662,8 @@
         </div>
 
         <div class="card">
-          <h2>Kommando-Log</h2>
-          <p class="hint">Eingehende HTTP-Aufrufe mit ihrem Ergebnis, laufend.</p>
+          <h2 x-text="t('web.system.command_log_heading')"></h2>
+          <p class="hint" x-text="t('web.system.command_log_hint')"></p>
           <div class="log-list">
             <template x-for="(entry, index) in commandLog" :key="index">
               <div
@@ -678,17 +675,10 @@
         </div>
 
         <div class="card">
-          <h2>Sicherung</h2>
-          <p class="hint">
-            Sicherung der Fabric-Zugangsdaten (matter-server-Datenverzeichnis) als ZIP-Datei –
-            der einzige unersetzliche Zustand dieser Installation. Geht er verloren, muss jedes
-            Gerät neu eingelernt werden.
-          </p>
-          <p class="hint">
-            Nur nach Anmeldung abrufbar, wie jede andere Funktion dieser Seite: wer sie
-            herunterladen kann, kann die Matter-Fabric übernehmen.
-          </p>
-          <button @click="downloadFabricBackup()">Sicherung herunterladen</button>
+          <h2 x-text="t('web.system.backup_heading')"></h2>
+          <p class="hint" x-text="t('web.system.backup_explanation')"></p>
+          <p class="hint" x-text="t('web.system.backup_access_note')"></p>
+          <button @click="downloadFabricBackup()" x-text="t('web.system.backup_download')"></button>
           <p x-show="backupError" x-cloak class="banner danger" x-text="backupError"></p>
         </div>
       </section>

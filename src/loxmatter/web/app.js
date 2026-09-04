@@ -1255,7 +1255,7 @@ function app() {
       try {
         this.systemChecks = await this.request("GET", "/api/diagnostics/system");
       } catch (error) {
-        this.systemError = `Diagnose konnte nicht geladen werden: ${error.message}`;
+        this.systemError = t("web.system.load_error", { message: error.message });
       } finally {
         this.diagnosticsBusy = false;
       }
@@ -1270,7 +1270,7 @@ function app() {
       try {
         await this.download("/api/diagnostics/fabric-backup", "matter-fabric-backup.zip");
       } catch (error) {
-        this.backupError = `Sicherung nicht möglich: ${error.message}`;
+        this.backupError = t("web.system.backup_error", { message: error.message });
       }
     },
 
