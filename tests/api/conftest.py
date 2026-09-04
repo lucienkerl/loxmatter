@@ -148,6 +148,11 @@ class FakeRuntime:
     def __init__(self, store: Store) -> None:
         self._store = store
         self._values: dict[str, float | bool] = {}
+        # Im Stil von `FakeMatterClient.fail_commission_with`: die echte
+        # `Runtime.set_online` schickt ein UDP-Datagramm, und `socket.sendto`
+        # wirft `OSError`, wenn das Miniserver-Netz kurz weg ist. Ein Test,
+        # der diesen Fall braucht, setzt hier eine Ausnahme.
+        self.fail_set_online_with: Exception | None = None
 
     def seed(self, key: str, value: float | bool) -> None:
         """Traegt einen Wert ein, als haette eine Subscription ihn gerade gemeldet."""
@@ -162,6 +167,8 @@ class FakeRuntime:
         unter demselben Schluessel, den `_device_out` liest. Gebraucht,
         seit das Einlernen die Erreichbarkeit eines neuen Geraets selbst
         saeet (siehe `api/devices.py`)."""
+        if self.fail_set_online_with is not None:
+            raise self.fail_set_online_with
         self._values[f"d{device_id}_online"] = online
 
 
@@ -187,6 +194,11 @@ class FakeMatterClient:
         self.datasets: list[str] = []
         self.fail_commission_with: Exception | None = None
         self.fail_remove_with: Exception | None = None
+        # Der Fall, um den dieser Zweig kreist: matter-server wird unmittelbar
+        # nach dem Einlernen neu gestartet, und `follow_node` laeuft in
+        # `MatterUnavailableError` - nachdem das Geraet laengst in der Fabric
+        # UND im Store steht.
+        self.fail_follow_with: Exception | None = None
         self._next_node_id = 100
         # Fuer den Systemcheck der Diagnose (Task 6, Phase 5) - spiegelt
         # `BridgeMatterClient.connected`. Ein Test, der eine getrennte
@@ -250,6 +262,8 @@ class FakeMatterClient:
         self.thread_dataset_set = True
 
     async def follow_node(self, node_id: int, *, seed_even_without_new_paths: bool = False) -> None:
+        if self.fail_follow_with is not None:
+            raise self.fail_follow_with
         self.followed.append(node_id)
         self.followed_forced.append(seed_even_without_new_paths)
         self.order.append("follow")

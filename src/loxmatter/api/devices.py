@@ -370,7 +370,28 @@ def build_device_router(
         # Einlernen auf "offline" und blieb es bis zum naechsten Neustart der
         # Bruecke - obwohl matter-server es laengst interviewt und eine
         # Subscription darauf aufgebaut hatte.
-        await runtime.set_online(device_id, snapshot.available)
+        #
+        # Ab hier laeuft nur noch Nachlauf, und Nachlauf darf den Vorgang
+        # nicht nachtraeglich absagen: VOR `register_device` ist ein Fehler
+        # eine Absage - das Geraet ist dann nicht eingelernt, und eine
+        # Fehlermeldung ist die richtige Antwort. DANACH steht es in der
+        # Fabric UND im Store, und eine Fehlermeldung waere schlicht falsch.
+        # Sie fuehrte in eine Sackgasse: die Oberflaeche zeigte "Einlernen
+        # fehlgeschlagen" und keine Geraetekachel, der Bedienende drueckte
+        # erneut auf "Einlernen", und der aufgedruckte Code war laengst
+        # verbraucht (422). Der Fehlschlag gehoert deshalb ins Log, nicht in
+        # die Antwort. Konkret erreichbar ueber `UdpSender.send` ->
+        # `socket.sendto`, das `OSError` wirft, wenn das Miniserver-Netz
+        # kurz weg ist - deshalb `Exception` und nicht nur ein einzelner Typ.
+        try:
+            await runtime.set_online(device_id, snapshot.available)
+        except Exception:
+            logger.exception(
+                "Erreichbarkeit des frisch eingelernten Geraets %s konnte nicht gesaet "
+                "werden - das Geraet ist eingelernt, seine Kachel steht bis zur naechsten "
+                "Meldung von matter-server aber auf offline",
+                device_id,
+            )
 
         # Erst jetzt, nach `register_device`: `follow_node` loest die Node-ID
         # ueber den Store auf, und vorher gaebe es dort nichts aufzuloesen -
@@ -390,7 +411,25 @@ def build_device_router(
         # nie an, und ein statischer Pfad (Spannung ohne Last, Batteriestand,
         # der Aus-Zustand einer Steckdose) bliebe ein Strich, weil
         # matter-server unveraenderte Werte unterdrueckt.
-        await active_client.follow_node(snapshot.node_id, seed_even_without_new_paths=True)
+        #
+        # Ebenfalls Nachlauf, ebenfalls abgesichert (siehe oben): das
+        # Szenario, um das dieser Zweig kreist, ist ein matter-server, der
+        # unmittelbar nach dem Einlernen neu startet - dann laeuft
+        # `follow_node` in `_require_upstream` und wirft
+        # `MatterUnavailableError`, obwohl das Geraet vollstaendig eingelernt
+        # ist. Ohne Werte, aber eingelernt: die Signalzeilen stehen (sie
+        # entstehen aus `register_signals` oben), sie fuellen sich, sobald die
+        # Verbindung zurueck ist und das naechste `NODE_ADDED`/`NODE_UPDATED`
+        # die Dispatch-Schleife nachziehen laesst.
+        try:
+            await active_client.follow_node(snapshot.node_id, seed_even_without_new_paths=True)
+        except Exception:
+            logger.exception(
+                "Abonnements des frisch eingelernten Geraets %s konnten nicht nachgezogen "
+                "werden - das Geraet ist eingelernt, seine Signale bleiben bis zur "
+                "naechsten Meldung von matter-server aber ohne Werte",
+                device_id,
+            )
         return _device_out(store.device(device_id), store, runtime)
 
     @router.delete("/devices/{device_id}", status_code=204)

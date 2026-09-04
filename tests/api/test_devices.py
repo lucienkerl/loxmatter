@@ -495,3 +495,55 @@ async def test_the_route_forces_the_seeding_of_the_new_node(api):
     await client.post("/api/devices/commission", json={"code": "MT:X"})
 
     assert fake_client.followed_forced == [True]
+
+
+# ---------------------------------------------------------------------------
+# Der Nachlauf des Einlernens darf den Vorgang nicht nachtraeglich absagen
+#
+# `set_online` und `follow_node` laufen NACH `register_device` - also ab dem
+# Punkt, an dem das Geraet in der Fabric UND im Store steht. Ein Fehlschlag
+# dort ist kein gescheitertes Einlernen, sondern ein unvollstaendiger
+# Nachlauf an einem vollendeten Vorgang.
+#
+# Das Szenario ist genau das, um das dieser Branch kreist: matter-server wird
+# unmittelbar nach dem Einlernen neu gestartet, `follow_node` scheitert mit
+# `MatterUnavailableError`, und die Route antwortete mit 500. Die Oberflaeche
+# zeigte "Einlernen fehlgeschlagen", die Geraetekachel erschien nicht - aber
+# das Geraet WAR eingelernt. Wer daraufhin erneut auf "Einlernen" drueckt,
+# scheitert an einem verbrauchten Pairing-Code (422) und sucht den Fehler bei
+# sich. Zweiter Weg dorthin: `Runtime.set_online` -> `UdpSender.send` ->
+# `socket.sendto` wirft `OSError`, wenn das Miniserver-Netz kurz weg ist.
+# ---------------------------------------------------------------------------
+
+
+async def test_a_failing_follow_up_still_reports_the_device_as_commissioned(api):
+    client, store, _, fake_client = api
+    fake_client.fail_follow_with = MatterUnavailableError("matter-server nicht erreichbar")
+
+    response = await client.post("/api/devices/commission", json={"code": "MT:X"})
+
+    assert response.status_code == 201
+    assert store.device(response.json()["id"]).node_id == 100
+
+
+async def test_a_failing_online_seed_still_reports_the_device_as_commissioned(
+    tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr
+):
+    """Eigener Aufbau statt der `api`-Fixture: der Fehlschlag muss auf der
+    `FakeRuntime` gesetzt werden, und die Fixture haelt sie nicht heraus."""
+    store = Store(tmp_path / "t.sqlite")
+    fake_client.store = store
+    runtime = fake_runtime(store)
+    runtime.fail_set_online_with = OSError("Network is unreachable")
+    app = build_app(store, no_invoke, runtime, client=fake_client, thread_dataset_source=fake_otbr)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        response = await c.post("/api/devices/commission", json={"code": "MT:X"})
+
+    assert response.status_code == 201
+    assert store.device(response.json()["id"]).node_id == 100
+    # Und der Nachlauf laeuft trotz des Fehlschlags weiter: das Nachziehen
+    # der Abonnements haengt nicht am Gelingen des Erreichbarkeits-Saeens.
+    assert fake_client.followed == [100]
+    store.close()
