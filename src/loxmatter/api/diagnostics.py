@@ -110,6 +110,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict
 
+from loxmatter import i18n
 from loxmatter.model.store import Store
 
 if TYPE_CHECKING:
@@ -338,29 +339,17 @@ def _run_check(name: str, check: _CheckFn) -> SystemCheckOut:
         return SystemCheckOut(
             name=name,
             ok=False,
-            detail=(
-                f"Diese Pruefung selbst ist fehlgeschlagen ({exc}) - das ist ein Fehler in "
-                "der Pruefung, nicht zwangslaeufig im gepruerften System. Der volle "
-                "Traceback steht im Server-Log."
-            ),
+            detail=i18n.t("api.diagnostics.check_failed", exc=exc),
         )
     return SystemCheckOut(name=name, ok=ok, detail=detail)
 
 
 def _check_matter_server(client: BridgeMatterClient | None) -> tuple[bool, str]:
     if client is None:
-        return False, (
-            "Kein matter-server-Client konfiguriert - die Bruecke laeuft ohne Matter-"
-            "Anbindung. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, "
-            "wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
-        )
+        return False, i18n.t("api.diagnostics.matter_server_not_configured")
     if not client.connected:
-        return False, (
-            "Keine aktive Verbindung zu matter-server. Laeuft der Dienst "
-            "(z. B. `docker compose ps matter-server`)? Ist die --url-Adresse aus "
-            "`loxmatter run` noch erreichbar?"
-        )
-    return True, "Verbunden."
+        return False, i18n.t("api.diagnostics.matter_server_not_connected")
+    return True, i18n.t("api.diagnostics.connected")
 
 
 def _check_store(store: Store) -> tuple[bool, str]:
@@ -371,13 +360,8 @@ def _check_store(store: Store) -> tuple[bool, str]:
     try:
         store.check_writable()
     except sqlite3.Error as exc:
-        return False, (
-            f"Die Signalschluessel-Datenbank ist nicht beschreibbar ({exc}). Pruefen Sie "
-            "Speicherplatz und Dateirechte des eingehaengten Datenvolumes - ohne "
-            "Schreibzugriff kann kein neues Geraet eingelernt und kein Export vermerkt "
-            "werden."
-        )
-    return True, "Beschreibbar."
+        return False, i18n.t("api.diagnostics.store_not_writable", exc=exc)
+    return True, i18n.t("api.diagnostics.writable")
 
 
 # Die Linux-Tabelle der lokalen IPv6-Adressen. Spalten: Adresse (hex, ohne
@@ -442,23 +426,22 @@ def _check_ipv6() -> tuple[bool, str]:
     "global" - ULA eingeschlossen.
     """
     if not socket.has_ipv6:
-        return False, "Diese Python-Installation wurde ohne IPv6-Unterstuetzung gebaut."
+        return False, i18n.t("api.diagnostics.no_ipv6_support")
     addresses = _routed_ipv6_addresses()
     if addresses is None:
-        return True, (
-            "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht "
-            "(kein Linux). Im Container laeuft die Bruecke unter Linux, dort greift "
-            "die Pruefung."
-        )
+        return True, i18n.t("api.diagnostics.ipv6_not_determinable")
     if not addresses:
-        return False, (
-            "Keine geroutete IPv6-Adresse gefunden - nur link-lokale oder Loopback. "
-            "Matter/Thread-Geraete sind damit nicht erreichbar. Laeuft der "
-            "Thread-Border-Router, und kuendigt er sein Praefix an?"
-        )
-    shown = ", ".join(f"{address} auf {interface}" for address, interface in addresses[:3])
-    more = f" (und {len(addresses) - 3} weitere)" if len(addresses) > 3 else ""
-    return True, f"Geroutete IPv6-Adressen vorhanden: {shown}{more}."
+        return False, i18n.t("api.diagnostics.no_routed_ipv6")
+    shown = ", ".join(
+        i18n.t("api.diagnostics.ipv6_address_on_interface", address=address, interface=interface)
+        for address, interface in addresses[:3]
+    )
+    more = (
+        i18n.t("api.diagnostics.ipv6_more_addresses", count=len(addresses) - 3)
+        if len(addresses) > 3
+        else ""
+    )
+    return True, i18n.t("api.diagnostics.routed_ipv6_found", shown=shown, more=more)
 
 
 def _check_thread() -> tuple[bool, str]:
@@ -481,25 +464,21 @@ def _check_thread() -> tuple[bool, str]:
     """
     addresses = _routed_ipv6_addresses()
     if addresses is None:
-        return True, (
-            "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht (kein Linux)."
-        )
+        return True, i18n.t("api.diagnostics.thread_not_determinable")
     thread = [
         (address, interface)
         for address, interface in addresses
         if interface.startswith(_THREAD_INTERFACE_PREFIX)
     ]
     if not thread:
-        return False, (
-            f"Keine Thread-Schnittstelle ({_THREAD_INTERFACE_PREFIX}*) mit einer "
-            "Mesh-Adresse gefunden. Laeuft der OTBR-Agent? Er bricht bei einem "
-            "RCP-Timeout ab - wenn das Funkmodul nicht mehr antwortet -, ohne dass "
-            "der Container endet, und wird dann von niemandem neu gestartet. "
-            "`docker compose restart otbr` holt ihn zurueck."
+        return False, i18n.t(
+            "api.diagnostics.no_thread_interface", prefix=_THREAD_INTERFACE_PREFIX
         )
-    return True, (
-        f"Thread-Schnittstelle {thread[0][1]} hat {len(thread)} Mesh-Adresse(n), "
-        f"z. B. {thread[0][0]}."
+    return True, i18n.t(
+        "api.diagnostics.thread_found",
+        interface=thread[0][1],
+        count=len(thread),
+        example=thread[0][0],
     )
 
 
@@ -513,25 +492,14 @@ def _check_miniserver(sender: UdpSender | None) -> tuple[bool, str]:
     `_check_ipv6` oben, nur mit dem tatsaechlichen Ziel statt einer
     Dokumentations-Adresse) - keine Zustellung."""
     if sender is None:
-        return False, (
-            "Kein UDP-Sender konfiguriert - die Bruecke sendet keine Werte an den "
-            "Miniserver. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, wurde "
-            "dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
-        )
+        return False, i18n.t("api.diagnostics.no_udp_sender")
     host, port = sender.target
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect((host, port))
     except OSError as exc:
-        return False, (
-            f"Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver "
-            "eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port aus "
-            "`loxmatter run --miniserver`/`--port`?"
-        )
-    return True, (
-        f"Ein Netzwerkpfad zu {host}:{port} existiert. Das bestaetigt nur Routing, keine "
-        "tatsaechliche Zustellung - der Miniserver wertet UDP-Antworten nicht aus."
-    )
+        return False, i18n.t("api.diagnostics.no_network_path", host=host, port=port, exc=exc)
+    return True, i18n.t("api.diagnostics.network_path_exists", host=host, port=port)
 
 
 def build_diagnostics_router(
@@ -626,19 +594,12 @@ def build_diagnostics_router(
         if matter_data_dir is None:
             raise HTTPException(
                 status_code=503,
-                detail=(
-                    "Das matter-server-Datenverzeichnis ist fuer diesen Dienst nicht "
-                    "eingehaengt - eine Sicherung kann deshalb nicht erstellt werden. "
-                    "Siehe die Bereitstellung (docker-compose.yml, --matter-data-dir)."
-                ),
+                detail=i18n.t("api.diagnostics.fabric_backup_not_mounted"),
             )
         if not matter_data_dir.is_dir():
             raise HTTPException(
                 status_code=503,
-                detail=(
-                    "Das konfigurierte matter-server-Datenverzeichnis existiert nicht "
-                    "oder ist kein Verzeichnis. Pruefen Sie die Einhaengung."
-                ),
+                detail=i18n.t("api.diagnostics.fabric_backup_dir_missing"),
             )
 
         buffer = io.BytesIO()

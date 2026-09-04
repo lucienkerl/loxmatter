@@ -302,3 +302,66 @@ api.auth.fail_no_password_set:
 api.auth.fail_wrong_password:
   en: "Wrong password."
   de: "Falsches Passwort."
+
+# api.diagnostics — Systemcheck-Zeilen (api/diagnostics.py) und die beiden
+# 503-Fehler der Fabric-Sicherung (Task 5, Phase i18n).
+api.diagnostics.check_failed:
+  en: "This check itself failed ({exc}) — that is a bug in the check, not necessarily in the checked system. The full traceback is in the server log."
+  de: "Diese Pruefung selbst ist fehlgeschlagen ({exc}) - das ist ein Fehler in der Pruefung, nicht zwangslaeufig im gepruerften System. Der volle Traceback steht im Server-Log."
+api.diagnostics.matter_server_not_configured:
+  en: "No matter-server client configured — the bridge is running without a Matter connection. This is always set for `loxmatter run`; if it's missing here, this service was started with an incomplete setup."
+  de: "Kein matter-server-Client konfiguriert - die Bruecke laeuft ohne Matter-Anbindung. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+api.diagnostics.matter_server_not_connected:
+  en: "No active connection to matter-server. Is the service running (e.g. `docker compose ps matter-server`)? Is the --url address from `loxmatter run` still reachable?"
+  de: "Keine aktive Verbindung zu matter-server. Laeuft der Dienst (z. B. `docker compose ps matter-server`)? Ist die --url-Adresse aus `loxmatter run` noch erreichbar?"
+api.diagnostics.connected:
+  en: "Connected."
+  de: "Verbunden."
+api.diagnostics.store_not_writable:
+  en: "The signal-key database is not writable ({exc}). Check the disk space and file permissions of the mounted data volume — without write access, no new device can be commissioned and no export can be recorded."
+  de: "Die Signalschluessel-Datenbank ist nicht beschreibbar ({exc}). Pruefen Sie Speicherplatz und Dateirechte des eingehaengten Datenvolumes - ohne Schreibzugriff kann kein neues Geraet eingelernt und kein Export vermerkt werden."
+api.diagnostics.writable:
+  en: "Writable."
+  de: "Beschreibbar."
+api.diagnostics.no_ipv6_support:
+  en: "This Python installation was built without IPv6 support."
+  de: "Diese Python-Installation wurde ohne IPv6-Unterstuetzung gebaut."
+api.diagnostics.ipv6_not_determinable:
+  en: "Not determinable: /proc/net/if_inet6 does not exist on this system (not Linux). In the container, the bridge runs under Linux, where this check applies."
+  de: "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht (kein Linux). Im Container laeuft die Bruecke unter Linux, dort greift die Pruefung."
+api.diagnostics.no_routed_ipv6:
+  en: "No routed IPv6 address found — only link-local or loopback. Matter/Thread devices are therefore unreachable. Is the Thread Border Router running, and is it announcing its prefix?"
+  de: "Keine geroutete IPv6-Adresse gefunden - nur link-lokale oder Loopback. Matter/Thread-Geraete sind damit nicht erreichbar. Laeuft der Thread-Border-Router, und kuendigt er sein Praefix an?"
+api.diagnostics.ipv6_address_on_interface:
+  en: "{address} on {interface}"
+  de: "{address} auf {interface}"
+api.diagnostics.ipv6_more_addresses:
+  en: " (and {count} more)"
+  de: " (und {count} weitere)"
+api.diagnostics.routed_ipv6_found:
+  en: "Routed IPv6 addresses present: {shown}{more}."
+  de: "Geroutete IPv6-Adressen vorhanden: {shown}{more}."
+api.diagnostics.thread_not_determinable:
+  en: "Not determinable: /proc/net/if_inet6 does not exist on this system (not Linux)."
+  de: "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht (kein Linux)."
+api.diagnostics.no_thread_interface:
+  en: "No Thread interface ({prefix}*) with a mesh address found. Is the OTBR agent running? It aborts on an RCP timeout — when the radio module stops responding — without the container ending, and is then not restarted by anyone. `docker compose restart otbr` brings it back."
+  de: "Keine Thread-Schnittstelle ({prefix}*) mit einer Mesh-Adresse gefunden. Laeuft der OTBR-Agent? Er bricht bei einem RCP-Timeout ab - wenn das Funkmodul nicht mehr antwortet -, ohne dass der Container endet, und wird dann von niemandem neu gestartet. `docker compose restart otbr` holt ihn zurueck."
+api.diagnostics.thread_found:
+  en: "Thread interface {interface} has {count} mesh address(es), e.g. {example}."
+  de: "Thread-Schnittstelle {interface} hat {count} Mesh-Adresse(n), z. B. {example}."
+api.diagnostics.no_udp_sender:
+  en: "No UDP sender configured — the bridge is not sending values to the Miniserver. This is always set for `loxmatter run`; if it's missing here, this service was started with an incomplete setup."
+  de: "Kein UDP-Sender konfiguriert - die Bruecke sendet keine Werte an den Miniserver. Das ist bei `loxmatter run` immer gesetzt; fehlt es hier, wurde dieser Dienst mit einem unvollstaendigen Aufbau gestartet."
+api.diagnostics.no_network_path:
+  en: "No network path to {host}:{port} found ({exc}). Is the Miniserver switched on and reachable on the same network? Do the IP and port match `loxmatter run --miniserver`/`--port`?"
+  de: "Kein Netzwerkpfad zu {host}:{port} gefunden ({exc}). Ist der Miniserver eingeschaltet und im selben Netz erreichbar? Stimmen IP und Port aus `loxmatter run --miniserver`/`--port`?"
+api.diagnostics.network_path_exists:
+  en: "A network path to {host}:{port} exists. This only confirms routing, not actual delivery — the Miniserver does not evaluate UDP responses."
+  de: "Ein Netzwerkpfad zu {host}:{port} existiert. Das bestaetigt nur Routing, keine tatsaechliche Zustellung - der Miniserver wertet UDP-Antworten nicht aus."
+api.diagnostics.fabric_backup_not_mounted:
+  en: "The matter-server data directory is not mounted for this service — a backup therefore cannot be created. See the deployment (docker-compose.yml, --matter-data-dir)."
+  de: "Das matter-server-Datenverzeichnis ist fuer diesen Dienst nicht eingehaengt - eine Sicherung kann deshalb nicht erstellt werden. Siehe die Bereitstellung (docker-compose.yml, --matter-data-dir)."
+api.diagnostics.fabric_backup_dir_missing:
+  en: "The configured matter-server data directory does not exist or is not a directory. Check the mount."
+  de: "Das konfigurierte matter-server-Datenverzeichnis existiert nicht oder ist kein Verzeichnis. Pruefen Sie die Einhaengung."
