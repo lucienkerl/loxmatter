@@ -372,17 +372,23 @@ function app() {
     // wie der Rest von `plan` unveraendert aus der API-Antwort, keine
     // eigene camelCase-Kopie.
     projectSync: {
+      // Das tatsaechliche `File`-Objekt, nicht nur sein Name (Nutzerwunsch
+      // nach dem Review: ein Auswahlfeld statt eine IP von Hand einzutippen)
+      // - so kann `confirmProjectSyncMiniserver` dieselbe Datei ein zweites
+      // Mal hochladen, sobald der Anwender den Miniserver gewaehlt hat,
+      // ganz ohne erneuten Datei-Dialog.
       file: null,
       plan: null,
       includeNewDevices: false,
       busy: false,
       error: "",
-      // Nur noetig, wenn die hochgeladene Datei mehr als einen Miniserver
-      // konfiguriert (`LoxLIVE.IntAddr`) - bei genau einem wird er
-      // automatisch verwendet, siehe `api.project_sync`s `miniserver_ip`.
-      // Leer bleibt leer: `uploadProjectFile` haengt das Feld nur an, wenn
-      // hier etwas drinsteht.
-      miniserverIp: "",
+      // Traegt die Datei mehr als einen Miniserver, antwortet `/api/export/
+      // project-sync` beim ersten Versuch (ohne `miniserver_ip`) mit
+      // `needs_miniserver_selection=true` statt einem Plan - `index.html`
+      // zeigt dann dieses Auswahlfeld statt der Plan-Ansicht.
+      needsMiniserverSelection: false,
+      availableMiniservers: [],
+      selectedMiniserverIp: "",
     },
 
     // --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------
@@ -1318,28 +1324,23 @@ function app() {
     // ---------------------------------------------------------------------
 
     /**
-     * Laedt die hochgeladene Loxone-Projektdatei zu `/api/export/project-sync`
-     * hoch und zeigt die Antwort (Plan + beide gepatchten Dateien) an.
-     * Dieselbe IP-Pruefung wie `downloadExport`/`exportDevice`: ohne sie
-     * ersetzte ein Klick bei leerem IP-Feld die Seite durch die rohe
-     * 422-Fehlerantwort des Backends (Pflichtparameter `bridge_ip`).
+     * Schickt `file` an `/api/export/project-sync`, optional mit einer
+     * bereits gewaehlten `miniserverIp`. Gemeinsamer Kern von
+     * `uploadProjectFile` (erster Versuch, ohne IP) und
+     * `confirmProjectSyncMiniserver` (zweiter Versuch, nachdem der Anwender
+     * im Auswahlfeld einen Miniserver gewaehlt hat) - beide zeigen dieselbe
+     * Antwort an, nur der Aufrufer entscheidet, ob eine IP schon feststeht.
+     *
+     * `needs_miniserver_selection=true` in der Antwort (Nutzerwunsch nach
+     * dem Review: auswaehlen statt die IP von Hand abzutippen) heisst: die
+     * Datei traegt mehr als einen Miniserver, `index.html` zeigt dann das
+     * Auswahlfeld statt eines Plans - kein Fehler, `projectSync.error`
+     * bleibt leer.
      */
-    async uploadProjectFile(event) {
-      const input = event.target;
-      const file = input.files && input.files[0];
-      if (!file) {
-        return;
-      }
+    async _syncProjectFile(file, miniserverIp) {
       this.projectSync.error = "";
-      if (!this.bridgeSettings.bridge_ip) {
-        this.projectSync.error =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
-        input.value = "";
-        return;
-      }
       this.projectSync.busy = true;
       this.projectSync.plan = null;
-      this.projectSync.file = file.name;
       try {
         const formData = new FormData();
         formData.append("file", file);
@@ -1348,20 +1349,71 @@ function app() {
           port: String(this.bridgeSettings.udp_port),
           listen: String(this.bridgeSettings.listen_port),
         });
-        if (this.projectSync.miniserverIp.trim()) {
-          params.set("miniserver_ip", this.projectSync.miniserverIp.trim());
+        if (miniserverIp) {
+          params.set("miniserver_ip", miniserverIp);
         }
-        this.projectSync.plan = await this.upload(`/api/export/project-sync?${params}`, formData);
+        const result = await this.upload(`/api/export/project-sync?${params}`, formData);
+        if (result.needs_miniserver_selection) {
+          this.projectSync.needsMiniserverSelection = true;
+          this.projectSync.availableMiniservers = result.available_miniservers;
+        } else {
+          this.projectSync.needsMiniserverSelection = false;
+          this.projectSync.availableMiniservers = [];
+          this.projectSync.plan = result;
+        }
       } catch (error) {
         this.projectSync.error = `Hochladen fehlgeschlagen: ${error.message}`;
       } finally {
         this.projectSync.busy = false;
-        // Loescht die Dateiauswahl im Eingabefeld selbst - ohne das loest
-        // ein erneuter Upload DERSELBEN Datei kein `change`-Ereignis mehr
-        // aus, weil sich der Wert des Feldes aus Sicht des Browsers nicht
-        // geaendert hat.
-        input.value = "";
       }
+    },
+
+    /**
+     * Laedt die hochgeladene Loxone-Projektdatei zu `/api/export/project-sync`
+     * hoch und zeigt die Antwort (Plan + beide gepatchten Dateien, oder das
+     * Miniserver-Auswahlfeld) an. Dieselbe IP-Pruefung wie `downloadExport`/
+     * `exportDevice`: ohne sie ersetzte ein Klick bei leerem IP-Feld die
+     * Seite durch die rohe 422-Fehlerantwort des Backends (Pflichtparameter
+     * `bridge_ip`).
+     */
+    async uploadProjectFile(event) {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      if (!file) {
+        return;
+      }
+      if (!this.bridgeSettings.bridge_ip) {
+        this.projectSync.error =
+          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        input.value = "";
+        return;
+      }
+      // Wird aufgehoben, falls ein vorheriger Upload schon eine Auswahl
+      // verlangt hatte - eine neu ausgewaehlte Datei faengt wieder bei null
+      // an, unabhaengig davon, ob die vorherige mehrere Miniserver hatte.
+      this.projectSync.file = file;
+      this.projectSync.needsMiniserverSelection = false;
+      this.projectSync.availableMiniservers = [];
+      this.projectSync.selectedMiniserverIp = "";
+      await this._syncProjectFile(file, null);
+      // Loescht die Dateiauswahl im Eingabefeld selbst - ohne das loest
+      // ein erneuter Upload DERSELBEN Datei kein `change`-Ereignis mehr
+      // aus, weil sich der Wert des Feldes aus Sicht des Browsers nicht
+      // geaendert hat.
+      input.value = "";
+    },
+
+    /**
+     * Zweiter Versuch, nachdem der Anwender im Auswahlfeld einen Miniserver
+     * gewaehlt hat - dieselbe Datei (`projectSync.file`, noch im Speicher
+     * des Browsers) geht ein zweites Mal raus, diesmal mit `miniserver_ip`
+     * gesetzt, kein erneuter Datei-Dialog noetig.
+     */
+    async confirmProjectSyncMiniserver() {
+      if (!this.projectSync.selectedMiniserverIp || !this.projectSync.file) {
+        return;
+      }
+      await this._syncProjectFile(this.projectSync.file, this.projectSync.selectedMiniserverIp);
     },
 
     /** Deutsche Kurzbezeichnung fuer die `PlanStatus`-Werte aus

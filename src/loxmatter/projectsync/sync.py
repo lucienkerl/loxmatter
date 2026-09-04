@@ -66,12 +66,17 @@ def run_sync(
             "Loxone-Projektdatei wird als UTF-8 gespeichert."
         ) from exc
     # `AmbiguousMiniserverError` (Subklasse von `ProjectFormatError`) bleibt
-    # hier bewusst unbehandelt und propagiert bis zu `api.project_sync`s
-    # `except ProjectFormatError` -> HTTP 400: ohne eindeutigen Miniserver
-    # gibt es fuer KEINE der beiden Varianten (konservativ oder
-    # experimentell) einen Ort, gegen den ueberhaupt abgeglichen werden
-    # koennte - anders als eine fehlende Caption (siehe unten) ist das keine
-    # Grenze nur des experimentellen Pfades.
+    # hier bewusst unbehandelt und propagiert bis zu `api.project_sync`. Dort
+    # wird sie GEZIELT abgefangen (nicht nur ueber das generische `except
+    # ProjectFormatError` -> HTTP 400): traegt sie `candidates` (mehrere
+    # gefundene Miniserver), liefert der Endpunkt statt eines Fehlers eine
+    # 200-Antwort mit `needs_miniserver_selection=True` fuer das Auswahlfeld
+    # in der WebUI (Nutzerwunsch nach dem Review) - nur der "gar keiner
+    # konfiguriert"-Fall (leere `candidates`) bleibt eine echte 400. Ohne
+    # eindeutigen Miniserver gibt es fuer KEINE der beiden Varianten
+    # (konservativ oder experimentell) einen Ort, gegen den ueberhaupt
+    # abgeglichen werden koennte - anders als eine fehlende Caption (siehe
+    # unten) ist das keine Grenze nur des experimentellen Pfades.
     index = build_index(text, miniserver_ip)
     devices = store.devices()
     signals_by_device: dict[int, Sequence[StoredSignal]] = {

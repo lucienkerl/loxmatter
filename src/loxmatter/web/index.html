@@ -501,16 +501,6 @@
           </p>
           <div class="row">
             <label
-              >IP des Miniservers <span class="hint">(nur nötig bei mehreren Miniservern in der Datei)</span>
-              <input
-                type="text"
-                placeholder="z. B. 10.0.0.10"
-                x-model="projectSync.miniserverIp"
-                :disabled="projectSync.busy"
-            /></label>
-          </div>
-          <div class="row">
-            <label
               >Projektdatei (.Loxone)
               <input
                 type="file"
@@ -521,6 +511,36 @@
           </div>
           <p x-show="projectSync.busy" x-cloak class="hint">Wird verarbeitet …</p>
           <p x-show="projectSync.error" x-cloak class="banner danger" x-text="projectSync.error"></p>
+
+          <!--
+            Nutzerwunsch nach dem Review: bei mehreren Miniservern in der
+            Datei ein Auswahlfeld statt eines Textfelds fuer die IP. Die
+            Datei liegt bereits im Speicher des Browsers (`projectSync.file`,
+            gesetzt in `uploadProjectFile`) - die Auswahl loest `confirm
+            ProjectSyncMiniserver` aus, das dieselbe Datei ein zweites Mal
+            mit der gewaehlten IP hochlaedt, ganz ohne erneuten Datei-Dialog.
+          -->
+          <div class="row" x-show="projectSync.needsMiniserverSelection" x-cloak>
+            <label
+              >Miniserver
+              <select
+                x-model="projectSync.selectedMiniserverIp"
+                @change="confirmProjectSyncMiniserver()"
+                :disabled="projectSync.busy"
+              >
+                <option value="" disabled>Bitte wählen …</option>
+                <template
+                  x-for="ms in projectSync.availableMiniservers"
+                  :key="ms.int_addr"
+                >
+                  <option :value="ms.int_addr" x-text="`${ms.title} (${ms.int_addr})`"></option>
+                </template>
+              </select>
+            </label>
+          </div>
+          <p class="hint" x-show="projectSync.needsMiniserverSelection" x-cloak>
+            Diese Projektdatei enthält mehrere Miniserver – bitte den gewünschten auswählen.
+          </p>
 
           <template x-if="projectSync.plan">
             <div>

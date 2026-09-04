@@ -23,15 +23,24 @@ den auch `api.export` und `api.devices` bekommen (siehe deren
 Moduldocstrings zur Begruendung: ein zweiter, unabhaengig geoeffneter Store
 vergaebe fuer dasselbe Geraet einen zweiten Satz Signalschluessel).
 
-**Ein Fehlerpfad als 400.** `ProjectFormatError` - die hochgeladene Datei ist
-kein gueltiges/erkennbares Loxone-Projekt (kein `ControlList`, unabgeschlossenes
-Tag, keine UTF-8-Textdatei), ODER (`AmbiguousMiniserverError`, eine Subklasse
-davon) es ist nicht eindeutig, gegen welchen der in der Datei konfigurierten
-Miniserver abgeglichen werden soll - wird zur verstaendlichen 400 mit der
-deutschen Meldung, die die Exception schon traegt. Kein Serverfehler, kein
-nackter 500.
+**Zwei Fehlerpfade, unterschiedlich behandelt:**
 
-`patch.MissingCaptionError` gehoert ausdruecklich NICHT dazu: ein ansonsten
+- `ProjectFormatError` - die hochgeladene Datei ist kein gueltiges/
+  erkennbares Loxone-Projekt (kein `ControlList`, unabgeschlossenes Tag,
+  keine UTF-8-Textdatei) - wird zur verstaendlichen 400 mit der deutschen
+  Meldung, die die Exception schon traegt. Kein Serverfehler, kein nackter
+  500.
+- `AmbiguousMiniserverError` (Subklasse von `ProjectFormatError`) - die
+  Datei konfiguriert mehr als einen Miniserver und keiner wurde ausgewaehlt.
+  Traegt sie `candidates` (mindestens ein gefundener Miniserver), liefert
+  der Endpunkt STATT einer 400 eine normale 200-Antwort mit
+  `needs_miniserver_selection=True` und `available_miniservers` - die WebUI
+  zeigt dann ein Auswahlfeld statt eines Fehlers (Nutzerwunsch nach dem
+  Review: auswaehlen statt die IP von Hand abzutippen). Nur der "gar keiner
+  konfiguriert"-Fall (leere `candidates`, nichts zur Auswahl) bleibt eine
+  echte 400.
+
+`patch.MissingCaptionError` gehoert zu keinem der beiden dazu: ein ansonsten
 wohlgeformtes Projekt, dem nur der `VirtualInCaption`- bzw.
 `VirtualOutCaption`-Abschnitt fehlt, ist laut Entwurf Abschnitt 8 eine Grenze
 des experimentellen Pfades, kein Grund, die ganze Antwort zu verwerfen.
@@ -45,10 +54,10 @@ import base64
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
-from loxmatter.api.models import ProjectSyncEntryOut, ProjectSyncPlanOut
+from loxmatter.api.models import ProjectSyncEntryOut, ProjectSyncMiniserverOut, ProjectSyncPlanOut
 from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store
 from loxmatter.projectsync.diff import SyncPlan
-from loxmatter.projectsync.index import ProjectFormatError
+from loxmatter.projectsync.index import AmbiguousMiniserverError, ProjectFormatError
 from loxmatter.projectsync.sync import run_sync
 
 
@@ -84,8 +93,9 @@ def build_project_sync_router(store: Store) -> APIRouter:
             None,
             description="Interne IP des Miniservers (`LoxLIVE.IntAddr` in der Projektdatei,"
             " dieselbe IP wie bei `loxmatter run --miniserver`). Nur noetig, wenn die"
-            " hochgeladene Datei mehr als einen Miniserver konfiguriert - bei genau einem"
-            " wird er automatisch verwendet.",
+            " hochgeladene Datei mehr als einen Miniserver konfiguriert und noch keiner"
+            " ausgewaehlt wurde - die Antwort traegt in dem Fall stattdessen"
+            " `needs_miniserver_selection=True` mit den gefundenen Miniservern zur Auswahl.",
         ),
     ) -> ProjectSyncPlanOut:
         """Baut Diff-Plan und beide gepatchten Datei-Varianten im Speicher -
@@ -102,6 +112,16 @@ def build_project_sync_router(store: Store) -> APIRouter:
                 port=port,
                 listen=listen,
                 miniserver_ip=miniserver_ip,
+            )
+        except AmbiguousMiniserverError as exc:
+            if not exc.candidates:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return ProjectSyncPlanOut(
+                needs_miniserver_selection=True,
+                available_miniservers=[
+                    ProjectSyncMiniserverOut(title=c.title, int_addr=c.int_addr)
+                    for c in exc.candidates
+                ],
             )
         except ProjectFormatError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
