@@ -47,6 +47,7 @@ import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from loxmatter import i18n
 from loxmatter.export.signals import LoxoneInput
 from loxmatter.export.xml import render_document
 
@@ -118,7 +119,7 @@ def render_virtual_in_udp(
         "VirtualInUdp",
         [
             ("Title", f"Matter — {device_label}"),
-            ("Comment", "erzeugt von loxmatter"),
+            ("Comment", i18n.t("export.comment_generated")),
             ("Address", bridge_ip),
             ("Port", str(port)),
         ],
@@ -199,7 +200,7 @@ def render_virtual_out(
             # `HintText` steht dort vorn, nicht hinter `CmdInit`.
             ("HintText", ""),
             ("Title", f"Matter — {device_label}"),
-            ("Comment", "erzeugt von loxmatter"),
+            ("Comment", i18n.t("export.comment_generated")),
             ("Address", base_url),
             ("CmdInit", ""),
             ("CloseAfterSend", "true"),
@@ -234,8 +235,8 @@ def render_system_templates(bridge_ip: str, port: int, listen_port: int) -> tupl
         [
             LoxoneInput(
                 key="bridge_alive",
-                title="Bridge erreichbar",
-                comment="Watchdog: toggelt, solange die Bridge laeuft",
+                title=i18n.t("export.system.bridge_alive_title"),
+                comment=i18n.t("export.system.bridge_alive_comment"),
                 # Analog wie jeder Zustand (2026-09-03): der Watchdog lebt
                 # gerade davon, dass der Wert zwischen 1 und 0 WECHSELT. Ein
                 # digitaler Eingang wertet den Wert nicht aus - er saehe nur,
@@ -253,7 +254,7 @@ def render_system_templates(bridge_ip: str, port: int, listen_port: int) -> tupl
         [
             LoxoneCommand(
                 key="resync",
-                title="Alle Werte neu senden",
+                title=i18n.t("export.system.resync_title"),
                 path="/resync",
                 analog=False,
             )

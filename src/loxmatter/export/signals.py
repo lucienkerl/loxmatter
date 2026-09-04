@@ -46,6 +46,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from loxmatter import i18n
 from loxmatter.matter.models import SignalKind
 from loxmatter.model.store import StoredSignal
 from loxmatter.profiles.table import Exportability, unit_format
@@ -150,13 +151,22 @@ def to_inputs(
                 # Flanke: der Impuls loest damit genau einmal aus statt
                 # zweimal (siehe LoxoneInput).
                 LoxoneInput(
-                    signal.key, signal.title, f"{comment} · Impuls", False, "", check_suffix="1"
+                    signal.key,
+                    signal.title,
+                    i18n.t("export.signals.pulse_comment_suffix", comment=comment),
+                    False,
+                    "",
+                    check_suffix="1",
                 ),
                 f"dem Impuls von {signal.key!r}",
             )
             emit(
                 LoxoneInput(
-                    f"{signal.key}_n", f"{signal.title} Zähler", f"{comment} · Zähler", True, ""
+                    f"{signal.key}_n",
+                    i18n.t("export.signals.counter_title_suffix", title=signal.title),
+                    i18n.t("export.signals.counter_comment_suffix", comment=comment),
+                    True,
+                    "",
                 ),
                 f"dem Zaehler von {signal.key!r}",
             )
@@ -174,7 +184,13 @@ def to_inputs(
     online_key = f"d{device_id}_online"
     emit(
         # Ein Zustand, kein Impuls - also analog (siehe LoxoneInput).
-        LoxoneInput(online_key, f"{device_label} erreichbar", device_label, True, ""),
+        LoxoneInput(
+            online_key,
+            i18n.t("export.signals.online_title", device_label=device_label),
+            device_label,
+            True,
+            "",
+        ),
         "dem Online-Signal",
     )
     return inputs
