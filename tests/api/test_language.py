@@ -83,6 +83,42 @@ async def test_get_i18n_only_returns_the_web_namespace(unauthenticated_api):
     assert all(key.startswith("web.") for key in body["strings"])
 
 
+async def test_get_i18n_does_not_crash_on_a_web_key_with_a_placeholder(
+    unauthenticated_api, monkeypatch
+):
+    """Der eigentliche Regressionstest fuer den Befund aus dem
+    Aufgabe-8-Bericht (siehe web.test.smoke in strings.yaml):
+    `_web_strings()` rief frueher `i18n.t(key)` OHNE `values` fuer JEDEN
+    `web.*`-Schluessel auf - `t()` ruft immer `.format(**values)` auf, und
+    ein Schluessel mit einem `{platzhalter}` liess das dort mit `KeyError`
+    abstuerzen. Weil `_web_strings()` das in einer einzigen
+    dict-comprehension tut, riss das nicht nur den einen Schluessel mit
+    sich, sondern die GESAMTE `GET /api/i18n`-Antwort (bestaetigt an vier
+    davon unabhaengigen, laengst zusammengefuehrten Tests in dieser Datei,
+    die dadurch ploetzlich fehlschlugen).
+
+    Ein temporaerer, ueber `monkeypatch` in `i18n._STRINGS` eingefuegter
+    `web.*`-Schluessel statt einer dauerhaften Ergaenzung von
+    `strings.yaml`: dieser Test soll nur das Zusammenspiel von
+    `_web_strings()` und `i18n` pruefen, nicht eine weitere dauerhafte
+    Testschablone in der echten Tabelle anlegen (die es mit
+    `web.test.smoke` - bewusst OHNE Platzhalter - bereits gibt).
+
+    Erwartet wird 200 mit der UNAUFGELOESTEN Vorlage im Antwortkoerper -
+    `i18n.raw_template()` statt `i18n.t()`, weil der Browser den
+    Platzhalter selbst befuellt (siehe app.js, `t()`), mit Werten, die der
+    Server nicht kennen kann."""
+    monkeypatch.setitem(
+        i18n._STRINGS,
+        "web.test.placeholder_smoke",
+        {"en": "{seconds}s ago"},
+    )
+    client, _ = unauthenticated_api
+    response = await client.get("/api/i18n")
+    assert response.status_code == 200
+    assert response.json()["strings"]["web.test.placeholder_smoke"] == "{seconds}s ago"
+
+
 async def test_patch_language_requires_a_session(unauthenticated_api):
     client, _ = unauthenticated_api
     response = await client.patch("/api/language", json={"language": "de"})

@@ -485,6 +485,15 @@ function app() {
         this.language = info.language;
         translationStrings = info.strings;
         document.documentElement.lang = info.language;
+      } catch (error) {
+        // Einzige bewusste Ausnahme von "keine console.*-Aufrufe in dieser
+        // Datei" (siehe Kopfkommentar): es gibt keinen Oberflaechen-Platz fuer
+        // "Uebersetzungen konnten nicht geladen werden" wie es ihn fuer
+        // authError gibt - ohne dieses Log waere ein Fehlschlag hier komplett
+        // unsichtbar. stringsReady wird trotzdem gesetzt (siehe finally): t()
+        // faellt fuer jeden noch nicht geladenen Schluessel selbst auf den
+        // rohen Schluesseltext zurueck, statt die Seite fuer immer zu blockieren.
+        console.error("Uebersetzungen konnten nicht geladen werden:", error);
       } finally {
         this.stringsReady = true;
       }

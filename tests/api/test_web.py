@@ -569,6 +569,37 @@ async def test_load_i18n_sets_the_document_language_via_dom_assignment(api):
     assert ':lang="' not in page
 
 
+async def test_load_i18n_catches_a_failed_request_so_init_still_proceeds(api):
+    """Regressionstest: anders als ihre Schwester `loadAuthInfo()` (die ein
+    `catch` UND ein `finally` traegt) hatte `loadI18n()` bisher NUR ein
+    `finally` - ein Fehlschlag von `GET /api/i18n` (Netzwerkaussetzer, ein
+    5xx) lief dadurch als unbehandelte Ablehnung durch `init()`s
+    `await Promise.all([this.loadI18n(), this.loadAuthInfo()])` durch, und
+    `init()` selbst umschliesst diese Zeile mit keinem eigenen `try`/`catch`
+    - mit der Folge, dass `if (this.authenticated) { await this.startApp(); }`
+    danach NIE lief, selbst wenn `loadAuthInfo()` fuer sich genommen
+    erfolgreich war und die Person angemeldet ist. Sichtbare Auswirkung: ein
+    voruebergehender Fehlschlag von `/api/i18n` bei bereits gueltiger
+    Sitzung liess die App nie Geraete/Daten laden, ohne jede sichtbare
+    Fehlermeldung.
+
+    Belegt nur, dass der ausgelieferte Quelltext innerhalb des Rumpfs von
+    `loadI18n()` ein `catch`-Bloch enthaelt, das den Fehler protokolliert -
+    nicht, dass ein echter Netzwerkfehler im Browser zur Laufzeit
+    tatsaechlich dort landet und `startApp()` danach trotzdem laeuft
+    (dafuer braeuchte es eine Browser-Engine, siehe
+    `test_the_page_does_not_call_init_a_second_time`)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    load_i18n_start = script.index("async loadI18n()")
+    load_i18n_end = script.index("},", load_i18n_start)
+    body = script[load_i18n_start:load_i18n_end]
+    assert "} catch (" in body
+    assert "console.error(" in body
+    assert "} finally {" in body
+    assert "this.stringsReady = true;" in body
+
+
 async def test_init_loads_translations_and_auth_info_in_parallel(api):
     """Beide sind unabhaengige, ungeschuetzte Aufrufe, die dieselben
     Auth-Bildschirm-Vorlagen gaten - init() muss sie parallel starten,

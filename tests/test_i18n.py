@@ -71,3 +71,34 @@ def test_strings_with_prefix_returns_only_matching_keys():
     assert "test.greeting" in keys
     assert "test.english_only" in keys
     assert not any(not k.startswith("test.") for k in keys)
+
+
+# -----------------------------------------------------------------------------
+# raw_template() - Regressionstests fuer den Befund aus dem Aufgabe-8-Bericht
+# (siehe web.test.smoke in strings.yaml sowie api/language.py:_web_strings()):
+# t() ruft IMMER .format(**values) auf, auch mit einem leeren values - fuer
+# GET /api/i18n, das dem Browser die UNAUFGELOESTE Vorlage liefern muss (der
+# Browser fuellt {platzhalter} selbst, mit Werten wie error.message oder
+# device.label, die der Server nicht kennen kann), ist das der falsche
+# Baustein. raw_template() liefert dieselbe Ruecksicherung wie t(), nur ohne
+# das .format() am Ende.
+# -----------------------------------------------------------------------------
+
+
+def test_raw_template_returns_the_unformatted_template_in_english_by_default():
+    assert i18n.raw_template("test.greeting") == "Hello, {name}!"
+
+
+def test_raw_template_returns_the_unformatted_template_in_german_after_set_language():
+    i18n.set_language("de")
+    assert i18n.raw_template("test.greeting") == "Hallo, {name}!"
+
+
+def test_raw_template_falls_back_to_english_when_german_is_missing():
+    i18n.set_language("de")
+    assert i18n.raw_template("test.english_only") == "English only"
+
+
+def test_raw_template_raises_for_an_unknown_key():
+    with pytest.raises(KeyError):
+        i18n.raw_template("test.does_not_exist")

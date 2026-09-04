@@ -54,14 +54,13 @@ class LanguageOut(BaseModel):
 
 
 def _web_strings() -> dict[str, str]:
-    """Alle `web.*`-Schluessel, aufgeloest in der aktuellen Sprache.
-
-    `i18n._STRINGS` traegt jeden Schluessel des gesamten Projekts
-    (`cli.*`, `api.*`, `web.*`, `export.*`, `test.*`) - diese Funktion
-    filtert auf genau den Namensraum, den der Client braucht, und laesst
-    `i18n.t()` selbst die Aufloesung (inkl. Ruecksicherungsfall) erledigen,
-    statt die Tabelle hier ein zweites Mal auszulesen."""
-    return {key: i18n.t(key) for key in i18n.strings_with_prefix("web.")}
+    """Alle `web.*`-Schluessel, unaufgeloest (mit noch unbefuellten
+    {platzhaltern}) in der aktuellen Sprache - der Browser fuellt sie
+    selbst (siehe app.js, t()). i18n.raw_template() statt i18n.t(), weil
+    t() sofort mit KeyError abstuerzen wuerde, sobald ein web.*-Schluessel
+    ueberhaupt einen Platzhalter traegt (Befund aus der Umsetzung der
+    WebUI-Uebersetzungsmechanik)."""
+    return {key: i18n.raw_template(key) for key in i18n.strings_with_prefix("web.")}
 
 
 def build_i18n_router(store: Store) -> APIRouter:
