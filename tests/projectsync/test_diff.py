@@ -15,6 +15,7 @@ def _signal(key: str, device_id: int, endpoint: int = 1) -> StoredSignal:
         device_id=device_id,
         exported=True,
         functional=True,
+        resend=False,
     )
 
 
@@ -85,6 +86,7 @@ def test_has_changes_is_false_when_everything_matches(sample_project):
         device_id=signal.device_id,
         exported=signal.exported,
         functional=signal.functional,
+        resend=signal.resend,
     )
     plan = build_plan(index, [device], {1: [signal_matching_title]}, {1: []})
     onoff = next(e for e in plan.entries if e.key == "d1_1_onoff")

@@ -17,6 +17,7 @@ def _signal(key: str, device_id: int, title: str = "Ein/Aus", unit: str = "") ->
         device_id=device_id,
         exported=True,
         functional=True,
+        resend=False,
     )
 
 
