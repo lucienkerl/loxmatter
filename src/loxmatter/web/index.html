@@ -526,41 +526,68 @@
               >
                 Alles aktuell – keine Änderungen nötig.
               </p>
-              <div style="overflow-x: auto" x-show="projectSync.plan.has_changes || projectSyncHasInformationalEntries(projectSync.plan.entries)">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Gerät</th>
-                      <th>Signal</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <template x-for="entry in projectSync.plan.entries" :key="entry.kind + entry.key">
-                      <tr>
-                        <td x-text="entry.device_label || '—'"></td>
-                        <td x-text="entry.title"></td>
-                        <td>
-                          <span
-                            class="badge"
-                            :class="projectSyncStatusBadgeClass(entry.status)"
-                            x-text="projectSyncStatusLabel(entry.status)"
-                          ></span>
-                          <!-- Review-Fix Important #6: die vom Backend
-                               mitgelieferte Attribut-Differenz (`entry.changes`,
-                               nur bei `status === "updated"` befuellt) war bisher
-                               nirgends zu sehen. -->
-                          <div
-                            x-show="entry.status === 'updated'"
-                            class="hint"
-                            style="white-space: pre-line"
-                            x-text="projectSyncChangesText(entry)"
-                          ></div>
-                        </td>
-                      </tr>
+              <!--
+                Nutzerwunsch: Verschachtelung nach Geraet statt einer langen
+                flachen Liste, dieselbe Gliederung (Geraet -> Eingaenge /
+                Ausgaenge), in der die Signale nachher als virtuelle Ein-/
+                Ausgaenge in Loxone Config landen. `projectSyncGroupedEntries`
+                (app.js) gruppiert den vom Backend gelieferten flachen Plan
+                rein clientseitig, kein Backend-Vertrag geaendert.
+              -->
+              <div
+                class="projectsync-plan"
+                x-show="projectSync.plan.has_changes || projectSyncHasInformationalEntries(projectSync.plan.entries)"
+              >
+                <template
+                  x-for="group in projectSyncGroupedEntries(projectSync.plan.entries)"
+                  :key="group.deviceId"
+                >
+                  <div class="projectsync-device">
+                    <h3 x-text="group.deviceLabel"></h3>
+                    <template x-for="section in [
+                      { label: 'Eingänge', items: group.inputs },
+                      { label: 'Ausgänge', items: group.outputs },
+                    ]">
+                      <div class="projectsync-io-group" x-show="section.items.length > 0">
+                        <div class="projectsync-io-label" x-text="section.label"></div>
+                        <div style="overflow-x: auto">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Signal</th>
+                                <th>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <template x-for="entry in section.items" :key="entry.kind + entry.key">
+                                <tr>
+                                  <td x-text="entry.title"></td>
+                                  <td>
+                                    <span
+                                      class="badge"
+                                      :class="projectSyncStatusBadgeClass(entry.status)"
+                                      x-text="projectSyncStatusLabel(entry.status)"
+                                    ></span>
+                                    <!-- Review-Fix Important #6: die vom Backend
+                                         mitgelieferte Attribut-Differenz (`entry.changes`,
+                                         nur bei `status === "updated"` befuellt) war bisher
+                                         nirgends zu sehen. -->
+                                    <div
+                                      x-show="entry.status === 'updated'"
+                                      class="hint"
+                                      style="white-space: pre-line"
+                                      x-text="projectSyncChangesText(entry)"
+                                    ></div>
+                                  </td>
+                                </tr>
+                              </template>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
                     </template>
-                  </tbody>
-                </table>
+                  </div>
+                </template>
               </div>
               <!--
                 Review-Fix Important #4: `patched_with_new_devices_base64`

@@ -640,3 +640,31 @@ footer.hint-block {
   border-radius: 8px;
   padding: 0.35rem 0.7rem;
 }
+
+/* Projektdatei-Sync: der Plan gruppiert nach Geraet und darunter nach Ein-/
+ * Ausgang (`projectSyncGroupedEntries` in app.js), ein Abbild derselben
+ * Verschachtelung, in der die Signale nachher in Loxone Config als virtuelle
+ * Ein-/Ausgaenge stehen - der linke Rahmen wirkt wie ein Baum-Einzug, an
+ * `.device-card`s farbigem Rand oben orientiert, hier aber neutral, weil ein
+ * Plan-Eintrag keinen Online/Offline-Zustand hat. */
+.projectsync-device {
+  border-left: 2px solid var(--border);
+  padding-left: 0.9rem;
+}
+
+.projectsync-device + .projectsync-device {
+  margin-top: 1.2rem;
+}
+
+.projectsync-io-group {
+  margin-top: 0.6rem;
+}
+
+.projectsync-io-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.3rem;
+}
