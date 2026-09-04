@@ -210,6 +210,11 @@ class FakeMatterClient:
         # Die Node-IDs, fuer die die Route das Nachziehen der Abonnements
         # angestossen hat (`BridgeMatterClient.follow_node`).
         self.followed: list[int] = []
+        # Der Store, gegen den `follow_node` prueft, ob das Geraet zum
+        # Zeitpunkt des Aufrufs bereits registriert war. Die `api`-Fixture
+        # setzt ihn; ohne ihn zeichnet `follow_node` nur den Aufruf auf.
+        self.store: Store | None = None
+        self.followed_resolved: list[int | None] = []
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
         if self.fail_commission_with is not None:
@@ -240,6 +245,14 @@ class FakeMatterClient:
     async def follow_node(self, node_id: int) -> None:
         self.followed.append(node_id)
         self.order.append("follow")
+        # Der eigentliche Nachweis: das echte
+        # `BridgeMatterClient.follow_node` loest die Node-ID ueber den Store
+        # auf und tut ohne Treffer nichts weiter als zu abonnieren. Wird sie
+        # hier nicht aufgeloest, zieht die Route zu frueh nach - dasselbe
+        # Wettrennen, das das NODE_ADDED-Ereignis bereits verloren hat.
+        self.followed_resolved.append(
+            None if self.store is None else self.store.device_id_for_node(node_id)
+        )
 
 
 @pytest.fixture

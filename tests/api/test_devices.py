@@ -32,6 +32,7 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
     store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    fake_client.store = store
 
     app = build_app(
         store,
@@ -461,13 +462,19 @@ async def test_commissioning_follows_the_new_node(api):
 async def test_the_new_node_is_followed_only_after_it_is_registered(api):
     """Die Reihenfolge ist der ganze Grund fuer diesen Aufruf: wuerde die
     Route frueher nachziehen, liefe `resolve_device_id` erneut ins Leere -
-    genau das Wettrennen, das `NODE_ADDED` schon verloren hat."""
+    genau das Wettrennen, das `NODE_ADDED` schon verloren hat. Die blosse
+    Reihenfolge "commission vor follow" beweist das nicht - erst die
+    Zusicherung, dass der Store die Node-ID beim `follow_node`-Aufruf schon
+    auf die neue `device_id` aufloesen konnte, zeigt, dass die Route
+    tatsaechlich erst NACH der Registrierung nachzieht."""
     client, _, _, fake_client = api
     # Der Thread-Datensatz ist hier nicht das Thema dieses Tests (siehe
     # test_a_missing_thread_dataset_is_fetched_from_the_border_router dafuer)
     # - ohne diese Zeile stuende zusaetzlich "dataset" am Anfang der Liste.
     fake_client.thread_dataset_set = True
 
-    await client.post("/api/devices/commission", json={"code": "MT:X"})
+    response = await client.post("/api/devices/commission", json={"code": "MT:X"})
 
     assert fake_client.order == ["commission", "follow"]
+    new_device_id = response.json()["id"]
+    assert fake_client.followed_resolved == [new_device_id]
