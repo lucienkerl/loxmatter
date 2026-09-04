@@ -118,7 +118,14 @@ from loxmatter.profiles.table import is_exportable
 # seit die Downloads ueber `fetch` statt ueber einen Link laufen, benennt
 # der Browser die Datei selbst (siehe `web/app.js`, `download`).
 ARCHIVE_NAME = "loxmatter-export.zip"
-_README_NAME = "Import-Anleitung.txt"
+# Sprachneutral (Review-Fix Important, Whole-Branch-Review 2026-09-04): der
+# Dateiname bleibt EIN fester Wert unabhaengig von der UI-Sprache, nur der
+# Inhalt (`_readme_text()`) ist uebersetzt. Ein Dateiname, der sich mit der
+# UI-Sprache aendert, wuerde jedes Skript, das die ZIP-Struktur erwartet,
+# unnoetig erschweren - hiess bis zu diesem Fix immer `Import-Anleitung.txt`,
+# auch im englischsprachigen Export.
+_README_NAME = "README.txt"
+
 
 def _readme_text() -> str:
     """Wie die alte Modul-Konstante `_README_TEXT`, aber pro Aufruf neu

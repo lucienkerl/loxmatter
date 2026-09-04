@@ -153,7 +153,7 @@ async def test_the_readme_explains_how_to_import_the_templates(api):
     raw = archive.read(name)
     text = raw.decode("utf-8")
     assert "IMPORT INSTRUCTIONS" in text
-    assert 'Templates\\VirtualIn\\' in text
+    assert "Templates\\VirtualIn\\" in text
     # `_readme_text()` haengt die CRLF-Umwandlung weiterhin an ihren
     # Rueckgabewert - dieselbe Notepad-Freundlichkeit wie vor Task 6.
     assert b"\r\n" in raw
@@ -173,7 +173,29 @@ async def test_the_readme_is_german_when_the_language_is_de(api):
     name = next(n for n in archive.namelist() if n.endswith(".txt"))
     text = archive.read(name).decode("utf-8")
     assert "IMPORT-ANLEITUNG" in text
-    assert 'Templates\\VirtualIn\\' in text
+    assert "Templates\\VirtualIn\\" in text
+
+
+async def test_the_readme_filename_stays_language_neutral(api):
+    """Review-Fix Important (Whole-Branch-Review, 2026-09-04): Task 6
+    uebersetzte nur den INHALT der Anleitungsdatei (`api.export.readme_text`)
+    - der Dateiname selbst blieb hartcodiert `Import-Anleitung.txt`, auch im
+    englischsprachigen Export. Ein Dateiname, der sich mit der UI-Sprache
+    aendert, wuerde jedes Skript erschweren, das die ZIP-Struktur erwartet -
+    er ist deshalb jetzt EIN fester, sprachneutraler Wert (`README.txt`),
+    unabhaengig davon, ob der Store auf Englisch oder Deutsch steht."""
+    client, store, _ = api
+
+    response_en = await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    names_en = zipfile.ZipFile(io.BytesIO(response_en.content)).namelist()
+    assert "README.txt" in names_en
+    assert "Import-Anleitung.txt" not in names_en
+
+    store.locale.set_language("de")
+    response_de = await client.get("/api/export/download?bridge_ip=192.168.1.50")
+    names_de = zipfile.ZipFile(io.BytesIO(response_de.content)).namelist()
+    assert "README.txt" in names_de
+    assert "Import-Anleitung.txt" not in names_de
 
 
 async def test_files_in_the_zip_keep_bom_and_crlf(api):
