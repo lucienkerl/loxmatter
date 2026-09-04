@@ -14,8 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Verbindungseinstellungen der Bruecke (IP, Ports) ueber die API - Geraete-
-Dashboard-Entwurf (2026-09-03), Abschnitt 4.
+"""Verbindungseinstellungen der Bruecke (IP, Ports) und das Intervall des
+periodischen Resends ueber die API - Geraete-Dashboard-Entwurf
+(2026-09-03), Abschnitt 4, und Entwurf periodischer Resend (2026-09-04),
+Abschnitt 5.
 
 `build_settings_router` baut einen `APIRouter` mit Praefix `/api`, genau wie
 `api.devices.build_device_router` - eingebunden in `loxone.server.build_app`
@@ -23,9 +25,14 @@ neben den uebrigen Routern dieser Phase, hinter demselben `api_guard`."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from loxmatter.api.models import BridgeSettingsIn, BridgeSettingsOut
+from loxmatter.api.models import (
+    BridgeSettingsIn,
+    BridgeSettingsOut,
+    ResendIntervalIn,
+    ResendIntervalOut,
+)
 from loxmatter.model.store import Store
 
 
@@ -37,6 +44,10 @@ def _settings_out(store: Store) -> BridgeSettingsOut:
         listen_port=settings.listen_port,
         saved_at=settings.saved_at,
     )
+
+
+def _resend_interval_out(store: Store) -> ResendIntervalOut:
+    return ResendIntervalOut(interval_seconds=store.resend_settings.get_interval_seconds())
 
 
 def build_settings_router(store: Store) -> APIRouter:
@@ -54,5 +65,17 @@ def build_settings_router(store: Store) -> APIRouter:
             listen_port=patch.listen_port,
         )
         return _settings_out(store)
+
+    @router.get("/settings/resend-interval")
+    async def get_resend_interval() -> ResendIntervalOut:
+        return _resend_interval_out(store)
+
+    @router.patch("/settings/resend-interval")
+    async def save_resend_interval(patch: ResendIntervalIn) -> ResendIntervalOut:
+        try:
+            store.resend_settings.set_interval_seconds(patch.interval_seconds)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _resend_interval_out(store)
 
     return router

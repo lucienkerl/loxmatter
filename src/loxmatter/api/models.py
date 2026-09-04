@@ -262,3 +262,23 @@ class BridgeSettingsIn(BaseModel):
     bridge_ip: str = Field(min_length=1)
     udp_port: int
     listen_port: int
+
+
+class ResendIntervalOut(BaseModel):
+    """Antwort von `GET`/`PATCH /api/settings/resend-interval` (Entwurf
+    periodischer Resend, 2026-09-04, Abschnitt 5)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    interval_seconds: float
+
+
+class ResendIntervalIn(BaseModel):
+    """Rumpf von `PATCH /api/settings/resend-interval`. `gt=0` faengt einen
+    nicht-positiven Wert bereits hier ab (422 ohne eigenen Validator); die
+    tatsaechliche Untergrenze (`MIN_RESEND_INTERVAL_SECONDS`) prueft
+    `ResendSettingsStore.set_interval_seconds` selbst, siehe dort."""
+
+    model_config = ConfigDict(frozen=True)
+
+    interval_seconds: float = Field(gt=0)
