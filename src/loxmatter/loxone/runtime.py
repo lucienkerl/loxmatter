@@ -289,7 +289,11 @@ class Runtime:
         """Zieht ein Geraet nach, dessen Attributpfade sich geaendert haben -
         gerufen aus `BridgeMatterClient.follow_node`.
 
-        Drei Schritte, deren Reihenfolge nicht beliebig ist:
+        Drei Schritte. Verbindlich ist davon nur eine Reihenfolge:
+        `invalidate_index` MUSS vor dem Saeen (Schritt 3) laufen. Ob
+        `register_signals` vor oder nach `invalidate_index` steht, ist
+        folgenlos - beide muessen nur abgeschlossen sein, bevor das Saeen den
+        ersten `_signal_for`-Zugriff macht.
 
         1. `register_signals` legt die Zeilen fuer neue Pfade an. Die Methode
            ist ausdruecklich fuer erneute Aufrufe gebaut (siehe dortiger
@@ -297,13 +301,14 @@ class Runtime:
            bekannten Signalen unangetastet, `unit`/`exportability`/
            `functional` werden nachgezogen.
         2. `invalidate_index` verwirft den Signal-Cache dieses Geraets.
-           **Ohne diesen Schritt waere der ganze Vorgang wirkungslos**:
-           `_signal_for` liest die Signale eines Geraets genau einmal und
-           merkt sich das in `_indexed`; ein eben angelegtes Signal existierte
-           dann in der Datenbank, aber jedes Update dazu liefe fuer den Rest
-           des Prozesses ins Leere - ohne Fehler, nur mit einem
-           `debug`-Eintrag. Der Docstring von `invalidate_index` verlangt
-           diesen Aufruf seit Phase 4; dies ist sein erster Aufrufer.
+           **Ohne diesen Schritt vor dem Saeen waere Schritt 3 fuer jeden
+           neuen Pfad wirkungslos**: `_signal_for` liest die Signale eines
+           Geraets genau einmal und merkt sich das in `_indexed`; ein eben
+           angelegtes Signal existierte dann in der Datenbank, aber das Saeen
+           faende es ueber den veralteten Cache nicht und wuerfe seinen Wert
+           stillschweigend weg - ohne Fehler, nur mit einem `debug`-Eintrag.
+           Der Docstring von `invalidate_index` verlangt diesen Aufruf seit
+           Phase 4; dies ist sein erster Aufrufer.
         3. Werte saeen, ueber denselben `_cache_attribute`-Weg wie
            `seed_from_snapshot` - und aus demselben Grund: ein Stecker ohne
            Last meldet nie eine sich aendernde Spannung, sein Wert entstuende

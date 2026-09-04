@@ -653,3 +653,44 @@ async def test_on_node_snapshot_seeds_an_unavailable_node_as_offline(environment
     await runtime.on_node_snapshot(device_id, NodeSnapshot.from_raw(raw["node_id"], raw))
 
     assert runtime._last_values[f"d{device_id}_online"] is False
+
+
+async def test_on_node_snapshot_invalidates_before_seeding_a_stale_cache(environment, monkeypatch):
+    """Die vier `test_on_node_snapshot_*`-Tests oben belegen nur, dass
+    `invalidate_index` ueberhaupt aufgerufen wird - nicht, dass es VOR dem
+    Saeen laeuft. Vertauscht man `self.invalidate_index(device_id)` mit der
+    Saeen-Passage darunter, bleiben alle vier gruen: keiner von ihnen indiziert
+    das Geraet VOR dem `on_node_snapshot`-Aufruf mit dem neuen Pfad noch nicht
+    im Cache.
+
+    Dieser Test tut genau das: `on_attribute` indiziert das Geraet vorab (der
+    Pfad existiert zu diesem Zeitpunkt noch nicht, der Wert wird verworfen,
+    der Cache aber gefuellt) - damit ist er beim folgenden
+    `on_node_snapshot`-Aufruf bereits veraltet. Laeuft die Invalidierung nach
+    dem Saeen, liest `_cache_attribute` ueber `_signal_for` den alten Stand,
+    findet dort kein Signal fuer den neuen Pfad und verwirft den mitgelieferten
+    Wert - genau der Strich-Zustand, den `on_node_snapshot` beseitigen soll."""
+    runtime, _, _, device_id, _ = environment
+    new_ref = SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)
+    key = f"d{device_id}_9_c1234_a5"
+
+    def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
+        return [*extract_signals(snapshot), new_ref]
+
+    # Erstmaliges Indizieren durch die Laufzeit - der Pfad existiert noch
+    # nicht, der Wert wird verworfen, aber das Geraet ist danach indiziert
+    # (und der Cache damit veraltet fuer alles, was gleich hinzukommt).
+    await runtime.on_attribute(device_id, "9/1234/5", 1)
+
+    monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
+
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    raw = dict(raw)
+    attributes = dict(raw["attributes"])
+    attributes["9/1234/5"] = 1
+    raw["attributes"] = attributes
+    snapshot = NodeSnapshot.from_raw(raw["node_id"], raw)
+
+    await runtime.on_node_snapshot(device_id, snapshot)
+
+    assert key in runtime._last_values
