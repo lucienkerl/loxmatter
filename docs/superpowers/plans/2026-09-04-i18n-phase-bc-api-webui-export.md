@@ -295,6 +295,17 @@ from loxmatter import i18n
 
 (add these two lines next to the existing `from loxmatter.api.*` imports)
 
+**Correction (Whole-Branch-Review, 2026-09-04):** the snippet below — and its
+docstring's claim that registering FIRST makes a middleware the outermost
+layer — reflects Task 1's original (incorrect) understanding of Starlette's
+middleware semantics. The real semantics are the opposite: the LAST
+`@app.middleware("http")` registered ends up outermost (see the corrected
+"Middleware-Registrierungsreihenfolge" reference section below). The shipped
+code in `server.py` now registers `_sync_language` AFTER `_record_command`,
+not before, and its docstring there states the corrected semantics. This
+snippet is left as historical record of what Task 1 actually executed at the
+time; do not copy its ordering or its docstring's derivation.
+
 Inside `build_app`, insert the middleware as the FIRST thing registered — before `_append_command_log`/`_record_command` are even defined, right after the `api_guard = [...]` line:
 
 ```python
@@ -390,24 +401,46 @@ EOF
 
 ## Middleware-Registrierungsreihenfolge (Referenz fuer Task 1)
 
+**Korrektur (Whole-Branch-Review, 2026-09-04):** Der urspruengliche Text
+dieses Abschnitts behauptete "Zuerst registriert = laeuft zuerst" und liess
+Task 1 `_sync_language` deshalb VOR `_record_command` registrieren. Das ist
+falsch herum - siehe unten fuer die tatsaechlichen Starlette-Semantiken und
+den Review-Fix (`_sync_language` wird in `server.py` inzwischen ALS LETZTE
+der beiden Middlewares registriert, nicht als erste). Der Fehler in der
+urspruenglichen Herleitung: `@app.middleware("http")` ruft intern
+`add_middleware` auf, und `Starlette.add_middleware` fuegt jede neue
+Middleware mit `self.user_middleware.insert(0, ...)` VORNE in die Liste ein
+- `user_middleware` ist bei zwei Registrierungen `A` (zuerst), `B` (danach)
+also `[B, A]`, NICHT `[A, B]` wie unten angenommen.
+
 Starlette baut den Middleware-Stapel in `Starlette.build_middleware_stack()`
 so auf: `app = router`, dann fuer jedes Element von
 `reversed([ServerError] + user_middleware + [ExceptionMiddleware])` wird die
-jeweilige Middleware um `app` HERUM gelegt (`app = cls(app=app, ...)`). Bei
-zwei `@app.middleware("http")`-Registrierungen `A` (zuerst) und `B` (danach)
-ergibt das die Schicht-Reihenfolge von aussen nach innen: `ServerError → A →
-B → ExceptionMiddleware → router`. Eine eingehende Anfrage durchlaeuft die
-Schichten von aussen nach innen - `A`s Code vor seinem `await call_next(...)`
-laeuft deshalb VOR `B`s entsprechendem Code. **Zuerst registriert = laeuft
-zuerst.** `_sync_language` muss deshalb VOR `_record_command` registriert
-werden (Task 1, Schritt 4) - nicht danach.
+jeweilige Middleware um `app` HERUM gelegt (`app = cls(app=app, ...)`). Mit
+`user_middleware = [B, A]` (siehe oben) ergibt `reversed(...)` die
+Wickel-Reihenfolge `ServerError, A, B, ExceptionMiddleware` - die Schicht-
+Reihenfolge von aussen nach innen ist damit `ServerError → B → A →
+ExceptionMiddleware → router`. Eine eingehende Anfrage durchlaeuft die
+Schichten von aussen nach innen - `B`s Code vor seinem `await
+call_next(...)` laeuft deshalb VOR `A`s entsprechendem Code, obwohl `A`
+ZUERST registriert wurde. **Zuletzt registriert = aeusserste Schicht = laeuft
+zuerst.** Verifiziert per `TestClient`-Probe (zwei Middlewares, Aufrufreihen-
+folge geloggt: `second-in, first-in, handler, first-out, second-out` fuer
+zwei nacheinander per `@app.middleware("http")` registrierte Funktionen
+`first`, `second`) sowie per `app.user_middleware[0]`, das nach zwei
+Registrierungen die ZULETZT registrierte Funktion enthaelt. `_sync_language`
+muss deshalb NACH `_record_command` registriert werden, nicht davor - so ist
+es in `server.py` inzwischen umgesetzt, mit einem Test
+(`test_sync_language_is_the_outermost_middleware` in
+`tests/loxone/test_server.py`), der `app.user_middleware[0]` genau darauf
+prueft.
 
 (Randbemerkung, nicht sicherheitsrelevant fuer diese Aufgabe: FastAPIs
 `Depends(...)`-Abhaengigkeiten, also auch `build_api_guard`, loesen erst
 WAEHREND der Routenbehandlung auf, die selbst innerhalb JEDER Middleware
 liegt - der Waechter saehe die richtige Sprache also auch, wenn die
 Registrierungsreihenfolge der beiden Middlewares vertauscht waere. Die
-Reihenfolge oben ist trotzdem korrekt und sollte nicht aus Bequemlichkeit
+Reihenfolge oben ist trotzdem wichtig und sollte nicht aus Bequemlichkeit
 vertauscht werden: `_record_command`s Ringpuffer-Eintraege selbst tragen
 keinen uebersetzten Text, aber ein kuenftiger Diagnose-Text dort sollte
 sich auf eine bereits aufgeloeste Sprache verlassen koennen, ohne dass

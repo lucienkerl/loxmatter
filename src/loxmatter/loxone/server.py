@@ -117,6 +117,7 @@ dort, wo ein Diagnostiker ihn am dringendsten braucht."""
 from __future__ import annotations
 
 import logging
+import os
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -380,27 +381,6 @@ def build_app(
     command_log: RingBuffer[CommandLogEntry] = RingBuffer(maxlen=COMMAND_LOG_SIZE)
     api_guard = [Depends(build_api_guard(api_token, store))]
 
-    @app.middleware("http")
-    async def _sync_language(
-        request: Request, call_next: Callable[[Request], Awaitable[StarletteResponse]]
-    ) -> StarletteResponse:
-        """Liest die gespeicherte Spracheinstellung bei JEDER Anfrage frisch
-        (Spec-Abschnitt 4) - registriert als ALLERERSTE Middleware, damit sie
-        vor `_record_command` und vor jeder Route (einschliesslich des
-        Anmelde-Waechters, dessen 401-Text ebenfalls uebersetzt ist) laeuft.
-        Middleware-Registrierungsreihenfolge in Starlette: die zuerst per
-        `@app.middleware("http")` registrierte Funktion wird zur AEUSSEREN
-        Schicht und sieht eine Anfrage deshalb zuerst - siehe die
-        ausfuehrliche Herleitung im Implementierungsplan dieser Aufgabe,
-        Abschnitt "Middleware-Registrierungsreihenfolge".
-
-        `store.locale.get_language()` wirft nie (Phase A) - kein try/except
-        noetig, anders als `_append_command_log` weiter unten, das einen
-        echten Fehlschlag beim Schreiben in einen fremden Ringpuffer
-        abfaengt."""
-        i18n.set_language(store.locale.get_language())
-        return await call_next(request)
-
     def _append_command_log(*, method: str, path: str, status: int) -> None:
         """Haengt einen Eintrag an - in ein eigenes try/except gekapselt, ein
         Fehler beim Mitschreiben selbst darf weder die Antwort noch (im
@@ -456,6 +436,43 @@ def build_app(
                 status=response.status_code,
             )
         return response
+
+    @app.middleware("http")
+    async def _sync_language(
+        request: Request, call_next: Callable[[Request], Awaitable[StarletteResponse]]
+    ) -> StarletteResponse:
+        """Liest die gespeicherte Spracheinstellung bei JEDER Anfrage frisch
+        (Spec-Abschnitt 4) - registriert als ALLERLETZTE Middleware, damit sie
+        vor `_record_command` und vor jeder Route (einschliesslich des
+        Anmelde-Waechters, dessen 401-Text ebenfalls uebersetzt ist) laeuft.
+        Middleware-Registrierungsreihenfolge in Starlette (per
+        `@app.middleware("http")`, aequivalent zu `add_middleware`): Starlette
+        fuegt jede neu registrierte Schicht VORNE in `app.user_middleware` ein
+        (`insert(0, ...)`) und baut den tatsaechlichen Stack anschliessend aus
+        `reversed(user_middleware)` auf - die ZULETZT registrierte Funktion
+        landet dadurch auf Index 0 und wird zur AEUSSEREN Schicht, sieht eine
+        Anfrage also zuerst (durch `Middleware.__call__` von aussen nach innen
+        durchgereicht). Verifiziert per `TestClient`-Probe (zwei Middlewares,
+        Aufrufreihenfolge geloggt): die zuletzt per `@app.middleware("http")`
+        dekorierte Funktion lief zuerst. Ein Test unten
+        (`test_sync_language_is_the_outermost_middleware` in
+        `tests/loxone/test_server.py`) haelt genau diese Reihenfolge fest -
+        siehe auch die korrigierte Herleitung im Implementierungsplan dieser
+        Aufgabe, Abschnitt "Middleware-Registrierungsreihenfolge".
+
+        `store.locale.get_language()` wirft nie (Phase A) - kein try/except
+        noetig, anders als `_append_command_log` weiter oben, das einen
+        echten Fehlschlag beim Schreiben in einen fremden Ringpuffer
+        abfaengt.
+
+        Ausnahme: ist `LOXMATTER_LANG` gesetzt (CLI-Override, siehe
+        `cli.py`), ueberschreibt diese Middleware die Prozess-Sprache NICHT
+        aus dem Store - sonst wuerde der allererste eingehende Request den
+        vom CLI-Bootstrap gesetzten Override sofort wieder verwerfen (Review-
+        Fix Important, 2026-09-04)."""
+        if os.environ.get("LOXMATTER_LANG") is None:
+            i18n.set_language(store.locale.get_language())
+        return await call_next(request)
 
     # `dependencies=api_guard` auf jedem der sechs `/api`-Router (Task 8,
     # Phase 5, siehe `build_api_guard` oben; sechster seit dem Live-Feed,

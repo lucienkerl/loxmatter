@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx2
 import pytest
 
+from loxmatter import i18n
 from loxmatter.auth.passwords import hash_password
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.runtime import Runtime
@@ -222,6 +223,67 @@ async def test_a_failing_resend_yields_502_with_the_german_detail_text(tmp_path)
         response = await c.get("/resync")
     assert response.status_code == 502
     assert response.json()["detail"] == "Full-Resend fehlgeschlagen: UdpSender ist geschlossen"
+    store.close()
+
+
+def test_sync_language_is_the_outermost_middleware(tmp_path):
+    """Review-Fix Important (Whole-Branch-Review, 2026-09-04): Starlette
+    fuegt jede per `@app.middleware("http")` registrierte Schicht VORNE in
+    `app.user_middleware` ein und baut den Stack aus `reversed(...)` auf -
+    die ZULETZT registrierte Funktion landet auf Index 0 und wird zur
+    AEUSSEREN Schicht (durch eine `TestClient`-Probe verifiziert, siehe
+    Docstring von `_sync_language` in server.py). `_sync_language` muss
+    deshalb ALS LETZTE registriert werden, damit sie vor `_record_command`
+    und vor jeder Route laeuft - dieser Test haelt das fest, damit eine
+    kuenftige Umsortierung der beiden `@app.middleware("http")`-Bloecke in
+    `build_app` sofort auffaellt."""
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    snap = NodeSnapshot.from_raw(raw["node_id"], raw)
+    store = Store(tmp_path / "t.sqlite")
+    store.register_device(snap)
+
+    async def invoke(call):
+        return None
+
+    app = build_app(store, invoke, Runtime(store, FakeSender()))
+    assert app.user_middleware[0].kwargs["dispatch"].__name__ == "_sync_language"
+    store.close()
+
+
+async def test_loxmatter_lang_override_survives_multiple_requests(tmp_path, monkeypatch):
+    """Review-Fix Important (Whole-Branch-Review, 2026-09-04): `cli.py`
+    dokumentiert `LOXMATTER_LANG` als Override mit striktem Vorrang vor
+    `store.locale` - bislang ueberschrieb `_sync_language` die
+    Prozess-Sprache aber bei JEDER eingehenden Anfrage wieder aus dem Store,
+    sodass schon die allererste HTTP-Anfrage den vom CLI-Bootstrap
+    gesetzten Override verwarf. Dieser Test setzt `LOXMATTER_LANG=de` UND
+    laesst den Store auf Englisch (dem Default) stehen - simuliert damit
+    genau die widerspruechliche Situation aus dem Review-Befund - und
+    prueft, dass zwei aufeinanderfolgende Anfragen die per Bootstrap
+    gesetzte Sprache NICHT verwerfen."""
+    monkeypatch.setenv("LOXMATTER_LANG", "de")
+    raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
+    snap = NodeSnapshot.from_raw(raw["node_id"], raw)
+    store = Store(tmp_path / "t.sqlite")
+    store.register_device(snap)
+    # Store bleibt beim Default (Englisch) - genau das widerspruechliche
+    # Szenario, das den Bug ausloest: ohne den Fix flippt die erste Anfrage
+    # `i18n.current_language()` zurueck auf "en".
+    assert store.locale.get_language() == "en"
+
+    async def invoke(call):
+        return None
+
+    # Simuliert cli.py's Modul-Import-Bootstrap (`i18n.set_language(
+    # _resolve_cli_language(...))`), das VOR `build_app()` laeuft.
+    i18n.set_language("de")
+    app = build_app(store, invoke, Runtime(store, FakeSender()))
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
+        await c.get("/health")
+        assert i18n.current_language() == "de"
+        await c.get("/health")
+        assert i18n.current_language() == "de"
     store.close()
 
 
