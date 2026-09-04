@@ -298,7 +298,8 @@ def test_missing_attribute_is_inserted_into_existing_tag(sample_project):
 # Abschnitt enthaelt - anders als `sample_project` aus conftest.py, das immer
 # beide Abschnitte hat. Ein reales Projekt, in dem noch nie ein virtueller
 # Eingang angelegt wurde, sieht so aus. Bewusst nicht in conftest.py, weil
-# dieses Dokument nur fuer den Fehlerpfad in `_new_device_edit` gebraucht wird.
+# dieses Dokument nur fuer den Automatisch-anlegen-Pfad in `_new_device_edit`
+# gebraucht wird.
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -429,15 +430,16 @@ def test_next_obj_edit_is_skipped_when_next_obj_is_not_numeric(sample_project):
     assert 'Check="d2_1_onoff:\\v"' in patched
 
 
-def test_new_device_without_virtual_in_caption_raises_clear_error():
+def test_new_device_without_virtual_in_caption_creates_the_caption_too():
     """`include_new_devices=True` fuer ein Geraet, das einen komplett neuen
     Eingangs-Container braucht, in einem Projekt ohne jeden bestehenden
-    `VirtualInCaption`-Abschnitt: `_new_device_edit` darf hier nicht mit einem
-    nackten `AssertionError` abstuerzen, sondern muss einen aussagekraeftigen
-    `MissingCaptionError` werfen (Finding 2 aus dem Review)."""
-    import pytest
-
-    from loxmatter.projectsync.patch import MissingCaptionError
+    `VirtualInCaption`-Abschnitt: `_new_device_edit` legt diesen Abschnitt
+    inzwischen selbst mit an (Entwurf Abschnitt 8, Nutzerwunsch nach dem
+    Review) - der Nutzer soll nicht von Hand einmal manuell etwas in Loxone
+    Config anlegen muessen, nur um den experimentellen Pfad ueberhaupt testen
+    zu koennen. Das Geraet-Kommando steckt danach INNERHALB der neu
+    angelegten Caption, nicht daneben."""
+    import xml.etree.ElementTree as ET
 
     index = build_index(NO_VIRTUAL_IN_CAPTION_PROJECT)
     assert index.virtual_in_caption is None
@@ -446,15 +448,27 @@ def test_new_device_without_virtual_in_caption_raises_clear_error():
     signals = [_signal("d2_1_onoff", 2)]
     plan = build_plan(index, [device], {device.id: signals}, {device.id: []})
 
-    with pytest.raises(MissingCaptionError, match="VirtualInCaption"):
-        apply_plan(
-            index,
-            plan,
-            [device],
-            {device.id: signals},
-            {device.id: []},
-            include_new_devices=True,
-            bridge_ip="10.0.0.5",
-            port=7000,
-            listen=8080,
-        )
+    patched = apply_plan(
+        index,
+        plan,
+        [device],
+        {device.id: signals},
+        {device.id: []},
+        include_new_devices=True,
+        bridge_ip="10.0.0.5",
+        port=7000,
+        listen=8080,
+    )
+    patched_text = patched.decode("utf-8-sig")
+
+    assert 'Type="VirtualInCaption"' in patched_text
+    ET.fromstring(patched_text)  # wirft bei ungueltigem XML
+
+    patched_index = build_index(patched_text)
+    assert patched_index.virtual_in_caption is not None
+    cmd = patched_index.input_cmds["d2_1_onoff"]
+    container = patched_index.input_containers["d2_1_onoff"]
+    # Das Kommando steckt in einem Container, der wiederum unter der neu
+    # angelegten Caption haengt - nicht als loses Geschwister-Objekt daneben.
+    assert container in patched_index.virtual_in_caption.children
+    assert cmd in container.children

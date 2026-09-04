@@ -32,9 +32,10 @@ def _plug_store(tmp_path):
 
 
 # Ein wohlgeformtes Projekt, in dem noch nie ein virtueller EINGANG angelegt
-# wurde - es fehlt also der `VirtualInCaption`-Abschnitt, in den ein komplett
-# neuer Eingangs-Container muesste. Realistischer Fall fuer jemanden, der
-# bislang nur Vorlagen fuer Ausgaenge importiert hat.
+# wurde - es fehlt also der `VirtualInCaption`-Abschnitt. Realistischer Fall
+# fuer jemanden, der bislang nur Vorlagen fuer Ausgaenge importiert hat;
+# `apply_plan` legt diesen Abschnitt im experimentellen Pfad selbst mit an
+# (Entwurf Abschnitt 8).
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -56,12 +57,14 @@ def test_run_sync_returns_plan_and_both_file_variants(tmp_path, sample_project):
     store.close()
 
 
-def test_missing_caption_disables_only_the_experimental_variant(tmp_path):
-    """Fehlt der `VirtualInCaption`-Abschnitt, ist das laut Entwurf Abschnitt
-    8 eine Grenze des EXPERIMENTELLEN Pfades - kein Grund, den ganzen Upload
-    scheitern zu lassen. Plan und konservative Variante muessen weiterhin
-    entstehen, nur `patched_with_new_devices` faellt mit einer Begruendung
-    weg."""
+def test_missing_caption_is_auto_created_for_the_experimental_variant(tmp_path):
+    """Fehlt der `VirtualInCaption`-Abschnitt, legt `apply_plan` ihn im
+    experimentellen Pfad (`include_new_devices=True`) inzwischen selbst mit
+    an (Entwurf Abschnitt 8, Nutzerwunsch nach dem Review) - kein manuelles
+    Vorbereiten in Loxone Config mehr noetig, nur um den Pfad ueberhaupt zu
+    erreichen. Die konservative Variante bleibt davon unberuehrt: sie legt
+    nie einen Container an, kann also gar nicht an einer fehlenden Caption
+    haengen."""
     store = _plug_store(tmp_path)
     result = run_sync(
         NO_VIRTUAL_IN_CAPTION_PROJECT.encode("utf-8"),
@@ -70,13 +73,10 @@ def test_missing_caption_disables_only_the_experimental_variant(tmp_path):
         port=7000,
         listen=8080,
     )
-    assert result.patched_with_new_devices is None
-    assert result.new_devices_unavailable_reason
-    assert "VirtualInCaption" in result.new_devices_unavailable_reason
+    assert result.new_devices_unavailable_reason is None
+    assert result.patched_with_new_devices is not None
+    assert b'Type="VirtualInCaption"' in result.patched_with_new_devices
 
-    # Plan und konservative Variante sind davon voellig unberuehrt: die
-    # konservative Variante legt nie einen Container an, kann also gar nicht
-    # an einer fehlenden Caption scheitern.
     assert result.plan.entries
     assert result.patched_conservative.decode("utf-8-sig") == NO_VIRTUAL_IN_CAPTION_PROJECT
     store.close()
