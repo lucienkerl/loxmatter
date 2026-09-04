@@ -339,19 +339,11 @@
            ================================================================ -->
       <section x-show="view === 'signals'" x-cloak>
         <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
-        <p class="hint">
-          Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier
-          nicht ändern – ein Klick würde dort einen Baustein still lahmlegen.
-        </p>
-        <p class="hint">
-          „Funktional“ sind die Signale, die zum erkannten Gerätetyp gehören (Ein/Aus, Leistung
-          und Ähnliches) – „Experte“ alles andere (Netzwerk-, Geräte- und Diagnosewerte,
-          technische Zähler). Beide Blöcke behalten den Exportieren-Haken für jedes einzelne
-          Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist.
-        </p>
+        <p class="hint" x-text="t('web.signals.key_hint')"></p>
+        <p class="hint" x-text="t('web.signals.functional_vs_expert_explanation')"></p>
         <label class="row signal-group-toggle">
           <input type="checkbox" x-model="showExpertSignals" />
-          Experten-Signale anzeigen
+          <span x-text="t('web.signals.show_expert')"></span>
         </label>
 
         <template x-for="device in devices" :key="'signals-' + device.id">
@@ -360,9 +352,8 @@
             <button
               x-show="!signalsByDevice[device.id]"
               @click="loadSignals(device.id)"
-            >
-              Signale laden
-            </button>
+              x-text="t('web.signals.load_button')"
+            ></button>
 
             <!--
               Beide Bloecke (Funktional, Experte) teilen sich seit Review-
@@ -384,21 +375,23 @@
                         x-text="'(' + group.signals.length + ')'"
                       ></span>
                     </h3>
-                    <p class="hint" x-show="!group.collapsible && group.signals.length === 0">
-                      Kein Signal dieses Geräts gilt als funktional.
-                    </p>
-                    <p class="hint" x-show="group.collapsible && !showExpertSignals">
-                      Zugeklappt – <span x-text="group.signals.length"></span> Signale ohne
-                      erkannte Bedeutung für diesen Gerätetyp. „Experten-Signale anzeigen“ oben
-                      blendet sie für alle Geräte ein.
-                    </p>
+                    <p
+                      class="hint"
+                      x-show="!group.collapsible && group.signals.length === 0"
+                      x-text="t('web.signals.none_functional')"
+                    ></p>
+                    <p
+                      class="hint"
+                      x-show="group.collapsible && !showExpertSignals"
+                      x-text="t('web.signals.expert_collapsed_hint', { count: group.signals.length })"
+                    ></p>
                     <div x-show="!group.collapsible || showExpertSignals" x-cloak>
                       <template x-for="signal in group.signals" :key="signal.key">
                         <div class="device-controls">
                           <div class="row">
                             <span
                               class="key"
-                              title="Verdrahtung in Loxone – nicht änderbar."
+                              :title="t('web.signals.key_tooltip')"
                               x-text="signal.key"
                             ></span>
                             <input
@@ -430,7 +423,7 @@
                                 :checked="signal.exported"
                                 @change="toggleExported(signal)"
                               />
-                              exportieren
+                              <span x-text="t('web.signals.export_checkbox')"></span>
                             </label>
                             <span
                               class="badge warn"
@@ -441,15 +434,14 @@
                           <div class="row" x-show="signal.kind === 'attribute'">
                             <input
                               type="text"
-                              placeholder="Rohwert schreiben"
+                              :placeholder="t('web.signals.raw_write_placeholder')"
                               @input="rawWriteDrafts[signal.key] = $event.target.value"
                             />
                             <button
                               @click="writeRaw(signal)"
                               :disabled="rawWriteBusyKey === signal.key"
-                            >
-                              Schreiben
-                            </button>
+                              x-text="t('web.signals.raw_write_submit')"
+                            ></button>
                             <span
                               x-show="rawWriteMessages[signal.key]"
                               :class="rawWriteMessageClass(signal)"

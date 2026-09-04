@@ -816,8 +816,8 @@ function app() {
     // leer-Hinweis) ist fuer beide Gruppen identisch.
     signalGroupsFor(deviceId) {
       return [
-        { key: "functional", title: "Funktional", collapsible: false, signals: this.functionalSignalsFor(deviceId) },
-        { key: "expert", title: "Experte", collapsible: true, signals: this.expertSignalsFor(deviceId) },
+        { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },
+        { key: "expert", title: t("web.signals.group_expert"), collapsible: true, signals: this.expertSignalsFor(deviceId) },
       ];
     },
 
@@ -1016,7 +1016,7 @@ function app() {
           `/api/devices/${deviceId}/signals`,
         );
       } catch (error) {
-        this.signalsError = `Signale konnten nicht geladen werden: ${error.message}`;
+        this.signalsError = t("web.signals.load_error", { message: error.message });
       }
     },
 
@@ -1029,7 +1029,7 @@ function app() {
         const updated = await this.request("PATCH", `/api/signals/${signal.key}`, { title });
         Object.assign(signal, updated);
       } catch (error) {
-        this.signalsError = `Titel konnte nicht gespeichert werden: ${error.message}`;
+        this.signalsError = t("web.signals.title_save_error", { message: error.message });
       }
     },
 
@@ -1040,7 +1040,7 @@ function app() {
         });
         Object.assign(signal, updated);
       } catch (error) {
-        this.signalsError = `Export-Kennzeichen konnte nicht geaendert werden: ${error.message}`;
+        this.signalsError = t("web.signals.export_flag_error", { message: error.message });
       }
     },
 
@@ -1052,7 +1052,7 @@ function app() {
       this.rawWriteBusyKey = signal.key;
       try {
         await this.request("POST", `/api/signals/${signal.key}/write`, { value: String(value) });
-        this.rawWriteMessages[signal.key] = { text: "Geschrieben.", isError: false };
+        this.rawWriteMessages[signal.key] = { text: t("web.signals.write_success"), isError: false };
       } catch (error) {
         this.rawWriteMessages[signal.key] = { text: error.message, isError: true };
       } finally {

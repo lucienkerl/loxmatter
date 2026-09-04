@@ -285,13 +285,17 @@ async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
     macht, dass der Schalter beim Klicken etwas umschaltet, oder dass die
     Gliederung fuer ein echtes Geraet richtig aussieht - dafuer braeuchte
     es eine Browser-Engine, die es in dieser Suite nicht gibt (siehe
-    `test_the_page_does_not_call_init_a_second_time` oben)."""
+    `test_the_page_does_not_call_init_a_second_time` oben).
+
+    Aufgabe 12: die beiden Gruppentitel und der Schaltertext tragen seither
+    `t(...)` statt fester deutscher Literale - siehe
+    `test_the_signal_group_titles_and_toggle_are_translated` fuer die
+    Bindung selbst; hier bleibt nur der Beleg, dass die Gruppierung
+    (`signal.functional`) unveraendert ist."""
     client, _, _ = api
-    page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
-    assert "Funktional" in page
-    assert "Experte" in page
-    assert "Experten-Signale anzeigen" in page
+    assert 't("web.signals.group_functional")' in script
+    assert 't("web.signals.group_expert")' in script
     # Beide Listen lesen nur das von der API mitgelieferte Feld, keine
     # eigene JavaScript-Fassung von `profiles.relevance.is_functional`.
     assert "signal.functional" in script
@@ -1030,3 +1034,105 @@ async def test_the_remove_confirm_dialog_text_comes_from_t(api):
     )
     assert "wirklich entfernen? Das kann nicht rückgängig gemacht werden" not in script
     assert "In Loxone bleiben danach verwaist" not in script
+
+
+async def test_the_signal_view_static_text_is_translated(api):
+    """Aufgabe 12, Schritt 3: die beiden erklaerenden Hinweise, der
+    Schaltertext, der "Signale laden"-Knopf, der leer-Hinweis fuer den
+    Funktional-Block, der Schluessel-Tooltip, das "exportieren"-
+    Checkbox-Label, der Rohwert-Platzhalter und der Schreiben-Knopf tragen
+    jetzt `t(...)` statt fester deutscher Literale - keiner der frueheren
+    Literale bleibt im Markup."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "x-text=\"t('web.signals.key_hint')\"" in markup
+    assert "ist die Verdrahtung in Loxone" not in markup
+    assert "x-text=\"t('web.signals.functional_vs_expert_explanation')\"" in markup
+    assert "„Funktional“ sind die Signale" not in markup
+    assert "x-text=\"t('web.signals.show_expert')\"" in markup
+    assert "Experten-Signale anzeigen" not in markup
+    assert "x-text=\"t('web.signals.load_button')\"" in markup
+    assert ">Signale laden<" not in markup
+    assert "x-text=\"t('web.signals.none_functional')\"" in markup
+    assert "Kein Signal dieses Geräts gilt als funktional." not in markup
+    assert (
+        "x-text=\"t('web.signals.expert_collapsed_hint', { count: group.signals.length })\""
+        in markup
+    )
+    assert "Zugeklappt" not in markup
+    assert ':title="t(\'web.signals.key_tooltip\')"' in markup
+    assert "Verdrahtung in Loxone – nicht änderbar." not in markup
+    assert "x-text=\"t('web.signals.export_checkbox')\"" in markup
+    assert ">exportieren<" not in markup
+    assert ':placeholder="t(\'web.signals.raw_write_placeholder\')"' in markup
+    assert "Rohwert schreiben" not in markup
+    assert "x-text=\"t('web.signals.raw_write_submit')\"" in markup
+    assert ">Schreiben<" not in markup
+
+
+async def test_the_signal_group_titles_and_toggle_are_translated(api):
+    """Aufgabe 12, Schritt 4: `signalGroupsFor`'s Gruppentitel (Objekt-
+    Literale) laufen jetzt ueber `t("web.signals.group_functional")` /
+    `t("web.signals.group_expert")` statt fester Literale "Funktional" /
+    "Experte"."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    signal_groups_start = script.index("signalGroupsFor(deviceId) {")
+    signal_groups_end = script.index("\n    },", signal_groups_start)
+    body = script[signal_groups_start:signal_groups_end]
+    assert 'title: t("web.signals.group_functional")' in body
+    assert 'title: t("web.signals.group_expert")' in body
+    assert '"Funktional"' not in body
+    assert '"Experte"' not in body
+
+
+async def test_the_signal_view_dynamic_errors_and_success_are_translated(api):
+    """Aufgabe 12, Schritt 4: der Lade-, Titel-Speicher- und
+    Export-Kennzeichen-Fehler sowie die Rohwert-Erfolgsmeldung tragen jetzt
+    `t(...)`. Die Fehlermeldung des Rohwert-Schreibens (`app.js`, `writeRaw`
+    catch-Zweig) bleibt bewusst unangetastet - sie reicht den bereits vom
+    Backend uebersetzten `detail`-Text unveraendert durch (Aufgabe 9s
+    Scope-Notiz); dafuer gibt es keinen `web.*`-Schluessel."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    load_signals_start = script.index("async loadSignals(deviceId) {")
+    load_signals_end = script.index("\n    },", load_signals_start)
+    load_signals_body = script[load_signals_start:load_signals_end]
+    assert (
+        'this.signalsError = t("web.signals.load_error", { message: error.message });'
+        in load_signals_body
+    )
+    assert "Signale konnten nicht geladen werden" not in load_signals_body
+
+    save_title_start = script.index("async saveTitle(signal) {")
+    save_title_end = script.index("\n    },", save_title_start)
+    save_title_body = script[save_title_start:save_title_end]
+    assert (
+        'this.signalsError = t("web.signals.title_save_error", { message: error.message });'
+        in save_title_body
+    )
+    assert "Titel konnte nicht gespeichert werden" not in save_title_body
+
+    toggle_exported_start = script.index("async toggleExported(signal) {")
+    toggle_exported_end = script.index("\n    },", toggle_exported_start)
+    toggle_exported_body = script[toggle_exported_start:toggle_exported_end]
+    assert (
+        'this.signalsError = t("web.signals.export_flag_error", { message: error.message });'
+        in toggle_exported_body
+    )
+    assert "Export-Kennzeichen konnte nicht geaendert werden" not in toggle_exported_body
+
+    write_raw_start = script.index("async writeRaw(signal) {")
+    write_raw_end = script.index("\n    },", write_raw_start)
+    write_raw_body = script[write_raw_start:write_raw_end]
+    assert (
+        'this.rawWriteMessages[signal.key] = { text: t("web.signals.write_success"), isError: false };'
+        in write_raw_body
+    )
+    assert '"Geschrieben."' not in write_raw_body
+    # Bewusst unuebersetzt: gibt den Backend-Fehlertext unveraendert durch.
+    assert (
+        "this.rawWriteMessages[signal.key] = { text: error.message, isError: true };"
+        in write_raw_body
+    )
