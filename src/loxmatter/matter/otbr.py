@@ -112,7 +112,19 @@ def _default_session_factory() -> Any:
     return aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS))
 
 
-def _validated(body: str, url: str) -> str:
+def validated_dataset(body: str, url: str) -> str:
+    """Prueft eine Zeichenkette darauf, ob sie ein Thread-Datensatz sein kann.
+
+    Oeffentlich, nicht modulprivat: `api/devices.py` prueft damit auch den
+    von Hand in die Oberflaeche eingetragenen Datensatz, damit fuer beide
+    Wege - geholt und eingetippt - dieselbe Regel gilt. Eine zweite,
+    nur aehnliche Pruefung dort waere genau die Doppelung, die frueher oder
+    spaeter auseinanderlaeuft.
+
+    `url` benennt in den Fehlermeldungen die Herkunft der geprueften
+    Zeichenkette. Der Datensatz selbst taucht dort NIE auf - er enthaelt den
+    Netzwerkschluessel des Thread-Netzes.
+    """
     """Prueft eine Antwort auf die Gestalt eines Thread-Datensatzes.
 
     Zwei Aufrufer: `fetch_active_dataset` unten mit der Antwort des Border
@@ -174,4 +186,4 @@ async def fetch_active_dataset(
             f"{url} hat mit HTTP {status} geantwortet statt mit einem Thread-Datensatz - "
             "OTBR antwortet so, solange kein aktives Netz existiert."
         )
-    return _validated(body, url)
+    return validated_dataset(body, url)

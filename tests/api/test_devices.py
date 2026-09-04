@@ -406,7 +406,7 @@ async def test_a_dataset_from_the_request_wins_over_the_border_router(api, fake_
 
 async def test_a_hand_entered_dataset_that_is_no_dataset_yields_422(api):
     """Der vom Border Router geholte Datensatz laeuft durch dieselbe Pruefung
-    (`otbr._validated`), der von Hand eingetragene lief bisher ungeprueft
+    (`otbr.validated_dataset`), der von Hand eingetragene lief bisher ungeprueft
     durch. Wer ihn als JSON-Struktur oder mit Zeilenumbruechen einfuegt,
     loeste bei matter-server ein `bytes.fromhex`-Scheitern aus - das kommt
     als `FailedCommand` zurueck, nicht als `MatterUnavailableError`, und
@@ -443,7 +443,7 @@ async def test_the_rejected_dataset_never_appears_in_the_message(api):
 
 async def test_a_hand_entered_dataset_may_carry_a_trailing_newline(api):
     """Ein aus dem Terminal kopierter Datensatz bringt fast immer einen
-    Zeilenumbruch mit. `_validated` schneidet ihn ab, statt ihn abzulehnen -
+    Zeilenumbruch mit. `validated_dataset` schneidet ihn ab, statt ihn abzulehnen -
     matter-server bekommt den bereinigten Datensatz."""
     client, _, _, fake_client = api
 

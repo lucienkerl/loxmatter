@@ -88,8 +88,8 @@ from loxmatter.export.signals import to_inputs
 from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
 from loxmatter.matter.otbr import (
     ThreadDatasetUnavailableError,
-    _validated,
     fetch_active_dataset,
+    validated_dataset,
 )
 from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDeviceError
 from loxmatter.profiles.table import Exportability, is_exportable
@@ -102,7 +102,7 @@ logger = logging.getLogger(__name__)
 # `session_factory` in `matter/client.py`.
 ThreadDatasetSource = Callable[[], Awaitable[str]]
 
-# Woher der gepruefte Datensatz kam - `_validated` stellt diese Angabe seinen
+# Woher der gepruefte Datensatz kam - `validated_dataset` stellt diese Angabe seinen
 # Meldungen voran. Der geholte nennt dort die URL des Border Routers, der von
 # Hand eingetragene diese Zeile; sie landet ausschliesslich im Log, nie in der
 # Antwort (siehe `commission_device`).
@@ -318,7 +318,7 @@ def build_device_router(
             # ist der Weg fuer ein Thread-Netz, das nicht von diesem Border
             # Router kommt.
             #
-            # Geprueft wird er auf demselben Weg wie der geholte - `_validated`
+            # Geprueft wird er auf demselben Weg wie der geholte - `validated_dataset`
             # aus `matter/otbr.py`, absichtlich dieselbe Funktion und keine
             # zweite Nachbildung derselben Regel (deshalb der Import eines
             # modul-privaten Namens). Ungeprueft durchgereicht loeste ein mit
@@ -328,7 +328,7 @@ def build_device_router(
             # also 500 "Internal Server Error", die nichtssagendste aller
             # Antworten.
             try:
-                dataset = _validated(request.thread_dataset, _MANUAL_DATASET_ORIGIN)
+                dataset = validated_dataset(request.thread_dataset, _MANUAL_DATASET_ORIGIN)
             except ThreadDatasetUnavailableError as exc:
                 # 422 wie beim abgelehnten Pairing-Code: die Anfrage ist
                 # wohlgeformt, ihr Inhalt aber nicht verwendbar. Der Grund
