@@ -116,9 +116,18 @@ async def test_the_key_cannot_be_changed_through_the_api(api):
 
 async def test_unknown_signal_yields_404(api):
     client, _, _, _ = api
-    assert (
-        await client.patch("/api/signals/d1_1_gibtsnicht", json={"title": "x"})
-    ).status_code == 404
+    response = await client.patch("/api/signals/d1_1_gibtsnicht", json={"title": "x"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "unknown signal key 'd1_1_gibtsnicht'"
+
+
+async def test_unknown_signal_yields_404_in_german(api):
+    """Deutscher Begleittest zu test_unknown_signal_yields_404."""
+    client, store, _, _ = api
+    store.locale.set_language("de")
+    response = await client.patch("/api/signals/d1_1_gibtsnicht", json={"title": "x"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "unbekannter Signal-Schluessel 'd1_1_gibtsnicht'"
 
 
 async def test_unknown_device_yields_404(api):
@@ -180,7 +189,23 @@ async def test_signal_route_404s_once_its_device_has_been_removed(api):
 
     response = await client.patch(f"/api/signals/{key}", json={"title": "x"})
     assert response.status_code == 404
-    assert "entfernt" in response.json()["detail"]
+    assert response.json()["detail"] == (
+        f"signal {key!r} belongs to device {device_id}, which was removed"
+    )
+
+
+async def test_signal_route_404s_once_its_device_has_been_removed_in_german(api):
+    """Deutscher Begleittest zu test_signal_route_404s_once_its_device_has_been_removed."""
+    client, store, device_id, _ = api
+    key = store.signals(device_id)[0].key
+    store.forget_device(device_id)
+    store.locale.set_language("de")
+
+    response = await client.patch(f"/api/signals/{key}", json={"title": "x"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == (
+        f"Signal {key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+    )
 
 
 async def test_signal_route_404s_after_the_device_is_removed_through_the_api(api):
@@ -279,6 +304,27 @@ async def test_commissioning_without_a_matter_client_yields_503(tmp_path, no_inv
         await authenticate(store, c)
         response = await c.post("/api/devices/commission", json={"code": "MT:ABC123"})
     assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "No matter-server client configured — the bridge is running without a Matter connection"
+    )
+    store.close()
+
+
+async def test_commissioning_without_a_matter_client_yields_503_in_german(
+    tmp_path, no_invoke, fake_runtime
+):
+    """Deutscher Begleittest zu test_commissioning_without_a_matter_client_yields_503."""
+    store = Store(tmp_path / "t.sqlite")
+    app = build_app(store, no_invoke, fake_runtime(store))  # client defaults to None
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        store.locale.set_language("de")
+        response = await c.post("/api/devices/commission", json={"code": "MT:ABC123"})
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
+    )
     store.close()
 
 
@@ -294,4 +340,29 @@ async def test_removal_without_a_matter_client_yields_503(tmp_path, no_invoke, f
         await authenticate(store, c)
         response = await c.delete(f"/api/devices/{device_id}")
     assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "No matter-server client configured — the bridge is running without a Matter connection"
+    )
+    store.close()
+
+
+async def test_removal_without_a_matter_client_yields_503_in_german(
+    tmp_path, no_invoke, fake_runtime
+):
+    """Deutscher Begleittest zu test_removal_without_a_matter_client_yields_503."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    app = build_app(store, no_invoke, fake_runtime(store))  # nur 3 Argumente, wie in Phase 4
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        store.locale.set_language("de")
+        response = await c.delete(f"/api/devices/{device_id}")
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
+    )
     store.close()

@@ -110,7 +110,7 @@ let toastCounter = 0;
  */
 class UnauthorizedError extends Error {
   constructor() {
-    super("Die Sitzung ist abgelaufen – bitte erneut anmelden.");
+    super(t("web.auth.session_expired"));
     this.name = "UnauthorizedError";
   }
 }
@@ -129,7 +129,7 @@ async function readErrorDetail(response) {
   } catch {
     // Antwort war kein JSON - der generische Text unten reicht dann.
   }
-  return `HTTP ${response.status}`;
+  return t("web.errors.http_status", { status: response.status });
 }
 
 /**
@@ -163,7 +163,7 @@ async function requestJson(method, path, body) {
     // Werkzeug, dessen Zweck es gerade ist, einen Fehlschlag ehrlich UND
     // verstaendlich zu zeigen (Spec 8.1). Review-Fix Important #2,
     // 2026-09-02.
-    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+    throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401 && !path.startsWith("/auth/")) {
     // Nicht der rohe Servertext: eine 401 mitten im Betrieb heisst, die
@@ -203,7 +203,7 @@ async function requestDownload(path, filename) {
   try {
     response = await fetch(path, { credentials: "same-origin" });
   } catch {
-    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+    throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401) {
     throw new UnauthorizedError();
@@ -228,6 +228,31 @@ async function requestDownload(path, filename) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
+// Modul-global, absichtlich NICHT auf dem app()-Objekt (siehe
+// Implementierungsplan, Task 8: "t() muss global aufrufbar sein") - jede
+// Funktion in dieser Datei erreicht sie, auch requestJson/requestDownload/
+// requestUpload, die keinen Zugriff auf `this` des Alpine-Bauteils haben.
+// Nicht reaktiv, weil sie es nicht sein muss: ein Sprachwechsel laedt die
+// ganze Seite neu.
+let translationStrings = {};
+
+/** Uebersetzungshelfer - liefert den zu key gehoerenden Text in der
+ * aktuellen Sprache, mit {platzhalter} aus values ersetzt. Fehlt der
+ * Schluessel (z. B. eine noch nicht neu geladene Seite nach einem
+ * Deployment mit neuen Schluesseln), liefert t() den Schluessel selbst
+ * zurueck statt abzustuerzen - sichtbar falsch statt einer kaputten
+ * Seite, dieselbe Haltung wie ueberall sonst in diesem Projekt
+ * ("ein Klick, der nichts bewirkt, muss als klare Absage ankommen"). */
+function t(key, values = {}) {
+  const template = translationStrings[key];
+  if (template === undefined) {
+    return key;
+  }
+  return template.replace(/\{(\w+)\}/g, (match, name) =>
+    Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : match
+  );
+}
+
 /**
  * Laedt eine Datei per multipart/form-data hoch und erwartet JSON zurueck -
  * eigene Funktion statt `requestJson`, weil ein Datei-Upload kein
@@ -244,7 +269,7 @@ async function requestUpload(path, formData) {
       body: formData,
     });
   } catch {
-    throw new Error("Die Brücke ist nicht erreichbar – sie läuft möglicherweise nicht.");
+    throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401) {
     throw new UnauthorizedError();
@@ -289,6 +314,15 @@ function app() {
     passwordRepeatDraft: "",
     authBusy: false,
     authError: null,
+
+    // --- Uebersetzung -------------------------------------------------------
+    // Nach demselben Muster wie authReady: bis GET /api/i18n geantwortet hat,
+    // zeigt die Seite nichts - siehe stringsReady in den beiden
+    // auth-screen-templates in index.html. Die eigentliche Tabelle liegt
+    // NICHT hier, sondern im modul-globalen translationStrings (siehe t()
+    // oben) - dieses Feld existiert nur fuer x-if="stringsReady && ...".
+    stringsReady: false,
+    language: "en",
 
     // --- Geraete -----------------------------------------------------------
     devices: [],
@@ -448,7 +482,7 @@ function app() {
       window.setInterval(() => {
         this.nowTick = Date.now();
       }, 1000);
-      await this.loadAuthInfo();
+      await Promise.all([this.loadI18n(), this.loadAuthInfo()]);
       if (this.authenticated) {
         await this.startApp();
       }
@@ -529,6 +563,31 @@ function app() {
       }
     },
 
+    /** Laedt die aktuelle Sprache und die web.*-Uebersetzungstabelle - der
+     * erste Aufruf jeder Seite, wie loadAuthInfo(), aber unabhaengig davon
+     * (siehe init(), das beide parallel startet): GET /api/i18n ist
+     * ungeschuetzt, die Ersteinrichtungs-/Anmeldeseite braucht diese Texte,
+     * bevor sich jemand angemeldet hat. */
+    async loadI18n() {
+      try {
+        const info = await requestJson("GET", "/api/i18n");
+        this.language = info.language;
+        translationStrings = info.strings;
+        document.documentElement.lang = info.language;
+      } catch (error) {
+        // Einzige bewusste Ausnahme von "keine console.*-Aufrufe in dieser
+        // Datei" (siehe Kopfkommentar): es gibt keinen Oberflaechen-Platz fuer
+        // "Uebersetzungen konnten nicht geladen werden" wie es ihn fuer
+        // authError gibt - ohne dieses Log waere ein Fehlschlag hier komplett
+        // unsichtbar. stringsReady wird trotzdem gesetzt (siehe finally): t()
+        // faellt fuer jeden noch nicht geladenen Schluessel selbst auf den
+        // rohen Schluesseltext zurueck, statt die Seite fuer immer zu blockieren.
+        console.error("Uebersetzungen konnten nicht geladen werden:", error);
+      } finally {
+        this.stringsReady = true;
+      }
+    },
+
     /**
      * Alles, was eine angemeldete Sitzung voraussetzt. Getrennt von `init`,
      * weil es nach dem Login ein zweites Mal laufen muss - dann ohne
@@ -574,7 +633,7 @@ function app() {
 
     async submitSetup() {
       if (this.passwordDraft !== this.passwordRepeatDraft) {
-        this.authError = "Die beiden Eingaben stimmen nicht überein.";
+        this.authError = t("web.auth.password_mismatch");
         return;
       }
       await this.submitPassword("/auth/setup");
@@ -684,7 +743,7 @@ function app() {
       try {
         this.devices = await this.request("GET", "/api/devices");
       } catch (error) {
-        this.devicesError = `Geraeteliste konnte nicht geladen werden: ${error.message}`;
+        this.devicesError = t("web.devices.list_load_error", { message: error.message });
       }
     },
 
@@ -718,7 +777,7 @@ function app() {
           `/api/devices/${deviceId}/controls`,
         );
       } catch (error) {
-        this.deviceActionError = `Bedienelemente konnten nicht geladen werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.controls_load_error", { message: error.message });
       }
     },
 
@@ -772,9 +831,9 @@ function app() {
     exportHintFor(deviceId) {
       const status = this.exportStatusFor(deviceId);
       if (!status || !status.exported_at) {
-        return "Noch nicht exportiert";
+        return t("web.devices.export_never");
       }
-      return `Zuletzt exportiert am ${this.formatTimestamp(status.exported_at)}`;
+      return t("web.devices.export_last", { timestamp: this.formatTimestamp(status.exported_at) });
     },
 
     // Klassen fuer den Farbstreifen der Kachel (style.css, `.device-card`) -
@@ -847,8 +906,8 @@ function app() {
     // leer-Hinweis) ist fuer beide Gruppen identisch.
     signalGroupsFor(deviceId) {
       return [
-        { key: "functional", title: "Funktional", collapsible: false, signals: this.functionalSignalsFor(deviceId) },
-        { key: "expert", title: "Experte", collapsible: true, signals: this.expertSignalsFor(deviceId) },
+        { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },
+        { key: "expert", title: t("web.signals.group_expert"), collapsible: true, signals: this.expertSignalsFor(deviceId) },
       ];
     },
 
@@ -869,7 +928,7 @@ function app() {
         const updated = await this.request("PATCH", `/api/devices/${device.id}`, { label });
         Object.assign(device, updated);
       } catch (error) {
-        this.deviceActionError = `Name konnte nicht gespeichert werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.label_save_error", { message: error.message });
       }
     },
 
@@ -885,13 +944,7 @@ function app() {
     // Der Praefix mit der Geraete-ID ist eindeutig (siehe `filename_for`)
     // und reicht, um die Datei in Loxone Config wiederzufinden.
     async removeDevice(device) {
-      const confirmed = window.confirm(
-        `Gerät "${device.label}" wirklich entfernen? Das kann nicht rückgängig gemacht werden.\n\n` +
-          "In Loxone bleiben danach verwaist:\n" +
-          `• alle virtuellen Ein- und Ausgänge mit dem Schlüssel-Präfix "d${device.id}_"\n` +
-          `• die importierten Vorlagen "VIU_d${device.id}_….xml" und "VO_d${device.id}_….xml"\n\n` +
-          "Diese in Loxone Config von Hand löschen.",
-      );
+      const confirmed = window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device.id }));
       if (!confirmed) {
         return;
       }
@@ -902,7 +955,7 @@ function app() {
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
       } catch (error) {
-        this.deviceActionError = `Gerät konnte nicht entfernt werden: ${error.message}`;
+        this.deviceActionError = t("web.devices.remove_error", { message: error.message });
       }
     },
 
@@ -911,9 +964,9 @@ function app() {
       const value = command.takes_value ? this.commandValueDrafts[command.key] ?? "" : "1";
       try {
         await this.request("POST", `/api/commands/${command.key}`, { value: String(value) });
-        this.showToast(`"${command.slug}" wurde an ${device.label} gesendet.`);
+        this.showToast(t("web.devices.command_sent", { slug: command.slug, label: device.label }));
       } catch (error) {
-        this.showToast(`"${command.slug}" ist fehlgeschlagen: ${error.message}`, true);
+        this.showToast(t("web.devices.command_failed", { slug: command.slug, message: error.message }), true);
       } finally {
         this.commandBusyKey = null;
       }
@@ -958,13 +1011,13 @@ function app() {
       }
       const seconds = Math.max(0, Math.round((this.nowTick - timestamp) / 1000));
       if (seconds < 60) {
-        return `vor ${seconds} s`;
+        return t("web.header.time_ago_seconds", { seconds });
       }
       const minutes = Math.round(seconds / 60);
       if (minutes < 60) {
-        return `vor ${minutes} min`;
+        return t("web.header.time_ago_minutes", { minutes });
       }
-      return `vor ${Math.round(minutes / 60)} h`;
+      return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
     },
 
     /** Wann zuletzt IRGENDETWAS ueber die Leitung kam - der Heartbeat
@@ -997,14 +1050,14 @@ function app() {
     signalAgeTitle(signal) {
       const text = this.signalSeenText(signal);
       return text
-        ? `Zuletzt aktualisiert ${text}`
-        : "Seit dem Laden der Seite unveraendert";
+        ? t("web.header.last_updated", { text })
+        : t("web.header.unchanged_since_load");
     },
 
     async commissionDevice() {
       this.commissionMessage = null;
       if (!this.commissionCode.trim()) {
-        this.commissionMessage = "Bitte zuerst einen Pairing-Code eingeben.";
+        this.commissionMessage = t("web.devices.commission_code_required");
         this.commissionMessageIsError = true;
         return;
       }
@@ -1029,16 +1082,12 @@ function app() {
         // keinen einzigen Attributwert. Ohne diesen Hinweis sieht der
         // Anwender ein gruenes Geraet, dessen Signale alle auf "-" stehen,
         // und sucht den Fehler bei sich.
-        this.commissionMessage =
-          `${device.label} wurde eingelernt. Live-Werte erscheinen erst nach einem ` +
-          "Neustart der Brücke – bis dahin zeigt das Gerät zwar „online“, aber jedes " +
-          "Signal „-“ (bekannte Grenze, Spec 12.3). Der Export der Vorlagen " +
-          "funktioniert davon unabhängig schon jetzt.";
+        this.commissionMessage = t("web.devices.commission_success", { label: device.label });
         this.commissionMessageIsError = false;
         this.commissionCode = "";
         this.commissionThreadDataset = "";
       } catch (error) {
-        this.commissionMessage = `Einlernen fehlgeschlagen: ${error.message}`;
+        this.commissionMessage = t("web.devices.commission_failed", { message: error.message });
         this.commissionMessageIsError = true;
       } finally {
         this.commissionBusy = false;
@@ -1057,7 +1106,7 @@ function app() {
           `/api/devices/${deviceId}/signals`,
         );
       } catch (error) {
-        this.signalsError = `Signale konnten nicht geladen werden: ${error.message}`;
+        this.signalsError = t("web.signals.load_error", { message: error.message });
       }
     },
 
@@ -1070,7 +1119,7 @@ function app() {
         const updated = await this.request("PATCH", `/api/signals/${signal.key}`, { title });
         Object.assign(signal, updated);
       } catch (error) {
-        this.signalsError = `Titel konnte nicht gespeichert werden: ${error.message}`;
+        this.signalsError = t("web.signals.title_save_error", { message: error.message });
       }
     },
 
@@ -1081,7 +1130,7 @@ function app() {
         });
         Object.assign(signal, updated);
       } catch (error) {
-        this.signalsError = `Export-Kennzeichen konnte nicht geaendert werden: ${error.message}`;
+        this.signalsError = t("web.signals.export_flag_error", { message: error.message });
       }
     },
 
@@ -1104,7 +1153,7 @@ function app() {
       this.rawWriteBusyKey = signal.key;
       try {
         await this.request("POST", `/api/signals/${signal.key}/write`, { value: String(value) });
-        this.rawWriteMessages[signal.key] = { text: "Geschrieben.", isError: false };
+        this.rawWriteMessages[signal.key] = { text: t("web.signals.write_success"), isError: false };
       } catch (error) {
         this.rawWriteMessages[signal.key] = { text: error.message, isError: true };
       } finally {
@@ -1131,7 +1180,7 @@ function app() {
         }
         this.exportStatusByDevice = byDevice;
       } catch (error) {
-        this.exportError = `Export-Status konnte nicht geladen werden: ${error.message}`;
+        this.exportError = t("web.export.status_load_error", { message: error.message });
       }
     },
 
@@ -1153,14 +1202,14 @@ function app() {
           listen_port: this.bridgeSettings.listen_port,
         };
       } catch (error) {
-        this.settingsError = `Einstellungen konnten nicht geladen werden: ${error.message}`;
+        this.settingsError = t("web.settings.load_error", { message: error.message });
       }
     },
 
     async saveSettings() {
       this.settingsError = null;
       if (!this.settingsDraft.bridge_ip.trim()) {
-        this.settingsError = "Bitte die IP dieser Brücke eingeben.";
+        this.settingsError = t("web.settings.bridge_ip_required");
         return;
       }
       this.settingsBusy = true;
@@ -1170,9 +1219,40 @@ function app() {
           udp_port: Number(this.settingsDraft.udp_port),
           listen_port: Number(this.settingsDraft.listen_port),
         });
-        this.showToast("Einstellungen gespeichert.");
+        this.showToast(t("web.settings.saved_toast"));
       } catch (error) {
-        this.settingsError = `Einstellungen konnten nicht gespeichert werden: ${error.message}`;
+        this.settingsError = t("web.settings.save_error", { message: error.message });
+      } finally {
+        this.settingsBusy = false;
+      }
+    },
+
+    /** Setzt die gemeinsame Spracheinstellung (PATCH /api/language, Aufgabe 1)
+     * und laedt danach die ganze Seite neu - bestaetigte, einfachere Variante
+     * aus dem Entwurfsgespraech (Spec Abschnitt 7): kein Sonderfall fuer
+     * bereits angezeigte Toasts oder WebSocket-Zustaende, die sonst in der
+     * alten Sprache stehen blieben.
+     *
+     * try/catch/finally um `this.request(...)` - dieselbe Form wie
+     * `saveSettings()` oben (Review-Fix Important, Whole-Branch-Review
+     * 2026-09-04): `this.request` wirft erneut bei jedem Fehler ausser 401,
+     * ohne dieses try/catch waere ein Fehlschlag (z. B. 400/502) eine
+     * unbehandelte Promise-Ablehnung ohne jede Rueckmeldung fuer den
+     * Nutzer. `settingsBusy` verhindert ausserdem, dass ein schneller
+     * Doppelklick zwei gleichzeitige PATCH-Aufrufe abfeuert - wird mit
+     * `saveSettings()` geteilt, beide Aktionen leben in derselben
+     * Einstellungen-Karte. */
+    async setLanguage(language) {
+      if (language === this.language) {
+        return;
+      }
+      this.settingsError = null;
+      this.settingsBusy = true;
+      try {
+        await this.request("PATCH", "/api/language", { language });
+        window.location.reload();
+      } catch (error) {
+        this.settingsError = t("web.settings.language_error", { message: error.message });
       } finally {
         this.settingsBusy = false;
       }
@@ -1210,8 +1290,7 @@ function app() {
     async previewExport() {
       this.exportError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.exportError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.exportError = t("web.export.bridge_ip_missing");
         return;
       }
       this.exportBusy = true;
@@ -1223,7 +1302,7 @@ function app() {
         this.exportPreview = await this.request("GET", `/api/export/preview?${params}`);
         await this.loadExportStatus();
       } catch (error) {
-        this.exportError = `Vorschau fehlgeschlagen: ${error.message}`;
+        this.exportError = t("web.export.preview_failed", { message: error.message });
       } finally {
         this.exportBusy = false;
       }
@@ -1277,14 +1356,13 @@ function app() {
     async downloadExport() {
       this.exportError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.exportError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.exportError = t("web.export.bridge_ip_missing");
         return;
       }
       try {
         await this.download(this.downloadUrl(), "loxmatter-export.zip");
       } catch (error) {
-        this.exportError = `Download fehlgeschlagen: ${error.message}`;
+        this.exportError = t("web.export.download_failed", { message: error.message });
         return;
       }
       // Ein Download IST ein Export (siehe `api/export.py`, Entscheidung 1):
@@ -1303,8 +1381,7 @@ function app() {
     async exportDevice(device) {
       this.deviceActionError = null;
       if (!this.bridgeSettings.bridge_ip) {
-        this.deviceActionError =
-          "Bitte zuerst in Einstellungen → Verbindung zum Miniserver die Brücken-IP hinterlegen.";
+        this.deviceActionError = t("web.export.bridge_ip_missing");
         return;
       }
       const params = new URLSearchParams({
@@ -1315,9 +1392,9 @@ function app() {
       });
       try {
         await this.download(`/api/export/download?${params}`, `loxmatter-d${device.id}-export.zip`);
-        this.showToast(`${device.label} wurde exportiert.`);
+        this.showToast(t("web.devices.exported_toast", { label: device.label }));
       } catch (error) {
-        this.deviceActionError = `Export fehlgeschlagen: ${error.message}`;
+        this.deviceActionError = t("web.devices.export_failed", { message: error.message });
         return;
       }
       await this.loadExportStatus();
@@ -1339,7 +1416,7 @@ function app() {
       try {
         this.systemChecks = await this.request("GET", "/api/diagnostics/system");
       } catch (error) {
-        this.systemError = `Diagnose konnte nicht geladen werden: ${error.message}`;
+        this.systemError = t("web.system.load_error", { message: error.message });
       } finally {
         this.diagnosticsBusy = false;
       }
@@ -1354,7 +1431,7 @@ function app() {
       try {
         await this.download("/api/diagnostics/fabric-backup", "matter-fabric-backup.zip");
       } catch (error) {
-        this.backupError = `Sicherung nicht möglich: ${error.message}`;
+        this.backupError = t("web.system.backup_error", { message: error.message });
       }
     },
 
@@ -1800,7 +1877,7 @@ function app() {
       // Sekundentakt gegen eine ungueltige Sitzung weiterzuversuchen.
       await this.loadAuthInfo();
       if (!this.authenticated) {
-        this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
+        this.authError = t("web.auth.session_expired");
         return;
       }
       this.scheduleDiagnosticsReconnect();
@@ -2048,7 +2125,7 @@ function app() {
       this.socketConnected = false;
       await this.loadAuthInfo();
       if (!this.authenticated) {
-        this.authError = "Die Sitzung ist abgelaufen – bitte erneut anmelden.";
+        this.authError = t("web.auth.session_expired");
         return;
       }
       this.scheduleReconnect();
@@ -2084,15 +2161,15 @@ function app() {
     // `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE` oben).
     connectionStatusText() {
       if (this.socketConnected) {
-        return "Live-Verbindung aktiv";
+        return t("web.connection.live");
       }
       if (this.socketEverConnected) {
-        return "Verbindung verloren – verbinde neu…";
+        return t("web.connection.lost_reconnecting");
       }
       if (this.initialConnectFailures >= INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE) {
-        return "Keine Verbindung zur Brücke möglich – verbinde weiter…";
+        return t("web.connection.never_connected");
       }
-      return "Verbinde…";
+      return t("web.connection.connecting");
     },
 
     // ---------------------------------------------------------------------
@@ -2101,10 +2178,10 @@ function app() {
 
     formatTimestamp(isoTimestamp) {
       if (!isoTimestamp) {
-        return "noch nie";
+        return t("web.format.never");
       }
       try {
-        return new Date(isoTimestamp).toLocaleString("de-DE");
+        return new Date(isoTimestamp).toLocaleString(this.language === "de" ? "de-DE" : "en-US");
       } catch {
         return isoTimestamp;
       }
@@ -2115,7 +2192,7 @@ function app() {
         return "-";
       }
       if (typeof value === "boolean") {
-        return value ? "wahr" : "falsch";
+        return value ? t("web.format.true") : t("web.format.false");
       }
       return String(value);
     },

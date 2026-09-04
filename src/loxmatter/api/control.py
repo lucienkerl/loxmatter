@@ -119,6 +119,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, HTTPException
 
+from loxmatter import i18n
 from loxmatter.api.models import CommandOut, ControlsOut, ValueIn
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
@@ -219,7 +220,11 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
         except UnknownDeviceError as exc:
             raise HTTPException(
                 status_code=404,
-                detail=f"Kommando {key!r} gehoert zu Geraet {stored.device_id}, das entfernt wurde",
+                detail=i18n.t(
+                    "api.errors.command_belongs_to_removed_device",
+                    command_key=key,
+                    device_id=stored.device_id,
+                ),
             ) from exc
 
         try:
@@ -234,7 +239,9 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
             # NICHT in die HTTP-Antwort - dieselbe Begruendung wie beim
             # Loxone-Endpunkt in loxone/server.py.
             logger.exception("Matter-Aufruf fuer Schluessel %r fehlgeschlagen", key)
-            raise HTTPException(status_code=502, detail=f"Geraet nicht erreichbar: {exc}") from exc
+            raise HTTPException(
+                status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
+            ) from exc
 
         return {"status": "ok", "key": key}
 
@@ -245,7 +252,9 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
         erlaubtes Attribut heute noch nicht tatsaechlich geschrieben wird."""
         stored = store.signal_by_key(key)
         if stored is None:
-            raise HTTPException(status_code=404, detail=f"unbekannter Signal-Schluessel {key!r}")
+            raise HTTPException(
+                status_code=404, detail=i18n.t("api.errors.unknown_signal_key", signal_key=key)
+            )
         try:
             # Dieselbe Pruefung wie bei PATCH /api/signals/{key}
             # (api/devices.py, Review-Fix Important #4): ein Signal eines
@@ -255,7 +264,11 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
         except UnknownDeviceError as exc:
             raise HTTPException(
                 status_code=404,
-                detail=f"Signal {key!r} gehoert zu Geraet {stored.device_id}, das entfernt wurde",
+                detail=i18n.t(
+                    "api.errors.signal_belongs_to_removed_device",
+                    signal_key=key,
+                    device_id=stored.device_id,
+                ),
             ) from exc
 
         if not _is_writable(stored.ref.cluster_id, stored.ref.element_id):
@@ -266,12 +279,7 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
             # sich tun laesst.
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    f"Die Beschreibbarkeit von Attribut {key!r} laesst sich nicht "
-                    "bestaetigen, es steht deshalb nicht auf der Erlaubnisliste "
-                    "beschreibbarer Attribute. Ist es tatsaechlich beschreibbar, kann "
-                    "es dort ergaenzt werden."
-                ),
+                detail=i18n.t("api.control.fail_not_writable", signal_key=key),
             )
 
         # Erlaubt, aber noch nicht verdrahtet - siehe Moduldocstring, Absatz
@@ -282,10 +290,7 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
         # mehr auf den Moduldocstring.
         raise HTTPException(
             status_code=501,
-            detail=(
-                f"Attribut {key!r} ist beschreibbar, aber das rohe Schreiben ist noch "
-                "nicht an matter-server angebunden."
-            ),
+            detail=i18n.t("api.control.fail_not_wired", signal_key=key),
         )
 
     return router

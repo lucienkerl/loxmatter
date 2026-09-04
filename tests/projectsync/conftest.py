@@ -43,6 +43,23 @@ bekannten Geraet mehr - deckt den `orphaned`-Fall ab."""
 
 import pytest
 
+from loxmatter import i18n
+
+
+@pytest.fixture(autouse=True)
+def _sample_project_uses_german(reset_language: None) -> None:
+    """`SAMPLE_PROJECT`s ``d1_online``-Titel ("Altes Geraet erreichbar") ist
+    fest als deutscher Text in diese Beispieldatei einprogrammiert (siehe
+    Moduldocstring); `export.signals.to_inputs` erzeugt denselben Titel seit
+    der i18n-Phase B+C sprachabhaengig ueber `i18n.t()` und faellt ohne
+    diesen Fixture-weiten deutschen Kontext auf den neuen Standard Englisch
+    zurueck ("... reachable") - jeder eigentlich unveraenderte Diff-Plan
+    saehe dann faelschlich wie ein `updated`-Fall aus. Haengt explizit von
+    `reset_language` ab (statt sich auf Fixture-Reihenfolge zu verlassen),
+    damit dieser Test-Ordner sicher NACH dem globalen Zuruecksetzen laeuft."""
+    i18n.set_language("de")
+
+
 SAMPLE_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'

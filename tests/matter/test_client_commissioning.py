@@ -20,6 +20,7 @@ import pytest
 from matter_server.client.exceptions import NotConnected
 from matter_server.common.errors import NodeCommissionFailed
 
+from loxmatter import i18n
 from loxmatter.matter.client import BridgeMatterClient, CommissioningError, MatterUnavailableError
 
 
@@ -101,11 +102,32 @@ async def test_commissioning_returns_a_snapshot(client):
 
 async def test_commissioning_without_connection_raises(client):
     bridge, _ = client
+    with pytest.raises(Exception, match="not connected"):
+        await bridge.commission_with_code("MT:ABC123")
+
+
+async def test_commissioning_without_connection_raises_in_german(client):
+    """Deutsches Gegenstueck zu `test_commissioning_without_connection_raises`
+    oben."""
+    i18n.set_language("de")
+    bridge, _ = client
     with pytest.raises(Exception, match="nicht verbunden"):
         await bridge.commission_with_code("MT:ABC123")
 
 
+async def test_a_failed_commissioning_says_so_clearly(client):
+    bridge, upstream = client
+    upstream.fail_with = RuntimeError("device not found")
+    await bridge.connect()
+    with pytest.raises(CommissioningError, match="Commissioning failed"):
+        await bridge.commission_with_code("MT:ABC123")
+    await bridge.disconnect()
+
+
 async def test_a_failed_commissioning_says_so_in_german(client):
+    """Deutsches Gegenstueck zu `test_a_failed_commissioning_says_so_clearly`
+    oben."""
+    i18n.set_language("de")
     bridge, upstream = client
     upstream.fail_with = RuntimeError("device not found")
     await bridge.connect()
@@ -131,6 +153,18 @@ async def test_a_device_side_commissioning_failure_stays_a_commissioning_error(c
     """Eine Ablehnung durch das Geraet selbst (z. B. falscher Code) bleibt
     ein CommissioningError - nur der Verbindungsverlust zu matter-server
     wird umgeleitet."""
+    bridge, upstream = client
+    upstream.fail_with = NodeCommissionFailed("Timeout during commissioning")
+    await bridge.connect()
+    with pytest.raises(CommissioningError, match="Commissioning failed"):
+        await bridge.commission_with_code("MT:ABC123")
+    await bridge.disconnect()
+
+
+async def test_a_device_side_commissioning_failure_stays_a_commissioning_error_in_german(client):
+    """Deutsches Gegenstueck zu
+    `test_a_device_side_commissioning_failure_stays_a_commissioning_error` oben."""
+    i18n.set_language("de")
     bridge, upstream = client
     upstream.fail_with = NodeCommissionFailed("Timeout during commissioning")
     await bridge.connect()

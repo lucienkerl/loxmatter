@@ -93,6 +93,7 @@ from collections.abc import Sequence
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
+from loxmatter import i18n
 from loxmatter.api.models import ExportDeviceOut, ExportPreviewOut, ExportStatusOut
 from loxmatter.export.documents import (
     LoxoneCommand,
@@ -117,31 +118,20 @@ from loxmatter.profiles.table import is_exportable
 # seit die Downloads ueber `fetch` statt ueber einen Link laufen, benennt
 # der Browser die Datei selbst (siehe `web/app.js`, `download`).
 ARCHIVE_NAME = "loxmatter-export.zip"
-_README_NAME = "Import-Anleitung.txt"
+# Sprachneutral (Review-Fix Important, Whole-Branch-Review 2026-09-04): der
+# Dateiname bleibt EIN fester Wert unabhaengig von der UI-Sprache, nur der
+# Inhalt (`_readme_text()`) ist uebersetzt. Ein Dateiname, der sich mit der
+# UI-Sprache aendert, wuerde jedes Skript, das die ZIP-Struktur erwartet,
+# unnoetig erschweren - hiess bis zu diesem Fix immer `Import-Anleitung.txt`,
+# auch im englischsprachigen Export.
+_README_NAME = "README.txt"
 
-_README_TEXT = (
-    """\
-IMPORT-ANLEITUNG
-=================
 
-Diese ZIP-Datei enthaelt Loxone-Vorlagen, erzeugt von loxmatter.
-
-1. Dateien, die mit "VIU_" beginnen, gehoeren in Loxone Config nach:
-     Templates\\VirtualIn\\
-
-2. Dateien, die mit "VO_" beginnen, gehoeren nach:
-     Templates\\VirtualOut\\
-
-3. Import in Loxone Config: im Projektbaum Rechtsklick auf den
-   jeweiligen Ordner (Virtuelle Eingaenge bzw. Virtuelle Ausgaenge) ->
-   "Vorlage importieren" -> die Datei auswaehlen.
-
-4. VIU_Matter_System.xml und VO_Matter_System.xml (falls in dieser
-   ZIP-Datei enthalten) gehoeren zu keinem einzelnen Geraet. Sie werden
-   nur EINMAL pro Projekt gebraucht - nicht bei jedem weiteren Export
-   erneut importieren.
-"""
-).replace("\n", "\r\n")  # Notepad-freundlich - Loxone Config ist eine Windows-Anwendung.
+def _readme_text() -> str:
+    """Wie die alte Modul-Konstante `_README_TEXT`, aber pro Aufruf neu
+    aufgeloest statt beim Modulimport eingefroren - dieselbe Begruendung wie
+    beim Entfernen von `_ALREADY_SET_UP_DETAIL` in `api/auth.py` (Task 4)."""
+    return i18n.t("api.export.readme_text").replace("\n", "\r\n")
 
 
 def _loxone_commands(commands: Sequence[StoredCommand]) -> list[LoxoneCommand]:
@@ -353,7 +343,7 @@ def build_export_router(store: Store) -> APIRouter:
                     )
                 exported_device_ids.append(device.id)
 
-            archive.writestr(_README_NAME, _README_TEXT)
+            archive.writestr(_README_NAME, _readme_text())
 
         # Das Archiv ist an dieser Stelle vollstaendig - jetzt erst zaehlt
         # der Export (siehe Docstring oben). Ein Fehler weiter oben haette

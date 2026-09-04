@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 from matter_server.common.models import EventType, MatterNodeEvent
 
+from loxmatter import i18n
 from loxmatter.commands.translate import MatterCall
 from loxmatter.matter import client as client_module
 from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
@@ -191,6 +192,13 @@ def client() -> BridgeMatterClient:
 
 
 async def test_snapshots_requires_a_connection(client):
+    with pytest.raises(MatterUnavailableError, match="not connected"):
+        await client.snapshots()
+
+
+async def test_snapshots_requires_a_connection_in_german(client):
+    """Deutsches Gegenstueck zu `test_snapshots_requires_a_connection` oben."""
+    i18n.set_language("de")
     with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
         await client.snapshots()
 
@@ -221,6 +229,14 @@ async def test_snapshot_selects_by_node_id(client):
 
 
 async def test_snapshot_raises_for_unknown_node(client):
+    await client.connect()
+    with pytest.raises(MatterUnavailableError, match="unknown node 99"):
+        await client.snapshot(99)
+
+
+async def test_snapshot_raises_for_unknown_node_in_german(client):
+    """Deutsches Gegenstueck zu `test_snapshot_raises_for_unknown_node` oben."""
+    i18n.set_language("de")
     await client.connect()
     with pytest.raises(MatterUnavailableError, match="unbekannter Node 99"):
         await client.snapshot(99)
@@ -254,6 +270,45 @@ async def test_disconnect_twice_closes_session_once_and_does_not_raise():
 async def test_failed_connect_closes_session_and_allows_retry():
     """Ein scheiternder connect() darf die Session nicht leaken und muss einen
     späteren, erfolgreichen connect() zulassen."""
+    sessions: list[FakeSession] = []
+
+    def http_session_factory() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    attempts = {"n": 0}
+
+    def session_factory(_session: FakeSession) -> FakeUpstream:
+        attempts["n"] += 1
+        return FakeUpstream([FakeNode(1, {})], fail_connect=attempts["n"] == 1)
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=session_factory,
+        http_session_factory=http_session_factory,
+    )
+
+    with pytest.raises(RuntimeError, match="Verbindung fehlgeschlagen"):
+        await bridge.connect()
+
+    assert len(sessions) == 1
+    assert sessions[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="not connected"):
+        await bridge.snapshots()
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+    assert [s.node_id for s in snapshots] == [1]
+    assert sessions[1].close_calls == 0
+
+
+async def test_failed_connect_closes_session_and_allows_retry_in_german():
+    """Deutsches Gegenstueck zu `test_failed_connect_closes_session_and_allows_retry`
+    oben. `FakeUpstream.start_listening` wirft "Verbindung fehlgeschlagen" immer
+    als plain RuntimeError - das ist ein Fixture-Text, kein uebersetzter, und
+    bleibt deshalb in beiden Sprachen gleich."""
+    i18n.set_language("de")
     sessions: list[FakeSession] = []
 
     def http_session_factory() -> FakeSession:
@@ -327,6 +382,22 @@ async def test_disconnect_closes_session_even_if_upstream_disconnect_raises():
         await bridge.disconnect()
 
     assert session.close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="not connected"):
+        await bridge.snapshots()
+
+
+async def test_disconnect_closes_session_even_if_upstream_disconnect_raises_in_german():
+    """Deutsches Gegenstueck zu
+    `test_disconnect_closes_session_even_if_upstream_disconnect_raises` oben.
+    "Trennung fehlgeschlagen" ist ein Fixture-Text (immer Deutsch, siehe dort)."""
+    i18n.set_language("de")
+    bridge, session = make_client([FakeNode(1, {})], fail_disconnect=True)
+    await bridge.connect()
+
+    with pytest.raises(RuntimeError, match="Trennung fehlgeschlagen"):
+        await bridge.disconnect()
+
+    assert session.close_calls == 1
     with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
         await bridge.snapshots()
 
@@ -362,6 +433,17 @@ async def test_connect_times_out_when_listener_never_signals_readiness(monkeypat
     monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     bridge, _session = make_client([FakeNode(1, {})], signal_ready=False)
 
+    with pytest.raises(MatterUnavailableError, match="did not report readiness"):
+        await bridge.connect()
+
+
+async def test_connect_times_out_when_listener_never_signals_readiness_in_german(monkeypatch):
+    """Deutsches Gegenstueck zu
+    `test_connect_times_out_when_listener_never_signals_readiness` oben."""
+    i18n.set_language("de")
+    monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    bridge, _session = make_client([FakeNode(1, {})], signal_ready=False)
+
     with pytest.raises(MatterUnavailableError, match="keine Bereitschaft"):
         await bridge.connect()
 
@@ -373,6 +455,47 @@ async def test_connect_timeout_closes_session_and_allows_a_later_successful_conn
     geschlossen sein, der Client als nicht verbunden gelten, und ein
     späterer connect() mit einem funktionierenden Upstream muss trotzdem
     gelingen."""
+    monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
+    sessions: list[FakeSession] = []
+
+    def http_session_factory() -> FakeSession:
+        session = FakeSession()
+        sessions.append(session)
+        return session
+
+    attempts = {"n": 0}
+
+    def session_factory(_session: FakeSession) -> FakeUpstream:
+        attempts["n"] += 1
+        return FakeUpstream([FakeNode(1, {})], signal_ready=attempts["n"] != 1)
+
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=session_factory,
+        http_session_factory=http_session_factory,
+    )
+
+    with pytest.raises(MatterUnavailableError, match="did not report readiness"):
+        await bridge.connect()
+
+    assert len(sessions) == 1
+    assert sessions[0].close_calls == 1
+    with pytest.raises(MatterUnavailableError, match="not connected"):
+        await bridge.snapshots()
+
+    await bridge.connect()
+    snapshots = await bridge.snapshots()
+    assert [s.node_id for s in snapshots] == [1]
+    assert sessions[1].close_calls == 0
+
+
+async def test_connect_timeout_closes_session_and_allows_a_later_successful_connect_in_german(
+    monkeypatch,
+):
+    """Deutsches Gegenstueck zu
+    `test_connect_timeout_closes_session_and_allows_a_later_successful_connect`
+    oben."""
+    i18n.set_language("de")
     monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     sessions: list[FakeSession] = []
 
@@ -491,6 +614,15 @@ async def _settle() -> None:
 async def test_send_command_requires_a_connection():
     bridge, _upstream = make_connected_pair()
     call = MatterCall(node_id=12, endpoint=1, cluster_id=6, command_id=1, payload={})
+    with pytest.raises(MatterUnavailableError, match="not connected"):
+        await bridge.send_command(call)
+
+
+async def test_send_command_requires_a_connection_in_german():
+    """Deutsches Gegenstueck zu `test_send_command_requires_a_connection` oben."""
+    i18n.set_language("de")
+    bridge, _upstream = make_connected_pair()
+    call = MatterCall(node_id=12, endpoint=1, cluster_id=6, command_id=1, payload={})
     with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
         await bridge.send_command(call)
 
@@ -545,11 +677,29 @@ async def test_send_command_raises_for_a_cluster_command_the_sdk_does_not_know()
 
 async def test_subscribe_requires_a_connection():
     bridge, _upstream = make_connected_pair()
+    with pytest.raises(MatterUnavailableError, match="not connected"):
+        await bridge.subscribe(lambda _node_id: 1, FakeHandler())
+
+
+async def test_subscribe_requires_a_connection_in_german():
+    """Deutsches Gegenstueck zu `test_subscribe_requires_a_connection` oben."""
+    i18n.set_language("de")
+    bridge, _upstream = make_connected_pair()
     with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
         await bridge.subscribe(lambda _node_id: 1, FakeHandler())
 
 
 async def test_subscribe_twice_raises():
+    bridge, _upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    await bridge.subscribe(lambda _node_id: 5, FakeHandler())
+    with pytest.raises(MatterUnavailableError, match="already"):
+        await bridge.subscribe(lambda _node_id: 5, FakeHandler())
+
+
+async def test_subscribe_twice_raises_in_german():
+    """Deutsches Gegenstueck zu `test_subscribe_twice_raises` oben."""
+    i18n.set_language("de")
     bridge, _upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     await bridge.subscribe(lambda _node_id: 5, FakeHandler())

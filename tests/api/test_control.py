@@ -190,6 +190,17 @@ async def test_a_device_that_does_not_answer_yields_502(api_failing_invoke):
     response = await client.post(f"/api/commands/d{device_id}_1_on", json={"value": "1"})
     assert response.status_code == 502
     assert "Traceback" not in response.text
+    assert response.json()["detail"] == "device unreachable: Geraet antwortet nicht"
+
+
+async def test_a_device_that_does_not_answer_yields_502_in_german(api_failing_invoke):
+    """Deutscher Begleittest zu test_a_device_that_does_not_answer_yields_502."""
+    client, store, device_id = api_failing_invoke
+    store.locale.set_language("de")
+    response = await client.post(f"/api/commands/d{device_id}_1_on", json={"value": "1"})
+    assert response.status_code == 502
+    assert "Traceback" not in response.text
+    assert response.json()["detail"] == "Geraet nicht erreichbar: Geraet antwortet nicht"
 
 
 async def test_raw_write_of_a_non_writable_attribute_is_refused(api):
@@ -198,6 +209,95 @@ async def test_raw_write_of_a_non_writable_attribute_is_refused(api):
     key = next(s.key for s in store.signals(device_id) if s.ref.cluster_id == 40)
     response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
     assert response.status_code == 400
+    assert response.json()["detail"] == (
+        f"The writability of attribute {key!r} cannot be confirmed, so it is not on "
+        "the allow-list of writable attributes. If it really is writable, it can be "
+        "added there."
+    )
+
+
+async def test_raw_write_of_a_non_writable_attribute_is_refused_in_german(api):
+    """Deutscher Begleittest zu test_raw_write_of_a_non_writable_attribute_is_refused."""
+    client, store, device_id = api
+    key = next(s.key for s in store.signals(device_id) if s.ref.cluster_id == 40)
+    store.locale.set_language("de")
+    response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        f"Die Beschreibbarkeit von Attribut {key!r} laesst sich nicht bestaetigen, "
+        "es steht deshalb nicht auf der Erlaubnisliste beschreibbarer Attribute. Ist "
+        "es tatsaechlich beschreibbar, kann es dort ergaenzt werden."
+    )
+
+
+async def test_raw_write_of_a_writable_attribute_is_not_yet_wired(api):
+    """Erlaubt, aber noch nicht verdrahtet - siehe Moduldocstring, Absatz
+    "Offener Punkt"."""
+    client, store, device_id = api
+    key = next(
+        s.key for s in store.signals(device_id) if (s.ref.cluster_id, s.ref.element_id) == (40, 5)
+    )
+    response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
+    assert response.status_code == 501
+    assert response.json()["detail"] == (
+        f"Attribute {key!r} is writable, but raw writing is not yet connected to matter-server."
+    )
+
+
+async def test_raw_write_of_a_writable_attribute_is_not_yet_wired_in_german(api):
+    """Deutscher Begleittest zu test_raw_write_of_a_writable_attribute_is_not_yet_wired."""
+    client, store, device_id = api
+    key = next(
+        s.key for s in store.signals(device_id) if (s.ref.cluster_id, s.ref.element_id) == (40, 5)
+    )
+    store.locale.set_language("de")
+    response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
+    assert response.status_code == 501
+    assert response.json()["detail"] == (
+        f"Attribut {key!r} ist beschreibbar, aber das rohe Schreiben ist noch nicht "
+        "an matter-server angebunden."
+    )
+
+
+async def test_writing_an_unknown_signal_yields_404(api):
+    client, _, _ = api
+    response = await client.post("/api/signals/d1_1_gibtsnicht/write", json={"value": "42"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "unknown signal key 'd1_1_gibtsnicht'"
+
+
+async def test_writing_an_unknown_signal_yields_404_in_german(api):
+    client, store, _ = api
+    store.locale.set_language("de")
+    response = await client.post("/api/signals/d1_1_gibtsnicht/write", json={"value": "42"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == "unbekannter Signal-Schluessel 'd1_1_gibtsnicht'"
+
+
+async def test_writing_a_signal_at_a_removed_device_is_refused(api):
+    """Dieselbe Pruefung wie bei PATCH /api/signals/{key} (api/devices.py,
+    Review-Fix Important #4), jetzt fuer den rohen Schreibpfad."""
+    client, store, device_id = api
+    key = store.signals(device_id)[0].key
+    store.forget_device(device_id)
+    response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == (
+        f"signal {key!r} belongs to device {device_id}, which was removed"
+    )
+
+
+async def test_writing_a_signal_at_a_removed_device_is_refused_in_german(api):
+    """Deutscher Begleittest zu test_writing_a_signal_at_a_removed_device_is_refused."""
+    client, store, device_id = api
+    key = store.signals(device_id)[0].key
+    store.forget_device(device_id)
+    store.locale.set_language("de")
+    response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == (
+        f"Signal {key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+    )
 
 
 async def test_command_at_a_removed_device_is_refused(api):
@@ -208,4 +308,19 @@ async def test_command_at_a_removed_device_is_refused(api):
     store.forget_device(device_id)
     response = await client.post(f"/api/commands/{key}", json={"value": "1"})
     assert response.status_code == 404
-    assert "entfernt" in response.json()["detail"]
+    assert response.json()["detail"] == (
+        f"command {key!r} belongs to device {device_id}, which was removed"
+    )
+
+
+async def test_command_at_a_removed_device_is_refused_in_german(api):
+    """Deutscher Begleittest zu test_command_at_a_removed_device_is_refused."""
+    client, store, device_id = api
+    key = f"d{device_id}_1_on"
+    store.forget_device(device_id)
+    store.locale.set_language("de")
+    response = await client.post(f"/api/commands/{key}", json={"value": "1"})
+    assert response.status_code == 404
+    assert response.json()["detail"] == (
+        f"Kommando {key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
+    )

@@ -83,3 +83,25 @@ def t(key: str, **values: Any) -> str:
     entry = _STRINGS[key]
     template = entry.get(_current_language, entry["en"])
     return template.format(**values)
+
+
+def raw_template(key: str) -> str:
+    """Wie t(), aber OHNE .format() - liefert die unaufgeloeste Vorlage (mit
+    noch unbefuellten {platzhaltern}) in der aktuellen Sprache, mit
+    Ruecksicherung auf Englisch wie t().
+
+    Fuer api/language.py's GET /api/i18n: der Browser fuellt Platzhalter
+    selbst, zur Laufzeit, mit Werten, die der Server nicht kennen kann
+    (z. B. error.message, device.label). t() selbst wuerde hier sofort mit
+    KeyError abstuerzen, sobald ein web.*-Schluessel ueberhaupt einen
+    Platzhalter traegt - genau der Fehler, den diese Funktion vermeidet."""
+    entry = _STRINGS[key]
+    return entry.get(_current_language, entry["en"])
+
+
+def strings_with_prefix(prefix: str) -> list[str]:
+    """Alle Schluessel, die mit `prefix` beginnen - fuer `api/language.py`s
+    `GET /api/i18n`, das nur den `web.*`-Namensraum an den Client
+    ausliefert, nicht die gesamte Tabelle (CLI-Hilfetexte, API-
+    Fehlermeldungen etc. gehen den Browser nichts an)."""
+    return [key for key in _STRINGS if key.startswith(prefix)]
