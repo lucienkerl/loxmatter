@@ -77,6 +77,13 @@
         <circle cx="12" cy="19" r="1.1" fill="currentColor" stroke="none" />
         <line x1="2" y1="2" x2="22" y2="22" />
       </symbol>
+      <!-- Aufklapp-Pfeil fuer die Projektdatei-Sync-Geraetekarten
+           (`.projectsync-device`, ein natives <details>) - ersetzt dessen
+           browserabhaengigen Standard-Marker durch dasselbe Strich-Icon wie
+           die uebrigen Symbole hier. -->
+      <symbol id="i-chevron" viewBox="0 0 24 24">
+        <path d="M9 6l6 6-6 6" />
+      </symbol>
     </svg>
     <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
@@ -507,6 +514,16 @@
           </p>
           <div class="row">
             <label
+              >IP des Miniservers <span class="hint">(nur nötig bei mehreren Miniservern in der Datei)</span>
+              <input
+                type="text"
+                placeholder="z. B. 10.0.0.10"
+                x-model="projectSync.miniserverIp"
+                :disabled="projectSync.busy"
+            /></label>
+          </div>
+          <div class="row">
+            <label
               >Projektdatei (.Loxone)
               <input
                 type="file"
@@ -540,66 +557,136 @@
                 Alles aktuell – keine Änderungen nötig.
               </p>
               <!--
-                Nutzerwunsch: Verschachtelung nach Geraet statt einer langen
-                flachen Liste, dieselbe Gliederung (Geraet -> Eingaenge /
-                Ausgaenge), in der die Signale nachher als virtuelle Ein-/
-                Ausgaenge in Loxone Config landen. `projectSyncGroupedEntries`
-                (app.js) gruppiert den vom Backend gelieferten flachen Plan
-                rein clientseitig, kein Backend-Vertrag geaendert.
+                Ueberarbeitet nach Nutzerwunsch ("schneller und sauberer
+                Ueberblick"): eine Gesamt-Uebersicht ganz oben, darunter je
+                Geraet eine aufklappbare Karte (`<details>`, nativ zugaenglich
+                per Tastatur/Screenreader, ganz ohne eigenes JS fuer aus-/
+                einklappen) statt einer langen flachen Tabelle. Karten mit
+                Aenderungen stehen von Anfang an offen, laengst unveraenderte
+                Geraete bleiben zu - bei einer echten, gewachsenen Datei mit
+                Dutzenden Signalen sonst zu viel auf einmal.
+
+                `projectSyncGroupedEntries` (app.js) gruppiert den vom
+                Backend gelieferten flachen Plan rein clientseitig nach
+                Geraet und dort nach Eingaengen/Ausgaengen, kein
+                Backend-Vertrag geaendert.
               -->
               <div
                 class="projectsync-plan"
                 x-show="projectSync.plan.has_changes || projectSyncHasInformationalEntries(projectSync.plan.entries)"
               >
+                <div class="projectsync-summary" x-data="{ counts: projectSyncOverallCounts(projectSync.plan.entries) }">
+                  <span class="projectsync-tally-item is-new" x-show="counts.new > 0">
+                    <span class="dot is-new"></span>
+                    <strong x-text="counts.new"></strong>&nbsp;neu
+                  </span>
+                  <span class="projectsync-tally-item is-updated" x-show="counts.updated > 0">
+                    <span class="dot is-updated"></span>
+                    <strong x-text="counts.updated"></strong>&nbsp;aktualisiert
+                  </span>
+                  <span class="projectsync-tally-item is-orphaned" x-show="counts.orphaned > 0">
+                    <span class="dot is-orphaned"></span>
+                    <strong x-text="counts.orphaned"></strong>&nbsp;verwaist
+                  </span>
+                  <span class="projectsync-tally-item is-conflict" x-show="counts.conflict > 0">
+                    <span class="dot is-conflict"></span>
+                    <strong x-text="counts.conflict"></strong>&nbsp;Konflikt
+                  </span>
+                  <span class="projectsync-tally-item is-unchanged" x-show="counts.unchanged > 0">
+                    <span class="dot is-unchanged"></span>
+                    <strong x-text="counts.unchanged"></strong>&nbsp;unverändert
+                  </span>
+                </div>
+
                 <template
                   x-for="group in projectSyncGroupedEntries(projectSync.plan.entries)"
                   :key="group.deviceId"
                 >
-                  <div class="projectsync-device">
-                    <h3 x-text="group.deviceLabel"></h3>
-                    <template x-for="section in [
-                      { label: 'Eingänge', items: group.inputs },
-                      { label: 'Ausgänge', items: group.outputs },
-                    ]">
-                      <div class="projectsync-io-group" x-show="section.items.length > 0">
-                        <div class="projectsync-io-label" x-text="section.label"></div>
-                        <div style="overflow-x: auto">
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Signal</th>
-                                <th>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <template x-for="entry in section.items" :key="entry.kind + entry.key">
-                                <tr>
-                                  <td x-text="entry.title"></td>
-                                  <td>
-                                    <span
-                                      class="badge"
-                                      :class="projectSyncStatusBadgeClass(entry.status)"
-                                      x-text="projectSyncStatusLabel(entry.status)"
-                                    ></span>
-                                    <!-- Review-Fix Important #6: die vom Backend
-                                         mitgelieferte Attribut-Differenz (`entry.changes`,
-                                         nur bei `status === "updated"` befuellt) war bisher
-                                         nirgends zu sehen. -->
-                                    <div
-                                      x-show="entry.status === 'updated'"
-                                      class="hint"
-                                      style="white-space: pre-line"
-                                      x-text="projectSyncChangesText(entry)"
-                                    ></div>
-                                  </td>
-                                </tr>
+                  <details class="projectsync-device" :open="group.needsAttention">
+                    <summary>
+                      <span x-text="group.deviceLabel"></span>
+                      <span class="projectsync-tally">
+                        <span class="projectsync-tally-item is-new" x-show="group.counts.new > 0">
+                          <span class="dot is-new"></span>
+                          <span x-text="group.counts.new"></span>
+                        </span>
+                        <span class="projectsync-tally-item is-updated" x-show="group.counts.updated > 0">
+                          <span class="dot is-updated"></span>
+                          <span x-text="group.counts.updated"></span>
+                        </span>
+                        <span class="projectsync-tally-item is-orphaned" x-show="group.counts.orphaned > 0">
+                          <span class="dot is-orphaned"></span>
+                          <span x-text="group.counts.orphaned"></span>
+                        </span>
+                        <span class="projectsync-tally-item is-conflict" x-show="group.counts.conflict > 0">
+                          <span class="dot is-conflict"></span>
+                          <span x-text="group.counts.conflict"></span>
+                        </span>
+                        <span class="projectsync-tally-item is-unchanged" x-show="!group.needsAttention">
+                          alles aktuell
+                        </span>
+                      </span>
+                      <svg class="icon chevron"><use href="#i-chevron"></use></svg>
+                    </summary>
+                    <div class="projectsync-device-body">
+                      <template x-for="section in group.sections" :key="section.label">
+                        <div
+                          class="projectsync-io-group"
+                          x-show="section.attention.length + section.unchanged.length > 0"
+                        >
+                          <div class="projectsync-io-label" x-text="section.label"></div>
+
+                          <template x-for="entry in section.attention" :key="entry.kind + entry.key">
+                            <div class="projectsync-entry" :class="'is-' + projectSyncStatusBucket(entry.status)">
+                              <div class="projectsync-entry-head">
+                                <span class="projectsync-entry-title" x-text="entry.title"></span>
+                                <span
+                                  class="badge"
+                                  :class="projectSyncStatusBadgeClass(entry.status)"
+                                  x-text="projectSyncStatusLabel(entry.status)"
+                                ></span>
+                              </div>
+                              <p
+                                class="hint projectsync-entry-note"
+                                x-show="projectSyncEntryNote(entry)"
+                                x-text="projectSyncEntryNote(entry)"
+                              ></p>
+                              <!-- Review-Fix Important #6: die vom Backend mitgelieferte
+                                   Attribut-Differenz (`entry.changes`, nur bei
+                                   `status === "updated"` befuellt) - jetzt als Liste mit
+                                   getrennt gestyltem Alt-/Neu-Wert statt Fliesstext. -->
+                              <ul class="projectsync-diff" x-show="entry.status === 'updated'">
+                                <template x-for="change in projectSyncChangeList(entry)" :key="change.label">
+                                  <li>
+                                    <span class="projectsync-diff-label" x-text="change.label"></span>
+                                    <span class="projectsync-diff-old" x-text="change.oldValue"></span>
+                                    <span class="projectsync-diff-arrow">→</span>
+                                    <span class="projectsync-diff-new" x-text="change.newValue"></span>
+                                  </li>
+                                </template>
+                              </ul>
+                            </div>
+                          </template>
+
+                          <!-- Unveraenderte Signale: bewusst eingeklappt und ohne
+                               Status-Badge je Zeile - sie stimmen bereits, sollen den
+                               Blick auf das Neue/Geaenderte oben nicht verstellen
+                               (Nutzerwunsch: "schneller und sauberer Ueberblick"). -->
+                          <details class="projectsync-unchanged-disclosure" x-show="section.unchanged.length > 0">
+                            <summary>
+                              <span x-text="section.unchanged.length"></span>
+                              unveränderte Signale anzeigen
+                            </summary>
+                            <div class="projectsync-unchanged-chips">
+                              <template x-for="entry in section.unchanged" :key="entry.kind + entry.key">
+                                <span class="value-chip" x-text="entry.title"></span>
                               </template>
-                            </tbody>
-                          </table>
+                            </div>
+                          </details>
                         </div>
-                      </div>
-                    </template>
-                  </div>
+                      </template>
+                    </div>
+                  </details>
                 </template>
               </div>
               <!--

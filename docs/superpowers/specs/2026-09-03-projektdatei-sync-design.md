@@ -118,6 +118,55 @@ Das ist kein globaler Schalter und keine Konfigdatei — sobald der Anwender
 einmal erfolgreich eine Datei mit frisch angelegtem Container importiert hat,
 ist der Haken für ihn einfach Alltag.
 
+### 3.5 Datei-Struktur & Miniserver-Zuordnung (korrigiert nach echtem Praxistest)
+
+**Die ursprüngliche Annahme in diesem Abschnitt (und in 3.3) war falsch.**
+Beim ersten Test an einer gewachsenen, echten Projektdatei (nicht nur an der
+kleinen Referenzdatei aus der Brainstorming-Phase) zeigte sich: `VirtualIn
+Caption`/`VirtualOutCaption` liegen **nicht** direkt unter `<ControlList>`.
+Der reale Aufbau ist:
+
+```
+<ControlList>
+  <C Type="Document">                    -- genau EIN Kind von ControlList
+    <C Type="LoxLIVE" IntAddr="…">       -- ein Block PRO konfiguriertem Miniserver
+      <C Type="VirtualInCaption"> … </C>
+      <C Type="VirtualOutCaption"> … </C>
+    </C>
+    <C Type="LoxLIVE" IntAddr="…"> … </C>  -- optional: weitere Miniserver
+  </C>
+</ControlList>
+```
+
+Der ursprüngliche, flache Suchalgorithmus parste solche Dateien fehlerfrei,
+fand aber **keinen einzigen** vorhandenen virtuellen Ein-/Ausgang — jedes
+bereits bestehende Gerät erschien dadurch fälschlich als `new_device`, statt
+als `unchanged`/`updated`. Genau dieser Fehler wurde vom Anwender an seiner
+echten Datei gemeldet und war der Auslöser für diese Korrektur.
+
+**Konsequenz: Miniserver-Zuordnung ist ein eigener Schritt, VOR dem
+eigentlichen Abgleich.** Eine Projektdatei kann mehrere `LoxLIVE`-Blöcke
+enthalten (mehrere in Loxone Config konfigurierte Miniserver in einem
+Projekt) — der Abgleich darf nur innerhalb EINES davon suchen, sonst könnte
+ein Signal fälschlich im falschen Miniserver-Bereich landen. Auflösung
+(`index._resolve_target_loxlive`):
+
+- Kein `LoxLIVE`-Block gefunden → Fehler (kein Ort für virtuelle Ein-/Ausgänge).
+- Genau ein Block → wird automatisch gewählt, unabhängig davon, ob eine IP
+  mitgegeben wurde.
+- Eine IP wurde mitgegeben → muss exakt einem `LoxLIVE.IntAddr` entsprechen
+  (derselbe Wert wie bei `loxmatter run --miniserver <IP>`), sonst Fehler mit
+  Auflistung der gefundenen Miniserver — auch wenn es nur einen Block gibt:
+  eine nicht passende, aber explizit angegebene IP deutet eher auf die
+  falsche Datei hin als auf einen Grund, sie zu ignorieren.
+- Mehrere Blöcke, keine IP mitgegeben → Fehler, IP ist Pflicht.
+
+Der Abgleich aus Abschnitt 3.3 ("sucht im gesamten Dokument") gilt seitdem
+präzisiert als "sucht innerhalb des aufgelösten `LoxLIVE`-Blocks" — nicht
+mehr über das gesamte `<ControlList>`. Neu angelegte Captions (Abschnitt 6,
+Neuanlage-Pfad) hängen entsprechend am Ende dieses `LoxLIVE`-Blocks, nicht
+am Ende von `<ControlList>`.
+
 ## 4. Architektur & Datenfluss
 
 ```
@@ -202,15 +251,19 @@ bleibt deshalb Vorgabe.
 ## 7. API & WebUI
 
 **Endpoint:** `POST /api/export/project-sync`, multipart mit der
-hochgeladenen `.Loxone`-Datei. Antwort: strukturierter Diff-Plan (Abschnitt 5)
-plus zwei Datei-Varianten (`patched_conservative`, `patched_with_new_devices`).
+hochgeladenen `.Loxone`-Datei, plus Query-Parameter `bridge_ip`/`port`/
+`listen` (wie bei `/api/export/download`) und optional `miniserver_ip`
+(Abschnitt 3.5) — nur nötig, wenn die Datei mehr als einen Miniserver
+konfiguriert. Antwort: strukturierter Diff-Plan (Abschnitt 5) plus zwei
+Datei-Varianten (`patched_conservative`, `patched_with_new_devices`).
 
-**WebUI:** neuer Bereich (voraussichtlich bei „System", analog zum
-bestehenden Export-Knopf je Gerätekarte). Datei-Upload, danach der Plan als
-Liste — Geräte aufgeklappt, je Signal eine Zeile mit Status-Badge
-(unverändert/aktualisiert/neu/verwaist) und bei `updated` die
-Attribut-Differenz. Der Experimentell-Haken schaltet, welche der beiden
-mitgelieferten Datei-Varianten der Download-Button anbietet. Der
+**WebUI:** primärer Punkt im Export-Bereich (auf Nutzerwunsch, ursprünglich
+unter „System" geplant). Optionales Feld „IP des Miniservers", darunter
+Datei-Upload, danach der Plan als Liste — nach Geräten gruppiert (Eingänge/
+Ausgänge je Gerät, analog zur späteren Loxone-Struktur), je Signal eine
+Zeile mit Status-Badge (unverändert/aktualisiert/neu/verwaist) und bei
+`updated` die Attribut-Differenz. Der Experimentell-Haken schaltet, welche
+der beiden mitgelieferten Datei-Varianten der Download-Button anbietet. Der
 Download-Button ist erst nach dem Hochladen (= der Plan wurde gesehen) aktiv.
 
 ## 8. Fehlerbehandlung
@@ -257,10 +310,16 @@ Abgedeckt werden soll mindestens:
   nicht gelöst.
 - **`NextObj`/`NextConst`-Semantik unverifiziert** — konservative Anhebung
   (Abschnitt 6) ist eine Annahme, kein belegtes Verhalten.
-- **Format-Abweichungen zwischen Config-Versionen** möglich — nur an einer
-  einzigen echten Datei (Config-Version aus `ConfigVersion="17030902"`)
-  geprüft. Andere Versionen könnten abweichen.
+- **Format-Abweichungen zwischen Config-Versionen** möglich — bislang an zwei
+  echten Dateien geprüft (der ursprünglichen Referenzdatei und der Datei, an
+  der die Struktur-Korrektur aus Abschnitt 3.5 gefunden wurde). Andere
+  Versionen könnten trotzdem abweichen.
+- **Erledigt (2026-09-04):** die in einer früheren Fassung dieses Abschnitts
+  offene Frage nach der tatsächlichen Verschachtelung war der eigentliche
+  erste reale Fehler — behoben und dokumentiert in Abschnitt 3.5.
 
 Der erste reale Test bleibt: eine automatisch gepatchte Datei in Loxone
 Config öffnen und auf Fehler prüfen, bevor ihr vertraut wird — insbesondere
-für den Experimentell-Pfad (neue Geräte-Container).
+für den Experimentell-Pfad (neue Geräte-Container). Das ID-Schema selbst
+(Abschnitt 6) ist bislang nur gegen die in der Datei vorgefundenen `U`-Werte
+geprüft, nicht durch einen erfolgreichen Import in Loxone Config bestätigt.
