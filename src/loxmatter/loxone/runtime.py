@@ -360,7 +360,15 @@ class Runtime:
         return {k: v for k, v in self._last_values.items() if k.startswith(prefix)}
 
     async def resend_all(self) -> int:
-        """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei.
+        """Schickt JEDEN bekannten Wert erneut, an der Entprellung vorbei -
+        unabhaengig vom `resend`-Flag (Entwurf periodischer Resend,
+        2026-09-04, Abschnitt 6). Bleibt bewusst unveraendert der volle
+        Restore-Pfad fuer `/resync` (`loxone.server`) und den Bruecken-Start
+        (`cli.py`, direkt nach `seed_from_snapshot`) - beide muessen nach
+        einem Miniserver-Neustart JEDEN virtuellen Eingang wiederherstellen
+        (Spec 6.4), unabhaengig davon, ob jemand das Signal fuer den
+        periodischen Timer markiert hat. Der periodische Timer selbst ruft
+        stattdessen `resend_marked()` auf, siehe dort.
 
         Iteriert nur die Schluessel als Momentaufnahme, liest den Wert aber
         JE SCHLUESSEL erst unmittelbar vor dem Senden aus `_last_values`
@@ -377,8 +385,23 @@ class Runtime:
         Systemstart-Baustein, und feuert also genau dann, wenn jemand
         zusieht.
         """
+        return await self._force_resend(list(self._last_values))
+
+    async def resend_marked(self) -> int:
+        """Wie `resend_all`, aber nur fuer Signale mit `resend = true`
+        (Entwurf periodischer Resend, 2026-09-04, Abschnitt 6) - der
+        Gegenpart zu `resend_all`s bewusster Ignoranz dieses Flags. Nur
+        `_resend_loop` ruft diese Methode auf."""
+        keys = self._store.resend_keys()
+        return await self._force_resend(keys)
+
+    async def _force_resend(self, keys: Sequence[str]) -> int:
+        """Gemeinsamer Kern von `resend_all`/`resend_marked` - siehe
+        `resend_all` fuer die Begruendung, warum der Wert JE SCHLUESSEL erst
+        unmittelbar vor dem Senden aus `_last_values` nachgelesen wird
+        (Review-Fix I4)."""
         count = 0
-        for key in list(self._last_values):
+        for key in keys:
             value = self._last_values.get(key)
             if value is None:
                 # Zwischen der Momentaufnahme der Schluessel oben und diesem
