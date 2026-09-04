@@ -2894,10 +2894,17 @@ Add to `tests/test_i18n.py`:
 
 ```python
 def test_web_namespace_has_no_missing_english_fallback_gaps():
-    """Jeder web.*-Schluessel muss mindestens 'en' tragen - t() faellt sonst
-    mit KeyError auf 'en' selbst zurueck (siehe t()s Implementierung)."""
+    """Jeder web.*-Schluessel muss mindestens 'en' tragen - raw_template()
+    wirft KeyError, wenn selbst 'en' fehlt (siehe dessen Implementierung,
+    hinzugefuegt beim Bugfix vor dieser Aufgabe: GET /api/i18n stuerzte
+    zuvor an genau dieser Stelle ab, weil t() hier - mit .format() und
+    ohne Platzhalterwerte - bei JEDEM web.*-Schluessel mit einem
+    {platzhalter} eine KeyError geworfen haette. raw_template() ist die
+    richtige Funktion fuer diese Pruefung: sie prueft nur "gibt es
+    ueberhaupt einen en-Eintrag", nicht "sind alle Platzhalter befuellt" -
+    letzteres ist client-seitig app.js's Aufgabe, nie serverseitig."""
     for key in i18n.strings_with_prefix("web."):
-        assert i18n.t(key)  # wirft, wenn 'en' fehlt oder ein Platzhalter unbefuellt bliebe
+        assert i18n.raw_template(key)  # wirft nur, wenn 'en' fehlt - keine .format()-Falle
 
 
 def test_web_namespace_key_count_is_substantial():
