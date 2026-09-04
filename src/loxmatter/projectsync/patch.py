@@ -52,6 +52,7 @@ from loxmatter.projectsync.ids import new_iname, new_unique_id
 from loxmatter.projectsync.index import ProjectIndex
 from loxmatter.projectsync.schema import (
     find_any_iodata_attrs,
+    new_caption_open_tag,
     new_cmd_children_xml,
     new_input_cmd_open_tag,
     new_input_container_open_tag,
@@ -64,12 +65,16 @@ __all__ = ["MissingCaptionError", "apply_plan"]
 
 
 class MissingCaptionError(ValueError):
-    """Die Projektdatei hat (noch) keinen `VirtualInCaption`- bzw.
-    `VirtualOutCaption`-Abschnitt, in den ein komplett neues Geraet
-    eingefuegt werden koennte. Anders als `ProjectFormatError`: die Datei ist
-    dabei nicht fehlerhaft, ihr fehlt nur ein optionaler Abschnitt, den genau
-    diese Operation braucht - das automatische Anlegen dieses Abschnitts ist
-    laut Entwurf ein spaeterer Ausbauschritt, hier (noch) nicht unterstuetzt."""
+    """Historisch: wurde geworfen, wenn die Projektdatei (noch) keinen
+    `VirtualInCaption`- bzw. `VirtualOutCaption`-Abschnitt hatte, in den ein
+    komplett neues Geraet eingefuegt werden koennte. `_new_device_edit` legt
+    diesen Abschnitt inzwischen selbst mit an (Entwurf Abschnitt 8: Sonderfall
+    der Neuanlage, ebenfalls hinter dem Experimentell-Haken) - dieser Fehler
+    wird darum in der aktuellen Codebasis nicht mehr ausgeloest. Die Klasse
+    bleibt exportiert und `sync.run_sync` faengt sie weiterhin ab: als
+    Verteidigungslinie, falls ein spaeterer Aufrufer `_new_device_edit` je
+    unter Bedingungen aufruft, unter denen das automatische Anlegen aus
+    irgendeinem Grund nicht greift."""
 
 
 @dataclass(frozen=True)
@@ -149,28 +154,35 @@ def _new_device_edit(
     bridge_ip: str,
     port: int,
     listen: int,
-) -> _Edit:
+) -> tuple[_Edit, int]:
     """EIN neuer Geraete-Container fuer ALLE `NEW_DEVICE`-Eintraege eines
     Geraets derselben Art (`entries` ist die Gruppe zu einem `(kind,
-    device_id)`).
+    device_id)`). Liefert den Edit UND die Anzahl neu entstehender
+    `<C>`-Objekte (fuer den `NextObj`-Zaehler in `apply_plan`).
 
     Bewusst eine Gruppe statt eines einzelnen Eintrags: `export.signals.
     to_inputs` erzeugt je Geraet immer zusaetzlich ein Online-Signal, ein
     real neues Geraet hat also praktisch nie nur einen Eintrag. Ein Container
     je Eintrag ergaebe mehrere gleichnamige `VirtualUdpIn`-Geraete mit
     identischer Adresse und Port, jedes mit genau einem Kommando darin -
-    strukturell falsch, nicht nur unschoen."""
+    strukturell falsch, nicht nur unschoen.
+
+    Fehlt der passende `VirtualInCaption`/`VirtualOutCaption`-Abschnitt
+    komplett (ein Projekt, das noch nie einen virtuellen Ein- bzw. Ausgang
+    dieser Art hatte), legt diese Funktion ihn selbst mit an - als
+    zusaetzliches Top-Level-Objekt direkt vor `</ControlList>` (Entwurf
+    Abschnitt 8: Sonderfall der Neuanlage, ebenfalls hinter dem
+    Experimentell-Haken, den `apply_plan` bereits durch `include_new_devices`
+    absichert). Die Position ist bewusst das Dateiende: unter den vielen
+    moeglichen Nachbar-Objekttypen einer echten Projektdatei (Place,
+    Category, User, ...) kennt dieses Projekt keine "richtige" Reihenfolge -
+    anhaengen statt raten, derselbe Grundsatz wie ueberall sonst in diesem
+    Modul."""
     first = entries[0]
     is_input = first.kind == "input"
+    kind = "input" if is_input else "output"
     caption = index.virtual_in_caption if is_input else index.virtual_out_caption
-    if caption is None or caption.inner_end is None:
-        section = "VirtualInCaption" if is_input else "VirtualOutCaption"
-        raise MissingCaptionError(
-            f"Die Projektdatei hat keinen `{section}`-Abschnitt - ein komplett "
-            f"neuer Geraete-Container fuer '{first.device_label}' kann darum nicht "
-            "automatisch eingefuegt werden. Bitte zuerst manuell einen virtuellen "
-            f"{'Eingang' if is_input else 'Ausgang'} in der Loxone Config anlegen."
-        )
+    caption_exists = caption is not None and caption.inner_end is not None
 
     container_iname_prefix = "VUI" if is_input else "VQ"
     container_iname = new_iname(container_iname_prefix, index.all_inames)
@@ -185,6 +197,9 @@ def _new_device_edit(
         )
 
     cmd_iname_prefix = "VCI" if is_input else "VQC"
+    # `caption` ist bei einer fehlenden Caption `None` -
+    # `find_any_iodata_attrs` behandelt das bereits als "kein Vorbild
+    # gefunden" und liefert `None` zurueck, statt zu werfen.
     iodata = find_any_iodata_attrs(index.text, caption)
     cmds: list[str] = []
     for entry in entries:
@@ -197,15 +212,23 @@ def _new_device_edit(
             else new_output_cmd_open_tag(cast(LoxoneCommand, obj), cmd_iname, cmd_u)
         )
         children_xml = new_cmd_children_xml(
-            kind="input" if is_input else "output",
-            existing_u=index.all_u_values,
-            iodata_attrs=iodata,
+            kind=kind, existing_u=index.all_u_values, iodata_attrs=iodata
         )
         cmds.append(f"{cmd_open}{children_xml}</C>")
 
-    full_xml = f"{container_open}{''.join(cmds)}</C>"
-    pos = caption.inner_end
-    return _Edit(pos, pos, full_xml)
+    device_xml = f"{container_open}{''.join(cmds)}</C>"
+    created_count = 1 + len(entries)  # Container + je ein Cmd.
+
+    if caption_exists:
+        assert caption is not None and caption.inner_end is not None  # fuer mypy
+        return _Edit(caption.inner_end, caption.inner_end, device_xml), created_count
+
+    caption_iname = new_iname("C", index.all_inames)
+    caption_u = new_unique_id(index.all_u_values)
+    caption_open = new_caption_open_tag(kind, caption_iname, caption_u)
+    full_xml = f"{caption_open}{device_xml}</C>"
+    pos = index.root_close_start
+    return _Edit(pos, pos, full_xml), created_count + 1  # + die neue Caption selbst.
 
 
 def _next_obj_edit(index: ProjectIndex, created_count: int) -> _Edit | None:
@@ -277,10 +300,11 @@ def apply_plan(
 
     for (kind, _device_id), group in new_device_groups.items():
         source = desired_inputs if kind == "input" else desired_outputs
-        edits.append(_new_device_edit(index, group, source, bridge_ip, port, listen))
-        # Der Container selbst plus ein Cmd je Eintrag sind alles neue
-        # <C>-Objekte.
-        created_count += 1 + len(group)
+        # Anzahl neuer <C>-Objekte kommt von `_new_device_edit` selbst zurueck:
+        # Container + ein Cmd je Eintrag, plus ggf. die neu angelegte Caption.
+        edit, group_created_count = _new_device_edit(index, group, source, bridge_ip, port, listen)
+        edits.append(edit)
+        created_count += group_created_count
 
     next_obj_edit = _next_obj_edit(index, created_count)
     if next_obj_edit is not None:

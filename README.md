@@ -227,17 +227,23 @@ diese übrigen Signale im zugeklappten Block „Experte" (mit Anzahl in der
 sich dort einzeln aktivieren, etwa ein Thread-Zähler zur Fehlersuche.
 Begründung und Auswahlregel: [Signalauswahl-Entwurf](docs/superpowers/specs/2026-09-03-signalauswahl-design.md).
 
-**Projektdatei-Sync (`POST /api/export/project-sync`, WebUI unter
-„System").** Statt Vorlagen einzeln zu importieren, kann eine bestehende
-Loxone-Projektdatei hochgeladen werden — das Tool gleicht sie gegen die
-gespeicherten Geräte ab und liefert eine gepatchte Fassung zum Download.
+**Projektdatei-Sync (`POST /api/export/project-sync`, WebUI oben unter
+„Export" — inzwischen der empfohlene Weg vor den einzeln zu importierenden
+Vorlagendateien darunter).** Statt Vorlagen einzeln zu importieren, kann eine
+bestehende Loxone-Projektdatei hochgeladen werden — das Tool gleicht sie gegen
+die gespeicherten Geräte ab und liefert eine gepatchte Fassung zum Download.
 Updates an bereits bestehenden virtuellen Ein-/Ausgängen und neue Signale
 innerhalb bereits bestehender Geräte sind die Vorgabe. **Komplett neue
 Geräte-Container sind experimentell** und nur über einen expliziten Haken
 im WebUI enthalten: das dafür nötige ID-Schema für neue Objekte ist aus
 einer einzigen echten Projektdatei abgeleitet, nicht offiziell dokumentiert
-und **nicht verifiziert**. Vor dem ersten Vertrauen in diesen Pfad: eine
-damit gepatchte Datei einmal in Loxone Config öffnen und auf Fehler prüfen.
+und **nicht verifiziert**. Hatte das Projekt noch nie einen virtuellen
+Ein- bzw. Ausgang dieser Art (kein `VirtualInCaption`/`VirtualOutCaption`-
+Abschnitt), legt derselbe experimentelle Pfad diesen Abschnitt inzwischen
+automatisch mit an, statt den Haken zu sperren — kein manuelles Vorbereiten
+in Loxone Config mehr nötig, aber ein weiteres unverifiziertes Objekt mehr in
+der Kette. Vor dem ersten Vertrauen in diesen Pfad: eine damit gepatchte
+Datei einmal in Loxone Config öffnen und auf Fehler prüfen.
 Details: [Projektdatei-Sync-Entwurf](docs/superpowers/specs/2026-09-03-projektdatei-sync-design.md).
 
 **Achtung beim Update auf diese Fassung, wenn schon Geräte eingelernt

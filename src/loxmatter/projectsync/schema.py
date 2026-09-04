@@ -141,6 +141,19 @@ def new_output_container_open_tag(device_label: str, base_url: str, iname: str, 
     return f"<C {render_attrs(attrs)}>"
 
 
+def new_caption_open_tag(kind: str, iname: str, u: str) -> str:
+    """Start-Tag eines frisch angelegten `VirtualInCaption`/`VirtualOutCaption`
+    - nur, wenn die Projektdatei noch nie einen virtuellen Ein- bzw. Ausgang
+    dieser Art hatte (Entwurf Abschnitt 8: Sonderfall der Neuanlage, ebenfalls
+    hinter dem Experimentell-Haken). `IName` folgt dem an der Referenzdatei
+    beobachteten Muster `C<n>` - ein eigener Namensraum, getrennt von den
+    Geraete-Containern (`VUI`/`VQ`) und ihren Kommandos (`VCI`/`VQC`)."""
+    if kind not in ("input", "output"):
+        raise ValueError(f"Unbekannte Art {kind!r} - erwartet 'input' oder 'output'.")
+    type_name = "VirtualInCaption" if kind == "input" else "VirtualOutCaption"
+    return f"<C {render_attrs([('Type', type_name), ('IName', iname), ('U', u)])}>"
+
+
 def sibling_iodata_attrs(text: str, element: Element) -> dict[str, str] | None:
     """Die Attribute des `<IoData .../>`-Kindes eines bestehenden Cmd-
     Elements, falls vorhanden - Quelle fuer die Berechtigungswerte eines neu

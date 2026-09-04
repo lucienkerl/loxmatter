@@ -4,6 +4,7 @@ from loxmatter.projectsync.schema import (
     desired_input_cmd_attrs,
     desired_output_cmd_attrs,
     find_any_iodata_attrs,
+    new_caption_open_tag,
     new_cmd_children_xml,
     new_input_cmd_open_tag,
     new_input_container_open_tag,
@@ -28,6 +29,24 @@ def test_desired_output_cmd_attrs_omits_cmdoff_when_there_is_none():
     command = LoxoneCommand("d1_1_level", "level", "/cmd/d1_1_level/<v>", True)
     desired = desired_output_cmd_attrs(command)
     assert desired == {"Title": "level", "CmdOn": "/cmd/d1_1_level/<v>", "Analog": "true"}
+
+
+def test_new_caption_open_tag_builds_input_caption():
+    tag = new_caption_open_tag("input", "C3", "u-new")
+    assert tag == '<C Type="VirtualInCaption" IName="C3" U="u-new">'
+    assert not tag.endswith("/>")
+
+
+def test_new_caption_open_tag_builds_output_caption():
+    tag = new_caption_open_tag("output", "C4", "u-new")
+    assert tag == '<C Type="VirtualOutCaption" IName="C4" U="u-new">'
+
+
+def test_new_caption_open_tag_rejects_unknown_kind():
+    import pytest
+
+    with pytest.raises(ValueError, match="input.*output"):
+        new_caption_open_tag("bogus", "C5", "u-new")
 
 
 def test_desired_output_cmd_attrs_includes_cmdoff_for_paired_commands():

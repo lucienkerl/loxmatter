@@ -46,11 +46,10 @@ SAMPLE_PROJECT = (
 # oben. Ein reales Projekt, in dem noch nie ein virtueller Eingang angelegt
 # wurde, sieht so aus (siehe `tests/projectsync/test_patch.py`,
 # NO_VIRTUAL_IN_CAPTION_PROJECT, fuer dasselbe Muster auf Ebene von
-# `patch.apply_plan`). `run_sync` faengt den daraus folgenden
-# `MissingCaptionError` selbst ab und liefert die Variante mit neuen Geraete-
-# Containern als `None` samt Begruendung - der Upload als Ganzes bleibt
-# erfolgreich (Entwurf Abschnitt 8: die fehlende Caption ist ein Sonderfall
-# der Neuanlage, also des experimentellen Pfads).
+# `patch.apply_plan`). `apply_plan` legt diesen Abschnitt im experimentellen
+# Pfad selbst mit an (Entwurf Abschnitt 8: Sonderfall der Neuanlage, ebenfalls
+# hinter dem Experimentell-Haken) - kein manuelles Vorbereiten in Loxone
+# Config mehr noetig.
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -118,14 +117,14 @@ async def test_project_sync_requires_authentication(tmp_path, no_invoke, fake_ru
     store.close()
 
 
-async def test_project_sync_missing_caption_still_returns_plan_and_conservative(api):
+async def test_project_sync_missing_caption_is_auto_created(api):
     """Ein wohlgeformtes Projekt ohne `VirtualInCaption`-Abschnitt, hochgeladen
     fuer ein Geraet, das komplett neu ist (die Steckdose aus der `api`-Fixture
     hat keinen passenden Container in `NO_VIRTUAL_IN_CAPTION_PROJECT`): die
-    fehlende Caption ist laut Entwurf Abschnitt 8 eine Grenze des
-    EXPERIMENTELLEN Pfades, nicht der ganzen Anfrage. Plan und konservative
-    Datei muessen also normal ankommen, nur die Variante mit neuen Geraete-
-    Containern faellt mit einer nachvollziehbaren Begruendung weg."""
+    Variante mit neuen Geraete-Containern legt den fehlenden Abschnitt seit
+    dem Nutzerwunsch nach dem Review selbst mit an, statt den experimentellen
+    Pfad nur mit einer Begruendung zu sperren. Die konservative Datei bleibt
+    davon unberuehrt."""
     client, _store = api
     response = await client.post(
         "/api/export/project-sync",
@@ -141,7 +140,8 @@ async def test_project_sync_missing_caption_still_returns_plan_and_conservative(
     assert response.status_code == 200
     body = response.json()
     assert body["entries"]
-    assert body["patched_with_new_devices_base64"] is None
-    assert "VirtualInCaption" in body["new_devices_unavailable_reason"]
+    assert body["new_devices_unavailable_reason"] is None
+    with_new_devices = base64.b64decode(body["patched_with_new_devices_base64"])
+    assert b'Type="VirtualInCaption"' in with_new_devices
     conservative = base64.b64decode(body["patched_conservative_base64"])
     assert conservative.decode("utf-8-sig") == NO_VIRTUAL_IN_CAPTION_PROJECT
