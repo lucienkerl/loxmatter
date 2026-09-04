@@ -1,4 +1,8 @@
-# <img src="src/loxmatter/web/icon.svg" alt="" width="28" height="28" align="top" /> loxmatter
+<!-- Absolute raw-URL statt des relativen Pfads: GitHub schreibt relative
+     `src`-Angaben in rohen <img>-Tags NICHT auf raw.githubusercontent um
+     (nur in Markdown-Bildern `![](pfad)`). Der Browser loeste den Pfad
+     gegen die Repo-Seite auf und bekam ein 404. -->
+# <img src="https://raw.githubusercontent.com/lucienkerl/loxmatter/main/src/loxmatter/web/icon.svg" alt="" width="28" height="28" align="top" /> loxmatter
 
 ![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
