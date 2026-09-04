@@ -468,6 +468,131 @@
            Ansicht 3: Export
            ================================================================ -->
       <section x-show="view === 'export'" x-cloak>
+        <!--
+          Projektdatei-Sync (Aufgabe 12, urspruenglich unten in "System" -
+          auf Nutzerwunsch als oberster Punkt hierher verschoben, weil das
+          der kuenftig primaere Weg werden soll statt der Vorlagen-ZIPs
+          darunter): bestehende Loxone-Projektdatei hochladen, Plan
+          ansehen, gepatchte Datei herunterladen - erst NACHDEM der Plan
+          zu sehen war (Entwurf: kein Download vor dem Plan). Beide
+          gepatchten Fassungen kommen bereits in der Upload-Antwort mit
+          (siehe `downloadPatchedProject` in app.js), der Haken unten
+          waehlt nur zwischen ihnen, ohne einen zweiten Aufruf an die
+          Bruecke.
+        -->
+        <div class="card">
+          <h2>Projektdatei-Sync</h2>
+          <p class="hint">
+            Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden
+            aktualisiert, neue Signale ergänzt. Nichts wird heruntergeladen, bevor du den Plan
+            gesehen hast.
+          </p>
+          <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
+            Bitte zuerst in
+            <a href="#" @click.prevent="selectView('settings')">Einstellungen → Verbindung zum Miniserver</a>
+            die Brücken-IP hinterlegen.
+          </p>
+          <div class="row">
+            <label
+              >Projektdatei (.Loxone)
+              <input
+                type="file"
+                accept=".Loxone,.xml"
+                @change="uploadProjectFile($event)"
+                :disabled="projectSync.busy"
+            /></label>
+          </div>
+          <p x-show="projectSync.busy" x-cloak class="hint">Wird verarbeitet …</p>
+          <p x-show="projectSync.error" x-cloak class="banner danger" x-text="projectSync.error"></p>
+
+          <template x-if="projectSync.plan">
+            <div>
+              <!--
+                Review-Fix Important #5: die Tabelle haengt jetzt an
+                `has_changes || projectSyncHasInformationalEntries(...)`,
+                nicht mehr nur an `has_changes` - sonst blieben
+                `orphaned`/`conflict`-Eintraege unsichtbar, obwohl
+                `has_changes` sie absichtlich nicht mitzaehlt (siehe
+                `SyncPlan.has_changes` in `diff.py`). Die Bedingung ist
+                bewusst das logische Gegenteil der "Alles aktuell"-Meldung
+                darunter, damit genau eine der beiden sichtbar ist: die
+                Meldung zeigt sich nur noch, wenn wirklich gar nichts zu
+                berichten ist: keine Aenderung UND keine informativen
+                Eintraege.
+              -->
+              <p
+                x-show="!projectSync.plan.has_changes && !projectSyncHasInformationalEntries(projectSync.plan.entries)"
+                class="hint"
+              >
+                Alles aktuell – keine Änderungen nötig.
+              </p>
+              <div style="overflow-x: auto" x-show="projectSync.plan.has_changes || projectSyncHasInformationalEntries(projectSync.plan.entries)">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Gerät</th>
+                      <th>Signal</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="entry in projectSync.plan.entries" :key="entry.kind + entry.key">
+                      <tr>
+                        <td x-text="entry.device_label || '—'"></td>
+                        <td x-text="entry.title"></td>
+                        <td>
+                          <span
+                            class="badge"
+                            :class="projectSyncStatusBadgeClass(entry.status)"
+                            x-text="projectSyncStatusLabel(entry.status)"
+                          ></span>
+                          <!-- Review-Fix Important #6: die vom Backend
+                               mitgelieferte Attribut-Differenz (`entry.changes`,
+                               nur bei `status === "updated"` befuellt) war bisher
+                               nirgends zu sehen. -->
+                          <div
+                            x-show="entry.status === 'updated'"
+                            class="hint"
+                            style="white-space: pre-line"
+                            x-text="projectSyncChangesText(entry)"
+                          ></div>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <!--
+                Review-Fix Important #4: `patched_with_new_devices_base64`
+                ist jetzt `null`, wenn die hochgeladene Datei keinen
+                `VirtualInCaption`/`VirtualOutCaption`-Abschnitt fuer einen
+                neuen Geraete-Container hat - der Haken wird dann deaktiviert,
+                statt einen stillen/leeren Download zuzulassen.
+              -->
+              <p
+                x-show="projectSync.plan.new_devices_unavailable_reason"
+                x-cloak
+                class="banner warn"
+                x-text="projectSync.plan.new_devices_unavailable_reason"
+              ></p>
+              <div class="row">
+                <label>
+                  <input
+                    type="checkbox"
+                    x-model="projectSync.includeNewDevices"
+                    :disabled="!!projectSync.plan.new_devices_unavailable_reason"
+                  />
+                  Neue Geräte-Container ebenfalls anlegen (experimentell, noch nicht gegen Loxone
+                  Config validiert)
+                </label>
+              </div>
+              <button class="primary" @click="downloadPatchedProject()">
+                Gepatchte Datei herunterladen
+              </button>
+            </div>
+          </template>
+        </div>
+
         <div class="card">
           <h2>Vorlagen exportieren</h2>
           <div class="row">
@@ -686,128 +811,6 @@
           </p>
           <button @click="downloadFabricBackup()">Sicherung herunterladen</button>
           <p x-show="backupError" x-cloak class="banner danger" x-text="backupError"></p>
-        </div>
-
-        <!--
-          Projektdatei-Sync (Aufgabe 12): bestehende Loxone-Projektdatei
-          hochladen, Plan ansehen, gepatchte Datei herunterladen - erst
-          NACHDEM der Plan zu sehen war (Entwurf: kein Download vor dem
-          Plan). Beide gepatchten Fassungen kommen bereits in der
-          Upload-Antwort mit (siehe `downloadPatchedProject` in app.js),
-          der Haken unten waehlt nur zwischen ihnen, ohne einen zweiten
-          Aufruf an die Bruecke.
-        -->
-        <div class="card">
-          <h2>Projektdatei-Sync</h2>
-          <p class="hint">
-            Bestehende Loxone-Projektdatei hochladen – vorhandene virtuelle Ein-/Ausgänge werden
-            aktualisiert, neue Signale ergänzt. Nichts wird heruntergeladen, bevor du den Plan
-            gesehen hast.
-          </p>
-          <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
-            Bitte zuerst in
-            <a href="#" @click.prevent="selectView('settings')">Einstellungen → Verbindung zum Miniserver</a>
-            die Brücken-IP hinterlegen.
-          </p>
-          <div class="row">
-            <label
-              >Projektdatei (.Loxone)
-              <input
-                type="file"
-                accept=".Loxone,.xml"
-                @change="uploadProjectFile($event)"
-                :disabled="projectSync.busy"
-            /></label>
-          </div>
-          <p x-show="projectSync.busy" x-cloak class="hint">Wird verarbeitet …</p>
-          <p x-show="projectSync.error" x-cloak class="banner danger" x-text="projectSync.error"></p>
-
-          <template x-if="projectSync.plan">
-            <div>
-              <!--
-                Review-Fix Important #5: die Tabelle haengt jetzt an
-                `has_changes || projectSyncHasInformationalEntries(...)`,
-                nicht mehr nur an `has_changes` - sonst blieben
-                `orphaned`/`conflict`-Eintraege unsichtbar, obwohl
-                `has_changes` sie absichtlich nicht mitzaehlt (siehe
-                `SyncPlan.has_changes` in `diff.py`). Die Bedingung ist
-                bewusst das logische Gegenteil der "Alles aktuell"-Meldung
-                darunter, damit genau eine der beiden sichtbar ist: die
-                Meldung zeigt sich nur noch, wenn wirklich gar nichts zu
-                berichten ist: keine Aenderung UND keine informativen
-                Eintraege.
-              -->
-              <p
-                x-show="!projectSync.plan.has_changes && !projectSyncHasInformationalEntries(projectSync.plan.entries)"
-                class="hint"
-              >
-                Alles aktuell – keine Änderungen nötig.
-              </p>
-              <div style="overflow-x: auto" x-show="projectSync.plan.has_changes || projectSyncHasInformationalEntries(projectSync.plan.entries)">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Gerät</th>
-                      <th>Signal</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <template x-for="entry in projectSync.plan.entries" :key="entry.kind + entry.key">
-                      <tr>
-                        <td x-text="entry.device_label || '—'"></td>
-                        <td x-text="entry.title"></td>
-                        <td>
-                          <span
-                            class="badge"
-                            :class="projectSyncStatusBadgeClass(entry.status)"
-                            x-text="projectSyncStatusLabel(entry.status)"
-                          ></span>
-                          <!-- Review-Fix Important #6: die vom Backend
-                               mitgelieferte Attribut-Differenz (`entry.changes`,
-                               nur bei `status === "updated"` befuellt) war bisher
-                               nirgends zu sehen. -->
-                          <div
-                            x-show="entry.status === 'updated'"
-                            class="hint"
-                            style="white-space: pre-line"
-                            x-text="projectSyncChangesText(entry)"
-                          ></div>
-                        </td>
-                      </tr>
-                    </template>
-                  </tbody>
-                </table>
-              </div>
-              <!--
-                Review-Fix Important #4: `patched_with_new_devices_base64`
-                ist jetzt `null`, wenn die hochgeladene Datei keinen
-                `VirtualInCaption`/`VirtualOutCaption`-Abschnitt fuer einen
-                neuen Geraete-Container hat - der Haken wird dann deaktiviert,
-                statt einen stillen/leeren Download zuzulassen.
-              -->
-              <p
-                x-show="projectSync.plan.new_devices_unavailable_reason"
-                x-cloak
-                class="banner warn"
-                x-text="projectSync.plan.new_devices_unavailable_reason"
-              ></p>
-              <div class="row">
-                <label>
-                  <input
-                    type="checkbox"
-                    x-model="projectSync.includeNewDevices"
-                    :disabled="!!projectSync.plan.new_devices_unavailable_reason"
-                  />
-                  Neue Geräte-Container ebenfalls anlegen (experimentell, noch nicht gegen Loxone
-                  Config validiert)
-                </label>
-              </div>
-              <button class="primary" @click="downloadPatchedProject()">
-                Gepatchte Datei herunterladen
-              </button>
-            </div>
-          </template>
         </div>
       </section>
 
