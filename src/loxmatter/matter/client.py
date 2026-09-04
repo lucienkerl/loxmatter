@@ -67,7 +67,7 @@ Einlern-Route. Das „zusätzlich" ist nicht Gürtel-und-Hosenträger: das
 `commission_with_code` zurückkehrt und der Store dem Node eine device_id
 geben kann — die Meldung wird deshalb verworfen, und eine zweite folgt
 für ein ruhig im Netz stehendes Gerät nicht. Siehe
-docs/superpowers/specs/2026-09-04-live-werte-neuer-geräte-design.md.
+docs/superpowers/specs/2026-09-04-live-werte-neuer-geraete-design.md.
 
 commission_with_code()/remove_node()/set_thread_dataset() — belegt gegen die
 installierte python-matter-server==8.1.2 (Task 1, Phase 5):
