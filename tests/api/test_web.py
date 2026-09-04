@@ -351,7 +351,7 @@ async def test_the_signal_row_offers_a_resend_checkbox(api):
     assert "toggleResend" in script
     assert "signal.resend" in page
 
-    resend_idx = page.index('signal.resend')
+    resend_idx = page.index("signal.resend")
     label_start = page.rindex("<label", 0, resend_idx)
     label_end = page.index("</label>", resend_idx) + len("</label>")
     resend_label = page[label_start:label_end]
@@ -1653,12 +1653,15 @@ async def test_the_projectsync_card_static_text_is_translated(api):
     """Aufgabe 16 (Projektdatei-Sync-Karte): die Ueberschrift, der Einfuehr-
     ungstext, der Bruecken-IP-Hinweis (Praefix/Link/Suffix - derselbe Aufbau
     wie Aufgabe 11/13, hier mit `web.export.projectsync_bridge_ip_hint_*`
-    und dem geteilten `web.settings.miniserver_link`), das Miniserver-IP-
-    Label samt Klammerhinweis und Platzhalter, das Dateifeld-Label, der
-    Verarbeitungs-Hinweis, die "Alles aktuell"-Meldung, die fuenf
-    Gesamt-Tally-Beschriftungen, die abweichende "alles aktuell"-Kurzform
-    je Geraetekarte, die vereinfachte Disclosure (ein einziger `t(...)`-
-    Aufruf mit `{count}` statt zwei Elementen), das Checkbox-Label und der
+    und dem geteilten `web.settings.miniserver_link`), das Dateifeld-Label,
+    der Verarbeitungs-Hinweis, die Miniserver-Auswahl (Label, Platzhalter-
+    Option, Mehrfach-Hinweis - Nutzerwunsch nach dem Review: ersetzt seit
+    dem Zusammenfuehren mit `main` das fruehere IP-Textfeld komplett, siehe
+    `web.export.projectsync_miniserver_select_*`/`_multiple_miniservers_
+    hint`), die "Alles aktuell"-Meldung, die fuenf Gesamt-Tally-
+    Beschriftungen, die abweichende "alles aktuell"-Kurzform je
+    Geraetekarte, die vereinfachte Disclosure (ein einziger `t(...)`-Aufruf
+    mit `{count}` statt zwei Elementen), das Checkbox-Label und der
     Download-Knopf tragen jetzt `t(...)` statt fester deutscher Literale -
     keiner der frueheren Literale bleibt im Markup."""
     client, _, _ = api
@@ -1680,18 +1683,18 @@ async def test_the_projectsync_card_static_text_is_translated(api):
     assert "Einstellungen → Verbindung zum Miniserver" not in bridge_hint
     assert "die Brücken-IP hinterlegen" not in markup
 
-    assert "x-text=\"t('web.export.projectsync_miniserver_ip_label')\"" in markup
-    assert ">IP des Miniservers<" not in markup
-    assert "x-text=\"t('web.export.projectsync_miniserver_ip_hint')\"" in markup
-    assert "nur nötig bei mehreren Miniservern" not in markup
-    assert ":placeholder=\"t('web.export.projectsync_ip_placeholder')\"" in markup
-    assert "z. B. 10.0.0.10" not in markup
-
     assert "x-text=\"t('web.export.projectsync_file_label')\"" in markup
     assert "Projektdatei (.Loxone)<" not in markup
 
     assert "x-text=\"t('web.export.projectsync_busy')\"" in markup
     assert "Wird verarbeitet …" not in markup
+
+    assert "x-text=\"t('web.export.projectsync_miniserver_select_label')\"" in markup
+    assert ">Miniserver<" not in markup
+    assert "x-text=\"t('web.export.projectsync_miniserver_select_placeholder')\"" in markup
+    assert "Bitte wählen …" not in markup
+    assert "x-text=\"t('web.export.projectsync_multiple_miniservers_hint')\"" in markup
+    assert "enthält mehrere Miniserver" not in markup
 
     assert "x-text=\"t('web.export.projectsync_all_current')\"" in markup
     assert "Alles aktuell – keine Änderungen nötig." not in markup
@@ -1743,11 +1746,20 @@ async def test_the_projectsync_card_dynamic_strings_are_translated(api):
     upload_body = script[upload_start:upload_end]
     assert 'this.projectSync.error = t("web.export.bridge_ip_missing");' in upload_body
     assert "die Brücken-IP hinterlegen" not in upload_body
+
+    # `_syncProjectFile` ist seit dem Zusammenfuehren mit `main` (Miniserver-
+    # Auswahlfeld statt IP-Textfeld) der gemeinsame Kern von
+    # `uploadProjectFile` UND `confirmProjectSyncMiniserver` - der Hochladen-
+    # fehlgeschlagen-Fehler lebt seither dort, nicht mehr in
+    # `uploadProjectFile` selbst.
+    sync_start = script.index("async _syncProjectFile(file, miniserverIp) {")
+    sync_end = script.index("\n    },", sync_start)
+    sync_body = script[sync_start:sync_end]
     assert (
         'this.projectSync.error = t("web.export.projectsync_upload_failed", '
-        "{ message: error.message });" in upload_body
+        "{ message: error.message });" in sync_body
     )
-    assert "Hochladen fehlgeschlagen" not in upload_body
+    assert "Hochladen fehlgeschlagen" not in sync_body
 
     status_label_start = script.index("projectSyncStatusLabel(status) {")
     status_label_end = script.index("\n    },", status_label_start)

@@ -553,36 +553,6 @@
             x-text="t('web.export.projectsync_multiple_miniservers_hint')"
           ></p>
 
-          <!--
-            Nutzerwunsch nach dem Review: bei mehreren Miniservern in der
-            Datei ein Auswahlfeld statt eines Textfelds fuer die IP. Die
-            Datei liegt bereits im Speicher des Browsers (`projectSync.file`,
-            gesetzt in `uploadProjectFile`) - die Auswahl loest `confirm
-            ProjectSyncMiniserver` aus, das dieselbe Datei ein zweites Mal
-            mit der gewaehlten IP hochlaedt, ganz ohne erneuten Datei-Dialog.
-          -->
-          <div class="row" x-show="projectSync.needsMiniserverSelection" x-cloak>
-            <label
-              >Miniserver
-              <select
-                x-model="projectSync.selectedMiniserverIp"
-                @change="confirmProjectSyncMiniserver()"
-                :disabled="projectSync.busy"
-              >
-                <option value="" disabled>Bitte wählen …</option>
-                <template
-                  x-for="ms in projectSync.availableMiniservers"
-                  :key="ms.int_addr"
-                >
-                  <option :value="ms.int_addr" x-text="`${ms.title} (${ms.int_addr})`"></option>
-                </template>
-              </select>
-            </label>
-          </div>
-          <p class="hint" x-show="projectSync.needsMiniserverSelection" x-cloak>
-            Diese Projektdatei enthält mehrere Miniserver – bitte den gewünschten auswählen.
-          </p>
-
           <template x-if="projectSync.plan">
             <div>
               <!--
