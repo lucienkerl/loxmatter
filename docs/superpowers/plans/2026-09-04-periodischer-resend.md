@@ -1075,13 +1075,25 @@ EOF
 
 An `tests/loxone/test_runtime.py` anhängen (nach den drei Tests aus Task 5):
 
+**Korrektur (beim Ausführen dieses Plans entdeckt, vor Implementierung von
+Task 6):** Die beiden Tests unten riefen ursprünglich
+`store.resend_settings.set_interval_seconds(0.01)` auf, um ein sehr kurzes
+Intervall zu simulieren - das verletzt aber genau die in Task 2 selbst
+eingeführte Untergrenze `MIN_RESEND_INTERVAL_SECONDS = 10.0`
+([resend_settings_store.py](../../../src/loxmatter/model/resend_settings_store.py)) und lässt den echten Setter mit `ValueError`
+scheitern, bevor der Test überhaupt zum eigentlichen Verhalten kommt. Die
+Tests unten nutzen stattdessen `monkeypatch` (in diesem Testmodul bereits an
+anderer Stelle verwendet), um `get_interval_seconds` direkt zu ersetzen -
+das prüft weiterhin, dass `_resend_loop` das Intervall bei JEDEM Poll frisch
+liest, ohne die Untergrenze des echten Setters zu umgehen oder zu senken.
+
 ```python
-async def test_resend_loop_never_sends_an_unmarked_signal(environment):
+async def test_resend_loop_never_sends_an_unmarked_signal(environment, monkeypatch):
     _, sender, store, device_id, _ = environment
     marked_key = f"d{device_id}_2_voltage"
     unmarked_key = f"d{device_id}_2_current"
     store.set_resend(marked_key, True)
-    store.resend_settings.set_interval_seconds(0.01)
+    monkeypatch.setattr(store.resend_settings, "get_interval_seconds", lambda: 0.01)
 
     runtime = Runtime(store, sender, resend_poll_seconds=0.02)
     await runtime.on_attribute(device_id, "2/144/4", 230000)
@@ -1097,14 +1109,17 @@ async def test_resend_loop_never_sends_an_unmarked_signal(environment):
     assert unmarked_key not in forced
 
 
-async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(environment):
+async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(environment, monkeypatch):
     """Eine Aenderung ueber die WebUI (`PATCH /api/settings/resend-interval`)
     wirkt innerhalb weniger Sekunden, ohne Prozess-Neustart (Entwurf,
-    Abschnitt 6)."""
+    Abschnitt 6). `interval` ist ein veraenderliches Dict statt einer freien
+    Variable, weil die monkeypatch-Lambda unten es per Closure lesen muss,
+    nachdem der Test seinen Wert schon geaendert hat."""
     _, sender, store, device_id, _ = environment
     key = f"d{device_id}_2_voltage"
     store.set_resend(key, True)
-    store.resend_settings.set_interval_seconds(10.0)
+    interval = {"seconds": 10.0}
+    monkeypatch.setattr(store.resend_settings, "get_interval_seconds", lambda: interval["seconds"])
 
     runtime = Runtime(store, sender, resend_poll_seconds=0.02)
     await runtime.on_attribute(device_id, "2/144/4", 230000)
@@ -1113,9 +1128,9 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
     await runtime.start()
     try:
         await asyncio.sleep(0.09)
-        assert sender.keys() == []  # 10s-Intervall ist noch lange nicht um
+        assert sender.keys() == []  # 10s-Intervall (simuliert) ist noch lange nicht um
 
-        store.resend_settings.set_interval_seconds(0.01)
+        interval["seconds"] = 0.01
         await asyncio.sleep(0.09)
     finally:
         await runtime.stop()
