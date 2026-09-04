@@ -87,17 +87,33 @@ verhindern.
 
 ## 6. Runtime-Verhalten
 
+**Korrektur gegenüber der ursprünglichen Fassung dieses Abschnitts:**
 `resend_all()` ([runtime.py:362-396](../../../src/loxmatter/loxone/runtime.py))
-filtert `self._last_values` nicht mehr vollständig, sondern nur noch auf
-Schlüssel, deren zugehöriges `StoredSignal.resend == True` ist.
+wird nicht nur vom periodischen Timer aufgerufen, sondern auch beim
+Bridge-Start (`cli.py`, direkt nach `seed_from_snapshot`) und vom
+`/resync`-Endpunkt (`server.py`) — beides Fälle, die ausdrücklich *jeden*
+bekannten Wert wiederherstellen müssen (Spec 6.4, Zustands-Wiederherstellung
+nach einem Miniserver-Neustart). `resend_all()` selbst auf `resend = true`
+zu filtern würde also nicht nur den periodischen Timer einschränken, sondern
+auch `/resync` und den Bridge-Start — nach einem echten
+Miniserver-Neustart blieben dann die meisten virtuellen Eingänge auf ihrem
+Defaultwert stehen, genau das Problem, das Spec 6.4 verhindern soll.
+
+**Deshalb bleibt `resend_all()` unverändert** (weiterhin ein voller Restore
+aller bekannten Werte, benutzt von `/resync` und dem Bridge-Start). Eine neue
+Methode `resend_marked()` filtert auf `resend = true` und wird
+ausschließlich von `_resend_loop` aufgerufen; beide teilen sich intern die
+bestehende, bereits gegen ein Race abgesicherte Sende-Logik (Wert je
+Schlüssel erst unmittelbar vor dem Senden aus `_last_values` nachlesen,
+siehe Kommentar an `resend_all()`), nur mit unterschiedlicher Schlüsselmenge.
 
 `_resend_loop` liest die konfigurierte Intervalldauer nicht mehr einmalig
 beim Start, sondern bei laufendem Betrieb wiederholt aus dem Store (kurzer
 Polling-Takt, z. B. alle 5s prüfen, ob die konfigurierte Zeit seit dem
-letzten Resend um ist). Eine Änderung über die WebUI wirkt damit innerhalb
-weniger Sekunden, ohne Prozess-Neustart — kein Event/Wecker-Mechanismus
-nötig, ein einfacher Poll reicht angesichts der Größenordnung (Sekunden,
-nicht Millisekunden).
+letzten `resend_marked()`-Lauf um ist). Eine Änderung über die WebUI wirkt
+damit innerhalb weniger Sekunden, ohne Prozess-Neustart — kein
+Event/Wecker-Mechanismus nötig, ein einfacher Poll reicht angesichts der
+Größenordnung (Sekunden, nicht Millisekunden).
 
 ## 7. Ausdrücklich außerhalb des Zuschnitts
 
@@ -120,12 +136,15 @@ mit Anzeige/Validierung des Minimums aus Abschnitt 5.
 
 ## 9. Prüfung
 
-- Ein Signal mit `resend = false` (Default) wird von `resend_all()` nicht
+- Ein Signal mit `resend = false` (Default) wird von `resend_marked()` nicht
   erfasst, auch wenn sein Wert seit Langem unverändert ist.
-- Ein Signal mit `resend = true` erscheint bei jedem `resend_all()`-Lauf,
+- Ein Signal mit `resend = true` erscheint bei jedem `resend_marked()`-Lauf,
   unabhängig vom Änderungsstatus.
-- `d<id>_online` und Pulszähler-Schlüssel tauchen nie in `resend_all()` auf,
-  selbst wenn (versehentlich) versucht wird, sie zu markieren.
+- `resend_all()` bleibt davon unberührt: es erfasst weiterhin JEDEN
+  bekannten Wert, unabhängig vom `resend`-Flag - `/resync` und der
+  Bridge-Start dürfen sich darauf verlassen (siehe Abschnitt 6).
+- `d<id>_online` und Pulszähler-Schlüssel tauchen nie in `resend_marked()`
+  auf, selbst wenn (versehentlich) versucht wird, sie zu markieren.
 - Eine Änderung des Intervalls über `PATCH /api/settings/resend-interval`
   wirkt sich innerhalb weniger Sekunden auf den Takt von `_resend_loop` aus,
   ohne Neustart.
