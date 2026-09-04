@@ -1128,7 +1128,17 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
     await runtime.start()
     try:
         await asyncio.sleep(0.09)
-        assert sender.keys() == []  # 10s-Intervall (simuliert) ist noch lange nicht um
+        # `runtime.start()` startet nebenbei auch die Heartbeat-Schleife
+        # (hier mit dem Default `heartbeat_seconds=30.0`), die schon vor
+        # ihrem eigenen ersten Schlaf einmal sendet (siehe `_heartbeat_loop`)
+        # - unabhaengig vom hier getesteten Resend-Intervall. Ohne den Filter
+        # wuerde "bridge_alive" diese Pruefung faelschlich zum Scheitern
+        # bringen, obwohl der Resend selbst (worum es hier geht) noch gar
+        # nicht gelaufen ist. (Beim Ausfuehren dieses Plans entdeckt, vor
+        # Implementierung von Task 6 - derselbe Fund wie die
+        # monkeypatch-Korrektur oben, nur diesmal ein Kollateraleffekt der
+        # Heartbeat-Schleife statt der Store-Validierung.)
+        assert [k for k in sender.keys() if k != "bridge_alive"] == []
 
         interval["seconds"] = 0.01
         await asyncio.sleep(0.09)
