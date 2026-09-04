@@ -67,6 +67,21 @@ def run_sync(
     # Ohne `try`: nur `NEW_DEVICE`-Eintraege erreichen mit
     # `include_new_devices=True` den Code, der eine Caption braucht - die
     # konservative Variante kann also gar keinen `MissingCaptionError` werfen.
+    #
+    # Ein `ProjectFormatError` aus `_installation_suffix` (Finding N1 aus dem
+    # Re-Review: ueber `apply_plan` -> `_new_signal_edit`/`_new_device_edit`
+    # -> `new_unique_id`, sobald ein `NEW_SIGNAL`-Eintrag eine neue ID
+    # braucht) kann diese konservative Variante dagegen SEHR WOHL werfen -
+    # `NEW_SIGNAL` ist unabhaengig von `include_new_devices`. Bewusst
+    # unbehandelt gelassen: anders als eine fehlende Caption (nur eine
+    # Grenze des experimentellen Pfades) heisst ein `ProjectFormatError`
+    # hier "das ID-Format dieser Datei ist grundsaetzlich nicht erkennbar"
+    # (Entwurf Abschnitt 10) - ein fundamentaleres Problem als eine fehlende
+    # optionale Sektion, das den ganzen Upload zu Recht scheitern lassen
+    # soll (`api.project_sync` faengt `ProjectFormatError` schon zur
+    # verstaendlichen 400 ab). Fuer Konsistenz gilt dieselbe Entscheidung
+    # weiter unten fuer die experimentelle Variante: der `except`-Block dort
+    # faengt bewusst nur `MissingCaptionError`, kein `ProjectFormatError`.
     conservative = apply_plan(
         index,
         plan,
@@ -98,6 +113,16 @@ def run_sync(
         # EXPERIMENTELLEN Pfades, kein Grund, den ganzen Upload scheitern zu
         # lassen: Plan und konservative Variante bleiben nutzbar, nur diese
         # eine Variante entfaellt - mit Begruendung statt kommentarlos.
+        #
+        # Bewusst NUR `MissingCaptionError`, kein `ProjectFormatError`: ein
+        # `ProjectFormatError` aus `_installation_suffix` (siehe Kommentar
+        # beim Aufruf der konservativen Variante oben) propagiert absichtlich
+        # bis zu `api.project_sync`s `except ProjectFormatError` -> HTTP 400
+        # durch, statt hier nur die experimentelle Variante stillzulegen -
+        # dieselbe Datei koennte denselben Fehler schon in der konservativen
+        # Variante ausgeloest haben, die dort ebenfalls unbehandelt bleibt.
+        # Ein degradiertes Verhalten nur fuer diesen Aufruf waere inkonsistent
+        # mit dem oberen.
         with_new_devices = None
         reason = str(exc)
     return ProjectSyncResult(plan, conservative, with_new_devices, reason)

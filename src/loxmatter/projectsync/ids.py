@@ -24,6 +24,8 @@ from __future__ import annotations
 import secrets
 import time
 
+from loxmatter.projectsync.scan import ProjectFormatError
+
 
 def _is_hex(value: str) -> bool:
     if not value:
@@ -38,12 +40,19 @@ def _is_hex(value: str) -> bool:
 def _installation_suffix(existing: set[str]) -> str:
     """Der letzte Bindestrich-Abschnitt einer bestehenden U-ID - wird fuer
     neue IDs uebernommen, damit sie zur selben Projekt-Familie gehoeren
-    (Entwurf Abschnitt 6), statt einen eigenen Suffix zu erfinden."""
+    (Entwurf Abschnitt 6), statt einen eigenen Suffix zu erfinden.
+
+    Findet sich kein `U`-Wert im erwarteten 4-Hex-Gruppen-Schema (Datei ganz
+    ohne `U`-Attribute, oder eine Loxone-Config-Version mit abweichendem
+    ID-Format - Entwurf Abschnitt 10 nennt genau diese Format-Unsicherheit
+    als offenes Risiko), ist das keine interne Fehlfunktion, sondern ein
+    Format, das dieses Modul nicht versteht: `ProjectFormatError`, nicht ein
+    nackter `ValueError`, der am Upload-Endpunkt als HTTP 500 ankaeme."""
     for value in existing:
         parts = value.split("-")
         if len(parts) == 4 and all(_is_hex(part) for part in parts):
             return parts[-1]
-    raise ValueError(
+    raise ProjectFormatError(
         "Keine bestehende U-ID im erwarteten Format in der Datei gefunden, aus der "
         "sich ein Installations-Suffix ableiten liesse."
     )

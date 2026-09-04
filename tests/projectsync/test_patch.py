@@ -349,6 +349,64 @@ def test_update_does_not_rewrite_an_attribute_that_only_ends_in_the_name():
     assert cmd.attrs["Title"] == "Neuer Titel"
 
 
+# Wie `sample_project`, aber OHNE ein einziges `U`-Attribut irgendwo im
+# Dokument - der Fall, den Entwurf Abschnitt 10 als offenes Risiko nennt
+# (Datei ganz ohne `U`-Attribute, oder eine Config-Version mit abweichendem
+# ID-Format). `d1_1_onoff` existiert schon (bleibt `unchanged`), `d1_1_temp`
+# fehlt noch - das erzwingt eine neue ID ueber `_new_signal_edit` ->
+# `new_unique_id` -> `_installation_suffix`, ohne dass ein komplett neues
+# Geraet (und damit `MissingCaptionError`) noetig waere.
+NO_U_ATTR_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="VirtualInCaption" IName="C1">\r\n'
+    '\t\t<C Type="VirtualUdpIn" IName="VUI1" Title="Matter — Altes Geraet" WF="16384"'
+    ' Address="10.0.0.5" Port="7000">\r\n'
+    '\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" Title="Alter Titel" Nio="2" WF="16384"'
+    ' Check="d1_1_onoff:\\v" Analog="true">\r\n'
+    '\t\t\t\t<IoData Cr="x" Pr="y"/>\r\n'
+    "\t\t\t</C>\r\n"
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
+def test_new_signal_without_any_existing_u_id_raises_project_format_error():
+    """Finding N1 aus dem Re-Review: `_installation_suffix` warf bislang einen
+    nackten `ValueError`, wenn keine bestehende `U`-ID im erwarteten
+    4-Hex-Gruppen-Format zu finden war - unbehandelt am Upload-Endpunkt eine
+    HTTP 500 statt der ueblichen verstaendlichen 400 (Entwurf Abschnitt 8).
+    Erwartet ist ein `ProjectFormatError`, wie bei jedem anderen erkannten
+    Formatfehler dieser Datei auch."""
+    import pytest
+
+    from loxmatter.projectsync.scan import ProjectFormatError
+
+    index = build_index(NO_U_ATTR_PROJECT)
+    assert index.all_u_values == set()
+
+    device = _device(1, "Altes Geraet")
+    signals = [
+        _signal("d1_1_onoff", 1, title="Alter Titel"),
+        _signal("d1_1_temp", 1, title="Temperatur"),
+    ]
+    plan = build_plan(index, [device], {1: signals}, {1: []})
+
+    with pytest.raises(ProjectFormatError, match="Installations-Suffix"):
+        apply_plan(
+            index,
+            plan,
+            [device],
+            {1: signals},
+            {1: []},
+            include_new_devices=False,
+            bridge_ip="10.0.0.5",
+            port=7000,
+            listen=8080,
+        )
+
+
 def test_new_device_without_virtual_in_caption_raises_clear_error():
     """`include_new_devices=True` fuer ein Geraet, das einen komplett neuen
     Eingangs-Container braucht, in einem Projekt ohne jeden bestehenden

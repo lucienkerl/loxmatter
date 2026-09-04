@@ -108,3 +108,58 @@ def test_run_sync_raises_project_format_error_for_non_utf8_upload(tmp_path):
     with pytest.raises(ProjectFormatError, match="UTF-8"):
         run_sync(utf16, store, bridge_ip="10.0.0.5", port=7000, listen=8080)
     store.close()
+
+
+# Enthaelt schon einen `VirtualUdpIn`-Container fuer Geraet 1 (Praefix `d1_`,
+# mit `d1_1_onoff`), aber KEIN einziges `U`-Attribut irgendwo im Dokument.
+# `export.signals.to_inputs` erzeugt fuer JEDES Geraet zusaetzlich ein
+# Online-Signal (`d1_online`) - das fehlt hier im Container, erzwingt also
+# einen `NEW_SIGNAL`-Eintrag in einem bereits BESTEHENDEN Container. Anders
+# als `NO_VIRTUAL_IN_CAPTION_PROJECT` oben (das einen `NEW_DEVICE`/
+# `MissingCaptionError`-Pfad braucht) reicht das schon mit
+# `include_new_devices=False` - `NEW_SIGNAL` ist von diesem Flag unabhaengig.
+NO_U_ATTR_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="VirtualInCaption" IName="C1">\r\n'
+    '\t\t<C Type="VirtualUdpIn" IName="VUI1" Title="Matter — Steckdose" WF="16384"'
+    ' Address="10.0.0.5" Port="7000">\r\n'
+    '\t\t\t<C Type="VirtualUdpInCmd" IName="VCI1" Title="Ein/Aus" Nio="2" WF="16384"'
+    ' Check="d1_1_onoff:\\v" Analog="true">\r\n'
+    '\t\t\t\t<IoData Cr="x" Pr="y"/>\r\n'
+    "\t\t\t</C>\r\n"
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
+def test_run_sync_propagates_project_format_error_from_id_generation(tmp_path):
+    """Finding N1, Punkt 3 aus dem Re-Review: ein `ProjectFormatError` aus
+    `_installation_suffix` (kein `U`-Wert im erwarteten Format in der Datei)
+    soll bewusst NICHT wie `MissingCaptionError` degradiert werden, sondern
+    bis zum Aufrufer durchschlagen - `api.project_sync` faengt es zur
+    verstaendlichen 400 ab. Anders als eine fehlende Caption (nur eine Grenze
+    des experimentellen Pfades) heisst dieser Fehler "das ID-Format der Datei
+    ist grundsaetzlich nicht erkennbar" (Entwurf Abschnitt 10) und soll darum
+    den ganzen Upload scheitern lassen.
+
+    Wichtig: dieser Fehler tritt schon bei der KONSERVATIVEN Variante auf
+    (`include_new_devices=False`), die in `run_sync` VOR der experimentellen
+    Variante berechnet wird und durch kein `try` geschuetzt ist - er kann
+    also gar nicht erst bis zum `except MissingCaptionError`-Block der
+    experimentellen Variante gelangen."""
+    import pytest
+
+    from loxmatter.projectsync.index import ProjectFormatError
+
+    store = _plug_store(tmp_path)
+    with pytest.raises(ProjectFormatError, match="Installations-Suffix"):
+        run_sync(
+            NO_U_ATTR_PROJECT.encode("utf-8"),
+            store,
+            bridge_ip="10.0.0.5",
+            port=7000,
+            listen=8080,
+        )
+    store.close()
