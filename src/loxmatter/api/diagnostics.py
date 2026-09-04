@@ -471,9 +471,7 @@ def _check_thread() -> tuple[bool, str]:
         if interface.startswith(_THREAD_INTERFACE_PREFIX)
     ]
     if not thread:
-        return False, i18n.t(
-            "api.diagnostics.no_thread_interface", prefix=_THREAD_INTERFACE_PREFIX
-        )
+        return False, i18n.t("api.diagnostics.no_thread_interface", prefix=_THREAD_INTERFACE_PREFIX)
     return True, i18n.t(
         "api.diagnostics.thread_found",
         interface=thread[0][1],

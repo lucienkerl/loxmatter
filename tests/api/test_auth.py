@@ -189,8 +189,7 @@ async def test_login_before_setup_says_so(auth_client):
     response = await client.post("/auth/login", json={"password": PASSWORT})
     assert response.status_code == 409
     assert response.json()["detail"] == (
-        "No password has been set for this service yet – please complete initial "
-        "setup first."
+        "No password has been set for this service yet – please complete initial setup first."
     )
 
 
