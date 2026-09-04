@@ -1101,14 +1101,14 @@ function app() {
           listen_port: this.bridgeSettings.listen_port,
         };
       } catch (error) {
-        this.settingsError = `Einstellungen konnten nicht geladen werden: ${error.message}`;
+        this.settingsError = t("web.settings.load_error", { message: error.message });
       }
     },
 
     async saveSettings() {
       this.settingsError = null;
       if (!this.settingsDraft.bridge_ip.trim()) {
-        this.settingsError = "Bitte die IP dieser Brücke eingeben.";
+        this.settingsError = t("web.settings.bridge_ip_required");
         return;
       }
       this.settingsBusy = true;
@@ -1118,12 +1118,25 @@ function app() {
           udp_port: Number(this.settingsDraft.udp_port),
           listen_port: Number(this.settingsDraft.listen_port),
         });
-        this.showToast("Einstellungen gespeichert.");
+        this.showToast(t("web.settings.saved_toast"));
       } catch (error) {
-        this.settingsError = `Einstellungen konnten nicht gespeichert werden: ${error.message}`;
+        this.settingsError = t("web.settings.save_error", { message: error.message });
       } finally {
         this.settingsBusy = false;
       }
+    },
+
+    /** Setzt die gemeinsame Spracheinstellung (PATCH /api/language, Aufgabe 1)
+     * und laedt danach die ganze Seite neu - bestaetigte, einfachere Variante
+     * aus dem Entwurfsgespraech (Spec Abschnitt 7): kein Sonderfall fuer
+     * bereits angezeigte Toasts oder WebSocket-Zustaende, die sonst in der
+     * alten Sprache stehen blieben. */
+    async setLanguage(language) {
+      if (language === this.language) {
+        return;
+      }
+      await this.request("PATCH", "/api/language", { language });
+      window.location.reload();
     },
 
     async previewExport() {

@@ -688,43 +688,60 @@
            ================================================================ -->
       <section x-show="view === 'settings'" x-cloak>
         <div class="card">
-          <h2>Verbindung zum Miniserver</h2>
-          <p class="hint">
-            Gemeint ist die Adresse des Rechners, auf dem loxmatter läuft – so, wie der
-            Miniserver ihn sieht. <strong>Nicht</strong> die Adresse des Miniservers. Der
-            virtuelle Eingang nimmt Datagramme nur von dieser Adresse an, und die
-            Ausgangsbefehle rufen sie als <span class="key">http://&lt;diese IP&gt;:HTTP-Port</span>
-            auf. Steht hier die Miniserver-IP, sehen die Vorlagen richtig aus, bleiben aber
-            stumm – ohne jede Fehlermeldung.
-          </p>
+          <h2 x-text="t('web.settings.connection_heading')"></h2>
+          <p class="hint" x-html="t('web.settings.connection_explanation')"></p>
           <div class="row">
             <label
-              >IP dieser Brücke
-              <input type="text" x-model="settingsDraft.bridge_ip" placeholder="z. B. 192.168.1.20"
+              ><span x-text="t('web.bridge_ip_label')"></span>
+              <input
+                type="text"
+                x-model="settingsDraft.bridge_ip"
+                :placeholder="t('web.settings.bridge_ip_placeholder')"
             /></label>
-            <label>UDP-Port (virtueller Eingang) <input type="number" x-model.number="settingsDraft.udp_port" /></label>
+            <label
+              ><span x-text="t('web.settings.udp_port_label')"></span>
+              <input type="number" x-model.number="settingsDraft.udp_port" />
+            </label>
             <label>
-              HTTP-Port (Befehle empfangen)
+              <span x-text="t('web.settings.http_port_label')"></span>
               <input type="number" x-model.number="settingsDraft.listen_port" />
             </label>
           </div>
           <div class="row">
-            <button class="primary" @click="saveSettings()" :disabled="settingsBusy">
-              Speichern
-            </button>
+            <button
+              class="primary"
+              @click="saveSettings()"
+              :disabled="settingsBusy"
+              x-text="t('web.settings.save')"
+            ></button>
             <span class="hint" x-show="bridgeSettings.saved_at" x-cloak
-              >Zuletzt gespeichert: <span x-text="formatTimestamp(bridgeSettings.saved_at)"></span
+              ><span x-text="t('web.settings.last_saved_prefix')"></span
+              ><span x-text="formatTimestamp(bridgeSettings.saved_at)"></span
             ></span>
-            <span class="hint" x-show="!bridgeSettings.saved_at" x-cloak
-              >Noch nicht gespeichert.</span
-            >
+            <span
+              class="hint"
+              x-show="!bridgeSettings.saved_at"
+              x-cloak
+              x-text="t('web.settings.never_saved')"
+            ></span>
           </div>
           <p x-show="settingsError" x-cloak class="banner danger" x-text="settingsError"></p>
         </div>
 
         <div class="card">
-          <h2>Weitere Einstellungen</h2>
-          <p class="hint">Hier entstehen künftig weitere Einstellungen, sobald sie gebraucht werden.</p>
+          <h2 x-text="t('web.settings.language_heading')"></h2>
+          <nav class="tabs">
+            <button
+              :class="{ active: language === 'en' }"
+              @click="setLanguage('en')"
+              x-text="t('web.settings.language_en')"
+            ></button>
+            <button
+              :class="{ active: language === 'de' }"
+              @click="setLanguage('de')"
+              x-text="t('web.settings.language_de')"
+            ></button>
+          </nav>
         </div>
       </section>
     </main>

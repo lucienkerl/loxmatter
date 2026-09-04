@@ -484,16 +484,16 @@ async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):
     teuersten - und schreibgeschuetzt im Export-Tab (`bridgeSettings.
     bridge_ip`), das denselben Wert nur noch anzeigt.
 
-    Die Einstellungen-Ansicht traegt ihr Label noch als festes deutsches
-    Literal (Aufgabe 15 uebersetzt sie erst); der Export-Tab traegt seit
-    Aufgabe 13 `t('web.bridge_ip_label')` - denselben Schluessel, den Aufgabe
-    15 dort ebenfalls verwenden wird."""
+    Beide Stellen tragen inzwischen `t('web.bridge_ip_label')` - denselben
+    Schluessel: der Export-Tab seit Aufgabe 13, die Einstellungen-Ansicht
+    seit Aufgabe 15."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
 
     editable_label = _label_around(markup, 'x-model="settingsDraft.bridge_ip')
     assert "Miniserver" not in editable_label, editable_label
-    assert "IP dieser Brücke" in editable_label, editable_label
+    assert "x-text=\"t('web.bridge_ip_label')\"" in editable_label, editable_label
+    assert "IP dieser Brücke" not in editable_label, editable_label
 
     readonly_label = _label_around(markup, ':value="bridgeSettings.bridge_ip')
     assert "Miniserver" not in readonly_label, readonly_label
@@ -1412,3 +1412,135 @@ async def test_the_system_tab_dynamic_errors_are_translated(api):
         in download_backup_body
     )
     assert "Sicherung nicht möglich" not in download_backup_body
+
+
+async def test_the_settings_tab_static_text_is_translated(api):
+    """Aufgabe 15, Schritt 3: die Verbindungskarte (Ueberschrift, Erklaerung
+    als `x-html` - sie enthaelt ein eingebettetes `<strong>Nicht</strong>`
+    und einen `<span class="key">` mit dem URL-Beispiel -, das geteilte
+    `web.bridge_ip_label`, der Platzhalter, die Port-Beschriftungen, der
+    Speichern-Knopf und der Zuletzt-gespeichert-/Noch-nicht-gespeichert-
+    Hinweis) tragen jetzt `t(...)` statt fester deutscher Literale. Die
+    „Verbindung zum Miniserver"-Ueberschrift ist der eindeutigste Beleg,
+    dass diese Karte ueberhaupt uebersetzt wurde - siehe Schritt 1/2."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    assert "x-text=\"t('web.settings.connection_heading')\"" in markup
+    assert ">Verbindung zum Miniserver<" not in markup
+    assert "Verbindung zum Miniserver" not in markup
+
+    assert "x-html=\"t('web.settings.connection_explanation')\"" in markup
+    assert "Gemeint ist die Adresse des Rechners" not in markup
+
+    assert "x-text=\"t('web.bridge_ip_label')\"" in markup
+
+    assert ":placeholder=\"t('web.settings.bridge_ip_placeholder')\"" in markup
+    assert 'placeholder="z. B. 192.168.1.20"' not in markup
+
+    assert "x-text=\"t('web.settings.udp_port_label')\"" in markup
+    assert ">UDP-Port (virtueller Eingang)<" not in markup
+
+    assert "x-text=\"t('web.settings.http_port_label')\"" in markup
+    assert ">HTTP-Port (Befehle empfangen)<" not in markup
+
+    assert "x-text=\"t('web.settings.save')\"" in markup
+    assert ">Speichern<" not in markup
+
+    assert "x-text=\"t('web.settings.last_saved_prefix')\"" in markup
+    assert "Zuletzt gespeichert:" not in markup
+    assert 'x-text="formatTimestamp(bridgeSettings.saved_at)"' in markup
+
+    assert "x-text=\"t('web.settings.never_saved')\"" in markup
+    assert "Noch nicht gespeichert." not in markup
+
+
+async def test_the_settings_tab_connection_explanation_html_renders_inline_markup(api):
+    """Aufgabe 15, Schritt 3 (Nachbesserung, analog zu Aufgabe 13/14):
+    `web.settings.connection_explanation` enthaelt sowohl ein eingebettetes
+    `<strong>Nicht</strong>` als auch einen `<span class="key">`, der das
+    URL-Beispiel umschliesst - die Bindung muss deshalb `x-html` sein, sonst
+    zeigt der Browser die spitzen Klammern als Text. `GET /api/i18n` liefert
+    die rohe Vorlage; die tatsaechliche Darstellung ist Teil der manuellen
+    Browserpruefung."""
+    client, _, _ = api
+    body = (await client.get("/api/i18n")).json()
+    template = body["strings"]["web.settings.connection_explanation"]
+    assert "<strong>" in template and "</strong>" in template
+    assert '<span class="key">' in template
+
+
+async def test_the_settings_tab_dynamic_errors_are_translated(api):
+    """Aufgabe 15, Schritt 6: der Lade- und Speicherfehler sowie die
+    Pflichtfeld-Meldung und die Erfolgs-Toast von `loadSettings`/
+    `saveSettings` tragen jetzt `t(...)` statt fester deutscher Literale
+    oder Template-Strings."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    load_start = script.index("async loadSettings() {")
+    load_end = script.index("\n    },", load_start)
+    load_body = script[load_start:load_end]
+    assert (
+        'this.settingsError = t("web.settings.load_error", { message: error.message });'
+        in load_body
+    )
+    assert "Einstellungen konnten nicht geladen werden" not in load_body
+
+    save_start = script.index("async saveSettings() {")
+    save_end = script.index("\n    },", save_start)
+    save_body = script[save_start:save_end]
+    assert 'this.settingsError = t("web.settings.bridge_ip_required");' in save_body
+    assert "Bitte die IP dieser Brücke eingeben." not in save_body
+    assert 'this.showToast(t("web.settings.saved_toast"));' in save_body
+    assert "Einstellungen gespeichert." not in save_body
+    assert (
+        'this.settingsError = t("web.settings.save_error", { message: error.message });'
+        in save_body
+    )
+    assert "Einstellungen konnten nicht gespeichert werden" not in save_body
+
+
+async def test_the_settings_tab_has_a_language_toggle(api):
+    """Aufgabe 15, Schritt 4: die bisherige Platzhalterkarte „Weitere
+    Einstellungen" ist ersetzt (nicht uebersetzt, siehe ihr eigener
+    Kommentar in Aufgabe 9) durch zwei Knoepfe, die die aktuelle Sprache
+    ueber die bereits vorhandene reaktive `language`-Eigenschaft (Aufgabe 8)
+    markieren und beim Anklicken `setLanguage(...)` aufrufen (Schritt 5).
+    Wiederverwendet die bereits vorhandene `nav.tabs`/`button.active`-Klasse
+    (Reiterleiste oben) statt einer neu erfundenen CSS-Klasse - siehe
+    `style.css`, es gibt sonst kein Beispiel fuer eine Knopfreihe mit
+    Aktiv-Zustand."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    assert ">Weitere Einstellungen<" not in markup
+    assert "Hier entstehen künftig weitere Einstellungen" not in markup
+
+    assert "x-text=\"t('web.settings.language_heading')\"" in markup
+
+    assert ':class="{ active: language === \'en\' }"' in markup
+    assert "@click=\"setLanguage('en')\"" in markup
+    assert "x-text=\"t('web.settings.language_en')\"" in markup
+
+    assert ':class="{ active: language === \'de\' }"' in markup
+    assert "@click=\"setLanguage('de')\"" in markup
+    assert "x-text=\"t('web.settings.language_de')\"" in markup
+
+
+async def test_app_js_defines_set_language(api):
+    """Aufgabe 15, Schritt 1/2 und 5: `app.js` liefert `setLanguage`, das
+    `PATCH /api/language` (Aufgabe 1) aufruft und danach die Seite neu
+    laedt - siehe die Auftragsbeschreibung fuer die bewusst einfache
+    Variante ohne Sonderfall fuer bereits angezeigte Toasts/WebSocket-
+    Zustaende."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    assert "async setLanguage(language) {" in script
+
+    start = script.index("async setLanguage(language) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+    assert 'await this.request("PATCH", "/api/language", { language });' in body
+    assert "window.location.reload();" in body
