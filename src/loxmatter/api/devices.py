@@ -458,14 +458,23 @@ def build_device_router(
         # matter-server unveraenderte Werte unterdrueckt.
         #
         # Ebenfalls Nachlauf, ebenfalls abgesichert (siehe oben): das
-        # Szenario, um das dieser Zweig kreist, ist ein matter-server, der
-        # unmittelbar nach dem Einlernen neu startet - dann laeuft
-        # `follow_node` in `_require_upstream` und wirft
-        # `MatterUnavailableError`, obwohl das Geraet vollstaendig eingelernt
-        # ist. Ohne Werte, aber eingelernt: die Signalzeilen stehen (sie
-        # entstehen aus `register_signals` oben), sie fuellen sich, sobald die
-        # Verbindung zurueck ist und das naechste `NODE_ADDED`/`NODE_UPDATED`
-        # die Dispatch-Schleife nachziehen laesst.
+        # naechstliegende Szenario ist ein matter-server, der unmittelbar nach
+        # dem Einlernen neu startet - dann laeuft `follow_node` in
+        # `_require_upstream` und wirft `MatterUnavailableError`, obwohl das
+        # Geraet vollstaendig eingelernt ist. Ohne Werte, aber eingelernt: die
+        # Signalzeilen stehen (sie entstehen aus `register_signals` oben).
+        #
+        # Dass sie sich auch wieder fuellen, traegt NICHT das naechste
+        # `NODE_ADDED`/`NODE_UPDATED` allein - dessen Diff ist fuer ein
+        # laengst abonniertes Geraet leer, und ohne den Schalter kaeme der
+        # Aufruf gar nicht bis zum Saeen. Es traegt `_seed_pending` in
+        # `BridgeMatterClient`: die Bruecke merkt sich jeden Node, dem sie noch
+        # ein Abbild schuldet - sei es, weil der Store ihn noch nicht kannte,
+        # sei es, weil der Handler beim Saeen geworfen hat -, und der naechste
+        # `follow_node` aus der Dispatch-Schleife holt es nach. Deshalb gilt
+        # die Zusage hier fuer BEIDE Faelle: fuer einen Fehlschlag vor dem
+        # Abonnieren wie fuer einen danach (etwa ein `sqlite3.OperationalError`
+        # unter gleichzeitiger Schreiblast der Resend-Schleife).
         try:
             await active_client.follow_node(snapshot.node_id, seed_even_without_new_paths=True)
         except Exception:

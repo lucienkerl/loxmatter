@@ -235,6 +235,10 @@ class BridgeMatterClient:
         # Wert doppelt zustellen. Queue, Handler und die device_id-Aufloesung
         # bleiben nach subscribe() erreichbar, weil follow_node sie braucht.
         self._subscribed_paths: set[tuple[int, str]] = set()
+        # Nodes, denen diese Bruecke noch ein Abbild schuldet - siehe
+        # `follow_node`, wo auch steht, warum das eine ANDERE Frage
+        # beantwortet als der Schalter `seed_even_without_new_paths`.
+        self._seed_pending: set[int] = set()
         self._queue: asyncio.Queue[_QueueItem] | None = None
         self._handler: RuntimeEventHandler | None = None
         self._resolve_device_id: Callable[[int], int | None] | None = None
@@ -333,6 +337,7 @@ class BridgeMatterClient:
         self._dispatch_task = None
         self._unsubscribers = []
         self._subscribed_paths = set()
+        self._seed_pending = set()
         self._queue = None
         self._handler = None
         self._resolve_device_id = None
@@ -695,6 +700,31 @@ class BridgeMatterClient:
         kennt der Store den Node nicht, bleibt der Handler auch mit dem
         Schalter außen vor.
 
+        **`_seed_pending` beantwortet eine andere Frage als der Schalter** —
+        beide werden gebraucht, keines ersetzt das andere. Der Schalter ist
+        der Aufrufer, der weiß, dass er das Gerät gerade registriert hat; die
+        Menge ist die Brücke, die sich merkt, dass sie einem Node noch ein
+        Abbild schuldet. Ein Node kommt hinein, wenn er (noch) keiner
+        device_id zuzuordnen war oder wenn der Handler beim Säen geworfen
+        hat, und verlässt sie erst, wenn das Abbild angekommen ist — deshalb
+        führt auch ein leerer Diff ohne Schalter bis zum Handler, solange die
+        Schuld offen ist.
+
+        Ohne die Menge trüge die Selbstheilungs-Zusage der Einlern-Route nur
+        halb: sie gilt für ein `follow_node`, das scheitert, BEVOR es
+        abonniert hat. Scheitert es DANACH — `resolve_device_id` liest aus
+        SQLite, der Handler schreibt dorthin, beides kann unter der
+        Schreiblast der Resend-Schleife auffliegen —, fände jeder spätere
+        Aufruf aus der Dispatch-Schleife einen leeren Diff vor und kehrte vor
+        dem Handler um. Das Gerät bliebe dauerhaft ohne Startwerte, und
+        niemand erführe davon.
+
+        `_subscribed_paths` bleibt davon unangetastet: die Abonnements beim
+        Upstream bestehen weiter, und würde man ihre Buchführung verwerfen,
+        legte der nächste Aufruf ein ZWEITES Abonnement je Pfad an — jeder
+        Wert käme doppelt an, bei einem Ereignissignal zählte zusätzlich der
+        Zähler doppelt hoch.
+
         Vor `subscribe()` aufgerufen tut die Methode nichts, statt zu werfen:
         die Einlern-Route ruft sie bedingungslos, und ein Aufbau ohne
         Subscription soll daran nicht scheitern.
@@ -718,22 +748,30 @@ class BridgeMatterClient:
 
         attributes = node.node_data.attributes
         added = self._subscribe_attribute_paths(upstream, queue, node_id, attributes)
-        if added == 0 and not seed_even_without_new_paths:
+        if added == 0 and not seed_even_without_new_paths and node_id not in self._seed_pending:
             return
 
         device_id = resolve_device_id(node_id)
         if device_id is None:
-            # Die Abonnements bleiben bestehen: sobald die Einlern-Route das
-            # Gerät registriert und mit `seed_even_without_new_paths` erneut
-            # nachzieht, greift der Zweig unten — dann ist der Diff leer, und
-            # nur der Schalter führt überhaupt noch bis hierher.
+            # Die Abonnements bleiben bestehen, und die Schuld wird vermerkt:
+            # sobald der Store den Node kennt, holt der nächste `follow_node`
+            # das Abbild nach — auch ohne neuen Pfad und ohne den Schalter.
+            self._seed_pending.add(node_id)
             logger.debug("Node %s ist keinem Gerät zugeordnet - nur abonniert", node_id)
             return
 
+        # Erst eintragen, dann säen, und nur nach Gelingen wieder austragen:
+        # wirft der Handler — er schreibt über `Runtime.on_node_snapshot` in
+        # den Store — oder wird der Aufruf abgebrochen, bleibt die Schuld
+        # stehen, und der nächste `follow_node` holt sie nach. Die Ausnahme
+        # läuft unverändert weiter; was mit ihr geschieht, entscheidet der
+        # Aufrufer.
+        self._seed_pending.add(node_id)
         await handler.on_node_snapshot(
             device_id,
             NodeSnapshot.from_raw(node_id, {"attributes": attributes, "available": node.available}),
         )
+        self._seed_pending.discard(node_id)
 
     async def _dispatch_loop(
         self,

@@ -849,6 +849,91 @@ async def test_forced_seeding_still_invents_no_device_id():
     assert handler.snapshot_calls == []
 
 
+class FailingOnceHandler(FakeHandler):
+    """Steht für ein `Runtime.on_node_snapshot`, das beim ersten Mal scheitert.
+
+    In Wirklichkeit schreibt der Handler über den Store nach SQLite — unter
+    gleichzeitiger Schreiblast der Resend-Schleife kann das mit
+    `sqlite3.OperationalError` ("database is locked") auffliegen. Für den
+    Client ist nur wichtig, DASS es wirft.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.remaining_failures = 1
+
+    async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None:
+        if self.remaining_failures > 0:
+            self.remaining_failures -= 1
+            raise RuntimeError("database is locked")
+        await super().on_node_snapshot(device_id, snapshot)
+
+
+async def test_a_snapshot_the_handler_refused_is_owed_and_caught_up_later():
+    """Der Ablauf, den die Einlern-Route für sich behauptet hatte: scheitert
+    das Säen NACH dem Abonnieren, half kein späteres `NODE_UPDATED` mehr - der
+    Diff war leer, `follow_node` kehrte vor dem Handler um, und das Gerät blieb
+    bis zum nächsten Neustart der Brücke ohne Startwerte.
+
+    Der spätere Aufruf hier hat weder einen neuen Pfad noch den Schalter -
+    genau der Aufruf aus der Dispatch-Schleife."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FailingOnceHandler()
+    await bridge.subscribe(lambda node_id: {8: 42}.get(node_id), handler)
+
+    upstream.add_node(FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": True}))
+    with pytest.raises(RuntimeError):
+        # Die Ausnahme läuft unverändert weiter - der Aufrufer (die Route)
+        # entscheidet, was damit geschieht.
+        await bridge.follow_node(8, seed_even_without_new_paths=True)
+    assert handler.snapshot_calls == []
+
+    await bridge.follow_node(8)
+
+    assert [(device_id, snap.node_id) for device_id, snap in handler.snapshot_calls] == [(42, 8)]
+
+
+async def test_a_node_the_store_did_not_know_yet_is_owed_its_snapshot():
+    """Der Node wurde abonniert, aber nicht gesät, weil der Store ihn noch
+    nicht kannte. Die Brücke schuldet ihm das Abbild, sobald er auflösbar ist -
+    auch ohne neuen Pfad und ohne Schalter."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+    known: dict[int, int] = {}
+    await bridge.subscribe(known.get, handler)
+
+    upstream.add_node(FakeNode(8, {"1/6/0": True}))
+    await bridge.follow_node(8)
+    assert handler.snapshot_calls == []
+
+    known[8] = 42
+    await bridge.follow_node(8)
+
+    assert [(device_id, snap.node_id) for device_id, snap in handler.snapshot_calls] == [(42, 8)]
+
+
+async def test_a_snapshot_that_arrived_is_not_owed_a_second_time():
+    """Die Kostenbremse bleibt: `NODE_UPDATED` feuert bei jedem Wechsel der
+    Erreichbarkeit und nach jeder Re-Subscription. Ist die Schuld einmal
+    beglichen, muss der leere Diff wieder vor dem Handler enden - sonst
+    schriebe jede dieser Meldungen über hundert UPDATE-Anweisungen in die
+    Datenbank."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+    handler = FakeHandler()
+    await bridge.subscribe(lambda node_id: {8: 42}.get(node_id), handler)
+
+    upstream.add_node(FakeNode(8, {"1/6/0": True}))
+    await bridge.follow_node(8)
+    assert len(handler.snapshot_calls) == 1
+
+    await bridge.follow_node(8)
+
+    assert len(handler.snapshot_calls) == 1
+
+
 async def test_follow_node_before_subscribe_does_nothing():
     """Kein Werfen: die Einlern-Route ruft `follow_node` bedingungslos auf,
     und ein Aufbau ohne Subscription soll daran nicht scheitern."""
