@@ -36,7 +36,13 @@ class SignalOut(BaseModel):
     Signalliste in "Funktional" und "Experte" zu gliedern (`api.devices.
     _signal_out` liest es unveraendert aus `StoredSignal.functional`) - eine
     zweite Berechnung der Regel gibt es weder in der API-Schicht noch in
-    JavaScript."""
+    JavaScript.
+
+    `resend` (Entwurf periodischer Resend, 2026-09-04) ist eine VIERTE,
+    wieder unabhaengige Frage: ob der periodische Timer (`Runtime.
+    resend_marked`) dieses Signal auch ohne Aenderung erneut senden soll.
+    Betrifft `/resync` und den Bridge-Start (`Runtime.resend_all`) nicht -
+    die ignorieren dieses Feld bewusst, siehe dortigen Docstring."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -50,6 +56,7 @@ class SignalOut(BaseModel):
     reason: str | None
     exported: bool
     functional: bool
+    resend: bool
 
 
 class DeviceOut(BaseModel):
@@ -94,6 +101,7 @@ class SignalPatch(BaseModel):
 
     title: str | None = None
     exported: bool | None = None
+    resend: bool | None = None
 
 
 class DeviceRename(BaseModel):
@@ -290,3 +298,23 @@ class ProjectSyncPlanOut(BaseModel):
     # Download-Angebots.
     patched_with_new_devices_base64: str | None
     new_devices_unavailable_reason: str | None
+
+
+class ResendIntervalOut(BaseModel):
+    """Antwort von `GET`/`PATCH /api/settings/resend-interval` (Entwurf
+    periodischer Resend, 2026-09-04, Abschnitt 5)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    interval_seconds: float
+
+
+class ResendIntervalIn(BaseModel):
+    """Rumpf von `PATCH /api/settings/resend-interval`. `gt=0` faengt einen
+    nicht-positiven Wert bereits hier ab (422 ohne eigenen Validator); die
+    tatsaechliche Untergrenze (`MIN_RESEND_INTERVAL_SECONDS`) prueft
+    `ResendSettingsStore.set_interval_seconds` selbst, siehe dort."""
+
+    model_config = ConfigDict(frozen=True)
+
+    interval_seconds: float = Field(gt=0)

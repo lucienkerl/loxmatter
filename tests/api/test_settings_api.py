@@ -27,6 +27,10 @@ import pytest
 from conftest import authenticate
 
 from loxmatter.loxone.server import build_app
+from loxmatter.model.resend_settings_store import (
+    DEFAULT_RESEND_INTERVAL_SECONDS,
+    MIN_RESEND_INTERVAL_SECONDS,
+)
 from loxmatter.model.store import DEFAULT_LISTEN_PORT, DEFAULT_UDP_PORT, Store
 
 
@@ -102,5 +106,52 @@ async def test_settings_route_requires_a_session(tmp_path, no_invoke, fake_runti
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/api/settings")
+    store.close()
+    assert response.status_code == 401
+
+
+async def test_a_fresh_installation_has_the_default_resend_interval(api):
+    client, _ = api
+    body = (await client.get("/api/settings/resend-interval")).json()
+    assert body["interval_seconds"] == DEFAULT_RESEND_INTERVAL_SECONDS
+
+
+async def test_patch_saves_and_returns_the_new_interval(api):
+    client, _ = api
+    response = await client.patch(
+        "/api/settings/resend-interval", json={"interval_seconds": 60.0}
+    )
+    assert response.status_code == 200
+    assert response.json()["interval_seconds"] == 60.0
+
+
+async def test_a_later_get_sees_what_patch_saved_for_the_interval(api):
+    client, _ = api
+    await client.patch("/api/settings/resend-interval", json={"interval_seconds": 45.0})
+    body = (await client.get("/api/settings/resend-interval")).json()
+    assert body["interval_seconds"] == 45.0
+
+
+async def test_an_interval_below_the_minimum_yields_422(api):
+    client, _ = api
+    response = await client.patch(
+        "/api/settings/resend-interval",
+        json={"interval_seconds": MIN_RESEND_INTERVAL_SECONDS - 1},
+    )
+    assert response.status_code == 422
+
+
+async def test_a_non_positive_interval_yields_422(api):
+    client, _ = api
+    response = await client.patch("/api/settings/resend-interval", json={"interval_seconds": 0})
+    assert response.status_code == 422
+
+
+async def test_resend_interval_route_requires_a_session(tmp_path, no_invoke, fake_runtime):
+    store = Store(tmp_path / "t.sqlite")
+    app = build_app(store, no_invoke, fake_runtime(store))
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/settings/resend-interval")
     store.close()
     assert response.status_code == 401

@@ -341,6 +341,10 @@ function app() {
     settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
     settingsBusy: false,
     settingsError: null,
+    resendInterval: { interval_seconds: 300 },
+    resendIntervalDraft: 300,
+    resendIntervalBusy: false,
+    resendIntervalError: null,
 
     // --- Export --------------------------------------------------------
     exportIncludeSystem: false,
@@ -556,6 +560,7 @@ function app() {
         ...this.devices.map((device) => this.loadSignals(device.id)),
         this.loadExportStatus(),
         this.loadSettings(),
+        this.loadResendInterval(),
       ]);
       this.connectLive();
       await this.selectView(this.view);
@@ -1074,6 +1079,17 @@ function app() {
       }
     },
 
+    async toggleResend(signal) {
+      try {
+        const updated = await this.request("PATCH", `/api/signals/${signal.key}`, {
+          resend: !signal.resend,
+        });
+        Object.assign(signal, updated);
+      } catch (error) {
+        this.signalsError = `Resend-Kennzeichen konnte nicht geaendert werden: ${error.message}`;
+      }
+    },
+
     async writeRaw(signal) {
       const value = this.rawWriteDrafts[signal.key];
       if (value === undefined || value === "") {
@@ -1153,6 +1169,35 @@ function app() {
         this.settingsError = `Einstellungen konnten nicht gespeichert werden: ${error.message}`;
       } finally {
         this.settingsBusy = false;
+      }
+    },
+
+    async loadResendInterval() {
+      this.resendIntervalError = null;
+      try {
+        this.resendInterval = await this.request("GET", "/api/settings/resend-interval");
+        this.resendIntervalDraft = this.resendInterval.interval_seconds;
+      } catch (error) {
+        this.resendIntervalError = `Resend-Intervall konnte nicht geladen werden: ${error.message}`;
+      }
+    },
+
+    async saveResendInterval() {
+      this.resendIntervalError = null;
+      if (!Number.isFinite(this.resendIntervalDraft) || this.resendIntervalDraft < 10) {
+        this.resendIntervalError = "Bitte ein Intervall von mindestens 10 Sekunden eingeben.";
+        return;
+      }
+      this.resendIntervalBusy = true;
+      try {
+        this.resendInterval = await this.request("PATCH", "/api/settings/resend-interval", {
+          interval_seconds: Number(this.resendIntervalDraft),
+        });
+        this.showToast("Resend-Intervall gespeichert.");
+      } catch (error) {
+        this.resendIntervalError = `Resend-Intervall konnte nicht gespeichert werden: ${error.message}`;
+      } finally {
+        this.resendIntervalBusy = false;
       }
     },
 

@@ -73,12 +73,12 @@ class Runtime:
         sender: Sender,
         *,
         heartbeat_seconds: float = 30.0,
-        resend_seconds: float = 300.0,
+        resend_poll_seconds: float = 5.0,
     ) -> None:
         self._store = store
         self._sender = sender
         self._heartbeat_seconds = heartbeat_seconds
-        self._resend_seconds = resend_seconds
+        self._resend_poll_seconds = resend_poll_seconds
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
@@ -360,7 +360,15 @@ class Runtime:
         return {k: v for k, v in self._last_values.items() if k.startswith(prefix)}
 
     async def resend_all(self) -> int:
-        """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei.
+        """Schickt JEDEN bekannten Wert erneut, an der Entprellung vorbei -
+        unabhaengig vom `resend`-Flag (Entwurf periodischer Resend,
+        2026-09-04, Abschnitt 6). Bleibt bewusst unveraendert der volle
+        Restore-Pfad fuer `/resync` (`loxone.server`) und den Bruecken-Start
+        (`cli.py`, direkt nach `seed_from_snapshot`) - beide muessen nach
+        einem Miniserver-Neustart JEDEN virtuellen Eingang wiederherstellen
+        (Spec 6.4), unabhaengig davon, ob jemand das Signal fuer den
+        periodischen Timer markiert hat. Der periodische Timer selbst ruft
+        stattdessen `resend_marked()` auf, siehe dort.
 
         Iteriert nur die Schluessel als Momentaufnahme, liest den Wert aber
         JE SCHLUESSEL erst unmittelbar vor dem Senden aus `_last_values`
@@ -377,8 +385,23 @@ class Runtime:
         Systemstart-Baustein, und feuert also genau dann, wenn jemand
         zusieht.
         """
+        return await self._force_resend(list(self._last_values))
+
+    async def resend_marked(self) -> int:
+        """Wie `resend_all`, aber nur fuer Signale mit `resend = true`
+        (Entwurf periodischer Resend, 2026-09-04, Abschnitt 6) - der
+        Gegenpart zu `resend_all`s bewusster Ignoranz dieses Flags. Nur
+        `_resend_loop` ruft diese Methode auf."""
+        keys = self._store.resend_keys()
+        return await self._force_resend(keys)
+
+    async def _force_resend(self, keys: Sequence[str]) -> int:
+        """Gemeinsamer Kern von `resend_all`/`resend_marked` - siehe
+        `resend_all` fuer die Begruendung, warum der Wert JE SCHLUESSEL erst
+        unmittelbar vor dem Senden aus `_last_values` nachgelesen wird
+        (Review-Fix I4)."""
         count = 0
-        for key in list(self._last_values):
+        for key in keys:
             value = self._last_values.get(key)
             if value is None:
                 # Zwischen der Momentaufnahme der Schluessel oben und diesem
@@ -471,11 +494,48 @@ class Runtime:
             await asyncio.sleep(self._heartbeat_seconds)
 
     async def _resend_loop(self) -> None:
+        """Schickt periodisch nur die markierten Signale erneut
+        (`resend_marked`) - anders als der einmalige Voll-Restore bei
+        `/resync` und beim Bruecken-Start (`resend_all`, siehe dort). Das
+        Intervall selbst ist eine zur Laufzeit ueber die WebUI aenderbare
+        Einstellung (`store.resend_settings`, Entwurf periodischer Resend,
+        Abschnitt 4/6) statt einer beim Start fixierten Konstante: dieser
+        Takt liest sie bei JEDEM Poll frisch, alle `resend_poll_seconds`
+        (Default 5s) - eine Aenderung ueber die WebUI wirkt sich damit binnen
+        weniger Sekunden aus, ohne Prozess-Neustart.
+
+        Zwei getrennte Fehlerpfade (Nachbesserung, finaler Review): ein
+        Fehler beim Lesen des Intervalls (z. B. eine kurzzeitig gesperrte
+        Datenbank) darf `last_resend` NICHT weiterschieben - sonst saehe ein
+        eigentlich faelliger Resend im naechsten Poll faelschlich wie gerade
+        erst erledigt aus. Ein Fehler bei `resend_marked()` selbst schiebt
+        `last_resend` dagegen weiter, wie schon zuvor: ein dauerhaft
+        kaputter Sender soll nicht bei JEDEM Poll erneut anlaufen, sondern
+        wieder ein volles Intervall abwarten. Ohne die Trennung in zwei
+        try/except-Bloecke wuerde ein Fehler beim Intervall-Lesen die
+        gesamte Schleife unbeobachtet sterben lassen (`Runtime.stop()`s
+        `asyncio.gather(..., return_exceptions=True)` schluckt das beim
+        naechsten Beenden zusaetzlich, ohne je etwas geloggt zu haben)."""
+        loop = asyncio.get_running_loop()
+        last_resend = loop.time()
         while True:
-            await asyncio.sleep(self._resend_seconds)
+            await asyncio.sleep(self._resend_poll_seconds)
             try:
-                await self.resend_all()
+                interval = self._store.resend_settings.get_interval_seconds()
+                due = loop.time() - last_resend >= interval
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("Full-Resend fehlgeschlagen - Schleife laeuft weiter")
+                logger.exception(
+                    "Resend-Intervall konnte nicht gelesen werden - Schleife laeuft weiter"
+                )
+                continue
+            if not due:
+                continue
+            try:
+                await self.resend_marked()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Markierter Resend fehlgeschlagen - Schleife laeuft weiter")
+            last_resend = loop.time()
