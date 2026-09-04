@@ -16,7 +16,7 @@
 
 import asyncio
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -45,6 +45,16 @@ class FakeSender:
 
     def keys(self) -> list[str]:
         return [k for k, _, _ in self.sent]
+
+    def __iter__(self) -> Iterator[str]:
+        # Ruffs SIM118 ("key in dict statt key in dict.keys()") setzt
+        # __contains__/__iter__ voraus, sonst wirft `key in sender` einen
+        # TypeError statt der gewuenschten Kuerzung - beide hier ergaenzt,
+        # damit `in`/`for` auf `FakeSender` genau wie auf `.keys()` wirken.
+        return iter(self.keys())
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.keys()
 
 
 class MutatingSender(FakeSender):
@@ -220,7 +230,7 @@ async def test_resend_marked_only_sends_flagged_signals(environment):
     assert count == 1
     assert sender.keys() == [voltage_key]
     assert sender.sent[0][2] is True
-    assert current_key not in sender.keys()
+    assert current_key not in sender
 
 
 async def test_resend_marked_of_no_flagged_signals_sends_nothing(environment):
@@ -297,14 +307,16 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
         # wuerde "bridge_alive" diese Pruefung faelschlich zum Scheitern
         # bringen, obwohl der Resend selbst (worum es hier geht) noch gar
         # nicht gelaufen ist.
-        assert [k for k in sender.keys() if k != "bridge_alive"] == []  # 10s-Intervall (simuliert) ist noch lange nicht um
+        assert [
+            k for k in sender if k != "bridge_alive"
+        ] == []  # 10s-Intervall (simuliert) ist noch lange nicht um
 
         interval["seconds"] = 0.01
         await asyncio.sleep(0.09)
     finally:
         await runtime.stop()
 
-    assert key in sender.keys()
+    assert key in sender
 
 
 async def test_resend_loop_survives_a_failing_interval_read(environment, monkeypatch):
@@ -334,7 +346,7 @@ async def test_resend_loop_survives_a_failing_interval_read(environment, monkeyp
     await runtime.stop()
 
     assert calls["n"] >= 2  # die Schleife hat den ersten Fehler ueberlebt und weiter gepollt
-    assert key in sender.keys()  # und danach tatsaechlich resent, sobald das Lesen wieder klappt
+    assert key in sender  # und danach tatsaechlich resent, sobald das Lesen wieder klappt
 
 
 async def test_heartbeat_toggles(environment):
