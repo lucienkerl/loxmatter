@@ -154,11 +154,11 @@ def main() -> None:
 uv run python scripts/dev_web_server.py --demo --port 8420 &
 sleep 4
 curl -s -o /dev/null -w "start=%{http_code}\n" http://127.0.0.1:8420/
-curl -s http://127.0.0.1:8420/api/auth-info
+curl -s http://127.0.0.1:8420/auth-info
 kill %1
 ```
 
-Erwartet: `start=200`, und `/api/auth-info` meldet ein bereits gesetztes Passwort (nicht die Ersteinrichtung). Den genauen Feldnamen vorher nachsehen: `grep -n "auth-info" -A 10 src/loxmatter/api/auth.py`.
+Erwartet: `start=200`, und `/auth-info` antwortet mit `{"password_set":true,"authenticated":false}` — also nicht mit der Ersteinrichtung. Der Pfad hat **kein** `/api`-Präfix: die Zugangs-Routen hängen bewusst ausserhalb des Waechters, sonst käme man vor der ersten Anmeldung nirgends hin (siehe `src/loxmatter/api/auth.py`, Moduldocstring).
 
 Danach die unveränderte Vorgabe:
 
