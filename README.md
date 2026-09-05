@@ -1,404 +1,240 @@
-# <img src="src/loxmatter/web/icon.svg" alt="" width="28" height="28" align="top" /> loxmatter
+<div align="center">
 
-![License: GPL v3](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
+<img src="src/loxmatter/web/icon.svg" alt="" width="96" height="96" />
+
+# loxmatter
+
+### Matter devices in Loxone — self-hosted, no cloud
+
+Your Miniserver does not speak Matter. This bridge makes it anyway: every value a
+Matter device reports becomes a virtual input, every Loxone command becomes a Matter
+command, and the Loxone objects for it are generated rather than typed by hand.
+
+![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
+[![CI](https://github.com/lucienkerl/loxmatter/actions/workflows/ci.yml/badge.svg)](https://github.com/lucienkerl/loxmatter/actions/workflows/ci.yml)
 
-Bindet Matter-Geräte (Thread und WiFi) an einen Loxone Miniserver an —
-selbst gehostet, ohne Cloud.
+[What it does](#-what-you-can-do) · [Screenshots](#-the-web-interface) ·
+[How it works](#-how-it-works) · [Quickstart](#-quickstart) · [Docs](#-documentation)
 
-Design: [`docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md)
+</div>
 
-## Inhalt
+## Why loxmatter
 
-- [Was macht loxmatter?](#was-macht-loxmatter)
-- [Stand](#stand)
-- [Voraussetzungen](#voraussetzungen)
-- [Erste Schritte](#erste-schritte)
-- [Entwickeln](#entwickeln)
-- [Ein Gerät ansehen](#ein-gerät-ansehen)
-- [Dauerhaft betreiben: `loxmatter run`](#dauerhaft-betreiben-loxmatter-run)
-- [Lizenz](#lizenz)
+Loxone has no Matter support, and Matter devices have no idea what a Miniserver is.
+The usual answer is a cloud bridge per vendor. This is the other answer: one service
+on your own hardware that reads devices generically — no curated list of supported
+models, so a device bought tomorrow works today — and hands Loxone something it already
+understands.
 
-## Was macht loxmatter?
+## ✨ What you can do
 
-Matter-Geräte (Lampen, Steckdosen, Sensoren, Taster …) und ein Loxone
-Miniserver sprechen von Haus aus nicht miteinander. loxmatter sitzt
-dazwischen: Es liest jeden Wert, den ein Matter-Gerät liefert — inklusive
-Ereignissen wie Tastendrücken — und reicht ihn an den Miniserver weiter, und
-umgekehrt setzt es Befehle aus Loxone in Matter-Kommandos um. Geräte werden
-über eine Weboberfläche eingelernt; die passenden Loxone-Objekte entstehen
-als fertige Vorlagendatei zum Import in Loxone Config, nicht per Handarbeit.
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 📟 Commission devices from the browser
+Add a Matter device over Bluetooth with its setup code. Thread devices reach the
+bridge through the border router in the same stack; Wi-Fi and Ethernet devices go
+straight over IP.
+
+</td>
+<td width="50%" valign="top">
+
+### 🎛 Pick the signals you actually want
+A single plug can expose over a hundred values. The functional ones are selected by
+default; everything else waits in a collapsed “expert” block with its own checkbox.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 📄 Generate the Loxone objects
+Virtual UDP inputs and virtual outputs come out as importable template files, one
+pair per device, instead of being typed into Loxone Config by hand.
+
+</td>
+<td width="50%" valign="top">
+
+### 🔁 Patch your existing project file
+Upload the Loxone project you already have, see exactly what would change per device
+and per signal, download the patched copy. Nothing is downloaded before you have seen
+the plan.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🔍 Watch it work
+A live feed of log lines, outgoing datagrams and incoming commands — the same lines
+`docker logs` would show, without shell access to the host.
+
+</td>
+<td width="50%" valign="top">
+
+### 🔒 Locked down by default, in your language
+No `/api` route answers before a password is set. The interface speaks English or
+German, switchable in the settings, and the setting applies to the CLI too.
+
+</td>
+</tr>
+</table>
+
+## 🖼 The web interface
+
+<table>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/dashboard.png" alt="Device list with live values and controls" />
+
+**Devices**<br>Every commissioned device on one page, with live values and controls, and a badge where signals changed since the last export.
+
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/commissioning.png" alt="Commissioning field with a pairing code entered" />
+
+**Commissioning**<br>Paste the pairing code from the device or its packaging and start — no vendor app, no account, no cloud round trip.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/signals.png" alt="Signal list with Loxone addresses and export checkboxes" />
+
+**Signals**<br>Each signal with the Loxone address it will get and its own export checkbox; the administrative ones sit behind the collapsed expert section.
+
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/export.png" alt="Project file sync card and template export card" />
+
+**Export**<br>Upload a project file for a patched copy, or take the per-device template files — with the bridge address and ports they use shown alongside.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/project-sync.png" alt="Diff plan showing new, updated and orphaned entries" />
+
+**Project file sync**<br>The plan before anything is written: how many entries are new, updated or orphaned, and per device the old value next to the new one.
+
+</td>
+<td width="50%" valign="top">
+<img src="docs/screenshots/system.png" alt="Live log lines, UDP capture and command log" />
+
+**Diagnostics**<br>Log lines, the UDP capture and the command log, all running live; the Matter fabric backup is pulled from here too.
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+<img src="docs/screenshots/settings.png" alt="Miniserver connection, language selection and periodic resend" />
+
+**Settings**<br>The Miniserver connection, the interface language, and how often marked signals are resent even when nothing changed.
+
+</td>
+</tr>
+</table>
+
+## 🏗 How it works
 
 ```mermaid
-flowchart LR
-    subgraph Geraete["Matter-Geräte"]
-        thread["🌡️ Thread-Gerät<br/>Sensor, Taster ..."]
-        wifi["💡 WiFi-Gerät<br/>Lampe, Steckdose ..."]
+flowchart TB
+    thread["🌡️ Thread device<br/>sensor, button …"]
+    ip["💡 Wi-Fi or Ethernet device<br/>lamp, plug, appliance …"]
+
+    subgraph Host["One host — e.g. a Raspberry Pi"]
+        otbr["🔀 otbr<br/>Thread border router"]
+        ms["🧠 matter-server<br/>drives the devices"]
+        lm["🌉 loxmatter<br/>this bridge"]
     end
 
-    subgraph Host["Docker-Stack – ein Host, z. B. Raspberry Pi"]
-        otbr["🔀 otbr<br/>Thread Border Router"]
-        ms["🧠 matter-server<br/>steuert die Geräte"]
-        lm["🌉 loxmatter<br/>diese Brücke"]
-    end
+    mini["🏠 Loxone Miniserver<br/>virtual inputs and outputs"]
+    browser["🖥️ Browser<br/>setup & diagnostics"]
 
-    mini["🏠 Loxone<br/>Miniserver"]
-    browser["🖥️ Browser<br/>Einrichtung & Diagnose"]
+    thread -- Thread --> otbr
+    otbr --> ms
+    ip -- "IP network" --> ms
+    ms -- "values · subscription" --> lm
+    lm -- commands --> ms
+    lm -- "values · UDP" --> mini
+    mini -- "commands · HTTP" --> lm
+    lm <-- "HTTP · WebSocket" --> browser
 
-    thread -- Thread --> otbr --> ms
-    wifi -- WiFi --> ms
-    ms -- "Werte (Subscription)" --> lm
-    lm -- Kommandos --> ms
-    lm -- "Werte (UDP)" --> mini
-    mini -- "Befehle (HTTP)" --> lm
-    browser -- HTTP --> lm
-    lm -- "Live-Werte (WebSocket)" --> browser
+    classDef device fill:#98a3ad,stroke:#6f7a85,color:#12161a
+    classDef svc fill:#5b6572,stroke:#3f4750,color:#f4f5f7
+    classDef bridge fill:#a15a2c,stroke:#7d4522,color:#fdf3e0
+    classDef endpoint fill:#e2915c,stroke:#a15a2c,color:#2a1a10
+
+    class thread,ip device
+    class otbr,ms svc
+    class lm bridge
+    class mini,browser endpoint
+
+    style Host fill:none,stroke:#98a3ad,stroke-dasharray:5 5
 ```
 
-Kein Profil pro Gerätetyp: loxmatter liest den Endpoint-/Cluster-Baum eines
-Geräts generisch aus, statt eine kuratierte Liste unterstützter Geräte zu
-pflegen. Neue Geräte funktionieren dadurch am ersten Tag, auch ohne dass
-loxmatter sie kennt.
+`matter-server` holds the Matter fabric and delivers values by subscription. loxmatter
+turns those values into datagrams for the Miniserver, and the commands coming back
+from Loxone over HTTP into Matter commands. The browser hangs off the bridge for setup
+and diagnostics only — the runtime path between devices and Miniserver does not use it.
 
-## Stand
+## 🚀 Quickstart
 
-Phasen 1 und 3 bis 6 sind gebaut: Matter-Adapter und Signal-Extraktion,
-Vorlagen-Export, die Laufzeitstrecke zwischen Matter und Loxone, die
-Bedienoberfläche samt Zugangsschutz und die Signalauswahl. Phase 2 wurde
-übersprungen. Validiert gegen zwei reale IKEA-Geräte an einem laufenden
-matter-server (Testumgebung: [`deploy/testhost/`](deploy/testhost/)); der
-Dienst läuft dort als Container.
-
-**Noch offen:** der Durchstich gegen einen echten Loxone Miniserver — die
-erzeugten Vorlagen sind bisher nur gegen einen nachgebauten Miniserver
-geprüft, nicht in Loxone Config importiert.
-
-Aus der Validierung von Phase 1: für Attribute trägt die generische
-Zerlegung uneingeschränkt — jeder Attributpfad war parsebar, kein gelistetes
-Attribut fehlte. Für Events trug sie nicht: keins der beiden Geräte führt die
-`EventList`, deshalb ist die Event-Erkennung FeatureMap-basiert und
-Cluster-spezifisch (`discovery.FEATURE_MAP_EVENTS`). Details, Zahlen und die
-Konsequenzen stehen im Validierungsabschnitt der Spec,
-[Abschnitt 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
-
-## Voraussetzungen
-
-**Software**
-
-- [Docker](https://docs.docker.com/get-docker/) mit Compose-Plugin — für den
-  vollständigen Stack (empfohlen für den eigenen Betrieb)
-- oder, wer nur die Kommandozeile ohne Container nutzen will: Python 3.12+
-  und [`uv`](https://docs.astral.sh/uv/getting-started/installation/)
-- Git
-
-**Hardware**
-
-- Ein Loxone Miniserver im selben Netzwerk wie der Rechner, auf dem loxmatter
-  läuft
-- Ein Host, auf dem der Dienst dauerhaft läuft — z. B. ein Raspberry Pi 4 im
-  selben Netz wie Miniserver und Geräte (die Testumgebung dieses Projekts
-  läuft so, siehe [`deploy/testhost/`](deploy/testhost/))
-- Nur für **Thread**-Geräte: ein USB-Funkmodul als Thread-Funkadapter (z. B.
-  SONOFF Dongle Plus MG24) am Host — der Docker-Stack bringt dafür einen
-  eigenen OpenThread Border Router mit
-- Ein Bluetooth-Adapter am Host, für das Einlernen von Geräten per BLE
-  (Matter-Commissioning)
-
-Kein Vorwissen über Matter oder Thread nötig — der Docker-Stack bringt die
-komplette Matter-Steuerung (`matter-server`) und den Thread-Border-Router
-(`otbr`) bereits mit.
-
-## Erste Schritte
-
-### Schnell reinschnuppern, ohne Hardware
-
-Zeigt, wie loxmatter ein Gerät liest — läuft komplett gegen ein
-gespeichertes Beispiel-Gerät, ohne Netzwerk oder echte Hardware:
+Try it without any hardware:
 
 ```bash
 git clone git@github.com:lucienkerl/loxmatter.git
 cd loxmatter
 uv sync
-uv run pytest                                                    # Testsuite, ohne Hardware
 uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
 ```
 
-Siehe [Ein Gerät ansehen](#ein-gerät-ansehen) für mehr dazu.
+For a real setup — Docker stack with `otbr`, `matter-server` and the bridge — follow
+[docs/SETUP.md](docs/SETUP.md).
 
-### Eigene Umgebung aufsetzen (mit echter Hardware)
+## 🗺 Status
 
-1. Repository auf dem Host klonen, der dauerhaft laufen soll:
+Working and validated against two real IKEA devices on a running `matter-server`:
+commissioning, signal extraction, the template export, the runtime path in both
+directions, the web interface and its access control.
 
-   ```bash
-   git clone git@github.com:lucienkerl/loxmatter.git
-   cd loxmatter/deploy/testhost
-   ```
+**Not yet done: the run against a real Miniserver.** The generated templates have only
+been checked against a rebuilt Miniserver, never imported into Loxone Config.
 
-2. `.env` aus der Vorlage anlegen und ausfüllen (Funkadapter, Bluetooth,
-   IP des Miniservers):
+**No TLS.** The service speaks plain HTTP — the password and any API token cross the
+network in the clear. Use a randomly generated password that is used nowhere else.
 
-   ```bash
-   cp .env.example .env
-   ```
+**First come, first served.** Until a password is set, anyone who can reach the port
+can claim the bridge. Set it within minutes of the first start, not days.
 
-   Details zu jeder Variable stehen als Kommentar in
-   [`.env.example`](deploy/testhost/.env.example).
+## 📚 Documentation
 
-3. Stack starten:
-
-   ```bash
-   docker compose up -d --build
-   ```
-
-   Das baut und startet drei Container: `otbr` (Thread-Netz), `matter-server`
-   (Matter-Steuerung) und `loxmatter` (diese Brücke).
-
-4. Im Browser `http://<Host>:8080/` öffnen. Beim allerersten Aufruf zeigt
-   die Oberfläche eine Ersteinrichtung — ein Passwort vergeben, siehe
-   [Zugangsschutz](#dauerhaft-betreiben-loxmatter-run) unten.
-
-5. In der Weboberfläche ein Gerät einlernen, ansehen und die Vorlage
-   exportieren (`VIU_*.xml`, `VO_*.xml`). Diese Dateien in Loxone Config
-   importieren und die entstandenen Ein-/Ausgänge auf die gewünschten
-   Funktionsbausteine ziehen — das bleibt Handarbeit, aber pro Gerät nur
-   einmal.
-
-> **Hinweis:** [`deploy/testhost/`](deploy/testhost/) ist die Umgebung, gegen
-> die dieses Projekt bisher getestet wurde — kein gehärtetes
-> Produktions-Image (nicht-root-Nutzer, gepinnte Digests, o. Ä. sind noch
-> offen). Für den Hausgebrauch heute trotzdem der geradlinigste Weg; die
-> Sicherheitshinweise unter [Dauerhaft betreiben](#dauerhaft-betreiben-loxmatter-run)
-> gelten unverändert.
-
-## Entwickeln
-
-```bash
-uv sync
-uv run pytest
-```
-
-Die Testsuite läuft ohne Hardware und ohne Netzwerkzugriff.
-
-## Ein Gerät ansehen
-
-```bash
-uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
-uv run loxmatter inspect --node 12          # gegen laufenden matter-server
-```
-
-Der erste Aufruf funktioniert heute ohne weitere Vorbereitung. Der zweite
-braucht einen erreichbaren matter-server (Standardadresse
-`ws://localhost:5580/ws`, per `--url` änderbar) — läuft und wurde gegen
-echte Hardware erprobt, siehe [`deploy/testhost/`](deploy/testhost/) für die
-Testumgebung.
-
-## Dauerhaft betreiben: `loxmatter run`
-
-```bash
-uv run loxmatter run --miniserver 192.168.1.10
-```
-
-Verbindet dauerhaft mit matter-server und Miniserver und startet einen
-HTTP-Dienst (Standardport 8080, `--listen`), der zwei Dinge gleichzeitig
-ausliefert:
-
-- `/cmd` und `/resync` für den Miniserver (virtuelle Ausgänge) — unverändert
-  seit Phase 4.
-- `/` und `/api/*` für eine Bedienoberfläche im Browser: Geräte einlernen,
-  ansehen, benennen, schalten, Vorlagen exportieren, Diagnose.
-
-**Die Ansicht „System"** zeigt seit dem Live-Feed (2026-09-03) drei Ströme
-laufend statt nur auf Knopfdruck: Logzeilen, UDP-Mitschnitt und Kommando-Log.
-Die Logzeilen sind dieselben, die auch `docker logs` zeigt — nur ohne
-Shell-Zugriff auf den Host, ab Stufe INFO. Ein Klick auf „Pausieren" hält die
-Anzeige an, ohne die laufende Erfassung zu stoppen; „Heartbeat und Resend
-ausblenden" filtert nur die Anzeige, nicht was ankommt. Details:
-[Live-Feed-Entwurf](docs/superpowers/specs/2026-09-03-diagnose-livefeed-design.md).
-
-**Was eine exportierte Vorlage standardmäßig enthält.** Ein Gerät liefert oft
-weit mehr Signale, als jemand in Loxone haben will — eine Steckdose etwa über
-hundert, meist Thread-Funkzähler, Seriennummern und andere Verwaltungswerte.
-Der Export nimmt deshalb standardmäßig nur die **funktionalen** Signale
-mit — die, die zum erkannten Gerätetyp gehören (bei einer Steckdose: Ein/Aus,
-Spannung, Strom, Leistung, Verbrauch). Alles andere bleibt technisch
-exportierbar, ist aber nicht angehakt. In der Signalliste der WebUI stehen
-diese übrigen Signale im zugeklappten Block „Experte" (mit Anzahl in der
-Überschrift) — jedes davon trägt seinen eigenen Exportieren-Haken und lässt
-sich dort einzeln aktivieren, etwa ein Thread-Zähler zur Fehlersuche.
-Begründung und Auswahlregel: [Signalauswahl-Entwurf](docs/superpowers/specs/2026-09-03-signalauswahl-design.md).
-
-**Projektdatei-Sync (`POST /api/export/project-sync`, WebUI oben unter
-„Export" — inzwischen der empfohlene Weg vor den einzeln zu importierenden
-Vorlagendateien darunter).** Statt Vorlagen einzeln zu importieren, kann eine
-bestehende Loxone-Projektdatei hochgeladen werden — das Tool gleicht sie gegen
-die gespeicherten Geräte ab und liefert eine gepatchte Fassung zum Download.
-Updates an bereits bestehenden virtuellen Ein-/Ausgängen und neue Signale
-innerhalb bereits bestehender Geräte sind die Vorgabe. **Komplett neue
-Geräte-Container sind experimentell** und nur über einen expliziten Haken
-im WebUI enthalten: das dafür nötige ID-Schema für neue Objekte ist aus
-einer einzigen echten Projektdatei abgeleitet, nicht offiziell dokumentiert
-und **nicht verifiziert**. Hatte das Projekt noch nie einen virtuellen
-Ein- bzw. Ausgang dieser Art (kein `VirtualInCaption`/`VirtualOutCaption`-
-Abschnitt), legt derselbe experimentelle Pfad diesen Abschnitt inzwischen
-automatisch mit an, statt den Haken zu sperren — kein manuelles Vorbereiten
-in Loxone Config mehr nötig, aber ein weiteres unverifiziertes Objekt mehr in
-der Kette. Vor dem ersten Vertrauen in diesen Pfad: eine damit gepatchte
-Datei einmal in Loxone Config öffnen und auf Fehler prüfen.
-Details: [Projektdatei-Sync-Entwurf](docs/superpowers/specs/2026-09-03-projektdatei-sync-design.md).
-
-**Achtung beim Update auf diese Fassung, wenn schon Geräte eingelernt
-sind.** Der Einmal-Umzug der Datenbank auf dieses Schema setzt den
-Exportieren-Haken **jedes** bereits gespeicherten Signals auf den neuen
-Vorgabewert zurück – auch wenn er zuvor von Hand umgelegt wurde. Wer vor
-diesem Update z. B. Thread-Zähler gezielt freigeschaltet oder ein Signal
-abgeschaltet hat, verliert diese Auswahl beim ersten Start danach, ohne
-Warnung, und muss sie in der Signalliste erneut setzen. Eine bereits in
-Loxone importierte Vorlage bleibt davon unberührt – die Laufzeitstrecke
-sendet ohnehin unabhängig vom Haken; betroffen ist nur eine **neu**
-erzeugte Vorlage nach dem Update.
-
-### Zugangsschutz
-
-Der Dienst bindet standardmäßig auf `0.0.0.0` (`--host`), damit der
-Miniserver ihn erreicht — dieselbe Erreichbarkeit gilt fürs restliche
-Netz. **Die `/api`-Routen verlangen deshalb eine Anmeldung.** Beim ersten
-Öffnen von `http://<Host>:8080/` zeigt die Oberfläche eine Ersteinrichtung:
-ein Passwort vergeben, fertig. Danach meldet man sich mit diesem Passwort
-an, die Oberfläche hält die Anmeldung über ein Sitzungs-Cookie
-(`loxmatter_session`, 30 Tage gültig, gleitend verlängert). **Bis das
-Passwort vergeben ist, liefert keine `/api`-Route irgendetwas aus** — jede
-Anfrage endet mit 401, und die Oberfläche zeigt nichts außer dem
-Einrichtungsbildschirm. Das ist ein bewusster Bruch mit dem früheren
-Verhalten (ein Dienst ohne Token lief bis dahin offen weiter, nur mit einer
-Log-Warnung): der offene Zustand gibt es nicht mehr. Die Ersteinrichtung
-verlangt dabei keinen weiteren Nachweis — wer zuerst kommt, vergibt das
-Passwort. Das ist eine bewusste Abwägung (Trust on first use), damit sich
-der Dienst ohne Shell-Zugriff auf dem Host einrichten lässt; der Preis ist
-ein Zeitfenster zwischen dem Start des Dienstes und der ersten Anmeldung, in
-dem jeder im Netz die Brücke übernehmen kann — es sollte deshalb Minuten
-dauern, nicht Tage. Ein vergessenes Passwort setzt im Referenz-Deployment
-(siehe [`deploy/testhost/`](deploy/testhost/)) `docker compose exec
-loxmatter loxmatter set-password` **im laufenden Container** neu; bei einer
-Installation aus dem Quellcode entsprechend `uv run loxmatter
-set-password` auf dem Host. Beides meldet dabei alle offenen Sitzungen ab.
-**Wichtig bei einer containerisierten Installation:** die Datenbank liegt
-dort typischerweise in einem benannten Docker-Volume und ist über
-`LOXMATTER_STORE` nur *innerhalb* des Containers erreichbar — `set-password`
-auf dem Host träfe dort eine andere, leere Datenbank und meldete
-fälschlich Erfolg, ohne die eigentliche Brücke zu entsperren; der Befehl
-bricht seit dem entsprechenden Fund deshalb mit einem klaren Fehler ab,
-statt eine neue Datenbank anzulegen. Details und Begründung:
-[Ergänzungs-Spec](docs/superpowers/specs/2026-09-03-webui-login-design.md).
-
-`/cmd` und `/resync` bleiben davon *immer* unberührt — der Miniserver kann
-keinen Header und kein Cookie mitschicken, das ist eine bewusste Grenze: wer
-den Port erreicht, kann ein Gerät weiterhin schalten, aber nicht mehr
-einlernen, entfernen oder die Fabric-Sicherung herunterladen. „Wer den Port
-erreicht" ist dabei weiter zu verstehen, als es klingt: `/cmd/{key}/{value}`
-ist ein GET ohne Ursprungsprüfung, den auch eine beliebige Webseite auslösen
-kann, die jemand aus diesem Netz im Browser öffnet
-(`<img src="http://…/cmd/…">`) — ein Fuß im LAN ist dafür nicht nötig.
-
-**`LOXMATTER_API_TOKEN` gibt es weiterhin — aber nur noch für Skripte und
-`curl`, nicht mehr für den Browser.** Gesetzt per `--api-token` bzw. der
-Umgebungsvariable, akzeptiert `build_api_guard` es weiterhin als
-`Authorization: Bearer <Token>` und, für den WebSocket-Handshake von
-`/api/live`, als Subprotokoll (`Sec-WebSocket-Protocol: bearer, <Token>`) —
-daraus folgt dieselbe Anforderung an das Token wie bisher: **keine
-Leerzeichen, kein Komma, kein Nicht-ASCII**, `openssl rand -hex 32` liefert
-nur `[0-9a-f]` und ist der empfohlene Weg dazu. Ein Token, das nur aus
-Leerraum besteht (ein versehentlicher Zeilenumbruch in einer `.env`), gilt
-als „nicht gesetzt". Die Browser-Oberfläche selbst setzt keinen
-`Authorization`-Header mehr und legt kein Geheimnis mehr im `localStorage`
-ab — das Sitzungs-Cookie übernimmt diese Rolle. Bestehende Automatisierungen
-gegen `LOXMATTER_API_TOKEN` brechen durch dieses Update nicht ab, auch nicht
-vor der Passwortvergabe: der Token-Pfad im Wächter existiert unabhängig vom
-Passwort-Status.
-
-**Kein TLS.** Der Dienst spricht weiterhin HTTP ohne Verschlüsselung; sowohl
-das Token als auch das Passwort gehen bei jeder Übertragung im Klartext über
-das Netz. Ein Passwort verwenden, das nirgendwo sonst benutzt wird — und
-zwar ein **zufällig erzeugtes**, kein ausgedachtes. Hinter der Anmeldung
-liegt seit dem Wegfall des 403-Zweigs auch die Fabric-Sicherung, und acht
-Zeichen tragen deren Absicherung nur, solange sie nicht zu raten sind
-(siehe Abschnitt 11 des Entwurfs).
-
-Die Fabric-Sicherung (`GET /api/diagnostics/fabric-backup`) ist heute keine
-Ausnahme mehr — sie war es früher: ohne konfiguriertes Token antwortete
-diese eine Route mit 403, während alle übrigen `/api`-Routen ohne Token
-offen blieben. Diesen Sonderfall gibt es nicht mehr, weil die Regel, von der
-er eine Ausnahme war, selbst entfallen ist: **alle** `/api`-Routen — die
-Fabric-Sicherung eingeschlossen — verlangen jetzt gleichermaßen eine gültige
-Sitzung oder ein gültiges Token, sonst 401.
-
-Ein lauffähiges Beispiel steht in
-[`deploy/testhost/docker-compose.yml`](deploy/testhost/docker-compose.yml);
-`deploy/testhost/README.md` führt `LOXMATTER_API_TOKEN` unter den Variablen
-auf, die beim Einrichten optional gesetzt werden können.
-
-### Sprache: Englisch oder Deutsch
-
-Die Oberfläche liegt standardmäßig auf Englisch, lässt sich aber jederzeit
-auf Deutsch umstellen — dieselbe, gemeinsame Einstellung gilt für CLI, WebUI
-und die Texte in neu erzeugten Export-Vorlagen gleichermaßen:
-
-- **In der Weboberfläche:** Tab „Einstellungen" → zwei Knöpfe EN/DE; die
-  Seite lädt sich danach automatisch neu.
-- **Per CLI:** `uv run loxmatter set-language de` (bzw. `en`) — verlangt wie
-  `set-password` eine bereits vorhandene Datenbank und bricht sonst mit einem
-  klaren Fehler ab; dieselbe Einschränkung bei einer containerisierten
-  Installation gilt entsprechend, siehe [Zugangsschutz](#zugangsschutz)
-  oben.
-- **Für einen einzelnen Aufruf, ohne die gespeicherte Einstellung zu
-  ändern:** die Umgebungsvariable `LOXMATTER_LANG` (z. B. `LOXMATTER_LANG=de
-  uv run loxmatter run --miniserver 192.168.1.10`) — hat Vorrang vor der
-  gespeicherten Einstellung, nur für diesen einen Prozess.
-
-**Achtung:** ein Sprachwechsel wirkt sich nur auf **neu** erzeugte
-Export-Vorlagen aus — dieselbe Eigenschaft wie beim Update-Hinweis zur
-Signalauswahl oben. Eine bereits in Loxone Config importierte Vorlage bleibt
-unverändert in der Sprache, in der sie ursprünglich exportiert wurde.
-
-## Lizenz
-
-**GNU General Public License, Version 3 oder später** — der vollständige Text
-steht in [`LICENSE`](LICENSE).
-
-Das heißt in der Praxis: du darfst dieses Werkzeug benutzen, verändern und
-weitergeben. Wer es in veränderter Form weitergibt, muss seine Änderungen
-unter derselben Lizenz offenlegen. Ein geschlossenes Produkt darf daraus
-nicht werden — das ist der Zweck dieser Wahl.
-
-Die Angabe lautet `GPL-3.0-or-later`, nicht `-only`: eine spätere Fassung der
-GPL darf ebenfalls verwendet werden. Das ist die von der Free Software
-Foundation empfohlene Form.
-
-### Fremdsoftware
-
-Alle Abhängigkeiten sind permissiv lizenziert und mit der GPL-3.0 vereinbar:
-
-| | |
+| Document | What is in it |
 |---|---|
-| `python-matter-server`, chip-SDK | Apache-2.0 |
-| FastAPI, Pydantic, Typer, PyYAML | MIT |
-| Starlette, uvicorn, websockets | BSD-3-Clause |
-| Alpine.js (mitgeliefert) | MIT |
+| [docs/SETUP.md](docs/SETUP.md) | [Requirements](docs/SETUP.md#requirements), the [hardware-free tour](docs/SETUP.md#try-it-without-hardware), [your own Docker setup](docs/SETUP.md#your-own-setup), and [looking at a device](docs/SETUP.md#looking-at-a-device) from the CLI. |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | [Running the bridge](docs/OPERATIONS.md#running-the-bridge), [what a template contains](docs/OPERATIONS.md#what-a-template-contains), [project file sync](docs/OPERATIONS.md#project-file-sync), [access control](docs/OPERATIONS.md#access-control) and [language](docs/OPERATIONS.md#language). |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Running the test suite and the checks CI runs. |
+| [docs/LICENSING.md](docs/LICENSING.md) | Third-party licences and the notices in the source files. |
 
-Alpine.js liegt als unveränderte Kopie unter
-[`src/loxmatter/web/vendor/`](src/loxmatter/web/vendor/) — mit seinem eigenen
-Lizenztext daneben, wie die MIT-Lizenz es verlangt. Die GPL dieses Projekts
-erstreckt sich nicht auf Alpine.js selbst.
+## 🧰 Tech stack
 
-Apache-2.0 ist einseitig mit der GPL-3.0 vereinbar: Apache-lizenzierter Code
-darf in ein GPL-3.0-Werk aufgenommen werden, der umgekehrte Weg nicht.
+Python 3.12+ with FastAPI and uvicorn for the HTTP service, Typer for the CLI,
+[`python-matter-server`](https://github.com/home-assistant-libs/python-matter-server)
+for the Matter side, SQLite for stored devices and settings. The web interface is plain
+HTML, CSS and Alpine.js — no build step, nothing fetched from a CDN at runtime.
 
-### Hinweise in den Quelldateien
+## Contributing
 
-Jede Quelldatei trägt den GPL-Hinweis im Kopf, wie ihn der Abschnitt „How to
-Apply These Terms" der GPL vorsieht — außer `src/loxmatter/web/vendor/`, das
-unter MIT steht und seinen eigenen Hinweis behält.
+Issues and pull requests are welcome. Please run the checks from
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) before opening one; the commit messages in
+this repository are written in German.
 
-Der Hinweis steht in der englischen Fassung der Free Software Foundation,
-obwohl dieses Projekt sonst deutsche Prosa verwendet. Das ist Absicht: er ist
-ein rechtlicher Verweis auf die `LICENSE`, und eine eigene Übersetzung wäre
-eine Auslegung, über die man streiten kann.
+## License
+
+**GNU General Public License, version 3 or later** — the full text is in
+[`LICENSE`](LICENSE). In practice: you may use, modify and pass on this tool, and
+whoever passes on a modified version has to publish their changes under the same
+licence. Third-party licences and the notices in each source file:
+[docs/LICENSING.md](docs/LICENSING.md).
