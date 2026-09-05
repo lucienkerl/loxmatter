@@ -2795,3 +2795,101 @@ async def test_the_room_group_wrapper_does_not_disturb_the_menu_layout(api):
     assert "flex-direction: column" in rule
     assert "align-items: stretch" in rule
     assert "gap: 1px" in rule
+
+
+async def test_exactly_one_signals_dialog_is_delivered(api):
+    """Entwurf Abschnitt 4: EIN `<dialog>` fuer die ganze Seite, nicht eines
+    je Kachel.
+
+    Markup innerhalb `x-for` wird einmal PRO GERAET ausgeliefert - bei
+    dreissig Geraeten laegen dreissig vollstaendige Signaltabellen im
+    Dokument, und jede `id` darin dreissigfach (derselbe Fallstrick, den
+    `aria-labelledby` im Kachel-Menue schon einmal umschiffen musste). Die
+    Zaehlung auf 1 ist die einzige Zusicherung, die diesen Rueckfall
+    ueberhaupt bemerken wuerde: ein `<dialog>` in der Kachel saehe im
+    ausgelieferten Text sonst genauso aus wie eines am Seitenende.
+
+    Die Ortspruefung (nach `</main>`) belegt zusaetzlich, dass es ausserhalb
+    der Ansichts-Sections und damit ausserhalb jeder Geraeteschleife steht."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert markup.count("<dialog") == 1
+    assert 'x-ref="signalsModal"' in markup
+    assert markup.index("<dialog") > markup.index("</main>")
+
+
+async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api):
+    """Entwurf Abschnitt 4: `@close` ist die EINZIGE Ruecksetzstelle.
+
+    Das Ereignis feuert auf jedem Schliessweg - Escape, Schliessen-Knopf,
+    Backdrop, `close()` aus JavaScript. Ein zweiter Ruecksetzer an einem
+    einzelnen Schliessweg waere genau die Verteilung auf mehrere Handler,
+    die beim Raum-Auswahlfeld sechs Reviewrunden gekostet hat; deshalb
+    zaehlt dieser Test die Vorkommen, statt nur eines zu suchen.
+
+    `@click.self` ist dazu Pflicht und kein Beiwerk: ein `<dialog>`
+    schliesst bei einem Klick auf den Backdrop NICHT von selbst."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert '@close="signalsModalDevice = null"' in markup
+    assert '@click.self="$el.close()"' in markup
+    assert markup.count("signalsModalDevice = null") == 1
+
+
+async def test_the_two_entry_points_open_the_signals_modal(api):
+    """Entwurf Abschnitt 5: das Modal hat genau zwei Einstiege.
+
+    Der Kebab-Eintrag ruft ERST `closeTileMenu($el)`, dann
+    `openSignalsModal(device)` - diese Reihenfolge traegt den Fokus:
+    `closeTileMenu` setzt ihn auf das `<summary>`, und das unmittelbar
+    folgende `showModal()` merkt sich genau diesen Fokus als Rueckkehrpunkt.
+    Umgedreht landete der Fokus nach dem Schliessen des Modals im Nichts.
+
+    Der `+ N weitere Signale`-Link sprang bislang per `selectView('signals')`
+    in eine Liste ALLER Geraete, in der man das eigene wieder suchen musste -
+    er zeigt jetzt auf das Geraet, dessen Signale er verspricht."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert '@click="closeTileMenu($el); openSignalsModal(device)"' in markup
+    assert "x-text=\"t('web.devices.menu_signals')\"" in markup
+    assert '@click.prevent="openSignalsModal(device)"' in markup
+
+    # Die Reihenfolge NUR innerhalb des Menues vergleichen: der
+    # `+ N weitere Signale`-Link steht weiter oben in derselben Kachel und
+    # ruft dieselbe Methode, ein `markup.index(...)` ueber die ganze Seite
+    # traefe also ihn statt den Menueeintrag und waere immer wahr.
+    menu_start = markup.index('<div class="tile-menu-items">')
+    menu = markup[menu_start : markup.index("</details>", menu_start)]
+    assert menu.index("openSignalsModal(device)") < menu.index("exportDevice(device)")
+
+
+async def test_open_signals_modal_shows_the_dialog_only_after_alpine_rendered(api):
+    """Entwurf Abschnitt 4: `showModal()` erst im `$nextTick`.
+
+    `showModal()` setzt den Anfangsfokus auf das erste fokussierbare Element
+    IM Dialog - und das gibt es erst, nachdem Alpine den `x-if`-Inhalt
+    aufgebaut hat. Ohne `$nextTick` oeffnet der Dialog leer und der Fokus
+    landet auf dem `<dialog>` selbst; die erste Tab-Taste faengt dann am
+    Dokumentanfang an statt im Modal."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("openSignalsModal(device) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+    assert "this.signalsModalDevice = device.id;" in body
+    assert "this.$nextTick(() => this.$refs.signalsModal.showModal());" in body
+
+
+async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
+    """Entwurf Abschnitt 4, "Wenn das Geraet verschwindet".
+
+    Ohne diesen Ruf bliebe ein Dialog ueber einem Geraet offen stehen, das
+    es nicht mehr gibt - und der `x-if`-Waechter machte ihn zu einem leeren
+    Kasten ohne erkennbaren Grund."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("async removeDevice(device) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+    assert "if (this.signalsModalDevice === device.id) {" in body
+    assert "this.closeSignalsModal();" in body

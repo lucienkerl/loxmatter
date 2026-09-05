@@ -151,6 +151,10 @@
         <path d="M14.5 5.5 18.5 9.5 8 20H4v-4L14.5 5.5z" />
         <path d="M12.7 7.3l4 4" />
       </symbol>
+      <symbol id="i-close" viewBox="0 0 24 24">
+        <path d="M6 6l12 12" />
+        <path d="M18 6L6 18" />
+      </symbol>
       <!-- Drei gefuellte Punkte statt Striche: `.icon` setzt
            `fill: none; stroke: currentColor`, was fuer Linien-Icons stimmt,
            einen Punkt aber unsichtbar machen wuerde. Dieselbe Ausnahme
@@ -459,7 +463,7 @@
                       <a
                         class="value-key"
                         href="#"
-                        @click.prevent="selectView('signals')"
+                        @click.prevent="openSignalsModal(device)"
                         x-text="'+ ' + remainingSignalCount(device.id) + ' ' + t('web.devices.more_signals_short')"
                       ></a>
                       <span></span>
@@ -770,6 +774,11 @@
                           />
                         </div>
                         <hr class="tile-menu-sep" />
+                        <button
+                          class="tile-menu-item"
+                          @click="closeTileMenu($el); openSignalsModal(device)"
+                          x-text="t('web.devices.menu_signals')"
+                        ></button>
                         <button
                           class="tile-menu-item"
                           @click="closeTileMenu($el); exportDevice(device)"
@@ -1496,6 +1505,67 @@
     </main>
     </div>
     </template>
+
+    <!--
+      Signal-Modal (Entwurf "Signale als Modal", 2026-09-05). Genau EIN
+      `<dialog>` fuer die ganze Seite, bewusst ausserhalb der `x-for`-
+      Schleife der Geraetekacheln: Markup innerhalb `x-for` wird einmal PRO
+      GERAET ausgeliefert - bei dreissig Geraeten laegen dreissig
+      vollstaendige Signaltabellen im Dokument, und jede `id` darin
+      dreissigfach (derselbe Fallstrick, den `aria-labelledby` im
+      Kachel-Menue schon einmal umschiffen musste).
+
+      Es steht zudem ausserhalb des Login-`<template>`, wie die
+      Kurzmeldungen darunter: so ist `$refs.signalsModal` immer aufloesbar
+      und nicht davon abhaengig, ob Alpine den angemeldeten Teilbaum gerade
+      gerendert hat.
+
+      `x-ref` ist hier zulaessig, obwohl der Kommentar am Kachel-Menue
+      (Fund 3) ausdruecklich davon abraet. Der dortige Einwand trifft eine
+      Registrierung, die PRO KACHEL laeuft: die Seite teilt sich ein
+      einziges `x-data` am `<body>`, und der Eintrag der zuletzt
+      gerenderten Kachel ueberschreibt jeden davor. Dieses `<dialog>` steht
+      genau einmal im Dokument - niemand kann es ueberschreiben. Dieselbe
+      Lage wie bei `x-ref="diagnosticsLogsList"` und `x-ref="datagramsList"`
+      weiter oben, die aus demselben Grund unbedenklich sind.
+
+      `@close` ist die EINZIGE Stelle, die `signalsModalDevice`
+      zuruecksetzt. Das Ereignis feuert auf jedem Schliessweg - Escape,
+      Schliessen-Knopf, Backdrop, `close()` aus JavaScript -, es gibt also
+      keinen Pfad, auf dem der Alpine-Zustand und der sichtbare Zustand
+      auseinanderlaufen koennen. Dieselbe Rolle, die `@toggle` beim
+      `<details>` des Kachel-Menues spielt. KEINE weiteren Ruecksetzer an
+      den einzelnen Schliesswegen ergaenzen - genau diese Verteilung auf
+      mehrere Handler war beim Raum-Auswahlfeld die Ursache von sechs
+      Reviewrunden.
+
+      Ein `<dialog>` schliesst bei einem Klick auf den Backdrop NICHT von
+      selbst (anders als es Escape tut). `@click.self` ergaenzt das: der
+      Inhalt liegt vollstaendig in `.signals-modal-body`, ein
+      Klick-Ereignis mit dem `<dialog>` SELBST als Ziel kann deshalb nur
+      der Backdrop sein.
+    -->
+    <dialog
+      x-ref="signalsModal"
+      class="signals-modal"
+      @close="signalsModalDevice = null"
+      @click.self="$el.close()"
+    >
+      <template x-if="signalsModalDeviceObject()">
+        <div class="signals-modal-body">
+          <div class="signals-modal-head">
+            <h2 x-text="t('web.signals.modal_heading', { device: signalsModalDeviceObject().label })"></h2>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              class="signals-modal-close"
+              :title="t('web.signals.modal_close')"
+              :aria-label="t('web.signals.modal_close')"
+              @click="closeSignalsModal()"
+            ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
+        </div>
+      </template>
+    </dialog>
 
     <!--
       Kurzmeldungen als Overlay. `position: fixed` heisst: sie stehen

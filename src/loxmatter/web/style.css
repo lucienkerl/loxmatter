@@ -1539,3 +1539,58 @@ footer.hint-block {
   border-top: 1px solid var(--border);
   margin: 0.25rem 0;
 }
+
+/* Signal-Modal (Entwurf "Signale als Modal", 2026-09-05).
+ *
+ * `max-height` plus `overflow: auto` statt einer festen Hoehe: ein Geraet
+ * mit vierzig Attributen soll im Modal scrollen, nicht ueber den unteren
+ * Bildschirmrand hinauswachsen, wo der Schliessen-Knopf dann unerreichbar
+ * waere.
+ *
+ * Der `::backdrop` bekommt KEINE Farbe aus den Themenvariablen: er liegt
+ * im Top-Layer, ausserhalb des Dokumentbaums, und erbt von dort keine
+ * `:root`-Variablen zuverlaessig. Ein fester halbtransparenter Schwarzton
+ * wirkt in beiden Themen. */
+.signals-modal {
+  width: min(46rem, 92vw);
+  max-height: 85vh;
+  overflow: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.signals-modal::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.signals-modal-body {
+  padding: 1rem 1.2rem 1.2rem;
+}
+
+.signals-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.signals-modal-head h2 {
+  margin: 0;
+}
+
+.signals-modal-close {
+  flex: none;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 0;
+}
+
+.signals-modal-close:hover {
+  color: var(--text);
+  border-color: var(--border);
+}

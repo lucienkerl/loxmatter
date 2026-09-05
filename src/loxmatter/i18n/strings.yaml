@@ -838,6 +838,9 @@ web.devices.menu:
 web.devices.menu_room_heading:
   en: "Room"
   de: "Raum"
+web.devices.menu_signals:
+  en: "Edit signals…"
+  de: "Signale bearbeiten…"
 
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
@@ -894,6 +897,12 @@ web.signals.resend_toggle_error:
 web.signals.write_success:
   en: "Written."
   de: "Geschrieben."
+web.signals.modal_heading:
+  en: "Signals — {device}"
+  de: "Signale — {device}"
+web.signals.modal_close:
+  en: "Close"
+  de: "Schließen"
 
 # --- web.export — Export-Tab ---
 web.export.heading:

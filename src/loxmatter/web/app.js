@@ -396,6 +396,13 @@ function app() {
     rawWriteDrafts: {},
     rawWriteBusyKey: null,
     rawWriteMessages: {},
+    // Das Signal-Modal haelt die Geraete-ID, NICHT das Geraeteobjekt:
+    // `loadDevices` ersetzt `devices` vollstaendig, ein festgehaltenes
+    // Objekt waere danach eine Leiche mit veraltetem Namen und Raum.
+    // `signalsModalDeviceObject()` loest die ID gegen die jeweils aktuelle
+    // Liste auf. Zurueckgesetzt wird dieses Feld an GENAU EINER Stelle, dem
+    // `@close` des `<dialog>` in index.html - siehe den Kommentar dort.
+    signalsModalDevice: null,
     // Experte-Block (Aufgabe 8): standardmaessig zugeklappt, ein einziger
     // globaler Schalter statt Zustand je Geraet - die Ansicht "Signale"
     // zeigt ohnehin alle Geraete auf einmal untereinander, ein Zustand pro
@@ -1343,6 +1350,15 @@ function app() {
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
+        // Ohne das bliebe ein Dialog ueber einem Geraet offen stehen, das
+        // es nicht mehr gibt - und der `x-if`-Waechter im Modal machte ihn
+        // zu einem leeren Kasten ohne erkennbaren Grund. `close()` ist ein
+        // Nichtstun, wenn der Dialog gar nicht offen ist; die Abfrage steht
+        // trotzdem davor, damit ein Modal ueber einem ANDEREN Geraet nicht
+        // mit zugeht.
+        if (this.signalsModalDevice === device.id) {
+          this.closeSignalsModal();
+        }
         // Fund 1 (Re-Review 2026-09-05): loescht man das letzte Geraet
         // eines gefilterten Raums, verschwindet dessen Chip aus
         // `roomChips()`, aber ohne diesen Aufruf bliebe `roomFilter` auf
@@ -1559,6 +1575,44 @@ function app() {
     // ---------------------------------------------------------------------
     // Signale
     // ---------------------------------------------------------------------
+
+    signalsModalDeviceObject() {
+      return this.devices.find((device) => device.id === this.signalsModalDevice) || null;
+    },
+
+    /**
+     * Oeffnet das Signal-Modal fuer ein Geraet.
+     *
+     * Das `$nextTick` ist Pflicht, kein Stil: `showModal()` setzt den
+     * Anfangsfokus auf das erste fokussierbare Element IM Dialog, und das
+     * gibt es erst, nachdem Alpine den `x-if`-Inhalt aufgebaut hat. Ohne
+     * das Warten oeffnet der Dialog leer, der Fokus bleibt auf dem
+     * `<dialog>` selbst, und die erste Tab-Taste faengt wieder am
+     * Dokumentanfang an.
+     *
+     * `$refs` ist hier unbedenklich, obwohl der Kommentar am Kachel-Menue
+     * (index.html, Fund 3) ausdruecklich davon abraet: dessen Einwand
+     * trifft eine Registrierung, die PRO KACHEL laeuft und sich selbst
+     * ueberschreibt. Dieses `<dialog>` steht genau einmal im Dokument -
+     * dieselbe Lage wie bei `pinLogListToTop`, das aus demselben Grund
+     * schon heute `this.$refs` benutzt.
+     */
+    openSignalsModal(device) {
+      this.signalsModalDevice = device.id;
+      this.$nextTick(() => this.$refs.signalsModal.showModal());
+    },
+
+    /**
+     * Schliesst das Modal ueber die native `close()`-Methode statt den
+     * Zustand direkt zu leeren: `close()` loest das `close`-Ereignis aus,
+     * und dessen Handler in index.html ist die eine Stelle, die
+     * `signalsModalDevice` zuruecksetzt. Wer hier zusaetzlich
+     * `this.signalsModalDevice = null` schriebe, haette wieder zwei
+     * Wahrheiten ueber denselben Zustand.
+     */
+    closeSignalsModal() {
+      this.$refs.signalsModal.close();
+    },
 
     async loadSignals(deviceId) {
       this.signalsError = null;
