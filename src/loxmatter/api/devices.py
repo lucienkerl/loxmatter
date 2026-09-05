@@ -80,7 +80,8 @@ from loxmatter import i18n
 from loxmatter.api.models import (
     CommissionRequest,
     DeviceOut,
-    DeviceRename,
+    DevicePatch,
+    RoomRename,
     SignalOut,
     SignalPatch,
 )
@@ -93,6 +94,7 @@ from loxmatter.matter.otbr import (
     validated_dataset,
 )
 from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDeviceError
+from loxmatter.profiles.categories import CATEGORY_RANK, category_for
 from loxmatter.profiles.table import Exportability, is_exportable
 
 logger = logging.getLogger(__name__)
@@ -188,6 +190,7 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     # Liste von fuenf - beide Zahlen stimmten, keine beantwortete, wie viele
     # Eingaenge der naechste Export tatsaechlich erzeugt.
     next_export_count = len(to_inputs(signals, device.id, device.label))
+    category = category_for(device.device_types)
     return DeviceOut(
         id=device.id,
         node_id=device.node_id,
@@ -196,6 +199,9 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
         signal_count=len(signals),
         exportable_count=exportable_count,
         next_export_count=next_export_count,
+        room=device.room,
+        category=category.value,
+        category_rank=CATEGORY_RANK[category],
     )
 
 
@@ -259,10 +265,42 @@ def build_device_router(
         return [_signal_out(signal, values) for signal in store.signals(device_id)]
 
     @router.patch("/devices/{device_id}")
-    async def rename_device(device_id: int, patch: DeviceRename) -> DeviceOut:
+    async def patch_device(device_id: int, patch: DevicePatch) -> DeviceOut:
+        """Aendert Label und/oder Raum. `None` heisst bei beiden Feldern
+        "unveraendert"; der Leerstring im Raum heisst "entfernen".
+
+        Die beiden Schreibwege sind bewusst verschieden: `rename_device`
+        setzt `updated_at` mit (das Label wird als `Title` exportiert),
+        `set_room` nicht (der Raum wird nirgends exportiert). Siehe die
+        Docstrings beider Store-Methoden."""
         device = _require_device(device_id)
-        store.rename_device(device.id, patch.label)
+        if patch.label is not None:
+            store.rename_device(device.id, patch.label)
+        if patch.room is not None:
+            store.set_room(device.id, patch.room)
         return _device_out(store.device(device.id), store, runtime)
+
+    @router.post("/rooms/rename")
+    async def rename_room(patch: RoomRename) -> dict[str, int]:
+        """Benennt einen Raum an allen aktiven Geraeten um.
+
+        Die einzige Route, die es fuer Raeume ueberhaupt gibt - es gibt keine
+        Raum-Objekte (Entwurf 3.2), also auch kein `GET /api/rooms`: die
+        Raumliste steckt bereits in `GET /api/devices`, und ein zweiter
+        Endpunkt fuer dieselbe Auskunft koennte nur auseinanderlaufen.
+
+        404 statt "0 umbenannt", wenn kein aktives Geraet den Quellnamen
+        traegt: ein Tippfehler im Quellnamen saehe sonst wie ein geglueckter
+        Vorgang aus."""
+        if not patch.to_room.strip():
+            raise HTTPException(status_code=422, detail=i18n.t("api.devices.room_name_required"))
+        renamed = store.rename_room(patch.from_room, patch.to_room)
+        if renamed == 0:
+            raise HTTPException(
+                status_code=404,
+                detail=i18n.t("api.devices.unknown_room", room=patch.from_room),
+            )
+        return {"renamed": renamed}
 
     @router.patch("/signals/{key}")
     async def rename_signal(key: str, patch: SignalPatch) -> SignalOut:
@@ -392,7 +430,7 @@ def build_device_router(
         # Derselbe Ablauf wie beim CLI-Export (cli.py): register_device vor
         # register_signals vor register_commands, denn beide brauchen die
         # frisch vergebene device_id.
-        device_id = store.register_device(snapshot)
+        device_id = store.register_device(snapshot, room=request.room)
         store.register_signals(device_id, snapshot)
         store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
 

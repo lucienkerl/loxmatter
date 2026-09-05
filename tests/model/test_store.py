@@ -659,6 +659,23 @@ def test_rename_room_rejects_an_empty_target(tmp_path):
         store.close()
 
 
+def test_rename_room_normalizes_the_source_name_too(tmp_path):
+    """Review-Fund zu Task 2: bislang lief nur `new` durch `_normalized_room`,
+    `old` wurde roh in `WHERE room = ?` verglichen - unbedenklich, solange
+    `old` ausschliesslich aus zurueckgelesenen Werten kam (die sind bereits
+    getrimmt). Die API-Route (Task 5) reicht `from` aber als Freitext aus dem
+    JSON-Koerper durch; " Küche " traefe dort sonst null Zeilen und saehe wie
+    ein Tippfehler in einem nicht existierenden Raum aus, obwohl der Raum
+    ganz offensichtlich existiert."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
+        assert store.rename_room("  Küche  ", "Essbereich") == 1
+        assert store.device(device_id).room == "Essbereich"
+    finally:
+        store.close()
+
+
 def test_register_device_stores_the_matter_device_types(tmp_path):
     """Endpunkt 1 der Steckdose meldet 266 (0x010A, On/Off Plug-in Unit),
     Endpunkt 0 die Verwaltungstypen - beide werden roh abgelegt, gefiltert

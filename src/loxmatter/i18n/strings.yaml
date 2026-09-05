@@ -359,6 +359,9 @@ api.devices.commissioning_thread_cause:
 api.devices.room_name_required:
   en: "A room name is required."
   de: "Ein Raumname ist erforderlich."
+api.devices.unknown_room:
+  en: "No device is assigned to the room “{room}”."
+  de: "Dem Raum „{room}“ ist kein Gerät zugeordnet."
 api.auth.fail_password_too_short:
   en: "The password must be at least {min_length} characters long."
   de: "Das Passwort muss mindestens {min_length} Zeichen haben."

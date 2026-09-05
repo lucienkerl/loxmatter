@@ -1062,11 +1062,19 @@ class Store:
         Ein leerer Zielname dagegen wird hier abgewiesen: "umbenennen" ist
         nicht der Weg, einen Raum aufzuloesen - dafuer gibt es `set_room`
         mit `None` an jedem einzelnen Geraet."""
+        # `old` durch dieselbe Normalisierung wie `new`: seit dieser Methode
+        # ueber `POST /api/rooms/rename` erreichbar ist (Task 5), kommt der
+        # Quellname als Freitext aus dem JSON-Koerper an, nicht mehr
+        # ausschliesslich als bereits getrimmter, aus dem Speicher
+        # zurueckgelesener Wert - ungefiltert traefe " Küche " sonst null
+        # Zeilen und saehe wie ein Tippfehler in einem nicht existierenden
+        # Raum aus (Review-Fund).
+        source = _normalized_room(old)
         target = _normalized_room(new)
         if target is None:
             raise ValueError(i18n.t("api.devices.room_name_required"))
         cur = self._db.execute(
-            "UPDATE device SET room = ? WHERE room = ? AND active = 1", (target, old)
+            "UPDATE device SET room = ? WHERE room = ? AND active = 1", (target, source)
         )
         self._db.commit()
         return int(cur.rowcount)

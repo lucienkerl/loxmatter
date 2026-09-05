@@ -80,6 +80,17 @@ class DeviceOut(BaseModel):
     signal_count: int
     exportable_count: int
     next_export_count: int
+    # Raum und Kategorie (Entwurf Geraete-Tab, 2026-09-05). `room` ist der
+    # frei gewaehlte Name, `None` heisst "Ohne Raum". `category` ist die
+    # Kennung aus `profiles.categories.Category` (`socket`, `light`, …),
+    # NICHT der uebersetzte Name - den setzt die Oberflaeche selbst ueber
+    # `t("web.devices.category." + category)`, damit die Suche nach
+    # "Steckdose" bzw. "socket" in der jeweils angezeigten Sprache trifft.
+    # `category_rank` kommt aus derselben Quelle wie die Kategorie, statt
+    # die Reihenfolge ein zweites Mal in JavaScript zu fuehren.
+    room: str | None
+    category: str
+    category_rank: int
 
 
 class SignalPatch(BaseModel):
@@ -104,15 +115,40 @@ class SignalPatch(BaseModel):
     resend: bool | None = None
 
 
-class DeviceRename(BaseModel):
-    """`PATCH /api/devices/{device_id}` - einzig das Label ist aenderbar,
-    genau wie bei einem Signal nur `title`/`exported` (siehe `SignalPatch`).
-    Weder `node_id` noch `id` gehoeren hier her, aus demselben Grund: keine
-    Chance, sie versehentlich zu uebernehmen."""
+class DevicePatch(BaseModel):
+    """`PATCH /api/devices/{device_id}` - Label und Raum, sonst nichts.
+
+    Hiess bis zum Geraete-Tab-Entwurf `DeviceRename` und konnte nur das
+    Label; der Name zieht mit der Faehigkeit mit. Weder `node_id` noch `id`
+    gehoeren hier her, aus demselben Grund wie bei `SignalPatch`: was das
+    Modell nicht kennt, kann eine Route nicht versehentlich uebernehmen
+    (Pydantic v2 verwirft unbekannte Felder per `extra="ignore"`).
+
+    `None` heisst "unveraendert" - fuer BEIDE Felder, wie bei `SignalPatch`.
+    Fuer den Raum braucht es deshalb einen zweiten Weg, ihn zu ENTFERNEN:
+    das ist der Leerstring `""`, den `Store.set_room` ueber
+    `_normalized_room` zu `NULL` macht. Ein Name aus reinem Leerraum geht
+    denselben Weg - er hat dieselbe eindeutige Bedeutung und ist deshalb
+    kein 422 wert."""
 
     model_config = ConfigDict(frozen=True)
 
-    label: str
+    label: str | None = None
+    room: str | None = None
+
+
+class RoomRename(BaseModel):
+    """`POST /api/rooms/rename`.
+
+    Die Felder heissen innen `from_room`/`to_room`, weil `from` ein
+    Python-Schluesselwort ist; nach aussen tragen sie ueber `alias` die
+    kurzen Namen, die im JSON stehen. `populate_by_name` erlaubt beides,
+    damit ein Test das Modell auch direkt mit den Python-Namen bauen kann."""
+
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
+
+    from_room: str = Field(alias="from")
+    to_room: str = Field(alias="to")
 
 
 class CommandOut(BaseModel):
@@ -174,6 +210,11 @@ class CommissionRequest(BaseModel):
 
     code: str
     thread_dataset: str | None = None
+    # Raum (Entwurf Geraete-Tab, 2026-09-05, Abschnitt 6.7): optional, weil
+    # ein Geraet ohne Raumwahl unter "Ohne Raum" landet und sich jederzeit
+    # nachtraeglich zuordnen laesst. Scheitert das Einlernen, entsteht kein
+    # Geraet und damit auch kein Raum.
+    room: str | None = None
 
 
 class ExportDeviceOut(BaseModel):

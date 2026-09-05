@@ -693,3 +693,83 @@ async def test_a_failing_online_seed_still_reports_the_device_as_commissioned(
     # der Abonnements haengt nicht am Gelingen des Erreichbarkeits-Saeens.
     assert fake_client.followed == [100]
     store.close()
+
+
+async def test_the_device_list_carries_room_and_category(api):
+    client, _store, device_id, _fake = api
+    devices = (await client.get("/api/devices")).json()
+    device = next(d for d in devices if d["id"] == device_id)
+    assert device["room"] is None
+    assert device["category"] == "socket"
+    assert device["category_rank"] == 1
+
+
+async def test_patching_only_the_room_leaves_the_label_alone(api):
+    client, store, device_id, _fake = api
+    before = store.device(device_id).label
+    response = await client.patch(f"/api/devices/{device_id}", json={"room": "  Küche  "})
+    assert response.status_code == 200
+    assert response.json()["room"] == "Küche"
+    assert store.device(device_id).label == before
+
+
+async def test_patching_only_the_label_leaves_the_room_alone(api):
+    client, store, device_id, _fake = api
+    store.set_room(device_id, "Bad")
+    response = await client.patch(f"/api/devices/{device_id}", json={"label": "Steckdose"})
+    assert response.status_code == 200
+    assert response.json()["room"] == "Bad"
+    assert response.json()["label"] == "Steckdose"
+
+
+async def test_an_empty_room_string_clears_the_room(api):
+    """`""` heisst "Raum entfernen", `null`/weggelassen heisst
+    "unveraendert" - dasselbe Prinzip wie bei `SignalPatch`."""
+    client, store, device_id, _fake = api
+    store.set_room(device_id, "Bad")
+    response = await client.patch(f"/api/devices/{device_id}", json={"room": ""})
+    assert response.status_code == 200
+    assert response.json()["room"] is None
+
+
+async def test_patching_the_room_does_not_make_the_device_pending(api):
+    """Der Raum landet in keiner Exportvorlage - ein frisch exportiertes
+    Geraet darf durch eine Raumzuweisung nicht wieder ausstehend werden
+    (Entwurf 3.3).
+
+    Der Export vorweg ist noetig, damit der Ausgangszustand eindeutig ist:
+    ein nie exportiertes Geraet gilt immer als ausstehend, dort waere die
+    Aussage dieses Tests nicht zu erkennen.
+
+    Die Gegenprobe - eine Umbenennung MUSS das Geraet als ausstehend
+    fuehren - steht bereits in `tests/api/test_export_api.py` (der Test um
+    Zeile 280, "Umbenennung … muss `GET /api/export/status` melden") und
+    wird hier nicht ein zweites Mal geschrieben. Sie ist der Grund, warum
+    dieser Test nicht dadurch gruen werden kann, dass `updated_at`
+    versehentlich gar nicht mehr gesetzt wird.
+
+    `GET /api/export/status` antwortet mit einer LISTE, nicht mit einem
+    Objekt (`-> list[ExportStatusOut]`, `api/export.py:362`)."""
+    client, store, device_id, _fake = api
+    store.mark_exported(device_id)
+
+    status = (await client.get("/api/export/status")).json()
+    entry = next(e for e in status if e["device_id"] == device_id)
+    assert entry["changed_since_export"] is False
+
+    await client.patch(f"/api/devices/{device_id}", json={"room": "Flur"})
+
+    status = (await client.get("/api/export/status")).json()
+    entry = next(e for e in status if e["device_id"] == device_id)
+    assert entry["changed_since_export"] is False
+
+
+async def test_commissioning_accepts_a_room(api):
+    client, _store, _device_id, fake_client = api
+    fake_client.snapshot_to_return = load_snapshot("ikea_bilresa_button.json")
+    response = await client.post(
+        "/api/devices/commission", json={"code": "1234-567-8901", "room": "Küche"}
+    )
+    assert response.status_code == 201
+    assert response.json()["room"] == "Küche"
+    assert response.json()["category"] == "switch"

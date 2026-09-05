@@ -234,12 +234,22 @@ class FakeMatterClient:
         # den Schalter faende sie einen leeren Diff und saete nie (siehe
         # `BridgeMatterClient.follow_node`).
         self.followed_forced: list[bool] = []
+        # Das Abbild, das `commission_with_code` zurueckgibt, wenn gesetzt
+        # (Kategorie am frisch eingelernten Geraet, Task 5 Geraete-Tab): das
+        # Attrappen-Abbild unten traegt `attributes={}`, `category_for`
+        # liefert dafuer ausnahmslos `OTHER` - ein Test, der eine andere
+        # Kategorie nach dem Einlernen sehen will, braucht ein echtes,
+        # aufgezeichnetes Abbild (`load_snapshot`). `None` (Vorgabe) laesst
+        # das bisherige Verhalten unveraendert.
+        self.snapshot_to_return: NodeSnapshot | None = None
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
         if self.fail_commission_with is not None:
             raise self.fail_commission_with
         self.commissioned.append(code)
         self.order.append("commission")
+        if self.snapshot_to_return is not None:
+            return self.snapshot_to_return
         node_id = self._next_node_id
         self._next_node_id += 1
         return NodeSnapshot(
