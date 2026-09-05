@@ -244,7 +244,7 @@ PASSWORD = "loxmatter-demo"
 
 
 def shoot(page: Page, name: str) -> None:
-    page.wait_for_timeout(600)          # Alpine rendert nach dem Laden nach
+    page.wait_for_timeout(600)  # Alpine rendert nach dem Laden nach
     SHOTS.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(SHOTS / f"{name}.png"))
     print(f"  {name}.png")
@@ -252,8 +252,8 @@ def shoot(page: Page, name: str) -> None:
 
 def capture(page: Page) -> None:
     page.goto(BASE, wait_until="networkidle")
-    page.fill('input[type="password"]', PASSWORD)      # aus Step 1
-    page.click('button:has-text("Sign in")')            # aus Step 1
+    page.fill('input[type="password"]', PASSWORD)  # aus Step 1
+    page.click('button:has-text("Sign in")')  # aus Step 1
     page.wait_for_timeout(1200)
 
     shoot(page, "dashboard")
@@ -307,23 +307,23 @@ Der `page.evaluate`-Umweg über Alpines Datenstapel ist absichtlich: ein Klick a
 Für `commissioning.png`: die Einlern-Karte steht oben im Geräte-Tab. Einen Beispielcode eintragen, **ohne** abzuschicken (ohne Matter-Verbindung käme nur ein Fehler), dann fotografieren:
 
 ```python
-    page.evaluate("document.querySelector('[x-data]')._x_dataStack[0].selectView('devices')")
-    page.fill('input[placeholder*="MT:"]', "MT:Y.K9042C00KA0648G00")   # Selektor aus Step 1
-    shoot(page, "commissioning")
+page.evaluate("document.querySelector('[x-data]')._x_dataStack[0].selectView('devices')")
+page.fill('input[placeholder*="MT:"]', "MT:Y.K9042C00KA0648G00")  # Selektor aus Step 1
+shoot(page, "commissioning")
 ```
 
 Für `project-sync.png`: die Beispiel-Projektdatei aus den Tests hochladen und den Diff-Plan abwarten:
 
 ```python
-    from tests.projectsync.conftest import SAMPLE_PROJECT     # oben importieren
+from tests.projectsync.conftest import SAMPLE_PROJECT  # oben importieren
 
-    sample = ROOT / "docs" / "screenshots" / "_sample.Loxone"
-    sample.write_text(SAMPLE_PROJECT, encoding="utf-8")
-    page.evaluate("document.querySelector('[x-data]')._x_dataStack[0].selectView('export')")
-    page.set_input_files('input[type="file"]', str(sample))
-    page.wait_for_timeout(2500)          # Upload plus Diff-Berechnung
-    shoot(page, "project-sync")
-    sample.unlink()
+sample = ROOT / "docs" / "screenshots" / "_sample.Loxone"
+sample.write_text(SAMPLE_PROJECT, encoding="utf-8")
+page.evaluate("document.querySelector('[x-data]')._x_dataStack[0].selectView('export')")
+page.set_input_files('input[type="file"]', str(sample))
+page.wait_for_timeout(2500)  # Upload plus Diff-Berechnung
+shoot(page, "project-sync")
+sample.unlink()
 ```
 
 Damit `from tests…` importierbar ist, muss `ROOT` in `sys.path` liegen:
