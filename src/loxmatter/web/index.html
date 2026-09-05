@@ -715,7 +715,7 @@
                           x-model="newRoomDraft"
                           :placeholder="t('web.devices.room_new_placeholder')"
                           @keydown.enter="closeTileMenu($el); commitNewRoom(device)"
-                          @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''; $nextTick(() => $el.parentElement.querySelector('.tile-menu-new').focus())"
+                          @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''; $nextTick(() => $el.parentElement.querySelector('.tile-menu-new')?.focus())"
                         />
                         <hr class="tile-menu-sep" />
                         <button
