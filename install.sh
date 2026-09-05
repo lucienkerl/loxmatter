@@ -51,8 +51,10 @@ CHECKOUT_EXISTED=0
 STACK_DIR=""
 ENV_FILE=""
 ENV_IS_NEW=0
+CONFIG_WRITTEN=0
 FINDINGS=""
 PORT=8080
+HEALTHY=1
 
 # ---------------------------------------------------------------- output --
 
@@ -522,7 +524,22 @@ env_file_has() { grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 env_set() {
   env_key="$1"
   env_value="$2"
+  # Every call to env_set only ever happens from inside configure() - this is
+  # how an abort further down that same function knows to say .env was
+  # already touched, instead of leaving that unsaid.
+  CONFIG_WRITTEN=1
   if ! env_file_has "$env_key"; then
+    # A hand-edited .env commonly has no trailing newline - $(...) in an
+    # editor, or a plain `printf` without one, both leave the file that way.
+    # Appending straight onto that merges the new "KEY=value" onto the end
+    # of the last existing line instead of starting a line of its own,
+    # destroying that line's value. `tail -c 1` reads the file's last byte
+    # without loading the whole thing; a missing file or an empty one both
+    # report something other than a lone newline, so the check only adds
+    # one when there is a real last line to close off.
+    if [ -s "$ENV_FILE" ] && [ "$(tail -c 1 "$ENV_FILE")" != "" ]; then
+      printf '\n' >> "$ENV_FILE"
+    fi
     printf '%s=%s\n' "$env_key" "$env_value" >> "$ENV_FILE"
     return 0
   fi
@@ -547,6 +564,16 @@ env_set() {
   TEMP_FILE=""
 }
 
+# Every abort message has to name what was and was not changed. An abort
+# reached from inside configure() can follow env_set calls that already
+# wrote earlier keys, so the die messages below add this sentence - naming
+# only that $ENV_FILE was touched, nothing about which keys.
+config_written_note() {
+  if [ "$CONFIG_WRITTEN" -eq 1 ]; then
+    printf ' %s was already partially written.' "$ENV_FILE"
+  fi
+}
+
 ensure_env_value() {
   value_key="$1"
   value_prompt="$2"
@@ -568,7 +595,7 @@ ensure_env_value() {
     value_new="$(ask "$value_prompt" "$value_default")"
   fi
   if [ -z "$value_new" ] && [ "$value_required" -eq 1 ]; then
-    die "$value_key needs a value and none could be obtained."
+    die "$value_key needs a value and none could be obtained.$(config_written_note)"
   fi
   env_set "$value_key" "$value_new"
   note "$value_key=$value_new"
@@ -585,7 +612,7 @@ ask_miniserver() {
   ms_value="${MINISERVER_IP:-}"
   while [ -z "$ms_value" ] || ! valid_ipv4 "$ms_value"; do
     if [ "$HAVE_TTY" -eq 0 ]; then
-      die "MINISERVER_IP is not a valid IPv4 address: '$ms_value'"
+      die "MINISERVER_IP is not a valid IPv4 address: '$ms_value'.$(config_written_note)"
     fi
     ms_value="$(ask "IPv4 address of the Loxone Miniserver" "")"
   done
@@ -626,6 +653,10 @@ gen_token() {
 # does have an otbr container. Writing an empty value there would silently
 # take its border router away on the next `compose up`.
 configure_mode() {
+  # decide_mode (phase one) already decided and printed this. Keeping the
+  # existing .env is correct, but silently overwriting that decision here
+  # is not - anything that changes MODE below has to say so.
+  cm_requested_mode="$MODE"
   if [ "$ENV_IS_NEW" -eq 0 ] && env_file_has COMPOSE_PROFILES; then
     if [ -n "$(env_file_value COMPOSE_PROFILES)" ]; then
       MODE="thread"
@@ -633,12 +664,18 @@ configure_mode() {
       MODE="wifi"
     fi
     note "COMPOSE_PROFILES kept, mode: $MODE"
+    if [ "$MODE" != "$cm_requested_mode" ]; then
+      warn "The existing $ENV_FILE wins over the requested '$cm_requested_mode' mode: mode is '$MODE'. Edit COMPOSE_PROFILES in $ENV_FILE to change it."
+    fi
     return 0
   fi
   if [ "$ENV_IS_NEW" -eq 0 ] && dk ps -a --format '{{.Names}}' 2>/dev/null | grep -qx otbr; then
     env_set COMPOSE_PROFILES thread
     MODE="thread"
     note "COMPOSE_PROFILES=thread (this installation already runs otbr)"
+    if [ "$MODE" != "$cm_requested_mode" ]; then
+      warn "The existing $ENV_FILE wins over the requested '$cm_requested_mode' mode: mode is '$MODE'. Edit COMPOSE_PROFILES in $ENV_FILE to change it."
+    fi
     return 0
   fi
   if [ "$MODE" = "thread" ]; then
@@ -759,7 +796,11 @@ check_health() {
   if [ "$health_ok" -ne 1 ]; then
     printf '\n\033[31m%s does not answer. Last lines from the log:\033[0m\n' "$health_url"
     dk logs --tail 30 loxmatter 2>&1 || true
-    die "The containers are up but the bridge does not report healthy."
+    HEALTHY=0
+    add_finding "$health_url does not answer, so the bridge is not healthy yet.
+Look at:
+  cd $STACK_DIR && docker compose logs loxmatter"
+    return 0
   fi
   note "$health_url answers"
 }
@@ -947,11 +988,18 @@ main() {
   install_packages
   install_docker
   ensure_checkout
+  offer_update
   configure
   start_stack
   run_checks
-  offer_update
   report
+  # Everything above still applies even when the bridge itself is not
+  # answering - the container list, the findings and the web address are
+  # exactly what points at why. So this stays the very last thing main does,
+  # after report() has already printed all of it.
+  if [ "$HEALTHY" -eq 0 ]; then
+    die "The bridge does not answer yet. Everything printed above still applies."
+  fi
 }
 
 main "$@"

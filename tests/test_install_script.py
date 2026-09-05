@@ -498,6 +498,20 @@ def test_zweiter_lauf_bietet_das_update_an_ohne_es_zu_tun(installer):
     assert "Apply them with" in second.output
 
 
+def test_update_angebot_kommt_vor_dem_bau(installer):
+    # main baute bisher zuerst - mit dem ALTEN Checkout, das eigene Hinweis
+    # warnt sogar, das dauere Minuten auf einem Pi - und bot das Update erst
+    # danach an. Ein erneuter Lauf ist der dokumentierte Update-Weg, also der
+    # haeufige Fall: hier darf nicht doppelt gebaut werden.
+    first = installer()
+    assert first.returncode == 0
+    second = installer(env={"FAKE_BEHIND": "3"})
+    assert second.returncode == 0
+    fetch_index = next(i for i, c in enumerate(second.calls) if "fetch --quiet origin main" in c)
+    build_index = next(i for i, c in enumerate(second.calls) if "compose up -d --build" in c)
+    assert fetch_index < build_index
+
+
 def test_erster_lauf_prueft_nicht_auf_updates(installer):
     # Frisch geklont - es gibt nichts zu aktualisieren.
     result = installer(env={"FAKE_BEHIND": "3"})
@@ -723,6 +737,60 @@ def test_rueckwaertsstrich_im_wert_bleibt_erhalten(installer):
     assert r"RADIO_DEVICE=/dev/serial/by-id/a\tb" in result.env_file.read_text()
 
 
+def test_env_ohne_abschliessenden_zeilenumbruch_bleibt_heil(installer):
+    # Eine von Hand bearbeitete .env endet oft ohne Zeilenumbruch. Ein
+    # angehaengter Schluessel verschmolz dann mit der letzten Zeile und
+    # zerstoerte deren Wert.
+    first = installer()
+    assert first.returncode == 0
+    text = first.env_file.read_text()
+    keep = "\n".join(line for line in text.splitlines() if not line.startswith("COMPOSE_PROFILES="))
+    first.env_file.write_text(keep.rstrip("\n"))  # bewusst ohne Zeilenumbruch am Ende
+    second = installer()
+    assert second.returncode == 0
+    values = dict(
+        line.split("=", 1)
+        for line in second.env_file.read_text().splitlines()
+        if "=" in line and not line.startswith("#")
+    )
+    assert values["MINISERVER_IP"] == "10.0.1.99"
+    assert "COMPOSE_PROFILES" in values
+
+
+def test_abbruch_in_configure_nennt_die_angefasste_env(installer):
+    # COMPOSE_PROFILES, RADIO_DEVICE und RADIO_BAUDRATE stehen schon in der
+    # .env, wenn BACKBONE_IF keinen Wert bekommt (kein Default-Route-Eintrag,
+    # kein Terminal) und der Lauf abbricht. Der Abbruch muss das sagen, sonst
+    # sieht es aus wie ein sauberer Abbruch vor jeder Aenderung.
+    result = installer(
+        env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"},
+        stubs={"ip": "echo\n"},
+    )
+    assert result.returncode == 2
+    assert "BACKBONE_IF" in result.output
+    assert str(result.env_file) in result.output
+    assert "partially written" in result.output
+    values = dict(
+        line.split("=", 1)
+        for line in result.env_file.read_text().splitlines()
+        if "=" in line and not line.startswith("#")
+    )
+    assert values["COMPOSE_PROFILES"] == "thread"
+
+
+def test_widerspruechlicher_modus_wird_laut_gemeldet(installer):
+    # LOXMATTER_MODE=thread trifft auf eine vorhandene .env mit
+    # COMPOSE_PROFILES= (wifi). "Operating mode: thread" und sechs Zeilen
+    # spaeter "mode: wifi" widersprachen sich bisher stillschweigend.
+    first = installer()
+    assert first.returncode == 0
+    second = installer(env={"LOXMATTER_MODE": "thread"})
+    assert second.returncode == 0
+    assert "Operating mode: thread" in second.output
+    assert "COMPOSE_PROFILES kept, mode: wifi" in second.output
+    assert "wins over the requested" in second.output
+
+
 def test_altinstallation_behaelt_ihren_border_router(installer):
     # Eine .env von vor den Compose-Profilen kennt COMPOSE_PROFILES nicht.
     # Ein leerer Wert naehme dem naechsten `compose up` den otbr-Dienst weg -
@@ -759,6 +827,24 @@ def test_gesundheitspruefung_laeuft(installer):
     result = installer()
     assert any("/health" in call for call in result.calls)
     assert "answers" in result.output
+
+
+def test_kranker_dienst_liefert_trotzdem_den_rest(installer):
+    # Antwortet /health nicht, ist die Containerliste die wahrscheinlichste
+    # Erklaerung - sie darf nicht mit abgebrochen werden. Nur der Health-Zweig
+    # des curl-Stubs schlaegt fehl, get.docker.com bliebe unberuehrt, falls
+    # dieser Pfad in einem anderen Test gebraucht wuerde.
+    curl_health_scheitert = _CURL.replace(
+        '*health*) body=\'{"status":"ok"}\' ;;',
+        "*health*) exit 1 ;;",
+    )
+    result = installer(stubs={"curl": curl_health_scheitert})
+    assert result.returncode == 2
+    assert "does not answer" in result.output
+    # Die Containerliste kommt ERST NACH der Gesundheitspruefung - genau das
+    # durfte bisher nicht mehr laufen.
+    assert any("compose ps --services" in call for call in result.calls)
+    assert "Web interface" in result.output
 
 
 def test_gesunder_port_kommt_aus_der_compose_datei(installer):
