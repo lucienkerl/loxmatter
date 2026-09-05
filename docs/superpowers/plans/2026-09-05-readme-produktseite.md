@@ -24,6 +24,7 @@
   7. Der Schema-Umzug setzt gesetzte Exportieren-Haken zurück.
   8. Ein Sprachwechsel wirkt nur auf **neu** erzeugte Vorlagen.
   Die Punkte 1, 2 und 3 stehen sichtbar in der README selbst, nicht nur verlinkt.
+- **Querverweise zeigen auf das neue Zuhause, nicht auf die alte README.** Die alte README verweist an vielen Stellen auf ihre eigenen Abschnitte („ein Passwort vergeben, siehe Zugangsschutz unten"). Beim Verschieben wird daraus ein Link auf die Datei, in die der Abschnitt wandert — nicht auf einen README-Anker, den es nach Aufgabe 6 nicht mehr gibt. Die Zielanker stehen in den **Interfaces** der jeweiligen Aufgabe: `SETUP.md#requirements`/`#try-it-without-hardware`/`#your-own-setup`/`#looking-at-a-device`, `OPERATIONS.md#running-the-bridge`/`#what-a-template-contains`/`#project-file-sync`/`#access-control`/`#language`. Innerhalb von `docs/` sind das Geschwisterpfade ohne `../`. Beim Ausführen von Aufgabe 3 aufgefallen, nachdem zwei Links auf `README.md#dauerhaft-betreiben-loxmatter-run` gezeigt hatten.
 - **Keine Änderung an Anwendungscode, Verhalten oder bestehenden Tests.** Neue Dateien nur unter `scripts/`, `docs/` und `docs/screenshots/`.
 - **Screenshots enthalten keine echten Daten** — nur Fixture-Geräte, Bridge-IP `192.168.1.50`, Miniserver `192.168.1.10`.
 - **Quelltext der alten README:** bis Aufgabe 6 steht er in `README.md`. Danach: `git show 8002484:README.md`.
