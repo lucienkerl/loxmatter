@@ -2176,7 +2176,23 @@ async def test_the_tile_menu_outranks_the_sticky_header(api):
     die Kopfzeile statt des Menues - ohne Browser-Engine kann diese Suite
     das Uebermalen selbst nicht nachstellen, belegt wird nur, dass die
     ausgelieferte Regel einen hoeheren `z-index` traegt als die Kopfzeile
-    und nicht wieder darunter faellt."""
+    und nicht wieder darunter faellt.
+
+    Review-Fund 4 (2026-09-05, Review der Nacharbeit): dieser Vergleich
+    zweier Zahlen ist eine NOTWENDIGE, aber keine HINREICHENDE Bedingung -
+    ein `z-index` gilt nur innerhalb des Stacking-Kontexts seines
+    Erzeugers, und `opacity`/`filter`/`transform`/`backdrop-filter`/
+    `will-change`/`isolation`/`contain: paint` auf `.device-card`,
+    `.device-foot` oder `.tile-menu` spannen einen solchen Kontext auf.
+    Gemessen mit `opacity: 0.75` auf `.device-card` (dem Vor-Nacharbeit-
+    Zustand): `document.elementFromPoint` an der Menue-Oberkante lieferte
+    trotzdem die Kopfzeile, SELBST mit `z-index: 20` hier - die Karten-
+    Opacity sperrte das Menue in ihren eigenen Kontext ein, in dem der
+    Vergleich nie ankam. Dieser Test kennt keine Stacking-Kontexte, er
+    vergleicht nur zwei Zahlen im Stylesheet - kommt einer der genannten
+    Nebeneffekte zwischen `.device-card` und `.tile-menu-items` zurueck,
+    faengt sich das Menue wieder unter der Kopfzeile, OHNE dass dieser
+    Test (oder irgendein anderer in dieser Datei) das meldet."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     header_rule = css.split("header.app-header {", 1)[1].split("}", 1)[0]

@@ -717,7 +717,24 @@ footer.hint-block {
  * Kinder von `.device-foot` ausser `.tile-menu`, der Farbstreifen
  * `::before` und der Kebab-Ausloeser `.tile-menu > summary` -, nicht
  * eine einzelne kartenweite Opacity: NUR so bleibt `.tile-menu-items`
- * (die schwebende Liste selbst) als einziges Element unangetastet. */
+ * (die schwebende Liste selbst) als einziges Element unangetastet.
+ *
+ * Review-Fund 4 (2026-09-05, Review der Nacharbeit): dieses Verlegen der
+ * Opacity von der Karte auf ihre Kinder ist nicht nur eine Sichtbarkeits-
+ * Frage fuer das Menue, sondern auch eine STACKING-Voraussetzung fuer den
+ * `z-index`-Sieg von `.tile-menu-items` gegen die Kopfzeile (Fund 1 der
+ * Nacharbeit, Begruendung dort): ein `z-index` gilt nur innerhalb des
+ * Stacking-Kontexts seines Erzeugers, und `opacity` (wie jeder der oben
+ * an `.device-card`, `.device-foot` oder `.tile-menu` verbotenen
+ * Nebeneffekte: `filter`, `transform`, `backdrop-filter`, `will-change`,
+ * `isolation`, `contain: paint`) spannt genau so einen Kontext auf. Vor
+ * dieser Nacharbeit sass die Opacity auf `.device-card` und sperrte damit
+ * `.tile-menu-items` in ihren Kontext ein - gemessen lieferte
+ * `document.elementFromPoint` an der Menue-Oberkante die Kopfzeile,
+ * SELBST mit `z-index: 20`. Kaeme irgendwo zwischen `.device-card` und
+ * `.tile-menu-items` erneut einer dieser Nebeneffekte hinzu, faengt sich
+ * das Menue wieder unter der Kopfzeile - der z-index-Test in test_web.py
+ * meldet das NICHT, er vergleicht nur zwei Zahlen im Stylesheet. */
 .device-card.is-offline > *:not(.device-foot) {
   opacity: 0.75;
 }
@@ -1334,7 +1351,26 @@ footer.hint-block {
  * gerade aktiv anschaut - die Kopfzeile ist dauerhaftes Chrome, das er nie
  * gezielt "ansteuert". Wer hier eine der beiden Zahlen anhebt, ohne dieses
  * Verhaeltnis zu kennen, riskiert das Gegenteil: eine Kopfzeile, die wieder
- * ueber jedem offenen Menue schwebt. */
+ * ueber jedem offenen Menue schwebt.
+ *
+ * Review-Fund 4 (2026-09-05, Review der Nacharbeit): dieser Vergleich
+ * gewinnt NUR, solange kein Vorfahre von `.tile-menu-items` zwischen ihr
+ * und `.device-card` einen eigenen Stacking-Kontext aufspannt - ein
+ * `z-index` kann nie aus dem Stacking-Kontext seines Erzeugers ausbrechen,
+ * er gilt nur INNERHALB davon. Gemessen mit `opacity: 0.75` auf
+ * `.device-card` (dem Vor-Nacharbeit-Zustand): `document.elementFromPoint`
+ * an der Menue-Oberkante lieferte trotzdem die Kopfzeile, SELBST mit
+ * `z-index: 20` hier - die Opacity der Karte sperrte das Menue in ihren
+ * eigenen Kontext ein, in dem "20 gegen 10" nie ankam. Dieser Vergleich
+ * funktioniert also nur, weil die Offline-Dimmung (Begruendung bei
+ * `.device-card.is-offline > *:not(.device-foot)`, unten in dieser Datei)
+ * die Opacity von der Karte weg auf ihre Kinder verlegt hat. Kommt hier,
+ * an `.device-foot` oder an `.tile-menu` selbst je wieder `opacity`,
+ * `filter`, `transform`, `backdrop-filter`, `will-change`, `isolation`
+ * oder `contain: paint` hinzu, faengt sich das Menue erneut unter der
+ * Kopfzeile - OHNE dass ein Test das meldet: der z-index-Test in
+ * test_web.py vergleicht nur zwei Zahlen im Stylesheet, er kennt keine
+ * Stacking-Kontexte. */
 /* Fund 2 (Nacharbeit 2026-09-05): `.tile-menu-item` ist `white-space:
  * nowrap`, die Liste selbst hatte nur ein `min-width`, keine Obergrenze -
  * ein langer Raumname (Nutzer duerfen Raeume frei benennen) blies die
