@@ -29,8 +29,12 @@ pytest gerade in einem Terminal oder in der CI laeuft.
 
 from __future__ import annotations
 
+import os
 import shutil
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -224,7 +228,7 @@ def installer(tmp_path):
         if real is not None:
             (sysdir / tool).symlink_to(real)
 
-    def run(*args, env=None, omit=(), stubs=None):
+    def build_env(env, omit, stubs):
         active = dict(DEFAULT_STUBS)
         active.update(stubs or {})
         for name in omit:
@@ -259,6 +263,10 @@ def installer(tmp_path):
             "MINISERVER_IP": "10.0.1.99",
         }
         full_env.update(env or {})
+        return full_env
+
+    def run(*args, env=None, omit=(), stubs=None):
+        full_env = build_env(env, omit, stubs)
         proc = subprocess.run(
             ["/bin/sh", str(INSTALLER), *args],
             env=full_env,
@@ -271,6 +279,25 @@ def installer(tmp_path):
         )
         return Result(proc, home, log, tmpdir)
 
+    # Fuer Tests, die auf den LAUFENDEN Prozess einwirken muessen (z.B. ein
+    # Signal schicken), statt nur das fertige Ergebnis zu pruefen. Gleicher
+    # Aufbau wie `run`, nur mit Popen statt subprocess.run, damit `run`
+    # selbst unveraendert bleibt.
+    def start(*args, env=None, omit=(), stubs=None):
+        full_env = build_env(env, omit, stubs)
+        return subprocess.Popen(
+            ["/bin/sh", str(INSTALLER), *args],
+            env=full_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+
+    run.start = start
+    run.log = log
+    run.tmpdir = tmpdir
     return run
 
 
@@ -443,9 +470,70 @@ def test_leerer_docker_download_bricht_ab(installer):
     assert not result.called("usermod")
 
 
+def test_unvollstaendiger_docker_download_wird_erkannt(installer):
+    # curl kann mit 0 enden und eine abgeschnittene, aber syntaktisch gueltige
+    # Datei liefern - ein echtes Docker-Installskript beginnt mit einem langen
+    # Kommentarkopf. Sie laeuft fehlerfrei durch und installiert nichts. Das
+    # muss als solches gemeldet werden, nicht als fehlendes Compose-Plugin.
+    truncated = (
+        'out=""\n'
+        "while [ $# -gt 0 ]; do\n"
+        '  case "$1" in\n'
+        '    -o) out="$2"; shift ;;\n'
+        "  esac\n"
+        "  shift\n"
+        "done\n"
+        'if [ -n "$out" ]; then printf \'#!/bin/sh\\n# abgeschnitten\\ntrue\\n\' > "$out"; fi\n'
+        "exit 0\n"
+    )
+    result = installer(omit=("docker",), stubs={"curl": truncated})
+    assert result.returncode == 2
+    assert "left no 'docker'" in result.output
+    assert not result.called("usermod")
+
+
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="mktemp auf macOS ignoriert TMPDIR - die Pruefung waere hier immer wahr",
+)
 def test_kein_temporaeres_skript_bleibt_liegen(installer):
     # Der Download landet in einer Datei, nicht in einer Pipe - sie muss auf
     # jedem Weg wieder verschwinden, auch wenn der Lauf abbricht.
     result = installer(omit=("docker",), stubs={"curl": "exit 6\n"})
     assert result.returncode == 2
     assert list(result.tmpdir.iterdir()) == []
+
+
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="mktemp auf macOS ignoriert TMPDIR - die Pruefung waere hier immer wahr",
+)
+def test_sigint_raeumt_temporaere_datei_auf(installer):
+    # Bisher nur einmal manuell per SIGINT vorgefuehrt, hier als Test: der
+    # Download haengt, das Signal geht an die ganze Prozessgruppe (der
+    # Kindprozess ist durch start_new_session=True selbst Gruppenfuehrer -
+    # ein Signal nur an ihn wuerde eine Shell, die auf ihr Vordergrund-Kind
+    # wartet, erst nach dessen Ende bemerken), und danach darf im
+    # temporaeren Verzeichnis nichts mehr liegen.
+    proc = installer.start(omit=("docker",), stubs={"curl": "sleep 30\n"})
+    deadline = time.time() + 10
+    while True:
+        if installer.log.exists() and "curl" in installer.log.read_text():
+            break
+        if time.time() > deadline:
+            proc.kill()
+            proc.wait()
+            pytest.fail("curl-Stub ist nicht rechtzeitig gestartet")
+        time.sleep(0.05)
+
+    # start_new_session=True macht proc.pid zur Prozessgruppen-ID.
+    os.killpg(proc.pid, signal.SIGINT)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        pytest.fail("Installer hat nach SIGINT nicht beendet")
+
+    assert proc.returncode == 130
+    assert list(installer.tmpdir.iterdir()) == []

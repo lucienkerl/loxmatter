@@ -437,6 +437,13 @@ Is this machine online? Nothing was changed."
   fi
   rm -f "$TEMP_FILE"
   TEMP_FILE=""
+  # Checking the outcome, not the download: a truncated but syntactically
+  # valid script runs cleanly and installs nothing, and no amount of
+  # inspecting the file beforehand catches every such case.
+  if ! have docker; then
+    die "The installer from $DOCKER_INSTALL_URL ran but left no 'docker'
+command. The download was probably incomplete. Nothing else was changed."
+  fi
   if [ -n "$SUDO" ]; then
     docker_user="$(id -un)"
     run_root usermod -aG docker "$docker_user" ||
