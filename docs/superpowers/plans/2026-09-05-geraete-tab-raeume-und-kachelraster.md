@@ -1498,9 +1498,6 @@ web.devices.room_new_placeholder:
 web.devices.room_rename:
   en: "Rename room"
   de: "Raum umbenennen"
-web.devices.room_rename_prompt:
-  en: "New name for this room:"
-  de: "Neuer Name für diesen Raum:"
 web.devices.room_rename_merge_confirm:
   en: "A room with that name already exists. Both rooms will be merged — this cannot be undone. Continue?"
   de: "Ein Raum dieses Namens besteht bereits. Beide Räume werden zusammengeführt — das lässt sich nicht rückgängig machen. Fortfahren?"
@@ -1571,7 +1568,7 @@ EOF
 
 **Interfaces:**
 - Consumes: `DeviceOut.room/category/category_rank` und die Routen aus Task 5; die Schlüssel aus Task 6.
-- Produces: die Alpine-Methoden, die Task 8 im Markup aufruft — `roomKeyOf(device)`, `roomChips()`, `hasAnyRoom()`, `matchesSearch(device)`, `visibleDevices()`, `hitsOutsideRoom()`, `clearRoomFilter()`, `deviceGroups()`, `categoryLabel(device)`, `leadSignalFor(deviceId)`, `restSignalsFor(deviceId)`, `saveRoom(device, value)`, `beginNewRoom(device)`, `commitNewRoom(device)`, `renameRoom(room)` — und die Zustandsfelder `roomFilter` (`null` = Alle, `""` = Ohne Raum, sonst der Raumname), `deviceSearch`, `newRoomFor`, `newRoomDraft`, `commissionRoom`, `commissionNewRoom`.
+- Produces: die Alpine-Methoden, die Task 8 im Markup aufruft — `roomKeyOf(device)`, `roomChips()`, `hasAnyRoom()`, `matchesSearch(device)`, `visibleDevices()`, `hitsOutsideRoom()`, `clearRoomFilter()`, `deviceGroups()`, `categoryLabel(device)`, `leadSignalFor(deviceId)`, `restSignalsFor(deviceId)`, `saveRoom(device, value)`, `beginNewRoom(device)`, `commitNewRoom(device)`, `beginRenameRoom(room)`, `commitRenameRoom()`, `cancelRenameRoom()` — und die Zustandsfelder `roomFilter` (`null` = Alle, `""` = Ohne Raum, sonst der Raumname), `deviceSearch`, `newRoomFor`, `newRoomDraft`, `commissionRoom`, `commissionNewRoom`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1597,7 +1594,8 @@ async def test_the_script_offers_room_filtering_grouping_and_search(api):
         "saveRoom(",
         "beginNewRoom(",
         "commitNewRoom(",
-        "renameRoom(",
+        "beginRenameRoom(",
+        "commitRenameRoom(",
         "hitsOutsideRoom(",
         "clearRoomFilter(",
     ):
@@ -1656,6 +1654,9 @@ In `app.js`, im Zustandsobjekt neben `labelDrafts` (Zeile ~346):
     // global, damit zwei offene Kacheln sich nicht gegenseitig schliessen.
     newRoomFor: null,
     newRoomDraft: "",
+    // Welcher Raum gerade inline umbenannt wird (Raumname oder null).
+    renamingRoom: null,
+    renameDraft: "",
 ```
 
 Und im Einlern-Block neben `commissionThreadDataset`:
@@ -1852,23 +1853,51 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
       }
     },
 
-    // Benennt einen Raum an allen seinen Geraeten um. Die Rueckfrage vor
-    // dem Zusammenfuehren steht hier und nicht im Server: nur die
-    // Oberflaeche weiss, ob der Zielname schon belegt ist, ohne dafuer
-    // eine zweite Abfrage zu stellen - die Geraeteliste liegt ihr vor.
-    async renameRoom(room) {
-      const target = window.prompt(t("web.devices.room_rename_prompt"), room);
-      if (target === null) {
+    // Umbenennen passiert INLINE, wie jede andere Bearbeitung dieser
+    // Oberflaeche (Geraetename, Signaltitel): der Stift macht aus der
+    // Ueberschrift ein Eingabefeld. Ein `window.prompt` waere weniger
+    // Markup gewesen, saehe aber in jedem Browser anders aus und waere der
+    // einzige Dialog in einer Ansicht, die sonst ohne auskommt.
+    beginRenameRoom(room) {
+      this.renamingRoom = room;
+      this.renameDraft = room;
+    },
+
+    cancelRenameRoom() {
+      this.renamingRoom = null;
+      this.renameDraft = "";
+    },
+
+    // Die Rueckfrage vor dem Zusammenfuehren bleibt dagegen ein nativer
+    // Dialog - der eine bewusste Unterschied zum Umbenennen selbst.
+    // Zusammenfuehren ist selten und unumkehrbar: danach weiss niemand
+    // mehr, welches Geraet vorher in welchem der beiden Raeume stand. Ein
+    // modaler Dialog ist bei genau dieser Art Aktion die ehrliche Bremse;
+    // ein Banner, das man wegklicken kann, ohne es gelesen zu haben,
+    // waere es nicht.
+    //
+    // Ob der Zielname schon belegt ist, entscheidet die Oberflaeche und
+    // nicht der Server: die Geraeteliste liegt ihr vor, eine zweite
+    // Abfrage nur fuer diese Auskunft waere ueberfluessig.
+    async commitRenameRoom() {
+      const room = this.renamingRoom;
+      if (room === null) {
+        // Enter hat bereits gespeichert und das Feld geschlossen; das
+        // anschliessende `blur` landet hier und hat nichts mehr zu tun.
         return;
       }
-      const name = target.trim();
+      const name = this.renameDraft.trim();
       if (!name || name === room) {
+        this.cancelRenameRoom();
         return;
       }
       const exists = this.devices.some((device) => device.room === name);
       if (exists && !window.confirm(t("web.devices.room_rename_merge_confirm"))) {
+        // Feld bleibt offen: die Rueckfrage abzulehnen heisst "so nicht",
+        // nicht "vergiss, was ich getippt habe".
         return;
       }
+      this.cancelRenameRoom();
       this.deviceActionError = null;
       try {
         await this.request("POST", "/api/rooms/rename", { from: room, to: name });
@@ -2120,11 +2149,21 @@ Die Raumleiste, unmittelbar vor der Geräteliste (nach den Fehler-Bannern):
                    koennte, ist gerade das, was ihnen fehlt. -->
               <button
                 class="room-rename"
-                x-show="roomFilter"
-                @click="renameRoom(roomFilter)"
+                x-show="roomFilter && renamingRoom !== roomFilter"
+                @click="beginRenameRoom(roomFilter)"
                 :title="t('web.devices.room_rename')"
                 x-text="'✎'"
               ></button>
+              <input
+                x-show="roomFilter && renamingRoom === roomFilter"
+                x-cloak
+                type="text"
+                class="room-rename-input"
+                x-model="renameDraft"
+                @keydown.enter="commitRenameRoom()"
+                @keydown.escape="cancelRenameRoom()"
+                @blur="commitRenameRoom()"
+              />
             </span>
           </template>
           <span style="flex: 1 1 auto"></span>
@@ -2153,7 +2192,30 @@ Die Geräteliste: das bestehende `<template x-for="device in devices">` wird zu 
 ```html
         <template x-for="group in deviceGroups()" :key="group.key">
           <div>
-            <h3 class="room-heading" x-show="group.title" x-text="group.title"></h3>
+            <!-- Umbenennen inline, wie der Geraetename in der Kachel: der
+                 Stift tauscht die Ueberschrift gegen ein Eingabefeld.
+                 `group.key` ist "" fuer "Ohne Raum" - falsy, also kein
+                 Stift: dort gibt es keinen Namen zu aendern. -->
+            <h3 class="room-heading" x-show="group.title">
+              <span x-show="renamingRoom !== group.key" x-text="group.title"></span>
+              <button
+                class="room-rename"
+                x-show="group.key && renamingRoom !== group.key"
+                @click="beginRenameRoom(group.key)"
+                :title="t('web.devices.room_rename')"
+                x-text="'✎'"
+              ></button>
+              <input
+                x-show="group.key && renamingRoom === group.key"
+                x-cloak
+                type="text"
+                class="room-rename-input"
+                x-model="renameDraft"
+                @keydown.enter="commitRenameRoom()"
+                @keydown.escape="cancelRenameRoom()"
+                @blur="commitRenameRoom()"
+              />
+            </h3>
             <div class="device-grid">
               <template x-for="device in group.devices" :key="device.id">
                 <!-- die Kachel, siehe unten -->
@@ -2374,6 +2436,15 @@ Ans Ende von `style.css` anhängen (die vorhandenen `.device-card`-Regeln bleibe
   font-size: 0.75rem;
 }
 
+/* Das Eingabefeld beim Umbenennen uebernimmt die Groesse der Ueberschrift,
+ * die es ersetzt - sonst springt die Zeile beim Klick auf den Stift. */
+.room-rename-input {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.05rem 0.3rem;
+}
+
 .device-search {
   min-width: 12rem;
   font-size: 0.8rem;
@@ -2562,7 +2633,6 @@ Prüfen, welche `web.devices.*`-Schlüssel durch den Kachel-Umbau in Task 8 unbe
 
 ```bash
 for key in $(grep -o '^web\.devices\.[a-z_.]*' src/loxmatter/i18n/strings.yaml | tr -d ':'); do
-  short="${key#web.}"
   grep -q "$key" src/loxmatter/web/index.html src/loxmatter/web/app.js || echo "UNBENUTZT: $key"
 done
 ```
