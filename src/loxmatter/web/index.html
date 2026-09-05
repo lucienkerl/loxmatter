@@ -475,19 +475,44 @@
                   <div class="device-foot">
                     <!-- `:value` muss NEBEN `device.room` auch `newRoomFor`
                          lesen, sonst wertet Alpine die Bindung nur neu aus,
-                         wenn sich `device.room` aendert. Waehlt jemand
+                         wenn sich `device.room` aendert. Es gibt ZWEI Wege
+                         aus dem "Neuer Raum"-Modus, und beide muessen
+                         `newRoomFor` zuruecksetzen: (1) Waehlt jemand
                          "+ Neuer Raum ..." und laesst das Eingabefeld dann
                          leer stehen (Blur oder Enter), setzt `commitNewRoom`
                          in app.js `newRoomFor` zurueck, OHNE `saveRoom` zu
-                         rufen - `device.room` bleibt also unveraendert.
-                         Ohne die Abhaengigkeit hier wuerde die Auswahlliste
-                         trotzdem weiter "+ Neuer Raum ..." zeigen, obwohl
-                         das Geraet diesen Raum nie hatte und das Eingabefeld
-                         fuer den Namen laengst wieder verschwunden ist. -->
+                         rufen - `device.room` bleibt also unveraendert. (2)
+                         Oeffnet man stattdessen dasselbe, noch fokussierte
+                         `<select>` erneut und waehlt direkt einen normalen
+                         Raum, greift NICHT `commitNewRoom`, sondern der
+                         `saveRoom`-Zweig hier im `@change` - der muss den
+                         Modus deshalb selbst verlassen. Ohne das wuerde die
+                         Auswahlliste nach Weg (1) weiter "+ Neuer Raum ..."
+                         zeigen, obwohl das Geraet diesen Raum nie hatte, und
+                         nach Weg (2) sogar dauerhaft "+ Neuer Raum ..." und
+                         das laengst ueberfluessige Eingabefeld anzeigen,
+                         obwohl `device.room` bereits korrekt gespeichert
+                         ist - eine Auswahlliste, die eine Option zeigt, die
+                         das Geraet gar nicht hat, und sich nie mehr von
+                         selbst korrigiert. Ein dritter, rein kosmetischer
+                         Fall bleibt bewusst so, wie er ist: Tippt man beim
+                         erfolgreichen Weg (Name eingeben, Enter) einen
+                         Raumnamen ein, loescht `commitNewRoom` in app.js
+                         `newRoomFor` SYNCHRON, bevor der PATCH ueberhaupt
+                         erst abgeschickt ist - waehrend dieser also noch
+                         unterwegs ist, faellt die Anzeige kurz auf den alten
+                         Raum zurueck und springt danach auf den neuen. Das
+                         wird in Kauf genommen, weil die Alternative -
+                         Loeschen erst nach dem `await` - einen doppelten
+                         Schreibvorgang eintauschen wuerde: `commitNewRoom`
+                         haengt an Enter UND an Blur, und genau das
+                         synchrone Loeschen VOR dem `await` macht den Blur
+                         nach einem Enter zu einem folgenlosen No-op statt
+                         zu einem zweiten PATCH. -->
                     <select
                       class="room-select"
                       :value="newRoomFor === device.id ? '__new__' : (device.room || '')"
-                      @change="$event.target.value === '__new__' ? beginNewRoom(device) : saveRoom(device, $event.target.value)"
+                      @change="$event.target.value === '__new__' ? beginNewRoom(device) : (newRoomFor = null, saveRoom(device, $event.target.value))"
                     >
                       <option value="" x-text="t('web.devices.room_none')"></option>
                       <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">

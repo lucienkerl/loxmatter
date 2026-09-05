@@ -2051,3 +2051,36 @@ async def test_the_room_select_snaps_back_when_a_new_room_is_abandoned(api):
     select_end = page.index("</select>", select_start)
     room_select = page[select_start:select_end]
     assert ':value="newRoomFor === device.id' in room_select
+
+
+async def test_the_room_select_leaves_new_room_mode_when_a_normal_room_is_picked(api):
+    """Review-Fix Important #2 (zweite Runde auf demselben Fund): Der
+    vorige Fix (siehe `test_the_room_select_snaps_back_when_a_new_room_is_
+    abandoned` oben) hat `newRoomFor` nur ueber `commitNewRoom` geloescht,
+    also nur dann, wenn man das TEXTFELD beendet oder abbricht (Enter/Blur).
+    Rein mit der Maus, ganz ohne Tastatur, bleibt aber ein zweiter Weg offen:
+    (1) "+ Neuer Raum ..." waehlen - `beginNewRoom` setzt `newRoomFor =
+    device.id`; das Textfeld hat kein Autofocus, der Fokus bleibt also auf
+    dem `<select>`. (2) Dasselbe, noch fokussierte `<select>` erneut
+    oeffnen und einen bestehenden Raum waehlen - `@change` nimmt dann den
+    `saveRoom`-Zweig, nicht `beginNewRoom`, und `commitNewRoom` wird nie
+    gerufen. `saveRoom` speichert `device.room` korrekt per PATCH, ruehrt
+    `newRoomFor` aber nicht an. Ohne dass der `saveRoom`-Zweig selbst
+    `newRoomFor` zuruecksetzt, wertet `:value` also fuer immer zu
+    `'__new__'` aus: Die Auswahlliste zeigt dauerhaft "+ Neuer Raum ..." fuer
+    ein Geraet mit einem echten, korrekt gespeicherten Raum, und das
+    verwaiste Texteingabefeld bleibt sichtbar offen - und das, anders als
+    beim ersten Fund, OHNE sich je von selbst zu korrigieren.
+
+    Wie beim ersten Fund kann ein Test ohne Browser-Engine Alpine nicht
+    tatsaechlich ausfuehren lassen. Belegt wird deshalb, dass der
+    `saveRoom`-Zweig des `@change`-Handlers `newRoomFor` ausdruecklich auf
+    `null` setzt, BEVOR er `saveRoom` ruft - der Teil, der genau diesen
+    zweiten Ausstiegsweg schliesst."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    select_start = page.index('class="room-select"')
+    select_end = page.index("</select>", select_start)
+    room_select = page[select_start:select_end]
+    assert "newRoomFor = null" in room_select
+    assert "saveRoom(device, $event.target.value)" in room_select
