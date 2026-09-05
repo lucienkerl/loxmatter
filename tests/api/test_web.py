@@ -1994,7 +1994,12 @@ async def test_the_page_offers_the_room_bar_and_the_room_picker(api):
     assert "roomChips()" in page
     assert "deviceGroups()" in page
     assert "leadSignalFor(" in page
-    assert "saveRoom(" in page
+    # `saveRoom(` selbst steht seit Fund 1 nicht mehr im Markup - die
+    # Auswahlliste ruft `onRoomSelectChange(device)`, das `saveRoom`
+    # innerhalb von app.js aufruft (siehe
+    # `test_the_room_select_leaves_new_room_mode_when_a_normal_room_is_picked`
+    # fuer den Beleg dieses Aufrufs).
+    assert "onRoomSelectChange(" in page
     assert "deviceSearch" in page
 
 
@@ -2025,95 +2030,119 @@ async def test_the_device_grid_is_multi_column(api):
     assert "minmax(260px" in css
 
 
-async def test_the_room_select_display_depends_only_on_the_device_room(api):
-    """Ersetzt `test_the_room_select_snaps_back_when_a_new_room_is_abandoned`
-    (Review-Fix Important #1): Der dortige Fix machte `:value` zusaetzlich
-    von `newRoomFor` abhaengig (`newRoomFor === device.id ? '__new__' :
-    (device.room || '')`), damit Alpine nach dem Verlassen des Neu-Raum-
-    Modus ueberhaupt neu auswertet. Das war eine Reparatur der SYMPTOME:
-    `newRoomFor` ist Modus-Zustand (nur der Schalter fuer das Neu-Raum-
-    Textfeld), wurde damit aber zugleich massgeblich fuer die Anzeige einer
-    NATIVEN `<select>`. Genau diese Kopplung war die eigentliche
-    Fehlerklasse - eine native `<select>` feuert kein Event fuer "geoeffnet,
-    dann ohne Auswahl wieder verlassen", also war jeder Fix, der die
-    Kopplung behielt, nur einen weiteren, ungefundenen Weg aus dem Modus von
-    der naechsten Instanz entfernt (siehe Runde 2 unten und Runde 3, die erst
-    mit dieser Struktur behoben wird).
+async def test_the_room_select_uses_a_synced_draft_instead_of_reading_device_room_directly(api):
+    """Ersetzt `test_the_room_select_display_depends_only_on_the_device_room`
+    (Fund 1, Review vom 2026-09-05): jener Test bewies exakt das, was ein
+    Test ohne Browser-Engine NICHT beweisen kann - dass eine Bindung im
+    Browser tatsaechlich das Richtige anzeigt. Er pruefte nur, dass
+    `:value="device.room || ''"` woertlich im ausgelieferten Markup steht,
+    und nannte das (im Docstring) "PER KONSTRUKTION" korrekt. Das war
+    falsch: Alpine wendet die Direktiven eines Elements an, BEVOR es dessen
+    `x-for`-Kinder aufbaut. Die Raum-`<option>`s dieser `<select>` entstehen
+    aber erst durch ein `x-for` IN ihr - beim ersten Lauf von `:value`
+    existierten sie schlicht noch nicht, die Zuweisung lief ins Leere, der
+    Browser blieb bei der ersten (statischen) Option "Ohne Raum" haengen,
+    und der Effekt (haengt nur an `device.room`, das sich dabei nicht
+    aendert) lief nie erneut nach. Getestet gegen das eingecheckte
+    vendor/alpine.min.js in einem echten Browser (siehe
+    .superpowers/sdd/final-fix-web-report.md): JEDE Kachel zeigte dauerhaft
+    "Ohne Raum", unabhaengig vom tatsaechlichen Raum - drei Review-Runden
+    lang unbemerkt, weil genau dieser servergerenderte Text-Test gruen
+    blieb.
 
-    Der neue Ansatz entkoppelt: `:value` liest ausschliesslich `device.room`.
-    Die Auswahlliste kann dadurch PER KONSTRUKTION keinen Raum anzeigen, den
-    das Geraet nicht hat - unabhaengig davon, ueber welchen Weg der
-    Neu-Raum-Modus verlassen (oder nie richtig betreten) wird. Ein Test ohne
-    Browser-Engine kann Alpine nicht tatsaechlich ausfuehren lassen (siehe
-    der Docstring von `test_the_page_does_not_call_init_a_second_time`
-    weiter oben zu genau dieser Grenze). Belegt wird deshalb, dass die
-    `:value`-Bindung selbst `newRoomFor` gar nicht mehr LIEST - `newRoomFor`
-    taucht im `<select>` nur noch im `@change`-Handler auf, der es SCHREIBT
-    (Modus verlassen bzw. betreten), nie mehr in dem, was angezeigt wird."""
+    Der Fix ersetzt `:value` durch `x-model="roomSelectDrafts[device.id]"` -
+    ein zuweisbares, geraeteweises Feld, das Alpine nach JEDEM Aufbau
+    (auch dem der Optionen) aktiv abgleicht, nicht nur bei einer Aenderung
+    von `device.room`. `roomSelectDrafts` wird von `syncRoomSelectDraft`
+    (app.js) aus `device.room` gehalten - dieser Test kann wieder nur
+    belegen, DASS dieses Konstrukt ausgeliefert wird, nicht dass es im
+    Browser korrekt anzeigt (das leistet der Harness-Nachweis im Bericht
+    oben). Zusaetzlich bleibt die Grundaussage des ersetzten Tests gueltig
+    und wird mitgeprueft: `newRoomFor` taucht in der Bindung selbst nicht
+    auf, nur noch im `@change`-Handler, der es SCHREIBT."""
     client, _, _ = api
     page = (await client.get("/")).text
     select_start = page.index('class="room-select"')
     select_end = page.index("</select>", select_start)
     room_select = page[select_start:select_end]
-    assert ":value=\"device.room || ''\"" in room_select
-    value_start = room_select.index(':value="')
-    value_end = room_select.index('"', value_start + len(':value="'))
-    assert "newRoomFor" not in room_select[value_start:value_end]
+    assert 'x-model="roomSelectDrafts[device.id]"' in room_select
+    assert "newRoomFor" not in room_select
+    assert '@change="onRoomSelectChange(device)"' in room_select
+
+    # `:value=` darf innerhalb der Optionen vorkommen (`<option
+    # :value="chip.key">` fuer jeden Raum-Chip) - verboten ist es nur auf
+    # der `<select>` selbst, das war die alte, fehlerhafte Bindung.
+    select_tag_end = room_select.index(">")
+    select_tag = room_select[:select_tag_end]
+    assert ":value=" not in select_tag
 
 
-async def test_the_new_room_option_resets_the_selects_own_value_before_the_mode_starts(api):
-    """Waere `:value` das einzige, das die Anzeige steuert, wuerde die
-    Auswahlliste beim Waehlen von "+ Neuer Raum ..." fuer einen Moment
-    tatsaechlich "__new__" anzeigen, bevor Alpine reagiert und das Textfeld
-    einblendet - der native Browser setzt den angezeigten Wert schliesslich
-    sofort auf die gewaehlte Option, unabhaengig von Alpines `:value`.
-    Deshalb setzt der `@change`-Zweig fuer `'__new__'` zuerst den DOM-Wert
-    des Elements selbst auf den aktuellen Raum zurueck, bevor er
-    `beginNewRoom` ruft: Die Auswahlliste zeigt "__new__" nie, das Textfeld
-    daneben ist die einzige sichtbare Neu-Raum-Affordanz."""
+async def test_the_new_room_option_resets_the_draft_before_the_mode_starts(api):
+    """Nachfolger von
+    `test_the_new_room_option_resets_the_selects_own_value_before_the_mode_starts`:
+    die Logik selbst wanderte mit dem Wechsel auf `x-model` (Fund 1) aus
+    dem Inline-`@change`-Ausdruck in index.html in die eigene Methode
+    `onRoomSelectChange` (app.js) - ein manuelles `$event.target.value =
+    ...` ist mit `x-model` nicht mehr noetig, weil Alpine die `<select>`
+    nach einer Aenderung von `roomSelectDrafts[device.id]` von selbst
+    abgleicht.
+
+    Der Grund fuer das Zuruecksetzen bleibt derselbe: waere
+    `roomSelectDrafts[device.id]` das einzige, was die Anzeige steuert,
+    zeigte die Auswahlliste beim Waehlen von "+ Neuer Raum ..." den Wert
+    "__new__", bis das Textfeld erscheint. `onRoomSelectChange` setzt den
+    Draft im `'__new__'`-Zweig deshalb zuerst auf den aktuellen Raum
+    zurueck, bevor es `beginNewRoom` ruft - die Auswahlliste zeigt
+    "__new__" dadurch nie, das Textfeld daneben ist die einzige sichtbare
+    Neu-Raum-Affordanz.
+
+    Wie beim vorigen Test: ein Lauf ohne Browser-Engine kann nur die
+    Reihenfolge im Quelltext pruefen, nicht, dass die Auswahlliste sich im
+    Browser tatsaechlich nicht kurz auf "__new__" zeigt (siehe
+    .superpowers/sdd/final-fix-web-report.md fuer den Browser-Nachweis)."""
     client, _, _ = api
-    page = (await client.get("/")).text
-    select_start = page.index('class="room-select"')
-    select_end = page.index("</select>", select_start)
-    room_select = page[select_start:select_end]
-    reset_index = room_select.index("$event.target.value = device.room || ''")
-    begin_index = room_select.index("beginNewRoom(device)")
+    script = (await client.get("/static/app.js")).text
+    method_start = script.index("onRoomSelectChange(device) {")
+    method_end = script.index("\n    },", method_start)
+    method_body = script[method_start:method_end]
+    reset_index = method_body.index('this.roomSelectDrafts[device.id] = device.room || "";')
+    begin_index = method_body.index("this.beginNewRoom(device);")
     assert reset_index < begin_index
 
 
 async def test_the_room_select_leaves_new_room_mode_when_a_normal_room_is_picked(api):
-    """Review-Fix Important #2 (zweite Runde auf demselben Fund): `newRoomFor`
-    wurde bis dahin nur ueber `commitNewRoom` geloescht, also nur dann, wenn
-    man das Textfeld beendet oder abbricht (Enter/Blur). Rein mit der Maus,
-    ganz ohne Tastatur, blieb aber ein zweiter Weg offen: (1) "+ Neuer Raum
-    ..." waehlen - `beginNewRoom` setzt `newRoomFor = device.id`; das
-    Textfeld hat kein Autofocus, der Fokus bleibt also auf dem `<select>`.
-    (2) Dasselbe, noch fokussierte `<select>` erneut oeffnen und einen
-    bestehenden Raum waehlen - `@change` nimmt dann den `saveRoom`-Zweig,
-    nicht `beginNewRoom`, und `commitNewRoom` wird nie gerufen.
+    """Review-Fix Important #2 (zweite Runde auf demselben Fund, vor Fund 1):
+    `newRoomFor` wurde bis dahin nur ueber `commitNewRoom` geloescht, also
+    nur dann, wenn man das Textfeld beendet oder abbricht (Enter/Blur).
+    Rein mit der Maus, ganz ohne Tastatur, blieb aber ein zweiter Weg offen:
+    (1) "+ Neuer Raum ..." waehlen - `beginNewRoom` setzt `newRoomFor =
+    device.id`; das Textfeld hat kein Autofocus, der Fokus bleibt also auf
+    dem `<select>`. (2) Dasselbe, noch fokussierte `<select>` erneut
+    oeffnen und einen bestehenden Raum waehlen - `onRoomSelectChange` (seit
+    Fund 1 die Heimat dieser Logik, vormals ein Inline-`@change`-Ausdruck)
+    nimmt dann den `saveRoom`-Zweig, nicht `beginNewRoom`, und
+    `commitNewRoom` wird nie gerufen.
 
-    Mit der alten, gekoppelten Anzeige-Bindung war das ein Anzeigefehler:
-    ohne das Zuruecksetzen haette `:value` fuer immer zu `'__new__'`
-    ausgewertet, obwohl `saveRoom` den Raum laengst korrekt gespeichert
-    hatte. Nach der Entkopplung (siehe
-    `test_the_room_select_display_depends_only_on_the_device_room`) haengt
-    die Anzeige nicht mehr daran - das Zuruecksetzen bleibt trotzdem
-    richtig, nur aus einem anderen Grund: Wer einen echten Raum waehlt, hat
-    den Neu-Raum-Modus damit verlassen, unabhaengig davon, was die
-    Auswahlliste anzeigt. Ein liegen gebliebenes `newRoomFor` wuerde sonst
-    weiterhin das (dann falsch platzierte) Neu-Raum-Textfeld einblenden.
+    Das Zuruecksetzen bleibt unabhaengig von Fund 1 richtig: wer einen
+    echten Raum waehlt, hat den Neu-Raum-Modus damit verlassen, egal was
+    die Auswahlliste zu dem Zeitpunkt zeigt. Ein liegen gebliebenes
+    `newRoomFor` wuerde sonst weiterhin das (dann falsch platzierte)
+    Neu-Raum-Textfeld einblenden.
 
-    Wie beim ersten Fund kann ein Test ohne Browser-Engine Alpine nicht
-    tatsaechlich ausfuehren lassen. Belegt wird deshalb, dass der
-    `saveRoom`-Zweig des `@change`-Handlers `newRoomFor` ausdruecklich auf
-    `null` setzt, BEVOR er `saveRoom` ruft."""
+    Wie bei den beiden Tests oben kann ein Lauf ohne Browser-Engine nur den
+    Quelltext pruefen. Belegt wird, dass der `saveRoom`-Zweig von
+    `onRoomSelectChange` `newRoomFor` ausdruecklich auf `null` setzt, BEVOR
+    er `saveRoom` ruft."""
     client, _, _ = api
-    page = (await client.get("/")).text
-    select_start = page.index('class="room-select"')
-    select_end = page.index("</select>", select_start)
-    room_select = page[select_start:select_end]
-    assert "newRoomFor = null" in room_select
-    assert "saveRoom(device, $event.target.value)" in room_select
+    script = (await client.get("/static/app.js")).text
+    method_start = script.index("onRoomSelectChange(device) {")
+    method_end = script.index("\n    },", method_start)
+    method_body = script[method_start:method_end]
+    assert "this.newRoomFor = null;" in method_body
+    assert "this.saveRoom(device, value);" in method_body
+    null_index = method_body.index("this.newRoomFor = null;")
+    save_index = method_body.index("this.saveRoom(device, value);")
+    assert null_index < save_index
 
 
 async def test_the_room_picker_closes_new_room_mode_when_focus_leaves_it_entirely(api):
@@ -2144,3 +2173,48 @@ async def test_the_room_picker_closes_new_room_mode_when_focus_leaves_it_entirel
     assert "newRoomFor = null" in room_picker
     assert 'class="room-select"' in room_picker
     assert 'class="room-new"' in room_picker
+
+
+async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
+    """Fund 2 (Review vom 2026-09-05): Verschiebt man per Kachel-
+    Auswahlliste das letzte Geraet eines gefilterten Raums in einen
+    anderen, oder benennt/vereint man den gefilterten Raum weg, aendert
+    `roomChips()` sich - `roomFilter` selbst aber nicht, ohne dass etwas
+    das nachzieht. Der gefilterte Raum existiert dann nicht mehr, kein Chip
+    ist mehr aktiv, keine Kachel mehr sichtbar, und der (nur an `roomFilter`
+    haengende) Umbenennen-Stift zeigt weiter auf einen Raum, der bei einem
+    Klick 404 liefern wuerde.
+
+    `reconcileRoomFilter` schliesst das an einer Stelle statt an jeder
+    Schreibstelle einzeln: faellt auf "Alle" (`null`) zurueck, wenn
+    `roomFilter` ein echter (nicht-leerer) Raumname ist, den `roomChips()`
+    nicht mehr fuehrt. Bewusst NICHT fuer "Ohne Raum" (`roomFilter === ""`)
+    - der Umbenennen-Stift zeigt sich fuer diesen Fall ohnehin nie
+    (`roomFilter && ...` ist fuer `""` bereits falsy), der Holzweg aus
+    diesem Fund kann dort also gar nicht entstehen.
+
+    Belegt wird, dass die Methode existiert, ihre Bedingungen wie
+    beschrieben pruefen, und dass sowohl `saveRoom` als auch
+    `commitRenameRoom` sie nach ihrem jeweiligen Schreibvorgang aufrufen -
+    nicht, dass Alpine daraufhin tatsaechlich auf den "Alle"-Chip
+    umschaltet (dafuer braeuchte es eine Browser-Engine, siehe
+    `test_the_page_does_not_call_init_a_second_time`)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    reconcile_start = script.index("reconcileRoomFilter() {")
+    reconcile_end = script.index("\n    },", reconcile_start)
+    reconcile_body = script[reconcile_start:reconcile_end]
+    assert 'typeof this.roomFilter !== "string"' in reconcile_body
+    assert 'this.roomFilter === ""' in reconcile_body
+    assert "this.roomFilter = null;" in reconcile_body
+
+    save_room_start = script.index("async saveRoom(device, value) {")
+    save_room_end = script.index("\n    },", save_room_start)
+    save_room_body = script[save_room_start:save_room_end]
+    assert "this.reconcileRoomFilter();" in save_room_body
+
+    rename_start = script.index("async commitRenameRoom() {")
+    rename_end = script.index("\n    },", rename_start)
+    rename_body = script[rename_start:rename_end]
+    assert "this.reconcileRoomFilter();" in rename_body

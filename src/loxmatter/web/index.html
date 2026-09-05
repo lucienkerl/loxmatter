@@ -471,66 +471,65 @@
                   </div>
 
                   <div class="device-foot">
-                    <!-- Drei Review-Runden sind an DERSELBEN Fehlerklasse
-                         gescheitert, nicht an drei verschiedenen: `newRoomFor`
-                         ist reiner Modus-Zustand (steuert nur, ob das
-                         Neu-Raum-Textfeld sichtbar ist), war aber zusaetzlich
-                         massgeblich dafuer, was die native `<select>` ANZEIGT
-                         (`:value="newRoomFor === device.id ? '__new__' :
-                         ..."`). Eine native `<select>` feuert jedoch fuer
-                         "geoeffnet, dann ohne Auswahl wieder verlassen" kein
-                         Event - weder beim leer gelassenen Textfeld (Runde 1)
-                         noch beim erneuten Oeffnen desselben, noch fokussierten
-                         Felds (Runde 2) noch beim schlichten Wegklicken (Runde
-                         3, hier erstmals behoben) gibt es einen Haken, an dem
-                         sich EIN zusaetzlicher Reset-Pfad zuverlaessig
-                         festmachen liesse. Jede Reparatur, die die Kopplung
-                         beibehaelt, ist nur eine weitere, noch nicht gefundene
-                         Geste von der naechsten Instanz entfernt.
-                         Deshalb: entkoppelt. `:value` liest ausschliesslich
-                         `device.room` - die Auswahlliste kann dadurch PER
-                         KONSTRUKTION nie einen Raum anzeigen, den das Geraet
-                         nicht hat, unabhaengig davon, wie der Neu-Raum-Modus
-                         verlassen wird. `newRoomFor` bleibt reiner
-                         Sichtbarkeits-Schalter fuer das Textfeld. Waehlt man
-                         "+ Neuer Raum ...", wuerde die `<select>` das kurz
-                         selbst anzeigen, bevor Alpine ueberhaupt reagiert -
-                         deshalb setzt der `@change`-Zweig den DOM-Wert des
-                         Elements sofort auf den aktuellen Raum zurueck, ehe
-                         `beginNewRoom` den Modus startet: die Auswahlliste
-                         zeigt "__new__" dadurch nie an, das Textfeld daneben
-                         ist die einzige sichtbare Neu-Raum-Affordanz. Im
-                         Normalraum-Zweig bleibt `newRoomFor = null` bestehen -
-                         nicht mehr, weil davon die Anzeige abhaengt, sondern
-                         weil das Verlassen des Neu-Raum-Modus bei einer echten
-                         Raumwahl unabhaengig davon korrekt ist. Den in Runde 3
-                         verbliebenen Rest - ein verwaistes, leeres Textfeld
-                         nach blossem Wegklicken - schliesst kein weiterer
-                         Sonderfall, sondern eine Fokus-Wache auf dem
-                         gemeinsamen Wrapper (`@focusout`): verlaesst der Fokus
-                         BEIDE Elemente (`$event.relatedTarget` liegt ausserhalb
-                         von `$el`), endet der Modus. Wandert der Fokus von der
-                         Auswahlliste ins gerade erschienene Textfeld, bleibt
-                         `relatedTarget` innerhalb des Wrappers - das ist die
-                         normale Fortsetzung, kein Abbruch.
-                         Nebenbefund: Der zuvor dokumentierte kosmetische
-                         Flicker (Anzeige faellt waehrend eines laufenden
-                         PATCH kurz auf den alten Raum zurueck) entfaellt mit
-                         dieser Struktur von selbst - die Auswahlliste zeigte
-                         `device.room` schon waehrend der Eingabe durchgehend
-                         an, es gibt also keinen Sprung mehr zwischen
-                         "__new__" und dem alten Namen, den `commitNewRoom`
-                         ausloesen koennte. -->
+                    <!-- Fund 1 (Review vom 2026-09-05, siehe
+                         .superpowers/sdd/final-fix-web-report.md): drei
+                         vorangehende Runden haben `newRoomFor` (reiner
+                         Modus-Zustand fuer die Sichtbarkeit des
+                         Neu-Raum-Textfelds) so lange an die ANZEIGE dieser
+                         nativen `<select>` gekoppelt, bis diese Kopplung
+                         selbst restlos entfernt war - siehe app.js,
+                         Kommentar bei `newRoomFor`. Das Ergebnis dieser
+                         Entkopplung war `:value="device.room || ''"`, mit
+                         dem Anspruch, die Auswahlliste koenne dadurch "per
+                         Konstruktion" nie einen Raum zeigen, den das Geraet
+                         nicht hat. Das stimmte nicht: Alpine wendet die
+                         Direktiven eines Elements an, BEVOR es dessen
+                         Kinder aufbaut - die `<option>`-Elemente aus dem
+                         `x-for` weiter unten existierten also noch gar
+                         nicht, als `:value` zum ersten Mal lief. Die
+                         Zuweisung lief ins Leere, der Browser blieb bei der
+                         ersten (statischen) Option "Ohne Raum" haengen, und
+                         weil der Effekt nur auf `device.room` reagiert
+                         (das sich dabei nicht aendert), lief er nie erneut:
+                         JEDE Kachel zeigte dauerhaft "Ohne Raum".
+                         `x-model="roomSelectDrafts[device.id]"` behebt das:
+                         Alpine gleicht ein `x-model`-Element auch nach dem
+                         Mounten seiner Kind-Optionen noch aktiv ab, ein
+                         reines `:value` dagegen nur bei einer Aenderung der
+                         gelesenen Eigenschaft. `roomSelectDrafts` (app.js)
+                         ist die dafuer noetige zuweisbare Kopie von
+                         `device.room` - `x-model` kann nicht direkt auf
+                         einen Ausdruck wie `device.room || ''` zeigen.
+                         Gegen echte Browser-Ausfuehrung mit dem
+                         eingecheckten vendor/alpine.min.js geprueft (siehe
+                         Bericht oben): mit `:value` zeigten alle
+                         Testgeraete "Ohne Raum", mit diesem Ansatz zeigte
+                         jedes seinen tatsaechlichen Raum.
+                         Die urspruengliche Erkenntnis der drei Runden davor
+                         bleibt richtig und gilt unveraendert weiter: eine
+                         native `<select>` feuert kein Ereignis fuer
+                         "geoeffnet, dann ohne Auswahl wieder verlassen".
+                         Der `@focusout`-Wachposten auf dem gemeinsamen
+                         Wrapper unten (Runde 3) bleibt deshalb bestehen -
+                         verlaesst der Fokus BEIDE Elemente
+                         (`$event.relatedTarget` liegt ausserhalb von
+                         `$el`), endet der Neu-Raum-Modus. Wandert der Fokus
+                         von der Auswahlliste ins gerade erschienene
+                         Textfeld, bleibt `relatedTarget` innerhalb des
+                         Wrappers - das ist die normale Fortsetzung, kein
+                         Abbruch. Die Reaktion auf "+ Neuer Raum ..." selbst
+                         (Auswahlliste sofort zurueck auf den aktuellen
+                         Raum, dann erst `beginNewRoom`) steht jetzt in
+                         `onRoomSelectChange` (app.js) statt inline hier -
+                         siehe dessen Kommentar fuer das WARUM. -->
                     <span
                       class="room-picker"
                       @focusout="if (!$el.contains($event.relatedTarget)) newRoomFor = null"
                     >
                       <select
                         class="room-select"
-                        :value="device.room || ''"
-                        @change="$event.target.value === '__new__'
-                          ? ($event.target.value = device.room || '', beginNewRoom(device))
-                          : (newRoomFor = null, saveRoom(device, $event.target.value))"
+                        x-model="roomSelectDrafts[device.id]"
+                        @change="onRoomSelectChange(device)"
                       >
                         <option value="" x-text="t('web.devices.room_none')"></option>
                         <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">

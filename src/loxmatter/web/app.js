@@ -367,9 +367,40 @@ function app() {
     // einem Neuladen steht die Ansicht wieder auf "Alle".
     roomFilter: null,
     deviceSearch: "",
+    // Ausgangswert der nativen `<select>` je Kachel, in der Kodierung von
+    // `roomFilter` ("" = Ohne Raum). Eine eigene, geraeteweise Kopie statt
+    // eines direkten `:value="device.room || ''"` (Fund 1, 2026-09-05):
+    // Alpine wendet die Direktiven eines Elements an, BEVOR es dessen
+    // Kinder aufbaut. Bei einer `<select>`, deren `<option>`-Liste selbst
+    // per `x-for` erzeugt wird, existieren die Raum-Optionen also noch gar
+    // nicht, wenn der `:value`-Effekt zum ersten Mal laeuft - die Zuweisung
+    // laeuft ins Leere, der Browser bleibt bei der ersten (statischen)
+    // Option "Ohne Raum" haengen, und weil der Effekt nur an `device.room`
+    // haengt, das sich dabei nicht aendert, laeuft er auch nie erneut: JEDE
+    // Kachel zeigte dauerhaft "Ohne Raum", unabhaengig vom echten Raum.
+    // `x-model` umgeht das: Alpine gleicht den DOM-Wert eines `x-model`-
+    // Elements nach jedem Aufbau (auch nach dem der `<option>`-Kinder) noch
+    // einmal aktiv ab, waehrend ein reines `:value` nur auf Aenderungen der
+    // gelesenen Eigenschaft reagiert. `x-model` braucht dafuer aber ein
+    // zuweisbares Ziel (`roomSelectDrafts[device.id]`, kein
+    // Funktionsaufruf) - daher dieses Objekt statt eines Ausdrucks direkt
+    // auf `device.room`. Gehalten/synchronisiert von `syncRoomSelectDraft`.
+    // Gegen echte Browser-Ausfuehrung geprueft (Alpine + das eingecheckte
+    // vendor/alpine.min.js, ausserhalb dieses Repos, siehe
+    // .superpowers/sdd/final-fix-web-report.md): mit `:value` zeigten alle
+    // drei Testgeraete "Ohne Raum", mit diesem Ansatz zeigte jedes seinen
+    // tatsaechlichen Raum, auch ein NACH dem ersten Rendern neu
+    // hinzugekommenes.
+    roomSelectDrafts: {},
     // Welche Kachel gerade ein Textfeld fuer einen neuen Raumnamen zeigt
-    // (Geraete-ID oder null) - der Zustand haengt an der Kachel, nicht
-    // global, damit zwei offene Kacheln sich nicht gegenseitig schliessen.
+    // (Geraete-ID oder null) - ein einzelner globaler Skalar, keine Menge
+    // je Kachel: es kann darum immer nur EINE Kachel gleichzeitig im
+    // Neu-Raum-Modus sein. Waehlt man "+ Neuer Raum ..." auf einer zweiten
+    // Kachel, waehrend eine erste noch offen ist, schliesst das die erste
+    // schlicht mit - `newRoomFor` zeigt danach auf die zweite. Das ist
+    // gewollt (zwei gleichzeitig offene Neu-Raum-Textfelder waeren ohnehin
+    // verwirrend), keine Einschraenkung, die ein globaler Zustand hier
+    // faelschlich erzwaenge.
     newRoomFor: null,
     newRoomDraft: "",
     // Welcher Raum gerade inline umbenannt wird (Raumname oder null).
@@ -781,6 +812,14 @@ function app() {
       this.devicesError = null;
       try {
         this.devices = await this.request("GET", "/api/devices");
+        // `roomSelectDrafts` je frisch geladenem Geraet nachziehen (siehe
+        // dessen Deklaration oben) - sonst zeigte eine neu hinzugekommene
+        // Kachel (frisch eingelernt, oder erste Ladung ueberhaupt) fuer
+        // einen Moment gar keinen Eintrag, und die `<select>` faellt ohne
+        // passende Option auf die erste zurueck.
+        for (const device of this.devices) {
+          this.syncRoomSelectDraft(device);
+        }
       } catch (error) {
         this.devicesError = t("web.devices.list_load_error", { message: error.message });
       }
@@ -1005,6 +1044,33 @@ function app() {
       this.roomFilter = null;
     },
 
+    // Fund 2 (2026-09-05): faellt auf "Alle" zurueck, wenn der Raum, nach
+    // dem gerade gefiltert wird, durch einen Schreibvorgang verschwunden
+    // ist - das letzte Geraet eines Raums per Kachel-Auswahlliste
+    // verschoben, oder der Raum umbenannt/zusammengefuehrt. Ohne das blieb
+    // `roomFilter` auf einem Namen stehen, den `roomChips()` nicht mehr
+    // liefert: keine Kachel mehr sichtbar, kein Chip mehr aktiv, und der
+    // Umbenennen-Stift (der ja nur an `roomFilter` haengt) noch da, aber
+    // ins Leere zeigend (404 beim Draufklicken).
+    //
+    // Nur fuer einen ECHTEN Raumnamen (nicht-leerer String) - "Alle"
+    // (`null`) betrifft das nicht, und "Ohne Raum" (`""`) auch nicht: der
+    // Umbenennen-Stift zeigt sich fuer "Ohne Raum" ohnehin nie (`roomFilter
+    // && ...` ist fuer `""` bereits falsy, siehe index.html), der Holzweg
+    // aus diesem Fund kann fuer diesen Fall also gar nicht entstehen.
+    //
+    // Eine Stelle statt an jeder Schreibstelle einzeln (`saveRoom`,
+    // `commitRenameRoom`) - beide rufen das hier auf, statt die Pruefung
+    // zu duplizieren.
+    reconcileRoomFilter() {
+      if (typeof this.roomFilter !== "string" || this.roomFilter === "") {
+        return;
+      }
+      if (!this.roomChips().some((chip) => chip.key === this.roomFilter)) {
+        this.roomFilter = null;
+      }
+    },
+
     // Die Geraete, nach Raum gruppiert und innerhalb eines Raums sortiert:
     // erst nach Kategorierang (alle Steckdosen beisammen, dann alle
     // Taster), darin alphabetisch nach Name.
@@ -1087,7 +1153,48 @@ function app() {
         Object.assign(device, updated);
       } catch (error) {
         this.deviceActionError = t("web.devices.room_save_error", { message: error.message });
+      } finally {
+        // In BEIDEN Faellen: bei Erfolg zeigt die Auswahlliste danach den
+        // neuen, tatsaechlich gespeicherten Raum; bei einem Fehlschlag
+        // faellt sie auf den unveraenderten `device.room` zurueck, statt
+        // beim schon gewaehlten (aber nie gespeicherten) Wert stehen zu
+        // bleiben - dieselbe Regel wie beim Verlassen des Neu-Raum-Modus
+        // (Fund 1): die Auswahlliste zeigt nie einen Raum, den das Geraet
+        // nicht hat.
+        this.syncRoomSelectDraft(device);
+        this.reconcileRoomFilter();
       }
+    },
+
+    // Ausgangswert der `<select>`-Kachel fuer genau dieses Geraet neu aus
+    // `device.room` ableiten (siehe `roomSelectDrafts` oben).
+    syncRoomSelectDraft(device) {
+      this.roomSelectDrafts[device.id] = device.room || "";
+    },
+
+    // Der `@change`-Handler der Raum-`<select>` (Fund 1): dank
+    // `x-model="roomSelectDrafts[device.id]"` steht der neu gewaehlte Wert
+    // hier bereits in `roomSelectDrafts[device.id]` - Alpine wendet
+    // `x-model` vor `x-on` an (siehe dessen feste Direktiven-Reihenfolge
+    // in vendor/alpine.min.js), das `change`-Ereignis selbst muss also
+    // nicht mehr ausgelesen werden.
+    onRoomSelectChange(device) {
+      const value = this.roomSelectDrafts[device.id];
+      if (value === "__new__") {
+        // Sofort zurueck auf den aktuellen Raum, bevor `beginNewRoom` das
+        // Textfeld einblendet: die Auswahlliste soll "__new__" nie
+        // anzeigen, das Textfeld daneben ist die einzige sichtbare
+        // Neu-Raum-Affordanz. `x-model` gleicht die `<select>` daraufhin
+        // von selbst wieder ab, kein manuelles `$event.target.value` mehr
+        // noetig.
+        this.roomSelectDrafts[device.id] = device.room || "";
+        this.beginNewRoom(device);
+        return;
+      }
+      // Eine echte Raumwahl beendet den Neu-Raum-Modus, unabhaengig davon,
+      // ob er gerade offen war - siehe Kommentar bei `newRoomFor`.
+      this.newRoomFor = null;
+      this.saveRoom(device, value);
     },
 
     beginNewRoom(device) {
@@ -1156,6 +1263,11 @@ function app() {
           this.roomFilter = name;
         }
         await this.loadDevices();
+        // Normalerweise ein No-Op (der Filter zeigt dank der Zeile darueber
+        // ja bereits auf `name`) - greift aber, falls ein Zusammenfuehren
+        // dazu fuehrte, dass am Ende gar kein Geraet mehr `name` traegt
+        // (siehe `reconcileRoomFilter`, Fund 2).
+        this.reconcileRoomFilter();
       } catch (error) {
         this.deviceActionError = t("web.devices.room_rename_error", { message: error.message });
       }
