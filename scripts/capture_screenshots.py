@@ -82,21 +82,16 @@ def capture(page: Page) -> None:
     page.wait_for_selector(".device-card", timeout=15000)
     page.wait_for_timeout(800)  # Werte-Chips und Live-Verbindung ziehen nach
 
-    # Review-Fix: ungescrollt sah dieses Bild der Kommissionierungs-Karte
-    # ganz oben (`commissioning.png`, siehe unten) zum Verwechseln aehnlich -
-    # beide Bilder zeigten dieselbe leere Karte, nur der Ausschnitt darunter
-    # unterschied sich kaum. Erst zur ersten Geraetekarte scrollen, damit
-    # dieses Bild tatsaechlich die Geraeteliste mit Werten zeigt.
-    page.evaluate(
-        """() => {
-            const card = document.querySelector('.device-card');
-            if (!card) return;
-            card.scrollIntoView({ block: 'start' });
-            const header = document.querySelector('header.app-header');
-            window.scrollBy(0, -(header?.offsetHeight ?? 0));
-        }"""
-    )
-    page.wait_for_timeout(200)
+    # Bewusst OHNE Bildlauf, direkt vom Seitenanfang: ein frueherer Versuch
+    # scrollte hier zur ersten Geraetekarte, damit sich dieses Bild staerker
+    # von `commissioning.png` unterscheidet - aber der Bildlauf schob dabei
+    # `nav.tabs` (Devices/Signals/Export/System/Settings) mit aus dem Bild,
+    # und genau dieser Reiterleiste sieht man an, dass hier eine Anwendung
+    # mit mehreren Ansichten laeuft, nicht nur eine einzelne Seite. Das
+    # eroeffnende Bild der Galerie ohne Reiterleiste zu zeigen wog schwerer
+    # als die Aehnlichkeit zu `commissioning.png` - die beiden Bilder
+    # unterscheiden sich weiterhin darin, dass dort ein Einlern-Code
+    # eingetragen ist und hier nicht.
     shoot(page, "dashboard")
 
     select_view(page, "Signals")

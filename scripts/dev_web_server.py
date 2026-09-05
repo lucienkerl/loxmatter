@@ -176,28 +176,45 @@ def _ensure_devices(store: Store) -> list[int]:
 # Plausible Analogwerte je Einheit, fuer `_plausible_value` unten - eine
 # Einheit allein legt den Wert schon fest, ausser bei "%" und "kWh", die je
 # nach Signal ganz Verschiedenes messen (Helligkeit vs. Batteriestand,
-# Bezug vs. Einspeisung). Dort entscheidet zusaetzlich das Schluesselende:
-# `d<id>_<endpoint>_<slug>` ist der Normalfall aus `Store._assign_key`, ein
-# kollisionsbedingt angehaengtes Element-Id-Suffix stoert `endswith` unten
-# nicht, es faellt dann einfach auf den alten Platzhalterwert zurueck.
+# Bezug vs. Einspeisung, Saettigung). Dort entscheidet zusaetzlich das
+# Schluesselende: `d<id>_<endpoint>_<slug>` ist der Normalfall aus
+# `Store._assign_key`, ein kollisionsbedingt angehaengtes Element-Id-Suffix
+# stoert `endswith` unten nicht, es faellt dann einfach auf den alten
+# Platzhalterwert zurueck. "°" und "mired" kommen in `clusters.yaml` nur je
+# einmal vor (Farbton bzw. Farbtemperatur), brauchen also keine
+# Schluessel-Unterscheidung wie "%".
 _UNIT_VALUES: dict[str, float] = {
     "V": 230.0,  # Netzspannung
     "A": 0.4,  # Stromaufnahme eines kleinen Geraets
     "kW": 0.092,  # ~92 W, passt zu 230 V * 0.4 A
+    "°": 35.0,  # Farbton (Hue) - warmes Orange
+    "mired": 370.0,  # Farbtemperatur, ~2700 K (warmweiss)
 }
 
 
-def _plausible_value(signal: StoredSignal) -> float:
+def _plausible_value(signal: StoredSignal) -> float | None:
     """Ein erfundener, aber zur Einheit passender Wert fuer ein Analogsignal -
     siehe Review: 12,4 kW "Leistung" fuer eine Steckdose sah nach
     Platzhalter aus, nicht nach Demo. Alles, was hier nicht erkannt wird,
-    behaelt den alten Platzhalterwert."""
+    behaelt den alten Platzhalterwert.
+
+    Sonderfall Farbmodus (`colormode`, Cluster 768 Attribut 8, siehe
+    `clusters.yaml`): eine Aufzaehlung, keine physikalische Groesse - dafuer
+    gibt es keinen erfundenen Bruchwert (derselbe Review-Fund: 12,4 als
+    "Farbmodus" sah kaputt aus, nicht nach Demo). `None` laesst das Signal
+    unbesetzt, `_seed_values` unten setzt dafuer keinen Wert - die
+    Geraetekarte zeigt denselben neutralen Strich wie bei
+    `VendorName`/`ProductName`."""
     if signal.unit in _UNIT_VALUES:
         return _UNIT_VALUES[signal.unit]
     if signal.unit == "kWh" and signal.key.endswith("_energy_imported"):
         return 41.7
     if signal.unit == "%" and signal.key.endswith("_level"):
         return 60.0
+    if signal.unit == "%" and signal.key.endswith("_saturation"):
+        return 80.0
+    if signal.unit == "" and signal.key.endswith("_colormode"):
+        return None
     return 12.4
 
 
@@ -211,7 +228,9 @@ def _seed_values(store: Store, device_ids: list[int]) -> dict[str, float | bool]
             if signal.exportability == Exportability.DIGITAL:
                 values[signal.key] = True
             elif signal.exportability == Exportability.ANALOG:
-                values[signal.key] = _plausible_value(signal)
+                value = _plausible_value(signal)
+                if value is not None:
+                    values[signal.key] = value
     return values
 
 
