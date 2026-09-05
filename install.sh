@@ -701,7 +701,7 @@ start_stack() {
   # reads by itself. Every later call in this directory - by hand, or from
   # scripts/update.sh - then picks the same services without a flag to remember.
   ( cd "$STACK_DIR" && dk compose up -d --build ) ||
-    die "docker compose up failed. The checkout and .env are in place; fix the
+    die "Could not start the stack in $STACK_DIR. The checkout and .env are in place; fix the
 cause and run this again. The logs are in:
   cd $STACK_DIR && docker compose logs"
   STACK_STARTED=1
@@ -713,17 +713,32 @@ cause and run this again. The logs are in:
 # container, and the OTBR workaround is kernel specific and would kill working
 # processes on hosts that do not need it.
 add_finding() {
-  FINDINGS="$FINDINGS
-$1
-"
+  if [ -z "$FINDINGS" ]; then
+    FINDINGS="$1"
+  else
+    FINDINGS="$FINDINGS
+
+$1"
+  fi
 }
 
+# Reads the port from the line after `- --listen`, and only when there is
+# exactly one such place in the file. A heuristic over YAML that silently
+# returns the WRONG number is worse than one that gives up: check_health
+# would probe it for its whole budget and then blame the service for not
+# answering.
 stack_port() {
-  port_value="$(grep -A1 -- '--listen' "$STACK_DIR/docker-compose.yml" |
-    tail -1 | tr -dc '0-9')"
-  if [ -z "$port_value" ]; then
-    port_value=8080
-  fi
+  port_value="$(awk '
+    /^[[:space:]]*-[[:space:]]*--listen[[:space:]]*$/ { want = 1; next }
+    want { gsub(/[^0-9]/, ""); if ($0 != "") { print; found++ }; want = 0 }
+    END { exit (found != 1) }
+  ' "$STACK_DIR/docker-compose.yml")" || port_value=""
+  case "$port_value" in
+    ""|*[!0-9]*)
+      warn "Could not read a single listen port from docker-compose.yml; assuming 8080."
+      port_value=8080
+      ;;
+  esac
   printf '%s' "$port_value"
 }
 

@@ -761,6 +761,27 @@ def test_gesundheitspruefung_laeuft(installer):
     assert "answers" in result.output
 
 
+def test_gesunder_port_kommt_aus_der_compose_datei(installer):
+    # Der echte Stack lauscht auf 8080 - das muss aus der Datei kommen, nicht
+    # aus dem Rueckfallwert.
+    result = installer()
+    assert result.returncode == 0
+    assert any(":8080/health" in call for call in result.calls)
+    assert "assuming 8080" not in result.output
+
+
+def test_mehrdeutiger_port_faellt_hoerbar_zurueck(installer):
+    # Zwei --listen-Stellen: lieber laut aufgeben als still die falsche Zahl
+    # nehmen und danach dem Dienst die Schuld geben.
+    first = installer()
+    compose = first.home / "loxmatter" / "deploy" / "testhost" / "docker-compose.yml"
+    compose.write_text(compose.read_text() + '\n      - --listen\n      - "9090"\n')
+    second = installer()
+    assert second.returncode == 0
+    assert "assuming 8080" in second.output
+    assert not any(":9090/" in call for call in second.calls)
+
+
 def test_fehlender_dienst_wird_zum_befund(installer):
     result = installer(env={"FAKE_SERVICES": "loxmatter"})
     assert result.returncode == 0
