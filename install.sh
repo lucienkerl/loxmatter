@@ -375,7 +375,10 @@ install_packages() {
     die "Installing $MISSING_PACKAGES failed. Nothing else was changed."
 }
 
-# The only way this script calls Docker.
+# How this script runs Docker commands that start or change things. The
+# read-only probe in collect_missing calls `docker compose version` directly
+# instead - it must still run during a dry run, and going through dk would
+# suppress it.
 dk() {
   if [ "$DRY_RUN" -eq 1 ]; then
     note "would run: docker $*"
@@ -400,13 +403,23 @@ install_docker() {
     note "would run: curl -fsSL $DOCKER_INSTALL_URL | sh"
     return 0
   fi
-  if [ -n "$SUDO" ]; then
-    curl -fsSL "$DOCKER_INSTALL_URL" | sudo sh ||
-      die "The Docker installer failed. Nothing else was changed."
-  else
-    curl -fsSL "$DOCKER_INSTALL_URL" | sh ||
-      die "The Docker installer failed. Nothing else was changed."
+  # Downloaded to a file first, NOT piped straight into sh. Without pipefail
+  # a pipeline reports the status of its LAST command, and an `sh` reading the
+  # empty stdin left by a failed download exits 0 - so `curl ... | sh || die`
+  # reads a network failure as a successful install and walks on into
+  # usermod, having promised it would not. Writing the file makes curl's own
+  # status observable.
+  docker_script="$(mktemp)" || die "Could not create a temporary file."
+  if ! curl -fsSL "$DOCKER_INSTALL_URL" -o "$docker_script"; then
+    rm -f "$docker_script"
+    die "Could not download the Docker installer from $DOCKER_INSTALL_URL.
+Is this machine online? Nothing was changed."
   fi
+  if ! run_root sh "$docker_script"; then
+    rm -f "$docker_script"
+    die "The Docker installer failed. Nothing else was changed."
+  fi
+  rm -f "$docker_script"
   if [ -n "$SUDO" ]; then
     docker_user="$(id -un)"
     run_root usermod -aG docker "$docker_user" ||

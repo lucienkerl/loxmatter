@@ -60,6 +60,7 @@ SYSTEM_TOOLS = (
     "env",
     "tail",
     "head",
+    "mktemp",
 )
 
 _UNAME = """case "${1-}" in
@@ -125,15 +126,39 @@ esac
 exit 0
 """
 
-# Die get.docker.com-Ausgabe wird vom Skript in `sh` gepipet - sie legt
-# deshalb den docker-Stub an, statt nur erfolgreich zu sein.
-_CURL = """for a in "$@"; do last="$a"; done
-case "$last" in
+# Das Skript laedt get.docker.com jetzt per `-o <datei>` herunter statt es zu
+# pipen - der Stub muss `-o` deshalb selbst auswerten und den Rumpf dorthin
+# schreiben statt ihn nur auszugeben. Ohne `-o` (z.B. beim health-Check) geht
+# die Ausgabe wie zuvor nach stdout.
+_CURL = """out=""
+url=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    -o)
+      out="$a"
+      prev=""
+      continue
+      ;;
+  esac
+  case "$a" in
+    -o) prev="-o" ;;
+    -*) ;;
+    *) url="$a" ;;
+  esac
+done
+body=""
+case "$url" in
   *get.docker.com*)
-    echo "cp '$STUB_TEMPLATES/docker' '$STUB_BIN/docker' && chmod 755 '$STUB_BIN/docker'"
+    body="cp '$STUB_TEMPLATES/docker' '$STUB_BIN/docker' && chmod 755 '$STUB_BIN/docker'"
     ;;
-  *health*) echo '{"status":"ok"}' ;;
+  *health*) body='{"status":"ok"}' ;;
 esac
+if [ -n "$out" ]; then
+  printf '%s\\n' "$body" > "$out"
+else
+  printf '%s\\n' "$body"
+fi
 exit 0
 """
 
@@ -386,3 +411,13 @@ def test_dry_run_veraendert_nichts(installer):
     assert not result.called("sudo")
     assert not any("get.docker.com" in call for call in result.calls)
     assert "would run" in result.output
+
+
+def test_fehlgeschlagener_docker_download_bricht_ab(installer):
+    # `curl ... | sh` meldete hier Erfolg, wenn der Download scheiterte: ohne
+    # pipefail zaehlt der Status des LETZTEN Befehls, und ein `sh` mit leerer
+    # Eingabe endet mit 0. Der Lauf lief dann in usermod weiter.
+    result = installer(omit=("docker",), stubs={"curl": "exit 6\n"})
+    assert result.returncode == 2
+    assert "Could not download" in result.output
+    assert not result.called("usermod")
