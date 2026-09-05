@@ -1098,7 +1098,7 @@ main() {
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 14 passed.
+Expected: 16 passed.
 
 - [ ] **Step 7: shellcheck**
 
@@ -1132,7 +1132,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `MISSING_PACKAGES`, `NEED_DOCKER`, `SUDO`, `DRY_RUN`, `DOCKER_INSTALL_URL`.
-- Produces: `run_root`, `install_packages`, `install_docker`, `dk`. Nach `install_docker` ist `DOCKER_SUDO` 1, wenn Docker in diesem Lauf installiert wurde; `dk` ist ab dann der einzige erlaubte Weg, Docker aufzurufen — kein direkter `docker`-Aufruf mehr irgendwo im Skript.
+- Produces: `run_root`, `dk`, `install_packages`, `install_docker`. Nach `install_docker` ist `DOCKER_SUDO` 1, wenn Docker in diesem Lauf mit `sudo` installiert wurde — das ist zugleich die Bedingung, unter der am Ende zur Neuanmeldung geraten wird (als root gibt es kein Gruppenproblem); `dk` ist ab dann der einzige erlaubte Weg, Docker aufzurufen — kein direkter `docker`-Aufruf mehr irgendwo im Skript.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1194,8 +1194,11 @@ werden:
 ```sh
 DOCKER_INSTALL_URL="https://get.docker.com"
 DOCKER_SUDO=0
-INSTALLED_DOCKER=0
 ```
+
+`dk` wird in dieser Aufgabe definiert **und** benutzt (von `install_docker`,
+siehe unten) — deshalb steht seine Definition vor `install_docker`, nicht
+dahinter.
 
 In `install.sh` nach `check_config_source` einfügen:
 
@@ -1250,7 +1253,6 @@ install_docker() {
     curl -fsSL "$DOCKER_INSTALL_URL" | sh ||
       die "The Docker installer failed. Nothing else was changed."
   fi
-  INSTALLED_DOCKER=1
   if [ -n "$SUDO" ]; then
     docker_user="$(id -un)"
     run_root usermod -aG docker "$docker_user" ||
@@ -1262,6 +1264,14 @@ install_docker() {
     warn "You are not in the 'docker' group in this session yet."
     note "This run continues with 'sudo docker'; log out and back in afterwards."
   fi
+  # collect_missing could not probe for the compose plugin - docker was not
+  # there to ask. It is now, and the stack cannot start without it.
+  if ! dk compose version >/dev/null 2>&1; then
+    die "Docker was installed, but 'docker compose' does not work.
+Install the compose plugin (on Debian and Ubuntu: apt-get install docker-compose-plugin),
+then run this again."
+  fi
+  note "docker compose is available"
 }
 
 # The only way this script calls Docker.
@@ -1288,7 +1298,7 @@ dk() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 19 passed.
+Expected: 21 passed.
 
 - [ ] **Step 5: shellcheck**
 
@@ -1406,7 +1416,7 @@ Move it aside, or pass --dir with a different path."
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 22 passed.
+Expected: 24 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1696,7 +1706,7 @@ configure() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 30 passed.
+Expected: 32 passed.
 
 - [ ] **Step 5: shellcheck und Formatierung**
 
@@ -1956,7 +1966,7 @@ run_checks() {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 35 passed.
+Expected: 37 passed.
 
 **Hinweis für die Abnahme:** `check_rfkill` lässt sich hier nicht gezielt auslösen — auf macOS fehlt `/sys` ganz, auf CI-Runnern ist `/sys/class/rfkill` üblicherweise leer. Getestet ist nur, dass die Funktion beide Fälle übersteht. Der Befund selbst zeigt sich erst auf einem echten Pi.
 
@@ -1988,7 +1998,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `tests/test_install_script.py`
 
 **Interfaces:**
-- Consumes: `FINDINGS`, `PORT`, `MODE`, `TARGET_DIR`, `CHECKOUT_EXISTED`, `INSTALLED_DOCKER`, `HAVE_TTY`, `ask`.
+- Consumes: `FINDINGS`, `PORT`, `MODE`, `TARGET_DIR`, `CHECKOUT_EXISTED`, `DOCKER_SUDO`, `HAVE_TTY`, `ask`.
 - Produces: `offer_update`, `report`. Damit ist `install.sh` vollständig.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2092,7 +2102,7 @@ report() {
     printf '  %s/.env, then `docker compose up -d` there.\n' "$STACK_DIR"
   fi
   printf '\n  To update later: %s/scripts/update.sh\n' "$TARGET_DIR"
-  if [ "$INSTALLED_DOCKER" -eq 1 ]; then
+  if [ "$DOCKER_SUDO" -eq 1 ]; then
     printf '\n'
     warn "Docker was installed during this run. Log out and back in once, so"
     warn "that 'docker' works without sudo - scripts/update.sh needs that."
@@ -2137,7 +2147,7 @@ main "$@"
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 40 passed.
+Expected: 42 passed.
 
 - [ ] **Step 5: Vollständiger Durchlauf aller Prüfungen**
 
