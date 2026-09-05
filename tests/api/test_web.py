@@ -2309,6 +2309,31 @@ async def test_offline_dimming_reaches_the_kebab_trigger_too(api):
     assert "opacity: 0.75" in summary_rule
 
 
+async def test_offline_footer_divider_matches_the_dimmed_commands_divider(api):
+    """Review-Fund 3 (2026-09-05, Review der Nacharbeit): `.device-commands`
+    und `.device-foot` ziehen beide `border-top: 1px solid var(--border)`.
+    Bei einem offline Geraet dimmt die erste Trennlinie als Teil von
+    `.device-commands` (ein direktes, komplett gedimmtes Kartenkind, s.o.)
+    mit, die zweite nicht - `.device-foot` selbst bleibt von der Dimmung
+    ausgenommen (nur seine Kinder ausser `.tile-menu` werden gedimmt), sein
+    Rahmen malt also ein paar Pixel darunter in voller Staerke weiter.
+    `.device-foot` als Ganzes zu dimmen scheidet aus, das traefe
+    `.tile-menu` als Nachfahren gleich mit. Ohne Browser-Engine kann diese
+    Suite den Helligkeitsunterschied selbst nicht nachstellen - belegt wird
+    nur, dass die ausgelieferte Regel NUR die Randfarbe dimmt (`color-mix`
+    auf `border-top-color`), nicht die Deckkraft des ganzen Elements."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    foot_offline_rule = css.split(".device-card.is-offline .device-foot {", 1)[1].split("}", 1)[0]
+    assert "border-top-color" in foot_offline_rule
+    assert "color-mix" in foot_offline_rule
+    assert "75%" in foot_offline_rule
+    # Darf NICHT die Deckkraft des ganzen `.device-foot` (und damit seines
+    # Nachfahren `.tile-menu`) mitziehen - genau der Fehler, den die
+    # `:not(.tile-menu)`-Ausnahme oben verhindern soll.
+    assert "opacity" not in foot_offline_rule
+
+
 async def test_lead_value_gets_padding_room_for_descenders(api):
     """Fund 4 (Nacharbeit 2026-09-05): `.lead-value` schneidet bei
     `line-height: 1.05` und `overflow: hidden` die Unterlaengen textwertiger

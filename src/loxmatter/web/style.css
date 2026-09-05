@@ -1248,6 +1248,26 @@ footer.hint-block {
   font-size: 0.7rem;
 }
 
+/* Review-Fund 3 (2026-09-05, Review der Nacharbeit): `.device-commands`
+ * und `.device-foot` ziehen beide dasselbe `border-top: 1px solid
+ * var(--border)`. Bei einem offline Geraet dimmt die erste Trennlinie mit
+ * - `.device-commands` ist ein direktes Kartenkind und faellt komplett
+ * unter `.device-card.is-offline > *:not(.device-foot)` (Begruendung
+ * dort) -, die zweite nicht: `.device-foot` selbst ist von genau dieser
+ * Regel ausgenommen (nur seine KINDER ausser `.tile-menu` werden gedimmt,
+ * das Element bleibt bei Opacity 1), sein eigener Rahmen malt also ein
+ * paar Pixel unter einem gedimmten in voller Staerke weiter.
+ * `.device-foot` insgesamt auf `opacity` zu setzen scheidet aus - das
+ * traefe `.tile-menu` als seinen Nachfahren gleich mit und risse genau
+ * das Loch wieder auf, das die Ausnahme oben stopft. `color-mix` dimmt
+ * deshalb NUR die Randfarbe selbst: das betrifft ausschliesslich den
+ * 1px-Rahmen, nicht die Deckkraft des Elements oder seiner Kinder -
+ * `.tile-menu` bleibt unberuehrt, und beide Trennlinien zeigen wieder
+ * dieselbe Staerke. */
+.device-card.is-offline .device-foot {
+  border-top-color: color-mix(in srgb, var(--border) 75%, transparent);
+}
+
 /* Kachel-Menue (Entwurf Kebab-Menue, 2026-09-05).
  *
  * `position: relative` am `<details>`, `absolute` an der Liste: das Menue
