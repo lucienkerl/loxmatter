@@ -842,3 +842,13 @@ def test_trockenlauf_bericht_erfindet_keine_adresse(installer):
     assert result.returncode == 0
     assert "Web interface" not in result.output
     assert "http://" not in result.output
+
+
+def test_ohne_befunde_kein_verweis_auf_befunde(installer):
+    # Ein Lauf im WiFi-Modus hat nichts zu bemaengeln: kein Thread-Netz zu
+    # pruefen, alle Dienste laufen. Dann darf am Ende auch kein Verweis auf
+    # Befunde stehen, die es nicht gibt.
+    result = installer()
+    assert result.returncode == 0
+    assert "Findings" not in result.output
+    assert "Some things above still need you" not in result.output
