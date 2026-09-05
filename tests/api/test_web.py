@@ -2231,6 +2231,39 @@ async def test_room_chip_in_the_tile_menu_carries_the_full_name_as_a_title(api):
     assert ':title="chip.key"' in chip_block
 
 
+async def test_offline_dimming_stays_off_the_tile_menu(api):
+    """Fund 3 (Nacharbeit 2026-09-05): `.device-card.is-offline { opacity:
+    0.75 }` spannte einen Deckkraft-Kontext ueber die GANZE Karte auf, das
+    Kachel-Menue eingeschlossen - es haengt als Nachfahre im `.device-foot`.
+    Ein offline Geraet dimmte damit sein eigenes, absolut ueber die
+    Nachbarkachel schwebendes Menue auf 75 % mit, durch das dann die
+    Nachbarkachel sichtbar durchschien. Ohne Browser-Engine kann diese
+    Suite das Durchscheinen selbst nicht nachstellen - belegt wird nur, dass
+    `.device-card.is-offline` KEIN pauschales `opacity` mehr traegt und
+    `.tile-menu` in der stattdessen gezielten Dimmung explizit ausgenommen
+    ist."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    # Die pauschale Karten-Regel `.device-card.is-offline { opacity: ... }`
+    # gibt es nicht mehr - nur noch als Selektor-Praefix vor `::before` oder
+    # `>`. Ein bare `{` direkt danach waere die alte, verworfene Fassung.
+    assert ".device-card.is-offline {" not in css
+    assert ".device-card.is-offline > *:not(.device-foot) {" in css
+    assert ".device-card.is-offline .device-foot > *:not(.tile-menu) {" in css
+
+
+async def test_offline_stripe_keeps_its_dimmed_look_on_its_own(api):
+    """Ergaenzung zu Fund 3: mit der Dimmung weg von `.device-card` dimmt
+    sich der Farbstreifen (`.device-card::before`) nicht mehr automatisch
+    als deren Nachfahre mit - ohne eigene Regel saehe er in einer offline
+    Kachel ploetzlich saettigter aus als vorher. `.device-card.is-offline::
+    before` muss das `opacity: 0.75` deshalb jetzt selbst tragen."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    stripe_rule = css.split(".device-card.is-offline::before {", 1)[1].split("}", 1)[0]
+    assert "opacity: 0.75" in stripe_rule
+
+
 async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
     """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man ueber das
     Kachel-Menue das letzte Geraet eines gefilterten Raums in einen

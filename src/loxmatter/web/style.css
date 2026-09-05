@@ -666,11 +666,46 @@ footer.hint-block {
   background: var(--warn);
 }
 
+/* Fund 3 (Nacharbeit 2026-09-05): dieselbe Zeile setzte bislang zusaetzlich
+ * `opacity: 0.75` - das war KEIN eigener Effekt fuer den Streifen, sondern
+ * nur der Nebeneffekt der (unten entfernten) Karten-weiten Regel, die den
+ * Streifen als Nachfahren mit dimmte. Jetzt, wo die Dimmung gezielt auf den
+ * Kachel-INHALT wandert (Begruendung dort) statt auf die Karte selbst, muss
+ * der Streifen sein 75 % explizit selbst mitbringen, sonst saehe er in
+ * einer offline Kachel ploetzlich saettigter aus als vorher - unveraendertes
+ * Aussehen war hier das Ziel, keine Verbesserung. */
 .device-card.is-offline::before {
   background: var(--off);
+  opacity: 0.75;
 }
 
-.device-card.is-offline {
+/* Fund 3 (Nacharbeit 2026-09-05): `opacity` auf `.device-card` selbst
+ * spannt einen Deckkraft-Kontext ueber die GESAMTE Karte auf, das
+ * Kachel-Menue (`.tile-menu-items`) eingeschlossen - es haengt als
+ * Nachfahre in `.device-foot`. Ein offline Geraet dimmte damit sein
+ * eigenes, absolut ueber die Nachbarkachel schwebendes Menue mit auf 75 %,
+ * durch das dann die Nachbarkachel sichtbar durchschien - obwohl das Menue
+ * selbst voellig unabhaengig vom Online-Zustand ist und, einmal geoeffnet,
+ * gerade gelesen werden soll. Die Absicht der Regel ("dieses Geraet ist
+ * offline, sein INHALT ist gedaempft") gilt dem Kacheln-Inhalt, nicht dem
+ * transienten Bedienelement - deshalb wandert die Dimmung von der Karte auf
+ * deren Kinder, mit EINER Ausnahme:
+ *
+ * `.device-card` hat (Stand dieser Nacharbeit) sieben direkte Kinder:
+ * `.device-head`, `.value-rows`, zwei bedingt sichtbare `.hint`-Absaetze,
+ * `.device-commands`, `.device-foot` und einen dritten `.hint`-Absatz fuer
+ * den Export-Hinweis ganz unten. `.tile-menu` selbst steckt NICHT direkt in
+ * der Karte, sondern im `.device-foot` neben dem Export-Hinweis-Span - die
+ * erste Regel dimmt deshalb alle Kinder ausser `.device-foot` selbst
+ * pauschal, die zweite steigt eine Ebene tiefer und dimmt innerhalb von
+ * `.device-foot` alles ausser `.tile-menu`. Das Ergebnis sieht identisch
+ * aus wie eine Karten-weite Opacity (jedes sichtbare Kind bekommt dieselben
+ * 75 %), nur dass das Menue selbst unangetastet bleibt. */
+.device-card.is-offline > *:not(.device-foot) {
+  opacity: 0.75;
+}
+
+.device-card.is-offline .device-foot > *:not(.tile-menu) {
   opacity: 0.75;
 }
 
