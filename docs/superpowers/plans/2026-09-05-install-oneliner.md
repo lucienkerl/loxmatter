@@ -1677,18 +1677,42 @@ env_file_has() { grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 # honour the last one either way, but whoever edits the file later would then
 # be changing the wrong line - the reasoning is spelled out in
 # deploy/testhost/README.md.
+#
+# Deliberately no awk: `awk -v value=...` runs the value through escape
+# processing, so a backslash in it is silently eaten and `\t` becomes a real
+# tab. Reading the file line by line passes every byte through untouched.
+#
+# Writes through $ENV_FILE.new and renames it into place so .env is either
+# fully the old content or fully the new content, never half-written - `mv`
+# on the same filesystem is atomic. That temporary file is tracked in the
+# same TEMP_FILE the EXIT trap already cleans up: if the run is interrupted
+# between the write and the rename, nothing is left lying next to .env.
 env_set() {
   env_key="$1"
   env_value="$2"
-  if env_file_has "$env_key"; then
-    awk -F= -v key="$env_key" -v value="$env_value" '
-      $1 == key && !seen { print key "=" value; seen = 1; next }
-      { print }
-    ' "$ENV_FILE" > "$ENV_FILE.new"
-    mv "$ENV_FILE.new" "$ENV_FILE"
-  else
+  if ! env_file_has "$env_key"; then
     printf '%s=%s\n' "$env_key" "$env_value" >> "$ENV_FILE"
+    return 0
   fi
+  TEMP_FILE="$ENV_FILE.new"
+  env_seen=0
+  {
+    while IFS= read -r env_line || [ -n "$env_line" ]; do
+      case "$env_line" in
+        "$env_key"=*)
+          if [ "$env_seen" -eq 0 ]; then
+            printf '%s=%s\n' "$env_key" "$env_value"
+            env_seen=1
+          else
+            printf '%s\n' "$env_line"
+          fi
+          ;;
+        *) printf '%s\n' "$env_line" ;;
+      esac
+    done
+  } < "$ENV_FILE" > "$TEMP_FILE"
+  mv "$TEMP_FILE" "$ENV_FILE"
+  TEMP_FILE=""
 }
 
 ensure_env_value() {
@@ -1835,7 +1859,7 @@ configure() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 42 Tests — 40 grün, 2 nur unter Linux.
+Expected: 44 Tests — 42 grün, 2 nur unter Linux.
 
 - [ ] **Step 5: shellcheck und Formatierung**
 
@@ -2095,7 +2119,7 @@ run_checks() {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 47 Tests — 45 grün, 2 nur unter Linux.
+Expected: 49 Tests — 47 grün, 2 nur unter Linux.
 
 **Hinweis für die Abnahme:** `check_rfkill` lässt sich hier nicht gezielt auslösen — auf macOS fehlt `/sys` ganz, auf CI-Runnern ist `/sys/class/rfkill` üblicherweise leer. Getestet ist nur, dass die Funktion beide Fälle übersteht. Der Befund selbst zeigt sich erst auf einem echten Pi.
 
@@ -2235,7 +2259,7 @@ main "$@"
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 50 Tests — 48 grün, 2 nur unter Linux.
+Expected: 52 Tests — 50 grün, 2 nur unter Linux.
 
 - [ ] **Step 5: Vollständiger Durchlauf aller Prüfungen**
 
