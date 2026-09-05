@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -81,12 +82,34 @@ def capture(page: Page) -> None:
     page.wait_for_selector(".device-card", timeout=15000)
     page.wait_for_timeout(800)  # Werte-Chips und Live-Verbindung ziehen nach
 
+    # Review-Fix: ungescrollt sah dieses Bild der Kommissionierungs-Karte
+    # ganz oben (`commissioning.png`, siehe unten) zum Verwechseln aehnlich -
+    # beide Bilder zeigten dieselbe leere Karte, nur der Ausschnitt darunter
+    # unterschied sich kaum. Erst zur ersten Geraetekarte scrollen, damit
+    # dieses Bild tatsaechlich die Geraeteliste mit Werten zeigt.
+    page.evaluate(
+        """() => {
+            const card = document.querySelector('.device-card');
+            if (!card) return;
+            card.scrollIntoView({ block: 'start' });
+            const header = document.querySelector('header.app-header');
+            window.scrollBy(0, -(header?.offsetHeight ?? 0));
+        }"""
+    )
+    page.wait_for_timeout(200)
     shoot(page, "dashboard")
 
     select_view(page, "Signals")
     shoot(page, "signals")
 
     select_view(page, "Export")
+    # Review-Fix: ohne Klick zeigte dieser Ausschnitt nur die beiden leeren
+    # Karten "Project file sync" und "Export templates" - zwei Drittel Leerraum,
+    # keine Vorschautabelle. "View preview" fuellt die dritte Karte darunter
+    # mit echten Zeilen, noch bevor irgendetwas heruntergeladen wird.
+    page.click('button:has-text("View preview")')
+    page.wait_for_selector("table", timeout=5000)
+    page.wait_for_timeout(300)
     shoot(page, "export")
 
     # Die "System check"-Karte ganz oben zeigt in dieser Demo (kein echter
@@ -96,6 +119,17 @@ def capture(page: Page) -> None:
     # unvollstaendigen Demo-Aufbaus. Deshalb zur naechsten Karte scrollen und
     # dort erst fotografieren - die Ansicht selbst (Reiter "System") bleibt
     # dieselbe, nur der sichtbare Ausschnitt aendert sich.
+    #
+    # Review-Fix: geprueft, ob sich das ohne die Fehlerkarte trotzdem mit
+    # sichtbarem Reiterleiste (`nav.tabs`) machen liesse - geht nicht. Nur
+    # `header.app-header` ist `position: sticky`, `nav.tabs` scrollt mit der
+    # Seite mit, und im Markup steht die Reiterleiste VOR der "System
+    # check"-Karte. Jeder Bildlauf, der die Fehlerkarte aus dem Bild
+    # schiebt, hat die Reiterleiste (die weiter oben im Fluss steht) also
+    # schon vorher aus dem Bild geschoben - beides gleichzeitig ist mit
+    # diesem Markup nicht zu haben. Deshalb bleibt die Reiterleiste hier
+    # bewusst draussen, statt einen fingierten "gesunden" Systemcheck zu
+    # zeigen.
     select_view(page, "System")
     # `scroll_into_view_if_needed()` scrollt nur, wenn das Element noch NICHT
     # sichtbar ist - die "Live diagnostics"-Karte steht aber schon im
@@ -123,7 +157,11 @@ def capture(page: Page) -> None:
 
     # Sonderfall 1: Einlern-Karte mit Beispielcode, aber NICHT abschicken -
     # ohne echten Matter-Server kaeme beim Absenden nur eine Fehlermeldung.
+    # Erst an den Seitenanfang zurueckscrollen: ohne das haette dieses Bild
+    # den Bildlaufstand des vorigen Reiters geerbt, statt zuverlaessig die
+    # Kommissionierungs-Karte zu zeigen.
     select_view(page, "Devices")
+    page.evaluate("window.scrollTo(0, 0)")
     page.fill('input[placeholder*="MT:"]', "MT:Y.K9042C00KA0648G00")
     shoot(page, "commissioning")
 
@@ -142,15 +180,16 @@ def capture(page: Page) -> None:
         .replace("Matter — Altes Geraet", "Matter — Old Device")
         .replace("Verwaist", "Orphaned")
     )
-    sample = SHOTS / "_sample.Loxone"
-    sample.write_text(sample_text, encoding="utf-8")
-    try:
+    # Im Temp-Verzeichnis statt unter `docs/screenshots/` (Review-Fix): das
+    # ist ein versioniertes Verzeichnis, ein abgebrochener Lauf liesse dort
+    # sonst eine Karteileiche zurueck, die `git status` unnoetig verschmutzt.
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        sample = Path(tmp_dir) / "_sample.Loxone"
+        sample.write_text(sample_text, encoding="utf-8")
         select_view(page, "Export")
         page.set_input_files('input[type="file"]', str(sample))
         page.wait_for_timeout(2500)  # Upload plus Diff-Berechnung
         shoot(page, "project-sync")
-    finally:
-        sample.unlink()
 
 
 def main() -> int:

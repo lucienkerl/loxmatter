@@ -45,7 +45,7 @@ from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
-from loxmatter.model.store import Store
+from loxmatter.model.store import Store, StoredSignal
 from loxmatter.profiles.table import Exportability
 
 FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures" / "nodes"
@@ -173,6 +173,34 @@ def _ensure_devices(store: Store) -> list[int]:
     return [plug_id, button_id]
 
 
+# Plausible Analogwerte je Einheit, fuer `_plausible_value` unten - eine
+# Einheit allein legt den Wert schon fest, ausser bei "%" und "kWh", die je
+# nach Signal ganz Verschiedenes messen (Helligkeit vs. Batteriestand,
+# Bezug vs. Einspeisung). Dort entscheidet zusaetzlich das Schluesselende:
+# `d<id>_<endpoint>_<slug>` ist der Normalfall aus `Store._assign_key`, ein
+# kollisionsbedingt angehaengtes Element-Id-Suffix stoert `endswith` unten
+# nicht, es faellt dann einfach auf den alten Platzhalterwert zurueck.
+_UNIT_VALUES: dict[str, float] = {
+    "V": 230.0,  # Netzspannung
+    "A": 0.4,  # Stromaufnahme eines kleinen Geraets
+    "kW": 0.092,  # ~92 W, passt zu 230 V * 0.4 A
+}
+
+
+def _plausible_value(signal: StoredSignal) -> float:
+    """Ein erfundener, aber zur Einheit passender Wert fuer ein Analogsignal -
+    siehe Review: 12,4 kW "Leistung" fuer eine Steckdose sah nach
+    Platzhalter aus, nicht nach Demo. Alles, was hier nicht erkannt wird,
+    behaelt den alten Platzhalterwert."""
+    if signal.unit in _UNIT_VALUES:
+        return _UNIT_VALUES[signal.unit]
+    if signal.unit == "kWh" and signal.key.endswith("_energy_imported"):
+        return 41.7
+    if signal.unit == "%" and signal.key.endswith("_level"):
+        return 60.0
+    return 12.4
+
+
 def _seed_values(store: Store, device_ids: list[int]) -> dict[str, float | bool]:
     values: dict[str, float | bool] = {}
     for device_id in device_ids:
@@ -183,7 +211,7 @@ def _seed_values(store: Store, device_ids: list[int]) -> dict[str, float | bool]
             if signal.exportability == Exportability.DIGITAL:
                 values[signal.key] = True
             elif signal.exportability == Exportability.ANALOG:
-                values[signal.key] = 12.4
+                values[signal.key] = _plausible_value(signal)
     return values
 
 
