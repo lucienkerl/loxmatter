@@ -345,9 +345,42 @@ function app() {
     labelDrafts: {},
     deviceActionError: null,
 
+    // --- Raeume, Filter, Suche (Entwurf Geraete-Tab, 2026-09-05) ----------
+    //
+    // DREI Zustaende, nicht zwei, und der Unterschied zwischen den letzten
+    // beiden ist der Grund fuer die Kodierung:
+    //   null  = "Alle"
+    //   ""    = "Ohne Raum" (die Geraete, deren `device.room` NULL ist)
+    //   "Bad" = dieser eine Raum
+    // "Ohne Raum" ist eine echte Auswahl und muss von "Alle" unterscheidbar
+    // bleiben - `null` fuer beide zu verwenden waere der naheliegende und
+    // falsche Weg gewesen, weil `device.room` selbst `null` ist. Der
+    // Leerstring kann mit keinem echten Raum kollidieren: `set_room` trimmt
+    // und macht aus einem leeren Namen NULL, ein Raum namens "" kann also
+    // gar nicht entstehen. Er ist ausserdem genau der Wert, den die API
+    // fuer "Raum entfernen" erwartet - dieselbe Kodierung auf beiden
+    // Seiten, nicht zwei.
+    //
+    // Bewusst nicht dauerhaft im Browser gemerkt (kein Web-Storage): ein
+    // gemerkter Filter erzeugt sonst den Moment, in dem nach zwei Wochen
+    // drei von zwoelf Geraeten dastehen und niemand mehr weiss, warum. Nach
+    // einem Neuladen steht die Ansicht wieder auf "Alle".
+    roomFilter: null,
+    deviceSearch: "",
+    // Welche Kachel gerade ein Textfeld fuer einen neuen Raumnamen zeigt
+    // (Geraete-ID oder null) - der Zustand haengt an der Kachel, nicht
+    // global, damit zwei offene Kacheln sich nicht gegenseitig schliessen.
+    newRoomFor: null,
+    newRoomDraft: "",
+    // Welcher Raum gerade inline umbenannt wird (Raumname oder null).
+    renamingRoom: null,
+    renameDraft: "",
+
     // Einlernen (Spec 7.1).
     commissionCode: "",
     commissionThreadDataset: "",
+    commissionRoom: "",
+    commissionNewRoom: "",
     commissionBusy: false,
     commissionMessage: null,
     commissionMessageIsError: false,
@@ -889,6 +922,245 @@ function app() {
       );
     },
 
+    // --- Kategorie, Raeume, Sortierung -----------------------------------
+
+    // Der uebersetzte Name der Kategorie. Die API liefert nur die Kennung
+    // ("socket"), damit die Suche unten gegen den Text vergleichen kann,
+    // den der Bedienende tatsaechlich sieht - auf Deutsch "Steckdose", auf
+    // Englisch "socket".
+    categoryLabel(device) {
+      return t("web.devices.category." + (device.category || "other"));
+    },
+
+    // Der Raum eines Geraets in der Kodierung von `roomFilter`: "" statt
+    // null/undefined. Eine Stelle, damit die Umrechnung nicht in vier
+    // Helfern einzeln steht und einer davon sie irgendwann anders macht.
+    roomKeyOf(device) {
+      return device.room || "";
+    },
+
+    // Alle Raeume mit ihrer Geraetezahl, "Ohne Raum" ganz am Ende.
+    // `key` ist der Wert, den `roomFilter` annimmt ("" fuer Ohne Raum),
+    // `label` der angezeigte Text.
+    roomChips() {
+      const counts = new Map();
+      for (const device of this.devices) {
+        const key = this.roomKeyOf(device);
+        counts.set(key, (counts.get(key) || 0) + 1);
+      }
+      const chips = [...counts.keys()]
+        .filter((key) => key !== "")
+        .sort((a, b) => a.localeCompare(b))
+        .map((key) => ({ key, label: key, count: counts.get(key) }));
+      if (counts.has("")) {
+        chips.push({ key: "", label: t("web.devices.room_none"), count: counts.get("") });
+      }
+      return chips;
+    },
+
+    // Die Leiste zeigt sich gar nicht, solange kein einziges Geraet einen
+    // Raum traegt: bei drei Geraeten und keinem Raum waere sie eine Zeile
+    // Laerm ueber einer Liste, die ohnehin auf einen Blick passt.
+    hasAnyRoom() {
+      return this.devices.some((device) => Boolean(device.room));
+    },
+
+    // Trifft der Suchbegriff dieses Geraet? Verglichen wird gegen Name,
+    // uebersetzten Kategorienamen und Raumnamen.
+    matchesSearch(device) {
+      const needle = this.deviceSearch.trim().toLocaleLowerCase();
+      if (!needle) {
+        return true;
+      }
+      const haystack = [device.label, this.categoryLabel(device), this.roomKeyOf(device)]
+        .join(" ")
+        .toLocaleLowerCase();
+      return haystack.includes(needle);
+    },
+
+    // Die sichtbaren Geraete: Raum-Chip und Suchfeld wirken ZUSAMMEN (UND).
+    // Eine Suche greift also nur im gewaehlten Raum - den Fall "kein
+    // Treffer hier, aber nebenan" faengt `hitsOutsideRoom()` unten ab.
+    visibleDevices() {
+      return this.devices.filter(
+        (device) =>
+          (this.roomFilter === null || this.roomKeyOf(device) === this.roomFilter) &&
+          this.matchesSearch(device),
+      );
+    },
+
+    // Wie viele Geraete der Suchbegriff AUSSERHALB des gewaehlten Raums
+    // trifft. Nur dann von Belang, wenn im Raum selbst nichts uebrig
+    // bleibt - sonst waere der Hinweis eine Ablenkung.
+    hitsOutsideRoom() {
+      if (this.roomFilter === null || !this.deviceSearch.trim()) {
+        return 0;
+      }
+      return this.devices.filter(
+        (device) => this.roomKeyOf(device) !== this.roomFilter && this.matchesSearch(device),
+      ).length;
+    },
+
+    clearRoomFilter() {
+      this.roomFilter = null;
+    },
+
+    // Die Geraete, nach Raum gruppiert und innerhalb eines Raums sortiert:
+    // erst nach Kategorierang (alle Steckdosen beisammen, dann alle
+    // Taster), darin alphabetisch nach Name.
+    //
+    // `localeCompare` statt `<`: sonst landete "Ärmelkanal" hinter "Zaun",
+    // weil der Code-Punkt von "Ä" hinter dem von "Z" liegt.
+    //
+    // Bei einem gewaehlten Raum entsteht genau eine Gruppe, und ihr
+    // `title` bleibt leer - es gibt nichts zu unterscheiden, und eine
+    // Ueberschrift ueber der einzigen Gruppe waere Dopplung der Chip-Leiste.
+    deviceGroups() {
+      const byRoom = new Map();
+      for (const device of this.visibleDevices()) {
+        const key = this.roomKeyOf(device);
+        if (!byRoom.has(key)) {
+          byRoom.set(key, []);
+        }
+        byRoom.get(key).push(device);
+      }
+      const sortDevices = (devices) =>
+        [...devices].sort(
+          (a, b) =>
+            (a.category_rank ?? 99) - (b.category_rank ?? 99) ||
+            a.label.localeCompare(b.label),
+        );
+      const groups = [...byRoom.keys()]
+        .filter((key) => key !== "")
+        .sort((a, b) => a.localeCompare(b))
+        .map((key) => ({ key, title: key, devices: sortDevices(byRoom.get(key)) }));
+      if (byRoom.has("")) {
+        groups.push({
+          key: "",
+          title: t("web.devices.room_none"),
+          devices: sortDevices(byRoom.get("")),
+        });
+      }
+      // Bei einem gewaehlten Raum gibt es nur eine Gruppe - ihre
+      // Ueberschrift waere die Dopplung des aktiven Chips direkt darueber.
+      if (this.roomFilter !== null) {
+        return groups.map((group) => ({ ...group, title: "" }));
+      }
+      return groups;
+    },
+
+    // --- Leitwert (Kachel-Kopfzeile) --------------------------------------
+
+    // Das erste funktionale Signal in der Reihenfolge, die
+    // `firstSignalsFor` ohnehin liefert - also die der Profiltabelle.
+    // Steckdose -> Zustand, Klimasensor -> Temperatur, Rollo -> Position.
+    // Keine eigene Datenhaltung, keine Konfiguration: ein Geraet ohne
+    // funktionale Signale hat schlicht keinen Leitwert, und die Kopfzeile
+    // bleibt einzeilig.
+    leadSignalFor(deviceId) {
+      return this.firstSignalsFor(deviceId)[0] || null;
+    },
+
+    // Der Rest der Kurzliste. `FUNCTIONAL_PREVIEW_LIMIT` zaehlt den
+    // Leitwert MIT (Entwurf 6.2), deshalb hier kein zweites Abschneiden -
+    // `firstSignalsFor` hat es bereits getan.
+    restSignalsFor(deviceId) {
+      return this.firstSignalsFor(deviceId).slice(1);
+    },
+
+    // --- Raum eines Geraets aendern ---------------------------------------
+
+    // Sendet AUSSCHLIESSLICH den Raum. Ein mitgeschicktes `label` liesse
+    // `rename_device` laufen und setzte `updated_at` - das Geraet stuende
+    // danach als "geaendert seit Export", obwohl der Raum in keiner
+    // Vorlage landet (Entwurf 3.3).
+    //
+    // `value` ist bereits in derselben Kodierung wie `roomFilter`: "" heisst
+    // "Ohne Raum", und genau das erwartet auch die API fuer "Raum
+    // entfernen". Keine Umrechnung an dieser Stelle.
+    async saveRoom(device, value) {
+      this.deviceActionError = null;
+      try {
+        const updated = await this.request("PATCH", `/api/devices/${device.id}`, {
+          room: value,
+        });
+        Object.assign(device, updated);
+      } catch (error) {
+        this.deviceActionError = t("web.devices.room_save_error", { message: error.message });
+      }
+    },
+
+    beginNewRoom(device) {
+      this.newRoomFor = device.id;
+      this.newRoomDraft = "";
+    },
+
+    async commitNewRoom(device) {
+      const name = this.newRoomDraft.trim();
+      this.newRoomFor = null;
+      this.newRoomDraft = "";
+      if (name) {
+        await this.saveRoom(device, name);
+      }
+    },
+
+    // Umbenennen passiert INLINE, wie jede andere Bearbeitung dieser
+    // Oberflaeche (Geraetename, Signaltitel): der Stift macht aus der
+    // Ueberschrift ein Eingabefeld. Ein `window.prompt` waere weniger
+    // Markup gewesen, saehe aber in jedem Browser anders aus und waere der
+    // einzige Dialog in einer Ansicht, die sonst ohne auskommt.
+    beginRenameRoom(room) {
+      this.renamingRoom = room;
+      this.renameDraft = room;
+    },
+
+    cancelRenameRoom() {
+      this.renamingRoom = null;
+      this.renameDraft = "";
+    },
+
+    // Die Rueckfrage vor dem Zusammenfuehren bleibt dagegen ein nativer
+    // Dialog - der eine bewusste Unterschied zum Umbenennen selbst.
+    // Zusammenfuehren ist selten und unumkehrbar: danach weiss niemand
+    // mehr, welches Geraet vorher in welchem der beiden Raeume stand. Ein
+    // modaler Dialog ist bei genau dieser Art Aktion die ehrliche Bremse;
+    // ein Banner, das man wegklicken kann, ohne es gelesen zu haben,
+    // waere es nicht.
+    //
+    // Ob der Zielname schon belegt ist, entscheidet die Oberflaeche und
+    // nicht der Server: die Geraeteliste liegt ihr vor, eine zweite
+    // Abfrage nur fuer diese Auskunft waere ueberfluessig.
+    async commitRenameRoom() {
+      const room = this.renamingRoom;
+      if (room === null) {
+        // Enter hat bereits gespeichert und das Feld geschlossen; das
+        // anschliessende `blur` landet hier und hat nichts mehr zu tun.
+        return;
+      }
+      const name = this.renameDraft.trim();
+      if (!name || name === room) {
+        this.cancelRenameRoom();
+        return;
+      }
+      const exists = this.devices.some((device) => device.room === name);
+      if (exists && !window.confirm(t("web.devices.room_rename_merge_confirm"))) {
+        // Feld bleibt offen: die Rueckfrage abzulehnen heisst "so nicht",
+        // nicht "vergiss, was ich getippt habe".
+        return;
+      }
+      this.cancelRenameRoom();
+      this.deviceActionError = null;
+      try {
+        await this.request("POST", "/api/rooms/rename", { from: room, to: name });
+        if (this.roomFilter === room) {
+          this.roomFilter = name;
+        }
+        await this.loadDevices();
+      } catch (error) {
+        this.deviceActionError = t("web.devices.room_rename_error", { message: error.message });
+      }
+    },
+
     // Signale-Ansicht (Aufgabe 8): "Funktional" zeigt sofort, was
     // `is_functional` als gewollt einstuft; "Experte" bleibt zugeklappt,
     // bis `showExpertSignals` das global fuer alle Geraetekarten umschaltet
@@ -1073,6 +1345,16 @@ function app() {
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }
+        // Raum (Entwurf 6.7): "" heisst "Ohne Raum" und wird gar nicht erst
+        // mitgeschickt; "__new__" ist der Sonderwert des Auswahlfelds, hinter
+        // dem das Textfeld `commissionNewRoom` steht.
+        const room =
+          this.commissionRoom === "__new__"
+            ? this.commissionNewRoom.trim()
+            : this.commissionRoom.trim();
+        if (room) {
+          body.room = room;
+        }
         const device = await this.request("POST", "/api/devices/commission", body);
         this.devices.push(device);
         // Karte ist ab sofort sichtbar und immer offen (Abschnitt 3) - ohne
@@ -1092,6 +1374,10 @@ function app() {
         this.commissionMessageIsError = false;
         this.commissionCode = "";
         this.commissionThreadDataset = "";
+        // Der Raum bleibt BEWUSST stehen (Entwurf 6.7): wer vier Geraete in
+        // der Kueche einlernt, waehlt ihn einmal. Ein Pairing-Code dagegen
+        // ist nach Gebrauch wertlos und ein stehengebliebener waere eine
+        // Fehlerquelle.
       } catch (error) {
         // Ohne die Fallunterscheidung stand die Überschrift dieser Meldung
         // doppelt in der Oberfläche: eine 422 dieser Route trägt bereits

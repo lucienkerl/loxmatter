@@ -1907,3 +1907,40 @@ async def test_the_resend_card_dynamic_strings_are_translated(api):
         in save_interval_body
     )
     assert "Resend-Intervall konnte nicht gespeichert werden" not in save_interval_body
+
+
+async def test_the_script_offers_room_filtering_grouping_and_search(api):
+    """Die Oberflaeche wird nicht von einem JS-Testlaeufer geprueft (es gibt
+    keinen - Alpine laeuft vendored im Browser). Diese Pruefung haelt
+    deshalb nur fest, DASS die Bausteine ausgeliefert werden, auf die das
+    Markup in index.html sich stuetzt - ein Umbenennen auf einer Seite ohne
+    die andere faellt hier auf."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    for name in (
+        "roomKeyOf(",
+        "roomChips(",
+        "hasAnyRoom(",
+        "visibleDevices(",
+        "deviceGroups(",
+        "categoryLabel(",
+        "leadSignalFor(",
+        "restSignalsFor(",
+        "saveRoom(",
+        "beginNewRoom(",
+        "commitNewRoom(",
+        "beginRenameRoom(",
+        "commitRenameRoom(",
+        "hitsOutsideRoom(",
+        "clearRoomFilter(",
+    ):
+        assert name in script, name
+
+
+async def test_the_search_never_reaches_the_server(api):
+    """Die Suche laeuft ueber die ohnehin geladene Geraeteliste - es gibt
+    keinen Endpunkt dafuer, und es soll auch keiner entstehen."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "/api/devices/search" not in script
+    assert "/api/rooms/rename" in script
