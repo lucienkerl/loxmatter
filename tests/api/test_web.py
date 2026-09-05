@@ -1164,6 +1164,54 @@ async def test_the_commissioning_flow_messages_are_translated(api):
     assert "Einlernen fehlgeschlagen" not in body
 
 
+async def test_commission_device_syncs_the_room_draft_and_avoids_duplicate_tiles(api):
+    """Fund 3 und Fund 4 (Re-Review 2026-09-05), beide in derselben paar
+    Zeilen von `commissionDevice`, die das frisch eingelernte Geraet in
+    `this.devices` einsortieren:
+
+    Fund 3 - ohne `syncRoomSelectDraft(device)` blieb
+    `roomSelectDrafts[device.id]` `undefined`, Alpine rundet das per
+    `x-model` auf `""` ab, und die neue Kachel zeigte "Ohne Raum" in ihrer
+    eigenen Auswahlliste, obwohl sie zugleich unter der Gruppen-Ueberschrift
+    des gewaehlten Raums stand (`roomKeyOf` liest `device.room` direkt,
+    nicht den Entwurf) - der genaue Widerspruch, den diese Fix-Runde
+    beseitigen sollte, auf einem Pfad, den der Browser-Check nicht
+    abgedeckt hatte. `loadDevices()` erledigt dasselbe fuer jedes Geraet
+    beim Start, wird beim Einlernen aber nie erreicht.
+
+    Fund 4 - die Einlern-Route liefert fuer ein schon registriertes Geraet
+    dieselbe `device_id` zurueck (siehe den Backend-Test
+    `test_recommissioning_a_known_device_applies_the_chosen_room` in
+    `tests/api/test_devices.py`). Ein bedingungsloses `push` legte dieses
+    Geraet ein zweites Mal in `this.devices` ab: zwei Kacheln mit
+    derselben `device.id`, was `x-for`s `:key="device.id"` verletzt und den
+    Raum-Chip doppelt zaehlen liess.
+
+    Ohne Browser-Engine laesst sich weder das tatsaechliche
+    `roomSelectDrafts` nach einem Klick pruefen noch ein doppelter
+    Alpine-Key-Warnhinweis in der Konsole - belegt wird deshalb der
+    ausgelieferte Methodenkoerper: er sucht per `findIndex` nach einem
+    bereits vorhandenen Geraet mit derselben ID, ersetzt es dort statt
+    ein zweites Mal anzuhaengen, haengt andernfalls neu an, und ruft in
+    JEDEM Fall `syncRoomSelectDraft(device)` auf - vor der ersten
+    `await`-Stelle danach (`loadControls`/`loadSignals`), damit die Kachel
+    nie mit einem veralteten Entwurf sichtbar wird."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    commission_start = script.index("async commissionDevice() {")
+    commission_end = script.index("\n    },", script.index("this.commissionBusy = false;"))
+    body = script[commission_start:commission_end]
+
+    push_index = body.index(
+        "const existingIndex = this.devices.findIndex((d) => d.id === device.id);"
+    )
+    assert "this.devices.push(device);" in body
+    assert "this.devices[existingIndex] = device;" in body
+    sync_index = body.index("this.syncRoomSelectDraft(device);")
+    controls_index = body.index("await Promise.all([this.loadControls(device.id)")
+    assert push_index < sync_index < controls_index, body
+
+
 async def test_the_remove_confirm_dialog_text_comes_from_t(api):
     """Aufgabe 11, Schritt 4: der native `window.confirm(...)` in
     `removeDevice` traegt jetzt einen einzigen `t(...)`-Aufruf mit `label`

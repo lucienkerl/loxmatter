@@ -1506,7 +1506,37 @@ function app() {
           body.room = room;
         }
         const device = await this.request("POST", "/api/devices/commission", body);
-        this.devices.push(device);
+        // Fund 4 (Re-Review 2026-09-05): die Einlern-Route liefert fuer ein
+        // schon registriertes Geraet dieselbe `device_id` zurueck, statt
+        // ein zweites anzulegen (siehe `register_device`s fruehen
+        // Rueckgabepfad in `model/store.py` sowie den Backend-Test
+        // `test_recommissioning_a_known_device_applies_the_chosen_room`).
+        // Ein bedingungsloses `push` legte dieses Geraet dann ein zweites
+        // Mal in `this.devices` ab: zwei Kacheln mit derselben
+        // `device.id`, was `x-for`s `:key="device.id"` verletzt (Alpine
+        // warnt in der Konsole ueber doppelte Schluessel) und den
+        // Raum-Chip doppelt zaehlen liess. Ersetzt wird deshalb die
+        // bestehende Karte, falls eine mit dieser ID schon da ist -
+        // andernfalls wird neu angehaengt.
+        const existingIndex = this.devices.findIndex((d) => d.id === device.id);
+        if (existingIndex === -1) {
+          this.devices.push(device);
+        } else {
+          this.devices[existingIndex] = device;
+        }
+        // Fund 3 (Re-Review 2026-09-05): ohne diesen Aufruf blieb
+        // `roomSelectDrafts[device.id]` `undefined`, Alpines `x-model`
+        // rundet das auf `""` ab, und die frisch eingelernte Kachel zeigte
+        // "Ohne Raum" in ihrer Auswahlliste - und zwar genau dann, wenn
+        // ein Raum gewaehlt wurde, denn dann steht sie zugleich unter
+        // dessen Gruppen-Ueberschrift (`roomKeyOf` liest `device.room`
+        // direkt, nicht den Entwurf). `loadDevices()` (das dasselbe fuer
+        // jedes Geraet beim Start erledigt) wird beim Einlernen nie
+        // erreicht - dieser Aufruf ist der einzige Weg, wie eine frisch
+        // eingelernte Karte einen synchronen Entwurf bekommt. Gilt fuer
+        // beide Zweige oben: sowohl das neue als auch das ersetzte Geraet
+        // brauchen ihn.
+        this.syncRoomSelectDraft(device);
         // Karte ist ab sofort sichtbar und immer offen (Abschnitt 3) - ohne
         // dieses Nachladen zeigte sie "Signale werden geladen…" dauerhaft,
         // bis irgendwann die Ansicht neu betreten wuerde.
