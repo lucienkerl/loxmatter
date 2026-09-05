@@ -2422,8 +2422,14 @@ async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
     override_rule = css.split(".device-commands > .row + .row {", 1)[1].split("}", 1)[0]
     assert "margin-top: 0;" in override_rule
     # Die allgemeine, fuer vertikale Stapel gedachte Regel muss unangetastet
-    # bleiben - der Fix ist ein gezielter Override, keine Streichung.
-    assert ".row + .row {\n  margin-top: 0.5rem;\n}" in css
+    # bleiben - der Fix ist ein gezielter Override, keine Streichung. Wie
+    # jede andere Regelpruefung in dieser Datei wird dafuer der Regelkoerper
+    # extrahiert statt der komplette Block samt Klammern und Einrueckung zu
+    # matchen (Fund 3, Review vom 2026-09-05) - ein Kommentar in der Regel
+    # oder eine andere Reihenfolge der Deklaration duerfte diesen Test nicht
+    # brechen, ohne dass sich am Verhalten etwas aendert.
+    base_rule = css.split(".row + .row {", 1)[1].split("}", 1)[0]
+    assert "margin-top: 0.5rem;" in base_rule
 
 
 async def test_lead_value_gets_padding_room_for_descenders(api):
