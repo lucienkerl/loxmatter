@@ -329,3 +329,20 @@ def test_ohne_miniserver_ip_und_ohne_terminal_bricht_es_ab(installer):
     assert result.returncode == 2
     assert "MINISERVER_IP" in result.output
     assert not result.called("git clone")
+
+
+def test_zu_langes_oktett_wird_abgewiesen(installer):
+    # `[ n -gt 255 ]` scheitert bei einer Zahl jenseits des Integer-Bereichs
+    # mit einem Fehler statt mit "falsch" - und ein fehlgeschlagener Test in
+    # `if` liest sich wie "nicht groesser". Diese Adresse galt deshalb einmal
+    # als gueltig.
+    result = installer(env={"MINISERVER_IP": "1.2.3.999999999999999999999"})
+    assert result.returncode == 2
+    assert "not a valid IPv4" in result.output
+
+
+def test_fuehrende_nullen_werden_abgewiesen(installer):
+    # 010 lesen verschiedene Verbraucher als oktal, nicht als 10.
+    result = installer(env={"MINISERVER_IP": "01.02.03.04"})
+    assert result.returncode == 2
+    assert "not a valid IPv4" in result.output

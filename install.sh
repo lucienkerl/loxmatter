@@ -273,26 +273,38 @@ decide_mode() {
   note "Operating mode: $MODE"
 }
 
+# Strict IPv4 check. Octets are shape-checked with `case` BEFORE any numeric
+# comparison: `[ n -gt 255 ]` on a number too large for the shell's integer
+# type does not return false, it errors - and an errored test inside `if`
+# reads as "not greater", which let 1.2.3.999999999999999999999 through as a
+# valid address. Peeling with parameter expansion also avoids splitting on
+# IFS, so the positional parameters stay untouched and no deliberate word
+# splitting has to be suppressed.
 valid_ipv4() {
-  case "$1" in
-    ""|*[!0-9.]*) return 1 ;;
-  esac
-  ipv4_saved_ifs="$IFS"
-  IFS=.
-  # Deliberate word splitting on the dots.
-  # shellcheck disable=SC2086
-  set -- $1
-  IFS="$ipv4_saved_ifs"
-  if [ $# -ne 4 ]; then
-    return 1
-  fi
-  for ipv4_octet in "$@"; do
+  ipv4_rest="$1"
+  ipv4_seen=0
+  while [ "$ipv4_seen" -lt 4 ]; do
+    if [ "$ipv4_seen" -eq 3 ]; then
+      ipv4_octet="$ipv4_rest"
+    else
+      case "$ipv4_rest" in
+        *.*)
+          ipv4_octet="${ipv4_rest%%.*}"
+          ipv4_rest="${ipv4_rest#*.}"
+          ;;
+        *) return 1 ;;
+      esac
+    fi
+    # Rejects the empty string, non-digits, anything longer than three
+    # digits, and leading zeros - all in one pattern list.
     case "$ipv4_octet" in
-      ""|*[!0-9]*) return 1 ;;
+      0|[1-9]|[1-9][0-9]|[1-9][0-9][0-9]) : ;;
+      *) return 1 ;;
     esac
     if [ "$ipv4_octet" -gt 255 ]; then
       return 1
     fi
+    ipv4_seen=$((ipv4_seen + 1))
   done
   return 0
 }
