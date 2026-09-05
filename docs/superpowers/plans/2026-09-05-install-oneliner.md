@@ -182,7 +182,18 @@ In `scripts/otbr-watchdog.sh`, direkt nach der Zuweisung von `STAMP` (vor `threa
 # faende der Waechter nie eine Thread-Schnittstelle, versuchte alle fuenf
 # Minuten einen Neustart und schriebe jedes Mal einen Fehlschlag ins Log -
 # aus einem Aufpasser wuerde eine Lawine.
-if ! docker ps -a --format '{{.Names}}' | grep -qx "$SERVICE"; then
+#
+# Die Abfrage steht bewusst getrennt von der Suche: unter `set -euo pipefail`
+# verliesse ein fehlendes oder nicht laufendes docker die Pipeline mit leerer
+# Ausgabe, `grep` faende nichts (Status 1), und `!` machte daraus eine stille
+# 0 - ein kaputtes docker saehe dann genauso aus wie "kein Thread-Betrieb",
+# und der Neustartversuch samt seinem Log-Eintrag wuerde nie erreicht.
+if ! CONTAINERS=$(docker ps -a --format '{{.Names}}' 2>&1); then
+  printf '%s  docker ps fehlgeschlagen - kann otbr-Container nicht pruefen:\n' "$STAMP"
+  printf '%s\n' "$CONTAINERS" | sed 's/^/    /'
+  exit 1
+fi
+if ! printf '%s\n' "$CONTAINERS" | grep -qx "$SERVICE"; then
   exit 0
 fi
 ```
