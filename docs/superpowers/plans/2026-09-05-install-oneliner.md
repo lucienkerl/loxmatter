@@ -1295,6 +1295,13 @@ Is this machine online? Nothing was changed."
   fi
   rm -f "$TEMP_FILE"
   TEMP_FILE=""
+  # Checking the outcome, not the download: a truncated but syntactically
+  # valid script runs cleanly and installs nothing, and no amount of
+  # inspecting the file beforehand catches every such case.
+  if ! have docker; then
+    die "The installer from $DOCKER_INSTALL_URL ran but left no 'docker'
+command. The download was probably incomplete. Nothing else was changed."
+  fi
   if [ -n "$SUDO" ]; then
     docker_user="$(id -un)"
     run_root usermod -aG docker "$docker_user" ||
@@ -1342,7 +1349,9 @@ dk() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 24 passed.
+Expected: 26 Tests, davon 24 grün und 2 übersprungen. Die beiden übersprungenen prüfen das
+Aufräumen der temporären Datei und laufen nur unter Linux: macOS' `mktemp` ignoriert `TMPDIR`,
+die Prüfung wäre dort immer wahr und damit wertlos. In der CI (Ubuntu) laufen alle 26.
 
 - [ ] **Step 5: shellcheck**
 
@@ -1460,7 +1469,7 @@ Move it aside, or pass --dir with a different path."
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 27 passed.
+Expected: 29 passed (unter macOS 27 plus 2 übersprungen).
 
 - [ ] **Step 5: Commit**
 
@@ -1750,7 +1759,7 @@ configure() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 35 passed.
+Expected: 37 passed (unter macOS 35 plus 2 übersprungen).
 
 - [ ] **Step 5: shellcheck und Formatierung**
 
@@ -2010,7 +2019,7 @@ run_checks() {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 40 passed.
+Expected: 42 passed (unter macOS 40 plus 2 übersprungen).
 
 **Hinweis für die Abnahme:** `check_rfkill` lässt sich hier nicht gezielt auslösen — auf macOS fehlt `/sys` ganz, auf CI-Runnern ist `/sys/class/rfkill` üblicherweise leer. Getestet ist nur, dass die Funktion beide Fälle übersteht. Der Befund selbst zeigt sich erst auf einem echten Pi.
 
@@ -2191,7 +2200,7 @@ main "$@"
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 45 passed.
+Expected: 47 passed (unter macOS 45 plus 2 übersprungen).
 
 - [ ] **Step 5: Vollständiger Durchlauf aller Prüfungen**
 
