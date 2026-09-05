@@ -765,6 +765,84 @@ web.devices.commission_failed:
   en: "Commissioning failed: {message}"
   de: "Einlernen fehlgeschlagen: {message}"
 
+# --- Raeume und Suche (Entwurf Geraete-Tab, 2026-09-05) ---
+# Die Kategorienamen unten sind die einzige Stelle, an der eine Kategorie
+# ihren lesbaren Namen bekommt - `profiles/categories.py` kennt nur die
+# Kennung. Die Suche vergleicht gegen genau diese Texte, deshalb findet
+# "Steckdose" auf Deutsch und "socket" auf Englisch dieselben Geraete.
+web.devices.category.light:
+  en: "Light"
+  de: "Licht"
+web.devices.category.socket:
+  en: "Socket"
+  de: "Steckdose"
+web.devices.category.switch:
+  en: "Switch"
+  de: "Taster"
+web.devices.category.covering:
+  en: "Covering"
+  de: "Beschattung"
+web.devices.category.climate:
+  en: "Climate"
+  de: "Klima"
+web.devices.category.sensor:
+  en: "Sensor"
+  de: "Sensor"
+web.devices.category.lock:
+  en: "Lock"
+  de: "Schloss"
+web.devices.category.other:
+  en: "Other"
+  de: "Sonstige"
+web.devices.room_all:
+  en: "All"
+  de: "Alle"
+web.devices.room_none:
+  en: "No room"
+  de: "Ohne Raum"
+web.devices.room_label:
+  en: "Room"
+  de: "Raum"
+web.devices.room_new:
+  en: "+ New room…"
+  de: "+ Neuer Raum…"
+web.devices.room_new_placeholder:
+  en: "Room name"
+  de: "Raumname"
+web.devices.room_rename:
+  en: "Rename room"
+  de: "Raum umbenennen"
+web.devices.room_rename_merge_confirm:
+  en: "A room with that name already exists. Both rooms will be merged — this cannot be undone. Continue?"
+  de: "Ein Raum dieses Namens besteht bereits. Beide Räume werden zusammengeführt — das lässt sich nicht rückgängig machen. Fortfahren?"
+web.devices.room_save_error:
+  en: "Could not save room: {message}"
+  de: "Raum konnte nicht gespeichert werden: {message}"
+web.devices.room_rename_error:
+  en: "Could not rename room: {message}"
+  de: "Raum konnte nicht umbenannt werden: {message}"
+web.devices.search_placeholder:
+  en: "Search name, category, room"
+  de: "Name, Kategorie, Raum suchen"
+web.devices.search_empty:
+  en: "No device matches this search."
+  de: "Kein Gerät passt zu dieser Suche."
+web.devices.search_hits_elsewhere:
+  en: "further matches in other rooms —"
+  de: "weitere Treffer in anderen Räumen —"
+web.devices.search_show_all_rooms:
+  en: "show all rooms"
+  de: "alle Räume anzeigen"
+web.devices.more_signals_short:
+  en: "more"
+  de: "weitere"
+web.devices.more_commands_short:
+  en: "unnamed"
+  de: "unbenannt"
+web.devices.commission_room_hint:
+  en: 'The room is optional — without a selection the device appears under "No room" and can be assigned later.'
+  de: 'Der Raum ist optional — ohne Auswahl erscheint das Gerät unter „Ohne Raum" und lässt sich später zuordnen.'
+
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
   en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
