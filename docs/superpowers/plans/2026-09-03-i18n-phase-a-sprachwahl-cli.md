@@ -1524,8 +1524,14 @@ def _silent_keys_report(template_name: str, announced: set[str], silent: list[st
     if not announced:
         return i18n.t("cli.fake_miniserver.report_no_check_signals", template=template_name)
     if not silent:
-        return i18n.t("cli.fake_miniserver.report_all_seen", count=len(announced), template=template_name)
-    lines = [i18n.t("cli.fake_miniserver.report_silent_header", count=len(silent), template=template_name)]
+        return i18n.t(
+            "cli.fake_miniserver.report_all_seen", count=len(announced), template=template_name
+        )
+    lines = [
+        i18n.t(
+            "cli.fake_miniserver.report_silent_header", count=len(silent), template=template_name
+        )
+    ]
     lines += [f"  {key}" for key in silent]
     return "\n".join(lines)
 ```

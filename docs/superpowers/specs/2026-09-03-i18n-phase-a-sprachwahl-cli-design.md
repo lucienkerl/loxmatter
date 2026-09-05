@@ -83,7 +83,7 @@ Muster „Fachdaten in YAML, kein Python". Kein neues Paket, kein Build-Schritt.
 
 ```python
 def t(key: str, **values: object) -> str:
-    entry = _STRINGS[key]                    # KeyError = Programmierfehler, soll auffallen
+    entry = _STRINGS[key]  # KeyError = Programmierfehler, soll auffallen
     template = entry.get(_current_language(), entry["en"])
     return template.format(**values)
 ```
@@ -105,7 +105,7 @@ Klasse `model/locale_store.py::LocaleStore`, nach demselben Muster:
 
 ```python
 class LocaleStore:
-    def get_language(self) -> str: ...        # "en", falls nichts gespeichert
+    def get_language(self) -> str: ...  # "en", falls nichts gespeichert
     def set_language(self, language: str) -> None: ...
 ```
 

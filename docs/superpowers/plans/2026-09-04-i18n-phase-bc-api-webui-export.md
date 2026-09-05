@@ -108,9 +108,7 @@ def test_patch_language_requires_a_session(client):
     assert response.status_code == 401
 
 
-def test_patch_language_persists_and_is_reflected_by_the_next_request(
-    authenticated_client, store
-):
+def test_patch_language_persists_and_is_reflected_by_the_next_request(authenticated_client, store):
     """Beweist die Middleware, nicht nur die Route: eine ZWEITE, unabhaengige
     Anfrage (hier /api/i18n, das keine Anmeldung braucht) muss die neue
     Sprache sehen - nicht nur store.locale direkt."""
@@ -127,9 +125,7 @@ def test_patch_language_rejects_an_unsupported_value(authenticated_client):
     assert response.status_code == 400
 
 
-def test_sync_language_middleware_sees_a_change_made_directly_through_the_store(
-    client, store
-):
+def test_sync_language_middleware_sees_a_change_made_directly_through_the_store(client, store):
     """Die Luecke aus Spec-Abschnitt 4: eine Aenderung, die NICHT ueber
     PATCH /api/language lief (hier direkt ueber store.locale, wie es
     `loxmatter set-language` in einem anderen Prozess taete), muss die
@@ -814,18 +810,13 @@ to:
 
 Change (lines 244-248):
 ```python
-            msg = (
-                f"matter-server hat nach {LISTENER_READY_TIMEOUT_SECONDS:.0f}s "
-                "keine Bereitschaft gemeldet"
-            )
-            raise MatterUnavailableError(msg)
+msg = f"matter-server hat nach {LISTENER_READY_TIMEOUT_SECONDS:.0f}s keine Bereitschaft gemeldet"
+raise MatterUnavailableError(msg)
 ```
 to:
 ```python
-            msg = i18n.t(
-                "api.errors.listener_timeout", timeout=LISTENER_READY_TIMEOUT_SECONDS
-            )
-            raise MatterUnavailableError(msg)
+msg = i18n.t("api.errors.listener_timeout", timeout=LISTENER_READY_TIMEOUT_SECONDS)
+raise MatterUnavailableError(msg)
 ```
 
 Change (line 330):
@@ -1559,49 +1550,46 @@ def _check_ipv6() -> tuple[bool, str]:
 
 `_check_thread`:
 ```python
-    addresses = _routed_ipv6_addresses()
-    if addresses is None:
-        return True, (
-            "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht (kein Linux)."
-        )
-    thread = [
-        (address, interface)
-        for address, interface in addresses
-        if interface.startswith(_THREAD_INTERFACE_PREFIX)
-    ]
-    if not thread:
-        return False, (
-            f"Keine Thread-Schnittstelle ({_THREAD_INTERFACE_PREFIX}*) mit einer "
-            "Mesh-Adresse gefunden. Laeuft der OTBR-Agent? Er bricht bei einem "
-            "RCP-Timeout ab - wenn das Funkmodul nicht mehr antwortet -, ohne dass "
-            "der Container endet, und wird dann von niemandem neu gestartet. "
-            "`docker compose restart otbr` holt ihn zurueck."
-        )
+addresses = _routed_ipv6_addresses()
+if addresses is None:
     return True, (
-        f"Thread-Schnittstelle {thread[0][1]} hat {len(thread)} Mesh-Adresse(n), "
-        f"z. B. {thread[0][0]}."
+        "Nicht feststellbar: /proc/net/if_inet6 gibt es auf diesem System nicht (kein Linux)."
     )
+thread = [
+    (address, interface)
+    for address, interface in addresses
+    if interface.startswith(_THREAD_INTERFACE_PREFIX)
+]
+if not thread:
+    return False, (
+        f"Keine Thread-Schnittstelle ({_THREAD_INTERFACE_PREFIX}*) mit einer "
+        "Mesh-Adresse gefunden. Laeuft der OTBR-Agent? Er bricht bei einem "
+        "RCP-Timeout ab - wenn das Funkmodul nicht mehr antwortet -, ohne dass "
+        "der Container endet, und wird dann von niemandem neu gestartet. "
+        "`docker compose restart otbr` holt ihn zurueck."
+    )
+return True, (
+    f"Thread-Schnittstelle {thread[0][1]} hat {len(thread)} Mesh-Adresse(n), z. B. {thread[0][0]}."
+)
 ```
 →
 ```python
-    addresses = _routed_ipv6_addresses()
-    if addresses is None:
-        return True, i18n.t("api.diagnostics.thread_not_determinable")
-    thread = [
-        (address, interface)
-        for address, interface in addresses
-        if interface.startswith(_THREAD_INTERFACE_PREFIX)
-    ]
-    if not thread:
-        return False, i18n.t(
-            "api.diagnostics.no_thread_interface", prefix=_THREAD_INTERFACE_PREFIX
-        )
-    return True, i18n.t(
-        "api.diagnostics.thread_found",
-        interface=thread[0][1],
-        count=len(thread),
-        example=thread[0][0],
-    )
+addresses = _routed_ipv6_addresses()
+if addresses is None:
+    return True, i18n.t("api.diagnostics.thread_not_determinable")
+thread = [
+    (address, interface)
+    for address, interface in addresses
+    if interface.startswith(_THREAD_INTERFACE_PREFIX)
+]
+if not thread:
+    return False, i18n.t("api.diagnostics.no_thread_interface", prefix=_THREAD_INTERFACE_PREFIX)
+return True, i18n.t(
+    "api.diagnostics.thread_found",
+    interface=thread[0][1],
+    count=len(thread),
+    example=thread[0][0],
+)
 ```
 
 `_check_miniserver`:
@@ -1849,17 +1837,13 @@ to:
 
 In the `/resync` handler:
 ```python
-            logger.exception("Full-Resend ueber /resync fehlgeschlagen")
-            raise HTTPException(
-                status_code=502, detail=f"Full-Resend fehlgeschlagen: {exc}"
-            ) from exc
+logger.exception("Full-Resend ueber /resync fehlgeschlagen")
+raise HTTPException(status_code=502, detail=f"Full-Resend fehlgeschlagen: {exc}") from exc
 ```
 to:
 ```python
-            logger.exception("Full-Resend ueber /resync fehlgeschlagen")
-            raise HTTPException(
-                status_code=502, detail=i18n.t("api.server.fail_resync", exc=exc)
-            ) from exc
+logger.exception("Full-Resend ueber /resync fehlgeschlagen")
+raise HTTPException(status_code=502, detail=i18n.t("api.server.fail_resync", exc=exc)) from exc
 ```
 
 In the `/cmd/{key}/{value}` handler:
@@ -2089,20 +2073,16 @@ Edit `src/loxmatter/export/signals.py`. Add `from loxmatter import i18n` next to
 
 In `to_inputs`, the event branch:
 ```python
-        if signal.ref.kind is SignalKind.EVENT:
-            emit(
-                LoxoneInput(
-                    signal.key, signal.title, f"{comment} · Impuls", False, "", check_suffix="1"
-                ),
-                f"dem Impuls von {signal.key!r}",
-            )
-            emit(
-                LoxoneInput(
-                    f"{signal.key}_n", f"{signal.title} Zähler", f"{comment} · Zähler", True, ""
-                ),
-                f"dem Zaehler von {signal.key!r}",
-            )
-            continue
+if signal.ref.kind is SignalKind.EVENT:
+    emit(
+        LoxoneInput(signal.key, signal.title, f"{comment} · Impuls", False, "", check_suffix="1"),
+        f"dem Impuls von {signal.key!r}",
+    )
+    emit(
+        LoxoneInput(f"{signal.key}_n", f"{signal.title} Zähler", f"{comment} · Zähler", True, ""),
+        f"dem Zaehler von {signal.key!r}",
+    )
+    continue
 ```
 →
 ```python

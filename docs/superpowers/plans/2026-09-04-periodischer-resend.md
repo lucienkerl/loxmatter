@@ -728,9 +728,7 @@ async def test_a_fresh_installation_has_the_default_resend_interval(api):
 
 async def test_patch_saves_and_returns_the_new_interval(api):
     client, _ = api
-    response = await client.patch(
-        "/api/settings/resend-interval", json={"interval_seconds": 60.0}
-    )
+    response = await client.patch("/api/settings/resend-interval", json={"interval_seconds": 60.0})
     assert response.status_code == 200
     assert response.json()["interval_seconds"] == 60.0
 
@@ -976,64 +974,66 @@ Expected: FAIL (`AttributeError: 'Runtime' object has no attribute 'resend_marke
 In `src/loxmatter/loxone/runtime.py` den bestehenden `resend_all` ersetzen durch:
 
 ```python
-    async def resend_all(self) -> int:
-        """Schickt JEDEN bekannten Wert erneut, an der Entprellung vorbei -
-        unabhaengig vom `resend`-Flag (Entwurf periodischer Resend,
-        2026-09-04, Abschnitt 6). Bleibt bewusst unveraendert der volle
-        Restore-Pfad fuer `/resync` (`loxone.server`) und den Bruecken-Start
-        (`cli.py`, direkt nach `seed_from_snapshot`) - beide muessen nach
-        einem Miniserver-Neustart JEDEN virtuellen Eingang wiederherstellen
-        (Spec 6.4), unabhaengig davon, ob jemand das Signal fuer den
-        periodischen Timer markiert hat. Der periodische Timer selbst ruft
-        stattdessen `resend_marked()` auf, siehe dort.
+async def resend_all(self) -> int:
+    """Schickt JEDEN bekannten Wert erneut, an der Entprellung vorbei -
+    unabhaengig vom `resend`-Flag (Entwurf periodischer Resend,
+    2026-09-04, Abschnitt 6). Bleibt bewusst unveraendert der volle
+    Restore-Pfad fuer `/resync` (`loxone.server`) und den Bruecken-Start
+    (`cli.py`, direkt nach `seed_from_snapshot`) - beide muessen nach
+    einem Miniserver-Neustart JEDEN virtuellen Eingang wiederherstellen
+    (Spec 6.4), unabhaengig davon, ob jemand das Signal fuer den
+    periodischen Timer markiert hat. Der periodische Timer selbst ruft
+    stattdessen `resend_marked()` auf, siehe dort.
 
-        Iteriert nur die Schluessel als Momentaufnahme, liest den Wert aber
-        JE SCHLUESSEL erst unmittelbar vor dem Senden aus `_last_values`
-        nach (Review-Fix I4, 2026-09-02). Der alte Code erfasste `(key,
-        value)`-Paare gemeinsam als eine Momentaufnahme und wartete dann -
-        durch die Entprellung im `UdpSender` - bis zu ein paar Sekunden fuer
-        rund 110 Signale. Eine gleichzeitige Aktualisierung waehrend dieser
-        Zeit schrieb ihren neuen Wert schon in `_last_values` und schickte
-        ihn selbst sofort, aber der lang laufende Resend traf mit seiner
-        laengst veralteten Momentaufnahme danach noch einmal ein und
-        ueberschrieb den frischen Wert in Loxone wieder mit dem alten. Der
-        Fehler heilt sich erst beim naechsten echten Update selbst - aber
-        der Ausloeser hier ist `/resync`, verdrahtet an den
-        Systemstart-Baustein, und feuert also genau dann, wenn jemand
-        zusieht.
-        """
-        return await self._force_resend(list(self._last_values))
+    Iteriert nur die Schluessel als Momentaufnahme, liest den Wert aber
+    JE SCHLUESSEL erst unmittelbar vor dem Senden aus `_last_values`
+    nach (Review-Fix I4, 2026-09-02). Der alte Code erfasste `(key,
+    value)`-Paare gemeinsam als eine Momentaufnahme und wartete dann -
+    durch die Entprellung im `UdpSender` - bis zu ein paar Sekunden fuer
+    rund 110 Signale. Eine gleichzeitige Aktualisierung waehrend dieser
+    Zeit schrieb ihren neuen Wert schon in `_last_values` und schickte
+    ihn selbst sofort, aber der lang laufende Resend traf mit seiner
+    laengst veralteten Momentaufnahme danach noch einmal ein und
+    ueberschrieb den frischen Wert in Loxone wieder mit dem alten. Der
+    Fehler heilt sich erst beim naechsten echten Update selbst - aber
+    der Ausloeser hier ist `/resync`, verdrahtet an den
+    Systemstart-Baustein, und feuert also genau dann, wenn jemand
+    zusieht.
+    """
+    return await self._force_resend(list(self._last_values))
 
-    async def resend_marked(self) -> int:
-        """Wie `resend_all`, aber nur fuer Signale mit `resend = true`
-        (Entwurf periodischer Resend, 2026-09-04, Abschnitt 6) - der
-        Gegenpart zu `resend_all`s bewusster Ignoranz dieses Flags. Nur
-        `_resend_loop` ruft diese Methode auf."""
-        keys = self._store.resend_keys()
-        return await self._force_resend(keys)
 
-    async def _force_resend(self, keys: Sequence[str]) -> int:
-        """Gemeinsamer Kern von `resend_all`/`resend_marked` - siehe
-        `resend_all` fuer die Begruendung, warum der Wert JE SCHLUESSEL erst
-        unmittelbar vor dem Senden aus `_last_values` nachgelesen wird
-        (Review-Fix I4)."""
-        count = 0
-        for key in keys:
-            value = self._last_values.get(key)
-            if value is None:
-                # Zwischen der Momentaufnahme der Schluessel oben und diesem
-                # Zugriff kann ein Schluessel theoretisch verschwunden sein -
-                # praktisch nie, aber `_last_values` kennt kein Loeschen, nur
-                # Ueberschreiben. Sicherer Ueberspringen statt eines
-                # `None`-Werts auf der Leitung.
-                continue
-            # Bewusst kein `_notify_observers(...)` hier (Review-Fix Minor
-            # #3, 2026-09-02): ein Resend verschickt nur Werte, die ein
-            # Beobachter (z. B. die WebUI) laengst als aktuell gesehen hat -
-            # kein neuer Wert, also auch keine neue Benachrichtigung noetig.
-            await self._sender.send(key, value, force=True)
-            count += 1
-        return count
+async def resend_marked(self) -> int:
+    """Wie `resend_all`, aber nur fuer Signale mit `resend = true`
+    (Entwurf periodischer Resend, 2026-09-04, Abschnitt 6) - der
+    Gegenpart zu `resend_all`s bewusster Ignoranz dieses Flags. Nur
+    `_resend_loop` ruft diese Methode auf."""
+    keys = self._store.resend_keys()
+    return await self._force_resend(keys)
+
+
+async def _force_resend(self, keys: Sequence[str]) -> int:
+    """Gemeinsamer Kern von `resend_all`/`resend_marked` - siehe
+    `resend_all` fuer die Begruendung, warum der Wert JE SCHLUESSEL erst
+    unmittelbar vor dem Senden aus `_last_values` nachgelesen wird
+    (Review-Fix I4)."""
+    count = 0
+    for key in keys:
+        value = self._last_values.get(key)
+        if value is None:
+            # Zwischen der Momentaufnahme der Schluessel oben und diesem
+            # Zugriff kann ein Schluessel theoretisch verschwunden sein -
+            # praktisch nie, aber `_last_values` kennt kein Loeschen, nur
+            # Ueberschreiben. Sicherer Ueberspringen statt eines
+            # `None`-Werts auf der Leitung.
+            continue
+        # Bewusst kein `_notify_observers(...)` hier (Review-Fix Minor
+        # #3, 2026-09-02): ein Resend verschickt nur Werte, die ein
+        # Beobachter (z. B. die WebUI) laengst als aktuell gesehen hat -
+        # kein neuer Wert, also auch keine neue Benachrichtigung noetig.
+        await self._sender.send(key, value, force=True)
+        count += 1
+    return count
 ```
 
 (`Sequence` ist in dieser Datei bereits importiert: `from collections.abc import Callable, Sequence`.)

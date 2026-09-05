@@ -649,36 +649,15 @@ web.devices.offline:
 web.devices.remove:
   en: "Remove"
   de: "Entfernen"
-web.devices.values_heading:
-  en: "Values"
-  de: "Werte"
 web.devices.signals_loading:
   en: "Loading signals…"
   de: "Signale werden geladen…"
-web.devices.no_functional_signals:
-  en: "No functional signals for this device."
-  de: "Keine funktionalen Signale für dieses Gerät."
-web.devices.more_in_signals_view:
-  en: "more in the Signals view."
-  de: "weitere in der Ansicht „Signale“."
-web.devices.controls_heading:
-  en: "Controls"
-  de: "Bedienung"
-web.devices.controls_loading:
-  en: "Loading controls…"
-  de: "Bedienelemente werden geladen…"
-web.devices.no_known_commands:
-  en: "No known output commands for this device."
-  de: "Keine bekannten Ausgangsbefehle für dieses Gerät."
 web.devices.value_placeholder:
   en: "Value"
   de: "Wert"
 web.devices.send:
   en: "Send"
   de: "Senden"
-web.devices.more_commands_unnamed:
-  en: "more commands exist, but are unnamed."
-  de: "weitere Kommandos vorhanden, aber nicht benannt."
 web.devices.export:
   en: "Export"
   de: "Exportieren"
@@ -800,9 +779,6 @@ web.devices.room_all:
 web.devices.room_none:
   en: "No room"
   de: "Ohne Raum"
-web.devices.room_label:
-  en: "Room"
-  de: "Raum"
 web.devices.room_new:
   en: "+ New room…"
   de: "+ Neuer Raum…"

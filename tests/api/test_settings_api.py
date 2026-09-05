@@ -118,9 +118,7 @@ async def test_a_fresh_installation_has_the_default_resend_interval(api):
 
 async def test_patch_saves_and_returns_the_new_interval(api):
     client, _ = api
-    response = await client.patch(
-        "/api/settings/resend-interval", json={"interval_seconds": 60.0}
-    )
+    response = await client.patch("/api/settings/resend-interval", json={"interval_seconds": 60.0})
     assert response.status_code == 200
     assert response.json()["interval_seconds"] == 60.0
 

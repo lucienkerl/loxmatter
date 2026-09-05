@@ -464,52 +464,51 @@ def _normalized_room(room: str | None) -> str | None:
 Zwei neue Methoden, direkt nach `rename_device`:
 
 ```python
-    def set_room(self, device_id: int, room: str | None) -> None:
-        """Setzt den Raum eines Geraets (`PATCH /api/devices/{device_id}`).
+def set_room(self, device_id: int, room: str | None) -> None:
+    """Setzt den Raum eines Geraets (`PATCH /api/devices/{device_id}`).
 
-        **Fasst `updated_at` bewusst NICHT an** - der eine Punkt, an dem
-        diese Methode von `rename_device` direkt darueber abweicht. Dessen
-        Docstring nennt den Grund fuer das Gegenteil: das Label landet im
-        naechsten Export als `Title` in der Vorlage, also fuehrt
-        `GET /api/export/status` das Geraet danach zu Recht als "seither
-        geaendert". Der Raum landet in keiner Vorlage. Wuerde er `updated_at`
-        mitsetzen, bekaeme beim ersten Aufraeumen der Raumzuordnung jedes
-        Geraet eine amber Pille und die Aufforderung zu einem Export, der
-        genau dieselben Dateien erzeugt wie der letzte.
+    **Fasst `updated_at` bewusst NICHT an** - der eine Punkt, an dem
+    diese Methode von `rename_device` direkt darueber abweicht. Dessen
+    Docstring nennt den Grund fuer das Gegenteil: das Label landet im
+    naechsten Export als `Title` in der Vorlage, also fuehrt
+    `GET /api/export/status` das Geraet danach zu Recht als "seither
+    geaendert". Der Raum landet in keiner Vorlage. Wuerde er `updated_at`
+    mitsetzen, bekaeme beim ersten Aufraeumen der Raumzuordnung jedes
+    Geraet eine amber Pille und die Aufforderung zu einem Export, der
+    genau dieselben Dateien erzeugt wie der letzte.
 
-        Wie `rename_device` ohne Existenzpruefung: die aufrufende Route
-        prueft ueber `device()` und meldet 404, bevor es hierher kommt."""
-        self._db.execute(
-            "UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id)
-        )
-        self._db.commit()
+    Wie `rename_device` ohne Existenzpruefung: die aufrufende Route
+    prueft ueber `device()` und meldet 404, bevor es hierher kommt."""
+    self._db.execute("UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id))
+    self._db.commit()
 
-    def rename_room(self, old: str, new: str) -> int:
-        """Benennt einen Raum an allen aktiven Geraeten um und gibt zurueck,
-        wie viele es waren (`POST /api/rooms/rename`).
 
-        Es gibt keine Raum-Tabelle (Entwurf 3.2), also ist "Raum umbenennen"
-        kein Schreibvorgang auf einem Objekt, sondern dieser eine
-        Massenschreibvorgang. Die Alternative waere, an jedem Geraet einzeln
-        einen neuen Raumnamen einzutippen - bei fuenf Geraeten fuenf
-        Gelegenheiten fuer einen Tippfehler, der einen sechsten Raum erzeugt.
+def rename_room(self, old: str, new: str) -> int:
+    """Benennt einen Raum an allen aktiven Geraeten um und gibt zurueck,
+    wie viele es waren (`POST /api/rooms/rename`).
 
-        `active = 1` aus demselben Grund, aus dem `devices()` danach filtert:
-        ein entferntes Geraet ist aus Sicht der Oberflaeche nicht mehr da.
+    Es gibt keine Raum-Tabelle (Entwurf 3.2), also ist "Raum umbenennen"
+    kein Schreibvorgang auf einem Objekt, sondern dieser eine
+    Massenschreibvorgang. Die Alternative waere, an jedem Geraet einzeln
+    einen neuen Raumnamen einzutippen - bei fuenf Geraeten fuenf
+    Gelegenheiten fuer einen Tippfehler, der einen sechsten Raum erzeugt.
 
-        Ein bereits belegter Zielname fuehrt beide Raeume zusammen; die
-        Rueckfrage davor ist Sache der Oberflaeche, nicht dieser Methode.
-        Ein leerer Zielname dagegen wird hier abgewiesen: "umbenennen" ist
-        nicht der Weg, einen Raum aufzuloesen - dafuer gibt es `set_room`
-        mit `None` an jedem einzelnen Geraet."""
-        target = _normalized_room(new)
-        if target is None:
-            raise ValueError(i18n.t("api.devices.room_name_required"))
-        cur = self._db.execute(
-            "UPDATE device SET room = ? WHERE room = ? AND active = 1", (target, old)
-        )
-        self._db.commit()
-        return int(cur.rowcount)
+    `active = 1` aus demselben Grund, aus dem `devices()` danach filtert:
+    ein entferntes Geraet ist aus Sicht der Oberflaeche nicht mehr da.
+
+    Ein bereits belegter Zielname fuehrt beide Raeume zusammen; die
+    Rueckfrage davor ist Sache der Oberflaeche, nicht dieser Methode.
+    Ein leerer Zielname dagegen wird hier abgewiesen: "umbenennen" ist
+    nicht der Weg, einen Raum aufzuloesen - dafuer gibt es `set_room`
+    mit `None` an jedem einzelnen Geraet."""
+    target = _normalized_room(new)
+    if target is None:
+        raise ValueError(i18n.t("api.devices.room_name_required"))
+    cur = self._db.execute(
+        "UPDATE device SET room = ? WHERE room = ? AND active = 1", (target, old)
+    )
+    self._db.commit()
+    return int(cur.rowcount)
 ```
 
 - [ ] **Step 4: Übersetzungsschlüssel für die `ValueError`-Nachricht anlegen**
@@ -1364,29 +1363,27 @@ Die PATCH-Route:
 Die neue Route, direkt darunter:
 
 ```python
-    @router.post("/rooms/rename")
-    async def rename_room(patch: RoomRename) -> dict[str, int]:
-        """Benennt einen Raum an allen aktiven Geraeten um.
+@router.post("/rooms/rename")
+async def rename_room(patch: RoomRename) -> dict[str, int]:
+    """Benennt einen Raum an allen aktiven Geraeten um.
 
-        Die einzige Route, die es fuer Raeume ueberhaupt gibt - es gibt keine
-        Raum-Objekte (Entwurf 3.2), also auch kein `GET /api/rooms`: die
-        Raumliste steckt bereits in `GET /api/devices`, und ein zweiter
-        Endpunkt fuer dieselbe Auskunft koennte nur auseinanderlaufen.
+    Die einzige Route, die es fuer Raeume ueberhaupt gibt - es gibt keine
+    Raum-Objekte (Entwurf 3.2), also auch kein `GET /api/rooms`: die
+    Raumliste steckt bereits in `GET /api/devices`, und ein zweiter
+    Endpunkt fuer dieselbe Auskunft koennte nur auseinanderlaufen.
 
-        404 statt "0 umbenannt", wenn kein aktives Geraet den Quellnamen
-        traegt: ein Tippfehler im Quellnamen saehe sonst wie ein geglueckter
-        Vorgang aus."""
-        if not patch.to_room.strip():
-            raise HTTPException(
-                status_code=422, detail=i18n.t("api.devices.room_name_required")
-            )
-        renamed = store.rename_room(patch.from_room, patch.to_room)
-        if renamed == 0:
-            raise HTTPException(
-                status_code=404,
-                detail=i18n.t("api.devices.unknown_room", room=patch.from_room),
-            )
-        return {"renamed": renamed}
+    404 statt "0 umbenannt", wenn kein aktives Geraet den Quellnamen
+    traegt: ein Tippfehler im Quellnamen saehe sonst wie ein geglueckter
+    Vorgang aus."""
+    if not patch.to_room.strip():
+        raise HTTPException(status_code=422, detail=i18n.t("api.devices.room_name_required"))
+    renamed = store.rename_room(patch.from_room, patch.to_room)
+    if renamed == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=i18n.t("api.devices.unknown_room", room=patch.from_room),
+        )
+    return {"renamed": renamed}
 ```
 
 In der Commission-Route den Raum durchreichen:

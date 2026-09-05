@@ -199,6 +199,11 @@ mitgibt.
    gezeigten Typen (Stecker, Bewegung, Lamellen) sind ausreichend belegt,
    weitere Matter-Gerätetypen brauchen ein Platzhalter-Symbol, bis sie
    einzeln ergänzt werden.
+
+   **Erledigt** durch den [Geräte-Tab-Entwurf vom 5. September 2026](2026-09-05-geraete-tab-raeume-und-kachelraster-design.md):
+   die Zuordnung ist `profiles/categories.py`, und sie liefert nicht nur das
+   Icon, sondern auch die Sortierung innerhalb eines Raums und den
+   Suchbegriff.
 2. Ob ein HTTP-Port-Konflikt (z. B. zwei Bridges auf demselben Host) beim
    Speichern der Einstellungen geprüft werden soll, ist offen — bis jemand
    danach fragt: nein, wie schon beim bestehenden Export-Tab.

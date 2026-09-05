@@ -205,7 +205,8 @@ ausliefert:
 - `/cmd` und `/resync` für den Miniserver (virtuelle Ausgänge) — unverändert
   seit Phase 4.
 - `/` und `/api/*` für eine Bedienoberfläche im Browser: Geräte einlernen,
-  ansehen, benennen, schalten, Vorlagen exportieren, Diagnose.
+  ansehen, nach Raum filtern und suchen, benennen, schalten, Vorlagen
+  exportieren, Diagnose.
 
 **Die Ansicht „System"** zeigt seit dem Live-Feed (2026-09-03) drei Ströme
 laufend statt nur auf Knopfdruck: Logzeilen, UDP-Mitschnitt und Kommando-Log.

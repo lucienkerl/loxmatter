@@ -62,10 +62,6 @@
          statt einer Icon-Bibliothek: kein Netzwerkverweis, dieselbe
          Begruendung wie beim vendorten Alpine.js oben im Kopfkommentar. -->
     <svg style="display: none" aria-hidden="true">
-      <symbol id="i-device" viewBox="0 0 24 24">
-        <rect x="4" y="4" width="16" height="16" rx="3" />
-        <circle cx="12" cy="12" r="2.2" />
-      </symbol>
       <symbol id="i-warn" viewBox="0 0 24 24">
         <path d="M12 3.7 21 19.3H3L12 3.7z" />
         <path d="M12 9.6v4.3M12 16.9v.1" />
@@ -126,7 +122,9 @@
            Kachel ohne Icon. Deshalb bekommt "Sonstige" ein eigenes Symbol,
            statt sich auf eine Sonderbehandlung in JavaScript zu verlassen,
            die jemand beim naechsten Umbau uebersieht. Die Form ist dieselbe
-           wie bei `#i-device`. -->
+           wie beim alten, generischen `#i-device` (Task 9 hat dessen
+           Definition entfernt, da `#i-cat-other` seine Rolle uebernommen
+           hat). -->
       <symbol id="i-cat-other" viewBox="0 0 24 24">
         <rect x="4" y="4" width="16" height="16" rx="3" />
         <circle cx="12" cy="12" r="2.2" />

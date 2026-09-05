@@ -2055,7 +2055,7 @@ async def test_the_room_select_display_depends_only_on_the_device_room(api):
     select_start = page.index('class="room-select"')
     select_end = page.index("</select>", select_start)
     room_select = page[select_start:select_end]
-    assert ':value="device.room || \'\'"' in room_select
+    assert ":value=\"device.room || ''\"" in room_select
     value_start = room_select.index(':value="')
     value_end = room_select.index('"', value_start + len(':value="'))
     assert "newRoomFor" not in room_select[value_start:value_end]
