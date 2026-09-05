@@ -374,29 +374,20 @@ async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api
     und Leistung. Seit `signal.functional` das echte Auswahlkriterium
     mitliefert, ist die alte, ehrlichere Formulierung wieder zutreffend.
 
-    Aufgabe 8 hat die Kachel seither erneut umgebaut (immer offen statt
-    per Klick aufgeklappt) und dabei die Ueberschrift auf das schlichte
-    „Werte“ verkuerzt - ein eigener Hinweis auf "funktional" waere dort
-    ueberfluessig geworden, denn die Kachel zeigt ohnehin ausschliesslich
-    die funktionalen Signale, ohne Umschalter und ohne Anspruch auf eine
-    Rangfolge. Die urspruengliche Sorge des Tests - eine Ueberschrift, die
-    mehr verspricht als die Kachel haelt - bleibt trotzdem gueltig zu
-    pruefen: die alte, falsche Formulierung darf nirgends mehr auftauchen,
-    und die aktuelle Ueberschrift muss ausgeliefert werden.
-
-    Belegt nur, dass die aktuelle Beschriftung ausgeliefert wird und die
-    alte verschwunden ist - nicht, dass die damit gezeigten Signale zur
-    Laufzeit tatsaechlich die funktionalen sind (siehe Testdocstring
-    oben).
-
-    Aufgabe 11: die Ueberschrift traegt seither `x-text="t('web.devices.
-    values_heading')"` statt des festen Literals "Werte" - siehe
-    `test_the_device_card_static_text_is_translated` fuer die Bindung
-    selbst; hier bleibt nur der Beleg, dass die beiden ueberholten
-    Formulierungen nicht zurueckgekehrt sind."""
+    Task 8 (Raster-Umbau, 2026-09-05) hat die eigene Werte-Ueberschrift
+    danach ganz entfernt: die Kachel zeigt den Leitwert jetzt in der
+    Kopfzeile und den Rest als fluchtendes Raster ohne Abschnittstitel -
+    eine Ueberschrift ueber der einzigen Werteliste einer sonst schon
+    kompakten Kachel waere reiner Platzverbrauch gewesen. Der
+    Schluessel `web.devices.values_heading` bleibt deshalb ungenutzt in
+    `strings.yaml` liegen (Task 9 raeumt ihn auf) und taucht im
+    ausgelieferten Markup nicht mehr auf. Die urspruengliche Sorge des
+    Tests - eine Ueberschrift, die mehr verspricht als die Kachel haelt -
+    bleibt trotzdem gueltig zu pruefen: die beiden ueberholten
+    Formulierungen duerfen nirgends mehr auftauchen."""
     client, _, _ = api
     page = (await client.get("/")).text
-    assert "x-text=\"t('web.devices.values_heading')\"" in page
+    assert "x-text=\"t('web.devices.values_heading')\"" not in page
     assert "Signale (Anfang der Liste)" not in page
     assert "Funktionale Signale" not in page
 
@@ -941,49 +932,78 @@ async def test_the_commissioning_card_is_translated(api):
 async def test_the_device_card_static_text_is_translated(api):
     """Aufgabe 11, Schritt 3: Statuspillen, Entfernen-Knopf, die beiden
     Werte-/Bedienungs-Abschnittsueberschriften mit ihren Ladehinweisen und
-    Leerzustaenden, der Wert-Platzhalter, der Senden-Knopf und der
-    Exportieren-Knopf der Geraetekarte - jeweils als reiner `x-text`, weil
-    keiner dieser Schluessel eingebettetes HTML traegt."""
+    Leerzustaenden, der Wert-Platzhalter und der Senden-Knopf der
+    Geraetekarte - jeweils als reiner `x-text`, weil keiner dieser
+    Schluessel eingebettetes HTML traegt.
+
+    Task 8 (Raster-Umbau, 2026-09-05) hat Export und Entfernen zu
+    Icon-Knoepfen gemacht (der Platz auf einer 260 px breiten Kachel reicht
+    nicht fuer ausgeschriebene Beschriftungen) und die beiden Werte-/
+    Bedienungs-Abschnittsueberschriften samt ihren Ladehinweisen
+    ersatzlos gestrichen - die Kachel zeigt ohnehin nur noch ein einziges
+    Werteraster ohne eigenen Titel. `remove`/`export` wandern deshalb vom
+    `x-text` in ein `:title` (die Bedeutung eines Icon-only-Knopfs muss
+    trotzdem aus `t(...)` kommen, siehe Globale Vorgabe), die vier
+    entfallenen Schluessel (`values_heading`, `no_functional_signals`,
+    `controls_heading`, `controls_loading`, `no_known_commands`) bleiben
+    ungenutzt in `strings.yaml` liegen (Task 9 raeumt sie auf)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.devices.changed_since_export')\"" in markup
     assert "Geändert seit Export" not in markup
     assert "x-text=\"t('web.devices.offline')\"" in markup
     assert ">Offline<" not in markup
-    assert "x-text=\"t('web.devices.remove')\"" in markup
+    assert ":title=\"t('web.devices.remove')\"" in markup
+    assert "x-text=\"t('web.devices.remove')\"" not in markup
     assert ">Entfernen<" not in markup
-    assert "x-text=\"t('web.devices.values_heading')\"" in markup
+    assert "x-text=\"t('web.devices.values_heading')\"" not in markup
     assert ">Werte<" not in markup
     assert "x-text=\"t('web.devices.signals_loading')\"" in markup
     assert "Signale werden geladen" not in markup
-    assert "x-text=\"t('web.devices.no_functional_signals')\"" in markup
+    assert "x-text=\"t('web.devices.no_functional_signals')\"" not in markup
     assert "Keine funktionalen Signale" not in markup
-    assert "x-text=\"t('web.devices.controls_heading')\"" in markup
+    assert "x-text=\"t('web.devices.controls_heading')\"" not in markup
     assert ">Bedienung<" not in markup
-    assert "x-text=\"t('web.devices.controls_loading')\"" in markup
+    assert "x-text=\"t('web.devices.controls_loading')\"" not in markup
     assert "Bedienelemente werden geladen" not in markup
-    assert "x-text=\"t('web.devices.no_known_commands')\"" in markup
+    assert "x-text=\"t('web.devices.no_known_commands')\"" not in markup
     assert "Keine bekannten Ausgangsbefehle" not in markup
     assert ":placeholder=\"t('web.devices.value_placeholder')\"" in markup
     assert 'placeholder="Wert"' not in markup
     assert "x-text=\"t('web.devices.send')\"" in markup
     assert ">Senden<" not in markup
-    assert "x-text=\"t('web.devices.export')\"" in markup
+    assert ":title=\"t('web.devices.export')\"" in markup
+    assert "x-text=\"t('web.devices.export')\"" not in markup
     assert ">Exportieren<" not in markup
 
 
 async def test_the_remaining_count_hints_keep_their_dynamic_span_and_translate_the_rest(api):
     """Aufgabe 11, Schritt 3: die beiden "N weitere..."-Hinweise bestehen aus
-    einem dynamischen Zaehler-`<span>` (`remainingSignalCount`/
-    `hiddenRawCommandsFor`) gefolgt von statischem Text - nur der statische
-    Teil wandert auf `t(...)`, der Zaehler-Ausdruck bleibt unveraendert."""
+    einem dynamischen Zaehler (`remainingSignalCount`/`hiddenRawCommandsFor`)
+    gefolgt von statischem Text - nur der statische Teil wandert auf
+    `t(...)`, der Zaehler-Ausdruck bleibt unveraendert.
+
+    Task 8 (Raster-Umbau, 2026-09-05) hat aus dem eigenen `<span>` je
+    Zaehler-Ausdruck ein zusammengesetztes `x-text` auf einem einzigen
+    Element gemacht (der Hinweis auf die restlichen Signale ist jetzt die
+    letzte Zeile des Werterasters statt eines eigenen Absatzes, siehe
+    `.value-row` in `index.html`) und die Kurzformen `more_signals_short`/
+    `more_commands_short` eingefuehrt - die alten Schluessel
+    `more_in_signals_view`/`more_commands_unnamed` bleiben ungenutzt in
+    `strings.yaml` liegen (Task 9 raeumt sie auf)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert '<span x-text="remainingSignalCount(device.id)"></span>' in markup
-    assert "x-text=\"t('web.devices.more_in_signals_view')\"" in markup
+    assert (
+        "x-text=\"'+ ' + remainingSignalCount(device.id) + ' ' + t('web.devices.more_signals_short')\""
+        in markup
+    )
+    assert "x-text=\"t('web.devices.more_in_signals_view')\"" not in markup
     assert "weitere in der Ansicht" not in markup
-    assert '<span x-text="hiddenRawCommandsFor(device.id)"></span>' in markup
-    assert "x-text=\"t('web.devices.more_commands_unnamed')\"" in markup
+    assert (
+        "x-text=\"'+' + hiddenRawCommandsFor(device.id) + ' ' + t('web.devices.more_commands_short')\""
+        in markup
+    )
+    assert "x-text=\"t('web.devices.more_commands_unnamed')\"" not in markup
     assert "weitere Kommandos vorhanden" not in markup
 
 
@@ -1944,3 +1964,40 @@ async def test_the_search_never_reaches_the_server(api):
     script = (await client.get("/static/app.js")).text
     assert "/api/devices/search" not in script
     assert "/api/rooms/rename" in script
+
+
+async def test_the_page_offers_the_room_bar_and_the_room_picker(api):
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "roomChips()" in page
+    assert "deviceGroups()" in page
+    assert "leadSignalFor(" in page
+    assert "saveRoom(" in page
+    assert "deviceSearch" in page
+
+
+async def test_every_category_has_an_icon_symbol(api):
+    """Acht Kategorien, acht Symbole - "other" eingeschlossen. Ein fehlendes
+    Symbol faellt im Browser NICHT auf: ein `<use>` auf eine unbekannte ID
+    zeichnet stillschweigend nichts, keine Fehlermeldung. Deshalb faellt es
+    hier auf."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    for category in (
+        "light",
+        "socket",
+        "switch",
+        "covering",
+        "climate",
+        "sensor",
+        "lock",
+        "other",
+    ):
+        assert f'id="i-cat-{category}"' in page, category
+
+
+async def test_the_device_grid_is_multi_column(api):
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    assert "auto-fill" in css
+    assert "minmax(260px" in css

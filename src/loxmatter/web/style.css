@@ -657,12 +657,12 @@ footer.hint-block {
   opacity: 0.75;
 }
 
-.value-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
+/* `.value-chips` (der Flex-Container um die Chips der Kachel) ist mit dem
+ * Umbau auf `.value-rows` (weiter unten) entfallen - die Kachel zeigt ihre
+ * Werte seither als fluchtendes Raster statt als maeandernde Chips.
+ * `.value-chip` (der einzelne Chip) bleibt dagegen bestehen:
+ * `.projectsync-unchanged-chips .value-chip` nutzt ihn weiterhin fuer die
+ * eingeklappten unveraenderten Signale der Projektdatei-Sync-Karte. */
 .value-chip {
   display: flex;
   align-items: baseline;
@@ -906,4 +906,183 @@ footer.hint-block {
   padding: 0.2rem 0.55rem;
   font-size: 0.82rem;
   color: var(--text-muted);
+}
+
+/* Geraete-Tab: Raumleiste, Raster, Kachel (Entwurf 2026-09-05).
+ *
+ * Das Raster ist der eigentliche Punkt: eine Kachel war bisher so breit
+ * wie das Fenster und so hoch wie ihr Inhalt - zwoelf Geraete waren zwoelf
+ * Bildschirmhoehen. `auto-fill` mit einer Untergrenze statt eigener
+ * Breakpoints: 260 px ist die Breite, ab der Kopfzeile samt Leitwert und
+ * die Wertespalte nicht mehr umbrechen. Daraus ergeben sich vier Spalten
+ * auf dem Desktop, zwei auf dem Tablet, eine auf dem Telefon, ohne dass
+ * eine Media Query die Zahlen ein zweites Mal festlegt. */
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 0.6rem;
+  align-items: start;
+}
+
+.device-grid .device-card {
+  margin-bottom: 0;
+}
+
+.room-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+}
+
+.room-chips {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.room-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.room-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.room-rename,
+.room-select,
+.room-new {
+  font-size: 0.75rem;
+}
+
+/* Das Eingabefeld beim Umbenennen uebernimmt die Groesse der Ueberschrift,
+ * die es ersetzt - sonst springt die Zeile beim Klick auf den Stift. */
+.room-rename-input {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.05rem 0.3rem;
+}
+
+.device-search {
+  min-width: 12rem;
+  font-size: 0.8rem;
+}
+
+.room-heading {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 1rem 0 0.4rem;
+}
+
+/* Kopfzeile: Name links, Leitwert rechts, beide auf einer Sichtachse.
+ * `min-width: 0` an der Mitte, damit ein langer Geraetename kuerzt statt
+ * den Leitwert aus der Kachel zu schieben - ohne diese Zeile gewinnt in
+ * einem Flex-Element der Inhalt gegen jede Breitenangabe. */
+.device-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.device-ident {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.device-name {
+  font-weight: 600;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0.1rem 0.2rem;
+  width: 100%;
+}
+
+.device-name:hover,
+.device-name:focus {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.lead-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding-left: 0.2rem;
+}
+
+.lead-value {
+  font-family: var(--mono);
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.05;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.lead-value small {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-left: 0.1rem;
+}
+
+/* Werteraster statt Chips: die Werte fluchten ueber alle Kacheln hinweg in
+ * einer Spalte, statt als unterschiedlich breite Chips zu maeandern - man
+ * scannt eine Spalte statt zwoelf Bausteine. */
+.value-rows {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.05rem 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.value-row {
+  display: contents;
+}
+
+.value-key {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.value-rows .value {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.device-commands {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+}
+
+.device-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
 }

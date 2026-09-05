@@ -84,6 +84,53 @@
       <symbol id="i-chevron" viewBox="0 0 24 24">
         <path d="M9 6l6 6-6 6" />
       </symbol>
+      <!-- Kategorie-Icons (Entwurf Geraete-Tab, 2026-09-05, Abschnitt 6.5).
+           Ein Symbol je Kategorie, "Sonstige" eingeschlossen - dort landet
+           auch jedes Geraet, dessen Typen noch nicht nachgetragen sind.
+           Weiterhin inline und ohne Icon-Bibliothek, aus demselben
+           Grund wie das eingecheckte vendor/alpine.min.js: die Oberflaeche
+           laeuft offline. -->
+      <symbol id="i-cat-light" viewBox="0 0 24 24">
+        <path d="M9 17.5a5.5 5.5 0 1 1 6 0V19H9v-1.5z" />
+        <path d="M10 21.5h4" />
+      </symbol>
+      <symbol id="i-cat-socket" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="3" />
+        <path d="M9.5 10v2.2M14.5 10v2.2" />
+        <path d="M8.4 13.6a4 4 0 0 0 7.2 0" />
+      </symbol>
+      <symbol id="i-cat-switch" viewBox="0 0 24 24">
+        <rect x="6" y="3.5" width="12" height="17" rx="3" />
+        <circle cx="12" cy="9" r="1.8" />
+      </symbol>
+      <symbol id="i-cat-covering" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="2" />
+        <path d="M4 9h16M4 13h16M4 17h16" />
+      </symbol>
+      <symbol id="i-cat-climate" viewBox="0 0 24 24">
+        <path d="M10 13.2V5.5a2 2 0 1 1 4 0v7.7" />
+        <circle cx="12" cy="16.5" r="3.2" />
+      </symbol>
+      <symbol id="i-cat-sensor" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="2.4" />
+        <path d="M7.4 7.4a6.5 6.5 0 0 0 0 9.2M16.6 16.6a6.5 6.5 0 0 0 0-9.2" />
+      </symbol>
+      <symbol id="i-cat-lock" viewBox="0 0 24 24">
+        <rect x="5" y="10.5" width="14" height="10" rx="2.5" />
+        <path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7" />
+      </symbol>
+      <!-- ACHT Symbole, nicht sieben: die Kachel bildet die Kennung stur auf
+           `#i-cat-<kennung>` ab, und `other` ist eine Kennung wie jede
+           andere. Ein `<use>` auf eine nicht vorhandene ID zeichnet
+           STILLSCHWEIGEND nichts - kein Fehler in der Konsole, nur eine
+           Kachel ohne Icon. Deshalb bekommt "Sonstige" ein eigenes Symbol,
+           statt sich auf eine Sonderbehandlung in JavaScript zu verlassen,
+           die jemand beim naechsten Umbau uebersieht. Die Form ist dieselbe
+           wie bei `#i-device`. -->
+      <symbol id="i-cat-other" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="16" rx="3" />
+        <circle cx="12" cy="12" r="2.2" />
+      </symbol>
     </svg>
     <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
@@ -187,6 +234,20 @@
               x-model="commissionThreadDataset"
               :placeholder="t('web.devices.thread_dataset_placeholder')"
             />
+            <select x-model="commissionRoom">
+              <option value="" x-text="t('web.devices.room_none')"></option>
+              <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
+                <option :value="chip.key" x-text="chip.key"></option>
+              </template>
+              <option value="__new__" x-text="t('web.devices.room_new')"></option>
+            </select>
+            <input
+              x-show="commissionRoom === '__new__'"
+              x-cloak
+              type="text"
+              x-model="commissionNewRoom"
+              :placeholder="t('web.devices.room_new_placeholder')"
+            />
             <button
               class="primary"
               @click="commissionDevice()"
@@ -196,6 +257,7 @@
           </div>
           <p class="hint" x-text="t('web.devices.commission_hint')"></p>
           <p class="hint" x-text="t('web.devices.thread_dataset_hint')"></p>
+          <p class="hint" x-text="t('web.devices.commission_room_hint')"></p>
           <p
             x-show="commissionMessage"
             x-cloak
@@ -213,135 +275,248 @@
           x-text="t('web.devices.empty')"
         ></p>
 
-        <template x-for="device in devices" :key="device.id">
-          <div class="card device-card" :class="deviceCardClass(device)">
-            <div class="row">
-              <span class="type-badge">
-                <svg class="icon"><use href="#i-device"></use></svg>
-              </span>
-              <input
-                type="text"
-                :value="device.label"
-                @input="labelDrafts[device.id] = $event.target.value"
-                @change="saveLabel(device)"
-              />
-              <span class="status-pill warn" x-show="isOnline(device) && changedSinceExport(device.id)">
-                <svg class="icon"><use href="#i-warn"></use></svg>
-                <span x-text="t('web.devices.changed_since_export')"></span>
-              </span>
-              <span class="status-pill off" x-show="!isOnline(device)">
-                <svg class="icon"><use href="#i-offline"></use></svg>
-                <span x-text="t('web.devices.offline')"></span>
-              </span>
+        <!-- Raumleiste (Entwurf 6.3): zeigt sich gar nicht, solange kein
+             einziges Geraet einen Raum traegt - bei drei Geraeten und keinem
+             Raum waere sie eine Zeile Laerm ueber einer Liste, die ohnehin
+             auf einen Blick passt. Das Suchfeld bleibt in dem Fall trotzdem
+             erreichbar, weil es auch ohne Raeume ueber Name und Kategorie
+             sucht. -->
+        <div class="room-bar" x-show="devices.length > 0" x-cloak>
+          <template x-if="hasAnyRoom()">
+            <span class="room-chips">
               <button
-                class="danger"
-                @click="removeDevice(device)"
-                x-text="t('web.devices.remove')"
+                class="room-chip"
+                :class="{ active: roomFilter === null }"
+                @click="roomFilter = null"
+                x-text="t('web.devices.room_all') + ' ' + devices.length"
               ></button>
-            </div>
-
-            <div class="device-controls">
-              <h3 x-text="t('web.devices.values_heading')"></h3>
-              <p
-                class="hint"
-                x-show="!signalsByDevice[device.id]"
-                x-text="t('web.devices.signals_loading')"
-              ></p>
-              <p
-                class="hint"
-                x-show="signalsByDevice[device.id] && firstSignalsFor(device.id).length === 0"
-                x-text="t('web.devices.no_functional_signals')"
-              ></p>
-              <div class="value-chips" x-show="signalsByDevice[device.id]">
-                <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
-                  <span class="value-chip">
-                    <span x-text="signal.title"></span>
-                    <!--
-                      Die Altersangabe steht im `title`, nicht daneben
-                      (2026-09-03): ein "vor 7 s", das jede Sekunde seine
-                      Breite aendert, schiebt die Zeile hin und her und zieht
-                      den Blick auf die Bewegung statt auf die Aenderung. Die
-                      Aenderung selbst zeigt jetzt `value-fresh`.
-                    -->
-                    <span
-                      class="value"
-                      :class="{ 'value-fresh': signalIsFresh(signal) }"
-                      :title="signalAgeTitle(signal)"
-                      x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
-                    ></span>
-                  </span>
-                </template>
-              </div>
-              <p class="hint" x-show="remainingSignalCount(device.id) > 0">
-                <span x-text="remainingSignalCount(device.id)"></span>
-                <span x-text="t('web.devices.more_in_signals_view')"></span>
-              </p>
-            </div>
-
-            <div class="device-controls">
-              <h3 x-text="t('web.devices.controls_heading')"></h3>
-              <p
-                class="hint"
-                x-show="!controlsLoaded(device.id)"
-                x-text="t('web.devices.controls_loading')"
-              ></p>
-              <p
-                class="hint"
-                x-show="controlsLoaded(device.id) && commandsFor(device.id).length === 0"
-                x-text="t('web.devices.no_known_commands')"
-              ></p>
-              <div class="row">
-                <template x-for="command in commandsFor(device.id)" :key="command.key">
-                  <span class="row">
-                    <button
-                      x-show="!command.takes_value"
-                      @click="executeCommand(device, command)"
-                      :disabled="commandBusyKey === command.key || !isOnline(device)"
-                      x-text="command.slug"
-                    ></button>
-                    <span x-show="command.takes_value" class="row">
-                      <span x-text="command.slug"></span>
-                      <input
-                        type="number"
-                        style="width: 5.5rem"
-                        :placeholder="t('web.devices.value_placeholder')"
-                        @input="commandValueDrafts[command.key] = $event.target.value"
-                      />
-                      <button
-                        @click="executeCommand(device, command)"
-                        :disabled="commandBusyKey === command.key || !isOnline(device)"
-                        x-text="t('web.devices.send')"
-                      ></button>
-                    </span>
-                  </span>
-                </template>
-              </div>
-              <p class="hint" x-show="hiddenRawCommandsFor(device.id) > 0">
-                <span x-text="hiddenRawCommandsFor(device.id)"></span>
-                <span x-text="t('web.devices.more_commands_unnamed')"></span>
-              </p>
-            </div>
-
-            <div class="device-controls">
-              <div class="row">
-                <span class="hint" x-text="exportHintFor(device.id)"></span>
-                <span style="flex: 1 1 auto"></span>
+              <template x-for="chip in roomChips()" :key="chip.key">
                 <button
-                  class="primary"
-                  @click="exportDevice(device)"
-                  :disabled="!bridgeSettings.bridge_ip"
-                  x-text="t('web.devices.export')"
+                  class="room-chip"
+                  :class="{ active: roomFilter === chip.key }"
+                  @click="roomFilter = chip.key"
+                  x-text="chip.label + ' ' + chip.count"
                 ></button>
-              </div>
-              <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
-                <span x-text="t('web.devices.export_hint_prefix')"></span>
-                <a
-                  href="#"
-                  @click.prevent="selectView('settings')"
-                  x-text="t('web.settings.miniserver_link')"
-                ></a>
-                <span x-text="t('web.devices.export_hint_suffix')"></span>
-              </p>
+              </template>
+              <!-- `x-show="roomFilter"` ist hier genau richtig und kein
+                   Schludern: falsy sind beide Faelle, in denen es nichts
+                   umzubenennen gibt - `null` ("Alle") und `""` ("Ohne
+                   Raum"). "Ohne Raum" ist kein Raum, sondern die Menge der
+                   Geraete ohne Zuordnung; ein Name, den man aendern
+                   koennte, ist gerade das, was ihnen fehlt. -->
+              <button
+                class="room-rename"
+                x-show="roomFilter && renamingRoom !== roomFilter"
+                @click="beginRenameRoom(roomFilter)"
+                :title="t('web.devices.room_rename')"
+                x-text="'✎'"
+              ></button>
+              <input
+                x-show="roomFilter && renamingRoom === roomFilter"
+                x-cloak
+                type="text"
+                class="room-rename-input"
+                x-model="renameDraft"
+                @keydown.enter="commitRenameRoom()"
+                @keydown.escape="cancelRenameRoom()"
+                @blur="commitRenameRoom()"
+              />
+            </span>
+          </template>
+          <span style="flex: 1 1 auto"></span>
+          <input
+            type="search"
+            class="device-search"
+            x-model="deviceSearch"
+            :placeholder="t('web.devices.search_placeholder')"
+          />
+        </div>
+
+        <p x-show="devices.length > 0 && visibleDevices().length === 0" x-cloak class="hint">
+          <span x-text="t('web.devices.search_empty')"></span>
+          <template x-if="hitsOutsideRoom() > 0">
+            <span>
+              <span x-text="hitsOutsideRoom()"></span>
+              <span x-text="t('web.devices.search_hits_elsewhere')"></span>
+              <a href="#" @click.prevent="clearRoomFilter()" x-text="t('web.devices.search_show_all_rooms')"></a>
+            </span>
+          </template>
+        </p>
+
+        <template x-for="group in deviceGroups()" :key="group.key">
+          <div>
+            <!-- Umbenennen inline, wie der Geraetename in der Kachel: der
+                 Stift tauscht die Ueberschrift gegen ein Eingabefeld.
+                 `group.key` ist "" fuer "Ohne Raum" - falsy, also kein
+                 Stift: dort gibt es keinen Namen zu aendern. -->
+            <h3 class="room-heading" x-show="group.title">
+              <span x-show="renamingRoom !== group.key" x-text="group.title"></span>
+              <button
+                class="room-rename"
+                x-show="group.key && renamingRoom !== group.key"
+                @click="beginRenameRoom(group.key)"
+                :title="t('web.devices.room_rename')"
+                x-text="'✎'"
+              ></button>
+              <input
+                x-show="group.key && renamingRoom === group.key"
+                x-cloak
+                type="text"
+                class="room-rename-input"
+                x-model="renameDraft"
+                @keydown.enter="commitRenameRoom()"
+                @keydown.escape="cancelRenameRoom()"
+                @blur="commitRenameRoom()"
+              />
+            </h3>
+            <div class="device-grid">
+              <template x-for="device in group.devices" :key="device.id">
+                <div class="card device-card" :class="deviceCardClass(device)">
+                  <div class="device-head">
+                    <span class="type-badge">
+                      <svg class="icon"><use :href="'#i-cat-' + device.category"></use></svg>
+                    </span>
+                    <span class="device-ident">
+                      <input
+                        type="text"
+                        class="device-name"
+                        :value="device.label"
+                        @input="labelDrafts[device.id] = $event.target.value"
+                        @change="saveLabel(device)"
+                      />
+                      <!-- Ist eine Status-Pille faellig, verdraengt sie das
+                           Leitwert-Label (Entwurf 6.2): der Zustand der
+                           Kachel wiegt schwerer als die Beschriftung einer
+                           Zahl, die zwei Zentimeter daneben steht. -->
+                      <span class="status-pill warn" x-show="isOnline(device) && changedSinceExport(device.id)">
+                        <svg class="icon"><use href="#i-warn"></use></svg>
+                        <span x-text="t('web.devices.changed_since_export')"></span>
+                      </span>
+                      <span class="status-pill off" x-show="!isOnline(device)">
+                        <svg class="icon"><use href="#i-offline"></use></svg>
+                        <span x-text="t('web.devices.offline')"></span>
+                      </span>
+                      <span
+                        class="lead-label"
+                        x-show="isOnline(device) && !changedSinceExport(device.id) && leadSignalFor(device.id)"
+                        x-text="leadSignalFor(device.id)?.title"
+                      ></span>
+                    </span>
+                    <span class="lead-value" x-show="leadSignalFor(device.id)">
+                      <span
+                        :class="{ 'value-fresh': signalIsFresh(leadSignalFor(device.id)) }"
+                        :title="signalAgeTitle(leadSignalFor(device.id))"
+                        x-text="formatValue(liveValueOf(leadSignalFor(device.id)))"
+                      ></span>
+                      <small x-text="leadSignalFor(device.id)?.unit"></small>
+                    </span>
+                  </div>
+
+                  <div class="value-rows" x-show="signalsByDevice[device.id]">
+                    <template x-for="signal in restSignalsFor(device.id)" :key="signal.key">
+                      <span class="value-row">
+                        <span class="value-key" x-text="signal.title"></span>
+                        <span
+                          class="value"
+                          :class="{ 'value-fresh': signalIsFresh(signal) }"
+                          :title="signalAgeTitle(signal)"
+                          x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                        ></span>
+                      </span>
+                    </template>
+                    <!-- Der Hinweis auf die restlichen Signale ist die letzte
+                         Rasterzeile statt eines eigenen Absatzes (Entwurf
+                         6.2) - auf einer 260 px breiten Kachel zaehlt jede
+                         Zeile. -->
+                    <span class="value-row" x-show="remainingSignalCount(device.id) > 0">
+                      <a
+                        class="value-key"
+                        href="#"
+                        @click.prevent="selectView('signals')"
+                        x-text="'+ ' + remainingSignalCount(device.id) + ' ' + t('web.devices.more_signals_short')"
+                      ></a>
+                      <span></span>
+                    </span>
+                  </div>
+                  <p class="hint" x-show="!signalsByDevice[device.id]" x-text="t('web.devices.signals_loading')"></p>
+
+                  <div class="device-commands">
+                    <template x-for="command in commandsFor(device.id)" :key="command.key">
+                      <span class="row">
+                        <button
+                          x-show="!command.takes_value"
+                          @click="executeCommand(device, command)"
+                          :disabled="commandBusyKey === command.key || !isOnline(device)"
+                          x-text="command.slug"
+                        ></button>
+                        <span x-show="command.takes_value" class="row">
+                          <span x-text="command.slug"></span>
+                          <input
+                            type="number"
+                            style="width: 4.5rem"
+                            :placeholder="t('web.devices.value_placeholder')"
+                            @input="commandValueDrafts[command.key] = $event.target.value"
+                          />
+                          <button
+                            @click="executeCommand(device, command)"
+                            :disabled="commandBusyKey === command.key || !isOnline(device)"
+                            x-text="t('web.devices.send')"
+                          ></button>
+                        </span>
+                      </span>
+                    </template>
+                    <span
+                      class="hint"
+                      x-show="hiddenRawCommandsFor(device.id) > 0"
+                      x-text="'+' + hiddenRawCommandsFor(device.id) + ' ' + t('web.devices.more_commands_short')"
+                    ></span>
+                  </div>
+
+                  <div class="device-foot">
+                    <select
+                      class="room-select"
+                      :value="device.room || ''"
+                      @change="$event.target.value === '__new__' ? beginNewRoom(device) : saveRoom(device, $event.target.value)"
+                    >
+                      <option value="" x-text="t('web.devices.room_none')"></option>
+                      <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
+                        <option :value="chip.key" x-text="chip.key"></option>
+                      </template>
+                      <option value="__new__" x-text="t('web.devices.room_new')"></option>
+                    </select>
+                    <input
+                      x-show="newRoomFor === device.id"
+                      x-cloak
+                      type="text"
+                      class="room-new"
+                      x-model="newRoomDraft"
+                      :placeholder="t('web.devices.room_new_placeholder')"
+                      @keydown.enter="commitNewRoom(device)"
+                      @blur="commitNewRoom(device)"
+                    />
+                    <span class="hint" x-text="exportHintFor(device.id)"></span>
+                    <span style="flex: 1 1 auto"></span>
+                    <button
+                      class="primary"
+                      @click="exportDevice(device)"
+                      :disabled="!bridgeSettings.bridge_ip"
+                      :title="t('web.devices.export')"
+                      x-text="'↓'"
+                    ></button>
+                    <button
+                      class="danger"
+                      @click="removeDevice(device)"
+                      :title="t('web.devices.remove')"
+                      x-text="'🗑'"
+                    ></button>
+                  </div>
+                  <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
+                    <span x-text="t('web.devices.export_hint_prefix')"></span>
+                    <a href="#" @click.prevent="selectView('settings')" x-text="t('web.settings.miniserver_link')"></a>
+                    <span x-text="t('web.devices.export_hint_suffix')"></span>
+                  </p>
+                </div>
+              </template>
             </div>
           </div>
         </template>
