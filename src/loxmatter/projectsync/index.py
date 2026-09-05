@@ -40,7 +40,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from loxmatter.projectsync.keys import key_from_check, key_from_cmd_on
+from loxmatter.projectsync.keys import key_from_check, key_from_output_cmd
 from loxmatter.projectsync.scan import Element, ProjectFormatError, parse_root, scan_children
 
 __all__ = [
@@ -222,7 +222,10 @@ def build_index(text: str, miniserver_ip: str | None = None) -> ProjectIndex:
             for cmd in container.children:
                 if cmd.type != "VirtualOutCmd":
                     continue
-                key = key_from_cmd_on(cmd.attrs.get("CmdOn", ""))
+                # Ueber `CmdOn` UND `CmdOff`: der kombinierte Ein/Aus-Ausgang
+                # traegt denselben `CmdOn` wie der einzelne `on`-Befehl und
+                # kollidierte sonst mit ihm - siehe `key_from_output_cmd`.
+                key = key_from_output_cmd(cmd.attrs)
                 if key is not None:
                     output_cmds[key] = cmd
                     output_containers[key] = container
