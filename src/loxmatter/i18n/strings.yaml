@@ -826,18 +826,18 @@ web.devices.more_commands_short:
   de: "unbenannt"
 web.devices.commission_room_hint:
   en: 'The room is optional — without a selection the device appears under “No room” and can be assigned later.'
-  de: 'Der Raum ist optional — ohne Auswahl erscheint das Gerät unter „Ohne Raum” und lässt sich später zuordnen.'
+  de: 'Der Raum ist optional — ohne Auswahl erscheint das Gerät unter „Ohne Raum“ und lässt sich später zuordnen.'
 # --- Kachel-Menue (Entwurf Kebab-Menue, 2026-09-05) ---
 # `menu` ist der zugaengliche Name des Kebab-Knopfs: er traegt kein Wort,
 # also braucht er einen. `menu_room_heading` beschriftet den Raum-Abschnitt
 # im Menue, damit die Liste der Raumnamen nicht ohne Zusammenhang ueber
 # “Exportieren” und “Entfernen” steht.
 web.devices.menu:
-  en: “Actions”
-  de: “Aktionen”
+  en: "Actions"
+  de: "Aktionen"
 web.devices.menu_room_heading:
-  en: “Room”
-  de: “Raum”
+  en: "Room"
+  de: "Raum"
 
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:

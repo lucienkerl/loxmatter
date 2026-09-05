@@ -131,3 +131,31 @@ def test_web_namespace_key_count_is_substantial():
     """Grobe Bewahrung gegen ein versehentlich unvollstaendiges Einfuegen -
     kein exakter Schwellwert, nur ein Mindestmass."""
     assert len(i18n.strings_with_prefix("web.")) > 100
+
+
+def test_no_value_is_wrapped_in_typographic_quotes():
+    """Kein Eintrag in strings.yaml darf als Ganzes von typografischen
+    Anfuehrungszeichen umschlossen sein - weder „...“ (deutsch)
+    noch “...” (englisch). Ein Eintrag, der selbst nur ein Zitat
+    ist, kommt in dieser Tabelle nicht vor; ein Wert mit genau diesem Muster
+    ist deshalb immer ein Bug: YAML kennt „ “ ” nicht als
+    Skalar-Trennzeichen (nur gerade ASCII-Anfuehrungszeichen \" bzw. '
+    trennen einen Skalar), also werden typografische Anfuehrungszeichen, die
+    versehentlich an Stelle der YAML-Delimiter stehen, woertlich Teil des
+    Strings. Genau das ist web.devices.menu und web.devices.menu_room_heading
+    passiert - und nichts in dieser Suite haette es bemerkt, denn
+    test_web_namespace_has_no_missing_english_fallback_gaps prueft nur, DASS
+    ein 'en'-Eintrag existiert, nie WAS er enthaelt."""
+    opening_quotes = {"„", "“"}
+    closing_quotes = {"“", "”"}
+    offenders = [
+        f"{key}.{lang} = {value!r}"
+        for key, translations in i18n._STRINGS.items()
+        for lang, value in translations.items()
+        if len(value) >= 2 and value[0] in opening_quotes and value[-1] in closing_quotes
+    ]
+    assert not offenders, (
+        "Wert komplett in typografische Anfuehrungszeichen eingeschlossen - "
+        "vermutlich wurden sie statt gerader ASCII-Anfuehrungszeichen als "
+        "YAML-Delimiter benutzt: " + ", ".join(offenders)
+    )
