@@ -154,6 +154,15 @@
         <path d="M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
         <path d="M10 11v6M14 11v6" />
       </symbol>
+      <!-- Drei gefuellte Punkte statt Striche: `.icon` setzt
+           `fill: none; stroke: currentColor`, was fuer Linien-Icons stimmt,
+           einen Punkt aber unsichtbar machen wuerde. Dieselbe Ausnahme
+           macht schon `#i-offline` fuer seinen Punkt. -->
+      <symbol id="i-kebab" viewBox="0 0 24 24">
+        <circle cx="12" cy="5" r="1.7" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none" />
+      </symbol>
     </svg>
     <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->

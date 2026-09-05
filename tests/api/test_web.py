@@ -2157,6 +2157,16 @@ async def test_the_tile_action_buttons_use_svg_symbols_not_raw_glyphs(api):
     assert ":title=\"t('web.devices.remove')\"" in remove_button
 
 
+async def test_the_tile_menu_has_its_own_icon_symbol(api):
+    """Das Kebab-Symbol wird wie alle anderen inline ausgeliefert - keine
+    Icon-Bibliothek, kein CDN, weil die Oberflaeche offline laeuft. Ein
+    `<use>` auf eine fehlende ID zeichnet stillschweigend nichts, deshalb
+    faellt ein vergessenes Symbol hier auf und nicht erst im Browser."""
+    client, _store, _device_id = api
+    page = (await client.get("/")).text
+    assert 'id="i-kebab"' in page
+
+
 async def test_the_device_grid_is_multi_column(api):
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
