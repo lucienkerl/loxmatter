@@ -1450,9 +1450,19 @@ footer.hint-block {
   font-size: 0.8rem;
   white-space: nowrap;
   /* Kappt zusammen mit dem `max-width` an `.tile-menu-items` (Begruendung
-   * dort) einen zu langen Raumnamen. Export und Entfernen bleiben davon
-   * unberuehrt - ihr Text ist kurz und uebersetzt, er passt immer in eine
-   * Zeile und wird nie beschnitten.
+   * dort) einen zu langen Raumnamen. Export und Entfernen sind davon in
+   * den HEUTIGEN Uebersetzungen nicht betroffen - ihr Text ist kurz genug,
+   * um in eine Zeile zu passen.
+   *
+   * Review-Fund 6 (2026-09-05, Review der Nacharbeit): das ist eine
+   * Eigenschaft der aktuellen Uebersetzungen (`strings.yaml`), keine
+   * Eigenschaft dieser Regel - `overflow: hidden; text-overflow: ellipsis`
+   * gilt fuer JEDEN `.tile-menu-item`, unabhaengig von seinem Text. Eine
+   * kuenftige, laengere Uebersetzung von `web.devices.export` oder
+   * `web.devices.remove` (oder eine andere Sprache mit laengeren Woertern)
+   * wuerde genauso gekappt wie ein langer Raumname - das ist dann
+   * beabsichtigtes Verhalten dieser Regel, kein Fehler, der hier behoben
+   * werden muesste.
    *
    * `position: relative` dient als Bezugsrahmen fuer das absolut
    * positionierte Haekchen von `.is-current::after` weiter unten -
