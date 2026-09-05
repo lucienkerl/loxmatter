@@ -21,7 +21,12 @@ from pathlib import Path
 import pytest
 
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
-from loxmatter.model.store import Store, UnknownDeviceError
+from loxmatter.model.store import (
+    Store,
+    UnknownDeviceError,
+    _decode_device_types,
+    _encode_device_types,
+)
 from loxmatter.profiles.relevance import device_types_by_endpoint, is_functional
 from loxmatter.profiles.table import Exportability, Profile, lookup
 
@@ -516,3 +521,36 @@ def test_check_writable_recovers_from_a_leftover_open_transaction(store):
     assert store._db.in_transaction
 
     store.check_writable()  # darf trotz der offenen Transaktion nicht werfen
+
+
+def test_decode_device_types_roundtrips_encode_device_types():
+    types = {0: frozenset({22, 18}), 1: frozenset({266})}
+    assert _decode_device_types(_encode_device_types(types)) == types
+
+
+def test_decode_device_types_of_none_is_none():
+    assert _decode_device_types(None) is None
+
+
+def test_decode_device_types_of_syntactically_broken_json_is_none():
+    assert _decode_device_types("{nicht json") is None
+
+
+def test_decode_device_types_of_non_integer_endpoint_key_is_none():
+    """Review-Fix (2026-09-05): `int("x")` wirft `ValueError`, nicht die
+    bisher abgefangenen `json.JSONDecodeError`/`TypeError` - eine von Hand
+    verstellte Zeile mit einem nicht-numerischen Endpunkt-Schluessel liess
+    `_decode_device_types` bisher durchbrechen."""
+    assert _decode_device_types('{"x": [1, 2]}') is None
+
+
+def test_decode_device_types_of_non_integer_type_id_is_none():
+    assert _decode_device_types('{"1": ["abc"]}') is None
+
+
+def test_decode_device_types_of_non_iterable_id_list_is_none():
+    assert _decode_device_types('{"1": 5}') is None
+
+
+def test_decode_device_types_of_non_object_json_is_none():
+    assert _decode_device_types("[1, 2]") is None

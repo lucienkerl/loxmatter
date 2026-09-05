@@ -728,16 +728,21 @@ def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
     von Hand verstellte Zeile darf die gesamte Geraeteliste nicht
     unbenutzbar machen: das Geraet landet dann in der Kategorie "Sonstige"
     und wird beim naechsten Bruueckenstart neu befuellt - dieselbe
-    Behandlung wie eine nie gefuellte Zeile."""
+    Behandlung wie eine nie gefuellte Zeile. "Unlesbar" meint dabei nicht
+    nur kaputtes JSON, sondern auch syntaktisch gueltiges JSON mit falscher
+    Form - ein nicht-numerischer Endpunkt- oder Typ-Schluessel (`ValueError`
+    aus `int(...)`) oder eine nicht iterierbare Typ-Liste (`TypeError`):
+    `_as_device` ruft diese Funktion fuer jede Zeile auf, und eine einzelne
+    handverstellte Zeile darf die uebrigen nicht mit reissen."""
     if raw is None:
         return None
     try:
         parsed = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+        if not isinstance(parsed, dict):
+            return None
+        return {int(endpoint): frozenset(int(i) for i in ids) for endpoint, ids in parsed.items()}
+    except (json.JSONDecodeError, TypeError, ValueError):
         return None
-    if not isinstance(parsed, dict):
-        return None
-    return {int(endpoint): frozenset(int(i) for i in ids) for endpoint, ids in parsed.items()}
 
 
 @dataclass(frozen=True)
