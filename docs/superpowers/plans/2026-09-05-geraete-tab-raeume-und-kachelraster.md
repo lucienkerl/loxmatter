@@ -15,7 +15,7 @@
 - **Entwickler-Prosa auf Deutsch.** Docstrings, Kommentare und Commit-Nachrichten in dichtem, begründendem Deutsch, das das *Warum* nennt. Ausnahme: der GPL-Kopf jeder Quelldatei bleibt im englischen FSF-Wortlaut.
 - **Jeder nutzersichtbare Text läuft über `i18n.t()`** mit `en`- **und** `de`-Eintrag in `src/loxmatter/i18n/strings.yaml`. Kein hartkodierter deutscher Text in `index.html`, `app.js` oder API-Fehlermeldungen.
 - **Schlüssel in `strings.yaml` sind flach und punktiert** (`web.devices.room_all`), keine verschachtelte YAML-Struktur.
-- **`web.*`-Schlüssel dürfen keine `{platzhalter}` enthalten**, die serverseitig nicht befüllt werden: `api/language.py:_web_strings()` ruft `i18n.t(key)` ohne Werte auf, ein Platzhalter wirft dort `KeyError` und reißt die **gesamte** `GET /api/i18n`-Antwort mit. Platzhalter werden clientseitig von `t(key, {…})` in `app.js` eingesetzt — dafür muss der Schlüssel serverseitig trotzdem ohne `KeyError` auflösen. Prüfen: nach jeder Schlüsseländerung `pytest tests/api/test_language.py -q`.
+- **`web.*`-Schlüssel dürfen `{platzhalter}` tragen**, und die Fehlermeldungen unter `web.devices.*` tun das auch. `api/language.py:_web_strings()` liefert sie über `i18n.raw_template()` **unaufgelöst** an den Browser aus (`language.py:56-63`), genau damit `t(key, {…})` in `app.js` sie clientseitig füllen kann. Neue Meldungen folgen deshalb der Form des Nachbarn `web.devices.label_save_error` (`"… : {message}"`) und werden nicht per Zeichenkettenverkettung zusammengesetzt. Prüfen: nach jeder Schlüsseländerung `uv run pytest tests/api/test_language.py -q`.
 - **Kommandos laufen mit `uv`**: `uv run pytest …`, `uv run ruff check .`, `uv run mypy src`.
 - **Keine externen Frontend-Abhängigkeiten.** Icons sind inline-SVG-`<symbol>`s in `index.html`, keine Icon-Bibliothek, kein CDN — die Oberfläche läuft offline.
 - **Migration:** `_SCHEMA_VERSION` wird auf `7` gesetzt, `_migrate_to_v7` in `_MIGRATIONS` eingetragen. Neue Spalten immer über `_add_column_if_missing`, nie über nacktes `ALTER TABLE`.
@@ -1502,11 +1502,11 @@ web.devices.room_rename_merge_confirm:
   en: "A room with that name already exists. Both rooms will be merged — this cannot be undone. Continue?"
   de: "Ein Raum dieses Namens besteht bereits. Beide Räume werden zusammengeführt — das lässt sich nicht rückgängig machen. Fortfahren?"
 web.devices.room_save_error:
-  en: "Room could not be saved:"
-  de: "Raum konnte nicht gespeichert werden:"
+  en: "Could not save room: {message}"
+  de: "Raum konnte nicht gespeichert werden: {message}"
 web.devices.room_rename_error:
-  en: "Room could not be renamed:"
-  de: "Raum konnte nicht umbenannt werden:"
+  en: "Could not rename room: {message}"
+  de: "Raum konnte nicht umbenannt werden: {message}"
 web.devices.search_placeholder:
   en: "Search name, category, room"
   de: "Name, Kategorie, Raum suchen"
@@ -1530,7 +1530,7 @@ web.devices.commission_room_hint:
   de: "Der Raum ist optional — ohne Auswahl erscheint das Gerät unter „Ohne Raum“ und lässt sich später zuordnen."
 ```
 
-**Warum die Fehler-Schlüssel auf einen Doppelpunkt enden und keinen `{message}`-Platzhalter tragen:** serverseitig ruft `api/language.py:_web_strings()` jeden `web.*`-Schlüssel ohne Werte auf. Ein Platzhalter wirft dort `KeyError` und reißt die gesamte `GET /api/i18n`-Antwort mit. Die bestehenden Schlüssel `web.devices.label_save_error` und `web.devices.list_load_error` prüfen — tragen sie Platzhalter, ist dieser Weg dort bereits gelöst; dann darf sich der neue Text daran anlehnen statt eine zweite Bauform einzuführen. Im Zweifel: kein Platzhalter, die Meldung wird in `app.js` angehängt.
+**Warum die Fehler-Schlüssel ein `{message}` tragen:** `api/language.py:_web_strings()` liefert `web.*`-Schlüssel über `i18n.raw_template()` unaufgelöst aus (`language.py:56-63`) — genau dafür gedacht, dass `t(key, {…})` in `app.js` sie füllt. Die Nachbarschlüssel `web.devices.label_save_error` und `web.devices.remove_error` sind bereits so gebaut. Eine zweite Bauform (Text mit Doppelpunkt, Meldung per Verkettung angehängt) wäre genau das Auseinanderdriften, das dieselbe Datei an anderer Stelle schon einmal beseitigt hat.
 
 - [ ] **Step 2: Vollständigkeit und Ladbarkeit prüfen**
 
@@ -1835,7 +1835,7 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
         });
         Object.assign(device, updated);
       } catch (error) {
-        this.deviceActionError = `${t("web.devices.room_save_error")} ${error.message}`;
+        this.deviceActionError = t("web.devices.room_save_error", { message: error.message });
       }
     },
 
@@ -1906,7 +1906,7 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
         }
         await this.loadDevices();
       } catch (error) {
-        this.deviceActionError = `${t("web.devices.room_rename_error")} ${error.message}`;
+        this.deviceActionError = t("web.devices.room_rename_error", { message: error.message });
       }
     },
 ```
