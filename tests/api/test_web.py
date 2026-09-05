@@ -2257,8 +2257,8 @@ async def test_the_room_picker_closes_new_room_mode_when_focus_leaves_it_entirel
 
 
 async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
-    """Fund 2 (Review vom 2026-09-05): Verschiebt man per Kachel-
-    Auswahlliste das letzte Geraet eines gefilterten Raums in einen
+    """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man per
+    Kachel-Auswahlliste das letzte Geraet eines gefilterten Raums in einen
     anderen, oder benennt/vereint man den gefilterten Raum weg, aendert
     `roomChips()` sich - `roomFilter` selbst aber nicht, ohne dass etwas
     das nachzieht. Der gefilterte Raum existiert dann nicht mehr, kein Chip
@@ -2266,19 +2266,23 @@ async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_va
     haengende) Umbenennen-Stift zeigt weiter auf einen Raum, der bei einem
     Klick 404 liefern wuerde.
 
-    `reconcileRoomFilter` schliesst das an einer Stelle statt an jeder
-    Schreibstelle einzeln: faellt auf "Alle" (`null`) zurueck, wenn
-    `roomFilter` ein echter (nicht-leerer) Raumname ist, den `roomChips()`
-    nicht mehr fuehrt. Bewusst NICHT fuer "Ohne Raum" (`roomFilter === ""`)
-    - der Umbenennen-Stift zeigt sich fuer diesen Fall ohnehin nie
-    (`roomFilter && ...` ist fuer `""` bereits falsy), der Holzweg aus
-    diesem Fund kann dort also gar nicht entstehen.
+    Die ERSTE Fassung dieses Fixes schloss "Ohne Raum" (`roomFilter ===
+    ""`) noch bewusst aus, mit der (fuer den Umbenennen-Stift richtigen)
+    Begruendung, der zeige sich fuer "Ohne Raum" ohnehin nie. Das Re-Review
+    (2026-09-05) zeigte den blinden Fleck: "Ohne Raum" ist der Filter, in
+    dem jemand ein unsortiertes Geraet nach dem anderen einem Raum zuweist
+    - genau das laesst den "Ohne Raum"-Chip aus `roomChips()`
+    verschwinden, sobald das letzte Geraet versorgt ist, mit denselben
+    Symptomen (kein Chip aktiv, keine Kachel, kein Ausweg) wie beim echten
+    Raumnamen. Der Guard prueft deshalb jetzt nur noch auf "Alle" (`null`)
+    - fuer den gibt es nichts zu tun, `roomChips()` kennt dafuer ohnehin
+    keinen Chip.
 
-    Belegt wird, dass die Methode existiert, ihre Bedingungen wie
-    beschrieben pruefen, und dass sowohl `saveRoom` als auch
-    `commitRenameRoom` sie nach ihrem jeweiligen Schreibvorgang aufrufen -
-    nicht, dass Alpine daraufhin tatsaechlich auf den "Alle"-Chip
-    umschaltet (dafuer braeuchte es eine Browser-Engine, siehe
+    Belegt wird, dass die Methode existiert, ihr Guard wie beschrieben nur
+    noch `null` ausschliesst (nicht mehr `""`), und dass sowohl `saveRoom`
+    als auch `commitRenameRoom` sie nach ihrem jeweiligen Schreibvorgang
+    aufrufen - nicht, dass Alpine daraufhin tatsaechlich auf den
+    "Alle"-Chip umschaltet (dafuer braeuchte es eine Browser-Engine, siehe
     `test_the_page_does_not_call_init_a_second_time`)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
@@ -2286,8 +2290,9 @@ async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_va
     reconcile_start = script.index("reconcileRoomFilter() {")
     reconcile_end = script.index("\n    },", reconcile_start)
     reconcile_body = script[reconcile_start:reconcile_end]
-    assert 'typeof this.roomFilter !== "string"' in reconcile_body
-    assert 'this.roomFilter === ""' in reconcile_body
+    assert "this.roomFilter === null" in reconcile_body
+    assert 'this.roomFilter === ""' not in reconcile_body
+    assert 'typeof this.roomFilter !== "string"' not in reconcile_body
     assert "this.roomFilter = null;" in reconcile_body
 
     save_room_start = script.index("async saveRoom(device, value) {")

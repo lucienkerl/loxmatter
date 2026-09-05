@@ -1060,17 +1060,29 @@ function app() {
     // Umbenennen-Stift (der ja nur an `roomFilter` haengt) noch da, aber
     // ins Leere zeigend (404 beim Draufklicken).
     //
-    // Nur fuer einen ECHTEN Raumnamen (nicht-leerer String) - "Alle"
-    // (`null`) betrifft das nicht, und "Ohne Raum" (`""`) auch nicht: der
-    // Umbenennen-Stift zeigt sich fuer "Ohne Raum" ohnehin nie (`roomFilter
-    // && ...` ist fuer `""` bereits falsy, siehe index.html), der Holzweg
-    // aus diesem Fund kann fuer diesen Fall also gar nicht entstehen.
+    // Nur fuer "Alle" (`null`) gibt es nichts zu tun - da wird ohnehin
+    // nicht gefiltert, `roomChips()` kennt fuer diesen Wert gar keinen
+    // Chip (siehe dort), der `some(...)`-Aufruf unten faende also nie eine
+    // Uebereinstimmung und wuerde bloss folgenlos wieder `null` setzen.
+    //
+    // "Ohne Raum" (`""`) MUSS den Rest der Methode durchlaufen (Fund 2,
+    // Re-Review 2026-09-05, verschaerft die urspruengliche Fassung dieses
+    // Fixes): das ist der Filter, in dem jemand ein unsortiertes Geraet
+    // nach dem anderen einem Raum zuweist, und genau das laesst den
+    // "Ohne Raum"-Chip aus `roomChips()` verschwinden, sobald das letzte
+    // Geraet ohne Raum versorgt ist - `counts.has("")` wird dann false
+    // (siehe dort). Ohne diesen Fix blieb `roomFilter` auf `""` stehen:
+    // kein Chip mehr aktiv, keine Kachel mehr sichtbar, irrefuehrender
+    // Leer-Hinweis, kein Ausweg-Link. Der `roomChips().some(...)`-Vergleich
+    // unten behandelt `""` bereits richtig, ganz ohne Sonderfall - er
+    // liefert fuer `""` schlicht `false`, sobald kein Geraet mehr ohne
+    // Raum ist.
     //
     // Eine Stelle statt an jeder Schreibstelle einzeln (`saveRoom`,
     // `commitRenameRoom`) - beide rufen das hier auf, statt die Pruefung
     // zu duplizieren.
     reconcileRoomFilter() {
-      if (typeof this.roomFilter !== "string" || this.roomFilter === "") {
+      if (this.roomFilter === null) {
         return;
       }
       if (!this.roomChips().some((chip) => chip.key === this.roomFilter)) {
