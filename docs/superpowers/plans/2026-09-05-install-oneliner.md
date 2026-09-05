@@ -1506,7 +1506,13 @@ offer_update() {
     return 0
   fi
   behind="$(git -C "$TARGET_DIR" rev-list --count HEAD..FETCH_HEAD 2>/dev/null || echo 0)"
-  if [ "${behind:-0}" -le 0 ]; then
+  # A non-numeric value would make `[ -le ]` error rather than return false,
+  # and an errored test inside `if` reads as false - the run would then
+  # announce an update using whatever rev-list printed.
+  case "$behind" in
+    ""|*[!0-9]*) behind=0 ;;
+  esac
+  if [ "$behind" -le 0 ]; then
     return 0
   fi
   say "$behind new commits are available"
@@ -1526,7 +1532,8 @@ offer_update() {
     y|Y|yes|Yes) "$TARGET_DIR/scripts/update.sh" ;;
     *) note "Left as it is. Run $TARGET_DIR/scripts/update.sh when you want it." ;;
   esac
-}```
+}
+```
 
 `main` erweitern — nach `install_docker`:
 
@@ -1538,7 +1545,7 @@ offer_update() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 32 Tests — 30 grün, 2 nur unter Linux.
+Expected: 34 Tests — 32 grün, 2 nur unter Linux.
 
 - [ ] **Step 5: Commit**
 
@@ -1828,7 +1835,7 @@ configure() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 40 Tests — 38 grün, 2 nur unter Linux.
+Expected: 42 Tests — 40 grün, 2 nur unter Linux.
 
 - [ ] **Step 5: shellcheck und Formatierung**
 
@@ -2088,7 +2095,7 @@ run_checks() {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 45 Tests — 43 grün, 2 nur unter Linux.
+Expected: 47 Tests — 45 grün, 2 nur unter Linux.
 
 **Hinweis für die Abnahme:** `check_rfkill` lässt sich hier nicht gezielt auslösen — auf macOS fehlt `/sys` ganz, auf CI-Runnern ist `/sys/class/rfkill` üblicherweise leer. Getestet ist nur, dass die Funktion beide Fälle übersteht. Der Befund selbst zeigt sich erst auf einem echten Pi.
 
@@ -2228,7 +2235,7 @@ main "$@"
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 48 Tests — 46 grün, 2 nur unter Linux.
+Expected: 50 Tests — 48 grün, 2 nur unter Linux.
 
 - [ ] **Step 5: Vollständiger Durchlauf aller Prüfungen**
 
