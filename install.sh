@@ -32,14 +32,10 @@
 set -eu
 
 REPO_URL="https://github.com/lucienkerl/loxmatter.git"
-# shellcheck disable=SC2034 # read by the Docker-install phase added in a later task
-DOCKER_INSTALL_URL="https://get.docker.com"
 
 DRY_RUN=0
 TARGET_DIR=""
 STEP="starting up"
-# shellcheck disable=SC2034 # set by the clone phase added in a later task
-CHECKOUT_EXISTED=0
 STACK_STARTED=0
 
 # ---------------------------------------------------------------- output --
@@ -60,8 +56,7 @@ die() {
 
 state_summary() {
   if [ "$STACK_STARTED" -eq 1 ]; then
-    # shellcheck disable=SC2016 # backticks are literal quoting for the reader, not a substitution
-    printf 'The stack in %s was started; `docker compose ps` there shows it.\n' \
+    printf 'The stack in %s was started; run docker compose ps there to see it.\n' \
       "$TARGET_DIR/deploy/testhost"
   elif [ -d "$TARGET_DIR" ]; then
     printf 'The checkout at %s exists; nothing was started.\n' "$TARGET_DIR"
