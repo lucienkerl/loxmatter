@@ -1406,14 +1406,38 @@ footer.hint-block {
 /* Fund 2 (Nacharbeit 2026-09-05): umschliesst die Raumliste (Ueberschrift,
  * Eintraege, "+ Neuer Raum" samt Textfeld) fuer ein `role="group"`, das sie
  * per `aria-labelledby` mit ihrer Ueberschrift verbindet (Begruendung im
- * Markup, index.html). `display: contents` nimmt den Wrapper selbst aus dem
- * Layout heraus, damit `.tile-menu-items` (Flex-Spalte, oben) weiterhin
- * direkt mit den Eintraegen als Flex-Kindern rechnet - dasselbe Mittel wie
- * einst bei `.room-picker` in dieser Datei (inzwischen entfernt, siehe
- * Versionsgeschichte), aus demselben Grund: ein rein semantischer Wrapper
- * darf das sichtbare Layout nicht veraendern. */
+ * Markup, index.html). Ein rein semantischer Wrapper darf das sichtbare
+ * Layout nicht veraendern - `.tile-menu-items` (oben) ist eine Flex-Spalte
+ * mit `gap: 1px` und `align-items: stretch`, deren Kinder direkt die
+ * Menue-Eintraege sind, und genau das muss so bleiben.
+ *
+ * Review-Fund 5 (2026-09-05, Review der Nacharbeit): `display: contents`
+ * war das urspruengliche Mittel dafuer (dasselbe wie einst bei
+ * `.room-picker` in dieser Datei, inzwischen entfernt), hat aber eine
+ * bekannte WebKit-Einschraenkung: aeltere und teils auch aktuelle
+ * Safari-Fassungen lassen einen `display: contents`-Teilbaum aus dem
+ * Accessibility-Baum herausfallen - das `role="group"` und dessen
+ * `aria-labelledby` (Begruendung im Markup) kaemen bei Safari-Nutzern
+ * dann nie an, obwohl das Markup dafuer korrekt ist. Diese Datei begruendet
+ * an anderer Stelle bereits gezielt fuer macOS Safari, Safari ist also
+ * ausdruecklich ein Ziel, keine Nebenbemerkung.
+ *
+ * Statt diese Browser-Kompatibilitaetsfrage zu tragen (und zu hoffen, dass
+ * sie sich nicht auswirkt), wird der Wrapper stattdessen selbst zu einer
+ * echten Box mit demselben Spalten-Flex, demselben `gap` und denselben
+ * `align-items` wie sein Elternelement `.tile-menu-items` - das
+ * Layoutergebnis ist ununterscheidbar (dieselbe Anordnung, derselbe
+ * Abstand), aber der Wrapper haengt nicht mehr davon ab, ob eine
+ * Browser-Engine ihn aus dem Accessibility-Baum entfernt. `min-width: 0`
+ * verhindert, dass der Wrapper als Flex-Item seines Elternteils auf seine
+ * Inhaltsbreite aufblaeht - dieselbe Falle wie bei `.value-key`/`.device-
+ * name` an anderer Stelle in dieser Datei. */
 .tile-menu-rooms {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  min-width: 0;
 }
 
 .tile-menu-item {

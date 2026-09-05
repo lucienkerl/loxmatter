@@ -2755,15 +2755,28 @@ async def test_the_room_list_is_a_labelled_group_for_assistive_tech(api):
 async def test_the_room_group_wrapper_does_not_disturb_the_menu_layout(api):
     """A11y-Nacharbeit (2026-09-05), Fund 2: `.tile-menu-items` ist eine
     Flex-Spalte, deren Kinder direkt die Menue-Eintraege sind (Begruendung
-    bei der Regel selbst, style.css). Der neue `.tile-menu-rooms`-Wrapper
-    fuer `role="group"` ist rein semantisch und darf dieses Layout nicht
-    veraendern - `display: contents` nimmt ihn aus dem Layoutbaum heraus,
-    genau wie einst `.room-picker` in derselben Datei (Begruendung dort per
-    Verweis wiederholt, das Element selbst ist laengst entfernt). Ohne
-    dieses `display: contents` wuerde der Wrapper selbst zu einer
-    zusaetzlichen Flex-Box, und die Raumeintraege staenden nicht mehr auf
-    einer Ebene mit "+ Neuer Raum", Trennstrich, Export und Entfernen."""
+    bei der Regel selbst, style.css). Der `.tile-menu-rooms`-Wrapper fuer
+    `role="group"` ist rein semantisch und darf dieses Layout nicht
+    veraendern.
+
+    Review-Fund 5 (2026-09-05, Review der Nacharbeit): urspruenglich per
+    `display: contents` geloest (genau wie einst `.room-picker` in
+    derselben Datei) - das hat aber eine bekannte WebKit-Einschraenkung:
+    Safari laesst `display: contents`-Teilbaeume teils aus dem
+    Accessibility-Baum fallen, das `role="group"` samt `aria-labelledby`
+    kaeme dort also nie an, obwohl Safari in dieser Datei an anderer Stelle
+    ausdruecklich ein Ziel ist. Die ausgelieferte Regel macht den Wrapper
+    deshalb stattdessen zu einer echten Box mit demselben Spalten-Flex,
+    demselben `gap` und denselben `align-items` wie `.tile-menu-items`
+    selbst - layoutidentisch, aber ohne die Browser-Kompatibilitaetsfrage.
+    Ohne dieses Nachziehen staenden die Raumeintraege sonst (mit `display:
+    contents` oder gaenzlich ohne Sonderbehandlung) nicht mehr auf einer
+    Ebene mit "+ Neuer Raum", Trennstrich, Export und Entfernen."""
     client, _store, _device_id = api
     css = (await client.get("/static/style.css")).text
     rule = css.split(".tile-menu-rooms {", 1)[1].split("}", 1)[0]
-    assert "display: contents;" in rule
+    assert "display: contents" not in rule
+    assert "display: flex" in rule
+    assert "flex-direction: column" in rule
+    assert "align-items: stretch" in rule
+    assert "gap: 1px" in rule
