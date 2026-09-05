@@ -237,6 +237,13 @@ def installer(tmp_path):
             stale.unlink()
         for stale in list(templates.iterdir()):
             stale.unlink()
+        # Ein zweiter installer()-Aufruf im selben Test (z.B. um ein zweites
+        # Mal gegen ein vorhandenes Checkout zu laufen) soll nur SEINE eigenen
+        # Aufrufe in result.calls sehen - ohne das hier wuerde der erste Lauf
+        # im Log stehen bleiben und jeder "not called(...)" auf den zweiten
+        # Lauf faelschlich fehlschlagen.
+        if log.exists():
+            log.unlink()
 
         def write(directory, name, body):
             path = directory / name
@@ -439,6 +446,53 @@ def test_vorhandenes_docker_wird_nicht_neu_installiert(installer):
     assert result.returncode == 0
     assert not any("get.docker.com" in call for call in result.calls)
     assert not result.called("sudo docker")
+
+
+# ------------------------------------------------------------- phase three --
+
+
+def test_klont_nach_target_dir(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert result.called("git clone --branch main https://github.com/lucienkerl/loxmatter.git")
+    assert (result.home / "loxmatter" / "deploy" / "testhost").is_dir()
+
+
+def test_zweiter_lauf_klont_nicht_erneut(installer):
+    first = installer()
+    assert first.returncode == 0
+    second = installer()
+    assert second.returncode == 0
+    assert not second.called("git clone")
+    assert "existing checkout" in second.output
+
+
+def test_fremdes_verzeichnis_wird_abgewiesen(installer, tmp_path):
+    fremd = tmp_path / "home" / "loxmatter"
+    fremd.mkdir(parents=True)
+    (fremd / "irgendwas.txt").write_text("nicht loxmatter")
+    result = installer()
+    assert result.returncode == 2
+    assert "does not look like a loxmatter checkout" in result.output
+
+
+def test_zweiter_lauf_bietet_das_update_an_ohne_es_zu_tun(installer):
+    # update.sh sichert vorher die Signaldatenbank. Ein Installskript, das
+    # nebenbei aktualisiert, umginge diese Sicherung - also wird nur
+    # angeboten.
+    first = installer()
+    assert first.returncode == 0
+    second = installer(env={"FAKE_BEHIND": "3"})
+    assert second.returncode == 0
+    assert "3 new commits" in second.output
+    assert "Apply them with" in second.output
+
+
+def test_erster_lauf_prueft_nicht_auf_updates(installer):
+    # Frisch geklont - es gibt nichts zu aktualisieren.
+    result = installer(env={"FAKE_BEHIND": "3"})
+    assert result.returncode == 0
+    assert "new commits" not in result.output
 
 
 def test_dry_run_veraendert_nichts(installer):

@@ -47,6 +47,8 @@ DETECTED_RADIO=""
 DOCKER_INSTALL_URL="https://get.docker.com"
 DOCKER_SUDO=0
 TEMP_FILE=""
+CHECKOUT_EXISTED=0
+STACK_DIR=""
 
 # ---------------------------------------------------------------- output --
 
@@ -465,6 +467,64 @@ then run this again."
   note "docker compose is available"
 }
 
+# ----------------------------------------------------------- phase three --
+
+# Either takes an existing checkout as-is, or clones a fresh one. Never pulls
+# or otherwise touches an existing checkout: an update goes through
+# scripts/update.sh and only after the human agrees, so this step cannot be
+# the thing that quietly rewrites a checkout the human is relying on.
+ensure_checkout() {
+  step "getting the repository"
+  STACK_DIR="$TARGET_DIR/deploy/testhost"
+  if [ -d "$TARGET_DIR" ]; then
+    CHECKOUT_EXISTED=1
+    say "Using the existing checkout"
+    note "$TARGET_DIR"
+    if [ ! -f "$TARGET_DIR/Dockerfile" ] || [ ! -f "$STACK_DIR/docker-compose.yml" ]; then
+      die "$TARGET_DIR exists but does not look like a loxmatter checkout
+(no Dockerfile, or no deploy/testhost/docker-compose.yml).
+Move it aside, or pass --dir with a different path."
+    fi
+    return 0
+  fi
+  say "Cloning the repository"
+  note "$REPO_URL -> $TARGET_DIR"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would run: git clone --branch main $REPO_URL $TARGET_DIR"
+    return 0
+  fi
+  git clone --branch main "$REPO_URL" "$TARGET_DIR" ||
+    die "git clone failed. Is this machine online, and is $TARGET_DIR writable?"
+}
+
+# Only offered, never done on the way past: scripts/update.sh backs up the
+# signal database first, and those keys are the wiring in the Loxone
+# configuration. An installer that updated in passing would skip that backup.
+offer_update() {
+  if [ "$CHECKOUT_EXISTED" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
+    return 0
+  fi
+  step "checking for updates"
+  if ! git -C "$TARGET_DIR" fetch --quiet origin main 2>/dev/null; then
+    note "Could not reach GitHub; skipping the update check."
+    return 0
+  fi
+  behind="$(git -C "$TARGET_DIR" rev-list --count HEAD..FETCH_HEAD 2>/dev/null || echo 0)"
+  if [ "${behind:-0}" -le 0 ]; then
+    return 0
+  fi
+  say "$behind new commits are available"
+  if [ "$HAVE_TTY" -eq 0 ]; then
+    note "Apply them with: $TARGET_DIR/scripts/update.sh"
+    return 0
+  fi
+  update_answer="$(ask "Update now? It backs up the signal database first [y/N]" "N")"
+  case "$update_answer" in
+    y|Y|yes|Yes) "$TARGET_DIR/scripts/update.sh" ;;
+    *) note "Left as it is. Run $TARGET_DIR/scripts/update.sh when you want it." ;;
+  esac
+}
+
 # ------------------------------------------------------------------ main --
 
 main() {
@@ -485,6 +545,8 @@ main() {
   check_config_source
   install_packages
   install_docker
+  ensure_checkout
+  offer_update
 }
 
 main "$@"
