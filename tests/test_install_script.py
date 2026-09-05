@@ -115,6 +115,11 @@ if [ "${1-}" = "ps" ]; then
     echo "$container"
   done
 fi
+if [ "${1-}" = "compose" ] && [ "${2-}" = "ps" ]; then
+  for service in ${FAKE_SERVICES-otbr matter-server loxmatter}; do
+    echo "$service"
+  done
+fi
 exit 0
 """
 
@@ -738,3 +743,39 @@ def test_altinstallation_behaelt_ihren_border_router(installer):
         if "=" in line and not line.startswith("#")
     )
     assert values["COMPOSE_PROFILES"] == "thread"
+
+
+# --------------------------------------------------------- phase fuenf/sechs --
+
+
+def test_stack_wird_gebaut_und_gestartet(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert result.called("docker compose up -d --build")
+    assert (result.home / "loxmatter" / "deploy" / "testhost" / "data").is_dir()
+
+
+def test_gesundheitspruefung_laeuft(installer):
+    result = installer()
+    assert any("/health" in call for call in result.calls)
+    assert "answers" in result.output
+
+
+def test_fehlender_dienst_wird_zum_befund(installer):
+    result = installer(env={"FAKE_SERVICES": "loxmatter"})
+    assert result.returncode == 0
+    assert "matter-server" in result.output
+    assert "not running" in result.output
+
+
+def test_thread_lauf_ohne_wpan_meldet_den_workaround(installer):
+    result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
+    assert result.returncode == 0
+    assert "start-stop-daemon" in result.output
+    assert "otbr-agent" in result.output
+
+
+def test_wifi_lauf_erwaehnt_thread_gar_nicht_als_problem(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert "start-stop-daemon" not in result.output

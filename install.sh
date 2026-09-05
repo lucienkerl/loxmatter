@@ -51,6 +51,8 @@ CHECKOUT_EXISTED=0
 STACK_DIR=""
 ENV_FILE=""
 ENV_IS_NEW=0
+FINDINGS=""
+PORT=8080
 
 # ---------------------------------------------------------------- output --
 
@@ -679,6 +681,151 @@ configure() {
   fi
 }
 
+# ------------------------------------------------------------ phase five --
+
+start_stack() {
+  step "starting the stack"
+  say "Starting the containers"
+  if [ "$MODE" = "thread" ]; then
+    note "otbr, matter-server, loxmatter"
+  else
+    note "matter-server, loxmatter - no Thread border router in this mode"
+  fi
+  note "The first build takes several minutes on a Raspberry Pi. It is not stuck."
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would run: docker compose up -d --build in $STACK_DIR"
+    return 0
+  fi
+  mkdir -p "$STACK_DIR/data"
+  # No --profile here on purpose: COMPOSE_PROFILES lives in .env, which Compose
+  # reads by itself. Every later call in this directory - by hand, or from
+  # scripts/update.sh - then picks the same services without a flag to remember.
+  ( cd "$STACK_DIR" && dk compose up -d --build ) ||
+    die "docker compose up failed. The checkout and .env are in place; fix the
+cause and run this again. The logs are in:
+  cd $STACK_DIR && docker compose logs"
+  STACK_STARTED=1
+}
+
+# ------------------------------------------------------------- phase six --
+
+# Findings are reported, never repaired: unblocking rfkill needs a privileged
+# container, and the OTBR workaround is kernel specific and would kill working
+# processes on hosts that do not need it.
+add_finding() {
+  FINDINGS="$FINDINGS
+$1
+"
+}
+
+stack_port() {
+  port_value="$(grep -A1 -- '--listen' "$STACK_DIR/docker-compose.yml" |
+    tail -1 | tr -dc '0-9')"
+  if [ -z "$port_value" ]; then
+    port_value=8080
+  fi
+  printf '%s' "$port_value"
+}
+
+check_health() {
+  step "waiting for the bridge to answer"
+  PORT="$(stack_port)"
+  health_url="http://127.0.0.1:$PORT/health"
+  health_ok=0
+  health_tries=0
+  while [ "$health_tries" -lt 20 ]; do
+    if curl -fsS -m 3 "$health_url" >/dev/null 2>&1; then
+      health_ok=1
+      break
+    fi
+    health_tries=$((health_tries + 1))
+    sleep 1
+  done
+  if [ "$health_ok" -ne 1 ]; then
+    printf '\n\033[31m%s does not answer. Last lines from the log:\033[0m\n' "$health_url"
+    dk logs --tail 30 loxmatter 2>&1 || true
+    die "The containers are up but the bridge does not report healthy."
+  fi
+  note "$health_url answers"
+}
+
+check_containers() {
+  step "checking the containers"
+  expected="matter-server loxmatter"
+  if [ "$MODE" = "thread" ]; then
+    expected="otbr $expected"
+  fi
+  running="$( ( cd "$STACK_DIR" && dk compose ps --services ) 2>/dev/null || true)"
+  for service in $expected; do
+    if ! printf '%s\n' "$running" | grep -qx "$service"; then
+      add_finding "Service '$service' is not running. Look at:
+  cd $STACK_DIR && docker compose logs $service"
+    fi
+  done
+}
+
+check_rfkill() {
+  step "checking the Bluetooth adapter"
+  for entry in /sys/class/rfkill/rfkill*; do
+    if [ ! -r "$entry/type" ]; then
+      continue
+    fi
+    if [ "$(cat "$entry/type")" != "bluetooth" ]; then
+      continue
+    fi
+    if [ "$(cat "$entry/soft" 2>/dev/null || echo 0)" = "1" ]; then
+      rfkill_name="${entry##*/}"
+      add_finding "Bluetooth is rfkill soft-blocked ($rfkill_name), so commissioning
+over BLE will fail. This needs root, which is why it is not done here:
+  docker run --rm --privileged -v /sys:/sys alpine \\
+    sh -c 'echo 0 > /sys/class/rfkill/$rfkill_name/soft'
+It only has to be done once; the unblock survives reboots."
+    fi
+    return 0
+  done
+}
+
+check_thread() {
+  if [ "$MODE" != "thread" ]; then
+    return 0
+  fi
+  step "checking the Thread network"
+  # The same test scripts/otbr-watchdog.sh and the "System" view use: scope 00
+  # means routed, wpan* is OTBR's Thread interface.
+  if awk '$4 == "00" && $6 ~ /^wpan/ { found = 1 } END { exit !found }' \
+      /proc/net/if_inet6 2>/dev/null; then
+    note "Thread interface is up"
+    return 0
+  fi
+  add_finding "No Thread interface (wpan*) yet. On a Raspberry Pi kernel the OTBR
+image's start-stop-daemon never finishes and otbr-agent is never exec'd, so
+this has to be re-applied after every 'docker compose up':
+  docker exec otbr sh -c 'rm -f /var/run/otbr-agent.pid /var/run/otbr-web.pid'
+  docker exec -d otbr /usr/sbin/otbr-agent -I wpan0 -B $(env_file_value BACKBONE_IF) -d7 \\
+    --rest-listen-address 127.0.0.1 \\
+    'spinel+hdlc+uart://$(env_file_value RADIO_DEVICE)?uart-baudrate=$(env_file_value RADIO_BAUDRATE)'
+  docker exec otbr ot-ctl ifconfig up
+  docker exec otbr ot-ctl thread start
+The state goes from 'detached' to 'leader' after about 15 seconds. See
+deploy/testhost/README.md, 'start-stop-daemon haengt auf dem Pi-Kernel'."
+}
+
+run_checks() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would check /health, the containers, Bluetooth and Thread"
+    return 0
+  fi
+  say "Checking"
+  check_health
+  check_containers
+  check_rfkill
+  check_thread
+  if [ -n "$FINDINGS" ]; then
+    say "Findings"
+    printf '%s\n' "$FINDINGS"
+  fi
+}
+
 # Only offered, never done on the way past: scripts/update.sh backs up the
 # signal database first, and those keys are the wiring in the Loxone
 # configuration. An installer that updated in passing would skip that backup.
@@ -742,6 +889,8 @@ main() {
   install_docker
   ensure_checkout
   configure
+  start_stack
+  run_checks
   offer_update
 }
 
