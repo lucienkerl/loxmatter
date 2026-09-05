@@ -94,6 +94,20 @@ kann) und unabhängig davon, unter welchem Container das Signal tatsächlich
 hängt. Ein Abgleich über den Gerätecontainer (Titel) wäre fragiler und ist
 nicht nötig.
 
+**Korrektur bei Ausgängen: `CmdOn` allein genügt nicht** (Anwenderbericht
+2026-09-05, „nach Export und erneutem Import ein neues Feld onoff"). Der
+kombinierte Ein/Aus-Ausgang aus `export.outputs.to_outputs` schickt bei
+steigender Flanke denselben Pfad wie der einzelne `on`-Befehl
+(`/cmd/d1_1_on/1`) und unterscheidet sich von ihm allein durch sein `CmdOff`.
+Aus `CmdOn` allein gelesen bekamen beide denselben Schlüssel, im Index
+überschrieb einer den anderen — der kombinierte Befehl war unter seinem
+echten Schlüssel (`"d1_1_on + d1_1_off"`, so vergibt ihn `to_outputs`)
+nirgends zu finden und wurde bei **jedem** Durchlauf erneut angelegt. Der
+Schlüssel eines bestehenden Ausgangs wird deshalb aus `CmdOn` UND `CmdOff`
+zusammen gelesen (`keys.key_from_output_cmd`). Nebenwirkung derselben
+Kollision: der `possible_duplicate`-Schutz griff hier nicht, weil das
+verdrängte Element gar nicht mehr im Index stand.
+
 ### 3.4 Risikostufen: Update ist der Vorgabefall, Neuanlage ist opt-in
 
 Die reale Referenzdatei parst zwar sauber, aber das `U`-ID-Schema für neue
@@ -274,6 +288,25 @@ dieses Attribut schlicht nicht auf dem Schirm. Behoben: alle fünf
 kompletten Neuanlage) fälschlich ein `IName` trug, das echte Captions nicht
 haben, und ein festes `Title` (`"Virtuelle Eingänge"`/`"Virtuelle
 Ausgänge"`) fehlte — ebenfalls korrigiert.
+
+**Die Einheit gehört ins `<Display>`, nicht ans `<C>`** (Anwenderbericht
+2026-09-05, „die Einheit ist bei den virtuellen Eingängen nicht mehr
+dabei"). Die *Vorlagendatei* führt die Einheit als Attribut
+(`virtual_in_udp_cmd_attributes`), eine *Projektdatei* nicht: dort trägt
+kein einziges `<C>`-Objekt ein `Unit`-Attribut (wieder an allen 3710
+geprüft), die Einheit steht ausschließlich im `<Display>`-Kind — als
+kompletter Formatstring inklusive Einheitentext, begleitet von `Type="2"`
+bei einem analogen Wert (`<Display Type="2" Unit="&lt;v.3&gt; kW"
+StateOnly="true"/>`, so an allen 86 analogen Eingängen der Referenzdatei).
+Die für die Neuanlage übernommene Vorlagen-Attributliste schrieb `Unit`
+deshalb an eine Stelle, an der Loxone Config es nie liest, während das
+`<Display>` ein festes `Unit="<v.1>"` ohne Einheit bekam. Behoben:
+`new_input_cmd_open_tag` filtert `Unit` heraus, `new_cmd_children_xml`
+schreibt Formatstring und `Type` ins `<Display>`. `Unit` ist damit auch
+kein verwaltetes Update-Attribut mehr (`MANAGED_INPUT_CMD_ATTRS`) — sonst
+erschiene jeder analoge Eingang bei jedem Lauf erneut als „aktualisiert".
+Der `<Display>` eines **bestehenden** Objekts bleibt unangetastet, wie jede
+andere Struktur, die der Anwender selbst eingerichtet haben kann.
 
 ## 7. API & WebUI
 

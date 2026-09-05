@@ -99,6 +99,19 @@ def _attr_span(text: str, tag_start: int, tag_end: int, name: str) -> tuple[int,
     return None if match is None else (match.start(), match.end())
 
 
+def _display_format(obj: LoxoneInput | LoxoneCommand, is_input: bool) -> tuple[bool, str]:
+    """`(analog, unit_format)` fuer das `<Display>`-Kind, das
+    `schema.new_cmd_children_xml` schreibt.
+
+    Nur ein Eingang traegt dort eine Einheit (Korrektur nach Anwenderbericht
+    2026-09-05, siehe dortigen Docstring); fuer einen Ausgang bleiben die
+    Vorgaben stehen, sein `<Display>` sieht damit aus wie bisher."""
+    if not is_input:
+        return False, ""
+    entry = cast(LoxoneInput, obj)
+    return entry.analog, entry.unit_format
+
+
 def _update_edits(index: ProjectIndex, entry: PlanEntry) -> list[_Edit]:
     element = (index.input_cmds if entry.kind == "input" else index.output_cmds)[entry.key]
     edits: list[_Edit] = []
@@ -106,8 +119,8 @@ def _update_edits(index: ProjectIndex, entry: PlanEntry) -> list[_Edit]:
         span = _attr_span(index.text, element.open_start, element.open_end, name)
         replacement = f'{name}="{escape_attr_value(new_value)}"'
         if span is None:
-            # Attribut fehlt im bestehenden Tag ganz (z. B. `Unit` bei einem
-            # digitalen Eingang) - vor dem schliessenden '>' einfuegen.
+            # Attribut fehlt im bestehenden Tag ganz (z. B. `CmdOff` bei einem
+            # Ausgang ohne Aus-Befehl) - vor dem schliessenden '>' einfuegen.
             insert_at = element.open_end - (2 if element.self_closing else 1)
             edits.append(_Edit(insert_at, insert_at, f" {replacement}"))
         else:
@@ -139,8 +152,13 @@ def _new_signal_edit(
         if is_input
         else new_output_cmd_open_tag(cast(LoxoneCommand, obj), iname, u)
     )
+    analog, unit_format = _display_format(obj, is_input)
     children_xml = new_cmd_children_xml(
-        kind="input" if is_input else "output", existing_u=index.all_u_values, iodata_attrs=iodata
+        kind="input" if is_input else "output",
+        existing_u=index.all_u_values,
+        iodata_attrs=iodata,
+        analog=analog,
+        unit_format=unit_format,
     )
     full_xml = f"{open_tag}{children_xml}</C>"
     pos = matching_container.inner_end
@@ -216,8 +234,13 @@ def _new_device_edit(
             if is_input
             else new_output_cmd_open_tag(cast(LoxoneCommand, obj), cmd_iname, cmd_u)
         )
+        analog, unit_format = _display_format(obj, is_input)
         children_xml = new_cmd_children_xml(
-            kind=kind, existing_u=index.all_u_values, iodata_attrs=iodata
+            kind=kind,
+            existing_u=index.all_u_values,
+            iodata_attrs=iodata,
+            analog=analog,
+            unit_format=unit_format,
         )
         cmds.append(f"{cmd_open}{children_xml}</C>")
 

@@ -16,11 +16,13 @@
 
 """Liest den von `loxmatter` selbst vergebenen Signal-/Kommando-Schluessel
 aus den Feldern, in denen er in der Projektdatei bereits steht (Entwurf
-Abschnitt 3.3) - `Check` bei Eingaengen, `CmdOn` bei Ausgaengen. Das ist
-derselbe Schluessel, den `model.store._assign_key` vergibt und den
+Abschnitt 3.3) - `Check` bei Eingaengen, `CmdOn`/`CmdOff` bei Ausgaengen. Das
+ist derselbe Schluessel, den `model.store._assign_key` vergibt und den
 `export.documents`/`export.outputs` in genau diese Felder schreiben."""
 
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 _CMD_PREFIX = "/cmd/"
 
@@ -46,3 +48,27 @@ def key_from_cmd_on(cmd_on: str) -> str | None:
     rest = cmd_on[len(_CMD_PREFIX) :]
     key = rest.split("/", 1)[0]
     return key or None
+
+
+def key_from_output_cmd(attrs: Mapping[str, str]) -> str | None:
+    """Der Schluessel eines bestehenden `VirtualOutCmd` - aus `CmdOn` UND
+    `CmdOff` zusammen, nicht aus `CmdOn` allein.
+
+    Der Grund ist der kombinierte Ein/Aus-Ausgang aus `export.outputs.
+    to_outputs`: er schickt bei steigender Flanke denselben Pfad wie der
+    einzelne `on`-Befehl (`/cmd/d1_1_on/1`) und unterscheidet sich von ihm
+    allein durch sein `CmdOff`. Aus `CmdOn` allein gelesen bekaemen beide
+    denselben Schluessel - im Index ueberschriebe dann einer den anderen,
+    und der kombinierte Befehl waere unter seinem echten Schluessel
+    (``"d1_1_on + d1_1_off"``, so vergibt ihn `to_outputs`) nirgends zu
+    finden. Genau das war der Anwenderbericht "nach Export und erneutem
+    Import ein neues Feld onoff": bei jedem Durchlauf eine weitere Dublette,
+    weil der Abgleich seine eigene Ausgabe nicht wiedererkannte.
+
+    Ein `CmdOff`, das nicht von `loxmatter` stammt (oder fehlt/leer ist),
+    aendert den Schluessel nicht - dann zaehlt der Ein-Befehl allein."""
+    on = key_from_cmd_on(attrs.get("CmdOn", ""))
+    if on is None:
+        return None
+    off = key_from_cmd_on(attrs.get("CmdOff", ""))
+    return f"{on} + {off}" if off is not None else on
