@@ -572,6 +572,10 @@ DRY_RUN=0
 TARGET_DIR=""
 STEP="starting up"
 STACK_STARTED=0
+# Der EXIT-Trap raeumt diese Datei weg, egal wie der Lauf endet. Sie wird
+# erst in Aufgabe 4 gefuellt, aber hier deklariert: on_exit liest sie, und
+# unter `set -u` waere sie sonst ungebunden.
+TEMP_FILE=""
 
 # ---------------------------------------------------------------- output --
 
@@ -601,7 +605,12 @@ state_summary() {
 }
 
 on_exit() {
+  # Muss die allererste Anweisung bleiben - jeder andere Befehl davor
+  # ueberschriebe den Status, der hier gemeint ist.
   code=$?
+  if [ -n "$TEMP_FILE" ]; then
+    rm -f "$TEMP_FILE"
+  fi
   if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
     printf '\n\033[31mFailed while: %s\033[0m\n' "$STEP" >&2
     state_summary >&2
@@ -678,6 +687,12 @@ On macOS, use the development path instead:
 
 main() {
   trap on_exit EXIT
+  # Damit ein Abbruch per Ctrl-C ueberhaupt beim EXIT-Trap ankommt und die
+  # temporaere Datei nicht liegen bleibt. 130 und 143 sind die ueblichen
+  # Status fuer SIGINT und SIGTERM - beide ungleich 2, der Trap meldet also
+  # zu Recht, an welchem Schritt es abbrach.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   parse_args "$@"
   say "loxmatter installer"
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -1247,7 +1262,7 @@ install_docker() {
   note "Installing it from $DOCKER_INSTALL_URL."
   note "This needs root and adds Docker's package repository to this machine."
   if [ "$DRY_RUN" -eq 1 ]; then
-    note "would run: curl -fsSL $DOCKER_INSTALL_URL | sh"
+    note "would run: download $DOCKER_INSTALL_URL to a temporary file, then run it"
     return 0
   fi
   # Downloaded to a file first, NOT piped straight into sh. Without pipefail
@@ -1256,17 +1271,30 @@ install_docker() {
   # reads a network failure as a successful install and walks on into
   # usermod, having promised it would not. Writing the file makes curl's own
   # status observable.
-  docker_script="$(mktemp)" || die "Could not create a temporary file."
-  if ! curl -fsSL "$DOCKER_INSTALL_URL" -o "$docker_script"; then
-    rm -f "$docker_script"
+  TEMP_FILE="$(mktemp)" || die "Could not create a temporary file."
+  if ! curl -fsSL "$DOCKER_INSTALL_URL" -o "$TEMP_FILE"; then
+    rm -f "$TEMP_FILE"
+    TEMP_FILE=""
     die "Could not download the Docker installer from $DOCKER_INSTALL_URL.
 Is this machine online? Nothing was changed."
   fi
-  if ! run_root sh "$docker_script"; then
-    rm -f "$docker_script"
+  # curl can exit 0 and still have delivered nothing - an empty body behind a
+  # flaky proxy or CDN. `sh` on an empty script also exits 0, so without this
+  # check the run would walk on into usermod and end with the same false
+  # "compose does not work" diagnosis the exit-status check above exists to
+  # prevent.
+  if [ ! -s "$TEMP_FILE" ]; then
+    rm -f "$TEMP_FILE"
+    TEMP_FILE=""
+    die "The download from $DOCKER_INSTALL_URL was empty. Nothing was changed."
+  fi
+  if ! run_root sh "$TEMP_FILE"; then
+    rm -f "$TEMP_FILE"
+    TEMP_FILE=""
     die "The Docker installer failed. Nothing else was changed."
   fi
-  rm -f "$docker_script"
+  rm -f "$TEMP_FILE"
+  TEMP_FILE=""
   if [ -n "$SUDO" ]; then
     docker_user="$(id -un)"
     run_root usermod -aG docker "$docker_user" ||
@@ -1314,7 +1342,7 @@ dk() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 22 passed.
+Expected: 24 passed.
 
 - [ ] **Step 5: shellcheck**
 
@@ -1432,7 +1460,7 @@ Move it aside, or pass --dir with a different path."
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 25 passed.
+Expected: 27 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1722,7 +1750,7 @@ configure() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 33 passed.
+Expected: 35 passed.
 
 - [ ] **Step 5: shellcheck und Formatierung**
 
@@ -1982,7 +2010,7 @@ run_checks() {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 38 passed.
+Expected: 40 passed.
 
 **Hinweis für die Abnahme:** `check_rfkill` lässt sich hier nicht gezielt auslösen — auf macOS fehlt `/sys` ganz, auf CI-Runnern ist `/sys/class/rfkill` üblicherweise leer. Getestet ist nur, dass die Funktion beide Fälle übersteht. Der Befund selbst zeigt sich erst auf einem echten Pi.
 
@@ -2163,7 +2191,7 @@ main "$@"
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 43 passed.
+Expected: 45 passed.
 
 - [ ] **Step 5: Vollständiger Durchlauf aller Prüfungen**
 
