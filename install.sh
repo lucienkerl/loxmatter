@@ -508,6 +508,10 @@ env_file_has() { grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 # be changing the wrong line - the reasoning is spelled out in
 # deploy/testhost/README.md.
 #
+# Deliberately no awk: `awk -v value=...` runs the value through escape
+# processing, so a backslash in it is silently eaten and `\t` becomes a real
+# tab. Reading the file line by line passes every byte through untouched.
+#
 # Writes through $ENV_FILE.new and renames it into place so .env is either
 # fully the old content or fully the new content, never half-written - `mv`
 # on the same filesystem is atomic. That temporary file is tracked in the
@@ -516,17 +520,29 @@ env_file_has() { grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
 env_set() {
   env_key="$1"
   env_value="$2"
-  if env_file_has "$env_key"; then
-    TEMP_FILE="$ENV_FILE.new"
-    awk -F= -v key="$env_key" -v value="$env_value" '
-      $1 == key && !seen { print key "=" value; seen = 1; next }
-      { print }
-    ' "$ENV_FILE" > "$TEMP_FILE"
-    mv "$TEMP_FILE" "$ENV_FILE"
-    TEMP_FILE=""
-  else
+  if ! env_file_has "$env_key"; then
     printf '%s=%s\n' "$env_key" "$env_value" >> "$ENV_FILE"
+    return 0
   fi
+  TEMP_FILE="$ENV_FILE.new"
+  env_seen=0
+  {
+    while IFS= read -r env_line || [ -n "$env_line" ]; do
+      case "$env_line" in
+        "$env_key"=*)
+          if [ "$env_seen" -eq 0 ]; then
+            printf '%s=%s\n' "$env_key" "$env_value"
+            env_seen=1
+          else
+            printf '%s\n' "$env_line"
+          fi
+          ;;
+        *) printf '%s\n' "$env_line" ;;
+      esac
+    done
+  } < "$ENV_FILE" > "$TEMP_FILE"
+  mv "$TEMP_FILE" "$ENV_FILE"
+  TEMP_FILE=""
 }
 
 ensure_env_value() {

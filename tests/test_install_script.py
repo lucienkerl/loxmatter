@@ -110,6 +110,11 @@ exec "$cmd" "$@"
 _DOCKER = """if [ "${1-}" = "compose" ] && [ "${2-}" = "version" ]; then
   echo "Docker Compose version v2.30.0"
 fi
+if [ "${1-}" = "ps" ]; then
+  for container in ${FAKE_CONTAINERS-}; do
+    echo "$container"
+  done
+fi
 exit 0
 """
 
@@ -703,3 +708,33 @@ def test_ein_schluessel_wird_ersetzt_nicht_angehaengt(installer):
         if line.startswith("COMPOSE_PROFILES=")
     ]
     assert len(lines) == 1
+
+
+def test_rueckwaertsstrich_im_wert_bleibt_erhalten(installer):
+    # `awk -v value=...` verarbeitet Escapes: ein Rueckwaertsstrich wurde
+    # stillschweigend geschluckt, aus \t wurde ein echter Tabulator.
+    result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": r"/dev/serial/by-id/a\tb"})
+    assert result.returncode == 0
+    assert r"RADIO_DEVICE=/dev/serial/by-id/a\tb" in result.env_file.read_text()
+
+
+def test_altinstallation_behaelt_ihren_border_router(installer):
+    # Eine .env von vor den Compose-Profilen kennt COMPOSE_PROFILES nicht.
+    # Ein leerer Wert naehme dem naechsten `compose up` den otbr-Dienst weg -
+    # deshalb entscheidet dann der laufende Container.
+    first = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
+    assert first.returncode == 0
+    ohne = "\n".join(
+        line
+        for line in first.env_file.read_text().splitlines()
+        if not line.startswith("COMPOSE_PROFILES=")
+    )
+    first.env_file.write_text(ohne + "\n")
+    second = installer(env={"FAKE_CONTAINERS": "otbr matter-server loxmatter"})
+    assert second.returncode == 0
+    values = dict(
+        line.split("=", 1)
+        for line in second.env_file.read_text().splitlines()
+        if "=" in line and not line.startswith("#")
+    )
+    assert values["COMPOSE_PROFILES"] == "thread"
