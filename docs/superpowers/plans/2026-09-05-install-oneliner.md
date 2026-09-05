@@ -313,8 +313,22 @@ INSTALLER = REPO_ROOT / "install.sh"
 # Echte Werkzeuge, die das Skript benutzen darf. Alles andere kommt aus
 # einem Stub oder gilt als nicht installiert.
 SYSTEM_TOOLS = (
-    "sh", "cat", "grep", "sed", "awk", "tr", "od", "mkdir", "rm", "mv",
-    "sleep", "chmod", "cp", "printf", "true", "false",
+    "sh",
+    "cat",
+    "grep",
+    "sed",
+    "awk",
+    "tr",
+    "od",
+    "mkdir",
+    "rm",
+    "mv",
+    "sleep",
+    "chmod",
+    "cp",
+    "printf",
+    "true",
+    "false",
 )
 
 _UNAME = """case "${1-}" in
@@ -456,11 +470,7 @@ def installer(tmp_path):
 
         def write(directory, name, body):
             path = directory / name
-            path.write_text(
-                "#!/bin/sh\n"
-                f"printf '%s\\n' \"{name} $*\" >> \"$STUB_LOG\"\n"
-                f"{body}"
-            )
+            path.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "{name} $*" >> "$STUB_LOG"\n{body}')
             path.chmod(0o755)
 
         # templates/ kennt alles, bin/ nur das, was auf diesem Host "da" ist.
@@ -506,7 +516,7 @@ def test_unbekanntes_argument_bricht_ab(installer):
 
 
 def test_macos_wird_abgewiesen(installer):
-    result = installer(stubs={"uname": 'echo Darwin\n'})
+    result = installer(stubs={"uname": "echo Darwin\n"})
     assert result.returncode == 2
     assert "needs Linux" in result.output
     assert not (result.home / "loxmatter").exists()
@@ -853,8 +863,25 @@ Expected: alle zehn FAIL — die Prüfungen gibt es noch nicht, das Skript endet
 
 ```python
 SYSTEM_TOOLS = (
-    "sh", "cat", "grep", "sed", "awk", "tr", "od", "mkdir", "rm", "mv",
-    "sleep", "chmod", "cp", "printf", "true", "false", "env", "tail", "head",
+    "sh",
+    "cat",
+    "grep",
+    "sed",
+    "awk",
+    "tr",
+    "od",
+    "mkdir",
+    "rm",
+    "mv",
+    "sleep",
+    "chmod",
+    "cp",
+    "printf",
+    "true",
+    "false",
+    "env",
+    "tail",
+    "head",
     "mktemp",
 )
 ```
@@ -1170,9 +1197,7 @@ def test_docker_kommt_nach_den_basispaketen(installer):
     result = installer(omit=("git", "curl", "docker"))
     assert result.returncode == 0
     apt = next(i for i, c in enumerate(result.calls) if c.startswith("apt-get install"))
-    docker_install = next(
-        i for i, c in enumerate(result.calls) if "get.docker.com" in c
-    )
+    docker_install = next(i for i, c in enumerate(result.calls) if "get.docker.com" in c)
     assert apt < docker_install
 
 
@@ -1646,7 +1671,8 @@ def test_nur_der_fehlende_schluessel_wird_ergaenzt(installer):
 def test_ein_schluessel_wird_ersetzt_nicht_angehaengt(installer):
     result = installer()
     lines = [
-        line for line in result.env_file.read_text().splitlines()
+        line
+        for line in result.env_file.read_text().splitlines()
         if line.startswith("COMPOSE_PROFILES=")
     ]
     assert len(lines) == 1
@@ -2174,8 +2200,6 @@ def test_wifi_bericht_schlaegt_keinen_watchdog_vor(installer):
     result = installer()
     assert "otbr-watchdog.sh" not in result.output
     assert "COMPOSE_PROFILES=thread" in result.output  # so ruestet man nach
-
-
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
