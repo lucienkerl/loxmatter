@@ -39,7 +39,7 @@ device, without network access or real hardware:
 git clone git@github.com:lucienkerl/loxmatter.git
 cd loxmatter
 uv sync
-uv run pytest                                                    # Testsuite, ohne Hardware
+uv run pytest                                                    # test suite, no hardware
 uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
 ```
 
@@ -95,7 +95,7 @@ With real hardware:
 
 ```bash
 uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
-uv run loxmatter inspect --node 12          # gegen laufenden matter-server
+uv run loxmatter inspect --node 12          # against a running matter-server
 ```
 
 The first call works today with no further preparation. The second needs a

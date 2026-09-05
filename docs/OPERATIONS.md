@@ -1,4 +1,4 @@
-# Running loxmatter
+# Operations
 
 [Back to the README](../README.md)
 
@@ -12,14 +12,13 @@ Connects permanently to matter-server and to the Miniserver and starts an
 HTTP service (default port 8080, `--listen`) that serves two things at the
 same time:
 
-- `/cmd` and `/resync` for the Miniserver (virtual outputs) — unchanged
-  since phase 4.
+- `/cmd` and `/resync` for the Miniserver (virtual outputs).
 - `/` and `/api/*` for a browser interface: commission devices, view them,
   name them, switch them, export templates, diagnostics.
 
-**The "System" view** has shown three streams continuously since the live
-feed (2026-09-03), instead of only at the push of a button: log lines, the
-UDP capture and the command log. The log lines are the same ones
+**The "System" view** shows three streams continuously, instead of only at
+the push of a button: log lines, the UDP capture and the command log. The
+log lines are the same ones
 `docker logs` shows — only without shell access to the host, from level INFO
 upwards. A click on "Pause" pauses the display without stopping the running
 capture; "Hide heartbeat and full-resend" filters only the display, not what
@@ -49,18 +48,17 @@ it that have to be imported one by one. Instead of importing templates one
 at a time, an existing Loxone project file can be uploaded — the tool
 reconciles it against the stored devices and returns a patched version for
 download. Updates to virtual inputs/outputs that already exist, and new
-signals within devices that already exist, are the default. **Completely
-new device
-containers are experimental** and are only included via an explicit checkbox
-in the WebUI: the ID scheme needed for new objects is derived from a single
-real project file, is not officially documented and is **not verified**. If
-the project has never had a virtual input or output of this kind (no
-`VirtualInCaption`/`VirtualOutCaption` section), that same experimental path
-now creates this section automatically along with it, instead of locking the
-checkbox — no more manual preparation in Loxone Config, but one more
-unverified object in the chain. Before trusting this path for the first
-time: open a file patched this way in Loxone Config once and check it for
-errors. Details:
+signals within devices that already exist, are the default. **Completely new
+device containers are experimental** and are only included via an explicit
+checkbox in the WebUI: the ID scheme needed for new objects is derived from a
+single real project file, is not officially documented and is **not
+verified**. If the project has never had a virtual input or output of this
+kind (no `VirtualInCaption`/`VirtualOutCaption` section), that same
+experimental path now creates this section automatically along with it,
+instead of locking the checkbox — no more manual preparation in Loxone
+Config, but one more unverified object in the chain. Before trusting this
+path for the first time: open a file patched this way in Loxone Config once
+and check it for errors. Details:
 [project file sync design](superpowers/specs/2026-09-03-projektdatei-sync-design.md).
 
 ## Updating when devices are already commissioned

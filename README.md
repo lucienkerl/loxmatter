@@ -28,7 +28,9 @@ on your own hardware that reads devices generically — no curated list of suppo
 models, so a device bought tomorrow works today — and hands Loxone something it already
 understands. That held without exception for attributes in testing; event detection is
 FeatureMap-based and cluster-specific instead, since neither test device advertised an
-`EventList`.
+`EventList`. Details, numbers and the consequences are in the design spec's validation
+section,
+[section 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
 
 ## ✨ What you can do
 
@@ -116,9 +118,9 @@ CLI too.
 
 </td>
 <td width="50%" valign="top">
-<img src="docs/screenshots/export.png" alt="Project file sync card and template export card" />
+<img src="docs/screenshots/export.png" alt="Project file sync card, template export card and a filled-in export preview table" />
 
-**Export**<br>Upload a project file for a patched copy, or take the per-device template files — with the bridge address and ports they use shown alongside.
+**Export**<br>Upload a project file for a patched copy, or generate the per-device template files — with the bridge address and ports they use shown alongside, and a preview of what each file will contain before anything downloads.
 
 </td>
 </tr>
@@ -130,9 +132,9 @@ CLI too.
 
 </td>
 <td width="50%" valign="top">
-<img src="docs/screenshots/system.png" alt="Live log lines, UDP capture and command log" />
+<img src="docs/screenshots/system.png" alt="Live diagnostics controls above log, UDP capture and command log panes" />
 
-**System**<br>Log lines, the UDP capture and the command log, all running live; the Matter fabric backup is pulled from here too.
+**System**<br>Three live panes below the diagnostics controls — the command log fills as requests come in; log lines and UDP capture stream the same way once a real `matter-server` and device traffic sit behind the bridge. The Matter fabric backup is pulled from here too.
 
 </td>
 </tr>
@@ -205,9 +207,12 @@ For a real setup — Docker stack with `otbr`, `matter-server` and the bridge �
 
 ## 🗺 Status
 
-Working and validated against two real IKEA devices on a running `matter-server`:
-commissioning, signal extraction, the template export, the runtime path in both
-directions, the web interface and its access control.
+**Built:** commissioning, signal extraction, the template export, the runtime path in
+both directions, the web interface and its access control.
+
+**Validated** against two real IKEA devices on a running `matter-server`:
+commissioning, signal extraction, the runtime path in both directions, and the web
+interface with its access control.
 
 **Not yet done: the run against a real Miniserver.** The generated templates have only
 been checked against a rebuilt Miniserver, never imported into Loxone Config.

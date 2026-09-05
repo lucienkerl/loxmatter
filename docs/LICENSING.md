@@ -2,6 +2,15 @@
 
 [Back to the README](../README.md)
 
+## Why `GPL-3.0-or-later`
+
+The licence is stated as `GPL-3.0-or-later`, not `-only`: a later version of
+the GPL may be used as well. That is the form the Free Software Foundation
+recommends.
+
+A closed product may not come out of this — that is the purpose of this
+choice.
+
 ## Third-party software
 
 All dependencies are permissively licensed and compatible with GPL-3.0:
