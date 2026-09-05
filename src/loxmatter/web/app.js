@@ -1515,14 +1515,25 @@ function app() {
         // Mal in `this.devices` ab: zwei Kacheln mit derselben
         // `device.id`, was `x-for`s `:key="device.id"` verletzt (Alpine
         // warnt in der Konsole ueber doppelte Schluessel) und den
-        // Raum-Chip doppelt zaehlen liess. Ersetzt wird deshalb die
-        // bestehende Karte, falls eine mit dieser ID schon da ist -
-        // andernfalls wird neu angehaengt.
+        // Raum-Chip doppelt zaehlen liess. Bei einer schon vorhandenen
+        // Karte wird deshalb in das bestehende Objekt hineingeschrieben,
+        // statt es im Array auszutauschen - andernfalls wird neu
+        // angehaengt.
         const existingIndex = this.devices.findIndex((d) => d.id === device.id);
         if (existingIndex === -1) {
           this.devices.push(device);
         } else {
-          this.devices[existingIndex] = device;
+          // `saveRoom` (oben) und `saveLabel` halten sich vor ihrem
+          // `await` eine Referenz auf genau dieses Geraete-Objekt und
+          // schreiben erst danach hinein (`Object.assign(device,
+          // updated)`). Ein hier eingesetztes neues Objekt liesse jene
+          // Referenz auf einem aus dem Array entkoppelten Exemplar sitzen
+          // - der Save meldete keinen Fehler, aber weder die Kachel noch
+          // `this.devices` saehen das Ergebnis, und der anschliessend aus
+          // dem verwaisten Objekt geschriebene `roomSelectDrafts`-Eintrag
+          // koennte dann vom tatsaechlich gespeicherten Raum abweichen.
+          // Deshalb wird das vorhandene Objekt befuellt statt ersetzt.
+          Object.assign(this.devices[existingIndex], device);
         }
         // Fund 3 (Re-Review 2026-09-05): ohne diesen Aufruf blieb
         // `roomSelectDrafts[device.id]` `undefined`, Alpines `x-model`

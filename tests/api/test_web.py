@@ -1189,13 +1189,18 @@ async def test_commission_device_syncs_the_room_draft_and_avoids_duplicate_tiles
 
     Ohne Browser-Engine laesst sich weder das tatsaechliche
     `roomSelectDrafts` nach einem Klick pruefen noch ein doppelter
-    Alpine-Key-Warnhinweis in der Konsole - belegt wird deshalb der
-    ausgelieferte Methodenkoerper: er sucht per `findIndex` nach einem
-    bereits vorhandenen Geraet mit derselben ID, ersetzt es dort statt
-    ein zweites Mal anzuhaengen, haengt andernfalls neu an, und ruft in
-    JEDEM Fall `syncRoomSelectDraft(device)` auf - vor der ersten
-    `await`-Stelle danach (`loadControls`/`loadSignals`), damit die Kachel
-    nie mit einem veralteten Entwurf sichtbar wird."""
+    Alpine-Key-Warnhinweis in der Konsole, und schon gar nicht die Race
+    gegen ein zeitgleich laufendes `saveRoom`/`saveLabel` (das sich vor
+    seinem eigenen `await` eine Objekt-Referenz merkt) - belegt wird
+    deshalb der ausgelieferte Methodenkoerper: er sucht per `findIndex`
+    nach einem bereits vorhandenen Geraet mit derselben ID, befuellt bei
+    einem Treffer das bestehende Objekt per `Object.assign` statt es im
+    Array auszutauschen (sonst schriebe ein spaeter aufloesendes
+    `saveRoom`/`saveLabel` in ein aus dem Array entkoppeltes Exemplar),
+    haengt andernfalls neu an, und ruft in JEDEM Fall
+    `syncRoomSelectDraft(device)` auf - vor der ersten `await`-Stelle
+    danach (`loadControls`/`loadSignals`), damit die Kachel nie mit einem
+    veralteten Entwurf sichtbar wird."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     commission_start = script.index("async commissionDevice() {")
@@ -1206,7 +1211,7 @@ async def test_commission_device_syncs_the_room_draft_and_avoids_duplicate_tiles
         "const existingIndex = this.devices.findIndex((d) => d.id === device.id);"
     )
     assert "this.devices.push(device);" in body
-    assert "this.devices[existingIndex] = device;" in body
+    assert "Object.assign(this.devices[existingIndex], device);" in body
     sync_index = body.index("this.syncRoomSelectDraft(device);")
     controls_index = body.index("await Promise.all([this.loadControls(device.id)")
     assert push_index < sync_index < controls_index, body
