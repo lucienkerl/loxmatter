@@ -376,8 +376,11 @@ esac
 exit 0
 """
 
-# Die get.docker.com-Ausgabe wird vom Skript in `sh` gepipet - sie legt
-# deshalb den docker-Stub an, statt nur erfolgreich zu sein.
+# Die get.docker.com-Ausgabe wird vom Skript ausgefuehrt - sie legt deshalb
+# den docker-Stub an, statt nur erfolgreich zu sein. ACHTUNG: das Skript ruft
+# curl mit `-o <datei>` auf (siehe Aufgabe 4, der Download darf nicht in eine
+# Pipe gehen), der Stub muss `-o` also auswerten und dorthin schreiben, statt
+# die URL blind als letztes Argument zu lesen.
 _CURL = """for a in "$@"; do last="$a"; done
 case "$last" in
   *get.docker.com*)
@@ -837,6 +840,7 @@ Expected: alle zehn FAIL — die Prüfungen gibt es noch nicht, das Skript endet
 SYSTEM_TOOLS = (
     "sh", "cat", "grep", "sed", "awk", "tr", "od", "mkdir", "rm", "mv",
     "sleep", "chmod", "cp", "printf", "true", "false", "env", "tail", "head",
+    "mktemp",
 )
 ```
 
@@ -1246,13 +1250,23 @@ install_docker() {
     note "would run: curl -fsSL $DOCKER_INSTALL_URL | sh"
     return 0
   fi
-  if [ -n "$SUDO" ]; then
-    curl -fsSL "$DOCKER_INSTALL_URL" | sudo sh ||
-      die "The Docker installer failed. Nothing else was changed."
-  else
-    curl -fsSL "$DOCKER_INSTALL_URL" | sh ||
-      die "The Docker installer failed. Nothing else was changed."
+  # Downloaded to a file first, NOT piped straight into sh. Without pipefail
+  # a pipeline reports the status of its LAST command, and an `sh` reading the
+  # empty stdin left by a failed download exits 0 - so `curl ... | sh || die`
+  # reads a network failure as a successful install and walks on into
+  # usermod, having promised it would not. Writing the file makes curl's own
+  # status observable.
+  docker_script="$(mktemp)" || die "Could not create a temporary file."
+  if ! curl -fsSL "$DOCKER_INSTALL_URL" -o "$docker_script"; then
+    rm -f "$docker_script"
+    die "Could not download the Docker installer from $DOCKER_INSTALL_URL.
+Is this machine online? Nothing was changed."
   fi
+  if ! run_root sh "$docker_script"; then
+    rm -f "$docker_script"
+    die "The Docker installer failed. Nothing else was changed."
+  fi
+  rm -f "$docker_script"
   if [ -n "$SUDO" ]; then
     docker_user="$(id -un)"
     run_root usermod -aG docker "$docker_user" ||
@@ -1274,7 +1288,9 @@ then run this again."
   note "docker compose is available"
 }
 
-# The only way this script calls Docker.
+# How this script runs Docker commands that start or change something. The
+# read-only probe in collect_missing stays a direct `docker compose version`
+# on purpose: it must run in a dry run too, and dk would suppress it.
 dk() {
   if [ "$DRY_RUN" -eq 1 ]; then
     note "would run: docker $*"
@@ -1298,7 +1314,7 @@ dk() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 21 passed.
+Expected: 22 passed.
 
 - [ ] **Step 5: shellcheck**
 
@@ -1416,7 +1432,7 @@ Move it aside, or pass --dir with a different path."
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 24 passed.
+Expected: 25 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1706,7 +1722,7 @@ configure() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 32 passed.
+Expected: 33 passed.
 
 - [ ] **Step 5: shellcheck und Formatierung**
 
@@ -1966,7 +1982,7 @@ run_checks() {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 37 passed.
+Expected: 38 passed.
 
 **Hinweis für die Abnahme:** `check_rfkill` lässt sich hier nicht gezielt auslösen — auf macOS fehlt `/sys` ganz, auf CI-Runnern ist `/sys/class/rfkill` üblicherweise leer. Getestet ist nur, dass die Funktion beide Fälle übersteht. Der Befund selbst zeigt sich erst auf einem echten Pi.
 
@@ -2147,7 +2163,7 @@ main "$@"
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 42 passed.
+Expected: 43 passed.
 
 - [ ] **Step 5: Vollständiger Durchlauf aller Prüfungen**
 
