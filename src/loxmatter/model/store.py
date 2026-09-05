@@ -745,6 +745,17 @@ def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
         return None
 
 
+def _normalized_room(room: str | None) -> str | None:
+    """Ein Raumname ohne aeusseren Leerraum; was danach leer ist, wird `None`.
+
+    Eine Stelle statt drei: `set_room`, `register_device` und `rename_room`
+    stellen dieselbe Frage, und ein Raum " Bad" neben "Bad" waeren zwei
+    Raeume in der Oberflaeche, ohne dass jemand den Unterschied saehe."""
+    if room is None:
+        return None
+    return room.strip() or None
+
+
 @dataclass(frozen=True)
 class StoredDevice:
     """Eine Zeile aus `device` (Spec 5) - fuer die Geraete-API (Task 2, Phase 5).
@@ -887,7 +898,7 @@ class Store:
         """Faellt auf die Node-ID zurueck: manche Geraete melden keine UniqueID (Spec 7.2)."""
         return snapshot.unique_id or f"node:{snapshot.node_id}"
 
-    def register_device(self, snapshot: NodeSnapshot) -> int:
+    def register_device(self, snapshot: NodeSnapshot, room: str | None = None) -> int:
         identity = self._device_identity(snapshot)
         row = self._db.execute(
             "SELECT id FROM device WHERE unique_id = ? AND active = 1", (identity,)
@@ -897,9 +908,16 @@ class Store:
 
         label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or identity
         cur = self._db.execute(
-            "INSERT INTO device (unique_id, node_id, label, udp_port, updated_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (identity, snapshot.node_id, label, DEFAULT_UDP_PORT, self._now()),
+            "INSERT INTO device (unique_id, node_id, label, udp_port, updated_at, room)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                identity,
+                snapshot.node_id,
+                label,
+                DEFAULT_UDP_PORT,
+                self._now(),
+                _normalized_room(room),
+            ),
         )
         self._db.commit()
         device_id = cur.lastrowid
@@ -964,6 +982,53 @@ class Store:
             (label, self._now(), device_id),
         )
         self._db.commit()
+
+    def set_room(self, device_id: int, room: str | None) -> None:
+        """Setzt den Raum eines Geraets (`PATCH /api/devices/{device_id}`).
+
+        **Fasst `updated_at` bewusst NICHT an** - der eine Punkt, an dem
+        diese Methode von `rename_device` direkt darueber abweicht. Dessen
+        Docstring nennt den Grund fuer das Gegenteil: das Label landet im
+        naechsten Export als `Title` in der Vorlage, also fuehrt
+        `GET /api/export/status` das Geraet danach zu Recht als "seither
+        geaendert". Der Raum landet in keiner Vorlage. Wuerde er `updated_at`
+        mitsetzen, bekaeme beim ersten Aufraeumen der Raumzuordnung jedes
+        Geraet eine amber Pille und die Aufforderung zu einem Export, der
+        genau dieselben Dateien erzeugt wie der letzte.
+
+        Wie `rename_device` ohne Existenzpruefung: die aufrufende Route
+        prueft ueber `device()` und meldet 404, bevor es hierher kommt."""
+        self._db.execute(
+            "UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id)
+        )
+        self._db.commit()
+
+    def rename_room(self, old: str, new: str) -> int:
+        """Benennt einen Raum an allen aktiven Geraeten um und gibt zurueck,
+        wie viele es waren (`POST /api/rooms/rename`).
+
+        Es gibt keine Raum-Tabelle (Entwurf 3.2), also ist "Raum umbenennen"
+        kein Schreibvorgang auf einem Objekt, sondern dieser eine
+        Massenschreibvorgang. Die Alternative waere, an jedem Geraet einzeln
+        einen neuen Raumnamen einzutippen - bei fuenf Geraeten fuenf
+        Gelegenheiten fuer einen Tippfehler, der einen sechsten Raum erzeugt.
+
+        `active = 1` aus demselben Grund, aus dem `devices()` danach filtert:
+        ein entferntes Geraet ist aus Sicht der Oberflaeche nicht mehr da.
+
+        Ein bereits belegter Zielname fuehrt beide Raeume zusammen; die
+        Rueckfrage davor ist Sache der Oberflaeche, nicht dieser Methode.
+        Ein leerer Zielname dagegen wird hier abgewiesen: "umbenennen" ist
+        nicht der Weg, einen Raum aufzuloesen - dafuer gibt es `set_room`
+        mit `None` an jedem einzelnen Geraet."""
+        target = _normalized_room(new)
+        if target is None:
+            raise ValueError(i18n.t("api.devices.room_name_required"))
+        cur = self._db.execute(
+            "UPDATE device SET room = ? WHERE room = ? AND active = 1", (target, old)
+        )
+        self._db.commit()
+        return int(cur.rowcount)
 
     def mark_exported(self, device_id: int) -> None:
         """Setzt `exported_at` auf jetzt (Task 5, Phase 5).

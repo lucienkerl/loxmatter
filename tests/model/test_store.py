@@ -554,3 +554,106 @@ def test_decode_device_types_of_non_iterable_id_list_is_none():
 
 def test_decode_device_types_of_non_object_json_is_none():
     assert _decode_device_types("[1, 2]") is None
+
+
+def test_set_room_stores_the_name_and_trims_it(tmp_path):
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(load("ikea_grillplats_plug.json"))
+        store.set_room(device_id, "  Wohnzimmer  ")
+        assert store.device(device_id).room == "Wohnzimmer"
+    finally:
+        store.close()
+
+
+def test_set_room_with_blank_input_clears_the_room(tmp_path):
+    """Ein Name aus reinem Leerraum hat eine eindeutige Bedeutung - "kein
+    Raum" - und ist deshalb kein Fehlerfall, sondern derselbe Weg wie ein
+    ausdrueckliches `None`."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(load("ikea_grillplats_plug.json"))
+        store.set_room(device_id, "Bad")
+        store.set_room(device_id, "   ")
+        assert store.device(device_id).room is None
+    finally:
+        store.close()
+
+
+def test_set_room_does_not_touch_updated_at(tmp_path):
+    """Der Kern der Entscheidung aus Abschnitt 3.3 des Entwurfs: der Raum
+    landet in KEINER Exportvorlage. Wuerde `set_room` `updated_at` mitsetzen,
+    bekaeme beim ersten Aufraeumen der Raumzuordnung jedes Geraet eine amber
+    "geaendert seit Export"-Pille und die Aufforderung zu einem Export, der
+    Byte fuer Byte dieselben Dateien erzeugt. `rename_device` setzt es
+    dagegen zu Recht - das Label wird als `Title` exportiert."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(load("ikea_grillplats_plug.json"))
+        before = store.device(device_id).updated_at
+        store.set_room(device_id, "Flur")
+        assert store.device(device_id).updated_at == before
+    finally:
+        store.close()
+
+
+def test_register_device_takes_a_room(tmp_path):
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
+        assert store.device(device_id).room == "Küche"
+    finally:
+        store.close()
+
+
+def test_rename_room_moves_every_device_and_reports_the_count(tmp_path):
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        plug = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
+        button = store.register_device(load("ikea_bilresa_button.json"), room="Küche")
+        assert store.rename_room("Küche", "Essbereich") == 2
+        assert store.device(plug).room == "Essbereich"
+        assert store.device(button).room == "Essbereich"
+    finally:
+        store.close()
+
+
+def test_rename_room_merges_into_an_existing_room(tmp_path):
+    """Ein Zielname, den es schon gibt, fuehrt beide Raeume zusammen - die
+    naheliegende Bedeutung von "nenne Kueche jetzt Essbereich", wenn es
+    einen Essbereich schon gibt. Die Oberflaeche fragt vorher nach; der
+    Store fuehrt nur aus."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        plug = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
+        button = store.register_device(load("ikea_bilresa_button.json"), room="Essbereich")
+        assert store.rename_room("Küche", "Essbereich") == 1
+        assert store.device(plug).room == "Essbereich"
+        assert store.device(button).room == "Essbereich"
+    finally:
+        store.close()
+
+
+def test_rename_room_leaves_removed_devices_alone(tmp_path):
+    """`active = 1` in der Bedingung, aus demselben Grund, aus dem
+    `Store.devices()` danach filtert: ein entferntes Geraet ist aus Sicht
+    der Oberflaeche nicht mehr da und soll nicht stillschweigend mitwandern."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        gone = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
+        store.forget_device(gone)
+        assert store.rename_room("Küche", "Essbereich") == 0
+        row = store._db.execute("SELECT room FROM device WHERE id = ?", (gone,)).fetchone()
+        assert row["room"] == "Küche"
+    finally:
+        store.close()
+
+
+def test_rename_room_rejects_an_empty_target(tmp_path):
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
+        with pytest.raises(ValueError):
+            store.rename_room("Küche", "   ")
+    finally:
+        store.close()

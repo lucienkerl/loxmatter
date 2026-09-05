@@ -356,6 +356,9 @@ api.devices.commissioning_thread_cause:
   # api.errors.thread_dataset_*-Zeilen oben).
   en: "{detail} Likely cause: matter-server holds no Thread credentials, and this bridge could not obtain any either ({reason}). A Thread device cannot be commissioned without them — a Wi-Fi device can, in which case the cause lies elsewhere. Remedy: make the Border Router reachable, or enter the Thread dataset by hand in the field below."
   de: "{detail} Mögliche Ursache: matter-server hat keine Thread-Zugangsdaten, und diese Brücke konnte auch keine holen ({reason}). Ein Thread-Gerät lässt sich ohne sie nicht einlernen – ein WiFi-Gerät dagegen schon, dann liegt es woanders. Abhilfe: den Border Router erreichbar machen, oder den Thread-Datensatz von Hand in das Feld darunter eintragen."
+api.devices.room_name_required:
+  en: "A room name is required."
+  de: "Ein Raumname ist erforderlich."
 api.auth.fail_password_too_short:
   en: "The password must be at least {min_length} characters long."
   de: "Das Passwort muss mindestens {min_length} Zeichen haben."
