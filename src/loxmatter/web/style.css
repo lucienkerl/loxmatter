@@ -1035,7 +1035,22 @@ footer.hint-block {
  * Elternelements, nicht an dessen Layout-Modus, und bleibt darum
  * unveraendert ueber die volle (jetzt gestreckte) Kartenhoehe gespannt -
  * das ist nach dieser Aenderung erneut zu pruefen, nicht nur zu
- * behaupten. */
+ * behaupten.
+ *
+ * Fund 2 (Review vom 2026-09-05): `display: flex` hat einen zweiten,
+ * unbeabsichtigten Nebeneffekt - Margin-Collapsing gilt nur zwischen
+ * BLOCK-Boxen im normalen Fluss, ein Flex-Container erzeugt fuer seine
+ * direkten Kinder aber Flex-Items, die per Spezifikation nie kollabieren.
+ * `.value-rows` (`margin: 0.5rem 0`) und die bedingt sichtbaren
+ * `<p class="hint">`-Absaetze direkt darunter (UA-Standardmargin) haben
+ * bislang aus genau diesem Kollabieren ihren Abstand gezogen - gemessen
+ * VOR dieser Karte-wird-Flex-Aenderung 13.12px (`max(8px, 13.12px)`),
+ * seither 21.12px (`8px + 13.12px`, siehe die gezielte Korrektur bei
+ * `.value-rows` unten). `.device-foot { margin-top: auto }` (s.u.) federt
+ * das bei der Fusszeile selbst ab, weil es den gesamten Freiraum ohnehin
+ * aufsaugt - bei `.value-rows` und den Hinweis-Absaetzen faellt dieselbe
+ * Kollabier-Aufhebung aber niemandem automatisch zum Opfer, sie muss
+ * gezielt nachgebildet werden. */
 .device-grid .device-card {
   margin-bottom: 0;
   display: flex;
@@ -1271,6 +1286,34 @@ footer.hint-block {
   grid-template-columns: minmax(0, 1fr) fit-content(9rem);
   gap: 0.05rem 0.5rem;
   margin: 0.5rem 0;
+}
+
+/* Fund 2 (Review vom 2026-09-05): die Korrektur zum Margin-Collapsing, das
+ * `.device-card` als Flex-Spalte (s. Kommentar dort) fuer ihre direkten
+ * Kinder abgeschafft hat. Betroffen sind ausschliesslich die beiden
+ * bedingt sichtbaren `<p class="hint">`-Absaetze zwischen `.value-rows`
+ * und `.device-commands` (index.html: "Signale laden" bzw. "keine
+ * funktionalen Signale") - der `+`-Kettenselektor trifft ausdruecklich nur
+ * diese zwei, nicht den dritten `.hint`-Absatz ganz unten in der Karte
+ * (Miniserver-Hinweis nach `.device-foot`), dessen Abstand von dieser
+ * Aenderung unberuehrt bleiben soll.
+ *
+ * Im Browser gemessen: `.value-rows` traegt `margin-bottom: 0.5rem`
+ * (8px), der UA-Standard eines `<p>` bei dessen `font-size: 0.82rem`
+ * `margin-block: 1em` (13.12px). Vor dem Flex-Umbau kollabierten beide zu
+ * `max(8px, 13.12px)` = 13.12px, seither addieren sie sich zu 21.12px.
+ * Ein blindes `margin: 0` auf dem Absatz waere zwar der simpelste Reset,
+ * liesse die Luecke aber bei 8px stehen - kleiner als vorher, nicht "wie
+ * vorher". Stattdessen traegt NUR `margin-top` exakt die Differenz
+ * (13.12px - 8px = 5.12px = 0.32rem): zusammen mit `.value-rows`' eigenen
+ * 8px ergibt das wieder 13.12px, ohne dass hier eine zweite, unabhaengige
+ * Zahl geraten wird. `margin-bottom` bleibt bewusst unangetastet - der
+ * naechste Nachbar (`.device-commands`) traegt kein eigenes `margin-top`,
+ * dort kollabierte ohnehin nur MIT einer Null (`max(13.12px, 0)` =
+ * `13.12px + 0` sind identisch), das war also nie zusaetzlich betroffen. */
+.value-rows + p.hint,
+.value-rows + p.hint + p.hint {
+  margin-top: 0.32rem;
 }
 
 .value-row {

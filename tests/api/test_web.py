@@ -2161,6 +2161,32 @@ async def test_device_tiles_in_the_same_row_stretch_to_equal_height(api):
     assert "margin-top: auto" in foot_rule
 
 
+async def test_the_loading_and_no_signals_hints_keep_their_pre_flex_spacing(api):
+    """Fund 2 (Review vom 2026-09-05): `display: flex` auf `.device-card`
+    (s.o.) hat einen zweiten, unbeabsichtigten Nebeneffekt - Flex-Items
+    kollabieren ihre Margins nicht mehr untereinander. `.value-rows`
+    (`margin-bottom: 0.5rem`, 8px) und die beiden bedingt sichtbaren
+    `<p class="hint">`-Absaetze direkt danach (UA-Standard `margin-block:
+    1em`, bei deren `font-size: 0.82rem` 13.12px) kollabierten im Browser
+    gemessen vorher zu `max(8px, 13.12px)` = 13.12px, seither addieren sie
+    sich zu 21.12px (siehe Aufgabenbericht) - eine Kachel im Lade- oder
+    "keine funktionalen Signale"-Zustand wird dadurch sichtbar hoeher, nur
+    weil sie zufaellig eine Flex-Spalte geworden ist. Ohne Browser-Engine
+    kann diese Suite die tatsaechliche Luecke nicht nachrechnen - belegt
+    wird nur, dass die ausgelieferte Regel den beiden betroffenen Absaetzen
+    (nicht dem dritten, unabhaengigen Miniserver-Hinweis nach
+    `.device-foot`) ein kompensierendes `margin-top` von `0.32rem`
+    (13.12px - 8px) mitgibt, statt sie unveraendert zu lassen oder ihr
+    Margin komplett auf 0 zu setzen (was die Luecke auf 8px verkleinern,
+    nicht wiederherstellen wuerde)."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split(".value-rows + p.hint,\n.value-rows + p.hint + p.hint {", 1)[1].split("}", 1)[
+        0
+    ]
+    assert "margin-top: 0.32rem" in rule
+
+
 async def test_the_device_card_does_not_clip_its_overflowing_menu(api):
     """Fund 1 (Review 2026-09-05): das Kachel-Menue haengt absolut an
     `.device-card` und oeffnet nach oben ueber deren Rand hinaus. Solange
