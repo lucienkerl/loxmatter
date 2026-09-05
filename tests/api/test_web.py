@@ -958,15 +958,16 @@ async def test_the_device_card_static_text_is_translated(api):
     Geraetekarte - jeweils als reiner `x-text`, weil keiner dieser
     Schluessel eingebettetes HTML traegt.
 
-    Task 8 (Raster-Umbau, 2026-09-05) hat Export und Entfernen zu
-    Icon-Knoepfen gemacht (der Platz auf einer 260 px breiten Kachel reicht
-    nicht fuer ausgeschriebene Beschriftungen) und die beiden Werte-/
-    Bedienungs-Abschnittsueberschriften ersatzlos gestrichen - die Kachel
-    zeigt ohnehin nur noch ein einziges Werteraster ohne eigenen Titel.
-    `remove`/`export` wandern deshalb vom `x-text` in ein `:title` (die
-    Bedeutung eines Icon-only-Knopfs muss trotzdem aus `t(...)` kommen,
-    siehe Globale Vorgabe); `values_heading`/`controls_heading` bleiben
-    ungenutzt in `strings.yaml` liegen (Task 9 raeumt sie auf).
+    Task 8 (Raster-Umbau, 2026-09-05) hatte Export und Entfernen zu
+    Icon-Knoepfen mit `:title` gemacht (der Platz auf einer 260 px breiten
+    Kachel reicht nicht fuer ausgeschriebene Beschriftungen); Task 2 (Kebab-
+    Menue, 2026-09-05) hat beide von der Fusszeile ins Menue verlegt, wo
+    genug Platz fuer ausgeschriebenen Text ist - `remove`/`export` stehen
+    seither wieder als `x-text`, nicht mehr als `:title`. Die beiden Werte-/
+    Bedienungs-Abschnittsueberschriften bleiben von Task 8 ersatzlos
+    gestrichen - die Kachel zeigt ohnehin nur noch ein einziges Werteraster
+    ohne eigenen Titel; `values_heading`/`controls_heading` bleiben ungenutzt
+    in `strings.yaml` liegen (Task 9 raeumt sie auf).
 
     `no_functional_signals`, `controls_loading` und `no_known_commands`
     dagegen wurden von Task 9 zunaechst ebenfalls (verfrueht) entfernt und
@@ -983,8 +984,8 @@ async def test_the_device_card_static_text_is_translated(api):
     assert "Geändert seit Export" not in markup
     assert "x-text=\"t('web.devices.offline')\"" in markup
     assert ">Offline<" not in markup
-    assert ":title=\"t('web.devices.remove')\"" in markup
-    assert "x-text=\"t('web.devices.remove')\"" not in markup
+    assert "x-text=\"t('web.devices.remove')\"" in markup
+    assert ":title=\"t('web.devices.remove')\"" not in markup
     assert ">Entfernen<" not in markup
     assert "x-text=\"t('web.devices.values_heading')\"" not in markup
     assert ">Werte<" not in markup
@@ -1002,8 +1003,8 @@ async def test_the_device_card_static_text_is_translated(api):
     assert 'placeholder="Wert"' not in markup
     assert "x-text=\"t('web.devices.send')\"" in markup
     assert ">Senden<" not in markup
-    assert ":title=\"t('web.devices.export')\"" in markup
-    assert "x-text=\"t('web.devices.export')\"" not in markup
+    assert "x-text=\"t('web.devices.export')\"" in markup
+    assert ":title=\"t('web.devices.export')\"" not in markup
     assert ">Exportieren<" not in markup
 
 
@@ -2124,37 +2125,24 @@ async def test_the_tile_action_buttons_use_svg_symbols_not_raw_glyphs(api):
     Emoji statt eines einfarbigen Symbols und bricht damit die
     kupfer-/gedeckte Symbolsprache der uebrigen Icons.
 
-    Geprueft wird sowohl das Fehlen der alten Zeichen als `x-text`-Inhalt
-    als auch das Vorhandensein der neuen Symbole und ihrer Verwendung -
-    inklusive des `:title`, das dabei erhalten bleiben musste."""
+    Task 2 (Kebab-Menue, 2026-09-05) hat Export und Entfernen aus der
+    Fusszeile ins Menue verlegt und dabei zu ausgeschriebenen
+    Text-Schaltflaechen gemacht - dort ist Platz fuer Beschriftung statt
+    Icon, `#i-export`/`#i-remove` sind seither nirgends mehr eingebunden.
+    Nur die Umbenennen-Schaltflaeche bleibt ein Icon-Knopf und wird hier
+    weiter geprueft; das Kebab-Symbol selbst deckt
+    `test_the_tile_menu_has_its_own_icon_symbol` ab."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert "x-text=\"'✎'\"" not in page
     assert "x-text=\"'↓'\"" not in page
     assert "x-text=\"'🗑'\"" not in page
-    for symbol_id in ("i-rename", "i-export", "i-remove"):
-        assert f'id="{symbol_id}"' in page, symbol_id
-        assert f'href="#{symbol_id}"' in page, symbol_id
 
     rename_start = page.index('class="room-rename"')
     rename_end = page.index("</button>", rename_start)
     rename_button = page[rename_start:rename_end]
     assert 'href="#i-rename"' in rename_button
     assert ":title=\"t('web.devices.room_rename')\"" in rename_button
-
-    export_start = page.index("exportDevice(device)")
-    export_button_start = page.rindex("<button", 0, export_start)
-    export_button_end = page.index("</button>", export_start)
-    export_button = page[export_button_start:export_button_end]
-    assert 'href="#i-export"' in export_button
-    assert ":title=\"t('web.devices.export')\"" in export_button
-
-    remove_start = page.index("removeDevice(device)")
-    remove_button_start = page.rindex("<button", 0, remove_start)
-    remove_button_end = page.index("</button>", remove_start)
-    remove_button = page[remove_button_start:remove_button_end]
-    assert 'href="#i-remove"' in remove_button
-    assert ":title=\"t('web.devices.remove')\"" in remove_button
 
 
 async def test_the_tile_menu_has_its_own_icon_symbol(api):
@@ -2414,3 +2402,28 @@ async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
     controls_loaded_start = script.index("controlsLoaded(deviceId) {")
     controls_loaded_end = script.index("\n    },", controls_loaded_start)
     assert controls_loaded_start < controls_loaded_end
+
+
+async def test_the_tile_menu_is_a_native_details_that_closes_three_ways(api):
+    """`<details>` haelt den Auf-/Zu-Zustand im DOM - der Grund, warum das
+    Menue ueberhaupt so gebaut ist (siehe Entwurf, Abschnitt 4). Zwei der
+    drei Schliesswege muessen dennoch von Hand kommen: `<details>` schliesst
+    weder bei einem Klick daneben noch bei Escape von selbst. Der dritte,
+    der Klick auf einen Eintrag, steht an den Eintraegen."""
+    client, _store, _device_id = api
+    page = (await client.get("/")).text
+    assert 'class="tile-menu"' in page
+    assert "@click.outside" in page
+    assert "@keydown.escape" in page
+
+
+async def test_export_and_remove_moved_into_the_tile_menu(api):
+    """Beide Aktionen liegen jetzt im Menue und schliessen es beim Klick.
+    Der Export-Knopf bleibt an `bridgeSettings.bridge_ip` gebunden - ohne
+    hinterlegte Bruecken-IP gibt es nichts zu exportieren."""
+    client, _store, _device_id = api
+    page = (await client.get("/")).text
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+    assert "exportDevice(device)" in menu
+    assert "removeDevice(device)" in menu
+    assert "!bridgeSettings.bridge_ip" in menu

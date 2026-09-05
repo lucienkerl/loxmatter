@@ -613,17 +613,40 @@
                     </span>
                     <span class="hint" x-text="exportHintFor(device.id)"></span>
                     <span style="flex: 1 1 auto"></span>
-                    <button
-                      class="primary"
-                      @click="exportDevice(device)"
-                      :disabled="!bridgeSettings.bridge_ip"
-                      :title="t('web.devices.export')"
-                    ><svg class="icon"><use href="#i-export"></use></svg></button>
-                    <button
-                      class="danger"
-                      @click="removeDevice(device)"
-                      :title="t('web.devices.remove')"
-                    ><svg class="icon"><use href="#i-remove"></use></svg></button>
+                    <!-- Der Auf-/Zu-Zustand liegt im DOM, nicht in Alpine:
+                         ein `<details>` braucht kein `open`-Feld je Kachel,
+                         das mit dem sichtbaren Zustand in Deckung gehalten
+                         werden muesste. Genau diese Deckungspflicht hat das
+                         Raum-Auswahlfeld sechs Reviewrunden gekostet.
+                         `<details>` schliesst allerdings NICHT von selbst
+                         bei Escape (anders als ein `<dialog>`) und auch
+                         nicht bei einem Klick daneben - beides steht
+                         deshalb hier. Dass immer nur ein Menue offen ist,
+                         faellt dabei ab: der Klick auf den Kebab einer
+                         anderen Kachel liegt ausserhalb dieses `<details>`
+                         und schliesst es ueber denselben Wachposten. -->
+                    <details
+                      class="tile-menu"
+                      @click.outside="$el.open = false"
+                      @keydown.escape="$el.open = false"
+                    >
+                      <summary :title="t('web.devices.menu')">
+                        <svg class="icon"><use href="#i-kebab"></use></svg>
+                      </summary>
+                      <div class="tile-menu-items">
+                        <button
+                          class="tile-menu-item"
+                          @click="$el.closest('details').open = false; exportDevice(device)"
+                          :disabled="!bridgeSettings.bridge_ip"
+                          x-text="t('web.devices.export')"
+                        ></button>
+                        <button
+                          class="tile-menu-item is-danger"
+                          @click="$el.closest('details').open = false; removeDevice(device)"
+                          x-text="t('web.devices.remove')"
+                        ></button>
+                      </div>
+                    </details>
                   </div>
                   <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
                     <span x-text="t('web.devices.export_hint_prefix')"></span>

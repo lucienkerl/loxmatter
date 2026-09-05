@@ -1113,3 +1113,79 @@ footer.hint-block {
   border-top: 1px solid var(--border);
   font-size: 0.7rem;
 }
+
+/* Kachel-Menue (Entwurf Kebab-Menue, 2026-09-05).
+ *
+ * `position: relative` am `<details>`, `absolute` an der Liste: das Menue
+ * darf die Kachel ueberragen, ohne die Fusszeile hoeher zu machen. Es
+ * oeffnet nach OBEN (`bottom: 100%`), weil die Fusszeile am unteren Rand
+ * der Kachel sitzt - nach unten wuerde es die naechste Kachelreihe
+ * verdecken statt freien Platz zu nutzen. */
+.tile-menu {
+  position: relative;
+  flex: none;
+}
+
+/* Der Standard-Marker eines `<summary>` (Dreieck bzw. Disclosure-Pfeil)
+ * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
+ * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren
+ * WebKit-Fassungen. */
+.tile-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text-muted);
+  padding: 0.15rem 0.4rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tile-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tile-menu[open] > summary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tile-menu-items {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  margin-bottom: 0.25rem;
+  z-index: 5;
+  min-width: 11rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  padding: 0.25rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+}
+
+.tile-menu-item {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.tile-menu-item:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.tile-menu-item.is-danger {
+  color: var(--danger);
+}
