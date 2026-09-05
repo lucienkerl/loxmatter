@@ -2209,6 +2209,31 @@ async def test_the_tile_menu_caps_its_width_and_truncates_long_room_names(api):
     assert "white-space: nowrap" in item_rule
 
 
+async def test_the_current_room_checkmark_survives_the_width_cap(api):
+    """Review-Fund 1 (2026-09-05, Review der Nacharbeit): `.tile-menu-item.
+    is-current::after` haengt sein Haekchen als normalen Text ans
+    Zeilenende - genau dort, wo `.tile-menu-item`s `overflow: hidden;
+    text-overflow: ellipsis` (Fund 2 der Nacharbeit, s.o.) abschneidet. Im
+    Browser gemessen mit dem Raumnamen "Werkstatt im Untergeschoss hinter
+    der Heizung und dem Regal" (siehe Aufgabenbericht): `clientWidth`
+    246px, `scrollWidth` 413px, das `::after` lag 167px hinter der
+    Clip-Kante - unsichtbar, der Eintrag zeigte die Ellipse ohne jedes
+    Haekchen. Ohne Browser-Engine kann diese Suite das Abschneiden selbst
+    nicht nachstellen - belegt wird nur, dass die ausgelieferte Regel das
+    Haekchen ausserhalb des geclippten Textflusses positioniert
+    (`position: absolute` auf einem `position: relative`-Bezugsrahmen)
+    statt es dem Textinhalt zu ueberlassen, und dass der aktuelle Eintrag
+    dafuer Platz reserviert."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    item_rule = css.split(".tile-menu-item {", 1)[1].split("}", 1)[0]
+    assert "position: relative" in item_rule
+    current_rule = css.split(".tile-menu-item.is-current {", 1)[1].split("}", 1)[0]
+    assert "padding-right" in current_rule
+    after_rule = css.split(".tile-menu-item.is-current::after {", 1)[1].split("}", 1)[0]
+    assert "position: absolute" in after_rule
+
+
 async def test_room_chip_in_the_tile_menu_carries_the_full_name_as_a_title(api):
     """Ergaenzung zu Fund 2: gekuerzt mit Ellipse bleibt der volle Raumname
     nirgends sichtbar, ausser man haelt ueber dem Eintrag oder fokussiert

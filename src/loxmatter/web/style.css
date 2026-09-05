@@ -1330,6 +1330,7 @@ footer.hint-block {
 }
 
 .tile-menu-item {
+  position: relative;
   border: none;
   background: none;
   text-align: left;
@@ -1340,7 +1341,11 @@ footer.hint-block {
   /* Kappt zusammen mit dem `max-width` an `.tile-menu-items` (Begruendung
    * dort) einen zu langen Raumnamen. Export und Entfernen bleiben davon
    * unberuehrt - ihr Text ist kurz und uebersetzt, er passt immer in eine
-   * Zeile und wird nie beschnitten. */
+   * Zeile und wird nie beschnitten.
+   *
+   * `position: relative` dient als Bezugsrahmen fuer das absolut
+   * positionierte Haekchen von `.is-current::after` weiter unten -
+   * Begruendung dort, dieser Regel faellt nur die Elternrolle zu. */
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -1364,14 +1369,43 @@ footer.hint-block {
 /* Das Haekchen steht in `::after`, nicht im Text: der Eintrag traegt
  * seine Bedeutung im Raumnamen, das Haekchen bestaetigt sie nur.
  * `aria-current` im Markup sagt dasselbe fuer alles, was die Seite nicht
- * sieht. */
+ * sieht.
+ *
+ * Review-Fund 1 (2026-09-05, Review der Nacharbeit): das Haekchen sass
+ * bislang als normaler Text am ZEILENENDE - genau dort, wo
+ * `.tile-menu-item`s `overflow: hidden; text-overflow: ellipsis`
+ * (Begruendung an der Regel selbst) abschneidet. Im Browser gemessen mit
+ * dem Raumnamen "Werkstatt im Untergeschoss hinter der Heizung und dem
+ * Regal": `clientWidth` 246px, `scrollWidth` 413px, das `::after` lag
+ * 167px hinter der Clip-Kante - unsichtbar. Der Eintrag zeigte "Werkstatt
+ * im Untergeschoss hinter der He..." ganz ohne Haekchen, waehrend ein
+ * kurzer aktueller Eintrag ("Kueche") daneben weiterhin sein "Kueche ✓"
+ * zeigte - `aria-current`, `font-weight` und `color` blieben in beiden
+ * Faellen unveraendert, nur die eine sichtbare Bestaetigung der Bedeutung
+ * fehlte lautlos.
+ *
+ * Der Fix holt das Haekchen aus dem geclippten Textfluss heraus, statt
+ * die Kappung selbst anzufassen: `position: absolute` bindet es an
+ * `.tile-menu-item`s eigenes `position: relative` (s.o.) und legt es IN
+ * dessen Padding-Box - absolut positionierte Kinder haengen nicht mehr am
+ * Inhaltsfluss, den `text-overflow: ellipsis` kappt, `overflow: hidden`
+ * schneidet also nur noch den Text, nicht mehr das Haekchen.
+ * `padding-right` auf `.is-current` reserviert dafuer sichtbaren Platz,
+ * damit der gekuerzte Text nicht darunter weiterlaeuft; ein NICHT
+ * aktueller Eintrag behaelt sein schmaleres Standard-Padding und sieht
+ * unveraendert aus. */
 .tile-menu-item.is-current {
+  padding-right: 1.4rem;
   font-weight: 600;
   color: var(--accent);
 }
 
 .tile-menu-item.is-current::after {
-  content: " ✓";
+  content: "✓";
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
 }
 
 .tile-menu-input {
