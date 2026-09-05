@@ -1042,24 +1042,24 @@ In `scripts/capture_screenshots.py` den Signals-Abschnitt ersetzen. Bisher:
     shoot(page, "signals")
 ```
 
-Neu:
+Neu — beim Einsetzen um eine Ebene einrücken, der Block steht im Rumpf von `capture()`:
 
 ```python
-    # Signale haben keinen eigenen Reiter mehr (Entwurf "Signale als Modal",
-    # 2026-09-05) - das Bild entsteht jetzt aus dem Modal ueber dem
-    # Geraeteraster. Der Weg dorthin ist derselbe wie fuer einen Nutzer:
-    # Kebab der ersten Kachel, dann der Menuepunkt.
-    page.click(".device-card .tile-menu > summary")
-    page.click('.tile-menu-item:has-text("Edit signals")')
-    page.wait_for_selector("dialog.signals-modal[open]", timeout=5000)
-    # Die Expertengruppe aufklappen: zugeklappt zeigt das Bild bei den
-    # Demo-Geraeten nur zwei, drei Zeilen und viel Leerraum - der Punkt
-    # dieses Bildes sind aber gerade die Loxone-Adressen und die
-    # Export-Haken nebeneinander.
-    page.click('dialog.signals-modal details:not([open]) > summary')
-    shoot(page, "signals")
-    page.keyboard.press("Escape")
-    page.wait_for_timeout(300)
+# Signale haben keinen eigenen Reiter mehr (Entwurf "Signale als Modal",
+# 2026-09-05) - das Bild entsteht jetzt aus dem Modal ueber dem
+# Geraeteraster. Der Weg dorthin ist derselbe wie fuer einen Nutzer:
+# Kebab der ersten Kachel, dann der Menuepunkt.
+page.click(".device-card .tile-menu > summary")
+page.click('.tile-menu-item:has-text("Edit signals")')
+page.wait_for_selector("dialog.signals-modal[open]", timeout=5000)
+# Die Expertengruppe aufklappen: zugeklappt zeigt das Bild bei den
+# Demo-Geraeten nur zwei, drei Zeilen und viel Leerraum - der Punkt
+# dieses Bildes sind aber gerade die Loxone-Adressen und die
+# Export-Haken nebeneinander.
+page.click("dialog.signals-modal details:not([open]) > summary")
+shoot(page, "signals")
+page.keyboard.press("Escape")
+page.wait_for_timeout(300)
 ```
 
 Und im Kommentar über `shoot(page, "dashboard")` die Aufzählung `Devices/Signals/Export/System/Settings` auf `Devices/Export/System/Settings` korrigieren.
