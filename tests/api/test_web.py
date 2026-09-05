@@ -961,14 +961,22 @@ async def test_the_device_card_static_text_is_translated(api):
     Task 8 (Raster-Umbau, 2026-09-05) hat Export und Entfernen zu
     Icon-Knoepfen gemacht (der Platz auf einer 260 px breiten Kachel reicht
     nicht fuer ausgeschriebene Beschriftungen) und die beiden Werte-/
-    Bedienungs-Abschnittsueberschriften samt ihren Ladehinweisen
-    ersatzlos gestrichen - die Kachel zeigt ohnehin nur noch ein einziges
-    Werteraster ohne eigenen Titel. `remove`/`export` wandern deshalb vom
-    `x-text` in ein `:title` (die Bedeutung eines Icon-only-Knopfs muss
-    trotzdem aus `t(...)` kommen, siehe Globale Vorgabe), die vier
-    entfallenen Schluessel (`values_heading`, `no_functional_signals`,
-    `controls_heading`, `controls_loading`, `no_known_commands`) bleiben
-    ungenutzt in `strings.yaml` liegen (Task 9 raeumt sie auf)."""
+    Bedienungs-Abschnittsueberschriften ersatzlos gestrichen - die Kachel
+    zeigt ohnehin nur noch ein einziges Werteraster ohne eigenen Titel.
+    `remove`/`export` wandern deshalb vom `x-text` in ein `:title` (die
+    Bedeutung eines Icon-only-Knopfs muss trotzdem aus `t(...)` kommen,
+    siehe Globale Vorgabe); `values_heading`/`controls_heading` bleiben
+    ungenutzt in `strings.yaml` liegen (Task 9 raeumt sie auf).
+
+    `no_functional_signals`, `controls_loading` und `no_known_commands`
+    dagegen wurden von Task 9 zunaechst ebenfalls (verfrueht) entfernt und
+    sind seit Fund 1 der Review vom 2026-09-05 wieder da: ohne sie war ein
+    Geraet mit leeren funktionalen Signalen bzw. ein noch ladender/
+    fehlgeschlagener Befehlsabruf nicht von einer echten Leermenge zu
+    unterscheiden - genau die Sorte stillschweigend falscher Zustand, die
+    Spec 8.1 ausschliessen will (siehe
+    `test_the_command_bar_distinguishes_loading_from_genuinely_empty` fuer
+    den ausfuehrlichen Beleg dieses Funds)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert "x-text=\"t('web.devices.changed_since_export')\"" in markup
@@ -982,14 +990,14 @@ async def test_the_device_card_static_text_is_translated(api):
     assert ">Werte<" not in markup
     assert "x-text=\"t('web.devices.signals_loading')\"" in markup
     assert "Signale werden geladen" not in markup
-    assert "x-text=\"t('web.devices.no_functional_signals')\"" not in markup
+    assert "x-text=\"t('web.devices.no_functional_signals')\"" in markup
     assert "Keine funktionalen Signale" not in markup
     assert "x-text=\"t('web.devices.controls_heading')\"" not in markup
     assert ">Bedienung<" not in markup
-    assert "x-text=\"t('web.devices.controls_loading')\"" not in markup
-    assert "Bedienelemente werden geladen" not in markup
-    assert "x-text=\"t('web.devices.no_known_commands')\"" not in markup
-    assert "Keine bekannten Ausgangsbefehle" not in markup
+    assert "x-text=\"t('web.devices.controls_loading')\"" in markup
+    assert "Befehle werden geladen" not in markup
+    assert "x-text=\"t('web.devices.no_known_commands')\"" in markup
+    assert "Keine bekannten Befehle" not in markup
     assert ":placeholder=\"t('web.devices.value_placeholder')\"" in markup
     assert 'placeholder="Wert"' not in markup
     assert "x-text=\"t('web.devices.send')\"" in markup
@@ -2218,3 +2226,50 @@ async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_va
     rename_end = script.index("\n    },", rename_start)
     rename_body = script[rename_start:rename_end]
     assert "this.reconcileRoomFilter();" in rename_body
+
+
+async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
+    """Fund 3 (Review vom 2026-09-05): Der Kachel-Umbau hatte die beiden
+    Hinweise verloren, die frueher auf `controlsLoaded(device.id)` gattert
+    waren, und der nachfolgende i18n-Aufraeumdurchgang loeschte daraufhin
+    konsequent - aber verfrueht - die dazugehoerigen Schluessel
+    `web.devices.controls_loading` und `web.devices.no_known_commands`.
+    `controlsLoaded()` blieb als tote Funktion zurueck, deren eigener
+    Docstring ihre Notwendigkeit begruendete (Spec 8.1: ein Fehlschlag darf
+    nicht als harmloser Zustand erscheinen) - ohne dass irgendetwas sie
+    noch aufrief. Ohne die Unterscheidung rendert ein Geraet, dessen
+    `/controls`-Abruf fehlgeschlagen oder noch nicht fertig ist, denselben
+    leeren, umrandeten Streifen wie ein Geraet ganz ohne Befehle: die
+    stillschweigend falsche Anzeige, die Spec 8.1 gerade ausschliessen
+    will.
+
+    Analog fuer Signale: `web.devices.no_functional_signals` wurde
+    ebenfalls geloescht, wodurch eine Kachel mit geladenen, aber leeren
+    funktionalen Signalen (`leadSignalFor` liefert `null`) zwischen
+    Kopfzeile und Befehlsleiste stillschweigend eine Luecke zeigte -
+    ununterscheidbar von einer noch ladenden Kachel.
+
+    Belegt wird, dass beide Unterscheidungen wieder ausgeliefert werden und
+    `controlsLoaded` dabei tatsaechlich (wieder) verwendet wird - nicht,
+    dass Alpine sie im Browser korrekt umschaltet."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+
+    assert "controlsLoaded(device.id)" in page
+    assert "t('web.devices.controls_loading')" in page
+    assert "t('web.devices.no_known_commands')" in page
+    assert "t('web.devices.no_functional_signals')" in page
+
+    commands_start = page.index('class="device-commands"')
+    commands_end = page.index("</div>", commands_start)
+    device_commands = page[commands_start:commands_end]
+    assert 'x-show="!controlsLoaded(device.id)"' in device_commands
+    assert (
+        'x-show="controlsLoaded(device.id) && commandsFor(device.id).length === 0'
+        in device_commands
+    )
+
+    controls_loaded_start = script.index("controlsLoaded(deviceId) {")
+    controls_loaded_end = script.index("\n    },", controls_loaded_start)
+    assert controls_loaded_start < controls_loaded_end

@@ -437,6 +437,17 @@
                     </span>
                   </div>
                   <p class="hint" x-show="!signalsByDevice[device.id]" x-text="t('web.devices.signals_loading')"></p>
+                  <!-- Fund 3: ohne diesen Hinweis blieb zwischen Kopfzeile
+                       und Befehlsleiste stillschweigend eine Luecke, sobald
+                       ein Geraet geladene, aber leere funktionale Signale
+                       hat (`leadSignalFor` liefert dann `null`, die
+                       `value-rows` bleiben ohne Inhalt) - nicht von einem
+                       noch ladenden Geraet zu unterscheiden. -->
+                  <p
+                    class="hint"
+                    x-show="signalsByDevice[device.id] && !leadSignalFor(device.id)"
+                    x-text="t('web.devices.no_functional_signals')"
+                  ></p>
 
                   <div class="device-commands">
                     <template x-for="command in commandsFor(device.id)" :key="command.key">
@@ -467,6 +478,26 @@
                       class="hint"
                       x-show="hiddenRawCommandsFor(device.id) > 0"
                       x-text="'+' + hiddenRawCommandsFor(device.id) + ' ' + t('web.devices.more_commands_short')"
+                    ></span>
+                    <!-- Fund 3: `controlsLoaded()` unterscheidet "noch nicht
+                         geladen oder Abruf fehlgeschlagen" von "geladen, aber
+                         tatsaechlich keine Befehle" - ohne diese beiden
+                         Zeilen rendert die Kachel in BEIDEN Faellen denselben
+                         leeren, umrandeten Streifen (Spec 8.1: ein
+                         Fehlschlag darf nicht als harmloser Zustand
+                         erscheinen). Der Fehlertext selbst laeuft weiterhin
+                         separat ueber das `deviceActionError`-Banner (siehe
+                         `loadControls`) - hier geht es nur um die
+                         Kachel-Anzeige. -->
+                    <span
+                      class="hint"
+                      x-show="!controlsLoaded(device.id)"
+                      x-text="t('web.devices.controls_loading')"
+                    ></span>
+                    <span
+                      class="hint"
+                      x-show="controlsLoaded(device.id) && commandsFor(device.id).length === 0 && hiddenRawCommandsFor(device.id) === 0"
+                      x-text="t('web.devices.no_known_commands')"
                     ></span>
                   </div>
 

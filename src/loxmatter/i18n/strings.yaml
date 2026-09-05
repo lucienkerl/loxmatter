@@ -652,6 +652,15 @@ web.devices.remove:
 web.devices.signals_loading:
   en: "Loading signals…"
   de: "Signale werden geladen…"
+web.devices.no_functional_signals:
+  en: "No functional signals."
+  de: "Keine funktionalen Signale."
+web.devices.controls_loading:
+  en: "Loading commands…"
+  de: "Befehle werden geladen…"
+web.devices.no_known_commands:
+  en: "No known commands."
+  de: "Keine bekannten Befehle."
 web.devices.value_placeholder:
   en: "Value"
   de: "Wert"

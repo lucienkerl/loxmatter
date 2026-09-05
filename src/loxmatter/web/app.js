@@ -673,11 +673,12 @@ function app() {
       // aus Phase 6, hier uebernommen): bei einer 401 legt
       // `loadControls`/`loadSignals` gar keinen Eintrag an - der
       // Zwischenspeicher bleibt leer, und ein leerer Eintrag ist von "dieses
-      // Geraet hat keine Befehle" nicht zu unterscheiden. Ohne dieses Leeren
-      // zeigte ein aufgeklapptes Geraet nach der Neuanmeldung dauerhaft
-      // "Keine bekannten Ausgangsbefehle", obwohl es drei gibt, und nur ein
-      // Neuladen der Seite half. Genau die Sorte stillschweigend falscher
-      // Zustand, die Spec 8.1 ausschliessen will.
+      // Geraet hat keine Befehle" nicht zu unterscheiden (siehe
+      // `controlsLoaded`). Ohne dieses Leeren zeigte eine Kachel nach der
+      // Neuanmeldung dauerhaft den Hinweis "keine bekannten Befehle", obwohl
+      // das Geraet welche hat, und nur ein Neuladen der Seite half. Genau
+      // die Sorte stillschweigend falscher Zustand, die Spec 8.1
+      // ausschliessen will.
       this.backupError = null;
       this.exportError = null;
       this.deviceActionError = null;
@@ -866,10 +867,16 @@ function app() {
     /**
      * Ob die Bedienelemente dieses Geraets ueberhaupt geladen werden
      * konnten. Ohne diese Unterscheidung rendert die Oberflaeche einen
-     * fehlgeschlagenen Abruf als "Keine bekannten Ausgangsbefehle" - eine
-     * Aussage ueber das Geraet, wo in Wahrheit eine ueber die Verbindung
-     * faellig waere (Spec 8.1: ein Fehlschlag darf nicht als harmloser
-     * Zustand erscheinen).
+     * fehlgeschlagenen (oder noch laufenden) Abruf als "keine bekannten
+     * Befehle" - eine Aussage ueber das Geraet, wo in Wahrheit eine ueber
+     * die Verbindung faellig waere (Spec 8.1: ein Fehlschlag darf nicht als
+     * harmloser Zustand erscheinen). `index.html` nutzt dies, um zwischen
+     * "noch nicht geladen/fehlgeschlagen" (`web.devices.controls_loading`)
+     * und "geladen, aber tatsaechlich keine Befehle"
+     * (`web.devices.no_known_commands`) zu unterscheiden - der Fehlertext
+     * selbst laeuft weiterhin ueber `deviceActionError` (siehe
+     * `loadControls`), hier geht es nur um das Vermeiden der falschen
+     * Kachel-Anzeige.
      */
     controlsLoaded(deviceId) {
       // Direkter Zugriff, kein `hasOwnProperty` - siehe `isOnline`.
