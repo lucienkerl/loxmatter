@@ -108,6 +108,28 @@ Erfolg gemeldet, während die eigentliche Brücke unverändert gesperrt
 bliebe. Er bricht deshalb mit einem klaren Fehler ab, wenn die angegebene
 Datenbank nicht existiert, statt eine neue anzulegen.
 
+## WiFi/Ethernet-only (ohne Thread-Funkmodul)
+
+Der `otbr`-Dienst steht seit dem 5. September 2026 hinter dem Compose-Profil
+`thread`. Wer nur WLAN- oder Ethernet-Matter-Geräte anbinden will, lässt
+`COMPOSE_PROFILES` in der `.env` leer — dann wird der Border Router gar nicht
+erzeugt, und `RADIO_DEVICE`, `RADIO_BAUDRATE` und `BACKBONE_IF` bleiben
+wirkungslos.
+
+**Warum das nötig war:** `otbr` reicht mit `devices: -
+${RADIO_DEVICE}:${RADIO_DEVICE}` ein echtes Gerät durch. Steckt kein Funkmodul,
+scheitert `docker compose up` mit „error gathering device information" — und
+zwar für den *gesamten* Stack, auch für die beiden Dienste, die das Modul nie
+gebraucht hätten.
+
+**BLE bleibt in beiden Betriebsarten nötig.** Auch ein WLAN-Matter-Gerät wird
+über Bluetooth eingelernt; `BLUETOOTH_ADAPTER` und der rfkill-Abschnitt weiter
+unten gelten unverändert.
+
+**Nachrüsten:** Funkmodul stecken, in der `.env` `COMPOSE_PROFILES=thread`
+setzen und `RADIO_DEVICE` auf den richtigen Pfad, dann `docker compose up -d`.
+Der `start-stop-daemon`-Workaround weiter unten wird ab dann wieder gebraucht.
+
 ## Aktualisieren
 
 Auf dem Rechner, auf dem die Brücke läuft:

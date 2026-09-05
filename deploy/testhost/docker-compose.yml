@@ -42,6 +42,14 @@ services:
   otbr:
     image: openthread/otbr:latest
     container_name: otbr
+    # Nur mit aktivem Profil "thread" (2026-09-05). Dieser Dienst reicht mit
+    # `devices:` unten ein echtes Geraet durch - fehlt das Funkmodul, scheitert
+    # `docker compose up` fuer den GESAMTEN Stack, auch fuer jemanden, der nur
+    # WLAN-Matter-Geraete anbinden will. Hinter einem Profil bleibt der Rest
+    # startbar; eingeschaltet wird es ueber COMPOSE_PROFILES in der .env, das
+    # Compose von sich aus liest - deshalb braucht kein spaeterer Aufruf und
+    # kein Skript ein `--profile` mitzuschleppen.
+    profiles: ["thread"]
     network_mode: host
     privileged: true
     restart: unless-stopped
@@ -123,8 +131,12 @@ services:
       - /data/credentials
       - --bluetooth-adapter
       - "${BLUETOOTH_ADAPTER:-0}"
-    depends_on:
-      - otbr
+    # Kein `depends_on: otbr` mehr (2026-09-05): Compose bricht ab, wenn ein
+    # aktiver Dienst von einem profil-deaktivierten abhaengt. Inhaltlich
+    # folgenlos - `depends_on` steuert die Startreihenfolge, nicht die
+    # Bereitschaft, und matter-server braucht den Border Router beim Start
+    # nicht: Thread-Kommissionierung laeuft spaeter ueber das Host-Netz, in
+    # dem otbr mit `network_mode: host` ohnehin steht.
 
   loxmatter:
     build:

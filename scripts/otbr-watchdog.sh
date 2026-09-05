@@ -43,6 +43,15 @@ SERVICE="otbr"
 STACK="$(cd "$(dirname "${BASH_SOURCE[0]}")/../deploy/testhost" && pwd)"
 STAMP="$(date '+%Y-%m-%d %H:%M:%S')"
 
+# Im WiFi/Ethernet-only-Betrieb (COMPOSE_PROFILES ohne "thread", siehe
+# deploy/testhost/.env) gibt es diesen Dienst gar nicht. Ohne diese Bremse
+# faende der Waechter nie eine Thread-Schnittstelle, versuchte alle fuenf
+# Minuten einen Neustart und schriebe jedes Mal einen Fehlschlag ins Log -
+# aus einem Aufpasser wuerde eine Lawine.
+if ! docker ps -a --format '{{.Names}}' | grep -qx "$SERVICE"; then
+  exit 0
+fi
+
 thread_is_up() {
   # Scope 00 heisst geroutet (ULA eingeschlossen); wpan* ist die
   # Thread-Schnittstelle von OTBR.
