@@ -1180,6 +1180,37 @@ async def test_the_remove_confirm_dialog_text_comes_from_t(api):
     assert "In Loxone bleiben danach verwaist" not in script
 
 
+async def test_remove_device_reconciles_the_room_filter_and_drops_its_draft(api):
+    """Fund 1 (Re-Review 2026-09-05): `removeDevice` mutierte `this.devices`
+    direkt und rief weder `reconcileRoomFilter()` noch ein Neuladen auf.
+    Filtert man auf einen Raum und loescht dessen letztes Geraet, bleibt
+    `roomFilter` auf dem verschwundenen Namen stehen: keine Kachel mehr
+    sichtbar, kein Chip mehr aktiv - und war es der letzte Raum ueberhaupt,
+    verschwindet sogar die ganze Chip-Leiste (`hasAnyRoom()` dann false,
+    siehe index.html), also auch der "Alle"-Chip, der den Ausweg boete.
+    Reines Neuladen der Seite war der einzige Ausweg.
+
+    Ohne eine Browser-Engine laesst sich weder `roomFilter` noch das
+    gerenderte Markup nach einem Klick pruefen (siehe die anderen Tests in
+    dieser Datei, die dasselbe eingestehen). Belegt wird deshalb, dass der
+    ausgelieferte Methodenkoerper von `removeDevice` selbst nach dem
+    Entfernen aus `this.devices` sowohl `reconcileRoomFilter()` aufruft
+    als auch den zugehoerigen Eintrag in `roomSelectDrafts` loescht -
+    dieselbe Aufraeum-Regel wie fuer `controlsByDevice`/`signalsByDevice`
+    zwei Zeilen darueber, die es schon vorher gab."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    remove_start = script.index("async removeDevice(device) {")
+    remove_end = script.index("\n    },", remove_start)
+    remove_body = script[remove_start:remove_end]
+
+    filter_index = remove_body.index("(d) => d.id !== device.id)")
+    reconcile_index = remove_body.index("this.reconcileRoomFilter();")
+    drafts_index = remove_body.index("delete this.roomSelectDrafts[device.id];")
+    assert filter_index < reconcile_index < drafts_index, remove_body
+
+
 async def test_the_signal_view_static_text_is_translated(api):
     """Aufgabe 12, Schritt 3: die beiden erklaerenden Hinweise, der
     Schaltertext, der "Signale laden"-Knopf, der leer-Hinweis fuer den

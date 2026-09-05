@@ -1351,6 +1351,25 @@ function app() {
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
+        // Fund 1 (Re-Review 2026-09-05): loescht man das letzte Geraet
+        // eines gefilterten Raums, verschwindet dessen Chip aus
+        // `roomChips()`, aber ohne diesen Aufruf bliebe `roomFilter` auf
+        // dem Namen stehen - keine Kachel mehr sichtbar, kein Chip mehr
+        // aktiv, und (war es der letzte Raum ueberhaupt) sogar die ganze
+        // Chip-Leiste weg (`hasAnyRoom()` dann false, siehe index.html),
+        // also auch kein "Alle"-Chip mehr zum Zurueckkommen. Reines
+        // Neuladen war der einzige Ausweg. `reconcileRoomFilter` deckt
+        // genau das ab (siehe dort) und wird hier aus demselben Grund wie
+        // in `saveRoom`/`commitRenameRoom` aufgerufen: eine Schreibstelle,
+        // die den gefilterten Raum zum Verschwinden bringen kann, ruft sie
+        // danach auf.
+        this.reconcileRoomFilter();
+        // Dieselbe Kachel-Auswahlliste, die `saveRoom`/`commitNewRoom`
+        // pflegen (siehe `roomSelectDrafts` oben) - ein geloeschtes Geraet
+        // braucht keinen Eintrag mehr, sonst waechst die Map ueber die
+        // Sitzung hinweg um Leichen, genau wie bei den beiden Zeilen
+        // darueber.
+        delete this.roomSelectDrafts[device.id];
       } catch (error) {
         this.deviceActionError = t("web.devices.remove_error", { message: error.message });
       }
