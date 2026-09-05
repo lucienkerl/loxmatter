@@ -633,7 +633,7 @@
                         <button
                           class="tile-menu-item tile-menu-new"
                           x-show="newRoomFor !== device.id"
-                          @click="beginNewRoom(device); $nextTick(() => $el.parentElement.querySelector('.tile-menu-input').focus())"
+                          @click="beginNewRoom(device); $nextTick(() => $el.parentElement.querySelector('.tile-menu-input')?.focus())"
                           x-text="t('web.devices.room_new')"
                         ></button>
                         <!-- Das Textfeld ist ein Kind des `<details>`, das
@@ -673,7 +673,20 @@
                              scheidet aus denselben Gruenden aus wie oben,
                              darum dieselbe `$el.parentElement.querySelector`-
                              Suche, nur mit der stabilen zweiten Klasse
-                             `.tile-menu-new` als Ziel. -->
+                             `.tile-menu-new` als Ziel.
+
+                             Fund 4 (Re-Review 2026-09-05): das `?.` vor
+                             `.focus()` am Fokus-Ruf des "+ Neuer Raum"-
+                             Knopfes oben laesst eine verfehlte Suche
+                             ergebnislos verpuffen statt einen `TypeError`
+                             zu werfen. Heute unerreichbar, weil dieses
+                             Feld unbedingt im selben `.tile-menu-items`
+                             gerendert wird (nur per `x-show` versteckt,
+                             nicht per `x-if` entfernt) - derselbe Fehlgriff
+                             wie bei `closeTileMenu` (app.js, Fund 4): der
+                             Fokus-Ruf soll bei einem Fehlschlag folgenlos
+                             bleiben, nicht mit einem unbehandelten Wurf in
+                             der `$nextTick`-Mikrotask enden. -->
                         <input
                           x-show="newRoomFor === device.id"
                           x-cloak

@@ -1178,10 +1178,21 @@ function app() {
     // verhindert zusaetzlich das Zurueckspringen fuer den verbleibenden,
     // tatsaechlich berechtigten Fall. Diese Wache NICHT vereinfachen - ohne
     // sie ist der Regressions-Fall (Klick/Escape ausserhalb) wieder da.
+    //
+    // Fund 4 (Re-Review 2026-09-05): `closest("details")` liefert `null`,
+    // wenn `el` (entgegen der obigen Voraussetzung) einmal AUSSERHALB eines
+    // `<details>` liegt - jeder heutige Aufruf haelt diese Voraussetzung
+    // ein, aber ein `TypeError` beim Dereferenzieren wuerde stillschweigend
+    // den Rest des Inline-Ausdrucks verschlucken, in dem `closeTileMenu`
+    // steht. An zwei Stellen in index.html folgt in DERSELBEN Zeile noch
+    // `saveRoom(...)` - ein Wurf hier wuerde die Raumzuweisung des Nutzers
+    // kommentarlos verwerfen, statt nur den (ohnehin ueberfluessigen)
+    // Fokus-Ruf zu verpassen. `?.` macht den Ausfall folgenlos statt den
+    // Geschwisteraufruf mitzureissen.
     closeTileMenu(el) {
       const menu = el.closest("details");
-      const hadFocus = menu.contains(document.activeElement);
-      menu.open = false;
+      const hadFocus = menu?.contains(document.activeElement);
+      if (menu) menu.open = false;
       if (hadFocus) menu.querySelector("summary").focus({ preventScroll: true });
     },
 
