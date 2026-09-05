@@ -35,6 +35,7 @@ from pathlib import Path
 
 import uvicorn
 
+from loxmatter.auth.passwords import hash_password
 from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
@@ -43,6 +44,40 @@ from loxmatter.model.store import Store
 from loxmatter.profiles.table import Exportability
 
 FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures" / "nodes"
+
+DEMO_PASSWORD = "loxmatter-demo"
+
+# Reihenfolge bestimmt die Reihenfolge in der Geraeteliste - die Steckdose
+# zuerst, weil ihre Signalliste den Unterschied funktional/Experte am besten
+# zeigt (ueber hundert Signale, davon eine Handvoll funktional).
+DEMO_DEVICES = [
+    ("ikea_grillplats_plug.json", "Coffee machine"),
+    ("example_light.json", "Living room lamp"),
+    ("synthetic_color_light.json", "Kitchen spots"),
+    ("ikea_bilresa_button.json", "Hallway button"),
+]
+
+
+def _ensure_demo_devices(store: Store) -> list[int]:
+    """Wie `_ensure_devices`, aber vier Geraete mit englischen Namen: die
+    README-Screenshots zeigen eine englische Oberflaeche, deutsche
+    Geraetenamen darin saehen nach Versehen aus."""
+    if store.devices():
+        return [device.id for device in store.devices()]
+
+    device_ids: list[int] = []
+    for filename, label in DEMO_DEVICES:
+        snapshot = _load_snapshot(filename)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.rename_device(device_id, label)
+        device_ids.append(device_id)
+
+    # Ein Geraet gilt als bereits exportiert, damit die Export-Vorschau beide
+    # Faelle nebeneinander zeigt statt vier gleich aussehender Zeilen.
+    store.mark_exported(device_ids[0])
+    return device_ids
 
 
 def _load_snapshot(name: str) -> NodeSnapshot:
@@ -99,10 +134,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--store-path",
         type=Path,
-        default=Path(tempfile.gettempdir()) / "loxmatter-dev-web.sqlite",
+        default=None,
         help="Datenbankdatei (Default: eine feste Datei im Temp-Verzeichnis).",
     )
     parser.add_argument("--port", type=int, default=8420)
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help=(
+            "Vier Geraete mit englischen Namen, Passwort und Bridge-Einstellungen "
+            "vorbelegt, Datenbank bei jedem Start frisch - fuer die README-Screenshots."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -141,13 +184,27 @@ def _seed_values(store: Store, device_ids: list[int]) -> dict[str, float | bool]
 
 def main() -> None:
     args = _parse_args()
-    store = Store(args.store_path)
-    device_ids = _ensure_devices(store)
-    values = _seed_values(store, device_ids)
 
+    # Eigene Datenbankdatei fuer den Demo-Betrieb, und die faellt bei jedem
+    # Start neu an: nur so entstehen aus demselben Aufruf zweimal dieselben
+    # Screenshots. Der normale Entwicklungsbetrieb behaelt seinen Bestand.
+    default_name = "loxmatter-demo-web.sqlite" if args.demo else "loxmatter-dev-web.sqlite"
+    store_path = args.store_path or Path(tempfile.gettempdir()) / default_name
+    if args.demo and args.store_path is None:
+        store_path.unlink(missing_ok=True)
+
+    store = Store(store_path)
+    if args.demo:
+        store.auth.reset_password(hash_password(DEMO_PASSWORD))
+        store.settings.save(bridge_ip="192.168.1.50", udp_port=7000, listen_port=8080)
+        device_ids = _ensure_demo_devices(store)
+    else:
+        device_ids = _ensure_devices(store)
+
+    values = _seed_values(store, device_ids)
     runtime = _SeededRuntime(values)
     app = build_app(store, _invoke, runtime)
-    print(f"Datenbank: {args.store_path}")
+    print(f"Datenbank: {store_path}")
     print(f"WebUI: http://127.0.0.1:{args.port}")
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 
