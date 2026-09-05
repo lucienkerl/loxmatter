@@ -1294,6 +1294,24 @@ footer.hint-block {
   border-top: 1px solid var(--border);
 }
 
+/* `.row + .row { margin-top: 0.5rem }` (weiter oben in dieser Datei) ist
+ * fuer VERTIKAL gestapelte Zeilen gedacht. Jeder Befehl steckt in einem
+ * eigenen `<span class="row">`-Wrapper (index.html), hier aber NEBENEINANDER
+ * in derselben Flex-Zeile von `.device-commands` (`align-items: center`) -
+ * ein Top-Margin schiebt so einen Wrapper nicht nach unten, sondern
+ * innerhalb der zentrierten Zeile aus der Mitte nach OBEN. Gemessen: der
+ * Knopf im ersten (margin-losen) Wrapper stand bei `top: 976.1`, die
+ * beiden folgenden bei `top: 980.1` - 4px versetzt trotz identischer
+ * Knopfhoehe (30.9px bei allen drei). Der Wrapper braucht den Rest von
+ * `.row` weiterhin (Flex, `gap`, Zentrierung der Inline-Werteingabe bei
+ * `command.takes_value`) - nur nicht dessen Stapel-Margin, die hier keine
+ * stapelnden Zeilen vorfindet. Deshalb ein gezielter Override statt einer
+ * Streichung an `.row + .row` selbst: der bleibt fuer jede vertikale
+ * Verwendung anderswo unangetastet. */
+.device-commands > .row + .row {
+  margin-top: 0;
+}
+
 .device-foot {
   display: flex;
   align-items: center;

@@ -2376,6 +2376,30 @@ async def test_offline_footer_divider_matches_the_dimmed_commands_divider(api):
     assert "opacity" not in foot_offline_rule
 
 
+async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
+    """Nacharbeit 2026-09-05, Fund 3: jeder Befehl steckt in einem eigenen
+    `<span class="row">`-Wrapper (index.html), und `.row + .row {
+    margin-top: 0.5rem }` (weiter oben in dieser Datei) ist fuer vertikal
+    GESTAPELTE Zeilen gedacht. In `.device-commands` sitzen die Wrapper
+    aber NEBENEINANDER in derselben zentrierten Flex-Zeile - ein
+    Top-Margin schiebt einen Wrapper darin nicht nach unten, sondern
+    innerhalb der zentrierten Zeile nach OBEN. Im Browser gemessen: alle
+    drei Befehlsknoepfe sind gleich hoch (30.9px), der erste (margin-lose)
+    stand aber bei `top: 976.1`, die beiden folgenden bei `top: 980.1`
+    (siehe Aufgabenbericht). Ohne Browser-Engine kann diese Suite den
+    Versatz selbst nicht nachrechnen - belegt wird nur, dass
+    `.device-commands` das Stapel-Margin gezielt auf 0 setzt, statt das
+    Element (das Flex/`gap`/Zentrierung weiterhin braucht) ganz von `.row`
+    zu loesen."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    override_rule = css.split(".device-commands > .row + .row {", 1)[1].split("}", 1)[0]
+    assert "margin-top: 0;" in override_rule
+    # Die allgemeine, fuer vertikale Stapel gedachte Regel muss unangetastet
+    # bleiben - der Fix ist ein gezielter Override, keine Streichung.
+    assert ".row + .row {\n  margin-top: 0.5rem;\n}" in css
+
+
 async def test_lead_value_gets_padding_room_for_descenders(api):
     """Fund 4 (Nacharbeit 2026-09-05): `.lead-value` schneidet bei
     `line-height: 1.05` und `overflow: hidden` die Unterlaengen textwertiger
