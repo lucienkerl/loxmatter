@@ -1157,10 +1157,32 @@ function app() {
     // eigenen Fokus-Rufs an jedem der fuenf Schliess-Handler in
     // index.html - genau die Wiederholung, die Fund 1 bei `newRoomFor`
     // schon einmal falsch gemacht hat.
+    //
+    // Fund 1 (Re-Review 2026-09-05): der bedingungslose Fokus-Ruf oben traf
+    // nicht nur die eigentlichen Schliesswege, sondern auch den `outside`-
+    // Listener von Alpine, der auf `document` in der Bubble-Phase haengt -
+    // also NACHDEM der Browser den geklickten Ausseneinstiegs-Punkt beim
+    // Mousedown bereits fokussiert hat. Im echten Browser gemessen: bei
+    // offenem Kachel-Menue ins Suchfeld geklickt, `document.activeElement`
+    // war danach `SUMMARY` statt des Suchfelds - die Tastatur ging an ein
+    // `<summary>` irgendwo im Geraeteraster, der Nutzer haette ein zweites
+    // Mal klicken muessen. Dasselbe gilt fuer `.window`-Escape: Escape beim
+    // Tippen in einem voelllig unbeteiligten Feld reisst den Fokus zu einem
+    // offenen Kebab woanders, und weil `focus()` seinen Ziel-Knoten in die
+    // Ansicht scrollt, springt die Seite dabei sogar zurueck zu dessen
+    // Kachel. `hadFocus` haelt fest, ob der Fokus VOR dem Schliessen
+    // ueberhaupt im Menue stand (Tastaturbedienung: ein Eintrag aktiviert,
+    // Escape im Feld/Menue) - nur dann darf `closeTileMenu` ihn umlenken.
+    // Bei einem Aussenklick steht er nie im Menue, der Ruf bleibt aus, und
+    // der Browser laesst das anvisierte Element in Ruhe. `preventScroll`
+    // verhindert zusaetzlich das Zurueckspringen fuer den verbleibenden,
+    // tatsaechlich berechtigten Fall. Diese Wache NICHT vereinfachen - ohne
+    // sie ist der Regressions-Fall (Klick/Escape ausserhalb) wieder da.
     closeTileMenu(el) {
       const menu = el.closest("details");
+      const hadFocus = menu.contains(document.activeElement);
       menu.open = false;
-      menu.querySelector("summary").focus();
+      if (hadFocus) menu.querySelector("summary").focus({ preventScroll: true });
     },
 
     beginNewRoom(device) {
