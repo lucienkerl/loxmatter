@@ -1215,12 +1215,25 @@ footer.hint-block {
   color: var(--accent);
 }
 
+/* Fund 1 (Nacharbeit 2026-09-05): `z-index: 5` lag unter dem `z-index: 10`
+ * des sticky `header.app-header` (Zeile ~116) - fuer eine Kachel in der
+ * ersten Reihe schiebt sich der nach OBEN oeffnende Menue-Rand unter die
+ * Kopfzeile. Im Browser gemessen: Menue-Oberkante bei y=48, Kopfzeile-
+ * Unterkante bei y=56, `document.elementFromPoint` an der Menue-Oberkante
+ * liefert die Kopfzeile statt des Menues - die Kopfzeile ist obenauf
+ * gezeichnet und "schluckt" den ersten Eintrag optisch wie auch fuer
+ * Klicks. `z-index: 20` gewinnt bewusst gegen die Kopfzeile: das Menue ist
+ * ein transientes, vom Nutzer selbst geoeffnetes Bedienelement, das er
+ * gerade aktiv anschaut - die Kopfzeile ist dauerhaftes Chrome, das er nie
+ * gezielt "ansteuert". Wer hier eine der beiden Zahlen anhebt, ohne dieses
+ * Verhaeltnis zu kennen, riskiert das Gegenteil: eine Kopfzeile, die wieder
+ * ueber jedem offenen Menue schwebt. */
 .tile-menu-items {
   position: absolute;
   right: 0;
   bottom: 100%;
   margin-bottom: 0.25rem;
-  z-index: 5;
+  z-index: 20;
   min-width: 11rem;
   max-height: 60vh;
   overflow-y: auto;

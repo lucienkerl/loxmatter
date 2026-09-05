@@ -2166,6 +2166,26 @@ async def test_the_device_card_stripe_is_rounded_on_its_own(api):
     assert "border-radius" in rule
 
 
+async def test_the_tile_menu_outranks_the_sticky_header(api):
+    """Fund 1 (Nacharbeit 2026-09-05): `.tile-menu-items` oeffnet nach OBEN
+    ueber den Kachelrand hinaus (s.o.) und kann dabei bis unter die sticky
+    Kopfzeile (`header.app-header`, `z-index: 10`) reichen, sobald eine
+    Kachel der ersten Reihe ihr Menue oeffnet. Im echten Browser gemessen
+    (siehe Aufgabenbericht): Menue-Oberkante bei y=48, Kopfzeile-Unterkante
+    bei y=56, `document.elementFromPoint` an der Menue-Oberkante lieferte
+    die Kopfzeile statt des Menues - ohne Browser-Engine kann diese Suite
+    das Uebermalen selbst nicht nachstellen, belegt wird nur, dass die
+    ausgelieferte Regel einen hoeheren `z-index` traegt als die Kopfzeile
+    und nicht wieder darunter faellt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    header_rule = css.split("header.app-header {", 1)[1].split("}", 1)[0]
+    header_z_index = int(re.search(r"z-index:\s*(\d+)", header_rule).group(1))
+    menu_rule = css.split(".tile-menu-items {", 1)[1].split("}", 1)[0]
+    menu_z_index = int(re.search(r"z-index:\s*(\d+)", menu_rule).group(1))
+    assert menu_z_index > header_z_index
+
+
 async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
     """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man ueber das
     Kachel-Menue das letzte Geraet eines gefilterten Raums in einen
