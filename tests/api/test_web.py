@@ -2263,21 +2263,24 @@ async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
     assert controls_loaded_start < controls_loaded_end
 
 
-async def test_the_tile_menu_is_a_native_details_that_closes_three_ways(api):
+async def test_the_tile_menu_is_a_native_details_that_closes_four_ways(api):
     """`<details>` haelt den Auf-/Zu-Zustand im DOM - der Grund, warum das
-    Menue ueberhaupt so gebaut ist (siehe Entwurf, Abschnitt 4). Zwei der
-    drei Schliesswege muessen dennoch von Hand kommen: `<details>` schliesst
-    weder bei einem Klick daneben noch bei Escape von selbst. Der dritte,
-    der Klick auf einen Eintrag, steht an den Eintraegen.
+    Menue ueberhaupt so gebaut ist (siehe Entwurf, Abschnitt 4). Drei der
+    vier Schliesswege muessen dennoch von Hand kommen: `<details>` schliesst
+    weder bei einem Klick daneben noch bei Escape von selbst, und Enter im
+    Neu-Raum-Feld committet den Entwurf statt bloss zu schliessen. Der
+    vierte, der Klick auf einen Eintrag (Raum, Export, Entfernen), steht an
+    den Eintraegen selbst.
 
     Geprueft wird ausschliesslich im Kachel-Menue-Block, nicht seitenweit:
     `@keydown.escape` (ohne `.window`) steht auch am Raum-Umbenennen-Feld
     (`room-rename-input`) - ein seitenweiter `in page`-Test bliebe selbst
     dann gruen, wenn der eigene Escape-Wachposten des Menues geloescht
     wuerde, solange irgendwo sonst auf der Seite `@keydown.escape`
-    vorkommt. Der dritte Weg wird ueber `closeTileMenu($el)` belegt, das
-    JEDER Eintrag beim Klick aufruft (siehe `closeTileMenu` in app.js, das
-    dort tatsaechlich `open = false` setzt)."""
+    vorkommt. Die uebrigen Wege laufen ueber `closeTileMenu($el)`, das
+    JEDER Eintrag beim Klick UND der Enter-Handler des Neu-Raum-Felds
+    aufrufen (siehe `closeTileMenu` in app.js, das dort tatsaechlich
+    `open = false` setzt)."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -2302,21 +2305,34 @@ async def test_the_tile_menu_resets_new_room_mode_on_every_close(api):
     einen Raumeintrag liessen `newRoomFor` auf der Geraete-ID stehen, obwohl
     das Menue sichtbar zu ist: beim naechsten Oeffnen zeigte die Kachel ein
     leeres Neu-Raum-Feld statt des "+ Neuer Raum"-Knopfes - im Browser
-    gemessen (siehe Aufgabenbericht): `newRoomFor` blieb nach einem
-    Aussenklick auf der ID des Geraets stehen, und beim Wiedereroeffnen war
+    gemessen: `newRoomFor` blieb nach einem Aussenklick auf der ID des
+    Geraets stehen, und beim Wiedereroeffnen war
     `newRoomButtonVisible: false, strayInputVisible: true`.
 
     Der Fix haengt an `@toggle` statt an jedem der vier Schliesswege
     einzeln: `<details>` feuert `toggle` bei JEDER Zustandsaenderung, gleich
     aus welchem Grund, und ist damit die einzige Stelle, die den
-    Neu-Raum-Zustand noch kennen muss."""
+    Neu-Raum-Zustand noch kennen muss.
+
+    Fund 5 (Re-Review 2026-09-05): fixierte diese Pruefung noch den
+    gesamten Inline-Ausdruck zeichengenau - Leerzeichen und
+    Anfuehrungszeichen eingeschlossen. Der naheliegende naechste Umbau
+    (den Ausdruck wie `closeTileMenu` in eine Methode ziehen) haette sie
+    bei unveraendertem Verhalten zerschossen. Geprueft wird deshalb nur
+    noch die Absicht: das `<details>` traegt ein `@toggle`, und dessen
+    Ausdruck setzt bei Uebereinstimmung mit der Geraete-ID `newRoomFor`
+    und `newRoomDraft` zurueck - nicht mehr, in welcher exakten Schreibweise
+    das geschieht."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
-    assert (
-        '@toggle="if (!$el.open && newRoomFor === device.id) '
-        "{ newRoomFor = null; newRoomDraft = '' }\""
-    ) in menu
+    assert "@toggle=" in menu
+    toggle_value_start = menu.index('@toggle="') + len('@toggle="')
+    toggle_value_end = menu.index('"', toggle_value_start)
+    toggle_expr = menu[toggle_value_start:toggle_value_end]
+    assert "newRoomFor === device.id" in toggle_expr
+    assert "newRoomFor = null" in toggle_expr
+    assert "newRoomDraft = ''" in toggle_expr
 
 
 async def test_the_tile_menu_escape_listener_is_window_scoped(api):
