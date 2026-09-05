@@ -908,8 +908,9 @@ class Store:
 
         label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or identity
         cur = self._db.execute(
-            "INSERT INTO device (unique_id, node_id, label, udp_port, updated_at, room)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO device"
+            " (unique_id, node_id, label, udp_port, updated_at, room, device_types)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 identity,
                 snapshot.node_id,
@@ -917,6 +918,7 @@ class Store:
                 DEFAULT_UDP_PORT,
                 self._now(),
                 _normalized_room(room),
+                _encode_device_types(device_types_by_endpoint(snapshot)),
             ),
         )
         self._db.commit()
@@ -1002,6 +1004,45 @@ class Store:
             "UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id)
         )
         self._db.commit()
+
+    def backfill_device_types(self, snapshots: Sequence[NodeSnapshot]) -> int:
+        """Traegt `device.device_types` fuer Geraete nach, die noch keine
+        haben, und gibt zurueck, wie viele das waren.
+
+        Aufgerufen beim Start der Bruecke, direkt neben
+        `runtime.seed_from_snapshot(await client.snapshots())` (`cli.py`) -
+        die Abbilder aller erreichbaren Knoten sind dort bereits geholt, ein
+        zweiter Abruf waere reine Verschwendung.
+
+        **Nur `device_types IS NULL`.** Ein bereits nachgetragenes Geraet
+        wird nicht bei jedem Start neu geschrieben, und ein Geraet, das
+        gerade offline ist und deshalb in `snapshots()` fehlt, verliert
+        seine Typen nicht - hier wird ausschliesslich gefuellt, nie geleert.
+
+        Ob ein Geraet, dessen Typen sich beim erneuten Interview aendern
+        (etwa nach einem Firmware-Update), eine Aktualisierung bekommen
+        soll, ist bewusst offen gelassen (Entwurf, offener Punkt 2): der
+        Fall ist nie beobachtet worden und bekommt keine Mechanik auf
+        Verdacht.
+
+        Fasst `updated_at` nicht an - dieselbe Begruendung wie bei
+        `set_room`: die Geraetetypen landen in keiner Exportvorlage."""
+        by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
+        rows = self._db.execute(
+            "SELECT id, node_id FROM device WHERE device_types IS NULL AND active = 1"
+        ).fetchall()
+        filled = 0
+        for row in rows:
+            snapshot = by_node.get(int(row["node_id"]))
+            if snapshot is None:
+                continue
+            self._db.execute(
+                "UPDATE device SET device_types = ? WHERE id = ?",
+                (_encode_device_types(device_types_by_endpoint(snapshot)), int(row["id"])),
+            )
+            filled += 1
+        self._db.commit()
+        return filled
 
     def rename_room(self, old: str, new: str) -> int:
         """Benennt einen Raum an allen aktiven Geraeten um und gibt zurueck,

@@ -603,7 +603,14 @@ async def _run(
         # faende `resend_all()` einen leeren Cache vor, weil ein Wert dort nur
         # ueber eine sich aendernde Subscription landet - siehe
         # `Runtime.seed_from_snapshot`.
-        await runtime.seed_from_snapshot(await client.snapshots())
+        snapshots = await client.snapshots()
+        await runtime.seed_from_snapshot(snapshots)
+        # Geraetetypen von Bestandsgeraeten nachtragen (Entwurf Geraete-Tab,
+        # 2026-09-05, Abschnitt 3.4): die Abbilder sind gerade geholt, ein
+        # zweiter Abruf nur fuer diesen Zweck waere Verschwendung. Fuellt nur
+        # Zeilen ohne Typen; ein Geraet, das gerade offline ist und deshalb
+        # hier fehlt, behaelt seine und wird beim naechsten Start erreicht.
+        store.backfill_device_types(snapshots)
         # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
 

@@ -657,3 +657,72 @@ def test_rename_room_rejects_an_empty_target(tmp_path):
             store.rename_room("Küche", "   ")
     finally:
         store.close()
+
+
+def test_register_device_stores_the_matter_device_types(tmp_path):
+    """Endpunkt 1 der Steckdose meldet 266 (0x010A, On/Off Plug-in Unit),
+    Endpunkt 0 die Verwaltungstypen - beide werden roh abgelegt, gefiltert
+    wird erst beim Ableiten der Kategorie."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(load("ikea_grillplats_plug.json"))
+        types = store.device(device_id).device_types
+        assert types is not None
+        assert types[1] == frozenset({0x010A})
+    finally:
+        store.close()
+
+
+def test_backfill_fills_only_rows_that_have_none(tmp_path):
+    """Eine Bestandszeile bekommt ihre Typen beim naechsten Bruueckenstart -
+    eine bereits gefuellte wird nicht bei jedem Start neu geschrieben."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snapshot = load("ikea_grillplats_plug.json")
+        device_id = store.register_device(snapshot)
+        store._db.execute("UPDATE device SET device_types = NULL WHERE id = ?", (device_id,))
+        store._db.commit()
+
+        assert store.backfill_device_types([snapshot]) == 1
+        assert store.device(device_id).device_types is not None
+        assert store.backfill_device_types([snapshot]) == 0
+    finally:
+        store.close()
+
+
+def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path):
+    """Ein Geraet, das beim Start gerade offline ist, fehlt in
+    `client.snapshots()`. Es darf dadurch nichts verlieren - deshalb wird
+    nur geschrieben, wo ein Abbild vorliegt, und nie geleert."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        plug = load("ikea_grillplats_plug.json")
+        button = load("ikea_bilresa_button.json")
+        plug_id = store.register_device(plug)
+        button_id = store.register_device(button)
+        store._db.execute("UPDATE device SET device_types = NULL")
+        store._db.commit()
+
+        assert store.backfill_device_types([plug]) == 1
+        assert store.device(plug_id).device_types is not None
+        assert store.device(button_id).device_types is None
+    finally:
+        store.close()
+
+
+def test_backfill_does_not_touch_updated_at(tmp_path):
+    """Dieselbe Begruendung wie bei `set_room`: die Geraetetypen landen in
+    keiner Exportvorlage. Ein Bruueckenstart darf nicht die halbe
+    Geraeteliste als "geaendert seit Export" markieren."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snapshot = load("ikea_grillplats_plug.json")
+        device_id = store.register_device(snapshot)
+        store._db.execute("UPDATE device SET device_types = NULL WHERE id = ?", (device_id,))
+        store._db.commit()
+        before = store.device(device_id).updated_at
+
+        store.backfill_device_types([snapshot])
+        assert store.device(device_id).updated_at == before
+    finally:
+        store.close()
