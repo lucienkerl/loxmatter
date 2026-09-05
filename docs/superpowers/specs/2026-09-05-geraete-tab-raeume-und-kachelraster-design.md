@@ -280,9 +280,24 @@ Status-Pille, ein vierter Bestandteil hätte einen davon verdrängt.
 jeweils mit der Gerätezahl. Bei **Alle** erscheinen Gruppenüberschriften pro
 Raum; bei einem gewählten Raum entfallen sie, weil es nur einen gibt.
 
-**Die Leiste zeigt sich gar nicht, solange kein einziges Gerät einen Raum
-trägt.** Bei drei Geräten und keinem Raum wäre sie eine Zeile Lärm über
-einer Liste, die ohnehin auf einen Blick passt.
+**Die Chip-Reihe zeigt sich gar nicht, solange kein einziges Gerät einen
+Raum trägt** (`hasAnyRoom()` in `app.js`). Bei drei Geräten und keinem Raum
+wäre sie eine Zeile Lärm über einer Liste, die ohnehin auf einen Blick
+passt.
+
+Das Suchfeld aus 6.6 bleibt davon unberührt und steht auch dann, wenn kein
+einziges Gerät einen Raum trägt — es ist Teil derselben Zeile, aber an
+keine Bedingung geknüpft (Korrektur, 2026-09-05: eine frühere Fassung
+dieses Abschnitts verlangte, die ganze Leiste inklusive Suchfeld
+auszublenden; die Umsetzung hat sich bewusst dagegen entschieden, und die
+Review hat das als die richtige Entscheidung bestätigt). Der Grund: die
+Suche greift laut 6.6 über Name, Kategoriename **und** Raumname — die
+beiden ersten Kriterien sind völlig unabhängig davon, ob irgendein Gerät
+einen Raum trägt. Ein Suchfeld, das erst nach der ersten Raumzuordnung
+erschiene, würde genau in dem Moment fehlen, in dem eine wachsende, noch
+raumlose Geräteliste es am nötigsten hätte — nach Namen oder Kategorie
+suchen zu können, ist von Räumen unabhängig und darf nicht an sie geknüpft
+werden.
 
 An jeder Gruppenüberschrift ein Stift, der den Raum umbenennt
 (`POST /api/rooms/rename`). Trägt der Zielname bereits Geräte, fragt die
