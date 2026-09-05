@@ -262,7 +262,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: nichts.
-- Produces: die Shell-Funktionen `say`, `note`, `warn`, `die`, `step`, `state_summary`, `usage`, `parse_args`, `check_platform`, `main`; die Variablen `REPO_URL`, `DOCKER_INSTALL_URL`, `DRY_RUN`, `TARGET_DIR`, `STEP`, `CHECKOUT_EXISTED`, `STACK_STARTED`. Für die Tests: die pytest-Fixture `installer`, die ein Objekt mit `returncode`, `output`, `calls`, `called(prefix)`, `home` liefert.
+- Produces: die Shell-Funktionen `say`, `note`, `warn`, `die`, `step`, `state_summary`, `usage`, `parse_args`, `check_platform`, `main`; die Variablen `REPO_URL`, `DRY_RUN`, `TARGET_DIR`, `STEP`, `STACK_STARTED`. **Regel fuer alle folgenden Aufgaben:** eine Variable wird dort deklariert, wo sie zuerst benutzt wird - nicht vorher. `shellcheck` meldet sonst SC2034, und eine Unterdrueckung dafuer wird spaeter zur Falschaussage. Für die Tests: die pytest-Fixture `installer`, die ein Objekt mit `returncode`, `output`, `calls`, `called(prefix)`, `home` liefert.
 - Konvention für alle folgenden Aufgaben: `die` beendet mit **Exit-Code 2** (erwarteter, sauber gemeldeter Abbruch). Jeder andere Code ungleich 0 ist ein unerwarteter Fehler, den der `EXIT`-Trap mit Schritt und Zustand meldet.
 
 - [ ] **Step 1: Testgerüst und die ersten Tests schreiben**
@@ -559,13 +559,15 @@ Neue Datei `install.sh` (ausführbar). Der GPL-Kopf wird aus `scripts/update.sh`
 # nothing at all.
 set -eu
 
+# Jede Variable wird in der Aufgabe eingefuehrt, die sie zuerst BENUTZT.
+# shellcheck meldet sonst SC2034 (ungenutzt), und eine Unterdrueckung dafuer
+# wuerde in genau der spaeteren Aufgabe stillschweigend falsch, die die
+# Variable dann doch benutzt.
 REPO_URL="https://github.com/lucienkerl/loxmatter.git"
-DOCKER_INSTALL_URL="https://get.docker.com"
 
 DRY_RUN=0
 TARGET_DIR=""
 STEP="starting up"
-CHECKOUT_EXISTED=0
 STACK_STARTED=0
 
 # ---------------------------------------------------------------- output --
@@ -586,7 +588,7 @@ die() {
 
 state_summary() {
   if [ "$STACK_STARTED" -eq 1 ]; then
-    printf 'The stack in %s was started; `docker compose ps` there shows it.\n' \
+    printf 'The stack in %s was started; run docker compose ps there to see it.\n' \
       "$TARGET_DIR/deploy/testhost"
   elif [ -d "$TARGET_DIR" ]; then
     printf 'The checkout at %s exists; nothing was started.\n' "$TARGET_DIR"
@@ -857,14 +859,15 @@ Neue Variablen zu den bestehenden oben ergänzen:
 ```sh
 HAVE_TTY=0
 SUDO=""
-DOCKER_SUDO=0
-INSTALLED_DOCKER=0
 MISSING_PACKAGES=""
 NEED_DOCKER=0
 MODE=""
 DETECTED_RADIO=""
-STACK_DIR=""
 ```
+
+`DOCKER_SUDO`, `INSTALLED_DOCKER` und `STACK_DIR` gehoeren NICHT hierher — sie
+kommen in den Aufgaben, die sie zuerst benutzen (4 bzw. 5). Sonst meldet
+`shellcheck` sie hier als ungenutzt.
 
 Nach `check_platform` einfügen:
 
@@ -1173,6 +1176,15 @@ Expected: FAIL — `apt-get` wird nie aufgerufen, `usermod` nie, `would run` ste
 
 - [ ] **Step 3: Phase 2 implementieren**
 
+Oben zu den Variablen ergänzen — hier, weil sie erst ab dieser Aufgabe benutzt
+werden:
+
+```sh
+DOCKER_INSTALL_URL="https://get.docker.com"
+DOCKER_SUDO=0
+INSTALLED_DOCKER=0
+```
+
 In `install.sh` nach `check_config_source` einfügen:
 
 ```sh
@@ -1336,6 +1348,13 @@ Expected: FAIL — `git clone` wird nie aufgerufen.
 
 - [ ] **Step 3: Phase 3 implementieren**
 
+Oben zu den Variablen ergänzen:
+
+```sh
+CHECKOUT_EXISTED=0
+STACK_DIR=""
+```
+
 In `install.sh` nach `dk` einfügen:
 
 ```sh
@@ -1494,7 +1513,6 @@ Oben zu den Variablen ergänzen:
 ```sh
 ENV_FILE=""
 ENV_IS_NEW=0
-PORT=8080
 ```
 
 Nach `ensure_checkout` einfügen:
@@ -1768,6 +1786,7 @@ Oben ergänzen:
 
 ```sh
 FINDINGS=""
+PORT=8080
 ```
 
 Nach `configure` einfügen:
