@@ -975,19 +975,8 @@ footer.hint-block {
   color: var(--accent-contrast);
 }
 
-.room-rename,
-.room-select,
-.room-new {
+.room-rename {
   font-size: 0.75rem;
-}
-
-/* Umschliesst `<select>` und das Neu-Raum-Textfeld nur als Fokus-Wache
- * (`@focusout` in index.html) - `display: contents` nimmt den Wrapper
- * selbst aus dem Flex-Layout heraus, damit `.device-foot` weiterhin direkt
- * mit `.room-select` und `.room-new` als Flex-Kinder rechnet und die
- * Fusszeile unveraendert bleibt. */
-.room-picker {
-  display: contents;
 }
 
 /* Das Eingabefeld beim Umbenennen uebernimmt die Groesse der Ueberschrift,
@@ -1207,4 +1196,36 @@ footer.hint-block {
 
 .tile-menu-item.is-danger {
   color: var(--danger);
+}
+
+.tile-menu-heading {
+  margin: 0.1rem 0.5rem 0.2rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+/* Das Haekchen steht in `::after`, nicht im Text: der Eintrag traegt
+ * seine Bedeutung im Raumnamen, das Haekchen bestaetigt sie nur.
+ * `aria-current` im Markup sagt dasselbe fuer alles, was die Seite nicht
+ * sieht. */
+.tile-menu-item.is-current {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tile-menu-item.is-current::after {
+  content: " ✓";
+}
+
+.tile-menu-input {
+  margin: 0.15rem 0;
+  font-size: 0.8rem;
+}
+
+.tile-menu-sep {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.25rem 0;
 }

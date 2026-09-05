@@ -534,83 +534,6 @@
                   </div>
 
                   <div class="device-foot">
-                    <!-- Fund 1 (Review vom 2026-09-05, siehe
-                         .superpowers/sdd/final-fix-web-report.md): drei
-                         vorangehende Runden haben `newRoomFor` (reiner
-                         Modus-Zustand fuer die Sichtbarkeit des
-                         Neu-Raum-Textfelds) so lange an die ANZEIGE dieser
-                         nativen `<select>` gekoppelt, bis diese Kopplung
-                         selbst restlos entfernt war - siehe app.js,
-                         Kommentar bei `newRoomFor`. Das Ergebnis dieser
-                         Entkopplung war `:value="device.room || ''"`, mit
-                         dem Anspruch, die Auswahlliste koenne dadurch "per
-                         Konstruktion" nie einen Raum zeigen, den das Geraet
-                         nicht hat. Das stimmte nicht: Alpine wendet die
-                         Direktiven eines Elements an, BEVOR es dessen
-                         Kinder aufbaut - die `<option>`-Elemente aus dem
-                         `x-for` weiter unten existierten also noch gar
-                         nicht, als `:value` zum ersten Mal lief. Die
-                         Zuweisung lief ins Leere, der Browser blieb bei der
-                         ersten (statischen) Option "Ohne Raum" haengen, und
-                         weil der Effekt nur auf `device.room` reagiert
-                         (das sich dabei nicht aendert), lief er nie erneut:
-                         JEDE Kachel zeigte dauerhaft "Ohne Raum".
-                         `x-model="roomSelectDrafts[device.id]"` behebt das:
-                         Alpine gleicht ein `x-model`-Element auch nach dem
-                         Mounten seiner Kind-Optionen noch aktiv ab, ein
-                         reines `:value` dagegen nur bei einer Aenderung der
-                         gelesenen Eigenschaft. `roomSelectDrafts` (app.js)
-                         ist die dafuer noetige zuweisbare Kopie von
-                         `device.room` - `x-model` kann nicht direkt auf
-                         einen Ausdruck wie `device.room || ''` zeigen.
-                         Gegen echte Browser-Ausfuehrung mit dem
-                         eingecheckten vendor/alpine.min.js geprueft (siehe
-                         Bericht oben): mit `:value` zeigten alle
-                         Testgeraete "Ohne Raum", mit diesem Ansatz zeigte
-                         jedes seinen tatsaechlichen Raum.
-                         Die urspruengliche Erkenntnis der drei Runden davor
-                         bleibt richtig und gilt unveraendert weiter: eine
-                         native `<select>` feuert kein Ereignis fuer
-                         "geoeffnet, dann ohne Auswahl wieder verlassen".
-                         Der `@focusout`-Wachposten auf dem gemeinsamen
-                         Wrapper unten (Runde 3) bleibt deshalb bestehen -
-                         verlaesst der Fokus BEIDE Elemente
-                         (`$event.relatedTarget` liegt ausserhalb von
-                         `$el`), endet der Neu-Raum-Modus. Wandert der Fokus
-                         von der Auswahlliste ins gerade erschienene
-                         Textfeld, bleibt `relatedTarget` innerhalb des
-                         Wrappers - das ist die normale Fortsetzung, kein
-                         Abbruch. Die Reaktion auf "+ Neuer Raum ..." selbst
-                         (Auswahlliste sofort zurueck auf den aktuellen
-                         Raum, dann erst `beginNewRoom`) steht jetzt in
-                         `onRoomSelectChange` (app.js) statt inline hier -
-                         siehe dessen Kommentar fuer das WARUM. -->
-                    <span
-                      class="room-picker"
-                      @focusout="if (!$el.contains($event.relatedTarget)) newRoomFor = null"
-                    >
-                      <select
-                        class="room-select"
-                        x-model="roomSelectDrafts[device.id]"
-                        @change="onRoomSelectChange(device)"
-                      >
-                        <option value="" x-text="t('web.devices.room_none')"></option>
-                        <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
-                          <option :value="chip.key" x-text="chip.key"></option>
-                        </template>
-                        <option value="__new__" x-text="t('web.devices.room_new')"></option>
-                      </select>
-                      <input
-                        x-show="newRoomFor === device.id"
-                        x-cloak
-                        type="text"
-                        class="room-new"
-                        x-model="newRoomDraft"
-                        :placeholder="t('web.devices.room_new_placeholder')"
-                        @keydown.enter="commitNewRoom(device)"
-                        @blur="commitNewRoom(device)"
-                      />
-                    </span>
                     <span class="hint" x-text="exportHintFor(device.id)"></span>
                     <span style="flex: 1 1 auto"></span>
                     <!-- Der Auf-/Zu-Zustand liegt im DOM, nicht in Alpine:
@@ -652,6 +575,53 @@
                         <svg class="icon"><use href="#i-kebab"></use></svg>
                       </summary>
                       <div class="tile-menu-items">
+                        <p class="tile-menu-heading" x-text="t('web.devices.menu_room_heading')"></p>
+                        <!-- "Ohne Raum" ist hier kein Sonderfall, sondern
+                             der Normalzustand eines noch nicht zugeordneten
+                             Geraets - es traegt das Haekchen wie jeder
+                             andere Eintrag auch. Der Leerstring ist derselbe
+                             Wert, den die API fuer "Raum entfernen"
+                             erwartet, also dieselbe Kodierung auf beiden
+                             Seiten und keine Umrechnung. -->
+                        <button
+                          class="tile-menu-item"
+                          :class="{ 'is-current': roomKeyOf(device) === '' }"
+                          :aria-current="roomKeyOf(device) === '' ? 'true' : null"
+                          @click="$el.closest('details').open = false; saveRoom(device, '')"
+                          x-text="t('web.devices.room_none')"
+                        ></button>
+                        <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
+                          <button
+                            class="tile-menu-item"
+                            :class="{ 'is-current': roomKeyOf(device) === chip.key }"
+                            :aria-current="roomKeyOf(device) === chip.key ? 'true' : null"
+                            @click="$el.closest('details').open = false; saveRoom(device, chip.key)"
+                            x-text="chip.key"
+                          ></button>
+                        </template>
+                        <button
+                          class="tile-menu-item"
+                          x-show="newRoomFor !== device.id"
+                          @click="beginNewRoom(device)"
+                          x-text="t('web.devices.room_new')"
+                        ></button>
+                        <!-- Das Textfeld ist ein Kind des `<details>`, das
+                             Menue bleibt beim Tippen also offen. Escape
+                             bricht NUR den Neu-Raum-Modus ab und darf nicht
+                             bis zum `@keydown.escape` des `<details>`
+                             hochblubbern, sonst verschwaende ein Abbruch
+                             gleich das ganze Menue - daher `.stop`. -->
+                        <input
+                          x-show="newRoomFor === device.id"
+                          x-cloak
+                          type="text"
+                          class="tile-menu-input"
+                          x-model="newRoomDraft"
+                          :placeholder="t('web.devices.room_new_placeholder')"
+                          @keydown.enter="$el.closest('details').open = false; commitNewRoom(device)"
+                          @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''"
+                        />
+                        <hr class="tile-menu-sep" />
                         <button
                           class="tile-menu-item"
                           @click="$el.closest('details').open = false; exportDevice(device)"
