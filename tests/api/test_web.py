@@ -2322,7 +2322,22 @@ async def test_the_tile_menu_resets_new_room_mode_on_every_close(api):
     noch die Absicht: das `<details>` traegt ein `@toggle`, und dessen
     Ausdruck setzt bei Uebereinstimmung mit der Geraete-ID `newRoomFor`
     und `newRoomDraft` zurueck - nicht mehr, in welcher exakten Schreibweise
-    das geschieht."""
+    das geschieht.
+
+    Fund 6 (Selbstverteidigungs-Review 2026-09-05): die drei Substring-
+    Assertions unten pruefen nur, dass die drei Bestandteile IRGENDWO im
+    Ausdruck auftauchen. Baut man die urspruengliche, in Fund 3 (siehe
+    Kommentar ueber dem `<details>` in index.html) verworfene Fassung
+    `!$el.open && newRoomFor === device.id` wieder ein, enthaelt der
+    Ausdruck `newRoomFor === device.id`, `newRoomFor = null` und
+    `newRoomDraft = ''` weiterhin woertlich - alle drei Assertions blieben
+    gruen, obwohl genau die Luecke zurueck waere, die Fund 3 geschlossen
+    hat: verschwindet eine Kachel mit offenem Menue (Re-Render entfernt den
+    Knoten ersatzlos), feuert nie ein schliessendes `toggle`, `newRoomFor`
+    bleibt auf der Geraete-ID stehen, und `!$el.open` verwirft dann das
+    naechste `toggle` fuer dieselbe ID (ein Oeffnen) als Reset-Anlass - das
+    verwaiste Neu-Raum-Feld ist wieder da. Nur eine eigene Negativ-Assertion
+    auf `!$el.open` macht diese Abwesenheit explizit pruefbar."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -2332,6 +2347,7 @@ async def test_the_tile_menu_resets_new_room_mode_on_every_close(api):
     toggle_expr = menu[toggle_value_start:toggle_value_end]
     assert "newRoomFor === device.id" in toggle_expr
     assert "newRoomFor = null" in toggle_expr
+    assert "!$el.open" not in toggle_expr
     assert "newRoomDraft = ''" in toggle_expr
 
 
