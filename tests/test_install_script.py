@@ -278,6 +278,12 @@ def installer(tmp_path):
             # Ohne Terminal muss die Adresse aus der Umgebung kommen. Tests,
             # die genau diesen Abbruch pruefen, setzen sie auf "".
             "MINISERVER_IP": "10.0.1.99",
+            # /sys/class/rfkill gibt es auf macOS nicht und ist nirgends
+            # beschreibbar. Dieser Pfad existiert standardmaessig nicht -
+            # check_rfkill findet dann nichts, genau wie auf einem Host ohne
+            # rfkill. Tests fuer check_rfkill zeigen hierher auf ein
+            # praepariertes Verzeichnis.
+            "RFKILL_DIR": str(tmp_path / "kein-rfkill-hier"),
         }
         full_env.update(env or {})
         return full_env
@@ -328,6 +334,16 @@ def test_unbekanntes_argument_bricht_ab(installer):
     result = installer("--nope")
     assert result.returncode == 2
     assert "Unknown argument" in result.output
+
+
+def test_dir_ohne_wert_nimmt_nicht_das_naechste_flag(installer):
+    # --dir --dry-run nahm bisher "--dry-run" klaglos als Pfad, DRY_RUN blieb
+    # 0, und der Lauf machte sich mit einem Verzeichnis namens "--dry-run"
+    # ans Werk statt abzubrechen.
+    result = installer("--dir", "--dry-run")
+    assert result.returncode == 2
+    assert "--dir needs a path" in result.output
+    assert not (result.home / "loxmatter").exists()
 
 
 def test_macos_wird_abgewiesen(installer):
@@ -520,11 +536,17 @@ def test_erster_lauf_prueft_nicht_auf_updates(installer):
 
 
 def test_dry_run_veraendert_nichts(installer):
-    result = installer("--dry-run", omit=("git", "docker"))
+    # git und docker sind hier absichtlich VORHANDEN (Standard-Stubs, kein
+    # omit=(...)): "kein Klon, kein docker-Aufruf" soll daran haengen, dass
+    # ein Trockenlauf sie nicht aufruft - nicht daran, dass es sie auf dem
+    # Testrechner gar nicht gibt.
+    result = installer("--dry-run")
     assert result.returncode == 0
     assert not result.called("apt-get")
     assert not result.called("sudo")
     assert not any("get.docker.com" in call for call in result.calls)
+    assert not result.called("git clone")
+    assert not result.called("docker compose up")
     assert "would run" in result.output
 
 
@@ -651,6 +673,24 @@ def test_unsinnige_commit_zahl_meldet_kein_update(installer):
     assert "new commits" not in second.output
 
 
+def test_kein_git_repository_bekommt_eigene_meldung_statt_netzwerkschuld(installer):
+    # ensure_checkout prueft nur auf Dockerfile und docker-compose.yml - ein
+    # aus einem Tarball entpackter Checkout besteht das, hat aber kein .git.
+    # `git fetch` scheitert daran genauso wie an einem Netzwerkproblem, und
+    # "Could not reach GitHub" waere dafuer die falsche Erklaerung.
+    kein_repo_git = _GIT.replace(
+        'case "${1-}" in\n  clone)',
+        'case "${1-}" in\n  rev-parse) exit 1 ;;\n  clone)',
+    )
+    first = installer()
+    assert first.returncode == 0
+    second = installer(stubs={"git": kein_repo_git}, env={"FAKE_BEHIND": "3"})
+    assert second.returncode == 0
+    assert "is not a git repository" in second.output
+    assert "Could not reach GitHub" not in second.output
+    assert "new commits" not in second.output
+
+
 # -------------------------------------------------------------- phase four --
 
 
@@ -695,6 +735,18 @@ def test_token_faellt_ohne_openssl_auf_urandom_zurueck(installer):
     token = _env(result)["LOXMATTER_API_TOKEN"]
     assert len(token) == 64
     assert set(token) <= set("0123456789abcdef")
+
+
+def test_leerer_urandom_fallback_bricht_laut_ab(installer):
+    # gen_tokens Rueckfallpipe (`od ... | tr -d ' \n'`) laeuft ohne pipefail:
+    # ein scheiterndes od faellt nicht auf, tr auf leerer Eingabe liefert
+    # trotzdem Erfolg. Ein leeres Token wurde bisher stillschweigend als
+    # "generated" gemeldet. openssl bleibt hier absichtlich vorhanden (sonst
+    # wuerde es der apt-get-Stub "nachinstallieren" und den Fallback nie
+    # erreichen) - sein `rand`-Aufruf selbst schlaegt fehl.
+    result = installer(stubs={"openssl": "exit 1\n", "od": "exit 1\n"})
+    assert result.returncode == 2
+    assert "Could not generate LOXMATTER_API_TOKEN" in result.output
 
 
 def test_zweiter_lauf_laesst_die_env_unberuehrt(installer):
@@ -888,6 +940,25 @@ def test_wifi_lauf_erwaehnt_thread_gar_nicht_als_problem(installer):
     assert "start-stop-daemon" not in result.output
 
 
+def test_rfkill_prueft_jeden_bluetooth_adapter_nicht_nur_den_ersten(installer, tmp_path):
+    # check_rfkill brach bisher nach dem ERSTEN Eintrag vom Typ "bluetooth"
+    # ab (`return 0` traf immer, gesperrt oder nicht) - ein zweiter Adapter
+    # kam nie zur Sprache. rfkill0 ist hier frei, rfkill1 gesperrt: die
+    # alphabetische Glob-Reihenfolge sorgt dafuer, dass der freie Adapter
+    # zuerst dran ist.
+    rfkill_dir = tmp_path / "rfkill"
+    frei = rfkill_dir / "rfkill0"
+    gesperrt = rfkill_dir / "rfkill1"
+    for entry, soft in ((frei, "0"), (gesperrt, "1")):
+        entry.mkdir(parents=True)
+        (entry / "type").write_text("bluetooth\n")
+        (entry / "soft").write_text(f"{soft}\n")
+    result = installer(env={"RFKILL_DIR": str(rfkill_dir)})
+    assert result.returncode == 0
+    assert "rfkill1" in result.output
+    assert "rfkill0" not in result.output
+
+
 # -------------------------------------------------------------- phase sieben --
 
 
@@ -910,6 +981,21 @@ def test_wifi_bericht_schlaegt_keinen_watchdog_vor(installer):
     assert "COMPOSE_PROFILES=thread" in result.output  # so ruestet man nach
 
 
+def test_watchdog_protokoll_liegt_neben_dem_checkout_nicht_in_home(installer, tmp_path):
+    # Die Cron-Zeile schrieb das Log bisher immer nach $HOME, auch wenn
+    # --dir den Checkout ganz woanders anlegt - dann passt die eigene
+    # Zeile nicht mehr zu sich selbst.
+    checkout = tmp_path / "anderswo" / "loxmatter"
+    result = installer(
+        "--dir",
+        str(checkout),
+        env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"},
+    )
+    assert result.returncode == 0
+    assert f"{checkout.parent}/otbr-watchdog.log" in result.output
+    assert f"{result.home}/otbr-watchdog.log" not in result.output
+
+
 def test_bericht_verweist_auf_befunde_ohne_sie_zu_wiederholen(installer):
     # check_containers meldet den fehlenden Dienst schon direkt in run_checks,
     # dort wo er auffaellt. report() darf diesen Block danach nicht noch
@@ -923,11 +1009,16 @@ def test_bericht_verweist_auf_befunde_ohne_sie_zu_wiederholen(installer):
 def test_trockenlauf_bericht_erfindet_keine_adresse(installer):
     # Im Trockenlauf wurde der Stack nie gestartet und PORT nie aus der
     # compose-Datei gelesen - der Bericht darf dann keine Web-Adresse
-    # behaupten.
-    result = installer("--dry-run", omit=("git", "docker"))
+    # behaupten. git und docker sind hier absichtlich VORHANDEN (kein
+    # omit=(...)): die Behauptung "es wird nichts geklont oder gestartet"
+    # soll am Verhalten des Trockenlaufs haengen, nicht daran, dass die
+    # Werkzeuge auf dem Testrechner fehlen.
+    result = installer("--dry-run")
     assert result.returncode == 0
     assert "Web interface" not in result.output
     assert "http://" not in result.output
+    assert not result.called("git clone")
+    assert not result.called("docker compose up")
 
 
 def test_ohne_befunde_kein_verweis_auf_befunde(installer):

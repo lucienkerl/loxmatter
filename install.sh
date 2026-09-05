@@ -55,6 +55,9 @@ CONFIG_WRITTEN=0
 FINDINGS=""
 PORT=8080
 HEALTHY=1
+# Overridable so tests can point this at a fabricated directory instead of
+# the real /sys, which does not exist off Linux and is not writable anyway.
+RFKILL_DIR="${RFKILL_DIR:-/sys/class/rfkill}"
 
 # ---------------------------------------------------------------- output --
 
@@ -128,6 +131,9 @@ parse_args() {
       --dry-run) DRY_RUN=1 ;;
       --dir)
         if [ $# -lt 2 ]; then die "--dir needs a path"; fi
+        case "$2" in
+          -*) die "--dir needs a path, got what looks like another option: $2" ;;
+        esac
         TARGET_DIR="$2"
         shift
         ;;
@@ -711,7 +717,18 @@ configure() {
     "$(detect_bt_adapter)" 0
   ask_miniserver
   if [ "$ENV_IS_NEW" -eq 1 ] || [ -z "$(env_file_value LOXMATTER_API_TOKEN)" ]; then
-    env_set LOXMATTER_API_TOKEN "${LOXMATTER_API_TOKEN:-$(gen_token)}"
+    token_value="${LOXMATTER_API_TOKEN:-$(gen_token)}"
+    # gen_token's /dev/urandom fallback runs through a pipe with no pipefail,
+    # so a failing od (missing or unreadable /dev/urandom) is invisible in
+    # its own exit status - tr on an empty stdin still succeeds, and this
+    # would otherwise write an empty token while printing "generated" below.
+    if [ "${#token_value}" -ne 64 ]; then
+      die "Could not generate LOXMATTER_API_TOKEN: expected 64 hex characters, got ${#token_value}."
+    fi
+    case "$token_value" in
+      *[!0-9a-f]*) die "Could not generate LOXMATTER_API_TOKEN: got non-hex output." ;;
+    esac
+    env_set LOXMATTER_API_TOKEN "$token_value"
     note "LOXMATTER_API_TOKEN generated"
   else
     note "LOXMATTER_API_TOKEN kept"
@@ -779,6 +796,10 @@ stack_port() {
   printf '%s' "$port_value"
 }
 
+# 20 tries, but each one can also spend curl's own 3-second timeout before
+# the 1-second sleep runs - a host that hangs instead of refusing to connect
+# can take close to 20 * (3 + 1) = 80 seconds here, not the 20 the retry
+# count alone suggests. The same shape exists in scripts/update.sh.
 check_health() {
   step "waiting for the bridge to answer"
   PORT="$(stack_port)"
@@ -822,7 +843,10 @@ check_containers() {
 
 check_rfkill() {
   step "checking the Bluetooth adapter"
-  for entry in /sys/class/rfkill/rfkill*; do
+  # A host can carry more than one Bluetooth radio - every rfkill* entry of
+  # type bluetooth gets its own finding when blocked, instead of stopping at
+  # the first one and leaving the rest unchecked.
+  for entry in "$RFKILL_DIR"/rfkill*; do
     if [ ! -r "$entry/type" ]; then
       continue
     fi
@@ -837,7 +861,6 @@ over BLE will fail. This needs root, which is why it is not done here:
     sh -c 'echo 0 > /sys/class/rfkill/$rfkill_name/soft'
 It only has to be done once; the unblock survives reboots."
     fi
-    return 0
   done
 }
 
@@ -907,8 +930,11 @@ report() {
   printf '  there is no open state.\n'
   if [ "$MODE" = "thread" ]; then
     printf "\n  Keep an eye on the Thread radio - add this to 'crontab -e':\n"
+    # Beside the checkout, not $HOME - --dir can put TARGET_DIR anywhere, and
+    # a log path that silently assumed $HOME would stop matching the checkout
+    # it is named after.
     printf '    */5 * * * * %s/scripts/otbr-watchdog.sh >> %s/otbr-watchdog.log 2>&1\n' \
-      "$TARGET_DIR" "$HOME"
+      "$TARGET_DIR" "${TARGET_DIR%/*}"
   else
     printf '\n  Running WiFi and Ethernet only. To add Thread later: plug the radio in,\n'
     printf '  set COMPOSE_PROFILES=thread and RADIO_DEVICE in\n'
@@ -934,6 +960,15 @@ offer_update() {
     return 0
   fi
   step "checking for updates"
+  # A tarball unpacked instead of cloned has no .git at all - ensure_checkout
+  # only looks for a Dockerfile and the compose file, so it accepts that too.
+  # `git fetch` would fail on it exactly like a network problem does, and
+  # blaming GitHub for something a network has nothing to do with is worse
+  # than saying nothing.
+  if ! git -C "$TARGET_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    note "$TARGET_DIR is not a git repository; skipping the update check."
+    return 0
+  fi
   if ! git -C "$TARGET_DIR" fetch --quiet origin main 2>/dev/null; then
     note "Could not reach GitHub; skipping the update check."
     return 0

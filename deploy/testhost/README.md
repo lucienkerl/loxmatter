@@ -132,6 +132,15 @@ Der `start-stop-daemon`-Workaround weiter unten wird ab dann wieder gebraucht.
 
 ## Aktualisieren
 
+**Bestehende Thread-Installation:** Fehlt in der `.env` `COMPOSE_PROFILES`
+(jede Installation von vor dem 5. September 2026), landet dieser Branch ohne
+erneuten Lauf des Installers stillschweigend im WiFi-Modus — der laufende
+`otbr`-Container wird dabei nicht gestoppt, aber bei der nächsten
+Konfigurationsänderung nicht mehr neu erzeugt, und ein `docker compose down
+&& up -d` bringt den Thread-Router danach nicht zurück. Wer Thread nutzt,
+trägt deshalb vor dem nächsten `docker compose up` `COMPOSE_PROFILES=thread`
+in die `.env` ein.
+
 Auf dem Rechner, auf dem die Brücke läuft:
 
 ```bash
