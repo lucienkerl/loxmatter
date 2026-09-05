@@ -2434,13 +2434,42 @@ async def test_lead_value_does_not_yield_to_the_device_name(api):
     belegt wird nur, dass die ausgelieferte Regel das Schrumpfen abstellt
     (`flex: 0 0 auto`), die Absicherung gegen einen pathologisch langen
     Wert stattdessen an ein `max-width` verlegt, und `min-width` (das ohne
-    `flex-shrink: 1` keine Funktion mehr haette) nicht mehr traegt."""
+    `flex-shrink: 1` keine Funktion mehr haette) nicht mehr traegt.
+
+    Fund 1 (Review vom 2026-09-05): der urspruengliche Deckel von `60%`
+    liess an der dokumentierten Grid-Untergrenze (261 px) den gesamten
+    Platzmangel beim Namen landen - im Browser gemessen 134 px Leitwert
+    gegen nur noch 43 px Name, dort ohne Ellipse mitten im Buchstaben
+    gekappt (siehe Aufgabenbericht). Der Deckel ist deshalb auf `50%`
+    gesenkt: der Leitwert weicht weiterhin nicht, darf aber hoechstens die
+    Haelfte der Kopfzeile beanspruchen, der Rest gehoert dem Namen. Ohne
+    Browser-Engine kann diese Suite die tatsaechliche Aufteilung nicht
+    nachrechnen - belegt wird nur der genaue Deckelwert."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     rule = css.split(".lead-value {", 1)[1].split("}", 1)[0]
     assert "flex: 0 0 auto" in rule
-    assert "max-width" in rule
+    assert "max-width: 50%" in rule
     assert "min-width" not in rule
+    assert "overflow: hidden" in rule
+    assert "text-overflow: ellipsis" in rule
+
+
+async def test_device_name_truncates_with_an_ellipsis_instead_of_clipping(api):
+    """Fund 1 (Review vom 2026-09-05): mit dem auf `50%` gesenkten Deckel an
+    `.lead-value` (s.o.) traegt der Name bei der Grid-Untergrenze immer
+    noch die Kuerzung - nur jetzt nicht mehr die vollstaendige. Ein
+    `<input>` clippt seinen Text intern, sobald er nicht passt, und zwar
+    OHNE jedes Zeichen, das anzeigt, dass Text fehlt, solange kein
+    `text-overflow` gesetzt ist - im Browser gemessen bei 261 px Kachel-
+    breite: Name 65 px, mitten im Buchstaben abgeschnitten, wo `overflow:
+    hidden` plus `text-overflow: ellipsis` stattdessen sichtbar kuerzen
+    (siehe Aufgabenbericht). Ohne Browser-Engine kann diese Suite das
+    Kuerzen selbst nicht nachrechnen - belegt wird nur, dass die
+    ausgelieferte Regel beide Eigenschaften traegt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split(".device-head .device-name {", 1)[1].split("}", 1)[0]
     assert "overflow: hidden" in rule
     assert "text-overflow: ellipsis" in rule
 

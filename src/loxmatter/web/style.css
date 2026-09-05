@@ -1126,6 +1126,16 @@ footer.hint-block {
  * Klasse plus eins - eine einfache Klassenregel verliert gegen sie. Der
  * Nachfahren-Selektor hebt die Regel darueber, ohne sich auf die
  * Reihenfolge in der Datei zu verlassen. */
+/* Fund 1 (Review vom 2026-09-05): ein `<input>` clippt seinen Text intern
+ * am Rand der Content-Box, sobald er nicht mehr hineinpasst - ganz ohne
+ * dass CSS das ausdruecklich anfordert, und ganz ohne jedes Zeichen, das
+ * anzeigt, dass Text fehlt. An der dokumentierten Grid-Untergrenze
+ * (261 px, siehe `.lead-value` unten) bekommt dieses Feld nur noch 65 px
+ * und MUSS kuerzen; die beiden Eigenschaften am Ende dieser Regel sorgen
+ * dafuer, dass es das sichtbar tut statt einen Namen mitten im Buchstaben
+ * verschwinden zu lassen. Ein zusaetzliches `white-space: nowrap` fuer die
+ * Ellipse ist bei `<input>` unnoetig - ein Textfeld umbricht ohnehin nie,
+ * das ist bereits sein natives Verhalten. */
 .device-head .device-name {
   font-weight: 600;
   border: 1px solid transparent;
@@ -1144,6 +1154,8 @@ footer.hint-block {
    * genau deshalb hat es keine der Pruefungen an einer einzelnen Kachel
    * gezeigt. */
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .device-head .device-name:hover,
@@ -1168,19 +1180,37 @@ footer.hint-block {
  * beide ohne jeden Platzmangel gekuerzt. Der Leitwert wich dem Namen,
  * obwohl er der eigentliche Zweck der Kopfzeile ist - er darf ihm nicht
  * weichen. `flex: 0 0 auto` nimmt ihm das Schrumpfen vollstaendig;
- * `max-width: 60%` uebernimmt allein die Rolle der Absicherung gegen den
+ * `max-width` uebernimmt allein die Rolle der Absicherung gegen den
  * Extremfall: kein gewoehnlicher Wert wird mehr ellipsiert, ein
  * pathologisch langer Listenwert (`12.4, 55.1, 99.9, 42.0, 17.3, 88.8`)
- * bleibt aber gemessen 17px innerhalb des rechten Kachelrands statt der
- * Kachel zu entkommen - `formatValue` (app.js) endet in
- * `String(value)` ohne Kuerzung, und die funktionale-Signal-Regel laesst
- * Listen- und Textattribute ausdruecklich zu, dieser Wert ist also
- * erreichbar, nicht nur hypothetisch. `overflow: hidden` und
- * `text-overflow: ellipsis` greifen nur noch in diesem einen Fall.
- * `min-width: 0` entfaellt: es wirkte ausschliesslich zusammen mit
- * `flex-shrink: 1` und waere hier eine Regel ohne jede Funktion.
- * `white-space: nowrap` bleibt trotzdem stehen: eine Zahl soll nicht
- * mitten im Wert umbrechen, sie soll kuerzen. */
+ * bleibt aber innerhalb des rechten Kachelrands statt der Kachel zu
+ * entkommen - `formatValue` (app.js) endet in `String(value)` ohne
+ * Kuerzung, und die funktionale-Signal-Regel laesst Listen- und
+ * Textattribute ausdruecklich zu, dieser Wert ist also erreichbar, nicht
+ * nur hypothetisch. `overflow: hidden` und `text-overflow: ellipsis`
+ * greifen nur noch in diesem einen Fall. `min-width: 0` entfaellt: es
+ * wirkte ausschliesslich zusammen mit `flex-shrink: 1` und waere hier
+ * eine Regel ohne jede Funktion. `white-space: nowrap` bleibt trotzdem
+ * stehen: eine Zahl soll nicht mitten im Wert umbrechen, sie soll
+ * kuerzen.
+ *
+ * Fund 1 (Review vom 2026-09-05): `max-width: 60%` liess an der
+ * dokumentierten Grid-Untergrenze (261 px, zwei Spalten bei 572 px
+ * Viewportbreite) den gesamten Platzmangel beim Namen landen - gemessen
+ * mit dem Namen "Kaffeemaschine Kueche" und obigem Listenwert: Leitwert
+ * 134 px, Name nur noch 43 px, dort ohne `text-overflow` (s.u.) mitten im
+ * Buchstaben gekappt. Das ist keine Kuerzung, das ist eine stille
+ * Verstuemmelung - der Leser sieht nicht, dass der Name weitergeht. Die
+ * Regel von oben gilt weiter unveraendert: der Leitwert weicht dem Namen
+ * nicht. Aber er darf hoechstens die Haelfte der Kopfzeile beanspruchen,
+ * und was danach fuer den Namen bleibt, nutzt dieser sichtbar kuerzend
+ * (Ellipse, s. `.device-head .device-name`) statt kommentarlos
+ * abgeschnitten zu werden. Mit `max-width: 50%` gemessen an derselben
+ * 261-px-Kachel: Leitwert 112 px, Name 65 px, Ellipse aktiv. Im
+ * GEWOEHNLICHEN Fall (kurzer Wert wie `true`, normaler Name) bleibt
+ * sowohl bei 261 px als auch bei 1440 px keines der beiden Felder
+ * gekuerzt - 50 % liegt weiterhin ueber allem, was ein gewoehnlicher
+ * Leitwert braucht. */
 /* Fund 4 (Nacharbeit 2026-09-05): `line-height: 1.05` reicht bei diesem
  * Schriftschnitt nicht fuer die Unterlaengen von Kleinbuchstaben wie
  * `g`/`y`/`p`/`q` - gemessen am Text `gypq`: `scrollHeight` 24px gegen
@@ -1208,7 +1238,7 @@ footer.hint-block {
   line-height: 1.05;
   padding-block: 1px;
   flex: 0 0 auto;
-  max-width: 60%;
+  max-width: 50%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
