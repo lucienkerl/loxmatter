@@ -47,6 +47,11 @@ See [Looking at a device](#looking-at-a-device) for more on this.
 
 ### Your own setup
 
+`install.sh` does everything below in one command — see the
+[Quickstart](../README.md#-quickstart). What follows is the same path by hand, for
+anyone who would rather see each step, or who is on a host the installer refuses
+(it only knows `apt-get`, and only Linux).
+
 With real hardware:
 
 1. Clone the repository on the host where it should run permanently:

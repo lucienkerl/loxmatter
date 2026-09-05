@@ -193,7 +193,43 @@ and diagnostics only — the runtime path between devices and Miniserver does no
 
 ## 🚀 Quickstart
 
-Try it without any hardware:
+One command on the machine that will run the bridge — a Raspberry Pi or any
+Debian-based Linux host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh | sh
+```
+
+It asks for your Miniserver's IP address, detects the rest — network interface,
+Thread radio, Bluetooth adapter — and starts the containers. When it finishes it
+prints the address of the web interface. **Open it and set a password**: until you
+do, no `/api` route answers.
+
+**Prefer to read it before running it?** Same script, three lines:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh
+less install.sh
+sh install.sh
+```
+
+The script installs `git`, `curl`, `openssl` and Docker if they are missing, which
+needs `sudo`. It says so before it does, but it does not ask. Add `--dry-run` — as
+`… | sh -s -- --dry-run` — to see every step without changing anything. Running it
+again is safe: it keeps your configuration, re-checks the stack, and offers to pull
+in new commits.
+
+**No Thread radio? That is fine.** With no USB radio the installer sets up
+WiFi/Ethernet-only mode: the Thread border router is left out, and the bridge talks
+to WiFi and Ethernet Matter devices over your existing network. Plug a radio in
+later, set `COMPOSE_PROFILES=thread` and `RADIO_DEVICE` in
+`deploy/testhost/.env`, and restart the stack.
+
+Two Raspberry-Pi-specific steps — unblocking Bluetooth and restarting the Thread
+agent — the installer reports but deliberately does not perform. Those, and the
+full manual path, are in [docs/SETUP.md](docs/SETUP.md).
+
+### Try it without any hardware
 
 ```bash
 git clone git@github.com:lucienkerl/loxmatter.git
@@ -201,9 +237,6 @@ cd loxmatter
 uv sync
 uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
 ```
-
-For a real setup — Docker stack with `otbr`, `matter-server` and the bridge — follow
-[docs/SETUP.md](docs/SETUP.md).
 
 ## 🗺 Status
 
