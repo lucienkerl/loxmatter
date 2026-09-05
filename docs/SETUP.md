@@ -77,9 +77,8 @@ With real hardware:
    of the three containers does.
 
 4. Open `http://<Host>:8080/` in your browser. On the very first visit, the
-   interface shows an initial setup step — pick a password, see access
-   protection under [Running loxmatter permanently](../README.md#dauerhaft-betreiben-loxmatter-run)
-   in the README.
+   interface shows an initial setup step — pick a password, see the
+   [access control configuration](OPERATIONS.md#access-control).
 
 5. In the web interface, commission a device, view it, and export the
    template (`VIU_*.xml`, `VO_*.xml`). Import these files into Loxone Config
@@ -89,9 +88,8 @@ With real hardware:
 > **Note:** [`deploy/testhost/`](../deploy/testhost/) is the environment
 > this project has been tested against so far — not a hardened production
 > image (a non-root user, pinned digests, and the like are still open).
-> Still the most straightforward path for home use today; the security
-> notes under [Running loxmatter permanently](../README.md#dauerhaft-betreiben-loxmatter-run)
-> apply unchanged.
+> Still the most straightforward path for home use today; the
+> [access-control notes](OPERATIONS.md#access-control) apply unchanged.
 
 ## Looking at a device
 
