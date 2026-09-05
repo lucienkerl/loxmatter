@@ -137,22 +137,19 @@
            kupfer-/gedeckte Symbolsprache der uebrigen Kachel-Icons. Gleiche
            Strich-Technik wie die Kategorie-Icons oben: nur Pfade, keine
            Fuellung ausser den Kreispunkten, `currentColor` uebernimmt Farbe
-           und Zustand (z. B. `.danger` auf dem Entfernen-Knopf) automatisch
-           von aussen. -->
+           und Zustand automatisch von aussen.
+
+           Export und Entfernen hatten hier je ein eigenes Symbol
+           (`#i-export`, `#i-remove`); Task 2 (Kebab-Menue, 2026-09-05) hat
+           beide Aktionen aus der Fusszeile ins Menue verlegt und dabei zu
+           ausgeschriebenen Text-Schaltflaechen gemacht - dort ist Platz fuer
+           Beschriftung statt Icon. Die beiden Symbole sind seither tot
+           (kein `<use>` verweist mehr auf sie) und wurden mit dem
+           Abschluss-Review vom 2026-09-05 entfernt; nur Umbenennen bleibt
+           ein Icon-Knopf. -->
       <symbol id="i-rename" viewBox="0 0 24 24">
         <path d="M14.5 5.5 18.5 9.5 8 20H4v-4L14.5 5.5z" />
         <path d="M12.7 7.3l4 4" />
-      </symbol>
-      <symbol id="i-export" viewBox="0 0 24 24">
-        <path d="M12 4v10" />
-        <path d="M8 10l4 4 4-4" />
-        <path d="M5 18h14" />
-      </symbol>
-      <symbol id="i-remove" viewBox="0 0 24 24">
-        <path d="M5 7h14" />
-        <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-        <path d="M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
-        <path d="M10 11v6M14 11v6" />
       </symbol>
       <!-- Drei gefuellte Punkte statt Striche: `.icon` setzt
            `fill: none; stroke: currentColor`, was fuer Linien-Icons stimmt,
@@ -560,16 +557,50 @@
                          Escape auf `document.body`, es erreicht das
                          `<details>` nie, das Menue bleibt lautlos offen.
                          `.window` haengt stattdessen am `window` und
-                         wirkt unabhaengig vom Fokus. Dass dieser Listener
-                         dann bei JEDEM Escape im Dokument prueft statt
-                         nur im eigenen Teilbaum, ist hier unproblematisch:
-                         es ist immer nur eine Kachel offen (s.o.), ein
-                         geschlossenes `<details>` auf `open = false` zu
-                         setzen ist ein no-op. -->
+                         wirkt unabhaengig vom Fokus. Das `if ($el.open)`
+                         davor ist trotzdem Pflicht, seit dieser Listener
+                         auch `closeTileMenu` aufruft (Fund 3, s.u.): ohne
+                         die Wache feuert er bei JEDEM Escape/Aussenklick an
+                         JEDER Kachel (es gibt ja eine `<details>`-Instanz
+                         je Geraet) und wuerde auch an laengst geschlossenen
+                         Menues deren `<summary>` fokussieren - obwohl der
+                         Nutzer gerade voellig woanders geklickt hat. Mit
+                         der Wache reagiert nur die tatsaechlich offene
+                         Kachel, und die ist ohnehin immer nur eine (s.o.).
+
+                         Fund 1 (Review vom 2026-09-05): `newRoomFor`
+                         schaltet nur noch die Sichtbarkeit des
+                         Neu-Raum-Feldes, war aber sonst genau die Sorte
+                         Zustand, gegen die dieser Umbau eigentlich antritt
+                         - er blieb auf drei der vier Schliesswege
+                         (Aussenklick, Escape, Klick auf einen Raumeintrag)
+                         unveraendert stehen, weil nur Enter und das Escape
+                         IM Feld ihn zuruecksetzten. Bei Wiedereroeffnen
+                         zeigte das Menue dann ein leeres Neu-Raum-Feld statt
+                         des "+ Neuer Raum"-Knopfes. `@toggle` feuert bei
+                         JEDEM Oeffnen/Schliessen dieses `<details>`, gleich
+                         aus welchem Grund - und ist damit die eine Stelle,
+                         die `newRoomFor` kennen muss, statt der vier
+                         Handler, die es bislang kennen MUESSTEN.
+
+                         Fund 3 (Review vom 2026-09-05): ein natives
+                         `<details>` gibt beim Schliessen keinen Fokus
+                         zurueck - der gerade aktivierte Eintrag verschwindet
+                         mitsamt seinem Fokus aus dem gerenderten Baum (nur
+                         der Inhalt hinter `<summary>` wird versteckt), und
+                         die naechste Tab-Taste faengt wieder ganz oben im
+                         Dokument an statt an der Kachel weiterzumachen, an
+                         der der Nutzer gerade stand. `closeTileMenu`
+                         (app.js) schliesst das `<details>` UND fokussiert
+                         danach dessen `<summary>` (die bleibt beim
+                         Schliessen immer gerendert) - eine Funktion fuer
+                         alle Schliesswege statt eines eigenen Fokus-Rufs an
+                         jedem einzelnen Eintrag. -->
                     <details
                       class="tile-menu"
-                      @click.outside="$el.open = false"
-                      @keydown.escape.window="$el.open = false"
+                      @toggle="if (!$el.open && newRoomFor === device.id) { newRoomFor = null; newRoomDraft = '' }"
+                      @click.outside="if ($el.open) closeTileMenu($el)"
+                      @keydown.escape.window="if ($el.open) closeTileMenu($el)"
                     >
                       <summary :title="t('web.devices.menu')">
                         <svg class="icon"><use href="#i-kebab"></use></svg>
@@ -587,7 +618,7 @@
                           class="tile-menu-item"
                           :class="{ 'is-current': roomKeyOf(device) === '' }"
                           :aria-current="roomKeyOf(device) === '' ? 'true' : null"
-                          @click="$el.closest('details').open = false; saveRoom(device, '')"
+                          @click="closeTileMenu($el); saveRoom(device, '')"
                           x-text="t('web.devices.room_none')"
                         ></button>
                         <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
@@ -595,14 +626,14 @@
                             class="tile-menu-item"
                             :class="{ 'is-current': roomKeyOf(device) === chip.key }"
                             :aria-current="roomKeyOf(device) === chip.key ? 'true' : null"
-                            @click="$el.closest('details').open = false; saveRoom(device, chip.key)"
+                            @click="closeTileMenu($el); saveRoom(device, chip.key)"
                             x-text="chip.key"
                           ></button>
                         </template>
                         <button
                           class="tile-menu-item"
                           x-show="newRoomFor !== device.id"
-                          @click="beginNewRoom(device)"
+                          @click="beginNewRoom(device); $nextTick(() => $el.parentElement.querySelector('.tile-menu-input').focus())"
                           x-text="t('web.devices.room_new')"
                         ></button>
                         <!-- Das Textfeld ist ein Kind des `<details>`, das
@@ -610,7 +641,24 @@
                              bricht NUR den Neu-Raum-Modus ab und darf nicht
                              bis zum `@keydown.escape` des `<details>`
                              hochblubbern, sonst verschwaende ein Abbruch
-                             gleich das ganze Menue - daher `.stop`. -->
+                             gleich das ganze Menue - daher `.stop`.
+
+                             Fund 3 (Review vom 2026-09-05): der Fokus-Ruf
+                             am "+ Neuer Raum"-Knopf oben zielt bewusst per
+                             `$el.parentElement.querySelector` auf dieses
+                             Feld statt per `x-ref`/`$refs`. Ein `x-ref`
+                             registriert sich am naechsten Element mit
+                             `x-data` - und das ist in dieser Seite einzig
+                             das `<body>` ganz oben, EIN gemeinsamer Topf
+                             fuer alle Kacheln zugleich. Bei mehreren
+                             Geraeten ueberschreibt der Eintrag der zuletzt
+                             gerenderten Kachel jeden davor registrierten,
+                             und `$refs.irgendwas` zeigte dann immer auf
+                             dasselbe (i. d. R. falsche) Feld, unabhaengig
+                             davon, welche Kachel der Nutzer tatsaechlich
+                             geoeffnet hat. Die Suche ab dem geklickten
+                             Knopf ist dagegen zwangslaeufig auf dessen
+                             eigene `.tile-menu-items` beschraenkt. -->
                         <input
                           x-show="newRoomFor === device.id"
                           x-cloak
@@ -618,19 +666,19 @@
                           class="tile-menu-input"
                           x-model="newRoomDraft"
                           :placeholder="t('web.devices.room_new_placeholder')"
-                          @keydown.enter="$el.closest('details').open = false; commitNewRoom(device)"
+                          @keydown.enter="closeTileMenu($el); commitNewRoom(device)"
                           @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''"
                         />
                         <hr class="tile-menu-sep" />
                         <button
                           class="tile-menu-item"
-                          @click="$el.closest('details').open = false; exportDevice(device)"
+                          @click="closeTileMenu($el); exportDevice(device)"
                           :disabled="!bridgeSettings.bridge_ip"
                           x-text="t('web.devices.export')"
                         ></button>
                         <button
                           class="tile-menu-item is-danger"
-                          @click="$el.closest('details').open = false; removeDevice(device)"
+                          @click="closeTileMenu($el); removeDevice(device)"
                           x-text="t('web.devices.remove')"
                         ></button>
                       </div>

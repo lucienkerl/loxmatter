@@ -400,10 +400,10 @@ async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api
     danach ganz entfernt: die Kachel zeigt den Leitwert jetzt in der
     Kopfzeile und den Rest als fluchtendes Raster ohne Abschnittstitel -
     eine Ueberschrift ueber der einzigen Werteliste einer sonst schon
-    kompakten Kachel waere reiner Platzverbrauch gewesen. Der
-    Schluessel `web.devices.values_heading` bleibt deshalb ungenutzt in
-    `strings.yaml` liegen (Task 9 raeumt ihn auf) und taucht im
-    ausgelieferten Markup nicht mehr auf. Die urspruengliche Sorge des
+    kompakten Kachel waere reiner Platzverbrauch gewesen. Der Schluessel
+    `web.devices.values_heading` ist deshalb (Task 9) aus `strings.yaml`
+    entfernt und taucht im ausgelieferten Markup nicht mehr auf. Die
+    urspruengliche Sorge des
     Tests - eine Ueberschrift, die mehr verspricht als die Kachel haelt -
     bleibt trotzdem gueltig zu pruefen: die beiden ueberholten
     Formulierungen duerfen nirgends mehr auftauchen."""
@@ -966,8 +966,8 @@ async def test_the_device_card_static_text_is_translated(api):
     seither wieder als `x-text`, nicht mehr als `:title`. Die beiden Werte-/
     Bedienungs-Abschnittsueberschriften bleiben von Task 8 ersatzlos
     gestrichen - die Kachel zeigt ohnehin nur noch ein einziges Werteraster
-    ohne eigenen Titel; `values_heading`/`controls_heading` bleiben ungenutzt
-    in `strings.yaml` liegen (Task 9 raeumt sie auf).
+    ohne eigenen Titel; `values_heading`/`controls_heading` sind seit
+    Task 9 aus `strings.yaml` entfernt.
 
     `no_functional_signals`, `controls_loading` und `no_known_commands`
     dagegen wurden von Task 9 zunaechst ebenfalls (verfrueht) entfernt und
@@ -2094,15 +2094,18 @@ async def test_the_tile_action_buttons_use_svg_symbols_not_raw_glyphs(api):
     Task 2 (Kebab-Menue, 2026-09-05) hat Export und Entfernen aus der
     Fusszeile ins Menue verlegt und dabei zu ausgeschriebenen
     Text-Schaltflaechen gemacht - dort ist Platz fuer Beschriftung statt
-    Icon, `#i-export`/`#i-remove` sind seither nirgends mehr eingebunden.
-    Nur die Umbenennen-Schaltflaeche bleibt ein Icon-Knopf und wird hier
-    weiter geprueft; das Kebab-Symbol selbst deckt
-    `test_the_tile_menu_has_its_own_icon_symbol` ab."""
+    Icon. Ihre Symbole `#i-export`/`#i-remove` waren seither nirgends mehr
+    eingebunden und sind mit dem Abschluss-Review vom 2026-09-05 ganz aus
+    dem Symbol-Block entfernt worden. Nur die Umbenennen-Schaltflaeche
+    bleibt ein Icon-Knopf und wird hier weiter geprueft; das Kebab-Symbol
+    selbst deckt `test_the_tile_menu_has_its_own_icon_symbol` ab."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert "x-text=\"'✎'\"" not in page
     assert "x-text=\"'↓'\"" not in page
     assert "x-text=\"'🗑'\"" not in page
+    assert 'id="i-export"' not in page
+    assert 'id="i-remove"' not in page
 
     rename_start = page.index('class="room-rename"')
     rename_end = page.index("</button>", rename_start)
@@ -2114,11 +2117,15 @@ async def test_the_tile_action_buttons_use_svg_symbols_not_raw_glyphs(api):
 async def test_the_tile_menu_has_its_own_icon_symbol(api):
     """Das Kebab-Symbol wird wie alle anderen inline ausgeliefert - keine
     Icon-Bibliothek, kein CDN, weil die Oberflaeche offline laeuft. Ein
-    `<use>` auf eine fehlende ID zeichnet stillschweigend nichts, deshalb
-    faellt ein vergessenes Symbol hier auf und nicht erst im Browser."""
+    `<use>` auf eine fehlende ID zeichnet stillschweigend nichts - die
+    riskante Richtung ist deshalb nicht die Symbol-Definition, sondern ihre
+    Verwendung: ein `<use href="#i-kebab">` ohne passendes `<symbol
+    id="i-kebab">` waere hier ebenso stillschweigend leer geblieben wie
+    umgekehrt. Beide Seiten werden deshalb geprueft."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     assert 'id="i-kebab"' in page
+    assert 'href="#i-kebab"' in page
 
 
 async def test_the_device_grid_is_multi_column(api):
@@ -2160,8 +2167,8 @@ async def test_the_device_card_stripe_is_rounded_on_its_own(api):
 
 
 async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
-    """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man per
-    Kachel-Auswahlliste das letzte Geraet eines gefilterten Raums in einen
+    """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man ueber das
+    Kachel-Menue das letzte Geraet eines gefilterten Raums in einen
     anderen, oder benennt/vereint man den gefilterten Raum weg, aendert
     `roomChips()` sich - `roomFilter` selbst aber nicht, ohne dass etwas
     das nachzieht. Der gefilterte Raum existiert dann nicht mehr, kein Chip
@@ -2261,12 +2268,55 @@ async def test_the_tile_menu_is_a_native_details_that_closes_three_ways(api):
     Menue ueberhaupt so gebaut ist (siehe Entwurf, Abschnitt 4). Zwei der
     drei Schliesswege muessen dennoch von Hand kommen: `<details>` schliesst
     weder bei einem Klick daneben noch bei Escape von selbst. Der dritte,
-    der Klick auf einen Eintrag, steht an den Eintraegen."""
+    der Klick auf einen Eintrag, steht an den Eintraegen.
+
+    Geprueft wird ausschliesslich im Kachel-Menue-Block, nicht seitenweit:
+    `@keydown.escape` (ohne `.window`) steht auch am Raum-Umbenennen-Feld
+    (`room-rename-input`) - ein seitenweiter `in page`-Test bliebe selbst
+    dann gruen, wenn der eigene Escape-Wachposten des Menues geloescht
+    wuerde, solange irgendwo sonst auf der Seite `@keydown.escape`
+    vorkommt. Der dritte Weg wird ueber `closeTileMenu($el)` belegt, das
+    JEDER Eintrag beim Klick aufruft (siehe `closeTileMenu` in app.js, das
+    dort tatsaechlich `open = false` setzt)."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
     assert 'class="tile-menu"' in page
-    assert "@click.outside" in page
-    assert "@keydown.escape" in page
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+    assert "@click.outside" in menu
+    assert "@keydown.escape" in menu
+    assert "closeTileMenu($el)" in menu
+
+    close_start = script.index("closeTileMenu(el) {")
+    close_end = script.index("\n    },", close_start)
+    close_body = script[close_start:close_end]
+    assert "open = false" in close_body
+
+
+async def test_the_tile_menu_resets_new_room_mode_on_every_close(api):
+    """Fund 1 (Abschluss-Review 2026-09-05): `newRoomFor` schaltet nur noch
+    die Sichtbarkeit des Neu-Raum-Textfelds, blieb dabei aber auf drei von
+    vier Schliesswegen unveraendert stehen - nur Enter und das Escape IM
+    Feld setzten es zurueck (siehe deren `@keydown`-Handler weiter unten in
+    dieser Datei). Ausserhalb geklickt, Escape im Menue oder ein Klick auf
+    einen Raumeintrag liessen `newRoomFor` auf der Geraete-ID stehen, obwohl
+    das Menue sichtbar zu ist: beim naechsten Oeffnen zeigte die Kachel ein
+    leeres Neu-Raum-Feld statt des "+ Neuer Raum"-Knopfes - im Browser
+    gemessen (siehe Aufgabenbericht): `newRoomFor` blieb nach einem
+    Aussenklick auf der ID des Geraets stehen, und beim Wiedereroeffnen war
+    `newRoomButtonVisible: false, strayInputVisible: true`.
+
+    Der Fix haengt an `@toggle` statt an jedem der vier Schliesswege
+    einzeln: `<details>` feuert `toggle` bei JEDER Zustandsaenderung, gleich
+    aus welchem Grund, und ist damit die einzige Stelle, die den
+    Neu-Raum-Zustand noch kennen muss."""
+    client, _store, _device_id = api
+    page = (await client.get("/")).text
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+    assert (
+        '@toggle="if (!$el.open && newRoomFor === device.id) '
+        "{ newRoomFor = null; newRoomDraft = '' }\""
+    ) in menu
 
 
 async def test_the_tile_menu_escape_listener_is_window_scoped(api):
@@ -2283,7 +2333,7 @@ async def test_the_tile_menu_escape_listener_is_window_scoped(api):
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
-    assert '@keydown.escape.window="$el.open = false"' in menu
+    assert '@keydown.escape.window="if ($el.open) closeTileMenu($el)"' in menu
 
 
 async def test_export_and_remove_moved_into_the_tile_menu(api):
@@ -2321,7 +2371,18 @@ async def test_the_current_room_is_marked_for_assistive_tech_too(api):
     """Das Haekchen am aktuellen Raum ist rein grafisch. `aria-current`
     traegt dieselbe Auskunft fuer alles, was die Seite nicht sieht - ohne
     das waere der aktuelle Raum im Menue nur eine von mehreren gleich
-    aussehenden Zeilen."""
+    aussehenden Zeilen.
+
+    Geprueft wird im Kachel-Menue-Block, nicht seitenweit - ein blosses
+    `"aria-current" in page` waere schon durch irgendeine zukuenftige,
+    voellig unabhaengige Verwendung des Attributs anderswo auf der Seite
+    zufrieden, ohne dass hier ueberhaupt etwas markiert waere. Belegt wird
+    ausserdem, dass das Attribut tatsaechlich an `roomKeyOf(device)` haengt
+    - demselben Vergleich, der auch `.is-current` (das sichtbare Haekchen)
+    steuert - und nicht an einem unabhaengigen, potenziell
+    auseinanderlaufenden Ausdruck."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
-    assert "aria-current" in page
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+    assert ":aria-current=\"roomKeyOf(device) === '' ? 'true' : null\"" in menu
+    assert ":aria-current=\"roomKeyOf(device) === chip.key ? 'true' : null\"" in menu

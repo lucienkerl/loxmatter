@@ -1017,12 +1017,12 @@ function app() {
 
     // Fund 2 (2026-09-05): faellt auf "Alle" zurueck, wenn der Raum, nach
     // dem gerade gefiltert wird, durch einen Schreibvorgang verschwunden
-    // ist - das letzte Geraet eines Raums per Kachel-Auswahlliste
-    // verschoben, oder der Raum umbenannt/zusammengefuehrt. Ohne das blieb
-    // `roomFilter` auf einem Namen stehen, den `roomChips()` nicht mehr
-    // liefert: keine Kachel mehr sichtbar, kein Chip mehr aktiv, und der
-    // Umbenennen-Stift (der ja nur an `roomFilter` haengt) noch da, aber
-    // ins Leere zeigend (404 beim Draufklicken).
+    // ist - das letzte Geraet eines Raums ueber das Kachel-Menue in einen
+    // anderen Raum verschoben, oder der Raum umbenannt/zusammengefuehrt.
+    // Ohne das blieb `roomFilter` auf einem Namen stehen, den `roomChips()`
+    // nicht mehr liefert: keine Kachel mehr sichtbar, kein Chip mehr aktiv,
+    // und der Umbenennen-Stift (der ja nur an `roomFilter` haengt) noch da,
+    // aber ins Leere zeigend (404 beim Draufklicken).
     //
     // Nur fuer "Alle" (`null`) gibt es nichts zu tun - da wird ohnehin
     // nicht gefiltert, `roomChips()` kennt fuer diesen Wert gar keinen
@@ -1142,6 +1142,25 @@ function app() {
         // bleiben, den es nicht mehr gibt.
         this.reconcileRoomFilter();
       }
+    },
+
+    // Fund 3 (Review vom 2026-09-05): ein natives `<details>` gibt beim
+    // Schliessen keinen Fokus zurueck - der Eintrag, den der Nutzer gerade
+    // aktiviert hat, verschwindet mitsamt seinem Fokus aus dem gerenderten
+    // Baum (nur der Inhalt hinter `<summary>` wird versteckt, siehe
+    // index.html), und Tab faengt danach wieder ganz oben im Dokument an.
+    // `el` ist ein beliebiges Element INNERHALB des Menues - ein Eintrag,
+    // das Eingabefeld, oder das `<details>` selbst bei den Aussenklick-/
+    // Escape-Wachposten -, `closest("details")` findet in jedem Fall
+    // dasselbe Element. `<summary>` bleibt beim Schliessen immer gerendert,
+    // ist also immer ein gueltiges Fokusziel. Eine Funktion statt eines
+    // eigenen Fokus-Rufs an jedem der fuenf Schliess-Handler in
+    // index.html - genau die Wiederholung, die Fund 1 bei `newRoomFor`
+    // schon einmal falsch gemacht hat.
+    closeTileMenu(el) {
+      const menu = el.closest("details");
+      menu.open = false;
+      menu.querySelector("summary").focus();
     },
 
     beginNewRoom(device) {

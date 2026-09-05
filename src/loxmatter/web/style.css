@@ -1059,13 +1059,29 @@ footer.hint-block {
   padding-left: 0.2rem;
 }
 
+/* `flex: 0 1 auto` statt `0 0 auto`, plus `min-width: 0` und Kappen mit
+ * Ellipse: dieselbe Absicherung wie am Werteraster weiter unten
+ * (`.value-rows .value`, Begruendung dort) und aus demselben Grund noetig -
+ * `.device-card` setzt seit dem Kachel-Menue bewusst `overflow: visible`
+ * (des Menues wegen), die Kachel schneidet also nichts mehr fuer einen,
+ * jede Zelle muss sich seither selbst eindaemmen. Ohne diese Regeln lief
+ * ein realistischer Listenwert (gemessen: `12.4, 55.1, 99.9, 42.0, 17.3,
+ * 88.8`) 32px ueber den rechten Kachelrand hinaus in die Nachbarkachel -
+ * `formatValue` (app.js) endet in `String(value)` ohne Kuerzung, und die
+ * funktionale-Signal-Regel laesst Listen- und Textattribute ausdruecklich
+ * zu, ein langer Wert ist also erreichbar, nicht nur hypothetisch.
+ * `white-space: nowrap` bleibt trotzdem stehen: eine Zahl soll nicht mitten
+ * im Wert umbrechen, sie soll kuerzen. */
 .lead-value {
   font-family: var(--mono);
   font-size: 1.35rem;
   font-weight: 600;
   line-height: 1.05;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lead-value small {
