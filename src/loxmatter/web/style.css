@@ -1078,9 +1078,21 @@ footer.hint-block {
 /* Werteraster statt Chips: die Werte fluchten ueber alle Kacheln hinweg in
  * einer Spalte, statt als unterschiedlich breite Chips zu maeandern - man
  * scannt eine Spalte statt zwoelf Bausteine. */
+/* `fit-content(9rem)` statt nacktem `auto` an der zweiten Spalte: eine
+ * `auto`-Spalte waechst auf die volle Max-Content-Breite ihres Inhalts,
+ * VOELLIG unabhaengig von `min-width` auf dem Grid-Item - das begrenzt nur
+ * die Minimalgroesse, nicht die maximale. Ein einzelner sehr langer
+ * (`white-space: nowrap`, siehe `.value-rows .value` unten) Wert wuerde die
+ * Spalte also auf seine volle Breite aufblasen und der `1fr`-Spalte
+ * daneben den Rest wegnehmen (bis auf 0px, gemessen) - `min-width: 0` auf
+ * `.value-key` haette das nicht verhindert, weil das Problem in der
+ * Spaltenbreite selbst liegt, nicht im Item. `fit-content(9rem)` deckelt
+ * genau diese Spaltenbreite: kurze Werte (`42.3 W`) bekommen weiterhin nur
+ * so viel Platz wie sie brauchen, ein pathologisch langer Wert wird bei
+ * 9rem gekappt, statt die Titel-Spalte zu verdraengen. */
 .value-rows {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) fit-content(9rem);
   gap: 0.05rem 0.5rem;
   margin: 0.5rem 0;
 }
@@ -1089,15 +1101,42 @@ footer.hint-block {
   display: contents;
 }
 
+/* `min-width: 0` auf beiden Rasterzellen ist trotz der Spaltendeckelung
+ * oben noetig: das automatische Minimum eines Grid-Items ist sonst seine
+ * Inhaltsbreite (dieselbe Falle wie beim `.device-name`-Eingabefeld an
+ * anderer Stelle in diesem Projekt) - ohne das wuerde `.value-key` selbst
+ * bei ausreichend Platz in der `1fr`-Spalte nie unter seine eigene
+ * Inhaltsbreite schrumpfen und den Umbruch unten nie ausloesen. Das faellt
+ * erst seit `.device-card` `overflow: visible` setzt (Begruendung dort,
+ * wegen des Kachel-Menues) wirklich auf: vorher hat die Karte selbst das
+ * Ergebnis stillschweigend abgeschnitten, jetzt laeuft es sichtbar in die
+ * Nachbarkachel. Reale Werte sind kurz (`42.3 W`, `true`), aber
+ * Signaltitel sind vom Nutzer frei vergeben - dieser Guard ist die
+ * Absicherung fuer den Tag, an dem einer lang und unteilbar ist. */
 .value-key {
   font-size: 0.75rem;
   color: var(--text-muted);
+  min-width: 0;
+  /* Der Titel ist Fliesstext, kein Einzelwert - zwei Zeilen sind lesbar,
+     `break-word` verhindert nur, dass ein einzelnes langes Wort ohne
+     Leerzeichen (z.B. ein technischer Signalname) die Zeile sprengt. */
+  overflow-wrap: break-word;
 }
 
 .value-rows .value {
   font-family: var(--mono);
   font-size: 0.75rem;
   text-align: right;
+  min-width: 0;
+  /* Der Wert ist ein einzelner Messpunkt, kein Text zum Weiterlesen -
+     Umbruch wuerde ihn in der schmalen Spalte optisch zerreissen
+     (`42.3` in Zeile eins, `W` in Zeile zwei) und die Rasterzeilen
+     ungleich hoch machen. Kappen mit Ellipse haelt die Zeile einzeilig
+     und die Spalte fluchtend; die Signalliste (View "signals") zeigt
+     denselben Wert ungekuerzt, falls der Ellipse-Rest nicht reicht. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .device-commands {
