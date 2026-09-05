@@ -2594,3 +2594,29 @@ async def test_the_current_room_is_marked_for_assistive_tech_too(api):
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
     assert ":aria-current=\"roomKeyOf(device) === '' ? 'true' : null\"" in menu
     assert ":aria-current=\"roomKeyOf(device) === chip.key ? 'true' : null\"" in menu
+
+
+async def test_the_kebab_button_names_itself_via_aria_label_and_hides_its_icon(api):
+    """A11y-Nacharbeit (2026-09-05), Fund 1: der Kebab-Knopf trug bisher nur
+    `title`, und `title` ist bei der Berechnung des zugaenglichen Namens
+    (accessible name) lediglich der letzte Rueckfallwert - Screenreader
+    verlassen sich darauf nicht zuverlaessig. Der Spec-Text zu diesem Menue
+    nannte `web.devices.menu` bereits "der zugaengliche Name des
+    ⋮-Knopfs" (siehe Kommentar ueber den Keys in strings.yaml), was bis zu
+    diesem Fix schlicht nicht stimmte. `aria-label` traegt jetzt denselben
+    uebersetzten Wert, `title` bleibt zusaetzlich als Maus-Tooltip stehen -
+    unterschiedliche Zwecke, beide Attribute duerfen nebeneinander stehen.
+
+    Das `<svg>` bekommt zugleich `aria-hidden="true"`: ein dekoratives Icon
+    in einem bereits benannten Element darf dem Accessibility-Baum keinen
+    zweiten, konkurrierenden Namen liefern. Dies ist eine Assertion gegen
+    die AUSGELIEFERTE Datei, keine Verhaltenspruefung - eine echte
+    Browser-Engine fuer die tatsaechliche Namensberechnung fehlt dieser
+    Suite (siehe die uebrigen Kachel-Menue-Tests in dieser Datei)."""
+    client, _store, _device_id = api
+    page = (await client.get("/")).text
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+    summary = menu.split("<summary", 1)[1].split("</summary>", 1)[0]
+    assert ":title=\"t('web.devices.menu')\"" in summary
+    assert ":aria-label=\"t('web.devices.menu')\"" in summary
+    assert 'aria-hidden="true"' in summary

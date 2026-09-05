@@ -622,8 +622,24 @@
                       @click.outside="if ($el.open) closeTileMenu($el)"
                       @keydown.escape.window="if ($el.open) closeTileMenu($el)"
                     >
-                      <summary :title="t('web.devices.menu')">
-                        <svg class="icon"><use href="#i-kebab"></use></svg>
+                      <!-- `title` allein ist bei der Berechnung des
+                           zugaenglichen Namens nur der letzte Rueckfallwert
+                           und wird von Screenreadern nicht zuverlaessig
+                           vorgelesen - `aria-label` legt den Namen explizit
+                           fest, `title` bleibt zusaetzlich als Maus-Tooltip
+                           stehen, beide Attribute erfuellen also
+                           unterschiedliche Zwecke nebeneinander.
+                           Das `<svg>` bekommt hier als erstes Icon in
+                           dieser Datei `aria-hidden="true"`: ein
+                           dekoratives Icon in einem bereits benannten
+                           Bedienelement darf dem Accessibility-Baum keinen
+                           zweiten, konkurrierenden Namen liefern. Die
+                           anderen Icon-Knoepfe (`.room-rename` u.a.) haben
+                           das noch nicht - beim naechsten Anfassen bitte
+                           dieses Muster uebernehmen, nicht das aeltere ohne
+                           `aria-hidden`. -->
+                      <summary :title="t('web.devices.menu')" :aria-label="t('web.devices.menu')">
+                        <svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg>
                       </summary>
                       <div class="tile-menu-items">
                         <p class="tile-menu-heading" x-text="t('web.devices.menu_room_heading')"></p>
