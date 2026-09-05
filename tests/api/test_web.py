@@ -2730,7 +2730,22 @@ async def test_the_room_list_is_a_labelled_group_for_assistive_tech(api):
     Belegt wird ausserdem, dass die Gruppe tatsaechlich die Raum-Eintraege
     und das Neu-Raum-Feld umschliesst, Export und Entfernen aber aussen vor
     laesst - eine zu weit oder zu eng gezogene Gruppe waere fuer
-    Screenreader-Nutzer ebenso falsch wie gar keine."""
+    Screenreader-Nutzer ebenso falsch wie gar keine.
+
+    Review-Fund 7 (2026-09-05, Review der Nacharbeit): den Schnitt am
+    ERSTEN `</div>` nach dem Oeffnungstag der Gruppe enden zu lassen ist
+    nur korrekt, solange innerhalb der Gruppe kein verschachteltes `<div>`
+    auftaucht - kaeme eines hinzu, faende `menu.index("</div>", ...)` dessen
+    schliessendes Tag statt des der Gruppe, `group_body` waere dann zu kurz
+    abgeschnitten. Die POSITIVEN Assertions unten wuerden das laut melden
+    (der abgeschnittene Text enthaelt "roomChips()" & Co. dann nicht mehr),
+    die beiden NEGATIVEN ("not in") dagegen wuerden lautlos weiter
+    bestehen, obwohl sie nichts mehr pruefen - ein verschachteltes `<div>`
+    faellt schlicht aus dem (jetzt zu kurzen) `group_body` heraus, noch
+    bevor Export/Entfernen ueberhaupt drankommen koennten. Verankert wird
+    das Ende deshalb an `<hr class="tile-menu-sep"` - dem tatsaechlichen,
+    im Markup fest stehenden Ende der Raumgruppe (s. index.html), nicht an
+    einem zufaelligen ersten `</div>`."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -2741,7 +2756,7 @@ async def test_the_room_list_is_a_labelled_group_for_assistive_tech(api):
     assert 'role="group"' in group_tag
     assert ":aria-labelledby=\"'tile-menu-room-heading-' + device.id\"" in group_tag
 
-    group_body = menu[group_open_end : menu.index("</div>", group_open_end)]
+    group_body = menu[group_open_end : menu.index('<hr class="tile-menu-sep"', group_open_end)]
     assert ":id=\"'tile-menu-room-heading-' + device.id\"" in group_body
     assert "menu_room_heading" in group_body
     assert "saveRoom(device, '')" in group_body
