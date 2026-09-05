@@ -591,3 +591,15 @@ def test_sigint_raeumt_temporaere_datei_auf(installer):
 
     assert proc.returncode == 130
     assert list(installer.tmpdir.iterdir()) == []
+
+
+def test_kein_update_angebot_wenn_docker_gerade_erst_kam(installer):
+    # update.sh ruft docker ohne sudo. Wurde Docker in diesem Lauf erst
+    # installiert, greift die Gruppenmitgliedschaft erst nach einer
+    # Neuanmeldung - das Angebot koennte gar nicht funktionieren.
+    first = installer()
+    assert first.returncode == 0
+    second = installer(omit=("docker",), env={"FAKE_BEHIND": "3"})
+    assert second.returncode == 0
+    assert "Log out and back in first" in second.output
+    assert "Apply them with" not in second.output

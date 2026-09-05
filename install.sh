@@ -514,6 +514,13 @@ offer_update() {
     return 0
   fi
   say "$behind new commits are available"
+  if [ "$DOCKER_SUDO" -eq 1 ]; then
+    # Docker was installed in this very run, so the docker group is not in
+    # effect yet - and scripts/update.sh calls docker without sudo. Offering
+    # something that cannot work is worse than not offering it.
+    note "Log out and back in first, then run: $TARGET_DIR/scripts/update.sh"
+    return 0
+  fi
   if [ "$HAVE_TTY" -eq 0 ]; then
     note "Apply them with: $TARGET_DIR/scripts/update.sh"
     return 0
