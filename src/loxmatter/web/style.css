@@ -1107,11 +1107,32 @@ footer.hint-block {
  * zu, ein langer Wert ist also erreichbar, nicht nur hypothetisch.
  * `white-space: nowrap` bleibt trotzdem stehen: eine Zahl soll nicht mitten
  * im Wert umbrechen, sie soll kuerzen. */
+/* Fund 4 (Nacharbeit 2026-09-05): `line-height: 1.05` reicht bei diesem
+ * Schriftschnitt nicht fuer die Unterlaengen von Kleinbuchstaben wie
+ * `g`/`y`/`p`/`q` - gemessen am Text `gypq`: `scrollHeight` 24px gegen
+ * `clientHeight` 23px, ein Pixel Unterlaenge faellt dem `overflow: hidden`
+ * zum Opfer (das erst mit dem Kachel-Menue dazukam, s.o.). Nur textwertige
+ * Leitwerte sind betroffen, Zahlen haben keine Unterlaengen.
+ *
+ * Zwei Wege wurden gemessen: `line-height` anheben (z. B. auf 1.2) schafft
+ * zwar Raum, vergroessert aber die Zeilenbox selbst und damit gleichermassen
+ * die Feldhoehe JEDER Kachel, auch der rein numerischen - eine spuerbare
+ * Verschiebung des `.device-head`-Kopfes ueberall, nur um ein selten
+ * auftretendes Pixel bei Textwerten zu gewinnen. `padding-block` zaehlt
+ * dagegen INNERHALB der Clip-Box von `overflow: hidden` (die am Padding-
+ * Rand schneidet, nicht am Rand der Zeilenbox) und schafft damit genau dort
+ * Reserve, wo sie noetig ist, ohne die Zeilenbox selbst zu vergroessern.
+ * Gewaehlt: `padding-block`. Im `.device-head` (`align-items: flex-start`)
+ * bestimmt ohnehin `.device-ident` mit seinem `.device-name`-Eingabefeld
+ * die Zeilenhoehe (dessen eigenes Padding plus Rahmen macht es hoeher als
+ * `.lead-value` selbst mit Zuschlag) - der Kopf einer normalen, numerischen
+ * Kachel verschiebt sich dadurch nicht. */
 .lead-value {
   font-family: var(--mono);
   font-size: 1.35rem;
   font-weight: 600;
   line-height: 1.05;
+  padding-block: 1px;
   flex: 0 1 auto;
   min-width: 0;
   white-space: nowrap;

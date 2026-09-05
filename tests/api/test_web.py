@@ -2264,6 +2264,29 @@ async def test_offline_stripe_keeps_its_dimmed_look_on_its_own(api):
     assert "opacity: 0.75" in stripe_rule
 
 
+async def test_lead_value_gets_padding_room_for_descenders(api):
+    """Fund 4 (Nacharbeit 2026-09-05): `.lead-value` schneidet bei
+    `line-height: 1.05` und `overflow: hidden` die Unterlaengen textwertiger
+    Leitwerte (`g`/`y`/`p`/`q`) um ein Pixel ab - im Browser gemessen am
+    Text `gypq`: `scrollHeight` 24px gegen `clientHeight` 23px. Zahlen ohne
+    Unterlaengen sind nicht betroffen.
+
+    Gemessene Wahl: `padding-block` statt einer hoeheren `line-height` -
+    Letzteres haette die Zeilenbox und damit die Feldhoehe JEDER Kachel
+    vergroessert (auch rein numerischer), `padding-block` zaehlt dagegen
+    innerhalb der `overflow: hidden`-Clip-Box (die am Padding-Rand
+    schneidet) und schafft nur dort zusaetzlichen Raum. Ohne Browser-Engine
+    kann diese Suite `scrollHeight`/`clientHeight` selbst nicht nachrechnen
+    (siehe Aufgabenbericht fuer die Messung) - belegt wird nur, dass die
+    ausgelieferte Regel ein `padding-block` traegt und `line-height`
+    unveraendert bei `1.05` bleibt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split(".lead-value {", 1)[1].split("}", 1)[0]
+    assert "padding-block" in rule
+    assert "line-height: 1.05" in rule
+
+
 async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
     """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man ueber das
     Kachel-Menue das letzte Geraet eines gefilterten Raums in einen
