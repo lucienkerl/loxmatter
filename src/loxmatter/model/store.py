@@ -899,6 +899,20 @@ class Store:
         return snapshot.unique_id or f"node:{snapshot.node_id}"
 
     def register_device(self, snapshot: NodeSnapshot, room: str | None = None) -> int:
+        """Legt ein Geraet an, oder liefert die id eines bereits bekannten
+        aktiven Geraets zurueck, ohne es zu veraendern.
+
+        **`room` wirkt ausschliesslich auf eine neu eingefuegte Zeile.** Ist
+        das Geraet schon aktiv registriert, greift der fruehe Rueckgabepfad
+        unten VOR dem INSERT, und `room` wird dabei stillschweigend
+        verworfen - beabsichtigt: ein bekanntes Geraet behaelt beim
+        Wiedereinlernen seinen gepflegten Raum, ein Wiedereinlernen ohne
+        Raumwahl darf ihn nicht leeren. Eine ausdrueckliche Raumwahl fuer ein
+        bereits bekanntes Geraet ist deshalb Sache der Aufruferin: die
+        Einlern-Route in `api/devices.py` traegt sie nach dieser Methode per
+        `set_room` nach, wenn `request.room is not None` war (Review-Fund,
+        Finding 4) - nie per `rename_device`, denn der Raum landet in keiner
+        Exportvorlage."""
         identity = self._device_identity(snapshot)
         row = self._db.execute(
             "SELECT id FROM device WHERE unique_id = ? AND active = 1", (identity,)

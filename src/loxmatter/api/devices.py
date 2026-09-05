@@ -431,6 +431,22 @@ def build_device_router(
         # register_signals vor register_commands, denn beide brauchen die
         # frisch vergebene device_id.
         device_id = store.register_device(snapshot, room=request.room)
+        # `register_device`s `room`-Argument wirkt laut seinem Docstring nur
+        # bei einer neu eingefuegten Zeile - ein schon bekanntes, aktives
+        # Geraet wird dort vor dem INSERT abgefangen und behaelt einfach
+        # seinen bisherigen Raum, die Auswahl aus dieser Anfrage wuerde
+        # kommentarlos verworfen (Review-Fund, Finding 4). Das ist beim
+        # erneuten Einlernen eines unveraendert bekannten Geraets OHNE
+        # Raumwahl richtig - ein Wiedereinlernen darf einen gepflegten Raum
+        # nicht stillschweigend leeren. Wurde aber, wie hier, ein Raum
+        # ausdruecklich ausgewaehlt (die Kachel im Einlern-Dialog bietet ihn
+        # an), soll genau diese Wahl gelten, gleich ob das Geraet neu oder
+        # schon bekannt war - also wird sie hier zusaetzlich per `set_room`
+        # nachgetragen. `set_room`, nicht `rename_device`: der Raum landet in
+        # keiner Exportvorlage, ein Wiedereinlernen mit Raumwahl darf das
+        # Geraet deshalb nicht als "seither geaendert" markieren.
+        if request.room is not None:
+            store.set_room(device_id, request.room)
         store.register_signals(device_id, snapshot)
         store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
 

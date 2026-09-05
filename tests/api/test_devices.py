@@ -773,3 +773,68 @@ async def test_commissioning_accepts_a_room(api):
     assert response.status_code == 201
     assert response.json()["room"] == "Küche"
     assert response.json()["category"] == "switch"
+
+
+async def test_recommissioning_a_known_device_applies_the_chosen_room(api):
+    """Review-Fund, Finding 4: `register_device` gibt fuer ein bereits
+    aktives Geraet frueh zurueck, VOR dem INSERT - das `room`-Argument wird
+    dabei verworfen (siehe dessen Docstring). Die Einlern-Kachel der
+    Oberflaeche bietet inzwischen ein Raumfeld an; ohne den Fix hier bekaeme
+    eine Person, die ein bereits bekanntes Geraet mit gewaehltem Raum
+    erneut einlernt, ein 201 und keinerlei Hinweis darauf, dass ihre Wahl
+    ignoriert wurde.
+
+    `fake_client.snapshot_to_return` liefert absichtlich dieselbe
+    `unique_id` wie das Geraet, das die `api`-Fixture bereits ohne Raum
+    registriert hat (`ikea_grillplats_plug.json`) - das ist der Fall
+    "erneutes Einlernen eines bekannten Geraets", nicht "neues Geraet"."""
+    client, store, device_id, fake_client = api
+    assert store.device(device_id).room is None
+    fake_client.snapshot_to_return = load_snapshot("ikea_grillplats_plug.json")
+
+    response = await client.post(
+        "/api/devices/commission", json={"code": "MT:ABC123", "room": "Küche"}
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["id"] == device_id
+    assert body["room"] == "Küche"
+    assert store.device(device_id).room == "Küche"
+    # Kein zweites Geraet entstanden - `register_device` hat den fruehen
+    # Rueckgabepfad genommen, `set_room` hat den Raum nachgetragen.
+    assert len(store.devices()) == 1
+
+
+async def test_recommissioning_a_known_device_uses_set_room_not_rename_device(api, monkeypatch):
+    """Die Gegenprobe zum Fix aus Finding 4, auf Store-Ebene statt ueber
+    `GET /api/export/status`: `register_signals` markiert ein Geraet bei
+    JEDEM Wiedereinlernen ohnehin als "seither geaendert" - absichtlich, mit
+    eigener Begruendung im Docstring dort ("reines Refresh eines schon
+    bekannten Geraets"), unabhaengig von einer Raumwahl. Ein End-zu-Ende-Test
+    ueber `GET /api/export/status` koennte die beiden Ursachen deshalb nicht
+    auseinanderhalten und wuerde immer "geaendert" zeigen, egal ob die
+    nachgetragene Raumwahl `updated_at` anfasst oder nicht.
+
+    Dieser Test prueft die eigentliche Zusicherung direkt: die Route in
+    `api/devices.py` darf zum Nachtragen der Raumwahl ausschliesslich
+    `Store.set_room` rufen, nie `Store.rename_device` - `rename_device`
+    wuerde `updated_at` setzen, und der Raum landet in keiner Exportvorlage
+    (Entwurf 3.3). `rename_device` wird hier durch eine Falle ersetzt, die
+    den Test scheitern liesse, waere sie tatsaechlich aufgerufen worden."""
+    client, store, device_id, fake_client = api
+    fake_client.snapshot_to_return = load_snapshot("ikea_grillplats_plug.json")
+
+    def _rename_device_is_the_wrong_call(*_args, **_kwargs):
+        raise AssertionError(
+            "rename_device darf beim Nachtragen einer Raumwahl nicht aufgerufen werden"
+        )
+
+    monkeypatch.setattr(store, "rename_device", _rename_device_is_the_wrong_call)
+
+    response = await client.post(
+        "/api/devices/commission", json={"code": "MT:ABC123", "room": "Küche"}
+    )
+
+    assert response.status_code == 201
+    assert store.device(device_id).room == "Küche"
