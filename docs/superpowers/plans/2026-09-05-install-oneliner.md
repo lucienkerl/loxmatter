@@ -2304,3 +2304,29 @@ Die Stub-Tests prüfen die Auswahl der Befehle, nicht ihre Wirkung. Vor dem Merg
 5. Der bestehende Produktivstack: `git pull` und `docker compose up -d` — der Dienst `otbr` muss weiterlaufen, weil seine `.env` `COMPOSE_PROFILES=thread` trägt (bzw. `install.sh` sie beim zweiten Lauf ergänzt hat).
 
 Schritt 5 ist der wichtigste: er ist der einzige, der zeigt, dass die Profil-Umstellung eine laufende Installation nicht beschädigt.
+
+---
+
+## Abweichungen bei der Ausführung
+
+Der Plan oben ist der Entwurf. Wo die Umsetzung davon abwich, geschah das auf
+einen Review-Befund hin — hier vollständig, damit niemand den Plan für den
+Stand der Dinge hält. Der Code im Repository ist maßgeblich.
+
+| Abweichung | Grund |
+|---|---|
+| `valid_ipv4` steht in Phase 1 statt in Phase 4 | Eine ungültige Adresse muss vor dem Klonen auffallen, nicht danach. |
+| `valid_ipv4` prüft die Form per `case`, bevor es rechnet | `[ n -gt 255 ]` gibt bei einer Zahl jenseits des Integer-Bereichs einen Fehler statt „falsch" zurück — `1.2.3.999999999999999999999` galt als gültig. |
+| Der Docker-Installer wird erst heruntergeladen, dann ausgeführt | `curl … \| sh \|\| die` konnte einen fehlgeschlagenen Download nicht erkennen: ohne `pipefail` zählt der Status des letzten Befehls, und `sh` mit leerer Eingabe endet mit 0. |
+| Nach der Installation prüft `have docker`, nicht der Download | Eine abgeschnittene, aber syntaktisch gültige Datei läuft fehlerfrei durch und installiert nichts. Das Ergebnis zu prüfen deckt die ganze Klasse ab. |
+| `install_docker` prüft zum Schluss das Compose-Plugin | `collect_missing` kann das nur, wenn Docker schon da ist — nach einer frischen Installation prüfte es niemand. |
+| `TEMP_FILE` ist global und wird vom EXIT-Trap entfernt; `main` fängt `INT`/`TERM` | Sonst blieb die heruntergeladene Datei bei einem Ctrl-C liegen. |
+| `INSTALLED_DOCKER` entfällt, `DOCKER_SUDO` trägt die Bedingung | Der Rat zur Neuanmeldung gilt genau dann, wenn mit `sudo` installiert wurde — als root gibt es kein Gruppenproblem. |
+| `offer_update` steht in Phase 3 statt in Phase 7 | „Repository holen" heißt klonen **oder** das vorhandene nehmen und anbieten, es auf Stand zu bringen. Gibt `CHECKOUT_EXISTED` seinen Leser in derselben Aufgabe. |
+| `offer_update` schweigt, wenn Docker gerade erst kam | `update.sh` ruft `docker` ohne `sudo`; die Gruppenmitgliedschaft greift erst nach einer Neuanmeldung. Ein Angebot, das nicht funktionieren kann, ist schlechter als keines. |
+| `offer_update` normalisiert das `rev-list`-Ergebnis auf eine Zahl | Ein nicht-numerischer Wert hätte ein Update mit dem Müllwert angekündigt. |
+| `env_set` schreibt ohne `awk` | `awk -v value=…` verarbeitet Escapes: ein Rückwärtsstrich verschwand still, aus `\t` wurde ein Tabulator. |
+| `stack_port` verlangt genau eine `--listen`-Stelle und gibt sonst hörbar auf | Ein still falsch gelesener Port hätte `check_health` auf den falschen Port zeigen lassen — und danach dem Dienst die Schuld gegeben. |
+| Befunde werden in `run_checks` ausgegeben, `report` verweist nur darauf | Sie zweimal vollständig zu drucken, wenige Zeilen auseinander, ist Lärm statt Nachdruck. |
+| Variablen werden dort deklariert, wo sie zuerst benutzt werden | `shellcheck` meldet sonst SC2034, und eine Unterdrückung dafür wird in der Aufgabe, die die Variable dann benutzt, zur Falschaussage. |
+| Zwei Tests laufen nur unter Linux | macOS' `mktemp` ignoriert `TMPDIR`; die Prüfung wäre dort immer wahr und damit wertlos. |
