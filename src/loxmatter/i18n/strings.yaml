@@ -840,8 +840,8 @@ web.devices.more_commands_short:
   en: "unnamed"
   de: "unbenannt"
 web.devices.commission_room_hint:
-  en: 'The room is optional — without a selection the device appears under "No room" and can be assigned later.'
-  de: 'Der Raum ist optional — ohne Auswahl erscheint das Gerät unter „Ohne Raum" und lässt sich später zuordnen.'
+  en: 'The room is optional — without a selection the device appears under “No room” and can be assigned later.'
+  de: 'Der Raum ist optional — ohne Auswahl erscheint das Gerät unter „Ohne Raum“ und lässt sich später zuordnen.'
 
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
