@@ -631,7 +631,7 @@
                           ></button>
                         </template>
                         <button
-                          class="tile-menu-item"
+                          class="tile-menu-item tile-menu-new"
                           x-show="newRoomFor !== device.id"
                           @click="beginNewRoom(device); $nextTick(() => $el.parentElement.querySelector('.tile-menu-input').focus())"
                           x-text="t('web.devices.room_new')"
@@ -658,7 +658,22 @@
                              davon, welche Kachel der Nutzer tatsaechlich
                              geoeffnet hat. Die Suche ab dem geklickten
                              Knopf ist dagegen zwangslaeufig auf dessen
-                             eigene `.tile-menu-items` beschraenkt. -->
+                             eigene `.tile-menu-items` beschraenkt.
+
+                             Fund 2 (Re-Review 2026-09-05): `newRoomFor =
+                             null` blendet dieses Feld per `x-show` aus
+                             (`display: none`), nimmt ihm den Fokus dabei
+                             aber NICHT ab - im Browser gemessen: danach war
+                             das Feld weiterhin `document.activeElement`,
+                             unsichtbar und ohne Nachbarn zum Weiter-Tabben,
+                             das Menue blieb offen mit Fokus auf einem toten
+                             Ende. Der Escape-Handler schickt den Fokus
+                             deshalb explizit auf den "+ Neuer Raum"-Knopf,
+                             der an seiner Stelle wieder auftaucht - `x-ref`
+                             scheidet aus denselben Gruenden aus wie oben,
+                             darum dieselbe `$el.parentElement.querySelector`-
+                             Suche, nur mit der stabilen zweiten Klasse
+                             `.tile-menu-new` als Ziel. -->
                         <input
                           x-show="newRoomFor === device.id"
                           x-cloak
@@ -667,7 +682,7 @@
                           x-model="newRoomDraft"
                           :placeholder="t('web.devices.room_new_placeholder')"
                           @keydown.enter="closeTileMenu($el); commitNewRoom(device)"
-                          @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''"
+                          @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''; $nextTick(() => $el.parentElement.querySelector('.tile-menu-new').focus())"
                         />
                         <hr class="tile-menu-sep" />
                         <button
