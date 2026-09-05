@@ -23,7 +23,12 @@ Danach: http://127.0.0.1:8420 oeffnen, ein beliebiges Passwort vergeben
 (Ersteinrichtung, gilt nur fuer diesen Testlauf).
 
 Die Datenbank liegt in einer festen Datei im Temp-Verzeichnis - ein zweiter
-Lauf findet denselben Bestand wieder, statt jedes Mal neu einzulernen."""
+Lauf findet denselben Bestand wieder, statt jedes Mal neu einzulernen.
+
+Mit `--demo` startet stattdessen der Modus fuer die README-Screenshots: vier
+Geraete mit englischen Namen, Passwort und Bridge-Einstellungen bereits
+vorbelegt, und die Datenbank wird bei jedem Start frisch angelegt, statt den
+Bestand wiederzuverwenden."""
 
 from __future__ import annotations
 
@@ -35,14 +40,49 @@ from pathlib import Path
 
 import uvicorn
 
+from loxmatter.auth.passwords import hash_password
 from loxmatter.commands.translate import MatterCall
 from loxmatter.export.commands import extract_commands
 from loxmatter.loxone.server import build_app
 from loxmatter.matter.models import NodeSnapshot
-from loxmatter.model.store import Store
+from loxmatter.model.store import Store, StoredSignal
 from loxmatter.profiles.table import Exportability
 
 FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures" / "nodes"
+
+DEMO_PASSWORD = "loxmatter-demo"
+
+# Reihenfolge bestimmt die Reihenfolge in der Geraeteliste - die Steckdose
+# zuerst, weil ihre Signalliste den Unterschied funktional/Experte am besten
+# zeigt (ueber hundert Signale, davon eine Handvoll funktional).
+DEMO_DEVICES = [
+    ("ikea_grillplats_plug.json", "Coffee machine"),
+    ("example_light.json", "Living room lamp"),
+    ("synthetic_color_light.json", "Kitchen spots"),
+    ("ikea_bilresa_button.json", "Hallway button"),
+]
+
+
+def _ensure_demo_devices(store: Store) -> list[int]:
+    """Wie `_ensure_devices`, aber vier Geraete mit englischen Namen: die
+    README-Screenshots zeigen eine englische Oberflaeche, deutsche
+    Geraetenamen darin saehen nach Versehen aus."""
+    if store.devices():
+        return [device.id for device in store.devices()]
+
+    device_ids: list[int] = []
+    for filename, label in DEMO_DEVICES:
+        snapshot = _load_snapshot(filename)
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+        store.rename_device(device_id, label)
+        device_ids.append(device_id)
+
+    # Ein Geraet gilt als bereits exportiert, damit die Export-Vorschau beide
+    # Faelle nebeneinander zeigt statt vier gleich aussehender Zeilen.
+    store.mark_exported(device_ids[0])
+    return device_ids
 
 
 def _load_snapshot(name: str) -> NodeSnapshot:
@@ -99,10 +139,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--store-path",
         type=Path,
-        default=Path(tempfile.gettempdir()) / "loxmatter-dev-web.sqlite",
+        default=None,
         help="Datenbankdatei (Default: eine feste Datei im Temp-Verzeichnis).",
     )
     parser.add_argument("--port", type=int, default=8420)
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help=(
+            "Vier Geraete mit englischen Namen, Passwort und Bridge-Einstellungen "
+            "vorbelegt, Datenbank bei jedem Start frisch - fuer die README-Screenshots."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -125,6 +173,51 @@ def _ensure_devices(store: Store) -> list[int]:
     return [plug_id, button_id]
 
 
+# Plausible Analogwerte je Einheit, fuer `_plausible_value` unten - eine
+# Einheit allein legt den Wert schon fest, ausser bei "%" und "kWh", die je
+# nach Signal ganz Verschiedenes messen (Helligkeit vs. Batteriestand,
+# Bezug vs. Einspeisung, Saettigung). Dort entscheidet zusaetzlich das
+# Schluesselende: `d<id>_<endpoint>_<slug>` ist der Normalfall aus
+# `Store._assign_key`, ein kollisionsbedingt angehaengtes Element-Id-Suffix
+# stoert `endswith` unten nicht, es faellt dann einfach auf den alten
+# Platzhalterwert zurueck. "°" und "mired" kommen in `clusters.yaml` nur je
+# einmal vor (Farbton bzw. Farbtemperatur), brauchen also keine
+# Schluessel-Unterscheidung wie "%".
+_UNIT_VALUES: dict[str, float] = {
+    "V": 230.0,  # Netzspannung
+    "A": 0.4,  # Stromaufnahme eines kleinen Geraets
+    "kW": 0.092,  # ~92 W, passt zu 230 V * 0.4 A
+    "°": 35.0,  # Farbton (Hue) - warmes Orange
+    "mired": 370.0,  # Farbtemperatur, ~2700 K (warmweiss)
+}
+
+
+def _plausible_value(signal: StoredSignal) -> float | None:
+    """Ein erfundener, aber zur Einheit passender Wert fuer ein Analogsignal -
+    siehe Review: 12,4 kW "Leistung" fuer eine Steckdose sah nach
+    Platzhalter aus, nicht nach Demo. Alles, was hier nicht erkannt wird,
+    behaelt den alten Platzhalterwert.
+
+    Sonderfall Farbmodus (`colormode`, Cluster 768 Attribut 8, siehe
+    `clusters.yaml`): eine Aufzaehlung, keine physikalische Groesse - dafuer
+    gibt es keinen erfundenen Bruchwert (derselbe Review-Fund: 12,4 als
+    "Farbmodus" sah kaputt aus, nicht nach Demo). `None` laesst das Signal
+    unbesetzt, `_seed_values` unten setzt dafuer keinen Wert - die
+    Geraetekarte zeigt denselben neutralen Strich wie bei
+    `VendorName`/`ProductName`."""
+    if signal.unit in _UNIT_VALUES:
+        return _UNIT_VALUES[signal.unit]
+    if signal.unit == "kWh" and signal.key.endswith("_energy_imported"):
+        return 41.7
+    if signal.unit == "%" and signal.key.endswith("_level"):
+        return 60.0
+    if signal.unit == "%" and signal.key.endswith("_saturation"):
+        return 80.0
+    if signal.unit == "" and signal.key.endswith("_colormode"):
+        return None
+    return 12.4
+
+
 def _seed_values(store: Store, device_ids: list[int]) -> dict[str, float | bool]:
     values: dict[str, float | bool] = {}
     for device_id in device_ids:
@@ -135,19 +228,35 @@ def _seed_values(store: Store, device_ids: list[int]) -> dict[str, float | bool]
             if signal.exportability == Exportability.DIGITAL:
                 values[signal.key] = True
             elif signal.exportability == Exportability.ANALOG:
-                values[signal.key] = 12.4
+                value = _plausible_value(signal)
+                if value is not None:
+                    values[signal.key] = value
     return values
 
 
 def main() -> None:
     args = _parse_args()
-    store = Store(args.store_path)
-    device_ids = _ensure_devices(store)
-    values = _seed_values(store, device_ids)
 
+    # Eigene Datenbankdatei fuer den Demo-Betrieb, und die faellt bei jedem
+    # Start neu an: nur so entstehen aus demselben Aufruf zweimal dieselben
+    # Screenshots. Der normale Entwicklungsbetrieb behaelt seinen Bestand.
+    default_name = "loxmatter-demo-web.sqlite" if args.demo else "loxmatter-dev-web.sqlite"
+    store_path = args.store_path or Path(tempfile.gettempdir()) / default_name
+    if args.demo and args.store_path is None:
+        store_path.unlink(missing_ok=True)
+
+    store = Store(store_path)
+    if args.demo:
+        store.auth.reset_password(hash_password(DEMO_PASSWORD))
+        store.settings.save(bridge_ip="192.168.1.50", udp_port=7000, listen_port=8080)
+        device_ids = _ensure_demo_devices(store)
+    else:
+        device_ids = _ensure_devices(store)
+
+    values = _seed_values(store, device_ids)
     runtime = _SeededRuntime(values)
     app = build_app(store, _invoke, runtime)
-    print(f"Datenbank: {args.store_path}")
+    print(f"Datenbank: {store_path}")
     print(f"WebUI: http://127.0.0.1:{args.port}")
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

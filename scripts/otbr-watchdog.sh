@@ -43,6 +43,32 @@ SERVICE="otbr"
 STACK="$(cd "$(dirname "${BASH_SOURCE[0]}")/../deploy/testhost" && pwd)"
 STAMP="$(date '+%Y-%m-%d %H:%M:%S')"
 
+# Im WiFi/Ethernet-only-Betrieb (COMPOSE_PROFILES ohne "thread", siehe
+# deploy/testhost/.env) gibt es diesen Dienst gar nicht. Ohne diese Bremse
+# faende der Waechter nie eine Thread-Schnittstelle, versuchte alle fuenf
+# Minuten einen Neustart und schriebe jedes Mal einen Fehlschlag ins Log -
+# aus einem Aufpasser wuerde eine Lawine.
+#
+# Wichtig: das ist NUR die Abfrage, ob otbr ueberhaupt konfiguriert ist -
+# nicht ob docker funktioniert. Unter `set -euo pipefail` wuerde ein
+# fehlendes oder nicht laufendes docker dazu fuehren, dass `docker ps` mit
+# leerer Ausgabe und Fehlerstatus endet, `grep` faende nichts (Status 1),
+# pipefail hebt diesen Status auf die Pipeline, und `!` machte daraus eine
+# stille 0 - ein kaputtes docker saehe dann genauso aus wie "kein
+# Thread-Betrieb" und der Neustartversuch weiter unten (samt seinem
+# Log-Eintrag bei Fehlschlag) wuerde nie erreicht. Deshalb getrennt pruefen:
+# schlaegt die docker-Abfrage selbst fehl, ist das ein echter Fehler und muss
+# geloggt werden; nur eine erfolgreiche Abfrage, die otbr nicht auflistet,
+# darf still beenden.
+if ! CONTAINERS=$(docker ps -a --format '{{.Names}}' 2>&1); then
+  printf '%s  docker ps fehlgeschlagen - kann otbr-Container nicht pruefen:\n' "$STAMP"
+  printf '%s\n' "$CONTAINERS" | sed 's/^/    /'
+  exit 1
+fi
+if ! printf '%s\n' "$CONTAINERS" | grep -qx "$SERVICE"; then
+  exit 0
+fi
+
 thread_is_up() {
   # Scope 00 heisst geroutet (ULA eingeschlossen); wpan* ist die
   # Thread-Schnittstelle von OTBR.

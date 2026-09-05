@@ -1,7 +1,7 @@
 [project]
 name = "loxmatter"
 version = "0.1.0"
-description = "Bindet Matter-Geraete (Thread und WiFi) an einen Loxone Miniserver an"
+description = "Bindet Matter-Geraete (Thread, Wi-Fi oder Ethernet) an einen Loxone Miniserver an"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE", "src/loxmatter/web/vendor/LICENSE"]
@@ -82,4 +82,14 @@ files = ["src", "scripts"]
 # nutzt) liefert keine py.typed-Markierung/Stubs - siehe
 # BridgeMatterClient.send_command in matter/client.py.
 module = "chip.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# playwright ist bewusst KEINE Projekt-Abhaengigkeit: es wird nur gebraucht,
+# um die README-Screenshots neu zu erzeugen, und laeuft deshalb ad hoc ueber
+# `uv run --with playwright ... scripts/capture_screenshots.py`. In CI ist es
+# folglich nicht installiert, `files = ["src", "scripts"]` nimmt das Skript
+# aber mit - ohne diese Ausnahme scheitert mypy dort an einem Import, den es
+# gar nicht aufloesen koennen soll.
+module = "playwright.*"
 ignore_missing_imports = true
