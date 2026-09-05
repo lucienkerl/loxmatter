@@ -473,9 +473,20 @@
                   </div>
 
                   <div class="device-foot">
+                    <!-- `:value` muss NEBEN `device.room` auch `newRoomFor`
+                         lesen, sonst wertet Alpine die Bindung nur neu aus,
+                         wenn sich `device.room` aendert. Waehlt jemand
+                         "+ Neuer Raum ..." und laesst das Eingabefeld dann
+                         leer stehen (Blur oder Enter), setzt `commitNewRoom`
+                         in app.js `newRoomFor` zurueck, OHNE `saveRoom` zu
+                         rufen - `device.room` bleibt also unveraendert.
+                         Ohne die Abhaengigkeit hier wuerde die Auswahlliste
+                         trotzdem weiter "+ Neuer Raum ..." zeigen, obwohl
+                         das Geraet diesen Raum nie hatte und das Eingabefeld
+                         fuer den Namen laengst wieder verschwunden ist. -->
                     <select
                       class="room-select"
-                      :value="device.room || ''"
+                      :value="newRoomFor === device.id ? '__new__' : (device.room || '')"
                       @change="$event.target.value === '__new__' ? beginNewRoom(device) : saveRoom(device, $event.target.value)"
                     >
                       <option value="" x-text="t('web.devices.room_none')"></option>

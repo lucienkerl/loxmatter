@@ -151,6 +151,28 @@ def test_the_icons_are_well_formed_xml():
         ElementTree.parse(WEB_DIR / name)
 
 
+async def test_the_inline_icon_symbols_are_well_formed_xml(api):
+    """Derselbe Befund wie oben, aber fuer das inline `<svg style="display:
+    none">` in `index.html` statt fuer die beiden Einzeldateien - dort
+    parst bislang niemand mit. Dabei gilt fuer ein `<symbol>` genau dasselbe
+    wie fuer eine eigene SVG-Datei: ein `<use xlink:href="#i-...">`, das auf
+    ein Symbol zeigt, dessen Markup nicht als XML durchgeht, zeichnet
+    STILLSCHWEIGEND nichts - keine Fehlermeldung in der Konsole, nur eine
+    Kachel ohne Icon, siehe der Kommentar zu `i-cat-other` in `index.html`.
+
+    Der Block traegt inzwischen zwoelf `<symbol>`-Definitionen, acht davon
+    aus dem Geraete-Tab-Umbau (Entwurf 2026-09-05, Abschnitt 6.5) - keine
+    davon war bislang durch einen Parser gelaufen. Ein einzelner falscher
+    Bindestrich oder ein nicht geschlossenes Tag in einem neuen Symbol waere
+    also erst im Browser aufgefallen, und selbst dort nur als leere Flaeche,
+    nie als Meldung."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    match = re.search(r'<svg style="display: none".*?</svg>', page, flags=re.DOTALL)
+    assert match, "inline SVG-Symbolblock nicht gefunden"
+    ElementTree.fromstring(match.group(0))
+
+
 async def test_static_files_do_not_escape_their_directory(api):
     client, _, _ = api
     response = await client.get("/static/../../../etc/passwd")
@@ -2001,3 +2023,31 @@ async def test_the_device_grid_is_multi_column(api):
     css = (await client.get("/static/style.css")).text
     assert "auto-fill" in css
     assert "minmax(260px" in css
+
+
+async def test_the_room_select_snaps_back_when_a_new_room_is_abandoned(api):
+    """Review-Fix Important #1: `x-bind:value` wertet Alpine nur dann neu
+    aus, wenn sich eine der darin GELESENEN Groessen aendert. Die alte
+    Bindung (`:value="device.room || ''"`) las nur `device.room`. Waehlt
+    man "+ Neuer Raum ..." (`beginNewRoom` blendet das Eingabefeld ein) und
+    laesst es dann leer stehen - Blur oder Enter -, setzt `commitNewRoom`
+    in app.js `newRoomFor` zurueck, ruft aber bewusst `saveRoom` NICHT auf,
+    also bleibt `device.room` unveraendert. Ohne eine gelesene Abhaengigkeit
+    von `newRoomFor` haette die Auswahlliste deshalb weiter "+ Neuer Raum
+    ..." gezeigt, obwohl das Geraet diesen Raum nie angenommen hat und das
+    Eingabefeld dafuer laengst wieder verschwunden ist - eine Auswahlliste,
+    die eine Option zeigt, die das Geraet gar nicht hat.
+
+    Ein Test ohne Browser-Engine kann Alpine nicht tatsaechlich ausfuehren
+    lassen, um das Neu-Auswerten zu beobachten (siehe der Docstring von
+    `test_the_page_does_not_call_init_a_second_time` weiter oben zu genau
+    dieser Grenze). Belegt wird deshalb nur, dass die ausgelieferte Bindung
+    ausdruecklich `newRoomFor === device.id` liest, statt sich allein auf
+    `device.room` zu verlassen - der Teil, der Alpine ueberhaupt erst dazu
+    bringt, nach `commitNewRoom` neu auszuwerten."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    select_start = page.index('class="room-select"')
+    select_end = page.index("</select>", select_start)
+    room_select = page[select_start:select_end]
+    assert ':value="newRoomFor === device.id' in room_select
