@@ -1386,7 +1386,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `TARGET_DIR`, `REPO_URL`, `DRY_RUN`.
-- Produces: `ensure_checkout`; setzt `STACK_DIR="$TARGET_DIR/deploy/testhost"` und `CHECKOUT_EXISTED` (0/1). Alle folgenden Aufgaben lesen und schreiben ausschließlich über `STACK_DIR`.
+- Produces: `ensure_checkout`, `offer_update`; setzt `STACK_DIR="$TARGET_DIR/deploy/testhost"` und `CHECKOUT_EXISTED` (0/1). Alle folgenden Aufgaben lesen und schreiben ausschließlich über `STACK_DIR`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1405,6 +1405,33 @@ def test_zweiter_lauf_klont_nicht_erneut(installer):
     assert second.returncode == 0
     assert not second.called("git clone")
     assert "existing checkout" in second.output
+
+
+def test_zweiter_lauf_bietet_das_update_an_ohne_es_zu_tun(installer):
+    first = installer()
+    assert first.returncode == 0
+    second = installer(env={"FAKE_BEHIND": "3"})
+    assert second.returncode == 0
+    assert "3 new commits" in second.output
+    assert "Apply them with" in second.output
+
+
+def test_erster_lauf_prueft_nicht_auf_updates(installer):
+    result = installer(env={"FAKE_BEHIND": "3"})
+    assert result.returncode == 0
+    assert "new commits" not in result.output
+
+
+def test_kein_update_angebot_wenn_docker_gerade_erst_kam(installer):
+    # update.sh ruft docker ohne sudo. Wurde Docker in diesem Lauf erst
+    # installiert, greift die Gruppenmitgliedschaft erst nach einer
+    # Neuanmeldung - das Angebot koennte gar nicht funktionieren.
+    first = installer()
+    assert first.returncode == 0
+    second = installer(omit=("docker",), env={"FAKE_BEHIND": "3"})
+    assert second.returncode == 0
+    assert "Log out and back in first" in second.output
+    assert "Apply them with" not in second.output
 
 
 def test_fremdes_verzeichnis_wird_abgewiesen(installer, tmp_path):
@@ -1460,16 +1487,58 @@ Move it aside, or pass --dir with a different path."
 }
 ```
 
+Direkt danach `offer_update` — es gehoert sachlich hierher: „Repository holen"
+heisst klonen **oder** das vorhandene nehmen und anbieten, es auf Stand zu
+bringen. Das gibt `CHECKOUT_EXISTED` zugleich seinen Leser in derselben
+Aufgabe, sonst meldet `shellcheck` die Variable als ungenutzt.
+
+```sh
+# Only offered, never done on the way past: scripts/update.sh backs up the
+# signal database first, and those keys are the wiring in the Loxone
+# configuration. An installer that updated in passing would skip that backup.
+offer_update() {
+  if [ "$CHECKOUT_EXISTED" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
+    return 0
+  fi
+  step "checking for updates"
+  if ! git -C "$TARGET_DIR" fetch --quiet origin main 2>/dev/null; then
+    note "Could not reach GitHub; skipping the update check."
+    return 0
+  fi
+  behind="$(git -C "$TARGET_DIR" rev-list --count HEAD..FETCH_HEAD 2>/dev/null || echo 0)"
+  if [ "${behind:-0}" -le 0 ]; then
+    return 0
+  fi
+  say "$behind new commits are available"
+  if [ "$DOCKER_SUDO" -eq 1 ]; then
+    # Docker was installed in this very run, so the docker group is not in
+    # effect yet - and scripts/update.sh calls docker without sudo. Offering
+    # something that cannot work is worse than not offering it.
+    note "Log out and back in first, then run: $TARGET_DIR/scripts/update.sh"
+    return 0
+  fi
+  if [ "$HAVE_TTY" -eq 0 ]; then
+    note "Apply them with: $TARGET_DIR/scripts/update.sh"
+    return 0
+  fi
+  update_answer="$(ask "Update now? It backs up the signal database first [y/N]" "N")"
+  case "$update_answer" in
+    y|Y|yes|Yes) "$TARGET_DIR/scripts/update.sh" ;;
+    *) note "Left as it is. Run $TARGET_DIR/scripts/update.sh when you want it." ;;
+  esac
+}```
+
 `main` erweitern — nach `install_docker`:
 
 ```sh
   ensure_checkout
+  offer_update
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 29 passed (unter macOS 27 plus 2 übersprungen).
+Expected: 32 Tests — 30 grün, 2 nur unter Linux.
 
 - [ ] **Step 5: Commit**
 
@@ -1759,7 +1828,7 @@ configure() {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 37 passed (unter macOS 35 plus 2 übersprungen).
+Expected: 40 Tests — 38 grün, 2 nur unter Linux.
 
 - [ ] **Step 5: shellcheck und Formatierung**
 
@@ -2019,7 +2088,7 @@ run_checks() {
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 42 passed (unter macOS 40 plus 2 übersprungen).
+Expected: 45 Tests — 43 grün, 2 nur unter Linux.
 
 **Hinweis für die Abnahme:** `check_rfkill` lässt sich hier nicht gezielt auslösen — auf macOS fehlt `/sys` ganz, auf CI-Runnern ist `/sys/class/rfkill` üblicherweise leer. Getestet ist nur, dass die Funktion beide Fälle übersteht. Der Befund selbst zeigt sich erst auf einem echten Pi.
 
@@ -2051,8 +2120,8 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Modify: `tests/test_install_script.py`
 
 **Interfaces:**
-- Consumes: `FINDINGS`, `PORT`, `MODE`, `TARGET_DIR`, `CHECKOUT_EXISTED`, `DOCKER_SUDO`, `HAVE_TTY`, `ask`.
-- Produces: `offer_update`, `report`. Damit ist `install.sh` vollständig.
+- Consumes: `FINDINGS`, `PORT`, `MODE`, `TARGET_DIR`, `DOCKER_SUDO`, `STACK_DIR`.
+- Produces: `report`. Damit ist `install.sh` vollständig.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2076,19 +2145,6 @@ def test_wifi_bericht_schlaegt_keinen_watchdog_vor(installer):
     assert "COMPOSE_PROFILES=thread" in result.output  # so ruestet man nach
 
 
-def test_zweiter_lauf_bietet_das_update_an_ohne_es_zu_tun(installer):
-    first = installer()
-    assert first.returncode == 0
-    second = installer(env={"FAKE_BEHIND": "3"})
-    assert second.returncode == 0
-    assert "3 new commits" in second.output
-    assert "Apply them with" in second.output
-    assert "update.sh" in second.output
-
-
-def test_erster_lauf_prueft_nicht_auf_updates(installer):
-    result = installer(env={"FAKE_BEHIND": "3"})
-    assert "new commits" not in result.output
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -2102,34 +2158,6 @@ Nach `run_checks` einfügen:
 
 ```sh
 # ----------------------------------------------------------- phase seven --
-
-# Only offered, never done on the way past: scripts/update.sh backs up the
-# signal database first, and those keys are the wiring in the Loxone
-# configuration. An installer that updates in passing would skip that backup.
-offer_update() {
-  if [ "$CHECKOUT_EXISTED" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
-    return 0
-  fi
-  step "checking for updates"
-  if ! git -C "$TARGET_DIR" fetch --quiet origin main 2>/dev/null; then
-    note "Could not reach GitHub; skipping the update check."
-    return 0
-  fi
-  behind="$(git -C "$TARGET_DIR" rev-list --count HEAD..FETCH_HEAD 2>/dev/null || echo 0)"
-  if [ "${behind:-0}" -le 0 ]; then
-    return 0
-  fi
-  say "$behind new commits are available"
-  if [ "$HAVE_TTY" -eq 0 ]; then
-    note "Apply them with: $TARGET_DIR/scripts/update.sh"
-    return 0
-  fi
-  update_answer="$(ask "Update now? It backs up the signal database first [y/N]" "N")"
-  case "$update_answer" in
-    y|Y|yes|Yes) "$TARGET_DIR/scripts/update.sh" ;;
-    *) note "Left as it is. Run $TARGET_DIR/scripts/update.sh when you want it." ;;
-  esac
-}
 
 report() {
   step "writing the summary"
@@ -2200,7 +2228,7 @@ main "$@"
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_install_script.py -v`
-Expected: 47 passed (unter macOS 45 plus 2 übersprungen).
+Expected: 48 Tests — 46 grün, 2 nur unter Linux.
 
 - [ ] **Step 5: Vollständiger Durchlauf aller Prüfungen**
 
