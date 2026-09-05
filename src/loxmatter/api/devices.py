@@ -445,6 +445,16 @@ def build_device_router(
         # nachgetragen. `set_room`, nicht `rename_device`: der Raum landet in
         # keiner Exportvorlage, ein Wiedereinlernen mit Raumwahl darf das
         # Geraet deshalb nicht als "seither geaendert" markieren.
+        #
+        # Bewusst UNBEDINGT, nicht nur fuer den frueh-zurueckgekehrten Fall
+        # (Review-Fund, Finding 5): fuer ein neues Geraet hat `register_device`
+        # den Raum durch die INSERT-Zeile bereits genauso gesetzt, der zweite
+        # Schreibzugriff hier ist fuer diesen Fall ein No-Op (gleiche
+        # Normalisierung, `updated_at` bleibt in beiden Faellen unberuehrt).
+        # Eine Fallunterscheidung "war das Geraet neu?" braeuchte entweder
+        # einen Rueckgabewert von `register_device`, den dessen Signatur
+        # heute nicht liefert, oder eine zweite Abfrage vor dem Aufruf - der
+        # No-Op ist die einfachere und robustere Wahl.
         if request.room is not None:
             store.set_room(device_id, request.room)
         store.register_signals(device_id, snapshot)
