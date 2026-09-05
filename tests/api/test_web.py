@@ -2135,6 +2135,32 @@ async def test_the_device_grid_is_multi_column(api):
     assert "minmax(260px" in css
 
 
+async def test_device_tiles_in_the_same_row_stretch_to_equal_height(api):
+    """Nacharbeit 2026-09-05, Fund 2: `align-items: start` liess jede
+    Kachel auf ihrer eigenen Inhaltshoehe stehen - im Browser gemessen
+    zwei Kacheln derselben Reihe bei 277px und 271px (siehe
+    Aufgabenbericht). `align-items: stretch` allein reicht nicht: es dehnt
+    nur die Karte, der zusaetzliche Freiraum blieb dann als Leerraum
+    UNTER der Fusszeile stehen, waehrend die kuerzere Nachbarkachel ihre
+    Fusszeile direkt unters letzte Kommando zeichnet (gemessen: zwei
+    Fusszeilen derselben Reihe 14px versetzt). Die Karte muss deshalb
+    selbst eine Flex-Spalte werden, deren Fusszeile den Freiraum per
+    `margin-top: auto` vor sich aufsaugt. Ohne Browser-Engine kann diese
+    Suite die Reihen-Hoehen selbst nicht nachrechnen - belegt wird nur,
+    dass `.device-grid` auf `align-items: stretch` steht und die Karte
+    beides mitbringt: `display: flex; flex-direction: column` sowie ein
+    `.device-foot` mit `margin-top: auto`."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    grid_rule = css.split(".device-grid {", 1)[1].split("}", 1)[0]
+    assert "align-items: stretch" in grid_rule
+    card_rule = css.split(".device-grid .device-card {", 1)[1].split("}", 1)[0]
+    assert "display: flex" in card_rule
+    assert "flex-direction: column" in card_rule
+    foot_rule = css.split(".device-card > .device-foot {", 1)[1].split("}", 1)[0]
+    assert "margin-top: auto" in foot_rule
+
+
 async def test_the_device_card_does_not_clip_its_overflowing_menu(api):
     """Fund 1 (Review 2026-09-05): das Kachel-Menue haengt absolut an
     `.device-card` und oeffnet nach oben ueber deren Rand hinaus. Solange

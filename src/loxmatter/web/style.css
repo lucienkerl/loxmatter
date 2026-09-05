@@ -1002,16 +1002,48 @@ footer.hint-block {
  * Breakpoints: 260 px ist die Breite, ab der Kopfzeile samt Leitwert und
  * die Wertespalte nicht mehr umbrechen. Daraus ergeben sich vier Spalten
  * auf dem Desktop, zwei auf dem Tablet, eine auf dem Telefon, ohne dass
- * eine Media Query die Zahlen ein zweites Mal festlegt. */
+ * eine Media Query die Zahlen ein zweites Mal festlegt.
+ *
+ * Nacharbeit 2026-09-05, Fund 2: `align-items: start` liess jede Kachel
+ * auf ihrer eigenen Inhaltshoehe stehen - in einer Reihe mit
+ * unterschiedlich vielen Signalen/Kommandos ergab das sichtbar
+ * unterschiedlich hohe Kacheln (gemessen: 277px neben 271px in derselben
+ * Reihe). Eine Geraetetabelle liest sich als Raster, nicht als Treppe;
+ * `align-items: stretch` dehnt jedes Grid-Item stattdessen auf die Hoehe
+ * der hoechsten Kachel seiner Reihe. */
 .device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 0.6rem;
-  align-items: start;
+  align-items: stretch;
 }
 
+/* Reines `stretch` (s.o.) dehnt nur die Karte, nicht ihren Inhalt - die
+ * zusaetzliche Hoehe blieb bislang als Leerraum UNTER der Fusszeile
+ * stehen, waehrend die kuerzere Nachbarkachel ihre Fusszeile direkt unters
+ * letzte Kommando zeichnet (gemessen: zwei Fusszeilen derselben Reihe
+ * 14px versetzt, mit ungleich viel Leerraum darunter). Die Karte wird
+ * deshalb selbst zur Flex-Spalte, und `.device-foot` bekommt
+ * `margin-top: auto`, das den gesamten uebrigen Freiraum VOR sich
+ * aufsaugt statt ihn hinter der Fusszeile liegen zu lassen - gleiche
+ * Kachelhoehe bedeutet damit auch fluchtende Fusszeilen, nicht nur
+ * fluchtende untere Kachelraender. `display: flex` gehoert NICHT zu den
+ * an `.device-card` verbotenen Nebeneffekten (`opacity`/`filter`/
+ * `transform`, Begruendung dort) und spannt keinen eigenen Stacking-
+ * Kontext auf - der Farbstreifen (`.device-card::before`, `position:
+ * absolute`, `top`/`bottom` auf 0) haengt an der Hoehe seines
+ * Elternelements, nicht an dessen Layout-Modus, und bleibt darum
+ * unveraendert ueber die volle (jetzt gestreckte) Kartenhoehe gespannt -
+ * das ist nach dieser Aenderung erneut zu pruefen, nicht nur zu
+ * behaupten. */
 .device-grid .device-card {
   margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.device-card > .device-foot {
+  margin-top: auto;
 }
 
 .room-bar {
