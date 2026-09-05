@@ -2620,3 +2620,64 @@ async def test_the_kebab_button_names_itself_via_aria_label_and_hides_its_icon(a
     assert ":title=\"t('web.devices.menu')\"" in summary
     assert ":aria-label=\"t('web.devices.menu')\"" in summary
     assert 'aria-hidden="true"' in summary
+
+
+async def test_the_room_list_is_a_labelled_group_for_assistive_tech(api):
+    """A11y-Nacharbeit (2026-09-05), Fund 2: die Ueberschrift
+    `.tile-menu-heading` war rein optisch ein Abschnittslabel fuer die
+    Raumeintraege - ohne programmatische Verbindung hoert ein
+    Screenreader-Nutzer beim Durchtabben nur "Kueche, aktueller Eintrag"
+    ohne jede Auskunft, dass das ein Raum ist. `role="group"` plus
+    `aria-labelledby` auf einem neuen `.tile-menu-rooms`-Wrapper stellt
+    diese Verbindung her.
+
+    Die id der Ueberschrift ist bewusst PRO GERAET abgeleitet
+    (`'tile-menu-room-heading-' + device.id`) statt eine feste Konstante:
+    die ganze Seite teilt sich ein einziges `x-data`, und dieses Markup
+    wird einmal PRO Kachel gerendert - eine feste id waere im
+    ausgelieferten Dokument so oft dupliziert wie es Kacheln gibt, und
+    `aria-labelledby` traefe dann nur das erste Vorkommen. Die Suche prueft
+    deshalb ausdruecklich den `device.id`-Ausdruck, nicht nur, dass
+    irgendeine id existiert - ein Rueckbau auf eine Konstante saehe sonst
+    zunaechst identisch aus.
+
+    Belegt wird ausserdem, dass die Gruppe tatsaechlich die Raum-Eintraege
+    und das Neu-Raum-Feld umschliesst, Export und Entfernen aber aussen vor
+    laesst - eine zu weit oder zu eng gezogene Gruppe waere fuer
+    Screenreader-Nutzer ebenso falsch wie gar keine."""
+    client, _store, _device_id = api
+    page = (await client.get("/")).text
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+
+    group_open_start = menu.index('<div class="tile-menu-rooms"')
+    group_open_end = menu.index(">", group_open_start) + 1
+    group_tag = menu[group_open_start:group_open_end]
+    assert 'role="group"' in group_tag
+    assert ":aria-labelledby=\"'tile-menu-room-heading-' + device.id\"" in group_tag
+
+    group_body = menu[group_open_end : menu.index("</div>", group_open_end)]
+    assert ":id=\"'tile-menu-room-heading-' + device.id\"" in group_body
+    assert "menu_room_heading" in group_body
+    assert "saveRoom(device, '')" in group_body
+    assert "roomChips()" in group_body
+    assert "beginNewRoom(device)" in group_body
+    assert "tile-menu-input" in group_body
+    assert "exportDevice(device)" not in group_body
+    assert "removeDevice(device)" not in group_body
+
+
+async def test_the_room_group_wrapper_does_not_disturb_the_menu_layout(api):
+    """A11y-Nacharbeit (2026-09-05), Fund 2: `.tile-menu-items` ist eine
+    Flex-Spalte, deren Kinder direkt die Menue-Eintraege sind (Begruendung
+    bei der Regel selbst, style.css). Der neue `.tile-menu-rooms`-Wrapper
+    fuer `role="group"` ist rein semantisch und darf dieses Layout nicht
+    veraendern - `display: contents` nimmt ihn aus dem Layoutbaum heraus,
+    genau wie einst `.room-picker` in derselben Datei (Begruendung dort per
+    Verweis wiederholt, das Element selbst ist laengst entfernt). Ohne
+    dieses `display: contents` wuerde der Wrapper selbst zu einer
+    zusaetzlichen Flex-Box, und die Raumeintraege staenden nicht mehr auf
+    einer Ebene mit "+ Neuer Raum", Trennstrich, Export und Entfernen."""
+    client, _store, _device_id = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split(".tile-menu-rooms {", 1)[1].split("}", 1)[0]
+    assert "display: contents;" in rule

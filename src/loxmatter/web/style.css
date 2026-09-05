@@ -1316,6 +1316,19 @@ footer.hint-block {
   box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
 }
 
+/* Fund 2 (Nacharbeit 2026-09-05): umschliesst die Raumliste (Ueberschrift,
+ * Eintraege, "+ Neuer Raum" samt Textfeld) fuer ein `role="group"`, das sie
+ * per `aria-labelledby` mit ihrer Ueberschrift verbindet (Begruendung im
+ * Markup, index.html). `display: contents` nimmt den Wrapper selbst aus dem
+ * Layout heraus, damit `.tile-menu-items` (Flex-Spalte, oben) weiterhin
+ * direkt mit den Eintraegen als Flex-Kindern rechnet - dasselbe Mittel wie
+ * einst bei `.room-picker` in dieser Datei (inzwischen entfernt, siehe
+ * Versionsgeschichte), aus demselben Grund: ein rein semantischer Wrapper
+ * darf das sichtbare Layout nicht veraendern. */
+.tile-menu-rooms {
+  display: contents;
+}
+
 .tile-menu-item {
   border: none;
   background: none;

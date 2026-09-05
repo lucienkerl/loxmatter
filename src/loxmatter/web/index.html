@@ -642,104 +642,133 @@
                         <svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg>
                       </summary>
                       <div class="tile-menu-items">
-                        <p class="tile-menu-heading" x-text="t('web.devices.menu_room_heading')"></p>
-                        <!-- "Ohne Raum" ist hier kein Sonderfall, sondern
-                             der Normalzustand eines noch nicht zugeordneten
-                             Geraets - es traegt das Haekchen wie jeder
-                             andere Eintrag auch. Der Leerstring ist derselbe
-                             Wert, den die API fuer "Raum entfernen"
-                             erwartet, also dieselbe Kodierung auf beiden
-                             Seiten und keine Umrechnung. -->
-                        <button
-                          class="tile-menu-item"
-                          :class="{ 'is-current': roomKeyOf(device) === '' }"
-                          :aria-current="roomKeyOf(device) === '' ? 'true' : null"
-                          @click="closeTileMenu($el); saveRoom(device, '')"
-                          x-text="t('web.devices.room_none')"
-                        ></button>
-                        <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
-                          <!-- Fund 2 (Nacharbeit 2026-09-05): der Eintrag kuerzt einen langen
-                               Raumnamen jetzt mit Ellipse (`.tile-menu-item`, style.css) - der
-                               volle Name muss trotzdem irgendwo greifbar bleiben, deshalb hier
-                               als natives `title`. `chip.key` ist Nutzerdaten (ein Raumname),
-                               keine zu uebersetzende Oberflaechen-Zeichenkette - `t()` waere
-                               hier fehl am Platz. -->
+                        <!-- Fund 2 (Nacharbeit 2026-09-05): die Ueberschrift
+                             war bis hierher nur optisch ein Gruppenlabel -
+                             per Tab erreicht ein Screenreader-Nutzer
+                             "Kueche" ohne jede Auskunft, dass das ein Raum
+                             ist. `role="group"` plus `aria-labelledby`
+                             stellt die Verbindung programmatisch her.
+                             Die id der Ueberschrift ist bewusst PRO GERAET
+                             abgeleitet (`device.id`) statt eine feste
+                             Konstante: die ganze Seite teilt sich ein
+                             einziges `x-data` (siehe die Begruendung gegen
+                             `x-ref`/`$refs` weiter unten in dieser Datei,
+                             Fund 3), und dieses Markup wird einmal PRO
+                             Kachel gerendert - eine feste id waere im
+                             ausgelieferten Dokument so oft dupliziert wie
+                             es Kacheln gibt, `aria-labelledby` traefe dann
+                             per Spezifikation nur das erste Vorkommen und
+                             fuer jede andere Kachel ins Leere oder auf die
+                             falsche Ueberschrift. -->
+                        <div class="tile-menu-rooms" role="group" :aria-labelledby="'tile-menu-room-heading-' + device.id">
+                          <p
+                            class="tile-menu-heading"
+                            :id="'tile-menu-room-heading-' + device.id"
+                            x-text="t('web.devices.menu_room_heading')"
+                          ></p>
+                          <!-- "Ohne Raum" ist hier kein Sonderfall, sondern
+                               der Normalzustand eines noch nicht zugeordneten
+                               Geraets - es traegt das Haekchen wie jeder
+                               andere Eintrag auch. Der Leerstring ist derselbe
+                               Wert, den die API fuer "Raum entfernen"
+                               erwartet, also dieselbe Kodierung auf beiden
+                               Seiten und keine Umrechnung. -->
                           <button
                             class="tile-menu-item"
-                            :class="{ 'is-current': roomKeyOf(device) === chip.key }"
-                            :aria-current="roomKeyOf(device) === chip.key ? 'true' : null"
-                            :title="chip.key"
-                            @click="closeTileMenu($el); saveRoom(device, chip.key)"
-                            x-text="chip.key"
+                            :class="{ 'is-current': roomKeyOf(device) === '' }"
+                            :aria-current="roomKeyOf(device) === '' ? 'true' : null"
+                            @click="closeTileMenu($el); saveRoom(device, '')"
+                            x-text="t('web.devices.room_none')"
                           ></button>
-                        </template>
-                        <button
-                          class="tile-menu-item tile-menu-new"
-                          x-show="newRoomFor !== device.id"
-                          @click="beginNewRoom(device); $nextTick(() => $el.parentElement.querySelector('.tile-menu-input')?.focus())"
-                          x-text="t('web.devices.room_new')"
-                        ></button>
-                        <!-- Das Textfeld ist ein Kind des `<details>`, das
-                             Menue bleibt beim Tippen also offen. Escape
-                             bricht NUR den Neu-Raum-Modus ab und darf nicht
-                             bis zum `@keydown.escape` des `<details>`
-                             hochblubbern, sonst verschwaende ein Abbruch
-                             gleich das ganze Menue - daher `.stop`.
+                          <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
+                            <!-- Fund 2 (Nacharbeit 2026-09-05): der Eintrag kuerzt einen langen
+                                 Raumnamen jetzt mit Ellipse (`.tile-menu-item`, style.css) - der
+                                 volle Name muss trotzdem irgendwo greifbar bleiben, deshalb hier
+                                 als natives `title`. `chip.key` ist Nutzerdaten (ein Raumname),
+                                 keine zu uebersetzende Oberflaechen-Zeichenkette - `t()` waere
+                                 hier fehl am Platz. -->
+                            <button
+                              class="tile-menu-item"
+                              :class="{ 'is-current': roomKeyOf(device) === chip.key }"
+                              :aria-current="roomKeyOf(device) === chip.key ? 'true' : null"
+                              :title="chip.key"
+                              @click="closeTileMenu($el); saveRoom(device, chip.key)"
+                              x-text="chip.key"
+                            ></button>
+                          </template>
+                          <button
+                            class="tile-menu-item tile-menu-new"
+                            x-show="newRoomFor !== device.id"
+                            @click="beginNewRoom(device); $nextTick(() => $el.parentElement.querySelector('.tile-menu-input')?.focus())"
+                            x-text="t('web.devices.room_new')"
+                          ></button>
+                          <!-- Das Textfeld ist ein Kind des `<details>`, das
+                               Menue bleibt beim Tippen also offen. Escape
+                               bricht NUR den Neu-Raum-Modus ab und darf nicht
+                               bis zum `@keydown.escape` des `<details>`
+                               hochblubbern, sonst verschwaende ein Abbruch
+                               gleich das ganze Menue - daher `.stop`.
 
-                             Fund 3 (Review vom 2026-09-05): der Fokus-Ruf
-                             am "+ Neuer Raum"-Knopf oben zielt bewusst per
-                             `$el.parentElement.querySelector` auf dieses
-                             Feld statt per `x-ref`/`$refs`. Ein `x-ref`
-                             registriert sich am naechsten Element mit
-                             `x-data` - und das ist in dieser Seite einzig
-                             das `<body>` ganz oben, EIN gemeinsamer Topf
-                             fuer alle Kacheln zugleich. Bei mehreren
-                             Geraeten ueberschreibt der Eintrag der zuletzt
-                             gerenderten Kachel jeden davor registrierten,
-                             und `$refs.irgendwas` zeigte dann immer auf
-                             dasselbe (i. d. R. falsche) Feld, unabhaengig
-                             davon, welche Kachel der Nutzer tatsaechlich
-                             geoeffnet hat. Die Suche ab dem geklickten
-                             Knopf ist dagegen zwangslaeufig auf dessen
-                             eigene `.tile-menu-items` beschraenkt.
+                               Fund 3 (Review vom 2026-09-05): der Fokus-Ruf
+                               am "+ Neuer Raum"-Knopf oben zielt bewusst per
+                               `$el.parentElement.querySelector` auf dieses
+                               Feld statt per `x-ref`/`$refs`. Ein `x-ref`
+                               registriert sich am naechsten Element mit
+                               `x-data` - und das ist in dieser Seite einzig
+                               das `<body>` ganz oben, EIN gemeinsamer Topf
+                               fuer alle Kacheln zugleich. Bei mehreren
+                               Geraeten ueberschreibt der Eintrag der zuletzt
+                               gerenderten Kachel jeden davor registrierten,
+                               und `$refs.irgendwas` zeigte dann immer auf
+                               dasselbe (i. d. R. falsche) Feld, unabhaengig
+                               davon, welche Kachel der Nutzer tatsaechlich
+                               geoeffnet hat. Die Suche ab dem geklickten
+                               Knopf ist dagegen zwangslaeufig auf dessen
+                               eigene `.tile-menu-rooms`-Gruppe beschraenkt
+                               (frueher `.tile-menu-items` direkt, seit dem
+                               `role="group"`-Wrapper fuer die Raumliste,
+                               Nacharbeit 2026-09-05, ist es dessen naechster
+                               Elternknoten - das Feld liegt weiterhin darin,
+                               die Suche findet es unveraendert).
 
-                             Fund 2 (Re-Review 2026-09-05): `newRoomFor =
-                             null` blendet dieses Feld per `x-show` aus
-                             (`display: none`), nimmt ihm den Fokus dabei
-                             aber NICHT ab - im Browser gemessen: danach war
-                             das Feld weiterhin `document.activeElement`,
-                             unsichtbar und ohne Nachbarn zum Weiter-Tabben,
-                             das Menue blieb offen mit Fokus auf einem toten
-                             Ende. Der Escape-Handler schickt den Fokus
-                             deshalb explizit auf den "+ Neuer Raum"-Knopf,
-                             der an seiner Stelle wieder auftaucht - `x-ref`
-                             scheidet aus denselben Gruenden aus wie oben,
-                             darum dieselbe `$el.parentElement.querySelector`-
-                             Suche, nur mit der stabilen zweiten Klasse
-                             `.tile-menu-new` als Ziel.
+                               Fund 2 (Re-Review 2026-09-05): `newRoomFor =
+                               null` blendet dieses Feld per `x-show` aus
+                               (`display: none`), nimmt ihm den Fokus dabei
+                               aber NICHT ab - im Browser gemessen: danach war
+                               das Feld weiterhin `document.activeElement`,
+                               unsichtbar und ohne Nachbarn zum Weiter-Tabben,
+                               das Menue blieb offen mit Fokus auf einem toten
+                               Ende. Der Escape-Handler schickt den Fokus
+                               deshalb explizit auf den "+ Neuer Raum"-Knopf,
+                               der an seiner Stelle wieder auftaucht - `x-ref`
+                               scheidet aus denselben Gruenden aus wie oben,
+                               darum dieselbe `$el.parentElement.querySelector`-
+                               Suche, nur mit der stabilen zweiten Klasse
+                               `.tile-menu-new` als Ziel.
 
-                             Fund 4 (Re-Review 2026-09-05): das `?.` vor
-                             `.focus()` am Fokus-Ruf des "+ Neuer Raum"-
-                             Knopfes oben laesst eine verfehlte Suche
-                             ergebnislos verpuffen statt einen `TypeError`
-                             zu werfen. Heute unerreichbar, weil dieses
-                             Feld unbedingt im selben `.tile-menu-items`
-                             gerendert wird (nur per `x-show` versteckt,
-                             nicht per `x-if` entfernt) - derselbe Fehlgriff
-                             wie bei `closeTileMenu` (app.js, Fund 4): der
-                             Fokus-Ruf soll bei einem Fehlschlag folgenlos
-                             bleiben, nicht mit einem unbehandelten Wurf in
-                             der `$nextTick`-Mikrotask enden. -->
-                        <input
-                          x-show="newRoomFor === device.id"
-                          x-cloak
-                          type="text"
-                          class="tile-menu-input"
-                          x-model="newRoomDraft"
-                          :placeholder="t('web.devices.room_new_placeholder')"
-                          @keydown.enter="closeTileMenu($el); commitNewRoom(device)"
-                          @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''; $nextTick(() => $el.parentElement.querySelector('.tile-menu-new')?.focus())"
-                        />
+                               Fund 4 (Re-Review 2026-09-05): das `?.` vor
+                               `.focus()` am Fokus-Ruf des "+ Neuer Raum"-
+                               Knopfes oben laesst eine verfehlte Suche
+                               ergebnislos verpuffen statt einen `TypeError`
+                               zu werfen. Heute unerreichbar, weil dieses
+                               Feld unbedingt in derselben `.tile-menu-rooms`-
+                               Gruppe gerendert wird (nur per `x-show` versteckt,
+                               nicht per `x-if` entfernt) - derselbe Fehlgriff
+                               wie bei `closeTileMenu` (app.js, Fund 4): der
+                               Fokus-Ruf soll bei einem Fehlschlag folgenlos
+                               bleiben, nicht mit einem unbehandelten Wurf in
+                               der `$nextTick`-Mikrotask enden. -->
+                          <input
+                            x-show="newRoomFor === device.id"
+                            x-cloak
+                            type="text"
+                            class="tile-menu-input"
+                            x-model="newRoomDraft"
+                            :placeholder="t('web.devices.room_new_placeholder')"
+                            @keydown.enter="closeTileMenu($el); commitNewRoom(device)"
+                            @keydown.escape.stop="newRoomFor = null; newRoomDraft = ''; $nextTick(() => $el.parentElement.querySelector('.tile-menu-new')?.focus())"
+                          />
+                        </div>
                         <hr class="tile-menu-sep" />
                         <button
                           class="tile-menu-item"
