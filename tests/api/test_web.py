@@ -2025,58 +2025,88 @@ async def test_the_device_grid_is_multi_column(api):
     assert "minmax(260px" in css
 
 
-async def test_the_room_select_snaps_back_when_a_new_room_is_abandoned(api):
-    """Review-Fix Important #1: `x-bind:value` wertet Alpine nur dann neu
-    aus, wenn sich eine der darin GELESENEN Groessen aendert. Die alte
-    Bindung (`:value="device.room || ''"`) las nur `device.room`. Waehlt
-    man "+ Neuer Raum ..." (`beginNewRoom` blendet das Eingabefeld ein) und
-    laesst es dann leer stehen - Blur oder Enter -, setzt `commitNewRoom`
-    in app.js `newRoomFor` zurueck, ruft aber bewusst `saveRoom` NICHT auf,
-    also bleibt `device.room` unveraendert. Ohne eine gelesene Abhaengigkeit
-    von `newRoomFor` haette die Auswahlliste deshalb weiter "+ Neuer Raum
-    ..." gezeigt, obwohl das Geraet diesen Raum nie angenommen hat und das
-    Eingabefeld dafuer laengst wieder verschwunden ist - eine Auswahlliste,
-    die eine Option zeigt, die das Geraet gar nicht hat.
+async def test_the_room_select_display_depends_only_on_the_device_room(api):
+    """Ersetzt `test_the_room_select_snaps_back_when_a_new_room_is_abandoned`
+    (Review-Fix Important #1): Der dortige Fix machte `:value` zusaetzlich
+    von `newRoomFor` abhaengig (`newRoomFor === device.id ? '__new__' :
+    (device.room || '')`), damit Alpine nach dem Verlassen des Neu-Raum-
+    Modus ueberhaupt neu auswertet. Das war eine Reparatur der SYMPTOME:
+    `newRoomFor` ist Modus-Zustand (nur der Schalter fuer das Neu-Raum-
+    Textfeld), wurde damit aber zugleich massgeblich fuer die Anzeige einer
+    NATIVEN `<select>`. Genau diese Kopplung war die eigentliche
+    Fehlerklasse - eine native `<select>` feuert kein Event fuer "geoeffnet,
+    dann ohne Auswahl wieder verlassen", also war jeder Fix, der die
+    Kopplung behielt, nur einen weiteren, ungefundenen Weg aus dem Modus von
+    der naechsten Instanz entfernt (siehe Runde 2 unten und Runde 3, die erst
+    mit dieser Struktur behoben wird).
 
-    Ein Test ohne Browser-Engine kann Alpine nicht tatsaechlich ausfuehren
-    lassen, um das Neu-Auswerten zu beobachten (siehe der Docstring von
-    `test_the_page_does_not_call_init_a_second_time` weiter oben zu genau
-    dieser Grenze). Belegt wird deshalb nur, dass die ausgelieferte Bindung
-    ausdruecklich `newRoomFor === device.id` liest, statt sich allein auf
-    `device.room` zu verlassen - der Teil, der Alpine ueberhaupt erst dazu
-    bringt, nach `commitNewRoom` neu auszuwerten."""
+    Der neue Ansatz entkoppelt: `:value` liest ausschliesslich `device.room`.
+    Die Auswahlliste kann dadurch PER KONSTRUKTION keinen Raum anzeigen, den
+    das Geraet nicht hat - unabhaengig davon, ueber welchen Weg der
+    Neu-Raum-Modus verlassen (oder nie richtig betreten) wird. Ein Test ohne
+    Browser-Engine kann Alpine nicht tatsaechlich ausfuehren lassen (siehe
+    der Docstring von `test_the_page_does_not_call_init_a_second_time`
+    weiter oben zu genau dieser Grenze). Belegt wird deshalb, dass die
+    `:value`-Bindung selbst `newRoomFor` gar nicht mehr LIEST - `newRoomFor`
+    taucht im `<select>` nur noch im `@change`-Handler auf, der es SCHREIBT
+    (Modus verlassen bzw. betreten), nie mehr in dem, was angezeigt wird."""
     client, _, _ = api
     page = (await client.get("/")).text
     select_start = page.index('class="room-select"')
     select_end = page.index("</select>", select_start)
     room_select = page[select_start:select_end]
-    assert ':value="newRoomFor === device.id' in room_select
+    assert ':value="device.room || \'\'"' in room_select
+    value_start = room_select.index(':value="')
+    value_end = room_select.index('"', value_start + len(':value="'))
+    assert "newRoomFor" not in room_select[value_start:value_end]
+
+
+async def test_the_new_room_option_resets_the_selects_own_value_before_the_mode_starts(api):
+    """Waere `:value` das einzige, das die Anzeige steuert, wuerde die
+    Auswahlliste beim Waehlen von "+ Neuer Raum ..." fuer einen Moment
+    tatsaechlich "__new__" anzeigen, bevor Alpine reagiert und das Textfeld
+    einblendet - der native Browser setzt den angezeigten Wert schliesslich
+    sofort auf die gewaehlte Option, unabhaengig von Alpines `:value`.
+    Deshalb setzt der `@change`-Zweig fuer `'__new__'` zuerst den DOM-Wert
+    des Elements selbst auf den aktuellen Raum zurueck, bevor er
+    `beginNewRoom` ruft: Die Auswahlliste zeigt "__new__" nie, das Textfeld
+    daneben ist die einzige sichtbare Neu-Raum-Affordanz."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    select_start = page.index('class="room-select"')
+    select_end = page.index("</select>", select_start)
+    room_select = page[select_start:select_end]
+    reset_index = room_select.index("$event.target.value = device.room || ''")
+    begin_index = room_select.index("beginNewRoom(device)")
+    assert reset_index < begin_index
 
 
 async def test_the_room_select_leaves_new_room_mode_when_a_normal_room_is_picked(api):
-    """Review-Fix Important #2 (zweite Runde auf demselben Fund): Der
-    vorige Fix (siehe `test_the_room_select_snaps_back_when_a_new_room_is_
-    abandoned` oben) hat `newRoomFor` nur ueber `commitNewRoom` geloescht,
-    also nur dann, wenn man das TEXTFELD beendet oder abbricht (Enter/Blur).
-    Rein mit der Maus, ganz ohne Tastatur, bleibt aber ein zweiter Weg offen:
-    (1) "+ Neuer Raum ..." waehlen - `beginNewRoom` setzt `newRoomFor =
-    device.id`; das Textfeld hat kein Autofocus, der Fokus bleibt also auf
-    dem `<select>`. (2) Dasselbe, noch fokussierte `<select>` erneut
-    oeffnen und einen bestehenden Raum waehlen - `@change` nimmt dann den
-    `saveRoom`-Zweig, nicht `beginNewRoom`, und `commitNewRoom` wird nie
-    gerufen. `saveRoom` speichert `device.room` korrekt per PATCH, ruehrt
-    `newRoomFor` aber nicht an. Ohne dass der `saveRoom`-Zweig selbst
-    `newRoomFor` zuruecksetzt, wertet `:value` also fuer immer zu
-    `'__new__'` aus: Die Auswahlliste zeigt dauerhaft "+ Neuer Raum ..." fuer
-    ein Geraet mit einem echten, korrekt gespeicherten Raum, und das
-    verwaiste Texteingabefeld bleibt sichtbar offen - und das, anders als
-    beim ersten Fund, OHNE sich je von selbst zu korrigieren.
+    """Review-Fix Important #2 (zweite Runde auf demselben Fund): `newRoomFor`
+    wurde bis dahin nur ueber `commitNewRoom` geloescht, also nur dann, wenn
+    man das Textfeld beendet oder abbricht (Enter/Blur). Rein mit der Maus,
+    ganz ohne Tastatur, blieb aber ein zweiter Weg offen: (1) "+ Neuer Raum
+    ..." waehlen - `beginNewRoom` setzt `newRoomFor = device.id`; das
+    Textfeld hat kein Autofocus, der Fokus bleibt also auf dem `<select>`.
+    (2) Dasselbe, noch fokussierte `<select>` erneut oeffnen und einen
+    bestehenden Raum waehlen - `@change` nimmt dann den `saveRoom`-Zweig,
+    nicht `beginNewRoom`, und `commitNewRoom` wird nie gerufen.
+
+    Mit der alten, gekoppelten Anzeige-Bindung war das ein Anzeigefehler:
+    ohne das Zuruecksetzen haette `:value` fuer immer zu `'__new__'`
+    ausgewertet, obwohl `saveRoom` den Raum laengst korrekt gespeichert
+    hatte. Nach der Entkopplung (siehe
+    `test_the_room_select_display_depends_only_on_the_device_room`) haengt
+    die Anzeige nicht mehr daran - das Zuruecksetzen bleibt trotzdem
+    richtig, nur aus einem anderen Grund: Wer einen echten Raum waehlt, hat
+    den Neu-Raum-Modus damit verlassen, unabhaengig davon, was die
+    Auswahlliste anzeigt. Ein liegen gebliebenes `newRoomFor` wuerde sonst
+    weiterhin das (dann falsch platzierte) Neu-Raum-Textfeld einblenden.
 
     Wie beim ersten Fund kann ein Test ohne Browser-Engine Alpine nicht
     tatsaechlich ausfuehren lassen. Belegt wird deshalb, dass der
     `saveRoom`-Zweig des `@change`-Handlers `newRoomFor` ausdruecklich auf
-    `null` setzt, BEVOR er `saveRoom` ruft - der Teil, der genau diesen
-    zweiten Ausstiegsweg schliesst."""
+    `null` setzt, BEVOR er `saveRoom` ruft."""
     client, _, _ = api
     page = (await client.get("/")).text
     select_start = page.index('class="room-select"')
@@ -2084,3 +2114,33 @@ async def test_the_room_select_leaves_new_room_mode_when_a_normal_room_is_picked
     room_select = page[select_start:select_end]
     assert "newRoomFor = null" in room_select
     assert "saveRoom(device, $event.target.value)" in room_select
+
+
+async def test_the_room_picker_closes_new_room_mode_when_focus_leaves_it_entirely(api):
+    """Runde 3, hier erstmals behoben: Waehlt man "+ Neuer Raum ..." und
+    klickt dann einfach irgendwo anders hin - ohne das Textfeld zu
+    fokussieren, ohne Enter, ohne Tab -, feuert `<select>` kein `change` und
+    das Textfeld kein `blur`. Nichts im bisherigen Code haette `newRoomFor`
+    je zurueckgesetzt: ein verwaistes, leeres Textfeld waere dauerhaft
+    sichtbar geblieben (die Auswahlliste selbst zeigt dank der Entkopplung
+    zwar weiterhin korrekt `device.room`, das Textfeld bliebe aber offen).
+
+    Statt eines weiteren Sonderfalls traegt ein gemeinsamer Wrapper
+    (`.room-picker`) eine Fokus-Wache: `@focusout` prueft, ob
+    `$event.relatedTarget` - das Element, das den Fokus als naechstes
+    bekommt - noch INNERHALB des Wrappers liegt. Nur wenn nicht (der Fokus
+    verlaesst `<select>` UND das Textfeld), wird `newRoomFor` geloescht.
+    Wandert der Fokus von der Auswahlliste ins gerade erschienene Textfeld -
+    die normale Fortsetzung, kein Abbruch -, bleibt `relatedTarget`
+    innerhalb des Wrappers, und der Modus bleibt bestehen."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    picker_start = page.index('class="room-picker"')
+    span_start = page.rindex("<span", 0, picker_start)
+    span_end = page.index("</span>", picker_start)
+    room_picker = page[span_start:span_end]
+    assert "@focusout=" in room_picker
+    assert "$event.relatedTarget" in room_picker
+    assert "newRoomFor = null" in room_picker
+    assert 'class="room-select"' in room_picker
+    assert 'class="room-new"' in room_picker

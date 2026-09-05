@@ -473,63 +473,84 @@
                   </div>
 
                   <div class="device-foot">
-                    <!-- `:value` muss NEBEN `device.room` auch `newRoomFor`
-                         lesen, sonst wertet Alpine die Bindung nur neu aus,
-                         wenn sich `device.room` aendert. Es gibt ZWEI Wege
-                         aus dem "Neuer Raum"-Modus, und beide muessen
-                         `newRoomFor` zuruecksetzen: (1) Waehlt jemand
-                         "+ Neuer Raum ..." und laesst das Eingabefeld dann
-                         leer stehen (Blur oder Enter), setzt `commitNewRoom`
-                         in app.js `newRoomFor` zurueck, OHNE `saveRoom` zu
-                         rufen - `device.room` bleibt also unveraendert. (2)
-                         Oeffnet man stattdessen dasselbe, noch fokussierte
-                         `<select>` erneut und waehlt direkt einen normalen
-                         Raum, greift NICHT `commitNewRoom`, sondern der
-                         `saveRoom`-Zweig hier im `@change` - der muss den
-                         Modus deshalb selbst verlassen. Ohne das wuerde die
-                         Auswahlliste nach Weg (1) weiter "+ Neuer Raum ..."
-                         zeigen, obwohl das Geraet diesen Raum nie hatte, und
-                         nach Weg (2) sogar dauerhaft "+ Neuer Raum ..." und
-                         das laengst ueberfluessige Eingabefeld anzeigen,
-                         obwohl `device.room` bereits korrekt gespeichert
-                         ist - eine Auswahlliste, die eine Option zeigt, die
-                         das Geraet gar nicht hat, und sich nie mehr von
-                         selbst korrigiert. Ein dritter, rein kosmetischer
-                         Fall bleibt bewusst so, wie er ist: Tippt man beim
-                         erfolgreichen Weg (Name eingeben, Enter) einen
-                         Raumnamen ein, loescht `commitNewRoom` in app.js
-                         `newRoomFor` SYNCHRON, bevor der PATCH ueberhaupt
-                         erst abgeschickt ist - waehrend dieser also noch
-                         unterwegs ist, faellt die Anzeige kurz auf den alten
-                         Raum zurueck und springt danach auf den neuen. Das
-                         wird in Kauf genommen, weil die Alternative -
-                         Loeschen erst nach dem `await` - einen doppelten
-                         Schreibvorgang eintauschen wuerde: `commitNewRoom`
-                         haengt an Enter UND an Blur, und genau das
-                         synchrone Loeschen VOR dem `await` macht den Blur
-                         nach einem Enter zu einem folgenlosen No-op statt
-                         zu einem zweiten PATCH. -->
-                    <select
-                      class="room-select"
-                      :value="newRoomFor === device.id ? '__new__' : (device.room || '')"
-                      @change="$event.target.value === '__new__' ? beginNewRoom(device) : (newRoomFor = null, saveRoom(device, $event.target.value))"
+                    <!-- Drei Review-Runden sind an DERSELBEN Fehlerklasse
+                         gescheitert, nicht an drei verschiedenen: `newRoomFor`
+                         ist reiner Modus-Zustand (steuert nur, ob das
+                         Neu-Raum-Textfeld sichtbar ist), war aber zusaetzlich
+                         massgeblich dafuer, was die native `<select>` ANZEIGT
+                         (`:value="newRoomFor === device.id ? '__new__' :
+                         ..."`). Eine native `<select>` feuert jedoch fuer
+                         "geoeffnet, dann ohne Auswahl wieder verlassen" kein
+                         Event - weder beim leer gelassenen Textfeld (Runde 1)
+                         noch beim erneuten Oeffnen desselben, noch fokussierten
+                         Felds (Runde 2) noch beim schlichten Wegklicken (Runde
+                         3, hier erstmals behoben) gibt es einen Haken, an dem
+                         sich EIN zusaetzlicher Reset-Pfad zuverlaessig
+                         festmachen liesse. Jede Reparatur, die die Kopplung
+                         beibehaelt, ist nur eine weitere, noch nicht gefundene
+                         Geste von der naechsten Instanz entfernt.
+                         Deshalb: entkoppelt. `:value` liest ausschliesslich
+                         `device.room` - die Auswahlliste kann dadurch PER
+                         KONSTRUKTION nie einen Raum anzeigen, den das Geraet
+                         nicht hat, unabhaengig davon, wie der Neu-Raum-Modus
+                         verlassen wird. `newRoomFor` bleibt reiner
+                         Sichtbarkeits-Schalter fuer das Textfeld. Waehlt man
+                         "+ Neuer Raum ...", wuerde die `<select>` das kurz
+                         selbst anzeigen, bevor Alpine ueberhaupt reagiert -
+                         deshalb setzt der `@change`-Zweig den DOM-Wert des
+                         Elements sofort auf den aktuellen Raum zurueck, ehe
+                         `beginNewRoom` den Modus startet: die Auswahlliste
+                         zeigt "__new__" dadurch nie an, das Textfeld daneben
+                         ist die einzige sichtbare Neu-Raum-Affordanz. Im
+                         Normalraum-Zweig bleibt `newRoomFor = null` bestehen -
+                         nicht mehr, weil davon die Anzeige abhaengt, sondern
+                         weil das Verlassen des Neu-Raum-Modus bei einer echten
+                         Raumwahl unabhaengig davon korrekt ist. Den in Runde 3
+                         verbliebenen Rest - ein verwaistes, leeres Textfeld
+                         nach blossem Wegklicken - schliesst kein weiterer
+                         Sonderfall, sondern eine Fokus-Wache auf dem
+                         gemeinsamen Wrapper (`@focusout`): verlaesst der Fokus
+                         BEIDE Elemente (`$event.relatedTarget` liegt ausserhalb
+                         von `$el`), endet der Modus. Wandert der Fokus von der
+                         Auswahlliste ins gerade erschienene Textfeld, bleibt
+                         `relatedTarget` innerhalb des Wrappers - das ist die
+                         normale Fortsetzung, kein Abbruch.
+                         Nebenbefund: Der zuvor dokumentierte kosmetische
+                         Flicker (Anzeige faellt waehrend eines laufenden
+                         PATCH kurz auf den alten Raum zurueck) entfaellt mit
+                         dieser Struktur von selbst - die Auswahlliste zeigte
+                         `device.room` schon waehrend der Eingabe durchgehend
+                         an, es gibt also keinen Sprung mehr zwischen
+                         "__new__" und dem alten Namen, den `commitNewRoom`
+                         ausloesen koennte. -->
+                    <span
+                      class="room-picker"
+                      @focusout="if (!$el.contains($event.relatedTarget)) newRoomFor = null"
                     >
-                      <option value="" x-text="t('web.devices.room_none')"></option>
-                      <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
-                        <option :value="chip.key" x-text="chip.key"></option>
-                      </template>
-                      <option value="__new__" x-text="t('web.devices.room_new')"></option>
-                    </select>
-                    <input
-                      x-show="newRoomFor === device.id"
-                      x-cloak
-                      type="text"
-                      class="room-new"
-                      x-model="newRoomDraft"
-                      :placeholder="t('web.devices.room_new_placeholder')"
-                      @keydown.enter="commitNewRoom(device)"
-                      @blur="commitNewRoom(device)"
-                    />
+                      <select
+                        class="room-select"
+                        :value="device.room || ''"
+                        @change="$event.target.value === '__new__'
+                          ? ($event.target.value = device.room || '', beginNewRoom(device))
+                          : (newRoomFor = null, saveRoom(device, $event.target.value))"
+                      >
+                        <option value="" x-text="t('web.devices.room_none')"></option>
+                        <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
+                          <option :value="chip.key" x-text="chip.key"></option>
+                        </template>
+                        <option value="__new__" x-text="t('web.devices.room_new')"></option>
+                      </select>
+                      <input
+                        x-show="newRoomFor === device.id"
+                        x-cloak
+                        type="text"
+                        class="room-new"
+                        x-model="newRoomDraft"
+                        :placeholder="t('web.devices.room_new_placeholder')"
+                        @keydown.enter="commitNewRoom(device)"
+                        @blur="commitNewRoom(device)"
+                      />
+                    </span>
                     <span class="hint" x-text="exportHintFor(device.id)"></span>
                     <span style="flex: 1 1 auto"></span>
                     <button

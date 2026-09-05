@@ -964,6 +964,15 @@ footer.hint-block {
   font-size: 0.75rem;
 }
 
+/* Umschliesst `<select>` und das Neu-Raum-Textfeld nur als Fokus-Wache
+ * (`@focusout` in index.html) - `display: contents` nimmt den Wrapper
+ * selbst aus dem Flex-Layout heraus, damit `.device-foot` weiterhin direkt
+ * mit `.room-select` und `.room-new` als Flex-Kinder rechnet und die
+ * Fusszeile unveraendert bleibt. */
+.room-picker {
+  display: contents;
+}
+
 /* Das Eingabefeld beim Umbenennen uebernimmt die Groesse der Ueberschrift,
  * die es ersetzt - sonst springt die Zeile beim Klick auf den Stift. */
 .room-rename-input {
