@@ -2368,6 +2368,61 @@ async def test_the_tile_menu_escape_listener_is_window_scoped(api):
     assert '@keydown.escape.window="if ($el.open) closeTileMenu($el)"' in menu
 
 
+async def test_close_tile_menu_restores_focus_conditionally_without_scrolling(api):
+    """Selbstverteidigungs-Review 2026-09-05, Fund 3: `closeTileMenu` (app.js)
+    holt sich den Fokus nur zurueck, wenn er beim Schliessen tatsaechlich IM
+    Menue stand (`hadFocus`), und tut das mit `{ preventScroll: true }`. Bis
+    hierher gab es dafuer keine einzige Assertion in dieser Datei -
+    `grep -c "preventScroll|hadFocus|tile-menu-new"` liefert vor diesem Test
+    0. Ein Refactor haette beides unbemerkt kippen koennen: liesse man die
+    `hadFocus`-Wache weg, risse ein Aussenklick oder Escape ausserhalb des
+    Menues (die `@click.outside`/`@keydown.escape.window`-Handler rufen
+    `closeTileMenu` unbedingt fuer JEDE Kachel auf, s. Test oben) den Fokus
+    von genau dem Element weg, das der Nutzer gerade angeklickt hat - selbst
+    wenn dessen Menue laengst zu ist. Fehlte `preventScroll`, spraenge die
+    Seite bei jedem programmatischen Fokus-Ruf zur `<summary>` zurueck, auch
+    wenn die zugehoerige Kachel laengst aus dem sichtbaren Bereich
+    gescrollt ist.
+
+    Dies ist eine Assertion gegen die AUSGELIEFERTE Datei, keine
+    Verhaltenspruefung: sie belegt, dass beide Bausteine im Quelltext von
+    `closeTileMenu` stehen, nicht, dass sich der Browser beim Ausfuehren
+    tatsaechlich so verhaelt (dafuer fehlt dieser Suite eine echte
+    Browser-Engine, siehe Test oben)."""
+    client, _store, _device_id = api
+    script = (await client.get("/static/app.js")).text
+    close_start = script.index("closeTileMenu(el) {")
+    close_end = script.index("\n    },", close_start)
+    close_body = script[close_start:close_end]
+    assert "hadFocus" in close_body
+    assert "preventScroll" in close_body
+
+
+async def test_the_new_room_escape_handler_focuses_the_new_room_button(api):
+    """Selbstverteidigungs-Review 2026-09-05, Fund 3: Escape im Neu-Raum-
+    Textfeld blendet das Feld per `x-show` aus, OHNE ihm dabei den Fokus zu
+    nehmen (Fund 2, Kommentarblock ueber dem `<details>` in index.html) -
+    der Handler muss den Fokus deshalb selbst auf den wieder auftauchenden
+    "+ Neuer Raum"-Knopf (`.tile-menu-new`) schicken. Ohne diese Assertion
+    koennte der Fokus-Ruf ersatzlos aus dem Escape-Handler verschwinden, und
+    die Suite bliebe gruen - der Fokus bliebe dann auf dem unsichtbaren,
+    aus dem Tab-Fluss gefallenen Textfeld stranden, ein totes Ende fuer
+    Tastatur- und Screenreader-Nutzung.
+
+    Auch dies ist eine Assertion gegen die AUSGELIEFERTE Datei: sie belegt,
+    dass der Fokus-Ruf im Quelltext steht, nicht, dass der Browser den
+    Fokus beim tatsaechlichen Escape-Druck auch dorthin bewegt."""
+    client, _store, _device_id = api
+    page = (await client.get("/")).text
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+    assert "@keydown.escape.stop=" in menu
+    escape_value_start = menu.index('@keydown.escape.stop="') + len('@keydown.escape.stop="')
+    escape_value_end = menu.index('"', escape_value_start)
+    escape_expr = menu[escape_value_start:escape_value_end]
+    assert "querySelector('.tile-menu-new')" in escape_expr
+    assert ".focus()" in escape_expr
+
+
 async def test_export_and_remove_moved_into_the_tile_menu(api):
     """Beide Aktionen liegen jetzt im Menue und schliessen es beim Klick.
     Der Export-Knopf bleibt an `bridgeSettings.bridge_ip` gebunden - ohne
