@@ -698,9 +698,26 @@ footer.hint-block {
  * der Karte, sondern im `.device-foot` neben dem Export-Hinweis-Span - die
  * erste Regel dimmt deshalb alle Kinder ausser `.device-foot` selbst
  * pauschal, die zweite steigt eine Ebene tiefer und dimmt innerhalb von
- * `.device-foot` alles ausser `.tile-menu`. Das Ergebnis sieht identisch
- * aus wie eine Karten-weite Opacity (jedes sichtbare Kind bekommt dieselben
- * 75 %), nur dass das Menue selbst unangetastet bleibt. */
+ * `.device-foot` alles ausser `.tile-menu`.
+ *
+ * Review-Fund 2 (2026-09-05, Review der Nacharbeit): `:not(.tile-menu)`
+ * schliesst das GESAMTE `<details>` aus, nicht nur die transiente,
+ * sich oeffnende Liste - eingeschlossen dessen permanent sichtbaren
+ * `<summary>`-Kebab. Gemessen an einer offline Karte: `.device-foot`
+ * Opacity 1, `.tile-menu > summary` Opacity 1, waehrend der `.hint`
+ * daneben bei 0.75 lag - der Kebab-Rahmen (`1px solid var(--border)`)
+ * wirkte dadurch heller als alles drumherum. Der Ausloeser laesst sich
+ * nicht einfach aus dem `:not()` streichen, das traefe ihn wieder ueber
+ * seine Kindschaft von `.device-foot` (unveraendert); er braucht
+ * stattdessen dieselbe Behandlung wie der Farbstreifen weiter oben
+ * (`.device-card.is-offline::before`): eine eigene, auf genau ihn
+ * gezielte Opacity-Regel, weiter unten bei `.tile-menu > summary`
+ * definiert. Damit tragen inzwischen VIER Regeln je ihren Teil der
+ * 75 % Dimmung - die direkten Kartenkinder ausser `.device-foot`, die
+ * Kinder von `.device-foot` ausser `.tile-menu`, der Farbstreifen
+ * `::before` und der Kebab-Ausloeser `.tile-menu > summary` -, nicht
+ * eine einzelne kartenweite Opacity: NUR so bleibt `.tile-menu-items`
+ * (die schwebende Liste selbst) als einziges Element unangetastet. */
 .device-card.is-offline > *:not(.device-foot) {
   opacity: 0.75;
 }
@@ -1269,6 +1286,20 @@ footer.hint-block {
 .tile-menu[open] > summary {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Review-Fund 2 (2026-09-05, Review der Nacharbeit): eigene Dimmung fuer
+ * den Kebab-Ausloeser, weil `.device-card.is-offline .device-foot >
+ * *:not(.tile-menu)` (Begruendung dort) das GANZE `<details>` ausnimmt,
+ * nicht nur die transiente Liste - dieser `<summary>` blieb dadurch bei
+ * offline Geraeten auf voller Deckkraft haengen, sichtbar heller als der
+ * Rest der Fusszeile. Direkt auf `summary` statt auf `.tile-menu`, weil
+ * `opacity` auf `.tile-menu` selbst wieder einen Deckkraft-Kontext um die
+ * schwebende Liste (`.tile-menu-items`, sein Geschwister-Div) aufspannen
+ * wuerde - derselbe Fehler, der frueher (vor dieser Nacharbeit) durch die
+ * Opacity auf `.device-card` entstand (Begruendung an der Regel oben). */
+.device-card.is-offline .tile-menu > summary {
+  opacity: 0.75;
 }
 
 /* Fund 1 (Nacharbeit 2026-09-05): `z-index: 5` lag unter dem `z-index: 10`

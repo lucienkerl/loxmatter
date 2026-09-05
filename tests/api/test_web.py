@@ -2289,6 +2289,26 @@ async def test_offline_stripe_keeps_its_dimmed_look_on_its_own(api):
     assert "opacity: 0.75" in stripe_rule
 
 
+async def test_offline_dimming_reaches_the_kebab_trigger_too(api):
+    """Review-Fund 2 (2026-09-05, Review der Nacharbeit): die Ausnahme
+    `.device-card.is-offline .device-foot > *:not(.tile-menu)` nimmt das
+    GESAMTE `<details class="tile-menu">` aus, nicht nur die transiente,
+    sich oeffnende Liste - eingeschlossen dessen permanent sichtbaren
+    `<summary>`-Kebab. Im Browser gemessen an einer offline Karte:
+    `.device-foot` Opacity 1, `.tile-menu > summary` Opacity 1, waehrend
+    der `.hint` daneben bei 0.75 lag - der Kebab-Rahmen wirkte dadurch
+    heller als alles drumherum. Ohne Browser-Engine kann diese Suite den
+    Helligkeitsunterschied selbst nicht nachstellen - belegt wird nur, dass
+    der Ausloeser eine eigene, auf ihn gezielte `opacity: 0.75`-Regel
+    bekommen hat, statt weiterhin unbehandelt zu bleiben."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    summary_rule = css.split(".device-card.is-offline .tile-menu > summary {", 1)[1].split("}", 1)[
+        0
+    ]
+    assert "opacity: 0.75" in summary_rule
+
+
 async def test_lead_value_gets_padding_room_for_descenders(api):
     """Fund 4 (Nacharbeit 2026-09-05): `.lead-value` schneidet bei
     `line-height: 1.05` und `overflow: hidden` die Unterlaengen textwertiger
