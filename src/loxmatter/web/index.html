@@ -129,6 +129,31 @@
         <rect x="4" y="4" width="16" height="16" rx="3" />
         <circle cx="12" cy="12" r="2.2" />
       </symbol>
+      <!-- Fund 6 (Review vom 2026-09-05): Umbenennen-, Export- und
+           Entfernen-Schaltflaeche in der Kachel zeigten die rohen Zeichen
+           "✎", "↓" und "🗑" statt eines Symbols aus diesem Block - "🗑"
+           rendert unter macOS/Windows als farbiges Emoji, anderswo als
+           Kaestchen, und beide Abweichungen brechen die einheitliche
+           kupfer-/gedeckte Symbolsprache der uebrigen Kachel-Icons. Gleiche
+           Strich-Technik wie die Kategorie-Icons oben: nur Pfade, keine
+           Fuellung ausser den Kreispunkten, `currentColor` uebernimmt Farbe
+           und Zustand (z. B. `.danger` auf dem Entfernen-Knopf) automatisch
+           von aussen. -->
+      <symbol id="i-rename" viewBox="0 0 24 24">
+        <path d="M14.5 5.5 18.5 9.5 8 20H4v-4L14.5 5.5z" />
+        <path d="M12.7 7.3l4 4" />
+      </symbol>
+      <symbol id="i-export" viewBox="0 0 24 24">
+        <path d="M12 4v10" />
+        <path d="M8 10l4 4 4-4" />
+        <path d="M5 18h14" />
+      </symbol>
+      <symbol id="i-remove" viewBox="0 0 24 24">
+        <path d="M5 7h14" />
+        <path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+        <path d="M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13" />
+        <path d="M10 11v6M14 11v6" />
+      </symbol>
     </svg>
     <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
@@ -307,8 +332,7 @@
                 x-show="roomFilter && renamingRoom !== roomFilter"
                 @click="beginRenameRoom(roomFilter)"
                 :title="t('web.devices.room_rename')"
-                x-text="'✎'"
-              ></button>
+              ><svg class="icon"><use href="#i-rename"></use></svg></button>
               <input
                 x-show="roomFilter && renamingRoom === roomFilter"
                 x-cloak
@@ -354,8 +378,7 @@
                 x-show="group.key && renamingRoom !== group.key"
                 @click="beginRenameRoom(group.key)"
                 :title="t('web.devices.room_rename')"
-                x-text="'✎'"
-              ></button>
+              ><svg class="icon"><use href="#i-rename"></use></svg></button>
               <input
                 x-show="group.key && renamingRoom === group.key"
                 x-cloak
@@ -586,14 +609,12 @@
                       @click="exportDevice(device)"
                       :disabled="!bridgeSettings.bridge_ip"
                       :title="t('web.devices.export')"
-                      x-text="'↓'"
-                    ></button>
+                    ><svg class="icon"><use href="#i-export"></use></svg></button>
                     <button
                       class="danger"
                       @click="removeDevice(device)"
                       :title="t('web.devices.remove')"
-                      x-text="'🗑'"
-                    ></button>
+                    ><svg class="icon"><use href="#i-remove"></use></svg></button>
                   </div>
                   <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
                     <span x-text="t('web.devices.export_hint_prefix')"></span>

@@ -2031,6 +2031,48 @@ async def test_every_category_has_an_icon_symbol(api):
         assert f'id="i-cat-{category}"' in page, category
 
 
+async def test_the_tile_action_buttons_use_svg_symbols_not_raw_glyphs(api):
+    """Fund 6 (Review vom 2026-09-05): Umbenennen-, Export- und
+    Entfernen-Schaltflaeche zeigten die rohen Zeichen "✎", "↓" und "🗑"
+    statt eines der eigenen `<symbol>`-Icons - Spec 6.5 und der Rest dieser
+    Ansicht verlangen inline SVG, keine externe Icon-Bibliothek und keine
+    rohen Glyphen. "🗑" rendert unter macOS/Windows zudem als farbiges
+    Emoji statt eines einfarbigen Symbols und bricht damit die
+    kupfer-/gedeckte Symbolsprache der uebrigen Icons.
+
+    Geprueft wird sowohl das Fehlen der alten Zeichen als `x-text`-Inhalt
+    als auch das Vorhandensein der neuen Symbole und ihrer Verwendung -
+    inklusive des `:title`, das dabei erhalten bleiben musste."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    assert "x-text=\"'✎'\"" not in page
+    assert "x-text=\"'↓'\"" not in page
+    assert "x-text=\"'🗑'\"" not in page
+    for symbol_id in ("i-rename", "i-export", "i-remove"):
+        assert f'id="{symbol_id}"' in page, symbol_id
+        assert f'href="#{symbol_id}"' in page, symbol_id
+
+    rename_start = page.index('class="room-rename"')
+    rename_end = page.index("</button>", rename_start)
+    rename_button = page[rename_start:rename_end]
+    assert 'href="#i-rename"' in rename_button
+    assert ":title=\"t('web.devices.room_rename')\"" in rename_button
+
+    export_start = page.index("exportDevice(device)")
+    export_button_start = page.rindex("<button", 0, export_start)
+    export_button_end = page.index("</button>", export_start)
+    export_button = page[export_button_start:export_button_end]
+    assert 'href="#i-export"' in export_button
+    assert ":title=\"t('web.devices.export')\"" in export_button
+
+    remove_start = page.index("removeDevice(device)")
+    remove_button_start = page.rindex("<button", 0, remove_start)
+    remove_button_end = page.index("</button>", remove_start)
+    remove_button = page[remove_button_start:remove_button_end]
+    assert 'href="#i-remove"' in remove_button
+    assert ":title=\"t('web.devices.remove')\"" in remove_button
+
+
 async def test_the_device_grid_is_multi_column(api):
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
