@@ -676,6 +676,30 @@ def test_rename_room_normalizes_the_source_name_too(tmp_path):
         store.close()
 
 
+def test_rename_room_does_not_touch_updated_at(tmp_path):
+    """Dieselbe Begruendung wie bei `set_room` und `backfill_device_types`:
+    der Raum landet in KEINER Exportvorlage, ein Aufraeumen der Raumnamen
+    darf also keinen Export verlangen, der Byte fuer Byte dieselben Dateien
+    erzeugt wie der letzte. `rename_room` ist der dritte Schreibpfad auf
+    `device.room` - anders als seine beiden Geschwister bislang ohne eigenen
+    Test dafuer, obwohl das SQL heute korrekt ist. Gerade das macht die
+    Luecke riskant: es ist die eine Stelle, an der eine kuenftige Aenderung
+    diese Zusicherung brechen koennte, ohne dass ein Test es merkt."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        device_id = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
+        before = store.device(device_id).updated_at
+
+        assert store.rename_room("Küche", "Essbereich") == 1
+        # Nicht vakuos bestehen: die Umbenennung muss tatsaechlich
+        # stattgefunden haben, sonst bewiese ein unveraendertes `updated_at`
+        # gar nichts.
+        assert store.device(device_id).room == "Essbereich"
+        assert store.device(device_id).updated_at == before
+    finally:
+        store.close()
+
+
 def test_register_device_stores_the_matter_device_types(tmp_path):
     """Endpunkt 1 der Steckdose meldet 266 (0x010A, On/Off Plug-in Unit),
     Endpunkt 0 die Verwaltungstypen - beide werden roh abgelegt, gefiltert
