@@ -287,7 +287,7 @@ Geprüfte Fälle:
 | `MINISERVER_IP` fehlt, kein TTY | Abbruch vor dem Klon |
 | zweiter Lauf bei vollständiger `.env` | kein `git clone`, `.env` byte-identisch, `compose up -d` erneut |
 | `.env` mit `MINISERVER_IP`, ohne `LOXMATTER_API_TOKEN` | nur die fehlende Zeile kommt dazu, die vorhandene bleibt |
-| `--dry-run` | kein einziger Stub wird aufgerufen |
+| `--dry-run` | kein veraendernder Stub wird aufgerufen: kein `apt-get`, kein `git clone`, kein `docker`, kein `sudo`. Lesende Erkennung (`uname`, `ip route`) laeuft weiter — sie veraendert nichts |
 
 **Was diese Tests nicht leisten:** Sie prüfen die *Auswahl* der Befehle, nicht
 ihre Wirkung. Ob `docker compose up -d --build` auf einem Pi tatsächlich einen
