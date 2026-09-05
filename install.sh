@@ -32,11 +32,18 @@
 set -eu
 
 REPO_URL="https://github.com/lucienkerl/loxmatter.git"
+RAW_URL="https://raw.githubusercontent.com/lucienkerl/loxmatter/main/install.sh"
 
 DRY_RUN=0
 TARGET_DIR=""
 STEP="starting up"
 STACK_STARTED=0
+HAVE_TTY=0
+SUDO=""
+MISSING_PACKAGES=""
+NEED_DOCKER=0
+MODE=""
+DETECTED_RADIO=""
 
 # ---------------------------------------------------------------- output --
 
@@ -139,6 +146,190 @@ On macOS, use the development path instead:
   note "Linux on $install_arch"
 }
 
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# stdin is the pipe when this runs as `curl ... | sh`, so every question has
+# to go to the controlling terminal instead. Opening it in a subshell is the
+# portable way to find out whether there is one at all - `test -r /dev/tty`
+# can succeed on a device node that then refuses to open.
+check_tty() {
+  if ( exec </dev/tty ) 2>/dev/null; then
+    HAVE_TTY=1
+  else
+    HAVE_TTY=0
+    note "No terminal available; every value has to come from the environment."
+  fi
+}
+
+# Asks on the terminal and echoes the answer. Without a terminal, or in a dry
+# run, it echoes the default and asks nothing.
+ask() {
+  ask_prompt="$1"
+  ask_default="$2"
+  if [ "$HAVE_TTY" -eq 0 ] || [ "$DRY_RUN" -eq 1 ]; then
+    printf '%s' "$ask_default"
+    return 0
+  fi
+  if [ -n "$ask_default" ]; then
+    printf '%s [%s]: ' "$ask_prompt" "$ask_default" >/dev/tty
+  else
+    printf '%s: ' "$ask_prompt" >/dev/tty
+  fi
+  if ! read -r ask_answer </dev/tty; then
+    ask_answer=""
+  fi
+  if [ -z "$ask_answer" ]; then
+    ask_answer="$ask_default"
+  fi
+  printf '%s' "$ask_answer"
+}
+
+check_privileges() {
+  step "checking privileges"
+  if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+    warn "Running as root. The checkout and ~/loxmatter-backups will belong to"
+    warn "root, and scripts/update.sh will need root from then on."
+  elif have sudo; then
+    SUDO="sudo"
+  else
+    SUDO=""
+  fi
+}
+
+# Collects everything that is missing instead of stopping at the first gap -
+# being told about git, then about curl, then about Docker on three separate
+# runs is the opposite of a one-liner.
+collect_missing() {
+  step "checking which tools are present"
+  MISSING_PACKAGES=""
+  for tool in git curl openssl; do
+    if ! have "$tool"; then
+      MISSING_PACKAGES="$MISSING_PACKAGES $tool"
+    fi
+  done
+  MISSING_PACKAGES="${MISSING_PACKAGES# }"
+  NEED_DOCKER=0
+  if ! have docker; then
+    NEED_DOCKER=1
+  elif ! docker compose version >/dev/null 2>&1; then
+    die "docker is installed but the compose plugin is not.
+On Debian and Ubuntu: apt-get install docker-compose-plugin
+Then run this again."
+  fi
+}
+
+check_can_install() {
+  step "checking whether missing tools can be installed"
+  if [ -z "$MISSING_PACKAGES" ] && [ "$NEED_DOCKER" -eq 0 ]; then
+    return 0
+  fi
+  wanted="$MISSING_PACKAGES"
+  if [ "$NEED_DOCKER" -eq 1 ]; then
+    wanted="$wanted docker"
+  fi
+  wanted="${wanted# }"
+  if [ "$(id -u)" -ne 0 ] && [ -z "$SUDO" ]; then
+    die "Missing: $wanted
+Installing these needs root, but this is not root and sudo is not available.
+Install them yourself, then run this again."
+  fi
+  if ! have apt-get; then
+    die "Missing: $wanted
+This installer only knows apt-get (Debian, Ubuntu, Raspberry Pi OS).
+Install them with your package manager, then run this again."
+  fi
+  note "Will install: $wanted"
+}
+
+detect_radio_device() {
+  for candidate in /dev/ttyUSB* /dev/ttyACM*; do
+    if [ -e "$candidate" ]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+}
+
+decide_mode() {
+  step "deciding the operating mode"
+  DETECTED_RADIO="$(detect_radio_device)"
+  if [ -n "${LOXMATTER_MODE:-}" ]; then
+    MODE="$LOXMATTER_MODE"
+  else
+    if [ -n "$DETECTED_RADIO" ]; then
+      note "Found a possible Thread radio at $DETECTED_RADIO."
+      mode_default="thread"
+    else
+      note "No Thread radio found at /dev/ttyUSB* or /dev/ttyACM*."
+      mode_default="wifi"
+    fi
+    MODE="$(ask "Operating mode - 'thread' for Thread and WiFi, 'wifi' for WiFi and Ethernet only" "$mode_default")"
+  fi
+  case "$MODE" in
+    thread|wifi) : ;;
+    *) die "Operating mode must be 'thread' or 'wifi' (got: $MODE)" ;;
+  esac
+  note "Operating mode: $MODE"
+}
+
+valid_ipv4() {
+  case "$1" in
+    ""|*[!0-9.]*) return 1 ;;
+  esac
+  ipv4_saved_ifs="$IFS"
+  IFS=.
+  # Deliberate word splitting on the dots.
+  # shellcheck disable=SC2086
+  set -- $1
+  IFS="$ipv4_saved_ifs"
+  if [ $# -ne 4 ]; then
+    return 1
+  fi
+  for ipv4_octet in "$@"; do
+    case "$ipv4_octet" in
+      ""|*[!0-9]*) return 1 ;;
+    esac
+    if [ "$ipv4_octet" -gt 255 ]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+# Reads a key out of an existing .env, so a second run does not ask again for
+# something that is already configured.
+env_file_value() {
+  if [ -f "$TARGET_DIR/deploy/testhost/.env" ]; then
+    awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' \
+      "$TARGET_DIR/deploy/testhost/.env"
+  fi
+}
+
+# Anything that has no default and cannot be asked for has to stop the run
+# HERE - before a single file is written.
+check_config_source() {
+  step "checking that the configuration can be obtained"
+  if [ -z "${MINISERVER_IP:-}" ] && [ -z "$(env_file_value MINISERVER_IP)" ] &&
+     [ "$HAVE_TTY" -eq 0 ]; then
+    die "MINISERVER_IP is not set and there is no terminal to ask on.
+Pass it in instead:
+  curl -fsSL $RAW_URL | MINISERVER_IP=10.0.1.99 sh"
+  fi
+  # A malformed address has to stop the run here too - noticing it after the
+  # clone would be exactly the "aborted halfway" this phase exists to prevent.
+  if [ -n "${MINISERVER_IP:-}" ] && ! valid_ipv4 "$MINISERVER_IP"; then
+    die "MINISERVER_IP is not a valid IPv4 address: '$MINISERVER_IP'"
+  fi
+  if [ "$MODE" = "thread" ] && [ -z "${RADIO_DEVICE:-}" ] &&
+     [ -z "$(env_file_value RADIO_DEVICE)" ] && [ -z "$DETECTED_RADIO" ] &&
+     [ "$HAVE_TTY" -eq 0 ]; then
+    die "Thread mode was requested, but no radio was found at /dev/ttyUSB* or
+/dev/ttyACM* and there is no terminal to ask on. Either plug the radio in,
+pass RADIO_DEVICE=/dev/ttyUSB0, or use LOXMATTER_MODE=wifi."
+  fi
+}
+
 # ------------------------------------------------------------------ main --
 
 main() {
@@ -149,6 +340,12 @@ main() {
     note "Dry run: every step is printed, nothing is changed."
   fi
   check_platform
+  check_tty
+  check_privileges
+  collect_missing
+  check_can_install
+  decide_mode
+  check_config_source
 }
 
 main "$@"

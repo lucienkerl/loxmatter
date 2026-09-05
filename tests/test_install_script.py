@@ -57,6 +57,9 @@ SYSTEM_TOOLS = (
     "printf",
     "true",
     "false",
+    "env",
+    "tail",
+    "head",
 )
 
 _UNAME = """case "${1-}" in
@@ -70,8 +73,12 @@ _IP = 'echo "default via 10.0.1.1 dev eth0 proto dhcp src 10.0.1.56"\n'
 _HOSTNAME = 'echo "10.0.1.56"\n'
 
 # Nicht als echtes Werkzeug: sonst haengt jeder root-Test davon ab, als wer
-# die Testsuite laeuft.
-_ID = "echo 1000\n"
+# die Testsuite laeuft. FAKE_UID=0 macht daraus einen root-Lauf.
+_ID = """case "${1-}" in
+  -un|-nu|-n) echo "tester" ;;
+  *) echo "${FAKE_UID-1000}" ;;
+esac
+"""
 
 _OPENSSL = """case "${1-} ${2-}" in
   "rand -hex") echo "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66" ;;
@@ -212,6 +219,9 @@ def installer(tmp_path):
             "STUB_TEMPLATES": str(templates),
             "LOXMATTER_REPO": str(REPO_ROOT),
             "LOXMATTER_DIR": str(home / "loxmatter"),
+            # Ohne Terminal muss die Adresse aus der Umgebung kommen. Tests,
+            # die genau diesen Abbruch pruefen, setzen sie auf "".
+            "MINISERVER_IP": "10.0.1.99",
         }
         full_env.update(env or {})
         proc = subprocess.run(
@@ -253,3 +263,69 @@ def test_fremde_architektur_wird_abgewiesen(installer):
     result = installer(stubs={"uname": riscv})
     assert result.returncode == 2
     assert "riscv64" in result.output
+
+
+def test_ohne_sudo_und_ohne_root_bricht_es_vor_dem_klonen_ab(installer):
+    result = installer(omit=("docker", "sudo"))
+    assert result.returncode == 2
+    assert "docker" in result.output
+    assert not result.called("git clone")
+
+
+def test_alle_fehlenden_werkzeuge_werden_auf_einmal_genannt(installer):
+    result = installer(omit=("git", "curl", "openssl", "docker", "sudo"))
+    assert result.returncode == 2
+    for tool in ("git", "curl", "openssl", "docker"):
+        assert tool in result.output
+
+
+def test_ohne_apt_get_nennt_es_die_pakete_und_bricht_ab(installer):
+    result = installer(omit=("git", "apt-get"))
+    assert result.returncode == 2
+    assert "apt-get" in result.output
+    assert "git" in result.output
+    assert not result.called("git clone")
+
+
+def test_root_wird_gewarnt_aber_nicht_gestoppt(installer):
+    result = installer(env={"FAKE_UID": "0"})
+    assert result.returncode == 0
+    assert "Running as root" in result.output
+
+
+def test_ohne_funkmodul_faellt_es_auf_wifi(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert "Operating mode: wifi" in result.output
+
+
+def test_thread_ohne_geraet_und_ohne_terminal_bricht_ab(installer):
+    result = installer(env={"LOXMATTER_MODE": "thread"})
+    assert result.returncode == 2
+    assert "no radio" in result.output
+
+
+def test_thread_mit_geraet_aus_der_umgebung(installer):
+    result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
+    assert result.returncode == 0
+    assert "Operating mode: thread" in result.output
+
+
+def test_unbekannte_betriebsart_bricht_ab(installer):
+    result = installer(env={"LOXMATTER_MODE": "zigbee"})
+    assert result.returncode == 2
+    assert "thread" in result.output
+
+
+def test_ungueltige_miniserver_ip_bricht_vor_dem_klonen_ab(installer):
+    result = installer(env={"MINISERVER_IP": "nicht.eine.ip"})
+    assert result.returncode == 2
+    assert "not a valid IPv4" in result.output
+    assert not result.called("git clone")
+
+
+def test_ohne_miniserver_ip_und_ohne_terminal_bricht_es_ab(installer):
+    result = installer(env={"MINISERVER_IP": ""})
+    assert result.returncode == 2
+    assert "MINISERVER_IP" in result.output
+    assert not result.called("git clone")
