@@ -2373,6 +2373,28 @@ async def test_lead_value_gets_padding_room_for_descenders(api):
     assert "line-height: 1.05" in rule
 
 
+async def test_lead_value_does_not_yield_to_the_device_name(api):
+    """Nacharbeit 2026-09-05, Fund 1: `flex: 0 1 auto` plus `min-width: 0`
+    liess `.lead-value` schon im GEWOEHNLICHEN Fall neben `.device-name`
+    schrumpfen, nicht erst im pathologischen, den beide Regeln eigentlich
+    eindaemmen sollten - im Browser gemessen bei 1440px: `12.4 %`
+    `clientWidth` 64px gegen `scrollWidth` 73px, `true` 51px gegen 54px,
+    beide ohne jeden Platzmangel gekuerzt (siehe Aufgabenbericht). Ohne
+    Browser-Engine kann diese Suite das Kuerzen selbst nicht nachrechnen -
+    belegt wird nur, dass die ausgelieferte Regel das Schrumpfen abstellt
+    (`flex: 0 0 auto`), die Absicherung gegen einen pathologisch langen
+    Wert stattdessen an ein `max-width` verlegt, und `min-width` (das ohne
+    `flex-shrink: 1` keine Funktion mehr haette) nicht mehr traegt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split(".lead-value {", 1)[1].split("}", 1)[0]
+    assert "flex: 0 0 auto" in rule
+    assert "max-width" in rule
+    assert "min-width" not in rule
+    assert "overflow: hidden" in rule
+    assert "text-overflow: ellipsis" in rule
+
+
 async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
     """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man ueber das
     Kachel-Menue das letzte Geraet eines gefilterten Raums in einen

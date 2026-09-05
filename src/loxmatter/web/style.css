@@ -1128,19 +1128,27 @@ footer.hint-block {
   padding-left: 0.2rem;
 }
 
-/* `flex: 0 1 auto` statt `0 0 auto`, plus `min-width: 0` und Kappen mit
- * Ellipse: dieselbe Absicherung wie am Werteraster weiter unten
- * (`.value-rows .value`, Begruendung dort) und aus demselben Grund noetig -
- * `.device-card` setzt seit dem Kachel-Menue bewusst `overflow: visible`
- * (des Menues wegen), die Kachel schneidet also nichts mehr fuer einen,
- * jede Zelle muss sich seither selbst eindaemmen. Ohne diese Regeln lief
- * ein realistischer Listenwert (gemessen: `12.4, 55.1, 99.9, 42.0, 17.3,
- * 88.8`) 32px ueber den rechten Kachelrand hinaus in die Nachbarkachel -
- * `formatValue` (app.js) endet in `String(value)` ohne Kuerzung, und die
- * funktionale-Signal-Regel laesst Listen- und Textattribute ausdruecklich
- * zu, ein langer Wert ist also erreichbar, nicht nur hypothetisch.
- * `white-space: nowrap` bleibt trotzdem stehen: eine Zahl soll nicht mitten
- * im Wert umbrechen, sie soll kuerzen. */
+/* `flex: 0 0 auto` mit `max-width` statt `flex: 0 1 auto` (Nacharbeit
+ * 2026-09-05): `flex-shrink: 1` sollte urspruenglich nur einen
+ * pathologisch langen Wert eindaemmen, schrumpfte aber genauso im
+ * GEWOEHNLICHEN Fall - gemessen bei 1440px neben `.device-name`: `12.4 %`
+ * `clientWidth` 64px gegen `scrollWidth` 73px, `true` 51px gegen 54px,
+ * beide ohne jeden Platzmangel gekuerzt. Der Leitwert wich dem Namen,
+ * obwohl er der eigentliche Zweck der Kopfzeile ist - er darf ihm nicht
+ * weichen. `flex: 0 0 auto` nimmt ihm das Schrumpfen vollstaendig;
+ * `max-width: 60%` uebernimmt allein die Rolle der Absicherung gegen den
+ * Extremfall: kein gewoehnlicher Wert wird mehr ellipsiert, ein
+ * pathologisch langer Listenwert (`12.4, 55.1, 99.9, 42.0, 17.3, 88.8`)
+ * bleibt aber gemessen 17px innerhalb des rechten Kachelrands statt der
+ * Kachel zu entkommen - `formatValue` (app.js) endet in
+ * `String(value)` ohne Kuerzung, und die funktionale-Signal-Regel laesst
+ * Listen- und Textattribute ausdruecklich zu, dieser Wert ist also
+ * erreichbar, nicht nur hypothetisch. `overflow: hidden` und
+ * `text-overflow: ellipsis` greifen nur noch in diesem einen Fall.
+ * `min-width: 0` entfaellt: es wirkte ausschliesslich zusammen mit
+ * `flex-shrink: 1` und waere hier eine Regel ohne jede Funktion.
+ * `white-space: nowrap` bleibt trotzdem stehen: eine Zahl soll nicht
+ * mitten im Wert umbrechen, sie soll kuerzen. */
 /* Fund 4 (Nacharbeit 2026-09-05): `line-height: 1.05` reicht bei diesem
  * Schriftschnitt nicht fuer die Unterlaengen von Kleinbuchstaben wie
  * `g`/`y`/`p`/`q` - gemessen am Text `gypq`: `scrollHeight` 24px gegen
@@ -1167,8 +1175,8 @@ footer.hint-block {
   font-weight: 600;
   line-height: 1.05;
   padding-block: 1px;
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
+  max-width: 60%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
