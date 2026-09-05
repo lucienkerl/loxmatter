@@ -583,6 +583,26 @@
                          die `newRoomFor` kennen muss, statt der vier
                          Handler, die es bislang kennen MUESSTEN.
 
+                         Fund 3 (Re-Review 2026-09-05): das `!$el.open` aus
+                         der ersten Fassung deckte nur das Schliessen ab und
+                         liess eine Luecke: verschwindet die Kachel selbst,
+                         waehrend ihr Menue offen ist (ein Re-Render entfernt
+                         den Knoten ersatzlos), feuert nie ein `toggle` fuers
+                         Schliessen - `newRoomFor` bleibt auf der Geraete-ID
+                         stehen. Taucht dieselbe ID spaeter in einem NEUEN
+                         `<details>` wieder auf, ist dessen erstes `toggle`
+                         ein Oeffnen, und `!$el.open` verwarf genau diesen
+                         Fall - das verwaiste Feld war wieder da. Die Wache
+                         deckt Oeffnen und Schliessen deshalb jetzt
+                         gleichermassen ab: `beginNewRoom` wird ausschliesslich
+                         per Klick INNERHALB eines bereits offenen Menues
+                         erreicht, also lange NACHDEM dessen eigenes,
+                         gequeutes `toggle` (das Oeffnen) schon gelaufen ist
+                         - ein Reset beim Oeffnen kann also nie einen gerade
+                         erst gesetzten Neu-Raum-Modus wieder wegnehmen.
+                         Dieses `!$el.open` NICHT wieder einbauen, sonst ist
+                         die Luecke beim Kachel-Verschwinden zurueck.
+
                          Fund 3 (Review vom 2026-09-05): ein natives
                          `<details>` gibt beim Schliessen keinen Fokus
                          zurueck - der gerade aktivierte Eintrag verschwindet
@@ -598,7 +618,7 @@
                          jedem einzelnen Eintrag. -->
                     <details
                       class="tile-menu"
-                      @toggle="if (!$el.open && newRoomFor === device.id) { newRoomFor = null; newRoomDraft = '' }"
+                      @toggle="if (newRoomFor === device.id) { newRoomFor = null; newRoomDraft = '' }"
                       @click.outside="if ($el.open) closeTileMenu($el)"
                       @keydown.escape.window="if ($el.open) closeTileMenu($el)"
                     >
