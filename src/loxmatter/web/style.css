@@ -1228,6 +1228,17 @@ footer.hint-block {
  * gezielt "ansteuert". Wer hier eine der beiden Zahlen anhebt, ohne dieses
  * Verhaeltnis zu kennen, riskiert das Gegenteil: eine Kopfzeile, die wieder
  * ueber jedem offenen Menue schwebt. */
+/* Fund 2 (Nacharbeit 2026-09-05): `.tile-menu-item` ist `white-space:
+ * nowrap`, die Liste selbst hatte nur ein `min-width`, keine Obergrenze -
+ * ein langer Raumname (Nutzer duerfen Raeume frei benennen) blies die
+ * shrink-to-fit-Box auf seine volle Wortbreite auf, und weil sie an
+ * `right: 0` verankert ist, wuchs sie dabei nach LINKS. Gemessen bei
+ * 375 px Breite mit dem Raumnamen "Werkstatt im Untergeschoss hinter der
+ * Heizung und dem Regal": Menue 384 px breit, linke Kante bei x=-46, das
+ * Dokument scrollte horizontal. `max-width` deckelt die Box, `.tile-menu-
+ * item` (unten) kuerzt seinen Text darin mit Ellipse - dieselbe Behandlung
+ * wie an `.value-rows .value` weiter oben in dieser Datei, aus demselben
+ * Grund: ein nutzerdefinierter Name ist Fliesstext ohne Laengengrenze. */
 .tile-menu-items {
   position: absolute;
   right: 0;
@@ -1235,6 +1246,7 @@ footer.hint-block {
   margin-bottom: 0.25rem;
   z-index: 20;
   min-width: 11rem;
+  max-width: 16rem;
   max-height: 60vh;
   overflow-y: auto;
   display: flex;
@@ -1256,6 +1268,12 @@ footer.hint-block {
   border-radius: 4px;
   font-size: 0.8rem;
   white-space: nowrap;
+  /* Kappt zusammen mit dem `max-width` an `.tile-menu-items` (Begruendung
+   * dort) einen zu langen Raumnamen. Export und Entfernen bleiben davon
+   * unberuehrt - ihr Text ist kurz und uebersetzt, er passt immer in eine
+   * Zeile und wird nie beschnitten. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .tile-menu-item:hover:not(:disabled) {

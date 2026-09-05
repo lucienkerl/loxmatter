@@ -642,10 +642,17 @@
                           x-text="t('web.devices.room_none')"
                         ></button>
                         <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
+                          <!-- Fund 2 (Nacharbeit 2026-09-05): der Eintrag kuerzt einen langen
+                               Raumnamen jetzt mit Ellipse (`.tile-menu-item`, style.css) - der
+                               volle Name muss trotzdem irgendwo greifbar bleiben, deshalb hier
+                               als natives `title`. `chip.key` ist Nutzerdaten (ein Raumname),
+                               keine zu uebersetzende Oberflaechen-Zeichenkette - `t()` waere
+                               hier fehl am Platz. -->
                           <button
                             class="tile-menu-item"
                             :class="{ 'is-current': roomKeyOf(device) === chip.key }"
                             :aria-current="roomKeyOf(device) === chip.key ? 'true' : null"
+                            :title="chip.key"
                             @click="closeTileMenu($el); saveRoom(device, chip.key)"
                             x-text="chip.key"
                           ></button>

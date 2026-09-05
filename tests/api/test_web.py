@@ -2186,6 +2186,51 @@ async def test_the_tile_menu_outranks_the_sticky_header(api):
     assert menu_z_index > header_z_index
 
 
+async def test_the_tile_menu_caps_its_width_and_truncates_long_room_names(api):
+    """Fund 2 (Nacharbeit 2026-09-05): `.tile-menu-item` ist `white-space:
+    nowrap`, `.tile-menu-items` hatte nur ein `min-width`, keine Obergrenze
+    - ein frei vergebener, langer Raumname blaeht die shrink-to-fit-Box auf
+    seine volle Wortbreite auf und laesst sie, weil sie an `right: 0`
+    verankert ist, nach LINKS aus der Kachel herauswachsen. Im Browser
+    gemessen bei 375 px Breite mit dem Raumnamen "Werkstatt im
+    Untergeschoss hinter der Heizung und dem Regal" (siehe
+    Aufgabenbericht): Menue 384 px breit, linke Kante bei x=-46, das
+    Dokument scrollte horizontal. Diese Suite hat keine Browser-Engine und
+    kann das Layout selbst nicht nachrechnen - belegt wird nur, dass die
+    ausgelieferte Regel ein `max-width` traegt und `.tile-menu-item` seinen
+    Text mit Ellipse statt mit Umbruch kuerzt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    items_rule = css.split(".tile-menu-items {", 1)[1].split("}", 1)[0]
+    assert "max-width" in items_rule
+    item_rule = css.split(".tile-menu-item {", 1)[1].split("}", 1)[0]
+    assert "text-overflow: ellipsis" in item_rule
+    assert "overflow: hidden" in item_rule
+    assert "white-space: nowrap" in item_rule
+
+
+async def test_room_chip_in_the_tile_menu_carries_the_full_name_as_a_title(api):
+    """Ergaenzung zu Fund 2: gekuerzt mit Ellipse bleibt der volle Raumname
+    nirgends sichtbar, ausser man haelt ueber dem Eintrag oder fokussiert
+    ihn - dafuer braucht der Knopf ein natives `title`. `chip.key` ist ein
+    vom Nutzer vergebener Raumname, also Daten und keine zu uebersetzende
+    Oberflaechen-Zeichenkette - anders als der Rest der Menuetexte laeuft er
+    bewusst NICHT durch `t()`. Diese Suite prueft nur, dass das Attribut
+    ausgeliefert wird, nicht dass der Browser es beim Hover tatsaechlich
+    anzeigt."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    # `roomChips()` wird zweimal per `x-for` durchlaufen: einmal im nativen
+    # `<select>` von "Commission a new device", einmal im Kachel-Menue -
+    # gesucht wird deshalb erst ab `.tile-menu-items`, sonst traf der erste
+    # (falsche) Treffer und der Test haette nie etwas belegt.
+    menu_start = page.index('class="tile-menu-items"')
+    chip_start = page.index('x-for="chip in roomChips()', menu_start)
+    chip_end = page.index("</template>", chip_start)
+    chip_block = page[chip_start:chip_end]
+    assert ':title="chip.key"' in chip_block
+
+
 async def test_reconcile_room_filter_falls_back_to_all_when_the_filtered_room_vanishes(api):
     """Fund 2 (Review vom 2026-09-05), zwei Runden: Verschiebt man ueber das
     Kachel-Menue das letzte Geraet eines gefilterten Raums in einen
