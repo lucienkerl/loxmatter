@@ -178,11 +178,12 @@ DEFAULT_STUBS = {
 
 
 class Result:
-    def __init__(self, proc, home, log):
+    def __init__(self, proc, home, log, tmpdir):
         self.returncode = proc.returncode
         self.output = proc.stdout + proc.stderr
         self.home = home
         self._log = log
+        self._tmpdir = tmpdir
 
     @property
     def calls(self):
@@ -197,6 +198,10 @@ class Result:
     def env_file(self):
         return self.home / "loxmatter" / "deploy" / "testhost" / ".env"
 
+    @property
+    def tmpdir(self):
+        return self._tmpdir
+
 
 @pytest.fixture
 def installer(tmp_path):
@@ -209,6 +214,10 @@ def installer(tmp_path):
     templates = tmp_path / "templates"
     templates.mkdir()
     log = tmp_path / "stub.log"
+    # Eigenes TMPDIR, damit `mktemp` im Skript hier landet statt im echten
+    # /tmp - nur so laesst sich pruefen, ob eine temporaere Datei liegen bleibt.
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
 
     for tool in SYSTEM_TOOLS:
         real = shutil.which(tool, path="/usr/bin:/bin:/usr/sbin:/sbin")
@@ -242,6 +251,7 @@ def installer(tmp_path):
             "STUB_LOG": str(log),
             "STUB_BIN": str(bindir),
             "STUB_TEMPLATES": str(templates),
+            "TMPDIR": str(tmpdir),
             "LOXMATTER_REPO": str(REPO_ROOT),
             "LOXMATTER_DIR": str(home / "loxmatter"),
             # Ohne Terminal muss die Adresse aus der Umgebung kommen. Tests,
@@ -259,7 +269,7 @@ def installer(tmp_path):
             timeout=120,
             check=False,
         )
-        return Result(proc, home, log)
+        return Result(proc, home, log, tmpdir)
 
     return run
 
@@ -421,3 +431,21 @@ def test_fehlgeschlagener_docker_download_bricht_ab(installer):
     assert result.returncode == 2
     assert "Could not download" in result.output
     assert not result.called("usermod")
+
+
+def test_leerer_docker_download_bricht_ab(installer):
+    # curl kann mit 0 enden und trotzdem nichts liefern (leerer Koerper hinter
+    # einem haklichen Proxy). Ein leeres Skript laeuft dann fehlerfrei durch,
+    # und der Lauf meldete faelschlich, das Compose-Plugin fehle.
+    result = installer(omit=("docker",), stubs={"curl": "exit 0\n"})
+    assert result.returncode == 2
+    assert "was empty" in result.output
+    assert not result.called("usermod")
+
+
+def test_kein_temporaeres_skript_bleibt_liegen(installer):
+    # Der Download landet in einer Datei, nicht in einer Pipe - sie muss auf
+    # jedem Weg wieder verschwinden, auch wenn der Lauf abbricht.
+    result = installer(omit=("docker",), stubs={"curl": "exit 6\n"})
+    assert result.returncode == 2
+    assert list(result.tmpdir.iterdir()) == []

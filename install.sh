@@ -46,6 +46,7 @@ MODE=""
 DETECTED_RADIO=""
 DOCKER_INSTALL_URL="https://get.docker.com"
 DOCKER_SUDO=0
+TEMP_FILE=""
 
 # ---------------------------------------------------------------- output --
 
@@ -76,6 +77,9 @@ state_summary() {
 
 on_exit() {
   code=$?
+  if [ -n "$TEMP_FILE" ]; then
+    rm -f "$TEMP_FILE"
+  fi
   if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
     printf '\n\033[31mFailed while: %s\033[0m\n' "$STEP" >&2
     state_summary >&2
@@ -400,7 +404,7 @@ install_docker() {
   note "Installing it from $DOCKER_INSTALL_URL."
   note "This needs root and adds Docker's package repository to this machine."
   if [ "$DRY_RUN" -eq 1 ]; then
-    note "would run: curl -fsSL $DOCKER_INSTALL_URL | sh"
+    note "would run: download $DOCKER_INSTALL_URL to a temporary file, then run it"
     return 0
   fi
   # Downloaded to a file first, NOT piped straight into sh. Without pipefail
@@ -409,17 +413,30 @@ install_docker() {
   # reads a network failure as a successful install and walks on into
   # usermod, having promised it would not. Writing the file makes curl's own
   # status observable.
-  docker_script="$(mktemp)" || die "Could not create a temporary file."
-  if ! curl -fsSL "$DOCKER_INSTALL_URL" -o "$docker_script"; then
-    rm -f "$docker_script"
+  TEMP_FILE="$(mktemp)" || die "Could not create a temporary file."
+  if ! curl -fsSL "$DOCKER_INSTALL_URL" -o "$TEMP_FILE"; then
+    rm -f "$TEMP_FILE"
+    TEMP_FILE=""
     die "Could not download the Docker installer from $DOCKER_INSTALL_URL.
 Is this machine online? Nothing was changed."
   fi
-  if ! run_root sh "$docker_script"; then
-    rm -f "$docker_script"
+  # curl can exit 0 and still have delivered nothing - an empty body behind a
+  # flaky proxy or CDN. `sh` on an empty script also exits 0, so without this
+  # check the run would walk on into usermod and end with the same false
+  # "compose does not work" diagnosis the exit-status check above exists to
+  # prevent.
+  if [ ! -s "$TEMP_FILE" ]; then
+    rm -f "$TEMP_FILE"
+    TEMP_FILE=""
+    die "The download from $DOCKER_INSTALL_URL was empty. Nothing was changed."
+  fi
+  if ! run_root sh "$TEMP_FILE"; then
+    rm -f "$TEMP_FILE"
+    TEMP_FILE=""
     die "The Docker installer failed. Nothing else was changed."
   fi
-  rm -f "$docker_script"
+  rm -f "$TEMP_FILE"
+  TEMP_FILE=""
   if [ -n "$SUDO" ]; then
     docker_user="$(id -un)"
     run_root usermod -aG docker "$docker_user" ||
@@ -445,6 +462,8 @@ then run this again."
 
 main() {
   trap on_exit EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   parse_args "$@"
   say "loxmatter installer"
   if [ "$DRY_RUN" -eq 1 ]; then
