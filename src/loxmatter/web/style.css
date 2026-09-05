@@ -628,13 +628,29 @@ footer.hint-block {
 /* Linker Farbstreifen an einer Geraetekarte - traegt dieselbe Bedeutung
    wie die Status-Pille daneben, bewusst redundant: faellt beim schnellen
    Scrollen ueber viele Geraete auf, ohne dass die Pille gelesen werden
-   muss. Grundzustand (kein Modifikator) ist gruen = unauffaellig. */
+   muss. Grundzustand (kein Modifikator) ist gruen = unauffaellig.
+
+   `overflow: visible` (nicht `hidden`!) ist hier Absicht, nicht Unterlass:
+   das Kachel-Menue (`.tile-menu-items`, weiter unten) haengt absolut
+   positioniert an dieser Karte und oeffnet nach oben ueber ihren Rand
+   hinaus - bei `overflow: hidden` schneidet die Karte die oberen Zeilen
+   des Menues ab, sobald es hoeher wird als der Platz ab dem Kebab-Icon
+   nach oben (kurze Kacheln, viele Raeume in der Liste). Der Radius des
+   Farbstreifens haengt deshalb NICHT mehr am Karten-Clip: siehe
+   `.device-card::before` unten, das jetzt selbst gerundet ist. Wer das
+   hier aus Versehen wieder auf `hidden` zuruecksetzt, kappt das Menue
+   wortlos - kein Fehler, keine Warnung, nur ein halb gezeichnetes Menue. */
 .device-card {
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   padding-left: calc(1rem + 4px);
 }
 
+/* Radius nur auf der linken Seite (`8px 0 0 8px`), passend zum Radius der
+   `.card`-Karte selbst: frueher hat der `overflow: hidden` der Karte
+   diese eckigen Ecken automatisch rundgeschnitten, das faellt mit dessen
+   Entfernung (s.o.) weg. Ohne diesen Radius haette der Streifen wieder
+   eckige Ecken oben/unten links, obwohl die Karte drumherum rund ist. */
 .device-card::before {
   content: "";
   position: absolute;
@@ -642,6 +658,7 @@ footer.hint-block {
   top: 0;
   bottom: 0;
   width: 4px;
+  border-radius: 8px 0 0 8px;
   background: var(--ok);
 }
 
@@ -1120,7 +1137,9 @@ footer.hint-block {
  * darf die Kachel ueberragen, ohne die Fusszeile hoeher zu machen. Es
  * oeffnet nach OBEN (`bottom: 100%`), weil die Fusszeile am unteren Rand
  * der Kachel sitzt - nach unten wuerde es die naechste Kachelreihe
- * verdecken statt freien Platz zu nutzen. */
+ * verdecken statt freien Platz zu nutzen. Das "ueberragen" traegt nur,
+ * weil `.device-card` bewusst `overflow: visible` setzt (Begruendung
+ * dort) - ohne das wird genau dieses Ueberragen wieder abgeschnitten. */
 .tile-menu {
   position: relative;
   flex: none;

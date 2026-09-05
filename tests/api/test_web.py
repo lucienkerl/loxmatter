@@ -2162,6 +2162,37 @@ async def test_the_device_grid_is_multi_column(api):
     assert "minmax(260px" in css
 
 
+async def test_the_device_card_does_not_clip_its_overflowing_menu(api):
+    """Fund 1 (Review 2026-09-05): das Kachel-Menue haengt absolut an
+    `.device-card` und oeffnet nach oben ueber deren Rand hinaus. Solange
+    `.device-card` (wie zuvor) `overflow: hidden` traegt, schneidet die
+    Karte genau diesen Teil des Menues ab - im echten Browser gemessen
+    (siehe Aufgabenbericht): `document.elementFromPoint` am oberen
+    Menuerand liefert dann die Karte statt des Menues. Diese Suite hat
+    keine Browser-Engine und kann das Abschneiden selbst nicht
+    nachstellen - belegt wird nur, dass die ausgelieferte Regel
+    `overflow: visible` traegt und nicht wieder auf `hidden` zurueckfaellt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split(".device-card {", 1)[1].split("}", 1)[0]
+    assert "overflow: visible" in rule
+    assert "hidden" not in rule
+
+
+async def test_the_device_card_stripe_is_rounded_on_its_own(api):
+    """Der Farbstreifen (`.device-card::before`) verdankte seine gerundeten
+    Ecken bislang dem `overflow: hidden` der Karte, das ihn wegschnitt statt
+    ihn zu runden - dieselbe Regel, die auch das Kachel-Menue abschnitt
+    (siehe `test_the_device_card_does_not_clip_its_overflowing_menu`). Mit
+    `overflow: visible` (s.o.) muss der Streifen seine linksseitige Rundung
+    jetzt selbst tragen, sonst stehen seine oberen/unteren linken Ecken
+    eckig neben der runden Karte."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split(".device-card::before {", 1)[1].split("}", 1)[0]
+    assert "border-radius" in rule
+
+
 async def test_the_room_select_uses_a_synced_draft_instead_of_reading_device_room_directly(api):
     """Ersetzt `test_the_room_select_display_depends_only_on_the_device_room`
     (Fund 1, Review vom 2026-09-05): jener Test bewies exakt das, was ein
@@ -2415,6 +2446,23 @@ async def test_the_tile_menu_is_a_native_details_that_closes_three_ways(api):
     assert 'class="tile-menu"' in page
     assert "@click.outside" in page
     assert "@keydown.escape" in page
+
+
+async def test_the_tile_menu_escape_listener_is_window_scoped(api):
+    """Fund 2 (Review 2026-09-05): `@keydown.escape` ohne `.window` haengt am
+    `<details>`-Teilbaum und feuert nur, wenn der Fokus dort drinsteht.
+    Safari auf macOS setzt den Fokus bei einem Mausklick auf `<summary>`
+    NICHT dorthin (Standard, "Volle Tastatursteuerung" aus) - danach landet
+    Escape auf `document.body` und erreicht das `<details>` nie, das Menue
+    bleibt lautlos offen. `.window` haengt den Listener stattdessen an
+    `window` und wirkt unabhaengig vom Fokus. Ohne Browser-Engine kann diese
+    Suite das Fokusverhalten selbst nicht nachstellen - belegt wird nur,
+    dass die ausgelieferte Seite die fokusunabhaengige Form traegt und
+    nicht wieder auf die element-gebundene zurueckfaellt."""
+    client, _store, _device_id = api
+    page = (await client.get("/")).text
+    menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
+    assert '@keydown.escape.window="$el.open = false"' in menu
 
 
 async def test_export_and_remove_moved_into_the_tile_menu(api):

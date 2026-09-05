@@ -624,11 +624,29 @@
                          deshalb hier. Dass immer nur ein Menue offen ist,
                          faellt dabei ab: der Klick auf den Kebab einer
                          anderen Kachel liegt ausserhalb dieses `<details>`
-                         und schliesst es ueber denselben Wachposten. -->
+                         und schliesst es ueber denselben Wachposten.
+
+                         `.window` am Escape-Listener ist Pflicht, kein
+                         Stil: ohne `.window` haengt der Listener am
+                         `<details>`-Teilbaum und feuert nur, wenn der
+                         Fokus dort drin steht. Safari auf macOS setzt den
+                         Fokus bei einem Mausklick auf `<summary>` NICHT
+                         automatisch dorthin (Standard, "Volle
+                         Tastatursteuerung" aus) - wer das Menue also per
+                         Maus oeffnet und danach Escape drueckt, feuert das
+                         Escape auf `document.body`, es erreicht das
+                         `<details>` nie, das Menue bleibt lautlos offen.
+                         `.window` haengt stattdessen am `window` und
+                         wirkt unabhaengig vom Fokus. Dass dieser Listener
+                         dann bei JEDEM Escape im Dokument prueft statt
+                         nur im eigenen Teilbaum, ist hier unproblematisch:
+                         es ist immer nur eine Kachel offen (s.o.), ein
+                         geschlossenes `<details>` auf `open = false` zu
+                         setzen ist ein no-op. -->
                     <details
                       class="tile-menu"
                       @click.outside="$el.open = false"
-                      @keydown.escape="$el.open = false"
+                      @keydown.escape.window="$el.open = false"
                     >
                       <summary :title="t('web.devices.menu')">
                         <svg class="icon"><use href="#i-kebab"></use></svg>
