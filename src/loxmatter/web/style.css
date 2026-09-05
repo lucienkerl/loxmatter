@@ -1013,16 +1013,34 @@ footer.hint-block {
   gap: 0.1rem;
 }
 
-.device-name {
+/* `.device-head .device-name` statt nur `.device-name`: die generische
+ * Regel `input[type="text"] { min-width: 12rem }` weiter oben in dieser
+ * Datei hat als Typ-plus-Attribut-Selektor dieselbe Spezifitaet wie eine
+ * Klasse plus eins - eine einfache Klassenregel verliert gegen sie. Der
+ * Nachfahren-Selektor hebt die Regel darueber, ohne sich auf die
+ * Reihenfolge in der Datei zu verlassen. */
+.device-head .device-name {
   font-weight: 600;
   border: 1px solid transparent;
   background: transparent;
   padding: 0.1rem 0.2rem;
   width: 100%;
+  /* `min-width: 0` MUSS hier stehen, nicht nur am umschliessenden
+   * `.device-ident` (2026-09-05, an den README-Screenshots aufgefallen).
+   * Ein `<input>` bringt aus seinem Standard-`size=20` eine intrinsische
+   * Mindestbreite mit - hier gemessene 192 px -, und `width: 100%` drueckt
+   * es darunter nicht. Das Feld lief deshalb aus seinem bereits korrekt
+   * auf 142 px geschrumpften Elternelement heraus und schob sich unter den
+   * Leitwert: bei 300 px breiten Kacheln, also im normalen Desktop-Fall
+   * mit drei bis vier Spalten, ueberlappten beide um 23 bis 43 px. Bei
+   * breiten Kacheln faellt es nicht auf, weil dort ohnehin Platz ist -
+   * genau deshalb hat es keine der Pruefungen an einer einzelnen Kachel
+   * gezeigt. */
+  min-width: 0;
 }
 
-.device-name:hover,
-.device-name:focus {
+.device-head .device-name:hover,
+.device-head .device-name:focus {
   border-color: var(--border);
   background: var(--surface);
 }

@@ -55,11 +55,21 @@ DEMO_PASSWORD = "loxmatter-demo"
 # Reihenfolge bestimmt die Reihenfolge in der Geraeteliste - die Steckdose
 # zuerst, weil ihre Signalliste den Unterschied funktional/Experte am besten
 # zeigt (ueber hundert Signale, davon eine Handvoll funktional).
+# Der dritte Eintrag ist der Raum (Entwurf Geraete-Tab, 2026-09-05). Ohne
+# ihn blieben alle vier Geraete unter "No room", und die Raumleiste zeigte
+# sich gar nicht - sie erscheint erst, sobald mindestens ein Geraet einen
+# Raum traegt. Der Screenshot haette dann ausgerechnet das nicht gezeigt,
+# wofuer die Ansicht umgebaut wurde.
+#
+# Die Kueche bekommt bewusst ZWEI Geraete: nur so ist an einer Gruppe
+# ablesbar, dass innerhalb eines Raums nach Kategorie sortiert wird - die
+# Leuchte (Rang 0) steht vor der Steckdose (Rang 1), unabhaengig von der
+# Reihenfolge in dieser Liste.
 DEMO_DEVICES = [
-    ("ikea_grillplats_plug.json", "Coffee machine"),
-    ("example_light.json", "Living room lamp"),
-    ("synthetic_color_light.json", "Kitchen spots"),
-    ("ikea_bilresa_button.json", "Hallway button"),
+    ("ikea_grillplats_plug.json", "Coffee machine", "Kitchen"),
+    ("example_light.json", "Living room lamp", "Living room"),
+    ("synthetic_color_light.json", "Kitchen spots", "Kitchen"),
+    ("ikea_bilresa_button.json", "Hallway button", "Hallway"),
 ]
 
 
@@ -71,9 +81,9 @@ def _ensure_demo_devices(store: Store) -> list[int]:
         return [device.id for device in store.devices()]
 
     device_ids: list[int] = []
-    for filename, label in DEMO_DEVICES:
+    for filename, label, room in DEMO_DEVICES:
         snapshot = _load_snapshot(filename)
-        device_id = store.register_device(snapshot)
+        device_id = store.register_device(snapshot, room=room)
         store.register_signals(device_id, snapshot)
         store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
         store.rename_device(device_id, label)
