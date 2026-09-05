@@ -290,7 +290,11 @@ def test_new_device_with_several_signals_gets_exactly_one_container(sample_proje
     assert len({patched_index.input_containers[key].attrs["U"] for key in new_input_keys}) == 1
 
     new_output_keys = {key for key in patched_index.output_containers if key.startswith("d2_")}
-    assert new_output_keys == {"d2_1_on", "d2_1_off"}
+    # Auch der kombinierte Ein/Aus-Befehl steht unter seinem eigenen
+    # Doppelschluessel im Index - vor der Korrektur an `key_from_output_cmd`
+    # fiel er hier heraus, weil er sich seinen `CmdOn` mit dem einzelnen
+    # `on`-Befehl teilt und einer den anderen ueberschrieb.
+    assert new_output_keys == {"d2_1_on", "d2_1_off", "d2_1_on + d2_1_off"}
     assert len({patched_index.output_containers[key].attrs["U"] for key in new_output_keys}) == 1
 
 
@@ -314,33 +318,35 @@ def test_output_is_valid_xml(sample_project):
 
 
 def test_missing_attribute_is_inserted_into_existing_tag(sample_project):
-    """`d1_1_onoff` hat im Beispieldokument gar kein `Unit`-Attribut auf dem
-    `<C>`-Tag selbst (nur das `Display`-Kindelement traegt eines). Ein Signal
-    mit einer echten physikalischen Einheit (anders als der Standard-`_signal`
-    mit `unit=""`) macht `Unit` zu einem gewuenschten, aber im bestehenden Tag
-    fehlenden Attribut - das deckt den `if span is None`-Einfuege-Zweig in
-    `_update_edits` ab, den bislang kein Test beruehrt hat (alle anderen
-    Updates aendern nur ein bereits vorhandenes `Title`)."""
+    """Der bestehende Ausgangsbefehl `d1_1_on` hat im Beispieldokument gar
+    kein `Analog`-Attribut, `desired_output_cmd_attrs` verlangt aber eines -
+    das deckt den `if span is None`-Einfuege-Zweig in `_update_edits` ab, den
+    sonst kein Test beruehrt (alle anderen Updates aendern nur ein bereits
+    vorhandenes `Title`).
+
+    Frueher lief dieser Test ueber `Unit` an einem EINGANG. Das geht nicht
+    mehr: `Unit` ist kein verwaltetes Attribut des `<C>`-Tags mehr, weil eine
+    Projektdatei die Einheit gar nicht dort fuehrt (siehe
+    `MANAGED_INPUT_CMD_ATTRS`)."""
     import xml.etree.ElementTree as ET
 
     index = build_index(sample_project)
-    # Vorher: kein `Unit=` auf dem VCI1-Tag selbst.
-    assert "Unit" not in index.input_cmds["d1_1_onoff"].attrs
+    # Vorher: kein `Analog=` auf dem VQC1-Tag selbst.
+    assert "Analog" not in index.output_cmds["d1_1_on"].attrs
 
     device = _device(1, "Altes Geraet")
-    signals = [_signal("d1_1_onoff", 1, title="Alter Titel", unit="°C")]
-    patched = _patch(index, device, signals, include_new_devices=False)
+    commands = [_command("d1_1_on", "on", 1, 1)]
+    patched = _patch(index, device, [], include_new_devices=False, commands=commands)
 
-    # Neu eingefuegt, mit dem richtigen (escapten) Wert, in genau das Tag,
-    # dem es vorher fehlte - nicht irgendwo sonst im Dokument.
-    assert 'Unit="&lt;v.1&gt; °C"' in patched
+    # Neu eingefuegt, in genau das Tag, dem es vorher fehlte - nicht irgendwo
+    # sonst im Dokument.
     patched_index = build_index(patched)
-    assert patched_index.input_cmds["d1_1_onoff"].attrs["Unit"] == "<v.1> °C"
+    assert patched_index.output_cmds["d1_1_on"].attrs["Analog"] == "true"
     # Die uebrigen, unveraenderten Attribute des Tags bleiben erhalten - das
     # Einfuegen haengt nur vor dem schliessenden '>' an, statt das Tag zu
     # ersetzen.
-    assert 'Check="d1_1_onoff:\\v"' in patched
-    assert 'Title="Alter Titel"' in patched
+    assert 'CmdOn="/cmd/d1_1_on/1"' in patched
+    assert 'Title="on"' in patched
 
     ET.fromstring(patched)  # wirft bei ungueltigem XML
 
@@ -537,3 +543,78 @@ def test_new_device_without_virtual_in_caption_creates_the_caption_too():
     # angelegten Caption haengt - nicht als loses Geschwister-Objekt daneben.
     assert container in patched_index.virtual_in_caption.children
     assert cmd in container.children
+
+
+def test_new_analog_input_carries_its_unit_into_the_file(sample_project):
+    """Anwenderbericht: "die Einheit ist bei den virtuellen Eingaengen nicht
+    mehr dabei". Ende zu Ende geprueft: ein neu angelegter analoger Eingang
+    muss seine Einheit in der fertigen Datei tragen - und zwar im
+    `<Display>`-Kind, dem einzigen Ort, an dem eine echte Projektdatei sie
+    fuehrt."""
+    index = build_index(sample_project)
+    device = _device(2, "Neues Geraet")
+    signals = [
+        StoredSignal(
+            key="d2_2_voltage",
+            ref=SignalRef(endpoint=2, cluster_id=144, element_id=4, kind=SignalKind.ATTRIBUTE),
+            title="voltage",
+            unit="V",
+            exportability=Exportability.ANALOG,
+            device_id=2,
+            exported=True,
+            functional=True,
+            resend=False,
+        )
+    ]
+    patched = _patch(index, device, signals, include_new_devices=True)
+
+    cmd_start = patched.index('Check="d2_2_voltage')
+    cmd_end = patched.index("</C>", cmd_start)
+    cmd_xml = patched[patched.rindex("<C ", 0, cmd_start) : cmd_end]
+    assert '<Display Type="2" Unit="&lt;v.1&gt; V" StateOnly="true"/>' in cmd_xml
+
+
+def test_patched_file_is_stable_when_synced_again(sample_project):
+    """Anwenderbericht: eine vom Sync erzeugte Datei erneut hochgeladen, und
+    er wollte schon wieder etwas anlegen ("ein neues Feld onoff"). Eine
+    gerade erst geschriebene Datei MUSS beim zweiten Durchlauf vollstaendig
+    `unchanged` sein - alles andere heisst, dass der Abgleich seine eigene
+    Ausgabe nicht wiedererkennt und bei jedem Lauf Dubletten anhaeuft."""
+    from loxmatter.projectsync.diff import PlanStatus
+
+    device = _device(2, "Neues Geraet")
+    signals = [
+        _signal("d2_1_onoff", 2),
+        # Analog MIT Einheit: deckt zusaetzlich ab, dass die Einheit im
+        # `<Display>` landet und nicht als `Unit`-Attribut am `<C>`-Tag, das
+        # beim zweiten Lauf sonst ewig als "aktualisiert" wiederkaeme.
+        StoredSignal(
+            key="d2_2_voltage",
+            ref=SignalRef(endpoint=2, cluster_id=144, element_id=4, kind=SignalKind.ATTRIBUTE),
+            title="voltage",
+            unit="V",
+            exportability=Exportability.ANALOG,
+            device_id=2,
+            exported=True,
+            functional=True,
+            resend=False,
+        ),
+    ]
+    commands = [_command("d2_1_on", "on", 2, 1), _command("d2_1_off", "off", 2, 0)]
+
+    first = _patch(
+        build_index(sample_project), device, signals, include_new_devices=True, commands=commands
+    )
+    # Der kombinierte Ein/Aus-Ausgang ist genau einmal entstanden ...
+    assert first.count('Title="onoff"') == 1
+
+    # ... und der zweite Lauf ueber dieselbe Datei plant nichts mehr.
+    second_index = build_index(first)
+    second_plan = build_plan(second_index, [device], {device.id: signals}, {device.id: commands})
+    unstable = [
+        (e.kind, e.key, e.title, e.status)
+        for e in second_plan.entries
+        if e.device_id == device.id and e.status is not PlanStatus.UNCHANGED
+    ]
+    assert unstable == []
+    assert second_plan.has_changes is False

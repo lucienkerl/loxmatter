@@ -175,3 +175,44 @@ def test_no_loxlive_raises():
 
     with pytest.raises(AmbiguousMiniserverError, match="keinen einzigen konfigurierten Miniserver"):
         build_index(NO_LOXLIVE_PROJECT)
+
+
+# Ein Ausgangs-Container, wie ihn dieses Projekt selbst schreibt: der
+# kombinierte Ein/Aus-Befehl steht unmittelbar vor seinem `on` und traegt
+# denselben `CmdOn` (`export.outputs.to_outputs`).
+PAIRED_OUTPUT_PROJECT = (
+    '<?xml version="1.0" encoding="utf-8"?>\r\n'
+    '<ControlList Version="275" NextObj="100">\r\n'
+    '\t<C Type="Document" U="2000-0000-0000-aaaaaaaaaaaaaaaa" Title="Testprojekt">\r\n'
+    '\t\t<C Type="LoxLIVE" U="2000-0001-0000-aaaaaaaaaaaaaaaa" Title="Testserver"'
+    ' IntAddr="10.0.0.10">\r\n'
+    '\t\t\t<C Type="VirtualOutCaption" U="1000-000a-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Virtuelle Ausgänge" WF="16384">\r\n'
+    '\t\t\t\t<C Type="VirtualOut" IName="VQ1" U="1000-000b-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="Matter — Steckdose" WF="16384" Address="http://10.0.0.5:8080">\r\n'
+    '\t\t\t\t\t<C Type="VirtualOutCmd" IName="VQC1" U="1000-000c-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="off" Nio="1" CmdOn="/cmd/d1_1_off/1"><IoData Cr="x" Pr="y"/></C>\r\n'
+    '\t\t\t\t\t<C Type="VirtualOutCmd" IName="VQC2" U="1000-000d-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="onoff" Nio="1" CmdOn="/cmd/d1_1_on/1" CmdOff="/cmd/d1_1_off/1" Analog="false">'
+    '<IoData Cr="x" Pr="y"/></C>\r\n'
+    '\t\t\t\t\t<C Type="VirtualOutCmd" IName="VQC3" U="1000-000e-0000-aaaaaaaaaaaaaaaa"'
+    ' Title="on" Nio="1" CmdOn="/cmd/d1_1_on/1" Analog="true"><IoData Cr="x" Pr="y"/></C>\r\n'
+    "\t\t\t\t</C>\r\n"
+    "\t\t\t</C>\r\n"
+    "\t\t</C>\r\n"
+    "\t</C>\r\n"
+    "</ControlList>\r\n"
+)
+
+
+def test_paired_and_single_output_commands_do_not_collide():
+    """Anwenderbericht: nach Export und erneutem Import wollte der Sync ein
+    zweites Feld "onoff" anlegen. Ursache war eine Schluesselkollision -
+    kombinierter Ein/Aus-Befehl und einzelner `on`-Befehl tragen denselben
+    `CmdOn`, sodass einer den anderen im Index ueberschrieb. Beide muessen
+    unter ihrem EIGENEN Schluessel stehen; der kombinierte unter dem
+    Doppelschluessel, den auch `export.outputs.to_outputs` vergibt."""
+    index = build_index(PAIRED_OUTPUT_PROJECT)
+    assert set(index.output_cmds) == {"d1_1_off", "d1_1_on", "d1_1_on + d1_1_off"}
+    assert index.output_cmds["d1_1_on + d1_1_off"].attrs["Title"] == "onoff"
+    assert index.output_cmds["d1_1_on"].attrs["Title"] == "on"
