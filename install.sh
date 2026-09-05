@@ -49,6 +49,8 @@ DOCKER_SUDO=0
 TEMP_FILE=""
 CHECKOUT_EXISTED=0
 STACK_DIR=""
+ENV_FILE=""
+ENV_IS_NEW=0
 
 # ---------------------------------------------------------------- output --
 
@@ -497,6 +499,170 @@ Move it aside, or pass --dir with a different path."
     die "git clone failed. Is this machine online, and is $TARGET_DIR writable?"
 }
 
+# ------------------------------------------------------------ phase four --
+
+env_file_has() { grep -q "^$1=" "$ENV_FILE" 2>/dev/null; }
+
+# Replaces the line instead of appending a second definition. Compose would
+# honour the last one either way, but whoever edits the file later would then
+# be changing the wrong line - the reasoning is spelled out in
+# deploy/testhost/README.md.
+#
+# Writes through $ENV_FILE.new and renames it into place so .env is either
+# fully the old content or fully the new content, never half-written - `mv`
+# on the same filesystem is atomic. That temporary file is tracked in the
+# same TEMP_FILE the EXIT trap already cleans up: if the run is interrupted
+# between the write and the rename, nothing is left lying next to .env.
+env_set() {
+  env_key="$1"
+  env_value="$2"
+  if env_file_has "$env_key"; then
+    TEMP_FILE="$ENV_FILE.new"
+    awk -F= -v key="$env_key" -v value="$env_value" '
+      $1 == key && !seen { print key "=" value; seen = 1; next }
+      { print }
+    ' "$ENV_FILE" > "$TEMP_FILE"
+    mv "$TEMP_FILE" "$ENV_FILE"
+    TEMP_FILE=""
+  else
+    printf '%s=%s\n' "$env_key" "$env_value" >> "$ENV_FILE"
+  fi
+}
+
+ensure_env_value() {
+  value_key="$1"
+  value_prompt="$2"
+  value_default="$3"
+  value_required="$4"
+  if [ "$ENV_IS_NEW" -eq 0 ]; then
+    value_kept="$(env_file_value "$value_key")"
+    if [ -n "$value_kept" ]; then
+      note "$value_key=$value_kept (kept)"
+      return 0
+    fi
+  fi
+  # An environment variable of the same name skips the question entirely.
+  value_override=""
+  eval "value_override=\${$value_key:-}"
+  if [ -n "$value_override" ]; then
+    value_new="$value_override"
+  else
+    value_new="$(ask "$value_prompt" "$value_default")"
+  fi
+  if [ -z "$value_new" ] && [ "$value_required" -eq 1 ]; then
+    die "$value_key needs a value and none could be obtained."
+  fi
+  env_set "$value_key" "$value_new"
+  note "$value_key=$value_new"
+}
+
+ask_miniserver() {
+  if [ "$ENV_IS_NEW" -eq 0 ]; then
+    ms_kept="$(env_file_value MINISERVER_IP)"
+    if [ -n "$ms_kept" ]; then
+      note "MINISERVER_IP=$ms_kept (kept)"
+      return 0
+    fi
+  fi
+  ms_value="${MINISERVER_IP:-}"
+  while [ -z "$ms_value" ] || ! valid_ipv4 "$ms_value"; do
+    if [ "$HAVE_TTY" -eq 0 ]; then
+      die "MINISERVER_IP is not a valid IPv4 address: '$ms_value'"
+    fi
+    ms_value="$(ask "IPv4 address of the Loxone Miniserver" "")"
+  done
+  env_set MINISERVER_IP "$ms_value"
+  note "MINISERVER_IP=$ms_value"
+}
+
+detect_backbone_if() {
+  ip route show default 2>/dev/null |
+    awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }'
+}
+
+detect_bt_adapter() {
+  for candidate in /sys/class/bluetooth/hci*; do
+    if [ -e "$candidate" ]; then
+      printf '%s' "${candidate##*/hci}"
+      return 0
+    fi
+  done
+  printf '0'
+}
+
+# The .env.example explains why the token has to be plain [0-9a-f]: it travels
+# in an HTTP header and in a WebSocket subprotocol. /dev/urandom produces the
+# same shape, so a missing openssl cannot sink an otherwise healthy install.
+gen_token() {
+  if have openssl; then
+    token_value="$(openssl rand -hex 32 2>/dev/null || true)"
+    if [ -n "$token_value" ]; then
+      printf '%s' "$token_value"
+      return 0
+    fi
+  fi
+  od -An -tx1 -N32 /dev/urandom | tr -d ' \n'
+}
+
+# An installation that predates the profiles has no COMPOSE_PROFILES line but
+# does have an otbr container. Writing an empty value there would silently
+# take its border router away on the next `compose up`.
+configure_mode() {
+  if [ "$ENV_IS_NEW" -eq 0 ] && env_file_has COMPOSE_PROFILES; then
+    if [ -n "$(env_file_value COMPOSE_PROFILES)" ]; then
+      MODE="thread"
+    else
+      MODE="wifi"
+    fi
+    note "COMPOSE_PROFILES kept, mode: $MODE"
+    return 0
+  fi
+  if [ "$ENV_IS_NEW" -eq 0 ] && dk ps -a --format '{{.Names}}' 2>/dev/null | grep -qx otbr; then
+    env_set COMPOSE_PROFILES thread
+    MODE="thread"
+    note "COMPOSE_PROFILES=thread (this installation already runs otbr)"
+    return 0
+  fi
+  if [ "$MODE" = "thread" ]; then
+    env_set COMPOSE_PROFILES thread
+    note "COMPOSE_PROFILES=thread"
+  else
+    env_set COMPOSE_PROFILES ""
+    note "COMPOSE_PROFILES= (WiFi and Ethernet only, no Thread border router)"
+  fi
+}
+
+configure() {
+  step "writing the configuration"
+  ENV_FILE="$STACK_DIR/.env"
+  say "Configuration"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would write $ENV_FILE for mode '$MODE'"
+    return 0
+  fi
+  ENV_IS_NEW=0
+  if [ ! -f "$ENV_FILE" ]; then
+    cp "$STACK_DIR/.env.example" "$ENV_FILE" || die "Could not create $ENV_FILE"
+    ENV_IS_NEW=1
+  fi
+  configure_mode
+  if [ "$MODE" = "thread" ]; then
+    ensure_env_value RADIO_DEVICE "Thread radio device" "$DETECTED_RADIO" 1
+    ensure_env_value RADIO_BAUDRATE "Thread radio baud rate" "460800" 1
+    ensure_env_value BACKBONE_IF "Network interface for the border router" \
+      "$(detect_backbone_if)" 1
+  fi
+  ensure_env_value BLUETOOTH_ADAPTER "Bluetooth adapter id for BLE commissioning" \
+    "$(detect_bt_adapter)" 0
+  ask_miniserver
+  if [ "$ENV_IS_NEW" -eq 1 ] || [ -z "$(env_file_value LOXMATTER_API_TOKEN)" ]; then
+    env_set LOXMATTER_API_TOKEN "${LOXMATTER_API_TOKEN:-$(gen_token)}"
+    note "LOXMATTER_API_TOKEN generated"
+  else
+    note "LOXMATTER_API_TOKEN kept"
+  fi
+}
+
 # Only offered, never done on the way past: scripts/update.sh backs up the
 # signal database first, and those keys are the wiring in the Loxone
 # configuration. An installer that updated in passing would skip that backup.
@@ -559,6 +725,7 @@ main() {
   install_packages
   install_docker
   ensure_checkout
+  configure
   offer_update
 }
 

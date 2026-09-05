@@ -625,3 +625,81 @@ def test_unsinnige_commit_zahl_meldet_kein_update(installer):
     second = installer(env={"FAKE_BEHIND": "keine-zahl"})
     assert second.returncode == 0
     assert "new commits" not in second.output
+
+
+# -------------------------------------------------------------- phase four --
+
+
+def _env(result):
+    return dict(
+        line.split("=", 1)
+        for line in result.env_file.read_text().splitlines()
+        if "=" in line and not line.startswith("#")
+    )
+
+
+def test_wifi_lauf_schaltet_das_thread_profil_ab(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert _env(result)["COMPOSE_PROFILES"] == ""
+
+
+def test_thread_lauf_setzt_profil_geraet_und_interface(installer):
+    result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
+    assert result.returncode == 0
+    values = _env(result)
+    assert values["COMPOSE_PROFILES"] == "thread"
+    assert values["RADIO_DEVICE"] == "/dev/ttyUSB0"
+    assert values["BACKBONE_IF"] == "eth0"
+
+
+def test_miniserver_ip_kommt_aus_der_umgebung(installer):
+    result = installer(env={"MINISERVER_IP": "10.0.1.77"})
+    assert _env(result)["MINISERVER_IP"] == "10.0.1.77"
+
+
+def test_token_wird_erzeugt(installer):
+    result = installer()
+    token = _env(result)["LOXMATTER_API_TOKEN"]
+    assert len(token) == 64
+    assert set(token) <= set("0123456789abcdef")
+
+
+def test_token_faellt_ohne_openssl_auf_urandom_zurueck(installer):
+    result = installer(omit=("openssl",))
+    assert result.returncode == 0
+    token = _env(result)["LOXMATTER_API_TOKEN"]
+    assert len(token) == 64
+    assert set(token) <= set("0123456789abcdef")
+
+
+def test_zweiter_lauf_laesst_die_env_unberuehrt(installer):
+    first = installer()
+    before = first.env_file.read_bytes()
+    second = installer()
+    assert second.returncode == 0
+    assert second.env_file.read_bytes() == before
+
+
+def test_nur_der_fehlende_schluessel_wird_ergaenzt(installer):
+    first = installer()
+    text = first.env_file.read_text().replace(
+        f"LOXMATTER_API_TOKEN={_env(first)['LOXMATTER_API_TOKEN']}",
+        "LOXMATTER_API_TOKEN=",
+    )
+    first.env_file.write_text(text)
+    second = installer(env={"MINISERVER_IP": "10.0.1.55"})
+    values = _env(second)
+    assert len(values["LOXMATTER_API_TOKEN"]) == 64
+    # Die vorhandene Adresse bleibt, obwohl die Umgebung eine andere nennt.
+    assert values["MINISERVER_IP"] == "10.0.1.99"
+
+
+def test_ein_schluessel_wird_ersetzt_nicht_angehaengt(installer):
+    result = installer()
+    lines = [
+        line
+        for line in result.env_file.read_text().splitlines()
+        if line.startswith("COMPOSE_PROFILES=")
+    ]
+    assert len(lines) == 1
