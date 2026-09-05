@@ -6,9 +6,10 @@
 
 ### Matter devices in Loxone — self-hosted, no cloud
 
-Your Miniserver does not speak Matter. This bridge makes it anyway: every value a
-Matter device reports becomes a virtual input, every Loxone command becomes a Matter
-command, and the Loxone objects for it are generated rather than typed by hand.
+Your Miniserver does not speak Matter. This bridge makes it anyway: any value a
+Matter device reports can become a virtual input, every Loxone command becomes a
+Matter command, and the Loxone objects for it are generated rather than typed by
+hand.
 
 ![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)
@@ -25,7 +26,9 @@ Loxone has no Matter support, and Matter devices have no idea what a Miniserver 
 The usual answer is a cloud bridge per vendor. This is the other answer: one service
 on your own hardware that reads devices generically — no curated list of supported
 models, so a device bought tomorrow works today — and hands Loxone something it already
-understands.
+understands. That held without exception for attributes in testing; event detection is
+FeatureMap-based and cluster-specific instead, since neither test device advertised an
+`EventList`.
 
 ## ✨ What you can do
 
@@ -60,7 +63,9 @@ pair per device, instead of being typed into Loxone Config by hand.
 ### 🔁 Patch your existing project file
 Upload the Loxone project you already have, see exactly what would change per device
 and per signal, download the patched copy. Nothing is downloaded before you have seen
-the plan.
+the plan. Updating existing inputs/outputs is the default path; adding completely new
+device containers is experimental and unverified, see
+[docs/OPERATIONS.md#project-file-sync](docs/OPERATIONS.md#project-file-sync).
 
 </td>
 </tr>
@@ -75,8 +80,12 @@ A live feed of log lines, outgoing datagrams and incoming commands — the same 
 <td width="50%" valign="top">
 
 ### 🔒 Locked down by default, in your language
-No `/api` route answers before a password is set. The interface speaks English or
-German, switchable in the settings, and the setting applies to the CLI too.
+No `/api` route answers before a password is set. `/cmd` and `/resync` stay open
+regardless — the Miniserver cannot send a header or a cookie — so whoever reaches the
+port can still switch a device; see
+[docs/OPERATIONS.md#access-control](docs/OPERATIONS.md#access-control). The interface
+speaks English or German, switchable in the settings, and the setting applies to the
+CLI too.
 
 </td>
 </tr>
@@ -95,7 +104,7 @@ German, switchable in the settings, and the setting applies to the CLI too.
 <td width="50%" valign="top">
 <img src="docs/screenshots/commissioning.png" alt="Commissioning field with a pairing code entered" />
 
-**Commissioning**<br>Paste the pairing code from the device or its packaging and start — no vendor app, no account, no cloud round trip.
+**Commissioning**<br>Paste the pairing code from the device or its packaging and start — no account, no cloud round trip. A device already paired with Apple, Google or a DIRIGERA needs an extra multi-admin code from that vendor's app first; its own printed code no longer works here.
 
 </td>
 </tr>
@@ -123,7 +132,7 @@ German, switchable in the settings, and the setting applies to the CLI too.
 <td width="50%" valign="top">
 <img src="docs/screenshots/system.png" alt="Live log lines, UDP capture and command log" />
 
-**Diagnostics**<br>Log lines, the UDP capture and the command log, all running live; the Matter fabric backup is pulled from here too.
+**System**<br>Log lines, the UDP capture and the command log, all running live; the Matter fabric backup is pulled from here too.
 
 </td>
 </tr>

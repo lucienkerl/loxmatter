@@ -2,6 +2,8 @@
 
 [Back to the README](../README.md)
 
+## Running the test suite
+
 ```bash
 uv sync
 uv run pytest

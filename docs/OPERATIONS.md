@@ -21,7 +21,7 @@ same time:
 feed (2026-09-03), instead of only at the push of a button: log lines, the
 UDP capture and the command log. The log lines are the same ones
 `docker logs` shows — only without shell access to the host, from level INFO
-upwards. A click on "Pause" holds the display, without stopping the running
+upwards. A click on "Pause" pauses the display without stopping the running
 capture; "Hide heartbeat and full-resend" filters only the display, not what
 arrives. Details:
 [live feed design](superpowers/specs/2026-09-03-diagnose-livefeed-design.md).
@@ -43,22 +43,24 @@ selection rule:
 
 ## Project file sync
 
-**(`POST /api/export/project-sync`, in the WebUI at the top under "Export" —
-by now the recommended route, ahead of the template files below it that have
-to be imported one by one.)** Instead of importing templates one at a time,
-an existing Loxone project file can be uploaded — the tool reconciles it
-against the stored devices and returns a patched version for download.
-Updates to virtual inputs/outputs that already exist, and new signals within
-devices that already exist, are the default. **Completely new device
+This runs via `POST /api/export/project-sync`, in the WebUI at the top under
+"Export" — by now the recommended route, ahead of the template files below
+it that have to be imported one by one. Instead of importing templates one
+at a time, an existing Loxone project file can be uploaded — the tool
+reconciles it against the stored devices and returns a patched version for
+download. Updates to virtual inputs/outputs that already exist, and new
+signals within devices that already exist, are the default. **Completely
+new device
 containers are experimental** and are only included via an explicit checkbox
 in the WebUI: the ID scheme needed for new objects is derived from a single
 real project file, is not officially documented and is **not verified**. If
 the project has never had a virtual input or output of this kind (no
 `VirtualInCaption`/`VirtualOutCaption` section), that same experimental path
-now creates this section along with it, instead of locking the checkbox — no
-more manual preparation in Loxone Config, but one more unverified object in
-the chain. Before trusting this path for the first time: open a file patched
-this way in Loxone Config once and check it for errors. Details:
+now creates this section automatically along with it, instead of locking the
+checkbox — no more manual preparation in Loxone Config, but one more
+unverified object in the chain. Before trusting this path for the first
+time: open a file patched this way in Loxone Config once and check it for
+errors. Details:
 [project file sync design](superpowers/specs/2026-09-03-projektdatei-sync-design.md).
 
 ## Updating when devices are already commissioned
@@ -134,8 +136,8 @@ and the password travel across the network in the clear on every
 transmission. Use a password that is used nowhere else — and a **randomly
 generated** one at that, not one you made up. Since the 403 branch was
 dropped, the fabric backup lies behind the login too, and eight characters
-carry its protection only as long as they cannot be guessed (see section 11
-of the design).
+carry its protection only as long as they cannot be guessed (see
+[section 11 of the design](superpowers/specs/2026-09-03-webui-login-design.md)).
 
 The fabric backup (`GET /api/diagnostics/fabric-backup`) is no longer an
 exception today — it used to be one: without a configured token, this one

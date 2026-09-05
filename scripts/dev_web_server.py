@@ -23,7 +23,12 @@ Danach: http://127.0.0.1:8420 oeffnen, ein beliebiges Passwort vergeben
 (Ersteinrichtung, gilt nur fuer diesen Testlauf).
 
 Die Datenbank liegt in einer festen Datei im Temp-Verzeichnis - ein zweiter
-Lauf findet denselben Bestand wieder, statt jedes Mal neu einzulernen."""
+Lauf findet denselben Bestand wieder, statt jedes Mal neu einzulernen.
+
+Mit `--demo` startet stattdessen der Modus fuer die README-Screenshots: vier
+Geraete mit englischen Namen, Passwort und Bridge-Einstellungen bereits
+vorbelegt, und die Datenbank wird bei jedem Start frisch angelegt, statt den
+Bestand wiederzuverwenden."""
 
 from __future__ import annotations
 

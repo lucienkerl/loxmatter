@@ -8,9 +8,10 @@ All dependencies are permissively licensed and compatible with GPL-3.0:
 
 | | |
 |---|---|
-| `python-matter-server`, chip SDK | Apache-2.0 |
+| `python-matter-server`, chip SDK, `python-multipart` | Apache-2.0 |
 | FastAPI, Pydantic, Typer, PyYAML | MIT |
 | Starlette, uvicorn, websockets | BSD-3-Clause |
+| `aiohttp` | Apache-2.0 AND MIT |
 | Alpine.js (bundled) | MIT |
 
 Alpine.js ships as an unmodified copy under
