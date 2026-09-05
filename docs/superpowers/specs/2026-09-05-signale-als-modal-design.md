@@ -147,18 +147,37 @@ Von oben nach unten:
 3. `t('web.signals.key_hint')` als Hinweiszeile.
 4. Der Wiederholungsknopf `t('web.signals.load_button')`, sichtbar nur bei
    `!signalsByDevice[id]`.
-5. Die Gruppen aus `signalGroupsFor(signalsModalDevice)`:
-   - `collapsible === false` (funktional) → gewöhnlicher Block mit `<h3>`,
-     bei leerer Gruppe der Hinweis `none_functional`.
-   - `collapsible === true` (Experte) → **`<details>`** mit `<summary>`
-     „Experte (12)". Der Auf-/Zu-Zustand lebt damit im DOM statt in Alpine —
-     genau das Muster, mit dem der Kebab-Entwurf die sechs Review-Runden des
-     Raum-Auswahlfelds vermieden hat, und der Grund, warum
-     `showExpertSignals` ersatzlos entfällt. Der Zustand überlebt das
-     Schließen des Modals nicht; das ist hinnehmbar, weil die
-     Expertengruppe je Gerät verschieden interessant ist.
-     `functional_vs_expert_explanation` steht in diesem `<details>` — dort,
-     wo er gebraucht wird, statt global über allem.
+5. Die Gruppen aus `signalGroupsFor(signalsModalDevice)`, **beide als
+   `<details>`** mit `<summary>` „Funktional (3)" bzw. „Experte (12)". Der
+   Auf-/Zu-Zustand lebt damit im DOM statt in Alpine — genau das Muster, mit
+   dem der Kebab-Entwurf die sechs Review-Runden des Raum-Auswahlfelds
+   vermieden hat, und der Grund, warum `showExpertSignals` ersatzlos
+   entfällt.
+
+   **Warum beide Gruppen dasselbe Element bekommen** und nicht, wie
+   naheliegend, die funktionale ein schlichter Block bleibt: zwei Formen
+   hießen zwei Zweige, und in jedem Zweig eine eigene Kopie der
+   Signalzeilen-Vorlage. Genau diese Verdopplung hat `signalGroupsFor`
+   abgeschafft (siehe dessen Kommentar in `app.js`: 51 doppelte Zeilen, die
+   bei jeder Änderung an beiden Stellen nachgezogen werden mussten). Eine
+   Form für beide Gruppen hält es bei einer Vorlage.
+
+   Der Startzustand — funktional offen, Experte zu — wird **einmalig** über
+   `x-init="$el.open = !group.collapsible"` gesetzt, nicht über ein
+   gebundenes `:open`. Ein `:open` wäre wieder die Kopplung aus Abschnitt 1:
+   Alpine wertet Bindungen bei jeder Änderung ihrer Abhängigkeiten neu aus,
+   und `signalGroupsFor` hängt an `signalsByDevice` — ein gespeicherter
+   Signaltitel schriebe die Bindung neu und klappte die gerade geöffnete
+   Expertengruppe wortlos wieder zu. `x-init` läuft einmal je Element; da
+   `:key="group.key"` stabil ist, überlebt ein Klick des Nutzers jeden
+   Re-Render.
+
+   Der Zustand überlebt das Schließen des Modals nicht; das ist hinnehmbar,
+   weil die Expertengruppe je Gerät verschieden interessant ist.
+   `functional_vs_expert_explanation` steht im Experten-`<details>` — dort,
+   wo er gebraucht wird, statt global über allem. Der Leer-Hinweis
+   `none_functional` bleibt an der funktionalen Gruppe.
+
 6. Die Signalzeilen, unverändert die vorhandene `.device-controls`-Vorlage.
 
 Der Inhalt hängt an `x-if="signalsModalDeviceObject()"`, damit ein
