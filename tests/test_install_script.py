@@ -603,3 +603,25 @@ def test_kein_update_angebot_wenn_docker_gerade_erst_kam(installer):
     assert second.returncode == 0
     assert "Log out and back in first" in second.output
     assert "Apply them with" not in second.output
+
+
+def test_checkout_ohne_compose_datei_wird_abgewiesen(installer, tmp_path):
+    # Alter Klon von vor deploy/testhost/: Dockerfile da, Stack fehlt. Ohne
+    # diesen Fall prueft die Suite nur die Dockerfile-Haelfte der Bedingung.
+    alt = tmp_path / "home" / "loxmatter"
+    alt.mkdir(parents=True, exist_ok=True)
+    (alt / "Dockerfile").write_text("FROM python:3.12-slim\n")
+    result = installer()
+    assert result.returncode == 2
+    assert "does not look like a loxmatter checkout" in result.output
+    assert not result.called("git clone")
+
+
+def test_unsinnige_commit_zahl_meldet_kein_update(installer):
+    # rev-list liefert normalerweise eine Zahl. Liefert es etwas anderes,
+    # darf daraus kein Update-Angebot mit Muellwert werden.
+    first = installer()
+    assert first.returncode == 0
+    second = installer(env={"FAKE_BEHIND": "keine-zahl"})
+    assert second.returncode == 0
+    assert "new commits" not in second.output

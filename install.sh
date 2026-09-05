@@ -510,7 +510,13 @@ offer_update() {
     return 0
   fi
   behind="$(git -C "$TARGET_DIR" rev-list --count HEAD..FETCH_HEAD 2>/dev/null || echo 0)"
-  if [ "${behind:-0}" -le 0 ]; then
+  # A non-numeric value would make `[ -le ]` error rather than return false,
+  # and an errored test inside `if` reads as false - the run would then
+  # announce an update using whatever rev-list printed.
+  case "$behind" in
+    ""|*[!0-9]*) behind=0 ;;
+  esac
+  if [ "$behind" -le 0 ]; then
     return 0
   fi
   say "$behind new commits are available"
