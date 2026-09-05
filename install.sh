@@ -44,6 +44,8 @@ MISSING_PACKAGES=""
 NEED_DOCKER=0
 MODE=""
 DETECTED_RADIO=""
+DOCKER_INSTALL_URL="https://get.docker.com"
+DOCKER_SUDO=0
 
 # ---------------------------------------------------------------- output --
 
@@ -342,6 +344,90 @@ pass RADIO_DEVICE=/dev/ttyUSB0, or use LOXMATTER_MODE=wifi."
   fi
 }
 
+# ------------------------------------------------------------- phase two --
+
+# Runs a command as root, or prints it in a dry run. Everything that needs
+# root goes through here, so a dry run cannot slip past by accident.
+run_root() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would run: $*"
+    return 0
+  fi
+  if [ -n "$SUDO" ]; then
+    sudo "$@"
+  else
+    "$@"
+  fi
+}
+
+install_packages() {
+  if [ -z "$MISSING_PACKAGES" ]; then
+    return 0
+  fi
+  step "installing $MISSING_PACKAGES"
+  say "Installing missing tools: $MISSING_PACKAGES"
+  note "This uses apt-get and needs root."
+  run_root apt-get update ||
+    die "apt-get update failed. Is this machine online?"
+  # Deliberate word splitting: one package per argument.
+  # shellcheck disable=SC2086
+  run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y $MISSING_PACKAGES ||
+    die "Installing $MISSING_PACKAGES failed. Nothing else was changed."
+}
+
+# The only way this script calls Docker.
+dk() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would run: docker $*"
+    return 0
+  fi
+  if [ "$DOCKER_SUDO" -eq 1 ]; then
+    sudo docker "$@"
+  else
+    docker "$@"
+  fi
+}
+
+install_docker() {
+  if [ "$NEED_DOCKER" -eq 0 ]; then
+    return 0
+  fi
+  step "installing Docker"
+  say "Docker is not installed"
+  note "Installing it from $DOCKER_INSTALL_URL."
+  note "This needs root and adds Docker's package repository to this machine."
+  if [ "$DRY_RUN" -eq 1 ]; then
+    note "would run: curl -fsSL $DOCKER_INSTALL_URL | sh"
+    return 0
+  fi
+  if [ -n "$SUDO" ]; then
+    curl -fsSL "$DOCKER_INSTALL_URL" | sudo sh ||
+      die "The Docker installer failed. Nothing else was changed."
+  else
+    curl -fsSL "$DOCKER_INSTALL_URL" | sh ||
+      die "The Docker installer failed. Nothing else was changed."
+  fi
+  if [ -n "$SUDO" ]; then
+    docker_user="$(id -un)"
+    run_root usermod -aG docker "$docker_user" ||
+      warn "Could not add $docker_user to the 'docker' group."
+    # The new group only takes effect after a new login session, so this run
+    # cannot use plain `docker` - it would fail with a permission error right
+    # after reporting success.
+    DOCKER_SUDO=1
+    warn "You are not in the 'docker' group in this session yet."
+    note "This run continues with 'sudo docker'; log out and back in afterwards."
+  fi
+  # collect_missing could not probe for the compose plugin - docker was not
+  # there to ask. It is now, and the stack cannot start without it.
+  if ! dk compose version >/dev/null 2>&1; then
+    die "Docker was installed, but 'docker compose' does not work.
+Install the compose plugin (on Debian and Ubuntu: apt-get install docker-compose-plugin),
+then run this again."
+  fi
+  note "docker compose is available"
+}
+
 # ------------------------------------------------------------------ main --
 
 main() {
@@ -358,6 +444,8 @@ main() {
   check_can_install
   decide_mode
   check_config_source
+  install_packages
+  install_docker
 }
 
 main "$@"

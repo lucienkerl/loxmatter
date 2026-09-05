@@ -346,3 +346,43 @@ def test_fuehrende_nullen_werden_abgewiesen(installer):
     result = installer(env={"MINISERVER_IP": "01.02.03.04"})
     assert result.returncode == 2
     assert "not a valid IPv4" in result.output
+
+
+def test_nur_die_fehlenden_pakete_werden_installiert(installer):
+    result = installer(omit=("git", "curl"))
+    assert result.returncode == 0
+    assert result.called("apt-get install -y git curl")
+    assert not result.called("apt-get install -y git curl openssl")
+
+
+def test_docker_kommt_nach_den_basispaketen(installer):
+    # get.docker.com braucht selbst curl - die Reihenfolge ist keine Kosmetik.
+    result = installer(omit=("git", "curl", "docker"))
+    assert result.returncode == 0
+    apt = next(i for i, c in enumerate(result.calls) if c.startswith("apt-get install"))
+    docker_install = next(i for i, c in enumerate(result.calls) if "get.docker.com" in c)
+    assert apt < docker_install
+
+
+def test_nach_eigener_docker_installation_laeuft_alles_ueber_sudo(installer):
+    result = installer(omit=("docker",))
+    assert result.returncode == 0
+    assert result.called("usermod -aG docker")
+    assert result.called("sudo docker")
+    assert "log out and back in" in result.output
+
+
+def test_vorhandenes_docker_wird_nicht_neu_installiert(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert not any("get.docker.com" in call for call in result.calls)
+    assert not result.called("sudo docker")
+
+
+def test_dry_run_veraendert_nichts(installer):
+    result = installer("--dry-run", omit=("git", "docker"))
+    assert result.returncode == 0
+    assert not result.called("apt-get")
+    assert not result.called("sudo")
+    assert not any("get.docker.com" in call for call in result.calls)
+    assert "would run" in result.output
