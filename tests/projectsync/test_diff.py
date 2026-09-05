@@ -40,6 +40,8 @@ def _device(device_id: int, label: str) -> StoredDevice:
         label=label,
         exported_at=None,
         updated_at=None,
+        room=None,
+        device_types=None,
     )
 
 

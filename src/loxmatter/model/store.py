@@ -40,8 +40,9 @@ Thread gebunden, und dieses Modul weicht davon bewusst nicht ab.
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,6 +90,14 @@ DEFAULT_LISTEN_PORT = 8080
 # fuer Bestandsdatenbanken noetig. Version 6 (Entwurf periodischer Resend,
 # 2026-09-04) fuegt `signal.resend` hinzu, siehe `_migrate_to_v6` - kein
 # Backfill, jede Bestandszeile startet beim Spalten-Default (0/aus).
+# Version 7 (Entwurf Geraete-Tab, 2026-09-05) fuegt `device.room` und
+# `device.device_types` hinzu, siehe `_migrate_to_v7` - kein Backfill fuer
+# beide, aber aus zwei verschiedenen Gruenden: `room = NULL` IST die
+# richtige Bedeutung ("Ohne Raum"), waehrend `device_types = NULL` nur
+# "noch nicht nachgetragen" heisst und beim naechsten Bruueckenstart aus
+# den ohnehin geholten Abbildern gefuellt wird (`backfill_device_types`).
+# Eine Migration kann das nicht: sie sieht nur die Datenbank, nie ein
+# `NodeSnapshot`.
 #
 # **Warum der Login-Umzug die 5 bekommt und nicht die 4.** Beide Vorhaben
 # entstanden parallel und beanspruchten die 4. Eine Datenbank, die Phase 6
@@ -97,18 +106,20 @@ DEFAULT_LISTEN_PORT = 8080
 # startete ohne die Tabellen, die er zum Anmelden braucht. Die Nummer haengt
 # an der Reihenfolge, in der die Aenderungen zusammengefuehrt wurden, nicht
 # daran, wann sie geschrieben wurden.
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    unique_id   TEXT NOT NULL,
-    node_id     INTEGER NOT NULL,
-    label       TEXT NOT NULL,
-    udp_port    INTEGER NOT NULL,
-    active      INTEGER NOT NULL DEFAULT 1,
-    exported_at TEXT,
-    updated_at  TEXT
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    unique_id    TEXT NOT NULL,
+    node_id      INTEGER NOT NULL,
+    label        TEXT NOT NULL,
+    udp_port     INTEGER NOT NULL,
+    active       INTEGER NOT NULL DEFAULT 1,
+    exported_at  TEXT,
+    updated_at   TEXT,
+    room         TEXT,
+    device_types TEXT
 );
 CREATE TABLE IF NOT EXISTS signal (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -570,6 +581,24 @@ def _migrate_to_v6(db: sqlite3.Connection) -> None:
     _add_column_if_missing(db, "signal", "resend", "INTEGER NOT NULL DEFAULT 0")
 
 
+def _migrate_to_v7(db: sqlite3.Connection) -> None:
+    """Fuegt `device.room` und `device.device_types` hinzu (Entwurf
+    Geraete-Tab, 2026-09-05, Abschnitt 3.1).
+
+    Zwei Spalten in einem Schritt, wie `_migrate_to_v2` - beide gehoeren zu
+    demselben Vorhaben und kaemen nie einzeln vor.
+
+    Kein Backfill. Fuer `room` gibt es keinen Bestandswert, aus dem sich ein
+    Raum ableiten liesse, und `NULL` ist ohnehin die gewollte Bedeutung
+    ("Ohne Raum"). Fuer `device_types` gaebe es einen - die Matter-
+    Geraetetypen stehen im `NodeSnapshot` -, aber genau der liegt einer
+    Migration nicht vor: sie bekommt eine `sqlite3.Connection` und sonst
+    nichts. Das Nachtragen uebernimmt `Store.backfill_device_types` beim
+    Start der Bruecke, wo die Abbilder ohnehin geholt werden."""
+    _add_column_if_missing(db, "device", "room", "TEXT")
+    _add_column_if_missing(db, "device", "device_types", "TEXT")
+
+
 # Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
 # Erweiterung fuer eine spaetere Schema-Aenderung: einfach anhaengen, mit der
 # naechsten Versionsnummer als Schluessel.
@@ -580,6 +609,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     4: _migrate_to_v4,
     5: _migrate_to_v5,
     6: _migrate_to_v6,
+    7: _migrate_to_v7,
 }
 
 
@@ -678,6 +708,38 @@ class StoredCommand:
     device_id: int
 
 
+def _encode_device_types(types: Mapping[int, frozenset[int]]) -> str:
+    """Die Ausgabe von `relevance.device_types_by_endpoint` als JSON fuer die
+    Spalte `device.device_types`.
+
+    Endpunkte werden zu Zeichenketten, weil JSON keine ganzzahligen
+    Schluessel kennt; die IDs werden sortiert abgelegt, damit zwei gleiche
+    Abbilder auch denselben Text ergeben - das macht einen Vergleich in
+    einem Test lesbar und verhindert, dass ein bedeutungsloser
+    Reihenfolgewechsel wie eine Aenderung aussieht."""
+    return json.dumps({str(endpoint): sorted(ids) for endpoint, ids in sorted(types.items())})
+
+
+def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
+    """Gegenstueck zu `_encode_device_types`. `None` heisst "noch nicht
+    nachgetragen" (siehe `_migrate_to_v7`).
+
+    Unlesbares JSON wird ebenfalls zu `None` statt zu einer Ausnahme: eine
+    von Hand verstellte Zeile darf die gesamte Geraeteliste nicht
+    unbenutzbar machen: das Geraet landet dann in der Kategorie "Sonstige"
+    und wird beim naechsten Bruueckenstart neu befuellt - dieselbe
+    Behandlung wie eine nie gefuellte Zeile."""
+    if raw is None:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return {int(endpoint): frozenset(int(i) for i in ids) for endpoint, ids in parsed.items()}
+
+
 @dataclass(frozen=True)
 class StoredDevice:
     """Eine Zeile aus `device` (Spec 5) - fuer die Geraete-API (Task 2, Phase 5).
@@ -703,6 +765,21 @@ class StoredDevice:
     # geaendert haben koennte - fuer "seither geaendert: ja/nein" reicht das.
     exported_at: str | None
     updated_at: str | None
+    # Raum und Geraetetypen (Entwurf Geraete-Tab, 2026-09-05). `room` ist ein
+    # frei gewaehlter Name, `None` heisst "Ohne Raum" - es gibt bewusst keine
+    # Raum-Tabelle, ein Raum existiert genau so lange, wie ein aktives Geraet
+    # seinen Namen traegt.
+    #
+    # `device_types` traegt die ROHE Auskunft des Geraets (Endpunkt ->
+    # Matter-Typ-IDs), nicht die daraus abgeleitete Kategorie. Der Grund
+    # steht in der Geschichte dieses Moduls: `signal.functional` und
+    # `signal.title` waren gespeicherte Ableitungen, und `_migrate_to_v3`
+    # musste sie fuer Bestandszeilen nachtraeglich neu berechnen, als sich
+    # die Regel verbesserte. Eine Zuordnungstabelle Matter-Typ -> Kategorie
+    # wird wachsen; wird nur die Quelle gespeichert, ist das ein
+    # Codewechsel ohne Migration.
+    room: str | None
+    device_types: dict[int, frozenset[int]] | None
 
 
 class UnknownCommandError(KeyError):
@@ -844,6 +921,8 @@ class Store:
             label=str(row["label"]),
             exported_at=row["exported_at"],
             updated_at=row["updated_at"],
+            room=row["room"],
+            device_types=_decode_device_types(row["device_types"]),
         )
 
     def devices(self) -> list[StoredDevice]:
