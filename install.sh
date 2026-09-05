@@ -841,6 +841,50 @@ run_checks() {
   fi
 }
 
+# ----------------------------------------------------------- phase seven --
+
+# check_containers, check_rfkill and check_thread already print each finding
+# right where they discover it, inside run_checks - printing the whole
+# $FINDINGS block again here would put the same copy-pasteable commands on
+# the screen twice, just a few lines apart. This only points back to them.
+report() {
+  step "writing the summary"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "Dry run finished. Nothing was changed."
+    return 0
+  fi
+  say "Done."
+  # hostname -I is Linux-only, can print several addresses separated by
+  # spaces, or none at all (no interface up yet) - take the first one, and
+  # fall back to a placeholder rather than print a URL missing its host.
+  lan_ip="$(hostname -I 2>/dev/null | awk '{ print $1 }')" || lan_ip=""
+  if [ -z "$lan_ip" ]; then
+    lan_ip="<this host>"
+  fi
+  printf '  Web interface: http://%s:%s/\n' "$lan_ip" "$PORT"
+  printf '  Open it and set a password. Until you do, no /api route answers -\n'
+  printf '  there is no open state.\n'
+  if [ "$MODE" = "thread" ]; then
+    printf "\n  Keep an eye on the Thread radio - add this to 'crontab -e':\n"
+    printf '    */5 * * * * %s/scripts/otbr-watchdog.sh >> %s/otbr-watchdog.log 2>&1\n' \
+      "$TARGET_DIR" "$HOME"
+  else
+    printf '\n  Running WiFi and Ethernet only. To add Thread later: plug the radio in,\n'
+    printf '  set COMPOSE_PROFILES=thread and RADIO_DEVICE in\n'
+    printf "  %s/.env, then 'docker compose up -d' there.\n" "$STACK_DIR"
+  fi
+  printf '\n  To update later: %s/scripts/update.sh\n' "$TARGET_DIR"
+  if [ "$DOCKER_SUDO" -eq 1 ]; then
+    printf '\n'
+    warn "Docker was installed during this run. Log out and back in once, so"
+    warn "that 'docker' works without sudo - scripts/update.sh needs that."
+  fi
+  if [ -n "$FINDINGS" ]; then
+    printf '\n'
+    note "Some things above still need you - see \"Findings\" for the commands."
+  fi
+}
+
 # Only offered, never done on the way past: scripts/update.sh backs up the
 # signal database first, and those keys are the wiring in the Loxone
 # configuration. An installer that updated in passing would skip that backup.
@@ -907,6 +951,7 @@ main() {
   start_stack
   run_checks
   offer_update
+  report
 }
 
 main "$@"

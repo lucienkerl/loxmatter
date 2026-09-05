@@ -800,3 +800,45 @@ def test_wifi_lauf_erwaehnt_thread_gar_nicht_als_problem(installer):
     result = installer()
     assert result.returncode == 0
     assert "start-stop-daemon" not in result.output
+
+
+# -------------------------------------------------------------- phase sieben --
+
+
+def test_bericht_nennt_die_weboberflaeche_und_das_passwort(installer):
+    result = installer()
+    assert result.returncode == 0
+    assert "http://10.0.1.56:8080/" in result.output
+    assert "set a password" in result.output
+
+
+def test_thread_bericht_schlaegt_den_watchdog_vor(installer):
+    result = installer(env={"LOXMATTER_MODE": "thread", "RADIO_DEVICE": "/dev/ttyUSB0"})
+    assert "otbr-watchdog.sh" in result.output
+    assert str(result.home / "loxmatter") in result.output
+
+
+def test_wifi_bericht_schlaegt_keinen_watchdog_vor(installer):
+    result = installer()
+    assert "otbr-watchdog.sh" not in result.output
+    assert "COMPOSE_PROFILES=thread" in result.output  # so ruestet man nach
+
+
+def test_bericht_verweist_auf_befunde_ohne_sie_zu_wiederholen(installer):
+    # check_containers meldet den fehlenden Dienst schon direkt in run_checks,
+    # dort wo er auffaellt. report() darf diesen Block danach nicht noch
+    # einmal ausgeben - sonst stehen dieselben kopierbaren Befehle zweimal im
+    # Lauf, nur durch ein paar Zeilen getrennt.
+    result = installer(env={"FAKE_SERVICES": "loxmatter"})
+    assert result.returncode == 0
+    assert result.output.count("docker compose logs matter-server") == 1
+
+
+def test_trockenlauf_bericht_erfindet_keine_adresse(installer):
+    # Im Trockenlauf wurde der Stack nie gestartet und PORT nie aus der
+    # compose-Datei gelesen - der Bericht darf dann keine Web-Adresse
+    # behaupten.
+    result = installer("--dry-run", omit=("git", "docker"))
+    assert result.returncode == 0
+    assert "Web interface" not in result.output
+    assert "http://" not in result.output
