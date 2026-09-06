@@ -375,12 +375,41 @@
             </span>
           </template>
           <span style="flex: 1 1 auto"></span>
-          <input
-            type="search"
-            class="device-search"
-            x-model="deviceSearch"
-            :placeholder="t('web.devices.search_placeholder')"
-          />
+          <!-- Der Rahmen sitzt am Container, nicht am Feld: Lupe, Zaehler
+               und Kreuz liegen mit IM Rahmen, und der Fokusring haengt per
+               :focus-within an der ganzen Gruppe statt am Eingabefeld in
+               ihrer Mitte.
+
+               Ein <div>, kein <label>: ein <button> innerhalb eines Labels
+               loest dessen Weiterleitung an das gelabelte Bedienelement mit
+               aus - das Loeschen soll ein Klick sein, nicht zwei
+               Ereignisse. Der Preis ist ein schmaler Streifen Polster, der
+               nicht ins Feld fokussiert; die Lupe traegt dafuer
+               `pointer-events: none` (style.css), damit wenigstens sie kein
+               Klickloch in die linke Kante schlaegt. -->
+          <div class="search-field">
+            <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input
+              type="search"
+              x-model="deviceSearch"
+              :placeholder="t('web.devices.search_placeholder')"
+              :aria-label="t('web.devices.search_placeholder')"
+            />
+            <span
+              class="search-count"
+              x-show="deviceSearch.trim()"
+              x-cloak
+              x-text="t('web.devices.search_count', { count: visibleDevices().length })"
+            ></span>
+            <button
+              class="search-clear"
+              x-show="deviceSearch.trim()"
+              x-cloak
+              @click="deviceSearch = ''"
+              :title="t('web.devices.search_clear')"
+              :aria-label="t('web.devices.search_clear')"
+            ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
         </div>
 
         <p x-show="devices.length > 0 && visibleDevices().length === 0" x-cloak class="hint">

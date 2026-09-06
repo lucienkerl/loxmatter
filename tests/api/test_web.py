@@ -3618,3 +3618,73 @@ async def test_the_search_field_has_a_magnifier_of_its_own(api):
     page = _without_comments((await client.get("/")).text)
     assert 'id="i-search"' in page
     assert page.count('id="i-close"') == 1
+
+
+async def test_the_search_field_carries_the_frame_and_the_input_does_not(api):
+    """Der Rahmen sitzt am Container, nicht am Feld.
+
+    Traegen beide einen, liegt ein Rahmen im anderen - und der Fokusring
+    (naechster Test) haette nichts, woran er sich festmachen koennte, das
+    Lupe und Kreuz mit einschliesst."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    field = css.split(".search-field {", 1)[1].split("}", 1)[0]
+    inner = css.split('.search-field input[type="search"] {', 1)[1].split("}", 1)[0]
+    assert "border: 1px solid var(--border)" in field
+    assert "border-radius" in field
+    assert "border: none" in inner
+    assert "background: none" in inner
+
+
+async def test_the_search_focus_ring_wraps_the_whole_group(api):
+    """`:focus-within` am Container statt `:focus` am Feld: der Ring soll
+    Lupe, Zaehler und Kreuz mit einschliessen, nicht nur das Eingabefeld in
+    ihrer Mitte. Der browsereigene Umriss am Feld muss dafuer weichen, sonst
+    stuenden beide."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    ring = css.split(".search-field:focus-within {", 1)[1].split("}", 1)[0]
+    assert "var(--accent)" in ring
+    inner_focus = css.split('.search-field input[type="search"]:focus {', 1)[1].split("}", 1)[0]
+    assert "outline: none" in inner_focus
+
+
+async def test_the_browser_does_not_add_a_second_clear_cross(api):
+    """WebKit legt in ein `input[type="search"]` sein eigenes Loeschkreuz -
+    daneben stuende unseres ein zweites Mal.
+
+    Abgeschaltet wird es mit `-webkit-appearance` UND `appearance`: das
+    Pseudoelement ist herstellerspezifisch, und die Zusicherung auf die
+    zweite Form braucht den Zeilenanfang - `"appearance: none"` ist eine
+    Teilzeichenkette von `"-webkit-appearance: none"` und waere sonst schon
+    von der ersten Zeile erfuellt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split("::-webkit-search-cancel-button {", 1)[1].split("}", 1)[0]
+    assert "-webkit-appearance: none" in rule
+    assert re.search(r"^\s*appearance: none", rule, re.MULTILINE)
+
+
+async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
+    """Beide haengen an `deviceSearch` und tragen `x-cloak`: bei leerem Feld
+    sind sie weg, und beim ersten Zeichnen blitzen sie nicht auf, bevor
+    Alpine initialisiert hat.
+
+    Der Zaehler liest `visibleDevices().length` - also das, was tatsaechlich
+    unter der Leiste steht, einschliesslich eines aktiven Raumfilters. Die
+    Suchlogik selbst bleibt unberuehrt.
+
+    Zwei `aria-label`: eines am Eingabefeld (es traegt nur einen Platzhalter,
+    und der verschwindet genau dann, wenn jemand etwas eingegeben hat), eines
+    am Kreuz (es traegt gar kein Wort)."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    field = page.split('<div class="search-field">', 1)[1].split("</div>", 1)[0]
+    assert field.count('x-show="deviceSearch.trim()"') == 2
+    assert field.count("x-cloak") == 2
+    assert field.count("aria-label") == 2
+    assert "visibleDevices().length" in field
+    assert "deviceSearch = ''" in field
+    assert "t('web.devices.search_clear')" in field
+    assert 'href="#i-search"' in field
+    assert 'href="#i-close"' in field
