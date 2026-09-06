@@ -19,7 +19,9 @@
 Aufruf:  uv run --with playwright python scripts/capture_screenshots.py
 
 Startet `dev_web_server.py --demo` selbst, meldet sich an, klappert die
-Ansichten ab und legt die Bilder unter docs/screenshots/ ab.
+Ansichten ab und legt die Bilder unter docs/screenshots/ ab. Jedes Bild
+zeigt nur den Bereich, von dem seine Bildunterschrift im README spricht -
+warum, steht bei `shoot()`.
 
 REPRODUZIERBAR sind sechs der sieben Bilder: die Demo-Datenbank faellt bei
 jedem Start neu an, und alle gesaeten Zeitstempel stehen auf
@@ -61,15 +63,107 @@ PORT = 8420
 BASE = f"http://127.0.0.1:{PORT}"
 PASSWORD = "loxmatter-demo"
 
+# `main` ist per CSS auf 960 px begrenzt, ein breiteres Fenster erzeugt also
+# nur grauen Rand. 820 px lassen die Inhaltsspalte selbst die Breite bestimmen
+# und legen das Kachelraster auf zwei Spalten - die Kacheln wachsen dabei von
+# 300 auf 345 px, was im skalierten README-Bild direkt Lesbarkeit ist.
+VIEWPORT_NARROW = 820
+# Nur fuer die Export-Vorschau: ihre acht Spalten brauchen 895 px und bekaemen
+# im schmalen Fenster einen waagerechten Bildlauf.
+VIEWPORT_WIDE = 1440
+VIEWPORT_HEIGHT = 1000
+
 # Fuer den `from tests...`-Import der Beispiel-Projektdatei unten.
 sys.path.insert(0, str(ROOT))
 
 
-def shoot(page: Page, name: str) -> None:
+# Aufloeser fuer die Bereichsangaben unten. Eine Angabe ist entweder ein
+# CSS-Selektor, `card:<Ueberschrift>` fuer die Karte um eine h2-Ueberschrift
+# (Karten haben keine eigenen Klassen, ihre Ueberschrift ist das einzige
+# stabile Merkmal) oder `nth:<Selektor>:<Index>` fuer den n-ten Treffer.
+_RESOLVE_JS = """
+  (spec) => {
+    if (spec.startsWith('card:')) {
+      const want = spec.slice(5);
+      const h = [...document.querySelectorAll('.card h2')]
+        .find((h) => h.textContent.trim() === want);
+      return h ? h.closest('.card') : null;
+    }
+    if (spec.startsWith('nth:')) {
+      const cut = spec.lastIndexOf(':');
+      const all = document.querySelectorAll(spec.slice(4, cut));
+      return all[Number(spec.slice(cut + 1))] ?? null;
+    }
+    return document.querySelector(spec);
+  }
+"""
+
+
+def shoot(
+    page: Page,
+    name: str,
+    top: str,
+    bottom: str | None = None,
+    *,
+    fixed: bool = False,
+    pad_top: int | None = None,
+    pad_bottom: int | None = None,
+) -> None:
+    """Fotografiert den Bereich von `top` bis `bottom` statt des ganzen Fensters.
+
+    Die Bilder stehen im README in einer zweispaltigen Tabelle und werden dort
+    auf rund 420 px Breite skaliert. Entscheidend fuer die Lesbarkeit ist
+    deshalb allein die CSS-Breite des Ausschnitts, nicht seine Hoehe: ein
+    hohes schmales Bild bleibt lesbar, ein 1440 px breites Fenster schrumpft
+    auf ein Drittel. Ein Vollbild verschenkte hier doppelt - `main` ist auf
+    960 px begrenzt, also war ein Drittel jedes Bildes leerer grauer Rand,
+    und darueber hinaus zeigte jedes Bild Karten, die seine eigene
+    Bildunterschrift gar nicht meint.
+
+    `fixed=True` fuer den Dialog: der ist `position: fixed` und steht damit
+    im Fenster, nicht im Dokument - Dokumentkoordinaten gingen daneben.
+    """
     page.wait_for_timeout(600)  # Alpine rendert nach dem Laden nach
+    rect = page.evaluate(
+        """([topSpec, bottomSpec, fixed]) => {
+          const resolve = """
+        + _RESOLVE_JS
+        + """;
+          const a = resolve(topSpec);
+          const b = bottomSpec ? resolve(bottomSpec) : a;
+          if (!a || !b) return null;
+          const ra = a.getBoundingClientRect();
+          const rb = b.getBoundingClientRect();
+          const ox = fixed ? 0 : window.scrollX;
+          const oy = fixed ? 0 : window.scrollY;
+          return {
+            x: Math.min(ra.left, rb.left) + ox,
+            y: Math.min(ra.top, rb.top) + oy,
+            right: Math.max(ra.right, rb.right) + ox,
+            bottom: Math.max(ra.bottom, rb.bottom) + oy,
+          };
+        }""",
+        [top, bottom, fixed],
+    )
+    if rect is None:
+        raise RuntimeError(f"{name}: Bereich '{top}' bis '{bottom}' nicht im Markup gefunden")
+    # Der Rand ist oben und unten einzeln einstellbar, weil ein Ausschnitt
+    # sonst ins Nachbarelement blutet: 16 px ueber der Zaehlerzeile reichen
+    # genau in die Upload-Zeile darueber, und ein waagerecht halbierter
+    # Bedienteil sieht nach kaputtem Bild aus, nicht nach Ausschnitt. Wo die
+    # Nachbarschaft eng ist, schneidet `0` sauber auf der Kante.
+    pad = 16
+    top_pad = pad if pad_top is None else pad_top
+    bottom_pad = pad if pad_bottom is None else pad_bottom
+    clip = {
+        "x": max(rect["x"] - pad, 0),
+        "y": max(rect["y"] - top_pad, 0),
+        "width": rect["right"] - rect["x"] + 2 * pad,
+        "height": rect["bottom"] - rect["y"] + top_pad + bottom_pad,
+    }
     SHOTS.mkdir(parents=True, exist_ok=True)
-    page.screenshot(path=str(SHOTS / f"{name}.png"))
-    print(f"  {name}.png")
+    page.screenshot(path=str(SHOTS / f"{name}.png"), clip=clip, full_page=not fixed)
+    print(f"  {name}.png  ({round(clip['width'])}x{round(clip['height'])} css px)")
 
 
 def select_view(page: Page, label: str) -> None:
@@ -95,17 +189,19 @@ def capture(page: Page) -> None:
     page.wait_for_selector(".device-card", timeout=15000)
     page.wait_for_timeout(800)  # Werte-Chips und Live-Verbindung ziehen nach
 
-    # Bewusst OHNE Bildlauf, direkt vom Seitenanfang: ein frueherer Versuch
-    # scrollte hier zur ersten Geraetekarte, damit sich dieses Bild staerker
-    # von `commissioning.png` unterscheidet - aber der Bildlauf schob dabei
-    # `nav.tabs` (Devices/Export/System/Settings) mit aus dem Bild,
-    # und genau dieser Reiterleiste sieht man an, dass hier eine Anwendung
-    # mit mehreren Ansichten laeuft, nicht nur eine einzelne Seite. Das
-    # eroeffnende Bild der Galerie ohne Reiterleiste zu zeigen wog schwerer
-    # als die Aehnlichkeit zu `commissioning.png` - die beiden Bilder
-    # unterscheiden sich weiterhin darin, dass dort ein Einlern-Code
-    # eingetragen ist und hier nicht.
-    shoot(page, "dashboard")
+    # Raumleiste plus die ersten beiden Raumgruppen. Die Einlern-Karte
+    # darueber bleibt bewusst draussen: sie ist das Motiv von
+    # `commissioning.png`, und mit ihren drei Erklaerungsabsaetzen belegte sie
+    # hier die obere Haelfte eines Bildes, dessen Bildunterschrift von der
+    # Geraeteliste spricht.
+    #
+    # Damit faellt auch die Reiterleiste aus diesem Bild - frueher stand hier
+    # das Argument, gerade das eroeffnende Bild der Galerie muesse sie zeigen,
+    # damit man die Anwendung als mehrseitig erkennt. Das Argument gilt
+    # weiter, nur traegt es jetzt `commissioning.png` gleich daneben: dort
+    # steht die Leiste vollstaendig im Bild. Zweimal dieselbe Leiste zu
+    # zeigen war den halben Bildausschnitt nicht wert.
+    shoot(page, "dashboard", ".room-bar", "nth:.device-grid:1")
 
     # Signale haben keinen eigenen Reiter mehr (Entwurf "Signale als Modal",
     # 2026-09-05) - das Bild entsteht jetzt aus dem Modal ueber dem
@@ -124,10 +220,15 @@ def capture(page: Page) -> None:
     # Ueberschrift, Schluessel-Hinweis und die ersten Adressen mit ihren
     # Export-Haken sind der Punkt dieses Bildes.
     page.eval_on_selector("dialog.signals-modal", "el => el.scrollTo(0, 0)")
-    shoot(page, "signals")
+    shoot(page, "signals", "dialog.signals-modal", fixed=True)
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
 
+    # Einziger Ausschnitt, der das breite Fenster braucht: die
+    # Vorschautabelle ist 895 px breit (acht Spalten) und bekaeme im schmalen
+    # Fenster einen waagerechten Bildlauf, also ein Bild mit abgeschnittener
+    # letzter Spalte. Danach zurueck auf die schmale Breite.
+    page.set_viewport_size({"width": VIEWPORT_WIDE, "height": VIEWPORT_HEIGHT})
     select_view(page, "Export")
     # Review-Fix: ohne Klick zeigte dieser Ausschnitt nur die beiden leeren
     # Karten "Project file sync" und "Export templates" - zwei Drittel Leerraum,
@@ -136,60 +237,37 @@ def capture(page: Page) -> None:
     page.click('button:has-text("View preview")')
     page.wait_for_selector("table", timeout=5000)
     page.wait_for_timeout(300)
-    shoot(page, "export")
+    shoot(page, "export", "card:Project file sync", "card:Preview")
+    page.set_viewport_size({"width": VIEWPORT_NARROW, "height": VIEWPORT_HEIGHT})
 
     # Die "System check"-Karte ganz oben zeigt in dieser Demo (kein echter
     # matter-server-Client, kein echter UDP-Versand) zwei "Error"-Zeilen -
     # zurecht, aber fuer ein Screenshot-Wortmarke schlecht: sieht nach
     # kaputtem Produkt aus, ist aber nur die ehrliche Diagnose eines absichtlich
-    # unvollstaendigen Demo-Aufbaus. Deshalb zur naechsten Karte scrollen und
-    # dort erst fotografieren - die Ansicht selbst (Reiter "System") bleibt
-    # dieselbe, nur der sichtbare Ausschnitt aendert sich.
-    #
-    # Review-Fix: geprueft, ob sich das ohne die Fehlerkarte trotzdem mit
-    # sichtbarem Reiterleiste (`nav.tabs`) machen liesse - geht nicht. Nur
-    # `header.app-header` ist `position: sticky`, `nav.tabs` scrollt mit der
-    # Seite mit, und im Markup steht die Reiterleiste VOR der "System
-    # check"-Karte. Jeder Bildlauf, der die Fehlerkarte aus dem Bild
-    # schiebt, hat die Reiterleiste (die weiter oben im Fluss steht) also
-    # schon vorher aus dem Bild geschoben - beides gleichzeitig ist mit
-    # diesem Markup nicht zu haben. Deshalb bleibt die Reiterleiste hier
-    # bewusst draussen, statt einen fingierten "gesunden" Systemcheck zu
-    # zeigen.
+    # unvollstaendigen Demo-Aufbaus. Der Ausschnitt beginnt deshalb erst bei
+    # "Live diagnostics" - was frueher ein Bildlauf mit Ausgleich fuer den
+    # klebenden Kopf erledigen musste und jetzt einfach die Bereichsangabe
+    # ist. Die Reiterleiste liegt damit ausserhalb; das ist dieselbe Abwaegung
+    # wie bei `dashboard.png` und hat denselben Ausgleich.
     select_view(page, "System")
-    # `scroll_into_view_if_needed()` scrollt nur, wenn das Element noch NICHT
-    # sichtbar ist - die "Live diagnostics"-Karte steht aber schon im
-    # Sichtbereich (die Fehlerkarte darueber ist nicht so hoch, wie man
-    # denkt), also erzwingt das hier den Bildlauf mit `block: "start"`.
-    page.evaluate(
-        """() => {
-            const heading = [...document.querySelectorAll('h2')]
-                .find((h) => h.textContent.trim() === 'Live diagnostics');
-            const card = heading?.closest('.card');
-            if (!card) return;
-            card.scrollIntoView({ block: 'start' });
-            // Der `header.app-header` ist `position: sticky` und ueberdeckt
-            // sonst genau die Kartenueberschrift, die `scrollIntoView` gerade
-            // an den (gedachten) Seitenanfang gelegt hat.
-            const header = document.querySelector('header.app-header');
-            window.scrollBy(0, -(header?.offsetHeight ?? 0));
-        }"""
-    )
-    page.wait_for_timeout(200)
-    shoot(page, "system")
+    shoot(page, "system", "card:Live diagnostics", "card:Command log")
 
     select_view(page, "Settings")
-    shoot(page, "settings")
+    shoot(page, "settings", "card:Miniserver connection", "card:Periodic resend")
 
     # Sonderfall 1: Einlern-Karte mit Beispielcode, aber NICHT abschicken -
     # ohne echten Matter-Server kaeme beim Absenden nur eine Fehlermeldung.
-    # Erst an den Seitenanfang zurueckscrollen: ohne das haette dieses Bild
-    # den Bildlaufstand des vorigen Reiters geerbt, statt zuverlaessig die
-    # Kommissionierungs-Karte zu zeigen.
+    # Dieses Bild traegt Kopf- und Reiterleiste fuer die ganze Galerie, hier
+    # also ausdruecklich ab dem Seitenanfang.
     select_view(page, "Devices")
-    page.evaluate("window.scrollTo(0, 0)")
     page.fill('input[placeholder*="MT:"]', "MT:Y.K9042C00KA0648G00")
-    shoot(page, "commissioning")
+    shoot(
+        page,
+        "commissioning",
+        "header.app-header",
+        "card:Commission a new device",
+        pad_bottom=0,
+    )
 
     # Sonderfall 2: Beispiel-Projektdatei aus den projectsync-Tests
     # hochladen und den Diff-Plan abwarten. Zwei deutsche Wortmarken aus der
@@ -215,7 +293,16 @@ def capture(page: Page) -> None:
         select_view(page, "Export")
         page.set_input_files('input[type="file"]', str(sample))
         page.wait_for_timeout(2500)  # Upload plus Diff-Berechnung
-        shoot(page, "project-sync")
+        # Zaehlerzeile plus der erste aufgeklappte Geraeteblock - genau das,
+        # wovon die Bildunterschrift spricht. Der Erklaerungstext ueber den
+        # Zaehlern gehoert zu `export.png`.
+        shoot(
+            page,
+            "project-sync",
+            ".projectsync-summary",
+            "nth:.projectsync-device:0",
+            pad_top=0,
+        )
 
 
 def main() -> int:
@@ -232,7 +319,10 @@ def main() -> int:
         time.sleep(4)
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
-            page = browser.new_page(viewport={"width": 1440, "height": 960}, device_scale_factor=2)
+            page = browser.new_page(
+                viewport={"width": VIEWPORT_NARROW, "height": VIEWPORT_HEIGHT},
+                device_scale_factor=2,
+            )
             capture(page)
             browser.close()
     finally:
