@@ -101,11 +101,17 @@ def capture(page: Page) -> None:
     page.click(".device-card .tile-menu > summary")
     page.click('.tile-menu-item:has-text("Edit signals")')
     page.wait_for_selector("dialog.signals-modal[open]", timeout=5000)
-    # Die Expertengruppe aufklappen: zugeklappt zeigt das Bild bei den
-    # Demo-Geraeten nur zwei, drei Zeilen und viel Leerraum - der Punkt
-    # dieses Bildes sind aber gerade die Loxone-Adressen und die
-    # Export-Haken nebeneinander.
-    page.click("dialog.signals-modal details:not([open]) > summary")
+    # Ein erster Anlauf klappte hier zusaetzlich die Expertengruppe auf, damit
+    # mehr Zeilen im Bild stehen. Das Ergebnis war unbrauchbar: Playwright
+    # scrollt zum Ziel eines `.click()`, und dieses Ziel liegt hinter 17
+    # funktionalen Signalen - das Bild begann mitten in einer angeschnittenen
+    # Zeile, ohne Ueberschrift, ohne erkennbar zu sein, WAS man da sieht. Die
+    # erste Kachel (Hallway button) hat funktional genug Zeilen, um das Bild
+    # zu fuellen; der zugeklappte Experte-Aufklapper am Fuss zeigt nebenbei,
+    # dass es noch mehr gibt. Der Bildlauf steht deshalb ausdruecklich oben:
+    # Ueberschrift, Schluessel-Hinweis und die ersten Adressen mit ihren
+    # Export-Haken sind der Punkt dieses Bildes.
+    page.eval_on_selector("dialog.signals-modal", "el => el.scrollTo(0, 0)")
     shoot(page, "signals")
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
