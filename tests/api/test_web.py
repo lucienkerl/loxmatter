@@ -3756,7 +3756,7 @@ async def test_the_search_focus_ring_wraps_the_whole_group(api):
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
     ring = css.split(".search-field:focus-within {", 1)[1].split("}", 1)[0]
-    assert "var(--accent)" in ring
+    assert "border-color: var(--accent)" in ring
     inner_focus = css.split('.search-field input[type="search"]:focus {', 1)[1].split("}", 1)[0]
     assert "outline: none" in inner_focus
 
@@ -3788,7 +3788,21 @@ async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
 
     Zwei `aria-label`: eines am Eingabefeld (es traegt nur einen Platzhalter,
     und der verschwindet genau dann, wenn jemand etwas eingegeben hat), eines
-    am Kreuz (es traegt gar kein Wort)."""
+    am Kreuz (es traegt gar kein Wort).
+
+    Das Kreuz muss den Fokus zurueck ins Feld legen: `x-show` setzt beim
+    Leeren `display: none` auf das Element, das gerade den Fokus traegt,
+    und der Browser wirft ihn dann auf `<body>`. Das native
+    Loeschkreuz von WebKit - `::-webkit-search-cancel-button`, andernorts in
+    dieser Datei bewusst abgeschaltet - hat genau das getan: den Fokus im
+    Feld gehalten. Unser eigenes Kreuz muss dasselbe leisten, sonst
+    verliert eine Tastaturbedienung durch das Loeschen den Anschluss und
+    muesste sich von ganz oben wieder durch die Seite tabben.
+
+    `aria-live="polite"` am Zaehler: er beantwortet fuer Screenreader-
+    Nutzer die Frage, auf die er auch visuell antwortet - wie viele
+    Treffer nach der letzten Eingabe uebrig sind, bis hinunter zu null.
+    Ohne die Live-Region bliebe das stumm."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     field = page.split('<div class="search-field">', 1)[1].split("</div>", 1)[0]
@@ -3800,6 +3814,9 @@ async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
     assert "t('web.devices.search_clear')" in field
     assert 'href="#i-search"' in field
     assert 'href="#i-close"' in field
+    assert 'x-ref="deviceSearchInput"' in field
+    assert "$refs.deviceSearchInput.focus()" in field
+    assert 'aria-live="polite"' in field
 
 
 async def test_the_search_field_moves_left_when_there_are_no_rooms(api):

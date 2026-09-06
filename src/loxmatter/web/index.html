@@ -397,12 +397,23 @@
             <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"></use></svg>
             <input
               type="search"
+              x-ref="deviceSearchInput"
               x-model="deviceSearch"
               :placeholder="t('web.devices.search_placeholder')"
               :aria-label="t('web.devices.search_placeholder')"
             />
+            <!-- `aria-live="polite"` nur hier, nicht an den Chips oder dem
+                 Hinweistext daneben: der Zaehler beantwortet genau die
+                 Frage, die Tippen aufwirft ("wie viele jetzt noch?"), und
+                 soll das leise nachreichen. Die uebrigen Texte aendern sich
+                 nicht als Reaktion auf Tastatureingabe und muessten sonst
+                 bei jeder Neuzeichnung erneut vorgelesen werden. Das Element
+                 bleibt bei leerem Feld im DOM (nur `display: none` per
+                 `x-show`) - die Live-Region existiert also schon, bevor ihr
+                 Inhalt sich das erste Mal aendert. -->
             <span
               class="search-count"
+              aria-live="polite"
               x-show="deviceSearch.trim()"
               x-cloak
               x-text="t('web.devices.search_count', { count: visibleDevices().length })"
@@ -411,7 +422,7 @@
               class="search-clear"
               x-show="deviceSearch.trim()"
               x-cloak
-              @click="deviceSearch = ''"
+              @click="deviceSearch = ''; $refs.deviceSearchInput.focus()"
               :title="t('web.devices.search_clear')"
               :aria-label="t('web.devices.search_clear')"
             ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
