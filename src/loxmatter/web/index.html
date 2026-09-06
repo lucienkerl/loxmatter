@@ -1437,7 +1437,29 @@
       schloesse ein Griff an den Scrollbalken das Modal, und zwar
       ausgerechnet bei den langen Listen, fuer die es ihn ueberhaupt gibt
       (ein Geraet mit 159 Signalen). `clientWidth` ist die Innenbreite OHNE
-      Scrollbalken, `offsetX` misst ab derselben Kante.
+      den Platz, den ein Scrollbalken reserviert; `offsetX` misst ab der
+      Innenkante desselben Kastens.
+
+      Die Reichweite dieser Bedingung genau (Fund 1 der zweiten
+      Nachpruefung, sonst liest sie sich staerker, als sie ist):
+
+      - Sie greift bei einem PLATZ REServierenden Scrollbalken (Windows,
+        Linux, macOS mit "Scrollbalken immer einblenden"). Dessen Flaeche
+        liegt ausserhalb von `clientWidth`, ein Mousedown darauf hat also
+        `offsetX >= clientWidth` und faellt heraus.
+      - Sie greift NICHT bei einem ueberlagernden Scrollbalken (macOS-
+        Voreinstellung). Der reserviert keinen Platz, `clientWidth` ist dann
+        die volle Innenbreite, und der Balken zeichnet DARIN - sein
+        `offsetX` ist also kleiner als `clientWidth` und von einem Klick auf
+        den Inhalt nicht zu unterscheiden. Dort bleibt nur, dass ein
+        ueberlagernder Balken die meiste Zeit gar nicht sichtbar ist.
+      - Sie prueft nur die WAAGERECHTE Achse. Ein waagerechter Scrollbalken
+        am unteren Rand bliebe unerkannt. Bei diesem Modal (feste Breite,
+        umbrechender Inhalt) entsteht keiner; wer den Inhalt spaeter
+        breiter macht, muss `offsetY` gegen `clientHeight` nachziehen.
+      - Sie setzt voraus, dass der Balken rechts sitzt (LTR). Die Seite ist
+        `<html lang="de">` ohne jede RTL-Unterstuetzung; wer die einbaut,
+        muss auch hier nachbessern.
 
       `aria-labelledby` verweist auf eine FESTE `id` an der Ueberschrift,
       anders als das `aria-labelledby` im Kachel-Menue weiter oben, das
