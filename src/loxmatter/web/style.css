@@ -482,14 +482,6 @@ button:disabled {
   border-top: 1px dashed var(--border);
 }
 
-/* Signale-Ansicht (Aufgabe 8): der globale Schalter zwischen den Hinweisen
- * oben und den ersten Geraetekarten braucht etwas Luft, sonst klebt er am
- * ersten Kartenrand - derselbe Zwischenraum wie zwischen zwei Karten
- * (`.card { margin-bottom: 1rem }`), keine neue Farbe oder Groesse. */
-.signal-group-toggle {
-  margin-bottom: 1rem;
-}
-
 footer.hint-block {
   margin-top: 0.4rem;
 }
@@ -1724,4 +1716,99 @@ footer.hint-block {
   border: none;
   border-top: 1px solid var(--border);
   margin: 0.25rem 0;
+}
+
+/* Signal-Modal (Entwurf "Signale als Modal", 2026-09-05).
+ *
+ * `max-height` plus `overflow: auto` statt einer festen Hoehe: ein Geraet
+ * mit vierzig Attributen soll im Modal scrollen, nicht ueber den unteren
+ * Bildschirmrand hinauswachsen, wo der Schliessen-Knopf dann unerreichbar
+ * waere.
+ *
+ * Der `::backdrop` bekommt KEINE Farbe aus den Themenvariablen: er liegt
+ * im Top-Layer, ausserhalb des Dokumentbaums, und erbt von dort keine
+ * `:root`-Variablen zuverlaessig. Ein fester halbtransparenter Schwarzton
+ * wirkt in beiden Themen. */
+.signals-modal {
+  width: min(46rem, 92vw);
+  max-height: 85vh;
+  overflow: auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.signals-modal::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.signals-modal-body {
+  padding: 1rem 1.2rem 1.2rem;
+}
+
+.signals-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.signals-modal-head h2 {
+  margin: 0;
+}
+
+.signals-modal-close {
+  flex: none;
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.25rem;
+  line-height: 0;
+}
+
+.signals-modal-close:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+/* Die beiden Signalgruppen im Modal. Der Standard-Marker eines `<summary>`
+ * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
+ * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren
+ * WebKit-Fassungen - dieselbe Doppelung wie bei `.tile-menu > summary`
+ * und `.projectsync-device summary`. An dessen Stelle tritt derselbe
+ * Chevron (`#i-chevron`), der sich beim Aufklappen um 90 Grad dreht -
+ * so sieht der Marker in beiden Browserfamilien gleich aus. */
+.signal-group {
+  margin-top: 1rem;
+}
+
+.signal-group > summary {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.3rem 0;
+  list-style: none;
+}
+
+.signal-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.signal-group > summary .muted {
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 0.35rem;
+}
+
+.signal-group > summary .chevron {
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.signal-group[open] > summary .chevron {
+  transform: rotate(90deg);
 }

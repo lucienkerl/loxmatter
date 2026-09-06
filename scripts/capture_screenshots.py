@@ -98,7 +98,7 @@ def capture(page: Page) -> None:
     # Bewusst OHNE Bildlauf, direkt vom Seitenanfang: ein frueherer Versuch
     # scrollte hier zur ersten Geraetekarte, damit sich dieses Bild staerker
     # von `commissioning.png` unterscheidet - aber der Bildlauf schob dabei
-    # `nav.tabs` (Devices/Signals/Export/System/Settings) mit aus dem Bild,
+    # `nav.tabs` (Devices/Export/System/Settings) mit aus dem Bild,
     # und genau dieser Reiterleiste sieht man an, dass hier eine Anwendung
     # mit mehreren Ansichten laeuft, nicht nur eine einzelne Seite. Das
     # eroeffnende Bild der Galerie ohne Reiterleiste zu zeigen wog schwerer
@@ -107,8 +107,26 @@ def capture(page: Page) -> None:
     # eingetragen ist und hier nicht.
     shoot(page, "dashboard")
 
-    select_view(page, "Signals")
+    # Signale haben keinen eigenen Reiter mehr (Entwurf "Signale als Modal",
+    # 2026-09-05) - das Bild entsteht jetzt aus dem Modal ueber dem
+    # Geraeteraster. Der Weg dorthin ist derselbe wie fuer einen Nutzer:
+    # Kebab der ersten Kachel, dann der Menuepunkt.
+    page.click(".device-card .tile-menu > summary")
+    page.click('.tile-menu-item:has-text("Edit signals")')
+    page.wait_for_selector("dialog.signals-modal[open]", timeout=5000)
+    # Ein erster Anlauf klappte hier zusaetzlich die Expertengruppe auf, damit
+    # mehr Zeilen im Bild stehen. Das Ergebnis war unbrauchbar: Playwright
+    # scrollt zum Ziel eines `.click()`, und dieses Ziel liegt hinter 17
+    # funktionalen Signalen - das Bild begann mitten in einer angeschnittenen
+    # Zeile, ohne Ueberschrift, ohne erkennbar zu sein, WAS man da sieht. Die
+    # erste Kachel (Hallway button) hat funktional genug Zeilen, um das Bild
+    # zu fuellen. Der Bildlauf steht deshalb ausdruecklich oben:
+    # Ueberschrift, Schluessel-Hinweis und die ersten Adressen mit ihren
+    # Export-Haken sind der Punkt dieses Bildes.
+    page.eval_on_selector("dialog.signals-modal", "el => el.scrollTo(0, 0)")
     shoot(page, "signals")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
 
     select_view(page, "Export")
     # Review-Fix: ohne Klick zeigte dieser Ausschnitt nur die beiden leeren
