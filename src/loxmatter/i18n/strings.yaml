@@ -968,7 +968,24 @@ web.export.download_failed:
   en: "Download failed: {message}"
   de: "Download fehlgeschlagen: {message}"
 
-# --- web.system — Systemcheck, Live-Diagnose, Sicherung ---
+# --- web.system — Resync, Systemcheck, Live-Diagnose, Sicherung ---
+web.system.resync_heading:
+  en: "Resend all values"
+  de: "Alle Werte erneut senden"
+web.system.resync_explanation:
+  en: |
+    Sends every known value to the Miniserver once more. The same full resend runs by itself when the bridge starts, and when the Miniserver calls /resync from the system-start block of the Config project - this button is the third way to trigger it, for when the values in Loxone look stale.
+  de: |
+    Schickt jeden bekannten Wert erneut an den Miniserver. Derselbe volle Resend laeuft von allein beim Bridge-Start und wenn der Miniserver /resync aus dem Systemstart-Baustein des Config-Projekts aufruft - dieser Knopf ist der dritte Weg dorthin, fuer den Fall, dass die Werte in Loxone veraltet aussehen.
+web.system.resync_button:
+  en: "Resend now"
+  de: "Jetzt erneut senden"
+web.system.resync_toast:
+  en: "{count} values resent."
+  de: "{count} Werte erneut gesendet."
+web.system.resync_error:
+  en: "Could not resend: {message}"
+  de: "Erneutes Senden fehlgeschlagen: {message}"
 web.system.checks_heading:
   en: "System check"
   de: "Systemcheck"
@@ -1109,9 +1126,9 @@ web.settings.resend_heading:
   de: "Periodischer Resend"
 web.settings.resend_explanation:
   en: |
-    Marked signals (the "resend periodically" checkbox in the signal list) are forcibly resent at this interval, even without a change – independently of that, a full restore still runs once at bridge startup and via "Resync" in the System section.
+    Marked signals (the "resend periodically" checkbox in the signal list) are forcibly resent at this interval, even without a change – independently of that, a full restore still runs once at bridge startup and via "Resend all values" in the System tab.
   de: |
-    Markierte Signale (Haken „periodisch erneut senden" in der Signalliste) werden in diesem Takt zwangsweise erneut gesendet, auch ohne Änderung - unabhängig davon läuft ein voller Restore weiterhin einmalig beim Bridge-Start und über „Erneut synchronisieren" im Bereich Diagnose.
+    Markierte Signale (Haken „periodisch erneut senden" in der Signalliste) werden in diesem Takt zwangsweise erneut gesendet, auch ohne Änderung - unabhängig davon läuft ein voller Restore weiterhin einmalig beim Bridge-Start und über „Alle Werte erneut senden" im Tab System.
 web.settings.resend_interval_label:
   en: "Interval in seconds"
   de: "Intervall in Sekunden"

@@ -1208,6 +1208,22 @@
            Ansicht 3: System
            ================================================================ -->
       <section x-show="view === 'system'" x-cloak>
+        <!-- Handlung, keine Diagnose - deshalb vor den Systemchecks und
+             nicht zwischen den Log-Ansichten weiter unten. Der Knopf loest
+             denselben vollen Resend aus wie der Bruecken-Start und wie
+             /resync aus dem Config-Projekt (Spec 6.4), nur ueber
+             POST /api/diagnostics/resync, das hinter dem Waechter liegt. -->
+        <div class="card">
+          <h2 x-text="t('web.system.resync_heading')"></h2>
+          <p class="hint" x-text="t('web.system.resync_explanation')"></p>
+          <button
+            @click="resyncAll()"
+            :disabled="resyncBusy"
+            x-text="t('web.system.resync_button')"
+          ></button>
+          <p x-show="resyncError" x-cloak class="banner danger" x-text="resyncError"></p>
+        </div>
+
         <div class="card">
           <div class="row">
             <h2 style="margin: 0" x-text="t('web.system.checks_heading')"></h2>
