@@ -324,11 +324,16 @@ async def test_the_page_does_not_call_init_a_second_time(api):
     Ausdruecke `init(` aufruft - fuer den bewachten Fehler ist das
     mindestens so scharf wie vorher: ein `x-init="init()"` auf einem
     verschachtelten Element, das die alte pauschale Pruefung nur zufaellig
-    mit erfasste, faellt der neuen absichtlich auf."""
+    mit erfasste, faellt der neuen absichtlich auf.
+
+    Der Regex erfasst `x-init="..."` UND `x-init='...'` - alle Fundstellen
+    in dieser Codebasis sind heute doppelt zitiert, aber die Pruefung soll
+    nicht stillschweigend an einer einfach zitierten Fundstelle vorbeilaufen
+    (Fund 2, Review der Nacharbeit, 2026-09-06)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert 'x-data="app()"' in markup
-    for expression in re.findall(r'x-init="([^"]*)"', markup):
+    for expression in re.findall(r"x-init=[\"']([^\"']*)[\"']", markup):
         assert "init(" not in expression, f"x-init ruft init() auf: {expression}"
 
 
@@ -2970,3 +2975,39 @@ async def test_both_signal_groups_share_one_details_template(api):
     assert ":open=" not in dialog
     assert "x-text=\"t('web.signals.functional_vs_expert_explanation')\"" in dialog
     assert "x-text=\"t('web.signals.none_functional')\"" in dialog
+
+
+async def test_the_signal_group_summary_suppresses_the_default_marker_and_ships_a_chevron(api):
+    """Fund 1 (Review der Nacharbeit, 2026-09-06): der Kommentar am
+    `.signal-group`-Block in `style.css` behauptete, der Standard-Marker
+    eines `<summary>` bleibe dort absichtlich sichtbar - dabei unterdrueckte
+    keine der Regeln ihn: kein `list-style: none`, keine
+    `::-webkit-details-marker`-Regel, kein Chevron. Ausgeliefert wurde also
+    das browsereigene Aufklapp-Dreieck (Firefox: Umriss, WebKit: gefuellt) -
+    das Gegenteil dessen, was der Kommentar behauptete.
+
+    Dieser Test verankert das Gegenstueck: dieselbe doppelte Unterdrueckung
+    wie bei `.tile-menu > summary` und `.projectsync-device summary`, plus
+    den ersetzenden Chevron (`#i-chevron`), der sich beim Aufklappen dreht.
+    Er belegt nur, dass Markup und Stylesheet die dafuer noetigen Knoten
+    bzw. Regeln tragen - nicht, dass eine Rendering-Engine daraus
+    tatsaechlich einen unsichtbaren Standardmarker und einen sichtbaren,
+    rotierenden Pfeil macht; dafuer braeuchte es einen echten Browser. Ein
+    kuenftiger Edit, der nur eine Haelfte der Doppelung entfernt und den
+    Kommentar stehen laesst, faellt hier durch."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    dialog = _signals_dialog(markup)
+    assert 'class="icon chevron" aria-hidden="true"' in dialog
+    assert 'href="#i-chevron"' in dialog
+
+    css = (await client.get("/static/style.css")).text
+    block_start = css.index("/* Die beiden Signalgruppen im Modal.")
+    block = css[block_start:]
+    assert ".signal-group > summary {" in block
+    assert "list-style: none;" in block
+    assert ".signal-group > summary::-webkit-details-marker {" in block
+    assert ".signal-group > summary .chevron {" in block
+    assert ".signal-group[open] > summary .chevron {" in block
+    assert "transform: rotate(90deg);" in block
+    assert "ERWUENSCHT" not in block

@@ -1598,22 +1598,39 @@ footer.hint-block {
 /* Die beiden Signalgruppen im Modal. Der Standard-Marker eines `<summary>`
  * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
  * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren
- * WebKit-Fassungen - dieselbe Doppelung wie bei `.tile-menu > summary`.
- * Hier bleibt der Marker aber ERWUENSCHT, weil beide Gruppen wirklich
- * auf- und zuklappbar sind: nur der eigene Chevron ersetzt ihn, damit er
- * in beiden Browserfamilien gleich aussieht. */
+ * WebKit-Fassungen - dieselbe Doppelung wie bei `.tile-menu > summary`
+ * und `.projectsync-device summary`. An dessen Stelle tritt derselbe
+ * Chevron (`#i-chevron`), der sich beim Aufklappen um 90 Grad dreht -
+ * so sieht der Marker in beiden Browserfamilien gleich aus. */
 .signal-group {
   margin-top: 1rem;
 }
 
 .signal-group > summary {
+  display: flex;
+  align-items: center;
   cursor: pointer;
   font-weight: 600;
   padding: 0.3rem 0;
+  list-style: none;
+}
+
+.signal-group > summary::-webkit-details-marker {
+  display: none;
 }
 
 .signal-group > summary .muted {
   color: var(--text-muted);
   font-weight: 400;
   margin-left: 0.35rem;
+}
+
+.signal-group > summary .chevron {
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.signal-group[open] > summary .chevron {
+  transform: rotate(90deg);
 }

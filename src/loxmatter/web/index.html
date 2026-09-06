@@ -1607,6 +1607,14 @@
                   <summary>
                     <span x-text="group.title"></span>
                     <span class="muted" x-text="'(' + group.signals.length + ')'"></span>
+                    <!-- `aria-hidden` wie am Kebab-Icon und am Schliessen-Knopf
+                         des Modals, NICHT wie am aelteren Chevron der
+                         Projektdatei-Sync-Aufklapper: ein dekoratives Icon in
+                         einem bereits benannten Bedienelement (die `<summary>`
+                         traegt Gruppentitel und Anzahl) darf dem
+                         Accessibility-Baum keinen zweiten, konkurrierenden
+                         Namen liefern. -->
+                    <svg class="icon chevron" aria-hidden="true"><use href="#i-chevron"></use></svg>
                   </summary>
                   <p
                     class="hint"
