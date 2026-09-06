@@ -1412,8 +1412,11 @@
       und der Mouseup beim Ueberziehen auf dem Backdrop landet - `.self`
       prueft nur das Klick-Ziel, nicht wo die Geste angefangen hat. Deshalb
       merkt sich `@mousedown` in `signalsModalBackdropMousedown` (app.js),
-      ob der Mousedown SELBST auch schon auf dem `<dialog>` war, und der
-      Klick-Handler schliesst nur, wenn beides zutrifft. Das Feld ist reine
+      ob der Mousedown SELBST auf dem Backdrop lag. Der Klick-Handler
+      schliesst nur, wenn DREI Dinge zutreffen: `.self` (das Klick-Ziel ist
+      das `<dialog>`), dieses gemerkte Feld, und `isBackdropEvent` fuer den
+      Klick selbst - die Lage zaehlt also an beiden Enden der Geste, nicht
+      nur am Anfang (Begruendung dafuer weiter unten). Das Feld ist reine
       Praesentations-Buchfuehrung fuer diese eine Geste, kein Modal-Zustand
       wie `signalsModalDevice` - `@close` bleibt dessen einzige
       Ruecksetzstelle, siehe oben.
