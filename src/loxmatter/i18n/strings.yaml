@@ -151,8 +151,8 @@ cli.export.echo_skipped_signals:
   en: "{count} signals not exportable (lists, structs, text, null values)"
   de: "{count} Signale nicht exportierbar (Listen, Strukturen, Texte, Nullwerte)"
 cli.export.echo_hidden_signals:
-  en: "{count} signals held back as expert (WebUI, \"Signals\" view, \"Expert\" section – enable them individually there)"
-  de: "{count} Signale als Experte zurückgehalten (Weboberfläche, Ansicht „Signale“, Block „Experte“ – dort einzeln freischaltbar)"
+  en: "{count} signals held back as expert (WebUI, tile menu → \"Edit signals…\" → \"Expert\" section – enable them individually there)"
+  de: "{count} Signale als Experte zurückgehalten (Weboberfläche, Kachelmenü → „Signale bearbeiten…“ → Block „Experte“ – dort einzeln freischaltbar)"
 cli.export.fail_write_first_file:
   en: "{path} could not be written: {exc}. No file has been created yet."
   de: "{path} konnte nicht geschrieben werden: {exc}. Es wurde noch keine Datei angelegt."
@@ -953,8 +953,8 @@ web.export.col_last_exported:
   en: "Last exported"
   de: "Zuletzt exportiert"
 web.export.expert_withheld_explanation:
-  en: "\"Held back as expert\" signals would be technically exportable but don't belong to the device type by default (Signals view, \"Expert\" section) – each one can be enabled individually there."
-  de: "„Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber standardmäßig nicht zum Gerätetyp gehören (Ansicht „Signale“, Block „Experte“) – dort lässt sich jedes einzeln freischalten."
+  en: "\"Held back as expert\" signals would be technically exportable but don't belong to the device type by default (tile menu → \"Edit signals…\" → \"Expert\" section) – each one can be enabled individually there."
+  de: "„Als Experte zurückgehalten“ sind Signale, die technisch exportierbar wären, aber standardmäßig nicht zum Gerätetyp gehören (Kachelmenü → „Signale bearbeiten…“ → Block „Experte“) – dort lässt sich jedes einzeln freischalten."
 web.export.system_files_prefix:
   en: "System templates: "
   de: "Systemvorlagen: "

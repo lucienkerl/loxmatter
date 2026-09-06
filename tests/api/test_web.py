@@ -329,36 +329,44 @@ async def test_the_page_does_not_call_init_a_second_time(api):
     Der Regex erfasst `x-init="..."` UND `x-init='...'` - alle Fundstellen
     in dieser Codebasis sind heute doppelt zitiert, aber die Pruefung soll
     nicht stillschweigend an einer einfach zitierten Fundstelle vorbeilaufen
-    (Fund 2, Review der Nacharbeit, 2026-09-06)."""
+    (Fund 2, Review der Nacharbeit, 2026-09-06).
+
+    Die Schleife allein prueft nichts, wenn der Regex ins Leere trifft -
+    faende eine kuenftige `x-init`-Schreibweise (andere Anfuehrung, anderes
+    Attribut-Format) keinen Treffer mehr, liefe die Sperre stillschweigend
+    leer statt fehlzuschlagen. Der zusaetzliche `assert` unten haelt die
+    Sperre scharf, indem er mindestens einen Treffer verlangt (Fund 8,
+    Review der Nacharbeit, 2026-09-06)."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert 'x-data="app()"' in markup
-    for expression in re.findall(r"x-init=[\"']([^\"']*)[\"']", markup):
+    expressions = re.findall(r"x-init=[\"']([^\"']*)[\"']", markup)
+    assert expressions, "kein x-init in der ausgelieferten Seite gefunden"
+    for expression in expressions:
         assert "init(" not in expression, f"x-init ruft init() auf: {expression}"
 
 
 async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
     """Aufgabe 8: die Signalliste soll sich in „Funktional“ (offen) und
-    „Experte“ (zugeklappt, mit Anzahl, plus Schalter) gliedern, statt alle
-    159 Signale eines Geraets flach untereinander zu zeigen.
+    „Experte“ (zugeklappt, mit Anzahl) gliedern, statt alle 159 Signale
+    eines Geraets flach untereinander zu zeigen.
 
     **Was dieser Test belegt und was nicht.** Belegt wird nur, dass die
     ausgelieferten Dateien (`index.html`, `app.js`) die dafuer noetigen
-    Bausteine enthalten: beide Ueberschriften, den Schaltertext und - im
-    Skript - dass beide Listen tatsaechlich ueber `signal.functional`
-    unterschieden werden statt ueber eine zweite, in JavaScript
-    nachgebaute Relevanz-Regel. NICHT belegt wird, dass Alpine daraus zur
-    Laufzeit tatsaechlich zwei getrennte, korrekt gefilterte Bloecke
-    macht, dass der Schalter beim Klicken etwas umschaltet, oder dass die
-    Gliederung fuer ein echtes Geraet richtig aussieht - dafuer braeuchte
-    es eine Browser-Engine, die es in dieser Suite nicht gibt (siehe
+    Bausteine enthalten: beide Ueberschriften und - im Skript - dass beide
+    Listen tatsaechlich ueber `signal.functional` unterschieden werden
+    statt ueber eine zweite, in JavaScript nachgebaute Relevanz-Regel.
+    NICHT belegt wird, dass Alpine daraus zur Laufzeit tatsaechlich zwei
+    getrennte, korrekt gefilterte Bloecke macht, oder dass die Gliederung
+    fuer ein echtes Geraet richtig aussieht - dafuer braeuchte es eine
+    Browser-Engine, die es in dieser Suite nicht gibt (siehe
     `test_the_page_does_not_call_init_a_second_time` oben).
 
-    Aufgabe 12: die beiden Gruppentitel und der Schaltertext tragen seither
-    `t(...)` statt fester deutscher Literale - siehe
-    `test_the_signal_group_titles_and_toggle_are_translated` fuer die
-    Bindung selbst; hier bleibt nur der Beleg, dass die Gruppierung
-    (`signal.functional`) unveraendert ist."""
+    Aufgabe 12: die beiden Gruppentitel tragen seither `t(...)` statt
+    fester deutscher Literale - siehe
+    `test_the_signal_group_titles_are_translated` fuer die Bindung selbst;
+    hier bleibt nur der Beleg, dass die Gruppierung (`signal.functional`)
+    unveraendert ist."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert 't("web.signals.group_functional")' in script
@@ -1291,7 +1299,7 @@ async def test_the_signal_modal_static_text_is_translated(api):
     assert ">Schreiben<" not in markup
 
 
-async def test_the_signal_group_titles_and_toggle_are_translated(api):
+async def test_the_signal_group_titles_are_translated(api):
     """Aufgabe 12, Schritt 4: `signalGroupsFor`'s Gruppentitel (Objekt-
     Literale) laufen jetzt ueber `t("web.signals.group_functional")` /
     `t("web.signals.group_expert")` statt fester Literale "Funktional" /
@@ -2848,11 +2856,26 @@ async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api
     zaehlt dieser Test die Vorkommen, statt nur eines zu suchen.
 
     `@click.self` ist dazu Pflicht und kein Beiwerk: ein `<dialog>`
-    schliesst bei einem Klick auf den Backdrop NICHT von selbst."""
+    schliesst bei einem Klick auf den Backdrop NICHT von selbst.
+
+    Fund 12 (finale Branch-Review, 2026-09-06): `@click.self` allein
+    schliesst das Modal auch, wenn ein Mousedown IM Inhalt beginnt (etwa
+    beim Markieren eines Signaltitels) und der Mouseup beim Ueberziehen auf
+    dem Backdrop landet - das Klick-Ziel ist dann `<dialog>`, obwohl die
+    Geste im Inhalt anfing. `@mousedown.self` haelt seither fest, ob der
+    Mousedown SELBST schon auf dem Backdrop war; der Klick-Handler schliesst
+    nur noch, wenn beides zutrifft. `signalsModalBackdropMousedown` ist
+    dabei reine Praesentations-Buchfuehrung, nicht Teil des hier bewachten
+    Modal-Zustands - `@close` bleibt trotzdem die einzige Stelle, die
+    `signalsModalDevice` zuruecksetzt."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert '@close="signalsModalDevice = null"' in markup
-    assert '@click.self="$el.close()"' in markup
+    assert '@mousedown.self="signalsModalBackdropMousedown = true"' in markup
+    assert (
+        '@click.self="if (signalsModalBackdropMousedown) $el.close(); '
+        'signalsModalBackdropMousedown = false"' in markup
+    )
     assert markup.count("signalsModalDevice = null") == 1
 
 
@@ -2900,6 +2923,32 @@ async def test_open_signals_modal_shows_the_dialog_only_after_alpine_rendered(ap
     assert "this.$nextTick(() => this.$refs.signalsModal.showModal());" in body
 
 
+async def test_opening_the_signals_modal_clears_a_stale_error_from_another_device(api):
+    """Fund 2 (finale Branch-Review, 2026-09-06): `signalsError` ist
+    seitenweit, das Modal aber pro Geraet. `startApp` laedt die Signale
+    aller Geraete parallel, und jedes `loadSignals` leert `signalsError`
+    nur VOR seinem eigenen Abruf - scheitert Geraet A und laedt Geraet B
+    danach erfolgreich, bleibt Geraet As Fehler stehen. Oeffnet man danach
+    das Modal fuer ein drittes, sauber geladenes Geraet, haengt der
+    namenlose Fehler ueber dessen Liste, obwohl er nichts mit diesem Geraet
+    zu tun hat. `openSignalsModal` muss den Fehler deshalb selbst raeumen,
+    als allererste Anweisung.
+
+    Das ist KEIN zweiter Ruecksetzer von `signalsModalDevice` - jene Regel
+    (siehe `test_the_signals_modal_has_exactly_one_place_that_resets_its_state`)
+    betrifft ausschliesslich dieses eine Feld; `signalsError` ist
+    eigenstaendiger Zustand."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    start = script.index("openSignalsModal(device) {")
+    end = script.index("\n    },", start)
+    body = script[start:end]
+    assert "this.signalsError = null;" in body
+    assert body.index("this.signalsError = null;") < body.index(
+        "this.signalsModalDevice = device.id;"
+    )
+
+
 async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
     """Entwurf Abschnitt 4, "Wenn das Geraet verschwindet".
 
@@ -2913,6 +2962,46 @@ async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
     body = script[start:end]
     assert "if (this.signalsModalDevice === device.id) {" in body
     assert "this.closeSignalsModal();" in body
+
+
+async def test_losing_authentication_closes_an_open_signals_modal(api):
+    """Fund 3 (finale Branch-Review, 2026-09-06): das `<dialog>` steht
+    bewusst ausserhalb von `<template x-if="stringsReady && authenticated">`
+    (siehe index.html), damit `$refs.signalsModal` immer aufloesbar ist -
+    aber nichts schloss es bisher, wenn `authenticated` auf `false`
+    kippt. Faellt die Sitzung waehrend das Modal offen ist (Bruecken-
+    Neustart via `handleLiveDisconnect` -> `loadAuthInfo`, oder eine 401
+    aus einer Modal-Aktion via `noteAuthError`), rendert Alpine den
+    Login-Bildschirm HINTER einem offenen `showModal()`-Dialog: alles
+    ausserhalb davon ist inert, Passwortfeld und Fehlerbanner unerreichbar.
+
+    Dieser Test belegt nur, dass beide Stellen, an denen `authenticated`
+    auf `false` gesetzt wird, `closeSignalsModal()` aufrufen - NICHT, dass
+    ein Browser daraus tatsaechlich einen erreichbaren Login-Bildschirm
+    macht; dafuer braeuchte es eine echte Rendering-Engine (siehe
+    `test_the_page_does_not_call_init_a_second_time` oben)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    note_auth_error_start = script.index("noteAuthError(error) {")
+    note_auth_error_end = script.index("\n    },", note_auth_error_start)
+    note_auth_error_body = script[note_auth_error_start:note_auth_error_end]
+    assert "this.authenticated = false;" in note_auth_error_body
+    assert "this.closeSignalsModal();" in note_auth_error_body
+
+    load_auth_info_start = script.index("async loadAuthInfo() {")
+    load_auth_info_end = script.index("\n    },", load_auth_info_start)
+    load_auth_info_body = script[load_auth_info_start:load_auth_info_end]
+    assert "this.authenticated = info.authenticated;" in load_auth_info_body
+    assert "if (!this.authenticated) {" in load_auth_info_body
+    assert "this.closeSignalsModal();" in load_auth_info_body
+    # Der Aufruf haengt am `if (!this.authenticated)`-Zweig, nicht am
+    # Erfolgsfall - ein Fund, der nur den blossen `in`-Test bestuende, liesse
+    # `closeSignalsModal()` auch dann durchgehen, wenn er unbedingt VOR der
+    # Bedingung stuende und das Modal bei jedem Aufruf schloesse.
+    guard_index = load_auth_info_body.index("if (!this.authenticated) {")
+    call_index = load_auth_info_body.index("this.closeSignalsModal();")
+    assert guard_index < call_index
 
 
 def _signals_dialog(markup: str) -> str:
@@ -2979,6 +3068,32 @@ async def test_both_signal_groups_share_one_details_template(api):
     assert ":open=" not in dialog
     assert "x-text=\"t('web.signals.functional_vs_expert_explanation')\"" in dialog
     assert "x-text=\"t('web.signals.none_functional')\"" in dialog
+
+
+async def test_the_signals_modal_head_ships_a_labelled_heading_and_a_close_button(api):
+    """Fund 4 und Fund 5 (finale Branch-Review, 2026-09-06): weder die
+    Ueberschrift noch der Schliessen-Knopf noch das `#i-close`-Symbol waren
+    bisher irgendwo verankert - ein Edit, der den Knopf loescht (den
+    einzigen immer erreichbaren Ausweg aus dem Dialog ausser Escape), liefe
+    an dieser Suite ungebremst vorbei.
+
+    Zugleich der Beleg fuer Fund 4: das `<dialog>` traegt
+    `aria-labelledby="signals-modal-heading"`, und genau diese `id` sitzt
+    an der `<h2>` - ohne das haette eine Screenreader-Ansage "Dialog" ohne
+    erkennbares Subjekt. Anders als das `aria-labelledby` am Kachel-Menue
+    (das seine id aus `device.id` ableiten muss, weil es einmal PRO KACHEL
+    existiert) ist eine feste id hier korrekt, weil es dieses `<dialog>`
+    nur ein einziges Mal im Dokument gibt."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    assert 'aria-labelledby="signals-modal-heading"' in dialog
+    assert 'id="signals-modal-heading"' in dialog
+    assert (
+        "x-text=\"t('web.signals.modal_heading', { device: signalsModalDeviceObject().label })\""
+        in dialog
+    )
+    assert ":aria-label=\"t('web.signals.modal_close')\"" in dialog
+    assert 'href="#i-close"' in dialog
 
 
 async def test_the_signal_group_summary_suppresses_the_default_marker_and_ships_a_chevron(api):

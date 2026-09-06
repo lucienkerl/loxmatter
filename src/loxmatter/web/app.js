@@ -403,6 +403,10 @@ function app() {
     // Liste auf. Zurueckgesetzt wird dieses Feld an GENAU EINER Stelle, dem
     // `@close` des `<dialog>` in index.html - siehe den Kommentar dort.
     signalsModalDevice: null,
+    // Reine Praesentations-Buchfuehrung fuer den Backdrop-Klick des Modals,
+    // KEIN Modal-Zustand wie `signalsModalDevice` oben - siehe der
+    // `@mousedown.self`/`@click.self`-Kommentar am `<dialog>` in index.html.
+    signalsModalBackdropMousedown: false,
 
     // --- Einstellungen ---------------------------------------------------
     // `bridgeSettings` ist der zuletzt vom Server geladene Stand (auch von
@@ -582,6 +586,12 @@ function app() {
       if (error instanceof UnauthorizedError) {
         this.authenticated = false;
         this.authError = error.message;
+        // Diese 401 kann aus einer Modal-Aktion kommen (saveTitle,
+        // toggleExported, toggleResend, writeRaw). Ohne diesen Aufruf bliebe
+        // das Signal-Modal offen, waehrend Alpine dahinter auf den
+        // Login-Bildschirm umschaltet - alles ausserhalb des <dialog> waere
+        // dann inert und weder Passwortfeld noch Fehlerbanner erreichbar.
+        this.closeSignalsModal();
       }
     },
 
@@ -591,6 +601,20 @@ function app() {
         const info = await requestJson("GET", "/auth-info");
         this.passwordSet = info.password_set;
         this.authenticated = info.authenticated;
+        if (!this.authenticated) {
+          // Faellt die Sitzung hier weg (z. B. Bruecken-Neustart waehrend
+          // `handleLiveDisconnect` diese Funktion erneut aufruft), reisst
+          // Alpine die App gleich auf den Login-Bildschirm um - aber das
+          // <dialog> steht ausserhalb von <template x-if="... &&
+          // authenticated"> (siehe dort) und bleibt deshalb offen stehen,
+          // wenn wir es nicht selbst schliessen. Ein offener Dialog vor dem
+          // Login-Bildschirm macht Passwortfeld und Fehlerbanner
+          // unerreichbar, weil alles ausserhalb davon inert ist.
+          // closeSignalsModal() ist hier auch dann unbedenklich, wenn gar
+          // kein Modal offen ist: close() auf einem bereits geschlossenen
+          // <dialog> ist ein no-op.
+          this.closeSignalsModal();
+        }
         // Loescht einen aelteren Fehlerbanner ("Die Bruecke ist nicht
         // erreichbar" o. ae.) im Erfolgsfall - diese Funktion lief frueher
         // nur einmal je Seitenaufbau, seit `handleLiveDisconnect` laeuft sie
@@ -889,7 +913,7 @@ function app() {
     // Kurzliste fuer die Geraete-Ansicht: nur die funktionalen Signale
     // (`signal.functional`, aus `profiles.relevance.is_functional` -
     // Aufgabe 8), und davon nur die ersten paar - der vollstaendige Baum
-    // (inklusive Experte-Block) steht in der Signale-Ansicht. Die Deckelung
+    // (inklusive Experte-Block) steht im Signal-Modal. Die Deckelung
     // bleibt trotzdem bestehen, auch wenn die funktionale Menge fuer die
     // beiden bislang bekannten Geraete klein ist (5 bzw. 17): ein Geraet mit
     // mehr funktionalen Signalen als hier Platz haben, ist von dieser Regel
@@ -1585,6 +1609,14 @@ function app() {
      * schon heute `this.$refs` benutzt.
      */
     openSignalsModal(device) {
+      // `signalsError` ist seitenweit, das Modal aber pro Geraet: ohne
+      // diesen Reset ueberlebt der Fehler eines anderen Geraets (z. B. aus
+      // dem parallelen Laden in `startApp`, oder aus `saveTitle` nach dem
+      // Escape-bedingten Blur) den Geraetewechsel und haengt unbenannt ueber
+      // einer sauber geladenen Liste. Das ist KEIN zweiter Reset von
+      // `signalsModalDevice` - jene Regel betrifft ausschliesslich dieses
+      // eine Feld, `signalsError` ist ein eigenstaendiger Zustand.
+      this.signalsError = null;
       this.signalsModalDevice = device.id;
       this.$nextTick(() => this.$refs.signalsModal.showModal());
     },

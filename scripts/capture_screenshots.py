@@ -107,8 +107,7 @@ def capture(page: Page) -> None:
     # funktionalen Signalen - das Bild begann mitten in einer angeschnittenen
     # Zeile, ohne Ueberschrift, ohne erkennbar zu sein, WAS man da sieht. Die
     # erste Kachel (Hallway button) hat funktional genug Zeilen, um das Bild
-    # zu fuellen; der zugeklappte Experte-Aufklapper am Fuss zeigt nebenbei,
-    # dass es noch mehr gibt. Der Bildlauf steht deshalb ausdruecklich oben:
+    # zu fuellen. Der Bildlauf steht deshalb ausdruecklich oben:
     # Ueberschrift, Schluessel-Hinweis und die ersten Adressen mit ihren
     # Export-Haken sind der Punkt dieses Bildes.
     page.eval_on_selector("dialog.signals-modal", "el => el.scrollTo(0, 0)")
