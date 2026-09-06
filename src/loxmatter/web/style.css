@@ -1594,3 +1594,26 @@ footer.hint-block {
   color: var(--text);
   border-color: var(--border);
 }
+
+/* Die beiden Signalgruppen im Modal. Der Standard-Marker eines `<summary>`
+ * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
+ * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren
+ * WebKit-Fassungen - dieselbe Doppelung wie bei `.tile-menu > summary`.
+ * Hier bleibt der Marker aber ERWUENSCHT, weil beide Gruppen wirklich
+ * auf- und zuklappbar sind: nur der eigene Chevron ersetzt ihn, damit er
+ * in beiden Browserfamilien gleich aussieht. */
+.signal-group {
+  margin-top: 1rem;
+}
+
+.signal-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.3rem 0;
+}
+
+.signal-group > summary .muted {
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 0.35rem;
+}

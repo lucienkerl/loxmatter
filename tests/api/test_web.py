@@ -306,19 +306,30 @@ async def test_the_page_does_not_call_init_a_second_time(api):
     nur die zuletzt geoeffnete in `this.socket` landete; die andere blieb
     unsichtbar und lief bis zum Schliessen des Tabs weiter.
 
-    **Was dieser Test belegt und was nicht.** Er belegt, dass die
-    ausgelieferte Seite `init()` nicht ausdruecklich ein zweites Mal
-    aufruft. Er belegt NICHT, dass ein echter Seitenaufruf am Ende genau
-    einen Beobachter hinterlaesst - dafuer braeuchte es eine Browser-Engine,
-    die Alpine tatsaechlich ausfuehrt, und die gibt es in dieser Suite
-    nicht (`Runtime.observer_count()` nach einem simulierten Aufruf waere
-    das direkte Mass gewesen). Ein zweiter Aufruf auf einem anderen Weg -
-    ein `x-init` auf einem verschachtelten Element, ein `Alpine.start()` von
-    Hand, ein zweites `x-data="app()"` - liefe an dieser Sperre vorbei."""
+    **Was dieser Test belegt und was nicht.** Er belegt, dass keiner der
+    ausgelieferten `x-init`-Ausdruecke `init()` aufruft. Er belegt NICHT,
+    dass ein echter Seitenaufruf am Ende genau einen Beobachter
+    hinterlaesst - dafuer braeuchte es eine Browser-Engine, die Alpine
+    tatsaechlich ausfuehrt, und die gibt es in dieser Suite nicht
+    (`Runtime.observer_count()` nach einem simulierten Aufruf waere das
+    direkte Mass gewesen). Ein zweiter Aufruf auf einem anderen Weg - ein
+    `Alpine.start()` von Hand, ein zweites `x-data="app()"` - liefe an
+    dieser Sperre vorbei.
+
+    2026-09-05/06: die Signalliste im Geraete-Modal nutzt seither selbst
+    `x-init`, um den Anfangszustand ihrer beiden `<details>`-Gruppen zu
+    setzen (siehe `index.html`), ohne mit dem hier bewachten Fehler etwas
+    zu tun zu haben. Die Sperre prueft daher seither nicht mehr, ob
+    `x-init` ueberhaupt vorkommt, sondern nur noch, ob einer seiner
+    Ausdruecke `init(` aufruft - fuer den bewachten Fehler ist das
+    mindestens so scharf wie vorher: ein `x-init="init()"` auf einem
+    verschachtelten Element, das die alte pauschale Pruefung nur zufaellig
+    mit erfasste, faellt der neuen absichtlich auf."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert 'x-data="app()"' in markup
-    assert "x-init" not in markup
+    for expression in re.findall(r'x-init="([^"]*)"', markup):
+        assert "init(" not in expression, f"x-init ruft init() auf: {expression}"
 
 
 async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
@@ -2893,3 +2904,69 @@ async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
     body = script[start:end]
     assert "if (this.signalsModalDevice === device.id) {" in body
     assert "this.closeSignalsModal();" in body
+
+
+def _signals_dialog(markup: str) -> str:
+    """Der Inhalt des Signal-Modals, ohne den Rest der Seite.
+
+    Ein blosses `in markup` wuerde die alte Signal-Section mitzaehlen,
+    solange es sie noch gibt (Task 3 loescht sie erst danach) - und traefe
+    danach immer noch die Geraetekacheln, die dieselben Helfer benutzen."""
+    start = markup.index("<dialog")
+    return markup[start : markup.index("</dialog>", start)]
+
+
+async def test_the_signals_modal_carries_the_complete_signal_row(api):
+    """Entwurf Abschnitt 2: die Signalzeile zieht 1:1 um, ohne
+    Funktionsverlust - Titel, Export, Resend und Rohwert-Schreiben
+    inbegriffen. Genau diese vier Schreibwege sind das, was die alte
+    Ansicht als einzige konnte; faellt einer beim Umzug herunter, ist er
+    nirgends mehr erreichbar."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    assert '@change="saveTitle(signal)"' in dialog
+    assert '@change="toggleExported(signal)"' in dialog
+    assert '@change="toggleResend(signal)"' in dialog
+    assert '@click="writeRaw(signal)"' in dialog
+    assert ":title=\"t('web.signals.key_tooltip')\"" in dialog
+    assert "x-text=\"t('web.signals.key_hint')\"" in dialog
+    assert "x-text=\"t('web.signals.load_button')\"" in dialog
+
+
+async def test_the_signals_error_banner_lives_inside_the_modal(api):
+    """Entwurf Abschnitt 4, Punkt 2: `signalsError` steht IM Modal.
+
+    Ein `<dialog>` im Top-Layer verdeckt alles darunter samt Backdrop - ein
+    Fehlerbanner ausserhalb waere waehrend der einzigen Aktion, die es
+    ausloesen kann (Titel speichern, Haken setzen, Rohwert schreiben),
+    unsichtbar. Ein unsichtbarer Fehler ist nach Spec 8.1 schlimmer als
+    keiner."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    assert 'x-show="signalsError"' in dialog
+    assert 'x-text="signalsError"' in dialog
+
+
+async def test_both_signal_groups_share_one_details_template(api):
+    """Entwurf Abschnitt 4, Punkt 5: EINE Vorlage fuer beide Gruppen.
+
+    Zwei Formen (Block hier, `<details>` dort) hiessen zwei Zweige und in
+    jedem eine eigene Kopie der Signalzeilen-Vorlage - genau die
+    Verdopplung, die `signalGroupsFor` abgeschafft hat (51 doppelte Zeilen,
+    siehe dessen Kommentar in app.js).
+
+    Der Startzustand laeuft ueber `x-init` und NICHT ueber ein gebundenes
+    `:open`: Alpine wertet Bindungen bei jeder Aenderung ihrer
+    Abhaengigkeiten neu aus, und `signalGroupsFor` haengt an
+    `signalsByDevice` - ein gespeicherter Signaltitel schriebe ein `:open`
+    neu und klappte die gerade geoeffnete Expertengruppe wortlos wieder zu.
+    Dieser Test ist die einzige Bremse gegen ein spaeteres, gut gemeintes
+    Vereinfachen zu `:open`."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    assert 'x-for="group in signalGroupsFor(signalsModalDevice)"' in dialog
+    assert dialog.count("<details") == 1
+    assert 'x-init="$el.open = !group.collapsible"' in dialog
+    assert ":open=" not in dialog
+    assert "x-text=\"t('web.signals.functional_vs_expert_explanation')\"" in dialog
+    assert "x-text=\"t('web.signals.none_functional')\"" in dialog

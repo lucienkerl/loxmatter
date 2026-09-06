@@ -1563,6 +1563,137 @@
               @click="closeSignalsModal()"
             ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
           </div>
+
+          <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
+          <p class="hint" x-text="t('web.signals.key_hint')"></p>
+
+          <!-- Bleibt als Wiederholung fuer den Fehlerfall: im Normalfall hat
+               `startApp` die Signale jedes Geraets laengst geladen, dieser
+               Knopf zeigt sich also nur, wenn genau dieser eine Abruf
+               gescheitert ist (der Grund steht im Banner darueber). -->
+          <button
+            x-show="!signalsByDevice[signalsModalDevice]"
+            @click="loadSignals(signalsModalDevice)"
+            x-text="t('web.signals.load_button')"
+          ></button>
+
+          <template x-if="signalsByDevice[signalsModalDevice]">
+            <div>
+              <!--
+                EINE Vorlage fuer beide Gruppen. Der naheliegende Entwurf -
+                funktional als schlichter Block, Experte als `<details>` -
+                braeuchte zwei Zweige und in jedem eine eigene Kopie der
+                Signalzeile darunter. Genau diese Verdopplung hat
+                `signalGroupsFor` (app.js) abgeschafft: 51 byte-identische
+                Zeilen, die bei jeder Aenderung an beiden Stellen
+                nachgezogen werden mussten.
+
+                Der Auf-/Zu-Zustand lebt im DOM, nicht in Alpine - dasselbe
+                Muster wie beim Kachel-Menue, und der Grund, warum der alte
+                globale Schalter `showExpertSignals` ersatzlos entfaellt.
+
+                `x-init` statt `:open` ist Pflicht, kein Stil: Alpine wertet
+                eine BINDUNG bei jeder Aenderung ihrer Abhaengigkeiten neu
+                aus, und `signalGroupsFor` haengt an `signalsByDevice` - ein
+                gespeicherter Signaltitel schriebe ein `:open` neu und
+                klappte die gerade geoeffnete Expertengruppe wortlos wieder
+                zu. `x-init` laeuft einmal je Element; da `:key` mit
+                `group.key` stabil ist, baut Alpine den Knoten bei einem
+                Re-Render nicht neu auf, und der Klick des Nutzers bleibt
+                stehen. NICHT zu `:open` vereinfachen.
+              -->
+              <template x-for="group in signalGroupsFor(signalsModalDevice)" :key="group.key">
+                <details class="signal-group" x-init="$el.open = !group.collapsible">
+                  <summary>
+                    <span x-text="group.title"></span>
+                    <span class="muted" x-text="'(' + group.signals.length + ')'"></span>
+                  </summary>
+                  <p
+                    class="hint"
+                    x-show="group.collapsible"
+                    x-text="t('web.signals.functional_vs_expert_explanation')"
+                  ></p>
+                  <p
+                    class="hint"
+                    x-show="!group.collapsible && group.signals.length === 0"
+                    x-text="t('web.signals.none_functional')"
+                  ></p>
+                  <template x-for="signal in group.signals" :key="signal.key">
+                    <div class="device-controls">
+                      <div class="row">
+                        <span
+                          class="key"
+                          :title="t('web.signals.key_tooltip')"
+                          x-text="signal.key"
+                        ></span>
+                        <input
+                          type="text"
+                          :value="signal.title"
+                          @input="titleDrafts[signal.key] = $event.target.value"
+                          @change="saveTitle(signal)"
+                        />
+                        <span class="hint" x-text="signal.path"></span>
+                        <!--
+                          Wann der Wert zuletzt kam, steht im `title` - nicht
+                          daneben im Textfluss (2026-09-03). Eine Angabe wie
+                          "vor 7 s" aendert jede Sekunde ihre Breite und
+                          schiebt damit die ganze Zeile; der Blick folgt dann
+                          der Bewegung statt der Aenderung. Die zeigt
+                          `value-fresh`: der Wert leuchtet kurz auf und
+                          verblasst wieder, ohne dass sich am Aufbau etwas
+                          bewegt.
+                        -->
+                        <span
+                          class="value"
+                          :class="{ 'value-fresh': signalIsFresh(signal) }"
+                          :title="signalAgeTitle(signal)"
+                          x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
+                        ></span>
+                        <label x-show="signal.exportable">
+                          <input
+                            type="checkbox"
+                            :checked="signal.exported"
+                            @change="toggleExported(signal)"
+                          />
+                          <span x-text="t('web.signals.export_checkbox')"></span>
+                        </label>
+                        <label x-show="signal.exportable">
+                          <input
+                            type="checkbox"
+                            :checked="signal.resend"
+                            @change="toggleResend(signal)"
+                          />
+                          <span x-text="t('web.signals.resend_checkbox')"></span>
+                        </label>
+                        <span
+                          class="badge warn"
+                          x-show="!signal.exportable"
+                          x-text="signal.reason"
+                        ></span>
+                      </div>
+                      <div class="row" x-show="signal.kind === 'attribute'">
+                        <input
+                          type="text"
+                          :placeholder="t('web.signals.raw_write_placeholder')"
+                          @input="rawWriteDrafts[signal.key] = $event.target.value"
+                        />
+                        <button
+                          @click="writeRaw(signal)"
+                          :disabled="rawWriteBusyKey === signal.key"
+                          x-text="t('web.signals.raw_write_submit')"
+                        ></button>
+                        <span
+                          x-show="rawWriteMessages[signal.key]"
+                          :class="rawWriteMessageClass(signal)"
+                          x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
+                        ></span>
+                      </div>
+                    </div>
+                  </template>
+                </details>
+              </template>
+            </div>
+          </template>
         </div>
       </template>
     </dialog>
