@@ -1433,6 +1433,13 @@ function app() {
     },
 
     liveValueOf(signal) {
+      // Kein Signal, kein Wert. `formatValue` macht daraus den Strich, den
+      // es fuer `undefined` ohnehin schon fuehrt - die Kachel zeigt "-",
+      // statt dass der Ausdruck wirft. Siehe `signalIsFresh` fuer den
+      // Grund, warum hier ueberhaupt `null` ankommt.
+      if (!signal) {
+        return undefined;
+      }
       // Direkter Zugriff, kein `hasOwnProperty` - siehe `isOnline`. Genau
       // hier war der Fehler am sichtbarsten: die Werte bewegten sich nicht.
       const live = this.liveValues[signal.key];
@@ -1576,6 +1583,9 @@ function app() {
      * Breite und schiebt die Zeile hin und her. Das zog den Blick auf die
      * Bewegung statt auf die Aenderung, um die es geht (2026-09-03). */
     signalSeenText(signal) {
+      if (!signal) {
+        return "";
+      }
       return this.sinceText(this.liveSeenAt[signal.key]);
     },
 
@@ -1584,6 +1594,20 @@ function app() {
      * sich am Aufbau der Zeile irgendetwas bewegt. Liest `nowTick`, damit
      * Alpine die Klasse wieder loswird, wenn die Zeit um ist. */
     signalIsFresh(signal) {
+      // `null` ist hier ein GUELTIGES Argument, kein Programmierfehler:
+      // `leadSignalFor` liefert es fuer jedes Geraet, dessen Signale noch
+      // nicht geladen sind - und das ist zwischen `GET /api/devices` und
+      // `GET /api/devices/<id>/signals` jedes Geraet, mindestens einen
+      // Rendering-Durchlauf lang (2026-09-06).
+      //
+      // Das `x-show` auf der Huelle in `index.html` fing das NICHT ab: es
+      // setzt nur `display`, es haelt Alpine nicht davon ab, die Ausdruecke
+      // der Kinder auszuwerten. Ein verstecktes Element rechnet weiter mit.
+      // Deshalb liegt die Absicherung hier, an der einen Stelle, die jeder
+      // Aufrufer durchlaeuft - und nicht in drei Bindungen im Markup.
+      if (!signal) {
+        return false;
+      }
       const at = this.liveSeenAt[signal.key];
       return at !== undefined && this.nowTick - at < VALUE_FRESH_MS;
     },
@@ -1591,6 +1615,17 @@ function app() {
     /** Der Tooltip einer Wertzelle: wann der Wert zuletzt kam, oder ein
      * Hinweis, dass seit dem Laden der Seite nichts kam. */
     signalAgeTitle(signal) {
+      // Ohne Signal gibt es nichts zu datieren - ein leerer `title` laesst
+      // den Tooltip weg, statt den Hinweis aus
+      // `web.header.unchanged_since_load` ueber eine Zelle zu schreiben, die
+      // gar keinen Wert zeigt. Der Schluessel steht hier absichtlich statt
+      // seines deutschen Textes: `test_the_relative_time_and_header_helpers_
+      // are_translated` sperrt genau dieses Literal im Rumpf der Funktion,
+      // und eine Sperre gegen fest verdrahtete Uebersetzungen soll sich
+      // nicht daran abarbeiten, ob ein Kommentar sie zitiert.
+      if (!signal) {
+        return "";
+      }
       const text = this.signalSeenText(signal);
       return text
         ? t("web.header.last_updated", { text })
