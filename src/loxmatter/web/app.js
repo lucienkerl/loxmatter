@@ -396,12 +396,17 @@ function app() {
     rawWriteDrafts: {},
     rawWriteBusyKey: null,
     rawWriteMessages: {},
-    // Experte-Block (Aufgabe 8): standardmaessig zugeklappt, ein einziger
-    // globaler Schalter statt Zustand je Geraet - die Ansicht "Signale"
-    // zeigt ohnehin alle Geraete auf einmal untereinander, ein Zustand pro
-    // Karte wuerde hier keinen zusaetzlichen Nutzen bringen, nur zusaetzliche
-    // Klicks.
-    showExpertSignals: false,
+    // Das Signal-Modal haelt die Geraete-ID, NICHT das Geraeteobjekt:
+    // `loadDevices` ersetzt `devices` vollstaendig, ein festgehaltenes
+    // Objekt waere danach eine Leiche mit veraltetem Namen und Raum.
+    // `signalsModalDeviceObject()` loest die ID gegen die jeweils aktuelle
+    // Liste auf. Zurueckgesetzt wird dieses Feld an GENAU EINER Stelle, dem
+    // `@close` des `<dialog>` in index.html - siehe den Kommentar dort.
+    signalsModalDevice: null,
+    // Reine Praesentations-Buchfuehrung fuer den Backdrop-Klick des Modals,
+    // KEIN Modal-Zustand wie `signalsModalDevice` oben - siehe der
+    // `@mousedown.self`/`@click.self`-Kommentar am `<dialog>` in index.html.
+    signalsModalBackdropMousedown: false,
 
     // --- Einstellungen ---------------------------------------------------
     // `bridgeSettings` ist der zuletzt vom Server geladene Stand (auch von
@@ -581,6 +586,12 @@ function app() {
       if (error instanceof UnauthorizedError) {
         this.authenticated = false;
         this.authError = error.message;
+        // Diese 401 kann aus einer Modal-Aktion kommen (saveTitle,
+        // toggleExported, toggleResend, writeRaw). Ohne diesen Aufruf bliebe
+        // das Signal-Modal offen, waehrend Alpine dahinter auf den
+        // Login-Bildschirm umschaltet - alles ausserhalb des <dialog> waere
+        // dann inert und weder Passwortfeld noch Fehlerbanner erreichbar.
+        this.closeSignalsModal();
       }
     },
 
@@ -590,6 +601,20 @@ function app() {
         const info = await requestJson("GET", "/auth-info");
         this.passwordSet = info.password_set;
         this.authenticated = info.authenticated;
+        if (!this.authenticated) {
+          // Faellt die Sitzung hier weg (z. B. Bruecken-Neustart waehrend
+          // `handleLiveDisconnect` diese Funktion erneut aufruft), reisst
+          // Alpine die App gleich auf den Login-Bildschirm um - aber das
+          // <dialog> steht ausserhalb von <template x-if="... &&
+          // authenticated"> (siehe dort) und bleibt deshalb offen stehen,
+          // wenn wir es nicht selbst schliessen. Ein offener Dialog vor dem
+          // Login-Bildschirm macht Passwortfeld und Fehlerbanner
+          // unerreichbar, weil alles ausserhalb davon inert ist.
+          // closeSignalsModal() ist hier auch dann unbedenklich, wenn gar
+          // kein Modal offen ist: close() auf einem bereits geschlossenen
+          // <dialog> ist ein no-op.
+          this.closeSignalsModal();
+        }
         // Loescht einen aelteren Fehlerbanner ("Die Bruecke ist nicht
         // erreichbar" o. ae.) im Erfolgsfall - diese Funktion lief frueher
         // nur einmal je Seitenaufbau, seit `handleLiveDisconnect` laeuft sie
@@ -758,17 +783,7 @@ function app() {
       } else {
         this.disconnectDiagnosticsLive();
       }
-      if (view === "signals") {
-        // Der vollstaendige Baum, nicht erst nach einem weiteren Klick pro
-        // Geraet - die "Signale laden"-Schaltflaeche in index.html bleibt
-        // trotzdem stehen, sie erscheint nur noch als Wiederholung fuer den
-        // Fall, dass ein einzelnes Geraet hier scheitert (`signalsError`).
-        await Promise.all(
-          this.devices
-            .filter((device) => !this.signalsByDevice[device.id])
-            .map((device) => this.loadSignals(device.id)),
-        );
-      } else if (view === "export") {
+      if (view === "export") {
         await this.loadExportStatus();
       } else if (view === "system") {
         await this.loadSystem();
@@ -898,7 +913,7 @@ function app() {
     // Kurzliste fuer die Geraete-Ansicht: nur die funktionalen Signale
     // (`signal.functional`, aus `profiles.relevance.is_functional` -
     // Aufgabe 8), und davon nur die ersten paar - der vollstaendige Baum
-    // (inklusive Experte-Block) steht in der Signale-Ansicht. Die Deckelung
+    // (inklusive Experte-Block) steht im Signal-Modal. Die Deckelung
     // bleibt trotzdem bestehen, auch wenn die funktionale Menge fuer die
     // beiden bislang bekannten Geraete klein ist (5 bzw. 17): ein Geraet mit
     // mehr funktionalen Signalen als hier Platz haben, ist von dieser Regel
@@ -1272,9 +1287,10 @@ function app() {
       }
     },
 
-    // Signale-Ansicht (Aufgabe 8): "Funktional" zeigt sofort, was
-    // `is_functional` als gewollt einstuft; "Experte" bleibt zugeklappt,
-    // bis `showExpertSignals` das global fuer alle Geraetekarten umschaltet
+    // Signal-Modal: "Funktional" zeigt sofort, was `is_functional` als
+    // gewollt einstuft; "Experte" bleibt zugeklappt, bis der Nutzer das
+    // `<details>` im Modal aufklappt (bis 2026-09-05 tat das ein globaler
+    // Schalter fuer alle Geraete zugleich)
     // - dieselbe Datengrundlage wie oben, nur ungefiltert nach der
     // jeweils anderen Bedingung. Keine der beiden Listen bildet die
     // Relevanz-Regel selbst nach: beide lesen nur `signal.functional`, das
@@ -1290,9 +1306,11 @@ function app() {
     // gegen `expertSignalsFor` - 51 Zeilen doppelt, die bei jeder
     // Aenderung zweimal angefasst werden mussten, ohne dass etwas ein
     // Auseinanderlaufen bemerkt haette. `collapsible` steuert in der
-    // Vorlage, ob ein Block hinter `showExpertSignals` versteckt ist und
-    // seine Anzahl in der Ueberschrift zeigt - der Rest (Zeilen-Markup,
-    // leer-Hinweis) ist fuer beide Gruppen identisch.
+    // Vorlage nur noch den Startzustand des `<details>` (funktional offen,
+    // Experte zu, siehe `x-init` in index.html) - der Rest (Zeilen-Markup,
+    // leer-Hinweis) ist fuer beide Gruppen identisch. Der erste Satz oben
+    // gilt seit dem Modal-Umbau doppelt: dort teilen sich beide Gruppen
+    // sogar dasselbe `<details>`-Markup, nicht nur dieselbe Zeilenvorlage.
     signalGroupsFor(deviceId) {
       return [
         { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },
@@ -1343,6 +1361,15 @@ function app() {
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
+        // Ohne das bliebe ein Dialog ueber einem Geraet offen stehen, das
+        // es nicht mehr gibt - und der `x-if`-Waechter im Modal machte ihn
+        // zu einem leeren Kasten ohne erkennbaren Grund. `close()` ist ein
+        // Nichtstun, wenn der Dialog gar nicht offen ist; die Abfrage steht
+        // trotzdem davor, damit ein Modal ueber einem ANDEREN Geraet nicht
+        // mit zugeht.
+        if (this.signalsModalDevice === device.id) {
+          this.closeSignalsModal();
+        }
         // Fund 1 (Re-Review 2026-09-05): loescht man das letzte Geraet
         // eines gefilterten Raums, verschwindet dessen Chip aus
         // `roomChips()`, aber ohne diesen Aufruf bliebe `roomFilter` auf
@@ -1559,6 +1586,86 @@ function app() {
     // ---------------------------------------------------------------------
     // Signale
     // ---------------------------------------------------------------------
+
+    signalsModalDeviceObject() {
+      return this.devices.find((device) => device.id === this.signalsModalDevice) || null;
+    },
+
+    /**
+     * Oeffnet das Signal-Modal fuer ein Geraet.
+     *
+     * Das `$nextTick` ist Pflicht, kein Stil: `showModal()` setzt den
+     * Anfangsfokus auf das erste fokussierbare Element IM Dialog, und das
+     * gibt es erst, nachdem Alpine den `x-if`-Inhalt aufgebaut hat. Ohne
+     * das Warten oeffnet der Dialog leer, der Fokus bleibt auf dem
+     * `<dialog>` selbst, und die erste Tab-Taste faengt wieder am
+     * Dokumentanfang an.
+     *
+     * `$refs` ist hier unbedenklich, obwohl der Kommentar am Kachel-Menue
+     * (index.html, Fund 3) ausdruecklich davon abraet: dessen Einwand
+     * trifft eine Registrierung, die PRO KACHEL laeuft und sich selbst
+     * ueberschreibt. Dieses `<dialog>` steht genau einmal im Dokument -
+     * dieselbe Lage wie bei `pinLogListToTop`, das aus demselben Grund
+     * schon heute `this.$refs` benutzt.
+     */
+    openSignalsModal(device) {
+      // `signalsError` ist seitenweit, das Modal aber pro Geraet: ohne
+      // diesen Reset ueberlebt der Fehler eines anderen Geraets (z. B. aus
+      // dem parallelen Laden in `startApp`, oder aus `saveTitle` nach dem
+      // Escape-bedingten Blur) den Geraetewechsel und haengt unbenannt ueber
+      // einer sauber geladenen Liste. Das ist KEIN zweiter Reset von
+      // `signalsModalDevice` - jene Regel betrifft ausschliesslich dieses
+      // eine Feld, `signalsError` ist ein eigenstaendiger Zustand.
+      this.signalsError = null;
+      this.signalsModalDevice = device.id;
+      this.$nextTick(() => this.$refs.signalsModal.showModal());
+    },
+
+    /**
+     * Schliesst das Modal ueber die native `close()`-Methode statt den
+     * Zustand direkt zu leeren: `close()` loest das `close`-Ereignis aus,
+     * und dessen Handler in index.html ist die eine Stelle, die
+     * `signalsModalDevice` zuruecksetzt. Wer hier zusaetzlich
+     * `this.signalsModalDevice = null` schriebe, haette wieder zwei
+     * Wahrheiten ueber denselben Zustand.
+     */
+    closeSignalsModal() {
+      this.$refs.signalsModal.close();
+    },
+
+    /**
+     * Ob ein Mausereignis auf dem BACKDROP des Modals liegt - und nicht auf
+     * dem Dialog selbst.
+     *
+     * Ein `<dialog>` im `showModal()`-Zustand hat als Backdrop ein
+     * `::backdrop`-Pseudoelement ueber dem ganzen Fenster; Mausereignisse
+     * darauf tragen das `<dialog>` als Ziel. `event.target === el` allein
+     * unterscheidet den Backdrop deshalb NICHT vom Dialog - auch dessen
+     * eigener Scrollbalken gehoert dem Element und liefert dasselbe Ziel.
+     *
+     * Der verlaessliche Unterschied ist die Lage: der Dialog belegt genau
+     * sein eigenes Rechteck, der Backdrop alles ausserhalb davon.
+     *
+     * Ein frueherer Versuch verglich stattdessen `offsetX` mit
+     * `clientWidth`. Das trennt nur einen Scrollbalken ab, der PLATZ
+     * RESERVIERT; bei einem ueberlagernden (macOS-Voreinstellung, misst
+     * 0 px) lief es ins Leere, und weder ein waagerechter Balken noch eine
+     * RTL-Anordnung waren abgedeckt. Der Rechteckvergleich braucht keine
+     * dieser drei Fallunterscheidungen - deshalb ersetzt er sie, statt sie
+     * einzeln nachzuruesten.
+     */
+    isBackdropEvent(event, el) {
+      if (event.target !== el) {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return (
+        event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom
+      );
+    },
 
     async loadSignals(deviceId) {
       this.signalsError = null;
