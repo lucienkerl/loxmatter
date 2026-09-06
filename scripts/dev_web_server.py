@@ -52,6 +52,16 @@ FIXTURES = Path(__file__).parent.parent / "tests" / "fixtures" / "nodes"
 
 DEMO_PASSWORD = "loxmatter-demo"
 
+# Fester Zeitpunkt fuer alles, was im Demo-Modus einen Zeitstempel bekommt.
+# Ohne ihn trugen `settings.png` und `export.png` die Wanduhr
+# des jeweiligen Laufs, und `capture_screenshots.py` erzeugte bei jedem
+# Aufruf neue Bilddateien, die sich einzig in dieser Uhrzeit unterschieden -
+# rund 700 KB Binaerrauschen pro Lauf, in dem eine echte Layout-Aenderung
+# untergegangen waere. Der Wert selbst ist beliebig, nur eben konstant; er
+# liegt bewusst weit in der Vergangenheit, damit "zuletzt exportiert" in der
+# Oberflaeche nicht wie "gerade eben" aussieht.
+DEMO_TIMESTAMP = "2026-01-15T09:30:00+00:00"
+
 # Reihenfolge bestimmt die Reihenfolge in der Geraeteliste - die Steckdose
 # zuerst, weil ihre Signalliste den Unterschied funktional/Experte am besten
 # zeigt (ueber hundert Signale, davon eine Handvoll funktional).
@@ -92,6 +102,15 @@ def _ensure_demo_devices(store: Store) -> list[int]:
     # Ein Geraet gilt als bereits exportiert, damit die Export-Vorschau beide
     # Faelle nebeneinander zeigt statt vier gleich aussehender Zeilen.
     store.mark_exported(device_ids[0])
+    # ... aber mit fester Uhrzeit statt "jetzt", siehe DEMO_TIMESTAMP. Der
+    # Store schreibt bewusst immer `now_iso()` - das ist im Betrieb richtig
+    # und soll dort nicht konfigurierbar werden, nur damit ein Demo-Modus
+    # existiert. Deshalb wird hier nachtraeglich ueberschrieben statt eine
+    # Naht in die Produktionsklasse zu schneiden.
+    store._db.execute(
+        "UPDATE device SET exported_at = ? WHERE id = ?", (DEMO_TIMESTAMP, device_ids[0])
+    )
+    store._db.commit()
     return device_ids
 
 
@@ -259,6 +278,15 @@ def main() -> None:
     if args.demo:
         store.auth.reset_password(hash_password(DEMO_PASSWORD))
         store.settings.save(bridge_ip="192.168.1.50", udp_port=7000, listen_port=8080)
+        # Dieselbe Behandlung wie bei `exported_at` oben und aus demselben
+        # Grund: `BridgeSettingsStore.save` setzt `saved_at` auf jetzt, was im
+        # Betrieb stimmt, den Screenshot aber bei jedem Lauf veraendert.
+        store._db.execute(
+            "INSERT INTO setting (key, value) VALUES (?, ?)"
+            " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            ("bridge_settings_saved_at", DEMO_TIMESTAMP),
+        )
+        store._db.commit()
         device_ids = _ensure_demo_devices(store)
     else:
         device_ids = _ensure_devices(store)

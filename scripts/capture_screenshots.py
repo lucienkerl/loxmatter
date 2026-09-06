@@ -19,9 +19,22 @@
 Aufruf:  uv run --with playwright python scripts/capture_screenshots.py
 
 Startet `dev_web_server.py --demo` selbst, meldet sich an, klappert die
-Ansichten ab und legt die Bilder unter docs/screenshots/ ab. Zweimal
-aufgerufen entstehen dieselben Bilder - die Demo-Datenbank faellt bei jedem
-Start neu an (siehe dort).
+Ansichten ab und legt die Bilder unter docs/screenshots/ ab.
+
+REPRODUZIERBAR sind sechs der sieben Bilder: die Demo-Datenbank faellt bei
+jedem Start neu an, und alle gesaeten Zeitstempel stehen auf
+`DEMO_TIMESTAMP` (siehe dev_web_server.py) statt auf der Wanduhr. Zweimal
+aufgerufen entstehen dort byte-gleiche Dateien; ein Diff bedeutet also eine
+echte Aenderung und darf nicht als Rauschen weggewinkt werden.
+
+NICHT reproduzierbar ist `system.png`. Sein Kommando-Log zeigt die
+HTTP-Anfragen dieses Laufs selbst, auf die Mikrosekunde genau - das
+Protokoll der Aufnahme, waehrend sie stattfindet. Das liesse sich nur
+festnageln, indem der Demo-Modus ein erfundenes Protokoll einsetzt, und ein
+fingierter Log in der Dokumentation waere schlechter als ein rauschendes
+Bild. Wer dieses Skript laufen laesst, ohne dass sich an der Oberflaeche
+etwas geaendert hat, sollte `system.png` daher verwerfen und die uebrigen
+sechs unveraendert vorfinden.
 
 Die Selektoren unten sind aus dem tatsaechlichen Markup
 (`src/loxmatter/web/index.html`) und den englischen Uebersetzungstexten
