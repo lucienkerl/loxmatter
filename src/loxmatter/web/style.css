@@ -130,16 +130,37 @@ nav.tabs {
   border-bottom: 1px solid var(--border);
 }
 
+/* Die Reiterleiste ganz oben besteht seit der URL-Navigation aus `<a>`- und
+   nicht mehr aus `<button>`-Elementen (siehe <nav class="tabs"> in
+   index.html) - `text-decoration: none` kommt deshalb dazu, sonst erbte der
+   Reiter die Unterstreichung der Dokument-Linkfarbe.
+
+   Die Knopf-Fassung bleibt trotzdem stehen: die Sprachumschaltung in den
+   Einstellungen borgt sich dieselbe `nav.tabs`-Leiste fuer zwei Knoepfe, die
+   die Sprache umschalten statt zu navigieren - dort waere ein Link falsch. */
+nav.tabs a,
 nav.tabs button {
   background: none;
   border: none;
   border-bottom: 3px solid transparent;
   padding: 0.6rem 0.9rem;
   font-size: 0.95rem;
+  /* Dieselbe Zeilenhoehe, die die Reiter als Knoepfe ueber die allgemeine
+     `button`-Regel weiter unten bekamen. Ein Link erbt stattdessen die 1.5
+     des Dokuments und machte die Leiste rund vier Pixel hoeher - die
+     Screenshots in docs/screenshots/ (byte-genau reproduzierbar, siehe
+     scripts/capture_screenshots.py) verschoben sich dadurch komplett. */
+  line-height: 1.3;
+  /* Ebenfalls aus der allgemeinen `button`-Regel uebernommen: sie rundet die
+     Enden des 3-px-Unterstrichs des aktiven Reiters leicht ab. Ein Link
+     brachte das nicht mit, und der Unterstrich sprang von rund auf eckig. */
+  border-radius: 5px;
   color: var(--text-muted);
+  text-decoration: none;
   cursor: pointer;
 }
 
+nav.tabs a.active,
 nav.tabs button.active {
   color: var(--text);
   border-bottom-color: var(--accent);

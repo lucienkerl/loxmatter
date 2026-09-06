@@ -734,8 +734,11 @@ async def test_init_loads_translations_and_auth_info_in_parallel(api):
     nicht nacheinander."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
+    # Bis zur naechsten Methode statt ueber eine feste Zeichenzahl: `init()`
+    # hat seit der URL-Navigation ein paar Zeilen mehr, und ein Fenster von
+    # 800 Zeichen endete mitten im Kommentar davor.
     init_start = script.index("async init()")
-    body = script[init_start : init_start + 800]
+    body = script[init_start : script.index("async request(method, path, body)")]
     assert "Promise.all([this.loadI18n(), this.loadAuthInfo()])" in body
 
 
@@ -808,17 +811,149 @@ async def test_the_generic_network_errors_call_the_global_t_from_a_free_function
     assert "`HTTP ${response.status}`" not in script
 
 
-async def test_the_nav_tabs_bind_to_translation_keys_without_altering_click_handlers(api):
-    """Aufgabe 10, Schritt 3: `x-text` ersetzt den Textknoten jedes
-    Reiterknopfs, `@click`/`:class` bleiben unangetastet - ein falsch
-    gebundener Reiter waere im Browser sofort sichtbar, aber dieser Test
-    ohne Browser-Engine kann nur pruefen, dass Handler und Bindung
-    NEBENEINANDER auf demselben Element stehen, nicht dass ein Klick
-    tatsaechlich die Ansicht wechselt."""
+async def test_the_nav_tabs_bind_to_translation_keys_without_altering_their_links(api):
+    """Aufgabe 10, Schritt 3: `x-text` ersetzt den Textknoten jedes Reiters,
+    `:class` bleibt unangetastet - ein falsch gebundener Reiter waere im
+    Browser sofort sichtbar, aber dieser Test ohne Browser-Engine kann nur
+    pruefen, dass Adresse und Bindungen NEBENEINANDER auf demselben Element
+    stehen, nicht dass ein Klick tatsaechlich die Ansicht wechselt.
+
+    Seit der URL-Navigation ist jeder Reiter ein `<a href="#/...">` statt
+    eines Knopfes mit `@click` (siehe die drei folgenden Tests)."""
     client, _, _ = api
     page = (await client.get("/")).text
     for view_key in ("devices", "export", "system", "settings"):
-        assert f"@click=\"selectView('{view_key}')\" x-text=\"t('web.nav.{view_key}')\"" in page
+        assert f'<a href="#/{view_key}" :class="{{ active: view === \'{view_key}\' }}"' in page
+        assert f"x-text=\"t('web.nav.{view_key}')\"" in page
+    assert "selectView('devices')" not in page
+
+
+async def test_every_view_has_its_own_url_fragment(api):
+    """Der Anlass dieser Aenderung: wer auf "Einstellungen" die Seite neu lud,
+    landete wieder im Geraete-Dashboard. Jede Ansicht hat deshalb ein eigenes
+    Fragment, und die Reiterleiste besteht aus echten Links darauf.
+
+    Geprueft wird beides zusammen: die Liste in `app.js` (sie entscheidet,
+    welches Fragment ueberhaupt angenommen wird) und die vier `href`s im
+    Markup. Ein Reiter, der auf ein Fragment zeigt, das `VIEWS` nicht kennt,
+    faende nach dem Neuladen wieder das Dashboard vor - genau der Fehler, der
+    hier verschwinden soll."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert 'const VIEWS = ["devices", "export", "system", "settings"];' in script
+    for view_key in ("devices", "export", "system", "settings"):
+        assert f'<a href="#/{view_key}"' in page
+        assert f"x-show=\"view === '{view_key}'\"" in page
+
+
+async def test_the_view_comes_from_the_url_before_anything_is_loaded(api):
+    """`init()` liest das Fragment, BEVOR `startApp()` laeuft - sonst baute
+    die Seite erst das Dashboard auf und danach die gewuenschte Ansicht: zwei
+    Ladevorgaenge und ein sichtbares Aufblitzen der falschen Ansicht.
+
+    Der `hashchange`-Zuhoerer haengt genau einmal am Fenster. Das ist in
+    dieser Datei kein Formalismus: doppelte Zuhoerer und doppelte
+    Live-Verbindungen aus einem zweiten `init()` sind hier schon zweimal
+    passiert (siehe `test_the_page_does_not_call_init_a_second_time`)."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    init_body = script[
+        script.index("async init() {") : script.index("async request(method, path, body)")
+    ]
+    assert "this.view = viewFromHash() ?? DEFAULT_VIEW;" in init_body
+    assert init_body.index("this.view = viewFromHash()") < init_body.index("this.startApp()")
+    assert script.count('addEventListener("hashchange"') == 1
+
+
+async def test_the_fragment_and_the_shown_view_cannot_drift_apart(api):
+    """Beide Richtungen sind verdrahtet: `selectView` traegt die Ansicht in
+    die Adresszeile ein (`writeHash`), `applyHash` liest sie zurueck und
+    schaltet um. Ohne den Rueckweg blieben Reiterklick, Zurueck-Knopf und
+    Lesezeichen wirkungslos; ohne den Hinweg zeigte die Adresszeile nach
+    einem programmatischen Wechsel (z. B. ueber den Hinweis-Link "Erst in
+    Einstellungen ... hinterlegen") noch die vorige Ansicht an.
+
+    Die beiden Abbruchbedingungen in `applyHash` sind kein Beiwerk: das
+    `hashchange`, das `selectView` ueber `writeHash` selbst ausloest, landet
+    wieder hier - ohne den Abgleich `view === this.view` liefe jeder
+    programmatische Wechsel zweimal. Und vor der Anmeldung darf gar nichts
+    geladen werden, sonst liefe eine von Hand geaenderte Adresse auf dem
+    Login-Bildschirm in eine 401."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    apply_start = script.index("async applyHash() {")
+    select_start = script.index("async selectView(view) {")
+    apply_body = script[apply_start:select_start]
+    select_body = script[select_start : script.index("async loadDevices()")]
+    assert "writeHash(view);" in select_body
+    assert "await this.selectView(view);" in apply_body
+    assert "if (view === this.view) {" in apply_body
+    assert "if (!this.authenticated) {" in apply_body
+
+
+async def test_an_unknown_fragment_does_not_leave_the_page_empty(api):
+    """Ein Lesezeichen auf die aufgeloeste Signale-Ansicht (`#/signals`, siehe
+    `test_the_signals_view_is_gone_from_navigation_and_markup`) oder ein
+    Tippfehler in der Adresszeile: `viewFromHash` liefert dann `null`, und
+    beide Aufrufer weichen aus - `init()` auf `DEFAULT_VIEW`, `applyHash` auf
+    die gerade gezeigte Ansicht, die es zugleich nachtraegt. Ohne diesen
+    Rueckfall waere jedes `x-show="view === ..."` falsch: eine Seite mit
+    Kopfzeile, Reitern und sonst nichts."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert 'const DEFAULT_VIEW = "devices";' in script
+    assert "return VIEWS.includes(name) ? name : null;" in script
+    apply_body = script[
+        script.index("async applyHash() {") : script.index("async selectView(view) {")
+    ]
+    assert "if (view === null) {" in apply_body
+    assert "writeHash(this.view);" in apply_body
+
+
+async def test_the_first_visit_does_not_leave_a_dead_history_entry(api):
+    """Beim Aufruf ohne Fragment traegt `writeHash` `#/devices` per
+    `replaceState` nach statt per `location.hash`: ein eigener Chronikeintrag
+    fuehrte beim Zurueck-Knopf auf dieselbe Seite ohne Fragment, die das
+    Fragment sofort wieder ergaenzte - eine Schaltflaeche, die sichtbar nichts
+    tut. Nur der Wechsel ZWISCHEN zwei gueltigen Ansichten bekommt einen
+    Eintrag, damit der Zurueck-Knopf den vorigen Reiter zeigt."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    write_body = script[
+        script.index("function writeHash(view) {") : script.index("function app() {")
+    ]
+    assert "if (viewFromHash() === null) {" in write_body
+    assert 'window.history.replaceState(null, "", target);' in write_body
+    assert "window.location.hash = target;" in write_body
+
+
+async def test_the_tab_styling_covers_links_and_buttons(api):
+    """`nav.tabs` traegt zweierlei: die Reiterleiste oben, seit der
+    URL-Navigation aus `<a href="#/...">`, und die Sprachumschaltung in den
+    Einstellungen, die sich dieselbe Leiste fuer zwei Knoepfe borgt (siehe
+    `test_the_settings_tab_has_a_language_toggle`). Beide Selektoren muessen
+    deshalb stehenbleiben - ein Umbau auf nur `nav.tabs a` liess die
+    Sprachknoepfe ohne Polsterung, ohne gedaempfte Schrift und ohne den
+    Unterstrich der aktiven Sprache zurueck."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    assert "nav.tabs a,\nnav.tabs button {" in css
+    assert "nav.tabs a.active,\nnav.tabs button.active {" in css
+    tab_rule = css[css.index("nav.tabs a,") : css.index("main {")]
+    # Ein Link erbt sonst die Unterstreichung der Dokument-Linkfarbe.
+    assert "text-decoration: none;" in tab_rule
+    # Und diese beiden Werte hatten die Reiter als Knoepfe aus der
+    # allgemeinen `button`-Regel (weiter unten in dieser Datei) - ein Link
+    # bringt sie nicht mit: ohne sie wurde die Leiste vier Pixel hoeher und
+    # der Unterstrich des aktiven Reiters eckig statt abgerundet. Beides fiel
+    # erst in den byte-genau reproduzierbaren Screenshots auf (siehe
+    # scripts/capture_screenshots.py), nicht im Test und nicht beim Hinsehen.
+    assert "line-height: 1.3;" in tab_rule
+    assert "border-radius: 5px;" in tab_rule
+    button_rule = css[css.index("\nbutton {") : css.index("button.primary {")]
+    assert "line-height: 1.3;" in button_rule
+    assert "border-radius: 5px;" in button_rule
 
 
 async def test_the_header_logout_and_connection_banner_are_translated(api):
@@ -1064,11 +1199,12 @@ async def test_the_remaining_count_hints_keep_their_dynamic_span_and_translate_t
 
 async def test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_to_x_html(api):
     """Aufgabe 11, Schritt 3 (das neue Muster dieser Aufgabe): der Hinweis
-    "Erst in Einstellungen -> ... hinterlegen." enthaelt einen echten Link mit
-    eigenem `@click.prevent`, der beim Uebersetzen NICHT in einen `x-html`-
-    Block verschwinden darf - sonst liesse sich der Klick-Handler nicht mehr
-    binden. Drei eigene Elemente (Praefix, Link, Suffix) je mit eigenem
-    `x-text` halten den Handler unangetastet.
+    "Erst in Einstellungen -> ... hinterlegen." enthaelt einen echten Link auf
+    die Einstellungen, der beim Uebersetzen NICHT in einen `x-html`-Block
+    verschwinden darf - sonst bliebe von dem Link nur noch Text uebrig. Drei
+    eigene Elemente (Praefix, Link, Suffix) je mit eigenem `x-text` halten ihn
+    unangetastet. Seit der URL-Navigation traegt er dieselbe Adresse wie der
+    Reiter (`#/settings`) statt eines `href="#"` mit abgefangenem Klick.
 
     Der Ausschnitt endet an der NAECHSTEN Ansicht, nicht an einem
     schliessenden Tag: `"view === 'signals'"` war dieser Anker, bis der
@@ -1086,7 +1222,7 @@ async def test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_t
     assert "Erst in " not in devices_markup
     assert "Einstellungen → Verbindung zum Miniserver" not in devices_markup
     assert " hinterlegen." not in devices_markup
-    assert "@click.prevent=\"selectView('settings')\"" in devices_markup
+    assert 'href="#/settings"' in devices_markup
 
 
 async def test_the_device_list_dynamic_errors_and_toasts_are_translated(api):
@@ -1394,12 +1530,12 @@ async def test_the_export_tab_static_text_is_translated(api):
     assert "x-text=\"t('web.export.settings_hint_suffix')\"" in markup
     assert "Wird in" not in markup
     assert "verwaltet." not in markup
-    # Der Link selbst bleibt unveraendert (derselbe `@click`-Handler,
+    # Der Link selbst bleibt unveraendert (dieselbe Adresse wie der Reiter,
     # jetzt mit dem geteilten Schluessel aus Aufgabe 11 uebersetzt).
     export_hint_start = markup.index("web.export.settings_hint_prefix")
     export_hint_end = markup.index("web.export.settings_hint_suffix")
     export_hint = markup[export_hint_start:export_hint_end]
-    assert "@click.prevent=\"selectView('settings')\"" in export_hint
+    assert 'href="#/settings"' in export_hint
     assert "x-text=\"t('web.settings.miniserver_link')\"" in export_hint
     assert "Einstellungen → Verbindung zum Miniserver" not in export_hint
 
@@ -1824,7 +1960,7 @@ async def test_the_projectsync_card_static_text_is_translated(api):
     bridge_hint_start = markup.index("web.export.projectsync_bridge_ip_hint_prefix")
     bridge_hint_end = markup.index("web.export.projectsync_bridge_ip_hint_suffix")
     bridge_hint = markup[bridge_hint_start:bridge_hint_end]
-    assert "@click.prevent=\"selectView('settings')\"" in bridge_hint
+    assert 'href="#/settings"' in bridge_hint
     assert "x-text=\"t('web.settings.miniserver_link')\"" in bridge_hint
     assert "Einstellungen → Verbindung zum Miniserver" not in bridge_hint
     assert "die Brücken-IP hinterlegen" not in markup

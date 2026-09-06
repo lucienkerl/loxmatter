@@ -153,6 +153,15 @@ class FakeRuntime:
         # wirft `OSError`, wenn das Miniserver-Netz kurz weg ist. Ein Test,
         # der diesen Fall braucht, setzt hier eine Ausnahme.
         self.fail_set_online_with: Exception | None = None
+        # Dasselbe Muster fuer den vollen Resend (`POST
+        # /api/diagnostics/resync`): `Runtime.resend_all` schickt ueber
+        # denselben Sender und scheitert an denselben Stellen.
+        self.fail_resend_with: Exception | None = None
+        # Was `resend_all` als Anzahl meldet, und wie oft es gerufen wurde -
+        # ein Test, der die Zahl bis in die Antwort verfolgt, setzt das
+        # erste, ein Test der Verdrahtung liest das zweite.
+        self.resend_result = 0
+        self.resend_calls = 0
 
     def seed(self, key: str, value: float | bool) -> None:
         """Traegt einen Wert ein, als haette eine Subscription ihn gerade gemeldet."""
@@ -170,6 +179,17 @@ class FakeRuntime:
         if self.fail_set_online_with is not None:
             raise self.fail_set_online_with
         self._values[f"d{device_id}_online"] = online
+
+    async def resend_all(self) -> int:
+        """Wie `Runtime.resend_all`, ohne den UDP-Versand: meldet nur, wie
+        viele Werte gegangen waeren. Gebraucht, seit der System-Tab einen
+        Resync-Knopf hat (`POST /api/diagnostics/resync`) - `build_app`
+        verlangte `resend_all` zwar schon fuer `/resync`, aber keine
+        Testfixture hier rief es je auf."""
+        if self.fail_resend_with is not None:
+            raise self.fail_resend_with
+        self.resend_calls += 1
+        return self.resend_result
 
 
 @pytest.fixture

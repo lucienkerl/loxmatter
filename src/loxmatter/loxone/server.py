@@ -504,6 +504,7 @@ def build_app(
             client,
             sender,
             matter_data_dir,
+            runtime,
         ),
         dependencies=api_guard,
     )

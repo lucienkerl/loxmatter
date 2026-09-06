@@ -249,11 +249,23 @@
          x-text="t('web.connection.lost_banner')">
     </div>
 
+    <!--
+      Echte Links auf die Fragmente der vier Ansichten (`VIEWS` in app.js),
+      bewusst keine Knoepfe mit `@click` mehr: nur so ueberlebt der gewaehlte
+      Reiter das Neuladen der Seite, laesst sich als Lesezeichen ablegen und
+      im neuen Tab oeffnen. Den Ansichtswechsel macht weiterhin `selectView`
+      - angestossen ueber `hashchange` (siehe `applyHash` in app.js), nicht
+      ueber einen Klick-Handler an dieser Stelle. Ein zusaetzliches `@click`
+      hier waere sogar schaedlich: es liefe VOR dem Fragmentwechsel und
+      liesse `applyHash` danach nichts mehr zu tun uebrig - der Zurueck-Knopf
+      bliebe davon zwar unberuehrt, aber die beiden Wege in dieselbe Ansicht
+      wuerden auseinanderlaufen.
+    -->
     <nav class="tabs">
-      <button :class="{ active: view === 'devices' }" @click="selectView('devices')" x-text="t('web.nav.devices')"></button>
-      <button :class="{ active: view === 'export' }" @click="selectView('export')" x-text="t('web.nav.export')"></button>
-      <button :class="{ active: view === 'system' }" @click="selectView('system')" x-text="t('web.nav.system')"></button>
-      <button :class="{ active: view === 'settings' }" @click="selectView('settings')" x-text="t('web.nav.settings')"></button>
+      <a href="#/devices" :class="{ active: view === 'devices' }" :aria-current="view === 'devices' ? 'page' : null" x-text="t('web.nav.devices')"></a>
+      <a href="#/export" :class="{ active: view === 'export' }" :aria-current="view === 'export' ? 'page' : null" x-text="t('web.nav.export')"></a>
+      <a href="#/system" :class="{ active: view === 'system' }" :aria-current="view === 'system' ? 'page' : null" x-text="t('web.nav.system')"></a>
+      <a href="#/settings" :class="{ active: view === 'settings' }" :aria-current="view === 'settings' ? 'page' : null" x-text="t('web.nav.settings')"></a>
     </nav>
 
     <main>
@@ -839,7 +851,7 @@
                   </div>
                   <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
                     <span x-text="t('web.devices.export_hint_prefix')"></span>
-                    <a href="#" @click.prevent="selectView('settings')" x-text="t('web.settings.miniserver_link')"></a>
+                    <a href="#/settings" x-text="t('web.settings.miniserver_link')"></a>
                     <span x-text="t('web.devices.export_hint_suffix')"></span>
                   </p>
                 </div>
@@ -870,11 +882,7 @@
           <p class="hint" x-text="t('web.export.projectsync_intro')"></p>
           <p class="hint" x-show="!bridgeSettings.bridge_ip" x-cloak>
             <span x-text="t('web.export.projectsync_bridge_ip_hint_prefix')"></span>
-            <a
-              href="#"
-              @click.prevent="selectView('settings')"
-              x-text="t('web.settings.miniserver_link')"
-            ></a>
+            <a href="#/settings" x-text="t('web.settings.miniserver_link')"></a>
             <span x-text="t('web.export.projectsync_bridge_ip_hint_suffix')"></span>
           </p>
           <div class="row">
@@ -1129,11 +1137,7 @@
           </div>
           <p class="hint">
             <span x-text="t('web.export.settings_hint_prefix')"></span>
-            <a
-              href="#"
-              @click.prevent="selectView('settings')"
-              x-text="t('web.settings.miniserver_link')"
-            ></a>
+            <a href="#/settings" x-text="t('web.settings.miniserver_link')"></a>
             <span x-text="t('web.export.settings_hint_suffix')"></span>
           </p>
           <div class="row">
@@ -1212,6 +1216,22 @@
            Ansicht 3: System
            ================================================================ -->
       <section x-show="view === 'system'" x-cloak>
+        <!-- Handlung, keine Diagnose - deshalb vor den Systemchecks und
+             nicht zwischen den Log-Ansichten weiter unten. Der Knopf loest
+             denselben vollen Resend aus wie der Bruecken-Start und wie
+             /resync aus dem Config-Projekt (Spec 6.4), nur ueber
+             POST /api/diagnostics/resync, das hinter dem Waechter liegt. -->
+        <div class="card">
+          <h2 x-text="t('web.system.resync_heading')"></h2>
+          <p class="hint" x-text="t('web.system.resync_explanation')"></p>
+          <button
+            @click="resyncAll()"
+            :disabled="resyncBusy"
+            x-text="t('web.system.resync_button')"
+          ></button>
+          <p x-show="resyncError" x-cloak class="banner danger" x-text="resyncError"></p>
+        </div>
+
         <div class="card">
           <div class="row">
             <h2 style="margin: 0" x-text="t('web.system.checks_heading')"></h2>

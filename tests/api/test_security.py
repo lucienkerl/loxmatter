@@ -566,6 +566,26 @@ async def test_with_token_resync_route_stays_open(secured_client):
     assert response.status_code == 200
 
 
+async def test_the_webui_resync_route_is_not_open(secured_client):
+    """Gegenprobe zum Test darueber: derselbe volle Resend, aber ueber die
+    Route der Oberflaeche (`POST /api/diagnostics/resync`, der Resync-Knopf
+    im System-Tab). Die bleibt verschlossen. Die Ausnahme gilt dem
+    Miniserver, der keinen Header schicken kann - nicht der Wirkung
+    "alle Werte erneut senden": waere die Wirkung der Grund, muesste jede
+    `/cmd`-artige Route offen sein."""
+    client, _, _, _ = secured_client
+    response = await client.post("/api/diagnostics/resync")
+    assert response.status_code == 401
+
+
+async def test_the_webui_resync_route_opens_with_a_token(secured_client):
+    client, _, _, _ = secured_client
+    response = await client.post(
+        "/api/diagnostics/resync", headers={"Authorization": "Bearer secret"}
+    )
+    assert response.status_code == 200
+
+
 async def test_with_token_health_route_stays_open(secured_client):
     """`/health` liegt wie `/cmd`/`/resync` ausserhalb von `/api` - kein
     Diagnose-Endpunkt, der Bestandsdaten preisgibt, muss also ebenfalls
