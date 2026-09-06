@@ -95,58 +95,33 @@ CLI too.
 
 ## 🖼 The web interface
 
-<table>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/screenshots/dashboard.png" alt="Device list with live values and controls" />
-
 **Devices**<br>Every commissioned device on one page, with live values and controls, and a badge where signals changed since the last export.
 
-</td>
-<td width="50%" valign="top">
-<img src="docs/screenshots/commissioning.png" alt="Commissioning field with a pairing code entered" />
+<img src="docs/screenshots/dashboard.png" alt="Device list with live values and controls" />
 
 **Commissioning**<br>Paste the pairing code from the device or its packaging and start — no account, no cloud round trip. A device already paired with Apple, Google or a DIRIGERA needs an extra multi-admin code from that vendor's app first; its own printed code no longer works here.
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/screenshots/signals.png" alt="Signal editor opened over the device grid, with Loxone addresses and export checkboxes" />
+<img src="docs/screenshots/commissioning.png" alt="Commissioning field with a pairing code entered" />
 
 **Signals**<br>Open a device's signals from its tile menu: each signal with the Loxone address it will get and its own export checkbox; the administrative ones sit behind a collapsed expert section.
 
-</td>
-<td width="50%" valign="top">
-<img src="docs/screenshots/export.png" alt="Project file sync card, template export card and a filled-in export preview table" />
+<img src="docs/screenshots/signals.png" alt="Signal editor opened over the device grid, with Loxone addresses and export checkboxes" />
 
 **Export**<br>Upload a project file for a patched copy, or generate the per-device template files — with the bridge address and ports they use shown alongside, and a preview of what each file will contain before anything downloads.
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/screenshots/project-sync.png" alt="Diff plan showing new, updated and orphaned entries" />
+<img src="docs/screenshots/export.png" alt="Project file sync card, template export card and a filled-in export preview table" />
 
 **Project file sync**<br>The plan before anything is written: how many entries are new, updated or orphaned, and per device the old value next to the new one.
 
-</td>
-<td width="50%" valign="top">
-<img src="docs/screenshots/system.png" alt="Live diagnostics controls above log, UDP capture and command log panes" />
+<img src="docs/screenshots/project-sync.png" alt="Diff plan showing new, updated and orphaned entries" />
 
 **System**<br>Three live panes below the diagnostics controls — the command log fills as requests come in; log lines and UDP capture stream the same way once a real `matter-server` and device traffic sit behind the bridge. The Matter fabric backup is pulled from here too.
 
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-<img src="docs/screenshots/settings.png" alt="Miniserver connection, language selection and periodic resend" />
+<img src="docs/screenshots/system.png" alt="Live diagnostics controls above log, UDP capture and command log panes" />
 
 **Settings**<br>The Miniserver connection, the interface language, and how often marked signals are resent even when nothing changed.
 
-</td>
-</tr>
-</table>
+<img src="docs/screenshots/settings.png" alt="Miniserver connection, language selection and periodic resend" />
 
 ## 🏗 How it works
 
