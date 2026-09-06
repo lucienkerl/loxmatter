@@ -3445,3 +3445,25 @@ async def test_the_dropped_signal_keys_are_gone_from_the_translation_table(api):
     assert "web.devices.menu_signals" in strings
     assert "web.signals.modal_heading" in strings
     assert "web.signals.modal_close" in strings
+
+
+# ---------------------------------------------------------------------------
+# Suchfeld der Geraeteansicht (Entwurf vom 2026-09-06). Das Feld fiel durch
+# das CSS-Raster - die Formularregel listet text, number, password und
+# select, aber nicht search -, weshalb der Browser es selbst zeichnete.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_search_field_ships_the_words_for_counter_and_clear_button(api):
+    """Der Zaehler traegt Text, das Loeschkreuz traegt keinen und braucht
+    deshalb einen zugaenglichen Namen - beide muessen uebersetzt beim
+    Browser ankommen.
+
+    `{count}` bleibt dabei UNAUFGELOEST: aufgeloest wird es in app.js
+    (`t(key, values)`), wenn die Zahl feststeht. Der Server kennt sie nicht,
+    und `GET /api/i18n` liefert deshalb die rohe Vorlage - genau das belegt
+    der Vergleich auf die Zeichenkette samt geschweifter Klammern."""
+    client, _, _ = api
+    strings = (await client.get("/api/i18n")).json()["strings"]
+    assert strings["web.devices.search_count"] == "{count} found"
+    assert strings["web.devices.search_clear"] == "Clear search"
