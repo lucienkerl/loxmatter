@@ -434,6 +434,12 @@ function app() {
     systemError: null,
     diagnosticsBusy: false,
     backupError: null,
+    // Der Resync-Knopf sperrt sich waehrend des Laufs selbst: `resend_all`
+    // schickt bei vielen Geraeten eine ganze Reihe Datagramme, und ein
+    // zweiter Klick daneben brachte nur einen zweiten Schwung, ohne dass
+    // die Oberflaeche etwas anderes gezeigt haette.
+    resyncBusy: false,
+    resyncError: null,
 
     // --- Projektdatei-Sync (Aufgabe 12) ------------------------------------
     // `plan` traegt die komplette Antwort von `/api/export/project-sync`
@@ -677,6 +683,7 @@ function app() {
       // die Sorte stillschweigend falscher Zustand, die Spec 8.1
       // ausschliessen will.
       this.backupError = null;
+      this.resyncError = null;
       this.exportError = null;
       this.deviceActionError = null;
       this.signalsError = null;
@@ -2001,6 +2008,34 @@ function app() {
         await this.download("/api/diagnostics/fabric-backup", "matter-fabric-backup.zip");
       } catch (error) {
         this.backupError = t("web.system.backup_error", { message: error.message });
+      }
+    },
+
+    /**
+     * Schickt alle bekannten Werte erneut an den Miniserver - dasselbe, was
+     * beim Bruecken-Start und beim Aufruf von `/resync` aus dem
+     * Config-Projekt passiert. Geht ueber `POST /api/diagnostics/resync` und
+     * NICHT ueber `/resync` selbst: `/resync` liegt bewusst ausserhalb von
+     * `/api` und damit ausserhalb des Waechters, weil der Miniserver keinen
+     * `Authorization`-Header mitschicken kann. Diese Oberflaeche kann das
+     * sehr wohl, und `this.request` bringt die 401-Behandlung mit, ohne die
+     * eine abgelaufene Sitzung hier als "Erneutes Senden fehlgeschlagen"
+     * erschiene statt als Anmeldemaske.
+     *
+     * Die Anzahl aus der Antwort geht in eine Kurzmeldung: ohne sie ist ein
+     * erfolgreicher Resync von einem, der nichts zu senden hatte, nicht zu
+     * unterscheiden - beide sehen aus wie ein Knopf, der kurz grau war.
+     */
+    async resyncAll() {
+      this.resyncError = null;
+      this.resyncBusy = true;
+      try {
+        const result = await this.request("POST", "/api/diagnostics/resync");
+        this.showToast(t("web.system.resync_toast", { count: result.sent }));
+      } catch (error) {
+        this.resyncError = t("web.system.resync_error", { message: error.message });
+      } finally {
+        this.resyncBusy = false;
       }
     },
 

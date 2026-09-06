@@ -104,7 +104,7 @@ import zipfile
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -543,12 +543,25 @@ def _check_miniserver(sender: UdpSender | None) -> tuple[bool, str]:
     return True, i18n.t("api.diagnostics.network_path_exists", host=host, port=port)
 
 
+class ResendableRuntime(Protocol):
+    """Was dieser Router von der Runtime braucht: einen vollen Resend.
+
+    Schmal gehalten wie `api.devices.RuntimeValues` und
+    `api.live.ObservableRuntime` - jeder Router beschreibt hier selbst
+    seinen Bedarf, statt sich auf `loxone.runtime.Runtime` festzulegen.
+    `loxone.server._RuntimeDependency` fuehrt dieselbe Methode bereits
+    fuer `/resync`; beide Wege enden in derselben Implementierung."""
+
+    async def resend_all(self) -> int: ...
+
+
 def build_diagnostics_router(
     store: Store,
     command_log: RingBuffer[CommandLogEntry],
     client: BridgeMatterClient | None,
     sender: UdpSender | None,
     matter_data_dir: Path | None,
+    runtime: ResendableRuntime,
 ) -> APIRouter:
     """Baut den `APIRouter` fuer `/api/diagnostics/*` (Spec 10.5).
 
@@ -605,6 +618,38 @@ def build_diagnostics_router(
             _run_check("thread", _check_thread),
             _run_check("miniserver", lambda: _check_miniserver(sender)),
         ]
+
+    @router.post("/resync")
+    async def resync() -> dict[str, int]:
+        """Der Resync-Knopf im System-Tab: schickt alle bekannten Werte erneut.
+
+        Dieselbe Wirkung wie `GET /resync` in `loxone.server` (Spec 6.4) und
+        wie der Bruecken-Start - nur ein anderer Ausloeser, deshalb dieselbe
+        Antwortform `{"sent": n}` und dieselbe Fehlermeldung. Zwei getrennte
+        Routen, weil sich die beiden Aufrufer im Zugang unterscheiden und in
+        sonst nichts: `/resync` muss offen bleiben, weil der Miniserver
+        keinen `Authorization`-Header mitschicken kann, waehrend diese Route
+        wie jede `/api`-Route hinter dem Waechter liegt (siehe
+        Moduldocstring). Ein gemeinsamer Endpunkt muesste eine der beiden
+        Eigenschaften aufgeben.
+
+        POST statt GET: die Route hat Wirkung. Dass `/resync` ein GET ist,
+        ist kein Vorbild, sondern eine Einschraenkung des Miniservers.
+        """
+        try:
+            count = await runtime.resend_all()
+        except Exception as exc:  # z. B. ein UdpSender, dessen Socket schon zu ist
+            # Dieselbe Trennung wie bei `/resync` und `/cmd`: der volle
+            # Traceback ins Server-Log, die Antwort traegt nur die Meldung.
+            # Der Unterschied zwischen einem toten Sender und einem
+            # Programmfehler in `resend_all` bliebe sonst nirgends erhalten.
+            logger.exception("Full-Resend ueber /api/diagnostics/resync fehlgeschlagen")
+            raise HTTPException(
+                status_code=502, detail=i18n.t("api.server.fail_resync", exc=exc)
+            ) from exc
+        # Englischer Schluessel im Wire-Format, wortgleich mit `/resync`:
+        # die Oberflaeche liest `sent` und macht eine Kurzmeldung daraus.
+        return {"sent": count}
 
     @router.get("/fabric-backup")
     async def fabric_backup() -> Response:

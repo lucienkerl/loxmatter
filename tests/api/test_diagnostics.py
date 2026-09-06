@@ -705,3 +705,102 @@ async def test_the_system_check_carries_the_thread_credentials_line(api):
     client, _, _ = api
     checks = (await client.get("/api/diagnostics/system")).json()
     assert "thread-credentials" in {c["name"] for c in checks}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/diagnostics/resync - der Resync-Knopf im System-Tab
+# ---------------------------------------------------------------------------
+#
+# Dieselbe Wirkung wie `GET /resync` (siehe tests/loxone/test_server.py), nur
+# von der anderen Seite: `/resync` gehoert dem Miniserver und bleibt bewusst
+# offen, diese Route gehoert der Oberflaeche und liegt wie jede `/api`-Route
+# hinter dem Waechter. Beide rufen dieselbe `Runtime.resend_all`.
+#
+# Eigene Fixture, weil `api` oben die Runtime nicht herausgibt: die Tests hier
+# muessen sie anfassen (Anzahl setzen, Fehlschlag ausloesen), waehrend jeder
+# andere Test in dieser Datei sie nur als Beiwerk von `build_app` braucht.
+
+
+@pytest.fixture
+async def api_with_runtime(tmp_path, no_invoke, fake_runtime, fake_client):
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+
+    runtime = fake_runtime(store)
+    app = build_app(store, no_invoke, runtime, client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, runtime
+    store.close()
+
+
+async def test_resync_triggers_a_full_resend(api_with_runtime):
+    """Der Knopf soll dasselbe ausloesen wie der Systemstart-Baustein im
+    Config-Projekt - nicht etwas Aehnliches."""
+    client, runtime = api_with_runtime
+    runtime.resend_result = 7
+
+    response = await client.post("/api/diagnostics/resync")
+
+    assert response.status_code == 200
+    assert runtime.resend_calls == 1
+
+
+async def test_resync_reports_how_many_values_went_out(api_with_runtime):
+    """Die Zahl ist die einzige Rueckmeldung, die der Anwender bekommt (die
+    Oberflaeche zeigt sie als Kurzmeldung) - sie muss die echte sein.
+    Englischer Schluessel im Wire-Format, wie bei `/resync`."""
+    client, runtime = api_with_runtime
+    runtime.resend_result = 42
+
+    response = await client.post("/api/diagnostics/resync")
+
+    assert response.json() == {"sent": 42}
+
+
+async def test_resync_reports_a_broken_sender_as_502(api_with_runtime):
+    """Wie `/resync` (Review-Fix Minor #3 dort): ein toter Sender ist kein
+    Programmfehler dieser Route. 502 statt 500, und die Meldung sagt, was
+    schiefging."""
+    client, runtime = api_with_runtime
+    runtime.fail_resend_with = OSError("Socket ist zu")
+
+    response = await client.post("/api/diagnostics/resync")
+
+    assert response.status_code == 502
+    assert "Socket ist zu" in response.json()["detail"]
+
+
+async def test_resync_keeps_the_traceback_out_of_the_answer(api_with_runtime):
+    """Derselbe Grund wie bei `/resync` und `/cmd`: der volle Traceback
+    gehoert ins Log, nicht in eine HTTP-Antwort."""
+    client, runtime = api_with_runtime
+    runtime.fail_resend_with = OSError("Socket ist zu")
+
+    response = await client.post("/api/diagnostics/resync")
+
+    assert "Traceback" not in response.text
+
+
+async def test_resync_fails_in_german(no_invoke, fake_runtime, fake_client, tmp_path):
+    """Deutscher Begleittest zu test_resync_reports_a_broken_sender_as_502 -
+    die Sprache haengt am Store, nicht am Prozess (siehe die
+    `_in_german`-Tests der Sicherung weiter oben)."""
+    store = Store(tmp_path / "t.sqlite")
+    runtime = fake_runtime(store)
+    runtime.fail_resend_with = OSError("Socket ist zu")
+    app = build_app(store, no_invoke, runtime, client=fake_client)
+    store.locale.set_language("de")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        response = await client.post("/api/diagnostics/resync")
+    store.close()
+
+    assert response.status_code == 502
+    assert "fehlgeschlagen" in response.json()["detail"]
+    assert "Socket ist zu" in response.json()["detail"]
