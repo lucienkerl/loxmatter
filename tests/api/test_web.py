@@ -29,7 +29,10 @@ ohne eine zweite Fixture auskommt.
 
 from __future__ import annotations
 
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -660,6 +663,115 @@ async def test_the_highlight_cannot_change_the_width_of_a_cell(api):
     assert "padding" not in highlight
     assert "border-radius" in base
     assert "border-radius" not in highlight
+
+
+# ---------------------------------------------------------------------------
+# Ein Geraet ohne Leitsignal (Kachel-Kopfzeile).
+#
+# Die einzige Stelle dieser Suite, die `app.js` wirklich AUSFUEHRT, statt den
+# ausgelieferten Text zu lesen. Der Grund: der Fehler, um den es hier geht,
+# steckt nicht im Markup, sondern im Verhalten der drei Helfer - eine
+# Textstichprobe auf `if (!signal)` wuerde auch dann gruen bleiben, wenn die
+# Bedingung das Falsche tut. Alpine laeuft trotzdem nicht mit; gepruefte
+# Einheit ist das von `app()` gelieferte Zustandsobjekt.
+# ---------------------------------------------------------------------------
+
+NODE = shutil.which("node")
+
+
+def _app_state(setup: str = "") -> dict:
+    """Laedt `app.js` in node, ruft `app()` und fuehrt `setup` darauf aus.
+
+    `app.js` ist ein einfaches Skript ohne Modulsystem (bewusst, siehe Kopf
+    der Datei) - deshalb `new Function` statt eines Imports.
+    """
+    script = f"""
+      const fs = require("node:fs");
+      const src = fs.readFileSync({str(WEB_DIR / "app.js")!r}, "utf8");
+      const state = new Function(src + "\\nreturn app();")();
+      {setup}
+    """
+    # `check=False`, weil die Zeile darunter denselben Fehlschlag mit dem
+    # nuetzlicheren Text meldet: `stderr` zeigt, WORAN node gescheitert ist,
+    # `CalledProcessError` nur, DASS es gescheitert ist.
+    result = subprocess.run(
+        [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_without_a_lead_signal_does_not_throw_in_any_binding():
+    """Zwischen `GET /api/devices` und `GET /api/devices/<id>/signals` liegt
+    ein Rendering-Durchlauf, in dem `signalsByDevice` fuer das Geraet noch
+    LEER ist - `leadSignalFor` liefert dann `null`. Das ist kein Sonderfall
+    kaputter Daten: es trifft JEDES Geraet einmal, weil die Signale in einer
+    zweiten Anfrage nachkommen (2026-09-06).
+
+    `x-show` auf der Huelle half nicht: es setzt nur `display`, es haelt
+    Alpine NICHT davon ab, die Ausdruecke der Kinder auszuwerten. Die drei
+    Helfer lasen also `signal.key` auf `null` und warfen - dreimal pro
+    Geraet, bei jedem Durchlauf.
+
+    Ein Geraet ohne Leitsignal ist ein gueltiger Zustand (die Kachel hat
+    dafuer laengst ihren Hinweis), also duerfen die Helfer ihn beantworten,
+    statt an ihm zu scheitern.
+    """
+    values = _app_state(
+        """
+        state.signalsByDevice = {};
+        const lead = state.leadSignalFor(1);
+        const out = { lead, calls: {} };
+        for (const fn of ["signalIsFresh", "signalAgeTitle", "liveValueOf"]) {
+          try {
+            out.calls[fn] = { ok: true, value: state[fn](lead) ?? null };
+          } catch (error) {
+            out.calls[fn] = { ok: false, error: error.message };
+          }
+        }
+        out.formatted = state.formatValue(state.liveValueOf(lead));
+        console.log(JSON.stringify(out));
+        """
+    )
+
+    assert values["lead"] is None, "ohne geladene Signale gibt es kein Leitsignal"
+    for name, call in values["calls"].items():
+        assert call["ok"], f"{name} warf: {call.get('error')}"
+
+    # Was die Kachel in diesem Zustand zeigt: keine Hervorhebung, kein
+    # Tooltip - und der Strich, den `formatValue` fuer "kein Wert" fuehrt.
+    assert values["calls"]["signalIsFresh"]["value"] is False
+    assert values["calls"]["signalAgeTitle"]["value"] in (None, "")
+    assert values["calls"]["liveValueOf"]["value"] is None
+    assert values["formatted"] == "-"
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_signal_that_exists_is_unaffected_by_the_guard():
+    """Die Absicherung darf den Normalfall nicht verbiegen: ein echtes
+    Signal muss weiter seinen Live-Wert, seine Hervorhebung und seinen
+    Tooltip bekommen."""
+    values = _app_state(
+        """
+        const signal = { key: "d1_1_onoff", title: "Zustand", value: false, functional: true };
+        state.signalsByDevice = { 1: [signal] };
+        state.liveValues = { d1_1_onoff: true };
+        state.liveSeenAt = { d1_1_onoff: 1000 };
+        state.nowTick = 1200;
+        console.log(JSON.stringify({
+          lead: state.leadSignalFor(1).key,
+          live: state.liveValueOf(signal),
+          fresh: state.signalIsFresh(signal),
+          title: state.signalAgeTitle(signal),
+        }));
+        """
+    )
+
+    assert values["lead"] == "d1_1_onoff"
+    assert values["live"] is True
+    assert values["fresh"] is True
+    assert values["title"]
 
 
 # ---------------------------------------------------------------------------
