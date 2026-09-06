@@ -111,14 +111,18 @@ def shoot(
 ) -> None:
     """Fotografiert den Bereich von `top` bis `bottom` statt des ganzen Fensters.
 
-    Die Bilder stehen im README in einer zweispaltigen Tabelle und werden dort
-    auf rund 420 px Breite skaliert. Entscheidend fuer die Lesbarkeit ist
-    deshalb allein die CSS-Breite des Ausschnitts, nicht seine Hoehe: ein
-    hohes schmales Bild bleibt lesbar, ein 1440 px breites Fenster schrumpft
-    auf ein Drittel. Ein Vollbild verschenkte hier doppelt - `main` ist auf
-    960 px begrenzt, also war ein Drittel jedes Bildes leerer grauer Rand,
-    und darueber hinaus zeigte jedes Bild Karten, die seine eigene
-    Bildunterschrift gar nicht meint.
+    Die Bilder stehen im README einspaltig und haben dort rund 896 px
+    Inhaltsbreite - alles Breitere wird herunterskaliert. Entscheidend fuer
+    die Lesbarkeit ist deshalb allein die CSS-Breite des Ausschnitts, nicht
+    seine Hoehe: ein hohes schmales Bild bleibt lesbar, ein 1440 px breites
+    Fenster kommt auf knapp der Haelfte an. Die Ausschnitte hier liegen
+    zwischen 768 und 952 px und werden damit praktisch unskaliert angezeigt;
+    wer sie breiter zieht, verschenkt genau diesen Gewinn.
+
+    Ein Vollbild verschenkte gleich doppelt - `main` ist auf 960 px begrenzt,
+    also war ein Drittel jedes Bildes leerer grauer Rand, und darueber hinaus
+    zeigte jedes Bild Karten, die seine eigene Bildunterschrift gar nicht
+    meint.
 
     `fixed=True` fuer den Dialog: der ist `position: fixed` und steht damit
     im Fenster, nicht im Dokument - Dokumentkoordinaten gingen daneben.
