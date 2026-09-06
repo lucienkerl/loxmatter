@@ -1396,6 +1396,46 @@ footer.hint-block {
   font-size: 0.7rem;
 }
 
+/* Die Pille rutscht ans SEHENDE Ende der Fusszeile, ohne im Markup zu
+ * wandern (2026-09-06).
+ *
+ * Der Grund ist der Umbruch: bei der ueblichen Desktopbreite - drei
+ * Spalten, rund 300 px je Kachel - passen Export-Hinweis und Pille
+ * zusammen nicht mehr in eine Zeile, und bei DOM-Reihenfolge
+ * (Hinweis, Pille, Abstandhalter, Kebab) landete der Kebab allein in
+ * einer zweiten Zeile und hing dort verloren unter dem Text. Weil die
+ * meisten Geraete "seit dem Export geaendert" sind, war das der
+ * Normalfall, nicht die Ausnahme. Mit `order: 1` teilt sich der Kebab die
+ * erste Zeile mit dem Hinweis (der Abstandhalter schiebt ihn nach
+ * rechts), und die Pille bricht als Ganzes darunter um.
+ *
+ * BEWUSST `order` statt einer anderen Markup-Reihenfolge: im Markup
+ * stehen Hinweis und Pille absichtlich nebeneinander, damit sie in dieser
+ * Folge vorgelesen werden ("Zuletzt exportiert am ... und seither
+ * geaendert") - dieselbe Begruendung wie beim Umzug der Pille hierher.
+ * Die sonst berechtigte Sorge, dass `order` Seh- und Tab-Reihenfolge
+ * auseinanderlaufen laesst, greift hier nicht: in der Fusszeile ist
+ * einzig der Kebab fokussierbar, es gibt also gar keine zweite
+ * Reihenfolge, die abweichen koennte.
+ *
+ * `flex-basis: 100%` gehoert zwingend dazu, `order` allein reicht NICHT.
+ * Ohne die Basis haengt das Ergebnis an der Kachelbreite: passt alles in
+ * eine Zeile - gemessen ab etwa 460 px, also im einspaltigen Layout -,
+ * dann steht der Kebab ploetzlich MITTEN in der Fusszeile zwischen
+ * Hinweis und Pille (gemessen 172 px vom rechten Rand), weil die Pille
+ * ihn nach `order` ueberholt. Mit der vollen Basis bricht die Pille
+ * immer auf eine eigene Zeile um, und die Aufteilung ist bei jeder
+ * Breite dieselbe: oben Hinweis links und Kebab rechts, darunter die
+ * Pille. Gemessen bei 300 px, 460 px und 526 px Kachelbreite - Kebab
+ * jeweils 17 px vom rechten Rand, Pille 21 px vom linken, kein
+ * Ueberlauf. Der Preis ist eine Zeile Hoehe auch dort, wo Platz waere;
+ * das ist der Gegenwert fuer eine Fusszeile, die sich nicht je nach
+ * Fensterbreite anders sortiert. */
+.device-foot > .status-pill {
+  order: 1;
+  flex-basis: 100%;
+}
+
 /* `.status-pill` ist auf die Kopfzeile zugeschnitten (0.78rem, groszuegiges
  * Padding, `margin-left: auto` fuer die Ausrichtung neben `.device-ident`)
  * - in der 0.7rem-Fusszeile einer 260 px-Kachel (Pille-in-die-Fusszeile-

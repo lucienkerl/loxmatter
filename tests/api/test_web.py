@@ -2402,6 +2402,28 @@ async def test_offline_footer_divider_matches_the_dimmed_commands_divider(api):
     assert "opacity" not in foot_offline_rule
 
 
+async def test_the_footer_pill_wraps_onto_its_own_line_below_the_kebab(api):
+    """Der Kebab teilt sich die erste Fusszeilen-Zeile mit dem Export-
+    Hinweis, die Pille bricht darunter um (2026-09-06).
+
+    `order: 1` allein reichte nicht: passt bei einer breiten Kachel alles
+    in eine Zeile, ueberholt die Pille den Kebab und der steht mitten in
+    der Fusszeile statt rechts. `flex-basis: 100%` zwingt die Pille immer
+    auf eine eigene Zeile, womit die Aufteilung bei jeder Kachelbreite
+    dieselbe ist. Beide Eigenschaften gehoeren zusammen - deshalb prueft
+    dieser Test beide, nicht nur die auffaelligere.
+
+    Reiner Auslieferungsbeleg: geprueft wird die Regel im ausgelieferten
+    Stylesheet, nicht das Ergebnis im Browser. Wie sie sich tatsaechlich
+    auswirkt, ist bei 300, 460 und 526 px Kachelbreite von Hand gemessen
+    worden (siehe Commit-Nachricht)."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split(".device-foot > .status-pill {", 1)[1].split("}", 1)[0]
+    assert "order: 1" in rule
+    assert "flex-basis: 100%" in rule
+
+
 async def test_the_changed_pill_now_lives_in_the_tile_footer(api):
     """Pille-in-die-Fusszeile-Umbau (2026-09-06): die Geaendert-seit-Export-
     Pille sass bisher in der Kopfzeile (`.device-ident`), wo sie laut dem
