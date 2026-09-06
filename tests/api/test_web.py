@@ -2402,6 +2402,54 @@ async def test_offline_footer_divider_matches_the_dimmed_commands_divider(api):
     assert "opacity" not in foot_offline_rule
 
 
+async def test_the_changed_pill_now_lives_in_the_tile_footer(api):
+    """Pille-in-die-Fusszeile-Umbau (2026-09-06): die Geaendert-seit-Export-
+    Pille sass bisher in der Kopfzeile (`.device-ident`), wo sie laut dem
+    inzwischen entfernten Entwurf-6.2-Kommentar das Leitwert-Label
+    verdraengte. Sie steht jetzt in `.device-foot`, direkt neben
+    `exportHintFor` - derselbe Exportzustand, dieselbe Zeile, statt Streit
+    um die schmale Zeile unter dem Geraetenamen. Die Reihenfolge Hinweis-
+    dann-Pille spiegelt den Fliesstext ("Zuletzt exportiert am ... und
+    seither geaendert"), nicht umgekehrt.
+
+    Reiner Auslieferungsbeleg (kein Browser-Lauf, kein Alpine-Rendering):
+    geprueft wird die Position der Textmarken im ausgelieferten Markup,
+    nicht das tatsaechliche Layout - das bestaetigt nur, was ausgeliefert
+    wird, nichts ueber Umbruch oder Ueberlauf im Browser (siehe die
+    manuelle Pruefung im Aufgabenbericht fuer 261 px/1440 px)."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    foot_pos = markup.index('class="device-foot"')
+    hint_pos = markup.index('x-text="exportHintFor(device.id)"')
+    pill_pos = markup.index("x-text=\"t('web.devices.changed_since_export')\"")
+    offline_pos = markup.index("x-text=\"t('web.devices.offline')\"")
+    # Die Pille steht nach dem Fusszeilen-Anfang und nach dem Export-
+    # Hinweis - nicht mehr vor `.device-foot` in der Kopfzeile.
+    assert foot_pos < hint_pos < pill_pos
+    # "Offline" bleibt in der Kopfzeile, also VOR der Fusszeile: das ist
+    # Geraetezustand, kein Exportzustand, und bleibt dort, wo der Blick
+    # zuerst hinfaellt.
+    assert offline_pos < foot_pos
+
+
+async def test_the_lead_label_only_yields_to_the_offline_pill_now(api):
+    """Folgeaenderung desselben Umbaus: die Bedingung
+    `x-show="isOnline(device) && !changedSinceExport(device.id) &&
+    leadSignalFor(device.id)"` galt nur, solange die Geaendert-Pille noch
+    in der Kopfzeile stand und sich mit dem Leitwert-Label dieselbe Zeile
+    teilte. Mit der Pille in der Fusszeile (s.
+    `test_the_changed_pill_now_lives_in_the_tile_footer`) hat ein
+    geaendertes, aber online Geraet die Zeile fuer sich - das Label muss
+    wieder erscheinen. Nur die Offline-Pille beansprucht die Zeile noch."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "!changedSinceExport(device.id)" not in markup
+    assert (
+        'x-show="isOnline(device) && leadSignalFor(device.id)"\n'
+        '                        x-text="leadSignalFor(device.id)?.title"' in markup
+    )
+
+
 async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
     """Nacharbeit 2026-09-05, Fund 3: jeder Befehl steckt in einem eigenen
     `<span class="row">`-Wrapper (index.html), und `.row + .row {

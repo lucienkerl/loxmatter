@@ -411,21 +411,31 @@
                         @input="labelDrafts[device.id] = $event.target.value"
                         @change="saveLabel(device)"
                       />
-                      <!-- Ist eine Status-Pille faellig, verdraengt sie das
-                           Leitwert-Label (Entwurf 6.2): der Zustand der
-                           Kachel wiegt schwerer als die Beschriftung einer
-                           Zahl, die zwei Zentimeter daneben steht. -->
-                      <span class="status-pill warn" x-show="isOnline(device) && changedSinceExport(device.id)">
-                        <svg class="icon"><use href="#i-warn"></use></svg>
-                        <span x-text="t('web.devices.changed_since_export')"></span>
-                      </span>
+                      <!-- Die Geaendert-seit-Export-Pille sass hier frueher
+                           (Entwurf 6.2) und verdraengte dafuer das
+                           Leitwert-Label. Verlegt in die Fusszeile (Pille-
+                           in-die-Fusszeile-Umbau, 2026-09-06): sie steht
+                           dort neben `exportHintFor`, das ohnehin schon
+                           beantwortet, WANN zuletzt exportiert wurde -
+                           "seither geaendert" ist dieselbe Fragestellung,
+                           keine zweite. Die Kopfzeile bleibt damit dem
+                           Geraetezustand vorbehalten (nur noch "Offline"),
+                           nicht dem Exportzustand. -->
                       <span class="status-pill off" x-show="!isOnline(device)">
                         <svg class="icon"><use href="#i-offline"></use></svg>
                         <span x-text="t('web.devices.offline')"></span>
                       </span>
+                      <!-- Nur noch die Offline-Pille verdraengt das
+                           Leitwert-Label: sie beansprucht dieselbe Zeile
+                           unter dem Geraetenamen, auf der sonst das Label
+                           steht. Der Geaendert-Zustand tut das seit dem
+                           Umzug der Pille in die Fusszeile nicht mehr - ein
+                           geaendertes, aber online Geraet zeigt sein
+                           Leitwert-Label ("Zustand", "Temperatur") wie
+                           jedes andere auch. -->
                       <span
                         class="lead-label"
-                        x-show="isOnline(device) && !changedSinceExport(device.id) && leadSignalFor(device.id)"
+                        x-show="isOnline(device) && leadSignalFor(device.id)"
                         x-text="leadSignalFor(device.id)?.title"
                       ></span>
                     </span>
@@ -532,6 +542,17 @@
 
                   <div class="device-foot">
                     <span class="hint" x-text="exportHintFor(device.id)"></span>
+                    <!-- Reihenfolge bewusst: der Hinweis nennt zuerst den
+                         Exportzeitpunkt ("Zuletzt exportiert am ..." /
+                         "Noch nie exportiert"), die Pille ergaenzt direkt
+                         danach die zugehoerige Abweichung ("...und seither
+                         geaendert") - dieselbe Subjekt-Praedikat-Folge wie
+                         im Fliesstext, nicht Pille zuerst und Zeitangabe
+                         hinterher. -->
+                    <span class="status-pill warn" x-show="isOnline(device) && changedSinceExport(device.id)">
+                      <svg class="icon"><use href="#i-warn"></use></svg>
+                      <span x-text="t('web.devices.changed_since_export')"></span>
+                    </span>
                     <span style="flex: 1 1 auto"></span>
                     <!-- Der Auf-/Zu-Zustand liegt im DOM, nicht in Alpine:
                          ein `<details>` braucht kein `open`-Feld je Kachel,

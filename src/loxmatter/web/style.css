@@ -1396,6 +1396,21 @@ footer.hint-block {
   font-size: 0.7rem;
 }
 
+/* `.status-pill` ist auf die Kopfzeile zugeschnitten (0.78rem, groszuegiges
+ * Padding, `margin-left: auto` fuer die Ausrichtung neben `.device-ident`)
+ * - in der 0.7rem-Fusszeile einer 260 px-Kachel (Pille-in-die-Fusszeile-
+ * Umbau, 2026-09-06) waere das zu grob und der Auto-Rand wuerde sich mit
+ * dem eigenen Abstands-Element (`<span style="flex: 1 1 auto">`) um denselben
+ * Freiraum streiten. Kleinere Schrift/Polsterung, kein Auto-Rand: die Pille
+ * fuegt sich neben `.hint` ein, statt sich selbst an den rechten Rand zu
+ * schieben. */
+.device-foot .status-pill {
+  font-size: 0.68rem;
+  padding: 0.18rem 0.5rem;
+  gap: 0.25rem;
+  margin-left: 0;
+}
+
 /* Review-Fund 3 (2026-09-05, Review der Nacharbeit): `.device-commands`
  * und `.device-foot` ziehen beide dasselbe `border-top: 1px solid
  * var(--border)`. Bei einem offline Geraet dimmt die erste Trennlinie mit
