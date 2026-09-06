@@ -122,6 +122,24 @@ header.app-header h1 {
   font-weight: 600;
 }
 
+/* Zeichen und Schriftzug als ein Block, damit `space-between` der Kopfzeile
+   ihn als Ganzes nach links schiebt (siehe den Kommentar an <div class="brand">
+   in index.html). */
+header.app-header .brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+/* Die Masse stehen doppelt - hier und als Attribute im Markup. Die Attribute
+   halten den Platz frei, bevor das Bild da ist; diese Regel setzt sie
+   durch, falls das SVG doch einmal mit eigener Groesse kaeme. */
+header.app-header .brand-mark {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
 nav.tabs {
   display: flex;
   gap: 0.25rem;
@@ -430,6 +448,18 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+/* Das Zeichen ueber der Ueberschrift. `align-self: start` statt `center`:
+   Ueberschrift, Felder und Knopf dieser Spalte sind alle linksbuendig, ein
+   zentriertes Bild daraus haette als einziges Element keine gemeinsame Kante
+   mit ihnen. Der zusaetzliche Abstand nach unten bindet es an die
+   Ueberschrift, statt es gleich weit von ihr und vom Seitenrand zu halten. */
+.auth-screen .auth-mark {
+  align-self: start;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 0.25rem;
 }
 
 .auth-screen label {

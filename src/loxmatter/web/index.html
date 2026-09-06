@@ -169,6 +169,14 @@
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
     <template x-if="stringsReady && authReady && !authenticated && !passwordSet">
       <main class="auth-screen">
+        <!-- Die grosse Fassung des Zeichens: `icon.svg` gilt laut seinem
+             eigenen Kopfkommentar ab etwa 32 px, `favicon.svg` darunter. Hier
+             sind es 64, in der Kopfzeile weiter unten 24 - deshalb dort die
+             andere Datei. `alt=""` ist Absicht: "loxmatter" steht in der
+             Ueberschrift direkt darunter (en wie de), ein Alt-Text liesse den
+             Namen zweimal vorlesen. Die Masse stehen im Markup, sonst springt
+             das Formular beim Nachladen des Bildes nach unten. -->
+        <img class="auth-mark" src="/static/icon.svg" alt="" width="64" height="64" />
         <h1 x-text="t('web.auth.setup_heading')"></h1>
         <p class="banner warn" x-html="t('web.auth.setup_warning')"></p>
         <label>
@@ -190,6 +198,7 @@
 
     <template x-if="stringsReady && authReady && !authenticated && passwordSet">
       <main class="auth-screen">
+        <img class="auth-mark" src="/static/icon.svg" alt="" width="64" height="64" />
         <h1>loxmatter</h1>
         <label>
           <span x-text="t('web.auth.password_label')"></span>
@@ -209,7 +218,16 @@
     <template x-if="stringsReady && authenticated">
     <div>
     <header class="app-header">
-      <h1>loxmatter</h1>
+      <!-- Zeichen und Schriftzug stehen zusammen in `.brand`, damit das
+           `justify-content: space-between` der Kopfzeile weiter genau zwei
+           Bloecke sieht - als Geschwister wanderte der Schriftzug sonst in die
+           Mitte. Hier die Kleinfassung `favicon.svg`: bei 24 px fliessen die
+           sechs Aussenpunkte von `icon.svg` zu einem Fleck zusammen, siehe die
+           Kommentare in beiden Dateien. -->
+      <div class="brand">
+        <img class="brand-mark" src="/static/favicon.svg" alt="" width="24" height="24" />
+        <h1>loxmatter</h1>
+      </div>
       <div class="header-right">
         <!--
           Zugang: seit dem WebUI-Login gibt es hier kein Token-Feld mehr,

@@ -138,6 +138,33 @@ async def test_the_page_carries_an_icon_that_is_actually_ausgeliefert(api):
     assert "svg" in response.headers["content-type"]
 
 
+async def test_the_mark_stands_in_the_interface_in_both_its_sizes(api):
+    """Das Zeichen sass bislang nur im Browser-Tab, nicht in der Oberflaeche.
+
+    Geprueft wird die Groessenregel, die der Kopfkommentar in `icon.svg`
+    aufstellt: die grosse Fassung gilt "ab etwa 32 px", darunter greift
+    `favicon.svg` mit kraeftigeren Strichen, weil die sechs Aussenpunkte sonst
+    ineinanderfliessen. Die Kopfzeile (24 px) muss deshalb `favicon.svg`
+    nennen, die beiden Anmeldebildschirme (64 px) `icon.svg` - ein vertauschtes
+    Paar sieht im Test wie im Browser gleich "richtig" aus und faellt nur bei
+    genauem Hinsehen auf.
+
+    `alt=""` gehoert mitgeprueft: "loxmatter" steht in allen drei
+    Ueberschriften direkt daneben, ein gefuellter Alt-Text liesse einen
+    Screenreader den Namen zweimal vorlesen."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    assert '<img class="brand-mark" src="/static/favicon.svg" alt=""' in page
+    # Zweimal: einmal ueber der Anmeldung, einmal ueber der Ersteinrichtung.
+    assert page.count('<img class="auth-mark" src="/static/icon.svg" alt=""') == 2
+
+    for name in ("icon.svg", "favicon.svg"):
+        response = await client.get(f"/static/{name}")
+        assert response.status_code == 200
+        assert "svg" in response.headers["content-type"]
+
+
 def test_the_icons_are_well_formed_xml():
     """Ein SVG, das nicht als XML parst, zeigt KEIN Browser an - er blendet es
     still als kaputtes Bild aus, ohne Meldung irgendwo.
