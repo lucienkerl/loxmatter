@@ -112,9 +112,9 @@ CLI too.
 </tr>
 <tr>
 <td width="50%" valign="top">
-<img src="docs/screenshots/signals.png" alt="Signal list with Loxone addresses and export checkboxes" />
+<img src="docs/screenshots/signals.png" alt="Signal editor opened over the device grid, with Loxone addresses and export checkboxes" />
 
-**Signals**<br>Each signal with the Loxone address it will get and its own export checkbox; the administrative ones sit behind the collapsed expert section.
+**Signals**<br>Open a device's signals from its tile menu: each signal with the Loxone address it will get and its own export checkbox; the administrative ones sit behind a collapsed expert section.
 
 </td>
 <td width="50%" valign="top">
