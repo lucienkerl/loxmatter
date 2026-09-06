@@ -664,8 +664,11 @@ def _app_state(setup: str = "") -> dict:
       const state = new Function(src + "\\nreturn app();")();
       {setup}
     """
+    # `check=False`, weil die Zeile darunter denselben Fehlschlag mit dem
+    # nuetzlicheren Text meldet: `stderr` zeigt, WORAN node gescheitert ist,
+    # `CalledProcessError` nur, DASS es gescheitert ist.
     result = subprocess.run(
-        [NODE, "-e", script], capture_output=True, text=True, timeout=30
+        [NODE, "-e", script], capture_output=True, text=True, timeout=30, check=False
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)

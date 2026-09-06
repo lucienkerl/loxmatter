@@ -1616,8 +1616,13 @@ function app() {
      * Hinweis, dass seit dem Laden der Seite nichts kam. */
     signalAgeTitle(signal) {
       // Ohne Signal gibt es nichts zu datieren - ein leerer `title` laesst
-      // den Tooltip weg, statt "seit dem Laden unveraendert" ueber eine
-      // Zelle zu schreiben, die gar keinen Wert zeigt.
+      // den Tooltip weg, statt den Hinweis aus
+      // `web.header.unchanged_since_load` ueber eine Zelle zu schreiben, die
+      // gar keinen Wert zeigt. Der Schluessel steht hier absichtlich statt
+      // seines deutschen Textes: `test_the_relative_time_and_header_helpers_
+      // are_translated` sperrt genau dieses Literal im Rumpf der Funktion,
+      // und eine Sperre gegen fest verdrahtete Uebersetzungen soll sich
+      // nicht daran abarbeiten, ob ein Kommentar sie zitiert.
       if (!signal) {
         return "";
       }
