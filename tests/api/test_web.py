@@ -105,7 +105,7 @@ async def test_the_page_names_all_four_views(api):
     client, _, _ = api
     page = (await client.get("/")).text
     assert ">Geräte<" not in page
-    for key in ("devices", "signals", "export", "system", "settings"):
+    for key in ("devices", "export", "system", "settings"):
         assert f"x-text=\"t('web.nav.{key}')\"" in page
 
 
@@ -809,7 +809,7 @@ async def test_the_nav_tabs_bind_to_translation_keys_without_altering_click_hand
     tatsaechlich die Ansicht wechselt."""
     client, _, _ = api
     page = (await client.get("/")).text
-    for view_key in ("devices", "signals", "export", "system", "settings"):
+    for view_key in ("devices", "export", "system", "settings"):
         assert f"@click=\"selectView('{view_key}')\" x-text=\"t('web.nav.{view_key}')\"" in page
 
 
@@ -1060,11 +1060,17 @@ async def test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_t
     eigenem `@click.prevent`, der beim Uebersetzen NICHT in einen `x-html`-
     Block verschwinden darf - sonst liesse sich der Klick-Handler nicht mehr
     binden. Drei eigene Elemente (Praefix, Link, Suffix) je mit eigenem
-    `x-text` halten den Handler unangetastet."""
+    `x-text` halten den Handler unangetastet.
+
+    Der Ausschnitt endet an der NAECHSTEN Ansicht, nicht an einem
+    schliessenden Tag: `"view === 'signals'"` war dieser Anker, bis der
+    Reiter aufgeloest wurde (2026-09-05) - jetzt ist es `'export'`. Ein
+    Anker auf `</div>` oder `</section>` waere hier untauglich, davon gibt
+    es in der Geraeteansicht Dutzende."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     device_section_start = markup.index("x-show=\"view === 'devices'\"")
-    device_section_end = markup.index("x-show=\"view === 'signals'\"")
+    device_section_end = markup.index("x-show=\"view === 'export'\"")
     devices_markup = markup[device_section_start:device_section_end]
     assert "x-text=\"t('web.devices.export_hint_prefix')\"" in devices_markup
     assert "x-text=\"t('web.settings.miniserver_link')\"" in devices_markup
@@ -1253,37 +1259,35 @@ async def test_remove_device_reconciles_the_room_filter(api):
     assert filter_index < reconcile_index, remove_body
 
 
-async def test_the_signal_view_static_text_is_translated(api):
-    """Aufgabe 12, Schritt 3: die beiden erklaerenden Hinweise, der
-    Schaltertext, der "Signale laden"-Knopf, der leer-Hinweis fuer den
-    Funktional-Block, der Schluessel-Tooltip, das "exportieren"-
-    Checkbox-Label, der Rohwert-Platzhalter und der Schreiben-Knopf tragen
-    jetzt `t(...)` statt fester deutscher Literale - keiner der frueheren
-    Literale bleibt im Markup."""
+async def test_the_signal_modal_static_text_is_translated(api):
+    """Frueher `test_the_signal_view_static_text_is_translated`: dieselben
+    Zusicherungen, jetzt gegen das Modal statt gegen den aufgeloesten
+    Reiter (2026-09-05).
+
+    Zwei davon sind ersatzlos entfallen: `show_expert` (der globale
+    Schalter weicht einem `<details>` je Gruppe) und
+    `expert_collapsed_hint` (dessen Text auf genau diesen Schalter
+    verwies). Die uebrigen Hinweise, Beschriftungen und Platzhalter tragen
+    unveraendert `t(...)` - keiner der frueheren deutschen Literale bleibt
+    im Markup."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert "x-text=\"t('web.signals.key_hint')\"" in markup
+    dialog = _signals_dialog(markup)
+    assert "x-text=\"t('web.signals.key_hint')\"" in dialog
     assert "ist die Verdrahtung in Loxone" not in markup
-    assert "x-text=\"t('web.signals.functional_vs_expert_explanation')\"" in markup
+    assert "x-text=\"t('web.signals.functional_vs_expert_explanation')\"" in dialog
     assert "„Funktional“ sind die Signale" not in markup
-    assert "x-text=\"t('web.signals.show_expert')\"" in markup
-    assert "Experten-Signale anzeigen" not in markup
-    assert "x-text=\"t('web.signals.load_button')\"" in markup
+    assert "x-text=\"t('web.signals.load_button')\"" in dialog
     assert ">Signale laden<" not in markup
-    assert "x-text=\"t('web.signals.none_functional')\"" in markup
+    assert "x-text=\"t('web.signals.none_functional')\"" in dialog
     assert "Kein Signal dieses Geräts gilt als funktional." not in markup
-    assert (
-        "x-text=\"t('web.signals.expert_collapsed_hint', { count: group.signals.length })\""
-        in markup
-    )
-    assert "Zugeklappt" not in markup
-    assert ":title=\"t('web.signals.key_tooltip')\"" in markup
+    assert ":title=\"t('web.signals.key_tooltip')\"" in dialog
     assert "Verdrahtung in Loxone – nicht änderbar." not in markup
-    assert "x-text=\"t('web.signals.export_checkbox')\"" in markup
+    assert "x-text=\"t('web.signals.export_checkbox')\"" in dialog
     assert ">exportieren<" not in markup
-    assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in markup
+    assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in dialog
     assert "Rohwert schreiben" not in markup
-    assert "x-text=\"t('web.signals.raw_write_submit')\"" in markup
+    assert "x-text=\"t('web.signals.raw_write_submit')\"" in dialog
     assert ">Schreiben<" not in markup
 
 
@@ -3011,3 +3015,48 @@ async def test_the_signal_group_summary_suppresses_the_default_marker_and_ships_
     assert ".signal-group[open] > summary .chevron {" in block
     assert "transform: rotate(90deg);" in block
     assert "ERWUENSCHT" not in block
+
+
+async def test_the_signals_view_is_gone_from_navigation_and_markup(api):
+    """Entwurf Abschnitt 3: der Reiter wird ersatzlos aufgeloest.
+
+    Geprueft wird nicht nur der Nav-Knopf, sondern auch, dass NIRGENDWO
+    mehr auf den Ansichtswert `'signals'` geschaltet wird - ein
+    stehengebliebener `selectView('signals')` waere ein Klick, der die
+    Anwendung in eine Ansicht schickt, die es nicht mehr gibt: alle
+    Sections blieben ausgeblendet, die Seite waere leer, ohne
+    Fehlermeldung.
+
+    `showExpertSignals` faellt mit: der Auf-/Zu-Zustand lebt jetzt im DOM
+    (`<details>` im Modal), ein globales Feld dafuer waere eine zweite
+    Wahrheit ohne Leser."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert "t('web.nav.signals')" not in page
+    assert "view === 'signals'" not in page
+    assert "selectView('signals')" not in page
+    assert 'view === "signals"' not in script
+    assert "showExpertSignals" not in script
+    assert "showExpertSignals" not in page
+
+
+async def test_the_dropped_signal_keys_are_gone_from_the_translation_table(api):
+    """Die drei Schluessel des alten Reiters haben keinen Leser mehr.
+
+    `expert_collapsed_hint` faellt dabei ersatzlos statt umzuziehen: "12
+    Expertensignale ausgeblendet" sagt dasselbe wie "Experte (12)" im
+    `<summary>`, nur nicht an der Stelle, an der man klickt. Ein
+    stehengelassener Schluessel waere nicht bloss tot - er verwiese in
+    seinem eigenen Text auf einen Schalter, den es nicht mehr gibt."""
+    client, _, _ = api
+    strings = (await client.get("/api/i18n")).json()["strings"]
+    for key in (
+        "web.nav.signals",
+        "web.signals.show_expert",
+        "web.signals.expert_collapsed_hint",
+    ):
+        assert key not in strings
+    assert "web.devices.menu_signals" in strings
+    assert "web.signals.modal_heading" in strings
+    assert "web.signals.modal_close" in strings

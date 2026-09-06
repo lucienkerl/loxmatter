@@ -403,12 +403,6 @@ function app() {
     // Liste auf. Zurueckgesetzt wird dieses Feld an GENAU EINER Stelle, dem
     // `@close` des `<dialog>` in index.html - siehe den Kommentar dort.
     signalsModalDevice: null,
-    // Experte-Block (Aufgabe 8): standardmaessig zugeklappt, ein einziger
-    // globaler Schalter statt Zustand je Geraet - die Ansicht "Signale"
-    // zeigt ohnehin alle Geraete auf einmal untereinander, ein Zustand pro
-    // Karte wuerde hier keinen zusaetzlichen Nutzen bringen, nur zusaetzliche
-    // Klicks.
-    showExpertSignals: false,
 
     // --- Einstellungen ---------------------------------------------------
     // `bridgeSettings` ist der zuletzt vom Server geladene Stand (auch von
@@ -765,17 +759,7 @@ function app() {
       } else {
         this.disconnectDiagnosticsLive();
       }
-      if (view === "signals") {
-        // Der vollstaendige Baum, nicht erst nach einem weiteren Klick pro
-        // Geraet - die "Signale laden"-Schaltflaeche in index.html bleibt
-        // trotzdem stehen, sie erscheint nur noch als Wiederholung fuer den
-        // Fall, dass ein einzelnes Geraet hier scheitert (`signalsError`).
-        await Promise.all(
-          this.devices
-            .filter((device) => !this.signalsByDevice[device.id])
-            .map((device) => this.loadSignals(device.id)),
-        );
-      } else if (view === "export") {
+      if (view === "export") {
         await this.loadExportStatus();
       } else if (view === "system") {
         await this.loadSystem();
@@ -1279,9 +1263,10 @@ function app() {
       }
     },
 
-    // Signale-Ansicht (Aufgabe 8): "Funktional" zeigt sofort, was
-    // `is_functional` als gewollt einstuft; "Experte" bleibt zugeklappt,
-    // bis `showExpertSignals` das global fuer alle Geraetekarten umschaltet
+    // Signal-Modal: "Funktional" zeigt sofort, was `is_functional` als
+    // gewollt einstuft; "Experte" bleibt zugeklappt, bis der Nutzer das
+    // `<details>` im Modal aufklappt (bis 2026-09-05 tat das ein globaler
+    // Schalter fuer alle Geraete zugleich)
     // - dieselbe Datengrundlage wie oben, nur ungefiltert nach der
     // jeweils anderen Bedingung. Keine der beiden Listen bildet die
     // Relevanz-Regel selbst nach: beide lesen nur `signal.functional`, das
@@ -1297,9 +1282,11 @@ function app() {
     // gegen `expertSignalsFor` - 51 Zeilen doppelt, die bei jeder
     // Aenderung zweimal angefasst werden mussten, ohne dass etwas ein
     // Auseinanderlaufen bemerkt haette. `collapsible` steuert in der
-    // Vorlage, ob ein Block hinter `showExpertSignals` versteckt ist und
-    // seine Anzahl in der Ueberschrift zeigt - der Rest (Zeilen-Markup,
-    // leer-Hinweis) ist fuer beide Gruppen identisch.
+    // Vorlage nur noch den Startzustand des `<details>` (funktional offen,
+    // Experte zu, siehe `x-init` in index.html) - der Rest (Zeilen-Markup,
+    // leer-Hinweis) ist fuer beide Gruppen identisch. Der erste Satz oben
+    // gilt seit dem Modal-Umbau doppelt: dort teilen sich beide Gruppen
+    // sogar dasselbe `<details>`-Markup, nicht nur dieselbe Zeilenvorlage.
     signalGroupsFor(deviceId) {
       return [
         { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },

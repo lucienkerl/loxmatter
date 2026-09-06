@@ -529,9 +529,6 @@ api.server.fail_resync:
 web.nav.devices:
   en: "Devices"
   de: "Geräte"
-web.nav.signals:
-  en: "Signals"
-  de: "Signale"
 web.nav.export:
   en: "Export"
   de: "Export"
@@ -849,18 +846,12 @@ web.signals.key_hint:
 web.signals.functional_vs_expert_explanation:
   en: "\"Functional\" are the signals that belong to the recognized device type (on/off, power, and similar) – \"Expert\" is everything else (network, device, and diagnostic values, technical counters). Both sections keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
   de: "„Funktional“ sind die Signale, die zum erkannten Gerätetyp gehören (Ein/Aus, Leistung und Ähnliches) – „Experte“ alles andere (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Blöcke behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
-web.signals.show_expert:
-  en: "Show expert signals"
-  de: "Experten-Signale anzeigen"
 web.signals.load_button:
   en: "Load signals"
   de: "Signale laden"
 web.signals.none_functional:
   en: "No signal of this device is considered functional."
   de: "Kein Signal dieses Geräts gilt als funktional."
-web.signals.expert_collapsed_hint:
-  en: "Collapsed – {count} signals without a recognized meaning for this device type. \"Show expert signals\" above reveals them for all devices."
-  de: "Zugeklappt – {count} Signale ohne erkannte Bedeutung für diesen Gerätetyp. „Experten-Signale anzeigen“ oben blendet sie für alle Geräte ein."
 web.signals.key_tooltip:
   en: "Wiring in Loxone – not changeable."
   de: "Verdrahtung in Loxone – nicht änderbar."

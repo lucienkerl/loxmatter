@@ -243,7 +243,6 @@
 
     <nav class="tabs">
       <button :class="{ active: view === 'devices' }" @click="selectView('devices')" x-text="t('web.nav.devices')"></button>
-      <button :class="{ active: view === 'signals' }" @click="selectView('signals')" x-text="t('web.nav.signals')"></button>
       <button :class="{ active: view === 'export' }" @click="selectView('export')" x-text="t('web.nav.export')"></button>
       <button :class="{ active: view === 'system' }" @click="selectView('system')" x-text="t('web.nav.system')"></button>
       <button :class="{ active: view === 'settings' }" @click="selectView('settings')" x-text="t('web.nav.settings')"></button>
@@ -806,140 +805,7 @@
       </section>
 
       <!-- ================================================================
-           Ansicht 2: Signale
-           ================================================================ -->
-      <section x-show="view === 'signals'" x-cloak>
-        <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
-        <p class="hint" x-text="t('web.signals.key_hint')"></p>
-        <p class="hint" x-text="t('web.signals.functional_vs_expert_explanation')"></p>
-        <label class="row signal-group-toggle">
-          <input type="checkbox" x-model="showExpertSignals" />
-          <span x-text="t('web.signals.show_expert')"></span>
-        </label>
-
-        <template x-for="device in devices" :key="'signals-' + device.id">
-          <div class="card">
-            <h2 x-text="device.label"></h2>
-            <button
-              x-show="!signalsByDevice[device.id]"
-              @click="loadSignals(device.id)"
-              x-text="t('web.signals.load_button')"
-            ></button>
-
-            <!--
-              Beide Bloecke (Funktional, Experte) teilen sich seit Review-
-              Fix 6 (Nachbesserung Phase 6) diese eine Signalzeilen-Vorlage
-              statt zweier byte-identischer Kopien, die nur gegen
-              `functionalSignalsFor` bzw. `expertSignalsFor` liefen -
-              `signalGroupsFor` (app.js) liefert dafuer beide Gruppen mit
-              ihren Metadaten (Titel, Anzahl, ob zuklappbar).
-            -->
-            <template x-if="signalsByDevice[device.id]">
-              <div>
-                <template x-for="group in signalGroupsFor(device.id)" :key="group.key">
-                  <div>
-                    <h3>
-                      <span x-text="group.title"></span>
-                      <span
-                        class="muted"
-                        x-show="group.collapsible"
-                        x-text="'(' + group.signals.length + ')'"
-                      ></span>
-                    </h3>
-                    <p
-                      class="hint"
-                      x-show="!group.collapsible && group.signals.length === 0"
-                      x-text="t('web.signals.none_functional')"
-                    ></p>
-                    <p
-                      class="hint"
-                      x-show="group.collapsible && !showExpertSignals"
-                      x-text="t('web.signals.expert_collapsed_hint', { count: group.signals.length })"
-                    ></p>
-                    <div x-show="!group.collapsible || showExpertSignals" x-cloak>
-                      <template x-for="signal in group.signals" :key="signal.key">
-                        <div class="device-controls">
-                          <div class="row">
-                            <span
-                              class="key"
-                              :title="t('web.signals.key_tooltip')"
-                              x-text="signal.key"
-                            ></span>
-                            <input
-                              type="text"
-                              :value="signal.title"
-                              @input="titleDrafts[signal.key] = $event.target.value"
-                              @change="saveTitle(signal)"
-                            />
-                            <span class="hint" x-text="signal.path"></span>
-                            <!--
-                              Wann der Wert zuletzt kam, steht im `title` -
-                              nicht daneben im Textfluss (2026-09-03). Eine
-                              Angabe wie "vor 7 s" aendert jede Sekunde ihre
-                              Breite und schiebt damit die ganze Zeile; der
-                              Blick folgt dann der Bewegung statt der
-                              Aenderung. Die zeigt jetzt `value-fresh`: der
-                              Wert leuchtet kurz auf und verblasst wieder,
-                              ohne dass sich am Aufbau etwas bewegt.
-                            -->
-                            <span
-                              class="value"
-                              :class="{ 'value-fresh': signalIsFresh(signal) }"
-                              :title="signalAgeTitle(signal)"
-                              x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
-                            ></span>
-                            <label x-show="signal.exportable">
-                              <input
-                                type="checkbox"
-                                :checked="signal.exported"
-                                @change="toggleExported(signal)"
-                              />
-                              <span x-text="t('web.signals.export_checkbox')"></span>
-                            </label>
-                            <label x-show="signal.exportable">
-                              <input
-                                type="checkbox"
-                                :checked="signal.resend"
-                                @change="toggleResend(signal)"
-                              />
-                              <span x-text="t('web.signals.resend_checkbox')"></span>
-                            </label>
-                            <span
-                              class="badge warn"
-                              x-show="!signal.exportable"
-                              x-text="signal.reason"
-                            ></span>
-                          </div>
-                          <div class="row" x-show="signal.kind === 'attribute'">
-                            <input
-                              type="text"
-                              :placeholder="t('web.signals.raw_write_placeholder')"
-                              @input="rawWriteDrafts[signal.key] = $event.target.value"
-                            />
-                            <button
-                              @click="writeRaw(signal)"
-                              :disabled="rawWriteBusyKey === signal.key"
-                              x-text="t('web.signals.raw_write_submit')"
-                            ></button>
-                            <span
-                              x-show="rawWriteMessages[signal.key]"
-                              :class="rawWriteMessageClass(signal)"
-                              x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
-                            ></span>
-                          </div>
-                        </div>
-                      </template>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </template>
-          </div>
-        </template>
-      </section>
-
-      <!-- ================================================================
-           Ansicht 3: Export
+           Ansicht 2: Export
            ================================================================ -->
       <section x-show="view === 'export'" x-cloak>
         <!--
@@ -1298,7 +1164,7 @@
       </section>
 
       <!-- ================================================================
-           Ansicht 4: System
+           Ansicht 3: System
            ================================================================ -->
       <section x-show="view === 'system'" x-cloak>
         <div class="card">
@@ -1421,7 +1287,7 @@
       </section>
 
       <!-- ================================================================
-           Ansicht 5: Einstellungen
+           Ansicht 4: Einstellungen
            ================================================================ -->
       <section x-show="view === 'settings'" x-cloak>
         <div class="card">
@@ -1590,7 +1456,7 @@
 
                 Der Auf-/Zu-Zustand lebt im DOM, nicht in Alpine - dasselbe
                 Muster wie beim Kachel-Menue, und der Grund, warum der alte
-                globale Schalter `showExpertSignals` ersatzlos entfaellt.
+                globale Auf-/Zu-Schalter (Aufgabe 8) ersatzlos entfaellt.
 
                 `x-init` statt `:open` ist Pflicht, kein Stil: Alpine wertet
                 eine BINDUNG bei jeder Aenderung ihrer Abhaengigkeiten neu
