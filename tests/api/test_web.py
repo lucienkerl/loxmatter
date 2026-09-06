@@ -3467,3 +3467,18 @@ async def test_the_search_field_ships_the_words_for_counter_and_clear_button(api
     strings = (await client.get("/api/i18n")).json()["strings"]
     assert strings["web.devices.search_count"] == "{count} found"
     assert strings["web.devices.search_clear"] == "Clear search"
+
+
+async def test_the_search_field_has_a_magnifier_of_its_own(api):
+    """Die Lupe kommt aus dem Inline-Sprite wie jedes andere Symbol -
+    dieselbe Begruendung wie beim eingecheckten vendor/alpine.min.js: die
+    Oberflaeche laeuft offline.
+
+    Das Loeschkreuz bekommt dagegen KEIN eigenes Symbol, es benutzt das
+    vorhandene `#i-close`. Zwei gleiche Formen waeren zwei Orte, an die man
+    sich beim naechsten Strichstaerken-Dreh erinnern muss - und an einen
+    davon erinnert man sich nicht."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    assert 'id="i-search"' in page
+    assert page.count('id="i-close"') == 1
