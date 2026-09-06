@@ -374,7 +374,13 @@
               />
             </span>
           </template>
-          <span style="flex: 1 1 auto"></span>
+          <!-- Der Abstandhalter existiert nur zusammen mit den Chips: er
+               schiebt das Suchfeld an ihnen vorbei nach rechts. Ohne
+               Raeume gibt es nichts, woran vorbeizuschieben waere - dann
+               soll das Feld an die linke Kante ruecken statt allein rechts
+               in einer leeren Zeile zu stehen. Deshalb ein eigenes `x-if`
+               und keine Zeile, die immer da ist. -->
+          <template x-if="hasAnyRoom()"><span class="room-spacer"></span></template>
           <!-- Der Rahmen sitzt am Container, nicht am Feld: Lupe, Zaehler
                und Kreuz liegen mit IM Rahmen, und der Fokusring haengt per
                :focus-within an der ganzen Gruppe statt am Eingabefeld in

@@ -1089,6 +1089,15 @@ footer.hint-block {
   align-items: center;
 }
 
+/* Schluckt den freien Rest der Zeile und schiebt das Suchfeld damit nach
+ * rechts an den Chips vorbei. Steht als eigene Klasse statt als
+ * `style`-Attribut im Markup, weil das Element inzwischen unter einem
+ * `x-if` haengt - dort gehoert die Begruendung ins Markup, das Mass ins
+ * Stylesheet. */
+.room-spacer {
+  flex: 1 1 auto;
+}
+
 .room-chip {
   border: 1px solid var(--border);
   background: var(--surface);

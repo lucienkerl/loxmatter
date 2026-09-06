@@ -3688,3 +3688,25 @@ async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
     assert "t('web.devices.search_clear')" in field
     assert 'href="#i-search"' in field
     assert 'href="#i-close"' in field
+
+
+async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
+    """Der Abstandhalter, der das Feld nach rechts schiebt, existiert nur
+    zusammen mit den Chips, an denen vorbeizuschieben waere.
+
+    Ohne Raeume blendet sich die Chip-Leiste aus (`x-if="hasAnyRoom()"`).
+    Stuende der Abstandhalter dann weiter im Markup - so war es -, bliebe
+    ein einzelner Kasten rechts in einer sonst leeren Zeile stehen. Mit
+    eigenem `x-if` verschwindet er mit den Chips, und das Feld rueckt an die
+    linke Kante, auf eine Sichtachse mit dem Kachelraster darunter.
+
+    Zwei `x-if="hasAnyRoom()"` in der Leiste sind also richtig und kein
+    Versehen: eines fuer die Chips, eines fuer den Abstandhalter."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    bar = page.split('<div class="room-bar"', 1)[1].split('<div class="search-field">', 1)[0]
+    assert 'style="flex: 1 1 auto"' not in bar
+    assert bar.count('x-if="hasAnyRoom()"') == 2
+    assert '<span class="room-spacer"></span>' in bar
+    css = (await client.get("/static/style.css")).text
+    assert "flex: 1 1 auto" in css.split(".room-spacer {", 1)[1].split("}", 1)[0]
