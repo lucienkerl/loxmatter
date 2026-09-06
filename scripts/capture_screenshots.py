@@ -173,8 +173,11 @@ def shoot(
 def select_view(page: Page, label: str) -> None:
     """Klickt den Reiter ueber seinen (englischen) Beschriftungstext - klappt,
     weil die Demo-Datenbank ohne Sprachvorgabe startet und die Oberflaeche
-    dann auf Englisch faellt (siehe dev_web_server.py --demo)."""
-    page.click(f'nav.tabs button:has-text("{label}")')
+    dann auf Englisch faellt (siehe dev_web_server.py --demo).
+
+    Die Reiter sind `<a href="#/...">` und keine Knoepfe mehr (URL-Navigation,
+    siehe `nav.tabs` in index.html)."""
+    page.click(f'nav.tabs a:has-text("{label}")')
     page.wait_for_timeout(400)
 
 
