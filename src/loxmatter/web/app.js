@@ -298,10 +298,75 @@ function blobFromBase64(base64, mimeType) {
   return new Blob([bytes], { type: mimeType });
 }
 
+// ---------------------------------------------------------------------------
+// Navigation ueber die Adresszeile
+// ---------------------------------------------------------------------------
+//
+// Jede Ansicht hat ihr eigenes Fragment: `#/devices`, `#/export`, `#/system`,
+// `#/settings`. Die Reiterleiste in `index.html` besteht deshalb aus echten
+// `<a href="#/...">`-Links statt aus Knoepfen - der gewaehlte Reiter
+// ueberlebt damit das Neuladen der Seite (der Anlass dieser Aenderung: wer
+// auf "Einstellungen" neu lud, landete wieder im Geraete-Dashboard), laesst
+// sich als Lesezeichen ablegen und weiterschicken, und der Zurueck-Knopf
+// fuehrt auf den vorigen Reiter statt aus der Anwendung heraus.
+//
+// Ein Fragment und kein Pfad (`/settings`): der Server liefert unter `/`
+// genau eine Datei aus (siehe loxone/server.py), ein Pfad brauchte dort eine
+// Auffangroute, die jeden unbekannten Pfad auf `index.html` zurueckfallen
+// laesst. Das Fragment erreicht den Server ohnehin nie.
+const VIEWS = ["devices", "export", "system", "settings"];
+const DEFAULT_VIEW = "devices";
+
+/** Das Fragment, das zu einer Ansicht gehoert. */
+function hashForView(view) {
+  return `#/${view}`;
+}
+
+/**
+ * Die Ansicht aus dem aktuellen Fragment - `null`, wenn dort nichts
+ * Gueltiges steht: beim Aufruf ohne Fragment, nach einem Lesezeichen auf
+ * eine inzwischen entfernte Ansicht (`#/signals`, siehe `openSignalsModal`)
+ * oder nach einem Tippfehler in der Adresszeile. Die Aufrufer weichen dann
+ * auf `DEFAULT_VIEW` bzw. die gerade gezeigte Ansicht aus, statt eine leere
+ * Seite zu zeigen.
+ */
+function viewFromHash() {
+  const name = window.location.hash.replace(/^#\/?/, "");
+  return VIEWS.includes(name) ? name : null;
+}
+
+/**
+ * Traegt die Ansicht in die Adresszeile ein.
+ *
+ * Stand dort schon eine gueltige Ansicht, ist der Wechsel ein gewoehnlicher
+ * Chronikeintrag - der Zurueck-Knopf fuehrt dann auf den vorigen Reiter.
+ * Stand dort nichts Gueltiges (der haeufigste Fall: der erste Aufruf ohne
+ * Fragment), ersetzt der Eintrag den bestehenden: sonst zeigte der
+ * Zurueck-Knopf auf dieselbe Seite ohne Fragment, die das Fragment sofort
+ * wieder ergaenzte - eine Schaltflaeche, die sichtbar nichts tut.
+ *
+ * Setzt `location.hash` nur bei tatsaechlicher Aenderung: ein identischer
+ * Wert loeste kein `hashchange` aus, aber `replaceState` schriebe einen
+ * Chronikeintrag fuer nichts.
+ */
+function writeHash(view) {
+  const target = hashForView(view);
+  if (window.location.hash === target) {
+    return;
+  }
+  if (viewFromHash() === null) {
+    window.history.replaceState(null, "", target);
+  } else {
+    window.location.hash = target;
+  }
+}
+
 function app() {
   return {
     // --- Ansicht ---------------------------------------------------------
-    view: "devices",
+    // Der Startwert gilt nur, bis `init()` das Fragment der Adresszeile
+    // gelesen hat (siehe `viewFromHash` oben).
+    view: DEFAULT_VIEW,
 
     // --- Zugang -----------------------------------------------------------
     // `authReady` verhindert das Aufblitzen des falschen Bildschirms: bis
@@ -529,6 +594,17 @@ function app() {
       window.setInterval(() => {
         this.nowTick = Date.now();
       }, 1000);
+      // Die Ansicht steht in der Adresszeile - gelesen VOR dem ersten Laden,
+      // damit `startApp()` unten gleich die richtige Ansicht aufbaut und
+      // nicht erst das Dashboard und danach die gewuenschte.
+      this.view = viewFromHash() ?? DEFAULT_VIEW;
+      // Ab hier fuehrt jeder Weg in eine andere Ansicht ueber das Fragment:
+      // Klick auf einen Reiter, Zurueck-Knopf, von Hand editierte
+      // Adresszeile. Alpine ruft `init()` genau einmal auf, der Zuhoerer
+      // haengt also auch genau einmal am Fenster.
+      window.addEventListener("hashchange", () => {
+        this.applyHash();
+      });
       await Promise.all([this.loadI18n(), this.loadAuthInfo()]);
       if (this.authenticated) {
         await this.startApp();
@@ -771,8 +847,39 @@ function app() {
     // Navigation
     // ---------------------------------------------------------------------
 
+    /**
+     * Der Rueckweg aus der Adresszeile in die Anwendung: haengt an
+     * `hashchange` (siehe `init`) und laeuft damit bei jedem Reiterklick,
+     * jedem Zurueck-Knopf und jeder von Hand geaenderten Adresse.
+     */
+    async applyHash() {
+      const view = viewFromHash();
+      if (view === null) {
+        // Nichts Gueltiges in der Adresszeile: die gezeigte Ansicht bleibt
+        // stehen und wird nur nachgetragen, statt kommentarlos auf das
+        // Dashboard zu springen.
+        writeHash(this.view);
+        return;
+      }
+      if (!this.authenticated) {
+        // Vor der Anmeldung gibt es nichts zu laden - jede Anfrage liefe in
+        // eine 401. Die Ansicht nur merken; `startApp()` baut sie nach dem
+        // Login auf.
+        this.view = view;
+        return;
+      }
+      if (view === this.view) {
+        // `selectView` traegt das Fragment selbst ein; das dabei ausgeloeste
+        // `hashchange` landet hier und darf die Ansicht nicht ein zweites
+        // Mal laden.
+        return;
+      }
+      await this.selectView(view);
+    },
+
     async selectView(view) {
       this.view = view;
+      writeHash(view);
       // Genau EINE Diagnose-Verbindung, offen nur waehrend "System"
       // tatsaechlich die aktive Ansicht ist (Falle 3, Aufgabe 6): sie oeffnet
       // beim Wechsel AUF "system" und schliesst bei jedem anderen Wert -
