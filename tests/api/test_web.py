@@ -2431,6 +2431,21 @@ async def test_the_changed_pill_now_lives_in_the_tile_footer(api):
     # zuerst hinfaellt.
     assert offline_pos < foot_pos
 
+    # Die Pille haengt NICHT mehr an `isOnline` (2026-09-06). Diese Kopplung
+    # stammte aus der Kopfzeile, wo sich Pille und Offline-Marke eine Zeile
+    # teilten; unten konkurriert nichts, und ob ein Geraet seit dem Export
+    # geaendert wurde, ist unabhaengig davon, ob es gerade antwortet. Ohne
+    # diese Zusicherung koennte ein spaeterer Umbau die Bedingung
+    # stillschweigend wieder mitschleppen - und ein offline stehendes Geraet
+    # mit ausstehendem Export saehe wieder aus wie eines ohne, weil auch der
+    # Randstreifen `is-changed` an `isOnline` koppelt.
+    # Rueckwaerts auf die PILLE ankern, nicht auf das naechste `<span`: das
+    # waere das innere Text-Span, das den Beschriftungsschluessel traegt.
+    pill_open = markup.rindex('<span class="status-pill warn"', 0, pill_pos)
+    pill_tag = markup[pill_open : markup.index(">", pill_open)]
+    assert "changedSinceExport(device.id)" in pill_tag
+    assert "isOnline" not in pill_tag
+
 
 async def test_the_lead_label_only_yields_to_the_offline_pill_now(api):
     """Folgeaenderung desselben Umbaus: die Bedingung
