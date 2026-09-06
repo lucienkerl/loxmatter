@@ -1633,6 +1633,40 @@ function app() {
       this.$refs.signalsModal.close();
     },
 
+    /**
+     * Ob ein Mausereignis auf dem BACKDROP des Modals liegt - und nicht auf
+     * dem Dialog selbst.
+     *
+     * Ein `<dialog>` im `showModal()`-Zustand hat als Backdrop ein
+     * `::backdrop`-Pseudoelement ueber dem ganzen Fenster; Mausereignisse
+     * darauf tragen das `<dialog>` als Ziel. `event.target === el` allein
+     * unterscheidet den Backdrop deshalb NICHT vom Dialog - auch dessen
+     * eigener Scrollbalken gehoert dem Element und liefert dasselbe Ziel.
+     *
+     * Der verlaessliche Unterschied ist die Lage: der Dialog belegt genau
+     * sein eigenes Rechteck, der Backdrop alles ausserhalb davon.
+     *
+     * Ein frueherer Versuch verglich stattdessen `offsetX` mit
+     * `clientWidth`. Das trennt nur einen Scrollbalken ab, der PLATZ
+     * RESERVIERT; bei einem ueberlagernden (macOS-Voreinstellung, misst
+     * 0 px) lief es ins Leere, und weder ein waagerechter Balken noch eine
+     * RTL-Anordnung waren abgedeckt. Der Rechteckvergleich braucht keine
+     * dieser drei Fallunterscheidungen - deshalb ersetzt er sie, statt sie
+     * einzeln nachzuruesten.
+     */
+    isBackdropEvent(event, el) {
+      if (event.target !== el) {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return (
+        event.clientX < rect.left ||
+        event.clientX > rect.right ||
+        event.clientY < rect.top ||
+        event.clientY > rect.bottom
+      );
+    },
+
     async loadSignals(deviceId) {
       this.signalsError = null;
       try {

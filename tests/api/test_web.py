@@ -2880,23 +2880,43 @@ async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api
     verhindern wollte. Ohne `.self` schreibt jeder Mousedown im Teilbaum das
     Feld neu.
 
-    Die `offsetX`-Bedingung schliesst den eigenen Scrollbalken des Modals
-    aus: er gehoert dem `<dialog>`, ein Ereignis auf ihm hat also ebenfalls
-    das `<dialog>` als Ziel. Ohne sie schlosse ein Griff an den Scrollbalken
-    das Modal - ausgerechnet bei den langen Listen, fuer die es ihn gibt."""
+    `isBackdropEvent` (app.js) entscheidet, ob ein Ereignis wirklich auf dem
+    Backdrop lag: der eigene Scrollbalken des Modals gehoert ebenfalls dem
+    `<dialog>` und liefert dasselbe Ziel, ein Griff daran schloesse das
+    Modal sonst - ausgerechnet bei den langen Listen, fuer die es ihn gibt.
+    Geprueft wird an BEIDEN Enden der Geste, sonst schloesse auch ein Zug
+    vom Backdrop IN den Inhalt hinein: das Klick-Ereignis feuert am
+    naechsten gemeinsamen Vorfahren beider Ziele, und das ist dann wieder
+    das `<dialog>`.
+
+    Die frueher hier stehende `offsetX < clientWidth`-Bedingung ist
+    ersetzt, nicht ergaenzt: sie trennte nur einen Scrollbalken ab, der
+    PLATZ RESERVIERT, und lief bei einem ueberlagernden (macOS-
+    Voreinstellung, misst 0 px) ins Leere - dazu deckte sie weder einen
+    waagerechten Balken noch eine RTL-Anordnung ab. Der Rechteckvergleich
+    in `isBackdropEvent` braucht keine dieser Fallunterscheidungen; taucht
+    `offsetX` hier je wieder auf, ist das ein Rueckschritt."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
+    script = (await client.get("/static/app.js")).text
     assert '@close="signalsModalDevice = null"' in markup
-    assert (
-        '@mousedown="signalsModalBackdropMousedown = $event.target === $el '
-        '&& $event.offsetX < $el.clientWidth"' in markup
-    )
+    assert '@mousedown="signalsModalBackdropMousedown = isBackdropEvent($event, $el)"' in markup
     assert "@mousedown.self=" not in markup
     assert (
-        '@click.self="if (signalsModalBackdropMousedown) $el.close(); '
-        'signalsModalBackdropMousedown = false"' in markup
+        '@click.self="if (signalsModalBackdropMousedown && isBackdropEvent($event, $el)) '
+        '$el.close(); signalsModalBackdropMousedown = false"' in markup
     )
     assert markup.count("signalsModalDevice = null") == 1
+
+    # Der Helfer vergleicht die Lage gegen das Rechteck des Dialogs - nicht
+    # `offsetX` gegen `clientWidth`, siehe oben.
+    helper_start = script.index("isBackdropEvent(event, el) {")
+    helper = script[helper_start : script.index("\n    },", helper_start)]
+    assert "event.target !== el" in helper
+    assert "getBoundingClientRect()" in helper
+    for edge in ("rect.left", "rect.right", "rect.top", "rect.bottom"):
+        assert edge in helper
+    assert "offsetX" not in helper
 
 
 async def test_the_two_entry_points_open_the_signals_modal(api):
