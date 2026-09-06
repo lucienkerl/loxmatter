@@ -1411,12 +1411,33 @@
       Mousedown IM Inhalt beginnt (etwa beim Markieren eines Signaltitels)
       und der Mouseup beim Ueberziehen auf dem Backdrop landet - `.self`
       prueft nur das Klick-Ziel, nicht wo die Geste angefangen hat. Deshalb
-      merkt sich `@mousedown.self` in `signalsModalBackdropMousedown`
-      (app.js), ob der Mousedown SELBST auch schon auf dem `<dialog>` war,
-      und der Klick-Handler schliesst nur, wenn beides zutrifft. Das Feld
-      ist reine Praesentations-Buchfuehrung fuer diese eine Geste, kein
-      Modal-Zustand wie `signalsModalDevice` - `@close` bleibt dessen
-      einzige Ruecksetzstelle, siehe oben.
+      merkt sich `@mousedown` in `signalsModalBackdropMousedown` (app.js),
+      ob der Mousedown SELBST auch schon auf dem `<dialog>` war, und der
+      Klick-Handler schliesst nur, wenn beides zutrifft. Das Feld ist reine
+      Praesentations-Buchfuehrung fuer diese eine Geste, kein Modal-Zustand
+      wie `signalsModalDevice` - `@close` bleibt dessen einzige
+      Ruecksetzstelle, siehe oben.
+
+      Der Mousedown-Handler traegt bewusst KEIN `.self` (Fund 1 der
+      Nachpruefung): mit `.self` wird das Feld nur GESETZT, wenn der
+      Mousedown auf dem Backdrop lag, und nur im `@click.self` wieder
+      geleert - Alpine ueberspringt einen `.self`-Ausdruck aber vollstaendig,
+      wenn das Ziel nicht passt. Ein Mousedown auf dem Backdrop, der nie in
+      einem Klick auf dem `<dialog>` endet (Escape mit gedrueckter Taste,
+      Loslassen ausserhalb des Fensters), liesse das Feld dauerhaft auf
+      `true` stehen - und der naechste Zieh-Vorgang aus dem Inhalt heraus
+      schloesse das Modal genau wieder so, wie es dieser Umbau verhindern
+      soll. Ohne `.self` laeuft der Handler bei JEDEM Mousedown im Teilbaum
+      und schreibt das Feld jedes Mal neu; ein veralteter Wert kann eine
+      Geste nicht ueberleben.
+
+      `offsetX < $el.clientWidth` schliesst den eigenen Scrollbalken des
+      Modals aus. Er gehoert dem `<dialog>`-Element, ein Mausereignis auf
+      ihm hat also ebenfalls das `<dialog>` als Ziel - ohne diese Bedingung
+      schloesse ein Griff an den Scrollbalken das Modal, und zwar
+      ausgerechnet bei den langen Listen, fuer die es ihn ueberhaupt gibt
+      (ein Geraet mit 159 Signalen). `clientWidth` ist die Innenbreite OHNE
+      Scrollbalken, `offsetX` misst ab derselben Kante.
 
       `aria-labelledby` verweist auf eine FESTE `id` an der Ueberschrift,
       anders als das `aria-labelledby` im Kachel-Menue weiter oben, das
@@ -1429,7 +1450,7 @@
       class="signals-modal"
       aria-labelledby="signals-modal-heading"
       @close="signalsModalDevice = null"
-      @mousedown.self="signalsModalBackdropMousedown = true"
+      @mousedown="signalsModalBackdropMousedown = $event.target === $el && $event.offsetX < $el.clientWidth"
       @click.self="if (signalsModalBackdropMousedown) $el.close(); signalsModalBackdropMousedown = false"
     >
       <template x-if="signalsModalDeviceObject()">

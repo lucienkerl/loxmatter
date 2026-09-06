@@ -2862,16 +2862,36 @@ async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api
     schliesst das Modal auch, wenn ein Mousedown IM Inhalt beginnt (etwa
     beim Markieren eines Signaltitels) und der Mouseup beim Ueberziehen auf
     dem Backdrop landet - das Klick-Ziel ist dann `<dialog>`, obwohl die
-    Geste im Inhalt anfing. `@mousedown.self` haelt seither fest, ob der
+    Geste im Inhalt anfing. `@mousedown` haelt seither fest, ob der
     Mousedown SELBST schon auf dem Backdrop war; der Klick-Handler schliesst
     nur noch, wenn beides zutrifft. `signalsModalBackdropMousedown` ist
     dabei reine Praesentations-Buchfuehrung, nicht Teil des hier bewachten
     Modal-Zustands - `@close` bleibt trotzdem die einzige Stelle, die
-    `signalsModalDevice` zuruecksetzt."""
+    `signalsModalDevice` zuruecksetzt.
+
+    Fund 1 (Nachpruefung der Fixes, 2026-09-06): am Mousedown-Handler darf
+    KEIN `.self` stehen, und dieser Test ist die einzige Stelle, die das
+    festhaelt. Mit `.self` ueberspringt Alpine den Ausdruck ganz, wenn das
+    Ziel nicht das `<dialog>` ist - das Feld wuerde dann nur gesetzt, nie
+    geleert, und ein Mousedown auf dem Backdrop ohne folgenden Klick darauf
+    (Escape mit gedrueckter Maustaste, Loslassen ausserhalb des Fensters)
+    liesse es dauerhaft auf `true` stehen. Der naechste Zieh-Vorgang aus dem
+    Inhalt heraus schloesse das Modal dann genau wieder so, wie Fund 12 es
+    verhindern wollte. Ohne `.self` schreibt jeder Mousedown im Teilbaum das
+    Feld neu.
+
+    Die `offsetX`-Bedingung schliesst den eigenen Scrollbalken des Modals
+    aus: er gehoert dem `<dialog>`, ein Ereignis auf ihm hat also ebenfalls
+    das `<dialog>` als Ziel. Ohne sie schlosse ein Griff an den Scrollbalken
+    das Modal - ausgerechnet bei den langen Listen, fuer die es ihn gibt."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert '@close="signalsModalDevice = null"' in markup
-    assert '@mousedown.self="signalsModalBackdropMousedown = true"' in markup
+    assert (
+        '@mousedown="signalsModalBackdropMousedown = $event.target === $el '
+        '&& $event.offsetX < $el.clientWidth"' in markup
+    )
+    assert "@mousedown.self=" not in markup
     assert (
         '@click.self="if (signalsModalBackdropMousedown) $el.close(); '
         'signalsModalBackdropMousedown = false"' in markup
@@ -3083,9 +3103,21 @@ async def test_the_signals_modal_head_ships_a_labelled_heading_and_a_close_butto
     erkennbares Subjekt. Anders als das `aria-labelledby` am Kachel-Menue
     (das seine id aus `device.id` ableiten muss, weil es einmal PRO KACHEL
     existiert) ist eine feste id hier korrekt, weil es dieses `<dialog>`
-    nur ein einziges Mal im Dokument gibt."""
+    nur ein einziges Mal im Dokument gibt.
+
+    Fund 2 (Nachpruefung der Fixes, 2026-09-06): geprueft wird BEIDE Seiten
+    des Icons - der `<use href="#i-close">` im Dialog UND die
+    `<symbol id="i-close">`-Definition im Sprite-Block oben. `#i-close` hat
+    sonst keinen Verwender; ohne die zweite Zusicherung liesse sich das
+    Symbol loeschen, ohne dass diese Suite etwas merkt, und der Knopf
+    zeichnete stillschweigend nichts (ein `<use>` auf eine fehlende id
+    bleibt leer, ohne Konsolenmeldung). Dasselbe Paar prueft
+    `test_the_tile_menu_has_its_own_icon_symbol` weiter oben aus demselben
+    Grund."""
     client, _, _ = api
-    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    markup = _without_comments((await client.get("/")).text)
+    dialog = _signals_dialog(markup)
+    assert '<symbol id="i-close"' in markup
     assert 'aria-labelledby="signals-modal-heading"' in dialog
     assert 'id="signals-modal-heading"' in dialog
     assert (
