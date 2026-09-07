@@ -403,10 +403,15 @@
                   <rect x="16" y="46" width="4" height="4" /><rect x="30" y="46" width="4" height="4" />
                   <rect x="62" y="78" width="4" height="4" /><rect x="54" y="70" width="4" height="4" />
                 </g>
-                <rect x="98" y="52" width="76" height="20" rx="4"
+                <rect x="96" y="52" width="86" height="20" rx="4"
                       fill="var(--warn-bg)" stroke="var(--warn)" stroke-width="1" />
-                <text x="104" y="66" font-family="var(--mono)" font-size="11"
-                      fill="var(--text)">1234-567-8901</text>
+                <!-- font-family ausgeschrieben statt var(--mono): SVG-Praesentationsattribute
+                     loesen CSS-Variablen nicht in jeder Engine auf, und Monospace ist hier
+                     kein Stilmittel -- 0 und O muessen unterscheidbar bleiben, weil genau so
+                     der Code auf dem Aufkleber steht. -->
+                <text x="100" y="66"
+                      font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+                      font-size="10" fill="var(--text)">1234-567-8901</text>
                 <text x="98" y="44" font-size="8.5" letter-spacing="0.6"
                       fill="var(--text-muted)">MATTER</text>
               </svg>
