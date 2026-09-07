@@ -4581,6 +4581,38 @@ async def test_the_modal_leads_with_the_number_the_user_came_for(api):
     assert "exportedSignalCount(signalsModalDevice)" in page
 
 
+async def test_the_deselect_all_button_calls_the_correct_function_with_the_device_id(api):
+    """Die Kopfzeile zeigt die Exportzahl und daneben einen "Alle abwaehlen"-
+    Knopf (Task 9, Entwurf 2026-09-07, Abschnitt 4.2). Ein fehlerhafter
+    Funktionsaufruf (vertauschte Variable, falsche Methode, vergessenes
+    Argument) bliebe im Text-Test gruen - der Knopf selbst laeuft nie, ohne
+    Browser-Engine naemlich nur sein Markup. Belegt wird deshalb, dass die
+    ausgelieferte Datei die korrekte Bindung traegt: der Aufruf heisst
+    `deselectAllSignals(signalsModalDevice)` (das Geraet-Argument nicht
+    vergessen, nicht vertauscht) und die Beschriftung kommt aus dem
+    Uebersetzungsschluessel `web.signals.deselect_all`.
+
+    Ein eigener Test, weil er eine andere Frage als
+    `test_the_modal_leads_with_the_number_the_user_came_for` beantwortet:
+    "haengt der Knopf am richtigen Aufruf" vs. "steht die Zahl im Kopf"."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+
+    # Die `signals-summary` Div findet, in der der Knopf sitzt.
+    summary_start = dialog.index('class="signals-summary"')
+    summary_section_end = dialog.index("</div>", summary_start)
+    summary_section = dialog[summary_start:summary_section_end]
+
+    # Den "Alle abwaehlen"-Knopf selbst schneiden, nicht die ganze Div.
+    button_text_idx = summary_section.index("deselectAllSignals")
+    button_start = summary_section.rindex("<button", 0, button_text_idx)
+    button_end = summary_section.index("</button>", button_text_idx)
+    button = summary_section[button_start:button_end]
+
+    assert '@click="deselectAllSignals(signalsModalDevice)"' in button
+    assert "x-text=\"t('web.signals.deselect_all')\"" in button
+
+
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
 def test_deselect_all_empties_the_selection_instead_of_inverting_it():
     """Ein `toggleExported` ueber ALLE Signale haette die Auswahl invertiert -
