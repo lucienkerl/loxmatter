@@ -228,9 +228,7 @@ def scan_text(text: str, path: str) -> list[Finding]:
 
 
 def tracked_files() -> list[str]:
-    out = subprocess.run(
-        ["git", "ls-files"], capture_output=True, text=True, check=True
-    ).stdout
+    out = subprocess.run(["git", "ls-files"], capture_output=True, text=True, check=True).stdout
     return [line for line in out.splitlines() if line]
 
 
@@ -374,9 +372,7 @@ STRINGS = "src/loxmatter/i18n/strings.yaml"
 
 
 def at_ref(ref: str, path: str) -> str | None:
-    result = subprocess.run(
-        ["git", "show", f"{ref}:{path}"], capture_output=True, text=True
-    )
+    result = subprocess.run(["git", "show", f"{ref}:{path}"], capture_output=True, text=True)
     return result.stdout if result.returncode == 0 else None
 
 
