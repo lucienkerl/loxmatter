@@ -451,9 +451,10 @@ async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api
     mitliefert, ist die alte, ehrlichere Formulierung wieder zutreffend.
 
     Task 8 (Raster-Umbau, 2026-09-05) hat die eigene Werte-Ueberschrift
-    danach ganz entfernt: die Kachel zeigt den Leitwert jetzt in der
-    Kopfzeile und den Rest als fluchtendes Raster ohne Abschnittstitel -
-    eine Ueberschrift ueber der einzigen Werteliste einer sonst schon
+    danach ganz entfernt: die Kachel zeigt heute (seit dem Wegfall des
+    Leitwerts, Entwurf 2026-09-07) alle funktionalen Signale gleichrangig
+    als fluchtendes Raster ohne Abschnittstitel - eine Ueberschrift ueber
+    der einzigen Werteliste einer sonst schon
     kompakten Kachel waere reiner Platzverbrauch gewesen. Der Schluessel
     `web.devices.values_heading` ist deshalb (Task 9) aus `strings.yaml`
     entfernt und taucht im ausgelieferten Markup nicht mehr auf. Die
@@ -3149,9 +3150,11 @@ async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
 
     Analog fuer Signale: `web.devices.no_functional_signals` wurde
     ebenfalls geloescht, wodurch eine Kachel mit geladenen, aber leeren
-    funktionalen Signalen (`leadSignalFor` liefert `null`) zwischen
-    Kopfzeile und Befehlsleiste stillschweigend eine Luecke zeigte -
-    ununterscheidbar von einer noch ladenden Kachel.
+    funktionalen Signalen (damals: `leadSignalFor` liefert `null`; die
+    Bedingung dafuer heisst heute `functionalSignalsFor(id).length === 0`,
+    `leadSignalFor` gibt es seit dem Wegfall des Leitwerts nicht mehr)
+    zwischen Kopfzeile und Befehlsleiste stillschweigend eine Luecke
+    zeigte - ununterscheidbar von einer noch ladenden Kachel.
 
     Belegt wird, dass beide Unterscheidungen wieder ausgeliefert werden und
     `controlsLoaded` dabei tatsaechlich (wieder) verwendet wird - nicht,
@@ -4084,8 +4087,11 @@ async def test_the_tile_header_no_longer_carries_a_lead_value(api):
 async def test_the_offline_pill_sits_in_the_header_not_under_the_name(api):
     """Die Pille rueckt auf den Platz des Leitwerts: drittes Kind von
     `.device-head`, nicht mehr Kind von `.device-ident` unter dem Namen
-    (Entwurf, Abschnitt 5). `margin-left: auto` an `.status-pill` schiebt
-    sie dort ohne eigene Regel nach rechts.
+    (Entwurf, Abschnitt 5). Keine eigene Positionsregel noetig: `.device-
+    ident` traegt `flex: 1 1 auto` und verbraucht den freien Platz in der
+    Flex-Kopfzeile, damit steht die Pille rechts - ohne dass ihr eigenes
+    `margin-left: auto` (style.css) dabei etwas beitraegt (Nachtrag
+    2026-09-07, siehe Spec Abschnitt 5).
 
     Belegt wird die Verschachtelung ueber die Reihenfolge im
     ausgelieferten Markup: zwischen dem Namensfeld und der Pille MUSS ein

@@ -102,6 +102,18 @@ Platz des Leitwerts. `.status-pill` trägt bereits `margin-left: auto` —
 in der Flex-Kopfzeile schiebt sie sich damit ohne weiteres Zutun nach
 rechts.
 
+Nachgetragen am 7. September 2026: Diese Begründung ist sachlich falsch,
+auch wenn das Ergebnis stimmt. `.device-ident` trägt `flex: 1 1 auto` und
+verbraucht beim Auflösen der flexiblen Längen (CSS Flexbox § 9.7) bereits
+den gesamten freien Platz in der Kopfzeile, **bevor** Auto-Ränder
+überhaupt verteilt werden (§ 9.5). Es bleibt kein freier Platz übrig, den
+`margin-left: auto` an `.status-pill` einsammeln könnte — der Auto-Rand
+ist an dieser Stelle wirkungslos. Die Pille steht rechts, **weil
+`.device-ident` wächst**, nicht wegen ihres eigenen Auto-Rands. Damit ist
+`flex: 1 1 auto` an `.device-ident` hier tragend und nicht entbehrlich:
+fiele es weg, bliebe freier Platz übrig, und erst dann würde
+`margin-left: auto` etwas bewirken.
+
 Damit entfällt die Regel „nur die Offline-Pille verdrängt das
 Leitwert-Label": es gibt kein Label mehr, das verdrängt werden könnte. Die
 Bedingung schrumpft von

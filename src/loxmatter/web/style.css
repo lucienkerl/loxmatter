@@ -1382,10 +1382,14 @@ footer.hint-block {
  * Das Raster ist der eigentliche Punkt: eine Kachel war bisher so breit
  * wie das Fenster und so hoch wie ihr Inhalt - zwoelf Geraete waren zwoelf
  * Bildschirmhoehen. `auto-fill` mit einer Untergrenze statt eigener
- * Breakpoints: 260 px ist die Breite, ab der Kopfzeile samt Leitwert und
- * die Wertespalte nicht mehr umbrechen. Daraus ergeben sich vier Spalten
- * auf dem Desktop, zwei auf dem Tablet, eine auf dem Telefon, ohne dass
- * eine Media Query die Zahlen ein zweites Mal festlegt.
+ * Breakpoints: 260 px stammt aus einer Messung, bei der die Kopfzeile
+ * noch den Leitwert trug - ab dieser Breite brachen damals weder sie noch
+ * die Wertespalte um. Mit dessen Wegfall (Entwurf 2026-09-07) ist die
+ * Kopfzeile schmaler geworden, die Untergrenze also eher grosszuegig als
+ * knapp bemessen; neu vermessen wurde sie deswegen nicht. Daraus ergeben
+ * sich vier Spalten auf dem Desktop, zwei auf dem Tablet, eine auf dem
+ * Telefon, ohne dass eine Media Query die Zahlen ein zweites Mal
+ * festlegt.
  *
  * Nacharbeit 2026-09-05, Fund 2: `align-items: start` liess jede Kachel
  * auf ihrer eigenen Inhaltshoehe stehen - in einer Reihe mit
@@ -1594,10 +1598,11 @@ footer.hint-block {
   margin: 1rem 0 0.4rem;
 }
 
-/* Kopfzeile: Name links, Leitwert rechts, beide auf einer Sichtachse.
- * `min-width: 0` an der Mitte, damit ein langer Geraetename kuerzt statt
- * den Leitwert aus der Kachel zu schieben - ohne diese Zeile gewinnt in
- * einem Flex-Element der Inhalt gegen jede Breitenangabe. */
+/* Kopfzeile: Icon links, Name in der Mitte, Status-Pille rechts (nur
+ * wenn das Geraet offline ist), alle auf einer Sichtachse. `min-width: 0`
+ * an der Mitte, damit ein langer Geraetename kuerzt statt die Pille aus
+ * der Kachel zu schieben - ohne diese Zeile gewinnt in einem Flex-Element
+ * der Inhalt gegen jede Breitenangabe. */
 .device-head {
   display: flex;
   align-items: flex-start;
@@ -1607,9 +1612,9 @@ footer.hint-block {
 .device-ident {
   flex: 1 1 auto;
   min-width: 0;
+  /* `.device-ident` ist ein <span> - ohne `display: flex` rendert es
+   * inline und schiebt dem `<input>` fremden Zeilenabstand unter. */
   display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
 }
 
 /* `.device-head .device-name` statt nur `.device-name`: die generische
@@ -1628,9 +1633,9 @@ footer.hint-block {
  * abzueglich Icon-Kachel und Abstaenden fuer sich - ausser bei einem
  * offline stehenden Geraet, wo die Status-Pille denselben Platz belegt
  * (index.html, `.device-head`). Kuerzen muss er damit nur noch bei
- * aussergewoehnlich langen Namen, offline etwas frueher - die beiden Eigenschaften
- * am Ende dieser Regel sorgen
- * dafuer, dass es das sichtbar tut statt einen Namen mitten im Buchstaben
+ * aussergewoehnlich langen Namen, offline etwas frueher - die beiden
+ * Eigenschaften am Ende dieser Regel sorgen dafuer, dass es das sichtbar
+ * tut statt einen Namen mitten im Buchstaben
  * verschwinden zu lassen. Ein zusaetzliches `white-space: nowrap` fuer die
  * Ellipse ist bei `<input>` unnoetig - ein Textfeld umbricht ohnehin nie,
  * das ist bereits sein natives Verhalten. */

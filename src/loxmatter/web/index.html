@@ -620,12 +620,22 @@
                          Offline-Pille verdraengt das Leitwert-Label", die
                          hier frueher zwei Absaetze Begruendung brauchte.
 
-                         Keine eigene Positionsregel noetig: `.status-pill`
-                         traegt `margin-left: auto` (style.css), und das
-                         schiebt sie in dieser Flex-Kopfzeile an den rechten
-                         Rand. Solange `.device-ident` daneben `flex: 1 1
-                         auto` hat, bleibt der Name der schrumpfende Teil -
-                         die Pille ist kurz und soll nicht kuerzen.
+                         Keine eigene Positionsregel noetig - aber nicht aus
+                         dem Grund, der hier bis zur Nacharbeit vom
+                         2026-09-07 stand: `.status-pill` traegt zwar
+                         `margin-left: auto` (style.css), doch der traegt
+                         hier nichts bei. `.device-ident` daneben hat `flex:
+                         1 1 auto` und verbraucht beim Aufloesen der
+                         flexiblen Laengen (CSS Flexbox 9.7) bereits den
+                         gesamten freien Platz, BEVOR Auto-Raender verteilt
+                         werden (9.5) - fuer den Auto-Rand bleibt nichts
+                         mehr uebrig. Die Pille steht rechts, WEIL
+                         `.device-ident` waechst, nicht weil ihr eigener
+                         Auto-Rand greift. Genau deshalb ist `flex: 1 1
+                         auto` an `.device-ident` hier tragend und nicht
+                         entbehrlich: faellt es weg, bleibt freier Platz
+                         uebrig, und erst dann wuerde `margin-left: auto`
+                         an der Pille etwas bewirken.
 
                          Die Geaendert-seit-Export-Pille sitzt weiterhin in
                          der FUSSZEILE (Pille-in-die-Fusszeile-Umbau,
