@@ -185,17 +185,16 @@ def test_a_cluster_known_only_for_its_commands_keeps_its_attributes_functional(
 
 
 def test_extended_color_light_attributes_are_functional_after_the_cluster_768_fix():
-    """Belegt den Fund aus dem Abschlussreview direkt, am (synthetischen)
-    Geraet: vor Review-Fix 1 stand Cluster 768 (ColorControl) nur mit
-    `commands:` in der Tabelle - jedes seiner Attribute (`CurrentHue`,
-    `CurrentSaturation`, `ColorTemperatureMireds`, `ColorMode`) galt deshalb
-    als nicht funktional, waehrend der Ausgangsbefehl fuer die
-    Farbtemperatur laengst exportiert wurde: Loxone konnte die Farbe setzen,
-    aber nie zurueckgemeldet bekommen. `tests/fixtures/nodes/
-    synthetic_color_light.json` ist synthetisch (siehe Kommentar dort) -
-    Geraetetyp und Attribut-IDs sind gegen dieselben Quellen belegt wie
-    `profiles/clusters.yaml` Cluster 768 selbst."""
-    snapshot = _snapshot("synthetic_color_light.json")
+    """Belegt den Fund aus dem Abschlussreview direkt, am echten Geraet: vor
+    Review-Fix 1 stand Cluster 768 (ColorControl) nur mit `commands:` in der
+    Tabelle - jedes seiner Attribute (`CurrentHue`, `CurrentSaturation`,
+    `ColorTemperatureMireds`, `ColorMode`) galt deshalb als nicht funktional,
+    waehrend der Ausgangsbefehl fuer die Farbtemperatur laengst exportiert
+    wurde: Loxone konnte die Farbe setzen, aber nie zurueckgemeldet bekommen.
+    `tests/fixtures/nodes/ikea_kajplats_cws_lamp.json` ist die echte IKEA
+    KAJPLATS E14 CWS globe 806lm (Phase 1, siehe Kommentar dort) - loeste ab
+    Task 1 das bis dahin verwendete synthetische Abbild ab."""
+    snapshot = _snapshot("ikea_kajplats_cws_lamp.json")
     types = device_types_by_endpoint(snapshot)
     # 0, 1, 7, 8 = CurrentHue, CurrentSaturation, ColorTemperatureMireds, ColorMode
     for element_id in (0, 1, 7, 8):
