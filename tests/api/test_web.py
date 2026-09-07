@@ -4660,3 +4660,54 @@ def test_deselect_all_empties_the_selection_instead_of_inverting_it():
     # "b" war bereits aus und darf nicht angefasst worden sein.
     assert "b" not in values["firstRun"]
     assert values["secondRunTouched"] == 0
+
+
+async def test_the_signal_table_stacks_on_a_narrow_screen(api):
+    """Sechs Spalten passen unter etwa 640 px nicht. Ohne diesen Umbruch
+    franst die Tabelle dort wieder aus - also genau der Zustand, den der
+    ganze Umbau beseitigt hat, nur auf einem Telefon.
+
+    Prueft nicht nur, DASS "display: none" irgendwo im Umkreis der
+    Medienabfrage steht, sondern dass es im REGELKOERPER von
+    `.signal-grid-head` selbst steht: ein Stichwort-Fenster von 900
+    Zeichen waere auch dann gruen, wenn ein CSS den Spaltenkopf gar
+    nicht ausblendet, weil "display: none" zufaellig in einer
+    benachbarten, unbeteiligten Regel auftaucht (diese Fassung tut das
+    tatsaechlich - die Kaestchen-Spalten selbst tragen `display: flex`,
+    nicht `none`, das koennte man aber nicht am blossen Fenster
+    ablesen). Diese Fassung bindet jede erwartete Deklaration an ihren
+    eigenen Selektor."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+
+    assert "@media (max-width: 640px)" in css
+    media_start = css.index("@media (max-width: 640px)")
+    body_start = css.index("{", media_start) + 1
+
+    # Klammertiefe zaehlen statt eine feste Zeichenzahl zu raten - liefert
+    # exakt den Koerper der Medienabfrage, unabhaengig davon, wie lang die
+    # Regeln darin sind oder in welcher Reihenfolge sie stehen.
+    depth = 1
+    i = body_start
+    while depth:
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+        i += 1
+    media_body = css[body_start : i - 1]
+
+    def rule_body(selector: str) -> str:
+        start = media_body.index(selector)
+        open_brace = media_body.index("{", start)
+        close_brace = media_body.index("}", open_brace)
+        return media_body[open_brace:close_brace]
+
+    # Der Spaltenkopf verschwindet: ueber einer gestapelten Karte
+    # beschriftet er nichts mehr.
+    assert "display: none" in rule_body(".signal-grid-head")
+    # Die Zeile wird zur gestapelten Karte statt der sechs festen Spalten.
+    assert "grid-template-columns: auto minmax(0, 1fr)" in rule_body(".signal-grid {")
+    # Die beiden Haekchenspalten bleiben sichtbar und bedienbar - sie
+    # verschwinden nicht mit dem Kopf, sie ruecken nur linksbuendig.
+    assert "justify-content: flex-start" in rule_body(".signal-grid .col-center")

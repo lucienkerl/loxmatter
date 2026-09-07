@@ -2452,3 +2452,44 @@ footer.hint-block {
 .signal-more[aria-expanded="true"] {
   color: var(--accent);
 }
+
+/* Sechs Spalten passen hier nicht (Entwurf 2026-09-07, Abschnitt 10). Die
+   Zeile wird zur gestapelten Karte, und der Spaltenkopf verschwindet -
+   ueber einer gestapelten Karte beschriftet er nichts mehr, er stuende nur
+   als Reihe von fuenf Woertern ohne Bezug da.
+
+   Damit die Haekchen ohne Spaltenkopf ihre Bedeutung behalten, bekommen
+   sie hier ihre Beschriftung zurueck: `.col-center` wird linksbuendig und
+   das `title`-Attribut des Kaestchens erscheint als Text daneben. Das ist
+   dieselbe Auskunft wie im Spaltenkopf, nur am anderen Ort - kein zweiter
+   Uebersetzungsschluessel. */
+@media (max-width: 640px) {
+  .signal-grid-head {
+    display: none;
+  }
+
+  .signal-grid {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.3rem 0.5rem;
+    padding: 0.5rem 0;
+  }
+
+  /* Name und Schluessel bekommen die volle Breite, die drei kurzen Zellen
+     teilen sich die Zeile darunter. */
+  .signal-grid .signal-title,
+  .signal-grid .key {
+    grid-column: 1 / -1;
+  }
+
+  .signal-grid .col-right {
+    text-align: left;
+  }
+
+  .signal-grid .col-center {
+    justify-content: flex-start;
+  }
+
+  .signal-detail {
+    padding-left: 0;
+  }
+}
