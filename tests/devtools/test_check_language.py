@@ -79,3 +79,74 @@ def test_a_known_clean_english_document_is_not_flagged():
     # documents are renamed it still carries a German section anchor.
     setup = Path(__file__).parents[2] / "docs" / "SETUP.md"
     assert check_language.scan_text(setup.read_text(), "docs/SETUP.md") == []
+
+
+def test_a_de_block_scalar_and_its_continuation_lines_are_exempt():
+    # Block scalars (`de: |`) are how strings.yaml carries multi-paragraph
+    # product content. Every indented line under it is still the de: value.
+    text = (
+        "web.export.zip_note:\n"
+        "  en: |\n"
+        "    This ZIP file contains Loxone templates.\n"
+        "  de: |\n"
+        "    Diese ZIP-Datei enthaelt Loxone-Vorlagen, erzeugt von loxmatter.\n"
+        "\n"
+        '    1. Dateien, die mit "VIU_" beginnen, gehoeren in Loxone Config nach:\n'
+        "         Templates\\VirtualIn\\\n"
+    )
+    assert check_language.scan_text(text, "src/loxmatter/i18n/strings.yaml") == []
+
+
+def test_an_en_block_scalar_is_still_checked_in_full():
+    # The block-scalar skip must be specific to `de:` - it must not leak
+    # into an `en:` block that happens to (wrongly) contain German.
+    text = "web.export.zip_note:\n  en: |\n    Diese Zeile ist versehentlich Deutsch.\n"
+    findings = check_language.scan_text(text, "src/loxmatter/i18n/strings.yaml")
+    assert findings
+    assert findings[0].line == 3
+
+
+def test_a_line_after_a_de_block_at_the_same_indentation_is_still_checked():
+    # The line that ends the de: block (next key, same/lower indentation)
+    # must not be swallowed by the skip.
+    text = (
+        "web.export.zip_note:\n"
+        "  de: |\n"
+        "    Diese ZIP-Datei enthaelt Loxone-Vorlagen.\n"
+        "web.export.next_key:\n"
+        "  en: Noch ein deutscher Satz hier\n"
+    )
+    findings = check_language.scan_text(text, "src/loxmatter/i18n/strings.yaml")
+    assert findings
+    assert findings[0].line == 5
+
+
+def test_blank_lines_inside_a_de_block_do_not_end_it():
+    text = (
+        "web.export.zip_note:\n"
+        "  de: |\n"
+        "    Diese ZIP-Datei enthaelt Loxone-Vorlagen.\n"
+        "\n"
+        "    Noch ein Absatz auf Deutsch, getrennt durch eine Leerzeile.\n"
+    )
+    assert check_language.scan_text(text, "src/loxmatter/i18n/strings.yaml") == []
+
+
+def test_the_umlaut_transliteration_table_is_exempt_as_german_data():
+    text = (
+        '_UMLAUTS = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"}\n'
+    )
+    assert check_language.scan_text(text, "src/loxmatter/export/documents.py") == []
+
+
+def test_virtuelle_eingaenge_caption_title_is_exempt_as_german_data():
+    text = 'title = "Virtuelle Eingänge" if kind == "input" else "Virtuelle Ausgänge"\n'
+    assert check_language.scan_text(text, "src/loxmatter/projectsync/schema.py") == []
+
+
+def test_ordinary_german_in_the_same_file_is_still_reported():
+    # Proves the GERMAN_AS_DATA exemption is narrow, not file-wide: schema.py
+    # still gets checked for ordinary German prose elsewhere in the file.
+    text = "# Diese Zeile ist ganz gewoehnliches deutsches Prosa und muss auffallen.\n"
+    findings = check_language.scan_text(text, "src/loxmatter/projectsync/schema.py")
+    assert findings

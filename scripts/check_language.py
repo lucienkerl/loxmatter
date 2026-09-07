@@ -104,8 +104,25 @@ EXEMPT_PATHS = frozenset(
     }
 )
 # The de: values in the string table are product content, not developer
-# German - removing them would delete the language switcher.
+# German - removing them would delete the language switcher. This matches
+# both a single-line value ('de: "..."') and the opening line of a block
+# scalar ('de: |'); DE_BLOCK_SCALAR below tells the two apart so the block
+# form can also exempt its (indented) continuation lines.
 DE_VALUE = re.compile(r"^\s*de:\s")
+DE_BLOCK_SCALAR = re.compile(r"^(\s*)de:\s*[|>][+-]?\s*$")
+
+# German that is data rather than untranslated prose. Each entry is a
+# decision, not an oversight:
+GERMAN_AS_DATA = (
+    # export/documents.py: the umlaut transliteration table. Its keys are
+    # German letters - that is the whole point of the table.
+    "_UMLAUTS = {",
+    # projectsync/schema.py: the titles Loxone Config itself gives caption
+    # folders in a German installation (verified against a real reference
+    # project). loxmatter has to write what Loxone Config writes.
+    "Virtuelle Eing",
+    "Virtuelle Ausg",
+)
 
 
 class Finding(NamedTuple):
@@ -122,8 +139,25 @@ def scan_text(text: str, path: str) -> list[Finding]:
     if _is_exempt(path):
         return []
     findings: list[Finding] = []
+    # None outside a de: block scalar; otherwise the indentation of the
+    # `de:` key that opened it - continuation lines indented deeper than
+    # this are still that key's value, and stay exempt until a line at or
+    # below this indentation ends the block (blank lines never end it).
+    de_block_indent: int | None = None
     for number, line in enumerate(text.splitlines(), start=1):
+        if de_block_indent is not None:
+            if line.strip() == "":
+                continue
+            indent = len(line) - len(line.lstrip(" "))
+            if indent > de_block_indent:
+                continue
+            de_block_indent = None
         if DE_VALUE.match(line):
+            block_match = DE_BLOCK_SCALAR.match(line)
+            if block_match:
+                de_block_indent = len(block_match.group(1))
+            continue
+        if any(marker in line for marker in GERMAN_AS_DATA):
             continue
         for match in WORD.finditer(line):
             word = match.group(0)
