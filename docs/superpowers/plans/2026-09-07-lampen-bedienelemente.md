@@ -44,28 +44,40 @@
 Ohne diese Task ist jeder Whitelist-Eintrag geraten. **Ergibt die Prüfung in Schritt 4, dass Kommando 6 fehlt, wird der Plan hier angehalten** und die Spec fortgeschrieben (Spec 4.1, 10.2).
 
 **Files:**
-- Create: `tests/fixtures/nodes/ikea_cct_lamp.json`
-- Create: `tests/fixtures/nodes/ikea_rgbw_lamp.json`
+- Create: `tests/fixtures/nodes/ikea_kajplats_ws_lamp.json`
+- Create: `tests/fixtures/nodes/ikea_kajplats_cws_lamp.json`
 - Modify: `tests/profiles/test_real_device_fixtures.py`
 
 **Interfaces:**
 - Produces: zwei Fixture-Dateien im Format `{"node_id", "available", "attributes"}`, ladbar über die dort bereits vorhandene `load(name)`-Hilfe.
 
-- [ ] **Step 1: Beide Nodes abziehen**
+- [x] **Step 1: Beide Nodes abziehen — ERLEDIGT am 7. September 2026**
 
-Auf dem Rechner, der den matter-server erreicht, im Checkout:
+Abgezogen von `ws://10.0.1.56:5580/ws` (dem Pi aus `deploy/testhost/README.md`). Neun Nodes insgesamt; die beiden Leuchten liegen im Scratchpad unter `nodes/`:
 
-```bash
-uv run python /pfad/zu/capture_nodes.py ws://localhost:5580/ws /tmp/nodes
-```
+| Datei im Scratchpad | Node | Gerät |
+| --- | --- | --- |
+| `node_14_ikea_of_sweden_kajplats_e27_ws_g60_clear_470lm.json` | 14 | KAJPLATS E27 WS G60 clear 470lm (Weisston) |
+| `node_21_ikea_of_sweden_kajplats_e14_cws_globe_806lm.json` | 21 | KAJPLATS E14 CWS globe 806lm (Farbe) |
 
-Das Skript schreibt je Node eine Datei und druckt Hersteller, Produktname und Attributzahl. Die beiden Leuchten heraussuchen.
+Befunde, auf denen der Rest des Plans steht:
 
-- [ ] **Step 2: Auf nicht-öffentliche Inhalte prüfen**
+| | WS (Node 14) | CWS (Node 21) |
+| --- | --- | --- |
+| ColorControl-Endpunkt | 1 | 1 |
+| AcceptedCommandList | `[7, 8, 9, 10, 71, 75, 76]` | `[0…10, 64…68, 71, 75, 76]` |
+| FeatureMap | 24 = XY\|CT | 31 = HS\|EHUE\|ColorLoop\|XY\|CT |
+| Kommando 6 (Hue/Sat) | **fehlt** | **vorhanden** ✓ |
+| PhysMin/Max Mired | 153 / 454 | 153 / 555 |
+| daraus Kelvin | 2202–6535 K | 1801–6535 K |
 
-Beide Dateien durchsehen, bevor sie ins Repository wandern — `.gitignore` hält aus demselben Grund die Loxone-Originalvorlagen fern. Prüfen auf: Netzwerknamen, IP-Adressen, Fabric-/Zugangsdaten. `0/40/18` (UniqueID) und `0/40/6` (Location) bleiben drin — dieselbe Entscheidung wie bei `ikea_grillplats_plug.json`.
+**Das Tor ist damit offen:** die CWS-Leuchte nimmt Kommando 6 an, die geplante Freischaltung ist belegt.
 
-Danach nach `tests/fixtures/nodes/ikea_cct_lamp.json` bzw. `ikea_rgbw_lamp.json` kopieren und jeder Datei ein `"_comment"`-Feld voranstellen, das Aufnahmedatum und Gerät nennt — Muster: die bestehenden Fixtures.
+- [x] **Step 2: Auf nicht-öffentliche Inhalte prüfen — ERLEDIGT**
+
+Beide Abbilder geprüft: keine IPv4-Adressen, keine Seriennummer (`0/40/15` fehlt), `NodeLabel` leer, `Location` = `"XX"`. `0/40/18` (UniqueID) bleibt drin — dieselbe Entscheidung wie beim eingecheckten `ikea_grillplats_plug.json`.
+
+Zu tun: die beiden Dateien nach `tests/fixtures/nodes/ikea_kajplats_ws_lamp.json` bzw. `ikea_kajplats_cws_lamp.json` kopieren und jeder ein `"_comment"`-Feld voranstellen, das Aufnahmedatum, Quelle (`ws://10.0.1.56:5580/ws`) und Gerät nennt — Muster: die bestehenden Fixtures.
 
 - [ ] **Step 3: Belegtest schreiben**
 
@@ -78,7 +90,7 @@ def test_rgbw_lamp_accepts_move_to_hue_and_saturation():
     Schlaegt dieser Test fehl, ist der Entwurf falsch - dann erwartet die
     Leuchte MoveToColor (7, xy) und es fehlt eine Farbraumumrechnung, die
     es im Projekt nirgends gibt (Spec 10.2)."""
-    snap = load("ikea_rgbw_lamp.json")
+    snap = load("ikea_kajplats_cws_lamp.json")
     accepted = snap.attributes["1/768/65529"]
     assert 6 in accepted
 
@@ -86,19 +98,32 @@ def test_rgbw_lamp_accepts_move_to_hue_and_saturation():
 def test_both_lamps_report_their_physical_colour_temperature_limits():
     """Ohne diese beiden Attribute bliebe `range` leer und der
     Kelvin-Regler unbegrenzt (Spec 6.4)."""
-    for name in ("ikea_cct_lamp.json", "ikea_rgbw_lamp.json"):
+    for name in ("ikea_kajplats_ws_lamp.json", "ikea_kajplats_cws_lamp.json"):
         snap = load(name)
         assert isinstance(snap.attributes["1/768/16395"], int)
         assert isinstance(snap.attributes["1/768/16396"], int)
 
 
-def test_the_cct_lamp_offers_no_colour_command():
-    """Belegt die Abstufung aus Spec 6.3: die CCT-Leuchte bekommt keine
+def test_the_ws_lamp_has_no_hue_saturation_command():
+    """Belegt die Abstufung aus Spec 6.3: die WS-Leuchte bekommt keine
     Tableiste, weil sie kein Hue/Sat-Kommando hat - nicht, weil der Code
-    ihr Modell kennt."""
-    snap = load("ikea_cct_lamp.json")
-    assert 6 not in snap.attributes["1/768/65529"]
-    assert 10 in snap.attributes["1/768/65529"]
+    ihr Modell kennt.
+
+    Sie fuehrt sehr wohl MoveToColor (7) und damit den XY-Farbraum
+    (FeatureMap 24 = XY|CT). Der bleibt bewusst ungenutzt: eine
+    xy-Umrechnung gibt es im Projekt nicht, und fuer eine Weisston-Leuchte
+    waere sie ein Bedienelement fuer eine Faehigkeit, die niemand von ihr
+    erwartet."""
+    accepted = load("ikea_kajplats_ws_lamp.json").attributes["1/768/65529"]
+    assert 6 not in accepted
+    assert 10 in accepted
+    assert 7 in accepted  # XY vorhanden, aber nicht freigeschaltet
+
+
+def test_the_cws_lamp_advertises_the_full_colour_feature_set():
+    """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - die Grundlage dafuer, dass
+    genau diese Leuchte beide Reiter bekommt und die WS-Leuchte nicht."""
+    assert load("ikea_kajplats_cws_lamp.json").attributes["1/768/65532"] == 31
 ```
 
 - [ ] **Step 4: Test laufen lassen — das Tor**
@@ -115,7 +140,7 @@ Schlägt `test_rgbw_lamp_accepts_move_to_hue_and_saturation` fehl: **anhalten**,
 - `tests/profiles/test_relevance.py:198` (über `_snapshot`)
 - `tests/profiles/test_categories.py:80` (über `load_snapshot`)
 
-Beide auf `ikea_rgbw_lamp.json` umstellen. Die Erwartungswerte dabei **an
+Beide auf `ikea_kajplats_cws_lamp.json` umstellen. Die Erwartungswerte dabei **an
 das echte Gerät anpassen, nicht umgekehrt** — eine echte Leuchte hat mehr
 Attribute als das synthetische Abbild, die Zahlen ändern sich also
 voraussichtlich.
@@ -333,7 +358,7 @@ In `src/loxmatter/profiles/clusters.yaml`, Cluster 768, unter `commands:` neben 
       # belegt", waehrend `commands/color.py` RGB mit offizieller Quelle
       # belegt und ausschliesslich Lumitech offen laesst. Der Wert ist die
       # gepackte Loxone-Farbzahl; belegt gegen die eingecheckte
-      # RGBW-Leuchte (tests/fixtures/nodes/ikea_rgbw_lamp.json, 1/768/65529
+      # RGBW-Leuchte (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
       # enthaelt 6).
       6: {slug: color, takes_value: true}
 ```
@@ -718,7 +743,7 @@ async def api_lamp(
     """Wie `api`, aber mit der eingecheckten RGBW-Leuchte - der einzigen
     Vorlage, die Farb- und Farbtemperatur-Kommandos zugleich traegt."""
     store = Store(tmp_path / "t.sqlite")
-    snapshot = load_snapshot("ikea_rgbw_lamp.json")
+    snapshot = load_snapshot("ikea_kajplats_cws_lamp.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
     store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
@@ -752,12 +777,13 @@ async def test_the_kelvin_range_comes_from_the_device_in_kelvin(api_lamp):
         for signal in store.signals(device_id)
         if signal.ref.cluster_id == 768 and signal.ref.element_id in (16395, 16396)
     }
-    runtime.seed(keys[16395], 250)  # 250 Mired = 4000 K
-    runtime.seed(keys[16396], 454)  # 454 Mired = 2202 K
+    # Die echten Werte der eingecheckten CWS-Leuchte.
+    runtime.seed(keys[16395], 153)  # 153 Mired = 6535 K
+    runtime.seed(keys[16396], 555)  # 555 Mired = 1801 K
 
     response = await client.get(f"/api/devices/{device_id}/controls")
     colortemp = next(c for c in response.json()["commands"] if c["slug"] == "colortemp")
-    assert colortemp["range"] == {"min": 2202, "max": 4000}
+    assert colortemp["range"] == {"min": 1801, "max": 6535}
 
 
 async def test_without_the_limits_there_is_no_range(api_lamp):
@@ -1510,8 +1536,8 @@ Erst jetzt, und nur wenn Schritt 2 vollständig durchgelaufen ist. Der Absatz �
 
 ```
 Gegengeprueft am 7. September 2026 an zwei IKEA-Leuchten (CCT und RGBW),
-eingecheckt als tests/fixtures/nodes/ikea_cct_lamp.json und
-ikea_rgbw_lamp.json. Bis dahin stand hier die Warnung, dieser Teil sei nie
+eingecheckt als tests/fixtures/nodes/ikea_kajplats_ws_lamp.json und
+ikea_kajplats_cws_lamp.json. Bis dahin stand hier die Warnung, dieser Teil sei nie
 an Hardware gelaufen - beim Bau stand keine Matter-Leuchte zur Verfuegung.
 Die Umrechnung bleibt die fehleranfaelligste im Projekt: ein Fehler hier
 sieht nach einem Geraetefehler aus, nicht nach einem Rechenfehler.
