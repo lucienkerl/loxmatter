@@ -3886,7 +3886,7 @@ async def test_the_signal_group_summary_suppresses_the_default_marker_and_ships_
     assert 'href="#i-chevron"' in dialog
 
     css = (await client.get("/static/style.css")).text
-    block_start = css.index("/* Die beiden Signalgruppen im Modal.")
+    block_start = css.index("/* The two signal groups in the modal.")
     block = css[block_start:]
     assert ".signal-group > summary {" in block
     assert "list-style: none;" in block
