@@ -463,10 +463,19 @@ button:disabled {
   flex: 0 0 auto;
 }
 
-/* Unter dieser Breite wandert die Skizze unter das Feld - dieselbe Schwelle
- * wie beim Umbruch von Feld und Knopf weiter unten, und aus demselben
- * Grund: dort steht man mit dem Telefon vor dem Geraet. */
-@media (max-width: 480px) {
+/* Unter dieser Breite wandert die Skizze unter das Feld statt daneben.
+ *
+ * Die Schwelle ist NICHT dieselbe wie beim Umbruch von Feld und Knopf
+ * weiter unten (480px) - hier geht es um eine andere Enge. `.code-sticker`
+ * (fest 188px breit) und `.code-detect` sind beide unschrumpfbar
+ * (`flex-shrink: 0`), das Eingabefeld ist also der einzige Nachgeber in
+ * dieser Zeile. Zwischen 480px und ~640px reichte der uebrige Platz fuer
+ * Chip und Knopf nicht mehr, ohne dass das Feld schon selbst umgebrochen
+ * waere (siehe der Umbruch weiter unten) - das Feld schrumpfte auf nahezu
+ * null, lange bevor es an der Reihe war. 700px raeumt der Skizze den Weg,
+ * bevor es dazu kommt: das Feld behaelt dann in der ganzen Spanne bis
+ * dorthin reichlich Breite fuer sich allein. */
+@media (max-width: 700px) {
   .code-with-sticker {
     flex-wrap: wrap;
     gap: 0.75rem;
