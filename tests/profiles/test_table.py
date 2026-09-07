@@ -17,6 +17,7 @@
 import pytest
 
 from loxmatter.matter.models import SignalKind, SignalRef
+from loxmatter.profiles import table
 from loxmatter.profiles.table import (
     _UNIT_DECIMALS,
     MAX_LOXONE_DECIMALS,
@@ -270,3 +271,36 @@ def test_no_unit_format_exceeds_what_loxone_accepts():
         rendered = unit_format(unit)
         decimals = int(rendered.split("<v.")[1].split(">")[0])
         assert decimals <= MAX_LOXONE_DECIMALS, f"{unit!r} ergibt {rendered!r}"
+
+
+def test_a_cluster_with_a_rank_reports_it():
+    """Der Rang entscheidet, was auf der Kachel als Leitwert erscheint -
+    er muss deshalb aus der Tabelle kommen und nicht aus einer Annahme."""
+    assert table.rank_for(6) == 10  # OnOff
+    assert table.rank_for(59) == 10  # Switch
+    assert table.rank_for(47) == 90  # PowerSource
+
+
+def test_a_cluster_without_a_rank_gets_the_default():
+    """Cluster 3 (Identify) steht nicht in der Tabelle. Er darf weder vorn
+    landen noch hinter der Batterie: die Vorgabe ist die Mitte, damit ein
+    neuer Geraetetyp nie versehentlich mit seinem Batteriestand fuehrt und
+    sein Hauptmerkmal trotzdem vor Verwaltungsangaben steht (Entwurf 4)."""
+    assert table.rank_for(3) == table.DEFAULT_RANK
+    assert table.DEFAULT_RANK == 50
+
+
+def test_the_utility_clusters_rank_behind_everything_functional():
+    """Die eine Regel, wegen der dieser Entwurf ueberhaupt entstand."""
+    functional = [table.rank_for(c) for c in (6, 8, 59, 144, 145, 768, 1026, 1029)]
+    assert max(functional) < table.rank_for(47)
+    assert table.rank_for(47) < table.rank_for(40)
+
+
+def test_every_rank_in_the_table_is_an_integer():
+    """Ein `rank: "10"` aus einem Tippfehler waere in YAML eine Zeichenkette
+    und wuerde beim Sortieren gegen eine Zahl werfen - erst zur Laufzeit,
+    beim Oeffnen einer Geraeteansicht."""
+    for cluster_id, cluster in table._table().items():
+        if "rank" in cluster:
+            assert isinstance(cluster["rank"], int), cluster_id
