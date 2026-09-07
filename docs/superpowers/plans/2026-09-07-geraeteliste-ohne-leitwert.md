@@ -495,8 +495,10 @@ durch
  * (261 px) bekam dieses Feld frueher nur 65 px, weil `.lead-value`
  * daneben die halbe Kopfzeile beanspruchte und nicht schrumpfte; seit
  * dessen Wegfall (Entwurf 2026-09-07) hat der Name die Kopfzeile
- * abzueglich Icon-Kachel und Abstaenden fuer sich. Kuerzen muss er damit
- * nur noch bei aussergewoehnlich langen Namen - die beiden Eigenschaften
+ * abzueglich Icon-Kachel und Abstaenden fuer sich - ausser bei einem
+ * offline stehenden Geraet, wo die Status-Pille denselben Platz belegt
+ * (index.html, `.device-head`). Kuerzen muss er damit nur noch bei
+ * aussergewoehnlich langen Namen, offline etwas frueher - die beiden Eigenschaften
  * am Ende dieser Regel sorgen
 ```
 
