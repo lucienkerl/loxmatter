@@ -1459,6 +1459,15 @@ footer.hint-block {
   align-items: center;
 }
 
+/* Schluckt den freien Rest der Zeile und schiebt das Suchfeld damit nach
+ * rechts an den Chips vorbei. Steht als eigene Klasse statt als
+ * `style`-Attribut im Markup, weil das Element inzwischen unter einem
+ * `x-if` haengt - dort gehoert die Begruendung ins Markup, das Mass ins
+ * Stylesheet. */
+.room-spacer {
+  flex: 1 1 auto;
+}
+
 .room-chip {
   border: 1px solid var(--border);
   background: var(--surface);
@@ -1487,9 +1496,94 @@ footer.hint-block {
   padding: 0.05rem 0.3rem;
 }
 
-.device-search {
-  min-width: 12rem;
-  font-size: 0.8rem;
+/* Suchfeld der Raumleiste (Entwurf Suchfeld-Optik, 2026-09-06). Vorher war
+ * das ein nacktes `input[type="search"]`: die Formularregel weiter oben in
+ * dieser Datei listet text, number, password und select - `search` steht
+ * nicht darunter, und der Browser zeichnete das Feld deshalb selbst. Im
+ * Dunkelmodus griff dabei keine der Projektfarben.
+ *
+ * Der Rahmen sitzt HIER, am Container - das Eingabefeld darin ist rand- und
+ * hintergrundlos (s.u.). So liegen Lupe, Zaehler und Kreuz mit im Rahmen,
+ * ohne dass eines davon absolut positioniert werden muesste: jedes Polster,
+ * das zur Icongroesse passen muss, waere eine Kopplung, die beim naechsten
+ * Schriftgroessen-Dreh bricht. */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.15rem 0.4rem;
+  /* Waechst in den freien Rest der Zeile, gedeckelt bei 22rem. Wer den
+   * Deckel hebt, bekommt auf einem breiten Fenster ein Suchfeld ueber vier
+   * Kacheln - schlechter als der einsame Kasten, den es zu beseitigen
+   * gilt. */
+  flex: 1 1 12rem;
+  max-width: 22rem;
+}
+
+/* Der Ring gehoert an die Gruppe, nicht an ihre Mitte: am `input:focus`
+ * umschloesse er nur das Eingabefeld und liesse Lupe und Kreuz draussen. */
+.search-field:focus-within {
+  border-color: var(--accent);
+}
+
+/* Ohne `pointer-events: none` faengt die Lupe Klicks ab, die dem Feld
+ * gelten - sie sieht aus wie Teil des Feldes und soll sich auch so
+ * verhalten. */
+.search-icon {
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.search-field input[type="search"] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 0.2rem 0;
+}
+
+.search-field input[type="search"]:focus {
+  outline: none;
+}
+
+/* WebKit legt sein eigenes Loeschkreuz ins Feld - daneben stuende unseres
+ * ein zweites Mal. Beide Schreibweisen, weil das Pseudoelement selbst
+ * herstellerspezifisch ist. */
+.search-field input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* `tabular-nums`: ohne das wechselt die Ziffernbreite von 9 auf 10 und
+ * schiebt das Kreuz daneben mit - dasselbe Zappeln, das die Altersangabe an
+ * der Signalzeile schon einmal gekostet hat (siehe `.value-fresh`). */
+.search-count {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Knopf ohne Knopfoptik - der Rahmen der Gruppe steht schon. `line-height:
+ * 0`, damit die Zeilenhoehe des leeren Knopftextes das Icon nicht nach
+ * unten aus der Achse schiebt. */
+.search-clear {
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 0.1rem;
+  line-height: 0;
+}
+
+.search-clear:hover {
+  color: var(--text);
 }
 
 .room-heading {

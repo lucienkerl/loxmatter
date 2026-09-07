@@ -151,6 +151,14 @@
         <path d="M14.5 5.5 18.5 9.5 8 20H4v-4L14.5 5.5z" />
         <path d="M12.7 7.3l4 4" />
       </symbol>
+      <!-- Lupe fuer das Suchfeld der Raumleiste (Entwurf Suchfeld-Optik,
+           2026-09-06). Gleiche Strichtechnik wie die Kategorie-Icons: nur
+           Pfade, keine Fuellung, `currentColor` uebernimmt Farbe und
+           Zustand von aussen. -->
+      <symbol id="i-search" viewBox="0 0 24 24">
+        <circle cx="11" cy="11" r="6.5" />
+        <path d="M15.8 15.8 20.5 20.5" />
+      </symbol>
       <symbol id="i-close" viewBox="0 0 24 24">
         <path d="M6 6l12 12" />
         <path d="M18 6L6 18" />
@@ -496,13 +504,59 @@
               />
             </span>
           </template>
-          <span style="flex: 1 1 auto"></span>
-          <input
-            type="search"
-            class="device-search"
-            x-model="deviceSearch"
-            :placeholder="t('web.devices.search_placeholder')"
-          />
+          <!-- Der Abstandhalter existiert nur zusammen mit den Chips: er
+               schiebt das Suchfeld an ihnen vorbei nach rechts. Ohne
+               Raeume gibt es nichts, woran vorbeizuschieben waere - dann
+               soll das Feld an die linke Kante ruecken statt allein rechts
+               in einer leeren Zeile zu stehen. Deshalb ein eigenes `x-if`
+               und keine Zeile, die immer da ist. -->
+          <template x-if="hasAnyRoom()"><span class="room-spacer"></span></template>
+          <!-- Der Rahmen sitzt am Container, nicht am Feld: Lupe, Zaehler
+               und Kreuz liegen mit IM Rahmen, und der Fokusring haengt per
+               :focus-within an der ganzen Gruppe statt am Eingabefeld in
+               ihrer Mitte.
+
+               Ein <div>, kein <label>: ein <button> innerhalb eines Labels
+               loest dessen Weiterleitung an das gelabelte Bedienelement mit
+               aus - das Loeschen soll ein Klick sein, nicht zwei
+               Ereignisse. Der Preis ist ein schmaler Streifen Polster, der
+               nicht ins Feld fokussiert; die Lupe traegt dafuer
+               `pointer-events: none` (style.css), damit wenigstens sie kein
+               Klickloch in die linke Kante schlaegt. -->
+          <div class="search-field">
+            <svg class="icon search-icon" aria-hidden="true"><use href="#i-search"></use></svg>
+            <input
+              type="search"
+              x-ref="deviceSearchInput"
+              x-model="deviceSearch"
+              :placeholder="t('web.devices.search_placeholder')"
+              :aria-label="t('web.devices.search_placeholder')"
+            />
+            <!-- `aria-live="polite"` nur hier, nicht an den Chips oder dem
+                 Hinweistext daneben: der Zaehler beantwortet genau die
+                 Frage, die Tippen aufwirft ("wie viele jetzt noch?"), und
+                 soll das leise nachreichen. Die uebrigen Texte aendern sich
+                 nicht als Reaktion auf Tastatureingabe und muessten sonst
+                 bei jeder Neuzeichnung erneut vorgelesen werden. Das Element
+                 bleibt bei leerem Feld im DOM (nur `display: none` per
+                 `x-show`) - die Live-Region existiert also schon, bevor ihr
+                 Inhalt sich das erste Mal aendert. -->
+            <span
+              class="search-count"
+              aria-live="polite"
+              x-show="deviceSearch.trim()"
+              x-cloak
+              x-text="t('web.devices.search_count', { count: visibleDevices().length })"
+            ></span>
+            <button
+              class="search-clear"
+              x-show="deviceSearch.trim()"
+              x-cloak
+              @click="deviceSearch = ''; $refs.deviceSearchInput.focus()"
+              :title="t('web.devices.search_clear')"
+              :aria-label="t('web.devices.search_clear')"
+            ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
         </div>
 
         <p x-show="devices.length > 0 && visibleDevices().length === 0" x-cloak class="hint">

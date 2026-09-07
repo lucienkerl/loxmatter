@@ -3940,3 +3940,149 @@ async def test_the_dropped_signal_keys_are_gone_from_the_translation_table(api):
     assert "web.devices.menu_signals" in strings
     assert "web.signals.modal_heading" in strings
     assert "web.signals.modal_close" in strings
+
+
+# ---------------------------------------------------------------------------
+# Suchfeld der Geraeteansicht (Entwurf vom 2026-09-06). Das Feld fiel durch
+# das CSS-Raster - die Formularregel listet text, number, password und
+# select, aber nicht search -, weshalb der Browser es selbst zeichnete.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_search_field_ships_the_words_for_counter_and_clear_button(api):
+    """Der Zaehler traegt Text, das Loeschkreuz traegt keinen und braucht
+    deshalb einen zugaenglichen Namen - beide muessen uebersetzt beim
+    Browser ankommen.
+
+    `{count}` bleibt dabei UNAUFGELOEST: aufgeloest wird es in app.js
+    (`t(key, values)`), wenn die Zahl feststeht. Der Server kennt sie nicht,
+    und `GET /api/i18n` liefert deshalb die rohe Vorlage - genau das belegt
+    der Vergleich auf die Zeichenkette samt geschweifter Klammern."""
+    client, _, _ = api
+    strings = (await client.get("/api/i18n")).json()["strings"]
+    assert strings["web.devices.search_count"] == "{count} found"
+    assert strings["web.devices.search_clear"] == "Clear search"
+
+
+async def test_the_search_field_has_a_magnifier_of_its_own(api):
+    """Die Lupe kommt aus dem Inline-Sprite wie jedes andere Symbol -
+    dieselbe Begruendung wie beim eingecheckten vendor/alpine.min.js: die
+    Oberflaeche laeuft offline.
+
+    Das Loeschkreuz bekommt dagegen KEIN eigenes Symbol, es benutzt das
+    vorhandene `#i-close`. Zwei gleiche Formen waeren zwei Orte, an die man
+    sich beim naechsten Strichstaerken-Dreh erinnern muss - und an einen
+    davon erinnert man sich nicht."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    assert 'id="i-search"' in page
+    assert page.count('id="i-close"') == 1
+
+
+async def test_the_search_field_carries_the_frame_and_the_input_does_not(api):
+    """Der Rahmen sitzt am Container, nicht am Feld.
+
+    Traegen beide einen, liegt ein Rahmen im anderen - und der Fokusring
+    (naechster Test) haette nichts, woran er sich festmachen koennte, das
+    Lupe und Kreuz mit einschliesst."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    field = css.split(".search-field {", 1)[1].split("}", 1)[0]
+    inner = css.split('.search-field input[type="search"] {', 1)[1].split("}", 1)[0]
+    assert "border: 1px solid var(--border)" in field
+    assert "border-radius" in field
+    assert "border: none" in inner
+    assert "background: none" in inner
+
+
+async def test_the_search_focus_ring_wraps_the_whole_group(api):
+    """`:focus-within` am Container statt `:focus` am Feld: der Ring soll
+    Lupe, Zaehler und Kreuz mit einschliessen, nicht nur das Eingabefeld in
+    ihrer Mitte. Der browsereigene Umriss am Feld muss dafuer weichen, sonst
+    stuenden beide."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    ring = css.split(".search-field:focus-within {", 1)[1].split("}", 1)[0]
+    assert "border-color: var(--accent)" in ring
+    inner_focus = css.split('.search-field input[type="search"]:focus {', 1)[1].split("}", 1)[0]
+    assert "outline: none" in inner_focus
+
+
+async def test_the_browser_does_not_add_a_second_clear_cross(api):
+    """WebKit legt in ein `input[type="search"]` sein eigenes Loeschkreuz -
+    daneben stuende unseres ein zweites Mal.
+
+    Abgeschaltet wird es mit `-webkit-appearance` UND `appearance`: das
+    Pseudoelement ist herstellerspezifisch, und die Zusicherung auf die
+    zweite Form braucht den Zeilenanfang - `"appearance: none"` ist eine
+    Teilzeichenkette von `"-webkit-appearance: none"` und waere sonst schon
+    von der ersten Zeile erfuellt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    rule = css.split("::-webkit-search-cancel-button {", 1)[1].split("}", 1)[0]
+    assert "-webkit-appearance: none" in rule
+    assert re.search(r"^\s*appearance: none", rule, re.MULTILINE)
+
+
+async def test_the_counter_and_the_cross_appear_only_with_a_query(api):
+    """Beide haengen an `deviceSearch` und tragen `x-cloak`: bei leerem Feld
+    sind sie weg, und beim ersten Zeichnen blitzen sie nicht auf, bevor
+    Alpine initialisiert hat.
+
+    Der Zaehler liest `visibleDevices().length` - also das, was tatsaechlich
+    unter der Leiste steht, einschliesslich eines aktiven Raumfilters. Die
+    Suchlogik selbst bleibt unberuehrt.
+
+    Zwei `aria-label`: eines am Eingabefeld (es traegt nur einen Platzhalter,
+    und der verschwindet genau dann, wenn jemand etwas eingegeben hat), eines
+    am Kreuz (es traegt gar kein Wort).
+
+    Das Kreuz muss den Fokus zurueck ins Feld legen: `x-show` setzt beim
+    Leeren `display: none` auf das Element, das gerade den Fokus traegt,
+    und der Browser wirft ihn dann auf `<body>`. Das native
+    Loeschkreuz von WebKit - `::-webkit-search-cancel-button`, andernorts in
+    dieser Datei bewusst abgeschaltet - hat genau das getan: den Fokus im
+    Feld gehalten. Unser eigenes Kreuz muss dasselbe leisten, sonst
+    verliert eine Tastaturbedienung durch das Loeschen den Anschluss und
+    muesste sich von ganz oben wieder durch die Seite tabben.
+
+    `aria-live="polite"` am Zaehler: er beantwortet fuer Screenreader-
+    Nutzer die Frage, auf die er auch visuell antwortet - wie viele
+    Treffer nach der letzten Eingabe uebrig sind, bis hinunter zu null.
+    Ohne die Live-Region bliebe das stumm."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    field = page.split('<div class="search-field">', 1)[1].split("</div>", 1)[0]
+    assert field.count('x-show="deviceSearch.trim()"') == 2
+    assert field.count("x-cloak") == 2
+    assert field.count("aria-label") == 2
+    assert "visibleDevices().length" in field
+    assert "deviceSearch = ''" in field
+    assert "t('web.devices.search_clear')" in field
+    assert 'href="#i-search"' in field
+    assert 'href="#i-close"' in field
+    assert 'x-ref="deviceSearchInput"' in field
+    assert "$refs.deviceSearchInput.focus()" in field
+    assert 'aria-live="polite"' in field
+
+
+async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
+    """Der Abstandhalter, der das Feld nach rechts schiebt, existiert nur
+    zusammen mit den Chips, an denen vorbeizuschieben waere.
+
+    Ohne Raeume blendet sich die Chip-Leiste aus (`x-if="hasAnyRoom()"`).
+    Stuende der Abstandhalter dann weiter im Markup - so war es -, bliebe
+    ein einzelner Kasten rechts in einer sonst leeren Zeile stehen. Mit
+    eigenem `x-if` verschwindet er mit den Chips, und das Feld rueckt an die
+    linke Kante, auf eine Sichtachse mit dem Kachelraster darunter.
+
+    Zwei `x-if="hasAnyRoom()"` in der Leiste sind also richtig und kein
+    Versehen: eines fuer die Chips, eines fuer den Abstandhalter."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    bar = page.split('<div class="room-bar"', 1)[1].split('<div class="search-field">', 1)[0]
+    assert 'style="flex: 1 1 auto"' not in bar
+    assert bar.count('x-if="hasAnyRoom()"') == 2
+    assert '<span class="room-spacer"></span>' in bar
+    css = (await client.get("/static/style.css")).text
+    assert "flex: 1 1 auto" in css.split(".room-spacer {", 1)[1].split("}", 1)[0]
