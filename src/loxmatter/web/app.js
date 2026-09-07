@@ -1774,28 +1774,50 @@ function app() {
       this.commissionCode = input.value;
     },
 
-    // Rueckschritt DIREKT hinter einem Bindestrich loescht die Ziffer davor.
+    // Rueckschritt DIREKT hinter einem Bindestrich loescht die Ziffer davor,
+    // Entf DIREKT davor die Ziffer danach - jeweils den Trenner gleich mit.
     //
-    // Ohne diesen Zweig loescht der Tastendruck den Trenner, den
-    // `formatCommissionCode` unmittelbar danach wieder setzt: der Wert
+    // Ohne diese Sonderbehandlung loescht der Tastendruck nur den Trenner,
+    // den `formatCommissionCode` unmittelbar danach wieder setzt: der Wert
     // aendert sich nicht, der Cursor bleibt stehen, und die Taste wirkt tot.
     // Das ist der eine Punkt, an dem eine mitformatierende Eingabe
-    // ueblicherweise scheitert.
+    // ueblicherweise scheitert - fuer beide Tasten, nicht nur Rueckschritt.
+    //
+    // Gilt NICHT im QR-Inhalt: dort traegt der Bindestrich Bedeutung
+    // (Base38-Alphabet), und dieser Zweig wuerde sonst still Nutzdaten mit
+    // loeschen (siehe `isPairingQrCode`).
     commissionCodeKeydown(event) {
-      if (event.key !== "Backspace") {
+      const isBackspace = event.key === "Backspace";
+      const isDelete = event.key === "Delete";
+      if (!isBackspace && !isDelete) {
         return;
       }
       const input = event.target;
       if (input.selectionStart !== input.selectionEnd) {
         return;
       }
-      const caret = input.selectionStart;
-      if (caret < 2 || input.value[caret - 1] !== "-") {
+      if (isPairingQrCode(input.value)) {
         return;
       }
+      const caret = input.selectionStart;
+      let from;
+      let to;
+      if (isBackspace) {
+        if (caret < 2 || input.value[caret - 1] !== "-") {
+          return;
+        }
+        from = caret - 2;
+        to = caret;
+      } else {
+        if (input.value[caret] !== "-") {
+          return;
+        }
+        from = caret;
+        to = caret + 2;
+      }
       event.preventDefault();
-      input.value = input.value.slice(0, caret - 2) + input.value.slice(caret);
-      input.setSelectionRange(caret - 2, caret - 2);
+      input.value = input.value.slice(0, from) + input.value.slice(to);
+      input.setSelectionRange(from, from);
       this.formatCommissionCode(input);
     },
 
