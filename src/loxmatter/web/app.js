@@ -1745,9 +1745,78 @@ function app() {
         : t("web.header.unchanged_since_load");
     },
 
+    // Schreibt den Zahlencode beim Tippen so, wie er auf dem Geraet steht.
+    //
+    // `commissionCode` wird hier AUSDRUECKLICH nachgezogen, statt sich auf
+    // x-model zu verlassen: beide haengen am selben `input`-Ereignis, und
+    // welcher Zuhoerer zuerst laeuft, haengt an der Reihenfolge der
+    // Attribute im Markup. Ein Zustand, der von einer Attributreihenfolge
+    // abhaengt, ist ein Fehler, der erst beim Umsortieren auffaellt.
+    formatCommissionCode(input) {
+      const before = input.value;
+      const formatted = formatPairingCode(before);
+      if (formatted !== before) {
+        // Ziffern LINKS vom Cursor zaehlen, nicht Zeichenpositionen: sonst
+        // verschoebe jeder neu gesetzte Bindestrich den Cursor um eins.
+        const caret = input.selectionStart ?? before.length;
+        const digitsLeft = before.slice(0, caret).replace(/\D/g, "").length;
+        input.value = formatted;
+        let seen = 0;
+        let position = 0;
+        while (position < formatted.length && seen < digitsLeft) {
+          if (/\d/.test(formatted[position])) {
+            seen += 1;
+          }
+          position += 1;
+        }
+        input.setSelectionRange(position, position);
+      }
+      this.commissionCode = input.value;
+    },
+
+    // Rueckschritt DIREKT hinter einem Bindestrich loescht die Ziffer davor.
+    //
+    // Ohne diesen Zweig loescht der Tastendruck den Trenner, den
+    // `formatCommissionCode` unmittelbar danach wieder setzt: der Wert
+    // aendert sich nicht, der Cursor bleibt stehen, und die Taste wirkt tot.
+    // Das ist der eine Punkt, an dem eine mitformatierende Eingabe
+    // ueblicherweise scheitert.
+    commissionCodeKeydown(event) {
+      if (event.key !== "Backspace") {
+        return;
+      }
+      const input = event.target;
+      if (input.selectionStart !== input.selectionEnd) {
+        return;
+      }
+      const caret = input.selectionStart;
+      if (caret < 2 || input.value[caret - 1] !== "-") {
+        return;
+      }
+      event.preventDefault();
+      input.value = input.value.slice(0, caret - 2) + input.value.slice(caret);
+      input.setSelectionRange(caret - 2, caret - 2);
+      this.formatCommissionCode(input);
+    },
+
+    // Text und Farbe des Chips im Feld.
+    commissionCodeBadge() {
+      const state = describePairingCode(this.commissionCode);
+      return {
+        text: state.key ? t(state.key, state.values) : "",
+        tone: state.tone,
+      };
+    },
+
     async commissionDevice() {
       this.commissionMessage = null;
-      if (!this.commissionCode.trim()) {
+      // Normalisiert, nicht nur getrimmt: die Trenner, die das Feld beim
+      // Tippen selbst gesetzt hat, gehoeren nicht in den Matter-Stack. Das
+      // Backend schneidet sie ohnehin ein zweites Mal weg
+      // (`CommissionRequest._strip_separators`) - hier stehen sie draussen,
+      // damit die Oberflaeche nicht etwas anderes abschickt, als sie zeigt.
+      const code = normalizePairingCode(this.commissionCode);
+      if (!code) {
         this.commissionMessage = t("web.devices.commission_code_required");
         this.commissionMessageIsError = true;
         return;
@@ -1755,9 +1824,12 @@ function app() {
       this.commissionBusy = true;
       this.commissionStep = 0;
       this.commissionFailed = false;
-      this.commissionRunCode = this.commissionCode.trim();
+      // Die Ablaufanzeige zeigt den FORMATIERTEN Code, nicht den
+      // uebertragenen: wer zwanzig bis sechzig Sekunden wartet, soll den
+      // Code wiedererkennen, den er eingetippt hat.
+      this.commissionRunCode = formatPairingCode(this.commissionCode.trim());
       try {
-        const body = { code: this.commissionCode.trim() };
+        const body = { code };
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }

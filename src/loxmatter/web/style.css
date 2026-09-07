@@ -487,6 +487,66 @@ button:disabled {
   outline: none;
 }
 
+/* Der Chip im Eingabefeld (Entwurf vom 2026-09-07). Er benennt, was das Feld
+ * erkannt hat. Bei leerem Feld bleibt er stehen und wird nur unsichtbar -
+ * entfernt aenderte er die Breite des Feldes beim ersten Tastendruck.
+ *
+ * Die drei Farben tragen dieselbe Bedeutung wie ueberall sonst in dieser
+ * Oberflaeche (--ok gelungen, --warn unfertig, --danger falsch); es kommt
+ * keine neue hinzu. */
+.code-field .code-detect {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.code-field .code-detect.tone-idle {
+  visibility: hidden;
+}
+
+.code-field .code-detect.tone-ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.code-field .code-detect.tone-warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.code-field .code-detect.tone-bad {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* Die beiden Bauformen als Beispiel. Ersetzt den frueheren Klammerzusatz im
+ * Platzhalter: der nannte die Bauform, das hier zeigt sie. */
+.code-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.code-examples b {
+  font-weight: 600;
+}
+
+.code-examples code {
+  font-family: var(--mono);
+  font-size: 0.95em;
+  color: var(--text);
+}
+
 .code-field .primary {
   padding: 0.45rem 1rem;
   border-radius: 4px;

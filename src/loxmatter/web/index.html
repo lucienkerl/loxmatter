@@ -327,11 +327,30 @@
                 id="commission-code"
                 class="code-input"
                 spellcheck="false"
+                autocomplete="off"
                 x-ref="commissionCode"
                 x-model="commissionCode"
                 :placeholder="t('web.devices.code_placeholder')"
+                @input="formatCommissionCode($event.target)"
+                @keydown="commissionCodeKeydown($event)"
                 @keydown.enter="commissionDevice()"
               />
+              <!--
+                Kein `inputmode="numeric"`: auf dem Telefon gaebe es die
+                Zifferntastatur, und dort steht man beim Ablesen. Es sperrte
+                aber das Tippen eines QR-Textes hinter eine Umschalttaste,
+                und diese Karte hat fuer beide Bauformen genau ein Feld.
+
+                Der Chip bleibt bei leerem Feld sichtbar-aber-leer
+                (`visibility: hidden` in style.css) statt entfernt, damit das
+                Feld beim ersten Tastendruck nicht seine Breite aendert.
+              -->
+              <span
+                class="code-detect"
+                :class="'tone-' + commissionCodeBadge().tone"
+                x-text="commissionCodeBadge().text"
+                aria-live="polite"
+              ></span>
               <button
                 class="primary"
                 @click="commissionDevice()"
@@ -339,6 +358,12 @@
                 x-text="t('web.devices.commission_submit')"
               ></button>
           </div>
+          <p class="code-examples">
+            <span><b x-text="t('web.devices.code_detect_manual')"></b>
+              <code x-text="t('web.devices.code_example_manual')"></code></span>
+            <span><b x-text="t('web.devices.code_detect_qr')"></b>
+              <code x-text="t('web.devices.code_example_qr')"></code></span>
+          </p>
 
           <div class="commission-meta">
             <label class="inline-field">

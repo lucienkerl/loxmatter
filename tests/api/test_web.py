@@ -1443,7 +1443,7 @@ async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
 
     assert "this.commissionStep = 0;" in body
     assert "this.commissionFailed = false;" in body
-    assert "this.commissionRunCode = this.commissionCode.trim();" in body
+    assert "this.commissionRunCode = formatPairingCode(this.commissionCode.trim());" in body
     # Schritt 1 steht VOR dem Nachladen, Schritt 2 dahinter.
     load = body.index(
         "await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);"
