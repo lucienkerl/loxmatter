@@ -333,6 +333,7 @@
                     x-ref="commissionCode"
                     x-model="commissionCode"
                     :placeholder="t('web.devices.code_placeholder')"
+                    aria-describedby="code-examples code-where-hint"
                     @input="formatCommissionCode($event.target)"
                     @keydown="commissionCodeKeydown($event)"
                     @keydown.enter="commissionDevice()"
@@ -360,13 +361,13 @@
                     x-text="t('web.devices.commission_submit')"
                   ></button>
                 </div>
-                <p class="code-examples">
+                <p class="code-examples" id="code-examples">
                   <span><b x-text="t('web.devices.code_detect_manual')"></b>
                     <code x-text="t('web.devices.code_example_manual')"></code></span>
                   <span><b x-text="t('web.devices.code_detect_qr')"></b>
                     <code x-text="t('web.devices.code_example_qr')"></code></span>
                 </p>
-                <p class="hint" x-text="t('web.devices.code_where_hint')"></p>
+                <p class="hint" id="code-where-hint" x-text="t('web.devices.code_where_hint')"></p>
               </div>
               <!--
                 Das QR-Quadrat ist eine Andeutung aus Rechtecken - drei
