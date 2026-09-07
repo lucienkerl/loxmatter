@@ -24,14 +24,20 @@ Developer-facing is the operative word. German as a *product* language stays.
 | Area | Files | What changes |
 | --- | --- | --- |
 | `src/**/*.py` | 75 | Comments, docstrings, and ~60 developer-facing German string literals (log messages, OpenAPI/CLI descriptions, internal exception text, attribute docstrings) |
-| `tests/**/*.py` | 82 | Comments, docstrings, and German test function names (≥256 of 1195) |
-| `docs/superpowers/specs` + `plans` | 37 | Full prose, plus German filenames renamed via `git mv` |
+| `tests/**/*.py` | 82 | Comments, docstrings, and 67 German test function names |
+| `docs/superpowers/specs` + `plans` | 37 | Full prose, plus 24 German filenames renamed via `git mv` |
 | WebUI | `index.html`, `app.js`, `style.css` | Header comments and inline prose |
 | i18n tables | `strings.yaml`, `clusters.yaml` | YAML **comments** only |
 | Build and ops | `install.sh`, `scripts/*.sh`, `scripts/*.py`, `Dockerfile`, `deploy/`, `.github/workflows/ci.yml`, `pyproject.toml` | Comments |
 | Dotfiles | `.gitignore`, `deploy/testhost/.gitignore`, `deploy/testhost/.env.example` | Comments |
 | Remaining docs | `docs/LICENSING.md`, `deploy/testhost/README.md`, `tests/fixtures/loxone/README.md` | Full prose |
 | GitHub | Repository description | Replaced with an English one |
+
+German test names are far less widespread than a first pass suggested. The
+subdirectories under `tests/` (`api`, `matter`, `model`, `projectsync`, …)
+are already English throughout — 1034 of the 1195 test functions needed no
+change. All 67 German names sit in two files: `tests/test_install_script.py`
+(64) and `tests/test_compose_profiles.py` (3).
 
 ### 2.2 Deliberately untouched
 
@@ -170,9 +176,11 @@ hopeful, and each area gets the strongest check available to it:
   `tests/model/test_store_error_messages.py`), so a careless rewording turns
   those red rather than passing silently.
 - **`tests/**/*.py` — collection count.** Function names change, so the AST
-  check cannot apply. Instead `pytest --collect-only -q` must report exactly
-  **1195** tests before and after, and the full suite must pass. A renamed
-  test that silently stopped being collected shows up as a count drop.
+  check cannot apply. Instead `uv run pytest --collect-only -q` must report
+  exactly **1236** collected tests before and after, and the full suite must
+  pass. (1236, not the 1195 test *functions* in the tree: parametrisation
+  expands some of them.) A renamed test that silently stopped being collected
+  shows up as a count drop.
 - **`strings.yaml` — parsed equality.** Load the YAML before and after; the
   resulting dictionaries must be identical. This proves only comments were
   removed and that no `de:` or `en:` value was touched.
