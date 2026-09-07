@@ -34,15 +34,14 @@ from typing import NamedTuple
 # excludes words English shares or spells the same ("die", "war", "hat",
 # "bald", "gift", "also", "an", "in", "so", "was") - a detector that cries
 # wolf gets switched off, which is worse than one that misses a word.
-GERMAN_WORDS = frozenset(
-    """
+_GERMAN_WORDS_TEXT = """
     aber auch aus bei beim dass dem den der des diese diesem diesen dieser dieses
     durch ein eine einem einen einer eines fuer gegen ihre kann kein keine muss
-    nach nicht noch nur oder sich sind ueber und vom von vor werden wird wurde
+    nach nicht noch nur oder sich sind statt ueber und vom von vor werden wird wurde
     wurden zum zur zwischen ohne weil wenn damit dann schon immer jede jeder
     jedes alle allen etwa sowie bereits mehrere andere weitere
-    """.split()  # noqa: SIM905 - a space-separated block reads/diffs better than a list literal
-)
+    """
+GERMAN_WORDS = frozenset(_GERMAN_WORDS_TEXT.split())
 
 # Words that only German produces. Generated once from the pre-translation
 # tree (see Step 3a) and then frozen: transliterations like "Geraet" cannot
@@ -50,8 +49,7 @@ GERMAN_WORDS = frozenset(
 # ("does", "goes", "value", "true", "across"). A pattern for those would fire
 # on almost every English file, and a detector that cries wolf gets switched
 # off - which is worse than one that misses a word.
-GERMAN_STEMS = frozenset(
-    """
+_GERMAN_STEMS_TEXT = """
     geraet geraete geraets uebersetzung uebersetzungen schluessel bruecke
     oberflaeche laeuft faellt haelt traegt ueber fuer koennen koennte muessen
     waere naechste naechsten zurueck aenderung loesung groesse gemaess
@@ -62,7 +60,7 @@ GERMAN_STEMS = frozenset(
     aendern aendert aktuell aktuelle aktuellen anfuehrungszeichen anhaengen
     aufgeloest aufloesung aufraeumen ausdruecklich ausgaenge ausloesen bauen
     befuellt begruendung behaelt bekaeme bestaetigt bloecke braeuchte
-    bruecken brueckenstart bruueckenstart dafuer darueber dauerhaft duerfen
+    bruecken dafuer darueber dauerhaft duerfen
     eingaenge eintraege entfaellt enthaelt ergaenzt faelle faelschlich
     faende faengt feuert frueher fruehere frueheren fuegt fuehren fuehrt
     fuellt fuenf geaendert gegenstueck gehoeren gehoert geprueft
@@ -82,8 +80,8 @@ GERMAN_STEMS = frozenset(
     virtuellen virtueller vollstaendige waechter waehlt waehrend waeren
     wuerde wuerden zaehlung zuerst zufaellig zugehoerige zuruecksetzen
     zuruecksetzt zusaetzliche zusammenfuehren zuverlaessig zwoelf
-    """.split()  # noqa: SIM905 - a space-separated block reads/diffs better than a list literal
-)
+    """
+GERMAN_STEMS = frozenset(_GERMAN_STEMS_TEXT.split())
 
 # Literal umlauts never appear in English. This is the one pattern that can
 # be trusted without a word list.
@@ -93,7 +91,18 @@ WORD = re.compile(r"[A-Za-zÄÖÜäöüß]+")
 
 # Exemptions, each one a decision recorded in section 2.2 of the spec.
 EXEMPT_PREFIXES = ("src/loxmatter/web/vendor/",)
-EXEMPT_PATHS = frozenset({"LICENSE", "uv.lock", "docs/LICENSING.md"})
+EXEMPT_PATHS = frozenset(
+    {
+        "LICENSE",
+        "uv.lock",
+        # This script's own word lists, and the fixtures that prove they work,
+        # are German by necessity - the detector cannot hold its vocabulary in
+        # any other language. Same category of exemption as the de: values:
+        # German as data, not German prose someone forgot to translate.
+        "scripts/check_language.py",
+        "tests/devtools/test_check_language.py",
+    }
+)
 # The de: values in the string table are product content, not developer
 # German - removing them would delete the language switcher.
 DE_VALUE = re.compile(r"^\s*de:\s")
