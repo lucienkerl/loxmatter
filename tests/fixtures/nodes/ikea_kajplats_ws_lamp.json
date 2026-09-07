@@ -1,5 +1,5 @@
 {
-  "_comment": "Aufgezeichnet am 7. September 2026 von ws://10.0.1.56:5580/ws (Test-Pi, siehe deploy/testhost/README.md) - IKEA of Sweden KAJPLATS E27 WS G60 clear 470lm (Weisston, Node 14). AcceptedCommandList (1/768/65529) ohne 6 (MoveToHueAndSaturation) - Beleg fuer die Abstufung aus Spec 6.3.",
+  "_comment": "Aufgezeichnet am 7. September 2026 vom matter-server des Test-Hosts (siehe deploy/testhost/README.md) - IKEA of Sweden KAJPLATS E27 WS G60 clear 470lm (Weisston, Node 14). AcceptedCommandList (1/768/65529) ohne 6 (MoveToHueAndSaturation) - Beleg fuer die Abstufung aus Spec 6.3.",
   "node_id": 14,
   "available": true,
   "attributes": {
