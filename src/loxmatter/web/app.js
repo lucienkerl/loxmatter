@@ -486,6 +486,10 @@ function app() {
     // dort gibt es ein Auf/Zu JE ELEMENT, hier genau EINEN Wert fuer das
     // ganze Modal. Hoechstens ein Bereich ist offen - bei 173 Zeilen waeren
     // mehrere offene Aufklapper wieder die Wand, die dieser Umbau abschafft.
+    // Zurueckgesetzt wird dieses Feld am `@close` des `<dialog>` in
+    // index.html, zusammen mit `signalsModalDevice` (Fund 3 der
+    // Nachpruefung, 2026-09-07) - sonst stuende der Aufklapper beim
+    // naechsten Oeffnen desselben Geraets sofort wieder offen.
     expandedSignalKey: null,
     // Das Signal-Modal haelt die Geraete-ID, NICHT das Geraeteobjekt:
     // `loadDevices` ersetzt `devices` vollstaendig, ein festgehaltenes
@@ -1947,9 +1951,12 @@ function app() {
      * Schliesst das Modal ueber die native `close()`-Methode statt den
      * Zustand direkt zu leeren: `close()` loest das `close`-Ereignis aus,
      * und dessen Handler in index.html ist die eine Stelle, die
-     * `signalsModalDevice` zuruecksetzt. Wer hier zusaetzlich
-     * `this.signalsModalDevice = null` schriebe, haette wieder zwei
-     * Wahrheiten ueber denselben Zustand.
+     * `signalsModalDevice` UND `expandedSignalKey` zuruecksetzt (Fund 3 der
+     * Nachpruefung, 2026-09-07: ohne den zweiten Reset stuende beim
+     * naechsten Oeffnen desselben Geraets sofort wieder derselbe Aufklapper
+     * offen, ohne dass der Kebab dafuer geklickt wurde). Wer hier
+     * zusaetzlich `this.signalsModalDevice = null` schriebe, haette wieder
+     * zwei Wahrheiten ueber denselben Zustand.
      */
     closeSignalsModal() {
       this.$refs.signalsModal.close();
@@ -2065,11 +2072,30 @@ function app() {
     // keinen gespeicherten Wert, den man ueberschreiben koennte) - die
     // Herkunft darueber gilt dagegen fuer beide Signalarten. Als eigener
     // Helfer statt `signal.kind === 'attribute'` direkt im Markup, damit
-    // dieselbe Bedingung nicht zweimal im Quelltext steht (siehe Test
-    // `test_the_raw_write_field_is_no_longer_a_row_of_its_own`, der genau
-    // den alten, jetzt abgeloesten Streifen als String sperrt).
+    // dieselbe Bedingung nicht zweimal im Quelltext steht.
     isAttributeSignal(signal) {
       return signal.kind === "attribute";
+    },
+
+    /**
+     * Formuliert die Herkunft eines Signals als Klartext-Satz fuer den
+     * Aufklapper.
+     *
+     * `signal.path` traegt dieselbe Auskunft schon als "1/59/1" - dass
+     * darin das DRITTE Segment das Element ist, ist Wissen ueber das
+     * Pfadformat und gehoert deshalb in eine benannte Funktion, nicht als
+     * `signal.path.split('/')[2]` mitten ins Markup (derselbe Grund wie bei
+     * `commandsFor` weiter oben: eine gewoehnliche Funktion ist lesbarer
+     * als ein Ausdruck mit eingebauter Zerlegungsregel im Markup - und
+     * aendert sich das Pfadformat, gibt es dafuer genau eine Stelle statt
+     * einer Suche in `index.html`).
+     */
+    signalOriginText(signal) {
+      return t("web.signals.origin", {
+        endpoint: signal.endpoint,
+        cluster: signal.cluster_id,
+        element: signal.path.split("/")[2],
+      });
     },
 
     // ---------------------------------------------------------------------

@@ -1683,6 +1683,13 @@
       mehrere Handler war beim Raum-Auswahlfeld die Ursache von sechs
       Reviewrunden.
 
+      Aus demselben Grund setzt derselbe Handler seit Fund 3 der
+      Nachpruefung (2026-09-07) zusaetzlich `expandedSignalKey` zurueck:
+      ohne das stuende beim naechsten Oeffnen desselben Geraets sofort
+      wieder derselbe Aufklapper offen, ohne dass der Kebab dafuer geklickt
+      wurde - `@close` ist ja auch fuer dieses Feld der einzige Weg, auf dem
+      ALLE Schliesspfade zusammenlaufen.
+
       Ein `<dialog>` schliesst bei einem Klick auf den Backdrop NICHT von
       selbst (anders als es Escape tut). `@click.self` allein reicht dafuer
       NICHT: der Klick-Ereignis-Ziel ist `<dialog>` schon dann, wenn ein
@@ -1737,7 +1744,7 @@
       x-ref="signalsModal"
       class="signals-modal"
       aria-labelledby="signals-modal-heading"
-      @close="signalsModalDevice = null"
+      @close="signalsModalDevice = null; expandedSignalKey = null"
       @mousedown="signalsModalBackdropMousedown = isBackdropEvent($event, $el)"
       @click.self="if (signalsModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); signalsModalBackdropMousedown = false"
     >
@@ -1938,11 +1945,14 @@
                         <!-- `signal.path` traegt dieselbe Auskunft als
                              "1/59/1", aber das ist ein Raetsel, solange
                              niemand sagt, welche Zahl was bedeutet - hier ist
-                             endlich Platz, es auszuschreiben. -->
-                        <p
-                          class="hint"
-                          x-text="t('web.signals.origin', { endpoint: signal.endpoint, cluster: signal.cluster_id, element: signal.path.split('/')[2] })"
-                        ></p>
+                             endlich Platz, es auszuschreiben. Die Zerlegung
+                             des Pfads (welches Segment das Element ist) steht
+                             in `signalOriginText` (app.js), nicht hier im
+                             Markup - Wissen ueber das Pfadformat gehoert in
+                             eine benannte Funktion, nicht in einen Ausdruck
+                             mitten im Markup (Fund 1 der Nachpruefung,
+                             2026-09-07). -->
+                        <p class="hint" x-text="signalOriginText(signal)"></p>
                         <p class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></p>
                         <!-- Nur fuer Attribute sinnvoll - ein Ereignis hat
                              keinen gespeicherten Wert, den man ueberschreiben

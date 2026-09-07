@@ -3744,11 +3744,17 @@ async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api
     Voreinstellung, misst 0 px) ins Leere - dazu deckte sie weder einen
     waagerechten Balken noch eine RTL-Anordnung ab. Der Rechteckvergleich
     in `isBackdropEvent` braucht keine dieser Fallunterscheidungen; taucht
-    `offsetX` hier je wieder auf, ist das ein Rueckschritt."""
+    `offsetX` hier je wieder auf, ist das ein Rueckschritt.
+
+    Fund 3 (Nachpruefung, 2026-09-07): derselbe `@close`-Handler setzt seit
+    da zusaetzlich `expandedSignalKey` zurueck - dediziert geprueft in
+    `test_closing_the_signals_modal_resets_the_open_detail` weiter unten;
+    hier zaehlt nur weiterhin `signalsModalDevice = null`, um genau EINE
+    Ruecksetzstelle fuer dieses Feld zu belegen."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     script = (await client.get("/static/app.js")).text
-    assert '@close="signalsModalDevice = null"' in markup
+    assert '@close="signalsModalDevice = null; expandedSignalKey = null"' in markup
     assert '@mousedown="signalsModalBackdropMousedown = isBackdropEvent($event, $el)"' in markup
     assert "@mousedown.self=" not in markup
     assert (
@@ -4434,9 +4440,10 @@ async def test_the_raw_write_field_lives_in_the_row_detail(api):
     endgueltiger Platz ist der Aufklapper aus Aufgabe 8. Bedienlogik und
     Handler bleiben unveraendert, nur der Ort und die Sichtbarkeitsbedingung
     aendern sich - letztere jetzt als `isAttributeSignal(signal)`-Aufruf
-    statt einem zweiten Mal ausgeschriebenem `signal.kind === 'attribute'`
-    (siehe `test_the_raw_write_field_is_no_longer_a_row_of_its_own`, der
-    genau diesen alten, jetzt abgeloesten Streifen als String sperrt)."""
+    statt einem zweiten Mal ausgeschriebenem `signal.kind === 'attribute'`.
+    `test_the_raw_write_field_is_no_longer_a_row_of_its_own` ergaenzt dazu
+    die strukturelle Gegenprobe: dasselbe Feld liegt NICHT als eigenes
+    Geschwister der Rasterzeile daneben."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     detail = dialog[dialog.index('class="signal-detail"') :]
@@ -4461,24 +4468,71 @@ async def test_only_one_signal_detail_is_open_at_a_time(api):
     assert "this.expandedSignalKey = " in body
 
 
-async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
-    """Frueher beanspruchte das Rohwert-Feld bei JEDEM Attribut eine volle
-    Zeile - ein Werkzeug zum Ausprobieren mit demselben Gewicht wie alles
-    andere."""
+async def test_closing_the_signals_modal_resets_the_open_detail(api):
+    """Fund 3 (Nachpruefung, 2026-09-07): `@close="signalsModalDevice = null"`
+    fasste `expandedSignalKey` bisher nicht an - schloss jemand das Modal
+    mit offenem Aufklapper und oeffnete danach dasselbe Geraet erneut, stand
+    der Aufklapper sofort wieder offen, ohne dass der Kebab dafuer geklickt
+    wurde. `@close` ist laut dem Kommentar am `<dialog>` (index.html) der
+    einzige Schliessweg, den ALLE Wege durchlaufen (Escape, Backdrop,
+    Schliessen-Knopf, `close()` aus JavaScript ueber `closeSignalsModal()`)
+    - der Reset gehoert deshalb genau dorthin, nicht an eine einzelne
+    Schliessstelle."""
     client, _, _ = api
-    page = _without_comments((await client.get("/")).text)
+    markup = _without_comments((await client.get("/")).text)
 
-    assert "x-show=\"signal.kind === 'attribute'\"" not in page
-    assert 'x-show="expandedSignalKey === signal.key"' in page
+    assert '@close="signalsModalDevice = null; expandedSignalKey = null"' in markup
+
+
+async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
+    """Fund 2 (Nachpruefung, 2026-09-07): dieser Test pruefte zuvor nur die
+    Ab-/Anwesenheit einer Zeichenkette
+    (`'x-show="signal.kind === \\'attribute\\'"' not in page`) - keine
+    Struktur, obwohl der Name "keine eigene Zeile mehr" verspricht. Diese
+    Fassung sichert das strukturell zu: das Rohwert-Eingabefeld liegt
+    INNERHALB des `.signal-detail`-Bereichs, nicht als eigenes Geschwister
+    der Rasterzeile (`.signal-grid.signal-row-cells`) daneben. Die Struktur
+    INNERHALB des Aufklappers deckt bereits
+    `test_the_raw_write_field_lives_in_the_row_detail` robust ab (sie
+    schneidet ab `class="signal-detail"`) - dieser Test ergaenzt dazu die
+    Abwesenheit ausserhalb, in der Rasterzeile, und wird dadurch keine
+    blosse Wiederholung."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+
+    row_start = dialog.index('class="signal-grid signal-row-cells"')
+    row_end = dialog.index("</div>", row_start)
+    row = dialog[row_start:row_end]
+    assert "raw_write_placeholder" not in row
+
+    detail_start = dialog.index('class="signal-detail"')
+    assert "raw_write_placeholder" in dialog[detail_start:]
 
 
 async def test_the_detail_spells_out_the_path(api):
     """Der Pfad `1/59/1` bekommt endlich einen Ort, an dem genug Platz ist,
-    ihn auszuschreiben, statt ihn als Raetsel neben den Namen zu stellen."""
+    ihn auszuschreiben, statt ihn als Raetsel neben den Namen zu stellen.
+
+    Fund 1 (Nachpruefung, 2026-09-07): die Zerlegung des Pfads
+    (`signal.path.split('/')[2]` fuer das Element) stand zuvor als Ausdruck
+    mitten im Markup - Wissen ueber das Pfadformat, das bei einer Aenderung
+    des Formats im Markup gesucht werden muesste statt an einer Stelle in
+    `app.js`. Ein Test, der nur `GET /` prueft, haette einen Helfer in
+    `app.js` nicht gesehen - dieser Test prueft deshalb wie
+    `test_only_one_signal_detail_is_open_at_a_time` direkt `app.js` und
+    zusaetzlich die Bindung im Markup."""
     client, _, _ = api
+    script = (await client.get("/static/app.js")).text
     page = _without_comments((await client.get("/")).text)
 
-    assert "web.signals.origin" in page
+    start = script.index("signalOriginText(signal) {")
+    body = script[start:][:300]
+    assert 't("web.signals.origin"' in body
+    assert "signal.endpoint" in body
+    assert "signal.cluster_id" in body
+    assert 'signal.path.split("/")[2]' in body
+
+    assert 'x-text="signalOriginText(signal)"' in page
 
 
 async def test_the_row_kebab_is_the_only_thing_left_in_the_28px_column(api):
