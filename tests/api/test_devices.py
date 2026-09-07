@@ -296,6 +296,17 @@ async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
     assert fake_client.commissioned == ["34970112332"]
 
 
+async def test_a_code_made_only_of_separators_normalizes_to_an_empty_string(api):
+    """Randfall der Normalisierung, nicht der Validierung (Entwurf Abschnitt
+    8): ein Code aus lauter Trennern hat keine Ziffer, die uebrig bleiben
+    koennte. Das Backend liefert dafuer "" an den Stack - ein leerer Code
+    bleibt ein leerer Code und scheitert dort, wo er heute scheitert."""
+    client, _, _, fake_client = api
+    response = await client.post("/api/devices/commission", json={"code": "---"})
+    assert response.status_code == 201
+    assert fake_client.commissioned == [""]
+
+
 async def test_an_overlong_code_is_passed_on_rather_than_rejected(api):
     """Der Validator normalisiert, er validiert NICHT (Entwurf Abschnitt 8):
     ueber die Bauformen der Setup-Codes entscheidet der Matter-Stack, nicht
