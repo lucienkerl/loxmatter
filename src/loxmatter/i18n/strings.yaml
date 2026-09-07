@@ -946,6 +946,27 @@ web.signals.modal_heading:
 web.signals.modal_close:
   en: "Close"
   de: "Schließen"
+web.signals.endpoint_button:
+  en: "Button"
+  de: "Taste"
+web.signals.endpoint_socket:
+  en: "Socket"
+  de: "Steckdose"
+web.signals.endpoint_light:
+  en: "Light"
+  de: "Leuchte"
+web.signals.endpoint_metering:
+  en: "Metering"
+  de: "Messung"
+web.signals.endpoint_device:
+  en: "Device"
+  de: "Gerät"
+web.signals.endpoint_numbered:
+  en: "{name} {index}"
+  de: "{name} {index}"
+web.signals.endpoint_plain:
+  en: "Endpoint {endpoint}"
+  de: "Endpunkt {endpoint}"
 
 # --- web.export — Export-Tab ---
 web.export.heading:

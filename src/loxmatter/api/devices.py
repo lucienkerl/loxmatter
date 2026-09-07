@@ -95,6 +95,7 @@ from loxmatter.matter.otbr import (
 )
 from loxmatter.model.store import Store, StoredDevice, StoredSignal, UnknownDeviceError
 from loxmatter.profiles.categories import CATEGORY_RANK, category_for
+from loxmatter.profiles.endpoints import endpoint_labels
 from loxmatter.profiles.table import Exportability, is_exportable
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,9 @@ class RuntimeValues(Protocol):
     async def set_online(self, device_id: int, online: bool) -> None: ...
 
 
-def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> SignalOut:
+def _signal_out(
+    signal: StoredSignal, values: dict[str, float | bool], labels: dict[int, str]
+) -> SignalOut:
     """`functional` kommt unveraendert aus `StoredSignal.functional` -
     `profiles.relevance.is_functional` braucht die Geraetetypen je Endpunkt
     (`device_types_by_endpoint`), die diese Funktion hier gar nicht sieht
@@ -152,7 +155,15 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
     echten Geraeteabbild zur Hand, und schreibt es in die Zeile - siehe dort
     und `_migrate_to_v4` fuer Bestandsgeraete. Eine zweite Berechnung hier
     (oder gar in der Oberflaeche) wuerde dieselbe Regel ein zweites Mal
-    nachbilden, ohne das Abbild zu haben, das sie eigentlich braucht."""
+    nachbilden, ohne das Abbild zu haben, das sie eigentlich braucht.
+
+    `labels` kommt als fertige Endpunkt->Name-Zuordnung vom Aufrufer herein
+    (`profiles.endpoints.endpoint_labels`, einmal je Geraet gebildet) statt
+    hier je Signal neu berechnet zu werden - bei 173 Signalen eines
+    Geraets waere das 173-mal dieselbe Rechnung ueber dieselben
+    Geraetetypen. Ein Endpunkt ohne Eintrag (Geraetetypen noch nicht
+    nachgetragen, siehe `endpoint_labels`-Docstring) faellt hier auf
+    `endpoint_plain` zurueck."""
     exportable = is_exportable(signal.exportability)
     reason = None if exportable else _UNEXPORTABLE_REASONS.get(signal.exportability)
     return SignalOut(
@@ -167,6 +178,12 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
         exported=signal.exported,
         functional=signal.functional,
         resend=signal.resend,
+        endpoint=signal.ref.endpoint,
+        cluster_id=signal.ref.cluster_id,
+        endpoint_label=labels.get(
+            signal.ref.endpoint,
+            i18n.t("web.signals.endpoint_plain", endpoint=signal.ref.endpoint),
+        ),
     )
 
 
@@ -260,9 +277,12 @@ def build_device_router(
 
     @router.get("/devices/{device_id}/signals")
     async def get_signals(device_id: int) -> list[SignalOut]:
-        _require_device(device_id)
+        device = _require_device(device_id)
         values = runtime.last_values_for(device_id)
-        return [_signal_out(signal, values) for signal in store.signals(device_id)]
+        # Einmal je Geraet gebildet, nicht je Signal - siehe Docstring von
+        # `_signal_out`.
+        labels = endpoint_labels(device.device_types)
+        return [_signal_out(signal, values, labels) for signal in store.signals(device_id)]
 
     @router.patch("/devices/{device_id}")
     async def patch_device(device_id: int, patch: DevicePatch) -> DeviceOut:
@@ -327,7 +347,7 @@ def build_device_router(
                 status_code=404, detail=i18n.t("api.errors.unknown_signal_key", signal_key=key)
             )
         try:
-            store.device(stored.device_id)
+            device = store.device(stored.device_id)
         except UnknownDeviceError as exc:
             raise HTTPException(
                 status_code=404,
@@ -347,7 +367,8 @@ def build_device_router(
         updated = store.signal_by_key(key)
         assert updated is not None  # eben noch gefunden, in derselben Anfrage nicht geloescht
         values = runtime.last_values_for(updated.device_id)
-        return _signal_out(updated, values)
+        labels = endpoint_labels(device.device_types)
+        return _signal_out(updated, values, labels)
 
     @router.post("/devices/commission", status_code=201)
     async def commission_device(request: CommissionRequest) -> DeviceOut:

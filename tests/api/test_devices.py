@@ -48,6 +48,53 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
     store.close()
 
 
+@pytest.fixture
+async def button_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
+    """Wie `api` oben, aber mit `ikea_bilresa_button.json` statt der
+    Steckdose: die Fernbedienung ist der Fall, den `profiles.endpoints`
+    ueberhaupt erst noetig macht - derselbe Geraetetyp (GenericSwitch) auf
+    zwei Endpunkten (Ep 1 und Ep 2)."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    fake_client.store = store
+
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        thread_dataset_source=fake_otbr,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        yield c, store, device_id
+    store.close()
+
+
+async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_api):
+    """Die Oberflaeche gruppiert nach Endpunkt und erkennt den Batteriestand
+    an seinem Cluster. Beides aus `path` ("1/59/2") in JavaScript
+    herauszuparsen hiesse, die Zerlegung ein zweites Mal zu pflegen -
+    deshalb liefert die API die Zahlen fertig."""
+    client, _store, device_id = button_api
+
+    response = await client.get(f"/api/devices/{device_id}/signals")
+
+    signals = response.json()
+    battery = next(s for s in signals if s["key"].endswith("_0_battery"))
+    assert battery["endpoint"] == 0
+    assert battery["cluster_id"] == 47
+    assert battery["endpoint_label"] == "Device"
+
+    press = next(s for s in signals if s["key"].endswith("_1_press"))
+    assert press["endpoint"] == 1
+    assert press["endpoint_label"] == "Button 1"
+
+
 async def test_device_list_carries_name_and_signal_count(api):
     client, _, device_id, _ = api
     response = await client.get("/api/devices")
