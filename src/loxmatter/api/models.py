@@ -151,19 +151,41 @@ class RoomRename(BaseModel):
     to_room: str = Field(alias="to")
 
 
+class ControlRange(BaseModel):
+    """Grenzen eines Reglers, in der Einheit, die die Oberflaeche anzeigt.
+
+    Heute nur fuer die Farbtemperatur, in Kelvin. Die Umrechnung aus Mired
+    passiert im Server und nicht im JavaScript: sie ist ein Kehrwert, bei
+    dem Min und Max tauschen - eine Falle, die man nicht zweimal aufstellen
+    will (Entwurf 2026-09-07, Abschnitt 5.5)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    min: int
+    max: int
+
+
 class CommandOut(BaseModel):
     """Ein Bedienelement fuer `GET /api/devices/{device_id}/controls` (Task 4).
 
     Traegt bewusst nur, was ein Klick braucht - der Schluessel zum Ausloesen
     und der Slug als Beschriftung. `takes_value` sagt der Oberflaeche, ob ein
     einfacher Knopf reicht (z. B. `on`) oder ein Regler noetig ist (z. B.
-    `level`)."""
+    `level`).
+
+    `control` sagt, WELCHES Bedienelement gebaut werden soll (`none`,
+    `percent`, `kelvin`, `hue_sat`, `unknown`) - siehe
+    `profiles.table.command_control`. `takes_value` bleibt daneben
+    bestehen, weil es etwas anderes beantwortet: ob der EXPORT einen
+    analogen oder digitalen Ausgang erzeugt."""
 
     model_config = ConfigDict(frozen=True)
 
     key: str
     slug: str
     takes_value: bool
+    control: str
+    range: ControlRange | None = None
 
 
 class ControlsOut(BaseModel):
