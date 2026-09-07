@@ -431,7 +431,7 @@ An `tests/projectsync/test_diff.py` anhängen. Dem dortigen Muster für den Aufb
 ```python
 def test_a_project_imported_before_the_reordering_still_matches(tmp_path):
     """Eine Projektdatei, die ein Anwender VOR der Rangliste importiert hat,
-    fuehrt ihre Eingaenge in der alten Reihenfolge. `_plan_inputs` schlaegt
+    fuehrt ihre Eingaenge in einer anderen Reihenfolge. `_plan_inputs` schlaegt
     jeden Eintrag ueber `index.input_cmds.get(entry.key)` nach, nicht ueber
     seine Position - kein Eintrag darf deshalb als neu gelten und keiner
     als verwaist.
@@ -445,9 +445,12 @@ def test_a_project_imported_before_the_reordering_still_matches(tmp_path):
     store.register_signals(device_id, snapshot)
 
     inputs = to_inputs(store.signals(device_id), device_id, "Taster")
-    # Die ALTE Ordnung: Batterie (Endpunkt 0) zuerst, wie vor der Rangliste.
-    old_order = sorted(inputs, key=lambda i: i.key)
-    project = _project_with_inputs(old_order)  # Helfer dieser Testdatei
+    # EINE andere Reihenfolge als die heutige - welche, ist gleichgueltig:
+    # der Abgleich laeuft ueber den Schluessel, also darf ihn KEINE
+    # Umsortierung stoeren. Alphabetisch nach Schluessel ist eine beliebige
+    # Permutation und beweist damit mehr als die eine alte Ordnung.
+    shuffled = sorted(inputs, key=lambda i: i.key)
+    project = _project_with_inputs(shuffled)  # Helfer dieser Testdatei
 
     plan = build_plan(project, store)
 
@@ -853,29 +856,95 @@ MSG
 An `tests/api/test_web.py` anhängen:
 
 ```python
-async def test_the_battery_is_never_the_lead_value(api):
-    """Der Batteriestand ist ab der Rangliste das letztplatzierte
-    funktionale Signal - `firstSignalsFor` darf ihn gar nicht erst
-    erreichen. Die Vorschauzeilen bilden sich deshalb aus
-    `previewSignalsFor`, das ihn herausnimmt."""
-    client, _, _ = api
-    script = (await client.get("/static/app.js")).text
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_the_battery_is_never_the_lead_and_never_counted_twice():
+    """Die drei Zusicherungen der Batteriezeile an EINEM Aufbau, weil sie
+    zusammengehoeren: der Batteriestand fuehrt nicht, er steht nicht in der
+    Vorschau, und er zaehlt nicht als "weiteres".
 
-    assert "previewSignalsFor(deviceId)" in script
-    assert "return this.previewSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT)" in script
+    Der Aufbau ist der Taster: 17 funktionale Signale in der Reihenfolge,
+    in der die Cluster-Rangliste sie liefert - sechzehn Switch-Signale,
+    zuletzt die Batterie. Sechs Vorschauzeilen plus eine Fusszeile lassen
+    zehn uebrig. Nennt die Kachel elf, ist die Batterie doppelt gezaehlt -
+    genau der Fehler, den der Canvas-Entwurf hatte.
+
+    Als node-Lauf statt als Zeichenketten-Suche in `app.js`: eine Suche
+    belegt nur, DASS eine Zeile ausgeliefert wird. Am 2026-09-05 haben drei
+    solche Tests einen Critical durchgelassen, weil sie exakt die
+    Zeichenketten prueften, die den Fehler erzeugten."""
+    values = _app_state(
+        """
+        const signals = [];
+        for (let i = 0; i < 16; i++) {
+          signals.push({
+            key: "d1_1_s" + i, title: "s" + i,
+            endpoint: 1, cluster_id: 59, functional: true,
+          });
+        }
+        signals.push({
+          key: "d1_0_battery", title: "battery",
+          endpoint: 0, cluster_id: 47, functional: true,
+        });
+        state.signalsByDevice = { 1: signals };
+        console.log(JSON.stringify({
+          lead: state.leadSignalFor(1).key,
+          battery: state.batterySignalFor(1).key,
+          preview: state.firstSignalsFor(1).map((s) => s.key),
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    assert values["lead"] == "d1_1_s0"
+    assert values["battery"] == "d1_0_battery"
+    assert "d1_0_battery" not in values["preview"]
+    assert len(values["preview"]) == 6
+    assert values["remaining"] == 10
 
 
-async def test_the_remaining_counter_treats_the_battery_as_shown(api):
-    """Die Batterie steht in ihrer eigenen Fusszeile, ist also GEZEIGT. Zaehlt
-    `remainingSignalCount` sie als "weiteres" mit, nennt die Kachel eine Zahl,
-    die um eins zu hoch ist - genau der Fehler, den der erste Entwurf hatte
-    ("+ 11 weitere" auf einer Kachel, die sieben von 17 Signalen zeigt)."""
-    client, _, _ = api
-    script = (await client.get("/static/app.js")).text
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_mains_powered_device_has_no_battery_row():
+    """Ohne PowerSource-Signal darf die Kachel keine Fusszeile zeigen - und
+    der Zaehler muss sich genauso verhalten wie vor dieser Aenderung."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_1_onoff", title: "onoff", endpoint: 1, cluster_id: 6, functional: true },
+          { key: "d1_2_power", title: "power", endpoint: 2, cluster_id: 144, functional: true },
+        ] };
+        console.log(JSON.stringify({
+          battery: state.batterySignalFor(1),
+          lead: state.leadSignalFor(1).key,
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
 
-    body = script[script.index("remainingSignalCount(deviceId)") :][:400]
-    assert "previewSignalsFor" in body
-    assert "functionalSignalsFor" not in body
+    assert values["battery"] is None
+    assert values["lead"] == "d1_1_onoff"
+    assert values["remaining"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_whose_only_functional_signal_is_the_battery_has_no_lead():
+    """Der Randfall, an dem der Hinweis "keine funktionalen Signale" falsch
+    waere: es GIBT eines, es steht nur in der Fusszeile."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_0_battery", title: "battery", endpoint: 0, cluster_id: 47, functional: true },
+        ] };
+        console.log(JSON.stringify({
+          lead: state.leadSignalFor(1),
+          battery: state.batterySignalFor(1).key,
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    assert values["lead"] is None
+    assert values["battery"] == "d1_0_battery"
+    assert values["remaining"] == 0
 
 
 async def test_the_tile_has_a_battery_row_with_its_own_symbol(api):
@@ -1083,14 +1152,44 @@ Nach `.value-rows .value` einfügen:
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-- [ ] **Step 10: Im Browser ansehen**
+- [ ] **Step 10: Die Bindung im Harness belegen, nicht nur die Funktion**
 
-Run: `uv run python scripts/dev_web_server.py`
-Dann `http://127.0.0.1:8099/` öffnen (Port aus dem Skript ablesen) und prüfen:
-- „Hallway button" führt mit `press`, nicht mit `battery`.
-- Unter den Vorschauzeilen steht eine abgesetzte Zeile `🔋 Batterie 12,4 %`.
-- „+ 10 weitere", nicht „+ 11 weitere".
-- „Coffee machine" und „Kitchen spots" haben **keine** Batteriezeile und sind nicht höher geworden.
+Der node-Test aus Step 1 belegt, dass `batterySignalFor` das richtige Signal
+liefert. Er sagt **nichts** darüber, ob die Zeile im Browser erscheint: `x-show`
+auf einem Element, dessen Ausdruck nie greift, verpufft stillschweigend. Genau
+diese Lücke hat am 2026-09-05 einen Critical durchgelassen.
+
+**Wie der Harness gebaut wird** (bewährt am 2026-09-06, spart Anmeldung und
+Runden): eine `harness.html` im Scratchpad, die den fraglichen Markup-Block
+per Python **aus `index.html` herausschneidet** — nicht abtippen, sonst prüft
+man eine Kopie. Daneben `style.css` und `vendor/alpine.min.js` kopieren und
+ein Mini-`app()` stellen, das nur die Felder trägt, die der Block anfasst.
+Davor `python3 -m http.server`. Zwei Fallen: `file://` lädt der eingebettete
+Browser als statischen Schnappschuss, Alpine läuft dort **gar nicht** — es
+muss über http gehen; und ein Tab, der einmal eine lokale Datei gezeigt hat,
+bleibt darauf festgenagelt, also einen neuen Tab für die http-URL öffnen.
+
+Im Harness dann **gemessene** Werte lesen, nicht Augenschein:
+
+```js
+const row = document.querySelector(".device-battery");
+JSON.stringify({
+  vorhanden: !!row,
+  sichtbar: row && getComputedStyle(row).display !== "none",
+  text: row && row.textContent.replace(/\s+/g, " ").trim(),
+  leitwert: document.querySelector(".lead-label").textContent,
+  rest: document.querySelector(".value-rows a.value-key").textContent,
+})
+```
+
+Erwartet: `sichtbar` true, `text` enthält „Batterie" und „12.4", `leitwert`
+ist `press`, `rest` nennt **10** weitere.
+
+Danach denselben Harness mit einem Gerät **ohne** PowerSource-Signal laden:
+`vorhanden` true (das Element steht im DOM), `sichtbar` false — und die
+Kachelhöhe darf sich gegenüber dem Stand vor dieser Aufgabe nicht ändern
+(`document.querySelector(".device-card").getBoundingClientRect().height`
+vorher/nachher vergleichen).
 
 - [ ] **Step 11: Commit**
 
@@ -1136,28 +1235,70 @@ MSG
 - [ ] **Step 1: Die failing tests schreiben**
 
 ```python
-async def test_the_modal_groups_signals_by_endpoint(api):
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_the_groups_follow_the_ranking_not_the_endpoint_number():
     """Der Grund fuer die Gruppen: `press` steht zweimal in der Liste -
     1/59/1 und 2/59/1, also zwei verschiedene Tasten derselben
-    Fernbedienung. Ohne Gruppe ist das zweimal dasselbe Wort ohne
-    Auskunft, welche gemeint ist."""
-    client, _, _ = api
-    script = (await client.get("/static/app.js")).text
+    Fernbedienung. Ohne Gruppe ist das zweimal dasselbe Wort ohne Auskunft,
+    welche gemeint ist.
 
-    body = script[script.index("signalGroupsFor(deviceId)") :][:1200]
-    assert "signal.endpoint" in body
-    assert "endpoint_label" in body
+    Und die Reihenfolge: "Geraet" (Endpunkt 0, nur die Batterie) steht
+    ZULETZT, obwohl es die kleinste Endpunktnummer traegt - die Gruppen
+    uebernehmen die Reihenfolge des ersten Auftretens in der bereits
+    gerangten Liste, sie sortieren nicht selbst. Genau das kann eine
+    Zeichenketten-Suche in `app.js` nicht belegen.
+
+    `t()` liefert ohne geladene Uebersetzungstabelle den Schluessel selbst
+    zurueck (siehe `t` in app.js) - der Titel der Experte-Gruppe ist hier
+    deshalb der Schluessel, und das genuegt fuer die Zusicherung."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_1_press", title: "press", endpoint: 1, cluster_id: 59,
+            functional: true, endpoint_label: "Taste 1" },
+          { key: "d1_2_press", title: "press", endpoint: 2, cluster_id: 59,
+            functional: true, endpoint_label: "Taste 2" },
+          { key: "d1_0_battery", title: "battery", endpoint: 0, cluster_id: 47,
+            functional: true, endpoint_label: "Gerät" },
+          { key: "d1_0_vendor", title: "VendorName", endpoint: 0, cluster_id: 40,
+            functional: false, endpoint_label: "Gerät" },
+        ] };
+        console.log(JSON.stringify(
+          state.signalGroupsFor(1).map((g) => ({
+            key: g.key, title: g.title, collapsible: g.collapsible,
+            signals: g.signals.map((s) => s.key),
+          }))
+        ));
+        """
+    )
+
+    assert [g["key"] for g in values] == ["ep1", "ep2", "ep0", "expert"]
+    assert [g["title"] for g in values[:3]] == ["Taste 1", "Taste 2", "Gerät"]
+    assert values[0]["signals"] == ["d1_1_press"]
+    assert values[1]["signals"] == ["d1_2_press"]
+    # 156 Signale ueber alle Endpunkte zu gliedern erzeugte nur mehr
+    # Ueberschriften - der Experte-Block bleibt EINE zugeklappte Gruppe.
+    assert values[3]["signals"] == ["d1_0_vendor"]
+    assert values[3]["collapsible"] is True
+    assert [g["collapsible"] for g in values[:3]] == [False, False, False]
 
 
-async def test_the_expert_group_stays_one_block(api):
-    """156 Signale ueber alle Endpunkte zu gliedern erzeugte nur mehr
-    Ueberschriften - der Experte-Block bleibt EINE zugeklappte Gruppe."""
-    client, _, _ = api
-    script = (await client.get("/static/app.js")).text
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_without_functional_signals_yields_only_the_expert_group():
+    """Der Zustand, fuer den der Hinweis `none_functional` jetzt AUSSERHALB
+    der Gruppenschleife steht: eine Endpunktgruppe ist nie leer, es gibt
+    dann schlicht keine."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_0_vendor", title: "VendorName", endpoint: 0, cluster_id: 40,
+            functional: false, endpoint_label: "Gerät" },
+        ] };
+        console.log(JSON.stringify(state.signalGroupsFor(1).map((g) => g.key)));
+        """
+    )
 
-    body = script[script.index("signalGroupsFor(deviceId)") :][:1200]
-    assert 'key: "expert"' in body
-    assert "collapsible: true" in body
+    assert values == ["expert"]
 
 
 async def test_the_group_header_shows_the_endpoint_as_a_subtitle(api):
@@ -1226,6 +1367,27 @@ web.signals.group_endpoint_subtitle:
       return groups;
     },
 ```
+
+**Achtung: zwei bestehende Tests brechen dadurch** — sie schreiben fest,
+dass `signalGroupsFor` die Gruppe „Funktional" führt, und genau die
+verschwindet:
+
+- `tests/api/test_web.py:402` (`assert 't("web.signals.group_functional")' in script`)
+- `tests/api/test_web.py:1852` (`assert 'title: t("web.signals.group_functional")' in body`)
+
+Beide sind aus Aufgabe 12 der i18n-Umstellung und belegen dort etwas
+Richtiges: dass die Gruppentitel übersetzt sind statt fest verdrahtet. Diese
+Zusicherung bleibt gültig und muss erhalten bleiben — sie zielt nur auf einen
+Titel, den es nicht mehr gibt. Also **umschreiben, nicht löschen**: beide
+Tests prüfen künftig `t("web.signals.group_expert")` und den
+Endpunkt-Untertitel `t("web.signals.group_endpoint_subtitle", ...)`, und
+behalten ihre Sperre gegen feste Literale (`'"Funktional"' not in body`
+entfällt, `'"Experte"' not in body` bleibt).
+
+Der Schlüssel `web.signals.group_functional` in `strings.yaml` wird danach von
+niemandem mehr gelesen und **wird mitentfernt** — ein toter
+Übersetzungsschlüssel ist Ballast, den beim nächsten Mal jemand für eine
+Fundstelle hält.
 
 **Achtung:** die bisherige Gruppe „Funktional" verschwindet damit. Der Hinweis `web.signals.none_functional` hing an `!group.collapsible && group.signals.length === 0` — eine Endpunktgruppe ist nie leer, sie entsteht ja aus ihren Signalen. Der Hinweis muss deshalb **außerhalb** der Gruppenschleife stehen, siehe Step 5.
 
@@ -1330,9 +1492,14 @@ async def test_both_boolean_columns_are_checkboxes(api):
     page = _without_comments((await client.get("/")).text)
 
     modal = page[page.index('class="signals-modal"') :]
-    assert "toggleExported(signal)" in modal
-    assert "toggleResend(signal)" in modal
-    assert "switch" not in modal.lower().split("toggleresend")[0][-600:]
+    for handler in ("toggleExported(signal)", "toggleResend(signal)"):
+        # Das Bedienelement, das den Handler traegt: vom Handler
+        # rueckwaerts bis zum oeffnenden Tag. So prueft der Test das
+        # tatsaechliche Element und nicht irgendein `type="checkbox"`
+        # anderswo im Modal.
+        end = modal.index(handler)
+        element = modal[modal.rindex("<", 0, end) : end]
+        assert 'type="checkbox"' in element, handler
 
 
 async def test_the_boolean_columns_keep_a_label_for_assistive_technology(api):
@@ -1539,9 +1706,42 @@ Die letzte Zelle trägt vorläufig die `reason`-Pille; Task 8 setzt dort den Auf
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-- [ ] **Step 8: Im Browser prüfen**
+- [ ] **Step 8: Das Fluchten messen, nicht ansehen**
 
-Modal öffnen und mit dem Auge kontrollieren: alle Spalten fluchten über alle drei Gruppen hinweg; der Spaltenkopf bleibt beim Scrollen stehen; keine Zeile bricht um; beide Ja/Nein-Spalten sind Häkchen.
+„Fluchtet" ist die Zusicherung dieser Aufgabe, und mit dem Auge ist sie an
+zwei Zeilen nicht zu belegen — bei `multipress_ongoing` ist der alte Umbruch
+ja auch erst in der langen Liste aufgefallen.
+
+**Wie der Harness gebaut wird** (bewährt am 2026-09-06, spart Anmeldung und
+Runden): eine `harness.html` im Scratchpad, die den fraglichen Markup-Block
+per Python **aus `index.html` herausschneidet** — nicht abtippen, sonst prüft
+man eine Kopie. Daneben `style.css` und `vendor/alpine.min.js` kopieren und
+ein Mini-`app()` stellen, das nur die Felder trägt, die der Block anfasst.
+Davor `python3 -m http.server`. Zwei Fallen: `file://` lädt der eingebettete
+Browser als statischen Schnappschuss, Alpine läuft dort **gar nicht** — es
+muss über http gehen; und ein Tab, der einmal eine lokale Datei gezeigt hat,
+bleibt darauf festgenagelt, also einen neuen Tab für die http-URL öffnen.
+
+Im Harness das Modal mit **allen 17** funktionalen Signalen füllen und messen:
+
+```js
+const rows = [...document.querySelectorAll(".signal-row-cells")];
+const head = document.querySelector(".signal-grid-head");
+const linkeKanten = (el) => [...el.children].map((c) => Math.round(c.getBoundingClientRect().left));
+const erwartet = linkeKanten(head);
+JSON.stringify({
+  zeilen: rows.length,
+  abweichende: rows.filter((r) => String(linkeKanten(r)) !== String(erwartet)).length,
+  hoehen: [...new Set(rows.map((r) => Math.round(r.getBoundingClientRect().height)))],
+})
+```
+
+Erwartet: `abweichende` **0** — jede Datenzeile teilt die Spaltenkanten des
+Kopfes. `hoehen` muss **einen** Wert enthalten: mehrere Höhen heißen, dass
+mindestens eine Zeile umbricht, also genau der alte Zustand.
+
+Dazu die Sperre gegen den waagerechten Überlauf:
+`document.querySelector(".signals-modal").scrollWidth <= clientWidth`.
 
 - [ ] **Step 9: Commit**
 
@@ -1822,14 +2022,53 @@ async def test_the_modal_leads_with_the_number_the_user_came_for(api):
     assert "exportedSignalCount(signalsModalDevice)" in page
 
 
-async def test_deselect_all_only_touches_signals_that_are_selected(api):
-    """Ein `toggleExported` auf ein bereits abgewaehltes Signal schaltete es
-    WIEDER EIN - "alle abwaehlen" haette dann die Auswahl invertiert."""
-    client, _, _ = api
-    script = (await client.get("/static/app.js")).text
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_deselect_all_empties_the_selection_instead_of_inverting_it():
+    """Ein `toggleExported` ueber ALLE Signale haette die Auswahl invertiert -
+    der Knopf heisst aber "alle abwaehlen", nicht "umkehren". Ein zweiter
+    Klick muss deshalb nichts mehr tun.
 
-    body = script[script.index("deselectAllSignals(deviceId)") :][:500]
-    assert "signal.exported" in body
+    `toggleExported` wird hier ersetzt, weil es die Route ruft: geprueft
+    wird die Auswahl-Regel dieser Schleife, nicht der Schreibweg."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "a", exported: true, exportable: true },
+          { key: "b", exported: false, exportable: true },
+          { key: "c", exported: true, exportable: false },
+        ] };
+        const touched = [];
+        state.toggleExported = (signal) => {
+          touched.push(signal.key);
+          signal.exported = !signal.exported;
+        };
+        const before = state.exportedSignalCount(1);
+        // Async-IIFE, weil `node -e` als CommonJS laeuft und dort kein
+        // `await` auf oberster Ebene erlaubt ist - `deselectAllSignals`
+        // ist async.
+        (async () => {
+          await state.deselectAllSignals(1);
+          const firstRun = touched.slice();
+          await state.deselectAllSignals(1);
+          console.log(JSON.stringify({
+            before,
+            after: state.exportedSignalCount(1),
+            total: state.signalCount(1),
+            firstRun,
+            secondRunTouched: touched.length - firstRun.length,
+          }));
+        })();
+        """
+    )
+
+    # "c" ist zwar `exported`, passt aber auf keinen Loxone-Eingang - es
+    # zaehlt nicht mit, genauso wie `to_inputs` es server-seitig auslaesst.
+    assert values["before"] == 1
+    assert values["total"] == 3
+    assert values["after"] == 0
+    # "b" war bereits aus und darf nicht angefasst worden sein.
+    assert "b" not in values["firstRun"]
+    assert values["secondRunTouched"] == 0
 ```
 
 - [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
@@ -2029,9 +2268,32 @@ Expected: FAIL.
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Im Browser prüfen**
+- [ ] **Step 5: Bei 380 px messen**
 
-Fenster auf 380 px schmal ziehen (oder die Geräteansicht der Entwicklerwerkzeuge auf ein Telefon stellen), Modal öffnen: keine waagerechte Bildlaufleiste, jede Signalzeile als lesbare Karte, die Häkchen weiterhin bedienbar.
+Denselben Harness wie in Aufgabe 7, aber das Fenster auf **380 px** stellen
+(`resize_window` mit `preset: "mobile"`), Seite neu laden — die Medienabfrage
+greift erst nach dem Neuladen zuverlässig — und lesen:
+
+```js
+const modal = document.querySelector(".signals-modal");
+const rows = [...document.querySelectorAll(".signal-row-cells")];
+JSON.stringify({
+  ueberlauf: modal.scrollWidth - modal.clientWidth,
+  kopfSichtbar: getComputedStyle(document.querySelector(".signal-grid-head")).display,
+  kaestchen: document.querySelectorAll('.signal-row-cells input[type="checkbox"]').length,
+  kleinsteTrefferflaeche: Math.min(
+    ...[...document.querySelectorAll('.signal-row-cells input[type="checkbox"]')]
+      .map((c) => Math.round(c.getBoundingClientRect().width)),
+  ),
+})
+```
+
+Erwartet: `ueberlauf` **0**, `kopfSichtbar` `"none"`, `kaestchen` gleich
+`2 × Zeilenzahl` (beide Ja/Nein-Spalten bleiben bedienbar, sie verschwinden
+nicht mit dem Kopf), `kleinsteTrefferflaeche` > 0.
+
+Zum Schluss `resize_window` auf `preset: "desktop"` zurücksetzen — eine
+gesetzte Größe bleibt sonst am Tab kleben.
 
 - [ ] **Step 6: Commit**
 
