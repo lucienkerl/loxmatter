@@ -1764,6 +1764,19 @@
             ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
           </div>
 
+          <!-- Die eine Zahl, wegen der man dieses Modal oeffnet. Sie stand
+               bisher nirgends - man musste 17 Haekchen zaehlen. -->
+          <div class="signals-summary">
+            <span
+              x-text="t('web.signals.export_summary', { exported: exportedSignalCount(signalsModalDevice), total: signalCount(signalsModalDevice) })"
+            ></span>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              @click="deselectAllSignals(signalsModalDevice)"
+              x-text="t('web.signals.deselect_all')"
+            ></button>
+          </div>
+
           <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
           <p class="hint">
             <span x-text="t('web.signals.key_hint')"></span>

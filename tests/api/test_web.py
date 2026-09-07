@@ -4569,3 +4569,62 @@ async def test_the_kebab_button_is_named_and_reports_its_state(api):
 
     assert ":aria-expanded=" in button
     assert ":aria-label=" in button
+
+
+async def test_the_modal_leads_with_the_number_the_user_came_for(api):
+    """Man oeffnet dieses Modal, um zu sehen und zu aendern, was nach Loxone
+    geht. Diese Zahl stand bisher nirgends."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert "web.signals.export_summary" in page
+    assert "exportedSignalCount(signalsModalDevice)" in page
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_deselect_all_empties_the_selection_instead_of_inverting_it():
+    """Ein `toggleExported` ueber ALLE Signale haette die Auswahl invertiert -
+    der Knopf heisst aber "alle abwaehlen", nicht "umkehren". Ein zweiter
+    Klick muss deshalb nichts mehr tun.
+
+    `toggleExported` wird hier ersetzt, weil es die Route ruft: geprueft
+    wird die Auswahl-Regel dieser Schleife, nicht der Schreibweg."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "a", exported: true, exportable: true },
+          { key: "b", exported: false, exportable: true },
+          { key: "c", exported: true, exportable: false },
+        ] };
+        const touched = [];
+        state.toggleExported = (signal) => {
+          touched.push(signal.key);
+          signal.exported = !signal.exported;
+        };
+        const before = state.exportedSignalCount(1);
+        // Async-IIFE, weil `node -e` als CommonJS laeuft und dort kein
+        // `await` auf oberster Ebene erlaubt ist - `deselectAllSignals`
+        // ist async.
+        (async () => {
+          await state.deselectAllSignals(1);
+          const firstRun = touched.slice();
+          await state.deselectAllSignals(1);
+          console.log(JSON.stringify({
+            before,
+            after: state.exportedSignalCount(1),
+            total: state.signalCount(1),
+            firstRun,
+            secondRunTouched: touched.length - firstRun.length,
+          }));
+        })();
+        """
+    )
+
+    # "c" ist zwar `exported`, passt aber auf keinen Loxone-Eingang - es
+    # zaehlt nicht mit, genauso wie `to_inputs` es server-seitig auslaesst.
+    assert values["before"] == 1
+    assert values["total"] == 3
+    assert values["after"] == 0
+    # "b" war bereits aus und darf nicht angefasst worden sein.
+    assert "b" not in values["firstRun"]
+    assert values["secondRunTouched"] == 0

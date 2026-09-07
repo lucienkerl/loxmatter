@@ -2032,6 +2032,32 @@ function app() {
       }
     },
 
+    // Wie viele Signale dieses Geraets tatsaechlich als Eingang nach Loxone
+    // gehen. `exported` allein reicht nicht: ein Signal, dessen Wert auf
+    // keinen Loxone-Eingang passt (`exportable === false`), erzeugt keinen -
+    // dieselbe Unterscheidung, die `to_inputs` server-seitig macht.
+    exportedSignalCount(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      return signals ? signals.filter((s) => s.exported && s.exportable).length : 0;
+    },
+
+    signalCount(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      return signals ? signals.length : 0;
+    },
+
+    // Nur was AN ist, wird ausgeschaltet. Ein `toggleExported` ueber alle
+    // Signale wuerde die Auswahl invertieren statt sie zu leeren - der
+    // Knopf heisst aber "alle abwaehlen", nicht "umkehren".
+    async deselectAllSignals(deviceId) {
+      const signals = this.signalsByDevice[deviceId] || [];
+      for (const signal of signals) {
+        if (signal.exported) {
+          await this.toggleExported(signal);
+        }
+      }
+    },
+
     async toggleResend(signal) {
       try {
         const updated = await this.request("PATCH", `/api/signals/${signal.key}`, {

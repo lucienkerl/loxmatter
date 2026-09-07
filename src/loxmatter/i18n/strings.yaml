@@ -970,6 +970,12 @@ web.signals.write_success:
 web.signals.modal_heading:
   en: "Signals — {device}"
   de: "Signale — {device}"
+web.signals.export_summary:
+  en: "{exported} of {total} signals go to Loxone as an input"
+  de: "{exported} von {total} Signalen gehen als Eingang nach Loxone"
+web.signals.deselect_all:
+  en: "Deselect all"
+  de: "Alle abwählen"
 web.signals.modal_close:
   en: "Close"
   de: "Schließen"
