@@ -15,4 +15,8 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run mypy
+      # The project is English-only. Without this step the rule holds only
+      # until the next feature branch - see
+      # docs/superpowers/specs/2026-09-07-english-only-translation-design.md
+      - run: uv run python scripts/check_language.py
       - run: uv run pytest -v
