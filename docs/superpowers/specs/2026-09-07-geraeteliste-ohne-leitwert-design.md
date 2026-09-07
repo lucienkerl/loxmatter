@@ -148,16 +148,18 @@ Ehrlichkeit vor Verkaufe: die Kachel wird **höher**, nicht niedriger.
 |---|---|
 | Werteraster gewinnt eine Zeile (`0.75rem` × 1.5 + `0.05rem` Zeilenabstand) | **≈ +16 px** |
 | Kopfzeile verliert die Label-Zeile (`0.65rem` × 1.5 plus `0.1rem` Abstand), soweit die Icon-Kachel mit ihren 33,6 px das nicht auffängt | **≈ −6 px** |
-| **Netto je Kachel** | **≈ +10 px** |
+| **Netto je Kachel, überschlagen** | ≈ +10 px |
+| **Netto je Kachel, gemessen** | **+14 px** |
 
-Bei achtzig Geräten und drei Spalten sind das grob 270 px zusätzliche
+Bei achtzig Geräten und drei Spalten sind das rund 380 px zusätzliche
 Scrollstrecke.
 
-Der zweite Posten ist der unsichere: er hängt daran, welche Zeilenhöhe der
-Browser dem `<input>` tatsächlich gibt — ein Textfeld erbt `line-height`
-nicht zuverlässig. Die Zahl ist deshalb überschlagen, nicht gemessen; die
-Messung steht in Abschnitt 9. Am Vorzeichen ändert das nichts: das
-Werteraster gewinnt in jedem Fall mehr, als die Kopfzeile verliert.
+Nachgetragen am 7. September 2026: im Browser gemessen (Chromium über
+Playwright, Demo-Daten) ergaben alle vier Kacheln durchgängig **+14 px** —
+284→298 und 265→279, je zweimal. Die Überschlagung lag 40 % darunter, weil
+der zweite Posten unsicher war: ein `<input>` erbt `line-height` nicht
+zuverlässig, die Kopfzeile verliert also weniger, als angenommen. Am
+Vorzeichen ändert das nichts, und die Größenordnung stimmt.
 
 Die Rechnung gilt für Geräte mit mindestens einem funktionalen Signal. Ein
 Gerät ohne Signale wird niedriger, weil die Kopfzeile eine Zeile verliert
