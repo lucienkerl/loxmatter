@@ -73,3 +73,45 @@ def test_every_button_event_is_named():
     events = [s for s in extract_signals(snap) if s.cluster_id == 59 and s.kind.value == "event"]
     assert len(events) == 12
     assert all(not lookup(e, None).slug.startswith("c59_e") for e in events)
+
+
+def test_rgbw_lamp_accepts_move_to_hue_and_saturation():
+    """Der Beleg, auf dem die Freischaltung von (768, 6) steht (Spec 4.1).
+
+    Schlaegt dieser Test fehl, ist der Entwurf falsch - dann erwartet die
+    Leuchte MoveToColor (7, xy) und es fehlt eine Farbraumumrechnung, die
+    es im Projekt nirgends gibt (Spec 10.2)."""
+    snap = load("ikea_kajplats_cws_lamp.json")
+    accepted = snap.attributes["1/768/65529"]
+    assert 6 in accepted
+
+
+def test_both_lamps_report_their_physical_colour_temperature_limits():
+    """Ohne diese beiden Attribute bliebe `range` leer und der
+    Kelvin-Regler unbegrenzt (Spec 6.4)."""
+    for name in ("ikea_kajplats_ws_lamp.json", "ikea_kajplats_cws_lamp.json"):
+        snap = load(name)
+        assert isinstance(snap.attributes["1/768/16395"], int)
+        assert isinstance(snap.attributes["1/768/16396"], int)
+
+
+def test_the_ws_lamp_has_no_hue_saturation_command():
+    """Belegt die Abstufung aus Spec 6.3: die WS-Leuchte bekommt keine
+    Tableiste, weil sie kein Hue/Sat-Kommando hat - nicht, weil der Code
+    ihr Modell kennt.
+
+    Sie fuehrt sehr wohl MoveToColor (7) und damit den XY-Farbraum
+    (FeatureMap 24 = XY|CT). Der bleibt bewusst ungenutzt: eine
+    xy-Umrechnung gibt es im Projekt nicht, und fuer eine Weisston-Leuchte
+    waere sie ein Bedienelement fuer eine Faehigkeit, die niemand von ihr
+    erwartet."""
+    accepted = load("ikea_kajplats_ws_lamp.json").attributes["1/768/65529"]
+    assert 6 not in accepted
+    assert 10 in accepted
+    assert 7 in accepted  # XY vorhanden, aber nicht freigeschaltet
+
+
+def test_the_cws_lamp_advertises_the_full_colour_feature_set():
+    """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - die Grundlage dafuer, dass
+    genau diese Leuchte beide Reiter bekommt und die WS-Leuchte nicht."""
+    assert load("ikea_kajplats_cws_lamp.json").attributes["1/768/65532"] == 31
