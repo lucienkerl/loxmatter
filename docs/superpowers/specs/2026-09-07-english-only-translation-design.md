@@ -25,7 +25,7 @@ Developer-facing is the operative word. German as a *product* language stays.
 | --- | --- | --- |
 | `src/**/*.py` | 75 | Comments, docstrings, and ~60 developer-facing German string literals (log messages, OpenAPI/CLI descriptions, internal exception text, attribute docstrings) |
 | `tests/**/*.py` | 82 | Comments, docstrings, and 67 German test function names |
-| `docs/superpowers/specs` + `plans` | 37 | Full prose, plus 24 German filenames renamed via `git mv` |
+| `docs/superpowers/specs` + `plans` | 37 | Full prose, plus 26 German filenames renamed via `git mv` |
 | WebUI | `index.html`, `app.js`, `style.css` | Header comments and inline prose |
 | i18n tables | `strings.yaml`, `clusters.yaml` | YAML **comments** only |
 | Build and ops | `install.sh`, `scripts/*.sh`, `scripts/*.py`, `Dockerfile`, `deploy/`, `.github/workflows/ci.yml`, `pyproject.toml` | Comments |
@@ -63,16 +63,16 @@ Each of these is a decision, not an oversight:
 ### 2.3 Routed through i18n instead of translated
 
 A survey of German string literals in `src/` found 66. About 60 are
-developer-facing and are simply translated. The remainder — roughly a dozen —
-reach the user without passing through i18n at all:
+developer-facing and are simply translated. The remaining fourteen reach the
+user without passing through i18n at all:
 
 - `_UNEXPORTABLE_REASONS` in `api/devices.py`, rendered by
   `index.html:1835` as `x-text="signal.reason"`.
-- The project-file error sentences built in `projectsync/index.py`
-  (`_describe`, and the messages at lines 169 and 175), which surface in the
-  project-sync flow.
-- Whatever populates `new_devices_unavailable_reason`, displayed at
-  `index.html:1277`.
+- Twelve `ProjectFormatError` messages across `projectsync/index.py`,
+  `scan.py`, `ids.py`, `sync.py` and `patch.py`. These are not merely
+  internal: `api/project_sync.py:118` and `:127` catch the exception and pass
+  `str(exc)` as the `detail` of an `HTTPException`, which the WebUI shows to
+  whoever uploaded the project file.
 
 This is a pre-existing inconsistency, not one this work introduces. Six lines
 above `_UNEXPORTABLE_REASONS`, the same file explains why
