@@ -198,9 +198,14 @@ def capture(page: Page) -> None:
 
     # Raumleiste plus die ersten beiden Raumgruppen. Die Einlern-Karte
     # darueber bleibt bewusst draussen: sie ist das Motiv von
-    # `commissioning.png`, und mit ihren drei Erklaerungsabsaetzen belegte sie
-    # hier die obere Haelfte eines Bildes, dessen Bildunterschrift von der
-    # Geraeteliste spricht.
+    # `commissioning.png`.
+    #
+    # Das Argument dafuer war urspruenglich ihre Groesse - mit ihren drei
+    # Erklaerungsabsaetzen belegte sie die obere Haelfte eines Bildes, dessen
+    # Bildunterschrift von der Geraeteliste spricht. Seit dem Umbau der Karte
+    # (Entwurf "Code zuerst", 2026-09-07) ist sie weniger als halb so hoch,
+    # das Argument also schwaecher; sie bleibt trotzdem draussen, denn zwei
+    # Bilder nebeneinander, die dasselbe Motiv zeigen, sind ein Bild zu viel.
     #
     # Damit faellt auch die Reiterleiste aus diesem Bild - frueher stand hier
     # das Argument, gerade das eroeffnende Bild der Galerie muesse sie zeigen,

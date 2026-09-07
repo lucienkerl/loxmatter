@@ -452,6 +452,24 @@ function app() {
     commissionBusy: false,
     commissionMessage: null,
     commissionMessageIsError: false,
+    // Die Ablaufanzeige der Einlern-Karte (Entwurf vom 2026-09-07).
+    // `commissionStep` ist NULL, solange das Formular zu sehen ist, danach
+    // der Index des Schritts, der gerade laeuft - 0 waehrend des POST auf
+    // /api/devices/commission, 1 waehrend Signale und Befehle nachgeladen
+    // werden, 2 wenn alles durch ist. `commissionFailed` faerbt den
+    // Schritt, auf dem es haengengeblieben ist; der Index bleibt dabei
+    // stehen, damit man sieht, WO es aufgehoert hat.
+    //
+    // Absichtlich getrennt von `commissionBusy`: busy sperrt den Knopf und
+    // ist waehrend eines Laufs wahr, `commissionStep` bleibt danach stehen
+    // und traegt die Anzeige, bis `resetCommission()` sie raeumt.
+    commissionStep: null,
+    commissionFailed: false,
+    // Code und Raum des laufenden Versuchs. Der Code im Eingabefeld wird
+    // nach einem Erfolg geleert (er ist verbraucht) - ohne diese Kopie
+    // stuende die Ablaufanzeige am Ende ohne den Code da, um den es ging.
+    commissionRunCode: "",
+    commissionRunRoom: "",
 
     // --- Signale (geteilt mit der Geraete-Ansicht: dieselbe Liste dient
     // dort als Kurzfassung der funktionalen Signale) -----------------------
@@ -1640,6 +1658,9 @@ function app() {
         return;
       }
       this.commissionBusy = true;
+      this.commissionStep = 0;
+      this.commissionFailed = false;
+      this.commissionRunCode = this.commissionCode.trim();
       try {
         const body = { code: this.commissionCode.trim() };
         if (this.commissionThreadDataset.trim()) {
@@ -1655,6 +1676,7 @@ function app() {
         if (room) {
           body.room = room;
         }
+        this.commissionRunRoom = room;
         const device = await this.request("POST", "/api/devices/commission", body);
         // Fund 4 (Re-Review 2026-09-05): die Einlern-Route liefert fuer ein
         // schon registriertes Geraet dieselbe `device_id` zurueck, statt
@@ -1686,7 +1708,9 @@ function app() {
         // Karte ist ab sofort sichtbar und immer offen (Abschnitt 3) - ohne
         // dieses Nachladen zeigte sie "Signale werden geladen…" dauerhaft,
         // bis irgendwann die Ansicht neu betreten wuerde.
+        this.commissionStep = 1;
         await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);
+        this.commissionStep = 2;
         // Der frühere Satz "Live-Werte erst nach einem Neustart der Brücke"
         // ist entfallen, weil die Grenze selbst entfallen ist: die
         // Einlern-Route ruft inzwischen `follow_node` auf, das die
@@ -1727,9 +1751,60 @@ function app() {
         this.commissionMessage =
           error.status === 422 ? message : t("web.devices.commission_failed", { message });
         this.commissionMessageIsError = true;
+        // `commissionStep` wird NICHT zurueckgesetzt: er zeigt weiterhin auf
+        // den Schritt, auf dem es haengengeblieben ist, und
+        // `commissionStepClass` faerbt genau diesen rot. Zurueck zum
+        // Formular geht es ueber `resetCommission()` am Knopf darunter -
+        // der eingetippte Code bleibt dabei stehen, denn ein Tippfehler
+        // darin ist der wahrscheinlichste Grund, hier zu landen.
+        this.commissionFailed = true;
       } finally {
         this.commissionBusy = false;
       }
+    },
+
+    /**
+     * Der Zustand eines Schritts der Ablaufanzeige: "done", "running",
+     * "failed" oder leer (steht noch aus).
+     *
+     * Ein reiner Ausdruck auf `commissionStep`/`commissionFailed` statt
+     * einer dritten Zustandsvariablen mit den Klassennamen darin: zwei
+     * Felder, die dasselbe erzaehlen, laufen frueher oder spaeter
+     * auseinander - und die Anzeige ist genau die Stelle, an der das
+     * niemandem auffiele, weil sie ja "irgendetwas" zeigt.
+     */
+    commissionStepClass(index) {
+      if (this.commissionStep === null) {
+        return "";
+      }
+      if (this.commissionFailed && index === this.commissionStep) {
+        return "failed";
+      }
+      if (index < this.commissionStep) {
+        return "done";
+      }
+      return index === this.commissionStep ? "running" : "";
+    },
+
+    /**
+     * Zurueck vom Ablauf zum Formular - nach einem Erfolg ("noch ein
+     * Geraet") wie nach einem Fehlschlag ("erneut versuchen").
+     *
+     * Die Meldung geht dabei mit: sie gehoert zu dem Lauf, den man gerade
+     * verlaesst. Eine Erfolgsmeldung ueber dem leeren Formular fuer das
+     * naechste Geraet stehen zu lassen, hiesse sie auf das falsche Geraet
+     * zu beziehen.
+     */
+    resetCommission() {
+      this.commissionStep = null;
+      this.commissionFailed = false;
+      this.commissionMessage = null;
+      this.commissionRunCode = "";
+      this.commissionRunRoom = "";
+      // Erst im naechsten Tick: bis dahin haelt `x-show` das Formular noch
+      // auf `display: none`, und ein `focus()` auf ein unsichtbares Feld
+      // tut still gar nichts.
+      this.$nextTick(() => this.$refs.commissionCode?.focus());
     },
 
     // ---------------------------------------------------------------------

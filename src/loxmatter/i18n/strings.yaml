@@ -619,15 +619,57 @@ web.devices.code_placeholder:
   en: "Pairing code (11 digits or MT:…)"
   de: "Pairing-Code (11-stellig oder MT:…)"
 web.devices.thread_dataset_placeholder:
-  # Nicht mehr "nur bei Thread-Geraeten": die Bruecke holt den Datensatz
-  # beim Einlernen selbst vom Border Router auf diesem Host, das Feld
-  # bleibt nur noch fuer ein FREMDES Thread-Netz noetig (siehe
-  # web.devices.thread_dataset_hint).
-  en: "Thread dataset (only for a different Thread network)"
-  de: "Thread-Datensatz (nur für ein fremdes Thread-Netz)"
+  # Der Platzhalter sagt seit dem Umbau der Einlern-Karte nicht mehr, WOFUER
+  # das Feld da ist, sondern WIE der Wert aussieht: wofuer, steht jetzt
+  # dreifach daneben - in der Klappe, die man dafuer oeffnet
+  # (web.devices.thread_summary), in der Beschriftung
+  # (web.devices.thread_dataset_label) und im Hinweis darunter
+  # (web.devices.thread_dataset_hint). Ein Platzhalter, der dasselbe ein
+  # viertes Mal sagt, verschenkt die einzige Stelle, an der ein Beispiel
+  # stehen kann. Beide Sprachen tragen denselben Wert - ein Hex-Datensatz
+  # uebersetzt sich nicht.
+  en: "0e08000000000100000300…"
+  de: "0e08000000000100000300…"
 web.devices.commission_submit:
   en: "Commission"
   de: "Einlernen"
+web.devices.code_label:
+  en: "Pairing code"
+  de: "Pairing-Code"
+web.devices.room_label:
+  en: "Room"
+  de: "Raum"
+web.devices.thread_dataset_label:
+  en: "Thread dataset"
+  de: "Thread-Datensatz"
+# Die beiden Klappen ueber dem Einlern-Formular. Beide sind als Frage bzw.
+# als Fall formuliert, den man bei sich wiedererkennt - nicht als Name des
+# Feldes dahinter: wer hier nachsieht, sucht eine Antwort ("mein Code wird
+# nicht angenommen"), nicht ein Eingabefeld.
+web.devices.code_help_summary:
+  en: "Code not accepted?"
+  de: "Code wird nicht angenommen?"
+web.devices.thread_summary:
+  en: "Different Thread network"
+  de: "Anderes Thread-Netz"
+# Die zwei Schritte der Ablaufanzeige. Es sind genau zwei, weil die
+# Oberflaeche genau zwei Abschnitte des Einlernens auseinanderhalten kann:
+# den POST auf /api/devices/commission und das anschliessende Laden von
+# Signalen und Befehlen. Ein dritter Punkt ("Geraet gefunden") liesse sich
+# gut anzeigen, waere aber geraten - der Matter-Stack meldet dieser Bruecke
+# keinen Zwischenstand, solange es dafuer keinen eigenen Kanal gibt.
+web.devices.commission_step_joining:
+  en: "Commissioning the device into the fabric"
+  de: "Gerät wird ins Fabric aufgenommen"
+web.devices.commission_step_loading:
+  en: "Loading signals and commands"
+  de: "Signale und Befehle werden geladen"
+web.devices.commission_again:
+  en: "Commission another device"
+  de: "Noch ein Gerät einlernen"
+web.devices.commission_retry:
+  en: "Try again"
+  de: "Erneut versuchen"
 web.devices.commission_hint:
   en: "If the device is already paired with Apple, Google, or a DIRIGERA, the printed code no longer works here — generate an additional multi-admin code there and enter that instead."
   de: "Hängt das Gerät schon in Apple, Google oder einer DIRIGERA, funktioniert der aufgedruckte Code hier nicht mehr – dort einen zusätzlichen Multi-Admin-Code erzeugen und stattdessen diesen eingeben."
@@ -822,8 +864,8 @@ web.devices.more_commands_short:
   en: "unnamed"
   de: "unbenannt"
 web.devices.commission_room_hint:
-  en: 'The room is optional — without a selection the device appears under “No room” and can be assigned later.'
-  de: 'Der Raum ist optional — ohne Auswahl erscheint das Gerät unter „Ohne Raum“ und lässt sich später zuordnen.'
+  en: "optional, can be changed later"
+  de: "optional, später änderbar"
 # --- Kachel-Menue (Entwurf Kebab-Menue, 2026-09-05) ---
 # `menu` ist der zugaengliche Name des Kebab-Knopfs: er traegt kein Wort,
 # also braucht er einen. `menu_room_heading` beschriftet den Raum-Abschnitt
