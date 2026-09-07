@@ -54,6 +54,11 @@ https://www.loxforum.com/forum/hardware-zubehoer-sensorik/143867-lumitech-
 ausgang-dmx-dimmer (Beitrag #2, Jan W., 01.12.2018). Das ist keine Quelle,
 auf die man sich verlassen sollte - deshalb bleibt die Dekodierung der
 rohen Loxone-Lumitech-Zahl hier offen (siehe Spec 7.3 / Offene Punkte).
+Zu keiner Zeit hat dieser Vorbehalt fuer RGB gegolten - `translate.py` hat
+ihn bis zum 7. September 2026 faelschlich auch auf die RGB-Codierung
+bezogen und deshalb Kommando 6 gesperrt (siehe Entwurf 2026-09-07,
+Abschnitt 1).
+
 `to_matter_call` in `translate.py` nimmt fuer Farbtemperatur deshalb
 bewusst einen bereits entpackten Kelvin-Wert entgegen, nicht die rohe
 Loxone-Zahl - das Entpacken ist Aufgabe der Aufrufer (Task 6 / WebUI), sobald
@@ -94,3 +99,37 @@ def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
     """
     h, s, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
     return round(h * 254), round(s * 254)
+
+
+def loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]:
+    """Entpackt die Loxone-Farbzahl in drei Kanaele zu je 0-255.
+
+    Die Codierung ist oben im Moduldocstring mit offizieller Quelle belegt:
+    `AQa = rot% + gruen% * 1000 + blau% * 1_000_000`. Sie transportiert je
+    Kanal nur volle Prozent - die Farbe ist also bereits beim Verlassen von
+    Loxone quantisiert, und diese Funktion kann das nicht zurueckholen
+    (Entwurf 2026-09-07, Abschnitt 9.1).
+
+    Ganzzahlig statt gerundet entgegengenommen: eine gebrochene Zahl kommt
+    in dieser Codierung nicht vor, und sie stillschweigend zu runden hiesse,
+    eine ganz andere Zahl - etwa einen bereits entpackten Kanal - als
+    gueltige Farbe durchzuwinken.
+    """
+    if value != int(value):
+        raise ValueError(f"Loxone-Farbzahl muss ganzzahlig sein, war {value}")
+    packed = int(value)
+    if packed < 0:
+        raise ValueError(
+            f"Loxone-Farbzahl darf nicht negativ sein, war {packed}"
+        )
+
+    percents = (packed % 1000, packed // 1000 % 1000, packed // 1_000_000)
+    for channel, percent in zip(("rot", "gruen", "blau"), percents,
+                                strict=True):
+        if percent > 100:
+            raise ValueError(
+                f"Kanal {channel} liegt bei {percent} %, erlaubt sind 0-100 "
+                f"(Loxone-Farbzahl {packed})"
+            )
+    red, green, blue = (round(percent * 255 / 100) for percent in percents)
+    return red, green, blue
