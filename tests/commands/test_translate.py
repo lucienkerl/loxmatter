@@ -111,13 +111,14 @@ def test_unknown_cluster_command_raises_rather_than_guessing_in_german():
 
 
 def test_known_cluster_with_unknown_command_raises():
-    """Cluster 768 (ColorControl) ist bekannt, Kommando 6 (Hue/Saturation) ist es
-    hier (noch) nicht - siehe color.py: die Loxone-seitige RGB-Zahl ist nicht
-    verlaesslich belegt. Der Fehler darf nicht nur beim voellig unbekannten
-    Cluster greifen, sondern auch bei einem bekannten Cluster mit unbekanntem
+    """Cluster 768 (ColorControl) ist bekannt, Kommando 7 (MoveToColor, xy) ist
+    es hier (noch) nicht - die Bedienflaeche setzt Farbton und Saettigung ueber
+    Kommando 6, weiteres waere unbelegte Flaeche (siehe Moduldocstring von
+    translate.py). Der Fehler darf nicht nur beim voellig unbekannten Cluster
+    greifen, sondern auch bei einem bekannten Cluster mit unbekanntem
     Kommando."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
-        to_matter_call(cmd(768, 6, takes_value=True), "255,0,0")
+        to_matter_call(cmd(768, 7, takes_value=True), "255,0,0")
 
 
 def test_known_cluster_with_unknown_command_raises_in_german():
@@ -125,7 +126,7 @@ def test_known_cluster_with_unknown_command_raises_in_german():
     oben."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
-        to_matter_call(cmd(768, 6, takes_value=True), "255,0,0")
+        to_matter_call(cmd(768, 7, takes_value=True), "255,0,0")
 
 
 def test_onoff_cluster_with_unknown_command_raises():
@@ -174,3 +175,36 @@ def test_level_cluster_with_unknown_command_raises_in_german():
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(8, 1, takes_value=True), "50")
+
+
+def test_a_packed_loxone_colour_becomes_hue_and_saturation():
+    """Reines Rot: Farbton 0, volle Saettigung (254). Der Weg ist
+    Loxone-Zahl -> RGB -> Hue/Sat, damit WebUI und Loxone denselben
+    Uebersetzer benutzen (Entwurf 2026-09-07, Abschnitt 6.5)."""
+    command = cmd(768, 6, takes_value=True)
+    call = to_matter_call(command, "100")
+    assert call.cluster_id == 768
+    assert call.command_id == 6
+    assert call.payload["hue"] == 0
+    assert call.payload["saturation"] == 254
+    assert call.payload["transitionTime"] == 0
+
+
+def test_white_has_no_saturation():
+    command = cmd(768, 6, takes_value=True)
+    call = to_matter_call(command, "100100100")
+    assert call.payload["saturation"] == 0
+
+
+def test_an_impossible_colour_number_is_rejected():
+    """Ein Kanal ueber 100 % kommt als 400 zurueck, nicht als erfundene
+    Farbe am Geraet."""
+    command = cmd(768, 6, takes_value=True)
+    with pytest.raises(UnsupportedValueError):
+        to_matter_call(command, "999999999")
+
+
+def test_colour_rejects_text():
+    command = cmd(768, 6, takes_value=True)
+    with pytest.raises(UnsupportedValueError):
+        to_matter_call(command, "rot")

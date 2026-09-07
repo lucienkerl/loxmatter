@@ -104,10 +104,9 @@ clusters:
       # Groesse - keine Einheit.
       8: {slug: colormode, unit: ""}
     commands:
-      # MoveToColorTemperature - der einzige ColorControl-Befehl, den
-      # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS und
-      # dessen Docstring: Hue/Saturation, Kommando 6, bleibt bewusst aussen
-      # vor, weil die Loxone-seitige RGB-Zahl nicht verlaesslich belegt ist).
+      # MoveToColorTemperature - einer von zwei ColorControl-Befehlen, die
+      # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS; der
+      # zweite ist Hue/Saturation, Kommando 6, weiter unten).
       # Review-Fix C2, 2026-09-02: dieser Eintrag fehlte, obwohl
       # _PAYLOAD_BUILDERS das Paar (768, 10) schon bediente - im Rohexport
       # (`raw`) wurde das Kommando dadurch als generisches, digitales
@@ -119,6 +118,15 @@ clusters:
       # sofort auch im normalen (nicht-rohen) Modus, was fuer ein bedientes
       # Kommando ohnehin richtig ist.
       10: {slug: colortemp, takes_value: true}
+      # MoveToHueAndSaturation - freigeschaltet am 7. September 2026
+      # (Entwurf 2026-09-07). Die frühere Sperre beruhte auf einer
+      # Verwechslung: `translate.py` begruendete sie mit "Loxone-RGB nicht
+      # belegt", waehrend `commands/color.py` RGB mit offizieller Quelle
+      # belegt und ausschliesslich Lumitech offen laesst. Der Wert ist die
+      # gepackte Loxone-Farbzahl; belegt gegen die eingecheckte
+      # RGBW-Leuchte (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
+      # enthaelt 6).
+      6: {slug: color, takes_value: true}
   1026:
     name: temperature
     attributes:

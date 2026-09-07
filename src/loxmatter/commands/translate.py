@@ -27,12 +27,19 @@ Fehler. Das gilt nicht nur fuer einen voellig unbekannten Cluster, sondern
 auch fuer ein bekanntes Cluster mit einer unbekannten Kommando-ID darin: der
 Dispatch schluesselt auf das Paar (Cluster-ID, Kommando-ID), nie auf die
 Cluster-ID allein - siehe `test_known_cluster_with_unknown_command_raises`
-(Cluster 768/ColorControl, Kommando 6),
+(Cluster 768/ColorControl, Kommando 7),
 `test_onoff_cluster_with_unknown_command_raises` (Cluster 6) und
 `test_level_cluster_with_unknown_command_raises` (Cluster 8) in
 `tests/commands/test_translate.py`. Cluster 768 Kommando 6 (Hue/Saturation)
-wird bewusst nicht bedient, weil die Loxone-seitige RGB-Zahl nicht
-verlaesslich dokumentiert ist (siehe `color.py`); Cluster 6 und 8 kennen
+wird seit dem 7. September 2026 bedient: die Loxone-seitige RGB-Codierung
+ist in `color.py` mit offizieller Quelle belegt (Knowledge Base, "RGB
+Lighting Controller"). Bis dahin stand hier die Begruendung, sie sei
+unbelegt - das verwechselte RGB mit **Lumitech**, dem kombinierten
+Helligkeits- und Kelvin-Ausgang, der weiterhin ohne belastbare Quelle ist
+(siehe `color.py` und Entwurf 2026-09-07, Abschnitt 10.1). Nicht bedient
+bleiben MoveToHue (0), MoveToSaturation (3), MoveToColor (7, xy) und
+Enhanced (67) - die Bedienflaeche setzt Farbton und Saettigung in einem
+Kommando, alles weitere waere unbelegte Flaeche. Cluster 6 und 8 kennen
 jenseits von Off/On/Toggle bzw. MoveToLevel(WithOnOff) hier schlicht keine
 weiteren Kommandos - das ist besonders beim Rohexport (`raw`) relevant, der
 auch Kommandos ohne Eintrag in `clusters.yaml` durchlaesst, etwa
@@ -48,7 +55,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from loxmatter import i18n
-from loxmatter.commands.color import kelvin_to_mireds
+from loxmatter.commands.color import kelvin_to_mireds, loxone_rgb_to_rgb, rgb_to_hue_saturation
 from loxmatter.model.store import StoredCommand
 
 LEVEL_MAX = 254
@@ -63,6 +70,7 @@ _COMMAND_TOGGLE = 2
 _COMMAND_MOVE_TO_LEVEL = 0
 _COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF = 4
 _COMMAND_COLOR_TEMPERATURE = 10
+_COMMAND_HUE_SATURATION = 6
 
 
 class UnsupportedValueError(ValueError):
@@ -110,6 +118,23 @@ def _payload_color_temperature(value: str) -> dict[str, object]:
     return {"colorTemperatureMireds": kelvin_to_mireds(_as_number(value))}
 
 
+def _payload_hue_saturation(value: str) -> dict[str, object]:
+    """Gepackte Loxone-Farbzahl -> Matter-Hue/Saturation.
+
+    Zwei Umrechnungen hintereinander, beide in `commands/color.py` belegt:
+    die Loxone-Codierung entpacken und das Ergebnis nach HSV wandeln.
+    `loxone_rgb_to_rgb` wirft `ValueError` fuer eine unmoegliche Zahl - hier
+    wird daraus `UnsupportedValueError`, damit der Aufrufer wie bei jedem
+    anderen unpassenden Wert mit 400 antwortet und nicht mit 500.
+    """
+    try:
+        red, green, blue = loxone_rgb_to_rgb(_as_number(value))
+    except ValueError as exc:
+        raise UnsupportedValueError(str(exc)) from exc
+    hue, saturation = rgb_to_hue_saturation(red, green, blue)
+    return {"hue": hue, "saturation": saturation, "transitionTime": 0}
+
+
 # Einziger Ort, an dem festgelegt ist, welche (Cluster-ID, Kommando-ID)-Paare
 # bedient werden. Der Dispatch in `to_matter_call` liest diese Zuordnung nur
 # noch aus - ein weiteres Kommando zu unterstuetzen ist eine Datenaenderung
@@ -122,6 +147,7 @@ _PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
     (_CLUSTER_LEVEL, _COMMAND_MOVE_TO_LEVEL): _payload_level,
     (_CLUSTER_LEVEL, _COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF): _payload_level,
     (_CLUSTER_COLOR, _COMMAND_COLOR_TEMPERATURE): _payload_color_temperature,
+    (_CLUSTER_COLOR, _COMMAND_HUE_SATURATION): _payload_hue_saturation,
 }
 
 
