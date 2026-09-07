@@ -4131,3 +4131,122 @@ async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
     assert '<span class="room-spacer"></span>' in bar
     css = (await client.get("/static/style.css")).text
     assert "flex: 1 1 auto" in css.split(".room-spacer {", 1)[1].split("}", 1)[0]
+
+
+# ---------------------------------------------------------------------------
+# Aufgabe 5: Die Batteriezeile der Kachel. Gegenbuchung zur Cluster-
+# Rangliste (Aufgabe 4): mit Rang 90 stuende der Batteriestand hinter allen
+# sechzehn anderen funktionalen Signalen des Tasters und fiele damit aus den
+# sechs Vorschauzeilen - er waere auf der Kachel gar nicht mehr zu sehen.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_the_battery_is_never_the_lead_and_never_counted_twice():
+    """Die drei Zusicherungen der Batteriezeile an EINEM Aufbau, weil sie
+    zusammengehoeren: der Batteriestand fuehrt nicht, er steht nicht in der
+    Vorschau, und er zaehlt nicht als "weiteres".
+
+    Der Aufbau ist der Taster: 17 funktionale Signale in der Reihenfolge,
+    in der die Cluster-Rangliste sie liefert - sechzehn Switch-Signale,
+    zuletzt die Batterie. Sechs Vorschauzeilen plus eine Fusszeile lassen
+    zehn uebrig. Nennt die Kachel elf, ist die Batterie doppelt gezaehlt -
+    genau der Fehler, den der Canvas-Entwurf hatte.
+
+    Als node-Lauf statt als Zeichenketten-Suche in `app.js`: eine Suche
+    belegt nur, DASS eine Zeile ausgeliefert wird. Am 2026-09-05 haben drei
+    solche Tests einen Critical durchgelassen, weil sie exakt die
+    Zeichenketten prueften, die den Fehler erzeugten."""
+    values = _app_state(
+        """
+        const signals = [];
+        for (let i = 0; i < 16; i++) {
+          signals.push({
+            key: "d1_1_s" + i, title: "s" + i,
+            endpoint: 1, cluster_id: 59, functional: true,
+          });
+        }
+        signals.push({
+          key: "d1_0_battery", title: "battery",
+          endpoint: 0, cluster_id: 47, functional: true,
+        });
+        state.signalsByDevice = { 1: signals };
+        console.log(JSON.stringify({
+          lead: state.leadSignalFor(1).key,
+          battery: state.batterySignalFor(1).key,
+          preview: state.firstSignalsFor(1).map((s) => s.key),
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    assert values["lead"] == "d1_1_s0"
+    assert values["battery"] == "d1_0_battery"
+    assert "d1_0_battery" not in values["preview"]
+    assert len(values["preview"]) == 6
+    assert values["remaining"] == 10
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_mains_powered_device_has_no_battery_row():
+    """Ohne PowerSource-Signal darf die Kachel keine Fusszeile zeigen - und
+    der Zaehler muss sich genauso verhalten wie vor dieser Aenderung."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_1_onoff", title: "onoff", endpoint: 1, cluster_id: 6, functional: true },
+          { key: "d1_2_power", title: "power", endpoint: 2, cluster_id: 144, functional: true },
+        ] };
+        console.log(JSON.stringify({
+          battery: state.batterySignalFor(1),
+          lead: state.leadSignalFor(1).key,
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    assert values["battery"] is None
+    assert values["lead"] == "d1_1_onoff"
+    assert values["remaining"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_whose_only_functional_signal_is_the_battery_has_no_lead():
+    """Der Randfall, an dem der Hinweis "keine funktionalen Signale" falsch
+    waere: es GIBT eines, es steht nur in der Fusszeile."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_0_battery", title: "battery", endpoint: 0, cluster_id: 47, functional: true },
+        ] };
+        console.log(JSON.stringify({
+          lead: state.leadSignalFor(1),
+          battery: state.batterySignalFor(1).key,
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    assert values["lead"] is None
+    assert values["battery"] == "d1_0_battery"
+    assert values["remaining"] == 0
+
+
+async def test_the_tile_has_a_battery_row_with_its_own_symbol(api):
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert 'id="i-battery"' in page
+    assert "device-battery" in page
+    assert 'x-show="batterySignalFor(device.id)"' in page
+
+
+async def test_the_no_functional_signals_hint_accounts_for_the_battery(api):
+    """Ein Geraet, dessen einziges funktionales Signal die Batterie ist, hat
+    keinen Leitwert - aber der Satz "keine funktionalen Signale" waere dort
+    falsch, denn die Fusszeile zeigt eines."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    hint = page[page.index("no_functional_signals") - 400 : page.index("no_functional_signals")]
+    assert "!batterySignalFor(device.id)" in hint

@@ -172,6 +172,11 @@
         <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
         <circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none" />
       </symbol>
+      <symbol id="i-battery" viewBox="0 0 24 24">
+        <rect x="2" y="8" width="16" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <path d="M21 11v3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+        <path d="M5 12.5h4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+      </symbol>
     </svg>
     <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
@@ -674,16 +679,48 @@
                       <span></span>
                     </span>
                   </div>
+
+                  <!-- Der Batteriestand steht UNTER den Vorschauzeilen und
+                       unter dem "+ N weitere"-Link, nicht zwischen ihnen
+                       (Entwurf 2026-09-07, Abschnitt 6). Er ist kein
+                       Nutzsignal wie ein Tastendruck, sondern eine Angabe
+                       ueber das Geraet selbst - und mit Rang 90 waere er
+                       aus den sechs Vorschauzeilen gefallen. Eigene Zeile,
+                       eigenes Symbol, gestrichelte Trennung: immer
+                       sichtbar, nie Leitwert.
+
+                       `x-show` statt `x-if`: ein netzbetriebenes Geraet
+                       hat kein PowerSource-Signal und darf nicht um eine
+                       leere Zeile hoeher werden - `.device-battery` traegt
+                       deshalb kein eigenes Aussenmass, das stehen bliebe. -->
+                  <div class="device-battery" x-show="batterySignalFor(device.id)" x-cloak>
+                    <svg class="icon" aria-hidden="true"><use href="#i-battery"></use></svg>
+                    <span class="value-key" x-text="t('web.devices.battery_label')"></span>
+                    <span
+                      class="value"
+                      :class="{ 'value-fresh': signalIsFresh(batterySignalFor(device.id)) }"
+                      :title="signalAgeTitle(batterySignalFor(device.id))"
+                      x-text="formatValue(liveValueOf(batterySignalFor(device.id))) + (batterySignalFor(device.id)?.unit ? ' ' + batterySignalFor(device.id).unit : '')"
+                    ></span>
+                  </div>
+
                   <p class="hint" x-show="!signalsByDevice[device.id]" x-text="t('web.devices.signals_loading')"></p>
                   <!-- Fund 3: ohne diesen Hinweis blieb zwischen Kopfzeile
                        und Befehlsleiste stillschweigend eine Luecke, sobald
                        ein Geraet geladene, aber leere funktionale Signale
                        hat (`leadSignalFor` liefert dann `null`, die
                        `value-rows` bleiben ohne Inhalt) - nicht von einem
-                       noch ladenden Geraet zu unterscheiden. -->
+                       noch ladenden Geraet zu unterscheiden.
+
+                       Seit der Batteriezeile (Entwurf 2026-09-07) reicht
+                       "kein Leitwert" als Bedingung nicht mehr: ein Geraet,
+                       dessen einziges funktionales Signal die Batterie ist,
+                       hat keinen Leitwert - aber "keine funktionalen
+                       Signale" waere dort falsch, die Fusszeile darunter
+                       zeigt ja eines. -->
                   <p
                     class="hint"
-                    x-show="signalsByDevice[device.id] && !leadSignalFor(device.id)"
+                    x-show="signalsByDevice[device.id] && !leadSignalFor(device.id) && !batterySignalFor(device.id)"
                     x-text="t('web.devices.no_functional_signals')"
                   ></p>
 

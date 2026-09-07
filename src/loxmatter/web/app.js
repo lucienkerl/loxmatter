@@ -1068,14 +1068,52 @@ function app() {
       return signals ? signals.filter((signal) => signal.functional) : [];
     },
 
+    // Der Cluster, an dem die Kachel den Batteriestand erkennt. Die Zahl
+    // steht hier statt einer Titel-Pruefung: der Titel ist vom Nutzer frei
+    // umbenennbar ("Akku", "Saft"), der Cluster nicht.
+    POWER_SOURCE_CLUSTER: 47,
+
+    // Der Batteriestand des Geraets, oder null. Er bekommt seit der
+    // Cluster-Rangliste (Entwurf 2026-09-07, Abschnitt 6) eine eigene
+    // Fusszeile: mit Rang 90 steht er hinter allen sechzehn anderen
+    // funktionalen Signalen des Tasters und fiele damit aus den sechs
+    // Vorschauzeilen heraus - er waere auf der Kachel gar nicht mehr zu
+    // sehen. Das ist der Preis der Rangliste, und dies ist die Gegenbuchung.
+    batterySignalFor(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      if (!signals) {
+        return null;
+      }
+      return (
+        signals.find(
+          (signal) => signal.functional && signal.cluster_id === this.POWER_SOURCE_CLUSTER,
+        ) || null
+      );
+    },
+
+    // Die funktionalen Signale OHNE den Batteriestand - die Menge, aus der
+    // sich Leitwert, Vorschauzeilen und der "+ N weitere"-Zaehler bilden.
+    //
+    // Dass alle drei aus DERSELBEN Menge kommen, ist der ganze Trick: der
+    // Leitwert kann damit nie die Batterie sein (sie ist gar nicht drin),
+    // und der Zaehler kann sie nie doppelt zaehlen (sie fehlt in beiden
+    // Summanden). Eine Sonderregel an drei Stellen waere dieselbe Aussage
+    // dreimal - und beim ersten Entwurf ist genau eine davon vergessen
+    // worden.
+    previewSignalsFor(deviceId) {
+      const battery = this.batterySignalFor(deviceId);
+      const functional = this.functionalSignalsFor(deviceId);
+      return battery ? functional.filter((signal) => signal.key !== battery.key) : functional;
+    },
+
     firstSignalsFor(deviceId) {
-      return this.functionalSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT);
+      return this.previewSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT);
     },
 
     remainingSignalCount(deviceId) {
       return Math.max(
         0,
-        this.functionalSignalsFor(deviceId).length - this.FUNCTIONAL_PREVIEW_LIMIT,
+        this.previewSignalsFor(deviceId).length - this.FUNCTIONAL_PREVIEW_LIMIT,
       );
     },
 

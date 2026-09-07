@@ -694,6 +694,9 @@ web.devices.signals_loading:
 web.devices.no_functional_signals:
   en: "No functional signals."
   de: "Keine funktionalen Signale."
+web.devices.battery_label:
+  en: "Battery"
+  de: "Batterie"
 web.devices.controls_loading:
   en: "Loading commands…"
   de: "Befehle werden geladen…"

@@ -1835,6 +1835,45 @@ footer.hint-block {
   text-overflow: ellipsis;
 }
 
+/* Der Batteriestand als eigene Zeile am Fuss der Vorschau (Entwurf
+   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt wie `.device-controls`
+   im Modal - dieselbe Geste fuer dasselbe: "gehoert dazu, ist aber eine
+   andere Art von Angabe".
+
+   `margin-top` steht auf dem Element, nicht als `margin-bottom` der
+   Vorschau: ein netzbetriebenes Geraet blendet diese Zeile per `x-show`
+   aus, und ein Aussenmass am Nachbarn bliebe dann als Luecke stehen. */
+.device-battery {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--border);
+}
+
+.device-battery .icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--warn);
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.device-battery .value-key {
+  flex: 1 1 auto;
+}
+
+/* Rechtsbuendig wie in `.value-rows`, damit die Zahl mit den Werten
+   darueber fluchtet - die Zeile ist ein Flex-Container und erbt deren
+   Rasterausrichtung nicht. */
+.device-battery .value {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--warn);
+}
+
 .device-commands {
   display: flex;
   gap: 0.25rem;
