@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,9 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Bindet Parsen, Diff und Patch zu einem einzigen Aufruf zusammen - das, was
-`api.project_sync` aufruft (Entwurf Abschnitt 4: ein Request, keine
-Zwischenzustand auf dem Server)."""
+"""Ties parsing, diffing and patching together into a single call - what
+`api.project_sync` invokes (design section 4: one request, no
+intermediate state on the server)."""
 
 from __future__ import annotations
 
@@ -35,9 +35,9 @@ __all__ = ["ProjectFormatError", "ProjectSyncResult", "run_sync"]
 class ProjectSyncResult:
     plan: SyncPlan
     patched_conservative: bytes
-    # `None`, wenn die experimentelle Variante fuer diese Datei nicht gebaut
-    # werden konnte - dann traegt `new_devices_unavailable_reason` den Grund
-    # (und umgekehrt: ist die Variante da, ist der Grund `None`).
+    # `None` if the experimental variant could not be built for this file
+    # - then `new_devices_unavailable_reason` carries the reason (and
+    # conversely: if the variant is present, the reason is `None`).
     patched_with_new_devices: bytes | None
     new_devices_unavailable_reason: str | None
 
@@ -51,32 +51,33 @@ def run_sync(
     listen: int,
     miniserver_ip: str | None = None,
 ) -> ProjectSyncResult:
-    """`miniserver_ip` waehlt den `LoxLIVE`-Block (= Miniserver), gegen den
-    abgeglichen wird, wenn die Projektdatei mehrere konfiguriert hat (siehe
-    `index.build_index`/`index.AmbiguousMiniserverError`) - bei genau einem
-    Miniserver in der Datei bleibt sie optional."""
+    """`miniserver_ip` selects the `LoxLIVE` block (= Miniserver) to compare
+    against, if the project file has several configured (see
+    `index.build_index`/`index.AmbiguousMiniserverError`) - with exactly
+    one Miniserver in the file it remains optional."""
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
-        # Eine falsche Datei (Bild, ZIP, UTF-16-Export) darf hier keinen
-        # nackten UnicodeDecodeError liefern - der waere im Endpunkt eine
-        # HTTP 500 statt einer verstaendlichen Meldung (Entwurf Abschnitt 8).
+        # A wrong file (image, ZIP, UTF-16 export) must not deliver a bare
+        # UnicodeDecodeError here - at the endpoint that would be an HTTP
+        # 500 instead of a comprehensible message (design section 8).
         raise ProjectFormatError(
             "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine "
             "Loxone-Projektdatei wird als UTF-8 gespeichert."
         ) from exc
-    # `AmbiguousMiniserverError` (Subklasse von `ProjectFormatError`) bleibt
-    # hier bewusst unbehandelt und propagiert bis zu `api.project_sync`. Dort
-    # wird sie GEZIELT abgefangen (nicht nur ueber das generische `except
-    # ProjectFormatError` -> HTTP 400): traegt sie `candidates` (mehrere
-    # gefundene Miniserver), liefert der Endpunkt statt eines Fehlers eine
-    # 200-Antwort mit `needs_miniserver_selection=True` fuer das Auswahlfeld
-    # in der WebUI (Nutzerwunsch nach dem Review) - nur der "gar keiner
-    # konfiguriert"-Fall (leere `candidates`) bleibt eine echte 400. Ohne
-    # eindeutigen Miniserver gibt es fuer KEINE der beiden Varianten
-    # (konservativ oder experimentell) einen Ort, gegen den ueberhaupt
-    # abgeglichen werden koennte - anders als eine fehlende Caption (siehe
-    # unten) ist das keine Grenze nur des experimentellen Pfades.
+    # `AmbiguousMiniserverError` (subclass of `ProjectFormatError`) is
+    # deliberately left unhandled here and propagates up to
+    # `api.project_sync`. There it is caught SPECIFICALLY (not just via
+    # the generic `except ProjectFormatError` -> HTTP 400): if it carries
+    # `candidates` (several Miniservers found), the endpoint returns,
+    # instead of an error, a 200 response with
+    # `needs_miniserver_selection=True` for the selection field in the
+    # WebUI (user request after the review) - only the "none configured at
+    # all" case (empty `candidates`) remains a genuine 400. Without an
+    # unambiguous Miniserver, there is, for NEITHER of the two variants
+    # (conservative or experimental), any place to compare against at all
+    # - unlike a missing caption (see below), that is not a limitation of
+    # the experimental path alone.
     index = build_index(text, miniserver_ip)
     devices = store.devices()
     signals_by_device: dict[int, Sequence[StoredSignal]] = {
@@ -86,24 +87,25 @@ def run_sync(
         device.id: store.commands(device.id) for device in devices
     }
     plan = build_plan(index, devices, signals_by_device, commands_by_device)
-    # Ohne `try`: nur `NEW_DEVICE`-Eintraege erreichen mit
-    # `include_new_devices=True` den Code, der eine Caption braucht - die
-    # konservative Variante kann also gar keinen `MissingCaptionError` werfen.
+    # Without `try`: only `NEW_DEVICE` entries reach, with
+    # `include_new_devices=True`, the code that needs a caption - so the
+    # conservative variant cannot throw a `MissingCaptionError` at all.
     #
-    # Ein `ProjectFormatError` aus `_installation_suffix` (Finding N1 aus dem
-    # Re-Review: ueber `apply_plan` -> `_new_signal_edit`/`_new_device_edit`
-    # -> `new_unique_id`, sobald ein `NEW_SIGNAL`-Eintrag eine neue ID
-    # braucht) kann diese konservative Variante dagegen SEHR WOHL werfen -
-    # `NEW_SIGNAL` ist unabhaengig von `include_new_devices`. Bewusst
-    # unbehandelt gelassen: anders als eine fehlende Caption (nur eine
-    # Grenze des experimentellen Pfades) heisst ein `ProjectFormatError`
-    # hier "das ID-Format dieser Datei ist grundsaetzlich nicht erkennbar"
-    # (Entwurf Abschnitt 10) - ein fundamentaleres Problem als eine fehlende
-    # optionale Sektion, das den ganzen Upload zu Recht scheitern lassen
-    # soll (`api.project_sync` faengt `ProjectFormatError` schon zur
-    # verstaendlichen 400 ab). Fuer Konsistenz gilt dieselbe Entscheidung
-    # weiter unten fuer die experimentelle Variante: der `except`-Block dort
-    # faengt bewusst nur `MissingCaptionError`, kein `ProjectFormatError`.
+    # A `ProjectFormatError` from `_installation_suffix` (finding N1 from
+    # the re-review: via `apply_plan` -> `_new_signal_edit`/
+    # `_new_device_edit` -> `new_unique_id`, as soon as a `NEW_SIGNAL`
+    # entry needs a new ID), by contrast, VERY MUCH CAN be thrown by this
+    # conservative variant - `NEW_SIGNAL` is independent of
+    # `include_new_devices`. Deliberately left unhandled: unlike a missing
+    # caption (only a limitation of the experimental path), a
+    # `ProjectFormatError` here means "this file's ID format cannot be
+    # recognised at all" (design section 10) - a more fundamental problem
+    # than a missing optional section, one that should rightly fail the
+    # whole upload (`api.project_sync` already catches `ProjectFormatError`
+    # into a comprehensible 400). For consistency, the same decision holds
+    # further below for the experimental variant: the `except` block there
+    # deliberately catches only `MissingCaptionError`, not
+    # `ProjectFormatError`.
     conservative = apply_plan(
         index,
         plan,
@@ -131,20 +133,20 @@ def run_sync(
         )
         reason = None
     except MissingCaptionError as exc:
-        # Eine fehlende Caption ist laut Entwurf Abschnitt 8 eine Grenze des
-        # EXPERIMENTELLEN Pfades, kein Grund, den ganzen Upload scheitern zu
-        # lassen: Plan und konservative Variante bleiben nutzbar, nur diese
-        # eine Variante entfaellt - mit Begruendung statt kommentarlos.
+        # A missing caption is, per design section 8, a limitation of the
+        # EXPERIMENTAL path, not a reason to fail the whole upload: the
+        # plan and the conservative variant remain usable, only this one
+        # variant is dropped - with a reason given, not silently.
         #
-        # Bewusst NUR `MissingCaptionError`, kein `ProjectFormatError`: ein
-        # `ProjectFormatError` aus `_installation_suffix` (siehe Kommentar
-        # beim Aufruf der konservativen Variante oben) propagiert absichtlich
-        # bis zu `api.project_sync`s `except ProjectFormatError` -> HTTP 400
-        # durch, statt hier nur die experimentelle Variante stillzulegen -
-        # dieselbe Datei koennte denselben Fehler schon in der konservativen
-        # Variante ausgeloest haben, die dort ebenfalls unbehandelt bleibt.
-        # Ein degradiertes Verhalten nur fuer diesen Aufruf waere inkonsistent
-        # mit dem oberen.
+        # Deliberately ONLY `MissingCaptionError`, not `ProjectFormatError`:
+        # a `ProjectFormatError` from `_installation_suffix` (see the
+        # comment at the conservative-variant call above) is meant to
+        # propagate up to `api.project_sync`'s `except ProjectFormatError`
+        # -> HTTP 400, rather than merely disabling the experimental
+        # variant here - the same file could already have triggered the
+        # same error in the conservative variant, which also leaves it
+        # unhandled there. Degraded behaviour only for this call would be
+        # inconsistent with the one above.
         with_new_devices = None
         reason = str(exc)
     return ProjectSyncResult(plan, conservative, with_new_devices, reason)

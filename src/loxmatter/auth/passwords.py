@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,23 +14,23 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Passwort-Hashing mit `hashlib.scrypt` (Spec 6).
+"""Password hashing with `hashlib.scrypt` (spec 6).
 
-**Warum scrypt und nicht Argon2 oder bcrypt:** beide brauchten eine neue
-Laufzeitabhaengigkeit (`argon2-cffi` bzw. `passlib`) fuer genau einen Hash in
-diesem Projekt. scrypt ist speicherhart, in der Standardbibliothek und fuer
-diesen Zweck ausreichend. Die Abhaengigkeitsliste in `pyproject.toml` bleibt
-dadurch unveraendert.
+**Why scrypt and not Argon2 or bcrypt:** both would need a new runtime
+dependency (`argon2-cffi` or `passlib` respectively) for exactly one hash
+in this project. scrypt is memory-hard, in the standard library, and
+sufficient for this purpose. The dependency list in `pyproject.toml` stays
+unchanged as a result.
 
-**Warum die Parameter im gespeicherten Wert stehen** (`scrypt$n$r$p$salt$hash`):
-werden die Kostenfaktoren spaeter angehoben, muessen bereits abgelegte Hashes
-weiter pruefbar bleiben - sonst sperrt ein Update den Betreiber aus seiner
-eigenen Bruecke aus. `verify_password` liest deshalb die Parameter aus dem
-Wert und nicht aus den Konstanten dieses Moduls.
+**Why the parameters live in the stored value** (`scrypt$n$r$p$salt$hash`):
+if the cost factors are raised later, already-stored hashes must remain
+checkable - otherwise an update would lock the operator out of their own
+bridge. `verify_password` therefore reads the parameters from the value
+itself, not from this module's constants.
 
-Der Speicherbedarf von scrypt ist 128 * n * r, hier also 16 MiB. Das liegt
-unter der Vorgabe, die `hashlib.scrypt` ohne gesetztes `maxmem` durchlaesst
-(32 MiB) - deshalb steht dort kein `maxmem`-Argument.
+scrypt's memory requirement is 128 * n * r, so 16 MiB here. That is below
+the threshold that `hashlib.scrypt` allows through without a `maxmem` set
+(32 MiB) - which is why no `maxmem` argument appears there.
 """
 
 from __future__ import annotations
@@ -38,10 +38,10 @@ from __future__ import annotations
 import hashlib
 import secrets
 
-# Kein Wert aus einem Sicherheitsvakuum, sondern der uebliche interaktive
-# Arbeitspunkt fuer scrypt: rund 16 MiB Speicher und ein Bruchteil einer
-# Sekunde je Pruefung. Hoeher gesetzt wuerde jeder Login auf einem
-# Raspberry Pi spuerbar traege.
+# Not a value pulled out of a security vacuum, but the usual interactive
+# working point for scrypt: about 16 MiB of memory and a fraction of a
+# second per check. Set any higher, every login would become noticeably
+# sluggish on a Raspberry Pi.
 _N = 2**14
 _R = 8
 _P = 1
@@ -50,26 +50,26 @@ _KEY_BYTES = 32
 
 _SCHEME = "scrypt"
 
-# Kuerzer waere ein Passwort, das eine Drosselung von 30 Sekunden je fuenf
-# Versuchen nicht mehr rettet (siehe `throttle`). Laenger vorzuschreiben
-# fuehrt erfahrungsgemaess zu einem Zettel am Bildschirm.
+# Shorter, and a password would no longer be saved by a throttle of 30
+# seconds per five attempts (see `throttle`). Mandating longer tends, in
+# practice, to end up as a note stuck to the screen.
 MIN_PASSWORD_LENGTH = 8
 
 
 def hash_password(password: str) -> str:
-    """Rechnet den abzulegenden Wert - mit frischem Salz bei jedem Aufruf."""
+    """Computes the value to store - with a fresh salt on every call."""
     salt = secrets.token_bytes(_SALT_BYTES)
     key = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=_N, r=_R, p=_P, dklen=_KEY_BYTES)
     return f"{_SCHEME}${_N}${_R}${_P}${salt.hex()}${key.hex()}"
 
 
 def verify_password(password: str, stored: str) -> bool:
-    """Prueft `password` gegen einen abgelegten Wert.
+    """Checks `password` against a stored value.
 
-    Gibt bei jedem unlesbaren, fremden oder verstuemmelten `stored` schlicht
-    `False` zurueck, statt zu werfen: der Wert kommt aus einer Datei auf der
-    Platte des Betreibers, und ein Tippfehler darin soll einen 401 ergeben,
-    keinen 500 mit Traceback im Log."""
+    Simply returns `False` for any unreadable, foreign, or corrupted
+    `stored` value instead of raising: the value comes from a file on the
+    operator's disk, and a typo in it should produce a 401, not a 500
+    with a traceback in the log."""
     parts = stored.split("$")
     if len(parts) != 6 or parts[0] != _SCHEME:
         return False
@@ -86,7 +86,7 @@ def verify_password(password: str, stored: str) -> bool:
             dklen=len(expected),
         )
     except ValueError:
-        # Unleserliche Hex-Zeichen, unsinnige Parameter (n keine Zweierpotenz,
-        # dklen 0) - alles derselbe Fall: dieser Wert ist kein Hash.
+        # Unreadable hex characters, nonsensical parameters (n not a power
+        # of two, dklen 0) - all the same case: this value is not a hash.
         return False
     return secrets.compare_digest(key, expected)

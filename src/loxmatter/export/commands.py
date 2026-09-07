@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,15 +14,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Leitet aus AcceptedCommandList ab, was Loxone einem Geraet sagen darf.
+"""Derives from AcceptedCommandList what Loxone is allowed to tell a device.
 
-Nicht aus den Attributen: Matter-Attribute sind ganz ueberwiegend nur lesbar,
-und ein Ausgangsbefehl je lesbarem Attribut waere zu 95 Prozent wirkungslos.
+Not from the attributes: Matter attributes are overwhelmingly read-only,
+and an output command per readable attribute would be pointless 95 percent
+of the time.
 
-Erlaubnisliste statt Sperrliste. Bei Attributen wird Unbekanntes grosszuegig
-durchgereicht; bei Kommandos waere das falsch herum, weil zu den akzeptierten
-Kommandos die Verwaltungscluster gehoeren - RemoveFabric, Kommissionierung,
-TestEventTrigger. ADMINISTRATIVE_CLUSTERS bleibt auch im Rohmodus gesperrt.
+An allow list rather than a deny list. For attributes, unknowns are passed
+through generously; for commands that would be the wrong way round,
+because the accepted commands include the administrative clusters -
+RemoveFabric, commissioning, TestEventTrigger. ADMINISTRATIVE_CLUSTERS
+stays blocked even in raw mode.
 """
 
 from __future__ import annotations
@@ -48,7 +50,7 @@ class DeviceCommand:
 
 
 def extract_commands(snapshot: NodeSnapshot, *, raw: bool = False) -> list[DeviceCommand]:
-    """Alle Kommandos, die als Loxone-Ausgang erscheinen duerfen."""
+    """All commands that may appear as a Loxone output."""
     commands: list[DeviceCommand] = []
 
     for path, value in snapshot.attributes.items():

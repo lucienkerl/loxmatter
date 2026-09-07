@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,10 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Vergleicht die gewuenschten Ein-/Ausgaenge (`export.signals.to_inputs`/
-`export.outputs.to_outputs` - dieselbe Quelle wie der bestehende Vorlagen-
-Export) gegen einen `ProjectIndex` und baut den Diff-Plan (Entwurf Abschnitt
-5)."""
+"""Compares the desired inputs/outputs (`export.signals.to_inputs`/
+`export.outputs.to_outputs` - the same source as the existing template
+export) against a `ProjectIndex` and builds the diff plan (design
+section 5)."""
 
 from __future__ import annotations
 
@@ -51,14 +51,14 @@ class PlanStatus(StrEnum):
     NEW_DEVICE = "new_device"
     ORPHANED = "orphaned"
     CONFLICT = "conflict"
-    # Ein gewuenschtes Signal hat KEIN Objekt mit passendem Schluessel, aber
-    # ein bestehender Befehl im selben Geraete-Container traegt bereits den
-    # gewuenschten Titel (Entwurf-Nachtrag, gefunden am Anwenderbericht "zwei
-    # mal onoff drin"): eher ein Hinweis auf einen beschaedigten/veralteten
-    # Schluessel in diesem einen Objekt (z. B. `Check`/`CmdOn` von Hand
-    # editiert) als ein wirklich neues Signal. Wird wie ORPHANED/CONFLICT nie
-    # automatisch angelegt - siehe `patch.apply_plan`, das nur UPDATED/
-    # NEW_SIGNAL/NEW_DEVICE explizit behandelt.
+    # A desired signal has NO object with a matching key, but an existing
+    # command in the same device container already carries the desired
+    # title (design addendum, found from the user report "onoff in there
+    # twice"): more likely a sign of a damaged/stale key on this one
+    # object (e.g. `Check`/`CmdOn` edited by hand) than a truly new
+    # signal. Like ORPHANED/CONFLICT, this is never created automatically
+    # - see `patch.apply_plan`, which only explicitly handles UPDATED/
+    # NEW_SIGNAL/NEW_DEVICE.
     POSSIBLE_DUPLICATE = "possible_duplicate"
 
 
@@ -70,7 +70,7 @@ class PlanEntry:
     key: str
     title: str
     status: PlanStatus
-    # attrname -> (alter Wert, neuer Wert) - nur bei UPDATED nicht leer.
+    # attrname -> (old value, new value) - non-empty only for UPDATED.
     changes: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
@@ -105,21 +105,21 @@ def _has_required_attrs(attrs: dict[str, str], required: Sequence[str]) -> bool:
 
 
 def _title_collision(cmds: Mapping[str, Element], prefix: str, title: str) -> bool:
-    """Traegt irgendein bereits vorhandener Befehl desselben Geraets (Schluessel
-    beginnt mit `prefix`) genau den gewuenschten Titel, obwohl KEIN Objekt
-    unter dem gewuenschten Schluessel selbst gefunden wurde?
+    """Does any already-existing command of the same device (key starts
+    with `prefix`) carry exactly the desired title, even though NO object
+    was found under the desired key itself?
 
-    Deckt den Fall auf, den der Anwender an seiner echten Datei gemeldet hat:
-    ein bestehender kombinierter Ausgangsbefehl "onoff" trug durch einen
-    alten Bug im Export ein beschaedigtes `CmdOn` (`/cmd/d1_1_o/1` statt
-    `/cmd/d1_1_onoff/1`, das fehlende Zeichen) - `key_from_cmd_on` liest
-    daraus den falschen Schluessel `d1_1_o`, das eigentlich gemeinte Objekt
-    taucht also nirgends unter `d1_1_onoff` auf. Ohne diese Pruefung waere
-    das Ergebnis ein zweiter, echter "onoff"-Befehl im selben Container -
-    eine stille Dopplung, kein hilfreicher Neueintrag. `index.input_cmds`/
-    `index.output_cmds` sind bereits nach dem (moeglicherweise falschen)
-    extrahierten Schluessel indiziert, tragen den beschaedigten Eintrag also
-    ohnehin - nur eben unter dem falschen Namen, nicht dem gewuenschten."""
+    Covers the case the user reported on their real file: an existing
+    combined output command "onoff" carried a damaged `CmdOn`
+    (`/cmd/d1_1_o/1` instead of `/cmd/d1_1_onoff/1`, the missing
+    character) due to an old export bug - `key_from_cmd_on` reads the
+    wrong key `d1_1_o` out of that, so the object that was actually meant
+    shows up nowhere under `d1_1_onoff`. Without this check, the result
+    would be a second, genuine "onoff" command in the same container - a
+    silent duplicate, not a helpful new entry. `index.input_cmds`/
+    `index.output_cmds` are already indexed by the (possibly wrong)
+    extracted key, so they carry the damaged entry anyway - just under the
+    wrong name, not the desired one."""
     return any(
         key.startswith(prefix) and element.attrs.get("Title") == title
         for key, element in cmds.items()

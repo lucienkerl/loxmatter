@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,22 +14,21 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Sitzungen: anlegen, pruefen, gleitend verlaengern (Spec 7).
+"""Sessions: create, check, extend on a sliding basis (spec 7).
 
-**Warum in der Datenbank und nicht im Speicher:** der Dienst laeuft mit
-`restart: unless-stopped` (siehe `deploy/testhost/docker-compose.yml`). Ein
-Neustart - nach einem Update, nach einem Stromausfall, nach einem Absturz -
-duerfte sonst jeden angemeldeten Browser abmelden, und der Betreiber saehe
-statt seiner Bruecke einen Login-Bildschirm, ohne zu wissen warum.
+**Why in the database and not in memory:** the service runs with
+`restart: unless-stopped` (see `deploy/testhost/docker-compose.yml`). A
+restart - after an update, after a power outage, after a crash - would
+otherwise log out every logged-in browser, and the operator would see a
+login screen instead of their bridge, with no idea why.
 
-**Warum ein serverseitiger Eintrag und kein signiertes Cookie:** ein
-signiertes Cookie liesse sich nicht zurueckziehen. `POST /auth/logout` und
-`loxmatter set-password` sollen eine Sitzung wirklich beenden koennen, nicht
-nur den Browser bitten, sie zu vergessen.
+**Why a server-side entry and not a signed cookie:** a signed cookie could
+not be revoked. `POST /auth/logout` and `loxmatter set-password` are meant
+to actually end a session, not just ask the browser to forget it.
 
-`now` ist in beiden Funktionen ein optionaler Parameter (Unix-Sekunden).
-Produktivcode uebergibt ihn nie; die Tests brauchen ihn, um dreissig Tage
-vergehen zu lassen, ohne zu schlafen.
+`now` is an optional parameter (Unix seconds) in both functions.
+Production code never passes it; the tests need it to let thirty days
+pass without sleeping.
 """
 
 from __future__ import annotations
@@ -39,26 +38,25 @@ import time
 
 from loxmatter.model.auth_store import AuthStore
 
-# Der Cookie-Name. Steht hier und nicht in `api/auth.py`, weil ihn zwei
-# Stellen brauchen: der Router setzt ihn, der Waechter in
-# `loxone/server.py` liest ihn. Zwei Schreibweisen desselben Namens waeren
-# ein Fehler, den niemand im Test bemerkt, weil beide Seiten fuer sich
-# funktionieren.
+# The cookie name. Lives here and not in `api/auth.py` because two places
+# need it: the router sets it, the guard in `loxone/server.py` reads it.
+# Two different spellings of the same name would be a bug that no test
+# would notice, because both sides work fine on their own.
 SESSION_COOKIE = "loxmatter_session"
 
 SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 
-# Verlaengert wird erst, wenn mehr als ein Tag der Laufzeit verbraucht ist -
-# siehe `session_is_valid`.
+# Only extended once more than one day of the lifetime has been used up -
+# see `session_is_valid`.
 _EXTEND_AFTER_SECONDS = 24 * 60 * 60
 
 
 def open_session(auth: AuthStore, *, now: int | None = None) -> str:
-    """Legt eine Sitzung an und gibt ihre Kennung zurueck.
+    """Creates a session and returns its identifier.
 
-    32 Byte aus `secrets.token_hex` - dieselbe Groessenordnung wie das
-    empfohlene API-Token (`openssl rand -hex 32`), weil diese Kennung
-    genau dasselbe wert ist: wer sie hat, ist angemeldet."""
+    32 bytes from `secrets.token_hex` - the same order of magnitude as the
+    recommended API token (`openssl rand -hex 32`), because this
+    identifier is worth exactly the same: whoever holds it is logged in."""
     moment = int(time.time()) if now is None else now
     auth.purge_expired_sessions(moment)
     session_id = secrets.token_hex(32)
@@ -67,15 +65,15 @@ def open_session(auth: AuthStore, *, now: int | None = None) -> str:
 
 
 def session_is_valid(auth: AuthStore, session_id: str, *, now: int | None = None) -> bool:
-    """Gilt diese Sitzung noch? Verlaengert sie dabei gleitend.
+    """Is this session still valid? Extends it on a sliding basis while at it.
 
-    Die Verlaengerung passiert hoechstens einmal je `_EXTEND_AFTER_SECONDS`
-    und nicht bei jedem Aufruf: diese Funktion laeuft in JEDER Anfrage an
-    `/api`, und die Oberflaeche stellt beim Bedienen mehrere je Sekunde. Ein
-    `UPDATE` pro Anfrage waere eine SQLite-Schreiboperation fuer nichts.
+    The extension happens at most once per `_EXTEND_AFTER_SECONDS`, not on
+    every call: this function runs on EVERY request to `/api`, and the
+    interface issues several per second while in use. An `UPDATE` per
+    request would be a SQLite write operation for nothing.
 
-    Eine abgelaufene Sitzung wird hier gleich geloescht - der Aufraeumpfad,
-    der ohne einen neuen Login nie liefe."""
+    An expired session is deleted right here - the cleanup path that would
+    otherwise never run without a fresh login."""
     moment = int(time.time()) if now is None else now
     expires_at = auth.session_expires_at(session_id)
     if expires_at is None:

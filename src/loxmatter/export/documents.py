@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,31 +14,32 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Setzt die beiden Vorlagentypen aus Spec 6.1 zusammen.
+"""Assembles the two template types from spec 6.1.
 
-Ein VirtualInUdp traegt beliebig viele Befehle, ein Import bringt damit alle
-Signale eines Geraets auf einmal ins Projekt. Eine Datei je Geraet — bei 200
-Eingaengen in einem Objekt waere die Config nicht mehr navigierbar (Spec 6.2).
+A VirtualInUdp carries any number of commands, so one import brings all of
+a device's signals into the project at once. One file per device — with
+200 inputs in a single object, the config would no longer be navigable
+(spec 6.2).
 
-Die Attributnamen und ihre Defaults stammen aus dem verifizierten Schema in
-Spec 6.1. Sie sind nicht frei waehlbar.
+The attribute names and their defaults come from the verified schema in
+spec 6.1. They are not freely chosen.
 
-Spec 6.1, „Korrektur 2026-09-02": das Schema stammte urspruenglich aus einer
-fremden Referenzimplementierung und wich in vier Punkten von dem ab, was
-Loxone Config an 26 realen Vorlagen tatsaechlich schreibt — belegt, nicht
-vermutet. Diese Task zieht die vier Korrekturen nach:
+Spec 6.1, "correction 2026-09-02": the schema originally came from a
+third-party reference implementation and differed in four points from
+what Loxone Config actually writes in 26 real templates — documented, not
+guessed. This task applies the four corrections:
 
-1. Jede Vorlage traegt ein `<Info>` als erstes Kind. `templateType` ist `1`
-   fuer `VirtualInUdp`, `3` fuer `VirtualOut`. `minVersion="14040925"` ist fuer
-   beide der niedrigste an den 26 Vorlagen beobachtete Wert — er gate also die
-   wenigsten Config-Versionen. Ob Loxone Config diesen Wert wirklich
-   akzeptiert, entscheidet nicht dieser Code, sondern der Import-Beleg in
-   Task 7 Schritt 6.
-2. `VirtualInUdpCmd` hat 15 Attribute, u. a. `Unit` (Formatstring, Spec 7.3)
-   und `HintText`.
-3. `VirtualOut` traegt `HintText` zwischen `CmdInit` und `CloseAfterSend`.
-4. `VirtualOutCmd` hat 15 Attribute, kein `ID`, und `CmdOnMethod`/`CmdOffMethod`
-   stehen zusammen statt verteilt.
+1. Every template carries an `<Info>` as its first child. `templateType`
+   is `1` for `VirtualInUdp`, `3` for `VirtualOut`. `minVersion="14040925"`
+   is, for both, the lowest value observed across the 26 templates — so it
+   gates out the fewest config versions. Whether Loxone Config actually
+   accepts this value is not decided by this code but by the import proof
+   in task 7 step 6.
+2. `VirtualInUdpCmd` has 15 attributes, including `Unit` (format string,
+   spec 7.3) and `HintText`.
+3. `VirtualOut` carries `HintText` between `CmdInit` and `CloseAfterSend`.
+4. `VirtualOutCmd` has 15 attributes, no `ID`, and `CmdOnMethod`/
+   `CmdOffMethod` sit together instead of spread apart.
 """
 
 from __future__ import annotations
@@ -53,25 +54,25 @@ from loxmatter.export.xml import render_document
 
 _UMLAUTS = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue"}
 
-# Niedrigster an den 26 realen Vorlagen (Spec 6.1) beobachteter Wert je
-# Vorlagentyp — gate damit die wenigsten Config-Versionen aus. Der eigentliche
-# Beleg, dass Loxone Config diesen Wert akzeptiert, ist der Import in Task 7.
+# Lowest value observed per template type across the 26 real templates
+# (spec 6.1) — that gates out the fewest config versions. The actual proof
+# that Loxone Config accepts this value is the import in task 7.
 _MIN_VERSION = "14040925"
 
 
 @dataclass(frozen=True)
 class LoxoneCommand:
-    """Ein virtueller Ausgang, wie er in der Vorlage landet.
+    """A virtual output, as it ends up in the template.
 
-    `off_path` ist der zweite Befehl desselben Ausgangs. Loxone sieht fuer
-    einen digitalen virtuellen Ausgang `CmdOn` UND `CmdOff` vor: EIN Objekt,
-    das bei der steigenden Flanke das eine und bei der fallenden das andere
-    schickt. Genau das braucht man, um einen Schalter direkt darauf zu
-    legen - zwei getrennte Ausgaenge fuer Ein und Aus muesste man in der
-    Config erst wieder von Hand zusammenbinden.
+    `off_path` is the second command of the same output. Loxone provides
+    `CmdOn` AND `CmdOff` for a digital virtual output: ONE object that
+    sends the one on the rising edge and the other on the falling edge.
+    That is exactly what is needed to wire a switch directly onto it - two
+    separate outputs for on and off would first have to be tied back
+    together by hand in the config.
 
-    Leer, wenn es keinen Gegenbefehl gibt (`toggle`, oder jedes Kommando mit
-    Wert wie `level`). Dann bleibt `CmdOff` leer, wie bisher.
+    Empty if there is no counter-command (`toggle`, or any command with a
+    value such as `level`). Then `CmdOff` stays empty, as before.
     """
 
     key: str
@@ -86,11 +87,11 @@ def _flag(value: bool) -> str:
 
 
 def virtual_in_udp_cmd_attributes(entry: LoxoneInput) -> list[tuple[str, str]]:
-    """Attribute eines einzelnen `VirtualInUdpCmd` — isoliert aus
-    `render_virtual_in_udp`, damit `projectsync.schema` dieselbe, bereits
-    gegen einen echten Import verifizierte Attributliste fuer neu in die
-    Projektdatei eingefuegte Objekte wiederverwenden kann, statt sie ein
-    zweites Mal zu erfinden."""
+    """Attributes of a single `VirtualInUdpCmd` — factored out of
+    `render_virtual_in_udp` so that `projectsync.schema` can reuse the same
+    attribute list, already verified against a real import, for objects
+    newly inserted into the project file, instead of inventing it a second
+    time."""
     return [
         ("Title", entry.title),
         ("Comment", entry.comment),
@@ -131,32 +132,33 @@ def render_virtual_in_udp(
 
 
 def virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]:
-    """Die Attribute eines virtuellen Ausgangs, in der Form, die Loxone Config
-    selbst schreibt.
+    """The attributes of a virtual output, in the form Loxone Config itself
+    writes them.
 
-    Belegt an einer Vorlage, die Config nach einem funktionierenden Import
-    ausgegeben hat (`tests/fixtures/loxone/VO_Funktionierend.xml`, vom
-    Anwender geliefert, 2026-09-03). Zwei Regeln stecken darin, und beide
-    hatten wir vorher falsch:
+    Documented against a template that Config produced after a working
+    import (`tests/fixtures/loxone/VO_Funktionierend.xml`, supplied by the
+    user, 2026-09-03). Two rules are embedded in it, and both were
+    previously wrong:
 
-    **`Analog="false"` genau dann, wenn ein Aus-Befehl gesetzt ist.** Das ist
-    der digitale Ausgang, bei dem Config den Haken "Als Digitalausgang
-    verwenden" setzt und das Feld fuer den Aus-Befehl ueberhaupt erst
-    anbietet. Ein Ausgang mit nur einem Befehl - `on`, `off`, `toggle` -
-    traegt `Analog="true"`.
+    **`Analog="false"` exactly when an off command is set.** That is the
+    digital output, where Config sets the "use as digital output" checkbox
+    and only then offers the field for the off command at all. An output
+    with only one command - `on`, `off`, `toggle` - carries
+    `Analog="true"`.
 
-    Es haengt also am Aus-Befehl, NICHT daran, ob das Kommando einen Wert
-    nimmt. Genau das war der Fehler: `onoff` kam mit gesetztem Haken nicht
-    an, und `CmdOff` blieb wirkungslos.
+    So it depends on the off command, NOT on whether the command takes a
+    value. That was exactly the bug: `onoff` did not arrive with the
+    checkbox set, and `CmdOff` stayed ineffective.
 
-    **Die vier Skalierungsattribute nur beim analogen Ausgang.** Config
-    schreibt `SourceValLow`/`DestValLow`/`SourceValHigh`/`DestValHigh` bei
-    jedem Ausgang ohne Aus-Befehl und laesst sie beim digitalen ganz weg.
+    **The four scaling attributes only for the analog output.** Config
+    writes `SourceValLow`/`DestValLow`/`SourceValHigh`/`DestValHigh` for
+    every output without an off command and leaves them out entirely for
+    the digital one.
 
-    Die aeltere `VO_Referenz.xml` widerspricht dem beim `Analog`-Wert. Sie
-    ist eine von Hand bereinigte Ableitung, diese Datei kommt unveraendert
-    aus Config - im Zweifel gilt Config. Die Referenz bleibt fuer alles
-    andere gueltig (Attributnamen, Reihenfolge, Aufbau des Dokuments).
+    The older `VO_Referenz.xml` contradicts this on the `Analog` value. It
+    is a hand-cleaned derivative; this file comes unmodified from Config -
+    when in doubt, Config wins. The reference remains valid for everything
+    else (attribute names, order, document structure).
     """
     digital = bool(command.off_path)
     attributes: list[tuple[str, str]] = [
@@ -182,8 +184,8 @@ def virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]:
             ("SourceValHigh", "0"),
             ("DestValHigh", "0"),
         ]
-    # `HintText` steht zuletzt, nicht in der Mitte - auch das schreibt Config
-    # so.
+    # `HintText` comes last, not in the middle - Config writes it that way
+    # too.
     attributes.append(("HintText", ""))
     return attributes
 
@@ -198,9 +200,9 @@ def render_virtual_out(
     return render_document(
         "VirtualOut",
         [
-            # Reihenfolge wie in der von Loxone Config selbst geschriebenen
-            # Vorlage (tests/fixtures/loxone/VO_Funktionierend.xml):
-            # `HintText` steht dort vorn, nicht hinter `CmdInit`.
+            # Order as in the template Loxone Config itself writes
+            # (tests/fixtures/loxone/VO_Funktionierend.xml):
+            # `HintText` sits at the front there, not after `CmdInit`.
             ("HintText", ""),
             ("Title", f"Matter — {device_label}"),
             ("Comment", i18n.t("export.comment_generated")),
@@ -214,22 +216,23 @@ def render_virtual_out(
 
 
 def render_system_templates(bridge_ip: str, port: int, listen_port: int) -> tuple[bytes, bytes]:
-    """Die beiden Vorlagen, die zu keinem Geraet gehoeren.
+    """The two templates that belong to no device.
 
-    bridge_alive ist der Watchdog (Spec 6.5): er toggelt, solange die Bridge
-    laeuft, und deckt "Container tot" wie "Netz weg" gleichermassen ab.
+    bridge_alive is the watchdog (spec 6.5): it toggles for as long as the
+    bridge is running, and covers "container dead" and "network gone"
+    alike.
 
-    /resync gehoert im Config-Projekt an den Systemstart-Baustein (Spec 6.4).
-    UDP ist zustandslos - ohne diesen Aufruf stehen nach einem Neustart des
-    Miniservers alle Eingaenge auf ihrem Defaultwert, bei einem Temperatursensor
-    womoeglich stundenlang.
+    /resync belongs, in the Config project, on the system-start block
+    (spec 6.4). UDP is stateless - without this call, after a Miniserver
+    restart all inputs sit at their default value, for a temperature
+    sensor possibly for hours.
 
-    `listen_port` ist der HTTP-Port, auf dem `loxmatter run` die Kommandos
-    aus Loxone entgegennimmt (Review-Fix I3, 2026-09-02: vorher hier fest auf
-    8080 verdrahtet, unabhaengig von `run --listen`; ein abweichender Port
-    liess `/resync` im Config-Projekt ins Leere laufen, ohne dass der
-    Miniserver das je meldet - er wertet die Antwort eines virtuellen
-    Ausgangs nicht aus).
+    `listen_port` is the HTTP port on which `loxmatter run` accepts the
+    commands from Loxone (review fix I3, 2026-09-02: previously hard-wired
+    here to 8080, independent of `run --listen`; a differing port made
+    `/resync` in the Config project run into nothing, without the
+    Miniserver ever reporting it - it does not evaluate a virtual output's
+    response).
     """
     viu = render_virtual_in_udp(
         "System",
@@ -240,12 +243,12 @@ def render_system_templates(bridge_ip: str, port: int, listen_port: int) -> tupl
                 key="bridge_alive",
                 title=i18n.t("export.system.bridge_alive_title"),
                 comment=i18n.t("export.system.bridge_alive_comment"),
-                # Analog wie jeder Zustand (2026-09-03): der Watchdog lebt
-                # gerade davon, dass der Wert zwischen 1 und 0 WECHSELT. Ein
-                # digitaler Eingang wertet den Wert nicht aus - er saehe nur,
-                # dass ein Muster passt, und koennte den Wechsel damit gar
-                # nicht bemerken. Genau das soll er aber: bleibt der Wert
-                # stehen, ist die Bruecke tot.
+                # Analog like every state (2026-09-03): the watchdog lives
+                # precisely off the value CHANGING between 1 and 0. A
+                # digital input does not evaluate the value - it would only
+                # see that a pattern matches, and so could not notice the
+                # change at all. But that is exactly what it needs to: if
+                # the value stops changing, the bridge is dead.
                 analog=True,
                 unit_format="",
             )
@@ -267,21 +270,20 @@ def render_system_templates(bridge_ip: str, port: int, listen_port: int) -> tupl
 
 
 def filename_for(prefix: str, device_id: int, device_label: str) -> str:
-    """Dateiname nach Spec 6.1, auf ASCII normalisiert.
+    """Filename per spec 6.1, normalised to ASCII.
 
-    `device_id` ist nicht Dekoration — er ist der einzige Teil des Namens,
-    der Eindeutigkeit garantiert. `Store` vergibt ihn unveraenderlich und
-    verwendet ihn nirgends doppelt (siehe `export.signals`); die Normalisierung
-    unten dagegen ist verlustbehaftet und bildet absichtlich viele
-    unterschiedliche Labels ("Lampe 1", "Lampe_1", "Lampe-1", "厨房", "")
-    auf denselben oder einen leeren String ab. Ohne die Geraete-ID wuerden
-    zwei Geraete mit kollidierendem Label sich beim Export gegenseitig
-    ueberschreiben — der Nutzer importiert dann eine Vorlage im Glauben, es
-    seien zwei. Also: die ID hier NICHT entfernen, auch wenn sie im Namen
-    redundant zum Label aussieht.
+    `device_id` is not decoration — it is the only part of the name that
+    guarantees uniqueness. `Store` assigns it immutably and never reuses
+    it (see `export.signals`); the normalisation below, by contrast, is
+    lossy and deliberately maps many different labels ("Lamp 1", "Lamp_1",
+    "Lamp-1", "厨房", "") onto the same or an empty string. Without the
+    device ID, two devices with a colliding label would overwrite each
+    other's export — the user would then import one template believing
+    there were two. So: do NOT remove the ID here, even though it looks
+    redundant with the label in the name.
 
-    Das Label bleibt trotzdem im Namen — es macht die Datei fuer einen
-    Menschen wiedererkennbar, waehrend die ID sie eindeutig macht.
+    The label stays in the name nonetheless — it makes the file
+    recognisable to a human, while the ID makes it unique.
     """
     text = "".join(_UMLAUTS.get(char, char) for char in device_label)
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")

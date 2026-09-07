@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,26 +14,25 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Wendet einen `SyncPlan` als gezielte Textersetzung auf den Original-
-Byte-Strom an (Entwurf Abschnitt 3.2) - nie ueber einen XML-Serialisierer.
+"""Applies a `SyncPlan` as targeted text replacement onto the original byte
+stream (design section 3.2) - never through an XML serialiser.
 
-Jede Aenderung ist ein `_Edit(start, end, replacement)`: `end == start`
-bedeutet reines Einfuegen. Alle Edits werden gesammelt, nach `start`
-ABSTEIGEND sortiert und von hinten nach vorn angewendet - so bleiben
-vorherige Positionen gueltig, ohne Versatz nachrechnen zu muessen.
+Every change is an `_Edit(start, end, replacement)`: `end == start` means a
+pure insertion. All edits are collected, sorted DESCENDING by `start`, and
+applied back to front - that way earlier positions stay valid without
+having to recompute an offset.
 
-`apply_plan` ruft `to_inputs`/`to_outputs` selbst auf, genau wie
-`diff.build_plan` - dieselbe Quelle fuer beide, damit Plan und Patch niemals
-auseinanderlaufen koennen. Der Grund, das nicht ueber den `PlanEntry`
-hindurchzureichen: der traegt nur, was die Oberflaeche zeigen muss
-(Titel/Schluessel/Status), nicht `unit_format`/`check_suffix`/`off_path`, die
-ein neu angelegtes Objekt zusaetzlich braucht.
+`apply_plan` calls `to_inputs`/`to_outputs` itself, exactly like
+`diff.build_plan` - the same source for both, so plan and patch can never
+drift apart. The reason for not passing this through the `PlanEntry`: it
+only carries what the interface needs to show (title/key/status), not the
+`unit_format`/`check_suffix`/`off_path` that a newly created object
+additionally needs.
 
-Die einzige Aenderung, die `apply_plan` ausserhalb des Plans vornimmt: die
-Ausgabe traegt IMMER ein BOM (`export.xml.BOM`, dieselbe Konstante wie die
-Vorlagendateien) - hinzugefuegt, falls das Original keines hatte, sonst
-unveraendert uebernommen. Wer Byte-Identitaet gegen die Eingabe prueft, muss
-das einrechnen."""
+The one change `apply_plan` makes outside the plan: the output ALWAYS
+carries a BOM (`export.xml.BOM`, the same constant as the template files)
+- added if the original had none, otherwise carried over unchanged.
+Anyone checking byte identity against the input must account for that."""
 
 from __future__ import annotations
 
@@ -65,16 +64,16 @@ __all__ = ["MissingCaptionError", "apply_plan"]
 
 
 class MissingCaptionError(ValueError):
-    """Historisch: wurde geworfen, wenn die Projektdatei (noch) keinen
-    `VirtualInCaption`- bzw. `VirtualOutCaption`-Abschnitt hatte, in den ein
-    komplett neues Geraet eingefuegt werden koennte. `_new_device_edit` legt
-    diesen Abschnitt inzwischen selbst mit an (Entwurf Abschnitt 8: Sonderfall
-    der Neuanlage, ebenfalls hinter dem Experimentell-Haken) - dieser Fehler
-    wird darum in der aktuellen Codebasis nicht mehr ausgeloest. Die Klasse
-    bleibt exportiert und `sync.run_sync` faengt sie weiterhin ab: als
-    Verteidigungslinie, falls ein spaeterer Aufrufer `_new_device_edit` je
-    unter Bedingungen aufruft, unter denen das automatische Anlegen aus
-    irgendeinem Grund nicht greift."""
+    """Historical: used to be thrown when the project file did not (yet)
+    have a `VirtualInCaption`/`VirtualOutCaption` section into which a
+    completely new device could be inserted. `_new_device_edit` now
+    creates this section itself (design section 8: the special case of
+    creating one, also behind the experimental flag) - this error is
+    therefore no longer triggered in the current codebase. The class
+    remains exported and `sync.run_sync` still catches it: as a line of
+    defence in case a later caller ever calls `_new_device_edit` under
+    conditions where the automatic creation, for whatever reason, does not
+    kick in."""
 
 
 @dataclass(frozen=True)
@@ -85,27 +84,28 @@ class _Edit:
 
 
 def _attr_span(text: str, tag_start: int, tag_end: int, name: str) -> tuple[int, int] | None:
-    """Byte-Bereich von `name="wert"` innerhalb eines Start-Tags, oder `None`,
-    wenn das Attribut dort nicht vorkommt.
+    """Byte range of `name="value"` inside a start tag, or `None` if the
+    attribute does not occur there.
 
-    Der Rueckblick `(?<![A-Za-z0-9_])` ist kein Detail: ohne ihn faende
-    `re.search` fuer `Title` auch die zweite Haelfte eines laengeren
-    Attributnamens (`XTitle="..."`) - und weil `search` den ERSTEN Treffer im
-    Tag liefert, wuerde ein solches Attribut still ueberschrieben statt des
-    eigentlich gemeinten. Ein Attributname beginnt immer nach Leerraum oder
-    direkt nach `<C`, nie mitten in einem Bezeichner."""
+    The lookbehind `(?<![A-Za-z0-9_])` is not a detail: without it,
+    `re.search` for `Title` would also find the second half of a longer
+    attribute name (`XTitle="..."`) - and because `search` returns the
+    FIRST match in the tag, such an attribute would be silently
+    overwritten instead of the one actually meant. An attribute name
+    always starts after whitespace or directly after `<C`, never in the
+    middle of an identifier."""
     pattern = re.compile(rf'(?<![A-Za-z0-9_]){re.escape(name)}="(?:[^"&]|&[^;]+;)*"')
     match = pattern.search(text, tag_start, tag_end)
     return None if match is None else (match.start(), match.end())
 
 
 def _display_format(obj: LoxoneInput | LoxoneCommand, is_input: bool) -> tuple[bool, str]:
-    """`(analog, unit_format)` fuer das `<Display>`-Kind, das
-    `schema.new_cmd_children_xml` schreibt.
+    """`(analog, unit_format)` for the `<Display>` child that
+    `schema.new_cmd_children_xml` writes.
 
-    Nur ein Eingang traegt dort eine Einheit (Korrektur nach Anwenderbericht
-    2026-09-05, siehe dortigen Docstring); fuer einen Ausgang bleiben die
-    Vorgaben stehen, sein `<Display>` sieht damit aus wie bisher."""
+    Only an input carries a unit there (correction after the user report
+    of 2026-09-05, see its docstring); for an output the defaults stand,
+    so its `<Display>` looks the same as before."""
     if not is_input:
         return False, ""
     entry = cast(LoxoneInput, obj)
@@ -119,8 +119,9 @@ def _update_edits(index: ProjectIndex, entry: PlanEntry) -> list[_Edit]:
         span = _attr_span(index.text, element.open_start, element.open_end, name)
         replacement = f'{name}="{escape_attr_value(new_value)}"'
         if span is None:
-            # Attribut fehlt im bestehenden Tag ganz (z. B. `CmdOff` bei einem
-            # Ausgang ohne Aus-Befehl) - vor dem schliessenden '>' einfuegen.
+            # Attribute is entirely missing from the existing tag (e.g.
+            # `CmdOff` on an output without an off command) - insert before
+            # the closing '>'.
             insert_at = element.open_end - (2 if element.self_closing else 1)
             edits.append(_Edit(insert_at, insert_at, f" {replacement}"))
         else:
@@ -173,34 +174,34 @@ def _new_device_edit(
     port: int,
     listen: int,
 ) -> tuple[_Edit, int]:
-    """EIN neuer Geraete-Container fuer ALLE `NEW_DEVICE`-Eintraege eines
-    Geraets derselben Art (`entries` ist die Gruppe zu einem `(kind,
-    device_id)`). Liefert den Edit UND die Anzahl neu entstehender
-    `<C>`-Objekte (fuer den `NextObj`-Zaehler in `apply_plan`).
+    """ONE new device container for ALL `NEW_DEVICE` entries of a device of
+    the same kind (`entries` is the group for one `(kind, device_id)`).
+    Returns the edit AND the number of newly created `<C>` objects (for
+    the `NextObj` counter in `apply_plan`).
 
-    Bewusst eine Gruppe statt eines einzelnen Eintrags: `export.signals.
-    to_inputs` erzeugt je Geraet immer zusaetzlich ein Online-Signal, ein
-    real neues Geraet hat also praktisch nie nur einen Eintrag. Ein Container
-    je Eintrag ergaebe mehrere gleichnamige `VirtualUdpIn`-Geraete mit
-    identischer Adresse und Port, jedes mit genau einem Kommando darin -
-    strukturell falsch, nicht nur unschoen.
+    Deliberately a group rather than a single entry: `export.signals.
+    to_inputs` always additionally produces an online signal per device,
+    so a genuinely new device practically never has just one entry. A
+    container per entry would produce several same-named `VirtualUdpIn`
+    devices with identical address and port, each with exactly one
+    command in it - structurally wrong, not just unattractive.
 
-    Fehlt der passende `VirtualInCaption`/`VirtualOutCaption`-Abschnitt
-    komplett (ein Miniserver, der noch nie einen virtuellen Ein- bzw.
-    Ausgang dieser Art hatte), legt diese Funktion ihn selbst mit an - als
-    zusaetzliches Kind-Objekt direkt vor dem schliessenden Tag des
-    ausgewaehlten `LoxLIVE`-Blocks (`index.target_loxlive`, Entwurf Abschnitt
-    8: Sonderfall der Neuanlage, ebenfalls hinter dem Experimentell-Haken,
-    den `apply_plan` bereits durch `include_new_devices` absichert).
-    Bewusst NICHT auf Ebene des `<ControlList>`-Wurzelelements (frueherer
-    Fehler, an einer echten Referenzdatei gefunden: `VirtualInCaption`/
-    `VirtualOutCaption` haengen dort niemals direkt, sondern immer unter
-    genau dem `LoxLIVE`-Block ihres Miniservers) und bewusst ans ENDE des
-    `LoxLIVE`-Inhalts, nicht an eine bestimmte Stelle dazwischen: unter den
-    vielen moeglichen Geschwister-Objekttypen (`InputCaption`,
-    `OutputCaption`, `WeatherCaption`, ...) kennt dieses Projekt keine
-    "richtige" Reihenfolge - anhaengen statt raten, derselbe Grundsatz wie
-    ueberall sonst in diesem Modul."""
+    If the matching `VirtualInCaption`/`VirtualOutCaption` section is
+    missing entirely (a Miniserver that has never had a virtual input or
+    output of this kind before), this function creates it itself - as an
+    additional child object directly before the closing tag of the
+    selected `LoxLIVE` block (`index.target_loxlive`, design section 8:
+    the special case of creating one, also behind the experimental flag
+    that `apply_plan` already guards via `include_new_devices`).
+    Deliberately NOT at the level of the `<ControlList>` root element (an
+    earlier bug, found against a real reference file: `VirtualInCaption`/
+    `VirtualOutCaption` never hang there directly, but always under
+    exactly the `LoxLIVE` block of their Miniserver), and deliberately at
+    the END of the `LoxLIVE` content, not at some specific point in
+    between: among the many possible sibling object types
+    (`InputCaption`, `OutputCaption`, `WeatherCaption`, ...) this project
+    knows no "correct" order - append instead of guessing, the same
+    principle as everywhere else in this module."""
     first = entries[0]
     is_input = first.kind == "input"
     kind = "input" if is_input else "output"
@@ -220,9 +221,9 @@ def _new_device_edit(
         )
 
     cmd_iname_prefix = "VCI" if is_input else "VQC"
-    # `caption` ist bei einer fehlenden Caption `None` -
-    # `find_any_iodata_attrs` behandelt das bereits als "kein Vorbild
-    # gefunden" und liefert `None` zurueck, statt zu werfen.
+    # `caption` is `None` when the caption is missing -
+    # `find_any_iodata_attrs` already treats that as "no template found"
+    # and returns `None` instead of raising.
     iodata = find_any_iodata_attrs(index.text, caption)
     cmds: list[str] = []
     for entry in entries:
@@ -245,20 +246,20 @@ def _new_device_edit(
         cmds.append(f"{cmd_open}{children_xml}</C>")
 
     device_xml = f"{container_open}{''.join(cmds)}</C>"
-    created_count = 1 + len(entries)  # Container + je ein Cmd.
+    created_count = 1 + len(entries)  # Container + one cmd each.
 
     if caption_exists:
-        assert caption is not None and caption.inner_end is not None  # fuer mypy
+        assert caption is not None and caption.inner_end is not None  # for mypy
         return _Edit(caption.inner_end, caption.inner_end, device_xml), created_count
 
     caption_u = new_unique_id(index.all_u_values)
     caption_open = new_caption_open_tag(kind, caption_u)
     full_xml = f"{caption_open}{device_xml}</C>"
-    # `target_loxlive.inner_end` ist bereits als nicht-`None` validiert
-    # (siehe `build_index`'s Pruefung direkt nach `_resolve_target_loxlive`).
-    assert index.target_loxlive.inner_end is not None  # fuer mypy
+    # `target_loxlive.inner_end` is already validated as not `None` (see
+    # `build_index`'s check directly after `_resolve_target_loxlive`).
+    assert index.target_loxlive.inner_end is not None  # for mypy
     pos = index.target_loxlive.inner_end
-    return _Edit(pos, pos, full_xml), created_count + 1  # + die neue Caption selbst.
+    return _Edit(pos, pos, full_xml), created_count + 1  # + the new caption itself.
 
 
 def _next_obj_edit(index: ProjectIndex, created_count: int) -> _Edit | None:
@@ -270,12 +271,12 @@ def _next_obj_edit(index: ProjectIndex, created_count: int) -> _Edit | None:
     try:
         current = int(index.root_attrs["NextObj"])
     except ValueError:
-        # `NextObj` ist laut Entwurf Abschnitt 6/10 ohnehin nur eine
-        # unverifizierte, konservative Bestleistung - kein belegtes
-        # Verhalten. Ein Wert, der nicht als Dezimalzahl lesbar ist, ist
-        # darum kein Grund, den ganzen (sonst gueltigen) Patch scheitern zu
-        # lassen: die eigentlichen Signal-/Geraete-Edits bleiben unberuehrt,
-        # nur dieses eine Attribut wird nicht angefasst.
+        # Per design section 6/10, `NextObj` is only an unverified,
+        # conservative best effort anyway - not documented behaviour. A
+        # value that cannot be read as a decimal number is therefore no
+        # reason to fail the whole (otherwise valid) patch: the actual
+        # signal/device edits remain untouched, only this one attribute is
+        # left alone.
         return None
     new_value = str(current + created_count)
     return _Edit(span[0], span[1], f'NextObj="{new_value}"')
@@ -299,10 +300,10 @@ def apply_plan(
     port: int,
     listen: int,
 ) -> bytes:
-    """Baut die gepatchte Datei fuer eine der beiden Download-Varianten
-    (Entwurf Abschnitt 3.4/7): `include_new_devices=False` liefert nur
-    Updates und neue Signale in bereits bestehenden Geraete-Containern,
-    `True` zusaetzlich komplett neue Geraete-Container."""
+    """Builds the patched file for one of the two download variants (design
+    section 3.4/7): `include_new_devices=False` produces only updates and
+    new signals in already-existing device containers, `True` also
+    produces completely new device containers."""
     desired_inputs: dict[str, LoxoneInput] = {}
     desired_outputs: dict[str, LoxoneCommand] = {}
     for device in devices:
@@ -313,10 +314,10 @@ def apply_plan(
 
     edits: list[_Edit] = []
     created_count = 0
-    # (kind, device_id) -> alle NEW_DEVICE-Eintraege dieses Geraets, damit ein
-    # Geraet genau EINEN neuen Container bekommt statt einen je Signal (siehe
-    # `_new_device_edit`). `dict` haelt die Reihenfolge des Plans fest, die
-    # erzeugte Datei ist damit reproduzierbar.
+    # (kind, device_id) -> all NEW_DEVICE entries of this device, so a
+    # device gets exactly ONE new container instead of one per signal (see
+    # `_new_device_edit`). `dict` preserves the plan's order, so the
+    # generated file is reproducible.
     new_device_groups: dict[tuple[str, int], list[PlanEntry]] = {}
     for entry in plan.entries:
         if entry.status is PlanStatus.UPDATED:
@@ -330,8 +331,9 @@ def apply_plan(
 
     for (kind, _device_id), group in new_device_groups.items():
         source = desired_inputs if kind == "input" else desired_outputs
-        # Anzahl neuer <C>-Objekte kommt von `_new_device_edit` selbst zurueck:
-        # Container + ein Cmd je Eintrag, plus ggf. die neu angelegte Caption.
+        # The number of new <C> objects comes back from `_new_device_edit`
+        # itself: container + one cmd per entry, plus the newly created
+        # caption if any.
         edit, group_created_count = _new_device_edit(index, group, source, bridge_ip, port, listen)
         edits.append(edit)
         created_count += group_created_count

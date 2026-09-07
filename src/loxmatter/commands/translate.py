@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,31 +14,31 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Uebersetzt einen Wunschzustand in ein Matter-Kommando.
+"""Translates a desired state into a Matter command.
 
-Dieses Modul hat spaeter zwei Aufrufer: den HTTP-Endpoint fuer die virtuellen
-Ausgaenge (Task 6) und die WebUI (Phase 5). Laege die Logik in einem von
-beiden, gaebe es die Umrechnung zweimal - mit garantiert auseinanderdriftendem
-Verhalten (Spec 4.2).
+This module will later have two callers: the HTTP endpoint for the virtual
+outputs (task 6) and the WebUI (phase 5). If the logic lived in either one
+of the two, the conversion would exist twice - with guaranteed drift in
+behaviour (spec 4.2).
 
-Was nicht in `_PAYLOAD_BUILDERS` steht, wirft. Ein Kommando mit erfundener
-Nutzlast an ein echtes Geraet zu schicken ist schlechter als ein klarer
-Fehler. Das gilt nicht nur fuer einen voellig unbekannten Cluster, sondern
-auch fuer ein bekanntes Cluster mit einer unbekannten Kommando-ID darin: der
-Dispatch schluesselt auf das Paar (Cluster-ID, Kommando-ID), nie auf die
-Cluster-ID allein - siehe `test_known_cluster_with_unknown_command_raises`
-(Cluster 768/ColorControl, Kommando 6),
-`test_onoff_cluster_with_unknown_command_raises` (Cluster 6) und
-`test_level_cluster_with_unknown_command_raises` (Cluster 8) in
-`tests/commands/test_translate.py`. Cluster 768 Kommando 6 (Hue/Saturation)
-wird bewusst nicht bedient, weil die Loxone-seitige RGB-Zahl nicht
-verlaesslich dokumentiert ist (siehe `color.py`); Cluster 6 und 8 kennen
-jenseits von Off/On/Toggle bzw. MoveToLevel(WithOnOff) hier schlicht keine
-weiteren Kommandos - das ist besonders beim Rohexport (`raw`) relevant, der
-auch Kommandos ohne Eintrag in `clusters.yaml` durchlaesst, etwa
-LevelControl Move/Step/Stop. Faelschlich ein Kommando zu bauen, nur weil der
-Cluster bekannt ist, waere genau der Fehler, den diese Funktion vermeiden
-soll.
+Whatever is not in `_PAYLOAD_BUILDERS` raises. Sending a command with a
+made-up payload to a real device is worse than a clear error. That holds
+not only for a completely unknown cluster, but also for a known cluster
+with an unknown command ID in it: the dispatch keys on the pair
+(cluster ID, command ID), never on the cluster ID alone - see
+`test_known_cluster_with_unknown_command_raises`
+(cluster 768/ColorControl, command 6),
+`test_onoff_cluster_with_unknown_command_raises` (cluster 6) and
+`test_level_cluster_with_unknown_command_raises` (cluster 8) in
+`tests/commands/test_translate.py`. Cluster 768 command 6 (hue/saturation)
+is deliberately not served because the Loxone-side RGB number is not
+reliably documented (see `color.py`); clusters 6 and 8 simply have no
+further commands here beyond Off/On/Toggle and MoveToLevel(WithOnOff)
+respectively - which matters particularly for the raw export (`raw`),
+which also passes through commands with no entry in `clusters.yaml`, such
+as LevelControl Move/Step/Stop. Wrongly building a command just because
+the cluster is known would be exactly the mistake this function is meant
+to avoid.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ _COMMAND_COLOR_TEMPERATURE = 10
 
 
 class UnsupportedValueError(ValueError):
-    """Der Wert passt nicht zu diesem Kommando."""
+    """The value does not fit this command."""
 
 
 @dataclass(frozen=True)
@@ -84,11 +84,11 @@ def _as_number(value: str) -> float:
     except ValueError as exc:
         raise UnsupportedValueError(i18n.t("api.errors.value_not_a_number", value=value)) from exc
     if not math.isfinite(result):
-        # float() liest "nan"/"inf"/"-inf" anstandslos ein. Liesse man das
-        # durch, wuerde spaeter `round()` mit einem englischen `ValueError`
-        # abstuerzen (nan) oder `kelvin_to_mireds` seine <=0-Pruefung
-        # unbemerkt umgehen (nan ist nie <= 0) - beides ist hier keine Zahl,
-        # die ein Kommando tragen kann.
+        # float() happily parses "nan"/"inf"/"-inf". Letting that through
+        # would later either crash `round()` with a `ValueError` (nan) or
+        # silently bypass `kelvin_to_mireds`'s <=0 check (nan is never
+        # <= 0) - either way, this is not a number that can carry a
+        # command.
         raise UnsupportedValueError(i18n.t("api.errors.value_not_a_number", value=value))
     return result
 
@@ -110,11 +110,10 @@ def _payload_color_temperature(value: str) -> dict[str, object]:
     return {"colorTemperatureMireds": kelvin_to_mireds(_as_number(value))}
 
 
-# Einziger Ort, an dem festgelegt ist, welche (Cluster-ID, Kommando-ID)-Paare
-# bedient werden. Der Dispatch in `to_matter_call` liest diese Zuordnung nur
-# noch aus - ein weiteres Kommando zu unterstuetzen ist eine Datenaenderung
-# hier, keine neue Verzweigung dort, und die Menge der bedienten Paare ist auf
-# einen Blick vollstaendig.
+# The single place that defines which (cluster ID, command ID) pairs are
+# served. The dispatch in `to_matter_call` only ever reads this mapping -
+# supporting another command is a data change here, not a new branch
+# there, and the set of served pairs is complete at a glance.
 _PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
     (_CLUSTER_ONOFF, _COMMAND_OFF): _payload_none,
     (_CLUSTER_ONOFF, _COMMAND_ON): _payload_none,
@@ -126,7 +125,7 @@ _PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
 
 
 def to_matter_call(command: StoredCommand, value: str) -> MatterCall:
-    """Baut den Matter-Aufruf zu einem exportierten Kommando-Schluessel."""
+    """Builds the Matter call for an exported command key."""
 
     build_payload = _PAYLOAD_BUILDERS.get((command.cluster_id, command.command_id))
     if build_payload is None:

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,21 +14,21 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Liest eine Loxone-Projektdatei als Baum aus `<C>`-Elementen, mit exakten
-Byte-Spans statt eines XML-Baums.
+"""Reads a Loxone project file as a tree of `<C>` elements, with exact byte
+spans instead of an XML tree.
 
-Bewusst kein `xml.etree.ElementTree` fuer irgendetwas, das spaeter
-geschrieben wird (siehe Entwurf `docs/superpowers/specs/
-2026-09-03-projektdatei-sync-design.md`, Abschnitt 3.2): ein XML-Serialisierer
-duerfte Attribute umsortieren oder anders schreiben, ohne dass sich das hier
-nachpruefen liesse, und ein 3-MB-Projekt enthaelt weit mehr Bausteintypen als
-dieses Projekt kennt. `Element.open_start`/`open_end`/`inner_end`/`outer_end`
-sind deshalb der eigentliche Zweck dieses Moduls: exakte Positionen, an denen
-`projectsync.patch` spaeter chirurgisch schreibt.
+Deliberately no `xml.etree.ElementTree` for anything that gets written
+back later (see design `docs/superpowers/specs/
+2026-09-03-project-file-sync-design.md`, section 3.2): an XML serialiser
+might reorder attributes or write them differently, with no way to check
+that here, and a 3 MB project contains far more block types than this
+project knows about. `Element.open_start`/`open_end`/`inner_end`/
+`outer_end` are therefore this module's actual purpose: exact positions
+where `projectsync.patch` later writes surgically.
 
-Nur `<C ...>`-Elemente werden hier verstanden. Alles andere (`Co`, `In`,
-`IoData`, `Display`, ...) bleibt fuer dieses Modul unsichtbarer Text
-innerhalb des Inhalts eines `<C>`-Elements."""
+Only `<C ...>` elements are understood here. Everything else (`Co`, `In`,
+`IoData`, `Display`, ...) remains invisible text to this module, inside
+the content of a `<C>` element."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ _CONTROL_LIST_OPEN = re.compile(r"<ControlList\b[^>]*>")
 
 
 class ProjectFormatError(ValueError):
-    """Die hochgeladene Datei ist keine (verstandene) Loxone-Projektdatei."""
+    """The uploaded file is not a (recognised) Loxone project file."""
 
 
 @dataclass
@@ -50,7 +50,7 @@ class Element:
     open_start: int
     open_end: int
     self_closing: bool
-    # inner_end/children sind None/leer bei einem selbstschliessenden Element.
+    # inner_end/children are None/empty for a self-closing element.
     inner_end: int | None
     outer_end: int
     children: list[Element] = field(default_factory=list)
@@ -61,8 +61,8 @@ class Element:
 
 
 def parse_attrs(tag_text: str) -> dict[str, str]:
-    """Liest alle `name="wert"`-Paare aus einem einzelnen Start-Tag-Text und
-    entschaerft die fuenf XML-Standard-Escapes."""
+    """Reads all `name="value"` pairs from a single start-tag text and
+    resolves the five standard XML escapes."""
     attrs: dict[str, str] = {}
     for match in _ATTR.finditer(tag_text):
         name, raw = match.group(1), match.group(2)
@@ -78,17 +78,17 @@ def parse_attrs(tag_text: str) -> dict[str, str]:
 
 
 def _find_tag_close(text: str, start: int) -> int:
-    """Findet das '>', das ein Start-Tag wirklich beendet - nicht das erste
-    '>' im Text danach. XML verlangt kein Escaping von '>' in Attributwerten
-    (anders als '<', '&' und das Anfuehrungszeichen selbst), ein Wert wie
-    `Title="Temp > 20"` ist gueltiges, unescaped XML. Ein '"' schaltet die
-    Erkennung um - ein woertliches Anfuehrungszeichen INNERHALB eines Werts
-    waere selbst escaped (`&quot;`), zaehlt hier also nicht als Umschalter.
+    """Finds the '>' that really ends a start tag - not the first '>' in the
+    text after it. XML does not require escaping '>' in attribute values
+    (unlike '<', '&' and the quote character itself); a value such as
+    `Title="Temp > 20"` is valid, unescaped XML. A '"' toggles the
+    detection - a literal quote INSIDE a value would itself be escaped
+    (`&quot;`), so it does not count as a toggle here.
 
-    Laeuft die Suche ueber das Textende hinaus (abgeschnittene Datei, nie
-    geschlossenes Anfuehrungszeichen), ist das ein Formatfehler der
-    hochgeladenen Datei - kein nackter `IndexError`, der als HTTP 500 beim
-    Anwender ankaeme (Entwurf Abschnitt 8)."""
+    If the search runs past the end of the text (a truncated file, a
+    quote that never closes), that is a format error in the uploaded
+    file - not a bare `IndexError` that would reach the user as an HTTP
+    500 (design section 8)."""
     in_quotes = False
     pos = start
     while pos < len(text):
@@ -104,11 +104,11 @@ def _find_tag_close(text: str, start: int) -> int:
 
 
 def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:
-    """Ausgehend vom `<` eines `<C>`-Elements: liefert `(inner_end, outer_end,
-    self_closing)`. Laeuft token-weise vorwaerts (naechstes `<C...>` oder
-    naechstes `</C>`, je nachdem was zuerst kommt) und haelt dabei die
-    Verschachtelungstiefe nach, um das WIRKLICH passende `</C>` zu finden,
-    nicht nur das naechste im Dokument."""
+    """Starting from the `<` of a `<C>` element: returns `(inner_end,
+    outer_end, self_closing)`. Advances token by token (next `<C...>` or
+    next `</C>`, whichever comes first) while tracking nesting depth, to
+    find the `</C>` that REALLY matches, not just the next one in the
+    document."""
     tag_close = _find_tag_close(text, open_start)
     self_closing = text[tag_close - 1] == "/"
     open_end = tag_close + 1
@@ -136,8 +136,8 @@ def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:
 
 
 def scan_children(text: str, start: int, end: int) -> list[Element]:
-    """Alle direkten `<C>`-Kinder im Bereich `[start, end)`, rekursiv mit
-    ihren eigenen `<C>`-Kindern gefuellt."""
+    """All direct `<C>` children in the range `[start, end)`, filled
+    recursively with their own `<C>` children."""
     children: list[Element] = []
     pos = start
     while True:
@@ -167,11 +167,11 @@ def scan_children(text: str, start: int, end: int) -> list[Element]:
 
 
 def parse_root(text: str) -> tuple[dict[str, str], int, int, int]:
-    """Findet das `<ControlList ...>`-Wurzelelement.
+    """Finds the `<ControlList ...>` root element.
 
-    Liefert `(attrs, open_start, open_end, close_start)` — `close_start` ist
-    die Position von `</ControlList>`, also das Ende des Inhaltsbereichs, in
-    dem `scan_children` die Top-Level-`<C>`-Elemente sucht."""
+    Returns `(attrs, open_start, open_end, close_start)` — `close_start` is
+    the position of `</ControlList>`, i.e. the end of the content range in
+    which `scan_children` looks for the top-level `<C>` elements."""
     match = _CONTROL_LIST_OPEN.search(text)
     if match is None:
         raise ProjectFormatError(

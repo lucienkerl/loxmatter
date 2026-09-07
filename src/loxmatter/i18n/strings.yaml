@@ -1,14 +1,14 @@
-# loxmatter - Uebersetzungstabelle.
+# loxmatter - translation table.
 #
-# Flache, punktierte Schluessel statt verschachtelter YAML-Struktur: neue
-# Namensraeume (api.*, web.* in spaeteren Phasen) kommen dazu, ohne
-# bestehende Eintraege umzubauen. Jeder Eintrag traegt mindestens "en" -
-# t() faellt bei fehlendem "de" automatisch auf "en" zurueck (siehe
-# i18n/__init__.py), nie umgekehrt.
+# Flat, dotted keys instead of a nested YAML structure: new namespaces
+# (api.*, web.* in later phases) get added without restructuring existing
+# entries. Every entry carries at least "en" - t() automatically falls
+# back to "en" when "de" is missing (see i18n/__init__.py), never the
+# other way round.
 #
-# test.* gehoert zu tests/test_i18n.py - dort absichtlich mit einem
-# Eintrag OHNE "de", um den Ruecksicherungsfall an echten Daten zu
-# belegen, statt eine zweite, nur fuer Tests geladene Datei zu pflegen.
+# test.* belongs to tests/test_i18n.py - deliberately with one entry
+# WITHOUT "de" there, to demonstrate the fallback case with real data
+# instead of maintaining a second file loaded only for tests.
 
 test.greeting:
   en: "Hello, {name}!"
@@ -16,26 +16,24 @@ test.greeting:
 test.english_only:
   en: "English only"
 
-# web.test.smoke: eine bewusst test-only benannte Schablone (analog zu
-# test.* oben), damit die WebUI-Uebersetzungsleitung (Aufgabe 8) sich
-# selbst gegen GET /api/i18n pruefen kann, ohne von der noch nicht
-# geschriebenen echten web.*-Tabelle (Aufgabe 9, ~150 Schluessel)
-# abzuhaengen.
+# web.test.smoke: a template deliberately named test-only (analogous to
+# test.* above), so the WebUI translation pipeline (task 8) can check
+# itself against GET /api/i18n without depending on the real web.* table
+# (task 9, ~150 keys) that has not been written yet.
 #
-# BEWUSST OHNE {platzhalter} (Abweichung vom urspruenglichen Entwurf des
-# Implementierungsplans, der hier "{value}" vorsah - siehe Aufgabe-8-
-# Bericht): `api/language.py:_web_strings()` ruft fuer jeden web.*-
-# Schluessel `i18n.t(key)` OHNE Werte auf. `i18n.t()` interpoliert serverseitig
-# via `str.format(**values)` - ein Schluessel mit einem Platzhalter wirft dort
-# `KeyError`, und das reisst die GESAMTE `GET /api/i18n`-Antwort mit sich
-# (ein einzelner dict-comprehension-Aufruf), nicht nur den einen Schluessel.
-# Mit "{value}" bricht das bereits VIER laengst zusammengefuehrte Tests in
-# tests/api/test_language.py (test_get_i18n_works_without_a_session u. a.) -
-# kein hypothetisches Zukunftsproblem, sondern eine sofortige Regression.
-# Der eigentliche Fehler liegt in api/language.py/i18n/__init__.py (beide
-# ausserhalb des Dateikreises dieser Aufgabe) und muss vor oder waehrend
-# Aufgabe 9 behoben werden, sobald dort echte web.*-Schluessel mit
-# Platzhaltern dazukommen - siehe Aufgabe-8-Bericht.
+# DELIBERATELY WITHOUT {placeholder} (a deviation from the implementation
+# plan's original design, which had "{value}" here - see the task 8
+# report): `api/language.py:_web_strings()` calls `i18n.t(key)` for every
+# web.* key WITHOUT values. `i18n.t()` interpolates server-side via
+# `str.format(**values)` - a key with a placeholder throws `KeyError`
+# there, and that takes down the ENTIRE `GET /api/i18n` response (a single
+# dict-comprehension call), not just the one key. With "{value}" this
+# already breaks FOUR long-merged tests in tests/api/test_language.py
+# (test_get_i18n_works_without_a_session, among others) - not a
+# hypothetical future problem but an immediate regression. The actual bug
+# lives in api/language.py/i18n/__init__.py (both outside this task's file
+# scope) and must be fixed before or during task 9, once real web.* keys
+# with placeholders are added there - see the task 8 report.
 web.test.smoke:
   en: "smoke test"
   de: "Rauchtest"
@@ -242,10 +240,10 @@ cli.fake_miniserver.report_silent_header:
   en: "{count} signals from {template} never seen:"
   de: "{count} Signale aus {template} nie gesehen:"
 
-# api.language - Phase B+C, Spec-Abschnitt 5 (src/loxmatter/api/language.py).
-# Erster Eintrag eines neuen api.*-Namensraums, den diese und spaetere
-# Aufgaben dieser Phase weiter fuellen (bestehende API-Fehlermeldungen sind
-# noch nicht migriert - das folgt in den naechsten Aufgaben).
+# api.language - phase B+C, spec section 5 (src/loxmatter/api/language.py).
+# First entry of a new api.* namespace, which this and later tasks of this
+# phase continue to fill (existing API error messages are not migrated
+# yet - that follows in the next tasks).
 api.language.fail_unsupported:
   en: "Unsupported language '{language}' — expected: {supported}."
   de: "Nicht unterstützte Sprache '{language}' — erwartet: {supported}."
@@ -255,9 +253,10 @@ api.errors.unknown_device:
   en: "unknown device {device_id}"
   de: "unbekanntes Geraet {device_id}"
 api.errors.unknown_command:
-  # Platzhalter heisst bewusst nicht "key" - i18n.t()s eigener erster
-  # Parameter heisst so, "key=..." als Keyword-Argument wuerde mit einem
-  # "TypeError: got multiple values for argument 'key'" kollidieren.
+  # The placeholder is deliberately not called "key" - i18n.t()'s own
+  # first parameter is named that, and "key=..." as a keyword argument
+  # would collide with a "TypeError: got multiple values for argument
+  # 'key'".
   en: "unknown command key {command_key!r}"
   de: "unbekannter Kommando-Schluessel {command_key!r}"
 api.errors.value_not_a_number:
@@ -303,17 +302,16 @@ api.errors.signal_belongs_to_removed_device:
   en: "signal {signal_key!r} belongs to device {device_id}, which was removed"
   de: "Signal {signal_key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
 
-# Die fuenf Meldungen von `ThreadDatasetUnavailableError` (matter/otbr.py).
-# KEINE davon darf den Datensatz selbst enthalten - er traegt den
-# Netzwerkschluessel des Thread-Netzes und gehoert weder in eine Antwort
-# noch in ein Log (siehe deploy/testhost/README.md). Genannt werden
-# ausschliesslich Herkunft ({url}), HTTP-Status und Laenge; das gilt fuer
-# BEIDE Sprachen und ist beim Uebersetzen der Grund, warum hier nirgends
-# ein {dataset} auftaucht.
+# The five messages of `ThreadDatasetUnavailableError` (matter/otbr.py).
+# NONE of them may contain the dataset itself - it carries the network key
+# of the Thread network and belongs neither in a response nor in a log
+# (see deploy/testhost/README.md). Only the origin ({url}), HTTP status
+# and length are named; that holds for BOTH languages and is, when
+# translating, the reason no {dataset} shows up anywhere here.
 #
-# {url} ist nicht zwingend eine Adresse: `validated_dataset` prueft auch
-# den von Hand eingetragenen Datensatz und benennt dessen Herkunft dann
-# ueber `api.devices.manual_dataset_origin`.
+# {url} is not necessarily an address: `validated_dataset` also checks the
+# manually entered dataset and then names its origin via
+# `api.devices.manual_dataset_origin`.
 api.errors.thread_dataset_empty:
   en: "{url} returned an empty Thread dataset — has the Border Router formed a network at all? (`ot-ctl state` should say `leader` or `router`.)"
   de: "{url} hat einen leeren Thread-Datensatz geliefert – hat der Border Router überhaupt ein Netz gebildet? (`ot-ctl state` sollte `leader` oder `router` sagen.)"
@@ -339,21 +337,21 @@ api.devices.fail_no_matter_client:
   en: "No matter-server client configured — the bridge is running without a Matter connection"
   de: "Matter-Client nicht verfuegbar - die Bruecke laeuft ohne Verbindung zu matter-server"
 api.devices.manual_dataset_origin:
-  # Steht als {url} in den Meldungen von `otbr.validated_dataset`, wenn der
-  # Datensatz nicht vom Border Router kam, sondern aus dem Formular. Landet
-  # ausschliesslich im Log - die Antwort an den Browser formuliert
-  # `api.devices.fail_manual_thread_dataset` unten selbst.
+  # Appears as {url} in `otbr.validated_dataset`'s messages when the
+  # dataset did not come from the Border Router but from the form. Ends up
+  # exclusively in the log - the response to the browser is phrased by
+  # `api.devices.fail_manual_thread_dataset` below on its own.
   en: "The input field"
   de: "Das Eingabefeld"
 api.devices.fail_manual_thread_dataset:
-  # Nennt den abgelehnten Wert bewusst NICHT: er enthaelt den
-  # Netzwerkschluessel des Thread-Netzes. Gilt fuer beide Sprachen.
+  # Deliberately does NOT name the rejected value: it contains the network
+  # key of the Thread network. Applies to both languages.
   en: "What was entered is not a Thread dataset. Expected is the hex TLV of the active dataset — a single line of 0-9 and a-f with an even number of characters, exactly as `ot-ctl dataset active -x` prints it; if a character is missing at the end, the line was clipped while copying. A JSON structure, quotation marks, or prose do not belong in here. The value itself is deliberately left out of this message: it contains the network key of the Thread network."
   de: "Der eingetragene Thread-Datensatz ist keiner. Erwartet wird das Hex-TLV des aktiven Datensatzes – eine einzige Zeile aus 0-9 und a-f in gerader Anzahl, so wie `ot-ctl dataset active -x` sie ausgibt; fehlt am Ende ein Zeichen, ist die Zeile beim Kopieren abgeschnitten worden. Eine JSON-Struktur, Anführungszeichen oder Text darin gehören nicht hinein. Der Wert selbst steht bewusst nicht in dieser Meldung: er enthält den Netzwerkschlüssel des Thread-Netzes."
 api.devices.commissioning_thread_cause:
-  # {detail} ist die Meldung von matter-server selbst, {reason} der Grund,
-  # aus dem der Datensatz nicht zu holen war (eine der
-  # api.errors.thread_dataset_*-Zeilen oben).
+  # {detail} is matter-server's own message, {reason} the reason the
+  # dataset could not be obtained (one of the api.errors.thread_dataset_*
+  # lines above).
   en: "{detail} Likely cause: matter-server holds no Thread credentials, and this bridge could not obtain any either ({reason}). A Thread device cannot be commissioned without them — a Wi-Fi device can, in which case the cause lies elsewhere. Remedy: make the Border Router reachable, or enter the Thread dataset by hand in the field below."
   de: "{detail} Mögliche Ursache: matter-server hat keine Thread-Zugangsdaten, und diese Brücke konnte auch keine holen ({reason}). Ein Thread-Gerät lässt sich ohne sie nicht einlernen – ein WiFi-Gerät dagegen schon, dann liegt es woanders. Abhilfe: den Border Router erreichbar machen, oder den Thread-Datensatz von Hand in das Feld darunter eintragen."
 api.devices.room_name_required:
@@ -378,8 +376,8 @@ api.auth.fail_wrong_password:
   en: "Wrong password."
   de: "Falsches Passwort."
 
-# api.diagnostics — Systemcheck-Zeilen (api/diagnostics.py) und die beiden
-# 503-Fehler der Fabric-Sicherung (Task 5, Phase i18n).
+# api.diagnostics — system-check lines (api/diagnostics.py) and the two
+# 503 errors of the fabric backup (task 5, phase i18n).
 api.diagnostics.check_failed:
   en: "This check itself failed ({exc}) — that is a bug in the check, not necessarily in the checked system. The full traceback is in the server log."
   de: "Diese Pruefung selbst ist fehlgeschlagen ({exc}) - das ist ein Fehler in der Pruefung, nicht zwangslaeufig im gepruerften System. Der volle Traceback steht im Server-Log."
@@ -392,10 +390,10 @@ api.diagnostics.matter_server_not_connected:
 api.diagnostics.connected:
   en: "Connected."
   de: "Verbunden."
-# Der Punkt `thread-credentials` - eine Zustandszeile, kein Alarm (die
-# Begruendung steht bei `_check_thread_credentials` in api/diagnostics.py).
-# Der Verweis auf den Nachbarpunkt nennt dessen feste Kennung `thread`, die
-# in beiden Sprachen gleich bleibt.
+# The `thread-credentials` item - a status line, not an alarm (the
+# rationale is at `_check_thread_credentials` in api/diagnostics.py). The
+# reference to the neighbouring item names its fixed identifier `thread`,
+# which stays the same in both languages.
 api.diagnostics.thread_credentials_not_determinable:
   en: "Not determinable without a connection to matter-server — see the matter-server check."
   de: "Nicht feststellbar ohne Verbindung zu matter-server – siehe den Punkt matter-server."
@@ -525,7 +523,7 @@ api.server.fail_resync:
   en: "Full resend failed: {exc}"
   de: "Full-Resend fehlgeschlagen: {exc}"
 
-# --- web.nav — Reiterleiste ---
+# --- web.nav — tab bar ---
 web.nav.devices:
   en: "Devices"
   de: "Geräte"
@@ -539,7 +537,7 @@ web.nav.settings:
   en: "Settings"
   de: "Einstellungen"
 
-# --- web.header / web.connection — Kopfzeile, Verbindungsstatus ---
+# --- web.header / web.connection — header, connection status ---
 web.header.logout:
   en: "Log out"
   de: "Abmelden"
@@ -580,7 +578,7 @@ web.header.unchanged_since_load:
   en: "Unchanged since the page loaded"
   de: "Seit dem Laden der Seite unveraendert"
 
-# --- web.auth — Ersteinrichtung, Anmeldung ---
+# --- web.auth — initial setup, login ---
 web.auth.setup_heading:
   en: "Set up loxmatter"
   de: "loxmatter einrichten"
@@ -611,7 +609,7 @@ web.auth.password_mismatch:
   en: "The two entries do not match."
   de: "Die beiden Eingaben stimmen nicht überein."
 
-# --- web.devices — Geraeteliste, Einlernen, Bedienung ---
+# --- web.devices — device list, commissioning, operation ---
 web.devices.commission_heading:
   en: "Commission a new device"
   de: "Neues Gerät einlernen"
@@ -619,15 +617,14 @@ web.devices.code_placeholder:
   en: "Pairing code (11 digits or MT:…)"
   de: "Pairing-Code (11-stellig oder MT:…)"
 web.devices.thread_dataset_placeholder:
-  # Der Platzhalter sagt seit dem Umbau der Einlern-Karte nicht mehr, WOFUER
-  # das Feld da ist, sondern WIE der Wert aussieht: wofuer, steht jetzt
-  # dreifach daneben - in der Klappe, die man dafuer oeffnet
-  # (web.devices.thread_summary), in der Beschriftung
-  # (web.devices.thread_dataset_label) und im Hinweis darunter
-  # (web.devices.thread_dataset_hint). Ein Platzhalter, der dasselbe ein
-  # viertes Mal sagt, verschenkt die einzige Stelle, an der ein Beispiel
-  # stehen kann. Beide Sprachen tragen denselben Wert - ein Hex-Datensatz
-  # uebersetzt sich nicht.
+  # Since the commissioning card was reworked, the placeholder no longer
+  # says WHAT FOR the field is there, but WHAT the value looks like: what
+  # it's for now sits alongside it three times over - in the disclosure
+  # opened for it (web.devices.thread_summary), in the label
+  # (web.devices.thread_dataset_label), and in the note underneath
+  # (web.devices.thread_dataset_hint). A placeholder saying the same thing
+  # a fourth time would waste the one place an example can go. Both
+  # languages carry the same value - a hex dataset does not translate.
   en: "0e08000000000100000300…"
   de: "0e08000000000100000300…"
 web.devices.commission_submit:
@@ -642,22 +639,22 @@ web.devices.room_label:
 web.devices.thread_dataset_label:
   en: "Thread dataset"
   de: "Thread-Datensatz"
-# Die beiden Klappen ueber dem Einlern-Formular. Beide sind als Frage bzw.
-# als Fall formuliert, den man bei sich wiedererkennt - nicht als Name des
-# Feldes dahinter: wer hier nachsieht, sucht eine Antwort ("mein Code wird
-# nicht angenommen"), nicht ein Eingabefeld.
+# The two disclosures above the commissioning form. Both are phrased as a
+# question, or as a case one recognises oneself in - not as the name of
+# the field behind them: whoever looks here is searching for an answer
+# ("my code is not accepted"), not an input field.
 web.devices.code_help_summary:
   en: "Code not accepted?"
   de: "Code wird nicht angenommen?"
 web.devices.thread_summary:
   en: "Different Thread network"
   de: "Anderes Thread-Netz"
-# Die zwei Schritte der Ablaufanzeige. Es sind genau zwei, weil die
-# Oberflaeche genau zwei Abschnitte des Einlernens auseinanderhalten kann:
-# den POST auf /api/devices/commission und das anschliessende Laden von
-# Signalen und Befehlen. Ein dritter Punkt ("Geraet gefunden") liesse sich
-# gut anzeigen, waere aber geraten - der Matter-Stack meldet dieser Bruecke
-# keinen Zwischenstand, solange es dafuer keinen eigenen Kanal gibt.
+# The two steps of the progress display. There are exactly two because the
+# interface can distinguish exactly two phases of commissioning: the POST
+# to /api/devices/commission and the subsequent loading of signals and
+# commands. A third item ("device found") could be displayed nicely, but
+# would be a guess - the Matter stack reports no intermediate state to
+# this bridge as long as there is no dedicated channel for it.
 web.devices.commission_step_joining:
   en: "Commissioning the device into the fabric"
   de: "Gerät wird ins Fabric aufgenommen"
@@ -778,12 +775,12 @@ web.devices.commission_code_required:
   en: "Please enter a pairing code first."
   de: "Bitte zuerst einen Pairing-Code eingeben."
 web.devices.commission_success:
-  # Die frueher hier genannte Grenze ("erst nach einem Neustart der
-  # Bruecke", Spec 12.3) gibt es nicht mehr: die Einlern-Route ruft
-  # `follow_node` auf und saet die Werte des neuen Geraets sofort. Uebrig
-  # bleibt der andere, weiterhin richtige Hinweis - im Miniserver kommen
-  # die Werte erst nach Export und Import an, weil es dort bis dahin
-  # keinen virtuellen Eingang gibt.
+  # The limitation formerly named here ("only after a restart of the
+  # bridge", spec 12.3) no longer exists: the commissioning route calls
+  # `follow_node` and seeds the new device's values immediately. What
+  # remains is the other, still-correct note - the values only reach the
+  # Miniserver after export and import, because until then there is no
+  # virtual input for them there.
   en: |
     {label} was commissioned and delivers live values from now on – no restart of the bridge needed. They reach the Miniserver as soon as you have exported the templates and imported them into Loxone Config.
   de: |
@@ -792,11 +789,11 @@ web.devices.commission_failed:
   en: "Commissioning failed: {message}"
   de: "Einlernen fehlgeschlagen: {message}"
 
-# --- Raeume und Suche (Entwurf Geraete-Tab, 2026-09-05) ---
-# Die Kategorienamen unten sind die einzige Stelle, an der eine Kategorie
-# ihren lesbaren Namen bekommt - `profiles/categories.py` kennt nur die
-# Kennung. Die Suche vergleicht gegen genau diese Texte, deshalb findet
-# "Steckdose" auf Deutsch und "socket" auf Englisch dieselben Geraete.
+# --- Rooms and search (devices-tab design, 2026-09-05) ---
+# The category names below are the only place a category gets its
+# readable name - `profiles/categories.py` only knows the identifier. The
+# search compares against exactly these texts, so "Steckdose" in German
+# and "socket" in English find the same devices.
 web.devices.category.light:
   en: "Light"
   de: "Licht"
@@ -857,13 +854,13 @@ web.devices.search_hits_elsewhere:
 web.devices.search_show_all_rooms:
   en: "show all rooms"
   de: "alle Räume anzeigen"
-# Ohne Plural-Sonderfall: "1 found" und "1 Treffer" lesen sich beide
-# richtig, und die Tabelle kennt an keiner Stelle eine Pluralform.
+# Without a plural special case: "1 found" and "1 Treffer" both read
+# correctly, and the table has no plural form anywhere.
 web.devices.search_count:
   en: "{count} found"
   de: "{count} Treffer"
-# Das Loeschkreuz traegt kein Wort, also braucht es eines - der Schluessel
-# beschriftet `title` UND `aria-label`.
+# The clear-cross carries no word, so it needs one - the key labels both
+# `title` AND `aria-label`.
 web.devices.search_clear:
   en: "Clear search"
   de: "Suche leeren"
@@ -876,11 +873,11 @@ web.devices.more_commands_short:
 web.devices.commission_room_hint:
   en: "optional, can be changed later"
   de: "optional, später änderbar"
-# --- Kachel-Menue (Entwurf Kebab-Menue, 2026-09-05) ---
-# `menu` ist der zugaengliche Name des Kebab-Knopfs: er traegt kein Wort,
-# also braucht er einen. `menu_room_heading` beschriftet den Raum-Abschnitt
-# im Menue, damit die Liste der Raumnamen nicht ohne Zusammenhang ueber
-# “Exportieren” und “Entfernen” steht.
+# --- Tile menu (kebab-menu design, 2026-09-05) ---
+# `menu` is the accessible name of the kebab button: it carries no word,
+# so it needs one. `menu_room_heading` labels the room section in the
+# menu, so the list of room names does not sit above "Exportieren" and
+# "Entfernen" without context.
 web.devices.menu:
   en: "Actions"
   de: "Aktionen"
@@ -891,7 +888,7 @@ web.devices.menu_signals:
   en: "Edit signals…"
   de: "Signale bearbeiten…"
 
-# --- web.signals — Signalansicht ---
+# --- web.signals — signal view ---
 web.signals.key_hint:
   en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
   de: "Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
@@ -947,7 +944,7 @@ web.signals.modal_close:
   en: "Close"
   de: "Schließen"
 
-# --- web.export — Export-Tab ---
+# --- web.export — export tab ---
 web.export.heading:
   en: "Export templates"
   de: "Vorlagen exportieren"
@@ -1020,7 +1017,7 @@ web.export.download_failed:
   en: "Download failed: {message}"
   de: "Download fehlgeschlagen: {message}"
 
-# --- web.system — Resync, Systemcheck, Live-Diagnose, Sicherung ---
+# --- web.system — resync, system check, live diagnostics, backup ---
 web.system.resync_heading:
   en: "Resend all values"
   de: "Alle Werte erneut senden"
@@ -1122,7 +1119,7 @@ web.system.backup_error:
   en: "Backup not possible: {message}"
   de: "Sicherung nicht möglich: {message}"
 
-# --- web.settings — Einstellungen-Tab ---
+# --- web.settings — settings tab ---
 web.settings.connection_heading:
   en: "Miniserver connection"
   de: "Verbindung zum Miniserver"
@@ -1197,7 +1194,7 @@ web.settings.resend_save_error:
   en: "Could not save resend interval: {message}"
   de: "Resend-Intervall konnte nicht gespeichert werden: {message}"
 
-# --- web.export.projectsync — Projektdatei-Sync-Karte ---
+# --- web.export.projectsync — project file sync card ---
 web.export.projectsync_heading:
   en: "Project file sync"
   de: "Projektdatei-Sync"
@@ -1324,7 +1321,7 @@ web.export.projectsync_download_button:
   en: "Download patched file"
   de: "Gepatchte Datei herunterladen"
 
-# --- web.format — gemeinsame Formatierungshelfer ---
+# --- web.format — shared formatting helpers ---
 web.format.never:
   en: "never"
   de: "noch nie"
@@ -1335,7 +1332,7 @@ web.format.false:
   en: "false"
   de: "falsch"
 
-# --- web.errors — Netzwerk-/generische Fehler ---
+# --- web.errors — network/generic errors ---
 web.errors.http_status:
   en: "HTTP {status}"
   de: "HTTP {status}"

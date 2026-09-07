@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,25 +14,25 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Baut aus dem Byte-Span-Baum (`projectsync.scan`) einen nach `loxmatter`-
-Schluesseln durchsuchbaren Index: welche virtuellen Eingaenge/Ausgaenge gibt
-es schon, und in welchem Geraete-Container stecken sie (Entwurf Abschnitt
-3.3/5).
+"""Builds, from the byte-span tree (`projectsync.scan`), an index
+searchable by `loxmatter` keys: which virtual inputs/outputs already
+exist, and in which device container they sit (design section 3.3/5).
 
-**Korrektur nach echtem Praxistest (2026-09-04):** die urspruengliche Annahme
-- `VirtualInCaption`/`VirtualOutCaption` liegen direkt unter `<ControlList>` -
-war falsch. An einer echten, seit Jahren gewachsenen Projektdatei geprueft:
-`<ControlList>` hat genau EIN Kind, `<C Type="Document">`, und JEDER darin
-konfigurierte Miniserver bekommt einen eigenen `<C Type="LoxLIVE">`-Block
-(mit dessen eigener `IntAddr`, `Serial` usw.) - `VirtualInCaption`/
-`VirtualOutCaption` sind Kinder DIESES `LoxLIVE`-Blocks, nicht von
-`ControlList` oder `Document`. Eine Datei kann mehrere `LoxLIVE`-Bloecke
-haben (mehrere Miniserver in einem Projekt) - `build_index` muss darum erst
-den richtigen auswaehlen, bevor es ueberhaupt nach virtuellen Ein-/Ausgaengen
-sucht. Der urspruengliche, flache Aufbau parste ohne Fehlermeldung durch,
-fand aber schlicht NICHTS - jedes bestehende Geraet erschien faelschlich als
-`new_device` (siehe `docs/superpowers/specs/2026-09-03-projektdatei-sync-design.md`,
-Abschnitt zur Miniserver-Zuordnung, fuer die vollstaendige Herleitung)."""
+**Correction after a real-world test (2026-09-04):** the original
+assumption - that `VirtualInCaption`/`VirtualOutCaption` sit directly
+under `<ControlList>` - was wrong. Checked against a real project file
+grown over years: `<ControlList>` has exactly ONE child, `<C
+Type="Document">`, and EVERY Miniserver configured within it gets its own
+`<C Type="LoxLIVE">` block (with its own `IntAddr`, `Serial`, etc.) -
+`VirtualInCaption`/`VirtualOutCaption` are children of THIS `LoxLIVE`
+block, not of `ControlList` or `Document`. A file can have several
+`LoxLIVE` blocks (several Miniservers in one project) - `build_index` must
+therefore first select the right one before it even looks for virtual
+inputs/outputs. The original, flat structure parsed through without an
+error message, but simply found NOTHING - every existing device wrongly
+showed up as `new_device` (see `docs/superpowers/specs/
+2026-09-03-project-file-sync-design.md`, the section on Miniserver
+assignment, for the full derivation)."""
 
 from __future__ import annotations
 
@@ -57,31 +57,31 @@ _INAME_ATTR = re.compile(r'\bIName="([^"]*)"')
 
 @dataclass(frozen=True)
 class MiniserverCandidate:
-    """Ein in der Projektdatei gefundener Miniserver (`LoxLIVE`-Block), so
-    wie ihn `AmbiguousMiniserverError.candidates` traegt - genug, um in der
-    WebUI ein Auswahlfeld zu fuellen (Nutzerwunsch: auswaehlen statt die IP
-    von Hand abzutippen), ohne den ganzen `Element`-Baum durchzureichen."""
+    """A Miniserver found in the project file (`LoxLIVE` block), as carried
+    by `AmbiguousMiniserverError.candidates` - enough to populate a
+    selection field in the WebUI (user request: select instead of typing
+    the IP by hand), without passing the whole `Element` tree through."""
 
     title: str
     int_addr: str
 
 
 class AmbiguousMiniserverError(ProjectFormatError):
-    """Die Projektdatei ist gueltig, aber welcher `LoxLIVE`-Block (= welcher
-    konfigurierte Miniserver) gemeint ist, laesst sich nicht eindeutig
-    bestimmen - entweder gibt es gar keinen, oder mehrere und keine (oder
-    eine nicht passende) `miniserver_ip` wurde mitgegeben. Ohne eindeutige
-    Zuordnung koennte der Abgleich sonst im falschen Miniserver-Bereich einer
-    Mehr-Miniserver-Datei landen. Subklasse von `ProjectFormatError`, damit
-    dieselbe Fehlerbehandlung am Upload-Endpunkt greift (klare 400-Antwort
-    statt 500) - die Datei selbst ist dabei nicht fehlerhaft, nur die Anfrage
-    unvollstaendig.
+    """The project file is valid, but which `LoxLIVE` block (= which
+    configured Miniserver) is meant cannot be determined unambiguously -
+    either there is none at all, or there are several and no (or a
+    non-matching) `miniserver_ip` was supplied. Without an unambiguous
+    assignment, the comparison could otherwise land in the wrong
+    Miniserver section of a multi-Miniserver file. A subclass of
+    `ProjectFormatError` so that the same error handling applies at the
+    upload endpoint (a clear 400 response instead of 500) - the file
+    itself is not faulty here, only the request is incomplete.
 
-    `candidates` traegt die tatsaechlich gefundenen Miniserver, wenn es
-    welche gibt (leer nur im "gar keiner konfiguriert"-Fall, wo es nichts
-    zur Auswahl gibt) - `api.project_sync` nutzt das, um statt einer reinen
-    Fehlermeldung ein Auswahlfeld anzubieten (Nutzerwunsch nach dem
-    Review)."""
+    `candidates` carries the Miniservers actually found, if there are any
+    (empty only in the "none configured at all" case, where there is
+    nothing to choose from) - `api.project_sync` uses this to offer a
+    selection field instead of a plain error message (user request after
+    the review)."""
 
     def __init__(self, message: str, candidates: Sequence[MiniserverCandidate] = ()) -> None:
         super().__init__(message)
@@ -94,9 +94,9 @@ class ProjectIndex:
     root_attrs: dict[str, str]
     root_open_end: int
     root_close_start: int
-    # Der ausgewaehlte `LoxLIVE`-Block (= Miniserver), gegen den dieser Lauf
-    # abgleicht - neu angelegte Captions (siehe `patch._new_device_edit`)
-    # haengen an dessen `inner_end`, nicht mehr an `root_close_start`.
+    # The selected `LoxLIVE` block (= Miniserver) this run compares
+    # against - newly created captions (see `patch._new_device_edit`)
+    # attach at its `inner_end`, no longer at `root_close_start`.
     target_loxlive: Element
     virtual_in_caption: Element | None
     virtual_out_caption: Element | None
@@ -109,11 +109,11 @@ class ProjectIndex:
 
 
 def _find_all_loxlive(elements: list[Element]) -> list[Element]:
-    """Findet alle `LoxLIVE`-Bloecke irgendwo im Baum, unabhaengig von der
-    Verschachtelungstiefe - an der Referenzdatei liegen sie unter `Document`,
-    nicht direkt unter `<ControlList>`. Rekursiv statt eine feste Tiefe
-    anzunehmen: diese Tiefe ist selbst kein dokumentiertes, verlaessliches
-    Format-Merkmal."""
+    """Finds all `LoxLIVE` blocks anywhere in the tree, regardless of
+    nesting depth - in the reference file they sit under `Document`, not
+    directly under `<ControlList>`. Recursive rather than assuming a fixed
+    depth: that depth is itself not a documented, reliable format
+    property."""
     found: list[Element] = []
     for element in elements:
         if element.type == "LoxLIVE":
@@ -130,10 +130,10 @@ def _describe(loxlives: list[Element]) -> str:
 
 
 def _candidates(loxlives: list[Element]) -> list[MiniserverCandidate]:
-    """Baut `AmbiguousMiniserverError.candidates` aus den gefundenen
-    `LoxLIVE`-Bloecken - nur die, die auch eine `IntAddr` tragen: ohne sie
-    gibt es nichts, das `miniserver_ip` beim naechsten Versuch entgegennehmen
-    koennte, so ein Block waere in der Auswahl also nur ein toter Eintrag."""
+    """Builds `AmbiguousMiniserverError.candidates` from the found
+    `LoxLIVE` blocks - only the ones that also carry an `IntAddr`: without
+    one, there is nothing that `miniserver_ip` could accept on the next
+    attempt, so such a block would just be a dead entry in the selection."""
     return [
         MiniserverCandidate(title=ll.attrs.get("Title", "?"), int_addr=ll.attrs["IntAddr"])
         for ll in loxlives
@@ -142,19 +142,19 @@ def _candidates(loxlives: list[Element]) -> list[MiniserverCandidate]:
 
 
 def _resolve_target_loxlive(loxlives: list[Element], miniserver_ip: str | None) -> Element:
-    """Waehlt den EINEN `LoxLIVE`-Block, gegen den dieser Lauf abgleicht.
+    """Selects the ONE `LoxLIVE` block this run compares against.
 
-    Genau ein Block in der Datei: der ist es - unabhaengig davon, ob
-    `miniserver_ip` gesetzt ist, WENN sie nicht gesetzt ist. Ist sie
-    gesetzt, muss sie trotzdem passen (siehe unten): eine explizit
-    mitgegebene, nicht passende IP deutet eher auf die falsche Datei hin als
-    auf einen Grund, sie zu ignorieren.
+    Exactly one block in the file: that is the one - regardless of
+    whether `miniserver_ip` is set, PROVIDED it is not set. If it is set,
+    it must still match (see below): an explicitly supplied, non-matching
+    IP points more towards the wrong file than towards a reason to ignore
+    it.
 
-    Mehrere Bloecke: `miniserver_ip` ist Pflicht und muss exakt einem
-    `LoxLIVE.IntAddr` entsprechen (derselben internen Adresse, die auch
-    `loxmatter run --miniserver <IP>` bekommt) - sonst koennte der Abgleich
-    in der falschen Miniserver-Haelfte der Datei landen, und genau das soll
-    dieses Feature nie tun."""
+    Several blocks: `miniserver_ip` is mandatory and must correspond
+    exactly to one `LoxLIVE.IntAddr` (the same internal address that
+    `loxmatter run --miniserver <IP>` also receives) - otherwise the
+    comparison could land in the wrong Miniserver half of the file, and
+    that is exactly what this feature must never do."""
     if not loxlives:
         raise AmbiguousMiniserverError(
             "Diese Projektdatei enthaelt keinen einzigen konfigurierten Miniserver "
@@ -222,9 +222,10 @@ def build_index(text: str, miniserver_ip: str | None = None) -> ProjectIndex:
             for cmd in container.children:
                 if cmd.type != "VirtualOutCmd":
                     continue
-                # Ueber `CmdOn` UND `CmdOff`: der kombinierte Ein/Aus-Ausgang
-                # traegt denselben `CmdOn` wie der einzelne `on`-Befehl und
-                # kollidierte sonst mit ihm - siehe `key_from_output_cmd`.
+                # Via `CmdOn` AND `CmdOff`: the combined on/off output
+                # carries the same `CmdOn` as the individual `on` command
+                # and would otherwise collide with it - see
+                # `key_from_output_cmd`.
                 key = key_from_output_cmd(cmd.attrs)
                 if key is not None:
                     output_cmds[key] = cmd
@@ -242,9 +243,9 @@ def build_index(text: str, miniserver_ip: str | None = None) -> ProjectIndex:
         output_cmds=output_cmds,
         input_containers=input_containers,
         output_containers=output_containers,
-        # Ueber den gesamten Rohtext, nicht nur ueber <C>-Elemente: <Co>-
-        # Verdrahtungsstummel tragen ebenfalls U-IDs, die eine neu erzeugte
-        # ID nicht kollidieren duerfen (Entwurf Abschnitt 6).
+        # Over the entire raw text, not only over <C> elements: <Co>
+        # wiring stubs also carry U-IDs that a newly generated ID must not
+        # collide with (design section 6).
         all_u_values=set(_U_ATTR.findall(text)),
         all_inames=set(_INAME_ATTR.findall(text)),
     )

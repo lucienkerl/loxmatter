@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,10 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Erzeugt neue, eindeutige Objekt-IDs im an der Referenzdatei beobachteten
-Format (Entwurf Abschnitt 6) - der unverifizierte Kern dieses Features: ob
-Loxone Config eine so erzeugte ID beim Oeffnen klaglos akzeptiert, weiss
-niemand vor einem echten Test-Import."""
+"""Generates new, unique object IDs in the format observed in the reference
+file (design section 6) - the unverified core of this feature: whether
+Loxone Config accepts an ID generated this way without complaint when
+opening the file, nobody knows before a real test import."""
 
 from __future__ import annotations
 
@@ -38,16 +38,16 @@ def _is_hex(value: str) -> bool:
 
 
 def _installation_suffix(existing: set[str]) -> str:
-    """Der letzte Bindestrich-Abschnitt einer bestehenden U-ID - wird fuer
-    neue IDs uebernommen, damit sie zur selben Projekt-Familie gehoeren
-    (Entwurf Abschnitt 6), statt einen eigenen Suffix zu erfinden.
+    """The last hyphen-separated segment of an existing U-ID - carried over
+    for new IDs so they belong to the same project family (design
+    section 6), instead of inventing a suffix of its own.
 
-    Findet sich kein `U`-Wert im erwarteten 4-Hex-Gruppen-Schema (Datei ganz
-    ohne `U`-Attribute, oder eine Loxone-Config-Version mit abweichendem
-    ID-Format - Entwurf Abschnitt 10 nennt genau diese Format-Unsicherheit
-    als offenes Risiko), ist das keine interne Fehlfunktion, sondern ein
-    Format, das dieses Modul nicht versteht: `ProjectFormatError`, nicht ein
-    nackter `ValueError`, der am Upload-Endpunkt als HTTP 500 ankaeme."""
+    If no `U` value in the expected 4-hex-group scheme can be found (a
+    file entirely without `U` attributes, or a Loxone Config version with
+    a different ID format - design section 10 names exactly this format
+    uncertainty as an open risk), that is not an internal malfunction but
+    a format this module does not understand: `ProjectFormatError`, not a
+    bare `ValueError` that would reach the upload endpoint as HTTP 500."""
     for value in existing:
         parts = value.split("-")
         if len(parts) == 4 and all(_is_hex(part) for part in parts):
@@ -59,9 +59,9 @@ def _installation_suffix(existing: set[str]) -> str:
 
 
 def new_unique_id(existing: set[str]) -> str:
-    """Neue U-ID, gegen `existing` eindeutig geprueft und dort sofort
-    eingetragen (folgende Aufrufe im selben Lauf kollidieren damit auch
-    untereinander nicht)."""
+    """New U-ID, checked for uniqueness against `existing` and immediately
+    recorded there (so subsequent calls within the same run also do not
+    collide with each other)."""
     suffix = _installation_suffix(existing)
     while True:
         millis = int(time.time() * 1000) & 0xFFFFFFFF
@@ -72,11 +72,11 @@ def new_unique_id(existing: set[str]) -> str:
 
 
 def new_iname(prefix: str, existing: set[str]) -> str:
-    """Naechste freie Nummer der Form ``<prefix><n>``, z. B. ``VCI2``, wenn
-    ``VCI1``/``VCI3``/``VCI4`` schon vergeben sind - zaehlt einfach hoch, bis
-    eine freie Nummer gefunden ist, ohne Luecken zu bevorzugen (reale
-    Projekte haben nicht-fortlaufende Nummern, sobald einmal etwas geloescht
-    wurde, siehe Entwurf Abschnitt 6)."""
+    """Next free number of the form ``<prefix><n>``, e.g. ``VCI2`` if
+    ``VCI1``/``VCI3``/``VCI4`` are already taken - simply counts up until a
+    free number is found, without preferring gaps (real projects have
+    non-contiguous numbers as soon as something has once been deleted, see
+    design section 6)."""
     used = {
         int(name[len(prefix) :])
         for name in existing

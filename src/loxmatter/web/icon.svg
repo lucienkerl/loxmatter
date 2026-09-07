@@ -1,23 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="loxmatter">
   <!--
-    loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
-    Copyright (C) 2026 Lucien Kerl - GNU General Public License v3 oder
-    spaeter, siehe LICENSE.
+    loxmatter - connects Matter devices to a Loxone Miniserver.
+    Copyright (C) 2026 Lucien Kerl - GNU General Public License v3 or
+    later, see LICENSE.
 
-    Das Zeichen: ein Knoten mit sechs Nachbarn - loxmatter als der Punkt, an
-    dem das Thread-Netz zusammenlaeuft. Farben aus style.css, nur umgekehrt
-    aufgetragen: die Akzentfarbe `accent` (#a15a2c) als Flaeche statt als
-    Strich, damit das Icon nicht wie eine weitere Karte der Oberflaeche
-    aussieht.
+    The mark: a node with six neighbours - loxmatter as the point where
+    the Thread mesh converges. Colours from style.css, applied in reverse:
+    the accent colour `accent` (#a15a2c) as a fill instead of a stroke, so
+    the icon does not look like just another card of the interface.
 
-    Keine zwei aufeinanderfolgenden Bindestriche in diesen Kommentaren:
-    XML verbietet sie, und ein SVG, das nicht parst, zeigt der Browser
-    ueberhaupt nicht - stillschweigend, als kaputtes Bild.
+    No two consecutive hyphens in these comments: XML forbids them, and an
+    SVG that fails to parse is not shown by the browser at all - silently,
+    as a broken image.
 
-    Diese Fassung ist die grosse: fuer die README, Repository-Bilder und
-    alles ab etwa 32 px. Darunter greift favicon.svg mit kraeftigeren
-    Strichen - die sechs Aussenpunkte dieser Fassung fliessen bei 16 px
-    ineinander.
+    This version is the large one: for the README, repository images and
+    anything from about 32 px up. Below that, favicon.svg takes over with
+    heavier strokes - this version's six outer points merge into each
+    other at 16 px.
   -->
   <rect width="512" height="512" rx="112" fill="#a15a2c"/>
   <g stroke="#f6ece3" stroke-width="22" stroke-linecap="round">
