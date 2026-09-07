@@ -767,3 +767,58 @@ def test_backfill_does_not_touch_updated_at(tmp_path):
         assert store.device(device_id).updated_at == before
     finally:
         store.close()
+
+
+def test_the_button_leads_with_a_switch_signal_not_the_battery(tmp_path):
+    """Der Befund, wegen dessen dieser Entwurf entstand: PowerSource sitzt
+    auf Endpunkt 0, das Nutz-Cluster auf Endpunkt 1 - nach Endpunktnummer
+    sortiert gewinnt damit bei JEDEM batteriebetriebenen Geraet die
+    Batterie."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    functional = [s for s in store.signals(device_id) if s.functional]
+
+    assert functional[0].ref.cluster_id == 59
+    assert functional[-1].ref.cluster_id == 47
+
+
+def test_the_plug_still_leads_with_onoff(tmp_path):
+    """Die beiden heute richtigen Geraete duerfen sich nicht verstellen."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    functional = [s for s in store.signals(device_id) if s.functional]
+
+    assert functional[0].ref.cluster_id == 6
+    assert functional[0].title == "onoff"
+
+
+def test_signals_of_the_same_cluster_keep_the_previous_order(tmp_path):
+    """Die Rangliste ordnet nur die CLUSTER zueinander. Innerhalb eines
+    Clusters bleibt Endpunkt/Element - dort ist die alte Ordnung richtig."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    switch = [s for s in store.signals(device_id) if s.ref.cluster_id == 59]
+    keys = [(s.ref.endpoint, s.ref.element_id, s.ref.kind.value) for s in switch]
+
+    assert keys == sorted(keys)
+
+
+def test_the_order_is_total_and_stable(tmp_path):
+    """Zwei Aufrufe muessen dieselbe Reihenfolge liefern - der Export
+    schreibt sie in eine Datei, ein Flattern waere dort ein Diff ohne
+    Aenderung."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    assert [s.key for s in store.signals(device_id)] == [s.key for s in store.signals(device_id)]
