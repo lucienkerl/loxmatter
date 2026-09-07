@@ -2626,7 +2626,7 @@ async def test_the_page_offers_the_room_bar(api):
     page = (await client.get("/")).text
     assert "roomChips()" in page
     assert "deviceGroups()" in page
-    assert "leadSignalFor(" in page
+    assert "firstSignalsFor(" in page
     assert "deviceSearch" in page
 
 
@@ -3035,24 +3035,6 @@ async def test_the_changed_pill_now_lives_in_the_tile_footer(api):
     pill_tag = markup[pill_open : markup.index(">", pill_open)]
     assert "changedSinceExport(device.id)" in pill_tag
     assert "isOnline" not in pill_tag
-
-
-async def test_the_lead_label_only_yields_to_the_offline_pill_now(api):
-    """Folgeaenderung desselben Umbaus: die Bedingung
-    `x-show="isOnline(device) && !changedSinceExport(device.id) &&
-    leadSignalFor(device.id)"` galt nur, solange die Geaendert-Pille noch
-    in der Kopfzeile stand und sich mit dem Leitwert-Label dieselbe Zeile
-    teilte. Mit der Pille in der Fusszeile (s.
-    `test_the_changed_pill_now_lives_in_the_tile_footer`) hat ein
-    geaendertes, aber online Geraet die Zeile fuer sich - das Label muss
-    wieder erscheinen. Nur die Offline-Pille beansprucht die Zeile noch."""
-    client, _, _ = api
-    markup = _without_comments((await client.get("/")).text)
-    assert "!changedSinceExport(device.id)" not in markup
-    assert (
-        'x-show="isOnline(device) && leadSignalFor(device.id)"\n'
-        '                        x-text="leadSignalFor(device.id)?.title"' in markup
-    )
 
 
 async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
@@ -4131,3 +4113,59 @@ async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
     assert '<span class="room-spacer"></span>' in bar
     css = (await client.get("/static/style.css")).text
     assert "flex: 1 1 auto" in css.split(".room-spacer {", 1)[1].split("}", 1)[0]
+
+
+async def test_the_value_grid_now_carries_every_functional_signal(api):
+    """Entwurf 2026-09-07, Abschnitt 2: der herausgehobene Leitwert
+    entfaellt, alle funktionalen Signale stehen gleichrangig im
+    Werteraster. `restSignalsFor` lieferte die Kurzliste OHNE ihren ersten
+    Eintrag - genau der stand oben in der Kopfzeile. Mit dem Wegfall der
+    Kopfzeilen-Anzeige muss das Raster wieder ueber die volle Liste
+    laufen, sonst verschwaende das erste Signal ersatzlos."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert 'x-for="signal in firstSignalsFor(device.id)"' in markup
+    assert "restSignalsFor(" not in markup
+
+
+async def test_the_tile_header_no_longer_carries_a_lead_value(api):
+    """Weder die Klassen noch der Aufruf duerfen ausgeliefert werden. Der
+    Test laeuft ueber `_without_comments`, weil die Begruendung im Markup
+    den Leitwert weiterhin beim Namen nennt - und zwar gerade, um zu
+    erklaeren, warum er dort nicht mehr steht."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "lead-value" not in markup
+    assert "lead-label" not in markup
+    assert "leadSignalFor(" not in markup
+
+
+async def test_the_offline_pill_sits_in_the_header_not_under_the_name(api):
+    """Die Pille rueckt auf den Platz des Leitwerts: drittes Kind von
+    `.device-head`, nicht mehr Kind von `.device-ident` unter dem Namen
+    (Entwurf, Abschnitt 5). `margin-left: auto` an `.status-pill` schiebt
+    sie dort ohne eigene Regel nach rechts.
+
+    Belegt wird die Verschachtelung ueber die Reihenfolge im
+    ausgelieferten Markup: zwischen dem Namensfeld und der Pille MUSS ein
+    schliessendes `</span>` liegen - das von `.device-ident`. Steht die
+    Pille noch drin, fehlt es."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    name_end = markup.index('@change="saveLabel(device)"')
+    pill = markup.index('<span class="status-pill off"', name_end)
+    assert "</span>" in markup[name_end:pill], (
+        "die Offline-Pille steht noch innerhalb von `.device-ident`"
+    )
+
+
+async def test_the_missing_signals_hint_no_longer_asks_for_a_lead(api):
+    """Der Hinweis unterscheidet "geladen, aber leer" von "laedt noch"
+    (Spec 8.1). Sein Aufhaenger war `!leadSignalFor(device.id)`; ohne
+    Leitwert fragt er die Liste direkt."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert (
+        'x-show="signalsByDevice[device.id] '
+        '&& functionalSignalsFor(device.id).length === 0"'
+    ) in markup
