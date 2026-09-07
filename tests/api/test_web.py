@@ -702,40 +702,39 @@ def _app_state(setup: str = "") -> dict:
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
-def test_a_device_without_a_lead_signal_does_not_throw_in_any_binding():
-    """Zwischen `GET /api/devices` und `GET /api/devices/<id>/signals` liegt
-    ein Rendering-Durchlauf, in dem `signalsByDevice` fuer das Geraet noch
-    LEER ist - `leadSignalFor` liefert dann `null`. Das ist kein Sonderfall
-    kaputter Daten: es trifft JEDES Geraet einmal, weil die Signale in einer
-    zweiten Anfrage nachkommen (2026-09-06).
+def test_the_signal_helpers_tolerate_null_without_throwing():
+    """Frueher `test_a_device_without_a_lead_signal_does_not_throw_in_any_binding`.
 
-    `x-show` auf der Huelle half nicht: es setzt nur `display`, es haelt
-    Alpine NICHT davon ab, die Ausdruecke der Kinder auszuwerten. Die drei
-    Helfer lasen also `signal.key` auf `null` und warfen - dreimal pro
-    Geraet, bei jedem Durchlauf.
+    Der Aufhaenger war der Leitwert: zwischen `GET /api/devices` und
+    `GET /api/devices/<id>/signals` liegt ein Rendering-Durchlauf, in dem
+    `signalsByDevice` fuer das Geraet noch LEER ist - `leadSignalFor`
+    lieferte dann `null`. Das `x-show` auf der Huelle half nicht: es setzt
+    nur `display`, es haelt Alpine NICHT davon ab, die Ausdruecke der
+    Kinder auszuwerten. Die drei Helfer lasen also `signal.key` auf `null`
+    und warfen - dreimal pro Geraet, bei jedem Durchlauf.
 
-    Ein Geraet ohne Leitsignal ist ein gueltiger Zustand (die Kachel hat
-    dafuer laengst ihren Hinweis), also duerfen die Helfer ihn beantworten,
-    statt an ihm zu scheitern.
+    Diesen Aufrufer gibt es nicht mehr (Entwurf 2026-09-07): das `x-for`
+    des Werterasters laeuft ueber eine leere Liste und wertet gar nichts
+    aus. Die Duldsamkeit der Helfer bleibt trotzdem stehen und wird
+    weiterhin belegt - der Test fragt sie jetzt direkt statt ueber einen
+    Aufrufer, den es nicht mehr gibt.
     """
     values = _app_state(
         """
         state.signalsByDevice = {};
-        const lead = state.leadSignalFor(1);
-        const out = { lead, calls: {} };
+        const out = { calls: {} };
         for (const fn of ["signalIsFresh", "signalAgeTitle", "liveValueOf"]) {
           try {
-            out.calls[fn] = { ok: true, value: state[fn](lead) ?? null };
+            out.calls[fn] = { ok: true, value: state[fn](null) ?? null };
           } catch (error) {
             out.calls[fn] = { ok: false, error: error.message };
           }
         }
-        out.formatted = state.formatValue(state.liveValueOf(lead));
+        out.formatted = state.formatValue(state.liveValueOf(null));
         console.log(JSON.stringify(out));
         """
     )
 
-    assert values["lead"] is None, "ohne geladene Signale gibt es kein Leitsignal"
     for name, call in values["calls"].items():
         assert call["ok"], f"{name} warf: {call.get('error')}"
 
@@ -760,7 +759,6 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
         state.liveSeenAt = { d1_1_onoff: 1000 };
         state.nowTick = 1200;
         console.log(JSON.stringify({
-          lead: state.leadSignalFor(1).key,
           live: state.liveValueOf(signal),
           fresh: state.signalIsFresh(signal),
           title: state.signalAgeTitle(signal),
@@ -768,7 +766,6 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
         """
     )
 
-    assert values["lead"] == "d1_1_onoff"
     assert values["live"] is True
     assert values["fresh"] is True
     assert values["title"]
@@ -2599,8 +2596,6 @@ async def test_the_script_offers_room_filtering_grouping_and_search(api):
         "visibleDevices(",
         "deviceGroups(",
         "categoryLabel(",
-        "leadSignalFor(",
-        "restSignalsFor(",
         "saveRoom(",
         "beginNewRoom(",
         "commitNewRoom(",
@@ -4169,3 +4164,21 @@ async def test_the_missing_signals_hint_no_longer_asks_for_a_lead(api):
         'x-show="signalsByDevice[device.id] '
         '&& functionalSignalsFor(device.id).length === 0"'
     ) in markup
+
+
+async def test_the_lead_helpers_are_gone_from_the_script(api):
+    """Entwurf 2026-09-07, Abschnitt 10: beide Methoden entfallen
+    ersatzlos, nachdem das Markup sie nicht mehr aufruft. Eine ungenutzte
+    Methode in `app.js` ist kein harmloser Rest - sie laedt den naechsten
+    Umbau dazu ein, den Leitwert wieder einzufuehren, ohne den Entwurf
+    gelesen zu haben."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    # Auf die DEFINITION ankern, nicht auf den blossen Namen: der Kommentar
+    # an `signalIsFresh` nennt `leadSignalFor` weiterhin - und zwar gerade,
+    # um zu erklaeren, warum dessen Null-Duldsamkeit stehen bleibt, obwohl
+    # der Aufrufer weg ist. Anders als beim Markup gibt es fuer `app.js`
+    # keinen `_without_comments`-Helfer.
+    assert "leadSignalFor(deviceId) {" not in script
+    assert "restSignalsFor(deviceId) {" not in script
+    assert "this.firstSignalsFor(deviceId).slice(1)" not in script

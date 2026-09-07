@@ -1245,25 +1245,6 @@ function app() {
       return groups;
     },
 
-    // --- Leitwert (Kachel-Kopfzeile) --------------------------------------
-
-    // Das erste funktionale Signal in der Reihenfolge, die
-    // `firstSignalsFor` ohnehin liefert - also die der Profiltabelle.
-    // Steckdose -> Zustand, Klimasensor -> Temperatur, Rollo -> Position.
-    // Keine eigene Datenhaltung, keine Konfiguration: ein Geraet ohne
-    // funktionale Signale hat schlicht keinen Leitwert, und die Kopfzeile
-    // bleibt einzeilig.
-    leadSignalFor(deviceId) {
-      return this.firstSignalsFor(deviceId)[0] || null;
-    },
-
-    // Der Rest der Kurzliste. `FUNCTIONAL_PREVIEW_LIMIT` zaehlt den
-    // Leitwert MIT (Entwurf 6.2), deshalb hier kein zweites Abschneiden -
-    // `firstSignalsFor` hat es bereits getan.
-    restSignalsFor(deviceId) {
-      return this.firstSignalsFor(deviceId).slice(1);
-    },
-
     // --- Raum eines Geraets aendern ---------------------------------------
 
     // Sendet AUSSCHLIESSLICH den Raum. Ein mitgeschicktes `label` liesse
@@ -1612,11 +1593,19 @@ function app() {
      * sich am Aufbau der Zeile irgendetwas bewegt. Liest `nowTick`, damit
      * Alpine die Klasse wieder loswird, wenn die Zeit um ist. */
     signalIsFresh(signal) {
-      // `null` ist hier ein GUELTIGES Argument, kein Programmierfehler:
-      // `leadSignalFor` liefert es fuer jedes Geraet, dessen Signale noch
-      // nicht geladen sind - und das ist zwischen `GET /api/devices` und
-      // `GET /api/devices/<id>/signals` jedes Geraet, mindestens einen
-      // Rendering-Durchlauf lang (2026-09-06).
+      // `null` ist hier ein GUELTIGES Argument, kein Programmierfehler.
+      // Der Aufrufer, der es lieferte, war `leadSignalFor` - fuer jedes
+      // Geraet, dessen Signale noch nicht geladen waren, also zwischen
+      // `GET /api/devices` und `GET /api/devices/<id>/signals` fuer JEDES
+      // Geraet, mindestens einen Rendering-Durchlauf lang (2026-09-06).
+      //
+      // Diesen Aufrufer gibt es seit dem Wegfall des Leitwerts nicht mehr
+      // (Entwurf 2026-09-07): das `x-for` des Werterasters laeuft ueber
+      // eine leere Liste und wertet gar nichts aus. Die Duldsamkeit bleibt
+      // trotzdem stehen. Sie zu entfernen, weil der eine BEKANNTE Aufrufer
+      // weg ist, waere die Sorte Aufraeumen, die beim naechsten Aufrufer
+      // zurueckschlaegt - und der naechste faende denselben Fehler wieder,
+      // ohne den Kommentar unten zu kennen.
       //
       // Das `x-show` auf der Huelle in `index.html` fing das NICHT ab: es
       // setzt nur `display`, es haelt Alpine nicht davon ab, die Ausdruecke
