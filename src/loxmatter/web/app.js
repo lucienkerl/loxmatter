@@ -314,6 +314,95 @@ function blobFromBase64(base64, mimeType) {
 // genau eine Datei aus (siehe loxone/server.py), ein Pfad brauchte dort eine
 // Auffangroute, die jeden unbekannten Pfad auf `index.html` zurueckfallen
 // laesst. Das Fragment erreicht den Server ohnehin nie.
+
+// --- Pairing-Code (Entwurf vom 2026-09-07) ----------------------------------
+//
+// Auf dem Geraet steht der Zahlencode gruppiert: `1234-567-8901`. Genau so
+// tippt ihn jeder ab - also nimmt ihn das Feld auch so entgegen und schreibt
+// die Bindestriche beim Tippen selbst.
+//
+// Die Regel steht ZWEIMAL: hier und als `_strip_separators` in
+// `api/models.py`. Das ist Absicht - die Oberflaeche formatiert, das Backend
+// normalisiert fuer JEDEN Aufrufer der Route. Wer eine der beiden Fassungen
+// aendert, aendert die andere.
+
+// Alles ausser Ziffern, Leerraum und Bindestrich macht den Wert zu einem
+// QR-Inhalt. Die Pruefung greift damit beim ersten getippten `M` von `MT:`,
+// nicht erst beim Doppelpunkt: eine Regel, die auf `MT:` wartet, wuerde die
+// zwei Zeichen davor als Zifferneingabe behandeln und wegwerfen.
+const PAIRING_QR_PAYLOAD = /[^0-9\s-]/;
+
+// Die belegte Schreibweise gibt es nur fuer die elf Stellen. Fuer den
+// 21-stelligen Code gibt es keine - eine erfundene Gruppierung saehe anders
+// aus als der Aufdruck, das Feld formatierte den Code also WEG vom Vorbild
+// statt hin. Ab der zwoelften Ziffer bleibt er deshalb ungruppiert.
+const PAIRING_GROUPS = [4, 7, 11];
+
+function isPairingQrCode(raw) {
+  return PAIRING_QR_PAYLOAD.test(raw);
+}
+
+function formatPairingCode(raw) {
+  if (isPairingQrCode(raw)) {
+    return raw;
+  }
+  const digits = raw.replace(/\D/g, "");
+  const parts = [];
+  let start = 0;
+  for (let i = 0; i < PAIRING_GROUPS.length; i++) {
+    const end = PAIRING_GROUPS[i];
+    if (digits.length <= start) {
+      break;
+    }
+    // Fuer die letzte Gruppe: alle restlichen Ziffern miteinbeziehen,
+    // ab der zwoelften Ziffer wird nicht weiter gruppiert.
+    const sliceEnd = i === PAIRING_GROUPS.length - 1 ? digits.length : end;
+    parts.push(digits.slice(start, sliceEnd));
+    start = end;
+  }
+  return parts.join("-");
+}
+
+function normalizePairingCode(raw) {
+  const text = raw.trim();
+  return isPairingQrCode(text) ? text : text.replace(/\D/g, "");
+}
+
+// Was der Chip im Feld sagt. Gibt einen Schluessel statt eines Textes
+// zurueck, damit diese Funktion ohne geladene Sprachtabelle prueffaehig
+// bleibt - uebersetzt wird erst beim Anzeigen.
+//
+// Der Chip BESCHREIBT, er verbietet nicht: auch bei `bad` bleibt der
+// Einlern-Knopf bedienbar und der Wert geht unveraendert an die Route.
+// Dieselbe Haltung wie beim Validator im Backend - die Bruecke sagt, was sie
+// sieht, und laesst den Matter-Stack entscheiden.
+function describePairingCode(raw) {
+  const text = raw.trim();
+  if (!text) {
+    return { key: "", values: {}, tone: "idle" };
+  }
+  if (isPairingQrCode(text)) {
+    return /^MT:/i.test(text)
+      ? { key: "web.devices.code_detect_qr", values: {}, tone: "ok" }
+      : { key: "web.devices.code_detect_invalid", values: {}, tone: "bad" };
+  }
+  const count = text.replace(/\D/g, "").length;
+  if (count === 11) {
+    return { key: "web.devices.code_detect_manual", values: {}, tone: "ok" };
+  }
+  if (count === 21) {
+    return { key: "web.devices.code_detect_manual_long", values: {}, tone: "ok" };
+  }
+  if (count > 21) {
+    return { key: "web.devices.code_detect_too_long", values: {}, tone: "bad" };
+  }
+  // Gezaehlt wird gegen die naechste gueltige Laenge - erst 11, dann 21.
+  const missing = count < 11 ? 11 - count : 21 - count;
+  return missing === 1
+    ? { key: "web.devices.code_detect_remaining_one", values: {}, tone: "warn" }
+    : { key: "web.devices.code_detect_remaining_many", values: { n: missing }, tone: "warn" };
+}
+
 const VIEWS = ["devices", "export", "system", "settings"];
 const DEFAULT_VIEW = "devices";
 
