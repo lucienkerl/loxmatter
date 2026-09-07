@@ -14,18 +14,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Rechnet rohe Matter-Werte in das um, was der Miniserver erwartet.
+"""Convert raw Matter values into what the Miniserver expects.
 
-Zwei Regeln aus Spec 7.3 pragen dieses Modul:
+Two rules from spec 7.3 shape this module:
 
-Zieleinheit ist die des Loxone-Bausteins, nicht die SI-Einheit. Der
-Energiemanager erwartet kW, also liefern wir kW - auch wenn Matter in
-Milliwatt misst.
+The target unit is that of the Loxone block, not the SI unit. The energy
+manager expects kW, so we deliver kW - even though Matter measures in
+milliwatts.
 
-Und daraus folgt das Zahlenformat: von mW nach kW sind sechs
-Groessenordnungen. Wer hier auf zwei Nachkommastellen rundet, laesst jeden
-Verbraucher unter 10 W als 0 erscheinen - und gerade die kleinen
-Dauerverbraucher sind oft der Grund, eine messende Steckdose einzubauen.
+And the number format follows from that: from mW to kW is six orders of
+magnitude. Rounding to two decimal places here would make every consumer
+under 10 W appear as 0 - and it is precisely the small continuous
+consumers that are often the reason for installing a metering plug.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ MAX_DECIMALS = 6
 
 
 def to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None:
-    """Skalierter Wert, oder None wenn Loxone ihn nicht aufnehmen kann."""
+    """Scaled value, or None if Loxone cannot accept it."""
     raw = struct_member(ref, raw)
     kind = classify(raw)
     if kind is Exportability.DIGITAL:
@@ -49,11 +49,11 @@ def to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None:
 
 
 def format_value(value: float | bool) -> str:
-    """Textform fuer das Datagramm: bis zu sechs Nachkommastellen, ohne Nullen am Ende.
+    """Text form for the datagram: up to six decimal places, no trailing zeros.
 
-    Ein Wert, der auf null rundet, wird immer als "0" ausgegeben - unabhaengig vom
-    Vorzeichen. Sonst liesse ein negativer Rundungsrest wie -1e-07 ein "-0" durch,
-    das in der Loxone-Visualisierung schlicht falsch waere.
+    A value that rounds to zero is always emitted as "0" - regardless of sign.
+    Otherwise a negative rounding remainder like -1e-07 would let a "-0" through,
+    which would simply be wrong in the Loxone visualization.
     """
     if isinstance(value, bool):
         return "1" if value else "0"
@@ -64,5 +64,5 @@ def format_value(value: float | bool) -> str:
 
 
 def datagram(key: str, value: float | bool) -> bytes:
-    """Ein UDP-Datagramm in der Form, die die exportierte Vorlage erkennt."""
+    """A UDP datagram in the form that the exported template recognizes."""
     return f"{key}:{format_value(value)}".encode()

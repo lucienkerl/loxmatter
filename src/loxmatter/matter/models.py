@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Unveränderliches Abbild dessen, was matter-server über ein Gerät weiß."""
+"""Immutable snapshot of what matter-server knows about a device."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-# BasicInformation-Cluster auf Endpoint 0.
+# BasicInformation cluster on endpoint 0.
 _VENDOR_NAME_PATH = "0/40/1"
 _PRODUCT_NAME_PATH = "0/40/3"
 _UNIQUE_ID_PATH = "0/40/18"
@@ -36,10 +36,10 @@ class SignalKind(str, Enum):
 
 @dataclass(frozen=True, order=True)
 class SignalRef:
-    """Verweis auf genau eine Datenquelle eines Geräts.
+    """Reference to exactly one data source of a device.
 
-    Attribut und Event können dieselben Zahlen tragen und sind trotzdem
-    verschiedene Dinge — `kind` gehört deshalb zur Identität.
+    An attribute and an event can carry the same numbers and still be
+    different things — `kind` is therefore part of the identity.
     """
 
     endpoint: int
@@ -59,12 +59,11 @@ class NodeSnapshot:
     product_name: str
     unique_id: str
     attributes: Mapping[str, Any] = field(default_factory=dict)
-    # Erreichbarkeit des Nodes bei matter-server (`MatterNode.available`).
-    # Default `True`: eine Fixture-Datei (siehe `_load_fixture` in cli.py)
-    # traegt dieses Feld nicht, und ein aus einer Aufzeichnung geladenes
-    # Geraet soll nicht faelschlich als unerreichbar gelten (Review-Fix C1,
-    # 2026-09-02 - siehe `BridgeMatterClient.snapshots` und
-    # `Runtime.seed_from_snapshot`).
+    # Reachability of the node at matter-server (`MatterNode.available`).
+    # Default `True`: a fixture file (see `_load_fixture` in cli.py) does
+    # not carry this field, and a device loaded from a recording should not
+    # be falsely treated as unreachable (review fix C1, 2026-09-02 - see
+    # `BridgeMatterClient.snapshots` and `Runtime.seed_from_snapshot`).
     available: bool = True
 
     @classmethod

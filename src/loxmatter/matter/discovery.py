@@ -14,27 +14,28 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Zerlegt ein Node-Abbild in einzelne Signale.
+"""Break a node snapshot down into individual signals.
 
-Rein funktional und ohne I/O — arbeitet auf einem NodeSnapshot und ist damit
-gegen eingecheckte Fixtures echter Geräte testbar.
+Purely functional and without I/O — operates on a NodeSnapshot and is
+therefore testable against checked-in fixtures of real devices.
 
-Grundsatz aus Spec 3.5: bei Attributen wird nichts verworfen. Unbekannte
-Cluster werden genauso zu Signalen wie bekannte; die Anreicherung um Namen
-und Skalierung passiert später in profiles/.
+Principle from spec 3.5: nothing is discarded for attributes. Unknown
+clusters become signals just like known ones; enrichment with names and
+scaling happens later in profiles/.
 
-Für Events gilt dieser Grundsatz **nicht mehr uneingeschränkt** — das ist die
-Korrektur aus der Validierung an echten Geräten (Phase 1, 2026-09-01, siehe
-Spec 3.5 und 6.3). Die EventList (0xFFFA) ist im Matter-Standard optional und
-in der Praxis bei den geprüften IKEA-Geräten nicht implementiert: ein Taster,
-der nachweislich Tastendrücke sendet, lieferte über die EventList null
-Events. Als zweite, cluster-spezifische Quelle wird deshalb aus der FeatureMap
-(0xFFFC) abgeleitet, welche Events ein Cluster laut Matter-Spezifikation
-generieren *kann* — das Gerät muss die Events dafür nicht selbst auflisten.
-Dieses Wissen steht in `FEATURE_MAP_EVENTS`, einer Tabelle, nicht in
-verzweigendem Code, damit weitere Cluster ergänzbar sind, ohne den Algorithmus
-hier anzufassen. Beide Quellen werden vereinigt und dedupliziert (SignalRef
-ist hashable, das Ergebnis-Set übernimmt das automatisch).
+For events this principle **no longer holds without restriction** — that
+is the correction from validation against real devices (phase 1,
+2026-09-01, see spec 3.5 and 6.3). The EventList (0xFFFA) is optional in
+the Matter standard and in practice not implemented on the IKEA devices
+tested: a push-button that demonstrably sends button presses delivered
+zero events via the EventList. As a second, cluster-specific source, we
+therefore derive from the FeatureMap (0xFFFC) which events a cluster *can*
+generate according to the Matter specification — the device does not need
+to list the events itself for that. This knowledge lives in
+`FEATURE_MAP_EVENTS`, a table, not in branching code, so that further
+clusters can be added without touching the algorithm here. Both sources
+are unioned and deduplicated (SignalRef is hashable, the result set
+handles that automatically).
 """
 
 from __future__ import annotations
@@ -51,7 +52,7 @@ from loxmatter.matter.paths import (
     parse_attribute_path,
 )
 
-# Switch-Cluster (0x003B / 59) — Feature-Bits der FeatureMap nach Matter
+# Switch cluster (0x003B / 59) — FeatureMap feature bits per the Matter
 # Application Cluster Specification.
 _SWITCH_CLUSTER_ID = 59
 _LATCHING_SWITCH = 0x01
@@ -64,8 +65,8 @@ _ACTION_SWITCH = 0x20
 
 @dataclass(frozen=True)
 class _FeatureEventRule:
-    """Ein Event, das ein Cluster generiert, wenn bestimmte FeatureMap-Bits
-    gesetzt und andere nicht gesetzt sind."""
+    """An event a cluster generates when certain FeatureMap bits are set
+    and others are not."""
 
     event_id: int
     requires: int
@@ -75,23 +76,23 @@ class _FeatureEventRule:
         return (feature_map & self.requires) == self.requires and (feature_map & self.excludes) == 0
 
 
-# Welche Events ein Cluster laut Spezifikation abhängig von seiner FeatureMap
-# generieren kann. Quelle geprüft gegen
-# data_model/1.4/clusters/Switch.xml aus project-chip/connectedhomeip
-# (maschinenlesbare Transkription der Matter Application Cluster
-# Specification) — je Event ein mandatoryConform über Feature-Bits:
+# Which events a cluster can generate depending on its FeatureMap, per the
+# specification. Source checked against
+# data_model/1.4/clusters/Switch.xml from project-chip/connectedhomeip
+# (machine-readable transcription of the Matter Application Cluster
+# Specification) — one mandatoryConform per event, via feature bits:
 #
 #   SwitchLatched (0)        ← LS
 #   InitialPress (1)         ← MS
 #   LongPress (2)            ← MSL
 #   ShortRelease (3)         ← MSR
 #   LongRelease (4)          ← MSL
-#   MultiPressOngoing (5)    ← MSM UND NICHT AS
+#   MultiPressOngoing (5)    ← MSM AND NOT AS
 #   MultiPressComplete (6)   ← MSM
 #
-# Weitere Cluster mit Events ohne EventList-Unterstützung kommen hier als
-# weitere Einträge dazu — der Algorithmus in extract_signals ändert sich
-# dafür nicht.
+# Further clusters with events lacking EventList support are added here as
+# additional entries — the algorithm in extract_signals does not change
+# for that.
 FEATURE_MAP_EVENTS: dict[int, tuple[_FeatureEventRule, ...]] = {
     _SWITCH_CLUSTER_ID: (
         _FeatureEventRule(event_id=0, requires=_LATCHING_SWITCH),
@@ -125,10 +126,10 @@ def _as_id_list(value: object) -> list[int]:
 
 
 def _feature_map_event_ids(cluster_id: int, value: object) -> list[int]:
-    """Event-IDs, die laut FEATURE_MAP_EVENTS aus der FeatureMap eines Clusters folgen.
+    """Event IDs that follow from a cluster's FeatureMap per FEATURE_MAP_EVENTS.
 
-    Leer für Cluster ohne Tabelleneintrag oder eine FeatureMap, die keine der
-    dort hinterlegten Bit-Bedingungen erfüllt.
+    Empty for clusters without a table entry, or a FeatureMap that satisfies
+    none of the bit conditions stored there.
     """
     rules = FEATURE_MAP_EVENTS.get(cluster_id)
     if not rules or not isinstance(value, (int, float)):
@@ -138,9 +139,9 @@ def _feature_map_event_ids(cluster_id: int, value: object) -> list[int]:
 
 
 def extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
-    """Jedes nicht-globale Attribut wird ein Signal. Events kommen aus zwei
-    vereinigten Quellen: der EventList (falls das Gerät sie führt) und, für
-    Cluster mit Eintrag in FEATURE_MAP_EVENTS, aus der FeatureMap."""
+    """Every non-global attribute becomes a signal. Events come from two
+    unioned sources: the EventList (if the device carries it) and, for
+    clusters with an entry in FEATURE_MAP_EVENTS, the FeatureMap."""
     signals: set[SignalRef] = set()
 
     for endpoint, cluster_id, attribute_id, value in _parsed_paths(snapshot):
@@ -160,10 +161,10 @@ def extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
 
 
 def find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]:
-    """Attribute, die das Gerät in seiner AttributeList nennt, aber nicht geliefert hat.
+    """Attributes the device names in its AttributeList but did not deliver.
 
-    Das ist der Prüfstein für Spec 3.5: eine nicht-leere Liste bedeutet, dass die
-    generische Zerlegung Werte übersieht, die das Gerät eigentlich anbietet.
+    This is the touchstone for spec 3.5: a non-empty list means the generic
+    decomposition is overlooking values the device actually offers.
     """
     present: set[tuple[int, int, int]] = set()
     claimed: set[tuple[int, int, int]] = set()
@@ -182,10 +183,11 @@ def find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]:
 
 
 def find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]:
-    """Pfade, die nicht dem erwarteten Format entsprachen. Sollte leer sein.
+    """Paths that did not match the expected format. Should be empty.
 
-    Läuft absichtlich noch einmal eigenständig über alle Pfade, statt
-    `_parsed_paths` wiederzuverwenden — das misst gerade, was dort verworfen wird.
+    Deliberately walks all paths independently once more instead of
+    reusing `_parsed_paths` — that is precisely what measures what gets
+    discarded there.
     """
     broken: list[str] = []
     for path in snapshot.attributes:
@@ -197,22 +199,22 @@ def find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]:
 
 
 def find_clusters_with_undiscoverable_events(snapshot: NodeSnapshot) -> list[tuple[int, int]]:
-    """Cluster, für die weder eine EventList vorliegt noch ein Eintrag in
-    FEATURE_MAP_EVENTS existiert.
+    """Clusters for which neither an EventList is present nor an entry in
+    FEATURE_MAP_EVENTS exists.
 
-    Das sind die Cluster, bei denen dieses Werkzeug schlicht nicht sagen kann,
-    ob es Events gibt: Die EventList wurde nicht geliefert (das Gerät führt sie
-    entweder nicht, oder sie ist leer — beides sieht hier gleich aus) und die
-    FeatureMap-Tabelle kennt den Cluster nicht, kann also auch nichts ableiten.
-    "Events (0)" im Bericht ist für so einen Cluster keine Aussage über das
-    Gerät, sondern über die Wissenslücke dieses Werkzeugs.
+    These are the clusters where this tool simply cannot say whether events
+    exist: the EventList was not delivered (the device either does not
+    carry one, or it is empty — both look the same here) and the FeatureMap
+    table does not know the cluster, so it cannot derive anything either.
+    "Events (0)" in the report is, for such a cluster, not a statement
+    about the device but about this tool's knowledge gap.
 
-    Absichtlich ohne Sonderfall für Endpoint 0: Cluster 0/42 (OTA Software
-    Update Requestor) ist genau das Beispiel, das diese Funktion motiviert hat
-    — seine Events (StateTransition, VersionApplied, DownloadError) sind
-    mandatorisch, aber ohne EventList nicht nachweisbar. Eine pauschale
-    Ausnahme für administrative Endpoint-0-Cluster würde also den Fall
-    verstecken, den dieses Instrument gerade aufdecken soll.
+    Deliberately without a special case for endpoint 0: cluster 0/42 (OTA
+    Software Update Requestor) is exactly the example that motivated this
+    function — its events (StateTransition, VersionApplied, DownloadError)
+    are mandatory but cannot be proven without an EventList. A blanket
+    exception for administrative endpoint-0 clusters would therefore hide
+    the very case this instrument is meant to uncover.
     """
     clusters: set[tuple[int, int]] = set()
     with_event_list: set[tuple[int, int]] = set()

@@ -14,60 +14,59 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Verschickt Werte als UDP-Datagramme an den Miniserver.
+"""Sends values as UDP datagrams to the Miniserver.
 
-Kennt kein Matter. Er bekommt fertige Schluessel und fertige Werte.
+Knows nothing about Matter. It receives finished keys and finished values.
 
-Zwei Eigenschaften sind nicht optional:
+Two properties are not optional:
 
-Entprellung - ein Matter-Geraet meldet einen Messwert gerne im Sekundentakt,
-auch wenn er sich nicht aendert. Unveraenderte Werte erneut zu schicken kostet
-nur Last, und der Miniserver mag keinen UDP-Sturm.
+Debouncing - a Matter device is happy to report a measured value once a
+second, even when it does not change. Sending unchanged values again costs
+only load, and the Miniserver does not like a UDP storm.
 
-Rate-Limit - beim Full-Resend nach einem Miniserver-Neustart stehen hunderte
-Datagramme gleichzeitig an. Gestaffelt kommen sie an, im Schwall nicht
-(Spec 6.4).
+Rate limiting - during a full resend after a Miniserver restart, hundreds
+of datagrams are due at once. They should arrive staggered, not in a burst
+(spec 6.4).
 
-**Mitschnitt (Spec 10.5, Task 6, Phase 5).** `send()` haelt einen
-Ringpuffer der zuletzt TATSAECHLICH ueber den Socket gegangenen Datagramme
-(`datagram_log`) - fuer `GET /api/diagnostics/datagrams`. Bewusst HIER und
-nicht in `Runtime.on_attribute`/`on_event` (die `send()` aufrufen): ein
-Mitschnitt vor dieser Stelle zeigt, was gesendet werden SOLLTE; dieser
-Mitschnitt, direkt neben dem `sendto()`-Aufruf, zeigt, was tatsaechlich
-ging - nach Entprellung, nach Rate-Limit-Wartezeit. Ein Wert, der wegen
-Entprellung uebersprungen wird (frueher `return False` oben in `send()`),
-landet deshalb folgerichtig NICHT im Mitschnitt - er wurde ja nicht
-gesendet. `RingBuffer`/`DatagramLogEntry` kommen aus `api.diagnostics`
-(siehe dortiger Moduldocstring fuer die Begruendung dieser - fuer dieses
-Projekt sonst unueblichen - Importrichtung).
+**Recording (spec 10.5, task 6, phase 5).** `send()` keeps a ring buffer
+of the datagrams that most recently ACTUALLY went over the socket
+(`datagram_log`) - for `GET /api/diagnostics/datagrams`. Deliberately
+placed HERE and not in `Runtime.on_attribute`/`on_event` (which call
+`send()`): a recording before that point would show what SHOULD be sent;
+this recording, right next to the `sendto()` call, shows what actually
+went out - after debouncing, after the rate-limit wait. A value skipped
+due to debouncing (the earlier `return False` above in `send()`)
+consequently and correctly does NOT end up in the recording - it was
+never sent. `RingBuffer`/`DatagramLogEntry` come from `api.diagnostics`
+(see that module's docstring for the rationale for this import direction,
+otherwise unusual for this project).
 
-Das Mitschreiben selbst ist in ein eigenes try/except gekapselt
-(`_record_sent`): ein Diagnosewerkzeug, das den Pfad, den es beobachtet,
-selbst zum Absturz bringen koennte, waere schlimmer als gar keins - siehe
-Task-6-Report, Punkt 1 (Kosten im Hot Path). Die Kosten selbst sind minimal:
-ein `deque.append` auf einen bereits begrenzten Puffer, kein I/O, keine
-Allokation ausser dem einen `DatagramLogEntry`.
+The recording itself is wrapped in its own try/except (`_record_sent`): a
+diagnostic tool that could crash the very path it observes would be worse
+than no diagnostic tool at all - see the task 6 report, point 1 (cost in
+the hot path). The cost itself is minimal: one `deque.append` onto an
+already bounded buffer, no I/O, no allocation beyond the single
+`DatagramLogEntry`.
 
-**Beobachterkette (Task 2, Phase 5) - seit Nachbesserung Task 7, Fix 2 EINE
-Anmelde-/Abmelde-Mechanik, nicht zwei.** `add_datagram_observer`/
-`remove_datagram_observer` unten waren bis dahin eine eigene, zweite Liste
-mit eigenem Kopie-beim-Iterieren und eigenem Log-und-uebersprungen -
-Wort fuer Wort dieselbe Mechanik, die `api.diagnostics.RingBuffer`
-(`self._datagram_log`, siehe `datagram_log` unten) fuer genau denselben
-Zweck schon mitbringt, nur auf einer zweiten, parallelen Liste. Beide
-Methoden sind jetzt duenne Weiterleitungen auf `self._datagram_log.
-add_observer`/`remove_observer` - `_notify_datagram_observers` entfaellt
-ersatzlos, `RingBuffer.append` benachrichtigt seine Beobachter bereits
-selbst (siehe dort). Die beiden Methoden bleiben trotzdem als eigene
-oeffentliche Schnittstelle stehen, nicht ersetzt durch einen Verweis auf
-`sender.datagram_log.add_observer`: so bleibt der Typ `DatagramLogEntry`
-in der Signatur dieser Klasse sichtbar, und ein Aufrufer braucht keine
-Kenntnis davon, dass der Mitschnitt intern ein `RingBuffer` ist. Ein
-Beobachter laeuft dadurch, wie zuvor, innerhalb von `send()`s `async with
-self._lock` (siehe dort und `api.diagnostics.RingBuffer`s Klassendocstring,
-Abschnitt zu `UdpSender.datagram_log`, fuer die Folge davon - keine
-Rekursionsgefahr, aber ein langsamer Beobachter bremst jeden
-nachfolgenden Versand ueber denselben Sender).
+**Observer chain (task 2, phase 5) - since the task 7, fix 2 follow-up, ONE
+subscribe/unsubscribe mechanism, not two.** `add_datagram_observer`/
+`remove_datagram_observer` below used to be a separate, second list with
+its own copy-while-iterating and its own log-and-skip logic - word for word
+the same mechanism that `api.diagnostics.RingBuffer` (`self._datagram_log`,
+see `datagram_log` below) already provides for exactly the same purpose,
+just on a second, parallel list. Both methods are now thin forwards onto
+`self._datagram_log.add_observer`/`remove_observer` - `_notify_datagram_observers`
+is removed with nothing replacing it, `RingBuffer.append` already notifies
+its observers itself (see there). The two methods nonetheless remain as
+their own public interface, not replaced by a reference to
+`sender.datagram_log.add_observer`: this keeps the `DatagramLogEntry` type
+visible in this class's signature, and a caller needs no knowledge that
+the recording is internally a `RingBuffer`. An observer thereby still runs,
+as before, inside `send()`'s `async with self._lock` (see there and
+`api.diagnostics.RingBuffer`'s class docstring, section on
+`UdpSender.datagram_log`, for the consequence of that - no risk of
+recursion, but a slow observer delays every subsequent send over the same
+sender).
 """
 
 from __future__ import annotations
@@ -96,7 +95,7 @@ class UdpSender:
         rate_limit: float = RATE_LIMIT_PER_SECOND,
         log_size: int = DATAGRAM_LOG_SIZE,
     ) -> None:
-        """Baut den UDP-Socket auf. Ein rate_limit von 0 oder darunter bedeutet: kein Rate-Limit."""
+        """Sets up the UDP socket. A rate_limit of 0 or below means: no rate limit."""
         self._target = (host, port)
         self._interval = 1.0 / rate_limit if rate_limit > 0 else 0.0
         self._socket: socket.socket | None = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -108,46 +107,46 @@ class UdpSender:
 
     @property
     def target(self) -> tuple[str, int]:
-        """Ziel-Host/-Port - fuer den Systemcheck der Diagnose
-        (`api.diagnostics._check_miniserver`), sonst rein intern."""
+        """Target host/port - for the diagnostics system check
+        (`api.diagnostics._check_miniserver`), otherwise purely internal."""
         return self._target
 
     @property
     def datagram_log(self) -> RingBuffer[DatagramLogEntry]:
-        """Die zuletzt tatsaechlich gesendeten Datagramme - siehe
-        Moduldocstring, Abschnitt "Mitschnitt". Nur lesbar von aussen: der
-        Ringpuffer selbst bietet ohnehin kein `clear()`/keine Mutation
-        ausser `append()` an (siehe `api.diagnostics.RingBuffer`), diese
-        Property verhindert zusaetzlich, dass ein Aufrufer `self._datagram_log`
-        durch ein komplett anderes Objekt ersetzt."""
+        """The datagrams most recently actually sent - see the module
+        docstring, "Recording" section. Read-only from the outside: the
+        ring buffer itself offers no `clear()`/no mutation besides
+        `append()` anyway (see `api.diagnostics.RingBuffer`), and this
+        property additionally prevents a caller from replacing
+        `self._datagram_log` with a completely different object."""
         return self._datagram_log
 
     def add_datagram_observer(self, callback: Callable[[DatagramLogEntry], None]) -> None:
-        """Meldet einen Beobachter an, der jedes tatsaechlich gesendete
-        Datagramm sieht - auch die, die `Runtime._notify_observers` bewusst
-        auslaesst (Full-Resend, Absenken eines Impulses; siehe dortiger
-        Docstring). Genau deshalb haengt diese Kette hier am Sender und nicht
-        an der Laufzeit: siehe Moduldocstring, Abschnitt "Mitschnitt".
+        """Registers an observer that sees every datagram actually sent -
+        including the ones `Runtime._notify_observers` deliberately skips
+        (full resend, decaying a pulse; see that docstring). This is
+        exactly why this chain hangs off the sender here and not off the
+        runtime: see the module docstring, "Recording" section.
 
-        Duenne Weiterleitung auf `self._datagram_log.add_observer` seit
-        Nachbesserung Task 7, Fix 2 - siehe Moduldocstring, Abschnitt
-        "Beobachterkette", fuer die Begruendung, warum diese Methode trotzdem
-        als eigene, oeffentliche Schnittstelle bestehen bleibt statt durch
-        `sender.datagram_log.add_observer` ersetzt zu werden.
+        Thin forward onto `self._datagram_log.add_observer` since the
+        task 7, fix 2 follow-up - see the module docstring, "Observer
+        chain" section, for why this method nonetheless remains its own
+        public interface instead of being replaced by
+        `sender.datagram_log.add_observer`.
 
-        Der Beobachter wird aus `_record_sent` heraus aufgerufen, also NACH
-        dem `sendto()` und NACH dem Anhaengen an `datagram_log`."""
+        The observer is called from within `_record_sent`, i.e. AFTER the
+        `sendto()` and AFTER the append to `datagram_log`."""
         self._datagram_log.add_observer(callback)
 
     def remove_datagram_observer(self, callback: Callable[[DatagramLogEntry], None]) -> None:
-        """Meldet einen Beobachter wieder ab. Ein unbekannter Beobachter
-        (z. B. doppelt abgemeldet) ist kein Fehler, sondern wird still
-        ignoriert - dieselbe Regel wie bei `Runtime.remove_observer` (hier
-        via `self._datagram_log.remove_observer` uebernommen, siehe dort)."""
+        """Unsubscribes an observer. An unknown observer (e.g. unsubscribed
+        twice) is not an error, it is silently ignored - the same rule as
+        for `Runtime.remove_observer` (taken over here via
+        `self._datagram_log.remove_observer`, see there)."""
         self._datagram_log.remove_observer(callback)
 
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
-        """Sendet, wenn sich der Wert geaendert hat oder force gesetzt ist."""
+        """Sends when the value has changed or force is set."""
         if self._socket is None:
             raise RuntimeError("UdpSender ist geschlossen")
 
@@ -165,54 +164,53 @@ class UdpSender:
                 await asyncio.sleep(wait_time)
             self._socket.sendto(packet, self._target)
             self._next_send_time = loop.time() + self._interval
-            # Erst NACH dem tatsaechlichen sendto() - siehe Moduldocstring.
-            # Ein uebersprungener (entprellter) Wert oben erreicht diese
-            # Zeile nie, ein force=True-Resend dagegen schon: beides ist
-            # richtig, denn beides beschreibt, was wirklich ueber den Draht
-            # ging. `force` wird unveraendert durchgereicht (Nachbesserung
-            # Task 6, 2026-09-03): `DatagramLogEntry.forced` haelt damit
-            # WARUM gesendet wurde fest - einzige verlaessliche Quelle
-            # dieser Unterscheidung, siehe dortiger Docstring.
+            # Only AFTER the actual sendto() - see the module docstring.
+            # A skipped (debounced) value above never reaches this line,
+            # whereas a force=True resend does: both are correct, since
+            # both describe what actually went over the wire. `force` is
+            # passed through unchanged (task 6 follow-up, 2026-09-03):
+            # `DatagramLogEntry.forced` thereby records WHY it was sent -
+            # the only reliable source of this distinction, see that
+            # docstring.
             self._record_sent(key, text, force)
 
         self._last_sent[key] = text
         return True
 
     def _record_sent(self, key: str, text: str, forced: bool) -> None:
-        """Haengt einen Eintrag an `datagram_log` an - abgeschottet in einem
-        eigenen try/except (Task-6-Report, Punkt 1): ein Fehler beim
-        Mitschreiben (heute keiner ersichtlich, aber ein spaeterer Umbau
-        koennte einen einschleppen) darf niemals den bereits erfolgten
-        Versand rueckwirkend zu einem Fehlschlag machen - `send()` hat an
-        dieser Stelle sein Datagramm laengst verschickt.
+        """Appends an entry to `datagram_log` - isolated in its own
+        try/except (task 6 report, point 1): a failure while recording
+        (none apparent today, but a later refactor could introduce one)
+        must never retroactively turn an already-completed send into a
+        failure - `send()` has already sent its datagram long before this
+        point.
 
-        Die Benachrichtigung der Beobachterkette uebernimmt `RingBuffer.
-        append` selbst (seit Nachbesserung Task 7, Fix 2 - siehe
-        Moduldocstring, Abschnitt "Beobachterkette"), nicht mehr eine eigene
-        `_notify_datagram_observers`-Methode hier: `append` ruft nach dem
-        Anhaengen bereits jeden angemeldeten Beobachter mit demselben
-        Kopie-beim-Iterieren und derselben Log-und-uebersprungen-Regel auf
-        (siehe `api.diagnostics.RingBuffer`).
+        Notifying the observer chain is handled by `RingBuffer.append`
+        itself (since the task 7, fix 2 follow-up - see the module
+        docstring, "Observer chain" section), no longer by a dedicated
+        `_notify_datagram_observers` method here: `append` already calls
+        every registered observer after appending, using the same
+        copy-while-iterating and the same log-and-skip rule (see
+        `api.diagnostics.RingBuffer`).
 
-        `forced` ist das `force`-Argument von `send()`, unveraendert
-        durchgereicht - siehe `DatagramLogEntry.forced` fuer die Begruendung,
-        warum genau diese Stelle sie kennt und eine Zeitheuristik im Browser
-        sie nicht ersetzen kann."""
+        `forced` is `send()`'s `force` argument, passed through unchanged -
+        see `DatagramLogEntry.forced` for why exactly this spot knows it
+        and a timing heuristic in the browser cannot replace it."""
         try:
             _, _, value_text = text.partition(":")
             entry = DatagramLogEntry(key=key, value=value_text, timestamp=now_iso(), forced=forced)
             self._datagram_log.append(entry)
         except Exception:
             logger.exception(
-                "Mitschnitt des gesendeten Datagramms fuer Schluessel %r fehlgeschlagen - "
-                "der Versand selbst ist davon nicht betroffen",
+                "recording the sent datagram for key %r failed - "
+                "the send itself is not affected by this",
                 key,
             )
 
     async def close(self) -> None:
-        """Schliesst den Socket. Nimmt dieselbe Sperre wie send(), damit ein
-        Sendevorgang, der gerade im Rate-Limit-Schlaf steckt, nicht auf einen
-        bereits geschlossenen Socket trifft. Mehrfacher Aufruf bleibt unschaedlich.
+        """Closes the socket. Takes the same lock as send(), so that a send
+        currently stuck in the rate-limit sleep does not hit an already
+        closed socket. Calling it more than once remains harmless.
         """
         async with self._lock:
             if self._socket is not None:
