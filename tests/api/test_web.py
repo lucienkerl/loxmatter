@@ -190,7 +190,7 @@ async def test_the_inline_icon_symbols_are_well_formed_xml(api):
     STILLSCHWEIGEND nichts - keine Fehlermeldung in der Konsole, nur eine
     Kachel ohne Icon, siehe der Kommentar zu `i-cat-other` in `index.html`.
 
-    Der Block traegt inzwischen zwoelf `<symbol>`-Definitionen, acht davon
+    Der Block traegt inzwischen sechzehn `<symbol>`-Definitionen, acht davon
     aus dem Geraete-Tab-Umbau (Entwurf 2026-09-05, Abschnitt 6.5) - keine
     davon war bislang durch einen Parser gelaufen. Ein einzelner falscher
     Bindestrich oder ein nicht geschlossenes Tag in einem neuen Symbol waere
@@ -4230,6 +4230,41 @@ def test_a_device_whose_only_functional_signal_is_the_battery_has_no_lead():
     assert values["lead"] is None
     assert values["battery"] == "d1_0_battery"
     assert values["remaining"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_with_two_power_source_endpoints_never_leads_with_battery():
+    """Der Randfall eines zusammengesetzten Geraets oder einer Bruecke mit
+    zwei Batterien unter einem Datensatz: zwei Signale auf Cluster 47, auf
+    verschiedenen Endpunkten.
+
+    `batterySignalFor` waehlt per `.find()` nur das erstplatzierte davon -
+    das zweite bliebe, wenn die Vorschaumenge nur DIESES eine ausschliesst
+    (Schluesselvergleich statt Cluster-Filter), unbemerkt in der Vorschau
+    stehen und koennte als Leitwert enden. Zusicherung hier: der Leitwert
+    ist das Nutzsignal, kein Signal der Vorschaumenge traegt
+    `cluster_id === 47`, und `batterySignalFor` liefert das erstplatzierte
+    der beiden PowerSource-Signale."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_0_battA", title: "battA", endpoint: 0, cluster_id: 47, functional: true },
+          { key: "d1_5_battB", title: "battB", endpoint: 5, cluster_id: 47, functional: true },
+          { key: "d1_1_onoff", title: "onoff", endpoint: 1, cluster_id: 6, functional: true },
+        ] };
+        console.log(JSON.stringify({
+          lead: state.leadSignalFor(1).key,
+          battery: state.batterySignalFor(1).key,
+          preview: state.previewSignalsFor(1).map((s) => s.key),
+          previewClusters: state.previewSignalsFor(1).map((s) => s.cluster_id),
+        }));
+        """
+    )
+
+    assert values["lead"] == "d1_1_onoff"
+    assert values["battery"] == "d1_0_battA"
+    assert 47 not in values["previewClusters"]
+    assert values["preview"] == ["d1_1_onoff"]
 
 
 async def test_the_tile_has_a_battery_row_with_its_own_symbol(api):

@@ -1079,6 +1079,15 @@ function app() {
     // funktionalen Signalen des Tasters und fiele damit aus den sechs
     // Vorschauzeilen heraus - er waere auf der Kachel gar nicht mehr zu
     // sehen. Das ist der Preis der Rangliste, und dies ist die Gegenbuchung.
+    //
+    // `.find()` liefert bei mehreren PowerSource-Signalen (zusammengesetztes
+    // Geraet, oder eine Bruecke mit zwei Batterien unter einem Datensatz)
+    // bewusst nur EINES - das erstplatzierte der Rangliste, deterministisch,
+    // weil die Liste sortiert ankommt. Die Kachel zeigt ohnehin nur eine
+    // Fusszeile, mehr waere dort kein Gewinn. `previewSignalsFor` verlaesst
+    // sich dafuer NICHT auf dieses eine Signal, sondern schliesst den ganzen
+    // Cluster aus - sonst kaeme ein zweites PowerSource-Signal ueber die
+    // Hintertuer doch wieder als Leitwert nach vorn.
     batterySignalFor(deviceId) {
       const signals = this.signalsByDevice[deviceId];
       if (!signals) {
@@ -1100,10 +1109,15 @@ function app() {
     // Summanden). Eine Sonderregel an drei Stellen waere dieselbe Aussage
     // dreimal - und beim ersten Entwurf ist genau eine davon vergessen
     // worden.
+    //
+    // Gefiltert wird ueber den Cluster, nicht ueber den Schluessel von
+    // `batterySignalFor`: der liefert bei zwei PowerSource-Signalen nur das
+    // erste, ein Schluesselvergleich liesse das zweite in der Vorschau -
+    // und genau das koennte dann zum Leitwert werden.
     previewSignalsFor(deviceId) {
-      const battery = this.batterySignalFor(deviceId);
-      const functional = this.functionalSignalsFor(deviceId);
-      return battery ? functional.filter((signal) => signal.key !== battery.key) : functional;
+      return this.functionalSignalsFor(deviceId).filter(
+        (signal) => signal.cluster_id !== this.POWER_SOURCE_CLUSTER,
+      );
     },
 
     firstSignalsFor(deviceId) {
