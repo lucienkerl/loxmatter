@@ -857,6 +857,16 @@ web.devices.search_hits_elsewhere:
 web.devices.search_show_all_rooms:
   en: "show all rooms"
   de: "alle Räume anzeigen"
+# Ohne Plural-Sonderfall: "1 found" und "1 Treffer" lesen sich beide
+# richtig, und die Tabelle kennt an keiner Stelle eine Pluralform.
+web.devices.search_count:
+  en: "{count} found"
+  de: "{count} Treffer"
+# Das Loeschkreuz traegt kein Wort, also braucht es eines - der Schluessel
+# beschriftet `title` UND `aria-label`.
+web.devices.search_clear:
+  en: "Clear search"
+  de: "Suche leeren"
 web.devices.more_signals_short:
   en: "more"
   de: "weitere"
