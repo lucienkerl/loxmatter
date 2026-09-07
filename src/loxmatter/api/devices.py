@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,58 +14,58 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Geraete- und Signal-API der WebUI (Spec 8, Ansichten 1 und 2).
+"""Device and signal API of the WebUI (Spec 8, views 1 and 2).
 
-`build_device_router` baut einen `APIRouter` mit Praefix `/api` - eingebunden
-in `loxone.server.build_app`, das dieselbe FastAPI-App auch fuer die
-Loxone-seitigen Routen (`/cmd`, `/resync`, `/health`) nutzt.
+`build_device_router` builds an `APIRouter` with prefix `/api` - wired
+into `loxone.server.build_app`, which also uses the same FastAPI app for
+the Loxone-side routes (`/cmd`, `/resync`, `/health`).
 
-`client` ist `None`, wenn die Bruecke ohne Verbindung zu `matter-server`
-gestartet wurde (siehe `build_app`). Die beiden Routen, die den Matter-Client
-brauchen - Einlernen und Entfernen - antworten dann mit 503, statt eine
-`AttributeError` auf `None` zu werfen; alle anderen Routen (lesen, umbenennen,
-Export-Flag setzen) kommen ganz ohne Matter-Verbindung aus und bleiben nutzbar.
+`client` is `None` if the bridge was started without a connection to
+`matter-server` (see `build_app`). The two routes that need the Matter
+client - commissioning and removal - then respond with 503 instead of
+throwing an `AttributeError` on `None`; all other routes (reading,
+renaming, setting the export flag) work entirely without a Matter
+connection and remain usable.
 
-**Entfernen (Task 2): erst `remove_node`, dann `forget_device`.** Ein Geraet
-zu entfernen ist zwei Schritte, die nicht in einer Transaktion liegen koennen
-(der eine ist ein Netzwerkaufruf an matter-server, der andere ein lokaler
-SQLite-Schreibzugriff) - einer von beiden kann gelingen, waehrend der andere
-scheitert. Die beiden moeglichen Reihenfolgen hinterlassen bei einem
-Teilausfall unterschiedlich schlimme Zustaende:
+**Removal (Task 2): `remove_node` first, then `forget_device`.** Removing
+a device is two steps that cannot sit in one transaction (one is a
+network call to matter-server, the other a local SQLite write) - either
+one can succeed while the other fails. The two possible orders leave
+behind states of different severity on a partial failure:
 
-- **`forget_device` zuerst, dann `remove_node` scheitert:** `Store` haelt das
-  Geraet fuer entfernt, es verschwindet aus `GET /api/devices` - aber es
-  haengt weiterhin in der Matter-Fabric. Die WebUI hat ab diesem Moment
-  keine `device_id` mehr, unter der sich ein erneutes Entfernen anstossen
-  liesse. Ein stiller, von der Oberflaeche aus nicht mehr erreichbarer Rest.
-- **`remove_node` zuerst, dann `forget_device` scheitert:** das Geraet ist
-  tatsaechlich aus der Fabric entfernt, aber `Store` fuehrt es noch als
-  aktiv. Es bleibt in `GET /api/devices` sichtbar - und meldet sich, sobald
-  `BridgeMatterClient.subscribe` das zugehoerige `NODE_REMOVED`-Ereignis
-  zustellt, ueber `Runtime.set_online` korrekt als nicht mehr erreichbar
-  (`d<id>_online = false`), genau wie jedes andere Geraet, das seine
-  Verbindung verliert (Spec 9). Ein erneutes `DELETE` bleibt moeglich, und
-  der fehlgeschlagene zweite Schritt ist ein gewoehnlicher, sichtbarer
-  Serverfehler, kein verschwundenes Geraet.
+- **`forget_device` first, then `remove_node` fails:** `Store` considers
+  the device removed, it disappears from `GET /api/devices` - but it
+  still hangs in the Matter fabric. From this moment on, the WebUI has no
+  more `device_id` under which a renewed removal could be triggered. A
+  silent leftover no longer reachable from the UI.
+- **`remove_node` first, then `forget_device` fails:** the device has
+  actually been removed from the fabric, but `Store` still lists it as
+  active. It stays visible in `GET /api/devices` - and, as soon as
+  `BridgeMatterClient.subscribe` delivers the associated `NODE_REMOVED`
+  event, correctly reports itself via `Runtime.set_online` as no longer
+  reachable (`d<id>_online = false`), exactly like any other device that
+  loses its connection (Spec 9). A renewed `DELETE` remains possible, and
+  the failed second step is an ordinary, visible server error, not a
+  vanished device.
 
-Die zweite Reihenfolge hinterlaesst damit im Fehlerfall einen sichtbaren,
-diagnostizierbaren Zustand statt eines stillen; `remove_device` unten setzt
-sie deshalb um.
+The second order thus leaves behind a visible, diagnosable state instead
+of a silent one on failure; `remove_device` below therefore implements
+it.
 
-**Unverifizierte Annahme (Minor #3, Review 2026-09-02):** "Ein erneutes
-`DELETE` bleibt moeglich" oben setzt voraus, dass `remove_node` gegen einen
-Node erneut aufgerufen werden darf, der beim ersten (teilweise gescheiterten)
-Versuch schon aus der Fabric entfernt wurde - also gegen `matter-server`
-retry-sicher ist. `tests/api/conftest.py::FakeMatterClient.remove_node`
-haengt jeden Aufruf lediglich an eine Liste an und kann diese Annahme nicht
-pruefen; ob das echte `MatterClient.remove_node` einen bereits entfernten
-Node mit einem Fehler quittiert oder ihn klaglos ignoriert, ist gegen die
-installierte `python-matter-server`-Version bislang nicht belegt (anders als
-die drei Methoden im Docstring von `matter/client.py`, die explizit gegen
-den Quelltext geprueft sind). Ein Fehlschlag dort waere kein neues Problem -
-er landete wie jeder andere `MatterUnavailableError` als 502 -, aber die
-Zusicherung "bleibt moeglich" ist bis dahin eine Annahme, keine belegte
-Tatsache.
+**Unverified assumption (Minor #3, review 2026-09-02):** "a renewed
+`DELETE` remains possible" above assumes that `remove_node` may be called
+again against a node that was already removed from the fabric on the
+first (partially failed) attempt - i.e. that it is retry-safe against
+`matter-server`. `tests/api/conftest.py::FakeMatterClient.remove_node`
+merely appends every call to a list and cannot verify this assumption;
+whether the real `MatterClient.remove_node` reports an already-removed
+node with an error or silently ignores it has not so far been verified
+against the installed `python-matter-server` version (unlike the three
+methods in the docstring of `matter/client.py`, which are explicitly
+checked against the source code). A failure there would not be a new
+problem - it would land as a 502 like any other `MatterUnavailableError`
+- but until then the assurance "remains possible" is an assumption, not
+a verified fact.
 """
 
 from __future__ import annotations
@@ -99,29 +99,28 @@ from loxmatter.profiles.table import Exportability, is_exportable
 
 logger = logging.getLogger(__name__)
 
-# Woher der Thread-Datensatz kommt, wenn matter-server ihn nicht (mehr) hat.
-# Ein eigener Typ statt des blanken Aufrufs, damit `build_app` ihn in Tests
-# durch eine Quelle ohne Netzwerk ersetzen kann - dasselbe Seam-Muster wie
-# `session_factory` in `matter/client.py`.
+# Where the Thread dataset comes from when matter-server does not (or no
+# longer) have it. A dedicated type instead of the bare call, so `build_app`
+# can replace it in tests with a source that has no network - the same seam
+# pattern as `session_factory` in `matter/client.py`.
 ThreadDatasetSource = Callable[[], Awaitable[str]]
 
-# Woher der gepruefte Datensatz kam - `validated_dataset` stellt diese Angabe seinen
-# Meldungen voran. Der geholte nennt dort die URL des Border Routers, der von
-# Hand eingetragene diese Zeile; sie landet ausschliesslich im Log, nie in der
-# Antwort (siehe `commission_device`).
+# Where the checked dataset came from - `validated_dataset` prepends this to
+# its messages. The fetched one names the URL of the Border Router there,
+# the manually entered one this line; it ends up exclusively in the log,
+# never in the response (see `commission_device`).
 #
-# Ein Schluessel statt eines fertigen Satzes, und aufgeloest erst zur
-# Aufrufzeit: die Meldungen von `validated_dataset` laufen seit der
-# i18n-Phase durch `i18n.t()`, ein fest deutscher Brocken mitten in einem
-# englischen Satz waere die halbe Uebersetzung. Beim Import steht die
-# Sprache ausserdem noch gar nicht fest (cli.py setzt sie erst danach).
+# A key instead of a finished sentence, and resolved only at call time: the
+# messages from `validated_dataset` have run through `i18n.t()` since the
+# i18n phase, a fixed German chunk in the middle of an English sentence
+# would be half a translation. At import time the language is also not yet
+# determined at all (cli.py only sets it afterwards).
 _MANUAL_DATASET_ORIGIN_KEY = "api.devices.manual_dataset_origin"
 
-# Warum ein Signal nicht exportierbar ist (Spec 6.6) - nur fuer die beiden
-# Faelle, die `Exportability` von ANALOG/DIGITAL unterscheidet. `NONE` deckt
-# sowohl Listen/Structs als auch (still, siehe Spec 6.6) Nullwerte ab; die
-# Tabelle kann diese beiden nicht auseinanderhalten, weil `classify()` selbst
-# es nicht tut.
+# Why a signal is not exportable (Spec 6.6) - only for the two cases that
+# `Exportability` distinguishes from ANALOG/DIGITAL. `NONE` covers both
+# lists/structs and (silently, see Spec 6.6) null values; the table cannot
+# tell these two apart, because `classify()` itself does not either.
 _UNEXPORTABLE_REASONS: dict[Exportability, str] = {
     Exportability.TEXT: "Text - ein virtueller UDP-Eingang kennt nur Zahlen und digitale Werte",
     Exportability.NONE: "kein abbildbarer Wert - Liste, Struktur, oder derzeit ohne Wert (null)",
@@ -129,14 +128,14 @@ _UNEXPORTABLE_REASONS: dict[Exportability, str] = {
 
 
 class RuntimeValues(Protocol):
-    """Was diese Route von `runtime` braucht - `loxone.runtime.Runtime`
-    erfuellt das bereits unveraendert (siehe dort `last_values_for` und
-    `set_online`), ein Test kann es mit einem einfachen Double erfuellen,
-    ohne eine echte `Runtime` samt Sender aufzubauen.
+    """What this route needs from `runtime` - `loxone.runtime.Runtime`
+    already satisfies this unchanged (see `last_values_for` and
+    `set_online` there), a test can satisfy it with a simple double,
+    without building a real `Runtime` complete with sender.
 
-    `set_online` kam dazu, als das Einlernen die Erreichbarkeit eines frisch
-    eingelernten Geraets selbst saeen musste (siehe `commission_device`) -
-    lesen allein reicht dafuer nicht."""
+    `set_online` was added when commissioning had to seed the reachability
+    of a freshly commissioned device itself (see `commission_device`) -
+    reading alone is not enough for that."""
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]: ...
 
@@ -144,15 +143,15 @@ class RuntimeValues(Protocol):
 
 
 def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> SignalOut:
-    """`functional` kommt unveraendert aus `StoredSignal.functional` -
-    `profiles.relevance.is_functional` braucht die Geraetetypen je Endpunkt
-    (`device_types_by_endpoint`), die diese Funktion hier gar nicht sieht
-    (nur `signal` und die aktuellen Werte). `Store.register_signals`
-    berechnet das Ergebnis bereits einmalig bei der Registrierung, mit dem
-    echten Geraeteabbild zur Hand, und schreibt es in die Zeile - siehe dort
-    und `_migrate_to_v4` fuer Bestandsgeraete. Eine zweite Berechnung hier
-    (oder gar in der Oberflaeche) wuerde dieselbe Regel ein zweites Mal
-    nachbilden, ohne das Abbild zu haben, das sie eigentlich braucht."""
+    """`functional` comes unchanged from `StoredSignal.functional` -
+    `profiles.relevance.is_functional` needs the device types per endpoint
+    (`device_types_by_endpoint`), which this function does not see here at
+    all (only `signal` and the current values). `Store.register_signals`
+    already computes the result once during registration, with the real
+    device snapshot at hand, and writes it into the row - see there and
+    `_migrate_to_v4` for existing devices. A second computation here (or
+    even in the UI) would replicate the same rule a second time, without
+    having the snapshot it actually needs."""
     exportable = is_exportable(signal.exportability)
     reason = None if exportable else _UNEXPORTABLE_REASONS.get(signal.exportability)
     return SignalOut(
@@ -171,24 +170,24 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
 
 
 def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> DeviceOut:
-    # `store.signals(device.id)` holt hier die volle Zeile pro Signal, obwohl
-    # `list_devices` (Minor #2, Review 2026-09-02) sie nur zaehlt - ein N+1-
-    # Zugriff pro Geraet in `GET /api/devices`. Bewusst hingenommen statt
-    # einer eigenen COUNT/SUM-Abfrage: die Zahl der Geraete einer Bruecke
-    # bleibt klein (eine Loxone-Instanz, keine Flotte), `exportable_count`
-    # braucht ohnehin `is_exportable` pro Zeile - eine SQL-Aggregation muesste
-    # diese Regel ein zweites Mal in SQL nachbilden und liefe damit genau in
-    # das Auseinanderdriften, das Important #2 oben erst behoben hat.
+    # `store.signals(device.id)` fetches the full row per signal here, even
+    # though `list_devices` (Minor #2, review 2026-09-02) only counts them -
+    # an N+1 access per device in `GET /api/devices`. Deliberately accepted
+    # instead of a dedicated COUNT/SUM query: the number of devices on a
+    # bridge stays small (one Loxone instance, not a fleet), `exportable_count`
+    # needs `is_exportable` per row anyway - an SQL aggregation would have to
+    # replicate this rule a second time in SQL and would thereby run right
+    # into the drift that Important #2 above only just fixed.
     signals = store.signals(device.id)
     values = runtime.last_values_for(device.id)
     online = bool(values.get(f"d{device.id}_online", False))
     exportable_count = sum(1 for s in signals if is_exportable(s.exportability))
-    # next_export_count (Nachbesserung Fix 7, Phase 6): dieselbe Zusammensetzung
-    # wie `ExportDeviceOut.inputs` in `api/export.py` (`to_inputs`, gefiltert
-    # auf `exported`) - keine zweite, nur aehnliche Zaehlung hier. Die
-    # Gerätekachel zeigte bisher "159 Signale, 110 exportierbar" ueber einer
-    # Liste von fuenf - beide Zahlen stimmten, keine beantwortete, wie viele
-    # Eingaenge der naechste Export tatsaechlich erzeugt.
+    # next_export_count (follow-up Fix 7, Phase 6): the same composition as
+    # `ExportDeviceOut.inputs` in `api/export.py` (`to_inputs`, filtered on
+    # `exported`) - no second, merely similar count here. The device tile
+    # previously showed "159 signals, 110 exportable" above a list of five -
+    # both numbers were correct, neither answered how many inputs the next
+    # export would actually produce.
     next_export_count = len(to_inputs(signals, device.id, device.label))
     category = category_for(device.device_types)
     return DeviceOut(
@@ -206,15 +205,15 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
 
 
 def _commissioning_detail(exc: CommissioningError, missing_dataset_reason: str | None) -> str:
-    """Die Meldung, die in der Oberflaeche ankommt.
+    """The message that reaches the UI.
 
-    Ohne den Zusatz stand dort nur, was matter-server selbst sagt -
-    "Commission with code failed for node 7." Der eigentliche Grund
-    ("Required network information not provided in commissioning
-    parameters") steht ausschliesslich im Log von matter-server, und ohne
-    Zugriff darauf ist die Meldung nicht deutbar: BLE, Pairing-Code und die
-    gesicherte Sitzung zum Geraet waren allesamt in Ordnung, es fehlte nur
-    das Netz, in das das Geraet gehoert haette.
+    Without the addition, it only stated what matter-server itself says -
+    "Commission with code failed for node 7." The actual reason ("Required
+    network information not provided in commissioning parameters") lives
+    exclusively in matter-server's log, and without access to it the
+    message cannot be interpreted: BLE, pairing code, and the secured
+    session to the device were all fine, only the network the device
+    should have belonged to was missing.
     """
     detail = str(exc)
     if missing_dataset_reason is None:
@@ -266,13 +265,13 @@ def build_device_router(
 
     @router.patch("/devices/{device_id}")
     async def patch_device(device_id: int, patch: DevicePatch) -> DeviceOut:
-        """Aendert Label und/oder Raum. `None` heisst bei beiden Feldern
-        "unveraendert"; der Leerstring im Raum heisst "entfernen".
+        """Changes label and/or room. `None` means "unchanged" for both
+        fields; the empty string in room means "remove".
 
-        Die beiden Schreibwege sind bewusst verschieden: `rename_device`
-        setzt `updated_at` mit (das Label wird als `Title` exportiert),
-        `set_room` nicht (der Raum wird nirgends exportiert). Siehe die
-        Docstrings beider Store-Methoden."""
+        The two write paths are deliberately different: `rename_device`
+        also sets `updated_at` (the label is exported as `Title`),
+        `set_room` does not (the room is never exported anywhere). See the
+        docstrings of both store methods."""
         device = _require_device(device_id)
         if patch.label is not None:
             store.rename_device(device.id, patch.label)
@@ -282,16 +281,16 @@ def build_device_router(
 
     @router.post("/rooms/rename")
     async def rename_room(patch: RoomRename) -> dict[str, int]:
-        """Benennt einen Raum an allen aktiven Geraeten um.
+        """Renames a room across all active devices.
 
-        Die einzige Route, die es fuer Raeume ueberhaupt gibt - es gibt keine
-        Raum-Objekte (Entwurf 3.2), also auch kein `GET /api/rooms`: die
-        Raumliste steckt bereits in `GET /api/devices`, und ein zweiter
-        Endpunkt fuer dieselbe Auskunft koennte nur auseinanderlaufen.
+        The only route that exists for rooms at all - there are no room
+        objects (design 3.2), so no `GET /api/rooms` either: the room list
+        already lives inside `GET /api/devices`, and a second endpoint for
+        the same information could only drift out of sync.
 
-        404 statt "0 umbenannt", wenn kein aktives Geraet den Quellnamen
-        traegt: ein Tippfehler im Quellnamen saehe sonst wie ein geglueckter
-        Vorgang aus."""
+        404 instead of "0 renamed" if no active device carries the source
+        name: a typo in the source name would otherwise look like a
+        successful operation."""
         if not patch.to_room.strip():
             raise HTTPException(status_code=422, detail=i18n.t("api.devices.room_name_required"))
         renamed = store.rename_room(patch.from_room, patch.to_room)
@@ -304,22 +303,22 @@ def build_device_router(
 
     @router.patch("/signals/{key}")
     async def rename_signal(key: str, patch: SignalPatch) -> SignalOut:
-        """Aendert Titel, Export- und Resend-Flag. Der Schluessel bleibt unberuehrt.
+        """Changes title, export and resend flag. The key remains untouched.
 
-        Spec 6.2: der Schluessel ist die Verdrahtung in Loxone. Waere er hier
-        aenderbar, koennte ein Klick in der Oberflaeche einen Baustein im Haus
-        still totlegen. Das Modell `SignalPatch` kennt deshalb gar kein Feld
-        dafuer - ein mitgeschicktes `key` wird verworfen, nicht angewendet.
+        Spec 6.2: the key is the wiring in Loxone. If it were changeable
+        here, a click in the UI could silently kill a component in the
+        house dead. The `SignalPatch` model therefore has no field for it
+        at all - a `key` sent along anyway is discarded, not applied.
 
-        Anders als jede geraete-gebundene Route (`_require_device` oben)
-        loeste diese Route bisher ausschliesslich ueber `signal_by_key` auf,
-        ohne zu pruefen, ob das zugehoerige Geraet ueberhaupt noch aktiv ist
-        (Review-Fix Important #4, 2026-09-02): nach `DELETE
-        /api/devices/{id}` meldete `GET /api/devices/{id}` korrekt 404, aber
-        `PATCH /api/signals/{key}` mutierte die Zeile eines entfernten
-        Geraets weiterhin klaglos - eine Signalzeile, die nirgends mehr in
-        der Oberflaeche sichtbar ist, aber ueber ihren Schluessel trotzdem
-        noch aenderbar bleibt. Die Pruefung unten schliesst diese Luecke.
+        Unlike every device-bound route (`_require_device` above), this
+        route previously resolved exclusively via `signal_by_key`, without
+        checking whether the associated device is even still active
+        (review fix Important #4, 2026-09-02): after `DELETE
+        /api/devices/{id}`, `GET /api/devices/{id}` correctly reported
+        404, but `PATCH /api/signals/{key}` still mutated the row of a
+        removed device without complaint - a signal row no longer visible
+        anywhere in the UI, but still changeable via its key nonetheless.
+        The check below closes this gap.
         """
         stored = store.signal_by_key(key)
         if stored is None:
@@ -345,7 +344,7 @@ def build_device_router(
             store.set_resend(key, patch.resend)
 
         updated = store.signal_by_key(key)
-        assert updated is not None  # eben noch gefunden, in derselben Anfrage nicht geloescht
+        assert updated is not None  # just found, not deleted within the same request
         values = runtime.last_values_for(updated.device_id)
         return _signal_out(updated, values)
 
@@ -353,42 +352,42 @@ def build_device_router(
     async def commission_device(request: CommissionRequest) -> DeviceOut:
         active_client = _require_client()
 
-        # Warum das hier ueberhaupt steht: matter-server haelt die
-        # Thread-Zugangsdaten NUR im Arbeitsspeicher und vergisst sie bei
-        # jedem Neustart (die ganze Begruendung samt aufgezeichnetem
-        # Ernstfall steht in `matter/otbr.py`). Das Eingabefeld allein hat
-        # das nicht aufgefangen - es ist optional und wird nach jedem
-        # Einlernen geleert, war beim naechsten Mal also leer.
+        # Why this even exists: matter-server holds the Thread credentials
+        # ONLY in memory and forgets them on every restart (the full
+        # rationale, including a recorded real-world incident, is in
+        # `matter/otbr.py`). The input field alone did not catch this - it
+        # is optional and is cleared after every commissioning, so it was
+        # empty the next time.
         missing_dataset_reason: str | None = None
 
         if request.thread_dataset is not None:
-            # Ein von Hand eingetragener Datensatz sticht den vom Host: er
-            # ist der Weg fuer ein Thread-Netz, das nicht von diesem Border
-            # Router kommt.
+            # A manually entered dataset takes priority over the one from
+            # the host: it is the path for a Thread network that does not
+            # come from this Border Router.
             #
-            # Geprueft wird er auf demselben Weg wie der geholte - `validated_dataset`
-            # aus `matter/otbr.py`, absichtlich dieselbe Funktion und keine
-            # zweite Nachbildung derselben Regel (deshalb der Import eines
-            # modul-privaten Namens). Ungeprueft durchgereicht loeste ein mit
-            # Zeilenumbruch oder als JSON-Struktur eingefuegter Datensatz bei
-            # matter-server ein `bytes.fromhex`-Scheitern aus, das als
-            # `FailedCommand` zurueckkommt - keine `MatterUnavailableError`,
-            # also 500 "Internal Server Error", die nichtssagendste aller
-            # Antworten.
+            # It is checked the same way as the fetched one -
+            # `validated_dataset` from `matter/otbr.py`, deliberately the
+            # same function and not a second replica of the same rule
+            # (hence the import of a module-private name). Passed through
+            # unchecked, a dataset inserted with a line break or as a JSON
+            # structure would trigger a `bytes.fromhex` failure at
+            # matter-server that comes back as a `FailedCommand` - not a
+            # `MatterUnavailableError`, so a 500 "Internal Server Error",
+            # the most meaningless of all responses.
             try:
                 dataset = validated_dataset(
                     request.thread_dataset, i18n.t(_MANUAL_DATASET_ORIGIN_KEY)
                 )
             except ThreadDatasetUnavailableError as exc:
-                # 422 wie beim abgelehnten Pairing-Code: die Anfrage ist
-                # wohlgeformt, ihr Inhalt aber nicht verwendbar. Der Grund
-                # steht in der Antwort, der Datensatz selbst NICHT - er
-                # enthaelt den Netzwerkschluessel des Thread-Netzes (siehe
-                # `matter/otbr.py`). Auch `str(exc)` bleibt draussen: seine
-                # Formulierung fragt nach dem Border Router, und der hat mit
-                # einem Eingabefeld nichts zu tun. Ins Log darf er, dort
-                # nennt er die Laenge.
-                logger.warning("Eingetragener Thread-Datensatz abgelehnt: %s", exc)
+                # 422 like a rejected pairing code: the request is
+                # well-formed, but its content is unusable. The reason
+                # goes in the response, the dataset itself does NOT - it
+                # contains the network key of the Thread network (see
+                # `matter/otbr.py`). `str(exc)` also stays out: its wording
+                # asks about the Border Router, and that has nothing to do
+                # with an input field. It may go into the log, where it
+                # names the length.
+                logger.warning("Entered Thread dataset rejected: %s", exc)
                 raise HTTPException(
                     status_code=422,
                     detail=i18n.t("api.devices.fail_manual_thread_dataset"),
@@ -401,14 +400,15 @@ def build_device_router(
             try:
                 dataset = await fetch_dataset()
             except ThreadDatasetUnavailableError as exc:
-                # KEIN Abbruch: ein WiFi-Geraet braucht gar keinen
-                # Thread-Datensatz, und ein Aufbau ohne eigenen Border Router
-                # ist damit weiterhin bedienbar. Der Grund wird nur gemerkt,
-                # fuer den Fall, dass das Einlernen gleich scheitert - dann
-                # ist er die wahrscheinliche Ursache und gehoert in die
-                # Meldung.
+                # NO abort: a WiFi device needs no Thread dataset at all,
+                # and a setup without its own Border Router remains usable
+                # as a result. The reason is only remembered in case
+                # commissioning fails right afterwards - then it is the
+                # likely cause and belongs in the message.
                 missing_dataset_reason = str(exc)
-                logger.warning("Kein Thread-Datensatz verfuegbar, Einlernen laeuft ohne: %s", exc)
+                logger.warning(
+                    "No Thread dataset available, commissioning proceeds without: %s", exc
+                )
             else:
                 try:
                     await active_client.set_thread_dataset(dataset)
@@ -418,137 +418,142 @@ def build_device_router(
         try:
             snapshot = await active_client.commission_with_code(request.code)
         except CommissioningError as exc:
-            # 422: die Anfrage selbst war wohlgeformt, aber das Geraet hat das
-            # Einlernen abgelehnt (falscher Code, schon in einem anderen
-            # Oekosystem, Timeout beim Interview) - siehe CommissioningError.
+            # 422: the request itself was well-formed, but the device
+            # rejected commissioning (wrong code, already in another
+            # ecosystem, timeout during the interview) - see
+            # CommissioningError.
             raise HTTPException(
                 status_code=422, detail=_commissioning_detail(exc, missing_dataset_reason)
             ) from exc
         except MatterUnavailableError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-        # Derselbe Ablauf wie beim CLI-Export (cli.py): register_device vor
-        # register_signals vor register_commands, denn beide brauchen die
-        # frisch vergebene device_id.
+        # The same sequence as in the CLI export (cli.py): register_device
+        # before register_signals before register_commands, because both
+        # need the freshly assigned device_id.
         device_id = store.register_device(snapshot, room=request.room)
-        # `register_device`s `room`-Argument wirkt laut seinem Docstring nur
-        # bei einer neu eingefuegten Zeile - ein schon bekanntes, aktives
-        # Geraet wird dort vor dem INSERT abgefangen und behaelt einfach
-        # seinen bisherigen Raum, die Auswahl aus dieser Anfrage wuerde
-        # kommentarlos verworfen (Review-Fund, Finding 4). Das ist beim
-        # erneuten Einlernen eines unveraendert bekannten Geraets OHNE
-        # Raumwahl richtig - ein Wiedereinlernen darf einen gepflegten Raum
-        # nicht stillschweigend leeren. Wurde aber, wie hier, ein Raum
-        # ausdruecklich ausgewaehlt (die Kachel im Einlern-Dialog bietet ihn
-        # an), soll genau diese Wahl gelten, gleich ob das Geraet neu oder
-        # schon bekannt war - also wird sie hier zusaetzlich per `set_room`
-        # nachgetragen. `set_room`, nicht `rename_device`: der Raum landet in
-        # keiner Exportvorlage, ein Wiedereinlernen mit Raumwahl darf das
-        # Geraet deshalb nicht als "seither geaendert" markieren.
+        # Per its docstring, `register_device`'s `room` argument only takes
+        # effect on a newly inserted row - an already known, active device
+        # is caught there before the INSERT and simply keeps its previous
+        # room, the selection from this request would be discarded without
+        # comment (review finding, Finding 4). That is correct when
+        # re-commissioning an unchanged, already known device WITHOUT a
+        # chosen room - a re-commissioning must not silently clear a
+        # maintained room. But if, as here, a room was explicitly selected
+        # (the tile in the commissioning dialog offers it), that exact
+        # choice should apply, whether the device was new or already
+        # known - so it is additionally applied here via `set_room`
+        # afterwards. `set_room`, not `rename_device`: the room ends up in
+        # no export template, so re-commissioning with a chosen room must
+        # not mark the device as "changed since" as a result.
         #
-        # Bewusst UNBEDINGT, nicht nur fuer den frueh-zurueckgekehrten Fall
-        # (Review-Fund, Finding 5): fuer ein neues Geraet hat `register_device`
-        # den Raum durch die INSERT-Zeile bereits genauso gesetzt, der zweite
-        # Schreibzugriff hier ist fuer diesen Fall ein No-Op (gleiche
-        # Normalisierung, `updated_at` bleibt in beiden Faellen unberuehrt).
-        # Eine Fallunterscheidung "war das Geraet neu?" braeuchte entweder
-        # einen Rueckgabewert von `register_device`, den dessen Signatur
-        # heute nicht liefert, oder eine zweite Abfrage vor dem Aufruf - der
-        # No-Op ist die einfachere und robustere Wahl.
+        # Deliberately UNCONDITIONAL, not only for the early-return case
+        # (review finding, Finding 5): for a new device, `register_device`
+        # has already set the room the same way through the INSERT row, so
+        # the second write here is a no-op in that case (same
+        # normalisation, `updated_at` remains untouched in both cases). A
+        # case distinction "was the device new?" would need either a
+        # return value from `register_device`, which its signature does
+        # not provide today, or a second query before the call - the no-op
+        # is the simpler and more robust choice.
         if request.room is not None:
             store.set_room(device_id, request.room)
         store.register_signals(device_id, snapshot)
         store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
 
-        # Die Erreichbarkeit des neuen Geraets MUSS hier gesaet werden, aus
-        # `snapshot.available` - genau wie `Runtime.seed_from_snapshot` es
-        # beim Start der Bruecke fuer die bereits bekannten Geraete tut.
+        # The reachability of the new device MUST be seeded here, from
+        # `snapshot.available` - exactly as `Runtime.seed_from_snapshot`
+        # does for the already known devices when the bridge starts.
         #
-        # Der Grund ist eine Reihenfolge, die sich von hier aus nicht
-        # beeinflussen laesst (aufgezeichnet am 2026-09-04): matter-server
-        # meldet `NODE_ADDED` bereits WAEHREND `commission_with_code` laeuft
-        # (`device_controller._setup_node` ruft `signal_event(
-        # EventType.NODE_ADDED, ...)` noch vor der Rueckkehr des Aufrufs).
-        # Zu diesem Zeitpunkt hat `register_device` oben dem Node noch keine
-        # device_id gegeben, und `BridgeMatterClient._dispatch_loop` verwirft
-        # die Meldung folgerichtig ("Aktualisierung fuer unbekannte Node ...
-        # verworfen") - die eine Gelegenheit, bei der `d<id>_online` von
-        # selbst entstanden waere, ist damit vorbei, bevor diese Route
-        # ueberhaupt wieder an die Reihe kommt.
+        # The reason is an ordering that cannot be influenced from here
+        # (recorded on 2026-09-04): matter-server reports `NODE_ADDED`
+        # already WHILE `commission_with_code` is running
+        # (`device_controller._setup_node` calls `signal_event(
+        # EventType.NODE_ADDED, ...)` before the call even returns). At
+        # that point, `register_device` above has not yet given the node a
+        # device_id, and `BridgeMatterClient._dispatch_loop` accordingly
+        # discards the notification ("update for unknown node ...
+        # discarded") - the one opportunity at which `d<id>_online` would
+        # have arisen by itself is thus gone before this route even gets
+        # its turn again.
         #
-        # Fuer ein ruhig im Netz stehendes Geraet folgt danach keine weitere
-        # `NODE_ADDED`/`NODE_UPDATED`-Meldung, und `_device_out` liest einen
-        # fehlenden Schluessel als `False`. Das Geraet stand deshalb nach dem
-        # Einlernen auf "offline" und blieb es bis zum naechsten Neustart der
-        # Bruecke - obwohl matter-server es laengst interviewt und eine
-        # Subscription darauf aufgebaut hatte.
+        # For a device sitting quietly on the network, no further
+        # `NODE_ADDED`/`NODE_UPDATED` notification follows after that, and
+        # `_device_out` reads a missing key as `False`. The device
+        # therefore showed as "offline" after commissioning and stayed
+        # that way until the bridge's next restart - even though
+        # matter-server had long since interviewed it and built a
+        # subscription for it.
         #
-        # Ab hier laeuft nur noch Nachlauf, und Nachlauf darf den Vorgang
-        # nicht nachtraeglich absagen: VOR `register_device` ist ein Fehler
-        # eine Absage - das Geraet ist dann nicht eingelernt, und eine
-        # Fehlermeldung ist die richtige Antwort. DANACH steht es in der
-        # Fabric UND im Store, und eine Fehlermeldung waere schlicht falsch.
-        # Sie fuehrte in eine Sackgasse: die Oberflaeche zeigte "Einlernen
-        # fehlgeschlagen" und keine Geraetekachel, der Bedienende drueckte
-        # erneut auf "Einlernen", und der aufgedruckte Code war laengst
-        # verbraucht (422). Der Fehlschlag gehoert deshalb ins Log, nicht in
-        # die Antwort. Konkret erreichbar ueber `UdpSender.send` ->
-        # `socket.sendto`, das `OSError` wirft, wenn das Miniserver-Netz
-        # kurz weg ist - deshalb `Exception` und nicht nur ein einzelner Typ.
+        # From here on only follow-up work runs, and follow-up work must
+        # not retroactively cancel the process: BEFORE `register_device`,
+        # an error is a cancellation - the device is then not commissioned,
+        # and an error message is the right response. AFTER it, the device
+        # is in the fabric AND in the store, and an error message would
+        # simply be wrong. It would lead into a dead end: the UI would
+        # show "commissioning failed" and no device tile, the operator
+        # would press "commission" again, and the printed code would
+        # already be used up (422). The failure therefore belongs in the
+        # log, not in the response. Concretely reachable via
+        # `UdpSender.send` -> `socket.sendto`, which throws `OSError` when
+        # the Miniserver's network is briefly down - hence `Exception` and
+        # not just a single type.
         try:
             await runtime.set_online(device_id, snapshot.available)
         except Exception:
             logger.exception(
-                "Erreichbarkeit des frisch eingelernten Geraets %s konnte nicht gesaet "
-                "werden - das Geraet ist eingelernt, seine Kachel steht bis zur naechsten "
-                "Meldung von matter-server aber auf offline",
+                "Could not seed reachability of freshly commissioned device %s - the "
+                "device is commissioned, but its tile shows offline until the next "
+                "notification from matter-server",
                 device_id,
             )
 
-        # Erst jetzt, nach `register_device`: `follow_node` loest die Node-ID
-        # ueber den Store auf, und vorher gaebe es dort nichts aufzuloesen -
-        # dasselbe Wettrennen, das `NODE_ADDED` bereits verloren hat (siehe
-        # den Kommentar oben und den Docstring von `follow_node`). Legt die
-        # Attribut-Abonnements fuer dieses Geraet an und saeet seine Werte,
-        # damit die Signale sofort Zahlen zeigen statt Striche - frueher
-        # brauchte es dafuer einen Neustart der Bruecke.
+        # Only now, after `register_device`: `follow_node` resolves the
+        # node ID via the store, and before that there would be nothing to
+        # resolve there - the same race that `NODE_ADDED` already lost
+        # (see the comment above and the docstring of `follow_node`).
+        # Creates the attribute subscriptions for this device and seeds
+        # its values, so the signals show numbers immediately instead of
+        # dashes - previously this required a restart of the bridge.
         #
-        # `seed_even_without_new_paths`, weil die Abonnements zu diesem
-        # Zeitpunkt in aller Regel schon stehen: derselbe `NODE_ADDED`-Lauf,
-        # der oben die Erreichbarkeit verloren hat, hat die
-        # Dispatch-Schleife von `BridgeMatterClient` bereits jeden Pfad
-        # dieses Node abonnieren lassen - nur eben ohne device_id, also ohne
-        # zu saeen. Ohne den Schalter faende dieser Aufruf hier einen leeren
-        # Diff vor und kehrte um, bevor er saet; die Startwerte kaemen dann
-        # nie an, und ein statischer Pfad (Spannung ohne Last, Batteriestand,
-        # der Aus-Zustand einer Steckdose) bliebe ein Strich, weil
-        # matter-server unveraenderte Werte unterdrueckt.
+        # `seed_even_without_new_paths`, because the subscriptions are, as
+        # a rule, already in place by this point: the same `NODE_ADDED`
+        # run that lost the reachability above has already had
+        # `BridgeMatterClient`'s dispatch loop subscribe to every path of
+        # this node - just without a device_id, i.e. without seeding.
+        # Without the flag, this call here would find an empty diff and
+        # turn back before seeding; the initial values would then never
+        # arrive, and a static path (voltage with no load, battery level,
+        # the off state of a plug) would remain a dash, because
+        # matter-server suppresses unchanged values.
         #
-        # Ebenfalls Nachlauf, ebenfalls abgesichert (siehe oben): das
-        # naechstliegende Szenario ist ein matter-server, der unmittelbar nach
-        # dem Einlernen neu startet - dann laeuft `follow_node` in
-        # `_require_upstream` und wirft `MatterUnavailableError`, obwohl das
-        # Geraet vollstaendig eingelernt ist. Ohne Werte, aber eingelernt: die
-        # Signalzeilen stehen (sie entstehen aus `register_signals` oben).
+        # Also follow-up work, also safeguarded (see above): the most
+        # likely scenario is a matter-server that restarts immediately
+        # after commissioning - then `follow_node` runs into
+        # `_require_upstream` and throws `MatterUnavailableError`, even
+        # though the device is fully commissioned. Without values, but
+        # commissioned: the signal rows exist (they are created by
+        # `register_signals` above).
         #
-        # Dass sie sich auch wieder fuellen, traegt NICHT das naechste
-        # `NODE_ADDED`/`NODE_UPDATED` allein - dessen Diff ist fuer ein
-        # laengst abonniertes Geraet leer, und ohne den Schalter kaeme der
-        # Aufruf gar nicht bis zum Saeen. Es traegt `_seed_pending` in
-        # `BridgeMatterClient`: die Bruecke merkt sich jeden Node, dem sie noch
-        # ein Abbild schuldet - sei es, weil der Store ihn noch nicht kannte,
-        # sei es, weil der Handler beim Saeen geworfen hat -, und der naechste
-        # `follow_node` aus der Dispatch-Schleife holt es nach. Deshalb gilt
-        # die Zusage hier fuer BEIDE Faelle: fuer einen Fehlschlag vor dem
-        # Abonnieren wie fuer einen danach (etwa ein `sqlite3.OperationalError`
-        # unter gleichzeitiger Schreiblast der Resend-Schleife).
+        # That they also fill in again is NOT carried by the next
+        # `NODE_ADDED`/`NODE_UPDATED` alone - its diff is empty for a
+        # device that has long been subscribed, and without the flag the
+        # call would not even get to the seeding. It is carried by
+        # `_seed_pending` in `BridgeMatterClient`: the bridge remembers
+        # every node it still owes a snapshot - whether because the store
+        # did not know it yet, or because the handler threw during
+        # seeding -, and the next `follow_node` from the dispatch loop
+        # catches up on it. That is why the assurance here holds for BOTH
+        # cases: a failure before subscribing as well as one after (say, a
+        # `sqlite3.OperationalError` under concurrent write load from the
+        # resend loop).
         try:
             await active_client.follow_node(snapshot.node_id, seed_even_without_new_paths=True)
         except Exception:
             logger.exception(
-                "Abonnements des frisch eingelernten Geraets %s konnten nicht nachgezogen "
-                "werden - das Geraet ist eingelernt, seine Signale bleiben bis zur "
-                "naechsten Meldung von matter-server aber ohne Werte",
+                "Could not catch up on subscriptions of freshly commissioned device %s "
+                "- the device is commissioned, but its signals remain without values "
+                "until the next notification from matter-server",
                 device_id,
             )
         return _device_out(store.device(device_id), store, runtime)
@@ -558,7 +563,7 @@ def build_device_router(
         device = _require_device(device_id)
         active_client = _require_client()
         try:
-            # Reihenfolge siehe Modul-Docstring: erst die Fabric, dann Store.
+            # Order: see module docstring - the fabric first, then the store.
             await active_client.remove_node(device.node_id)
         except MatterUnavailableError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc

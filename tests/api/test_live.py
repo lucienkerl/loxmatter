@@ -107,7 +107,7 @@ async def test_bounded_queue_drops_oldest_keeps_newest_and_logs_once(caplog):
         {"key": "k3", "value": 3},
         {"key": "k4", "value": 4},
     ]
-    drop_logs = [r for r in caplog.records if "verworfen" in r.getMessage()]
+    drop_logs = [r for r in caplog.records if "dropping oldest" in r.getMessage()]
     assert len(drop_logs) == 1
 
 

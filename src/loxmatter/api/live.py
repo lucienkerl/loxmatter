@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,35 +14,33 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""WebSocket fuer Live-Werte der WebUI (Spec 8.3).
+"""WebSocket for live values of the WebUI (Spec 8.3).
 
-`build_live_router` baut einen `APIRouter` mit der Route `GET /api/live` -
-ein WebSocket, kein REST-Endpunkt. Jede Verbindung meldet sich bei
-`Runtime.add_observer` an und beim Trennen wieder ab (`Runtime.
-remove_observer`) - dieselbe Subscription, die auch den UDP-Sender speist
-(siehe `loxone.runtime.Runtime`). Kein zweiter Pfad, kein Polling: was hier
-ankommt, ist wortwoertlich derselbe Schluessel/Wert, den `Runtime` bereits an
-Loxone geschickt hat.
+`build_live_router` builds an `APIRouter` with the route `GET /api/live` -
+a WebSocket, not a REST endpoint. Every connection registers with
+`Runtime.add_observer` and deregisters again on disconnect (`Runtime.
+remove_observer`) - the same subscription that also feeds the UDP sender
+(see `loxone.runtime.Runtime`). No second path, no polling: what arrives
+here is literally the same key/value that `Runtime` has already sent to
+Loxone.
 
-**Der Beobachter blockiert nie.** Eine eigene Warteschlange pro Verbindung
-entkoppelt den Beobachter-Aufruf - der synchron und in-line im Aufrufpfad von
-`Runtime.on_attribute`/`on_event`/`set_online` laeuft, siehe dort
-`_notify_observers` - vom eigentlichen Versand ueber den WebSocket, der
-asynchron ist und auf einen langsamen oder haengenden Browser-Tab warten
-koennte. Der Beobachter selbst tut deshalb nur `queue.put(...)` - das kann
-nicht blockieren -, und `streaming.send_loop` pumpt die Warteschlange auf die
-Leitung, in einem eigenen Task. Wuerde der Beobachter stattdessen direkt
-`await websocket.send_json(...)` aufrufen, haenge ein Browser-Tab, der nicht
-mehr liest (Tab im Hintergrund, Netz weg, Laptop im Schlaf), am Ende die
-UDP-Bruecke selbst auf - genau die Klasse Fehler, vor der Spec 8.3 mit
-"dieselbe Subscription... kein zweiter Pfad" nicht nur einen doppelten
-Lesepfad, sondern auch einen gemeinsamen Blockierpfad ausschliessen soll.
+**The observer never blocks.** A dedicated queue per connection decouples
+the observer call - which runs synchronously and in-line in the call path of
+`Runtime.on_attribute`/`on_event`/`set_online`, see `_notify_observers`
+there - from the actual delivery over the WebSocket, which is asynchronous
+and could wait on a slow or hanging browser tab. The observer itself
+therefore only does `queue.put(...)` - which cannot block -, and
+`streaming.send_loop` pumps the queue onto the wire, in its own task. If the
+observer instead called `await websocket.send_json(...)` directly, a browser
+tab that stops reading (tab in the background, network gone, laptop asleep)
+would ultimately hang the UDP bridge itself - exactly the class of failure
+that Spec 8.3's "same subscription... no second path" is meant to rule out
+not only a duplicate read path but also a shared blocking path.
 
-Die Warteschlangen-, Trennungs- und Subprotokoll-Mechanik selbst (begrenzte
-Groesse, Drop-Oldest, das Bemerken einer Trennung, das Echoen des
-Bearer-Markers) ist Task 1 nach `api.streaming` herausgeloest, weil ein
-zweiter Kanal (Diagnose-Feed) sie unveraendert braucht - siehe dort fuer
-die vollstaendige Begruendung."""
+The queue, disconnect and subprotocol mechanics themselves (bounded size,
+drop-oldest, noticing a disconnect, echoing the bearer marker) were factored
+out into `api.streaming` by Task 1, because a second channel (diagnostics
+feed) needs them unchanged - see there for the full rationale."""
 
 from __future__ import annotations
 
@@ -62,18 +60,18 @@ from loxmatter.api.streaming import (
 )
 
 __all__ = ["BEARER_SUBPROTOCOL", "ObservableRuntime", "build_live_router"]
-"""`BEARER_SUBPROTOCOL` reist hier nur durch: `loxone.server` importiert sie
-weiterhin von hier (siehe deren Definition in `api.streaming`), nicht
-umgestellt, um dessen Import unveraendert zu lassen. `__all__` macht daraus
-einen expliziten Re-Export statt eines impliziten (mypy strict verlangt
-das), ohne den ungenutzten `as X`-Alias, den Ruff (PLC0414) beanstandet."""
+"""`BEARER_SUBPROTOCOL` only passes through here: `loxone.server` still
+imports it from here (see its definition in `api.streaming`), left
+unchanged so as not to alter that import. `__all__` turns this into an
+explicit re-export instead of an implicit one (mypy strict requires that),
+without the unused `as X` alias that Ruff (PLC0414) flags."""
 
 Observer = Callable[[str, object], None]
 
 
 class ObservableRuntime(Protocol):
-    """Was diese Route von `runtime` braucht - `loxone.runtime.Runtime`
-    erfuellt das bereits unveraendert."""
+    """What this route needs from `runtime` - `loxone.runtime.Runtime`
+    already satisfies this unchanged."""
 
     def add_observer(self, callback: Observer) -> None: ...
 
@@ -85,9 +83,9 @@ def build_live_router(runtime: ObservableRuntime) -> APIRouter:
 
     @router.websocket("/live")
     async def live(websocket: WebSocket) -> None:
-        # Subprotokoll-Aushandlung und Warteschlange sind gemeinsame
-        # Mechanik, siehe `api.streaming` fuer die Begruendung (Review-Fix
-        # Fix 1c / Important #1, wortwoertlich dort dokumentiert).
+        # Subprotocol negotiation and queue are shared mechanics, see
+        # `api.streaming` for the rationale (review fix Fix 1c / Important
+        # #1, documented there verbatim).
         subprotocol = accepted_subprotocol(websocket)
         await websocket.accept(subprotocol=subprotocol)
         queue = BoundedQueue(QUEUE_MAXSIZE, connection_label=str(websocket.client))

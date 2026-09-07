@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,102 +14,100 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Bedienung eines Geraets aus der Oberflaeche.
+"""Operating a device from the UI.
 
-Das ist kein Komfortmerkmal (Spec 8.1). Schaltet eine Lampe ueber Loxone
-nicht, trennt ein Klick hier die beiden moeglichen Ursachen: reagiert das
-Geraet, liegt der Fehler in der Loxone-Verdrahtung oder im Export; reagiert
-es nicht, in Matter, Thread oder am Geraet.
+This is not a convenience feature (Spec 8.1). If switching a lamp via
+Loxone does not work, a click here separates the two possible causes: if
+the device reacts, the fault is in the Loxone wiring or the export; if it
+does not react, the fault is in Matter, Thread, or the device itself.
 
-Die Uebersetzung kommt aus `commands.translate` - derselben, die der
-Loxone-Endpunkt benutzt. Eine eigene Kopie hier wuerde driften, und dann
-haette die Diagnose genau den Fehler, den sie finden soll (Spec 4.2). Die
-Statuscodes fuer `POST /api/commands/{key}` folgen deshalb wortwoertlich dem
-Loxone-Endpunkt `/cmd/{key}/{value}` aus Phase 4 (`loxone/server.py`): 404
-unbekannter Schluessel, 400 unpassender Wert, 502 Geraet antwortet nicht.
+The translation comes from `commands.translate` - the same one the Loxone
+endpoint uses. A separate copy here would drift, and then the diagnosis
+would have exactly the fault it is meant to find (Spec 4.2). The status
+codes for `POST /api/commands/{key}` therefore follow the Loxone endpoint
+`/cmd/{key}/{value}` from Phase 4 (`loxone/server.py`) verbatim: 404
+unknown key, 400 mismatched value, 502 device does not respond.
 
-**Befund zur Schreibbarkeit eines Attributs (Task 4, 2026-09-02).** Der
-Snapshot (`NodeSnapshot.attributes`) traegt nur Werte, keine Zugriffsrechte -
-"beschreibbar" steht dort nirgends. Geprueft gegen die installierten
-Pakete, nicht geraten:
+**Finding on the writability of an attribute (Task 4, 2026-09-02).** The
+snapshot (`NodeSnapshot.attributes`) carries only values, no access
+rights - "writable" appears nowhere there. Checked against the installed
+packages, not guessed:
 
-- `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` (die Basisklasse
-  jeder generierten Attribut-Klasse wie `BasicInformation.Attributes.
-  NodeLabel`) traegt `cluster_id`, `attribute_id`, `attribute_type`,
-  `must_use_timed_write` - keine Eigenschaft, die Lese- von Schreibzugriff
-  unterscheidet. `must_use_timed_write` ist etwas anderes: ob ein *erlaubter*
-  Schreibzugriff ein Timed-Write-Envelope braucht, nicht ob er erlaubt ist.
+- `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` (the base
+  class of every generated attribute class such as
+  `BasicInformation.Attributes.NodeLabel`) carries `cluster_id`,
+  `attribute_id`, `attribute_type`, `must_use_timed_write` - no property
+  that distinguishes read from write access. `must_use_timed_write` is
+  something else: whether an *allowed* write access needs a timed-write
+  envelope, not whether it is allowed.
 - `matter_server.client.client.MatterClient.write_attribute(node_id,
-  attribute_path, value)` fragt vorher nichts ab - der Aufruf geht
-  ungeprueft an den Controller; eine Ablehnung kaeme, wenn ueberhaupt, als
-  Fehler vom echten Geraet zurueck, nicht von matter-server selbst.
-- **Berichtigung (Review-Fix Important #2, 2026-09-02): eine Volltextsuche
-  nach "writable" traf sehr wohl Treffer - vorher stand hier faelschlich das
-  Gegenteil.** `chip/clusters/CHIPClusters.py` (Teil des installierten
-  `chip`-Pakets) traegt eine eigene, von `ClusterObjects` unabhaengige
-  Tabelle mit genau diesen Zugriffsrechten: `grep -c '"writable": True'
-  chip/clusters/CHIPClusters.py` liefert 250 Treffer, und fuer
-  `BasicInformation` (Cluster 0x28 = 40) sind darin exakt die drei
-  Attribut-IDs 5 (NodeLabel), 6 (Location) und 16 (LocalConfigDisabled) mit
-  `"writable": True` markiert - genau die drei, auf die `_WRITABLE_
-  ATTRIBUTES` unten unabhaengig davon schon gegen ein echtes Geraet kam.
-  Die Information existiert also, nur nicht dort, wo zuerst gesucht wurde
+  attribute_path, value)` does not check anything beforehand - the call
+  goes to the controller unchecked; a rejection would come, if at all, as
+  an error from the real device, not from matter-server itself.
+- **Correction (review fix Important #2, 2026-09-02): a full-text search
+  for "writable" did in fact get hits - this previously stated the
+  opposite by mistake.** `chip/clusters/CHIPClusters.py` (part of the
+  installed `chip` package) carries its own table, independent of
+  `ClusterObjects`, with exactly these access rights: `grep -c
+  '"writable": True' chip/clusters/CHIPClusters.py` yields 250 hits, and
+  for `BasicInformation` (cluster 0x28 = 40) exactly the three attribute
+  IDs 5 (NodeLabel), 6 (Location) and 16 (LocalConfigDisabled) are marked
+  `"writable": True` in it - exactly the three that `_WRITABLE_ATTRIBUTES`
+  below already arrived at independently, against a real device. So the
+  information does exist, just not where it was first looked for
   (`ClusterAttributeDescriptor`).
-- **Dieses Modul ist trotzdem nicht importierbar, und nichts in
-  python-matter-server benutzt es.** `from chip.clusters.CHIPClusters
-  import ChipClusters` scheitert in dieser Distribution mit `ImportError:
-  cannot import name 'exceptions' from 'chip'` - das Paket
-  `home_assistant_chip_clusters`, das hier `chip.clusters.CHIPClusters`
-  bereitstellt, liefert `CHIPClusters.py` ohne das dazugehoerige
-  `chip/exceptions.py`, das die Datei beim Laden voraussetzt. Eine
-  Volltextsuche nach `CHIPClusters` im installierten `matter_server`-Paket
-  ergibt ausserdem keinen einzigen Treffer - python-matter-server liest
-  diese Tabelle nirgends.
+- **This module is nonetheless not importable, and nothing in
+  python-matter-server uses it.** `from chip.clusters.CHIPClusters import
+  ChipClusters` fails in this distribution with `ImportError: cannot
+  import name 'exceptions' from 'chip'` - the package
+  `home_assistant_chip_clusters`, which provides `chip.clusters.
+  CHIPClusters` here, ships `CHIPClusters.py` without the accompanying
+  `chip/exceptions.py` that the file requires on load. A full-text search
+  for `CHIPClusters` in the installed `matter_server` package likewise
+  yields not a single hit - python-matter-server does not read this table
+  anywhere.
 
-Praktisch bleibt die Schlussfolgerung deshalb unveraendert, nur ihre
-Begruendung ist jetzt eine andere: **nicht, weil die Schreibbarkeit
-nirgends steht, sondern weil sie in einer Tabelle steht, die diese
-Installation nicht laden kann und die python-matter-server selbst nicht
-benutzt.** Ein roher Schreibversuch gegen ein nur lesbares Attribut faellt
-folglich nicht hier auf, sondern - wenn ueberhaupt - erst am Geraet, in einer
-Form, die diese Bruecke nicht zuverlaessig von einem Verbindungsfehler
-unterscheiden koennte. Genau das darf bei einem Diagnosewerkzeug nicht
-passieren: ein Klick, der nichts bewirkt, muss als klare Absage ankommen,
-nicht als stiller Fehlschlag irgendwo zwischen Bruecke und Geraet.
+In practice, the conclusion therefore remains unchanged, only its
+justification is now different: **not because writability appears
+nowhere, but because it appears in a table that this installation cannot
+load and that python-matter-server itself does not use.** A raw write
+attempt against a read-only attribute consequently does not show up here,
+but - if at all - only at the device, in a form this bridge could not
+reliably distinguish from a connection error. That is exactly what must
+not happen with a diagnostic tool: a click that has no effect must arrive
+as a clear refusal, not as a silent failure somewhere between bridge and
+device.
 
-Also gilt hier dieselbe Asymmetrie wie bei Kommandos (Spec 6.7): eine
-**Erlaubnisliste** statt der grosszuegigen Durchreiche, die fuer den
-*Export* von Signalen gilt (Spec 3.5). `_WRITABLE_ATTRIBUTES` unten ist
-bewusst klein und ausschliesslich mit Eintraegen belegt, die sich entweder
-gegen ein echtes, in dieser Testsuite eingechecktes Geraet nachweisen lassen
-(IKEA GRILLPLATS, `tests/fixtures/nodes/ikea_grillplats_plug.json`) oder,
-klar so gekennzeichnet, ausschliesslich auf der Matter-Spezifikation
-beruhen, ohne dass ein passendes Geraet zum Gegenpruefen vorlag - dieselbe
-Zurueckhaltung wie bei `commands/color.py`. Ein zu Unrecht gesperrtes
-Attribut kostet eine fehlende Bedienmoeglichkeit; ein zu Unrecht
-freigegebenes kann ein Geraet fehlkonfigurieren.
+So the same asymmetry applies here as for commands (Spec 6.7): an
+**allowlist** instead of the generous pass-through that applies to the
+*export* of signals (Spec 3.5). `_WRITABLE_ATTRIBUTES` below is
+deliberately small and populated exclusively with entries that can either
+be proven against a real device checked into this test suite (IKEA
+GRILLPLATS, `tests/fixtures/nodes/ikea_grillplats_plug.json`) or, clearly
+marked as such, rest solely on the Matter specification, without a
+matching device available to cross-check - the same restraint as in
+`commands/color.py`. A wrongly blocked attribute costs a missing control
+option; a wrongly allowed one can misconfigure a device.
 
-**Weiterer offener Punkt (siehe Spec, Abschnitt 12, Punkt 7):** die von Hand
-gepflegte Erlaubnisliste skaliert nicht ueber eine Handvoll Geraete hinaus -
-jedes zusaetzliche schreibbare Attribut braucht einen eigenen, gegen ein
-echtes Geraet oder die Spezifikation belegten Eintrag. Sobald
-`chip.clusters.CHIPClusters` in einer spaeteren Version importierbar wird
-(oder sich das Parsen der Datei als Daten ohne Import als vertretbar
-erweist), koennte diese Liste durch das Auslesen der oben gefundenen
-`"writable"`-Tabelle ersetzt werden - siehe Spec.
+**Further open point (see spec, section 12, point 7):** the manually
+maintained allowlist does not scale beyond a handful of devices - every
+additional writable attribute needs its own entry, backed by a real
+device or the specification. Once `chip.clusters.CHIPClusters` becomes
+importable in a later version (or parsing the file as data without an
+import proves acceptable), this list could be replaced by reading out the
+`"writable"` table found above - see spec.
 
-**Offener Punkt, hier bewusst nicht geloest (siehe Spec, Abschnitt 12):**
-selbst ein Attribut auf der Erlaubnisliste laesst sich mit dem heutigen
-Stand nicht tatsaechlich schreiben - `BridgeMatterClient` (matter/client.py)
-hat kein `write_attribute`, und die Schnittstelle dieses Moduls
-(`build_control_router(store, invoke)`) nimmt dafuer auch keinen zweiten
-Aufrufer entgegen; `invoke` ist ausschliesslich fuer Kommandos typisiert
-(`Callable[[MatterCall], Awaitable[None]]`), und ein Attribut-Schreibzugriff
-ist kein Kommando. `POST /api/signals/{key}/write` antwortet fuer ein
-erlaubtes Attribut deshalb ehrlich mit 501 statt mit einem Erfolg, der
-nichts bewirkt - dieselbe Haltung wie oben, nur eine Stufe weiter: eine
-Antwort, die stillschweigend nichts tut, ist genau der Fehler, den dieses
-Werkzeug aufdecken soll, nicht erzeugen.
+**Open point, deliberately not solved here (see spec, section 12):** even
+an attribute on the allowlist cannot actually be written with today's
+state - `BridgeMatterClient` (matter/client.py) has no `write_attribute`,
+and this module's interface (`build_control_router(store, invoke)`) does
+not accept a second caller for it either; `invoke` is typed exclusively
+for commands (`Callable[[MatterCall], Awaitable[None]]`), and an attribute
+write is not a command. `POST /api/signals/{key}/write` therefore honestly
+responds with 501 for an allowed attribute instead of a success that has
+no effect - the same stance as above, just one step further: a response
+that silently does nothing is exactly the fault this tool is meant to
+expose, not produce.
 """
 
 from __future__ import annotations
@@ -129,15 +127,15 @@ Invoker = Callable[[MatterCall], Awaitable[None]]
 
 logger = logging.getLogger(__name__)
 
-# Siehe Moduldocstring "Befund zur Schreibbarkeit eines Attributs" fuer die
-# Begruendung dieser Liste und warum sie eine Erlaubnisliste ist, keine
-# Sperrliste. (Cluster-ID, Attribut-ID)-Paare.
+# See the module docstring "Finding on the writability of an attribute" for
+# the rationale of this list and why it is an allowlist, not a blocklist.
+# (cluster ID, attribute ID) pairs.
 _WRITABLE_ATTRIBUTES: frozenset[tuple[int, int]] = frozenset(
     {
-        # BasicInformation (0/40) - belegt gegen die eingecheckte IKEA-
-        # GRILLPLATS-Vorlage (0/40/5 = "", 0/40/6 = "XX", 0/40/16 = False):
-        # alle drei Pfade sind dort tatsaechlich vorhanden, nicht nur laut
-        # Spezifikation vermutet.
+        # BasicInformation (0/40) - proven against the checked-in IKEA
+        # GRILLPLATS template (0/40/5 = "", 0/40/6 = "XX", 0/40/16 = False):
+        # all three paths are actually present there, not merely assumed
+        # per the specification.
         (40, 5),  # NodeLabel
         (40, 6),  # Location
         (40, 16),  # LocalConfigDisabled
@@ -160,34 +158,32 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
 
     @router.get("/devices/{device_id}/controls")
     async def controls(device_id: int) -> ControlsOut:
-        """Nur benannte Kommandos werden zu einem Bedienelement (Spec 6.7:
-        Ausgangsbefehle stammen aus AcceptedCommandList, nicht aus
-        Attributen).
+        """Only named commands become a control (Spec 6.7: output commands
+        come from AcceptedCommandList, not from attributes).
 
-        Der Rohexport (`loxmatter export --raw`, `export.commands.
-        extract_commands(..., raw=True)`) kann Kommandos ohne Eintrag in
-        `clusters.yaml` in den Store schreiben - ihr Slug ist dann ein
-        generischer Platzhalter wie `c4_cmd0` (siehe dort). Ein Knopf mit
-        dieser Beschriftung waere fuer die Bedienoberflaeche nutzlos: niemand
-        weiss, was `c4_cmd0` bewirkt, ohne die Vorlage zu lesen - und ein
-        Klick auf einen Knopf ohne erkennbare Bedeutung ist das Gegenteil
-        von Spec 8.1s "ein Klick trennt die beiden moeglichen Ursachen".
-        `command_slug` ist dieselbe Quelle, die auch `to_matter_call`
-        letztlich bedient (ueber `commands.translate._PAYLOAD_BUILDERS`,
-        gegen `clusters.yaml` synchron gehalten von
-        `profiles.table.known_command_pairs` - siehe dort) - ein hier
-        gefilterter Rohbefehl war ohnehin nie ausfuehrbar, sondern haette
-        sofort mit 400 quittiert. Diese Route zeigt deshalb nur, was ein
-        Klick tatsaechlich ausloesen kann.
+        The raw export (`loxmatter export --raw`, `export.commands.
+        extract_commands(..., raw=True)`) can write commands without an
+        entry in `clusters.yaml` into the store - their slug is then a
+        generic placeholder like `c4_cmd0` (see there). A button with that
+        label would be useless for the control UI: no one knows what
+        `c4_cmd0` does without reading the template - and clicking a
+        button with no recognisable meaning is the opposite of Spec 8.1's
+        "a click separates the two possible causes". `command_slug` is the
+        same source that `to_matter_call` ultimately serves too (via
+        `commands.translate._PAYLOAD_BUILDERS`, kept in sync with
+        `clusters.yaml` by `profiles.table.known_command_pairs` - see
+        there) - a raw command filtered out here was never executable
+        anyway, and would have been rejected immediately with 400. This
+        route therefore only shows what a click can actually trigger.
 
-        Der Filter bleibt trotzdem nicht spurlos (Review-Fix Minor #4,
-        2026-09-02): `hidden_raw_commands` zaehlt, wie viele Kommandos des
-        Geraets herausgefiltert wurden. Ohne diese Zahl saehe ein
-        unbenanntes Geraet in der Oberflaeche genauso aus wie eines ganz
-        ohne Ausgangsbefehle (Spec 8.1 - genau der Fall, den `test_button_
-        offers_no_controls` prueft) - eine Person, die ein fremdes Geraet
-        diagnostiziert, verlaeuft sich dann daran, statt zu sehen: da waeren
-        noch Kommandos, nur unbenannt.
+        The filter does not go unnoticed, though (review fix Minor #4,
+        2026-09-02): `hidden_raw_commands` counts how many of the device's
+        commands were filtered out. Without this number, an unnamed
+        device would look in the UI exactly like one with no output
+        commands at all (Spec 8.1 - exactly the case that
+        `test_button_offers_no_controls` checks) - a person diagnosing a
+        foreign device would then be misled by that, instead of seeing:
+        there would still be commands, just unnamed.
         """
         _require_device(device_id)
         stored = store.commands(device_id)
@@ -206,16 +202,16 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         try:
-            # Dieselbe Pruefung, aus demselben Grund, wie bei `write_signal`
-            # unten und `PATCH /api/signals/{key}` (api/devices.py) - beide
-            # tragen den Namen Review-Fix Important #4 aus Task 2, dort noch
-            # ausschliesslich fuer Signale geschlossen: `resolve_command`
-            # sucht das `command`-Tabelle allein, ohne den Status des
-            # zugehoerigen Geraets zu pruefen, und `forget_device` loescht
-            # dort keine Zeile, sondern setzt nur `device.active = 0`. Ein
-            # Kommando eines entfernten Geraets blieb deshalb ueber seinen
-            # Schluessel weiterhin ausloesbar - dieselbe Luecke, jetzt fuer
-            # Kommandos geschlossen (Review-Fix Important #1, 2026-09-02).
+            # The same check, for the same reason, as in `write_signal`
+            # below and `PATCH /api/signals/{key}` (api/devices.py) - both
+            # carry the name review fix Important #4 from Task 2, closed
+            # there so far exclusively for signals: `resolve_command`
+            # searches the `command` table alone, without checking the
+            # status of the associated device, and `forget_device` does
+            # not delete a row there, only sets `device.active = 0`. A
+            # command of a removed device therefore remained triggerable
+            # via its key - the same gap, now closed for commands (review
+            # fix Important #1, 2026-09-02).
             store.device(stored.device_id)
         except UnknownDeviceError as exc:
             raise HTTPException(
@@ -234,11 +230,11 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
 
         try:
             await invoke(call)
-        except Exception as exc:  # jedes Geraeteproblem wird zu 502
-            # logger.exception schreibt den vollen Traceback ins Server-Log,
-            # NICHT in die HTTP-Antwort - dieselbe Begruendung wie beim
-            # Loxone-Endpunkt in loxone/server.py.
-            logger.exception("Matter-Aufruf fuer Schluessel %r fehlgeschlagen", key)
+        except Exception as exc:  # every device problem becomes a 502
+            # logger.exception writes the full traceback to the server log,
+            # NOT into the HTTP response - the same rationale as for the
+            # Loxone endpoint in loxone/server.py.
+            logger.exception("Matter call for key %r failed", key)
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc
@@ -247,19 +243,19 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
 
     @router.post("/signals/{key}/write")
     async def write_signal(key: str, body: ValueIn) -> dict[str, str]:
-        """Setzt ein Attribut roh (Spec 8, Ansicht 2). Siehe Moduldocstring
-        fuer den Befund zur Schreibbarkeit und den offenen Punkt, dass ein
-        erlaubtes Attribut heute noch nicht tatsaechlich geschrieben wird."""
+        """Sets an attribute raw (Spec 8, view 2). See the module docstring
+        for the finding on writability and the open point that an allowed
+        attribute is not actually written yet today."""
         stored = store.signal_by_key(key)
         if stored is None:
             raise HTTPException(
                 status_code=404, detail=i18n.t("api.errors.unknown_signal_key", signal_key=key)
             )
         try:
-            # Dieselbe Pruefung wie bei PATCH /api/signals/{key}
-            # (api/devices.py, Review-Fix Important #4): ein Signal eines
-            # entfernten Geraets bleibt ueber seinen Schluessel auffindbar,
-            # soll aber nicht mehr bedienbar sein.
+            # The same check as in PATCH /api/signals/{key}
+            # (api/devices.py, review fix Important #4): a signal of a
+            # removed device remains findable via its key, but should no
+            # longer be operable.
             store.device(stored.device_id)
         except UnknownDeviceError as exc:
             raise HTTPException(
@@ -272,22 +268,22 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
             ) from exc
 
         if not _is_writable(stored.ref.cluster_id, stored.ref.element_id):
-            # Review-Fix Minor #3, 2026-09-02: vorher verwies diese Meldung
-            # auf den Moduldocstring - hilfreich in einem Server-Log, aber
-            # nichtssagend fuer eine Person, die nur auf die Oberflaeche
-            # schaut. Die Meldung sagt jetzt selbst, was los ist und was
-            # sich tun laesst.
+            # Review fix Minor #3, 2026-09-02: this message previously
+            # pointed to the module docstring - helpful in a server log,
+            # but meaningless for a person who only looks at the UI. The
+            # message now says by itself what is going on and what can be
+            # done.
             raise HTTPException(
                 status_code=400,
                 detail=i18n.t("api.control.fail_not_writable", signal_key=key),
             )
 
-        # Erlaubt, aber noch nicht verdrahtet - siehe Moduldocstring, Absatz
-        # "Offener Punkt". Eine 200-Antwort waere hier schlimmer als dieser
-        # ehrliche Fehler: sie taeuschte eine Wirkung vor, die nicht
-        # eintritt, und genau das soll dieses Werkzeug sichtbar machen, nicht
-        # verstecken. Wortlaut ebenfalls Review-Fix Minor #3: kein Verweis
-        # mehr auf den Moduldocstring.
+        # Allowed, but not yet wired up - see module docstring, paragraph
+        # "Open point". A 200 response here would be worse than this
+        # honest error: it would fake an effect that does not occur, and
+        # that is exactly what this tool is meant to make visible, not
+        # hide. Wording likewise review fix Minor #3: no more reference to
+        # the module docstring.
         raise HTTPException(
             status_code=501,
             detail=i18n.t("api.control.fail_not_wired", signal_key=key),

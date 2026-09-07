@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,134 +14,133 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""WebSocket fuer den Diagnose-Livestream der WebUI (Task 4, Phase 5, Spec 10.5).
+"""WebSocket for the diagnostics live stream of the WebUI (Task 4, Phase 5, Spec 10.5).
 
-Die Systemseite holt Logs, UDP-Mitschnitt und Kommando-Log heute (Task 6)
-nur einmalig beim Oeffnen ab - `GET /api/diagnostics/{datagrams,commands}`
-und, sobald verdrahtet, ein Logs-Aequivalent. Diese Datei baut die laufende
-Variante: EIN WebSocket, `/api/diagnostics/live`, der alle drei Quellen
-gemeinsam schiebt, statt dass die Oberflaeche pollt.
+The system page today (Task 6) fetches logs, UDP capture and command log
+only once, when opened - `GET /api/diagnostics/{datagrams,commands}` and,
+once wired up, a logs equivalent. This file builds the running variant:
+ONE WebSocket, `/api/diagnostics/live`, that pushes all three sources
+together instead of the UI polling.
 
-`build_diagnostics_live_router` folgt bewusst demselben Muster wie
-`api.live.build_live_router` (dort ausfuehrlich begruendet, hier nicht
-wiederholt): eine begrenzte Warteschlange pro Verbindung
-(`api.streaming.BoundedQueue`) entkoppelt den (synchron laufenden)
-Beobachter-Aufruf vom (asynchronen) Versand, `watch_for_disconnect` und
-`send_loop` laufen nebeneinander, das Subprotokoll traegt bei Bedarf das
-Token. Neu gegenueber `api.live` ist einzig, dass hier DREI Quellen statt
-einer angezapft werden - mit drei unabhaengigen, optionalen Beobachterketten
-statt einer.
+`build_diagnostics_live_router` deliberately follows the same pattern as
+`api.live.build_live_router` (justified there at length, not repeated
+here): a bounded queue per connection (`api.streaming.BoundedQueue`)
+decouples the (synchronously running) observer call from the
+(asynchronous) delivery, `watch_for_disconnect` and `send_loop` run
+alongside each other, the subprotocol carries the token when needed. The
+only thing new compared to `api.live` is that THREE sources are tapped
+here instead of one - with three independent, optional observer chains
+instead of one.
 
-**Drei Quellen, drei Vertraege, ein gemeinsames Nachrichtenformat.** Jede
-Nachricht traegt `kind` (`"datagram"`, `"command"` oder `"log"`) und
-GENAU die Felder des jeweiligen Eintragstyps aus
-`api.diagnostics.DatagramLogEntry`, `api.diagnostics.CommandLogEntry` bzw.
-`diagnostics.logbuffer.LogEntry` - nicht neu erfundene Namen, sonst hiesse
-dieselbe Angabe (z. B. der Zeitstempel) in zwei Antworten zweimal anders.
+**Three sources, three contracts, one shared message format.** Every
+message carries `kind` (`"datagram"`, `"command"` or `"log"`) and EXACTLY
+the fields of the respective entry type from
+`api.diagnostics.DatagramLogEntry`, `api.diagnostics.CommandLogEntry` and
+`diagnostics.logbuffer.LogEntry` respectively - not newly invented names,
+otherwise the same piece of data (e.g. the timestamp) would be called two
+different things in two responses.
 
-- **Datagramme:** `sender.add_datagram_observer` (Task 2) - sieht jedes
-  TATSAECHLICH gesendete Datagramm, einschliesslich Full-Resend und
-  Impulsende, die `Runtime`s eigene Beobachterkette (`api.live`) bewusst
-  auslaesst (siehe dort). Genau deshalb haengt dieser Zweig am `sender`,
-  nicht an `runtime` - ein zweiter `Runtime`-Beobachter waere eine
-  ABWEICHENDE, nicht dieselbe Sicht.
-- **Kommandos:** `command_log.add_observer` (Task 4, neu in
-  `api.diagnostics.RingBuffer` - siehe dort fuer die Begruendung, warum die
-  Beobachterkette am Ring selbst haengt und nicht an der Middleware
-  `_record_command`: die Signatur dieser Funktion nimmt bereits den fertig
-  gebauten Ring entgegen, `add_observer` darauf aufzurufen braucht keine
-  weitere Kopplung an `loxone.server`, und `command_log` hat - anders als
-  `UdpSender`/`LogBufferHandler` - keinen eigenen Besitzer-Typ, an dem eine
-  Kette sonst haengen koennte).
-- **Logs:** `log_handler.add_observer` (Task 3) - **NICHT jede Zeile**, wie
-  dort dokumentiert (eine Zeile, die synchron AUS einem Beobachter heraus
-  protokolliert wird, erreicht keinen Beobachter, landet aber im Ring). Der
-  Beobachter darf laut Vertrag von `LogBufferHandler.add_observer` NICHT
-  blockieren und muss zuegig zurueckkehren: er laeuft im Thread, der die
-  Zeile erzeugt hat, unter `logging.Handler.lock` - ein wartender Beobachter
-  koennte in einen Deadlock laufen (siehe dort).
+- **Datagrams:** `sender.add_datagram_observer` (Task 2) - sees every
+  datagram ACTUALLY sent, including full resend and pulse ends, which
+  `Runtime`'s own observer chain (`api.live`) deliberately leaves out
+  (see there). Exactly for that reason this branch hangs off `sender`,
+  not `runtime` - a second `Runtime` observer would be a DIFFERENT view,
+  not the same one.
+- **Commands:** `command_log.add_observer` (Task 4, new in
+  `api.diagnostics.RingBuffer` - see there for why the observer chain
+  hangs off the ring itself rather than off the `_record_command`
+  middleware: this function's signature already receives the fully built
+  ring, calling `add_observer` on it needs no further coupling to
+  `loxone.server`, and `command_log` - unlike `UdpSender`/
+  `LogBufferHandler` - has no owner type of its own that a chain could
+  otherwise hang off).
+- **Logs:** `log_handler.add_observer` (Task 3) - **NOT every line**, as
+  documented there (a line logged synchronously FROM within an observer
+  never reaches an observer, but does land in the ring). Per the
+  contract of `LogBufferHandler.add_observer`, the observer must NOT
+  block and must return promptly: it runs on the thread that produced
+  the line, under `logging.Handler.lock` - a waiting observer could run
+  into a deadlock (see there).
 
-  **Und genau dieser Thread ist NICHT der Event-Loop-Thread dieser Route**
-  (Review-Fix Wichtig #1, 2026-09-03). `LogBufferHandler.add_observer`
-  sagt es woertlich: der Beobachter laeuft "im Thread, der die Zeile erzeugt
-  hat" - und dieses Projekt protokolliert aus aiohttp und dem chip-SDK, also
-  aus fremden Threads, nicht nur aus dem Event-Loop-Thread dieser Route.
-  `on_log` darf deshalb NICHT einfach `queue.put(...)` aufrufen: `put`
-  fasst ueber `BoundedQueue` hinweg `asyncio.Queue`-Interna an
-  (`put_nowait`/`get_nowait`, darunter `Future.set_result`, das ueber
-  `loop.call_soon` einen wartenden `await queue.get()` weckt) - und
-  `asyncio.Queue` ist NICHT thread-sicher, `loop.call_soon` aus einem
-  fremden Thread weckt einen bereits blockierten Event-Loop nicht (nur
-  `call_soon_threadsafe` schreibt dafuer in die Selbst-Pipe des Loops). Eine
-  ruhige Verbindung - `send_loop` haengt in `await queue.get()`, sonst
-  passiert auf dem Loop gerade nichts - wuerde eine Logzeile aus einem
-  echten fremden Thread deshalb unter Umstaenden GAR NICHT sehen, bis
-  irgendetwas Unbeteiligtes den Loop aus einem anderen Grund weckt: kein
-  Absturz, keine Fehlermeldung, der Log-Zweig des Stroms bleibt einfach
-  leer. `live()` haelt deshalb den laufenden Loop
-  (`asyncio.get_running_loop()`) fest, BEVOR er `on_log` definiert, und
-  `on_log` reiht seine Nutzlast ueber `loop.call_soon_threadsafe(queue.put,
-  ...)` ein statt `queue.put(...)` direkt aufzurufen - das schreibt in die
-  Selbst-Pipe des Loops und weckt ihn zuverlaessig, auch aus einem fremden
-  Thread. `call_soon_threadsafe` wirft `RuntimeError`, wenn der Loop bereits
-  geschlossen ist (moeglich waehrend des Herunterfahrens, wenn genau dann
-  noch eine Logzeile entsteht) - `on_log` faengt das ab und protokolliert
-  NICHTS dabei, sonst waere das genau die Rekursion, die Task 3 fuer diesen
-  Handler ausschliesst (siehe `diagnostics.logbuffer`-Moduldocstring, "Die
-  eine Regel...").
+  **And that very thread is NOT the event-loop thread of this route**
+  (review fix Important #1, 2026-09-03). `LogBufferHandler.add_observer`
+  says it literally: the observer runs "on the thread that produced the
+  line" - and this project logs from aiohttp and the chip SDK, i.e. from
+  foreign threads, not only from this route's event-loop thread. `on_log`
+  must therefore NOT simply call `queue.put(...)`: `put`, via
+  `BoundedQueue`, touches `asyncio.Queue` internals (`put_nowait`/
+  `get_nowait`, including `Future.set_result`, which wakes a waiting
+  `await queue.get()` via `loop.call_soon`) - and `asyncio.Queue` is NOT
+  thread-safe, `loop.call_soon` from a foreign thread does not wake an
+  already-blocked event loop (only `call_soon_threadsafe` writes to the
+  loop's self-pipe for that). A quiet connection - `send_loop` hanging in
+  `await queue.get()`, with nothing else happening on the loop right now
+  - could therefore, under some circumstances, NOT see a log line from a
+  genuinely foreign thread AT ALL, until something unrelated wakes the
+  loop for another reason: no crash, no error message, the log branch of
+  the stream simply stays empty. `live()` therefore holds on to the
+  running loop (`asyncio.get_running_loop()`) BEFORE defining `on_log`,
+  and `on_log` enqueues its payload via `loop.call_soon_threadsafe(
+  queue.put, ...)` instead of calling `queue.put(...)` directly - that
+  writes to the loop's self-pipe and reliably wakes it, even from a
+  foreign thread. `call_soon_threadsafe` throws `RuntimeError` if the
+  loop is already closed (possible during shutdown, if a log line is
+  produced at exactly that moment) - `on_log` catches that and logs
+  NOTHING in the process, otherwise that would be exactly the recursion
+  that Task 3 rules out for this handler (see the
+  `diagnostics.logbuffer` module docstring, "The one rule...").
 
-  `on_datagram` und `on_command` bleiben bei einfachem `queue.put(...)`:
-  beide laufen ausschliesslich im Event-Loop-Thread dieser Route (siehe die
-  beiden Abschnitte oben - `UdpSender.send` haelt seinen eigenen `asyncio.
-  Lock`, die Kommando-Middleware ist eine gewoehnliche ASGI-Middleware),
-  fuer keinen von beiden gilt die Thread-Warnung von `LogBufferHandler.
-  add_observer`. `call_soon_threadsafe` waere fuer sie kein Fehler, aber ein
-  unnoetiger Umweg (eine zusaetzliche Rundreise durch die Selbst-Pipe des
-  Loops fuer einen Aufruf, der ohnehin schon im richtigen Thread steht) -
-  und wuerde den fuer LESER wichtigsten Unterschied zwischen den drei
-  Zweigen (welcher davon aus einem fremden Thread kommt) hinter derselben
-  Zeile verstecken, statt ihn wie hier sichtbar zu lassen.
+  `on_datagram` and `on_command` stick with a plain `queue.put(...)`:
+  both run exclusively on this route's event-loop thread (see the two
+  sections above - `UdpSender.send` holds its own `asyncio.Lock`, the
+  command middleware is an ordinary ASGI middleware), the thread warning
+  from `LogBufferHandler.add_observer` applies to neither. For them,
+  `call_soon_threadsafe` would not be an error but an unnecessary detour
+  (an extra round trip through the loop's self-pipe for a call that is
+  already on the right thread anyway) - and it would hide, behind the
+  same line, the difference between the three branches that matters most
+  to a READER (which of them comes from a foreign thread), instead of
+  leaving it visible as it is here.
 
-**`sender` und `log_handler` sind optional** (siehe `build_app` in
-`loxone.server`): `None` bedeutet "dieser Teil des Livestreams ist fuer
-diesen Lauf nicht verfuegbar", nicht "die Route insgesamt fehlt" - fehlt
-einer, entfaellt sein Zweig (kein Anmelden, kein Abmelden, keine
-Momentaufnahme), die uebrigen beiden laufen unveraendert weiter.
-`command_log` ist dagegen nicht optional: `loxone.server.build_app` legt
-ihn immer an, unabhaengig von `sender`/`client`/`log_handler`.
+**`sender` and `log_handler` are optional** (see `build_app` in
+`loxone.server`): `None` means "this part of the live stream is not
+available for this run", not "the route as a whole is missing" - if one
+is missing, its branch is skipped (no registering, no deregistering, no
+snapshot), the other two keep running unchanged. `command_log`, on the
+other hand, is not optional: `loxone.server.build_app` always creates it,
+independent of `sender`/`client`/`log_handler`.
 
-**Die Momentaufnahme laeuft VOR dem Anmelden der Beobachter - und genau
-DIESE Reihenfolge kann einen Eintrag verlieren, nicht die umgekehrte**
-(richtiggestellt in Nachbesserung Task 7, Fix 3a: eine fruehere Fassung
-dieses Docstrings behauptete das Gegenteil). Ein Eintrag, der genau
-zwischen "Momentaufnahme genommen" und "Beobachter angemeldet" entsteht,
-landet in KEINEM der beiden Wege - die Momentaufnahme war schon gezogen,
-der Beobachter noch nicht angemeldet - und geht damit verloren. Die
-umgekehrte Reihenfolge (zuerst anmelden, dann die Momentaufnahme ziehen)
-haette stattdessen das andere Problem: ein Eintrag aus genau diesem
-Fenster erschiene ZWEIMAL, einmal live ueber den frisch angemeldeten
-Beobachter und einmal in der danach gezogenen Momentaufnahme. Verlieren
-statt verdoppeln ist hier die bewusste Wahl - eine Zeile zu wenig faellt
-in einer Live-Ansicht kaum auf, eine Zeile zu viel schon.
+**The snapshot runs BEFORE registering the observers - and it is exactly
+THIS order that can lose an entry, not the reverse one** (corrected in
+follow-up Task 7, Fix 3a: an earlier version of this docstring claimed
+the opposite). An entry that is produced exactly between "snapshot taken"
+and "observer registered" lands in NEITHER of the two paths - the
+snapshot had already been taken, the observer was not yet registered -
+and is thereby lost. The reverse order (register first, then take the
+snapshot) would instead have the other problem: an entry from exactly
+that window would appear TWICE, once live via the freshly registered
+observer and once in the snapshot taken afterwards. Losing rather than
+duplicating is the deliberate choice here - one line too few is barely
+noticeable in a live view, one line too many is.
 
-Fuer Datagramme und Kommandos ist das ohnehin folgenlos: zwischen
-`list(...)` und dem jeweiligen `add_observer` steht kein `await`, und
-beide moeglichen Schreiber (`UdpSender.send`, die Kommando-Middleware)
-laufen selbst im Event-Loop-Thread dieser Route - ohne einen
-Zwischenausstieg kann dort nichts dazwischenfahren, das Fenster ist real,
-aber leer. Bei **Logzeilen aus einem fremden Thread** dagegen ist die
-Luecke echt: `LogBufferHandler.emit()` laeuft synchron in JEDEM Thread, der
-gerade protokolliert (siehe `diagnostics.logbuffer`-Moduldocstring), nicht
-im Event-Loop-Thread dieser Route - ein `emit()`-Aufruf aus aiohttp oder
-dem chip-SDK kann jederzeit dazwischenfahren, unabhaengig davon, was der
-Event-Loop gerade tut. `SNAPSHOT_LIMIT` begrenzt die Momentaufnahme je
-Strom - siehe dort fuer die Begruendung der Zahl.
+For datagrams and commands this is inconsequential anyway: there is no
+`await` between `list(...)` and the respective `add_observer`, and both
+possible writers (`UdpSender.send`, the command middleware) themselves
+run on this route's event-loop thread - without an intervening yield,
+nothing can interleave there, the window is real but empty. For **log
+lines from a foreign thread**, on the other hand, the gap is genuine:
+`LogBufferHandler.emit()` runs synchronously on WHATEVER thread happens
+to be logging (see the `diagnostics.logbuffer` module docstring), not on
+this route's event-loop thread - an `emit()` call from aiohttp or the
+chip SDK can interleave at any time, regardless of what the event loop
+is doing right now. `SNAPSHOT_LIMIT` bounds the snapshot per stream - see
+there for the rationale of the number.
 
-**Im `finally` werden alle DREI - beziehungsweise nur die tatsaechlich
-angemeldeten - Beobachter wieder abgemeldet.** Ein `sender`/`log_handler`
-von `None` bedeutet: dieser Zweig wurde nie angemeldet, also muss er auch
-nicht abgemeldet werden - die Bedingung ist bei An- und Abmeldung
-identisch, damit kein Zweig verwaist."""
+**In the `finally`, all THREE - or rather only the ones actually
+registered - observers are deregistered again.** A `sender`/`log_handler`
+of `None` means: this branch was never registered, so it does not need
+to be deregistered either - the condition is identical for registering
+and deregistering, so that no branch is orphaned."""
 
 from __future__ import annotations
 
@@ -161,25 +160,25 @@ from loxmatter.api.streaming import (
 from loxmatter.diagnostics.logbuffer import LogBufferHandler, LogEntry
 
 if TYPE_CHECKING:
-    # Ausschliesslich fuer Typannotationen - dieselbe Begruendung wie in
-    # `api.diagnostics` (siehe dort): `from __future__ import annotations`
-    # wertet Annotationen ohnehin nur als Zeichenketten aus, dieser Block
-    # existiert einzig fuer mypy.
+    # Exclusively for type annotations - the same rationale as in
+    # `api.diagnostics` (see there): `from __future__ import annotations`
+    # evaluates annotations only as strings anyway, this block exists
+    # solely for mypy.
     from loxmatter.loxone.sender import UdpSender
 
 __all__ = ["build_diagnostics_live_router"]
 
 SNAPSHOT_LIMIT = 50
-"""Obergrenze je Strom fuer die Momentaufnahme beim Verbindungsaufbau.
+"""Upper bound per stream for the snapshot taken when a connection opens.
 
-Jeder der drei Ringe fasst bis zu 500 Eintraege (`DATAGRAM_LOG_SIZE`,
-`COMMAND_LOG_SIZE`, `LOG_BUFFER_SIZE`) - alle drei auf einen Schlag zu
-schicken waeren beim Oeffnen der Ansicht 1500 Nachrichten, spuerbar sowohl
-fuer die Verbindung als auch fuer eine Person, die die letzten Minuten
-sehen will, nicht die letzten Stunden. 50 je Strom (150 insgesamt) reicht
-dafuer bequem - ein Systemcheck, der etwas Aelteres braucht, hat weiterhin
-die einmalig abrufbaren `GET /api/diagnostics/{datagrams,commands}`-Routen
-mit ihren vollen 500 Eintraegen."""
+Each of the three rings holds up to 500 entries (`DATAGRAM_LOG_SIZE`,
+`COMMAND_LOG_SIZE`, `LOG_BUFFER_SIZE`) - sending all three at once would
+be 1500 messages when the view is opened, noticeable both for the
+connection and for a person who wants to see the last few minutes, not
+the last few hours. 50 per stream (150 in total) is comfortably enough
+for that - a system check that needs something older still has the
+one-shot `GET /api/diagnostics/{datagrams,commands}` routes with their
+full 500 entries."""
 
 
 def build_diagnostics_live_router(
@@ -191,14 +190,14 @@ def build_diagnostics_live_router(
 
     @router.websocket("/live")
     async def live(websocket: WebSocket) -> None:
-        # Subprotokoll-Aushandlung und Warteschlange sind gemeinsame
-        # Mechanik, siehe `api.streaming` fuer die Begruendung.
+        # Subprotocol negotiation and queue are shared mechanics, see
+        # `api.streaming` for the rationale.
         subprotocol = accepted_subprotocol(websocket)
         await websocket.accept(subprotocol=subprotocol)
         queue = BoundedQueue(QUEUE_MAXSIZE, connection_label=str(websocket.client))
-        # Festgehalten, BEVOR `on_log` definiert wird - siehe Moduldocstring,
-        # Abschnitt "Logs": `on_log` braucht ihn, um aus einem fremden Thread
-        # heraus zuverlaessig ueber `call_soon_threadsafe` einzureihen.
+        # Captured BEFORE `on_log` is defined - see module docstring,
+        # section "Logs": `on_log` needs it to reliably enqueue from a
+        # foreign thread via `call_soon_threadsafe`.
         loop = asyncio.get_running_loop()
 
         def on_datagram(entry: DatagramLogEntry) -> None:
@@ -208,13 +207,13 @@ def build_diagnostics_live_router(
                     "key": entry.key,
                     "value": entry.value,
                     "timestamp": entry.timestamp,
-                    # Nachbesserung Task 6 (2026-09-03): die WebUI erkennt
-                    # ein entbehrliches Datagramm (Heartbeat, Full-Resend)
-                    # daran - nicht mehr an der Ankunftsrate im Browser, die
-                    # jeden schnell aufeinanderfolgenden ECHTEN Wertewechsel
-                    # (z. B. Impuls + Zaehler aus `Runtime.on_event`)
-                    # faelschlich mitgetroffen haette. Siehe
-                    # `DatagramLogEntry.forced` fuer die Begruendung.
+                    # Follow-up Task 6 (2026-09-03): the WebUI recognises a
+                    # dispensable datagram (heartbeat, full resend) by this
+                    # - no longer by the arrival rate in the browser, which
+                    # would have wrongly caught every rapid succession of
+                    # REAL value changes too (e.g. pulse + counter from
+                    # `Runtime.on_event`). See `DatagramLogEntry.forced`
+                    # for the rationale.
                     "forced": entry.forced,
                 }
             )
@@ -231,18 +230,17 @@ def build_diagnostics_live_router(
             )
 
         def on_log(entry: LogEntry) -> None:
-            # Laeuft moeglicherweise in einem FREMDEN Thread (siehe
-            # Moduldocstring, Abschnitt "Logs") - `queue.put` deshalb
-            # NICHT direkt aufrufen, sondern ueber `call_soon_threadsafe`
-            # einreihen, das den Event-Loop auch aus einem fremden Thread
-            # zuverlaessig weckt.
-            # Annotiert, nicht dem Typ-Inferenz-Ergebnis von mypy ueberlassen:
-            # ohne die explizite `dict[str, object]` schliesst mypy aus den
-            # ausschliesslich Zeichenketten-wertigen Feldern hier
-            # `dict[str, str]` - `BoundedQueue.put` (und damit
-            # `call_soon_threadsafe(queue.put, ...)` unten) erwartet aber
-            # `dict[str, object]`, dieselbe Nutzlastform wie `on_datagram`/
-            # `on_command`.
+            # May be running on a FOREIGN thread (see module docstring,
+            # section "Logs") - so do NOT call `queue.put` directly,
+            # enqueue it via `call_soon_threadsafe` instead, which
+            # reliably wakes the event loop even from a foreign thread.
+            # Annotated rather than left to mypy's type inference result:
+            # without the explicit `dict[str, object]`, mypy infers
+            # `dict[str, str]` here from the exclusively string-valued
+            # fields - but `BoundedQueue.put` (and hence
+            # `call_soon_threadsafe(queue.put, ...)` below) expects
+            # `dict[str, object]`, the same payload shape as
+            # `on_datagram`/`on_command`.
             payload: dict[str, object] = {
                 "kind": "log",
                 "level": entry.level,
@@ -253,23 +251,23 @@ def build_diagnostics_live_router(
             try:
                 loop.call_soon_threadsafe(queue.put, payload)
             except RuntimeError:
-                # Der Loop ist bereits geschlossen (Herunterfahren, waehrend
-                # genau jetzt noch eine Logzeile entsteht) - dieselbe Regel
-                # wie ueberall in `LogBufferHandler`: ein Beobachter darf
-                # niemals in den Logging-Pfad hineinwerfen, und er darf hier
-                # nichts protokollieren, sonst waere das die Rekursion, die
-                # Task 3 fuer diesen Handler ausschliesst (siehe
-                # `diagnostics.logbuffer`-Moduldocstring, "Die eine Regel...").
+                # The loop is already closed (shutdown, while a log line
+                # is produced at exactly this moment) - the same rule as
+                # everywhere in `LogBufferHandler`: an observer must never
+                # throw back into the logging path, and it must not log
+                # anything here, otherwise that would be the recursion
+                # that Task 3 rules out for this handler (see the
+                # `diagnostics.logbuffer` module docstring, "The one
+                # rule...").
                 pass
 
-        # Momentaufnahme VOR dem Anmelden der Beobachter (siehe
-        # Moduldocstring) - `list(...)` je Ring, NIE eine blosse
-        # `for`-Schleife ueber den Ring selbst: `command_log` und
-        # `log_handler.entries` koennen waehrenddessen aus einem anderen
-        # Pfad (HTTP-Middleware bzw. einem fremden Logging-Thread)
-        # beschrieben werden, und `RingBuffer.__iter__` gibt einen lebenden
-        # `deque`-Iterator zurueck, der bei einer Mutation waehrend der
-        # Iteration mit `RuntimeError` abbricht (siehe dort).
+        # Snapshot BEFORE registering the observers (see module docstring)
+        # - `list(...)` per ring, NEVER a plain `for` loop over the ring
+        # itself: `command_log` and `log_handler.entries` can be written
+        # to meanwhile from another path (HTTP middleware or a foreign
+        # logging thread respectively), and `RingBuffer.__iter__` returns
+        # a live `deque` iterator that aborts with `RuntimeError` on a
+        # mutation during iteration (see there).
         if sender is not None:
             for datagram_entry in list(sender.datagram_log)[-SNAPSHOT_LIMIT:]:
                 on_datagram(datagram_entry)
@@ -279,13 +277,15 @@ def build_diagnostics_live_router(
             for log_entry in list(log_handler.entries)[-SNAPSHOT_LIMIT:]:
                 on_log(log_entry)
 
-        # Alle drei Anmeldungen INNERHALB des `try` (Review-Fix Kleinigkeit
-        # #2, 2026-09-03): stuende die zweite oder dritte davor und wuerfe,
-        # bliebe die erste fuer immer angemeldet, weil das `finally` sie nie
-        # zu sehen bekaeme. `list.append` (beide `add_observer`-Methoden)
-        # wirft in der Praxis nicht - strukturell richtig ist es trotzdem,
-        # denn `api.live.build_live_router` (das Vorbild) hat nur eine
-        # einzige Anmeldung und stellt die Frage deshalb gar nicht erst.
+        # All three registrations INSIDE the `try` (review fix Minor #2,
+        # 2026-09-03): if the second or third one were before it and
+        # threw, the first would stay registered forever because the
+        # `finally` would never get to see it. `list.append` (both
+        # `add_observer` methods) does not throw in practice - it is
+        # still structurally correct, though, because
+        # `api.live.build_live_router` (the model for this) has only a
+        # single registration and therefore never even raises the
+        # question.
         try:
             if sender is not None:
                 sender.add_datagram_observer(on_datagram)
@@ -304,13 +304,13 @@ def build_diagnostics_live_router(
         except WebSocketDisconnect:
             pass
         finally:
-            # Dieselbe Bedingung wie beim Anmelden oben - ein Zweig, der nie
-            # angemeldet wurde (sender/log_handler ist None), darf auch
-            # nicht abgemeldet werden. Ein Zweig, der zwar angemeldet werden
-            # SOLLTE, aber wegen eines fruehen Fehlers nie tatsaechlich
-            # angemeldet wurde, meldet hier trotzdem folgenlos ab - beide
-            # `remove_observer`-Methoden ignorieren einen unbekannten
-            # Beobachter still (siehe dort).
+            # The same condition as when registering above - a branch that
+            # was never registered (sender/log_handler is None) must not
+            # be deregistered either. A branch that SHOULD have been
+            # registered but, due to an early error, never actually was,
+            # still deregisters here without consequence - both
+            # `remove_observer` methods silently ignore an unknown
+            # observer (see there).
             if sender is not None:
                 sender.remove_datagram_observer(on_datagram)
             command_log.remove_observer(on_command)
