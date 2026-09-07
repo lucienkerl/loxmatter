@@ -22,8 +22,10 @@ from loxmatter.profiles.table import (
     MAX_LOXONE_DECIMALS,
     Exportability,
     classify,
+    command_control,
     is_exportable,
     known_attribute_section,
+    known_command_pairs,
     lookup,
     names_element,
     scale_factor,
@@ -270,3 +272,32 @@ def test_no_unit_format_exceeds_what_loxone_accepts():
         rendered = unit_format(unit)
         decimals = int(rendered.split("<v.")[1].split(">")[0])
         assert decimals <= MAX_LOXONE_DECIMALS, f"{unit!r} ergibt {rendered!r}"
+
+
+@pytest.mark.parametrize(
+    ("cluster_id", "command_id", "control"),
+    [
+        (6, 0, "none"),
+        (6, 1, "none"),
+        (6, 2, "none"),
+        (8, 0, "percent"),
+        (8, 4, "percent"),
+        (768, 10, "kelvin"),
+        (768, 6, "hue_sat"),
+    ],
+)
+def test_every_known_command_names_its_widget(cluster_id, command_id, control):
+    assert command_control(cluster_id, command_id) == control
+
+
+def test_a_command_outside_the_table_is_unknown():
+    assert command_control(768, 7) == "unknown"
+
+
+def test_every_table_command_carries_a_control():
+    """Ein Eintrag ohne `control` erschiene in der Oberflaeche als nacktes
+    Zahlenfeld, ohne dass jemand das entschieden haette (Entwurf
+    2026-09-07, Abschnitt 5.5). Dieser Test macht das Vergessen sichtbar,
+    statt es durchgehen zu lassen."""
+    for cluster_id, command_id in known_command_pairs():
+        assert command_control(cluster_id, command_id) != "unknown"

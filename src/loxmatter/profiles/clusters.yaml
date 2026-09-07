@@ -27,17 +27,17 @@ clusters:
     commands:
       # "off"/"on" muessen in Anfuehrungszeichen stehen: YAML 1.1 liest sie
       # sonst als Booleans, nicht als Strings (PyYAML-Falle).
-      0: {slug: "off", takes_value: false}
-      1: {slug: "on", takes_value: false}
-      2: {slug: toggle, takes_value: false}
+      0: {slug: "off", takes_value: false, control: none}
+      1: {slug: "on", takes_value: false, control: none}
+      2: {slug: toggle, takes_value: false, control: none}
   8:
     name: level
     attributes:
       # 0-254 auf 0-100 %: 100/254
       0: {slug: level, unit: "%", scale: 0.3937007874015748}
     commands:
-      0: {slug: level, takes_value: true}
-      4: {slug: level_onoff, takes_value: true}
+      0: {slug: level, takes_value: true, control: percent}
+      4: {slug: level_onoff, takes_value: true, control: percent}
   47:
     name: powersource
     attributes:
@@ -117,7 +117,7 @@ clusters:
       # macht daraus einen analogen Ausgang UND exportiert das Kommando ab
       # sofort auch im normalen (nicht-rohen) Modus, was fuer ein bedientes
       # Kommando ohnehin richtig ist.
-      10: {slug: colortemp, takes_value: true}
+      10: {slug: colortemp, takes_value: true, control: kelvin}
       # MoveToHueAndSaturation - freigeschaltet am 7. September 2026
       # (Entwurf 2026-09-07). Die frühere Sperre beruhte auf einer
       # Verwechslung: `translate.py` begruendete sie mit "Loxone-RGB nicht
@@ -126,7 +126,7 @@ clusters:
       # gepackte Loxone-Farbzahl; belegt gegen die eingecheckte
       # RGBW-Leuchte (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
       # enthaelt 6).
-      6: {slug: color, takes_value: true}
+      6: {slug: color, takes_value: true, control: hue_sat}
   1026:
     name: temperature
     attributes:

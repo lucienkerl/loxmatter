@@ -332,6 +332,29 @@ def command_takes_value(cluster_id: int, command_id: int) -> bool:
     return bool(entry and entry.get("takes_value"))
 
 
+def command_control(cluster_id: int, command_id: int) -> str:
+    """Welches Bedienelement die Oberflaeche fuer dieses Kommando bauen soll.
+
+    `none` (Knopf), `percent`, `kelvin`, `hue_sat` - oder `unknown` fuer
+    einen Eintrag, dem noch niemand ein `control` gegeben hat.
+
+    `unknown` ist bewusst ein eigener Wert und keine aus `takes_value`
+    geratene Voreinstellung: ein Regler behauptet einen Wertebereich, und
+    den kennt hier niemand. Die Oberflaeche faellt fuer `unknown` auf das
+    schlichte Zahlenfeld zurueck (Entwurf 2026-09-07, Abschnitt 5.5).
+
+    Der Rueckgabewert ist absichtlich ein `str` und kein Enum: er wandert
+    unveraendert durch die API in das JavaScript, wo ohnehin nur der
+    Wortlaut zaehlt - ein Enum muesste an der Grenze wieder aufgeloest
+    werden und brauchte bei jedem neuen Widget zwei Aenderungen statt einer.
+    """
+    entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
+    if not entry:
+        return "unknown"
+    control = entry.get("control")
+    return str(control) if control else "unknown"
+
+
 def known_command_pairs() -> set[tuple[int, int]]:
     """Alle (Cluster-ID, Kommando-ID)-Paare, die `clusters.yaml` unter
     `commands` fuehrt.
