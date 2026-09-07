@@ -773,6 +773,57 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_first_signals_for_filters_orders_and_caps_at_the_preview_limit():
+    """Nacharbeit 2026-09-07, Fund 3: Der Umbau auf das Werteraster (Entwurf
+    2026-09-05) hat aus `test_a_signal_that_exists_is_unaffected_by_the_guard`
+    die Zeile `assert values["lead"] == "d1_1_onoff"` entfernt - formal eine
+    Aussage ueber das inzwischen geloeschte `leadSignalFor`. Tatsaechlich war
+    das aber die einzige Assertion im Repo, die `firstSignalsFor` in einem
+    echten `node`-Prozess ausfuehrte. `test_the_value_grid_now_carries_every_
+    functional_signal` (tests/api/test_web.py) belegt seither nur noch, dass
+    `x-for="signal in firstSignalsFor(device.id)"` als String ausgeliefert
+    wird - nicht, was der Helfer selbst tut. Dieser Test schliesst die
+    Luecke eigenstaendig, statt sie an einen Test mit anderem Zweck
+    anzuflanschen.
+
+    Geprueft werden alle drei Aufgaben von `firstSignalsFor` /
+    `remainingSignalCount` zusammen (app.js): nicht-funktionale Signale
+    fallen durch das `signal.functional`-Sieb, die Reihenfolge der
+    Eingabe-Liste bleibt erhalten (kein Sortieren, kein Umschichten), und
+    ab mehr als `FUNCTIONAL_PREVIEW_LIMIT` (6) funktionalen Signalen liefert
+    `firstSignalsFor` genau sechs zurueck, waehrend `remainingSignalCount`
+    den Rest zaehlt."""
+    values = _app_state(
+        """
+        const signals = [
+          { key: "s1", functional: true },
+          { key: "s2", functional: false },
+          { key: "s3", functional: true },
+          { key: "s4", functional: true },
+          { key: "s5", functional: false },
+          { key: "s6", functional: true },
+          { key: "s7", functional: true },
+          { key: "s8", functional: true },
+          { key: "s9", functional: true },
+        ];
+        state.signalsByDevice = { 1: signals };
+        console.log(JSON.stringify({
+          first: state.firstSignalsFor(1).map((signal) => signal.key),
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    # Sieben der neun Signale sind funktional (s1, s3, s4, s6, s7, s8, s9);
+    # s2 und s5 muessen draussen bleiben, und die Reihenfolge der restlichen
+    # sieben bleibt die der Eingabe-Liste - kein Sortieren nach Schluessel
+    # oder sonst etwas.
+    assert values["first"] == ["s1", "s3", "s4", "s6", "s7", "s8"]
+    # Sieben funktionale Signale, Deckel bei sechs: genau eines bleibt uebrig.
+    assert values["remaining"] == 1
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
 def test_live_values_are_shown_with_at_most_two_decimal_places():
     """Die Live-Werte kommen aus Matter-Attributen als ganzzahlige
     Hundertstel; das Umrechnen erbt die Fliesskomma-Unschaerfe, und
