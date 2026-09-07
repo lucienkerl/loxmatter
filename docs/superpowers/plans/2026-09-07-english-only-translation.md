@@ -51,6 +51,13 @@ wait for 3 and 4, because it edits files they own.
 - Create: `tests/devtools/test_check_language.py`
 - Modify: `.github/workflows/ci.yml`
 
+> **Landed as `e332d37` + `cd058c5`.** Review changed three things from the
+> code below: `docs/LICENSING.md` is *not* exempt (the spec schedules it for
+> translation), `statt` stays in the word list (779 real occurrences; its one
+> false positive is a URL anchor Task 5 translates away), and the detector
+> exempts its own script and test file. Git holds the truth; this section
+> records the intent.
+
 **Interfaces:**
 - Consumes: nothing.
 - Produces: `scan_text(text: str, path: str) -> list[Finding]` where `Finding` is a `NamedTuple` with fields `line: int`, `word: str`, `text: str`. Also `main(argv: list[str] | None = None) -> int` returning 0 when clean, 1 when German is found. Tasks 3–8 all end by running `uv run python scripts/check_language.py`.
@@ -1119,6 +1126,12 @@ Expected: `No German found.` and exit status 0. Any remaining line is either
 real German to fix, or a false positive — decide which, and if it is a false
 positive, fix the word list in `scripts/check_language.py` rather than adding
 a path exemption.
+
+Two path exemptions already exist and are correct: `scripts/check_language.py`
+and `tests/devtools/test_check_language.py` hold German as *data* — the
+detection vocabulary itself, and the fixtures that prove it fires. They were
+added during Task 1's review, on the same principle as the `de:` values. Do
+not remove them, and do not add a third without the same kind of reason.
 
 - [ ] **Step 3: Run the full CI set locally**
 
