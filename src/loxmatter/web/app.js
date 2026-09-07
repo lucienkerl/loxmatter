@@ -1,5 +1,5 @@
 /*
- * loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+ * loxmatter - connects Matter devices to a Loxone Miniserver.
  * Copyright (C) 2026 Lucien Kerl
  *
  * This program is free software: you can redistribute it and/or modify
@@ -16,97 +16,95 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-// Zustand und Verhalten der loxmatter-Oberflaeche (Task 7, Phase 5).
+// State and behavior of the loxmatter UI (Task 7, Phase 5).
 //
-// Bezeichner sind Englisch, wie im restlichen Code dieses Projekts - nur
-// Text, der tatsaechlich auf dem Bildschirm oder im Fehlerfall vor einer
-// Person landet, ist Deutsch (siehe Aufgabenstellung: "Deutsch in der
-// Oberflaeche, in Prosa und Fehlermeldungen, Englisch in Bezeichnern -
-// auch in JavaScript").
+// Identifiers are English, like the rest of this project's code - only
+// text that actually reaches a person on screen or in an error case is
+// German (see the task statement: "German in the UI, in prose and error
+// messages, English in identifiers - in JavaScript too").
 //
-// Keine Klassen, kein Modul-System, kein Bundler: eine einzige Funktion
-// `app()`, die Alpine.js per `x-data="app()"` in `index.html` aufruft und
-// deren zurueckgegebenes Objekt den gesamten Zustand traegt. Das passt zum
-// Rest dieser Datei - eine flache, leicht lesbare Struktur statt einer
-// Klassenhierarchie fuer eine einzige Seite.
+// No classes, no module system, no bundler: a single `app()` function
+// that Alpine.js calls via `x-data="app()"` in `index.html`, whose
+// returned object carries the entire state. That fits the rest of this
+// file - a flat, easily readable structure instead of a class hierarchy
+// for a single page.
 
-// Zeitspanne zwischen zwei Wiederverbindungsversuchen des Live-Websockets,
-// nach einem Abbruch verdoppelt bis zu diesem Maximum (Spec 8.3: eine
-// verlorene Verbindung muss sich von selbst erholen, ohne die Leitung mit
-// Versuchen im Sekundentakt zu fluten).
+// Time span between two reconnection attempts of the live WebSocket,
+// doubled after a drop up to this maximum (Spec 8.3: a lost connection
+// must recover on its own, without flooding the line with attempts every
+// second).
 const RECONNECT_DELAY_INITIAL_MS = 1000;
 const RECONNECT_DELAY_MAX_MS = 15000;
 
-// Nach wie vielen erfolglosen Versuchen der ALLERERSTEN Verbindung (vor der
-// ersten je erfolgreichen) die Kopfzeile von der neutralen "Verbinde…"-
-// Formulierung auf einen klareren Text wechselt (Review-Fix Minor #4,
-// 2026-09-02). Ohne das bliebe die Kopfzeile bei einer Bruecke, die von
-// Anfang an nicht erreichbar ist, unbegrenzt bei "Verbinde…" stehen, waehrend
-// im Hintergrund still weiterversucht wird - kein Datenrisiko (es gibt ja
-// noch keine Live-Werte, die faelschlich aktuell wirken koennten), aber ein
-// schwaecheres Diagnosesignal als der Fall der VERLORENEN Verbindung, der
-// bereits einen roten Banner und "Verbindung verloren" bekommt.
+// After how many unsuccessful attempts of the VERY FIRST connection
+// (before the first ever successful one) the header switches from the
+// neutral "Connecting…" wording to a clearer text (Review-Fix Minor #4,
+// 2026-09-02). Without this, the header would stay on "Connecting…"
+// indefinitely for a bridge that is unreachable from the start, while it
+// keeps quietly retrying in the background - no data risk (there are no
+// live values yet that could falsely look current), but a weaker
+// diagnostic signal than the case of the LOST connection, which already
+// gets a red banner and "Connection lost".
 const INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3;
 
-// Der Heartbeat-Schluessel der Bruecke (siehe loxone/runtime.py,
-// HEARTBEAT_KEY). Er gehoert zu keinem Geraet und kommt auch dann, wenn
-// sich an keinem etwas aendert - damit ist er das einzige verlaessliche
-// Lebenszeichen, das diese Oberflaeche hat.
+// The bridge's heartbeat key (see loxone/runtime.py, HEARTBEAT_KEY). It
+// does not belong to any device and arrives even when nothing on any
+// device changes - which makes it the only reliable sign of life this UI
+// has.
 const HEARTBEAT_KEY = "bridge_alive";
 
-// Wie lange ein frisch eingetroffener Wert hervorgehoben bleibt. Etwas mehr
-// als zwei Sekunden: `nowTick` laeuft im Sekundentakt, also ist die Grenze
-// ohnehin auf eine Sekunde genau, und kuerzer als zwei Ticks liefe man
-// Gefahr, die Hervorhebung zu verpassen, wenn man gerade woanders hinsieht.
+// How long a freshly arrived value stays highlighted. A bit more than two
+// seconds: `nowTick` runs on a one-second cadence, so the threshold is
+// accurate to within one second anyway, and anything shorter than two
+// ticks would risk missing the highlight if you happen to be looking
+// elsewhere.
 const VALUE_FRESH_MS = 2500;
 
-// --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------------
+// --- Live diagnostics (Task 6, Spec 10.5) -----------------------------------
 //
-// Obergrenze der gehaltenen Zeilen je Strom (Logs, UDP-Mitschnitt,
-// Kommando-Log). Ohne sie wuerde jeder der drei Ringe waehrend einer langen
-// Sitzung unbegrenzt weiterwachsen - anders als beim Server (dessen drei
-// Ringe von vornherein feste Groessen haben, siehe DATAGRAM_LOG_SIZE,
-// COMMAND_LOG_SIZE, LOG_BUFFER_SIZE) haelt der Browser-Tab sonst jede
-// Zeile seit dem Oeffnen der Ansicht im Speicher. Derselbe Wert wie die
-// Momentaufnahme-Begrenzung je Strom auf der Serverseite waere zu knapp
-// (SNAPSHOT_LIMIT = 50 gilt nur fuer den EINMALIGEN Schub beim Verbinden) -
-// 500 entspricht stattdessen der vollen Ringgroesse je Strom und reicht
-// damit fuer eine laengere Sitzung, ohne den Tab unbegrenzt wachsen zu
-// lassen.
+// Upper bound on the lines kept per stream (logs, UDP capture, command
+// log). Without it each of the three rings would keep growing without
+// bound during a long session - unlike the server (whose three rings have
+// a fixed size from the start, see DATAGRAM_LOG_SIZE, COMMAND_LOG_SIZE,
+// LOG_BUFFER_SIZE), the browser tab would otherwise keep every line since
+// the view was opened in memory. The same value as the server-side
+// snapshot limit per stream would be too tight (SNAPSHOT_LIMIT = 50 only
+// applies to the ONE-TIME burst on connect) - 500 instead matches the
+// full ring size per stream and is thus enough for a longer session
+// without letting the tab grow without bound.
 const DIAGNOSTICS_LINE_LIMIT = 500;
 
-// Woran ein Datagramm als "Rauschen" erkannt wird, das `hideNoise`
-// ausblendet: an `message.forced` (`api/diagnostics_live.py`, gefuellt aus
-// `DatagramLogEntry.forced`, siehe dort) - NICHT mehr an der Ankunftsrate im
-// Browser (Nachbesserung Task 6, 2026-09-03). Die fruehere Heuristik hier
-// nahm an, "kein Geraet dieses Projekts aendert regelmaessig mehrere Signale
-// in derselben Millisekunde" - das widerlegt `Runtime.on_event`
-// (`loxone/runtime.py`) selbst: ein Impuls und sein Zaehler gehen dort ohne
-// jede Wartezeit dazwischen hintereinander raus, wenige Mikrosekunden
-// auseinander, und waren damit IMMER als Schwall markiert. Der Server weiss
-// dagegen bereits verlaesslich, warum ein Datagramm ging - `force=True`
-// steht fuer GENAU zwei Aufrufer, `Runtime.resend_all()` (Full-Resend) und
-// den Heartbeat, niemals fuer eine echte Wertaenderung. Diese Auskunft zu
-// uebernehmen statt sie im Browser aus dem Zeitabstand zu erraten, ist der
-// eigentliche Fix - eine Ankunftsrate kann zwei echte, dicht aufeinander
-// folgende Aenderungen strukturell nicht von einem Schwall unterscheiden.
+// What marks a datagram as "noise" for `hideNoise` to hide: `message.forced`
+// (`api/diagnostics_live.py`, filled from `DatagramLogEntry.forced`, see
+// there) - NO LONGER the arrival rate in the browser (follow-up fix Task 6,
+// 2026-09-03). The earlier heuristic here assumed "no device in this
+// project regularly changes several signals within the same millisecond" -
+// `Runtime.on_event` (`loxone/runtime.py`) itself disproves that: a pulse
+// and its counter go out there back to back with no delay in between, a
+// few microseconds apart, and were therefore ALWAYS flagged as a burst.
+// The server, by contrast, already knows reliably why a datagram was
+// sent - `force=True` stands for EXACTLY two callers, `Runtime.resend_all()`
+// (full resend) and the heartbeat, never for a real value change. Taking
+// over that information instead of guessing it in the browser from the
+// time gap is the actual fix - an arrival rate cannot structurally tell
+// two real, closely spaced changes apart from a burst.
 
-// Reihenfolge der Python-Logstufen, wie `logging` sie kennt - fuer den
-// Vergleich mit `logLevel` unten ("ab Stufe X zeigen"). Ein Eintrag mit
-// einer hier unbekannten Stufe wird NICHT herausgefiltert (siehe
-// `visibleDiagnosticsLogs`): eine unerwartete Stufe lieber zeigen als eine
-// vielleicht wichtige Zeile stillschweigend verschlucken.
+// Order of the Python log levels as `logging` knows them - for the
+// comparison against `logLevel` below ("show from level X up"). An entry
+// with a level unknown here is NOT filtered out (see
+// `visibleDiagnosticsLogs`): better to show an unexpected level than to
+// silently swallow a line that might matter.
 const LOG_LEVEL_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
 
-// Laufende Nummer fuer Kurzmeldungen. Modulweit statt im Zustand, weil
-// sie nur die Meldungen auseinanderhalten muss und niemanden sonst
-// interessiert.
+// Running number for toast messages. Module-wide instead of in the
+// state, because it only needs to tell the messages apart and no one
+// else cares about it.
 let toastCounter = 0;
 
 /**
- * Fehler eines Aufrufs ohne gueltige Sitzung - eigene Klasse, damit die
- * Oberflaeche diesen Fall von jedem anderen Fehlschlag unterscheiden kann,
- * ohne auf einen Meldungstext zu pruefen.
+ * Error for a call without a valid session - its own class so the UI can
+ * tell this case apart from any other failure without checking a message
+ * text.
  */
 class UnauthorizedError extends Error {
   constructor() {
@@ -116,9 +114,9 @@ class UnauthorizedError extends Error {
 }
 
 /**
- * Liest den Fehlertext aus einer FastAPI-Fehlerantwort (`{"detail": "..."}"`)
- * - oder liefert einen generischen Text, falls die Antwort kein JSON war
- * (z. B. ein Netzwerkfehler ganz ohne Antwort vom Server).
+ * Reads the error text from a FastAPI error response (`{"detail": "..."}"`)
+ * - or returns a generic text if the response was not JSON (e.g. a network
+ * error with no response from the server at all).
  */
 async function readErrorDetail(response) {
   try {
@@ -127,62 +125,59 @@ async function readErrorDetail(response) {
       return body.detail;
     }
   } catch {
-    // Antwort war kein JSON - der generische Text unten reicht dann.
+    // Response was not JSON - the generic text below is then enough.
   }
   return t("web.errors.http_status", { status: response.status });
 }
 
 /**
- * Ruft einen JSON-Endpunkt auf und wirft bei einer Fehlerantwort einen
- * `Error`, dessen Nachricht der `detail`-Text des Backends ist - dieselbe
- * Nachricht, die auch ein Server-Log sehen wuerde, nicht nur "HTTP 400".
- * Eine Diagnose-Oberflaeche, die einen Fehlschlag verschluckt oder
- * verwaessert, waere genau das Gegenteil ihres Zwecks (Spec 8.1).
+ * Calls a JSON endpoint and, on an error response, throws an `Error` whose
+ * message is the backend's `detail` text - the same message a server log
+ * would also see, not just "HTTP 400". A diagnostics UI that swallows or
+ * waters down a failure would be exactly the opposite of its purpose
+ * (Spec 8.1).
  */
 async function requestJson(method, path, body) {
   let response;
   try {
     response = await fetch(path, {
       method,
-      // Das Sitzungs-Cookie statt eines Tokens im Header: `same-origin`
-      // schickt es an genau den Ursprung mit, von dem diese Seite geladen
-      // wurde, und an keinen anderen. Ein `Authorization`-Header wird hier
-      // nicht mehr gesetzt - der Weg ueber das Token gibt es weiterhin,
-      // aber fuer Skripte, nicht fuer diesen Browser (siehe api/auth.py).
+      // The session cookie instead of a token in the header: `same-origin`
+      // sends it only to the exact origin this page was loaded from, and
+      // to no other. An `Authorization` header is no longer set here - the
+      // token-based path still exists, but for scripts, not for this
+      // browser (see api/auth.py).
       credentials: "same-origin",
       headers: body !== undefined ? { "Content-Type": "application/json" } : {},
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
-    // `fetch()` selbst wirft nur bei einem Fehler auf Netzwerkebene -
-    // Verbindung abgelehnt, Bruecken-Prozess unten, Netz nicht erreichbar -
-    // nie bei einer Fehlerantwort des Servers (die faengt `readErrorDetail`
-    // oben ab, weiter unten in dieser Funktion). Ohne dieses `catch` liefe
-    // der rohe Browsertext dafuer ("Failed to fetch" o. ae.) unveraendert
-    // bis in die Oberflaeche durch - Englisch und Browser-Jargon, in einem
-    // Werkzeug, dessen Zweck es gerade ist, einen Fehlschlag ehrlich UND
-    // verstaendlich zu zeigen (Spec 8.1). Review-Fix Important #2,
-    // 2026-09-02.
+    // `fetch()` itself only throws on a network-level error - connection
+    // refused, bridge process down, network unreachable - never on an
+    // error response from the server (that is caught by `readErrorDetail`
+    // above, further down in this function). Without this `catch`, the raw
+    // browser text for it ("Failed to fetch" or similar) would pass
+    // through unchanged all the way into the UI - English and browser
+    // jargon, in a tool whose very purpose is to show a failure honestly
+    // AND understandably (Spec 8.1). Review-Fix Important #2, 2026-09-02.
     throw new Error(t("web.errors.bridge_unreachable"));
   }
   if (response.status === 401 && !path.startsWith("/auth/")) {
-    // Nicht der rohe Servertext: eine 401 mitten im Betrieb heisst, die
-    // Sitzung ist abgelaufen, und die eigene Fehlerklasse fuehrt die
-    // Oberflaeche zurueck zum Login-Bildschirm (siehe `noteAuthError`
-    // unten). Fuer `/auth/`-Pfade selbst gilt das NICHT: dort ist eine 401
-    // schlicht "Falsches Passwort", und genau dieser Servertext soll den
-    // Login-Bildschirm erreichen, nicht die hier vorformulierte Meldung
-    // ueber eine abgelaufene Sitzung, die es beim allerersten Versuch noch
-    // gar nicht gab.
+    // Not the raw server text: a 401 mid-operation means the session has
+    // expired, and the dedicated error class routes the UI back to the
+    // login screen (see `noteAuthError` below). This does NOT apply to
+    // `/auth/` paths themselves: there, a 401 simply means "wrong
+    // password", and that exact server text should reach the login
+    // screen, not the message pre-formulated here about an expired
+    // session, which did not exist yet on the very first attempt.
     throw new UnauthorizedError();
   }
   if (!response.ok) {
     const error = new Error(await readErrorDetail(response));
-    // `status` haengt hier mit dran, nicht nur der Text: `submitPassword`
-    // unten muss eine 409 auf `/auth/setup` von jedem anderen Fehlschlag
-    // unterscheiden koennen, und der Meldungstext dafuer ist kein
-    // verlaesslicher Anker (der duerfte sich unabhaengig vom Statuscode
-    // aendern).
+    // `status` is attached here, not just the text: `submitPassword`
+    // below needs to be able to tell a 409 on `/auth/setup` apart from
+    // any other failure, and the message text for that is not a reliable
+    // anchor (it could change independently of the status code).
     error.status = response.status;
     throw error;
   }
@@ -193,10 +188,10 @@ async function requestJson(method, path, body) {
 }
 
 /**
- * Laedt eine Datei von `/api` herunter. Ueber `fetch` und nicht ueber ein
- * `<a href>`, weil eine 401 sonst als roher Fehlertext im Browserfenster
- * landete statt in der Oberflaeche - und weil der Blob-Download so den
- * Dateinamen setzen kann.
+ * Downloads a file from `/api`. Via `fetch` and not via an `<a href>`,
+ * because a 401 would otherwise land as raw error text in the browser
+ * window instead of in the UI - and because the blob download can set
+ * the file name this way.
  */
 async function requestDownload(path, filename) {
   let response;
@@ -217,32 +212,30 @@ async function requestDownload(path, filename) {
   link.href = objectUrl;
   link.download = filename;
   link.click();
-  // Ohne dieses Freigeben haelt der Browser den kompletten Blob bis zum
-  // Verlassen der Seite im Speicher - bei einer Fabric-Sicherung oder einem
-  // Export-ZIP ist das kein Kleingeld. Aber NICHT sofort: manche Browser
-  // starten den Download eines Objekt-URLs erst nach dem laufenden
-  // Aufrufstapel, und ein bereits freigegebener URL laesst den Download
-  // dann stillschweigend ausfallen. Das `setTimeout` gibt ihn eine
-  // Runde spaeter frei - fuer Chrome unnoetig, fuer Firefox nicht
-  // (Review-Fix Minor #3, 2026-09-03).
+  // Without this release, the browser keeps the complete blob in memory
+  // until the page is left - for a Fabric backup or an export ZIP that is
+  // not pocket change. But NOT immediately: some browsers only start the
+  // download of an object URL after the current call stack, and an
+  // already-released URL then makes the download silently fail. The
+  // `setTimeout` releases it one round later - unnecessary for Chrome, not
+  // for Firefox (Review-Fix Minor #3, 2026-09-03).
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
 }
 
-// Modul-global, absichtlich NICHT auf dem app()-Objekt (siehe
-// Implementierungsplan, Task 8: "t() muss global aufrufbar sein") - jede
-// Funktion in dieser Datei erreicht sie, auch requestJson/requestDownload/
-// requestUpload, die keinen Zugriff auf `this` des Alpine-Bauteils haben.
-// Nicht reaktiv, weil sie es nicht sein muss: ein Sprachwechsel laedt die
-// ganze Seite neu.
+// Module-global, deliberately NOT on the app() object (see the
+// implementation plan, Task 8: "t() must be callable globally") - every
+// function in this file can reach it, including requestJson/
+// requestDownload/requestUpload, which have no access to the Alpine
+// component's `this`. Not reactive, because it does not need to be: a
+// language change reloads the whole page.
 let translationStrings = {};
 
-/** Uebersetzungshelfer - liefert den zu key gehoerenden Text in der
- * aktuellen Sprache, mit {platzhalter} aus values ersetzt. Fehlt der
- * Schluessel (z. B. eine noch nicht neu geladene Seite nach einem
- * Deployment mit neuen Schluesseln), liefert t() den Schluessel selbst
- * zurueck statt abzustuerzen - sichtbar falsch statt einer kaputten
- * Seite, dieselbe Haltung wie ueberall sonst in diesem Projekt
- * ("ein Klick, der nichts bewirkt, muss als klare Absage ankommen"). */
+/** Translation helper - returns the text for `key` in the current
+ * language, with {placeholder} replaced from values. If the key is
+ * missing (e.g. a page not yet reloaded after a deployment with new
+ * keys), t() returns the key itself instead of crashing - visibly wrong
+ * instead of a broken page, the same stance as everywhere else in this
+ * project ("a click that does nothing must arrive as a clear refusal"). */
 function t(key, values = {}) {
   const template = translationStrings[key];
   if (template === undefined) {
@@ -254,11 +247,11 @@ function t(key, values = {}) {
 }
 
 /**
- * Laedt eine Datei per multipart/form-data hoch und erwartet JSON zurueck -
- * eigene Funktion statt `requestJson`, weil ein Datei-Upload kein
- * `JSON.stringify`-Body ist und `Content-Type` dem Browser ueberlassen
- * werden muss (er setzt die Multipart-Boundary selbst, inklusive der
- * Trennzeichenfolge, die `JSON.stringify` gar nicht kennt).
+ * Uploads a file via multipart/form-data and expects JSON back - a
+ * dedicated function instead of `requestJson`, because a file upload is
+ * not a `JSON.stringify` body and `Content-Type` must be left to the
+ * browser (it sets the multipart boundary itself, including the
+ * separator sequence that `JSON.stringify` does not know at all).
  */
 async function requestUpload(path, formData) {
   let response;
@@ -283,11 +276,10 @@ async function requestUpload(path, formData) {
 }
 
 /**
- * Dekodiert einen Base64-String zu einem Blob - fuer den Download der
- * gepatchten Projektdatei aus der JSON-Antwort von
- * `/api/export/project-sync` (die Datei kommt eingebettet in der
- * Plan-Antwort, nicht ueber einen eigenen Download-Aufruf, siehe
- * `downloadPatchedProject` unten).
+ * Decodes a base64 string into a blob - for downloading the patched
+ * project file from the JSON response of `/api/export/project-sync` (the
+ * file arrives embedded in the plan response, not via a dedicated
+ * download call, see `downloadPatchedProject` below).
  */
 function blobFromBase64(base64, mimeType) {
   const binary = atob(base64);
@@ -299,36 +291,35 @@ function blobFromBase64(base64, mimeType) {
 }
 
 // ---------------------------------------------------------------------------
-// Navigation ueber die Adresszeile
+// Navigation via the address bar
 // ---------------------------------------------------------------------------
 //
-// Jede Ansicht hat ihr eigenes Fragment: `#/devices`, `#/export`, `#/system`,
-// `#/settings`. Die Reiterleiste in `index.html` besteht deshalb aus echten
-// `<a href="#/...">`-Links statt aus Knoepfen - der gewaehlte Reiter
-// ueberlebt damit das Neuladen der Seite (der Anlass dieser Aenderung: wer
-// auf "Einstellungen" neu lud, landete wieder im Geraete-Dashboard), laesst
-// sich als Lesezeichen ablegen und weiterschicken, und der Zurueck-Knopf
-// fuehrt auf den vorigen Reiter statt aus der Anwendung heraus.
+// Every view has its own fragment: `#/devices`, `#/export`, `#/system`,
+// `#/settings`. The tab bar in `index.html` therefore consists of real
+// `<a href="#/...">` links instead of buttons - the selected tab thus
+// survives a page reload (the reason for this change: reloading on
+// "Settings" used to land back on the device dashboard), can be
+// bookmarked and shared, and the back button leads to the previous tab
+// instead of out of the application.
 //
-// Ein Fragment und kein Pfad (`/settings`): der Server liefert unter `/`
-// genau eine Datei aus (siehe loxone/server.py), ein Pfad brauchte dort eine
-// Auffangroute, die jeden unbekannten Pfad auf `index.html` zurueckfallen
-// laesst. Das Fragment erreicht den Server ohnehin nie.
+// A fragment and not a path (`/settings`): the server serves exactly one
+// file under `/` (see loxone/server.py); a path would need a catch-all
+// route there that falls back to `index.html` for every unknown path.
+// The fragment never reaches the server at all.
 const VIEWS = ["devices", "export", "system", "settings"];
 const DEFAULT_VIEW = "devices";
 
-/** Das Fragment, das zu einer Ansicht gehoert. */
+/** The fragment that belongs to a view. */
 function hashForView(view) {
   return `#/${view}`;
 }
 
 /**
- * Die Ansicht aus dem aktuellen Fragment - `null`, wenn dort nichts
- * Gueltiges steht: beim Aufruf ohne Fragment, nach einem Lesezeichen auf
- * eine inzwischen entfernte Ansicht (`#/signals`, siehe `openSignalsModal`)
- * oder nach einem Tippfehler in der Adresszeile. Die Aufrufer weichen dann
- * auf `DEFAULT_VIEW` bzw. die gerade gezeigte Ansicht aus, statt eine leere
- * Seite zu zeigen.
+ * The view from the current fragment - `null` if nothing valid is there:
+ * on a call without a fragment, after a bookmark to a view that has since
+ * been removed (`#/signals`, see `openSignalsModal`), or after a typo in
+ * the address bar. Callers then fall back to `DEFAULT_VIEW` or the
+ * currently shown view instead of showing a blank page.
  */
 function viewFromHash() {
   const name = window.location.hash.replace(/^#\/?/, "");
@@ -336,18 +327,19 @@ function viewFromHash() {
 }
 
 /**
- * Traegt die Ansicht in die Adresszeile ein.
+ * Writes the view into the address bar.
  *
- * Stand dort schon eine gueltige Ansicht, ist der Wechsel ein gewoehnlicher
- * Chronikeintrag - der Zurueck-Knopf fuehrt dann auf den vorigen Reiter.
- * Stand dort nichts Gueltiges (der haeufigste Fall: der erste Aufruf ohne
- * Fragment), ersetzt der Eintrag den bestehenden: sonst zeigte der
- * Zurueck-Knopf auf dieselbe Seite ohne Fragment, die das Fragment sofort
- * wieder ergaenzte - eine Schaltflaeche, die sichtbar nichts tut.
+ * If a valid view was already there, the change is an ordinary history
+ * entry - the back button then leads to the previous tab. If nothing
+ * valid was there (the most common case: the first call with no
+ * fragment), the entry replaces the existing one: otherwise the back
+ * button would lead to the same page without a fragment, which would
+ * immediately add the fragment back on - a button that visibly does
+ * nothing.
  *
- * Setzt `location.hash` nur bei tatsaechlicher Aenderung: ein identischer
- * Wert loeste kein `hashchange` aus, aber `replaceState` schriebe einen
- * Chronikeintrag fuer nichts.
+ * Only sets `location.hash` on an actual change: an identical value would
+ * not trigger a `hashchange`, but `replaceState` would write a history
+ * entry for nothing.
  */
 function writeHash(view) {
   const target = hashForView(view);
@@ -363,15 +355,15 @@ function writeHash(view) {
 
 function app() {
   return {
-    // --- Ansicht ---------------------------------------------------------
-    // Der Startwert gilt nur, bis `init()` das Fragment der Adresszeile
-    // gelesen hat (siehe `viewFromHash` oben).
+    // --- View --------------------------------------------------------------
+    // The initial value only holds until `init()` has read the address
+    // bar's fragment (see `viewFromHash` above).
     view: DEFAULT_VIEW,
 
-    // --- Zugang -----------------------------------------------------------
-    // `authReady` verhindert das Aufblitzen des falschen Bildschirms: bis
-    // `/auth-info` geantwortet hat, weiss die Seite nicht, ob sie Einrichtung,
-    // Login oder die App zeigen muss, und zeigt deshalb keines davon.
+    // --- Access -------------------------------------------------------------
+    // `authReady` prevents a flash of the wrong screen: until `/auth-info`
+    // has answered, the page does not know whether it must show setup,
+    // login, or the app, and therefore shows none of them.
     authReady: false,
     passwordSet: false,
     authenticated: false,
@@ -380,71 +372,70 @@ function app() {
     authBusy: false,
     authError: null,
 
-    // --- Uebersetzung -------------------------------------------------------
-    // Nach demselben Muster wie authReady: bis GET /api/i18n geantwortet hat,
-    // zeigt die Seite nichts - siehe stringsReady in den beiden
-    // auth-screen-templates in index.html. Die eigentliche Tabelle liegt
-    // NICHT hier, sondern im modul-globalen translationStrings (siehe t()
-    // oben) - dieses Feld existiert nur fuer x-if="stringsReady && ...".
+    // --- Translation ---------------------------------------------------------
+    // Same pattern as authReady: until GET /api/i18n has answered, the
+    // page shows nothing - see stringsReady in both auth-screen templates
+    // in index.html. The actual table lives NOT here but in the
+    // module-global translationStrings (see t() above) - this field only
+    // exists for x-if="stringsReady && ...".
     stringsReady: false,
     language: "en",
 
-    // --- Geraete -----------------------------------------------------------
+    // --- Devices -------------------------------------------------------------
     devices: [],
     devicesError: null,
     controlsByDevice: {},
     commandValueDrafts: {},
     commandBusyKey: null,
-    // Kurzmeldungen als Overlay statt im Textfluss (2026-09-03): eine
-    // eingeblendete Zeile im Fluss verschiebt alles darunter, und wer
-    // gerade einen zweiten Befehl anklicken will, trifft daneben.
+    // Toasts as an overlay instead of in the text flow (2026-09-03): a
+    // line inserted into the flow shifts everything below it, and anyone
+    // trying to click a second command right then misses.
     toasts: [],
-    // Wann ein Schluessel zuletzt ueber die Live-Verbindung kam. Macht den
-    // Unterschied sichtbar zwischen "nichts aendert sich" und "nichts
-    // kommt an" - bei einer Steckdose ohne Last sieht beides gleich aus.
+    // When a key last came in over the live connection. Makes the
+    // difference visible between "nothing is changing" and "nothing is
+    // arriving" - for a plug socket with no load, both look the same.
     liveSeenAt: {},
     lastHeartbeatAt: null,
-    // Tickt jede Sekunde, damit die "vor ..."-Angaben mitlaufen. Ohne
-    // dieses Feld saehe Alpine keinen Grund, sie neu zu zeichnen.
+    // Ticks every second so the "... ago" labels keep up. Without this
+    // field, Alpine would see no reason to redraw them.
     nowTick: Date.now(),
     labelDrafts: {},
     deviceActionError: null,
 
-    // --- Raeume, Filter, Suche (Entwurf Geraete-Tab, 2026-09-05) ----------
+    // --- Rooms, filter, search (device tab design, 2026-09-05) -------------
     //
-    // DREI Zustaende, nicht zwei, und der Unterschied zwischen den letzten
-    // beiden ist der Grund fuer die Kodierung:
-    //   null  = "Alle"
-    //   ""    = "Ohne Raum" (die Geraete, deren `device.room` NULL ist)
-    //   "Bad" = dieser eine Raum
-    // "Ohne Raum" ist eine echte Auswahl und muss von "Alle" unterscheidbar
-    // bleiben - `null` fuer beide zu verwenden waere der naheliegende und
-    // falsche Weg gewesen, weil `device.room` selbst `null` ist. Der
-    // Leerstring kann mit keinem echten Raum kollidieren: `set_room` trimmt
-    // und macht aus einem leeren Namen NULL, ein Raum namens "" kann also
-    // gar nicht entstehen. Er ist ausserdem genau der Wert, den die API
-    // fuer "Raum entfernen" erwartet - dieselbe Kodierung auf beiden
-    // Seiten, nicht zwei.
+    // THREE states, not two, and the difference between the last two is
+    // the reason for this encoding:
+    //   null  = "All"
+    //   ""    = "No room" (the devices whose `device.room` is NULL)
+    //   "Bad" = this one room
+    // "No room" is a real selection and must stay distinguishable from
+    // "All" - using `null` for both would have been the obvious and wrong
+    // way to go, because `device.room` itself is `null`. The empty string
+    // cannot collide with any real room: `set_room` trims and turns an
+    // empty name into NULL, so a room named "" can never come into
+    // existence. It is also exactly the value the API expects for
+    // "remove room" - the same encoding on both sides, not two.
     //
-    // Bewusst nicht dauerhaft im Browser gemerkt (kein Web-Storage): ein
-    // gemerkter Filter erzeugt sonst den Moment, in dem nach zwei Wochen
-    // drei von zwoelf Geraeten dastehen und niemand mehr weiss, warum. Nach
-    // einem Neuladen steht die Ansicht wieder auf "Alle".
+    // Deliberately not remembered persistently in the browser (no web
+    // storage): a remembered filter would otherwise create the moment
+    // where, two weeks later, three out of twelve devices show up and no
+    // one remembers why. After a reload the view is back on "All".
     roomFilter: null,
     deviceSearch: "",
-    // Welche Kachel gerade das Textfeld fuer einen neuen Raumnamen zeigt
-    // (Geraete-ID oder null). Ein einzelner globaler Skalar, keine Menge je
-    // Kachel: es kann darum immer nur EIN Textfeld offen sein. Waehlt man
-    // "+ Neuer Raum ..." im Menue einer zweiten Kachel, schliesst das die
-    // erste mit - gewollt, zwei gleichzeitig offene Textfelder waeren
-    // ohnehin verwirrend.
+    // Which tile currently shows the text field for a new room name
+    // (device id or null). A single global scalar, not a set per tile:
+    // that means only ONE text field can ever be open. Choosing
+    // "+ New room ..." in a second tile's menu therefore closes the first
+    // one too - intentional, two simultaneously open text fields would be
+    // confusing anyway.
     newRoomFor: null,
     newRoomDraft: "",
-    // Welcher Raum gerade inline umbenannt wird (Raumname oder null).
+    // Which room is currently being renamed inline (room name or null).
     renamingRoom: null,
     renameDraft: "",
 
-    // Einlernen (Spec 7.1).
+    // Commissioning (Spec 7.1).
     commissionCode: "",
     commissionThreadDataset: "",
     commissionRoom: "",
@@ -452,49 +443,51 @@ function app() {
     commissionBusy: false,
     commissionMessage: null,
     commissionMessageIsError: false,
-    // Die Ablaufanzeige der Einlern-Karte (Entwurf vom 2026-09-07).
-    // `commissionStep` ist NULL, solange das Formular zu sehen ist, danach
-    // der Index des Schritts, der gerade laeuft - 0 waehrend des POST auf
-    // /api/devices/commission, 1 waehrend Signale und Befehle nachgeladen
-    // werden, 2 wenn alles durch ist. `commissionFailed` faerbt den
-    // Schritt, auf dem es haengengeblieben ist; der Index bleibt dabei
-    // stehen, damit man sieht, WO es aufgehoert hat.
+    // The commissioning card's progress display (design from 2026-09-07).
+    // `commissionStep` is NULL as long as the form is visible, and after
+    // that the index of the step currently running - 0 during the POST to
+    // /api/devices/commission, 1 while signals and commands are being
+    // (re)loaded, 2 once everything is done. `commissionFailed` colors
+    // the step it got stuck on; the index stays put so you can see WHERE
+    // it stopped.
     //
-    // Absichtlich getrennt von `commissionBusy`: busy sperrt den Knopf und
-    // ist waehrend eines Laufs wahr, `commissionStep` bleibt danach stehen
-    // und traegt die Anzeige, bis `resetCommission()` sie raeumt.
+    // Deliberately separate from `commissionBusy`: busy locks the button
+    // and is true while a run is in progress, `commissionStep` stays set
+    // afterwards and carries the display until `resetCommission()` clears
+    // it.
     commissionStep: null,
     commissionFailed: false,
-    // Code und Raum des laufenden Versuchs. Der Code im Eingabefeld wird
-    // nach einem Erfolg geleert (er ist verbraucht) - ohne diese Kopie
-    // stuende die Ablaufanzeige am Ende ohne den Code da, um den es ging.
+    // Code and room of the current attempt. The code in the input field
+    // is cleared after a success (it has been used) - without this copy,
+    // the progress display would end up with no code to show at the end.
     commissionRunCode: "",
     commissionRunRoom: "",
 
-    // --- Signale (geteilt mit der Geraete-Ansicht: dieselbe Liste dient
-    // dort als Kurzfassung der funktionalen Signale) -----------------------
+    // --- Signals (shared with the device view: the same list serves
+    // there as the short list of functional signals) ------------------------
     signalsByDevice: {},
     signalsError: null,
     titleDrafts: {},
     rawWriteDrafts: {},
     rawWriteBusyKey: null,
     rawWriteMessages: {},
-    // Das Signal-Modal haelt die Geraete-ID, NICHT das Geraeteobjekt:
-    // `loadDevices` ersetzt `devices` vollstaendig, ein festgehaltenes
-    // Objekt waere danach eine Leiche mit veraltetem Namen und Raum.
-    // `signalsModalDeviceObject()` loest die ID gegen die jeweils aktuelle
-    // Liste auf. Zurueckgesetzt wird dieses Feld an GENAU EINER Stelle, dem
-    // `@close` des `<dialog>` in index.html - siehe den Kommentar dort.
+    // The signal modal holds the device id, NOT the device object:
+    // `loadDevices` replaces `devices` entirely, and a retained object
+    // would afterwards be a corpse carrying a stale name and room.
+    // `signalsModalDeviceObject()` resolves the id against the current
+    // list each time. This field is reset at EXACTLY ONE place, the
+    // `@close` of the `<dialog>` in index.html - see the comment there.
     signalsModalDevice: null,
-    // Reine Praesentations-Buchfuehrung fuer den Backdrop-Klick des Modals,
-    // KEIN Modal-Zustand wie `signalsModalDevice` oben - siehe der
-    // `@mousedown.self`/`@click.self`-Kommentar am `<dialog>` in index.html.
+    // Pure presentation bookkeeping for the modal's backdrop click, NOT
+    // modal state like `signalsModalDevice` above - see the
+    // `@mousedown.self`/`@click.self` comment on the `<dialog>` in
+    // index.html.
     signalsModalBackdropMousedown: false,
 
-    // --- Einstellungen ---------------------------------------------------
-    // `bridgeSettings` ist der zuletzt vom Server geladene Stand (auch von
-    // Task 7 und Task 9 gelesen); `settingsDraft` sind die drei Eingabefelder
-    // auf diesem Tab, erst nach "Speichern" uebernommen.
+    // --- Settings --------------------------------------------------------
+    // `bridgeSettings` is the state most recently loaded from the server
+    // (also read by Task 7 and Task 9); `settingsDraft` are the three
+    // input fields on this tab, only adopted after "Save".
     bridgeSettings: { bridge_ip: null, udp_port: 7000, listen_port: 8080, saved_at: null },
     settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
     settingsBusy: false,
@@ -517,115 +510,116 @@ function app() {
     systemError: null,
     diagnosticsBusy: false,
     backupError: null,
-    // Der Resync-Knopf sperrt sich waehrend des Laufs selbst: `resend_all`
-    // schickt bei vielen Geraeten eine ganze Reihe Datagramme, und ein
-    // zweiter Klick daneben brachte nur einen zweiten Schwung, ohne dass
-    // die Oberflaeche etwas anderes gezeigt haette.
+    // The resync button locks itself while it runs: `resend_all` sends a
+    // whole batch of datagrams for many devices, and a second click next
+    // to it just triggered a second batch, without the UI showing
+    // anything different.
     resyncBusy: false,
     resyncError: null,
 
-    // --- Projektdatei-Sync (Aufgabe 12) ------------------------------------
-    // `plan` traegt die komplette Antwort von `/api/export/project-sync`
-    // unveraendert (Entries UND die beiden fertig gepatchten Dateien als
-    // Base64) - `downloadPatchedProject` liest daraus, statt fuer den
-    // Haken "Neue Geraete-Container ebenfalls anlegen" einen zweiten Aufruf
-    // an die Bruecke zu machen. Solange `plan` `null` ist, gab es noch
-    // keine Antwort zu sehen - und genau daran haengt der Download-Knopf
-    // in `index.html` (`x-show="projectSync.plan"`): nichts herunterladen,
-    // bevor der Plan gesehen wurde.
-    // `plan.patched_with_new_devices_base64` ist `null`, wenn die
-    // hochgeladene Datei keinen `VirtualInCaption`/`VirtualOutCaption`-
-    // Abschnitt hat (Review-Fix Important #4) - `plan.
-    // new_devices_unavailable_reason` traegt dann den Grund. Beides bleibt
-    // wie der Rest von `plan` unveraendert aus der API-Antwort, keine
-    // eigene camelCase-Kopie.
+    // --- Project file sync (Task 12) ---------------------------------------
+    // `plan` carries the complete response from `/api/export/project-sync`
+    // unchanged (entries AND the two fully patched files as base64) -
+    // `downloadPatchedProject` reads from it instead of making a second
+    // call to the bridge for the "Also create new device containers"
+    // checkbox. As long as `plan` is `null`, there was no response to see
+    // yet - and exactly that is what the download button in `index.html`
+    // (`x-show="projectSync.plan"`) hangs on: nothing to download before
+    // the plan has been seen.
+    // `plan.patched_with_new_devices_base64` is `null` if the uploaded
+    // file has no `VirtualInCaption`/`VirtualOutCaption` section
+    // (Review-Fix Important #4) - `plan.new_devices_unavailable_reason`
+    // then carries the reason. Both stay, like the rest of `plan`,
+    // unchanged from the API response, with no dedicated camelCase copy.
     projectSync: {
-      // Das tatsaechliche `File`-Objekt, nicht nur sein Name (Nutzerwunsch
-      // nach dem Review: ein Auswahlfeld statt eine IP von Hand einzutippen)
-      // - so kann `confirmProjectSyncMiniserver` dieselbe Datei ein zweites
-      // Mal hochladen, sobald der Anwender den Miniserver gewaehlt hat,
-      // ganz ohne erneuten Datei-Dialog.
+      // The actual `File` object, not just its name (user request after
+      // the review: a selection field instead of typing an IP by hand) -
+      // this lets `confirmProjectSyncMiniserver` upload the same file a
+      // second time once the user has chosen the Miniserver, with no
+      // repeated file dialog.
       file: null,
       plan: null,
       includeNewDevices: false,
       busy: false,
       error: "",
-      // Traegt die Datei mehr als einen Miniserver, antwortet `/api/export/
-      // project-sync` beim ersten Versuch (ohne `miniserver_ip`) mit
-      // `needs_miniserver_selection=true` statt einem Plan - `index.html`
-      // zeigt dann dieses Auswahlfeld statt der Plan-Ansicht.
+      // If the file carries more than one Miniserver, `/api/export/
+      // project-sync` responds to the first attempt (without
+      // `miniserver_ip`) with `needs_miniserver_selection=true` instead of
+      // a plan - `index.html` then shows this selection field instead of
+      // the plan view.
       needsMiniserverSelection: false,
       availableMiniservers: [],
       selectedMiniserverIp: "",
     },
 
-    // --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------
-    // Drei Straeme, gefuellt von genau EINEM WebSocket
-    // (`/api/diagnostics/live`) statt wie bisher einmalig per GET - siehe
-    // `connectDiagnosticsLive`. `datagrams` und `commandLog` hiessen schon
-    // vorher so (frueher durch `loadSystem()` einmalig befuellt); die neue
-    // dritte Sorte (`kind: "log"`) kommt mit dieser Aufgabe dazu.
+    // --- Live diagnostics (Task 6, Spec 10.5) -------------------------------
+    // Three streams, filled by exactly ONE WebSocket
+    // (`/api/diagnostics/live`) instead of a one-time GET as before - see
+    // `connectDiagnosticsLive`. `datagrams` and `commandLog` were already
+    // named this before (previously filled once by `loadSystem()`); the
+    // new third kind (`kind: "log"`) is added with this task.
     datagrams: [],
     commandLog: [],
     diagnosticsLogs: [],
     diagnosticsSocket: null,
     diagnosticsConnected: false,
-    // Haelt nur das ANHAENGEN neuer Zeilen an - nicht die Verbindung selbst
-    // (siehe `handleDiagnosticsMessage`). Bewusst KEIN Anzeigefilter wie
-    // `hideNoise`/`logLevel` (Entwurf 4 gilt fuer die beiden, nicht fuer
-    // diese Pause): waehrend der Pause eintreffende Zeilen werden nicht
-    // nachgeholt, wie bei einem angehaltenen `tail -f`.
+    // Only holds the APPENDING of new lines - not the connection itself
+    // (see `handleDiagnosticsMessage`). Deliberately NOT a display filter
+    // like `hideNoise`/`logLevel` (design 4 applies to those two, not to
+    // this pause): lines arriving during the pause are not caught up on
+    // afterwards, like a paused `tail -f`.
     diagnosticsPaused: false,
     diagnosticsReconnectDelayMs: RECONNECT_DELAY_INITIAL_MS,
     diagnosticsReconnectTimer: null,
-    // Anzeigefilter (Entwurf 4): wirken NUR auf das, was diese beiden
-    // `visible...`-Funktionen zurueckgeben - die gehaltenen Zeilen selbst
-    // (`datagrams`, `diagnosticsLogs`) bleiben unveraendert. Wer den Filter
-    // ausschaltet, sieht die vorhandenen Zeilen deshalb sofort, statt auf
-    // neue zu warten.
+    // Display filters (design 4): only affect what these two `visible...`
+    // functions return - the held lines themselves (`datagrams`,
+    // `diagnosticsLogs`) stay unchanged. Turning the filter off therefore
+    // shows the existing lines immediately, instead of waiting for new
+    // ones.
     hideNoise: true,
     logLevel: "INFO",
 
-    // --- Live-Verbindung (Spec 8.3) --------------------------------------
+    // --- Live connection (Spec 8.3) -----------------------------------------
     liveValues: {},
     socket: null,
     socketConnected: false,
     socketEverConnected: false,
-    // Zaehlt erfolglose Versuche der ALLERERSTEN Verbindung - bleibt ab der
-    // ersten erfolgreichen Verbindung unbenutzt (Review-Fix Minor #4, siehe
-    // `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE` oben).
+    // Counts unsuccessful attempts of the VERY FIRST connection - stays
+    // unused from the first successful connection onward (Review-Fix
+    // Minor #4, see `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE`
+    // above).
     initialConnectFailures: 0,
     reconnectDelayMs: RECONNECT_DELAY_INITIAL_MS,
     reconnectTimer: null,
 
-    // Ruft Alpine von sich aus genau EINMAL auf, sobald `x-data="app()"`
-    // ausgewertet ist. `index.html` traegt deshalb bewusst kein
-    // `x-init="init()"` (Review-Fix Fix 2, 2026-09-03) - das rief die
-    // Methode ein zweites Mal auf, und mit ihr (nach einer angemeldeten
-    // Sitzung) `startApp()`: jeder offene Tab hielt dann zwei
-    // Live-Verbindungen, von denen nur die zuletzt geoeffnete in
-    // `this.socket` landete. Die andere blieb unsichtbar und lief bis zum
-    // Schliessen des Tabs weiter.
+    // Has Alpine call this exactly ONCE on its own, as soon as
+    // `x-data="app()"` is evaluated. `index.html` therefore deliberately
+    // carries no `x-init="init()"` (Review-Fix Fix 2, 2026-09-03) - that
+    // called the method a second time, and with it (after a logged-in
+    // session) `startApp()`: every open tab then held two live
+    // connections, of which only the most recently opened one landed in
+    // `this.socket`. The other stayed invisible and kept running until
+    // the tab was closed.
     async init() {
-      // Der Sekundentakt fuer die Lebenszeichen-Anzeige steht hier und NICHT
-      // in `startApp()`: `startApp()` laeuft auch nach einer Neuanmeldung
-      // erneut, und ein zweites `setInterval` liesse sich danach durch
-      // nichts mehr stoppen - genau die Falle, die dieses Projekt schon
-      // zweimal mit doppelten Live-Verbindungen getroffen hat. `init()`
-      // ruft Alpine garantiert genau einmal auf. Der Takt kostet nichts,
-      // solange niemand angemeldet ist: er schreibt in ein Feld, das nur
-      // die Kopfzeile der App liest.
+      // The one-second heartbeat display tick lives here and NOT in
+      // `startApp()`: `startApp()` also runs again after a re-login, and
+      // a second `setInterval` afterwards could no longer be stopped by
+      // anything - exactly the trap this project has already fallen into
+      // twice with duplicate live connections. `init()` is guaranteed to
+      // call Alpine exactly once. The tick costs nothing as long as no
+      // one is logged in: it writes to a field that only the app's header
+      // reads.
       window.setInterval(() => {
         this.nowTick = Date.now();
       }, 1000);
-      // Die Ansicht steht in der Adresszeile - gelesen VOR dem ersten Laden,
-      // damit `startApp()` unten gleich die richtige Ansicht aufbaut und
-      // nicht erst das Dashboard und danach die gewuenschte.
+      // The view lives in the address bar - read BEFORE the first load, so
+      // `startApp()` below builds the right view straight away instead of
+      // first the dashboard and then the desired one.
       this.view = viewFromHash() ?? DEFAULT_VIEW;
-      // Ab hier fuehrt jeder Weg in eine andere Ansicht ueber das Fragment:
-      // Klick auf einen Reiter, Zurueck-Knopf, von Hand editierte
-      // Adresszeile. Alpine ruft `init()` genau einmal auf, der Zuhoerer
-      // haengt also auch genau einmal am Fenster.
+      // From here on, every path to a different view goes through the
+      // fragment: clicking a tab, the back button, hand-editing the
+      // address bar. Alpine calls `init()` exactly once, so the listener
+      // is also attached to the window exactly once.
       window.addEventListener("hashchange", () => {
         this.applyHash();
       });
@@ -636,16 +630,16 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Zugang
+    // Access
     // ---------------------------------------------------------------------
 
     /**
-     * Der einzige Weg dieser Oberflaeche zu `/api`. Reicht `requestJson`
-     * unveraendert durch und merkt sich unterwegs nur den einen Fall, den
-     * jeder Aufrufer sonst einzeln behandeln muesste: eine 401. Dann setzt
-     * er den Hinweis oben und klappt das Eingabefeld auf, statt den
-     * Anwender mit fuenfzehn verschiedenen Fehlermeldungen zu belegen, die
-     * alle dasselbe bedeuten.
+     * The only path this UI takes to `/api`. Passes `requestJson` through
+     * unchanged and, along the way, only remembers the one case every
+     * caller would otherwise have to handle individually: a 401. It then
+     * sets the note above and opens up the input field, instead of
+     * burdening the user with fifteen different error messages that all
+     * mean the same thing.
      */
     async request(method, path, body) {
       try {
@@ -656,7 +650,7 @@ function app() {
       }
     },
 
-    /** Wie `request`, aber fuer die beiden Datei-Downloads. */
+    /** Like `request`, but for the two file downloads. */
     async download(path, filename) {
       try {
         await requestDownload(path, filename);
@@ -666,7 +660,7 @@ function app() {
       }
     },
 
-    /** Wie `request`, aber fuer den Datei-Upload (Projektdatei-Sync). */
+    /** Like `request`, but for the file upload (project file sync). */
     async upload(path, formData) {
       try {
         return await requestUpload(path, formData);
@@ -677,51 +671,50 @@ function app() {
     },
 
     /**
-     * Eine 401 mitten im Betrieb heisst: die Sitzung ist abgelaufen oder
-     * wurde anderswo beendet. Dann zurueck auf den Login-Bildschirm - eine
-     * Fehlermeldung, die auf ein Eingabefeld verweist, das es nicht mehr
-     * gibt, waere schlimmer als gar keine.
+     * A 401 mid-operation means: the session has expired or was ended
+     * elsewhere. Then back to the login screen - an error message that
+     * points at an input field that no longer exists would be worse than
+     * none at all.
      */
     noteAuthError(error) {
       if (error instanceof UnauthorizedError) {
         this.authenticated = false;
         this.authError = error.message;
-        // Diese 401 kann aus einer Modal-Aktion kommen (saveTitle,
-        // toggleExported, toggleResend, writeRaw). Ohne diesen Aufruf bliebe
-        // das Signal-Modal offen, waehrend Alpine dahinter auf den
-        // Login-Bildschirm umschaltet - alles ausserhalb des <dialog> waere
-        // dann inert und weder Passwortfeld noch Fehlerbanner erreichbar.
+        // This 401 can come from a modal action (saveTitle, toggleExported,
+        // toggleResend, writeRaw). Without this call the signal modal
+        // would stay open while Alpine switches behind it to the login
+        // screen - everything outside the <dialog> would then be inert
+        // and neither the password field nor the error banner would be
+        // reachable.
         this.closeSignalsModal();
       }
     },
 
-    /** Fragt den Zustand des Zugangs ab - der erste Aufruf jeder Seite. */
+    /** Queries the access state - the first call on every page. */
     async loadAuthInfo() {
       try {
         const info = await requestJson("GET", "/auth-info");
         this.passwordSet = info.password_set;
         this.authenticated = info.authenticated;
         if (!this.authenticated) {
-          // Faellt die Sitzung hier weg (z. B. Bruecken-Neustart waehrend
-          // `handleLiveDisconnect` diese Funktion erneut aufruft), reisst
-          // Alpine die App gleich auf den Login-Bildschirm um - aber das
-          // <dialog> steht ausserhalb von <template x-if="... &&
-          // authenticated"> (siehe dort) und bleibt deshalb offen stehen,
-          // wenn wir es nicht selbst schliessen. Ein offener Dialog vor dem
-          // Login-Bildschirm macht Passwortfeld und Fehlerbanner
-          // unerreichbar, weil alles ausserhalb davon inert ist.
-          // closeSignalsModal() ist hier auch dann unbedenklich, wenn gar
-          // kein Modal offen ist: close() auf einem bereits geschlossenen
-          // <dialog> ist ein no-op.
+          // If the session drops out here (e.g. a bridge restart while
+          // `handleLiveDisconnect` calls this function again), Alpine
+          // immediately switches the app to the login screen - but the
+          // <dialog> lives outside <template x-if="... && authenticated">
+          // (see there) and therefore stays open unless we close it
+          // ourselves. An open dialog in front of the login screen makes
+          // the password field and error banner unreachable, because
+          // everything outside it is inert. closeSignalsModal() is
+          // harmless here even when no modal is open at all: close() on
+          // an already-closed <dialog> is a no-op.
           this.closeSignalsModal();
         }
-        // Loescht einen aelteren Fehlerbanner ("Die Bruecke ist nicht
-        // erreichbar" o. ae.) im Erfolgsfall - diese Funktion lief frueher
-        // nur einmal je Seitenaufbau, seit `handleLiveDisconnect` laeuft sie
-        // aber bei JEDEM Verbindungsabbruch erneut: ohne diese Zeile bliebe
-        // ein Banner von einem kurzen Netzausfall stehen, auch nachdem die
-        // naechste Anfrage laengst wieder erfolgreich war (Review-Fund,
-        // 2026-09-03).
+        // Clears an older error banner ("The bridge is unreachable" or
+        // similar) on success - this function used to run only once per
+        // page build, but since `handleLiveDisconnect` it runs again on
+        // EVERY connection drop: without this line, a banner from a brief
+        // network outage would stay up even after the next request had
+        // long since succeeded again (review finding, 2026-09-03).
         this.authError = null;
       } catch (error) {
         this.authError = error.message;
@@ -730,11 +723,11 @@ function app() {
       }
     },
 
-    /** Laedt die aktuelle Sprache und die web.*-Uebersetzungstabelle - der
-     * erste Aufruf jeder Seite, wie loadAuthInfo(), aber unabhaengig davon
-     * (siehe init(), das beide parallel startet): GET /api/i18n ist
-     * ungeschuetzt, die Ersteinrichtungs-/Anmeldeseite braucht diese Texte,
-     * bevor sich jemand angemeldet hat. */
+    /** Loads the current language and the web.* translation table - the
+     * first call on every page, like loadAuthInfo(), but independent of
+     * it (see init(), which starts both in parallel): GET /api/i18n is
+     * unprotected, since the initial-setup/login page needs these texts
+     * before anyone has logged in. */
     async loadI18n() {
       try {
         const info = await requestJson("GET", "/api/i18n");
@@ -742,40 +735,39 @@ function app() {
         translationStrings = info.strings;
         document.documentElement.lang = info.language;
       } catch (error) {
-        // Einzige bewusste Ausnahme von "keine console.*-Aufrufe in dieser
-        // Datei" (siehe Kopfkommentar): es gibt keinen Oberflaechen-Platz fuer
-        // "Uebersetzungen konnten nicht geladen werden" wie es ihn fuer
-        // authError gibt - ohne dieses Log waere ein Fehlschlag hier komplett
-        // unsichtbar. stringsReady wird trotzdem gesetzt (siehe finally): t()
-        // faellt fuer jeden noch nicht geladenen Schluessel selbst auf den
-        // rohen Schluesseltext zurueck, statt die Seite fuer immer zu blockieren.
-        console.error("Uebersetzungen konnten nicht geladen werden:", error);
+        // The one deliberate exception to "no console.* calls in this
+        // file" (see the header comment): there is no UI slot for
+        // "Translations could not be loaded" the way there is for
+        // authError - without this log, a failure here would be
+        // completely invisible. stringsReady is still set regardless (see
+        // finally): t() itself falls back to the raw key text for any
+        // not-yet-loaded key, instead of blocking the page forever.
+        console.error("Translations could not be loaded:", error);
       } finally {
         this.stringsReady = true;
       }
     },
 
     /**
-     * Alles, was eine angemeldete Sitzung voraussetzt. Getrennt von `init`,
-     * weil es nach dem Login ein zweites Mal laufen muss - dann ohne
-     * Neuladen der Seite.
+     * Everything that requires a logged-in session. Separate from `init`,
+     * because it has to run a second time after login - then without
+     * reloading the page.
      */
     async startApp() {
-      // Zwischenspeicher und Fehlermeldungen leeren, BEVOR irgendetwas neu
-      // geladen wird. Diese Methode laeuft nicht nur beim ersten Aufbau,
-      // sondern auch nach einer Neuanmeldung - und dann steht in diesen
-      // Feldern noch der Stand von vor dem Sitzungsende.
+      // Clear caches and error messages BEFORE anything is reloaded. This
+      // method does not only run on the initial build, but also after a
+      // re-login - and at that point these fields still hold the state
+      // from before the session ended.
       //
-      // Die geraeteweisen Zwischenspeicher sind dabei der heikle Teil (Fund
-      // aus Phase 6, hier uebernommen): bei einer 401 legt
-      // `loadControls`/`loadSignals` gar keinen Eintrag an - der
-      // Zwischenspeicher bleibt leer, und ein leerer Eintrag ist von "dieses
-      // Geraet hat keine Befehle" nicht zu unterscheiden (siehe
-      // `controlsLoaded`). Ohne dieses Leeren zeigte eine Kachel nach der
-      // Neuanmeldung dauerhaft den Hinweis "keine bekannten Befehle", obwohl
-      // das Geraet welche hat, und nur ein Neuladen der Seite half. Genau
-      // die Sorte stillschweigend falscher Zustand, die Spec 8.1
-      // ausschliessen will.
+      // The per-device caches are the tricky part here (finding from
+      // Phase 6, adopted here): on a 401, `loadControls`/`loadSignals`
+      // create no entry at all - the cache stays empty, and an empty
+      // entry cannot be told apart from "this device has no commands"
+      // (see `controlsLoaded`). Without this clearing, a tile would keep
+      // showing "no known commands" permanently after a re-login, even
+      // though the device does have some, and only reloading the page
+      // helped. Exactly the kind of silently wrong state Spec 8.1 wants
+      // to rule out.
       this.backupError = null;
       this.resyncError = null;
       this.exportError = null;
@@ -785,10 +777,10 @@ function app() {
       this.controlsByDevice = {};
       this.signalsByDevice = {};
       await this.loadDevices();
-      // Jede Karte zeigt Werte und Bedienelemente sofort, ohne Klick
-      // (Geraete-Dashboard-Entwurf Abschnitt 3) - deshalb laedt startApp()
-      // beides fuer JEDES Geraet, nicht erst fuer eines nach einem
-      // Aufklappen (das es seit diesem Entwurf nicht mehr gibt).
+      // Every card shows values and controls immediately, with no click
+      // needed (device dashboard design, section 3) - that is why
+      // startApp() loads both for EVERY device, not just for one after an
+      // expand (which no longer exists since this design).
       await Promise.all([
         ...this.devices.map((device) => this.loadControls(device.id)),
         ...this.devices.map((device) => this.loadSignals(device.id)),
@@ -813,15 +805,15 @@ function app() {
     },
 
     /**
-     * Der gemeinsame Teil von Einrichtung und Login: absenden, Fehler
-     * anzeigen, bei Erfolg die App starten. Das Cookie setzt der Server,
-     * diese Seite fasst es nie an (es ist `HttpOnly`).
+     * The shared part of setup and login: submit, show errors, start the
+     * app on success. The server sets the cookie, this page never touches
+     * it (it is `HttpOnly`).
      *
-     * Ruft `requestJson` direkt auf, nicht `this.request`: dessen 401-Fall
-     * ist fuer einen Tippfehler im Passwort gedacht, nicht fuer einen
-     * fehlgeschlagenen Login selbst - `requestJson` weiss das (siehe dessen
-     * Pfadpruefung) und wirft hier den Servertext ("Falsches Passwort.")
-     * unveraendert als gewoehnlichen `Error`.
+     * Calls `requestJson` directly, not `this.request`: its 401 case is
+     * meant for the currently-logged-in session expiring, not for a
+     * failed login itself - `requestJson` knows this (see its path check)
+     * and throws the server text ("Wrong password.") here unchanged as an
+     * ordinary `Error`.
      */
     async submitPassword(path) {
       this.authBusy = true;
@@ -831,24 +823,24 @@ function app() {
       } catch (error) {
         this.authError = error.message;
         if (path === "/auth/setup" && error.status === 409) {
-          // Diese Bruecke hat laengst ein Passwort - der Bildschirm zeigte
-          // die Einrichtung trotzdem, typischerweise weil `/auth-info` beim
-          // Laden fehlschlug und `passwordSet` deshalb bei `false` blieb
-          // (siehe `loadAuthInfo`). Ohne diesen Wechsel bliebe die Seite auf
-          // dem Einrichtungsbildschirm samt Uebernahme-Warnung stehen, und
-          // ein Betreiber, der dort mehrfach "Passwort vergeben" klickt,
-          // sperrte sich ueber die gemeinsame `LoginThrottle` auch aus dem
-          // LOGIN aus - ohne je ein falsches Passwort eingegeben zu haben
-          // (Review-Fund, 2026-09-03; der zweite Teil der Behebung ist der
-          // 409-Zweig in `api/auth.py`, der seither keinen Fehlversuch mehr
-          // dafuer bucht).
+          // This bridge already has a password long since - the screen
+          // showed setup anyway, typically because `/auth-info` failed to
+          // load and `passwordSet` therefore stayed `false` (see
+          // `loadAuthInfo`). Without this switch the page would stay on
+          // the setup screen with its takeover warning, and an operator
+          // who clicks "Set password" there repeatedly would lock
+          // themselves out of LOGIN too via the shared `LoginThrottle` -
+          // without ever having entered a wrong password (review finding,
+          // 2026-09-03; the second part of the fix is the 409 branch in
+          // `api/auth.py`, which since then no longer books a failed
+          // attempt for this).
           this.passwordSet = true;
         }
         return;
       } finally {
         this.authBusy = false;
-        // In jedem Fall: ein Passwort bleibt nicht im Speicher der Seite
-        // stehen, auch nicht nach einem Fehlversuch.
+        // In every case: a password does not stay in the page's memory,
+        // not even after a failed attempt.
         this.passwordDraft = "";
         this.passwordRepeatDraft = "";
       }
@@ -861,9 +853,9 @@ function app() {
       try {
         await requestJson("POST", "/auth/logout");
       } catch {
-        // Auch ein fehlgeschlagener Logout soll abmelden: das Neuladen
-        // unten verwirft jeden geladenen Stand, und ohne gueltige Sitzung
-        // kommt die Seite ohnehin nur bis zum Login-Bildschirm.
+        // A failed logout should still log out: the reload below discards
+        // any loaded state, and without a valid session the page only
+        // gets as far as the login screen anyway.
       }
       window.location.reload();
     },
@@ -873,30 +865,29 @@ function app() {
     // ---------------------------------------------------------------------
 
     /**
-     * Der Rueckweg aus der Adresszeile in die Anwendung: haengt an
-     * `hashchange` (siehe `init`) und laeuft damit bei jedem Reiterklick,
-     * jedem Zurueck-Knopf und jeder von Hand geaenderten Adresse.
+     * The way back from the address bar into the application: attached to
+     * `hashchange` (see `init`), and thus runs on every tab click, every
+     * back button, and every hand-edited address.
      */
     async applyHash() {
       const view = viewFromHash();
       if (view === null) {
-        // Nichts Gueltiges in der Adresszeile: die gezeigte Ansicht bleibt
-        // stehen und wird nur nachgetragen, statt kommentarlos auf das
-        // Dashboard zu springen.
+        // Nothing valid in the address bar: the shown view stays put and
+        // is only added back in, instead of silently jumping to the
+        // dashboard.
         writeHash(this.view);
         return;
       }
       if (!this.authenticated) {
-        // Vor der Anmeldung gibt es nichts zu laden - jede Anfrage liefe in
-        // eine 401. Die Ansicht nur merken; `startApp()` baut sie nach dem
-        // Login auf.
+        // There is nothing to load before login - every request would run
+        // into a 401. Just remember the view; `startApp()` builds it after
+        // login.
         this.view = view;
         return;
       }
       if (view === this.view) {
-        // `selectView` traegt das Fragment selbst ein; das dabei ausgeloeste
-        // `hashchange` landet hier und darf die Ansicht nicht ein zweites
-        // Mal laden.
+        // `selectView` writes the fragment itself; the `hashchange` it
+        // triggers lands here and must not load the view a second time.
         return;
       }
       await this.selectView(view);
@@ -905,11 +896,11 @@ function app() {
     async selectView(view) {
       this.view = view;
       writeHash(view);
-      // Genau EINE Diagnose-Verbindung, offen nur waehrend "System"
-      // tatsaechlich die aktive Ansicht ist (Falle 3, Aufgabe 6): sie oeffnet
-      // beim Wechsel AUF "system" und schliesst bei jedem anderen Wert -
-      // dasselbe Muster wie `connectLive()`/dessen Aufraeumen fuer den
-      // Wertekanal, nur an die Ansicht statt an den Login gebunden.
+      // Exactly ONE diagnostics connection, open only while "System" is
+      // actually the active view (trap 3, Task 6): it opens on switching
+      // TO "system" and closes on every other value - the same pattern as
+      // `connectLive()`/its cleanup for the value channel, just tied to
+      // the view instead of the login.
       if (view === "system") {
         this.connectDiagnosticsLive();
       } else {
@@ -925,7 +916,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Geraete
+    // Devices
     // ---------------------------------------------------------------------
 
     async loadDevices() {
@@ -937,20 +928,19 @@ function app() {
       }
     },
 
-    // Online-Status bevorzugt aus dem Live-Websocket (dessen Wert kann
-    // sich seit dem letzten Laden der Liste geaendert haben, siehe Spec
-    // 8.3) - fehlt er (noch keine Nachricht fuer dieses Geraet
-    // eingetroffen), gilt der zuletzt geladene Stand aus `GET
-    // /api/devices`.
-    // KEIN `hasOwnProperty` hier (2026-09-03). Alpines Reaktivitaet
-    // erfasst eine Abhaengigkeit nur bei einem echten Property-ZUGRIFF;
-    // `Object.prototype.hasOwnProperty.call(obj, key)` laeuft daran vorbei.
-    // Folge in der ausgelieferten Fassung: die erste Nachricht fuer einen
-    // Schluessel, den `liveValues` noch nicht kannte, veraenderte die
-    // Anzeige NICHT - erst ein spaeteres Neuzeichnen aus anderem Grund
-    // holte sie nach. Von aussen sah das aus, als kaeme ueber die
-    // Live-Verbindung nichts an, obwohl der Wert laengst im Zustand stand.
-    // Ein direkter Zugriff mit `=== undefined` wird dagegen erfasst.
+    // Online status preferably from the live WebSocket (its value may
+    // have changed since the list was last loaded, see Spec 8.3) - if it
+    // is missing (no message for this device has arrived yet), the state
+    // most recently loaded from `GET /api/devices` applies.
+    // NO `hasOwnProperty` here (2026-09-03). Alpine's reactivity only
+    // captures a dependency on a genuine property ACCESS;
+    // `Object.prototype.hasOwnProperty.call(obj, key)` bypasses that.
+    // Consequence in the shipped version: the first message for a key
+    // `liveValues` did not yet know did NOT change the display - only a
+    // later redraw for some other reason caught it up. From the outside
+    // this looked as if nothing was arriving over the live connection,
+    // even though the value had long since been in the state. A direct
+    // access with `=== undefined`, by contrast, is captured.
     isOnline(device) {
       const liveKey = `d${device.id}_online`;
       const live = this.liveValues[liveKey];
@@ -976,29 +966,27 @@ function app() {
     },
 
     /**
-     * Ob die Bedienelemente dieses Geraets ueberhaupt geladen werden
-     * konnten. Ohne diese Unterscheidung rendert die Oberflaeche einen
-     * fehlgeschlagenen (oder noch laufenden) Abruf als "keine bekannten
-     * Befehle" - eine Aussage ueber das Geraet, wo in Wahrheit eine ueber
-     * die Verbindung faellig waere (Spec 8.1: ein Fehlschlag darf nicht als
-     * harmloser Zustand erscheinen). `index.html` nutzt dies, um zwischen
-     * "noch nicht geladen/fehlgeschlagen" (`web.devices.controls_loading`)
-     * und "geladen, aber tatsaechlich keine Befehle"
-     * (`web.devices.no_known_commands`) zu unterscheiden - der Fehlertext
-     * selbst laeuft weiterhin ueber `deviceActionError` (siehe
-     * `loadControls`), hier geht es nur um das Vermeiden der falschen
-     * Kachel-Anzeige.
+     * Whether this device's controls could be loaded at all. Without this
+     * distinction the UI renders a failed (or still running) fetch as
+     * "no known commands" - a statement about the device, when what is
+     * really due is one about the connection (Spec 8.1: a failure must
+     * not appear as a harmless state). `index.html` uses this to tell
+     * "not loaded yet/failed" (`web.devices.controls_loading`) apart from
+     * "loaded, but genuinely no commands"
+     * (`web.devices.no_known_commands`) - the error text itself still
+     * runs via `deviceActionError` (see `loadControls`); this is only
+     * about avoiding the wrong tile display.
      */
     controlsLoaded(deviceId) {
-      // Direkter Zugriff, kein `hasOwnProperty` - siehe `isOnline`.
+      // Direct access, no `hasOwnProperty` - see `isOnline`.
       return this.controlsByDevice[deviceId] !== undefined;
     },
 
-    // Die drei folgenden Helfer bestehen einzig, damit `index.html` kein
-    // optionales Verkettungsoperator (`?.`) in einem Alpine-Ausdruck
-    // braucht, um mit einem noch nicht geladenen Eintrag umzugehen - eine
-    // gewoehnliche Funktion ist hier lesbarer als ein Ausdruck mit
-    // eingebauter Existenzpruefung mitten im Markup.
+    // The following three helpers exist solely so `index.html` does not
+    // need an optional chaining operator (`?.`) in an Alpine expression to
+    // handle an entry that has not been loaded yet - an ordinary function
+    // is more readable here than an expression with a built-in existence
+    // check in the middle of the markup.
     commandsFor(deviceId) {
       const controls = this.controlsByDevice[deviceId];
       return controls ? controls.commands : [];
@@ -1014,10 +1002,10 @@ function app() {
       return status ? status.exported_at : null;
     },
 
-    // Wie `ExportStatusOut.changed_since_export` server-seitig: ohne
-    // geladenen Status (z. B. ein gerade erst eingelerntes Geraet, bevor
-    // die naechste `loadExportStatus`-Runde durch ist) gilt "geaendert" -
-    // dieselbe vorsichtige Annahme wie beim Server (siehe api/export.py,
+    // Like `ExportStatusOut.changed_since_export` server-side: without a
+    // loaded status (e.g. a device that was just commissioned, before the
+    // next `loadExportStatus` round has gone through), "changed" applies -
+    // the same cautious assumption as on the server (see api/export.py,
     // `_changed_since_export`).
     changedSinceExport(deviceId) {
       const status = this.exportStatusFor(deviceId);
@@ -1032,9 +1020,9 @@ function app() {
       return t("web.devices.export_last", { timestamp: this.formatTimestamp(status.exported_at) });
     },
 
-    // Klassen fuer den Farbstreifen der Kachel (style.css, `.device-card`) -
-    // eine Funktion statt eines Inline-Ausdrucks in index.html, weil zwei
-    // Bedingungen (online UND geaendert) hier zusammenkommen.
+    // Classes for the tile's color stripe (style.css, `.device-card`) - a
+    // function instead of an inline expression in index.html, because two
+    // conditions (online AND changed) come together here.
     deviceCardClass(device) {
       return {
         "is-offline": !this.isOnline(device),
@@ -1042,25 +1030,24 @@ function app() {
       };
     },
 
-    // Kurzliste fuer die Geraete-Ansicht: nur die funktionalen Signale
-    // (`signal.functional`, aus `profiles.relevance.is_functional` -
-    // Aufgabe 8), und davon nur die ersten paar - der vollstaendige Baum
-    // (inklusive Experte-Block) steht im Signal-Modal. Die Deckelung
-    // bleibt trotzdem bestehen, auch wenn die funktionale Menge fuer die
-    // beiden bislang bekannten Geraete klein ist (5 bzw. 17): ein Geraet mit
-    // mehr funktionalen Signalen als hier Platz haben, ist von dieser Regel
-    // nicht ausgeschlossen.
+    // Short list for the device view: only the functional signals
+    // (`signal.functional`, from `profiles.relevance.is_functional` -
+    // Task 8), and only the first few of those - the full tree (including
+    // the expert block) lives in the signal modal. The cap still applies
+    // even though the functional set is small for the two devices known
+    // so far (5 and 17 respectively): a device with more functional
+    // signals than fit here is not excluded by this rule.
     //
-    // Frueher hiessen diese drei Helfer `exportableSignalsFor`/
-    // `firstSignalsFor`/`remainingSignalCount`, gefiltert auf `exportable`
-    // statt auf `functional`, und die Ueberschrift daneben hiess "Signale
-    // (Anfang der Liste)" (Review-Fix Fix 9, 2026-09-03): `exportable`
-    // beantwortet nur, ob ein Wert TECHNISCH auf einen Loxone-Eingang
-    // passt, nicht, ob ihn jemand WILL - eine Steckdose hat 110
-    // exportierbare Signale, darunter Netzwerk- und Geraeteangaben, aber
-    // nur 5 funktionale. Seit `signal.functional` das direkt beantwortet
-    // (statt einer geratenen Reihenfolge), ist die Kurzliste wieder ehrlich
-    // benennbar.
+    // These three helpers used to be called `exportableSignalsFor`/
+    // `firstSignalsFor`/`remainingSignalCount`, filtered on `exportable`
+    // instead of `functional`, with the heading next to it reading
+    // "Signals (start of the list)" (Review-Fix Fix 9, 2026-09-03):
+    // `exportable` only answers whether a value TECHNICALLY fits a Loxone
+    // input, not whether anyone WANTS it - a plug socket has 110
+    // exportable signals, including network and device details, but only
+    // 5 functional ones. Since `signal.functional` answers that directly
+    // (instead of a guessed order), the short list can be honestly named
+    // again.
     FUNCTIONAL_PREVIEW_LIMIT: 6,
 
     functionalSignalsFor(deviceId) {
@@ -1079,26 +1066,27 @@ function app() {
       );
     },
 
-    // --- Kategorie, Raeume, Sortierung -----------------------------------
+    // --- Category, rooms, sorting --------------------------------------------
 
-    // Der uebersetzte Name der Kategorie. Die API liefert nur die Kennung
-    // ("socket"), damit die Suche unten gegen den Text vergleichen kann,
-    // den der Bedienende tatsaechlich sieht - auf Deutsch "Steckdose", auf
-    // Englisch "socket".
+    // The translated name of the category. The API only returns the
+    // identifier ("socket"), so the search below can compare against the
+    // text the operator actually sees - in German "Steckdose", in English
+    // "socket".
     categoryLabel(device) {
       return t("web.devices.category." + (device.category || "other"));
     },
 
-    // Der Raum eines Geraets in der Kodierung von `roomFilter`: "" statt
-    // null/undefined. Eine Stelle, damit die Umrechnung nicht in vier
-    // Helfern einzeln steht und einer davon sie irgendwann anders macht.
+    // A device's room in the encoding of `roomFilter`: "" instead of
+    // null/undefined. One place, so the conversion does not live
+    // separately in four helpers, one of which might eventually do it
+    // differently.
     roomKeyOf(device) {
       return device.room || "";
     },
 
-    // Alle Raeume mit ihrer Geraetezahl, "Ohne Raum" ganz am Ende.
-    // `key` ist der Wert, den `roomFilter` annimmt ("" fuer Ohne Raum),
-    // `label` der angezeigte Text.
+    // All rooms with their device count, "No room" right at the end.
+    // `key` is the value `roomFilter` takes on ("" for no room), `label`
+    // the displayed text.
     roomChips() {
       const counts = new Map();
       for (const device of this.devices) {
@@ -1115,15 +1103,15 @@ function app() {
       return chips;
     },
 
-    // Die Leiste zeigt sich gar nicht, solange kein einziges Geraet einen
-    // Raum traegt: bei drei Geraeten und keinem Raum waere sie eine Zeile
-    // Laerm ueber einer Liste, die ohnehin auf einen Blick passt.
+    // The bar does not show at all as long as not a single device carries
+    // a room: with three devices and no room it would be a line of noise
+    // above a list that fits in one glance anyway.
     hasAnyRoom() {
       return this.devices.some((device) => Boolean(device.room));
     },
 
-    // Trifft der Suchbegriff dieses Geraet? Verglichen wird gegen Name,
-    // uebersetzten Kategorienamen und Raumnamen.
+    // Does the search term match this device? Compared against name,
+    // translated category name, and room name.
     matchesSearch(device) {
       const needle = this.deviceSearch.trim().toLocaleLowerCase();
       if (!needle) {
@@ -1135,9 +1123,10 @@ function app() {
       return haystack.includes(needle);
     },
 
-    // Die sichtbaren Geraete: Raum-Chip und Suchfeld wirken ZUSAMMEN (UND).
-    // Eine Suche greift also nur im gewaehlten Raum - den Fall "kein
-    // Treffer hier, aber nebenan" faengt `hitsOutsideRoom()` unten ab.
+    // The visible devices: room chip and search field act TOGETHER (AND).
+    // A search therefore only applies within the selected room - the case
+    // of "no match here, but next door" is caught by `hitsOutsideRoom()`
+    // below.
     visibleDevices() {
       return this.devices.filter(
         (device) =>
@@ -1146,9 +1135,9 @@ function app() {
       );
     },
 
-    // Wie viele Geraete der Suchbegriff AUSSERHALB des gewaehlten Raums
-    // trifft. Nur dann von Belang, wenn im Raum selbst nichts uebrig
-    // bleibt - sonst waere der Hinweis eine Ablenkung.
+    // How many devices the search term matches OUTSIDE the selected
+    // room. Only relevant when nothing is left within the room itself -
+    // otherwise the note would be a distraction.
     hitsOutsideRoom() {
       if (this.roomFilter === null || !this.deviceSearch.trim()) {
         return 0;
@@ -1162,36 +1151,35 @@ function app() {
       this.roomFilter = null;
     },
 
-    // Fund 2 (2026-09-05): faellt auf "Alle" zurueck, wenn der Raum, nach
-    // dem gerade gefiltert wird, durch einen Schreibvorgang verschwunden
-    // ist - das letzte Geraet eines Raums ueber das Kachel-Menue in einen
-    // anderen Raum verschoben, oder der Raum umbenannt/zusammengefuehrt.
-    // Ohne das blieb `roomFilter` auf einem Namen stehen, den `roomChips()`
-    // nicht mehr liefert: keine Kachel mehr sichtbar, kein Chip mehr aktiv,
-    // und der Umbenennen-Stift (der ja nur an `roomFilter` haengt) noch da,
-    // aber ins Leere zeigend (404 beim Draufklicken).
+    // Finding 2 (2026-09-05): falls back to "All" if the room currently
+    // being filtered on has disappeared through a write - the last device
+    // of a room moved to another room via the tile menu, or the room
+    // renamed/merged. Without this, `roomFilter` stayed on a name
+    // `roomChips()` no longer returns: no tile visible anymore, no chip
+    // active anymore, and the rename pencil (which only hangs off
+    // `roomFilter`) still there but pointing at nothing (404 on click).
     //
-    // Nur fuer "Alle" (`null`) gibt es nichts zu tun - da wird ohnehin
-    // nicht gefiltert, `roomChips()` kennt fuer diesen Wert gar keinen
-    // Chip (siehe dort), der `some(...)`-Aufruf unten faende also nie eine
-    // Uebereinstimmung und wuerde bloss folgenlos wieder `null` setzen.
+    // For "All" (`null`) there is nothing to do - nothing is filtered
+    // there anyway, `roomChips()` knows no chip at all for this value
+    // (see there), so the `some(...)` call below would never find a match
+    // and would just harmlessly set `null` again.
     //
-    // "Ohne Raum" (`""`) MUSS den Rest der Methode durchlaufen (Fund 2,
-    // Re-Review 2026-09-05, verschaerft die urspruengliche Fassung dieses
-    // Fixes): das ist der Filter, in dem jemand ein unsortiertes Geraet
-    // nach dem anderen einem Raum zuweist, und genau das laesst den
-    // "Ohne Raum"-Chip aus `roomChips()` verschwinden, sobald das letzte
-    // Geraet ohne Raum versorgt ist - `counts.has("")` wird dann false
-    // (siehe dort). Ohne diesen Fix blieb `roomFilter` auf `""` stehen:
-    // kein Chip mehr aktiv, keine Kachel mehr sichtbar, irrefuehrender
-    // Leer-Hinweis, kein Ausweg-Link. Der `roomChips().some(...)`-Vergleich
-    // unten behandelt `""` bereits richtig, ganz ohne Sonderfall - er
-    // liefert fuer `""` schlicht `false`, sobald kein Geraet mehr ohne
-    // Raum ist.
+    // "No room" (`""`) MUST run through the rest of the method (finding
+    // 2, re-review 2026-09-05, tightens the original version of this fix):
+    // that is the filter in which someone assigns one unsorted device
+    // after another to a room, and that is exactly what makes the
+    // "No room" chip disappear from `roomChips()` once the last
+    // device-without-a-room has been given one - `counts.has("")` then
+    // becomes false (see there). Without this fix, `roomFilter` stayed on
+    // `""`: no chip active anymore, no tile visible anymore, a misleading
+    // empty-state note, no way out link. The `roomChips().some(...)`
+    // comparison below already handles `""` correctly, with no special
+    // case at all - it simply returns `false` for `""` once no device is
+    // left without a room.
     //
-    // Eine Stelle statt an jeder Schreibstelle einzeln (`saveRoom`,
-    // `commitRenameRoom`) - beide rufen das hier auf, statt die Pruefung
-    // zu duplizieren.
+    // One place instead of at each write site individually (`saveRoom`,
+    // `commitRenameRoom`) - both call this instead of duplicating the
+    // check.
     reconcileRoomFilter() {
       if (this.roomFilter === null) {
         return;
@@ -1201,16 +1189,17 @@ function app() {
       }
     },
 
-    // Die Geraete, nach Raum gruppiert und innerhalb eines Raums sortiert:
-    // erst nach Kategorierang (alle Steckdosen beisammen, dann alle
-    // Taster), darin alphabetisch nach Name.
+    // The devices, grouped by room and sorted within a room: first by
+    // category rank (all plug sockets together, then all pushbuttons),
+    // then alphabetically by name within that.
     //
-    // `localeCompare` statt `<`: sonst landete "Ärmelkanal" hinter "Zaun",
-    // weil der Code-Punkt von "Ä" hinter dem von "Z" liegt.
+    // `localeCompare` instead of `<`: otherwise "Ärmelkanal" would land
+    // behind "Zaun", because the code point of "Ä" comes after that of
+    // "Z".
     //
-    // Bei einem gewaehlten Raum entsteht genau eine Gruppe, und ihr
-    // `title` bleibt leer - es gibt nichts zu unterscheiden, und eine
-    // Ueberschrift ueber der einzigen Gruppe waere Dopplung der Chip-Leiste.
+    // With a selected room, exactly one group results, and its `title`
+    // stays empty - there is nothing to distinguish, and a heading above
+    // the single group would duplicate the chip bar.
     deviceGroups() {
       const byRoom = new Map();
       for (const device of this.visibleDevices()) {
@@ -1237,43 +1226,42 @@ function app() {
           devices: sortDevices(byRoom.get("")),
         });
       }
-      // Bei einem gewaehlten Raum gibt es nur eine Gruppe - ihre
-      // Ueberschrift waere die Dopplung des aktiven Chips direkt darueber.
+      // With a selected room there is only one group - its heading would
+      // duplicate the active chip right above it.
       if (this.roomFilter !== null) {
         return groups.map((group) => ({ ...group, title: "" }));
       }
       return groups;
     },
 
-    // --- Leitwert (Kachel-Kopfzeile) --------------------------------------
+    // --- Primary signal (tile header) ----------------------------------------
 
-    // Das erste funktionale Signal in der Reihenfolge, die
-    // `firstSignalsFor` ohnehin liefert - also die der Profiltabelle.
-    // Steckdose -> Zustand, Klimasensor -> Temperatur, Rollo -> Position.
-    // Keine eigene Datenhaltung, keine Konfiguration: ein Geraet ohne
-    // funktionale Signale hat schlicht keinen Leitwert, und die Kopfzeile
-    // bleibt einzeilig.
+    // The first functional signal in the order `firstSignalsFor` returns
+    // anyway - i.e. that of the profile table. Plug socket -> state,
+    // climate sensor -> temperature, blind -> position. No dedicated data
+    // storage, no configuration: a device with no functional signals
+    // simply has no primary signal, and the header stays single-line.
     leadSignalFor(deviceId) {
       return this.firstSignalsFor(deviceId)[0] || null;
     },
 
-    // Der Rest der Kurzliste. `FUNCTIONAL_PREVIEW_LIMIT` zaehlt den
-    // Leitwert MIT (Entwurf 6.2), deshalb hier kein zweites Abschneiden -
-    // `firstSignalsFor` hat es bereits getan.
+    // The rest of the short list. `FUNCTIONAL_PREVIEW_LIMIT` counts the
+    // primary signal IN (design 6.2), so there is no second cutoff here -
+    // `firstSignalsFor` has already done it.
     restSignalsFor(deviceId) {
       return this.firstSignalsFor(deviceId).slice(1);
     },
 
-    // --- Raum eines Geraets aendern ---------------------------------------
+    // --- Changing a device's room ----------------------------------------------
 
-    // Sendet AUSSCHLIESSLICH den Raum. Ein mitgeschicktes `label` liesse
-    // `rename_device` laufen und setzte `updated_at` - das Geraet stuende
-    // danach als "geaendert seit Export", obwohl der Raum in keiner
-    // Vorlage landet (Entwurf 3.3).
+    // Sends ONLY the room. A `label` sent along with it would run
+    // `rename_device` and set `updated_at` - the device would afterwards
+    // show as "changed since export" even though the room does not end up
+    // in any template (design 3.3).
     //
-    // `value` ist bereits in derselben Kodierung wie `roomFilter`: "" heisst
-    // "Ohne Raum", und genau das erwartet auch die API fuer "Raum
-    // entfernen". Keine Umrechnung an dieser Stelle.
+    // `value` is already in the same encoding as `roomFilter`: "" means
+    // "no room", and that is exactly what the API also expects for
+    // "remove room". No conversion at this point.
     async saveRoom(device, value) {
       this.deviceActionError = null;
       try {
@@ -1284,58 +1272,55 @@ function app() {
       } catch (error) {
         this.deviceActionError = t("web.devices.room_save_error", { message: error.message });
       } finally {
-        // Auch im Fehlerfall: faellt durch den fehlgeschlagenen Schreibweg
-        // ein Raum leer, darf der Filter nicht auf einem Raum stehen
-        // bleiben, den es nicht mehr gibt.
+        // Even on failure: if a failed write leaves a room empty, the
+        // filter must not stay stuck on a room that no longer exists.
         this.reconcileRoomFilter();
       }
     },
 
-    // Fund 3 (Review vom 2026-09-05): ein natives `<details>` gibt beim
-    // Schliessen keinen Fokus zurueck - der Eintrag, den der Nutzer gerade
-    // aktiviert hat, verschwindet mitsamt seinem Fokus aus dem gerenderten
-    // Baum (nur der Inhalt hinter `<summary>` wird versteckt, siehe
-    // index.html), und Tab faengt danach wieder ganz oben im Dokument an.
-    // `el` ist ein beliebiges Element INNERHALB des Menues - ein Eintrag,
-    // das Eingabefeld, oder das `<details>` selbst bei den Aussenklick-/
-    // Escape-Wachposten -, `closest("details")` findet in jedem Fall
-    // dasselbe Element. `<summary>` bleibt beim Schliessen immer gerendert,
-    // ist also immer ein gueltiges Fokusziel. Eine Funktion statt eines
-    // eigenen Fokus-Rufs an jedem der fuenf Schliess-Handler in
-    // index.html - genau die Wiederholung, die Fund 1 bei `newRoomFor`
-    // schon einmal falsch gemacht hat.
+    // Finding 3 (review from 2026-09-05): a native `<details>` does not
+    // return focus when closing - the entry the user just activated
+    // disappears from the rendered tree along with its focus (only the
+    // content behind `<summary>` gets hidden, see index.html), and Tab
+    // afterwards starts over again at the very top of the document. `el`
+    // is any element WITHIN the menu - an entry, the input field, or the
+    // `<details>` itself for the outside-click/Escape guards -
+    // `closest("details")` finds the same element in every case.
+    // `<summary>` always stays rendered when closing, so it is always a
+    // valid focus target. One function instead of a separate focus call
+    // at each of the five close handlers in index.html - exactly the
+    // repetition finding 1 already got wrong once for `newRoomFor`.
     //
-    // Fund 1 (Re-Review 2026-09-05): der bedingungslose Fokus-Ruf oben traf
-    // nicht nur die eigentlichen Schliesswege, sondern auch den `outside`-
-    // Listener von Alpine, der auf `document` in der Bubble-Phase haengt -
-    // also NACHDEM der Browser den geklickten Ausseneinstiegs-Punkt beim
-    // Mousedown bereits fokussiert hat. Im echten Browser gemessen: bei
-    // offenem Kachel-Menue ins Suchfeld geklickt, `document.activeElement`
-    // war danach `SUMMARY` statt des Suchfelds - die Tastatur ging an ein
-    // `<summary>` irgendwo im Geraeteraster, der Nutzer haette ein zweites
-    // Mal klicken muessen. Dasselbe gilt fuer `.window`-Escape: Escape beim
-    // Tippen in einem voelllig unbeteiligten Feld reisst den Fokus zu einem
-    // offenen Kebab woanders, und weil `focus()` seinen Ziel-Knoten in die
-    // Ansicht scrollt, springt die Seite dabei sogar zurueck zu dessen
-    // Kachel. `hadFocus` haelt fest, ob der Fokus VOR dem Schliessen
-    // ueberhaupt im Menue stand (Tastaturbedienung: ein Eintrag aktiviert,
-    // Escape im Feld/Menue) - nur dann darf `closeTileMenu` ihn umlenken.
-    // Bei einem Aussenklick steht er nie im Menue, der Ruf bleibt aus, und
-    // der Browser laesst das anvisierte Element in Ruhe. `preventScroll`
-    // verhindert zusaetzlich das Zurueckspringen fuer den verbleibenden,
-    // tatsaechlich berechtigten Fall. Diese Wache NICHT vereinfachen - ohne
-    // sie ist der Regressions-Fall (Klick/Escape ausserhalb) wieder da.
+    // Finding 1 (re-review 2026-09-05): the unconditional focus call above
+    // hit not only the actual close paths, but also Alpine's `outside`
+    // listener, which sits on `document` in the bubble phase - i.e. AFTER
+    // the browser has already focused the clicked outside entry point on
+    // mousedown. Measured in a real browser: with the tile menu open,
+    // clicked into the search field, `document.activeElement` was
+    // afterwards `SUMMARY` instead of the search field - the keyboard went
+    // to a `<summary>` somewhere in the device grid, and the user would
+    // have had to click a second time. The same applies to `.window`
+    // Escape: pressing Escape while typing in a completely unrelated field
+    // yanks focus to an open kebab elsewhere, and because `focus()`
+    // scrolls its target node into view, the page even jumps back to that
+    // tile. `hadFocus` records whether focus was even inside the menu
+    // BEFORE closing (keyboard operation: an entry activated, Escape in
+    // the field/menu) - only then may `closeTileMenu` redirect it. On an
+    // outside click it is never inside the menu, the call is skipped, and
+    // the browser leaves the targeted element alone. `preventScroll`
+    // additionally prevents the jump-back for the remaining, genuinely
+    // legitimate case. Do NOT simplify this guard - without it the
+    // regression case (click/Escape outside) is back.
     //
-    // Fund 4 (Re-Review 2026-09-05): `closest("details")` liefert `null`,
-    // wenn `el` (entgegen der obigen Voraussetzung) einmal AUSSERHALB eines
-    // `<details>` liegt - jeder heutige Aufruf haelt diese Voraussetzung
-    // ein, aber ein `TypeError` beim Dereferenzieren wuerde stillschweigend
-    // den Rest des Inline-Ausdrucks verschlucken, in dem `closeTileMenu`
-    // steht. An zwei Stellen in index.html folgt in DERSELBEN Zeile noch
-    // `saveRoom(...)` - ein Wurf hier wuerde die Raumzuweisung des Nutzers
-    // kommentarlos verwerfen, statt nur den (ohnehin ueberfluessigen)
-    // Fokus-Ruf zu verpassen. `?.` macht den Ausfall folgenlos statt den
-    // Geschwisteraufruf mitzureissen.
+    // Finding 4 (re-review 2026-09-05): `closest("details")` returns
+    // `null` if `el` (contrary to the assumption above) is ever OUTSIDE a
+    // `<details>` - every call today upholds this assumption, but a
+    // `TypeError` on dereferencing would silently swallow the rest of the
+    // inline expression that `closeTileMenu` sits in. In two places in
+    // index.html, `saveRoom(...)` follows in the SAME line - a throw here
+    // would discard the user's room assignment without a trace, instead of
+    // just missing the (otherwise superfluous) focus call. `?.` makes the
+    // failure harmless instead of dragging the sibling call down with it.
     closeTileMenu(el) {
       const menu = el.closest("details");
       const hadFocus = menu?.contains(document.activeElement);
@@ -1357,11 +1342,11 @@ function app() {
       }
     },
 
-    // Umbenennen passiert INLINE, wie jede andere Bearbeitung dieser
-    // Oberflaeche (Geraetename, Signaltitel): der Stift macht aus der
-    // Ueberschrift ein Eingabefeld. Ein `window.prompt` waere weniger
-    // Markup gewesen, saehe aber in jedem Browser anders aus und waere der
-    // einzige Dialog in einer Ansicht, die sonst ohne auskommt.
+    // Renaming happens INLINE, like every other edit in this UI (device
+    // name, signal title): the pencil turns the heading into an input
+    // field. A `window.prompt` would have been less markup, but would
+    // look different in every browser and would be the only dialog in a
+    // view that otherwise does without.
     beginRenameRoom(room) {
       this.renamingRoom = room;
       this.renameDraft = room;
@@ -1372,22 +1357,21 @@ function app() {
       this.renameDraft = "";
     },
 
-    // Die Rueckfrage vor dem Zusammenfuehren bleibt dagegen ein nativer
-    // Dialog - der eine bewusste Unterschied zum Umbenennen selbst.
-    // Zusammenfuehren ist selten und unumkehrbar: danach weiss niemand
-    // mehr, welches Geraet vorher in welchem der beiden Raeume stand. Ein
-    // modaler Dialog ist bei genau dieser Art Aktion die ehrliche Bremse;
-    // ein Banner, das man wegklicken kann, ohne es gelesen zu haben,
-    // waere es nicht.
+    // The confirmation before merging, by contrast, stays a native
+    // dialog - the one deliberate difference from renaming itself.
+    // Merging is rare and irreversible: afterwards no one knows anymore
+    // which device used to be in which of the two rooms. A modal dialog
+    // is the honest brake for exactly this kind of action; a banner you
+    // can dismiss without having read it would not be.
     //
-    // Ob der Zielname schon belegt ist, entscheidet die Oberflaeche und
-    // nicht der Server: die Geraeteliste liegt ihr vor, eine zweite
-    // Abfrage nur fuer diese Auskunft waere ueberfluessig.
+    // Whether the target name is already taken is decided by the UI, not
+    // the server: it already has the device list, a second request just
+    // for this piece of information would be superfluous.
     async commitRenameRoom() {
       const room = this.renamingRoom;
       if (room === null) {
-        // Enter hat bereits gespeichert und das Feld geschlossen; das
-        // anschliessende `blur` landet hier und hat nichts mehr zu tun.
+        // Enter already saved and closed the field; the subsequent `blur`
+        // lands here and has nothing left to do.
         return;
       }
       const name = this.renameDraft.trim();
@@ -1397,8 +1381,8 @@ function app() {
       }
       const exists = this.devices.some((device) => device.room === name);
       if (exists && !window.confirm(t("web.devices.room_rename_merge_confirm"))) {
-        // Feld bleibt offen: die Rueckfrage abzulehnen heisst "so nicht",
-        // nicht "vergiss, was ich getippt habe".
+        // Field stays open: declining the confirmation means "not like
+        // this", not "forget what I typed".
         return;
       }
       this.cancelRenameRoom();
@@ -1409,40 +1393,40 @@ function app() {
           this.roomFilter = name;
         }
         await this.loadDevices();
-        // Normalerweise ein No-Op (der Filter zeigt dank der Zeile darueber
-        // ja bereits auf `name`) - greift aber, falls ein Zusammenfuehren
-        // dazu fuehrte, dass am Ende gar kein Geraet mehr `name` traegt
-        // (siehe `reconcileRoomFilter`, Fund 2).
+        // Normally a no-op (thanks to the line above, the filter already
+        // points at `name`) - but kicks in if a merge resulted in no
+        // device carrying `name` at all in the end (see
+        // `reconcileRoomFilter`, finding 2).
         this.reconcileRoomFilter();
       } catch (error) {
         this.deviceActionError = t("web.devices.room_rename_error", { message: error.message });
       }
     },
 
-    // Signal-Modal: "Funktional" zeigt sofort, was `is_functional` als
-    // gewollt einstuft; "Experte" bleibt zugeklappt, bis der Nutzer das
-    // `<details>` im Modal aufklappt (bis 2026-09-05 tat das ein globaler
-    // Schalter fuer alle Geraete zugleich)
-    // - dieselbe Datengrundlage wie oben, nur ungefiltert nach der
-    // jeweils anderen Bedingung. Keine der beiden Listen bildet die
-    // Relevanz-Regel selbst nach: beide lesen nur `signal.functional`, das
-    // die API bereits fertig mitliefert (`api.devices._signal_out`).
+    // Signal modal: "Functional" shows immediately what `is_functional`
+    // classifies as intentional; "Expert" stays collapsed until the user
+    // expands the `<details>` in the modal (until 2026-09-05 a global
+    // toggle did this for all devices at once)
+    // - the same data basis as above, just unfiltered on the respective
+    // opposite condition. Neither list reimplements the relevance rule
+    // itself: both only read `signal.functional`, which the API already
+    // delivers ready-made (`api.devices._signal_out`).
     expertSignalsFor(deviceId) {
       const signals = this.signalsByDevice[deviceId];
       return signals ? signals.filter((signal) => !signal.functional) : [];
     },
 
-    // Beide Bloecke der Signale-Ansicht als eine Liste (Review-Fix 6,
-    // Nachbesserung Phase 6): vorher stand die Signalzeilen-Vorlage in
-    // index.html zweimal, byte-identisch bis auf `functionalSignalsFor`
-    // gegen `expertSignalsFor` - 51 Zeilen doppelt, die bei jeder
-    // Aenderung zweimal angefasst werden mussten, ohne dass etwas ein
-    // Auseinanderlaufen bemerkt haette. `collapsible` steuert in der
-    // Vorlage nur noch den Startzustand des `<details>` (funktional offen,
-    // Experte zu, siehe `x-init` in index.html) - der Rest (Zeilen-Markup,
-    // leer-Hinweis) ist fuer beide Gruppen identisch. Der erste Satz oben
-    // gilt seit dem Modal-Umbau doppelt: dort teilen sich beide Gruppen
-    // sogar dasselbe `<details>`-Markup, nicht nur dieselbe Zeilenvorlage.
+    // Both blocks of the signals view as one list (Review-Fix 6, Phase 6
+    // follow-up): the signal-row template used to sit in index.html
+    // twice, byte-identical apart from `functionalSignalsFor` versus
+    // `expertSignalsFor` - 51 duplicated lines that had to be touched
+    // twice on every change, with nothing noticing if they drifted apart.
+    // In the template, `collapsible` now only controls the `<details>`'s
+    // starting state (functional open, expert closed, see `x-init` in
+    // index.html) - the rest (row markup, empty-state note) is identical
+    // for both groups. The first sentence above has applied twice since
+    // the modal rework: there, both groups even share the same
+    // `<details>` markup, not just the same row template.
     signalGroupsFor(deviceId) {
       return [
         { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },
@@ -1451,15 +1435,15 @@ function app() {
     },
 
     liveValueOf(signal) {
-      // Kein Signal, kein Wert. `formatValue` macht daraus den Strich, den
-      // es fuer `undefined` ohnehin schon fuehrt - die Kachel zeigt "-",
-      // statt dass der Ausdruck wirft. Siehe `signalIsFresh` fuer den
-      // Grund, warum hier ueberhaupt `null` ankommt.
+      // No signal, no value. `formatValue` turns this into the dash it
+      // already shows for `undefined` anyway - the tile displays "-"
+      // instead of the expression throwing. See `signalIsFresh` for why
+      // `null` arrives here at all.
       if (!signal) {
         return undefined;
       }
-      // Direkter Zugriff, kein `hasOwnProperty` - siehe `isOnline`. Genau
-      // hier war der Fehler am sichtbarsten: die Werte bewegten sich nicht.
+      // Direct access, no `hasOwnProperty` - see `isOnline`. This is
+      // exactly where the bug was most visible: the values did not move.
       const live = this.liveValues[signal.key];
       return live === undefined ? signal.value : live;
     },
@@ -1478,17 +1462,17 @@ function app() {
       }
     },
 
-    // Die Rueckfrage benennt die Objekte, die verwaisen (Spec 9, Zeile
-    // "Geraet entfernt und neu eingelernt"; Review-Fix Fix 10,
-    // 2026-09-03). Genannt werden der Schluesselpraefix und die beiden
-    // Vorlagendateien - und zwar nur bis zur Geraete-ID (`VIU_d12_….xml`),
-    // nicht der vollstaendige Dateiname: dessen zweite Haelfte entsteht aus
-    // `export.documents.filename_for`, das das Label auf ASCII normalisiert
-    // (Umlaute, Sonderzeichen, Mehrfach-Unterstriche). Diese Regel hier in
-    // JavaScript nachzubilden hiesse, sie ein zweites Mal zu pflegen - genau
-    // die Verdopplung, die Fix 8 an anderer Stelle gerade beseitigt hat.
-    // Der Praefix mit der Geraete-ID ist eindeutig (siehe `filename_for`)
-    // und reicht, um die Datei in Loxone Config wiederzufinden.
+    // The confirmation names the objects that get orphaned (Spec 9, line
+    // "device removed and re-commissioned"; Review-Fix Fix 10,
+    // 2026-09-03). It names the key prefix and the two template files -
+    // but only up to the device id (`VIU_d12_….xml`), not the full file
+    // name: its second half comes from `export.documents.filename_for`,
+    // which normalizes the label to ASCII (umlauts, special characters,
+    // repeated underscores). Reproducing that rule here in JavaScript
+    // would mean maintaining it a second time - exactly the duplication
+    // Fix 8 just eliminated elsewhere. The prefix with the device id is
+    // unique (see `filename_for`) and is enough to find the file again in
+    // Loxone Config.
     async removeDevice(device) {
       const confirmed = window.confirm(t("web.devices.remove_confirm", { label: device.label, id: device.id }));
       if (!confirmed) {
@@ -1500,27 +1484,26 @@ function app() {
         this.devices = this.devices.filter((d) => d.id !== device.id);
         delete this.controlsByDevice[device.id];
         delete this.signalsByDevice[device.id];
-        // Ohne das bliebe ein Dialog ueber einem Geraet offen stehen, das
-        // es nicht mehr gibt - und der `x-if`-Waechter im Modal machte ihn
-        // zu einem leeren Kasten ohne erkennbaren Grund. `close()` ist ein
-        // Nichtstun, wenn der Dialog gar nicht offen ist; die Abfrage steht
-        // trotzdem davor, damit ein Modal ueber einem ANDEREN Geraet nicht
-        // mit zugeht.
+        // Without this, a dialog would stay open over a device that no
+        // longer exists - and the `x-if` guard in the modal would turn it
+        // into an empty box for no discernible reason. `close()` is a
+        // no-op when the dialog is not even open; the check is there
+        // anyway so a modal over a DIFFERENT device does not close along
+        // with it.
         if (this.signalsModalDevice === device.id) {
           this.closeSignalsModal();
         }
-        // Fund 1 (Re-Review 2026-09-05): loescht man das letzte Geraet
-        // eines gefilterten Raums, verschwindet dessen Chip aus
-        // `roomChips()`, aber ohne diesen Aufruf bliebe `roomFilter` auf
-        // dem Namen stehen - keine Kachel mehr sichtbar, kein Chip mehr
-        // aktiv, und (war es der letzte Raum ueberhaupt) sogar die ganze
-        // Chip-Leiste weg (`hasAnyRoom()` dann false, siehe index.html),
-        // also auch kein "Alle"-Chip mehr zum Zurueckkommen. Reines
-        // Neuladen war der einzige Ausweg. `reconcileRoomFilter` deckt
-        // genau das ab (siehe dort) und wird hier aus demselben Grund wie
-        // in `saveRoom`/`commitRenameRoom` aufgerufen: eine Schreibstelle,
-        // die den gefilterten Raum zum Verschwinden bringen kann, ruft sie
-        // danach auf.
+        // Finding 1 (re-review 2026-09-05): deleting the last device of a
+        // filtered room makes its chip disappear from `roomChips()`, but
+        // without this call `roomFilter` would stay stuck on the name -
+        // no tile visible anymore, no chip active anymore, and (if it was
+        // the very last room) even the whole chip bar gone (`hasAnyRoom()`
+        // then false, see index.html), so no "All" chip left to come back
+        // to either. A plain reload was the only way out.
+        // `reconcileRoomFilter` covers exactly that (see there) and is
+        // called here for the same reason as in `saveRoom`/
+        // `commitRenameRoom`: any write site that can make the filtered
+        // room disappear calls it afterward.
         this.reconcileRoomFilter();
       } catch (error) {
         this.deviceActionError = t("web.devices.remove_error", { message: error.message });
@@ -1541,18 +1524,18 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Kurzmeldungen (2026-09-03)
+    // Toasts (2026-09-03)
     // ---------------------------------------------------------------------
 
     /**
-     * Zeigt eine Meldung als Overlay am unteren Rand. Bewusst NICHT im
-     * Textfluss: die vorherige Fassung blendete eine Zeile ueber der
-     * Geraeteliste ein, wodurch beim Schalten die ganze Seite sprang und
-     * der naechste Klick daneben ging.
+     * Shows a message as an overlay at the bottom edge. Deliberately NOT
+     * in the text flow: the previous version faded a line in above the
+     * device list, which made the whole page jump when toggling and sent
+     * the next click astray.
      *
-     * Fehler bleiben deutlich laenger stehen als Erfolge - eine
-     * Erfolgsmeldung hat man gesehen, sobald das Geraet reagiert, eine
-     * Fehlermeldung will man lesen.
+     * Errors stay up much longer than successes - a success message has
+     * been seen as soon as the device reacts, an error message is meant
+     * to be read.
      */
     showToast(text, isError = false) {
       const id = ++toastCounter;
@@ -1565,13 +1548,13 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Lebenszeichen (2026-09-03)
+    // Sign of life (2026-09-03)
     // ---------------------------------------------------------------------
 
     /**
-     * "vor 3 s", "vor 12 min" - oder null, wenn dieser Schluessel ueber die
-     * Live-Verbindung noch nie kam. Liest `nowTick`, damit Alpine die
-     * Angabe jede Sekunde neu zeichnet.
+     * "3s ago", "12min ago" - or null if this key has never come in over
+     * the live connection. Reads `nowTick`, so Alpine redraws the label
+     * every second.
      */
     sinceText(timestamp) {
       if (!timestamp) {
@@ -1588,18 +1571,18 @@ function app() {
       return t("web.header.time_ago_hours", { hours: Math.round(minutes / 60) });
     },
 
-    /** Wann zuletzt IRGENDETWAS ueber die Leitung kam - der Heartbeat
-     * eingeschlossen. Das ist die Angabe, die "nichts aendert sich" von
-     * "nichts kommt an" unterscheidet. */
+    /** When ANYTHING last came in over the line - the heartbeat
+     * included. This is the value that tells "nothing is changing" apart
+     * from "nothing is arriving". */
     heartbeatText() {
       return this.sinceText(this.lastHeartbeatAt);
     },
 
-    /** Wann dieses eine Signal zuletzt einen Wert lieferte. Steht nur noch
-     * im `title` der Zelle, nicht mehr daneben im Textfluss: eine Angabe wie
-     * "vor 7 s", die sich jede Sekunde aendert, aendert dabei auch ihre
-     * Breite und schiebt die Zeile hin und her. Das zog den Blick auf die
-     * Bewegung statt auf die Aenderung, um die es geht (2026-09-03). */
+    /** When this one signal last delivered a value. Now lives only in the
+     * cell's `title`, no longer next to it in the text flow: a value like
+     * "7s ago" that changes every second also changes its width along the
+     * way and shifts the row back and forth. That drew the eye to the
+     * motion instead of to the change that actually matters (2026-09-03). */
     signalSeenText(signal) {
       if (!signal) {
         return "";
@@ -1607,22 +1590,22 @@ function app() {
       return this.sinceText(this.liveSeenAt[signal.key]);
     },
 
-    /** Ob dieses Signal gerade eben einen Wert bekommen hat. Traegt die
-     * Hervorhebung, die den Blick an die richtige Stelle zieht - ohne dass
-     * sich am Aufbau der Zeile irgendetwas bewegt. Liest `nowTick`, damit
-     * Alpine die Klasse wieder loswird, wenn die Zeit um ist. */
+    /** Whether this signal has just now received a value. Carries the
+     * highlight that draws the eye to the right spot - without anything
+     * in the row's layout moving at all. Reads `nowTick`, so Alpine drops
+     * the class again once the time is up. */
     signalIsFresh(signal) {
-      // `null` ist hier ein GUELTIGES Argument, kein Programmierfehler:
-      // `leadSignalFor` liefert es fuer jedes Geraet, dessen Signale noch
-      // nicht geladen sind - und das ist zwischen `GET /api/devices` und
-      // `GET /api/devices/<id>/signals` jedes Geraet, mindestens einen
-      // Rendering-Durchlauf lang (2026-09-06).
+      // `null` is a VALID argument here, not a programming error:
+      // `leadSignalFor` returns it for every device whose signals are not
+      // loaded yet - and that is every device, for at least one render
+      // pass, between `GET /api/devices` and
+      // `GET /api/devices/<id>/signals` (2026-09-06).
       //
-      // Das `x-show` auf der Huelle in `index.html` fing das NICHT ab: es
-      // setzt nur `display`, es haelt Alpine nicht davon ab, die Ausdruecke
-      // der Kinder auszuwerten. Ein verstecktes Element rechnet weiter mit.
-      // Deshalb liegt die Absicherung hier, an der einen Stelle, die jeder
-      // Aufrufer durchlaeuft - und nicht in drei Bindungen im Markup.
+      // The `x-show` on the wrapper in `index.html` did NOT catch this: it
+      // only sets `display`, it does not stop Alpine from evaluating the
+      // children's expressions. A hidden element keeps computing anyway.
+      // That is why the guard lives here, at the one place every caller
+      // passes through - and not in three bindings in the markup.
       if (!signal) {
         return false;
       }
@@ -1630,17 +1613,17 @@ function app() {
       return at !== undefined && this.nowTick - at < VALUE_FRESH_MS;
     },
 
-    /** Der Tooltip einer Wertzelle: wann der Wert zuletzt kam, oder ein
-     * Hinweis, dass seit dem Laden der Seite nichts kam. */
+    /** The tooltip of a value cell: when the value last arrived, or a
+     * note that nothing has come in since the page was loaded. */
     signalAgeTitle(signal) {
-      // Ohne Signal gibt es nichts zu datieren - ein leerer `title` laesst
-      // den Tooltip weg, statt den Hinweis aus
-      // `web.header.unchanged_since_load` ueber eine Zelle zu schreiben, die
-      // gar keinen Wert zeigt. Der Schluessel steht hier absichtlich statt
-      // seines deutschen Textes: `test_the_relative_time_and_header_helpers_
-      // are_translated` sperrt genau dieses Literal im Rumpf der Funktion,
-      // und eine Sperre gegen fest verdrahtete Uebersetzungen soll sich
-      // nicht daran abarbeiten, ob ein Kommentar sie zitiert.
+      // With no signal there is nothing to date - an empty `title` omits
+      // the tooltip, instead of writing the note from
+      // `web.header.unchanged_since_load` over a cell that shows no value
+      // at all. The key is deliberately used here instead of its German
+      // text: `test_the_relative_time_and_header_helpers_are_translated`
+      // locks exactly this literal in the body of the function, and a
+      // guard against hardcoded translations should not be tripped up by
+      // whether a comment quotes it.
       if (!signal) {
         return "";
       }
@@ -1666,9 +1649,9 @@ function app() {
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }
-        // Raum (Entwurf 6.7): "" heisst "Ohne Raum" und wird gar nicht erst
-        // mitgeschickt; "__new__" ist der Sonderwert des Auswahlfelds, hinter
-        // dem das Textfeld `commissionNewRoom` steht.
+        // Room (design 6.7): "" means "no room" and is not sent along at
+        // all; "__new__" is the selection field's special value, behind
+        // which the `commissionNewRoom` text field sits.
         const room =
           this.commissionRoom === "__new__"
             ? this.commissionNewRoom.trim()
@@ -1678,85 +1661,86 @@ function app() {
         }
         this.commissionRunRoom = room;
         const device = await this.request("POST", "/api/devices/commission", body);
-        // Fund 4 (Re-Review 2026-09-05): die Einlern-Route liefert fuer ein
-        // schon registriertes Geraet dieselbe `device_id` zurueck, statt
-        // ein zweites anzulegen (siehe `register_device`s fruehen
-        // Rueckgabepfad in `model/store.py` sowie den Backend-Test
+        // Finding 4 (re-review 2026-09-05): for a device that is already
+        // registered, the commissioning route returns the same
+        // `device_id` instead of creating a second one (see
+        // `register_device`'s early return path in `model/store.py`, as
+        // well as the backend test
         // `test_recommissioning_a_known_device_applies_the_chosen_room`).
-        // Ein bedingungsloses `push` legte dieses Geraet dann ein zweites
-        // Mal in `this.devices` ab: zwei Kacheln mit derselben
-        // `device.id`, was `x-for`s `:key="device.id"` verletzt (Alpine
-        // warnt in der Konsole ueber doppelte Schluessel) und den
-        // Raum-Chip doppelt zaehlen liess. Bei einer schon vorhandenen
-        // Karte wird deshalb in das bestehende Objekt hineingeschrieben,
-        // statt es im Array auszutauschen - andernfalls wird neu
-        // angehaengt.
+        // An unconditional `push` then stored this device a second time
+        // in `this.devices`: two tiles with the same `device.id`, which
+        // violates `x-for`'s `:key="device.id"` (Alpine warns about
+        // duplicate keys in the console) and made the room chip count
+        // twice. For an already existing card, the existing object is
+        // therefore written into instead of being swapped in the array -
+        // otherwise it is newly appended.
         const existingIndex = this.devices.findIndex((d) => d.id === device.id);
         if (existingIndex === -1) {
           this.devices.push(device);
         } else {
-          // `saveRoom` (oben) und `saveLabel` halten sich vor ihrem
-          // `await` eine Referenz auf genau dieses Geraete-Objekt und
-          // schreiben erst danach hinein (`Object.assign(device,
-          // updated)`). Ein hier eingesetztes neues Objekt liesse jene
-          // Referenz auf einem aus dem Array entkoppelten Exemplar sitzen
-          // - der Save meldete keinen Fehler, aber weder die Kachel noch
-          // `this.devices` saehen das Ergebnis. Deshalb wird das
-          // vorhandene Objekt befuellt statt ersetzt.
+          // `saveRoom` (above) and `saveLabel` hold a reference to exactly
+          // this device object before their `await` and only write into
+          // it afterward (`Object.assign(device, updated)`). A new object
+          // inserted here would leave that reference sitting on a copy
+          // decoupled from the array - the save would report no error,
+          // but neither the tile nor `this.devices` would see the result.
+          // That is why the existing object is filled in instead of being
+          // replaced.
           Object.assign(this.devices[existingIndex], device);
         }
-        // Karte ist ab sofort sichtbar und immer offen (Abschnitt 3) - ohne
-        // dieses Nachladen zeigte sie "Signale werden geladen…" dauerhaft,
-        // bis irgendwann die Ansicht neu betreten wuerde.
+        // The card is visible and always open from now on (section 3) -
+        // without this reload it would show "Loading signals…"
+        // permanently, until the view happened to be entered again at
+        // some point.
         this.commissionStep = 1;
         await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);
         this.commissionStep = 2;
-        // Der frühere Satz "Live-Werte erst nach einem Neustart der Brücke"
-        // ist entfallen, weil die Grenze selbst entfallen ist: die
-        // Einlern-Route ruft inzwischen `follow_node` auf, das die
-        // Attribut-Abonnements dieses Geräts anlegt und seine Werte säet
-        // (Entwurf vom 2026-09-04). Einen Hinweis braucht es hier trotzdem,
-        // nur einen anderen: dass die Werte im Miniserver erst nach dem
-        // Export und dem Import in Loxone Config ankommen, denn bis dahin
-        // gibt es dort keinen virtuellen Eingang. Der Satz selbst steht in
-        // strings.yaml unter `web.devices.commission_success`.
+        // The earlier sentence "live values only after a bridge restart"
+        // has been dropped because the limitation itself is gone: the
+        // commissioning route now calls `follow_node`, which sets up this
+        // device's attribute subscriptions and seeds its values (design
+        // from 2026-09-04). A note is still needed here, just a different
+        // one: that the values only arrive in the Miniserver after export
+        // and import into Loxone Config, since there is no virtual input
+        // there until then. The sentence itself lives in strings.yaml
+        // under `web.devices.commission_success`.
         this.commissionMessage = t("web.devices.commission_success", { label: device.label });
         this.commissionMessageIsError = false;
         this.commissionCode = "";
         this.commissionThreadDataset = "";
-        // Der Raum bleibt BEWUSST stehen (Entwurf 6.7): wer vier Geraete in
-        // der Kueche einlernt, waehlt ihn einmal. Ein Pairing-Code dagegen
-        // ist nach Gebrauch wertlos und ein stehengebliebener waere eine
-        // Fehlerquelle.
+        // The room DELIBERATELY stays put (design 6.7): whoever
+        // commissions four devices in the kitchen picks it once. A
+        // pairing code, by contrast, is worthless after use, and a
+        // leftover one would be a source of errors.
       } catch (error) {
-        // Ohne die Fallunterscheidung stand die Überschrift dieser Meldung
-        // doppelt in der Oberfläche: eine 422 dieser Route trägt bereits
-        // einen vollständig gerahmten Satz, den der Server selbst gebildet
-        // hat (`api.errors.commissioning_failed`, gesetzt in
-        // matter/client.py) – ein zweiter Rahmen hier schob die eigentliche
-        // Auskunft nach hinten.
+        // Without this case distinction, this message's heading stood
+        // doubled in the UI: a 422 from this route already carries a
+        // fully framed sentence the server itself composed
+        // (`api.errors.commissioning_failed`, set in matter/client.py) - a
+        // second frame here pushed the actual information further back.
         //
-        // Unterschieden wird am HTTP-Status, nicht am Text. Ein Vergleich
-        // auf den Anfang der Servermeldung kennt immer nur eine der beiden
-        // Sprachen: läuft die Brücke auf Englisch, griffe er nie, und die
-        // Dopplung wäre still zurück – ganz abgesehen davon, dass ein
-        // Meldungstext sich jederzeit ändern darf. Der Status dagegen ist
-        // derselbe, in welcher Sprache der Server auch antwortet. Er hängt
-        // seit `requestJson` an jedem Fehlerobjekt (siehe dort).
+        // The distinction is made on the HTTP status, not on the text. A
+        // comparison against the start of the server message only ever
+        // knows one of the two languages: if the bridge runs in English
+        // it would never match, and the duplication would silently
+        // return - quite apart from the fact that a message text may
+        // change at any time. The status, on the other hand, is the same
+        // regardless of which language the server answers in. It has been
+        // attached to every error object since `requestJson` (see there).
         //
-        // Jeder andere Fehlschlag (502, 503, ein Netzfehler ganz ohne
-        // Antwort) bringt keinen eigenen Rahmen mit und bekommt hier einen –
-        // ohne ihn stünde in der Oberfläche bloß "HTTP 502".
+        // Any other failure (502, 503, a network error with no response
+        // at all) brings no frame of its own and gets one here - without
+        // it, the UI would show nothing but "HTTP 502".
         const message = String(error.message ?? "");
         this.commissionMessage =
           error.status === 422 ? message : t("web.devices.commission_failed", { message });
         this.commissionMessageIsError = true;
-        // `commissionStep` wird NICHT zurueckgesetzt: er zeigt weiterhin auf
-        // den Schritt, auf dem es haengengeblieben ist, und
-        // `commissionStepClass` faerbt genau diesen rot. Zurueck zum
-        // Formular geht es ueber `resetCommission()` am Knopf darunter -
-        // der eingetippte Code bleibt dabei stehen, denn ein Tippfehler
-        // darin ist der wahrscheinlichste Grund, hier zu landen.
+        // `commissionStep` is NOT reset: it continues to point at the
+        // step it got stuck on, and `commissionStepClass` colors exactly
+        // that one red. The way back to the form goes via
+        // `resetCommission()` on the button below - the typed-in code
+        // stays put, since a typo in it is the most likely reason to end
+        // up here.
         this.commissionFailed = true;
       } finally {
         this.commissionBusy = false;
@@ -1764,14 +1748,14 @@ function app() {
     },
 
     /**
-     * Der Zustand eines Schritts der Ablaufanzeige: "done", "running",
-     * "failed" oder leer (steht noch aus).
+     * The state of a step in the progress display: "done", "running",
+     * "failed", or empty (still pending).
      *
-     * Ein reiner Ausdruck auf `commissionStep`/`commissionFailed` statt
-     * einer dritten Zustandsvariablen mit den Klassennamen darin: zwei
-     * Felder, die dasselbe erzaehlen, laufen frueher oder spaeter
-     * auseinander - und die Anzeige ist genau die Stelle, an der das
-     * niemandem auffiele, weil sie ja "irgendetwas" zeigt.
+     * A pure expression on `commissionStep`/`commissionFailed` instead of
+     * a third state variable holding the class names: two fields telling
+     * the same story drift apart sooner or later - and the display is
+     * exactly the place where no one would notice, because it shows
+     * "something" regardless.
      */
     commissionStepClass(index) {
       if (this.commissionStep === null) {
@@ -1787,13 +1771,12 @@ function app() {
     },
 
     /**
-     * Zurueck vom Ablauf zum Formular - nach einem Erfolg ("noch ein
-     * Geraet") wie nach einem Fehlschlag ("erneut versuchen").
+     * Back from the progress display to the form - after a success
+     * ("one more device") as well as after a failure ("try again").
      *
-     * Die Meldung geht dabei mit: sie gehoert zu dem Lauf, den man gerade
-     * verlaesst. Eine Erfolgsmeldung ueber dem leeren Formular fuer das
-     * naechste Geraet stehen zu lassen, hiesse sie auf das falsche Geraet
-     * zu beziehen.
+     * The message goes along with it: it belongs to the run being left
+     * behind. Leaving a success message standing above the empty form for
+     * the next device would attribute it to the wrong device.
      */
     resetCommission() {
       this.commissionStep = null;
@@ -1801,14 +1784,14 @@ function app() {
       this.commissionMessage = null;
       this.commissionRunCode = "";
       this.commissionRunRoom = "";
-      // Erst im naechsten Tick: bis dahin haelt `x-show` das Formular noch
-      // auf `display: none`, und ein `focus()` auf ein unsichtbares Feld
-      // tut still gar nichts.
+      // Only on the next tick: until then `x-show` still keeps the form
+      // at `display: none`, and a `focus()` on an invisible field quietly
+      // does nothing at all.
       this.$nextTick(() => this.$refs.commissionCode?.focus());
     },
 
     // ---------------------------------------------------------------------
-    // Signale
+    // Signals
     // ---------------------------------------------------------------------
 
     signalsModalDeviceObject() {
@@ -1816,67 +1799,67 @@ function app() {
     },
 
     /**
-     * Oeffnet das Signal-Modal fuer ein Geraet.
+     * Opens the signal modal for a device.
      *
-     * Das `$nextTick` ist Pflicht, kein Stil: `showModal()` setzt den
-     * Anfangsfokus auf das erste fokussierbare Element IM Dialog, und das
-     * gibt es erst, nachdem Alpine den `x-if`-Inhalt aufgebaut hat. Ohne
-     * das Warten oeffnet der Dialog leer, der Fokus bleibt auf dem
-     * `<dialog>` selbst, und die erste Tab-Taste faengt wieder am
-     * Dokumentanfang an.
+     * The `$nextTick` is mandatory, not a matter of style: `showModal()`
+     * sets initial focus on the first focusable element IN the dialog,
+     * and that does not exist until Alpine has built the `x-if` content.
+     * Without this wait the dialog opens empty, focus stays on the
+     * `<dialog>` itself, and the first Tab press starts over again at the
+     * top of the document.
      *
-     * `$refs` ist hier unbedenklich, obwohl der Kommentar am Kachel-Menue
-     * (index.html, Fund 3) ausdruecklich davon abraet: dessen Einwand
-     * trifft eine Registrierung, die PRO KACHEL laeuft und sich selbst
-     * ueberschreibt. Dieses `<dialog>` steht genau einmal im Dokument -
-     * dieselbe Lage wie bei `pinLogListToTop`, das aus demselben Grund
-     * schon heute `this.$refs` benutzt.
+     * `$refs` is safe here even though the comment on the tile menu
+     * (index.html, finding 3) explicitly advises against it: that
+     * objection applies to a registration that runs PER TILE and
+     * overwrites itself. This `<dialog>` exists exactly once in the
+     * document - the same situation as `pinLogListToTop`, which already
+     * uses `this.$refs` today for the same reason.
      */
     openSignalsModal(device) {
-      // `signalsError` ist seitenweit, das Modal aber pro Geraet: ohne
-      // diesen Reset ueberlebt der Fehler eines anderen Geraets (z. B. aus
-      // dem parallelen Laden in `startApp`, oder aus `saveTitle` nach dem
-      // Escape-bedingten Blur) den Geraetewechsel und haengt unbenannt ueber
-      // einer sauber geladenen Liste. Das ist KEIN zweiter Reset von
-      // `signalsModalDevice` - jene Regel betrifft ausschliesslich dieses
-      // eine Feld, `signalsError` ist ein eigenstaendiger Zustand.
+      // `signalsError` is page-wide, but the modal is per device: without
+      // this reset, another device's error (e.g. from the parallel load
+      // in `startApp`, or from `saveTitle` after an Escape-triggered blur)
+      // survives the device switch and hangs unnamed over a cleanly
+      // loaded list. This is NOT a second reset of `signalsModalDevice` -
+      // that rule applies exclusively to that one field, `signalsError`
+      // is a state of its own.
       this.signalsError = null;
       this.signalsModalDevice = device.id;
       this.$nextTick(() => this.$refs.signalsModal.showModal());
     },
 
     /**
-     * Schliesst das Modal ueber die native `close()`-Methode statt den
-     * Zustand direkt zu leeren: `close()` loest das `close`-Ereignis aus,
-     * und dessen Handler in index.html ist die eine Stelle, die
-     * `signalsModalDevice` zuruecksetzt. Wer hier zusaetzlich
-     * `this.signalsModalDevice = null` schriebe, haette wieder zwei
-     * Wahrheiten ueber denselben Zustand.
+     * Closes the modal via the native `close()` method instead of
+     * clearing the state directly: `close()` fires the `close` event, and
+     * its handler in index.html is the one place that resets
+     * `signalsModalDevice`. Anyone additionally writing
+     * `this.signalsModalDevice = null` here would once again create two
+     * sources of truth for the same state.
      */
     closeSignalsModal() {
       this.$refs.signalsModal.close();
     },
 
     /**
-     * Ob ein Mausereignis auf dem BACKDROP des Modals liegt - und nicht auf
-     * dem Dialog selbst.
+     * Whether a mouse event lies on the modal's BACKDROP - and not on the
+     * dialog itself.
      *
-     * Ein `<dialog>` im `showModal()`-Zustand hat als Backdrop ein
-     * `::backdrop`-Pseudoelement ueber dem ganzen Fenster; Mausereignisse
-     * darauf tragen das `<dialog>` als Ziel. `event.target === el` allein
-     * unterscheidet den Backdrop deshalb NICHT vom Dialog - auch dessen
-     * eigener Scrollbalken gehoert dem Element und liefert dasselbe Ziel.
+     * A `<dialog>` in `showModal()` state has a `::backdrop` pseudo
+     * element over the entire window as its backdrop; mouse events on it
+     * carry the `<dialog>` as their target. `event.target === el` alone
+     * therefore does NOT distinguish the backdrop from the dialog - its
+     * own scrollbar also belongs to the element and produces the same
+     * target.
      *
-     * Der verlaessliche Unterschied ist die Lage: der Dialog belegt genau
-     * sein eigenes Rechteck, der Backdrop alles ausserhalb davon.
+     * The reliable difference is position: the dialog occupies exactly
+     * its own rectangle, the backdrop everything outside it.
      *
-     * Ein frueherer Versuch verglich stattdessen `offsetX` mit
-     * `clientWidth`. Das trennt nur einen Scrollbalken ab, der PLATZ
-     * RESERVIERT; bei einem ueberlagernden (macOS-Voreinstellung, misst
-     * 0 px) lief es ins Leere, und weder ein waagerechter Balken noch eine
-     * RTL-Anordnung waren abgedeckt. Der Rechteckvergleich braucht keine
-     * dieser drei Fallunterscheidungen - deshalb ersetzt er sie, statt sie
-     * einzeln nachzuruesten.
+     * An earlier attempt instead compared `offsetX` with `clientWidth`.
+     * That only separates out a scrollbar that RESERVES SPACE; with an
+     * overlay one (the macOS default, measures 0 px) it ran into nothing,
+     * and neither a horizontal bar nor an RTL layout were covered. The
+     * rectangle comparison needs none of these three case distinctions -
+     * so it replaces them instead of retrofitting them one by one.
      */
     isBackdropEvent(event, el) {
       if (event.target !== el) {
@@ -1982,7 +1965,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Einstellungen
+    // Settings
     // ---------------------------------------------------------------------
 
     async loadSettings() {
@@ -2020,21 +2003,20 @@ function app() {
       }
     },
 
-    /** Setzt die gemeinsame Spracheinstellung (PATCH /api/language, Aufgabe 1)
-     * und laedt danach die ganze Seite neu - bestaetigte, einfachere Variante
-     * aus dem Entwurfsgespraech (Spec Abschnitt 7): kein Sonderfall fuer
-     * bereits angezeigte Toasts oder WebSocket-Zustaende, die sonst in der
-     * alten Sprache stehen blieben.
+    /** Sets the shared language setting (PATCH /api/language, Task 1) and
+     * then reloads the whole page - the confirmed, simpler variant from
+     * the design discussion (Spec section 7): no special case for toasts
+     * already shown or WebSocket state, which would otherwise stay in the
+     * old language.
      *
-     * try/catch/finally um `this.request(...)` - dieselbe Form wie
-     * `saveSettings()` oben (Review-Fix Important, Whole-Branch-Review
-     * 2026-09-04): `this.request` wirft erneut bei jedem Fehler ausser 401,
-     * ohne dieses try/catch waere ein Fehlschlag (z. B. 400/502) eine
-     * unbehandelte Promise-Ablehnung ohne jede Rueckmeldung fuer den
-     * Nutzer. `settingsBusy` verhindert ausserdem, dass ein schneller
-     * Doppelklick zwei gleichzeitige PATCH-Aufrufe abfeuert - wird mit
-     * `saveSettings()` geteilt, beide Aktionen leben in derselben
-     * Einstellungen-Karte. */
+     * try/catch/finally around `this.request(...)` - the same shape as
+     * `saveSettings()` above (Review-Fix Important, whole-branch review
+     * 2026-09-04): `this.request` rethrows on every error except 401,
+     * and without this try/catch a failure (e.g. 400/502) would be an
+     * unhandled promise rejection with no feedback at all for the user.
+     * `settingsBusy` also prevents a fast double click from firing two
+     * simultaneous PATCH calls - shared with `saveSettings()`, both
+     * actions live in the same settings card. */
     async setLanguage(language) {
       if (language === this.language) {
         return;
@@ -2114,14 +2096,14 @@ function app() {
       });
     },
 
-    // `only_pending` geht mit auf die Leitung (Review-Fix Fix 4,
-    // 2026-09-03). Vorher galt der Filter nur fuer die Tabelle darueber,
-    // waehrend der Download ausnahmslos alle Geraete lieferte UND alle als
-    // exportiert markierte - wer gefiltert hat, ein ausstehendes Geraet sah
-    // und herunterlud, bekam alles und hatte den Filter danach fuer immer
-    // leer. Jetzt entscheidet dasselbe Kaestchen ueber beides, und
-    // `/api/export/download` markiert nur, was es tatsaechlich ausgeliefert
-    // hat (siehe `api/export.py`).
+    // `only_pending` travels along with the request (Review-Fix Fix 4,
+    // 2026-09-03). Previously the filter only applied to the table above
+    // it, while the download delivered every device without exception AND
+    // marked all of them as exported - anyone who filtered, saw a pending
+    // device, and downloaded got everything, and the filter would be
+    // empty forever afterward. Now the same checkbox decides both, and
+    // `/api/export/download` only marks what it actually delivered (see
+    // `api/export.py`).
     downloadUrl() {
       const params = new URLSearchParams({
         bridge_ip: this.bridgeSettings.bridge_ip,
@@ -2133,19 +2115,18 @@ function app() {
       return `/api/export/download?${params}`;
     },
 
-    // Frueher ein gewoehnlicher `<a href>`: eine Fehlerantwort (z. B. 401
-    // nach abgelaufener Sitzung, oder 422 bei leerem Pflichtfeld) haette die
-    // ganze Seite durch ihren rohen Text ersetzt statt in der Oberflaeche zu
-    // erscheinen (Review-Fix Fix 1a, 2026-09-03). Deshalb ueber `download()`,
-    // das wie jeder andere Aufruf `requestDownload()` nutzt.
+    // Formerly a plain `<a href>`: an error response (e.g. 401 after an
+    // expired session, or 422 for an empty required field) would have
+    // replaced the whole page with its raw text instead of appearing in
+    // the UI (Review-Fix Fix 1a, 2026-09-03). Hence via `download()`,
+    // which uses `requestDownload()` like every other call.
     //
-    // Die IP-Pruefung stand vorher aus demselben Grund hier: ohne sie
-    // ersetzte ein Klick bei leerem IP-Feld die Seite durch die rohe
-    // 422-Fehlerantwort des Backends (Pflichtparameter `bridge_ip`, siehe
-    // `api/export.py`) - fuer ein Diagnosewerkzeug, das gerade in
-    // schwierigen Momenten benutzt wird, ist eine Fehlermeldung an
-    // derselben Stelle, an der schon die Vorschau ihre Fehler zeigt, die
-    // bessere Antwort.
+    // The IP check was here for the same reason previously: without it, a
+    // click with an empty IP field replaced the page with the backend's
+    // raw 422 error response (required parameter `bridge_ip`, see
+    // `api/export.py`) - for a diagnostics tool that is used precisely in
+    // difficult moments, an error message in the same place where the
+    // preview already shows its errors is the better answer.
     async downloadExport() {
       this.exportError = null;
       if (!this.bridgeSettings.bridge_ip) {
@@ -2158,19 +2139,19 @@ function app() {
         this.exportError = t("web.export.download_failed", { message: error.message });
         return;
       }
-      // Ein Download IST ein Export (siehe `api/export.py`, Entscheidung 1):
-      // er schreibt `exported_at` fuer jedes ausgelieferte Geraet. Ohne
-      // dieses Nachladen zeigte die Spalte "Zuletzt exportiert" weiter den
-      // Stand von vorhin und der Filter "nur noch nicht exportierte" die
-      // gerade exportierten Geraete - bis irgendwann jemand die Vorschau neu
-      // lud (Review-Fix Fix 12, 2026-09-03).
+      // A download IS an export (see `api/export.py`, decision 1): it
+      // writes `exported_at` for every delivered device. Without this
+      // reload, the "Last exported" column kept showing the earlier state
+      // and the "only not-yet-exported" filter kept showing the devices
+      // just exported - until someone eventually reloaded the preview
+      // (Review-Fix Fix 12, 2026-09-03).
       await this.loadExportStatus();
     },
 
-    // Export-Knopf an einer einzelnen Geraetekarte (Geraete-Dashboard-
-    // Entwurf, Abschnitt 6) - kein Vorschauschritt: die Werte stehen ja
-    // bereits offen auf der Karte, eine zusaetzliche Vorschau waere
-    // doppelte Information.
+    // Export button on an individual device card (device dashboard
+    // design, section 6) - no preview step: the values are already
+    // openly displayed on the card, an additional preview would be
+    // duplicate information.
     async exportDevice(device) {
       this.deviceActionError = null;
       if (!this.bridgeSettings.bridge_ip) {
@@ -2197,12 +2178,13 @@ function app() {
     // System
     // ---------------------------------------------------------------------
 
-    // Laedt nur noch den Systemcheck einmalig per GET - Datagramme,
-    // Kommando-Log und Logzeilen liefert seit Aufgabe 6 laufend der
-    // Diagnose-Kanal (`connectDiagnosticsLive`, oeffnet beim Wechsel auf
-    // diese Ansicht in `selectView`). Fuer den Systemcheck gibt es dagegen
-    // keinen dritten Strom auf `/api/diagnostics/live` - er bleibt ein
-    // einmaliger Abruf, ausgeloest hier und ueber den "Aktualisieren"-Knopf.
+    // Now only loads the system check once via GET - datagrams, command
+    // log, and log lines have been delivered continuously since Task 6 by
+    // the diagnostics channel (`connectDiagnosticsLive`, opens on
+    // switching to this view in `selectView`). For the system check,
+    // however, there is no third stream on `/api/diagnostics/live` - it
+    // stays a one-time fetch, triggered here and via the "Refresh"
+    // button.
     async loadSystem() {
       this.systemError = null;
       this.diagnosticsBusy = true;
@@ -2215,10 +2197,10 @@ function app() {
       }
     },
 
-    // Ebenfalls kein `<a href>` mehr (siehe `downloadExport`): ein
-    // Fehler (z. B. 503 ohne eingehaengtes Datenverzeichnis) soll als
-    // lesbare Meldung erscheinen, statt eine heruntergeladene Datei zu
-    // ergeben, die in Wahrheit eine Fehlermeldung ist.
+    // Also no longer an `<a href>` (see `downloadExport`): an error
+    // (e.g. 503 with no data directory mounted) should appear as a
+    // readable message, instead of resulting in a downloaded file that is
+    // actually an error message.
     async downloadFabricBackup() {
       this.backupError = null;
       try {
@@ -2229,19 +2211,19 @@ function app() {
     },
 
     /**
-     * Schickt alle bekannten Werte erneut an den Miniserver - dasselbe, was
-     * beim Bruecken-Start und beim Aufruf von `/resync` aus dem
-     * Config-Projekt passiert. Geht ueber `POST /api/diagnostics/resync` und
-     * NICHT ueber `/resync` selbst: `/resync` liegt bewusst ausserhalb von
-     * `/api` und damit ausserhalb des Waechters, weil der Miniserver keinen
-     * `Authorization`-Header mitschicken kann. Diese Oberflaeche kann das
-     * sehr wohl, und `this.request` bringt die 401-Behandlung mit, ohne die
-     * eine abgelaufene Sitzung hier als "Erneutes Senden fehlgeschlagen"
-     * erschiene statt als Anmeldemaske.
+     * Sends all known values to the Miniserver again - the same thing
+     * that happens on bridge startup and when `/resync` is called from
+     * the Config project. Goes via `POST /api/diagnostics/resync` and NOT
+     * via `/resync` itself: `/resync` deliberately lives outside `/api`
+     * and thus outside the guard, because the Miniserver cannot send an
+     * `Authorization` header along. This UI certainly can, and
+     * `this.request` brings the 401 handling with it, without which an
+     * expired session here would appear as "Resend failed" instead of the
+     * login screen.
      *
-     * Die Anzahl aus der Antwort geht in eine Kurzmeldung: ohne sie ist ein
-     * erfolgreicher Resync von einem, der nichts zu senden hatte, nicht zu
-     * unterscheiden - beide sehen aus wie ein Knopf, der kurz grau war.
+     * The count from the response goes into a toast: without it, a
+     * successful resync cannot be told apart from one that had nothing to
+     * send - both would look like a button that was briefly gray.
      */
     async resyncAll() {
       this.resyncError = null;
@@ -2257,22 +2239,22 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Projektdatei-Sync (Aufgabe 12)
+    // Project file sync (Task 12)
     // ---------------------------------------------------------------------
 
     /**
-     * Schickt `file` an `/api/export/project-sync`, optional mit einer
-     * bereits gewaehlten `miniserverIp`. Gemeinsamer Kern von
-     * `uploadProjectFile` (erster Versuch, ohne IP) und
-     * `confirmProjectSyncMiniserver` (zweiter Versuch, nachdem der Anwender
-     * im Auswahlfeld einen Miniserver gewaehlt hat) - beide zeigen dieselbe
-     * Antwort an, nur der Aufrufer entscheidet, ob eine IP schon feststeht.
+     * Sends `file` to `/api/export/project-sync`, optionally with a
+     * `miniserverIp` already chosen. Shared core of `uploadProjectFile`
+     * (first attempt, without an IP) and `confirmProjectSyncMiniserver`
+     * (second attempt, after the user has chosen a Miniserver in the
+     * selection field) - both display the same response, only the caller
+     * decides whether an IP is already fixed.
      *
-     * `needs_miniserver_selection=true` in der Antwort (Nutzerwunsch nach
-     * dem Review: auswaehlen statt die IP von Hand abzutippen) heisst: die
-     * Datei traegt mehr als einen Miniserver, `index.html` zeigt dann das
-     * Auswahlfeld statt eines Plans - kein Fehler, `projectSync.error`
-     * bleibt leer.
+     * `needs_miniserver_selection=true` in the response (user request
+     * after the review: selecting instead of typing the IP by hand)
+     * means: the file carries more than one Miniserver, `index.html` then
+     * shows this selection field instead of a plan - not an error,
+     * `projectSync.error` stays empty.
      */
     async _syncProjectFile(file, miniserverIp) {
       this.projectSync.error = "";
@@ -2306,12 +2288,12 @@ function app() {
     },
 
     /**
-     * Laedt die hochgeladene Loxone-Projektdatei zu `/api/export/project-sync`
-     * hoch und zeigt die Antwort (Plan + beide gepatchten Dateien, oder das
-     * Miniserver-Auswahlfeld) an. Dieselbe IP-Pruefung wie `downloadExport`/
-     * `exportDevice`: ohne sie ersetzte ein Klick bei leerem IP-Feld die
-     * Seite durch die rohe 422-Fehlerantwort des Backends (Pflichtparameter
-     * `bridge_ip`).
+     * Uploads the uploaded Loxone project file to
+     * `/api/export/project-sync` and displays the response (plan + both
+     * patched files, or the Miniserver selection field). The same IP
+     * check as `downloadExport`/`exportDevice`: without it, a click with
+     * an empty IP field replaced the page with the backend's raw 422
+     * error response (required parameter `bridge_ip`).
      */
     async uploadProjectFile(event) {
       const input = event.target;
@@ -2324,26 +2306,26 @@ function app() {
         input.value = "";
         return;
       }
-      // Wird aufgehoben, falls ein vorheriger Upload schon eine Auswahl
-      // verlangt hatte - eine neu ausgewaehlte Datei faengt wieder bei null
-      // an, unabhaengig davon, ob die vorherige mehrere Miniserver hatte.
+      // Cleared in case a previous upload had already required a
+      // selection - a newly selected file starts over from zero,
+      // regardless of whether the previous one had several Miniservers.
       this.projectSync.file = file;
       this.projectSync.needsMiniserverSelection = false;
       this.projectSync.availableMiniservers = [];
       this.projectSync.selectedMiniserverIp = "";
       await this._syncProjectFile(file, null);
-      // Loescht die Dateiauswahl im Eingabefeld selbst - ohne das loest
-      // ein erneuter Upload DERSELBEN Datei kein `change`-Ereignis mehr
-      // aus, weil sich der Wert des Feldes aus Sicht des Browsers nicht
-      // geaendert hat.
+      // Clears the file selection in the input field itself - without
+      // this, a repeated upload of the SAME file no longer fires a
+      // `change` event, because the field's value has not changed from
+      // the browser's point of view.
       input.value = "";
     },
 
     /**
-     * Zweiter Versuch, nachdem der Anwender im Auswahlfeld einen Miniserver
-     * gewaehlt hat - dieselbe Datei (`projectSync.file`, noch im Speicher
-     * des Browsers) geht ein zweites Mal raus, diesmal mit `miniserver_ip`
-     * gesetzt, kein erneuter Datei-Dialog noetig.
+     * Second attempt, after the user has chosen a Miniserver in the
+     * selection field - the same file (`projectSync.file`, still in the
+     * browser's memory) goes out a second time, this time with
+     * `miniserver_ip` set, no repeated file dialog needed.
      */
     async confirmProjectSyncMiniserver() {
       if (!this.projectSync.selectedMiniserverIp || !this.projectSync.file) {
@@ -2352,12 +2334,12 @@ function app() {
       await this._syncProjectFile(this.projectSync.file, this.projectSync.selectedMiniserverIp);
     },
 
-    /** Deutsche Kurzbezeichnung fuer die `PlanStatus`-Werte aus
+    /** Short display label for the `PlanStatus` values from
      * `projectsync/diff.py` (`unchanged`, `updated`, `new_signal`,
-     * `new_device`, `orphaned`, `conflict`, `possible_duplicate`) - die
-     * Rohwerte sind Englisch (Bezeichner-Konvention dieses Projekts, siehe
-     * Kommentar am Kopf dieser Datei), duerfen aber nicht unuebersetzt auf
-     * dem Bildschirm landen. */
+     * `new_device`, `orphaned`, `conflict`, `possible_duplicate`) - the
+     * raw values are English (this project's identifier convention, see
+     * the comment at the top of this file), but must not land untranslated
+     * on screen. */
     projectSyncStatusLabel(status) {
       const labels = {
         unchanged: t("web.export.projectsync_status_unchanged"),
@@ -2371,17 +2353,17 @@ function app() {
       return labels[status] || status;
     },
 
-    /** Badge-Farbe fuer `projectSyncStatusLabel`. Vier eigenstaendige Faelle
-     * statt vorher drei (Nutzerwunsch nach dem Review: neu/aktualisiert
-     * muessen sich auf den ersten Blick unterscheiden lassen, nicht beide
-     * als `warn` zusammenfallen) - `ok` (gruen) fuer alles Neue ist dieselbe
-     * Farbsprache wie ein hinzugefuegter Diff in einer Versionsverwaltung,
-     * `warn` bleibt exklusiv fuer `updated`, `off` (dieselbe neutrale Farbe
-     * wie eine Geraetekarte im Zustand "offline") fuer `orphaned`, `danger`
-     * fuer `conflict` UND `possible_duplicate` (beide werden nie automatisch
-     * angelegt/uebernommen, beide verdienen dieselbe "hinschauen"-Farbe).
-     * `unchanged` braucht hier kein Badge mehr - es erscheint nur noch als
-     * schlichter Chip, siehe `projectSyncSplitBySignificance`. */
+    /** Badge color for `projectSyncStatusLabel`. Four separate cases
+     * instead of three previously (user request after the review:
+     * new/updated must be distinguishable at a glance, not both collapse
+     * into `warn`) - `ok` (green) for everything new is the same color
+     * language as an added diff in a version control system, `warn` stays
+     * exclusive to `updated`, `off` (the same neutral color as a device
+     * card in the "offline" state) for `orphaned`, `danger` for
+     * `conflict` AND `possible_duplicate` (neither is ever auto-created/
+     * auto-adopted, both deserve the same "look at this" color).
+     * `unchanged` no longer needs a badge here - it now only appears as a
+     * plain chip, see `projectSyncSplitBySignificance`. */
     projectSyncStatusBadgeClass(status) {
       if (status === "conflict" || status === "possible_duplicate") {
         return "danger";
@@ -2395,15 +2377,15 @@ function app() {
       return "ok";
     },
 
-    /** Ordnet einen Plan-Status einem von fuenf Sammel-Eimern zu - dieselbe
-     * Einteilung liegt sowohl den Zaehlern je Geraet (`projectSyncGrouped
-     * Entries`) als auch der Gesamt-Uebersicht oben (`projectSyncOverall
-     * Counts`) und der CSS-Klasse jeder Eintragszeile (`is-<bucket>`)
-     * zugrunde - eine einzige Zuordnung statt mehrerer, die auseinanderlaufen
-     * koennten. `possible_duplicate` teilt sich den `conflict`-Eimer: beide
-     * sind "etwas stimmt hier nicht, bitte pruefen", nur der Beschriftungs-
-     * und Erklaertext (`projectSyncStatusLabel`/`projectSyncEntryNote`)
-     * unterscheidet sie fuer den Anwender. */
+    /** Maps a plan status to one of five collection buckets - the same
+     * classification underlies both the per-device counters
+     * (`projectSyncGroupedEntries`) and the overall summary above
+     * (`projectSyncOverallCounts`), as well as each entry row's CSS class
+     * (`is-<bucket>`) - a single mapping instead of several that could
+     * drift apart. `possible_duplicate` shares the `conflict` bucket:
+     * both mean "something here is not right, please check", only the
+     * label and explanation text (`projectSyncStatusLabel`/
+     * `projectSyncEntryNote`) distinguishes them for the user. */
     projectSyncStatusBucket(status) {
       if (status === "new_signal" || status === "new_device") {
         return "new";
@@ -2421,24 +2403,24 @@ function app() {
     },
 
     /**
-     * Gruppiert den flachen Plan nach Gerät und dort nochmal nach Ein-/
-     * Ausgang - genau die Verschachtelung, in der die Signale hinterher als
-     * virtuelle Ein-/Ausgänge in Loxone Config landen (ein Container je
-     * Gerät, `Eingänge` und `Ausgänge` als eigene Gruppen darunter), statt
-     * einer einzigen langen, unsortierten Liste.
+     * Groups the flat plan by device and, within that, again by input/
+     * output - exactly the nesting in which the signals later end up as
+     * virtual inputs/outputs in Loxone Config (one container per device,
+     * `Inputs` and `Outputs` as separate groups underneath it), instead of
+     * one single long, unsorted list.
      *
-     * Verwaiste Einträge (`device_id === -1`, siehe `PlanEntry` in `diff.py`
-     * - gehören zu keinem aktuell bekannten Gerät mehr) bekommen eine eigene
-     * Gruppe ohne echten Gerätenamen und stehen bewusst am Ende, unabhängig
-     * von ihrer Position im flachen Plan.
+     * Orphaned entries (`device_id === -1`, see `PlanEntry` in `diff.py` -
+     * no longer belong to any currently known device) get their own group
+     * with no real device name and are deliberately placed at the end,
+     * regardless of their position in the flat plan.
      *
-     * Jede Gruppe trägt zusätzlich `counts` (je Status-Eimer, für die
-     * Zähl-Chips im aufklappbaren Kartenkopf) und `needsAttention` (alles
-     * außer `unchanged` - steuert, ob die Karte beim ersten Anzeigen schon
-     * aufgeklappt ist). `sections` bündelt Ein-/Ausgänge bereits vorsortiert
-     * in "braucht einen Blick" vs. "unverändert, eingeklappt" (`projectSync
-     * SplitBySignificance`) - einmal hier berechnet statt bei jedem
-     * Render erneut im Template.
+     * Each group additionally carries `counts` (per status bucket, for the
+     * count chips in the collapsible card header) and `needsAttention`
+     * (everything except `unchanged` - controls whether the card is
+     * already expanded on first display). `sections` bundles inputs/
+     * outputs already pre-sorted into "needs a look" vs. "unchanged,
+     * collapsed" (`projectSyncSplitBySignificance`) - computed once here
+     * instead of again on every render in the template.
      */
     projectSyncGroupedEntries(entries) {
       const groups = [];
@@ -2481,13 +2463,13 @@ function app() {
       return groups;
     },
 
-    /** Trennt eine Liste von Einträgen in `attention` (alles außer
-     * `unchanged` - wird immer als eigene Zeile mit Status und ggf. Diff
-     * gezeigt) und `unchanged` (wird nur noch als schlichter Chip hinter
-     * einer eingeklappten Zusammenfassung gezeigt, siehe `index.html`) -
-     * bei einer echten, seit Jahren gewachsenen Datei sind das schnell
-     * Dutzende Signale, die längst stimmen und beim Überblick nur stören
-     * würden (Nutzerwunsch: "schneller und sauberer Überblick"). */
+    /** Splits a list of entries into `attention` (everything except
+     * `unchanged` - always shown as its own row with status and, where
+     * applicable, a diff) and `unchanged` (now only shown as a plain chip
+     * behind a collapsed summary, see `index.html`) - for a real file that
+     * has grown over years, that quickly amounts to dozens of signals that
+     * have long been correct and would only get in the way of the overview
+     * (user request: "faster and cleaner overview"). */
     projectSyncSplitBySignificance(items) {
       const attention = [];
       const unchanged = [];
@@ -2497,9 +2479,9 @@ function app() {
       return { attention, unchanged };
     },
 
-    /** Gesamtzahl je Status-Eimer über den kompletten Plan - Grundlage der
-     * Übersichtszeile ganz oben, bevor man sich durch die einzelnen
-     * Geräte-Karten klickt. */
+    /** Total count per status bucket across the whole plan - the basis
+     * for the summary row right at the top, before clicking through the
+     * individual device cards. */
     projectSyncOverallCounts(entries) {
       const counts = { new: 0, updated: 0, unchanged: 0, orphaned: 0, conflict: 0 };
       for (const entry of entries || []) {
@@ -2508,27 +2490,26 @@ function app() {
       return counts;
     },
 
-    /** Fuer die "Alles aktuell"-Meldung (Review-Fix Important #5): `orphaned`,
-     * `conflict` und `possible_duplicate` sind informativ und werden nie
-     * gepatcht (siehe `SyncPlan.has_changes` in `diff.py`, das genau diese
-     * Status bewusst ausklammert), muessen aber trotzdem sichtbar bleiben,
-     * auch wenn `has_changes` deshalb `false` ist. */
+    /** For the "everything up to date" message (Review-Fix Important #5):
+     * `orphaned`, `conflict`, and `possible_duplicate` are informational
+     * and are never patched (see `SyncPlan.has_changes` in `diff.py`,
+     * which deliberately excludes exactly these statuses), but still need
+     * to stay visible even though `has_changes` is therefore `false`. */
     projectSyncHasInformationalEntries(entries) {
       return (entries || []).some((entry) =>
         ["orphaned", "conflict", "possible_duplicate"].includes(entry.status),
       );
     },
 
-    /** Kurzer Erklärsatz unter dem Titel einer Eintragszeile - macht
-     * `new_device` (kompletter neuer Container) und `new_signal` (nur ein
-     * neues Kommando in einem bestehenden Container) auf einen Blick
-     * unterscheidbar, ohne dass der Anwender erst den Unterschied der beiden
-     * Badge-Texte nachschlagen muss (Nutzerwunsch: sehen, "welche Knoten +
-     * Befehle" neu dazukommen). `possible_duplicate` (Anwenderbericht "zwei
-     * mal onoff drin"): ein bestehender Befehl mit demselben Titel wurde
-     * gefunden, aber unter einem anderen Schluessel - eher ein beschaedigtes
-     * altes Objekt als ein wirklich neues Signal, deshalb keine automatische
-     * Neuanlage. */
+    /** Short explanatory sentence under an entry row's title - makes
+     * `new_device` (a complete new container) and `new_signal` (just one
+     * new command in an existing container) distinguishable at a glance,
+     * without the user first having to look up the difference between the
+     * two badge texts (user request: see "which nodes + commands" are
+     * newly added). `possible_duplicate` (user report "onoff shows up
+     * twice"): an existing command with the same title was found, but
+     * under a different key - more likely a damaged old object than a
+     * genuinely new signal, hence no automatic creation. */
     projectSyncEntryNote(entry) {
       if (entry.status === "new_device") {
         return t("web.export.projectsync_note_new_device");
@@ -2548,11 +2529,10 @@ function app() {
       return "";
     },
 
-    /** Deutsche Beschriftung fuer die Attributnamen aus `entry.changes` -
-     * dieselben Schluessel wie `MANAGED_INPUT_CMD_ATTRS`/
-     * `MANAGED_OUTPUT_CMD_ATTRS` in `projectsync/schema.py`. Unbekannte
-     * Namen (sollte nicht vorkommen) erscheinen unuebersetzt statt zu
-     * verschwinden. */
+    /** Display label for the attribute names from `entry.changes` - the
+     * same keys as `MANAGED_INPUT_CMD_ATTRS`/`MANAGED_OUTPUT_CMD_ATTRS` in
+     * `projectsync/schema.py`. Unknown names (should not happen) appear
+     * untranslated instead of vanishing. */
     projectSyncAttrLabel(attr) {
       const labels = {
         Title: t("web.export.projectsync_attr_title"),
@@ -2566,13 +2546,14 @@ function app() {
     },
 
     /**
-     * Wandelt `entry.changes` (nur bei `status === "updated"` befuellt,
-     * sonst leer - siehe `ProjectSyncEntryOut` in `api/models.py`) in eine
-     * Liste aus `{label, oldValue, newValue}` fuer die Diff-Zeilen im
-     * Template (Review-Fix Important #6, jetzt strukturiert statt als ein
-     * einzelner Fliesstext, damit Alt- und Neu-Wert getrennt gestylt werden
-     * koennen). Reines `x-text` im Template, nie `x-html`: die Werte stammen
-     * aus der hochgeladenen Projektdatei und sind nicht vertrauenswuerdig.
+     * Turns `entry.changes` (only filled for `status === "updated"`,
+     * otherwise empty - see `ProjectSyncEntryOut` in `api/models.py`) into
+     * a list of `{label, oldValue, newValue}` for the diff rows in the
+     * template (Review-Fix Important #6, now structured instead of a
+     * single block of running text, so the old and new value can be
+     * styled separately). Plain `x-text` in the template, never `x-html`:
+     * the values come from the uploaded project file and are not
+     * trustworthy.
      */
     projectSyncChangeList(entry) {
       const changes = entry.changes || {};
@@ -2583,19 +2564,18 @@ function app() {
     },
 
     /**
-     * Baut den Blob aus der Base64-kodierten Datei, die bereits Teil der
-     * Plan-Antwort war (kein zweiter Aufruf an die Bruecke noetig) - der
-     * Haken "Neue Geraete-Container ebenfalls anlegen" waehlt dabei nur
-     * aus, WELCHE der beiden mitgelieferten Fassungen heruntergeladen wird.
+     * Builds the blob from the base64-encoded file that was already part
+     * of the plan response (no second call to the bridge needed) - the
+     * "Also create new device containers" checkbox only selects WHICH of
+     * the two supplied versions gets downloaded.
      *
-     * `patched_with_new_devices_base64` kann `null` sein, wenn die
-     * hochgeladene Datei keinen `VirtualInCaption`/`VirtualOutCaption`-
-     * Abschnitt fuer einen neuen Geraete-Container enthaelt
-     * (`new_devices_unavailable_reason` traegt dann den Grund, angezeigt in
-     * `index.html`). Der Haken ist in dem Fall bereits deaktiviert - diese
-     * Pruefung hier ist nur die zweite Verteidigungslinie, falls er trotzdem
-     * angehakt sein sollte, und faellt still auf die konservative Fassung
-     * zurueck statt `atob(null)` auszuloesen.
+     * `patched_with_new_devices_base64` can be `null` if the uploaded file
+     * has no `VirtualInCaption`/`VirtualOutCaption` section for a new
+     * device container (`new_devices_unavailable_reason` then carries the
+     * reason, displayed in `index.html`). The checkbox is already
+     * disabled in that case - this check here is only the second line of
+     * defense in case it is checked anyway, and quietly falls back to the
+     * conservative version instead of triggering `atob(null)`.
      */
     downloadPatchedProject() {
       if (!this.projectSync.plan) {
@@ -2615,57 +2595,56 @@ function app() {
         ? "loxmatter-projekt-gepatcht-mit-neuen-geraeten.Loxone"
         : "loxmatter-projekt-gepatcht.Loxone";
       link.click();
-      // Verzoegertes Freigeben wie in `requestDownload` oben - manche
-      // Browser (Firefox) starten den Download eines Objekt-URLs erst nach
-      // dem laufenden Aufrufstapel.
+      // Delayed release like in `requestDownload` above - some browsers
+      // (Firefox) only start the download of an object URL after the
+      // current call stack.
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     },
 
     // ---------------------------------------------------------------------
-    // Live-Diagnose (Aufgabe 6, Spec 10.5)
+    // Live diagnostics (Task 6, Spec 10.5)
     // ---------------------------------------------------------------------
 
     /**
-     * Oeffnet den Diagnose-Kanal (`/api/diagnostics/live`) - dasselbe
-     * Aufraeum-vor-Neuaufbau-Muster wie `connectLive()` fuer den Wertekanal
-     * (siehe dort fuer die ausfuehrliche Begruendung, hier nicht wiederholt):
-     * ein alter Timer wird zuerst gestoppt, ein alter Socket zuerst aus
-     * `this.diagnosticsSocket` entfernt und DANACH geschlossen, damit dessen
-     * `close`-Ereignis auf ein bereits ausgetauschtes Feld trifft und keine
-     * zweite Wiederverbindung anstoesst.
+     * Opens the diagnostics channel (`/api/diagnostics/live`) - the same
+     * clean-up-before-rebuild pattern as `connectLive()` for the value
+     * channel (see there for the detailed rationale, not repeated here):
+     * an old timer is stopped first, an old socket is first removed from
+     * `this.diagnosticsSocket` and THEN closed, so that its `close` event
+     * hits a field that has already been swapped out and does not trigger
+     * a second reconnection.
      *
-     * Kein Subprotokoll (Review der Aufgabenstellung, siehe
-     * `.superpowers/sdd/task-6-report.md`): anders als im Aufgabentext
-     * angenommen traegt `connectLive()` seit dem WebUI-Login KEIN
-     * `["bearer", token]`-Subprotokoll mehr - das Sitzungs-Cookie reist bei
-     * einem WebSocket zum selben Ursprung von selbst mit (siehe dessen
-     * Kommentar). Dieser Kanal haengt an genau demselben `build_api_guard`
-     * wie `/api/live` (`loxone/server.py`) und braucht deshalb denselben,
-     * einfacheren Weg - ein erfundenes zweites Subprotokoll waere eine
-     * Abweichung vom Vorbild, nicht ein Folgen.
+     * No subprotocol (review of the task statement, see
+     * `.superpowers/sdd/task-6-report.md`): contrary to what the task text
+     * assumed, `connectLive()` no longer carries a `["bearer", token]`
+     * subprotocol since the WebUI login - the session cookie travels along
+     * on its own for a WebSocket to the same origin (see its comment).
+     * This channel hangs off exactly the same `build_api_guard` as
+     * `/api/live` (`loxone/server.py`) and therefore needs the same,
+     * simpler path - inventing a second subprotocol would be a deviation
+     * from the model, not a following of it.
      *
-     * **Leert alle drei Straeme, BEVOR die neue Verbindung aufgebaut wird**
-     * (Nachbesserung Task 6, 2026-09-03): jede (Wieder-)Verbindung bekommt
-     * von `api/diagnostics_live.py` eine Momentaufnahme von bis zu
-     * `SNAPSHOT_LIMIT` Eintraegen je Strom, in genau derselben
-     * Nachrichtenform wie eine laufende Zeile und ohne eigene Kennzeichnung
-     * als Momentaufnahme. Ohne dieses Leeren haengte sich diese
-     * Momentaufnahme einfach an das bereits Gehaltene an - ein Wechsel weg
-     * von "System" und zurueck, oder jede automatische Wiederverbindung
-     * nach einem Netzhaenger, haette bis zu 150 bereits vorhandene Zeilen
-     * ein zweites Mal angehaengt, auf dem gewoehnlichsten Weg durch die
-     * Oberflaeche. Der einfachere der beiden moeglichen Wege gegenueber
-     * einer serverseitigen Kennzeichnung der Momentaufnahme:
-     * `clearDiagnosticsBuffers()` (dieselbe Funktion, die auch der
-     * "Leeren"-Knopf ruft) macht die Unterscheidung "Momentaufnahme vs.
-     * laufende Zeile" im Browser schlicht ueberfluessig, statt sie dort
-     * nachzubilden - keine neue Nachrichtenform, kein Zusammenfuehren zweier
-     * Quellen beim Anzeigen. Der Preis: eine Wiederverbindung verwirft auch
-     * Zeilen, die aelter sind als die letzten `SNAPSHOT_LIMIT` je Strom (50)
-     * und NICHT durch die folgende Momentaufnahme ersetzt werden - fuer eine
-     * Diagnoseansicht, deren "Leeren"-Knopf genau das ohnehin schon jederzeit
-     * bewusst anbietet, ist das kein neues Risiko, nur derselbe Verlust zu
-     * einem zusaetzlichen Zeitpunkt.
+     * **Clears all three streams BEFORE the new connection is built**
+     * (follow-up fix Task 6, 2026-09-03): every (re)connection gets a
+     * snapshot of up to `SNAPSHOT_LIMIT` entries per stream from
+     * `api/diagnostics_live.py`, in exactly the same message shape as a
+     * running line and with no marker of its own identifying it as a
+     * snapshot. Without this clearing, that snapshot would simply attach
+     * to what was already held - switching away from "System" and back,
+     * or any automatic reconnection after a network hiccup, would have
+     * appended up to 150 already-present lines a second time, on the most
+     * ordinary path through the UI. The simpler of the two possible
+     * approaches compared to a server-side marking of the snapshot:
+     * `clearDiagnosticsBuffers()` (the same function the "Clear" button
+     * also calls) simply makes the "snapshot vs. running line" distinction
+     * unnecessary in the browser, instead of reproducing it there - no new
+     * message shape, no merging of two sources on display. The cost: a
+     * reconnection also discards lines older than the last
+     * `SNAPSHOT_LIMIT` per stream (50) that are NOT replaced by the
+     * following snapshot - for a diagnostics view whose "Clear" button
+     * already deliberately offers exactly that at any time anyway, this
+     * is not a new risk, just the same loss at one additional point in
+     * time.
      */
     connectDiagnosticsLive() {
       if (this.diagnosticsReconnectTimer !== null) {
@@ -2693,11 +2672,11 @@ function app() {
         this.handleDiagnosticsMessage(JSON.parse(event.data));
       });
 
-      // Dieselbe `this.diagnosticsSocket === socket`-Pruefung wie bei
-      // `connectLive()`: nur eine Verbindung, die noch als DIE aktuelle
-      // gilt, darf eine Wiederverbindung ausloesen - eine bewusst
-      // geschlossene (siehe `disconnectDiagnosticsLive`) hat `this.
-      // diagnosticsSocket` da schon nicht mehr gesetzt.
+      // The same `this.diagnosticsSocket === socket` check as in
+      // `connectLive()`: only a connection that still counts as THE
+      // current one may trigger a reconnection - a deliberately closed
+      // one (see `disconnectDiagnosticsLive`) no longer has `this.
+      // diagnosticsSocket` set by that point.
       socket.addEventListener("close", () => {
         if (this.diagnosticsSocket === socket) {
           this.handleDiagnosticsDisconnect();
@@ -2709,12 +2688,12 @@ function app() {
     },
 
     /**
-     * Schliesst den Diagnose-Kanal und stoppt jede geplante
-     * Wiederverbindung - aufgerufen von `selectView`, sobald "System" nicht
-     * mehr die aktive Ansicht ist (Falle 3: genau eine Verbindung, nur
-     * waehrend die Ansicht offen ist). Setzt `this.diagnosticsSocket` VOR
-     * dem `close()`-Aufruf auf `null`, damit der `close`-Handler oben diese
-     * Trennung nicht mit einer Wiederverbindung beantwortet.
+     * Closes the diagnostics channel and stops any scheduled reconnection -
+     * called by `selectView` as soon as "System" is no longer the active
+     * view (trap 3: exactly one connection, only while the view is open).
+     * Sets `this.diagnosticsSocket` to `null` BEFORE the `close()` call,
+     * so the `close` handler above does not answer this disconnection with
+     * a reconnection.
      */
     disconnectDiagnosticsLive() {
       if (this.diagnosticsReconnectTimer !== null) {
@@ -2730,25 +2709,25 @@ function app() {
     },
 
     /**
-     * Reagiert auf den Abbruch des Diagnose-Kanals - sinngemaess
-     * `handleLiveDisconnect` fuer den Wertekanal (siehe dort), an dieser
-     * Ansicht statt an der Sitzung gemessen: die Ansicht kann laengst
-     * verlassen worden sein, BEVOR dieses `close`-Ereignis eintrifft
-     * (asynchron), und `disconnectDiagnosticsLive` hat `this.
-     * diagnosticsSocket` dann schon geleert - der `close`-Handler oben ruft
-     * diese Funktion in dem Fall gar nicht erst auf. Trifft sie trotzdem auf
-     * eine inzwischen verlassene Ansicht (z. B. ein Wechsel genau waehrend
-     * dieser Aufruf schon laeuft), bricht sie hier ab, statt im Hintergrund
-     * weiterzuversuchen.
+     * Reacts to the diagnostics channel dropping - the equivalent of
+     * `handleLiveDisconnect` for the value channel (see there), measured
+     * against this view instead of the session: the view can have been
+     * left long before this `close` event arrives (asynchronous), and
+     * `disconnectDiagnosticsLive` has already cleared `this.
+     * diagnosticsSocket` by then - the `close` handler above does not even
+     * call this function in that case. If it still hits a view that has
+     * meanwhile been left (e.g. a switch happening exactly while this call
+     * is already running), it aborts here instead of continuing to retry
+     * in the background.
      */
     async handleDiagnosticsDisconnect() {
       this.diagnosticsConnected = false;
       if (this.view !== "system") {
         return;
       }
-      // Wie bei `handleLiveDisconnect`: eine 401 mitten im Betrieb heisst,
-      // die Sitzung ist abgelaufen - dann zurueck zum Login statt im
-      // Sekundentakt gegen eine ungueltige Sitzung weiterzuversuchen.
+      // As with `handleLiveDisconnect`: a 401 mid-operation means the
+      // session has expired - then back to login instead of continuing to
+      // retry every second against an invalid session.
       await this.loadAuthInfo();
       if (!this.authenticated) {
         this.authError = t("web.auth.session_expired");
@@ -2772,11 +2751,11 @@ function app() {
     },
 
     /**
-     * Verteilt eine Nachricht des Diagnose-Kanals an ihren Strom, nach
-     * `message.kind` (siehe api/diagnostics_live.py fuer die drei Formen).
-     * Waehrend `diagnosticsPaused` gesetzt ist, wird NICHTS angehaengt -
-     * das ist die Pause selbst, kein Anzeigefilter (siehe deren Kommentar
-     * im Zustand oben).
+     * Dispatches a diagnostics channel message to its stream, based on
+     * `message.kind` (see api/diagnostics_live.py for the three shapes).
+     * While `diagnosticsPaused` is set, NOTHING is appended - that is the
+     * pause itself, not a display filter (see its comment in the state
+     * above).
      */
     handleDiagnosticsMessage(message) {
       if (this.diagnosticsPaused) {
@@ -2791,12 +2770,12 @@ function app() {
         this.appendDiagnosticsEntry(this.diagnosticsLogs, message);
         this.pinLogListToTop("diagnosticsLogsList");
       }
-      // Eine unbekannte `kind` wird still ignoriert statt zu werfen: eine
-      // kuenftige, hier noch unbekannte Nachrichtenart soll die Verbindung
-      // nicht abreissen lassen.
+      // An unknown `kind` is silently ignored rather than thrown: a
+      // future message type not yet known here should not tear down the
+      // connection.
     },
 
-    /** Haengt an, gedeckelt auf DIAGNOSTICS_LINE_LIMIT je Strom (siehe dort). */
+    /** Appends, capped at DIAGNOSTICS_LINE_LIMIT per stream (see there). */
     appendDiagnosticsEntry(list, entry) {
       list.push(entry);
       if (list.length > DIAGNOSTICS_LINE_LIMIT) {
@@ -2805,15 +2784,15 @@ function app() {
     },
 
     /**
-     * Haelt eine `.log-list` oben angeheftet, nachdem eine neue Zeile
-     * eingetroffen ist - aber nur, wenn man dort ohnehin schon war. Die
-     * Vorlage zeigt die Straeme umgekehrt an (jüngste zuerst, siehe
-     * `visibleDatagrams`/`visibleDiagnosticsLogs`), daher bedeutet
-     * "mitscrollen" hier: Scrollposition oben (0) halten, nicht ans Ende
-     * springen. Wer nach unten gescrollt hat, um aeltere Zeilen zu lesen,
-     * wird durch neu eintreffende Zeilen nicht zurueckgerissen - der
-     * Toleranzwert (4px) faengt Rundungsreste vom Scrollen ab, kein
-     * Trackpad/Mausrad haelt exakt bei 0 an.
+     * Keeps a `.log-list` pinned to the top after a new line has arrived -
+     * but only if you were already there. The template displays the
+     * streams in reverse (newest first, see
+     * `visibleDatagrams`/`visibleDiagnosticsLogs`), so "following along"
+     * here means: keeping the scroll position at the top (0), not jumping
+     * to the end. Anyone who has scrolled down to read older lines is not
+     * yanked back by newly arriving lines - the tolerance value (4px)
+     * catches rounding remainders from scrolling, since no trackpad/mouse
+     * wheel stops at exactly 0.
      */
     pinLogListToTop(ref) {
       const el = this.$refs[ref];
@@ -2829,30 +2808,29 @@ function app() {
     },
 
     /**
-     * Die UDP-Mitschnitt-Zeilen, wie `hideNoise` sie gerade zeigen soll.
-     * Der Filter liest `entry.forced` (`api/diagnostics_live.py`, gefuellt
-     * aus `DatagramLogEntry.forced` - siehe dort fuer die Begruendung,
-     * warum diese Auskunft vom Server kommt statt aus einer im Browser
-     * nachgebauten Zeitheuristik): `True` steht ausschliesslich fuer den
-     * Heartbeat und einen Full-Resend, niemals fuer eine echte
-     * Wertaenderung - auch dann nicht, wenn zwei echte Aenderungen (z. B.
-     * ein Impuls und sein Zaehler, siehe `Runtime.on_event`) binnen
-     * Mikrosekunden hintereinander eintreffen.
+     * The UDP capture lines as `hideNoise` currently wants them shown.
+     * The filter reads `entry.forced` (`api/diagnostics_live.py`, filled
+     * from `DatagramLogEntry.forced` - see there for the rationale behind
+     * why this information comes from the server instead of a time
+     * heuristic reconstructed in the browser): `True` stands exclusively
+     * for the heartbeat and a full resend, never for a real value change -
+     * not even when two real changes (e.g. a pulse and its counter, see
+     * `Runtime.on_event`) arrive back to back within microseconds.
      */
     visibleDatagrams() {
       const entries = this.hideNoise
         ? this.datagrams.filter((entry) => !entry.forced)
         : this.datagrams;
-      // Angezeigt wird umgekehrt (juengste zuerst) - der Ringpuffer selbst
-      // bleibt aeltester-zuerst, damit `appendDiagnosticsEntry` mit `shift()`
-      // weiterhin am aeltesten Eintrag kappt (siehe dort).
+      // Displayed in reverse (newest first) - the ring buffer itself stays
+      // oldest-first, so `appendDiagnosticsEntry` with `shift()` continues
+      // to cap at the oldest entry (see there).
       return [...entries].reverse();
     },
 
     /**
-     * Die Logzeilen ab `logLevel` (siehe LOG_LEVEL_ORDER oben). Eine Zeile
-     * mit einer hier unbekannten Stufe bleibt sichtbar statt stillschweigend
-     * zu verschwinden.
+     * The log lines from `logLevel` up (see LOG_LEVEL_ORDER above). A
+     * line with a level unknown here stays visible instead of silently
+     * disappearing.
      */
     visibleDiagnosticsLogs() {
       const threshold = LOG_LEVEL_ORDER.indexOf(this.logLevel);
@@ -2860,16 +2838,17 @@ function app() {
         const rank = LOG_LEVEL_ORDER.indexOf(entry.level);
         return rank === -1 || rank >= threshold;
       });
-      // Siehe Kommentar in visibleDatagrams(): Anzeige umgekehrt, Ringpuffer nicht.
+      // See the comment in visibleDatagrams(): display reversed, ring
+      // buffer not.
       return entries.reverse();
     },
 
     /**
-     * Leert alle drei gehaltenen Straeme auf dieser Seite - nur die Anzeige
-     * in diesem Tab, keine Wirkung auf die Ringe des Servers (die naechste
-     * Momentaufnahme beim erneuten Verbinden zeigt sie unveraendert wieder).
-     * Auch von `connectDiagnosticsLive()` selbst gerufen, VOR jedem
-     * (Wieder-)Aufbau der Verbindung - siehe dortiger Kommentar.
+     * Clears all three streams held on this page - only the display in
+     * this tab, no effect on the server's rings (the next snapshot on
+     * reconnecting shows them again unchanged). Also called by
+     * `connectDiagnosticsLive()` itself, BEFORE every (re)build of the
+     * connection - see the comment there.
      */
     clearDiagnosticsBuffers() {
       this.datagrams = [];
@@ -2878,25 +2857,25 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Live-Verbindung (Spec 8.3)
+    // Live connection (Spec 8.3)
     // ---------------------------------------------------------------------
 
     connectLive() {
-      // Aufraeumen vor jedem Neuaufbau - frueher der Rumpf von
-      // `restartLive()`, das der Token-Aufraeumung diente (Tokenwechsel
-      // machte eine bestehende Verbindung ungueltig) und beim Entfernen der
-      // Token-Eingabe als vermeintlich toter Code mitgeloescht wurde. War es
-      // nicht: dieselbe Aufraeumung fehlt jetzt auch dem Fall, dass
-      // `connectLive()` waehrend eine ALTE Verbindung noch lebt erneut
-      // aufgerufen wird - etwa wenn nach einer abgelaufenen Sitzung
-      // (`noteAuthError`, Login-Bildschirm) gleichzeitig der
-      // `reconnectTimer` der alten Verbindung noch armiert ist UND
-      // `submitPassword` -> `startApp()` nach der Neuanmeldung selbst einen
-      // Aufruf ausloest: ohne dieses Aufraeumen liefe der alte, verwaiste
-      // Socket authentifiziert weiter (sein `close`-Handler haette den
-      // Vergleich `this.socket === socket` schon gegen den NEUEN Socket
-      // verloren und loest daher nie eine Wiederverbindung aus), waehrend
-      // der Timer kurz danach eine dritte Verbindung eroeffnet.
+      // Clean up before every rebuild - previously the body of
+      // `restartLive()`, which served token cleanup (a token change
+      // invalidated an existing connection) and was deleted along with
+      // the token input as supposedly dead code when that was removed. It
+      // was not: the same cleanup is now also missing for the case where
+      // `connectLive()` is called again while an OLD connection is still
+      // alive - for instance when, after an expired session
+      // (`noteAuthError`, login screen), the old connection's
+      // `reconnectTimer` is still armed AND `submitPassword` ->
+      // `startApp()` itself triggers a call after re-login: without this
+      // cleanup, the old, orphaned socket would keep running
+      // authenticated (its `close` handler would already have lost the
+      // `this.socket === socket` comparison against the NEW socket and
+      // therefore never triggers a reconnection), while the timer opens a
+      // third connection shortly afterward.
       if (this.reconnectTimer !== null) {
         window.clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
@@ -2910,12 +2889,13 @@ function app() {
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const url = `${protocol}//${window.location.host}/api/live`;
-      // Kein Subprotokoll mehr: das Sitzungs-Cookie reist beim Handshake von
-      // selbst mit, weil dieser WebSocket denselben Ursprung hat wie die
-      // Seite. Der frueher noetige Umweg `new WebSocket(url, ["bearer",
-      // token])` - und mit ihm der Sonderfall, dass ein Token mit Leerzeichen
-      // den Konstruktor synchron werfen liess - entfaellt ersatzlos. Der
-      // Server liest das Subprotokoll weiterhin, aber fuer Skripte (siehe
+      // No more subprotocol: the session cookie travels along on its own
+      // during the handshake, because this WebSocket has the same origin
+      // as the page. The previously necessary detour `new WebSocket(url,
+      // ["bearer", token])` - and with it the special case where a token
+      // containing spaces made the constructor throw synchronously - is
+      // dropped with nothing taking its place. The server still reads the
+      // subprotocol, but for scripts (see
       // `loxone.server.build_api_guard`).
       const socket = new WebSocket(url);
 
@@ -2930,30 +2910,28 @@ function app() {
         this.liveValues[message.key] = message.value;
         const now = Date.now();
         this.liveSeenAt[message.key] = now;
-        // Der Heartbeat gehoert zu keinem Geraet (Spec 6.5) und ist genau
-        // deshalb das ehrliche Lebenszeichen: er kommt auch dann, wenn
-        // sich an keinem Geraet etwas aendert.
+        // The heartbeat does not belong to any device (Spec 6.5) and is
+        // exactly for that reason the honest sign of life: it arrives
+        // even when nothing changes on any device.
         if (message.key === HEARTBEAT_KEY) {
           this.lastHeartbeatAt = now;
         }
       });
 
-      // Sowohl ein sauberes Schliessen als auch ein Verbindungsfehler
-      // sollen dieselbe Wiederverbindung ausloesen - eine Oberflaeche, die
-      // eingefrorene Werte weiter als aktuell zeigt, ist schlimmer als
-      // eine, die zugibt, dass sie die Verbindung verloren hat. Die
-      // Pruefung `this.socket === socket` verhindert, dass eine bewusst
-      // verworfene Verbindung noch eine Wiederverbindung anstoesst: der
-      // Aufraeum-Teil oben in `connectLive()` schliesst eine alte Verbindung
-      // erst, NACHDEM er `this.socket` schon geleert hat, und dieser Aufruf
-      // selbst setzt `this.socket` gleich im Anschluss auf den neuen Socket
-      // - das `close`-Ereignis der alten Verbindung feuert asynchron und
-      // trifft hier also auf ein `this.socket`, das schon nicht mehr sie
-      // selbst ist. Nur ein Weg kann `connectLive()` ueberhaupt auf eine
-      // noch lebende Verbindung treffen lassen: `startApp()` nach einer
-      // Neuanmeldung. Der `reconnectTimer` unten dagegen entsteht erst aus
-      // dem `close`-Ereignis dieser Verbindung und trifft daher immer auf
-      // einen bereits geschlossenen Socket.
+      // Both a clean close and a connection error should trigger the same
+      // reconnection - a UI that keeps showing frozen values as current
+      // is worse than one that admits it has lost the connection. The
+      // `this.socket === socket` check prevents a deliberately discarded
+      // connection from still triggering a reconnection: the cleanup part
+      // above in `connectLive()` only closes an old connection AFTER it
+      // has already cleared `this.socket`, and this call itself sets
+      // `this.socket` to the new socket right afterward - the old
+      // connection's `close` event fires asynchronously and therefore
+      // hits a `this.socket` here that is no longer itself. Only one path
+      // can ever let `connectLive()` run into a still-living connection
+      // at all: `startApp()` after a re-login. The `reconnectTimer`
+      // below, by contrast, only ever arises from this connection's own
+      // `close` event and therefore always hits an already-closed socket.
       socket.addEventListener("close", () => {
         if (this.socket === socket) {
           this.handleLiveDisconnect();
@@ -2965,37 +2943,36 @@ function app() {
     },
 
     /**
-     * Reagiert auf den Abbruch der Live-Verbindung: ein gewoehnlicher
-     * Netzwerkausfall soll weiter automatisch wiederverbinden, eine
-     * ungueltig gewordene Sitzung dagegen zurueck zum Login fuehren - ohne
-     * diese Unterscheidung bliebe ein offener Tab fuer immer bei
-     * "Verbindung verloren" haengen, weil der Browser eine mit 401
-     * abgelehnte WebSocket-Verbindung nicht von einem echten Netzwerkfehler
-     * unterscheiden kann (beides feuert nur `close`) und `scheduleReconnect`
-     * es deshalb unbegrenzt im Sekundentakt weiter versuchen wuerde.
+     * Reacts to the live connection dropping: an ordinary network outage
+     * should keep automatically reconnecting, while a session that has
+     * become invalid should instead lead back to login - without this
+     * distinction, an open tab would hang forever on "Connection lost",
+     * because the browser cannot tell a WebSocket connection rejected
+     * with 401 apart from a genuine network error (both only fire
+     * `close`), and `scheduleReconnect` would therefore keep trying
+     * indefinitely, every second.
      *
-     * Ausgeloest u. a. durch `loxmatter set-password` (meldet alle
-     * Sitzungen ab) oder ein Logout in einem anderen Tab - kein Aufruf
-     * dieser Seite erfaehrt sonst je davon, solange niemand nachfragt: es
-     * gibt keinen periodischen HTTP-Aufruf, der den Sitzungszustand
-     * einfaengt, die Ansichten laden nur auf Klick.
+     * Triggered, among other things, by `loxmatter set-password` (logs
+     * out every session) or a logout in another tab - no call on this
+     * page would otherwise ever learn about it, as long as no one asks:
+     * there is no periodic HTTP call that catches the session state, the
+     * views only load on click.
      *
-     * `/auth-info` haengt ausserhalb des Waechters (siehe api/auth.py) und
-     * ist genau fuer diese Frage da. Bleibt die Sitzung gueltig (oder
-     * schlaegt schon die Anfrage selbst fehl, z. B. weil das Netz komplett
-     * weg ist - `loadAuthInfo` ruehrt `authenticated` in diesem Fall nicht
-     * an), geht es wie bisher mit `scheduleReconnect` weiter; der
-     * exponentielle Backoff bleibt dadurch unveraendert wirksam.
+     * `/auth-info` sits outside the guard (see api/auth.py) and exists
+     * exactly for this question. If the session stays valid (or the
+     * request itself already fails, e.g. because the network is
+     * completely gone - `loadAuthInfo` does not touch `authenticated` in
+     * that case), things continue as before with `scheduleReconnect`; the
+     * exponential backoff thus remains unchanged in effect.
      */
     async handleLiveDisconnect() {
-      // ALS ERSTES, vor dem `await` unten: der Socket ist in diesem Moment
-      // bereits tot (dieser Aufruf kommt aus seinem `close`-Ereignis), die
-      // Kopfzeile meldete ohne diese Zeile aber bis zum Ende von
-      // `loadAuthInfo()` weiter "Live-Verbindung aktiv" und liess den
-      // Banner "Werte koennen veraltet sein" aus - genau der Zustand, den
-      // der Kommentar in `connectLive()` oben als "schlimmer, als
-      // zuzugeben, dass die Verbindung weg ist" beschreibt (Review-Fund,
-      // 2026-09-03).
+      // FIRST, before the `await` below: the socket is already dead at
+      // this point (this call comes from its `close` event); without this
+      // line, the header would keep reporting "Live connection active"
+      // until `loadAuthInfo()` finished and would omit the "Values may be
+      // stale" banner - exactly the state the comment in `connectLive()`
+      // above describes as "worse than admitting the connection is gone"
+      // (review finding, 2026-09-03).
       this.socketConnected = false;
       await this.loadAuthInfo();
       if (!this.authenticated) {
@@ -3008,12 +2985,13 @@ function app() {
     scheduleReconnect() {
       this.socketConnected = false;
       if (!this.socketEverConnected) {
-        // Noch nie erfolgreich verbunden gewesen - dieser Versuch war einer
-        // der ERSTEN, nicht der Verlust einer bestehenden Verbindung
-        // (Review-Fix Minor #4). Nach oben gedeckelt, damit die Zahl nicht
-        // unbegrenzt waechst, waehrend die Bruecke dauerhaft unerreichbar
-        // bleibt - `connectionStatusText()` unten fragt ohnehin nur, ob die
-        // Schwelle erreicht ist, nicht nach dem genauen Wert.
+        // Never successfully connected before - this attempt was one of
+        // the FIRST ones, not the loss of an existing connection
+        // (Review-Fix Minor #4). Capped from above, so the number does
+        // not grow without bound while the bridge stays permanently
+        // unreachable - `connectionStatusText()` below only ever asks
+        // whether the threshold has been reached anyway, not for the
+        // exact value.
         this.initialConnectFailures = Math.min(
           this.initialConnectFailures + 1,
           INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE,
@@ -3029,10 +3007,10 @@ function app() {
       this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, RECONNECT_DELAY_MAX_MS);
     },
 
-    // Kopfzeilentext der Live-Verbindung (Spec 8.3) - als eigene Funktion
-    // statt einer verschachtelten Bedingung direkt in `index.html`, seit
-    // Review-Fix Minor #4 einen dritten Fall dazubekommen hat (siehe
-    // `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE` oben).
+    // Header text of the live connection (Spec 8.3) - as a dedicated
+    // function instead of a nested condition directly in `index.html`,
+    // since Review-Fix Minor #4 added a third case (see
+    // `INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE` above).
     connectionStatusText() {
       if (this.socketConnected) {
         return t("web.connection.live");
@@ -3047,7 +3025,7 @@ function app() {
     },
 
     // ---------------------------------------------------------------------
-    // Formatierung
+    // Formatting
     // ---------------------------------------------------------------------
 
     formatTimestamp(isoTimestamp) {
