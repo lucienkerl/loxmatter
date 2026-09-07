@@ -92,8 +92,7 @@ async def test_the_missing_signals_hint_no_longer_asks_for_a_lead(api):
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert (
-        'x-show="signalsByDevice[device.id] '
-        '&& functionalSignalsFor(device.id).length === 0"'
+        'x-show="signalsByDevice[device.id] && functionalSignalsFor(device.id).length === 0"'
     ) in markup
 ```
 
@@ -335,7 +334,7 @@ Die beiden folgenden Absätze des Kommentars (über `x-show` und darüber, warum
 
 `tests/api/test_web.py`, ~Zeile 2595. Lösche aus dem `for name in (…)`-Tupel die beiden Zeilen:
 
-```python
+```text
         "leadSignalFor(",
         "restSignalsFor(",
 ```
