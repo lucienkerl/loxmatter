@@ -256,8 +256,14 @@ async def test_the_lead_helpers_are_gone_from_the_script(api):
     gelesen zu haben."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    assert "leadSignalFor" not in script
-    assert "restSignalsFor" not in script
+    # Auf die DEFINITION ankern, nicht auf den blossen Namen: der Kommentar
+    # an `signalIsFresh` nennt `leadSignalFor` weiterhin - und zwar gerade,
+    # um zu erklaeren, warum dessen Null-Duldsamkeit stehen bleibt, obwohl
+    # der Aufrufer weg ist. Anders als beim Markup gibt es fuer `app.js`
+    # keinen `_without_comments`-Helfer.
+    assert "leadSignalFor(deviceId) {" not in script
+    assert "restSignalsFor(deviceId) {" not in script
+    assert "this.firstSignalsFor(deviceId).slice(1)" not in script
 ```
 
 - [ ] **Step 2: Test laufen lassen, er muss fehlschlagen**
@@ -447,8 +453,13 @@ async def test_the_lead_rules_are_gone_from_the_stylesheet(api):
     Unterlaengen - beschreiben ein Element, das es nicht mehr gibt."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
-    assert ".lead-value" not in css
-    assert ".lead-label" not in css
+    # Auf den Selektor mit oeffnender Klammer ankern, nicht auf den blossen
+    # Klassennamen: der Kommentar an `.device-head .device-name` nennt
+    # `.lead-value` weiterhin - er erklaert, warum der Name dort frueher nur
+    # 65 px bekam. Ein Stylesheet hat keinen `_without_comments`-Helfer.
+    assert ".lead-value {" not in css
+    assert ".lead-value small {" not in css
+    assert ".lead-label {" not in css
 ```
 
 - [ ] **Step 2: Test laufen lassen, er muss fehlschlagen**
