@@ -647,10 +647,10 @@ web.devices.code_label:
 # Codes an genau der Stelle, an der man ihn eintippt. Er BESCHREIBT nur:
 # auch "zu lang" sperrt den Einlern-Knopf nicht.
 web.devices.code_detect_manual:
-  en: "Numeric code"
+  en: "numeric code"
   de: "Zahlencode"
 web.devices.code_detect_manual_long:
-  en: "Numeric code, long"
+  en: "numeric code, long"
   de: "Zahlencode, lang"
 web.devices.code_detect_qr:
   en: "QR code"
