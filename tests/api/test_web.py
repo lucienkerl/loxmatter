@@ -595,8 +595,8 @@ async def test_the_noise_rule_is_written_down(api):
     script = (await client.get("/static/app.js")).text
     assert "message.forced" in script
     assert "DatagramLogEntry.forced" in script
-    assert "Schwall" in script
-    assert "Full-Resend" in script
+    assert "burst" in script
+    assert "full resend" in script
 
 
 async def test_the_export_field_asks_for_the_bridge_not_the_miniserver(api):

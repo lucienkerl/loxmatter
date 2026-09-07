@@ -1193,8 +1193,8 @@ function app() {
     // category rank (all plug sockets together, then all pushbuttons),
     // then alphabetically by name within that.
     //
-    // `localeCompare` instead of `<`: otherwise "Ärmelkanal" would land
-    // behind "Zaun", because the code point of "Ä" comes after that of
+    // `localeCompare` instead of `<`: otherwise "Émile" would land
+    // behind "Zurich", because the code point of "É" comes after that of
     // "Z".
     //
     // With a selected room, exactly one group results, and its `title`
@@ -2592,8 +2592,8 @@ function app() {
       const link = document.createElement("a");
       link.href = objectUrl;
       link.download = isNewDevicesVariant
-        ? "loxmatter-projekt-gepatcht-mit-neuen-geraeten.Loxone"
-        : "loxmatter-projekt-gepatcht.Loxone";
+        ? "loxmatter-project-patched-with-new-devices.Loxone"
+        : "loxmatter-project-patched.Loxone";
       link.click();
       // Delayed release like in `requestDownload` above - some browsers
       // (Firefox) only start the download of an object URL after the
