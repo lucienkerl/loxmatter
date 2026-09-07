@@ -1622,8 +1622,12 @@ footer.hint-block {
  * am Rand der Content-Box, sobald er nicht mehr hineinpasst - ganz ohne
  * dass CSS das ausdruecklich anfordert, und ganz ohne jedes Zeichen, das
  * anzeigt, dass Text fehlt. An der dokumentierten Grid-Untergrenze
- * (261 px, siehe `.lead-value` unten) bekommt dieses Feld nur noch 65 px
- * und MUSS kuerzen; die beiden Eigenschaften am Ende dieser Regel sorgen
+ * (261 px) bekam dieses Feld frueher nur 65 px, weil `.lead-value`
+ * daneben die halbe Kopfzeile beanspruchte und nicht schrumpfte; seit
+ * dessen Wegfall (Entwurf 2026-09-07) hat der Name die Kopfzeile
+ * abzueglich Icon-Kachel und Abstaenden fuer sich. Kuerzen muss er damit
+ * nur noch bei aussergewoehnlich langen Namen - die beiden Eigenschaften
+ * am Ende dieser Regel sorgen
  * dafuer, dass es das sichtbar tut statt einen Namen mitten im Buchstaben
  * verschwinden zu lassen. Ein zusaetzliches `white-space: nowrap` fuer die
  * Ellipse ist bei `<input>` unnoetig - ein Textfeld umbricht ohnehin nie,
@@ -1654,93 +1658,6 @@ footer.hint-block {
 .device-head .device-name:focus {
   border-color: var(--border);
   background: var(--surface);
-}
-
-.lead-label {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  padding-left: 0.2rem;
-}
-
-/* `flex: 0 0 auto` mit `max-width` statt `flex: 0 1 auto` (Nacharbeit
- * 2026-09-05): `flex-shrink: 1` sollte urspruenglich nur einen
- * pathologisch langen Wert eindaemmen, schrumpfte aber genauso im
- * GEWOEHNLICHEN Fall - gemessen bei 1440px neben `.device-name`: `12.4 %`
- * `clientWidth` 64px gegen `scrollWidth` 73px, `true` 51px gegen 54px,
- * beide ohne jeden Platzmangel gekuerzt. Der Leitwert wich dem Namen,
- * obwohl er der eigentliche Zweck der Kopfzeile ist - er darf ihm nicht
- * weichen. `flex: 0 0 auto` nimmt ihm das Schrumpfen vollstaendig;
- * `max-width` uebernimmt allein die Rolle der Absicherung gegen den
- * Extremfall: kein gewoehnlicher Wert wird mehr ellipsiert, ein
- * pathologisch langer Listenwert (`12.4, 55.1, 99.9, 42.0, 17.3, 88.8`)
- * bleibt aber innerhalb des rechten Kachelrands statt der Kachel zu
- * entkommen - `formatValue` (app.js) endet in `String(value)` ohne
- * Kuerzung, und die funktionale-Signal-Regel laesst Listen- und
- * Textattribute ausdruecklich zu, dieser Wert ist also erreichbar, nicht
- * nur hypothetisch. `overflow: hidden` und `text-overflow: ellipsis`
- * greifen nur noch in diesem einen Fall. `min-width: 0` entfaellt: es
- * wirkte ausschliesslich zusammen mit `flex-shrink: 1` und waere hier
- * eine Regel ohne jede Funktion. `white-space: nowrap` bleibt trotzdem
- * stehen: eine Zahl soll nicht mitten im Wert umbrechen, sie soll
- * kuerzen.
- *
- * Fund 1 (Review vom 2026-09-05): `max-width: 60%` liess an der
- * dokumentierten Grid-Untergrenze (261 px, zwei Spalten bei 572 px
- * Viewportbreite) den gesamten Platzmangel beim Namen landen - gemessen
- * mit dem Namen "Kaffeemaschine Kueche" und obigem Listenwert: Leitwert
- * 134 px, Name nur noch 43 px, dort ohne `text-overflow` (s.u.) mitten im
- * Buchstaben gekappt. Das ist keine Kuerzung, das ist eine stille
- * Verstuemmelung - der Leser sieht nicht, dass der Name weitergeht. Die
- * Regel von oben gilt weiter unveraendert: der Leitwert weicht dem Namen
- * nicht. Aber er darf hoechstens die Haelfte der Kopfzeile beanspruchen,
- * und was danach fuer den Namen bleibt, nutzt dieser sichtbar kuerzend
- * (Ellipse, s. `.device-head .device-name`) statt kommentarlos
- * abgeschnitten zu werden. Mit `max-width: 50%` gemessen an derselben
- * 261-px-Kachel: Leitwert 112 px, Name 65 px, Ellipse aktiv. Im
- * GEWOEHNLICHEN Fall (kurzer Wert wie `true`, normaler Name) bleibt
- * sowohl bei 261 px als auch bei 1440 px keines der beiden Felder
- * gekuerzt - 50 % liegt weiterhin ueber allem, was ein gewoehnlicher
- * Leitwert braucht. */
-/* Fund 4 (Nacharbeit 2026-09-05): `line-height: 1.05` reicht bei diesem
- * Schriftschnitt nicht fuer die Unterlaengen von Kleinbuchstaben wie
- * `g`/`y`/`p`/`q` - gemessen am Text `gypq`: `scrollHeight` 24px gegen
- * `clientHeight` 23px, ein Pixel Unterlaenge faellt dem `overflow: hidden`
- * zum Opfer (das erst mit dem Kachel-Menue dazukam, s.o.). Nur textwertige
- * Leitwerte sind betroffen, Zahlen haben keine Unterlaengen.
- *
- * Zwei Wege wurden gemessen: `line-height` anheben (z. B. auf 1.2) schafft
- * zwar Raum, vergroessert aber die Zeilenbox selbst und damit gleichermassen
- * die Feldhoehe JEDER Kachel, auch der rein numerischen - eine spuerbare
- * Verschiebung des `.device-head`-Kopfes ueberall, nur um ein selten
- * auftretendes Pixel bei Textwerten zu gewinnen. `padding-block` zaehlt
- * dagegen INNERHALB der Clip-Box von `overflow: hidden` (die am Padding-
- * Rand schneidet, nicht am Rand der Zeilenbox) und schafft damit genau dort
- * Reserve, wo sie noetig ist, ohne die Zeilenbox selbst zu vergroessern.
- * Gewaehlt: `padding-block`. Im `.device-head` (`align-items: flex-start`)
- * bestimmt ohnehin `.device-ident` mit seinem `.device-name`-Eingabefeld
- * die Zeilenhoehe (dessen eigenes Padding plus Rahmen macht es hoeher als
- * `.lead-value` selbst mit Zuschlag) - der Kopf einer normalen, numerischen
- * Kachel verschiebt sich dadurch nicht. */
-.lead-value {
-  font-family: var(--mono);
-  font-size: 1.35rem;
-  font-weight: 600;
-  line-height: 1.05;
-  padding-block: 1px;
-  flex: 0 0 auto;
-  max-width: 50%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.lead-value small {
-  font-size: 0.7rem;
-  font-weight: 400;
-  color: var(--text-muted);
-  margin-left: 0.1rem;
 }
 
 /* Werteraster statt Chips: die Werte fluchten ueber alle Kacheln hinweg in

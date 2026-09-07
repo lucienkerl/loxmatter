@@ -3062,65 +3062,11 @@ async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
     assert "margin-top: 0.5rem;" in base_rule
 
 
-async def test_lead_value_gets_padding_room_for_descenders(api):
-    """Fund 4 (Nacharbeit 2026-09-05): `.lead-value` schneidet bei
-    `line-height: 1.05` und `overflow: hidden` die Unterlaengen textwertiger
-    Leitwerte (`g`/`y`/`p`/`q`) um ein Pixel ab - im Browser gemessen am
-    Text `gypq`: `scrollHeight` 24px gegen `clientHeight` 23px. Zahlen ohne
-    Unterlaengen sind nicht betroffen.
-
-    Gemessene Wahl: `padding-block` statt einer hoeheren `line-height` -
-    Letzteres haette die Zeilenbox und damit die Feldhoehe JEDER Kachel
-    vergroessert (auch rein numerischer), `padding-block` zaehlt dagegen
-    innerhalb der `overflow: hidden`-Clip-Box (die am Padding-Rand
-    schneidet) und schafft nur dort zusaetzlichen Raum. Ohne Browser-Engine
-    kann diese Suite `scrollHeight`/`clientHeight` selbst nicht nachrechnen
-    (siehe Aufgabenbericht fuer die Messung) - belegt wird nur, dass die
-    ausgelieferte Regel ein `padding-block` traegt und `line-height`
-    unveraendert bei `1.05` bleibt."""
-    client, _, _ = api
-    css = (await client.get("/static/style.css")).text
-    rule = css.split(".lead-value {", 1)[1].split("}", 1)[0]
-    assert "padding-block" in rule
-    assert "line-height: 1.05" in rule
-
-
-async def test_lead_value_does_not_yield_to_the_device_name(api):
-    """Nacharbeit 2026-09-05, Fund 1: `flex: 0 1 auto` plus `min-width: 0`
-    liess `.lead-value` schon im GEWOEHNLICHEN Fall neben `.device-name`
-    schrumpfen, nicht erst im pathologischen, den beide Regeln eigentlich
-    eindaemmen sollten - im Browser gemessen bei 1440px: `12.4 %`
-    `clientWidth` 64px gegen `scrollWidth` 73px, `true` 51px gegen 54px,
-    beide ohne jeden Platzmangel gekuerzt (siehe Aufgabenbericht). Ohne
-    Browser-Engine kann diese Suite das Kuerzen selbst nicht nachrechnen -
-    belegt wird nur, dass die ausgelieferte Regel das Schrumpfen abstellt
-    (`flex: 0 0 auto`), die Absicherung gegen einen pathologisch langen
-    Wert stattdessen an ein `max-width` verlegt, und `min-width` (das ohne
-    `flex-shrink: 1` keine Funktion mehr haette) nicht mehr traegt.
-
-    Fund 1 (Review vom 2026-09-05): der urspruengliche Deckel von `60%`
-    liess an der dokumentierten Grid-Untergrenze (261 px) den gesamten
-    Platzmangel beim Namen landen - im Browser gemessen 134 px Leitwert
-    gegen nur noch 43 px Name, dort ohne Ellipse mitten im Buchstaben
-    gekappt (siehe Aufgabenbericht). Der Deckel ist deshalb auf `50%`
-    gesenkt: der Leitwert weicht weiterhin nicht, darf aber hoechstens die
-    Haelfte der Kopfzeile beanspruchen, der Rest gehoert dem Namen. Ohne
-    Browser-Engine kann diese Suite die tatsaechliche Aufteilung nicht
-    nachrechnen - belegt wird nur der genaue Deckelwert."""
-    client, _, _ = api
-    css = (await client.get("/static/style.css")).text
-    rule = css.split(".lead-value {", 1)[1].split("}", 1)[0]
-    assert "flex: 0 0 auto" in rule
-    assert "max-width: 50%" in rule
-    assert "min-width" not in rule
-    assert "overflow: hidden" in rule
-    assert "text-overflow: ellipsis" in rule
-
-
 async def test_device_name_truncates_with_an_ellipsis_instead_of_clipping(api):
-    """Fund 1 (Review vom 2026-09-05): mit dem auf `50%` gesenkten Deckel an
-    `.lead-value` (s.o.) traegt der Name bei der Grid-Untergrenze immer
-    noch die Kuerzung - nur jetzt nicht mehr die vollstaendige. Ein
+    """Fund 1 (Review vom 2026-09-05), nachgezogen 2026-09-07: seit dem
+    Wegfall von `.lead-value` hat der Name die Kopfzeile fuer sich und
+    kuerzt nur noch bei aussergewoehnlich langen Namen. Dass er es dann
+    SICHTBAR tut, bleibt die Zusicherung dieses Tests. Ein
     `<input>` clippt seinen Text intern, sobald er nicht passt, und zwar
     OHNE jedes Zeichen, das anzeigt, dass Text fehlt, solange kein
     `text-overflow` gesetzt ist - im Browser gemessen bei 261 px Kachel-
@@ -4182,3 +4128,19 @@ async def test_the_lead_helpers_are_gone_from_the_script(api):
     assert "leadSignalFor(deviceId) {" not in script
     assert "restSignalsFor(deviceId) {" not in script
     assert "this.firstSignalsFor(deviceId).slice(1)" not in script
+
+
+async def test_the_lead_rules_are_gone_from_the_stylesheet(api):
+    """Entwurf 2026-09-07, Abschnitt 10. Beide Klassen stehen in keinem
+    Markup mehr; ihre Regeln - samt der langen Begruendung zu
+    `flex: 0 0 auto` gegen `flex: 0 1 auto` und zum `padding-block` fuer
+    Unterlaengen - beschreiben ein Element, das es nicht mehr gibt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    # Auf den Selektor mit oeffnender Klammer ankern, nicht auf den blossen
+    # Klassennamen: der Kommentar an `.device-head .device-name` nennt
+    # `.lead-value` weiterhin - er erklaert, warum der Name dort frueher nur
+    # 65 px bekam. Ein Stylesheet hat keinen `_without_comments`-Helfer.
+    assert ".lead-value {" not in css
+    assert ".lead-value small {" not in css
+    assert ".lead-label {" not in css
