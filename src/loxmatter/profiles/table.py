@@ -142,6 +142,32 @@ def names_element(ref: SignalRef) -> bool:
     return ref.element_id in (cluster.get(section) or {})
 
 
+def marked_non_functional(ref: SignalRef) -> bool:
+    """Ob die Tabelle dieses Element ausdruecklich als nicht vorausgewaehlt
+    fuehrt (`functional: false`).
+
+    Der Gegenspieler zu `names_element`: benannt zu sein heisst
+    normalerweise gewollt zu sein (siehe `profiles.relevance.is_functional`,
+    Schicht 3). Fuer Geraetekonstanten - Min/Max-Bereiche, Aufloesungen -
+    stimmt das nicht: sie muessen lesbar sein, ohne den Standard-Export
+    aufzublaehen.
+
+    Bewusst ein allgemeines Feld statt eines Sonderfalls fuer Cluster 768:
+    jeder weitere Cluster mit Kapazitaetsangaben trifft dasselbe Problem.
+    Die Alternative - die Werte an der Tabelle vorbei direkt aus dem
+    Snapshot greifen - schuefe eine zweite Stelle, an der Attributwissen
+    lebt (Entwurf 2026-09-07, Abschnitt 5.2).
+    """
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return False
+    section = "events" if ref.kind is SignalKind.EVENT else "attributes"
+    entry = (cluster.get(section) or {}).get(ref.element_id)
+    if not entry:
+        return False
+    return entry.get("functional") is False
+
+
 def struct_field(ref: SignalRef) -> int | None:
     """Die Feldnummer, die aus einer Struktur zu ziehen ist - oder None.
 

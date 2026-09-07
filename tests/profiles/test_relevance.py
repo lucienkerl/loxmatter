@@ -212,3 +212,23 @@ def test_an_unnamed_power_source_attribute_on_the_utility_endpoint_is_not_functi
     den Batteriestand traegt."""
     ref = SignalRef(0, 47, 0, SignalKind.ATTRIBUTE)
     assert is_functional(ref, _BUTTON_TYPES) is False
+
+
+def test_the_physical_colour_temperature_limits_are_known_but_not_wanted():
+    """Zwei unveraenderliche Geraetekonstanten. Bekannt genug zum Auslesen
+    (der Kelvin-Regler braucht sie), nicht interessant genug, um als
+    virtueller Loxone-Eingang vorausgewaehlt zu werden (Entwurf
+    2026-09-07, Abschnitt 5.2)."""
+    device_types = {1: frozenset({269})}
+    for element_id in (16395, 16396):
+        ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)
+        assert not is_functional(ref, device_types)
+
+
+def test_the_ordinary_colour_attributes_stay_functional():
+    """Die Gegenprobe: `functional: false` darf nicht auf den ganzen
+    Cluster durchschlagen."""
+    device_types = {1: frozenset({269})}
+    for element_id in (0, 1, 7, 8):
+        ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)
+        assert is_functional(ref, device_types)

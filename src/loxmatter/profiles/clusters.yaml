@@ -103,6 +103,22 @@ clusters:
       # Farbmodus (ColorMode, 8): eine Aufzaehlung, keine physikalische
       # Groesse - keine Einheit.
       8: {slug: colormode, unit: ""}
+      # ColorTempPhysicalMinMireds (16395) und ColorTempPhysicalMaxMireds
+      # (16396): was die Leuchte an Farbtemperatur ueberhaupt kann. IDs
+      # gegen das installierte SDK belegt (chip.clusters.Objects.
+      # ColorControl.Attributes), Werte gegen beide eingecheckten Leuchten.
+      #
+      # `functional: false`, weil es unveraenderliche Geraetekonstanten
+      # sind: die Oberflaeche braucht sie, um den Kelvin-Regler zu
+      # begrenzen (Entwurf 2026-09-07, Abschnitt 6.2), aber als virtueller
+      # Loxone-Eingang waeren sie zwei Zahlen, die sich nie aendern. Im
+      # Expertenblock bleiben sie von Hand waehlbar.
+      #
+      # Wie 7 oben bleiben sie in Mired stehen - Kelvin = 1e6 / Mired ist
+      # ein Kehrwert, den `scale` nicht ausdruecken kann. Die API rechnet
+      # sie fuer die Oberflaeche um (siehe api/control.py).
+      16395: {slug: colortemp_phys_min_mireds, unit: mired, functional: false}
+      16396: {slug: colortemp_phys_max_mireds, unit: mired, functional: false}
     commands:
       # MoveToColorTemperature - einer von zwei ColorControl-Befehlen, die
       # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS; der

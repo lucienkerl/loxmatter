@@ -301,3 +301,13 @@ def test_every_table_command_carries_a_control():
     statt es durchgehen zu lassen."""
     for cluster_id, command_id in known_command_pairs():
         assert command_control(cluster_id, command_id) != "unknown"
+
+
+def test_the_colour_temperature_limits_remain_exportable():
+    """Nicht vorausgewaehlt heisst nicht gesperrt: im Expertenblock muss
+    man sie weiterhin von Hand waehlen koennen."""
+    ref = SignalRef(1, 768, 16395, SignalKind.ATTRIBUTE)
+    profile = lookup(ref, 250)
+    assert profile.unit == "mired"
+    assert is_exportable(profile.exportability)
+    assert not profile.slug.startswith("c768_a")
