@@ -3061,12 +3061,30 @@ function app() {
       }
     },
 
+    // Zahlen bekommen hoechstens zwei Nachkommastellen (2026-09-07). Die
+    // Live-Werte entstehen aus Matter-Attributen, die als ganzzahlige
+    // Hundertstel kommen und beim Umrechnen die uebliche
+    // Fliesskomma-Unschaerfe erben - aus 2253 wird 22.529999999999998, und
+    // das stand so in der Kachel: es sprengt die Spalte und behauptet eine
+    // Genauigkeit, die das Geraet nie geliefert hat.
+    //
+    // `toFixed(2)` rundet auf zwei Stellen und gibt eine Zeichenkette
+    // zurueck, `Number(...)` wirft die dabei entstandenen Nullen am Ende
+    // wieder weg - sonst stuende bei einem glatten Wert "21.00" statt "21".
+    // Der Umweg ueber `Number.isFinite` haelt `NaN` und `Infinity` heraus,
+    // die `toFixed` zwar nicht wirft, aber auch nicht sinnvoll rundet.
+    // Nicht-Zahlen (Zeichenketten aus der Live-Verbindung) bleiben
+    // unangetastet: eine Zeichenkette hier zu zerlegen hiesse raten, was
+    // darin eine Zahl ist.
     formatValue(value) {
       if (value === null || value === undefined) {
         return "-";
       }
       if (typeof value === "boolean") {
         return value ? t("web.format.true") : t("web.format.false");
+      }
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return String(Number(value.toFixed(2)));
       }
       return String(value);
     },

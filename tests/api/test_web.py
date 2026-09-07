@@ -774,6 +774,51 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
     assert values["title"]
 
 
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_live_values_are_shown_with_at_most_two_decimal_places():
+    """Die Live-Werte kommen aus Matter-Attributen als ganzzahlige
+    Hundertstel; das Umrechnen erbt die Fliesskomma-Unschaerfe, und
+    `String(value)` schrieb sie ungekuerzt in die Kachel
+    (22.529999999999998 fuer 22.53). Zwei Nachkommastellen sind die
+    Genauigkeit, die das Geraet ueberhaupt liefert - alles dahinter ist
+    Rauschen, das die Spalte sprengt.
+
+    Geprueft wird hier das VERHALTEN, nicht der ausgelieferte Text: ob
+    gerundet oder abgeschnitten wird und was mit einem glatten Wert
+    passiert, steht in keiner Zeichenkette, die man in `app.js` suchen
+    koennte.
+    """
+    values = _app_state(
+        """
+        const cases = [
+          22.529999999999998, 21, 21.5, 21.006, -3.14159, 1234.5678, 0.001,
+          "22.5299", true, false, null,
+        ];
+        console.log(JSON.stringify(cases.map((v) => state.formatValue(v))));
+        """
+    )
+
+    assert values[0] == "22.53", "die Fliesskomma-Unschaerfe verschwindet"
+    assert values[1] == "21", "ein glatter Wert bekommt keine Nullen angehaengt"
+    assert values[2] == "21.5", "eine einzelne Nachkommastelle bleibt eine"
+    assert values[3] == "21.01", "es wird gerundet, nicht abgeschnitten"
+    assert values[4] == "-3.14"
+    assert values[5] == "1234.57"
+    assert values[6] == "0"
+    # Was keine Zahl ist, wird auch nicht als eine behandelt: eine
+    # Zeichenkette aus der Live-Verbindung zu zerlegen hiesse raten, welcher
+    # Teil davon eine Zahl sein soll.
+    assert values[7] == "22.5299"
+    # Und die beiden Sonderwege von `formatValue` bleiben, wie sie waren
+    # (die Uebersetzungstabelle ist in node nicht geladen, deshalb steht
+    # hier der Schluessel statt "wahr"/"falsch" - siehe
+    # `test_formatting_helpers_translate_and_the_locale_follows_the_language`
+    # fuer die Uebersetzung selbst).
+    assert values[8] == "web.format.true"
+    assert values[9] == "web.format.false"
+    assert values[10] == "-"
+
+
 # ---------------------------------------------------------------------------
 # Uebersetzungsmechanismus (Aufgabe 8). Diese Aufgabe uebersetzt noch KEINEN
 # eigenen WebUI-Text (das ist Aufgabe 9+) - sie baut nur die Leitung:
