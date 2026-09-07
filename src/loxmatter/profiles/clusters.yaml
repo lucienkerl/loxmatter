@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,26 +14,26 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# Anreicherung fuer bekannte Cluster. Unbekanntes wird nicht verworfen, sondern
-# bekommt einen generischen Namen (Spec 3.5).
+# Enrichment for known clusters. The unknown is not discarded, but gets a
+# generic name (Spec 3.5).
 #
-# Zieleinheit ist die, die der Loxone-Baustein erwartet, nicht die SI-Einheit
-# (Spec 7.3). Die Umrechnung selbst macht der UDP-Sender in Phase 4.
+# The target unit is the one the Loxone function block expects, not the SI
+# unit (Spec 7.3). The UDP sender in Phase 4 does the actual conversion.
 clusters:
   6:
     name: onoff
     attributes:
       0: {slug: onoff, unit: ""}
     commands:
-      # "off"/"on" muessen in Anfuehrungszeichen stehen: YAML 1.1 liest sie
-      # sonst als Booleans, nicht als Strings (PyYAML-Falle).
+      # "off"/"on" must be quoted: otherwise YAML 1.1 reads them as
+      # booleans, not as strings (PyYAML pitfall).
       0: {slug: "off", takes_value: false}
       1: {slug: "on", takes_value: false}
       2: {slug: toggle, takes_value: false}
   8:
     name: level
     attributes:
-      # 0-254 auf 0-100 %: 100/254
+      # 0-254 to 0-100 %: 100/254
       0: {slug: level, unit: "%", scale: 0.3937007874015748}
     commands:
       0: {slug: level, takes_value: true}
@@ -41,83 +41,85 @@ clusters:
   47:
     name: powersource
     attributes:
-      # BatPercentRemaining, Attribut-ID gegen
-      # chip.clusters.Objects.PowerSource.Attributes belegt.
+      # BatPercentRemaining, attribute ID confirmed against
+      # chip.clusters.Objects.PowerSource.Attributes.
       #
-      # Der Faktor 0.5 ist NICHT gegen eine Primaerquelle belegt (Review-Fix
-      # Important, 2026-09-03): die Matter Application Cluster Specification
-      # gibt den Wert nach allgemeiner Kenntnis in halben Prozent (0-200) an,
-      # aber weder das installierte chip-SDK noch matter_server fuehren
-      # Einheiten mit, und das Spezifikationsdokument selbst lag hier nicht
-      # vor. Was tatsaechlich belegt ist: das eingecheckte Abbild
-      # tests/fixtures/nodes/ikea_bilresa_button.json meldet unter 0/47/12
-      # den Wert 200 bei einem Taster, dessen Batterie voll ist - was zu
-      # halben Prozent passt und zu ganzen nicht. Ein Umstandsbeweis, kein
-      # Beleg. Wer die Spezifikation zur Hand hat, moege ihn ersetzen.
+      # The factor 0.5 is NOT confirmed against a primary source (review
+      # fix Important, 2026-09-03): the Matter Application Cluster
+      # Specification is generally known to state the value in half
+      # percent (0-200), but neither the installed chip SDK nor
+      # matter_server carry units, and the specification document itself
+      # was not available here. What is actually confirmed: the checked-in
+      # snapshot tests/fixtures/nodes/ikea_bilresa_button.json reports the
+      # value 200 under 0/47/12 for a button whose battery is full - which
+      # fits half percent and not whole percent. Circumstantial evidence,
+      # not proof. Whoever has the specification at hand, please replace
+      # this.
       #
-      # Nur dieses eine von 37 Attributen ist benannt, und das ist die
-      # Feinauswahl aus dem Entwurf (4.3): PowerSource fuehrt daneben
-      # Ladezustaende, Batteriechemie, ANSI-Bezeichnungen und Fehlerlisten.
-      # Wer eines davon braucht, schaltet es im Experten-Block frei.
+      # Only this one of 37 attributes is named, and that is the
+      # fine-grained selection from the design (4.3): PowerSource also
+      # carries charge states, battery chemistry, ANSI designations and
+      # fault lists. Whoever needs one of those enables it in the expert
+      # block.
       12: {slug: battery, unit: "%", scale: 0.5}
   768:
     name: colorcontrol
     attributes:
-      # Attribut-IDs gegen das installierte SDK belegt (chip.clusters.Objects.
-      # ColorControl.Attributes): CurrentHue=0, CurrentSaturation=1,
+      # Attribute IDs confirmed against the installed SDK (chip.clusters.
+      # Objects.ColorControl.Attributes): CurrentHue=0, CurrentSaturation=1,
       # ColorTemperatureMireds=7, ColorMode=8.
       #
-      # Fehlte bis zur Phase-6-Nachbesserung komplett: der Cluster stand nur
-      # mit `commands:` unten in der Tabelle (Phase 4, fuer
-      # MoveToColorTemperature). Schicht 3 von `is_functional`
-      # (profiles/relevance.py) fragte deshalb `knows_cluster(768)` (wahr)
-      # und dann `names_element`, das ohne diesen Abschnitt IMMER falsch war
-      # - jedes Attribut von ColorControl galt dadurch als nicht funktional,
-      # waehrend der Ausgangsbefehl fuer die Farbtemperatur (unten,
-      # `commands:`) laengst exportiert wurde: Loxone konnte die Farbe
-      # setzen, aber nie zurueckgemeldet bekommen. `known_attribute_section`
-      # in `profiles/table.py` schliesst diese Falle jetzt strukturell fuer
-      # jeden kuenftigen nur-Kommando-Cluster, nicht nur fuer diesen.
+      # Was missing entirely until the Phase 6 follow-up fix: the cluster
+      # was only in the table with `commands:` below (Phase 4, for
+      # MoveToColorTemperature). Layer 3 of `is_functional`
+      # (profiles/relevance.py) therefore asked `knows_cluster(768)` (true)
+      # and then `names_element`, which was ALWAYS false without this
+      # section - every attribute of ColorControl thereby counted as not
+      # functional, while the output command for the color temperature
+      # (below, `commands:`) had long been exported: Loxone could set the
+      # color but never get it reported back. `known_attribute_section` in
+      # `profiles/table.py` now structurally closes this trap for every
+      # future commands-only cluster, not just for this one.
       #
-      # Farbton (Hue, 0): Matter zaehlt 0-254 fuer 0-360°. Auf Grad skaliert
-      # statt roh gelassen - anders als bei der Farbtemperatur unten ist
-      # 360/254 ein linearer Faktor, den der vorhandene `scale`-Mechanismus
-      # korrekt ausdruecken kann, und Grad ist die in Farbwaehlern uebliche
-      # Einheit. Kein Eintrag in `_UNIT_DECIMALS`: ohne eine echte
-      # Loxone-Vorlage, die eine Nachkommastellenzahl fuer Grad belegt,
-      # bleibt der Loxone-Formatstring leer, statt eine erfundene Genauigkeit
-      # vorzugeben - die WebUI zeigt "°" trotzdem an (`signal.unit`, direkt
-      # aus dieser Tabelle, unabhaengig von `unit_format`).
+      # Hue (0): Matter counts 0-254 for 0-360°. Scaled to degrees instead
+      # of left raw - unlike the color temperature below, 360/254 is a
+      # linear factor that the existing `scale` mechanism can express
+      # correctly, and degrees is the unit customary in color pickers. No
+      # entry in `_UNIT_DECIMALS`: without a real Loxone template that
+      # confirms a decimal-place count for degrees, the Loxone format
+      # string stays empty rather than prescribing a made-up precision -
+      # the WebUI shows "°" regardless (`signal.unit`, straight from this
+      # table, independent of `unit_format`).
       0: {slug: hue, unit: "°", scale: 1.4173228346456692}
-      # Saettigung (CurrentSaturation, 1): 0-254 wie `level` (Cluster 8) -
-      # derselbe Zahlenwert wie dort, nicht neu ausgerechnet.
+      # Saturation (CurrentSaturation, 1): 0-254 like `level` (cluster 8) -
+      # the same numeric value as there, not recomputed.
       1: {slug: saturation, unit: "%", scale: 0.3937007874015748}
-      # Farbtemperatur (ColorTemperatureMireds, 7): Matter liefert Mired,
-      # Loxone will Kelvin - aber Kelvin = 1e6 / Mired ist ein Kehrwert,
-      # kein Faktor, und der `scale`-Mechanismus kann nur multiplizieren.
-      # Der Wert bleibt deshalb in Mired stehen, mit einem Slug, der das
-      # klarstellt, statt eine falsche Kelvin-Zahl zu erfinden. Offener
-      # Punkt (fehlende Kehrwert-Umrechnung):
-      # docs/superpowers/specs/2026-09-03-signalauswahl-design.md Abschnitt 10.
+      # Color temperature (ColorTemperatureMireds, 7): Matter returns
+      # mired, Loxone wants Kelvin - but Kelvin = 1e6 / mired is a
+      # reciprocal, not a factor, and the `scale` mechanism can only
+      # multiply. The value therefore stays in mired, with a slug that
+      # makes that clear, instead of inventing a wrong Kelvin number. Open
+      # point (missing reciprocal conversion):
+      # docs/superpowers/specs/2026-09-03-signalauswahl-design.md section 10.
       7: {slug: colortemp_mireds, unit: mired}
-      # Farbmodus (ColorMode, 8): eine Aufzaehlung, keine physikalische
-      # Groesse - keine Einheit.
+      # Color mode (ColorMode, 8): an enumeration, not a physical
+      # quantity - no unit.
       8: {slug: colormode, unit: ""}
     commands:
-      # MoveToColorTemperature - der einzige ColorControl-Befehl, den
-      # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS und
-      # dessen Docstring: Hue/Saturation, Kommando 6, bleibt bewusst aussen
-      # vor, weil die Loxone-seitige RGB-Zahl nicht verlaesslich belegt ist).
-      # Review-Fix C2, 2026-09-02: dieser Eintrag fehlte, obwohl
-      # _PAYLOAD_BUILDERS das Paar (768, 10) schon bediente - im Rohexport
-      # (`raw`) wurde das Kommando dadurch als generisches, digitales
-      # `c768_cmd10` exportiert (takes_value=False laut command_takes_value),
-      # und ein Tastendruck schickte den woertlichen Text "1" in
-      # _payload_color_temperature, das daraus 1_000_000 mireds baute - eine
-      # erfundene Farbtemperatur an ein echtes Geraet. takes_value: true
-      # macht daraus einen analogen Ausgang UND exportiert das Kommando ab
-      # sofort auch im normalen (nicht-rohen) Modus, was fuer ein bedientes
-      # Kommando ohnehin richtig ist.
+      # MoveToColorTemperature - the only ColorControl command that
+      # commands/translate.py serves (see its _PAYLOAD_BUILDERS there and
+      # its docstring: Hue/Saturation, command 6, is deliberately left out
+      # because the Loxone-side RGB number is not reliably confirmed).
+      # Review fix C2, 2026-09-02: this entry was missing even though
+      # _PAYLOAD_BUILDERS already served the pair (768, 10) - in the raw
+      # export (`raw`), the command was thereby exported as a generic,
+      # digital `c768_cmd10` (takes_value=False per command_takes_value),
+      # and a button press sent the literal text "1" into
+      # _payload_color_temperature, which built 1_000_000 mireds from it -
+      # a made-up color temperature sent to a real device. takes_value:
+      # true turns this into an analog output AND exports the command
+      # immediately in normal (non-raw) mode too, which is correct anyway
+      # for a served command.
       10: {slug: colortemp, takes_value: true}
   1026:
     name: temperature
@@ -136,14 +138,14 @@ clusters:
   145:
     name: energy
     attributes:
-      # CumulativeEnergyImported/-Exported. Matter liefert beide als
-      # EnergyMeasurementStruct - Wert plus Zeitstempel -, nicht als Zahl.
-      # `field: 0` ist EnergyMeasurementStruct.energy, gegen
-      # chip.clusters.Objects belegt; die ZEITSTEMPEL bleiben absichtlich
-      # weg, sie haben in Loxone keine Verwendung.
+      # CumulativeEnergyImported/-Exported. Matter returns both as an
+      # EnergyMeasurementStruct - value plus timestamp -, not as a number.
+      # `field: 0` is EnergyMeasurementStruct.energy, confirmed against
+      # chip.clusters.Objects; the TIMESTAMPS are deliberately left out,
+      # they have no use in Loxone.
       #
-      # Matter zaehlt in mWh (Matter Application Cluster Specification),
-      # Loxone will kWh (Hauptdokument 7.3): 1 kWh = 1e6 mWh.
+      # Matter counts in mWh (Matter Application Cluster Specification),
+      # Loxone wants kWh (main document 7.3): 1 kWh = 1e6 mWh.
       1: {slug: energy_imported, field: 0, unit: "kWh", scale: 0.000001}
       2: {slug: energy_exported, field: 0, unit: "kWh", scale: 0.000001}
   59:

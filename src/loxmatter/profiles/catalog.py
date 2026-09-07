@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,26 +14,24 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Attribut- und Ereignisnamen aus dem Cluster-Katalog des chip-SDK.
+"""Attribute and event names from the chip SDK's cluster catalog.
 
-`python-matter-server` installiert `chip.clusters.Objects` ohnehin als
-Abhaengigkeit (Task 4, Hauptdokument 6.2: der Signalschluessel bleibt
-generisch und unveraenderlich - dieses Modul speist ausschliesslich die
-Anzeige, nie den Schluessel). Dort steht fuer jeden Cluster eine
-`Attributes`- und eine `Events`-Klasse mit den von der Matter-Spezifikation
-vergebenen Namen, indiziert ueber `attribute_id` bzw. `event_id`. Diese
-Namen von Hand in `clusters.yaml` nachzupflegen waere Arbeit fuer etwas,
-das die Abhaengigkeit bereits mitbringt.
+`python-matter-server` installs `chip.clusters.Objects` as a dependency
+anyway (Task 4, main document 6.2: the signal key stays generic and
+immutable - this module feeds only the display, never the key). It carries,
+for every cluster, an `Attributes` and an `Events` class with the names
+assigned by the Matter specification, indexed by `attribute_id` and
+`event_id` respectively. Maintaining these names by hand in `clusters.yaml`
+would be work for something the dependency already provides.
 
-Der Katalog ist eine reine Verbesserung der Anzeige, kein Betriebsmittel:
-schlaegt der Import von `chip.clusters.Objects` fehl, oder hat eine
-kuenftige SDK-Fassung eine andere Form als hier erwartet (andere
-Attributnamen, fehlende `attribute_id`/`event_id`), faengt `_catalog()` das
-ab und liefert eine leere Abbildung. `element_name` gibt dann fuer jedes
-Signal `None` zurueck, der Aufrufer (`profiles.table.lookup`) faellt auf
-den generischen Slug zurueck, und das Werkzeug laeuft unveraendert weiter -
-es gibt hier bewusst keinen Pfad, auf dem ein SDK-Problem eine Ausnahme bis
-zum Aufrufer durchreicht.
+The catalog is a pure improvement to the display, not an operational
+resource: if importing `chip.clusters.Objects` fails, or a future SDK
+release has a different shape than expected here (different attribute
+names, missing `attribute_id`/`event_id`), `_catalog()` catches that and
+returns an empty mapping. `element_name` then returns `None` for every
+signal, the caller (`profiles.table.lookup`) falls back to the generic
+slug, and the tool keeps running unchanged - there is deliberately no path
+here on which an SDK problem propagates an exception up to the caller.
 """
 
 from __future__ import annotations
@@ -48,13 +46,12 @@ _CatalogKey = tuple[int, int, SignalKind]
 
 @functools.cache
 def _catalog() -> dict[_CatalogKey, str]:
-    """Baut einmalig die Abbildung (cluster_id, element_id, kind) -> Name.
+    """Builds the mapping (cluster_id, element_id, kind) -> name once.
 
-    Ein Geraet traegt bis zu 173 Signale (Entwurf 2026-09-03); 140 Cluster
-    mit allen Attributen und Ereignissen fuer jedes einzelne neu zu
-    durchsuchen waere spuerbar. Der Aufbau laeuft deshalb genau einmal pro
-    Prozess hinter `functools.cache`, nicht bei jedem Aufruf von
-    `element_name`.
+    A device carries up to 173 signals (design 2026-09-03); re-searching
+    140 clusters with all attributes and events for every single one would
+    be noticeable. The build therefore runs exactly once per process behind
+    `functools.cache`, not on every call to `element_name`.
     """
     try:
         import chip.clusters.Objects as chip_objects
@@ -76,11 +73,12 @@ def _catalog() -> dict[_CatalogKey, str]:
                 attribute_id = getattr(attribute, "attribute_id", None)
                 if isinstance(attribute_id, int):
                     mapping[(cluster_id, attribute_id, SignalKind.ATTRIBUTE)] = name
-            # Ereignisse liegen in einer eigenen, zu `Attributes` parallelen
-            # Klasse `Events` mit `event_id` statt `attribute_id` (belegt in
-            # Step 1 gegen chip.clusters.Objects.PowerSource: `WiredFaultChange`
-            # traegt `event_id`, keine `attribute_id`). Nicht jeder Cluster
-            # hat eine - `getattr` mit Default statt direktem Zugriff.
+            # Events live in their own class `Events`, parallel to
+            # `Attributes`, with `event_id` instead of `attribute_id`
+            # (confirmed in Step 1 against chip.clusters.Objects.PowerSource:
+            # `WiredFaultChange` carries `event_id`, no `attribute_id`). Not
+            # every cluster has one - `getattr` with a default instead of
+            # direct access.
             events = getattr(cluster, "Events", None)
             if events is None:
                 continue
@@ -88,18 +86,19 @@ def _catalog() -> dict[_CatalogKey, str]:
                 event_id = getattr(event, "event_id", None)
                 if isinstance(event_id, int):
                     mapping[(cluster_id, event_id, SignalKind.EVENT)] = name
-    except Exception:  # noqa: BLE001 — Katalog ist kein Betriebsmittel (siehe Moduldocstring):
-        # jede unerwartete Form einer kuenftigen SDK-Fassung bleibt folgenlos statt das
-        # Werkzeug zu stoppen; genau das rechtfertigt hier den absichtlich weiten Fang.
+    except Exception:  # noqa: BLE001 — the catalog is not an operational resource (see module
+        # docstring): any unexpected shape of a future SDK release stays without consequence
+        # instead of stopping the tool; that is exactly what justifies the deliberately broad
+        # catch here.
         return {}
     return mapping
 
 
 def element_name(ref: SignalRef) -> str | None:
-    """Name eines Attributs oder Ereignisses laut chip-SDK-Katalog.
+    """Name of an attribute or event per the chip SDK catalog.
 
-    `None`, wenn der Katalog nicht verfuegbar ist (Import fehlgeschlagen
-    oder unerwartete Form) oder das Element dort nicht auftaucht - beides
-    behandelt der Aufrufer gleich: generischer Name bleibt bestehen.
+    `None` if the catalog is unavailable (import failed or unexpected
+    shape) or the element does not appear there - the caller treats both
+    the same: the generic name is kept.
     """
     return _catalog().get((ref.cluster_id, ref.element_id, ref.kind))

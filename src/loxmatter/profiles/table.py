@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,18 +14,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Benennt Signale und entscheidet, ob sie nach Loxone exportierbar sind.
+"""Names signals and decides whether they are exportable to Loxone.
 
-Grundsatz aus Spec 3.5: die Tabelle reichert an, sie filtert nicht. Ein
-unbekannter Cluster bekommt einen generischen Namen und wird trotzdem
-exportiert, sofern sein Wert ueberhaupt auf einen Loxone-Eingang passt.
+Principle from Spec 3.5: the table enriches, it does not filter. An
+unknown cluster gets a generic name and is still exported, provided its
+value fits a Loxone input at all.
 
-Spec 6.6: Listen, Strukturen und Nullwerte passen nicht. Sie bleiben Signale
-und sind in der Oberflaeche sichtbar, werden aber nie zu Loxone-Objekten.
+Spec 6.6: lists, structs and null values do not fit. They stay signals and
+are visible in the UI, but never become Loxone objects.
 
-Spec 7.3: `Unit` in der Vorlage ist ein Formatstring fuer die Loxone-Oberflaeche
-(`<v.N> Einheit`), keine Einheitenbezeichnung. `unit_format` traegt diese
-Abbildung als Datentabelle, nicht als Verzweigung im Exporter.
+Spec 7.3: `Unit` in the template is a format string for the Loxone UI
+(`<v.N> unit`), not a unit label. `unit_format` carries this mapping as a
+data table, not as a branch in the exporter.
 """
 
 from __future__ import annotations
@@ -63,27 +63,27 @@ _EXPORTABLE_KINDS = (Exportability.ANALOG, Exportability.DIGITAL)
 
 
 def is_exportable(exportability: Exportability) -> bool:
-    """Ob ein Signal mit dieser Exportability ueberhaupt zu einem
-    Loxone-Eingang werden kann - analog oder digital, sonst nicht (Spec 6.6:
-    Text, Listen/Strukturen und Nullwerte passen nicht).
+    """Whether a signal with this exportability can become a Loxone input
+    at all - analog or digital, otherwise not (Spec 6.6: text,
+    lists/structs and null values do not fit).
 
-    Einzige Quelle fuer diese Regel (Review-Fix Important #2, 2026-09-02):
-    vorher bildete `Store.register_signals` sie fuer das Default von
-    `exported` als ``exportability is not Exportability.NONE`` nach - das
-    schliesst TEXT faelschlich mit ein - waehrend `api.devices` unabhaengig
-    davon ``in (ANALOG, DIGITAL)`` rechnete. Zwei Kopien derselben Regel,
-    die auseinanderliefen, ohne dass ein Fehler es meldete. Jetzt gibt es
-    nur noch diese eine Funktion; `Store.register_signals` (Default von
-    `exported`), `api.devices._signal_out`/`_device_out` (`exportable`/
-    `exportable_count`) und die Migration auf Schema-Version 1
-    (`model.store._migrate_to_v1`, Ruecknachtraeglicher Backfill der
-    Bestandszeilen) rufen sie alle auf.
+    The single source for this rule (review fix Important #2, 2026-09-02):
+    previously `Store.register_signals` replicated it for the default of
+    `exported` as ``exportability is not Exportability.NONE`` - which
+    incorrectly includes TEXT - while `api.devices` independently computed
+    ``in (ANALOG, DIGITAL)``. Two copies of the same rule that drifted
+    apart without any error reporting it. Now there is only this one
+    function; `Store.register_signals` (default of `exported`),
+    `api.devices._signal_out`/`_device_out` (`exportable`/
+    `exportable_count`) and the migration to schema version 1
+    (`model.store._migrate_to_v1`, retroactive backfill of existing rows)
+    all call it.
     """
     return exportability in _EXPORTABLE_KINDS
 
 
 def classify(value: object) -> Exportability:
-    """Entscheidet allein am Wert, ob Loxone ihn aufnehmen kann."""
+    """Decides, based solely on the value, whether Loxone can take it in."""
     if isinstance(value, bool):
         return Exportability.DIGITAL
     if isinstance(value, (int, float)):
@@ -100,40 +100,39 @@ def _table() -> dict[int, dict[str, Any]]:
 
 
 def knows_cluster(cluster_id: int) -> bool:
-    """Ob die Profiltabelle diesen Cluster ueberhaupt fuehrt."""
+    """Whether the profile table carries this cluster at all."""
     return cluster_id in _table()
 
 
 def known_attribute_section(cluster_id: int) -> bool:
-    """Ob die Tabelle fuer diesen Cluster ueberhaupt einen `attributes:`-
-    Abschnitt fuehrt - unabhaengig davon, ob er etwas benennt.
+    """Whether the table carries an `attributes:` section for this cluster
+    at all - regardless of whether it names anything.
 
-    Getrennt von `knows_cluster`, weil `knows_cluster` nur fragt, ob der
-    Cluster ueberhaupt in der Tabelle steht - ein Cluster kann dort stehen
-    und trotzdem nichts ueber seine Attribute sagen, wenn er nur wegen
-    seiner Kommandos gepflegt wurde (Cluster 768/ColorControl bis zur
-    Phase-6-Nachbesserung: nur `commands:`, kein `attributes:`). Ohne diese
-    Unterscheidung las `profiles.relevance.is_functional` "kennt die Tabelle
-    den Cluster" faelschlich als "kennt die Tabelle jedes seiner Attribute"
-    - `names_element` schlaegt in einem fehlenden Abschnitt IMMER erfolglos
-    nach (`cluster.get(section) or {}` wird `{}`), und jedes Attribut eines
-    nur-fuer-Kommandos gepflegten Clusters galt dadurch als nicht funktional,
-    obwohl die Tabelle zu ihnen gar keine Aussage trifft. Die Falle ist
-    strukturell und nicht auf Cluster 768 beschraenkt: jeder kuenftige
-    Cluster, der nur fuer ein Kommando oder eine Einheit in die Tabelle
-    kommt, waere sonst in allen seinen Attributen verstummt."""
+    Separate from `knows_cluster`, because `knows_cluster` only asks
+    whether the cluster is in the table at all - a cluster can be in there
+    and still say nothing about its attributes, if it was only maintained
+    for its commands (cluster 768/ColorControl before the Phase 6
+    follow-up fix: only `commands:`, no `attributes:`). Without this
+    distinction, `profiles.relevance.is_functional` incorrectly read
+    "the table knows the cluster" as "the table knows every one of its
+    attributes" - `names_element` ALWAYS looks up unsuccessfully in a
+    missing section (`cluster.get(section) or {}` becomes `{}`), and every
+    attribute of a cluster maintained only for commands thereby counted as
+    not functional, even though the table makes no statement about them at
+    all. The trap is structural and not limited to cluster 768: any future
+    cluster that enters the table only for a command or a unit would
+    otherwise be silenced across all its attributes."""
     cluster = _table().get(cluster_id)
     return cluster is not None and cluster.get("attributes") is not None
 
 
 def names_element(ref: SignalRef) -> bool:
-    """Ob die Profiltabelle genau dieses Element namentlich fuehrt.
+    """Whether the profile table names exactly this element.
 
-    Getrennt von `lookup`, weil `lookup` fuer ein unbenanntes Element einen
-    generischen Namen erfindet (`c6_a16387`) und die Unterscheidung damit
-    verliert. Die Feinauswahl in `profiles.relevance` braucht sie aber:
-    innerhalb eines bekannten Clusters ist "benannt" das Kennzeichen fuer
-    "gewollt".
+    Separate from `lookup`, because `lookup` invents a generic name for an
+    unnamed element (`c6_a16387`) and thereby loses the distinction. The
+    fine-grained selection in `profiles.relevance` needs it, though: within
+    a known cluster, "named" is the marker for "wanted".
     """
     cluster = _table().get(ref.cluster_id)
     if cluster is None:
@@ -143,10 +142,10 @@ def names_element(ref: SignalRef) -> bool:
 
 
 def struct_field(ref: SignalRef) -> int | None:
-    """Die Feldnummer, die aus einer Struktur zu ziehen ist - oder None.
+    """The field number to pull out of a struct - or None.
 
-    Nur fuer Attribute eines Clusters, den die Tabelle kennt und bei dem
-    der Eintrag ein `field` traegt.
+    Only for attributes of a cluster the table knows, where the entry
+    carries a `field`.
     """
     if ref.kind is SignalKind.EVENT:
         return None
@@ -161,20 +160,20 @@ def struct_field(ref: SignalRef) -> int | None:
 
 
 def struct_member(ref: SignalRef, raw: object) -> object:
-    """Der Wert, auf dem klassifiziert und gerechnet wird.
+    """The value on which classification and computation happen.
 
-    Ohne `field`-Eintrag unveraendert `raw`. Mit `field` das benannte
-    Element der Struktur - und `None`, wenn der Wert keine Struktur ist
-    oder das Element fehlt. Dann bleibt das Signal nicht exportierbar; es
-    wird NICHT geraten (Entwurf 2026-09-03, 5).
+    Without a `field` entry, `raw` unchanged. With `field`, the named
+    element of the struct - and `None` if the value is not a struct or the
+    element is missing. The signal then stays non-exportable; it is NOT
+    guessed at (design 2026-09-03, 5).
 
-    matter-server liefert Strukturen als Woerterbuch mit dem Feld-Tag als
-    Zeichenkette (`{"0": ...}`); die Zahl wird ebenso akzeptiert.
+    matter-server returns structs as a dictionary with the field tag as a
+    string (`{"0": ...}`); the number is accepted as well.
 
-    Diese eine Funktion ist die gemeinsame Quelle fuer `lookup` (Einstufung
-    beim Einlernen) und `loxone.values.to_loxone_value` (Laufzeit). Zwei
-    Kopien wuerden auseinanderlaufen und die Oberflaeche einen Wert melden
-    lassen, den der Export nicht kennt.
+    This one function is the shared source for `lookup` (classification at
+    commissioning time) and `loxone.values.to_loxone_value` (runtime). Two
+    copies would drift apart and let the UI report a value the export does
+    not know.
     """
     field = struct_field(ref)
     if field is None:
@@ -185,18 +184,18 @@ def struct_member(ref: SignalRef, raw: object) -> object:
 
 
 def lookup(ref: SignalRef, value: object) -> Profile:
-    """Liefert Name(n), Einheit und Exportierbarkeit fuer ein Signal.
+    """Returns name(s), unit and exportability for a signal.
 
-    `slug` ist Schluesselmaterial (Hauptdokument 6.2) und bleibt deshalb
-    immer generisch, wenn die eigene Tabelle das Element nicht namentlich
-    fuehrt - er darf sich nie bewegen, sonst stirbt eine bestehende
-    Loxone-Verdrahtung lautlos. `title` ist reine Anzeige: fuehrt die
-    Tabelle das Element, gewinnt sie (dieselbe Kuerze wie der Slug reicht
-    dort aus). Sonst speist der SDK-Katalog (`profiles.catalog.element_name`)
-    den Klartextnamen aus der Matter-Spezifikation; kennt auch der ihn
-    nicht, faellt `title` auf den generischen Slug zurueck - Anzeige und
-    Betrieb funktionieren so unabhaengig davon, ob der Katalog ueberhaupt
-    verfuegbar ist (siehe Docstring dort).
+    `slug` is key material (main document 6.2) and therefore always stays
+    generic when the table itself does not name the element - it must
+    never move, or an existing Loxone wiring dies silently. `title` is
+    pure display: if the table names the element, it wins (the same
+    brevity as the slug is fine there). Otherwise the SDK catalog
+    (`profiles.catalog.element_name`) feeds the plain-text name from the
+    Matter specification; if that does not know it either, `title` falls
+    back to the generic slug - display and operation thereby work
+    independently of whether the catalog is available at all (see its
+    docstring).
     """
     cluster = _table().get(ref.cluster_id, {})
     section = "events" if ref.kind is SignalKind.EVENT else "attributes"
@@ -231,87 +230,87 @@ def lookup(ref: SignalRef, value: object) -> Profile:
     )
 
 
-# Nachkommastellen je Einheit fuer den Loxone-Formatstring (Spec 7.3). Leistung
-# steht bewusst nicht bei den uebrigen physikalischen Groessen mit 1 Dezimale:
-# von mW nach kW sind sechs Groessenordnungen, und mit <v.3> verschwindet ein
-# 300-mW-Standby-Verbraucher als 0.000 auf der Oberflaeche.
-# Loxone nimmt im Formatstring hoechstens DREI Nachkommastellen an; `<v.4>`
-# und mehr funktioniert nicht (am Miniserver geprueft, 2026-09-03). Diese
-# Grenze ist der Grund, warum `unit_format` unten deckelt.
+# Decimal places per unit for the Loxone format string (Spec 7.3). Power is
+# deliberately not grouped with the other physical quantities at 1
+# decimal: from mW to kW is six orders of magnitude, and with <v.3> a
+# 300 mW standby consumer disappears as 0.000 in the UI.
+# Loxone accepts at most THREE decimal places in the format string; `<v.4>`
+# and more does not work (verified on the Miniserver, 2026-09-03). This
+# limit is the reason `unit_format` below caps the value.
 MAX_LOXONE_DECIMALS = 3
 
 _UNIT_DECIMALS: dict[str, int] = {
-    # Leistung und Energie standen hier auf 6, weil von mW nach kW sechs
-    # Groessenordnungen liegen und ein 300-mW-Standby-Verbraucher mit drei
-    # Stellen als 0.000 verschwindet. Loxone nimmt sechs aber nicht an, und
-    # ein nicht angenommener Formatstring ist schlimmer als eine grobe
-    # Anzeige. Der WERT bleibt davon unberuehrt - der Formatstring bestimmt
-    # nur die Darstellung, Bausteine und Statistik rechnen mit der vollen
-    # Zahl. Sichtbar verloren geht damit nur, was unter einem Watt liegt.
+    # Power and energy used to be at 6 here, because there are six orders
+    # of magnitude from mW to kW and a 300 mW standby consumer disappears
+    # as 0.000 with three digits. But Loxone does not accept six, and a
+    # format string that is not accepted is worse than a coarse display.
+    # The VALUE itself is unaffected by this - the format string only
+    # determines the presentation, function blocks and statistics compute
+    # with the full number. Only what lies below one watt is visibly lost.
     "kW": MAX_LOXONE_DECIMALS,
     "kWh": MAX_LOXONE_DECIMALS,
     "°C": 1,
     "%": 1,
     "V": 1,
     "A": 1,
-    # Farbton in Grad und Farbtemperatur in Mired sind ganzzahlig sinnvoll.
+    # Hue in degrees and color temperature in mired are meaningfully integers.
     "°": 0,
     "mired": 0,
 }
 
-# Loxone schreibt vor Prozent keine Leerstelle (`<v>%`), vor jeder anderen
-# Einheit dagegen schon (`<v.3> kW`, `<v.1> °C`) — belegt an den 26 realen
-# Vorlagen aus Spec 6.1.
+# Loxone writes no space before percent (`<v>%`), but does before every
+# other unit (`<v.3> kW`, `<v.1> °C`) - confirmed against the 26 real
+# templates from Spec 6.1.
 _UNITS_WITHOUT_LEADING_SPACE: frozenset[str] = frozenset({"%"})
 
 
 def unit_format(unit: str) -> str:
-    """Loxone-Formatstring fuer eine Einheit, oder "" wenn keine bekannt ist."""
+    """Loxone format string for a unit, or "" if none is known."""
     decimals = _UNIT_DECIMALS.get(unit)
     if decimals is None:
         return ""
-    # Gedeckelt statt nur in der Tabelle richtig gehalten: ein Eintrag mit
-    # mehr Stellen waere sonst ein Formatstring, den der Miniserver nicht
-    # annimmt - und das faellt erst beim Import auf, nicht hier.
+    # Capped rather than just kept correct in the table: an entry with
+    # more digits would otherwise be a format string the Miniserver does
+    # not accept - and that would only surface at import time, not here.
     decimals = min(decimals, MAX_LOXONE_DECIMALS)
     separator = "" if unit in _UNITS_WITHOUT_LEADING_SPACE else " "
     return f"<v.{decimals}>{separator}{unit}"
 
 
-# Cluster, deren Kommandos nie als Loxone-Ausgang erscheinen duerfen. Diese Liste
-# gilt auch im Rohmodus. Jeder Eintrag ist eine bewusste Entscheidung, keine
-# Aufzaehlung - die Liste ist absichtlich konservativ: ein zu Unrecht gesperrter
-# Cluster kostet einen fehlenden Befehl, ein zu Unrecht vergessener kann das Geraet
-# aus dem Netz werfen.
+# Clusters whose commands must never appear as a Loxone output. This list
+# also applies in raw mode. Every entry is a deliberate decision, not an
+# enumeration - the list is deliberately conservative: a cluster blocked
+# wrongly costs one missing command, one wrongly forgotten can throw the
+# device off the network.
 ADMINISTRATIVE_CLUSTERS: frozenset[int] = frozenset(
     {
-        31,  # AccessControl - regelt, wer mit dem Geraet ueberhaupt sprechen darf
-        41,  # OtaSoftwareUpdateProvider - ApplyUpdateRequest kann ein Firmware-Update erzwingen
-        42,  # OtaSoftwareUpdateRequestor - AnnounceOtaProvider stoesst eine Update-Suche an
-        48,  # GeneralCommissioning - Kommissionierung
-        49,  # NetworkCommissioning - Kommissionierung
+        31,  # AccessControl - governs who may even talk to the device at all
+        41,  # OtaSoftwareUpdateProvider - ApplyUpdateRequest can force a firmware update
+        42,  # OtaSoftwareUpdateRequestor - AnnounceOtaProvider triggers an update search
+        48,  # GeneralCommissioning - commissioning
+        49,  # NetworkCommissioning - commissioning
         50,  # DiagnosticLogs - RetrieveLogsRequest
         51,  # GeneralDiagnostics - TestEventTrigger
-        52,  # SoftwareDiagnostics - ResetWatermarks setzt Diagnosezaehler zurueck
-        53,  # ThreadNetworkDiagnostics - ResetCounts setzt Diagnosezaehler zurueck
-        54,  # WiFiNetworkDiagnostics - ResetCounts setzt Diagnosezaehler zurueck
-        55,  # EthernetNetworkDiagnostics - ResetCounts setzt Diagnosezaehler zurueck
-        56,  # TimeSynchronization - SetUTCTime, SetTrustedTimeSource: eine falsche Uhr
-        #     bricht Zeitplaene und Zertifikatspruefung
-        60,  # AdministratorCommissioning - OpenCommissioningWindow oeffnet das Geraet fuer
-        #     eine weitere Fabric
+        52,  # SoftwareDiagnostics - ResetWatermarks resets diagnostic counters
+        53,  # ThreadNetworkDiagnostics - ResetCounts resets diagnostic counters
+        54,  # WiFiNetworkDiagnostics - ResetCounts resets diagnostic counters
+        55,  # EthernetNetworkDiagnostics - ResetCounts resets diagnostic counters
+        56,  # TimeSynchronization - SetUTCTime, SetTrustedTimeSource: a wrong clock
+        #     breaks schedules and certificate validation
+        60,  # AdministratorCommissioning - OpenCommissioningWindow opens the device for
+        #     another fabric
         62,  # OperationalCredentials - RemoveFabric
-        63,  # GroupKeyManagement - verwaltet die Sicherheitsschluessel der Gruppen
-        70,  # IcdManagement - RegisterClient steuert, wer das Geraet aufwecken darf
+        63,  # GroupKeyManagement - manages the groups' security keys
+        70,  # IcdManagement - RegisterClient controls who may wake the device
     }
 )
 
 
 def scale_factor(ref: SignalRef) -> float:
-    """Faktor, mit dem ein roher Matter-Wert in die Loxone-Einheit uebergeht.
+    """Factor by which a raw Matter value converts into the Loxone unit.
 
-    1.0, wenn die Tabelle nichts sagt - unbekannte Cluster werden roh
-    durchgereicht, nicht verworfen (Spec 3.5).
+    1.0 if the table says nothing - unknown clusters are passed through
+    raw, not discarded (Spec 3.5).
     """
     cluster = _table().get(ref.cluster_id, {})
     entry = (cluster.get("attributes") or {}).get(ref.element_id)
@@ -321,28 +320,28 @@ def scale_factor(ref: SignalRef) -> float:
 
 
 def command_slug(cluster_id: int, command_id: int) -> str | None:
-    """Name eines Kommandos, oder None wenn es nicht in der Tabelle steht."""
+    """Name of a command, or None if it is not in the table."""
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
     return entry["slug"] if entry else None
 
 
 def command_takes_value(cluster_id: int, command_id: int) -> bool:
-    """Ob das Kommando einen Wert erwartet (z.B. MoveToLevel), oder keinen (z.B. Off)."""
+    """Whether the command expects a value (e.g. MoveToLevel), or none (e.g. Off)."""
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
     return bool(entry and entry.get("takes_value"))
 
 
 def known_command_pairs() -> set[tuple[int, int]]:
-    """Alle (Cluster-ID, Kommando-ID)-Paare, die `clusters.yaml` unter
-    `commands` fuehrt.
+    """All (cluster ID, command ID) pairs that `clusters.yaml` carries
+    under `commands`.
 
-    Existiert einzig fuer den Konsistenz-Test gegen
-    `commands.translate._PAYLOAD_BUILDERS` (siehe dort) - haelt beide
-    Tabellen synchron, statt sie stillschweigend auseinanderlaufen zu lassen.
-    Genau das ist Review-Fix C2 (2026-09-02) passiert: Cluster 768 Kommando
-    10 stand in `_PAYLOAD_BUILDERS`, fehlte aber hier - der Rohexport baute
-    daraus ein digitales Kommando, dessen Payload-Builder in Wirklichkeit
-    einen Wert erwartete."""
+    Exists solely for the consistency test against
+    `commands.translate._PAYLOAD_BUILDERS` (see there) - keeps both tables
+    in sync instead of letting them silently drift apart. That is exactly
+    what happened in review fix C2 (2026-09-02): cluster 768 command 10 was
+    in `_PAYLOAD_BUILDERS` but missing here - the raw export built a
+    digital command out of it whose payload builder in reality expected a
+    value."""
     return {
         (cluster_id, command_id)
         for cluster_id, cluster in _table().items()

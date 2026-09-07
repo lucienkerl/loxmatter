@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,15 +14,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Das Intervall des periodischen Resends - EINE Einstellung fuer die
-gesamte Bruecke, zur Laufzeit ueber die WebUI/API aenderbar statt einer beim
-Start fixierten Konstante. Siehe
-docs/superpowers/specs/2026-09-04-periodischer-resend-design.md, Abschnitt 4.
+"""The interval of the periodic resend - ONE setting for the entire bridge,
+changeable at runtime via the WebUI/API instead of a constant fixed at
+startup. See
+docs/superpowers/specs/2026-09-04-periodischer-resend-design.md, section 4.
 
-Eigenes Modul und eigene Klasse, analog zu `locale_store.py`: die
-`setting`-Tabelle ist generisch angelegt, genau damit weitere Konfiguration
-wie diese hier denselben Weg gehen kann. Diese Klasse ist eine weitere Sicht
-auf dieselbe Tabelle und dieselbe Verbindung, kein zweiter Verbindungsaufbau."""
+Its own module and its own class, analogous to `locale_store.py`: the
+`setting` table is generic by design, precisely so that further
+configuration like this one can go the same way. This class is another view
+onto the same table and the same connection, not a second connection."""
 
 from __future__ import annotations
 
@@ -31,29 +31,29 @@ import sqlite3
 _INTERVAL_KEY = "resend_interval_seconds"
 
 DEFAULT_RESEND_INTERVAL_SECONDS = 300.0
-# Untergrenze (Entwurf, Abschnitt 5): schuetzt vor einem versehentlich zu
-# kurzen Intervall, das bei vielen markierten Signalen genau den Burst
-# erzeugen wuerde, den dieser Entwurf eigentlich vermeiden soll.
+# Lower bound (design, section 5): guards against an accidentally too-short
+# interval that, with many marked signals, would produce exactly the burst
+# this design is actually meant to avoid.
 MIN_RESEND_INTERVAL_SECONDS = 10.0
 
 
 class ResendSettingsStore:
-    """Zugriff auf `setting` ueber die Verbindung des Stores - wie
-    `LocaleStore`, nur fuer den Schluessel `"resend_interval_seconds"`."""
+    """Access to `setting` via the store's connection - like `LocaleStore`,
+    just for the key `"resend_interval_seconds"`."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
 
     def get_interval_seconds(self) -> float:
-        """Der gespeicherte Wert - `DEFAULT_RESEND_INTERVAL_SECONDS`, solange
-        nichts gespeichert ist ODER der gespeicherte Wert nicht mehr als Zahl
-        lesbar ist (z. B. nach einer manuellen Aenderung der Datenbank von
-        aussen). Dieser eine Fall faellt bewusst still auf den Vorgabewert
-        zurueck, statt den Aufrufer (den periodischen Timer in
-        `Runtime._resend_loop`) daran scheitern zu lassen. Ein echter
-        Datenbankfehler (z. B. eine gesperrte Datei) wird davon NICHT
-        abgefangen und wirft weiterhin - `_resend_loop` hat dafuer einen
-        eigenen Fehlerpfad (siehe dort), der genau das erwartet."""
+        """The stored value - `DEFAULT_RESEND_INTERVAL_SECONDS` as long as
+        nothing is stored OR the stored value can no longer be read as a
+        number (e.g. after a manual change to the database from outside).
+        This one case deliberately falls back silently to the default
+        instead of letting the caller (the periodic timer in
+        `Runtime._resend_loop`) fail on it. A genuine database error (e.g. a
+        locked file) is NOT caught by this and still raises -
+        `_resend_loop` has its own error path for that (see there), which
+        expects exactly that."""
         row = self._db.execute(
             "SELECT value FROM setting WHERE key = ?", (_INTERVAL_KEY,)
         ).fetchone()
@@ -67,8 +67,7 @@ class ResendSettingsStore:
     def set_interval_seconds(self, seconds: float) -> None:
         if seconds < MIN_RESEND_INTERVAL_SECONDS:
             raise ValueError(
-                f"Resend-Intervall muss mindestens {MIN_RESEND_INTERVAL_SECONDS}s betragen, "
-                f"bekommen: {seconds}"
+                f"resend interval must be at least {MIN_RESEND_INTERVAL_SECONDS}s, got: {seconds}"
             )
         self._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,28 +14,27 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""SQLite-Ablage fuer Geraete und Signale.
+"""SQLite storage for devices and signals.
 
-Der Schluessel eines Signals ist die Verdrahtung in Loxone (Spec 6.2). Er wird
-einmal vergeben und danach nie geaendert — weder beim Umbenennen noch bei einem
-erneuten Einlesen desselben Geraets. Deshalb liegt er in einer Datenbank und
-nicht in einer Ableitung zur Laufzeit.
+A signal's key is the wiring in Loxone (Spec 6.2). It is assigned once and
+never changed afterward - neither on renaming nor on re-reading the same
+device. That is why it lives in a database rather than being derived at
+runtime.
 
-device_id wird nie wiederverwendet: ein entferntes und neu eingelerntes Geraet
-bekommt neue Schluessel, damit es keine alte Verdrahtung stillschweigend erbt.
+device_id is never reused: a removed and newly commissioned device gets new
+keys, so it does not silently inherit old wiring.
 
-Schluesselformat (Spec 6.2): ``d<device_id>_<endpoint>_<slug>``, z. B.
-``d12_1_temp``. Zwei Signale auf demselben Endpoint koennen denselben
-Profil-Slug tragen (z. B. mehrere Events desselben Clusters, die zufaellig
-gleich benannt sind, oder ein generischer Slug fuer zwei unbekannte
-Attribute) — in dem Fall haengt ``_assign_key`` die Element-ID an
-(``d12_1_temp_5``), um die von der Tabelle ``signal.key`` erzwungene
-Eindeutigkeit zu erhalten, ohne den Schluessel eines schon vergebenen
-Signals zu aendern.
+Key format (Spec 6.2): ``d<device_id>_<endpoint>_<slug>``, e.g.
+``d12_1_temp``. Two signals on the same endpoint can carry the same
+profile slug (e.g. several events of the same cluster that happen to be
+named the same, or a generic slug for two unknown attributes) - in that
+case ``_assign_key`` appends the element ID (``d12_1_temp_5``) to satisfy
+the uniqueness enforced by the ``signal.key`` table without changing the
+key of a signal that has already been assigned one.
 
-Eine Store-Instanz gehoert genau einem Thread und genau einer Event-Loop -
-`sqlite3.Connection` ist ohne `check_same_thread=False` an ihren Erzeuger-
-Thread gebunden, und dieses Modul weicht davon bewusst nicht ab.
+A store instance belongs to exactly one thread and exactly one event loop -
+without `check_same_thread=False`, `sqlite3.Connection` is bound to its
+creating thread, and this module deliberately does not deviate from that.
 """
 
 from __future__ import annotations
@@ -64,48 +63,46 @@ from loxmatter.profiles.table import Exportability, is_exportable, lookup, struc
 from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
-# `_DEFAULT_LISTEN_PORT` von `api/export.py` hierher gehoben (Geraete-
-# Dashboard-Entwurf, Abschnitt 4): der neue `BridgeSettingsStore` unten
-# braucht denselben Vorgabewert, und ein zweiter, unabhaengig gepflegter
-# Literal `8080` waere genau die Art Drift, vor der `api/export.py`s eigener
-# Moduldocstring (Entscheidung 2) bereits warnt.
+# `_DEFAULT_LISTEN_PORT` lifted here from `api/export.py` (device dashboard
+# design, section 4): the new `BridgeSettingsStore` below needs the same
+# default value, and a second, independently maintained literal `8080`
+# would be exactly the kind of drift `api/export.py`'s own module docstring
+# (decision 2) already warns against.
 DEFAULT_LISTEN_PORT = 8080
 
-# Schema-Version dieses Moduls, verwaltet ueber `PRAGMA user_version` (Review-Fix
-# Important #1, 2026-09-02). `CREATE TABLE IF NOT EXISTS` allein erreicht eine
-# bereits bestehende Tabelle nie mit einer neuen Spalte - eine Datenbank, die vor
-# dem `exported`-Feld angelegt wurde, blieb bislang ohne Migration dauerhaft ohne
-# diese Spalte, und `Store.signals()` scheiterte mit `IndexError`. Version 0 ist
-# "vor dieser Migrationslogik" (jede bestehende Datenbank, `PRAGMA user_version`
-# noch nie gesetzt); Version 1 fuegt `signal.exported` hinzu und befuellt
-# Bestandszeilen zurueckwirkend, siehe `_migrate_to_v1`. Version 2 (Task 5,
-# Phase 5) fuegt `device.exported_at` und `device.updated_at` hinzu, siehe
-# `_migrate_to_v2`. Version 3 (Aufgabe 7, Phase 6) fuegt keine Spalte hinzu -
-# sie leitet `signal.title`, `signal.unit` und den Vorgabewert von
-# `signal.exported` fuer BESTEHENDE Zeilen aus der Profiltabelle neu ab, siehe
-# `_migrate_to_v3`. Version 4 (Aufgabe 8, Phase 6) fuegt `signal.functional`
-# hinzu, siehe `_migrate_to_v4`. Version 5 (WebUI-Login) fuegt die Tabellen
-# `setting` und `session` hinzu, siehe `_migrate_to_v5` - beide sind bei einer
-# frischen Datenbank bereits durch `_SCHEMA` da, die Migration ist deshalb nur
-# fuer Bestandsdatenbanken noetig. Version 6 (Entwurf periodischer Resend,
-# 2026-09-04) fuegt `signal.resend` hinzu, siehe `_migrate_to_v6` - kein
-# Backfill, jede Bestandszeile startet beim Spalten-Default (0/aus).
-# Version 7 (Entwurf Geraete-Tab, 2026-09-05) fuegt `device.room` und
-# `device.device_types` hinzu, siehe `_migrate_to_v7` - kein Backfill fuer
-# beide, aber aus zwei verschiedenen Gruenden: `room = NULL` IST die
-# richtige Bedeutung ("Ohne Raum"), waehrend `device_types = NULL` nur
-# "noch nicht nachgetragen" heisst und beim naechsten Bruueckenstart aus
-# den ohnehin geholten Abbildern gefuellt wird (`backfill_device_types`).
-# Eine Migration kann das nicht: sie sieht nur die Datenbank, nie ein
-# `NodeSnapshot`.
+# Schema version of this module, managed via `PRAGMA user_version` (review
+# fix Important #1, 2026-09-02). `CREATE TABLE IF NOT EXISTS` alone never
+# reaches an already existing table with a new column - a database created
+# before the `exported` field permanently lacked this column until a
+# migration was added, and `Store.signals()` failed with `IndexError`.
+# Version 0 is "before this migration logic" (every existing database,
+# `PRAGMA user_version` never set); version 1 adds `signal.exported` and
+# backfills existing rows retroactively, see `_migrate_to_v1`. Version 2
+# (Task 5, Phase 5) adds `device.exported_at` and `device.updated_at`, see
+# `_migrate_to_v2`. Version 3 (Task 7, Phase 6) adds no column - it
+# re-derives `signal.title`, `signal.unit` and the default value of
+# `signal.exported` for EXISTING rows from the profile table, see
+# `_migrate_to_v3`. Version 4 (Task 8, Phase 6) adds `signal.functional`,
+# see `_migrate_to_v4`. Version 5 (WebUI login) adds the tables `setting`
+# and `session`, see `_migrate_to_v5` - both are already present in a fresh
+# database via `_SCHEMA`, so the migration is only needed for existing
+# databases. Version 6 (periodic resend design, 2026-09-04) adds
+# `signal.resend`, see `_migrate_to_v6` - no backfill, every existing row
+# starts at the column default (0/off). Version 7 (device tab design,
+# 2026-09-05) adds `device.room` and `device.device_types`, see
+# `_migrate_to_v7` - no backfill for either, but for two different reasons:
+# `room = NULL` IS the correct meaning ("no room"), while
+# `device_types = NULL` only means "not yet backfilled" and gets filled from
+# the snapshots that are fetched anyway on the next bridge start
+# (`backfill_device_types`). A migration cannot do that: it only ever sees
+# the database, never a `NodeSnapshot`.
 #
-# **Warum der Login-Umzug die 5 bekommt und nicht die 4.** Beide Vorhaben
-# entstanden parallel und beanspruchten die 4. Eine Datenbank, die Phase 6
-# bereits gesehen hat, steht auf 4 - eine zweite Migration unter derselben
-# Nummer wuerde von `_migrate` stillschweigend uebersprungen, und der Dienst
-# startete ohne die Tabellen, die er zum Anmelden braucht. Die Nummer haengt
-# an der Reihenfolge, in der die Aenderungen zusammengefuehrt wurden, nicht
-# daran, wann sie geschrieben wurden.
+# **Why the login move gets 5, not 4.** Both efforts arose in parallel and
+# each claimed 4. A database that has already seen Phase 6 is at 4 - a
+# second migration under the same number would be silently skipped by
+# `_migrate`, and the service would start without the tables it needs to
+# sign in. The number depends on the order in which the changes were
+# merged, not on when they were written.
 _SCHEMA_VERSION = 7
 
 _SCHEMA = """
@@ -162,20 +159,20 @@ CREATE TABLE IF NOT EXISTS session (
 
 
 def _add_column_if_missing(db: sqlite3.Connection, table: str, column: str, ddl: str) -> bool:
-    """Fuegt `column` zu `table` hinzu, falls sie fehlt - gemeinsame Absicherung
-    fuer `_migrate_to_v1` und `_migrate_to_v2` (Review-Fix Minor #3, 2026-09-02:
-    beide pruefen `PRAGMA table_info`, dieselbe Falle, dieselbe Idee, zuvor
-    zweimal von Hand hingeschrieben statt einmal geteilt).
+    """Adds `column` to `table` if it is missing - shared safeguard for
+    `_migrate_to_v1` and `_migrate_to_v2` (review fix Minor #3, 2026-09-02:
+    both check `PRAGMA table_info`, the same pitfall, the same idea,
+    previously written out by hand twice instead of shared once).
 
-    Die Falle, gegen die der Spaltencheck schuetzt: eine frisch angelegte
-    Datenbank hat eine neue Spalte durch `_SCHEMA`s `CREATE TABLE IF NOT
-    EXISTS` bereits, waehrend `PRAGMA user_version` bei ihr ebenfalls noch auf
-    0 steht (siehe `_migrate`). `ALTER TABLE ... ADD COLUMN` liefe dort gegen
-    eine schon vorhandene Spalte und scheiterte mit "duplicate column".
+    The pitfall the column check guards against: a freshly created database
+    already has a new column via `_SCHEMA`'s `CREATE TABLE IF NOT EXISTS`,
+    while its `PRAGMA user_version` is also still at 0 (see `_migrate`).
+    `ALTER TABLE ... ADD COLUMN` would then run against an already existing
+    column and fail with "duplicate column".
 
-    Gibt zurueck, ob die Spalte neu hinzugefuegt wurde (`False`, wenn sie
-    schon da war) - `_migrate_to_v1` braucht das, um seinen Backfill nur bei
-    einer echten Alt-Datenbank auszufuehren, nicht bei einer frischen."""
+    Returns whether the column was newly added (`False` if it was already
+    there) - `_migrate_to_v1` needs this to run its backfill only for a
+    genuine legacy database, not for a fresh one."""
     columns = {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})")}
     if column in columns:
         return False
@@ -184,23 +181,23 @@ def _add_column_if_missing(db: sqlite3.Connection, table: str, column: str, ddl:
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
-    """Fuegt `signal.exported` hinzu und befuellt bestehende Zeilen anhand
-    ihrer `exportability` (Review-Fix Important #1 und #2, 2026-09-02) -
-    dieselbe Regel wie bei einem frisch registrierten Signal, siehe
+    """Adds `signal.exported` and backfills existing rows based on their
+    `exportability` (review fix Important #1 and #2, 2026-09-02) - the same
+    rule as for a freshly registered signal, see
     `profiles.table.is_exportable`.
 
-    Der Backfill laeuft nur, wenn `_add_column_if_missing` die Spalte
-    tatsaechlich neu angelegt hat - bei einer frisch erzeugten Datenbank
-    (Spalte schon durch `_SCHEMA` da) gibt es keine Bestandszeilen, die
-    rueckwirkend befuellt werden muessten.
+    The backfill only runs if `_add_column_if_missing` actually added the
+    column - for a freshly created database (column already present via
+    `_SCHEMA`) there are no existing rows that would need retroactive
+    filling.
     """
     if not _add_column_if_missing(db, "signal", "exported", "INTEGER NOT NULL DEFAULT 1"):
         return
-    # Aus `is_exportable` abgeleitet statt hier ein drittes Mal von Hand
-    # aufgezaehlt (Review-Fix Fix 8, 2026-09-03, zusammen mit den beiden
-    # Kopien in `cli.py` und `api/export.py`): eine SQL-Abfrage braucht
-    # die Werte als Liste, nicht die Funktion - die Liste selbst kommt
-    # jetzt trotzdem aus derselben einen Quelle.
+    # Derived from `is_exportable` instead of enumerated by hand here a
+    # third time (review fix Fix 8, 2026-09-03, together with the two
+    # copies in `cli.py` and `api/export.py`): an SQL query needs the
+    # values as a list, not the function - but the list itself now still
+    # comes from that one single source.
     exportable_values = tuple(e.value for e in Exportability if is_exportable(e))
     placeholders = ", ".join("?" for _ in exportable_values)
     db.execute(
@@ -211,45 +208,43 @@ def _migrate_to_v1(db: sqlite3.Connection) -> None:
 
 
 def _migrate_to_v2(db: sqlite3.Connection) -> None:
-    """Fuegt `device.exported_at` und `device.updated_at` hinzu (Task 5,
-    Phase 5) - Grundlage fuer `GET /api/export/status`: wann ein Geraet
-    zuletzt exportiert wurde, und ob sich seither etwas geaendert hat.
+    """Adds `device.exported_at` and `device.updated_at` (Task 5, Phase 5) -
+    the basis for `GET /api/export/status`: when a device was last exported,
+    and whether anything has changed since then.
 
-    Beide Spalten bleiben bei einer bereits bestehenden Zeile NULL statt
-    rueckwirkend befuellt zu werden - anders als bei `_migrate_to_v1` gibt es
-    hier keinen Bestandswert, aus dem sich ein sinnvoller Zeitpunkt ableiten
-    liesse. `NULL` bedeutet fuer `exported_at` "noch nie exportiert" (dieselbe
-    Bedeutung wie bei einem frisch registrierten Geraet) und fuer
-    `updated_at` "unbekannt" - `api.export._status_for` behandelt ein
-    unbekanntes `updated_at` als "seither geaendert", die vorsichtigere der
-    beiden moeglichen Annahmen.
+    Both columns stay NULL on an already existing row instead of being
+    backfilled retroactively - unlike `_migrate_to_v1` there is no existing
+    value here from which a meaningful point in time could be derived.
+    `NULL` means "never exported" for `exported_at` (the same meaning as for
+    a freshly registered device) and "unknown" for `updated_at` -
+    `api.export._status_for` treats an unknown `updated_at` as "changed
+    since then", the more cautious of the two possible assumptions.
 
-    Jede Spalte einzeln ueber `_add_column_if_missing` geprueft, weil eine
-    Datenbank, die genau auf Version 1 steht (`signal.exported` vorhanden,
-    beide Spalten hier noch nicht), von einer echten Alt-Datenbank (Version
-    0, laeuft `_migrate_to_v1` und `_migrate_to_v2` nacheinander in
-    demselben Lauf) nicht zu unterscheiden sein muss - beide landen hier mit
-    fehlenden Spalten und bekommen sie angelegt."""
+    Each column checked individually via `_add_column_if_missing`, because a
+    database that sits at exactly version 1 (`signal.exported` present,
+    neither column here yet) need not be distinguishable from a genuine
+    legacy database (version 0, runs `_migrate_to_v1` and `_migrate_to_v2`
+    one after the other in the same run) - both end up here with missing
+    columns and get them added."""
     _add_column_if_missing(db, "device", "exported_at", "TEXT")
     _add_column_if_missing(db, "device", "updated_at", "TEXT")
 
 
 def _endpoint0_device_types(rows: Sequence[sqlite3.Row]) -> dict[int, dict[int, frozenset[int]]]:
-    """Ersatzregel fuer `profiles.relevance.device_types_by_endpoint`, wenn
-    kein Geraeteabbild vorliegt, sondern nur bereits gespeicherte Zeilen -
-    gemeinsame Grundlage von `_migrate_to_v3` (Aufgabe 7) und
-    `_migrate_to_v4` (Aufgabe 8): beide muessen `is_functional` ohne
-    `NodeSnapshot` aufrufen, aus genau demselben Grund (siehe der
-    Docstring-Abschnitt "Woher die Geraetetypen je Endpunkt kommen" unten
-    bei `_migrate_to_v3`) und mit genau derselben Ersatzregel - eine zweite,
-    nur leicht abweichende Kopie waere fuer zwei Migrationen, die dieselbe
-    Frage stellen, nicht zu rechtfertigen.
+    """Fallback rule for `profiles.relevance.device_types_by_endpoint` when
+    no device snapshot is available, only already stored rows - shared
+    basis for `_migrate_to_v3` (Task 7) and `_migrate_to_v4` (Task 8): both
+    have to call `is_functional` without a `NodeSnapshot`, for exactly the
+    same reason (see the docstring section "Where the device types per
+    endpoint come from" below under `_migrate_to_v3`) and with exactly the
+    same fallback rule - a second copy that differs only slightly would not
+    be justifiable for two migrations that ask the same question.
 
-    Endpunkt 0 gilt immer als Root Node (Matter Core-Spezifikation 9.2.1),
-    PowerSource zusaetzlich, sobald Endpunkt 0 ueberhaupt ein Signal dieses
-    Clusters traegt (`relevance.UTILITY_ENDPOINT_KEEP_CLUSTERS`, bislang der
-    einzige belegte Fall). `rows` muss mindestens die Spalten `device_id`,
-    `endpoint` und `cluster_id` tragen."""
+    Endpoint 0 always counts as the root node (Matter core specification
+    9.2.1), and PowerSource additionally as soon as endpoint 0 carries any
+    signal of that cluster at all (`relevance.UTILITY_ENDPOINT_KEEP_CLUSTERS`,
+    so far the only case covered). `rows` must carry at least the columns
+    `device_id`, `endpoint` and `cluster_id`."""
     clusters_on_endpoint0: dict[int, set[int]] = {}
     for row in rows:
         if int(row["endpoint"]) == 0:
@@ -268,176 +263,170 @@ def _endpoint0_device_types(rows: Sequence[sqlite3.Row]) -> dict[int, dict[int, 
 
 
 def _migrate_to_v3(db: sqlite3.Connection) -> None:
-    """Leitet `title`, `unit` und den Vorgabewert von `exported` fuer
-    BESTEHENDE Signale neu ab (Aufgabe 7) - der Schluessel bleibt dabei in
-    jedem Fall unangetastet, siehe Modul-Docstring und Hauptdokument 6.2.
+    """Re-derives `title`, `unit` and the default value of `exported` for
+    EXISTING signals (Task 7) - the key itself stays untouched in every
+    case, see the module docstring and main document 6.2.
 
-    **Warum rueckwirkend, nicht nur fuer neu eingelernte Geraete:** Aufgabe 6
-    hat `profiles.relevance.is_functional` bereits verdrahtet, aber nur in
-    `register_signals` - ein Geraet, das gestern eingelernt wurde, sieht die
-    Korrektur nie, ausser es wird komplett neu eingelernt. Zwei
-    Regelsaetze, deren Unterschied allein am Einlerndatum haengt, waeren
-    niemandem zu erklaeren.
+    **Why retroactive, not only for newly commissioned devices:** Task 6
+    already wired up `profiles.relevance.is_functional`, but only in
+    `register_signals` - a device commissioned yesterday would never see
+    the correction unless it is fully re-commissioned. Two rule sets whose
+    difference depends solely on the commissioning date would be
+    impossible to explain to anyone.
 
-    **Der Schluessel bleibt unangetastet.** Diese Migration schreibt nie in
-    die Spalte `key`. Folge: ein vor diesem Update eingelerntes Geraet
-    behaelt z. B. `d2_0_c47_a12` und heisst ab jetzt "battery"; ein danach
-    eingelerntes Geraet bekommt fuer denselben Wert den neuen Schluessel
-    `d2_0_battery`. Zwei Schluessel fuer denselben Wert, je nach
-    Einlerndatum - haesslich, aber Absicht (Hauptdokument 6.2): die
-    Alternative waere ein stillschweigend toter Funktionsbaustein in einer
-    fremden Loxone-Konfiguration.
+    **The key stays untouched.** This migration never writes to the `key`
+    column. Consequence: a device commissioned before this update keeps
+    e.g. `d2_0_c47_a12` and is now called "battery"; a device commissioned
+    afterward gets the new key `d2_0_battery` for the same value. Two keys
+    for the same value, depending on the commissioning date - ugly, but
+    deliberate (main document 6.2): the alternative would be a silently
+    dead functional block in someone else's Loxone configuration.
 
-    **Woher die Geraetetypen je Endpunkt kommen (die im Aufgabenzuschnitt
-    bewusst offen gelassene Entscheidung):** `is_functional` braucht die vom
-    Geraet deklarierten Geraetetypen je Endpunkt, um einen
-    Verwaltungs-Endpunkt (Root Node, OTA Requestor) von einem Nutz-Endpunkt
-    zu unterscheiden - diese Angabe steht im Geraeteabbild
-    (Descriptor-Cluster), nicht in dieser Datenbank.
+    **Where the device types per endpoint come from (the decision
+    deliberately left open in the task scope):** `is_functional` needs the
+    device types declared by the device per endpoint to distinguish a
+    management endpoint (root node, OTA requestor) from a functional
+    endpoint - this information lives in the device snapshot (descriptor
+    cluster), not in this database.
 
-    Eine neue Spalte, die `register_device`/`register_signals` ab sofort
-    mitschreibt, loest das NICHT: eine Migration laeuft beim Oeffnen einer
-    Datenbank (`_migrate` ruft sie mit `db: sqlite3.Connection` auf, nie mit
-    einem `NodeSnapshot`) und hat deshalb NIE ein Abbild zur Hand - auch in
-    einer kuenftigen Migration nicht. Und genau die hier zu migrierenden
-    Bestandszeilen sind vor einer solchen Spalte entstanden, haetten also
-    ohnehin nichts, das sie befuellen koennte. Eine neue Spalte waere damit
-    fuer DIESE Migration wertlos; sie haette nur helfen koennen, wenn sie
-    schon bei der urspruenglichen Registrierung existiert haette.
+    A new column that `register_device`/`register_signals` write from now
+    on does NOT solve this: a migration runs when a database is opened
+    (`_migrate` calls it with `db: sqlite3.Connection`, never with a
+    `NodeSnapshot`) and therefore NEVER has a snapshot at hand - not even
+    in a future migration. And the existing rows to be migrated here were
+    created before such a column existed, so they would have nothing to
+    fill it with anyway. A new column would thus be worthless for THIS
+    migration; it could only have helped if it had already existed at the
+    time of the original registration.
 
-    Deshalb der zweite Weg aus dem Aufgabenzuschnitt: eine Ersatzregel aus
-    den ohnehin gespeicherten Cluster-/Endpunkt-Nummern. Matter garantiert
-    strukturell, dass Endpunkt 0 immer der Root-Node-Endpunkt ist (Core-
-    Spezifikation 9.2.1) - das ist die einzige Aussage ueber einen
-    Verwaltungs-Endpunkt, die sich OHNE Abbild sicher treffen laesst; jeder
-    andere Endpunkt gilt hier als gewoehnlicher Nutz-Endpunkt. Fuer den
-    bislang einzigen belegten Ausnahmefall
-    (`relevance.UTILITY_ENDPOINT_KEEP_CLUSTERS`: PowerSource, Cluster 47)
-    gilt der zugehoerige Nutz-Geraetetyp als erklaert, sobald Endpunkt 0
-    ueberhaupt ein Signal dieses Clusters traegt - ein Geraet exponiert den
-    PowerSource-Cluster auf seinem Root-Endpunkt nur, wenn es dort
-    tatsaechlich einen Batteriestand zu melden hat. Gegengeprueft an beiden
-    eingecheckten Abbildern (`tests/fixtures/nodes/`, siehe
-    `test_store_migration.py`,
+    Hence the second path from the task scope: a fallback rule derived from
+    the cluster/endpoint numbers already stored. Matter structurally
+    guarantees that endpoint 0 is always the root node endpoint (core
+    specification 9.2.1) - that is the only statement about a management
+    endpoint that can be made reliably WITHOUT a snapshot; every other
+    endpoint counts here as an ordinary functional endpoint. For the only
+    exception case covered so far
+    (`relevance.UTILITY_ENDPOINT_KEEP_CLUSTERS`: PowerSource, cluster 47),
+    the associated functional device type counts as declared as soon as
+    endpoint 0 carries any signal of that cluster at all - a device only
+    exposes the PowerSource cluster on its root endpoint if it actually has
+    a battery level to report there. Cross-checked against both checked-in
+    snapshots (`tests/fixtures/nodes/`, see `test_store_migration.py`,
     `test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures`):
-    diese Ersatzregel liefert fuer den Stecker und den Taster exakt
-    dieselbe Anzahl exportierter Signale wie eine frische Registrierung mit
-    echtem Abbild - 5 bzw. 17.
+    this fallback rule produces, for the plug and the button, exactly the
+    same count of exported signals as a fresh registration with a real
+    snapshot - 5 and 17 respectively.
 
-    **`exportability` wird nur in einem einzigen, eng begrenzten Fall
-    angehoben, sonst unangetastet gelassen:** `classify()` (Spec 6.6)
-    braucht grundsaetzlich einen echten Laufzeitwert, den eine Migration
-    nie hat - der gespeicherte Wert bleibt deshalb im Regelfall die beste
-    verfuegbare Wahrheit. Die eine Ausnahme: traegt der Tabelleneintrag
-    heute eine Feldnummer (`profiles.table.struct_field` - Aufgabe 5, der
-    Zaehlerstand), gilt das daraus gezogene Element als abbildbar (ANALOG),
-    UNABHAENGIG vom gespeicherten Wert. Begruendung: eine Feldnummer traegt
-    nur ein, wer im Matter-Spezifikationstext nachgesehen hat, dass genau
-    dieses Struktur-Element numerisch ist (Cluster-Autor-Wissen, keine
-    Laufzeit-Eigenschaft) - eine Zeile, deren Struktur zur Registrierzeit
-    noch nicht auslesbar war (kein `field:` in der damaligen
-    `clusters.yaml`, deshalb `exportability=none`, Spec 6.6), wird durch
-    diese Migration genau wie durch ein Neu-Einlesen mit echtem Wert auf
-    ANALOG gehoben. Fuer jeden benannten Eintrag OHNE Feldnummer ist
-    `classify(struct_member(ref, value))` ohnehin identisch mit
-    `classify(value)` - Benennung allein aendert die Klassifizierung nie,
-    nur eine neue Feldnummer tut das.
+    **`exportability` is only raised in a single, tightly scoped case,
+    otherwise left untouched:** `classify()` (Spec 6.6) fundamentally needs
+    a real runtime value, which a migration never has - the stored value
+    therefore remains, as a rule, the best truth available. The one
+    exception: if the table entry today carries a field number
+    (`profiles.table.struct_field` - Task 5, the counter reading), the
+    element derived from it counts as mappable (ANALOG), REGARDLESS of the
+    stored value. Rationale: only someone who has checked the Matter
+    specification text that this exact struct element is numeric enters a
+    field number (cluster-author knowledge, not a runtime property) - a
+    row whose structure was not yet readable at registration time (no
+    `field:` in `clusters.yaml` at the time, hence `exportability=none`,
+    Spec 6.6) is raised to ANALOG by this migration exactly as it would be
+    by a fresh re-read with a real value. For every named entry WITHOUT a
+    field number, `classify(struct_member(ref, value))` is identical to
+    `classify(value)` anyway - naming alone never changes the
+    classification, only a new field number does.
 
-    **Zwei offene Grenzen dieser Ausnahme, bewusst hingenommen statt
-    beseitigt (Aufgabe 7, Nachbesserung Fix 1):**
-    - Sie sieht den Laufzeitwert nicht: ein Zaehler, der noch NIE gemessen
-      wurde (Matter liefert dafuer `null`, kein Zahlenwert), wird trotzdem
-      auf ANALOG gehoben und gilt danach als exportiert - ein
-      Loxone-Eingang, der nie einen Wert traegt, eine Checkbox in der
-      Oberflaeche, die luegt. Zur Laufzeit passiert dabei nichts Falsches:
-      `to_loxone_value` leitet unabhaengig aus dem echten Wert ab und
-      liefert dafuer weiterhin `None` (Spec 6.6), es fliesst also nie ein
-      erfundener Wert - nur die erzeugte Vorlage bekommt einen Eingang zu
-      viel. Erwogen und verworfen wurde, die Ausnahme deswegen ganz zu
-      streichen: der Stecker (`tests/fixtures/nodes/ikea_grillplats_plug.json`)
-      meldet fuer `energy_imported` (Cluster 145, Element 1) bereits einen
-      echten Wert (0, kein `null`) - eine frische Registrierung stuft dieses
-      Signal ueber genau diese Ausnahme als ANALOG und damit exportiert ein
-      (siehe `lookup`). Ohne die Ausnahme bliebe die migrierte
-      Exportability beim vor-Aufgabe-6-Wert NONE stehen (siehe
-      `_pretend_unnamed_profile` in `test_store_migration.py`), und die
-      Gegenprobe
+    **Two open limits of this exception, deliberately accepted rather than
+    eliminated (Task 7, follow-up fix 1):**
+    - It does not see the runtime value: a counter that has NEVER been
+      measured (Matter returns `null` for that, not a numeric value) is
+      still raised to ANALOG and then counts as exported - a Loxone input
+      that never carries a value, a checkbox in the UI that lies. Nothing
+      wrong happens at runtime, though: `to_loxone_value` derives
+      independently from the real value and still returns `None` for it
+      (Spec 6.6), so a made-up value never flows in - only the generated
+      template gets one input too many. Dropping the exception entirely
+      for this reason was considered and rejected: the plug
+      (`tests/fixtures/nodes/ikea_grillplats_plug.json`) already reports a
+      real value (0, not `null`) for `energy_imported` (cluster 145,
+      element 1) - a fresh registration classifies this signal as ANALOG
+      and therefore exported via exactly this exception (see `lookup`).
+      Without the exception the migrated exportability would stay at the
+      pre-Task-6 value NONE (see `_pretend_unnamed_profile` in
+      `test_store_migration.py`), and the cross-check
       (`test_the_migration_reproduces_the_functional_export_counts_of_both_fixtures`)
-      fiele fuer den Stecker von 5 auf 4 - also just die Zahl, die dieses
-      Modul selbst als Beleg fuer die Ersatzregel nennt. Streichen wuerde
-      damit ein bewiesen richtiges Verhalten (der Stecker) gegen ein rein
-      hypothetisches, an keinem der beiden eingecheckten Abbilder
-      beobachtbares (der nie gemessene Zaehler) eintauschen - die Ausnahme
-      bleibt deshalb bestehen, mit dieser Grenze hier offen benannt statt
-      stillschweigend in Kauf genommen. Siehe
+      would drop for the plug from 5 to 4 - precisely the number this
+      module itself cites as evidence for the fallback rule. Dropping it
+      would therefore trade a provably correct behaviour (the plug) for a
+      purely hypothetical one, unobservable on either of the two checked-in
+      snapshots (the never-measured counter) - the exception therefore
+      stays, with this limit named openly here rather than accepted
+      silently. See
       `test_a_never_measured_energy_counter_is_still_promoted_by_the_field_number_exception`.
-    - Sie ist hart auf ANALOG verdrahtet, nicht auf die tatsaechliche
-      Struktur-Semantik: beide heute bekannten Faelle
-      (`energy_imported`/`energy_exported`, `EnergyMeasurementStruct.energy`)
-      sind laut Matter-Spezifikation numerisch - ANALOG ist also heute in
-      jedem Fall richtig. Traegt `clusters.yaml` kuenftig ein `field:` auf
-      ein boolesches Strukturelement ein, laege diese Zeile falsch (DIGITAL
-      waere richtig): die Tabelle kennt bislang keinen Typ je Feld, nur die
-      Feldnummer selbst. Unbelegt, weil es noch keinen solchen Fall gibt -
-      wer den ersten Fall dieser Art anlegt, muss diese Stelle mitdenken.
+    - It is hard-wired to ANALOG, not to the actual struct semantics: both
+      cases known today (`energy_imported`/`energy_exported`,
+      `EnergyMeasurementStruct.energy`) are numeric per the Matter
+      specification - so ANALOG is correct in every case today. If
+      `clusters.yaml` ever enters a `field:` on a boolean struct element,
+      this line would be wrong (DIGITAL would be correct): the table does
+      not yet know a type per field, only the field number itself.
+      Unaddressed because no such case exists yet - whoever creates the
+      first case of this kind must think this spot through.
 
-    **Was diese Migration sonst NICHT kann:**
-    - Jenseits der Feldnummer-Ausnahme oben wird `exportability` NICHT neu
-      klassifiziert. Eine Korrektur in `clusters.yaml`, die aus einem
-      anderen Grund die Klassifizierung eines Werts aendern wuerde, erreicht
-      ein schon gespeichertes Signal deshalb weiterhin erst beim naechsten
-      echten Neu-Einlesen des Geraets (`register_signals`), nicht durch
-      diese Migration. `title` und `unit` sind davon nicht betroffen: beide
-      haengen in `profiles.table.lookup` nie vom Laufzeitwert ab.
-    - Ein vom Nutzer ueber `set_title` personalisierter Titel wird von
-      dieser einmaligen Migration ebenfalls ueberschrieben - die Datenbank
-      unterscheidet nicht, ob ein gespeicherter Titel der automatische
-      Vorgabewert ist oder eine bewusste Umbenennung.
-    - Dasselbe gilt fuer `exported`: laut `register_signals`/`set_exported`
-      gehoert der Wert ab dem ersten Bekanntsein eines Signals dem Nutzer -
-      ein bewusst umgeschaltetes Signal bleibt bei jedem weiteren
-      Neu-Einlesen unangetastet (siehe dort). Diese Migration kann das
-      nicht einhalten: sie schreibt `exported` fuer JEDE Zeile einmalig neu,
-      weil das Schema keine Spalte kennt, die "vom Nutzer gesetzt" von
-      "automatischer Vorgabewert" unterscheidet - innerhalb des
-      Aufgabenzuschnitts unvermeidbar. Ein Betreiber, der zwoelf Signale
-      von Hand freigeschaltet (oder abgeschaltet) hat, verliert diese
-      Auswahl bei diesem einen Update. Entwarnung: der Laufzeitpfad
-      (`loxone.runtime`) filtert beim Senden NICHT auf `exported` - eine
-      bestehende UDP-Verdrahtung stirbt dadurch nicht. Betroffen ist erst
-      eine NEU erzeugte Loxone-Vorlage nach diesem Update
-      (`export.signals.to_inputs` filtert dort auf `exported`, siehe dessen
-      Docstring).
-    - Ein Verwaltungs-Endpunkt jenseits von Endpunkt 0 (aus Matters Sicht
-      nicht ausgeschlossen, an den beiden bislang bekannten echten Geraeten
-      aber nie beobachtet) wird von der Ersatzregel nicht erkannt; ein
-      solches Geraet bliebe nach der Migration grosszuegiger exportiert, als
-      es eine echte Neuregistrierung waere. Das ist aber NICHT die einzige
-      Abweichung von `device_types_by_endpoint`, und nicht immer die
-      grosszuegigere Richtung - "hoechstens grosszuegiger" waere hier eine
-      falsche Zusicherung, siehe die beiden folgenden Punkte.
-    - Die Ersatzregel schliesst von "Cluster 47 (PowerSource) liegt auf
-      Endpunkt 0" auf "PowerSource ist dort als Geraetetyp deklariert" -
-      `is_functional` fragt aber nach der Geraetetyp-Deklaration, nicht nach
-      blosser Cluster-Anwesenheit. Bei einem Taster, dessen Descriptor auf
-      Endpunkt 0 tatsaechlich nur Root Node nennt (der PowerSource-Cluster
-      liegt zwar vor, ist dort aber nicht als Geraetetyp gemeldet): eine
-      frische Registrierung exportiert 16 Signale, diese Migration 17 - in
-      diesem Fall IST die Migration grosszuegiger.
-    - Meldet ein Abbild fuer Endpunkt 0 gar keine `DeviceTypeList`, behandelt
-      `is_functional` bei einer frischen Registrierung Endpunkt 0 wie einen
-      gewoehnlichen NUTZ-Endpunkt (`profiles.relevance.device_types_by_endpoint`:
-      ein Endpunkt ohne Descriptor-Eintrag taucht dort gar nicht auf, und
-      eine fehlende Deklaration schliesst layer 2 in `is_functional` damit
-      aus). Diese Migration nimmt dagegen IMMER Endpunkt 0 = Root Node an,
-      egal ob ein Abbild das je bestaetigt hat. Beispiel: frisch 108
-      exportierte Signale, migriert 17 - hier ist die Migration deutlich
-      WENIGER grosszuegig, die entgegengesetzte Richtung der beiden Punkte
-      oben.
-    - Scheitert die Neuableitung fuer eine einzelne Zeile (z. B. ein
-      unerwarteter Wert in `kind`), bleibt GENAU DIESE Zeile unveraendert
-      stehen - kein Abbruch der gesamten Migration, keine halb migrierte
-      Datenbank (Entwurf 8, siehe
+    **What this migration otherwise CANNOT do:**
+    - Beyond the field-number exception above, `exportability` is NOT
+      reclassified. A fix in `clusters.yaml` that would change a value's
+      classification for some other reason therefore still only reaches an
+      already stored signal on the next genuine re-read of the device
+      (`register_signals`), not through this migration. `title` and `unit`
+      are unaffected by this: neither ever depends on the runtime value in
+      `profiles.table.lookup`.
+    - A title personalised by the user via `set_title` is also overwritten
+      by this one-time migration - the database does not distinguish
+      whether a stored title is the automatic default or a deliberate
+      rename.
+    - The same applies to `exported`: per `register_signals`/`set_exported`,
+      the value belongs to the user from the moment a signal first becomes
+      known - a deliberately toggled signal stays untouched on every
+      subsequent re-read (see there). This migration cannot honour that: it
+      rewrites `exported` once for EVERY row, because the schema has no
+      column that distinguishes "set by the user" from "automatic default"
+      - unavoidable within the task's scope. An operator who has manually
+      enabled (or disabled) twelve signals loses that selection with this
+      one update. Reassurance: the runtime path (`loxone.runtime`) does NOT
+      filter on `exported` when sending - an existing UDP wiring does not
+      die because of this. Only a NEWLY generated Loxone template after
+      this update is affected (`export.signals.to_inputs` filters on
+      `exported` there, see its docstring).
+    - A management endpoint beyond endpoint 0 (not ruled out from Matter's
+      point of view, but never observed on either of the two real devices
+      known so far) is not recognised by the fallback rule; such a device
+      would remain exported more generously after the migration than a
+      genuine fresh registration would. But that is NOT the only deviation
+      from `device_types_by_endpoint`, and not always the more generous
+      direction - "at most more generous" would be a false guarantee here,
+      see the following two points.
+    - The fallback rule infers from "cluster 47 (PowerSource) sits on
+      endpoint 0" that "PowerSource is declared there as a device type" -
+      but `is_functional` asks about the device-type declaration, not mere
+      cluster presence. For a button whose descriptor on endpoint 0
+      actually names only root node (the PowerSource cluster is present but
+      not reported there as a device type): a fresh registration exports 16
+      signals, this migration 17 - in this case the migration IS more
+      generous.
+    - If a snapshot reports no `DeviceTypeList` at all for endpoint 0,
+      `is_functional` treats endpoint 0 on a fresh registration like an
+      ordinary FUNCTIONAL endpoint
+      (`profiles.relevance.device_types_by_endpoint`: an endpoint without a
+      descriptor entry does not appear there at all, and a missing
+      declaration thereby excludes layer 2 in `is_functional`). This
+      migration, by contrast, ALWAYS assumes endpoint 0 = root node,
+      regardless of whether any snapshot ever confirmed that. Example:
+      freshly 108 exported signals, migrated 17 - here the migration is
+      markedly LESS generous, the opposite direction of the two points
+      above.
+    - If the re-derivation fails for a single row (e.g. an unexpected value
+      in `kind`), EXACTLY THAT row is left unchanged - no abort of the
+      entire migration, no half-migrated database (design 8, see
       `test_an_unparseable_row_survives_the_migration_untouched`).
     """
     rows = db.execute(
@@ -453,26 +442,26 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
                 int(row["element_id"]),
                 SignalKind(row["kind"]),
             )
-            # `value=None`: `lookup` braucht den Laufzeitwert nur fuer die
-            # Exportability-Klassifizierung - `title` und `unit` haengen in
-            # `profiles.table.lookup` nie von `value` ab (siehe Docstring
-            # oben).
+            # `value=None`: `lookup` only needs the runtime value for the
+            # exportability classification - `title` and `unit` never
+            # depend on `value` in `profiles.table.lookup` (see docstring
+            # above).
             profile = lookup(ref, None)
-            # Kein Eintrag noetig, wenn dieses Geraet gar kein Signal auf
-            # Endpunkt 0 hat - `is_functional` behandelt einen fehlenden
-            # Endpunkt darin ohnehin wie einen gewoehnlichen Nutz-Endpunkt.
+            # No entry needed if this device has no signal at all on
+            # endpoint 0 - `is_functional` treats a missing endpoint there
+            # like an ordinary functional endpoint anyway.
             device_types = device_types_by_device.get(int(row["device_id"]), {})
             exportability = Exportability(row["exportability"])
             if struct_field(ref) is not None:
-                # Die einzige Ausnahme, in der diese Migration eine
-                # Klassifizierung OHNE Laufzeitwert anhebt (siehe Docstring,
-                # "Feldnummer").
+                # The only exception where this migration raises a
+                # classification WITHOUT a runtime value (see docstring,
+                # "field number").
                 exportability = Exportability.ANALOG
             exported = int(is_exportable(exportability) and is_functional(ref, device_types))
         except (ValueError, KeyError):
-            # Diese eine Zeile bleibt unveraendert (siehe Docstring, "Was
-            # diese Migration sonst NICHT kann") - kein Abbruch der
-            # Transaktion.
+            # This one row stays unchanged (see docstring, "What this
+            # migration otherwise CANNOT do") - no abort of the
+            # transaction.
             continue
         db.execute(
             "UPDATE signal SET title = ?, unit = ?, exportability = ?, exported = ? WHERE key = ?",
@@ -481,43 +470,43 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
 
 
 def _migrate_to_v4(db: sqlite3.Connection) -> None:
-    """Fuegt `signal.functional` hinzu und befuellt bestehende Zeilen (Aufgabe 8).
+    """Adds `signal.functional` and backfills existing rows (Task 8).
 
-    **Warum eine eigene Spalte, obwohl `exported` schon existiert.** Beide
-    starten beim Anlegen eines Signals (`register_signals`) am selben Wert -
-    `is_exportable(...) and is_functional(...)` -, laufen aber danach
-    auseinander, sobald jemand einen Haken in der Signale-Ansicht umlegt
-    (`PATCH /api/signals/{key}`, `set_exported`): `exported` gehoert dann dem
-    Nutzer, `is_functional` bleibt eine reine Eigenschaft des Geraets, die
-    sich durch einen Klick nicht aendert. Die Oberflaeche braucht aber genau
-    diese zweite, vom Nutzer UNBEEINFLUSSTE Antwort, um die Signalliste in
-    "Funktional" und "Experte" zu gliedern (`api.devices._signal_out`) - ein
-    Nutzer, der ein technisches Signal manuell exportiert, soll es dadurch
-    nicht auch aus dem Experte-Block herausheben, und umgekehrt. Ohne eigene
-    Spalte gaebe es nur zwei schlechte Alternativen: `is_functional` bei
-    jeder Anfrage neu berechnen (braucht die Geraetetypen je Endpunkt, siehe
-    `_migrate_to_v3`s Docstring - genau das Problem, das dort schon gegen
-    eine Spalte sprach, JETZT aber nicht mehr gilt, weil `register_signals`
-    das Ergebnis ab sofort ohnehin schon kennt und mitschreiben kann), oder
-    `exported` fuer beide Fragen gleichzeitig missbrauchen und damit die
-    Nutzer-Auswahl beim Umschalten stillschweigend verlieren.
+    **Why a separate column even though `exported` already exists.** Both
+    start at the same value when a signal is created (`register_signals`) -
+    `is_exportable(...) and is_functional(...)` - but then diverge as soon
+    as someone flips a checkbox in the signals view (`PATCH
+    /api/signals/{key}`, `set_exported`): `exported` then belongs to the
+    user, while `is_functional` remains a pure property of the device that
+    does not change through a click. The UI, however, needs exactly this
+    second answer, UNAFFECTED by the user, to organise the signal list into
+    "functional" and "expert" (`api.devices._signal_out`) - a user who
+    manually exports a technical signal should not thereby also lift it out
+    of the expert block, and vice versa. Without a dedicated column there
+    would only be two bad alternatives: recompute `is_functional` on every
+    request (needs the device types per endpoint, see `_migrate_to_v3`'s
+    docstring - exactly the problem that already argued against a column
+    there, but no longer applies NOW, because `register_signals` already
+    knows the result from now on anyway and can write it along), or abuse
+    `exported` for both questions at once and thereby silently lose the
+    user's selection on toggling.
 
-    **Der Ruecksicherungsfall (Bestandszeilen ohne Geraeteabbild) laeuft
-    ueber dieselbe Ersatzregel wie `_migrate_to_v3`**, siehe
-    `_endpoint0_device_types` - dieselben dort dokumentierten Grenzen gelten
-    hier unveraendert (Endpunkt 0 = Root Node angenommen, PowerSource nur
-    ueber Cluster-Anwesenheit statt echter Geraetetyp-Deklaration erkannt,
-    kein Wissen ueber einen Verwaltungs-Endpunkt jenseits von Endpunkt 0).
-    Anders als `_migrate_to_v3` fasst diese Migration `exportability` und
-    `exported` nicht an - nur die neue Spalte.
+    **The fallback case (existing rows without a device snapshot) goes
+    through the same fallback rule as `_migrate_to_v3`**, see
+    `_endpoint0_device_types` - the same limits documented there apply here
+    unchanged (endpoint 0 = root node assumed, PowerSource recognised only
+    via cluster presence rather than a genuine device-type declaration, no
+    knowledge of a management endpoint beyond endpoint 0). Unlike
+    `_migrate_to_v3`, this migration does not touch `exportability` or
+    `exported` - only the new column.
 
-    Wie `_migrate_to_v1`: der Backfill laeuft nur, wenn die Spalte tatsaechlich
-    neu angelegt wurde, nicht bei einer frisch erzeugten Datenbank (Spalte
-    schon durch `_SCHEMA` da, keine Bestandszeilen). Eine Zeile, die sich
-    nicht parsen laesst, bleibt beim Spalten-Default `functional = 1` stehen -
-    derselbe konservative Fehlschlagfall wie bei `_migrate_to_v3` ("diese eine
-    Zeile bleibt unveraendert" dort bedeutet fuer `exported`, hier fuer
-    `functional`: im Zweifel sichtbar statt versteckt)."""
+    Like `_migrate_to_v1`: the backfill only runs if the column was
+    actually newly added, not for a freshly created database (column
+    already present via `_SCHEMA`, no existing rows). A row that cannot be
+    parsed is left at the column default `functional = 1` - the same
+    conservative failure case as in `_migrate_to_v3` ("this one row stays
+    unchanged" there means for `exported`, here for `functional`: when in
+    doubt, visible rather than hidden)."""
     if not _add_column_if_missing(db, "signal", "functional", "INTEGER NOT NULL DEFAULT 1"):
         return
     rows = db.execute(
@@ -536,24 +525,24 @@ def _migrate_to_v4(db: sqlite3.Connection) -> None:
             device_types = device_types_by_device.get(int(row["device_id"]), {})
             functional = int(is_functional(ref, device_types))
         except (ValueError, KeyError):
-            # Diese eine Zeile bleibt beim Spalten-Default stehen (siehe
-            # Docstring) - kein Abbruch der gesamten Migration.
+            # This one row is left at the column default (see docstring) -
+            # no abort of the entire migration.
             continue
         db.execute("UPDATE signal SET functional = ? WHERE key = ?", (functional, row["key"]))
 
 
 def _migrate_to_v5(db: sqlite3.Connection) -> None:
-    """Legt `setting` und `session` an (WebUI-Login).
+    """Creates `setting` and `session` (WebUI login).
 
-    `CREATE TABLE IF NOT EXISTS` und nicht `CREATE TABLE`: eine frisch
-    angelegte Datenbank hat beide Tabellen bereits durch `_SCHEMA`, steht
-    dabei aber ebenfalls auf `PRAGMA user_version = 0` und laeuft deshalb
-    durch dieselbe Migrationskette (siehe `_migrate` und
-    `_add_column_if_missing` zur gleichen Falle bei Spalten).
+    `CREATE TABLE IF NOT EXISTS` and not `CREATE TABLE`: a freshly created
+    database already has both tables via `_SCHEMA`, but is also at `PRAGMA
+    user_version = 0` and therefore runs through the same migration chain
+    (see `_migrate` and `_add_column_if_missing` for the same pitfall with
+    columns).
 
-    Kein Backfill: eine Bestandsdatenbank hat kein Passwort und keine
-    Sitzung, und genau das ist der richtige Zustand - sie geht nach dem
-    Update durch die Ersteinrichtung (Spec 5)."""
+    No backfill: an existing database has no password and no session, and
+    that is exactly the right state - it goes through initial setup after
+    the update (Spec 5)."""
     db.executescript(
         """
         CREATE TABLE IF NOT EXISTS setting (
@@ -570,38 +559,38 @@ def _migrate_to_v5(db: sqlite3.Connection) -> None:
 
 
 def _migrate_to_v6(db: sqlite3.Connection) -> None:
-    """Fuegt `signal.resend` hinzu (periodischer Resend als Opt-in, Entwurf
-    2026-09-04) - kein Backfill: jede Bestandszeile startet bei `resend = 0`,
-    genau der Spalten-Default. Anders als `exported` (`_migrate_to_v1`) gibt
-    es hier keinen Bestandswert, aus dem sich ein sinnvoller Vorgabewert
-    ableiten liesse - im Gegenteil ist "aus" hier ausdruecklich die
-    gewuenschte Vorgabe (siehe Entwurf, Abschnitt 3): der periodische
-    Voll-Resend soll nach diesem Update fuer JEDES Signal erst durch eine
-    bewusste Nutzerentscheidung wieder anspringen."""
+    """Adds `signal.resend` (periodic resend as opt-in, design 2026-09-04) -
+    no backfill: every existing row starts at `resend = 0`, exactly the
+    column default. Unlike `exported` (`_migrate_to_v1`), there is no
+    existing value here from which a meaningful default could be derived -
+    on the contrary, "off" is explicitly the desired default here (see
+    design, section 3): the periodic full resend should only start again
+    for EVERY signal after this update through a deliberate user
+    decision."""
     _add_column_if_missing(db, "signal", "resend", "INTEGER NOT NULL DEFAULT 0")
 
 
 def _migrate_to_v7(db: sqlite3.Connection) -> None:
-    """Fuegt `device.room` und `device.device_types` hinzu (Entwurf
-    Geraete-Tab, 2026-09-05, Abschnitt 3.1).
+    """Adds `device.room` and `device.device_types` (device tab design,
+    2026-09-05, section 3.1).
 
-    Zwei Spalten in einem Schritt, wie `_migrate_to_v2` - beide gehoeren zu
-    demselben Vorhaben und kaemen nie einzeln vor.
+    Two columns in one step, like `_migrate_to_v2` - both belong to the
+    same effort and would never occur individually.
 
-    Kein Backfill. Fuer `room` gibt es keinen Bestandswert, aus dem sich ein
-    Raum ableiten liesse, und `NULL` ist ohnehin die gewollte Bedeutung
-    ("Ohne Raum"). Fuer `device_types` gaebe es einen - die Matter-
-    Geraetetypen stehen im `NodeSnapshot` -, aber genau der liegt einer
-    Migration nicht vor: sie bekommt eine `sqlite3.Connection` und sonst
-    nichts. Das Nachtragen uebernimmt `Store.backfill_device_types` beim
-    Start der Bruecke, wo die Abbilder ohnehin geholt werden."""
+    No backfill. For `room` there is no existing value from which a room
+    could be derived, and `NULL` is the intended meaning anyway ("no
+    room"). For `device_types` there would be one - the Matter device
+    types live in the `NodeSnapshot` - but a migration does not have
+    exactly that available: it receives an `sqlite3.Connection` and
+    nothing else. `Store.backfill_device_types` takes over the backfilling
+    when the bridge starts, where the snapshots are fetched anyway."""
     _add_column_if_missing(db, "device", "room", "TEXT")
     _add_column_if_missing(db, "device", "device_types", "TEXT")
 
 
-# Migrationen der Reihe nach, angewandt ab der jeweils gespeicherten Version -
-# Erweiterung fuer eine spaetere Schema-Aenderung: einfach anhaengen, mit der
-# naechsten Versionsnummer als Schluessel.
+# Migrations in order, applied from whichever version is stored - to extend
+# for a later schema change: simply append, with the next version number as
+# the key.
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
@@ -614,21 +603,19 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 
 
 def _migrate(db: sqlite3.Connection) -> None:
-    """Bringt eine geoeffnete Datenbank auf `_SCHEMA_VERSION`.
+    """Brings an opened database up to `_SCHEMA_VERSION`.
 
-    Laeuft in einer Transaktion: scheitert eine Migration, bleibt die
-    Datenbank unveraendert (Review-Fix Important #1) - `ALTER TABLE ADD
-    COLUMN` ist in SQLite vollstaendig transaktional, weshalb ein expliziter
-    Rollback die schon ausgefuehrten Schritte dieses Laufs wieder rueckgaengig
-    macht. `PRAGMA user_version` selbst ist ebenfalls Teil dieser Transaktion
-    und wird deshalb nur bei vollstaendigem Erfolg auf `_SCHEMA_VERSION`
-    gesetzt - ein Absturz mitten in einer Migration hinterlaesst also nicht
-    eine halb angewandte Aenderung unter einer bereits erhoehten Version, die
-    ein spaeterer Start faelschlich fuer erledigt haelt.
+    Runs in one transaction: if a migration fails, the database stays
+    unchanged (review fix Important #1) - `ALTER TABLE ADD COLUMN` is fully
+    transactional in SQLite, so an explicit rollback undoes the steps of
+    this run that already executed. `PRAGMA user_version` itself is also
+    part of this transaction and is therefore only set to `_SCHEMA_VERSION`
+    on complete success - a crash in the middle of a migration therefore
+    does not leave a half-applied change under an already-raised version
+    that a later start would incorrectly consider done.
 
-    Bereits auf dem neuesten Stand (der Normalfall bei jedem Start ausser dem
-    allerersten nach einer Schema-Aenderung): kein Schreibzugriff, echtes
-    No-op.
+    Already at the latest state (the normal case on every start except the
+    very first after a schema change): no write access, a genuine no-op.
     """
     version = int(db.execute("PRAGMA user_version").fetchone()[0])
     if version >= _SCHEMA_VERSION:
@@ -652,42 +639,42 @@ class StoredSignal:
     title: str
     unit: str
     exportability: Exportability
-    # Beide Felder unten sind bereits Spalten der `signal`-Tabelle - kein
-    # Bruch der Schluessel-Opazitaet aus Spec 6.2 (der Schluessel selbst
-    # bleibt unangetastet), sondern nur ihre Offenlegung im Dataclass.
+    # Both fields below are already columns of the `signal` table - not a
+    # break of key opacity from Spec 6.2 (the key itself stays untouched),
+    # only their exposure in the dataclass.
     #
-    # device_id (Task 2, Phase 5): die Geraete-API loest ein Signal ueber
-    # `signal_by_key` OHNE Geraete-Kontext im Pfad auf (`PATCH
-    # /api/signals/{key}`) und braucht trotzdem die zugehoerige device_id,
-    # um z. B. einen Live-Wert nachzuschlagen. Den device_id aus dem
-    # Schluessel-String zu parsen waere ein Bruch von "Keys sind opak"
-    # (Spec 6.2) durch die Hintertuer - store.py kennt die device_id ohnehin
-    # aus der Zeile, sie muss nur mitgegeben werden.
+    # device_id (Task 2, Phase 5): the device API resolves a signal via
+    # `signal_by_key` WITHOUT device context in the path (`PATCH
+    # /api/signals/{key}`) and still needs the associated device_id, e.g.
+    # to look up a live value. Parsing the device_id out of the key string
+    # would be a break of "keys are opaque" (Spec 6.2) through the back
+    # door - store.py already knows the device_id from the row anyway, it
+    # just needs to be passed along.
     device_id: int
-    # exported (Spec 5, Datenmodell): ob dieses Signal in den naechsten
-    # Export einfliessen soll - vom Nutzer umschaltbar (`PATCH
-    # /api/signals/{key}`), unabhaengig von `exportability`. Ein technisch
-    # nicht abbildbares Signal (siehe Spec 6.6) hat hier nie eine editierbare
-    # Checkbox, siehe `exportable` in `api.models.SignalOut`.
+    # exported (Spec 5, data model): whether this signal should flow into
+    # the next export - toggleable by the user (`PATCH
+    # /api/signals/{key}`), independent of `exportability`. A signal that
+    # is not technically mappable (see Spec 6.6) never has an editable
+    # checkbox here, see `exportable` in `api.models.SignalOut`.
     exported: bool
-    # functional (Aufgabe 8, Phase 6): ob `profiles.relevance.is_functional`
-    # dieses Signal fuer diesen GERAETETYP als gewollt einstuft - anders als
-    # `exported` vom Nutzer NICHT umschaltbar und bleibt deshalb auch dann
-    # unveraendert, wenn ein Nutzer `exported` per Checkbox umlegt. Beide
-    # Felder starten beim Anlegen am selben Wert, laufen aber ab dem ersten
-    # Klick auseinander - siehe `_migrate_to_v4`, wo diese Unterscheidung
-    # ausfuehrlich begruendet ist. Die Oberflaeche nutzt allein DIESES Feld,
-    # um die Signalliste in "Funktional" und "Experte" zu gliedern
-    # (`api.devices._signal_out`) - eine zweite Berechnung der Regel in der
-    # API-Schicht oder gar in JavaScript gibt es bewusst nicht.
+    # functional (Task 8, Phase 6): whether `profiles.relevance.is_functional`
+    # classifies this signal as intended for this DEVICE TYPE - unlike
+    # `exported`, NOT toggleable by the user and therefore stays unchanged
+    # even when a user flips `exported` via checkbox. Both fields start at
+    # the same value when created, but diverge from the first click onward
+    # - see `_migrate_to_v4`, where this distinction is explained at
+    # length. The UI uses only THIS field to organise the signal list into
+    # "functional" and "expert" (`api.devices._signal_out`) - there is
+    # deliberately no second computation of the rule in the API layer or
+    # even in JavaScript.
     functional: bool
-    # resend (Entwurf periodischer Resend, 2026-09-04): ob dieses Signal vom
-    # periodischen Timer erneut gesendet werden soll, auch wenn es sich
-    # nicht geaendert hat - vom Nutzer umschaltbar (`PATCH
-    # /api/signals/{key}`), unabhaengig von `exported`/`functional`. Betrifft
-    # NUR `Runtime.resend_marked()` (den periodischen Timer); `resend_all()`
-    # (fuer `/resync` und den Bridge-Start) ignoriert dieses Feld bewusst und
-    # sendet weiterhin jeden bekannten Wert, siehe dortigen Docstring.
+    # resend (periodic resend design, 2026-09-04): whether this signal
+    # should be resent by the periodic timer even if it has not changed -
+    # toggleable by the user (`PATCH /api/signals/{key}`), independent of
+    # `exported`/`functional`. Affects ONLY `Runtime.resend_marked()` (the
+    # periodic timer); `resend_all()` (for `/resync` and the bridge start)
+    # deliberately ignores this field and still sends every known value,
+    # see its docstring.
     resend: bool
 
 
@@ -700,40 +687,38 @@ class StoredCommand:
     cluster_id: int
     command_id: int
     takes_value: bool
-    # device_id (Review-Fix Important #1, 2026-09-02): dieselbe Begruendung
-    # wie bei `StoredSignal.device_id` oben - `resolve_command` loest einen
-    # Kommando-Schluessel OHNE Geraete-Kontext im Pfad auf (`POST
-    # /api/commands/{key}`), und die aufrufende Route braucht trotzdem die
-    # device_id, um zu pruefen, ob das zugehoerige Geraet noch aktiv ist.
+    # device_id (review fix Important #1, 2026-09-02): the same rationale
+    # as for `StoredSignal.device_id` above - `resolve_command` resolves a
+    # command key WITHOUT device context in the path (`POST
+    # /api/commands/{key}`), and the calling route still needs the
+    # device_id to check whether the associated device is still active.
     device_id: int
 
 
 def _encode_device_types(types: Mapping[int, frozenset[int]]) -> str:
-    """Die Ausgabe von `relevance.device_types_by_endpoint` als JSON fuer die
-    Spalte `device.device_types`.
+    """The output of `relevance.device_types_by_endpoint` as JSON for the
+    `device.device_types` column.
 
-    Endpunkte werden zu Zeichenketten, weil JSON keine ganzzahligen
-    Schluessel kennt; die IDs werden sortiert abgelegt, damit zwei gleiche
-    Abbilder auch denselben Text ergeben - das macht einen Vergleich in
-    einem Test lesbar und verhindert, dass ein bedeutungsloser
-    Reihenfolgewechsel wie eine Aenderung aussieht."""
+    Endpoints become strings because JSON has no integer keys; the IDs are
+    stored sorted, so that two identical snapshots also produce the same
+    text - that makes a comparison in a test readable and prevents a
+    meaningless order change from looking like an actual change."""
     return json.dumps({str(endpoint): sorted(ids) for endpoint, ids in sorted(types.items())})
 
 
 def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
-    """Gegenstueck zu `_encode_device_types`. `None` heisst "noch nicht
-    nachgetragen" (siehe `_migrate_to_v7`).
+    """Counterpart to `_encode_device_types`. `None` means "not yet
+    backfilled" (see `_migrate_to_v7`).
 
-    Unlesbares JSON wird ebenfalls zu `None` statt zu einer Ausnahme: eine
-    von Hand verstellte Zeile darf die gesamte Geraeteliste nicht
-    unbenutzbar machen: das Geraet landet dann in der Kategorie "Sonstige"
-    und wird beim naechsten Bruueckenstart neu befuellt - dieselbe
-    Behandlung wie eine nie gefuellte Zeile. "Unlesbar" meint dabei nicht
-    nur kaputtes JSON, sondern auch syntaktisch gueltiges JSON mit falscher
-    Form - ein nicht-numerischer Endpunkt- oder Typ-Schluessel (`ValueError`
-    aus `int(...)`) oder eine nicht iterierbare Typ-Liste (`TypeError`):
-    `_as_device` ruft diese Funktion fuer jede Zeile auf, und eine einzelne
-    handverstellte Zeile darf die uebrigen nicht mit reissen."""
+    Unreadable JSON also becomes `None` instead of an exception: a row
+    manually tampered with must not make the entire device list unusable:
+    the device then ends up in the "other" category and is refilled on the
+    next bridge start - the same handling as a row that was never filled.
+    "Unreadable" here means not just broken JSON, but also syntactically
+    valid JSON in the wrong shape - a non-numeric endpoint or type key
+    (`ValueError` from `int(...)`) or a non-iterable type list
+    (`TypeError`): `_as_device` calls this function for every row, and a
+    single hand-tampered row must not take the rest down with it."""
     if raw is None:
         return None
     try:
@@ -746,11 +731,13 @@ def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
 
 
 def _normalized_room(room: str | None) -> str | None:
-    """Ein Raumname ohne aeusseren Leerraum; was danach leer ist, wird `None`.
+    """A room name without leading/trailing whitespace; whatever is empty
+    afterward becomes `None`.
 
-    Eine Stelle statt drei: `set_room`, `register_device` und `rename_room`
-    stellen dieselbe Frage, und ein Raum " Bad" neben "Bad" waeren zwei
-    Raeume in der Oberflaeche, ohne dass jemand den Unterschied saehe."""
+    One place instead of three: `set_room`, `register_device` and
+    `rename_room` ask the same question, and a room " Kitchen" next to
+    "Kitchen" would be two rooms in the UI without anyone seeing the
+    difference."""
     if room is None:
         return None
     return room.strip() or None
@@ -758,63 +745,61 @@ def _normalized_room(room: str | None) -> str | None:
 
 @dataclass(frozen=True)
 class StoredDevice:
-    """Eine Zeile aus `device` (Spec 5) - fuer die Geraete-API (Task 2, Phase 5).
+    """A row from `device` (Spec 5) - for the device API (Task 2, Phase 5).
 
-    Traegt bewusst keinen `online`-Status: Erreichbarkeit ist Laufzeit-
-    Zustand (`Runtime`, gespeist aus Matter-Subscriptions), keine
-    gespeicherte Eigenschaft. Ein hier eingefrorenes `online`-Feld koennte
-    beim Neustart der Bruecke veraltet sein, bis die naechste Subscription
-    eintrifft.
+    Deliberately carries no `online` status: reachability is runtime state
+    (`Runtime`, fed from Matter subscriptions), not a stored property. An
+    `online` field frozen here could be stale after a bridge restart until
+    the next subscription arrives.
     """
 
     id: int
     node_id: int
     unique_id: str
     label: str
-    # exported_at/updated_at (Task 5, Phase 5) - Grundlage fuer `GET
-    # /api/export/status`. Beide sind ISO-8601-Zeitstempel als Text, `None`
-    # bedeutet "noch nie exportiert" bzw. "seit der Registrierung nicht mehr
-    # angefasst" (siehe `_migrate_to_v2` fuer den Fall einer Alt-Datenbank).
-    # `updated_at` ist absichtlich grob: es unterscheidet nicht, WAS sich am
-    # Geraet geaendert hat (Label, ein Signaltitel, eine neu entdeckte
-    # Signal-Liste, ...), nur DASS sich seit dem letzten Export etwas
-    # geaendert haben koennte - fuer "seither geaendert: ja/nein" reicht das.
+    # exported_at/updated_at (Task 5, Phase 5) - the basis for `GET
+    # /api/export/status`. Both are ISO 8601 timestamps as text, `None`
+    # means "never exported" or "not touched since registration"
+    # respectively (see `_migrate_to_v2` for the case of a legacy
+    # database). `updated_at` is deliberately coarse: it does not
+    # distinguish WHAT changed on the device (label, a signal title, a
+    # newly discovered signal list, ...), only THAT something might have
+    # changed since the last export - that is enough for "changed since
+    # then: yes/no".
     exported_at: str | None
     updated_at: str | None
-    # Raum und Geraetetypen (Entwurf Geraete-Tab, 2026-09-05). `room` ist ein
-    # frei gewaehlter Name, `None` heisst "Ohne Raum" - es gibt bewusst keine
-    # Raum-Tabelle, ein Raum existiert genau so lange, wie ein aktives Geraet
-    # seinen Namen traegt.
+    # Room and device types (device tab design, 2026-09-05). `room` is a
+    # freely chosen name, `None` means "no room" - there is deliberately no
+    # room table, a room exists for exactly as long as an active device
+    # carries its name.
     #
-    # `device_types` traegt die ROHE Auskunft des Geraets (Endpunkt ->
-    # Matter-Typ-IDs), nicht die daraus abgeleitete Kategorie. Der Grund
-    # steht in der Geschichte dieses Moduls: `signal.functional` und
-    # `signal.title` waren gespeicherte Ableitungen, und `_migrate_to_v3`
-    # musste sie fuer Bestandszeilen nachtraeglich neu berechnen, als sich
-    # die Regel verbesserte. Eine Zuordnungstabelle Matter-Typ -> Kategorie
-    # wird wachsen; wird nur die Quelle gespeichert, ist das ein
-    # Codewechsel ohne Migration.
+    # `device_types` carries the RAW information from the device (endpoint
+    # -> Matter type IDs), not the category derived from it. The reason
+    # lies in this module's history: `signal.functional` and `signal.title`
+    # were stored derivations, and `_migrate_to_v3` had to retroactively
+    # recompute them for existing rows when the rule improved. A mapping
+    # table from Matter type to category will grow; if only the source is
+    # stored, that is a code change without a migration.
     room: str | None
     device_types: dict[int, frozenset[int]] | None
 
 
 class UnknownCommandError(KeyError):
-    """`KeyError.__str__` haengt die Nachricht in `repr()` ein, wodurch
-    `str(exc)` zusaetzliche Anfuehrungszeichen um den ganzen deutschen Text
-    legt — Task 6 macht daraus einen HTTP-Fehlerkoerper, dem die Klammerung
-    nicht anzusehen sein soll. Die Unterklasse gibt die Nachricht
-    unveraendert zurueck; `pytest.raises(KeyError, ...)` faengt sie weiterhin,
-    da sie von `KeyError` erbt."""
+    """`KeyError.__str__` wraps the message in `repr()`, which makes
+    `str(exc)` put extra quote marks around the entire text - Task 6 turns
+    this into an HTTP error body that should not show that wrapping. The
+    subclass returns the message unchanged; `pytest.raises(KeyError, ...)`
+    still catches it, since it inherits from `KeyError`."""
 
     def __str__(self) -> str:
         return str(self.args[0])
 
 
 class UnknownDeviceError(KeyError):
-    """Wie `UnknownCommandError`, fuer ein unbekanntes oder bereits
-    entferntes (`forget_device`) Geraet - dieselbe Begruendung: die
-    Geraete-API (Task 2) macht daraus einen HTTP-404-Koerper, der die
-    `repr()`-Anfuehrungszeichen von `KeyError.__str__` nicht tragen soll."""
+    """Like `UnknownCommandError`, for an unknown or already removed
+    (`forget_device`) device - the same rationale: the device API (Task 2)
+    turns this into an HTTP 404 body that should not carry the
+    `repr()` quote marks from `KeyError.__str__`."""
 
     def __str__(self) -> str:
         return str(self.args[0])
@@ -827,59 +812,57 @@ class Store:
         self._db.executescript(_SCHEMA)
         self._db.commit()
         _migrate(self._db)
-        # Sicht auf dieselbe Verbindung, kein zweiter Verbindungsaufbau -
-        # siehe Moduldocstring von `auth_store.py`.
+        # A view onto the same connection, not a second connection - see
+        # the module docstring of `auth_store.py`.
         self.auth = AuthStore(self._db)
-        # Sicht auf dieselbe Verbindung - siehe `settings_store.py`.
+        # A view onto the same connection - see `settings_store.py`.
         self.settings = BridgeSettingsStore(
             self._db, default_udp_port=DEFAULT_UDP_PORT, default_listen_port=DEFAULT_LISTEN_PORT
         )
-        # Sicht auf dieselbe Verbindung - siehe `locale_store.py`.
+        # A view onto the same connection - see `locale_store.py`.
         self.locale = LocaleStore(self._db)
-        # Sicht auf dieselbe Verbindung - siehe `resend_settings_store.py`.
+        # A view onto the same connection - see `resend_settings_store.py`.
         self.resend_settings = ResendSettingsStore(self._db)
 
     def close(self) -> None:
         self._db.close()
 
     def check_writable(self) -> None:
-        """Prueft, ob die Datenbank JETZT tatsaechlich beschreibbar ist -
-        nicht nur laut Dateisystem-Bits, sondern durch einen echten,
-        sofort zurueckgerollten Schreibversuch. Wirft (typischerweise
-        `sqlite3.OperationalError`) bei einer schreibgeschuetzten Ablage,
-        einer vollen Platte oder einer exklusiv durch einen anderen Prozess
-        gesperrten Datenbank; aendert bei Erfolg nichts an den Daten.
+        """Checks whether the database is actually writable RIGHT NOW - not
+        just according to filesystem bits, but through a real write
+        attempt that is immediately rolled back. Raises (typically
+        `sqlite3.OperationalError`) for a read-only store, a full disk, or
+        a database exclusively locked by another process; changes nothing
+        about the data on success.
 
-        Fuer den Systemcheck der Diagnose (Spec 10.5, siehe
-        `api.diagnostics._check_store`) - der einzige Aufrufer bislang.
+        For the diagnostics system check (Spec 10.5, see
+        `api.diagnostics._check_store`) - the only caller so far.
 
-        **Vorab: eine eventuell schon offene, implizite Transaktion wird
-        zurueckgerollt (Review-Fix Important, 2026-09-02).** Ein paar
-        schreibende Methoden dieser Klasse (`rename_device`,
-        `mark_exported`, `set_title`, `set_exported`) legen kein eigenes
-        try/except um ihr `UPDATE ...` plus `commit()` - anders als z. B.
-        `register_signals`, das bei `ValueError`/`sqlite3.Error`
-        ausdruecklich zurueckrollt. Scheitert dort das `UPDATE` selbst oder
-        sogar erst das `commit()` (z. B. volle Platte), bleibt die von
-        Python VOR dem `UPDATE` automatisch eroeffnete Transaktion auf
-        dieser Verbindung offen. Ein zweites, direkt darauf folgendes
-        `BEGIN IMMEDIATE` wuerde dann IMMER mit `sqlite3.OperationalError:
-        cannot start a transaction within a transaction` scheitern -
-        unabhaengig davon, ob die Datenbank inzwischen wieder beschreibbar
-        ist. Ohne die Behandlung hier wuerde der Systemcheck genau diesen
-        Fall faelschlich als "nicht beschreibbar" melden, obwohl die
-        Datenbank selbst in Ordnung sein kann.
+        **Beforehand: any already-open implicit transaction is rolled back
+        (review fix Important, 2026-09-02).** A few writing methods of this
+        class (`rename_device`, `mark_exported`, `set_title`,
+        `set_exported`) do not wrap their `UPDATE ...` plus `commit()` in
+        their own try/except - unlike e.g. `register_signals`, which
+        explicitly rolls back on `ValueError`/`sqlite3.Error`. If the
+        `UPDATE` itself fails there, or even only the `commit()` does (e.g.
+        a full disk), the transaction Python automatically opened BEFORE
+        the `UPDATE` on this connection stays open. A second `BEGIN
+        IMMEDIATE` right after that would then ALWAYS fail with
+        `sqlite3.OperationalError: cannot start a transaction within a
+        transaction` - regardless of whether the database has since become
+        writable again. Without the handling here, the system check would
+        incorrectly report exactly this case as "not writable", even
+        though the database itself may be fine.
 
-        Das Zurueckrollen ist hier unbedenklich: jede Store-Instanz gehoert
-        genau einem Thread und einer Event-Loop, und jede schreibende
-        Methode ist rein synchron - sie haengt nie mitten in ihrer eigenen
-        Transaktion an einem `await`. Eine zum Zeitpunkt DIESES Aufrufs
-        vorgefundene offene Transaktion kann deshalb nie eine tatsaechlich
-        noch laufende, legitime Transaktion sein - sie ist immer der Rest
-        eines bereits fehlgeschlagenen, nie committeten Schreibversuchs,
-        dessen Ausnahme schon an dessen eigenen Aufrufer weitergereicht
-        wurde. Sie zurueckzurollen verwirft deshalb garantiert keine
-        erfolgreich geschriebenen Daten."""
+        Rolling back here is safe: every store instance belongs to exactly
+        one thread and one event loop, and every writing method is purely
+        synchronous - it never hangs on an `await` in the middle of its own
+        transaction. An open transaction found at the time of THIS call can
+        therefore never be an actually still-running, legitimate
+        transaction - it is always the remainder of an already-failed,
+        never-committed write attempt whose exception has already been
+        passed on to its own caller. Rolling it back therefore is
+        guaranteed never to discard any successfully written data."""
         if self._db.in_transaction:
             self._db.rollback()
         self._db.execute("BEGIN IMMEDIATE")
@@ -887,32 +870,30 @@ class Store:
 
     @staticmethod
     def _now() -> str:
-        """Duenne Bruecke zu `loxmatter.timestamps.now_iso` (Review-Fix
-        Minor, 2026-09-02 - siehe dort fuer die Begruendung, warum diese
-        Funktion nicht mehr eigenstaendig implementiert ist). Bleibt als
-        eigene Methode erhalten, weil `self._now()` bereits an vielen
-        Stellen dieser Klasse verdrahtet ist."""
+        """Thin bridge to `loxmatter.timestamps.now_iso` (review fix Minor,
+        2026-09-02 - see there for the rationale why this function is no
+        longer implemented on its own). Kept as its own method because
+        `self._now()` is already wired up in many places in this class."""
         return now_iso()
 
     def _device_identity(self, snapshot: NodeSnapshot) -> str:
-        """Faellt auf die Node-ID zurueck: manche Geraete melden keine UniqueID (Spec 7.2)."""
+        """Falls back to the node ID: some devices do not report a unique ID (Spec 7.2)."""
         return snapshot.unique_id or f"node:{snapshot.node_id}"
 
     def register_device(self, snapshot: NodeSnapshot, room: str | None = None) -> int:
-        """Legt ein Geraet an, oder liefert die id eines bereits bekannten
-        aktiven Geraets zurueck, ohne es zu veraendern.
+        """Creates a device, or returns the id of an already known active
+        device without changing it.
 
-        **`room` wirkt ausschliesslich auf eine neu eingefuegte Zeile.** Ist
-        das Geraet schon aktiv registriert, greift der fruehe Rueckgabepfad
-        unten VOR dem INSERT, und `room` wird dabei stillschweigend
-        verworfen - beabsichtigt: ein bekanntes Geraet behaelt beim
-        Wiedereinlernen seinen gepflegten Raum, ein Wiedereinlernen ohne
-        Raumwahl darf ihn nicht leeren. Eine ausdrueckliche Raumwahl fuer ein
-        bereits bekanntes Geraet ist deshalb Sache der Aufruferin: die
-        Einlern-Route in `api/devices.py` traegt sie nach dieser Methode per
-        `set_room` nach, wenn `request.room is not None` war (Review-Fund,
-        Finding 4) - nie per `rename_device`, denn der Raum landet in keiner
-        Exportvorlage."""
+        **`room` only takes effect on a newly inserted row.** If the
+        device is already actively registered, the early return path below
+        kicks in BEFORE the INSERT, and `room` is silently discarded there
+        - deliberate: a known device keeps its maintained room on
+        recommissioning, and a recommissioning without a room choice must
+        not clear it. An explicit room choice for an already known device
+        is therefore the caller's responsibility: the commissioning route
+        in `api/devices.py` records it after this method via `set_room` if
+        `request.room is not None` (review finding, finding 4) - never via
+        `rename_device`, because the room ends up in no export template."""
         identity = self._device_identity(snapshot)
         row = self._db.execute(
             "SELECT id FROM device WHERE unique_id = ? AND active = 1", (identity,)
@@ -941,14 +922,14 @@ class Store:
         return int(device_id)
 
     def forget_device(self, device_id: int) -> None:
-        """Markiert ein Geraet als entfernt. Die id bleibt vergeben (Spec 6.2)."""
+        """Marks a device as removed. The id stays assigned (Spec 6.2)."""
         self._db.execute("UPDATE device SET active = 0 WHERE id = ?", (device_id,))
         self._db.commit()
 
     def udp_port(self, device_id: int) -> int:
         row = self._db.execute("SELECT udp_port FROM device WHERE id = ?", (device_id,)).fetchone()
         if row is None:
-            raise KeyError(f"unbekanntes Geraet {device_id}")
+            raise KeyError(f"unknown device {device_id}")
         return int(row["udp_port"])
 
     @staticmethod
@@ -965,16 +946,16 @@ class Store:
         )
 
     def devices(self) -> list[StoredDevice]:
-        """Alle aktiven Geraete (Task 2, Phase 5) - fuer `GET /api/devices`.
+        """All active devices (Task 2, Phase 5) - for `GET /api/devices`.
 
-        Ein entferntes Geraet (`forget_device`) taucht hier nicht mehr auf,
-        genau wie bei `device_id_for_node`."""
+        A removed device (`forget_device`) no longer shows up here, exactly
+        as with `device_id_for_node`."""
         rows = self._db.execute("SELECT * FROM device WHERE active = 1 ORDER BY id").fetchall()
         return [self._as_device(r) for r in rows]
 
     def device(self, device_id: int) -> StoredDevice:
-        """Ein einzelnes aktives Geraet - `UnknownDeviceError`, wenn es nie
-        registriert wurde oder inzwischen entfernt ist."""
+        """A single active device - `UnknownDeviceError` if it was never
+        registered or has since been removed."""
         row = self._db.execute(
             "SELECT * FROM device WHERE id = ? AND active = 1", (device_id,)
         ).fetchone()
@@ -983,16 +964,16 @@ class Store:
         return self._as_device(row)
 
     def rename_device(self, device_id: int, label: str) -> None:
-        """Setzt das Label eines Geraets (`PATCH /api/devices/{device_id}`).
+        """Sets a device's label (`PATCH /api/devices/{device_id}`).
 
-        Wie `set_title` ohne vorherige Existenzpruefung - der Aufrufer (die
-        API-Route) prueft ueber `device()` selbst und meldet ein unbekanntes
-        Geraet als 404, bevor diese Methode ueberhaupt aufgerufen wird.
+        Like `set_title`, with no prior existence check - the caller (the
+        API route) checks via `device()` itself and reports an unknown
+        device as 404 before this method is even called.
 
-        Setzt `updated_at` (Task 5, Phase 5): eine Umbenennung landet im
-        naechsten Export als neuer `Title` in der Vorlage - `GET
-        /api/export/status` soll das Geraet danach als "seither geaendert"
-        fuehren, auch wenn kein Signal betroffen ist."""
+        Sets `updated_at` (Task 5, Phase 5): a rename ends up in the next
+        export as a new `Title` in the template - `GET /api/export/status`
+        should then list the device as "changed since then", even if no
+        signal is affected."""
         self._db.execute(
             "UPDATE device SET label = ?, updated_at = ? WHERE id = ?",
             (label, self._now(), device_id),
@@ -1000,47 +981,46 @@ class Store:
         self._db.commit()
 
     def set_room(self, device_id: int, room: str | None) -> None:
-        """Setzt den Raum eines Geraets (`PATCH /api/devices/{device_id}`).
+        """Sets a device's room (`PATCH /api/devices/{device_id}`).
 
-        **Fasst `updated_at` bewusst NICHT an** - der eine Punkt, an dem
-        diese Methode von `rename_device` direkt darueber abweicht. Dessen
-        Docstring nennt den Grund fuer das Gegenteil: das Label landet im
-        naechsten Export als `Title` in der Vorlage, also fuehrt
-        `GET /api/export/status` das Geraet danach zu Recht als "seither
-        geaendert". Der Raum landet in keiner Vorlage. Wuerde er `updated_at`
-        mitsetzen, bekaeme beim ersten Aufraeumen der Raumzuordnung jedes
-        Geraet eine amber Pille und die Aufforderung zu einem Export, der
-        genau dieselben Dateien erzeugt wie der letzte.
+        **Deliberately does NOT touch `updated_at`** - the one point where
+        this method deviates from `rename_device` directly above it. That
+        one's docstring gives the reason for the opposite: the label ends
+        up in the next export as `Title` in the template, so `GET
+        /api/export/status` rightly lists the device afterward as "changed
+        since then". The room ends up in no template. If it also set
+        `updated_at`, the first cleanup of room assignments would give
+        every device an amber pill and a prompt for an export that produces
+        exactly the same files as the last one.
 
-        Wie `rename_device` ohne Existenzpruefung: die aufrufende Route
-        prueft ueber `device()` und meldet 404, bevor es hierher kommt."""
+        Like `rename_device`, with no existence check: the calling route
+        checks via `device()` and reports 404 before it gets here."""
         self._db.execute(
             "UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id)
         )
         self._db.commit()
 
     def backfill_device_types(self, snapshots: Sequence[NodeSnapshot]) -> int:
-        """Traegt `device.device_types` fuer Geraete nach, die noch keine
-        haben, und gibt zurueck, wie viele das waren.
+        """Backfills `device.device_types` for devices that do not yet have
+        any, and returns how many that was.
 
-        Aufgerufen beim Start der Bruecke, direkt neben
+        Called when the bridge starts, right next to
         `runtime.seed_from_snapshot(await client.snapshots())` (`cli.py`) -
-        die Abbilder aller erreichbaren Knoten sind dort bereits geholt, ein
-        zweiter Abruf waere reine Verschwendung.
+        the snapshots of all reachable nodes are already fetched there, a
+        second fetch would be pure waste.
 
-        **Nur `device_types IS NULL`.** Ein bereits nachgetragenes Geraet
-        wird nicht bei jedem Start neu geschrieben, und ein Geraet, das
-        gerade offline ist und deshalb in `snapshots()` fehlt, verliert
-        seine Typen nicht - hier wird ausschliesslich gefuellt, nie geleert.
+        **Only `device_types IS NULL`.** A device already backfilled is not
+        rewritten on every start, and a device that happens to be offline
+        and therefore missing from `snapshots()` does not lose its types -
+        this only ever fills, never clears.
 
-        Ob ein Geraet, dessen Typen sich beim erneuten Interview aendern
-        (etwa nach einem Firmware-Update), eine Aktualisierung bekommen
-        soll, ist bewusst offen gelassen (Entwurf, offener Punkt 2): der
-        Fall ist nie beobachtet worden und bekommt keine Mechanik auf
-        Verdacht.
+        Whether a device whose types change on a repeated interview (e.g.
+        after a firmware update) should get an update is deliberately left
+        open (design, open point 2): the case has never been observed and
+        gets no mechanism on suspicion.
 
-        Fasst `updated_at` nicht an - dieselbe Begruendung wie bei
-        `set_room`: die Geraetetypen landen in keiner Exportvorlage."""
+        Does not touch `updated_at` - the same rationale as for `set_room`:
+        the device types end up in no export template."""
         by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
         rows = self._db.execute(
             "SELECT id, node_id FROM device WHERE device_types IS NULL AND active = 1"
@@ -1059,30 +1039,29 @@ class Store:
         return filled
 
     def rename_room(self, old: str, new: str) -> int:
-        """Benennt einen Raum an allen aktiven Geraeten um und gibt zurueck,
-        wie viele es waren (`POST /api/rooms/rename`).
+        """Renames a room across all active devices and returns how many
+        that was (`POST /api/rooms/rename`).
 
-        Es gibt keine Raum-Tabelle (Entwurf 3.2), also ist "Raum umbenennen"
-        kein Schreibvorgang auf einem Objekt, sondern dieser eine
-        Massenschreibvorgang. Die Alternative waere, an jedem Geraet einzeln
-        einen neuen Raumnamen einzutippen - bei fuenf Geraeten fuenf
-        Gelegenheiten fuer einen Tippfehler, der einen sechsten Raum erzeugt.
+        There is no room table (design 3.2), so "rename room" is not a
+        write to one object but this one bulk write. The alternative would
+        be typing a new room name into each device individually - with five
+        devices, five opportunities for a typo that creates a sixth room.
 
-        `active = 1` aus demselben Grund, aus dem `devices()` danach filtert:
-        ein entferntes Geraet ist aus Sicht der Oberflaeche nicht mehr da.
+        `active = 1` for the same reason `devices()` filters on it
+        afterward: a removed device is no longer there from the UI's point
+        of view.
 
-        Ein bereits belegter Zielname fuehrt beide Raeume zusammen; die
-        Rueckfrage davor ist Sache der Oberflaeche, nicht dieser Methode.
-        Ein leerer Zielname dagegen wird hier abgewiesen: "umbenennen" ist
-        nicht der Weg, einen Raum aufzuloesen - dafuer gibt es `set_room`
-        mit `None` an jedem einzelnen Geraet."""
-        # `old` durch dieselbe Normalisierung wie `new`: seit dieser Methode
-        # ueber `POST /api/rooms/rename` erreichbar ist (Task 5), kommt der
-        # Quellname als Freitext aus dem JSON-Koerper an, nicht mehr
-        # ausschliesslich als bereits getrimmter, aus dem Speicher
-        # zurueckgelesener Wert - ungefiltert traefe " Küche " sonst null
-        # Zeilen und saehe wie ein Tippfehler in einem nicht existierenden
-        # Raum aus (Review-Fund).
+        An already occupied target name merges both rooms; the confirmation
+        prompt for that is the UI's responsibility, not this method's. An
+        empty target name, by contrast, is rejected here: "rename" is not
+        the way to dissolve a room - `set_room` with `None` on each
+        individual device exists for that."""
+        # `old` through the same normalization as `new`: since this method
+        # became reachable via `POST /api/rooms/rename` (Task 5), the
+        # source name arrives as free text from the JSON body, no longer
+        # exclusively as an already-trimmed value read back from storage -
+        # unfiltered, " Kitchen " would otherwise match zero rows and look
+        # like a typo in a nonexistent room (review finding).
         source = _normalized_room(old)
         target = _normalized_room(new)
         if target is None:
@@ -1094,29 +1073,28 @@ class Store:
         return int(cur.rowcount)
 
     def mark_exported(self, device_id: int) -> None:
-        """Setzt `exported_at` auf jetzt (Task 5, Phase 5).
+        """Sets `exported_at` to now (Task 5, Phase 5).
 
-        Aufgerufen sowohl von `api.export.download` als auch von `cli.py`s
-        `export`-Kommando - beide schreiben in dieselbe Datenbank (siehe
-        Modul-Docstring von `api/export.py`), und `GET /api/export/status`
-        soll "wann zuletzt exportiert" unabhaengig davon beantworten, ueber
-        welchen der beiden Wege der letzte Export lief. Ohne diesen Aufruf
-        im CLI-Kommando zeigte die WebUI nach einem `loxmatter export`
-        weiterhin "nie exportiert" an."""
+        Called both from `api.export.download` and from `cli.py`'s
+        `export` command - both write to the same database (see the
+        module docstring of `api/export.py`), and `GET
+        /api/export/status` should answer "when last exported"
+        independently of which of the two paths the last export went
+        through. Without this call in the CLI command, the WebUI would
+        keep showing "never exported" after a `loxmatter export`."""
         self._db.execute("UPDATE device SET exported_at = ? WHERE id = ?", (self._now(), device_id))
         self._db.commit()
 
     def device_id_for_node(self, node_id: int) -> int | None:
-        """Bildet eine Matter-Node-ID auf die zugehoerige, stabile `device_id` ab.
+        """Maps a Matter node ID to the associated, stable `device_id`.
 
-        Fuer die Laufzeit (Task 8): eine eingehende Subscription von
-        matter-server traegt nur die Node-ID, aber die Signalschluessel
-        haengen an der `device_id` (siehe Modul-Docstring - eine Node-ID kann
-        sich aendern, die `device_id` nie). `None`, wenn kein aktives Geraet
-        mit dieser Node-ID bekannt ist, etwa weil es noch nie exportiert oder
-        inzwischen entfernt (`forget_device`) wurde - eine Node-ID eines
-        entfernten Geraets darf nicht auf dessen alte, inaktive `device_id`
-        zeigen.
+        For the runtime (Task 8): an incoming subscription from
+        matter-server carries only the node ID, but the signal keys hang
+        off the `device_id` (see module docstring - a node ID can change,
+        the `device_id` never does). `None` if no active device with this
+        node ID is known, e.g. because it was never exported or has since
+        been removed (`forget_device`) - a removed device's node ID must
+        not point to its old, inactive `device_id`.
         """
         row = self._db.execute(
             "SELECT id FROM device WHERE node_id = ? AND active = 1", (node_id,)
@@ -1130,13 +1108,13 @@ class Store:
         return {str(r["key"]) for r in rows}
 
     def _assign_key(self, device_id: int, ref: SignalRef, slug: str, taken: set[str]) -> str:
-        """Vergibt einen neuen, noch nicht belegten Schluessel fuer ``ref``.
+        """Assigns a new, not-yet-taken key for ``ref``.
 
-        Der Normalfall ist ``d<device_id>_<endpoint>_<slug>``. Kollidiert das
-        mit einem bereits vergebenen Schluessel eines *anderen* Signals
-        desselben Geraets, wird die Element-ID angehaengt — das ist der
-        einzige zusaetzliche Diskriminator, der garantiert pro Endpoint
-        eindeutig ist (siehe Modul-Docstring, Spec 6.2).
+        The normal case is ``d<device_id>_<endpoint>_<slug>``. If that
+        collides with a key already assigned to *another* signal of the
+        same device, the element ID is appended - the only extra
+        discriminator that is guaranteed to be unique per endpoint (see
+        module docstring, Spec 6.2).
         """
         base = f"d{device_id}_{ref.endpoint}_{slug}"
         if base not in taken:
@@ -1144,36 +1122,37 @@ class Store:
         disambiguated = f"{base}_{ref.element_id}"
         if disambiguated in taken:
             raise ValueError(
-                f"Schluessel-Kollision fuer Geraet {device_id}: {disambiguated!r} bereits vergeben"
+                f"key collision for device {device_id}: {disambiguated!r} already assigned"
             )
         return disambiguated
 
     def register_signals(self, device_id: int, snapshot: NodeSnapshot) -> list[StoredSignal]:
-        """Legt neue Signale an; bekannte behalten Schluessel und Titel, aber
-        `unit` und `exportability` werden bei jedem Aufruf neu bestimmt.
+        """Creates new signals; known ones keep their key and title, but
+        `unit` and `exportability` are redetermined on every call.
 
-        Spec 6.2 verlangt Unveraenderlichkeit ausdruecklich nur fuer den
-        Schluessel — nicht fuer `unit` oder `exportability`. Wuerden diese
-        beim ersten Einlernen eingefroren, bliebe ein Signal, das nur meldet,
-        weil gerade kein Kommissionierungsfenster offen ist, oder ein
-        Attribut wie `StartUpOnOff`, das ein Geraet erst spaeter befuellt,
-        fuer immer bei `exportability=none` stehen — und eine Korrektur in
-        `clusters.yaml` erreichte ein schon gespeichertes Signal nie. Die
-        einzige Abhilfe waere das Loeschen der ganzen Datenbank, was jeden
-        Schluessel zerstoert. `title` dagegen bleibt unangetastet, sobald
-        `set_title` es einmal gesetzt hat — ab dann gehoert es dem Nutzer
-        (siehe `test_key_survives_a_title_change`). Nur beim Anlegen (Zweig
-        unten ohne `existing`) wird die Titelspalte einmalig aus
-        `profile.title` befuellt — bei einem generischen Slug ist das der
-        Klartextname aus dem SDK-Katalog (`profiles.table.lookup`,
-        `profiles.catalog.element_name`), sonst derselbe Wert wie `slug`.
+        Spec 6.2 explicitly requires immutability only for the key - not
+        for `unit` or `exportability`. If those were frozen at first
+        commissioning, a signal that only reports because no commissioning
+        window happens to be open right now, or an attribute like
+        `StartUpOnOff` that a device only populates later, would be stuck
+        at `exportability=none` forever - and a fix in `clusters.yaml`
+        would never reach an already stored signal. The only remedy would
+        be deleting the entire database, which destroys every key. `title`,
+        by contrast, stays untouched once `set_title` has set it - from
+        then on it belongs to the user (see
+        `test_key_survives_a_title_change`). Only when creating (the branch
+        below without `existing`) is the title column filled once from
+        `profile.title` - for a generic slug that is the plain-text name
+        from the SDK catalog (`profiles.table.lookup`,
+        `profiles.catalog.element_name`), otherwise the same value as
+        `slug`.
 
-        Laeuft als eine Transaktion: scheitert die Schluesselvergabe fuer ein
-        einzelnes neues Signal (siehe `_assign_key`), wird die gesamte
-        Registrierung zurueckgerollt statt das Geraet mit einer Teilmenge
-        seiner Signale zu belassen. Absichtlich kein `INSERT OR IGNORE` — das
-        wuerde eine echte Schluessel-Kollision nicht melden, sondern das
-        zweite Signal stillschweigend verwerfen (siehe Modul-Docstring).
+        Runs as one transaction: if key assignment fails for a single new
+        signal (see `_assign_key`), the entire registration is rolled back
+        instead of leaving the device with a subset of its signals.
+        Deliberately no `INSERT OR IGNORE` - that would not report a
+        genuine key collision, but silently discard the second signal (see
+        module docstring).
         """
         taken = self._existing_keys(device_id)
         device_types = device_types_by_endpoint(snapshot)
@@ -1186,12 +1165,12 @@ class Store:
                     (device_id, ref.endpoint, ref.cluster_id, ref.element_id, ref.kind.value),
                 ).fetchone()
                 if existing is not None:
-                    # `functional` wird hier MIT aktualisiert, anders als
-                    # `exported` (Aufgabe 8): es ist eine reine Eigenschaft
-                    # des Geraets (`profiles.relevance.is_functional`), nicht
-                    # vom Nutzer umschaltbar - ein Firmware-Update, das einen
-                    # Endpunkt-Geraetetyp aendert, soll sich hier genauso
-                    # nachziehen wie bei `unit`/`exportability`. Siehe
+                    # `functional` IS updated here, unlike `exported` (Task
+                    # 8): it is a pure property of the device
+                    # (`profiles.relevance.is_functional`), not toggleable
+                    # by the user - a firmware update that changes an
+                    # endpoint device type should be picked up here just
+                    # like `unit`/`exportability`. See
                     # `StoredSignal.functional`.
                     self._db.execute(
                         "UPDATE signal SET unit = ?, exportability = ?, functional = ? WHERE key = ?",
@@ -1206,17 +1185,17 @@ class Store:
 
                 key = self._assign_key(device_id, ref, profile.slug, taken)
                 taken.add(key)
-                # Zwei Fragen, zwei Antworten (Entwurf 2026-09-03, 3):
-                # `is_exportable` sagt, ob der Wert ueberhaupt auf einen
-                # Loxone-Eingang passt; `is_functional`, ob ihn jemand
-                # standardmaessig will. Ein Thread-Funkzaehler ist das
-                # erste und nicht das zweite.
+                # Two questions, two answers (design 2026-09-03, 3):
+                # `is_exportable` says whether the value fits a Loxone
+                # input at all; `is_functional`, whether anyone wants it by
+                # default. A Thread radio counter is the former and not
+                # the latter.
                 #
-                # Nur beim ANLEGEN: der UPDATE-Zweig oben fasst `exported`
-                # weiterhin nicht an, sobald ein Signal einmal bekannt ist -
-                # ab dann gehoert der Wert dem Nutzer. `functional` dagegen
-                # gehoert nie dem Nutzer (siehe oben) und wird deshalb in
-                # BEIDEN Zweigen geschrieben.
+                # Only when CREATING: the UPDATE branch above continues to
+                # leave `exported` alone once a signal is known - from then
+                # on the value belongs to the user. `functional`, on the
+                # other hand, never belongs to the user (see above) and is
+                # therefore written in BOTH branches.
                 functional = is_functional(ref, device_types)
                 exported = is_exportable(profile.exportability) and functional
                 self._db.execute(
@@ -1237,11 +1216,11 @@ class Store:
                         int(functional),
                     ),
                 )
-            # Geraet als "seither geaendert" markieren (Task 5, Phase 5): ein
-            # neu entdecktes oder in `unit`/`exportability` korrigiertes
-            # Signal soll `GET /api/export/status` erreichen, auch wenn
-            # `register_signals` selbst keinen einzigen neuen Schluessel
-            # vergeben hat (reines Refresh eines schon bekannten Geraets).
+            # Mark the device as "changed since then" (Task 5, Phase 5): a
+            # newly discovered signal, or one corrected in `unit`/
+            # `exportability`, should reach `GET /api/export/status`, even
+            # if `register_signals` itself did not assign a single new key
+            # (a pure refresh of an already known device).
             self._db.execute(
                 "UPDATE device SET updated_at = ? WHERE id = ?", (self._now(), device_id)
             )
@@ -1257,27 +1236,27 @@ class Store:
         self._db.commit()
 
     def set_exported(self, key: str, exported: bool) -> None:
-        """Setzt das Export-Flag eines Signals (`PATCH /api/signals/{key}`,
-        Task 2). Wie `set_title` ohne Existenzpruefung - siehe dort."""
+        """Sets a signal's export flag (`PATCH /api/signals/{key}`,
+        Task 2). Like `set_title`, with no existence check - see there."""
         self._touch_owning_device(key)
         self._db.execute("UPDATE signal SET exported = ? WHERE key = ?", (int(exported), key))
         self._db.commit()
 
     def set_resend(self, key: str, resend: bool) -> None:
-        """Setzt das Resend-Flag eines Signals (`PATCH /api/signals/{key}`,
-        Entwurf periodischer Resend, 2026-09-04). Wie `set_exported` ohne
+        """Sets a signal's resend flag (`PATCH /api/signals/{key}`,
+        periodic resend design, 2026-09-04). Like `set_exported`, with no
         Existenzpruefung - siehe dort."""
         self._touch_owning_device(key)
         self._db.execute("UPDATE signal SET resend = ? WHERE key = ?", (int(resend), key))
         self._db.commit()
 
     def _touch_owning_device(self, signal_key: str) -> None:
-        """Setzt `updated_at` des Geraets, zu dem `signal_key` gehoert (Task
-        5, Phase 5) - `set_title`/`set_exported` bekommen keine `device_id`
-        (siehe deren Docstrings), deshalb die Unterabfrage. Ein unbekannter
-        Schluessel trifft keine Zeile und bleibt ein stilles No-op, genau wie
-        das anschliessende `UPDATE signal` in beiden Aufrufern - der Aufrufer
-        (die API-Route) prueft Existenz bereits vorher (siehe
+        """Sets `updated_at` of the device that `signal_key` belongs to
+        (Task 5, Phase 5) - `set_title`/`set_exported` do not get a
+        `device_id` (see their docstrings), hence the subquery. An unknown
+        key matches no row and stays a silent no-op, exactly like the
+        subsequent `UPDATE signal` in both callers - the caller (the API
+        route) already checks existence beforehand (see
         `api.devices.rename_signal`)."""
         self._db.execute(
             "UPDATE device SET updated_at = ?"
@@ -1310,20 +1289,19 @@ class Store:
         return [self._as_signal(r) for r in rows]
 
     def signal_by_key(self, key: str) -> StoredSignal | None:
-        """Ein einzelnes Signal ueber seinen Schluessel - fuer `PATCH
-        /api/signals/{key}` (Task 2), die keinen Geraete-Pfadparameter hat
-        und deshalb nicht ueber `signals(device_id)` gehen kann. `None` statt
-        einer Ausnahme, analog zu `device_id_for_node` - der Aufrufer
-        entscheidet, ob das ein 404 ist."""
+        """A single signal by its key - for `PATCH /api/signals/{key}`
+        (Task 2), which has no device path parameter and therefore cannot
+        go via `signals(device_id)`. `None` instead of an exception,
+        analogous to `device_id_for_node` - the caller decides whether that
+        is a 404."""
         row = self._db.execute("SELECT * FROM signal WHERE key = ?", (key,)).fetchone()
         return self._as_signal(row) if row is not None else None
 
     def resend_keys(self) -> list[str]:
-        """Alle Signal-Schluessel mit `resend = true`, ueber alle AKTIVEN
-        Geraete hinweg - fuer `Runtime.resend_marked()` (periodischer Resend
-        als Opt-in, Entwurf 2026-09-04). Ein Signal eines entfernten Geraets
-        (`forget_device`) taucht hier nicht mehr auf, genau wie bei
-        `devices()`."""
+        """All signal keys with `resend = true`, across all ACTIVE devices
+        - for `Runtime.resend_marked()` (periodic resend as opt-in, design
+        2026-09-04). A signal of a removed device (`forget_device`) no
+        longer shows up here, exactly as with `devices()`."""
         rows = self._db.execute(
             "SELECT signal.key FROM signal"
             " JOIN device ON device.id = signal.device_id"
@@ -1340,34 +1318,33 @@ class Store:
     def register_commands(
         self, device_id: int, commands: Sequence[DeviceCommand], node_id: int
     ) -> list[StoredCommand]:
-        """Macht die exportierten Kommando-Schluessel zur Laufzeit aufloesbar.
+        """Makes the exported command keys resolvable at runtime.
 
-        Ohne das schreibt der Exporter Schluessel in die Vorlage, die spaeter
-        niemand zurueck auf ein Matter-Kommando abbilden kann. Der Schluessel
-        wird ausschliesslich hier zusammengesetzt — der Exporter (cli.py)
-        uebernimmt das Ergebnis, statt ihn ein zweites Mal selbst zu bauen.
-        Zwei Stellen, die denselben Schluessel unabhaengig zusammensetzen,
-        wuerden sonst auseinanderdriften, ohne dass ein Fehler es meldet.
+        Without this, the exporter would write keys into the template that
+        nobody could later map back to a Matter command. The key is
+        assembled exclusively here - the exporter (cli.py) takes over the
+        result instead of building it a second time itself. Two places
+        that assemble the same key independently would otherwise drift
+        apart without any error reporting it.
 
-        Ein schon bekanntes Kommando (gleiches device_id/endpoint/cluster_id/
-        command_id) behaelt seinen Schluessel, aber `takes_value` und `slug`
-        werden bei jedem Aufruf neu uebernommen — genau wie `register_signals`
-        `unit` und `exportability` neu bestimmt. Sonst erreichte eine
-        Korrektur in `clusters.yaml` (ein Kommando, das nachtraeglich einen
-        Wert erwartet, oder umbenannt wird) ein schon gespeichertes Kommando
-        nie, und die einzige Abhilfe waere das Loeschen der ganzen Datenbank,
-        was jeden Schluessel zerstoert.
+        An already known command (same device_id/endpoint/cluster_id/
+        command_id) keeps its key, but `takes_value` and `slug` are
+        re-adopted on every call - exactly as `register_signals`
+        redetermines `unit` and `exportability`. Otherwise a fix in
+        `clusters.yaml` (a command that is subsequently given a value or
+        renamed) would never reach an already stored command, and the only
+        remedy would be deleting the entire database, which destroys every
+        key.
 
-        Laeuft als eine Transaktion: scheitert die Schluesselvergabe fuer ein
-        einzelnes neues Kommando, wird die gesamte Registrierung
-        zurueckgerollt statt das Geraet mit einer Teilmenge seiner Kommandos
-        zu belassen. Absichtlich kein `INSERT OR IGNORE` — das wuerde eine
-        echte Schluessel-Kollision nicht melden, sondern das zweite Kommando
-        stillschweigend verwerfen (siehe Modul-Docstring und
-        `register_signals`). Anders als bei Signalen gibt es hier keine
-        Ausweichstrategie ueber eine zusaetzliche ID: zwei Kommandos
-        verschiedener Cluster auf demselben Endpoint mit gleichem Slug sind
-        ein Fehler in `clusters.yaml`, keine ordnungsgemaesse Mehrdeutigkeit.
+        Runs as one transaction: if key assignment fails for a single new
+        command, the entire registration is rolled back instead of leaving
+        the device with a subset of its commands. Deliberately no `INSERT
+        OR IGNORE` - that would not report a genuine key collision, but
+        silently discard the second command (see module docstring and
+        `register_signals`). Unlike with signals, there is no fallback
+        strategy here via an extra ID: two commands of different clusters
+        on the same endpoint with the same slug are a bug in
+        `clusters.yaml`, not a legitimate ambiguity.
         """
         taken = self._existing_command_keys(device_id)
         try:
@@ -1392,11 +1369,11 @@ class Store:
                         (device_id, key),
                     ).fetchone()
                     raise ValueError(
-                        f"Schluessel-Kollision fuer Geraet {device_id}: Kommando "
+                        f"key collision for device {device_id}: command "
                         f"(cluster_id={command.cluster_id}, command_id={command.command_id}) "
-                        f"und (cluster_id={collision['cluster_id']}, "
-                        f"command_id={collision['command_id']}) teilen sich den "
-                        f"Schluessel {key!r}"
+                        f"and (cluster_id={collision['cluster_id']}, "
+                        f"command_id={collision['command_id']}) share the "
+                        f"key {key!r}"
                     )
                 taken.add(key)
                 self._db.execute(
@@ -1414,10 +1391,10 @@ class Store:
                         int(command.takes_value),
                     ),
                 )
-            # Wie am Ende von `register_signals` (Task 5, Phase 5): auch ein
-            # reines Refresh ohne neuen Schluessel zaehlt als "seither
-            # geaendert", z. B. wenn `clusters.yaml` einem Kommando
-            # nachtraeglich `takes_value` zuweist.
+            # Like at the end of `register_signals` (Task 5, Phase 5): even
+            # a pure refresh without a new key counts as "changed since
+            # then", e.g. when `clusters.yaml` subsequently assigns a
+            # command `takes_value`.
             self._db.execute(
                 "UPDATE device SET updated_at = ? WHERE id = ?", (self._now(), device_id)
             )

@@ -130,7 +130,7 @@ def test_command_key_collision_raises_instead_of_dropping_silently(store, monkey
         (6, 1, "on"),
     }
 
-    with pytest.raises(ValueError, match="Schluessel-Kollision"):
+    with pytest.raises(ValueError, match="key collision"):
         store.register_commands(device_id, commands, snap.node_id)
 
     assert store.commands(device_id) == []
