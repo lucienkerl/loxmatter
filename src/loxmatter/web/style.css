@@ -443,6 +443,36 @@ button:disabled {
   margin-bottom: 0.3rem;
 }
 
+/* Feld und Aufkleber-Skizze nebeneinander (Entwurf vom 2026-09-07,
+ * Abschnitt 7). Die Skizze steht dauerhaft da: sie kostet keinen
+ * Lesevorgang, wer sie nicht braucht ueberliest sie, und sie ersetzt den
+ * frueheren Klammerzusatz im Platzhalter - der Text wird also nicht mehr,
+ * sondern weniger. */
+.code-with-sticker {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+}
+
+.code-with-sticker .code-col {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.code-sticker {
+  flex: 0 0 auto;
+}
+
+/* Unter dieser Breite wandert die Skizze unter das Feld - dieselbe Schwelle
+ * wie beim Umbruch von Feld und Knopf weiter unten, und aus demselben
+ * Grund: dort steht man mit dem Telefon vor dem Geraet. */
+@media (max-width: 480px) {
+  .code-with-sticker {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+}
+
 /* Feld und Knopf teilen sich EINE Umrandung: `Enter` im Feld und ein Klick
  * auf den Knopf tun dasselbe, also sollen sie auch wie ein Bedienelement
  * aussehen. `:focus-within` traegt den Fokusrahmen deshalb die aeussere

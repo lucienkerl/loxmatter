@@ -680,6 +680,16 @@ web.devices.code_example_manual:
 web.devices.code_example_qr:
   en: "MT:Y.K90SO527JA0648G00"
   de: "MT:Y.K90SO527JA0648G00"
+# Die Aufkleber-Skizze neben dem Feld (Entwurf Abschnitt 7). Sie ist eine
+# Verdeutlichung, keine Informationsquelle - die Beispielzeile darueber
+# traegt denselben Inhalt als Text. Das aria-label beschreibt deshalb, was
+# zu SEHEN ist, statt den Inhalt ein zweites Mal vorzulesen.
+web.devices.sticker_alt:
+  en: "Sketch of a Matter label: the QR code on the left, the numeric code highlighted below it on the right."
+  de: "Skizze eines Matter-Aufklebers: links der QR-Code, rechts darunter der hervorgehobene Zahlencode."
+web.devices.code_where_hint:
+  en: "Printed on the device, its packaging, or in the manual. The text behind the QR code works too."
+  de: "Steht auf dem Gerät, seiner Verpackung oder im Handbuch. Statt der Zahl geht auch der Text hinter dem QR-Code."
 web.devices.room_label:
   en: "Room"
   de: "Raum"
