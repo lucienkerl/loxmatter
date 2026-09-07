@@ -1222,6 +1222,226 @@ async def test_the_commissioning_card_is_translated(api):
     assert "Noch kein Gerät eingelernt." not in markup
 
 
+async def test_the_commissioning_card_leads_with_a_labelled_code_field(api):
+    """Entwurf "Code zuerst" (2026-09-07): der Pairing-Code ist das einzige
+    Pflichtfeld dieser Karte und bekommt eine eigene Zeile, eine sichtbare
+    Beschriftung und den Absende-Knopf in derselben Umrandung.
+
+    Vorher standen hier vier gleich breite Felder in einer `.row` - der
+    Code hatte dasselbe Gewicht wie der Thread-Datensatz, den fast niemand
+    je ausfuellt - und die Beschriftungen lebten nur im `placeholder`, der
+    beim ersten Tastendruck verschwindet und fuer einen Screenreader keine
+    Beschriftung ist, sondern ein Beispiel."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    label = _label_around(markup, "web.devices.code_label")
+    assert 'for="commission-code"' in label
+
+    code_start = markup.index('<div class="code-field">')
+    code_field = markup[code_start : markup.index("</div>", code_start)]
+    assert 'id="commission-code"' in code_field
+    assert 'x-model="commissionCode"' in code_field
+    # Enter im Feld tut dasselbe wie der Knopf daneben - beide stehen in
+    # derselben Umrandung, also muessen sie auch dasselbe ausloesen.
+    assert '@keydown.enter="commissionDevice()"' in code_field
+    assert '@click="commissionDevice()"' in code_field
+    assert "x-text=\"t('web.devices.commission_submit')\"" in code_field
+
+    # Die vier Felder in einer Reihe sind weg.
+    assert '<div class="row">\n            <input\n              type="text"' not in markup
+
+
+async def test_the_two_long_commissioning_hints_moved_into_disclosures(api):
+    """Kein Satz der frueheren drei Hinweisabsaetze ist verlorengegangen -
+    die beiden langen stehen jetzt in je einer `<details>`-Klappe bei dem
+    Feld, um das es geht, statt dauerhaft als 78 Woerter Fliesstext unter
+    der Karte.
+
+    Nativ, nicht per Alpine-Zustand: ein Auf-/Zu-Zustand, den niemand
+    zuruecksetzen muss, kann auch mit nichts anderem auseinanderlaufen -
+    dieselbe Ueberlegung wie beim Kachel-Menue und den Signalgruppen."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    help_start = markup.index('<div class="commission-help">')
+    help_block = markup[help_start : markup.index('x-show="commissionStep !== null"')]
+    assert help_block.count('<details class="commission-disclosure">') == 2
+    assert help_block.count("</details>") == 2
+
+    # Klappe 1: der Multi-Admin-Hinweis, hinter einer Frage, die man bei
+    # sich wiedererkennt - nicht hinter dem Namen eines Eingabefeldes.
+    assert "x-text=\"t('web.devices.code_help_summary')\"" in help_block
+    assert "x-text=\"t('web.devices.commission_hint')\"" in help_block
+
+    # Klappe 2: das Thread-Feld samt seinem Hinweis. Die Beschriftung ist
+    # jetzt ein echtes `<label>`; der Platzhalter darf sie nicht ersetzen.
+    assert "x-text=\"t('web.devices.thread_summary')\"" in help_block
+    assert 'x-model="commissionThreadDataset"' in help_block
+    assert "x-text=\"t('web.devices.thread_dataset_hint')\"" in help_block
+    thread_label = _label_around(help_block, "web.devices.thread_dataset_label")
+    assert 'for="commission-thread"' in thread_label
+
+    # Und keiner der drei Absaetze steht mehr frei in der Karte.
+    assert markup.count("x-text=\"t('web.devices.commission_hint')\"") == 1
+    assert markup.count("x-text=\"t('web.devices.thread_dataset_hint')\"") == 1
+
+
+async def test_the_commissioning_message_banner_survived_the_redesign(api):
+    """Regression zum Umbau selbst: beim Herausloesen der alten `.row` fiel
+    der Meldungsabsatz mit heraus. Der Zustand stimmte weiter - eine leere
+    Code-Eingabe setzte `commissionMessage` -, nur zeigte ihn nichts mehr
+    an, und keiner der damals 1219 Tests bemerkte das.
+
+    Er steht bewusst AUSSERHALB beider Haelften: die Pruefung auf einen
+    leeren Code schlaegt zu, bevor ein Lauf beginnt (also am Formular),
+    Erfolg und Fehlschlag melden sich danach (also an der Ablaufanzeige).
+    Zwei Kopien waeren zwei Stellen, an denen die Meldung haengenbleiben
+    kann - deshalb genau eine."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    assert markup.count('x-show="commissionMessage"') == 1
+    banner_start = markup.index('x-show="commissionMessage"')
+    banner = markup[markup.rindex("<p", 0, banner_start) : markup.index("</p>", banner_start)]
+    assert ":class=\"commissionMessageIsError ? 'banner danger' : 'banner ok'\"" in banner
+    assert 'x-text="commissionMessage"' in banner
+
+    # Weder im Formular- noch im Ablauf-Zweig, sondern hinter beiden: sonst
+    # verschwaende ein Wechsel zwischen den Haelften die Meldung.
+    form_start = markup.index('<div x-show="commissionStep === null">')
+    flow_start = markup.index('<div x-show="commissionStep !== null"')
+    assert form_start < flow_start < banner_start
+
+
+async def test_the_commissioning_flow_shows_the_two_phases_it_actually_knows(api):
+    """Entwurf "Der Ablauf wird sichtbar": waehrend eines Laufs ersetzt eine
+    Ablaufanzeige das Formular. Einlernen dauert zwanzig bis sechzig
+    Sekunden und war bis hierher ein grau werdender Knopf - von einer
+    haengenden Seite nicht zu unterscheiden.
+
+    ZWEI Schritte, nicht drei: mehr Abschnitte kann diese Oberflaeche nicht
+    ehrlich auseinanderhalten. Sie kennt den POST auf
+    /api/devices/commission und das anschliessende Nachladen von Signalen
+    und Befehlen - einen Zwischenstand aus dem Matter-Stack ("Geraet
+    gefunden") meldet ihr niemand. Ein dritter Punkt saehe besser aus und
+    waere geraten; dieser Test haelt die Anzeige auf dem fest, was
+    tatsaechlich bekannt ist."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    flow_start = markup.index('<div x-show="commissionStep !== null"')
+    flow = markup[flow_start : markup.index('x-show="commissionMessage"', flow_start)]
+
+    assert flow.count('<li class="commission-step"') == 2
+    assert ':class="commissionStepClass(0)"' in flow
+    assert ':class="commissionStepClass(1)"' in flow
+    assert ':class="commissionStepClass(2)"' not in flow
+    assert "x-text=\"t('web.devices.commission_step_joining')\"" in flow
+    assert "x-text=\"t('web.devices.commission_step_loading')\"" in flow
+
+    # Der Code des laufenden Versuchs steht ueber den Schritten - nach einem
+    # Erfolg ist das Eingabefeld geleert, die Anzeige stuende sonst ohne
+    # den Code da, um den es ging.
+    assert 'x-text="commissionRunCode"' in flow
+
+    # Ein Weg zurueck zum Formular, mit zwei Beschriftungen fuer die zwei
+    # Bedeutungen: nach einem Erfolg das naechste Geraet, nach einem
+    # Fehlschlag derselbe Versuch noch einmal.
+    assert '@click="resetCommission()"' in flow
+    assert 'x-text="commissionFailed ?' in flow
+    assert "t('web.devices.commission_retry')" in flow
+    assert "t('web.devices.commission_again')" in flow
+
+
+async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
+    """Die Schrittanzeige haengt an `commissionDevice` selbst, nicht an
+    einer Zeitschaltung: Schritt 0 ab dem POST, Schritt 1 ab dem Nachladen,
+    Schritt 2 am Ende.
+
+    Im Fehlerfall wird der Zaehler ausdruecklich NICHT zurueckgesetzt - er
+    zeigt weiter auf den Schritt, auf dem es haengengeblieben ist, und
+    genau den faerbt `commissionStepClass` rot. Ein Ruecksetzer hier
+    naehme der Anzeige ihre einzige Auskunft: wie weit es gekommen ist."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    commission_start = script.index("async commissionDevice() {")
+    commission_end = script.index("\n    },", script.index("this.commissionBusy = false;"))
+    body = script[commission_start:commission_end]
+
+    assert "this.commissionStep = 0;" in body
+    assert "this.commissionFailed = false;" in body
+    assert "this.commissionRunCode = this.commissionCode.trim();" in body
+    # Schritt 1 steht VOR dem Nachladen, Schritt 2 dahinter.
+    load = body.index(
+        "await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);"
+    )
+    assert body.index("this.commissionStep = 1;") < load
+    assert load < body.index("this.commissionStep = 2;")
+    # Der Fehlerzweig markiert, setzt aber nicht zurueck.
+    assert "this.commissionFailed = true;" in body
+    assert "this.commissionStep = null;" not in body
+
+
+async def test_the_step_class_is_derived_and_reset_returns_to_the_form(api):
+    """`commissionStepClass` ist ein reiner Ausdruck auf
+    `commissionStep`/`commissionFailed`, keine dritte Zustandsvariable mit
+    Klassennamen darin: zwei Felder, die dasselbe erzaehlen, laufen frueher
+    oder spaeter auseinander - und die Anzeige ist die Stelle, an der das
+    niemandem auffiele, weil sie ja irgendetwas zeigt.
+
+    `resetCommission` raeumt beides plus die Meldung (sie gehoert zu dem
+    Lauf, den man verlaesst) und setzt den Fokus zurueck ins Codefeld -
+    erst im naechsten Tick, weil `x-show` das Formular bis dahin noch auf
+    `display: none` haelt und ein `focus()` darauf still nichts tut."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    step_class = script[
+        script.index("commissionStepClass(index) {") : script.index(
+            "\n    },", script.index("commissionStepClass(index) {")
+        )
+    ]
+    assert 'return "failed";' in step_class
+    assert 'return "done";' in step_class
+    assert 'return index === this.commissionStep ? "running" : "";' in step_class
+
+    reset = script[
+        script.index("resetCommission() {") : script.index(
+            "\n    },", script.index("resetCommission() {")
+        )
+    ]
+    assert "this.commissionStep = null;" in reset
+    assert "this.commissionFailed = false;" in reset
+    assert "this.commissionMessage = null;" in reset
+    assert "this.$nextTick(() => this.$refs.commissionCode?.focus());" in reset
+
+
+async def test_the_commissioning_disclosures_do_not_shift_what_stands_around_them(api):
+    """Erster Anlauf war eine Reihe: Raumfeld links, die beiden Klappen per
+    Fuellstueck ans rechte Ende geschoben. Im Browser riss ein aufgeklapptes
+    `<details>` - ein hohes Flex-Element - diese Reihe auseinander: die
+    aufgeklappte Klappe rutschte nach unten, die zweite blieb mittig neben
+    deren Erklaertext haengen.
+
+    Sie stehen deshalb untereinander in einem eigenen Behaelter. Ein Auf-
+    und Zuklappen darf nicht verschieben, was um es herum steht, und am
+    wenigsten die Schaltflaeche, die man gerade angeklickt hat."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+
+    block_start = css.index(".commission-help {")
+    block = css[block_start : css.index("}", block_start)]
+    assert "flex-direction: column;" in block
+    assert "align-items: flex-start;" in block
+
+    markup = _without_comments((await client.get("/")).text)
+    # Das Fuellstueck des ersten Anlaufs ist restlos weg - sonst bliebe eine
+    # Regel ohne Element bzw. ein Element ohne Regel stehen.
+    assert "meta-spacer" not in markup
+    assert "meta-spacer" not in css
+
+
 async def test_the_device_card_static_text_is_translated(api):
     """Aufgabe 11, Schritt 3: Statuspillen, Entfernen-Knopf, die beiden
     Werte-/Bedienungs-Abschnittsueberschriften mit ihren Ladehinweisen und

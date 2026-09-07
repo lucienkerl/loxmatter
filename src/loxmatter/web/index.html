@@ -267,47 +267,159 @@
       <section x-show="view === 'devices'">
         <div class="card">
           <h2 x-text="t('web.devices.commission_heading')"></h2>
-          <div class="row">
-            <input
-              type="text"
-              x-model="commissionCode"
-              :placeholder="t('web.devices.code_placeholder')"
-            />
-            <input
-              type="text"
-              x-model="commissionThreadDataset"
-              :placeholder="t('web.devices.thread_dataset_placeholder')"
-            />
-            <select x-model="commissionRoom">
-              <option value="" x-text="t('web.devices.room_none')"></option>
-              <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
-                <option :value="chip.key" x-text="chip.key"></option>
-              </template>
-              <option value="__new__" x-text="t('web.devices.room_new')"></option>
-            </select>
+          <div x-show="commissionStep === null">
+            <!--
+              Aufbau seit dem Entwurf "Code zuerst" (2026-09-07): der
+              Pairing-Code steht allein in der ersten Zeile, alles andere
+              darunter in einer leisen zweiten. Vorher standen hier vier
+              gleich breite Felder nebeneinander und darunter drei Absaetze
+              Hilfe - 78 Woerter, dauerhaft sichtbar, geloest von den
+              Feldern, die sie erklaeren, und der laengste davon gehoerte zum
+              seltensten Feld (dem Thread-Datensatz).
+
+              Kein Satz davon ist verlorengegangen: die beiden langen
+              Hinweise stehen jetzt in den `<details>`-Klappen unten, jeder
+              bei dem Feld, um das es geht. Der dritte (der Raumhinweis) ist
+              zum Einzeiler neben dem Auswahlfeld geworden, weil das
+              Auswahlfeld mit "Ohne Raum" die halbe Auskunft schon selbst
+              gibt.
+            -->
+            <label class="field-label" for="commission-code"
+                   x-text="t('web.devices.code_label')"></label>
+            <!--
+              Der Code bekommt eine eigene Umrandung um Feld UND Knopf, statt
+              beide als Geschwister in eine `.row` zu haengen: er ist das
+              einzige Pflichtfeld dieser Karte, und `Enter` im Feld tut
+              dasselbe wie der Knopf daneben. Die Monospace-Schrift ist
+              nicht Dekoration - genau so steht der Code auf dem Aufkleber
+              des Geraets, und in Proportionalschrift ist ein O von einer 0
+              beim Abtippen nicht zu unterscheiden.
+            -->
+            <div class="code-field">
+              <input
+                type="text"
+                id="commission-code"
+                class="code-input"
+                spellcheck="false"
+                x-ref="commissionCode"
+                x-model="commissionCode"
+                :placeholder="t('web.devices.code_placeholder')"
+                @keydown.enter="commissionDevice()"
+              />
+              <button
+                class="primary"
+                @click="commissionDevice()"
+                :disabled="commissionBusy"
+                x-text="t('web.devices.commission_submit')"
+              ></button>
+          </div>
+
+          <div class="commission-meta">
+            <label class="inline-field">
+              <span x-text="t('web.devices.room_label')"></span>
+              <select x-model="commissionRoom">
+                <option value="" x-text="t('web.devices.room_none')"></option>
+                <template x-for="chip in roomChips().filter((c) => c.key !== '')" :key="chip.key">
+                  <option :value="chip.key" x-text="chip.key"></option>
+                </template>
+                <option value="__new__" x-text="t('web.devices.room_new')"></option>
+              </select>
+            </label>
             <input
               x-show="commissionRoom === '__new__'"
               x-cloak
               type="text"
+              class="new-room-input"
               x-model="commissionNewRoom"
               :placeholder="t('web.devices.room_new_placeholder')"
+              :aria-label="t('web.devices.room_new_placeholder')"
             />
+            <span class="hint" x-text="t('web.devices.commission_room_hint')"></span>
+          </div>
+
+          <div class="commission-help">
+            <!--
+              Zwei native `<details>` statt eines eigenen Auf-/Zu-Zustands
+              in `app()`: der Browser kann das, und ein Zustand, den
+              niemand zuruecksetzen muss, kann auch mit nichts anderem
+              auseinanderlaufen. Dieselbe Ueberlegung wie beim
+              Kachel-Menue und den Signalgruppen im Modal.
+            -->
+            <details class="commission-disclosure">
+              <summary x-text="t('web.devices.code_help_summary')"></summary>
+              <div class="disclosure-body">
+                <p class="hint" x-text="t('web.devices.commission_hint')"></p>
+              </div>
+            </details>
+            <details class="commission-disclosure">
+              <summary x-text="t('web.devices.thread_summary')"></summary>
+              <div class="disclosure-body">
+                <label class="field-label" for="commission-thread"
+                       x-text="t('web.devices.thread_dataset_label')"></label>
+                <input
+                  type="text"
+                  id="commission-thread"
+                  x-model="commissionThreadDataset"
+                  :placeholder="t('web.devices.thread_dataset_placeholder')"
+                />
+                <p class="hint" x-text="t('web.devices.thread_dataset_hint')"></p>
+              </div>
+            </details>
+          </div>
+          </div>
+
+          <!--
+            Die Ablaufanzeige (Entwurf "Der Ablauf wird sichtbar"). Sie
+            loest ein Problem, das kein Layout loesen kann: Einlernen
+            dauert je nach Geraet zwanzig bis sechzig Sekunden, und bis
+            hierher war das ein grau werdender Knopf - von einer haengenden
+            Seite nicht zu unterscheiden.
+
+            ZWEI Schritte, nicht drei: mehr Abschnitte kann diese
+            Oberflaeche nicht ehrlich auseinanderhalten (siehe die
+            Begruendung bei `web.devices.commission_step_joining` in
+            strings.yaml). Ein dritter Punkt saehe besser aus und waere
+            geraten.
+          -->
+          <div x-show="commissionStep !== null" x-cloak>
+            <p class="commission-subject">
+              <span class="key" x-text="commissionRunCode"></span>
+              <span class="hint" x-show="commissionRunRoom" x-text="commissionRunRoom"></span>
+            </p>
+            <ol class="commission-steps">
+              <li class="commission-step" :class="commissionStepClass(0)">
+                <span class="step-marker" aria-hidden="true"></span>
+                <span x-text="t('web.devices.commission_step_joining')"></span>
+              </li>
+              <li class="commission-step" :class="commissionStepClass(1)">
+                <span class="step-marker" aria-hidden="true"></span>
+                <span x-text="t('web.devices.commission_step_loading')"></span>
+              </li>
+            </ol>
             <button
-              class="primary"
-              @click="commissionDevice()"
-              :disabled="commissionBusy"
-              x-text="t('web.devices.commission_submit')"
+              class="commission-restart"
+              x-show="commissionStep === 2 || commissionFailed"
+              x-cloak
+              @click="resetCommission()"
+              x-text="commissionFailed ? t('web.devices.commission_retry') : t('web.devices.commission_again')"
             ></button>
           </div>
-          <p class="hint" x-text="t('web.devices.commission_hint')"></p>
-          <p class="hint" x-text="t('web.devices.thread_dataset_hint')"></p>
-          <p class="hint" x-text="t('web.devices.commission_room_hint')"></p>
+
+          <!--
+            Die Meldung steht ausserhalb der beiden Haelften, weil sie zu
+            beiden gehoert: die Pruefung auf einen leeren Code schlaegt zu,
+            BEVOR ein Lauf beginnt (also am Formular), Erfolg und Fehlschlag
+            melden sich danach (also an der Ablaufanzeige). Zwei Kopien
+            desselben Banners waeren zwei Stellen, an denen es haengenbleiben
+            kann.
+          -->
           <p
             x-show="commissionMessage"
             x-cloak
             :class="commissionMessageIsError ? 'banner danger' : 'banner ok'"
             x-text="commissionMessage"
           ></p>
+
         </div>
 
         <p x-show="devicesError" x-cloak class="banner danger" x-text="devicesError"></p>

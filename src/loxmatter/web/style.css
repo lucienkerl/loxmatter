@@ -403,6 +403,346 @@ button:disabled {
   border: 1px solid var(--warn);
 }
 
+/* ---------------------------------------------------------------------
+ * Einlern-Karte (Entwurf "Code zuerst" mit Ablaufanzeige, 2026-09-07).
+ *
+ * Vorher: vier gleich breite Felder in einer `.row`, darunter drei Absaetze
+ * Hilfe. Der Pairing-Code - das einzige Pflichtfeld - hatte dasselbe
+ * Gewicht wie der Thread-Datensatz, den fast niemand je ausfuellt.
+ * ------------------------------------------------------------------- */
+
+/* Sichtbare Beschriftung ueber einem Feld. Die Karte trug ihre
+ * Beschriftungen vorher nur im `placeholder` - der verschwindet, sobald
+ * jemand tippt, und ist fuer einen Screenreader keine Beschriftung,
+ * sondern ein Beispiel. */
+.field-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.3rem;
+}
+
+/* Feld und Knopf teilen sich EINE Umrandung: `Enter` im Feld und ein Klick
+ * auf den Knopf tun dasselbe, also sollen sie auch wie ein Bedienelement
+ * aussehen. `:focus-within` traegt den Fokusrahmen deshalb die aeussere
+ * Umrandung, nicht das Feld darin. */
+.code-field {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.3rem 0.3rem 0.3rem 0.75rem;
+}
+
+.code-field:focus-within {
+  border-color: var(--accent);
+}
+
+/* Spezifitaet mit Absicht ueber `input[type="text"]` weiter oben (dort
+ * 0-1-1, hier 0-2-0): ohne den Klassen-Vorfahren gewaenne die
+ * Attributregel und das Feld behielte im gemeinsamen Rahmen seinen
+ * eigenen. Aus demselben Grund faellt hier `min-width: 12rem`, das dort
+ * fuer Geraetenamen steht, wieder auf 0 zurueck - der Rahmen darum gibt
+ * die Breite vor. */
+.code-field .code-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0.35rem 0;
+  color: var(--text);
+  /* Monospace ist hier kein Stilmittel: genau so steht der Code auf dem
+   * Aufkleber, und beim Abtippen sind 0 und O sonst nicht zu
+   * unterscheiden. Die Sperrung gibt langen MT:-Codes Luft. */
+  font-family: var(--mono);
+  font-size: 1.05rem;
+  letter-spacing: 0.045em;
+}
+
+.code-field .code-input:focus {
+  outline: none;
+}
+
+.code-field .primary {
+  padding: 0.45rem 1rem;
+  border-radius: 4px;
+}
+
+/* Auf einem Telefon - und genau dort steht man, wenn man den Code vom
+ * Aufkleber abliest - blieben Feld und Knopf sonst in einer Zeile, und
+ * das Feld schrumpfte auf ein Drittel: ein 22 Zeichen langer MT:-Code
+ * liefe darin waagerecht davon. Unter dieser Breite bekommt das Feld die
+ * ganze Zeile und der Knopf die naechste, beide weiter innerhalb
+ * derselben Umrandung. */
+@media (max-width: 480px) {
+  .code-field {
+    flex-wrap: wrap;
+  }
+
+  .code-field .code-input {
+    flex: 1 1 100%;
+  }
+
+  .code-field .primary {
+    width: 100%;
+  }
+}
+
+/* Die leise zweite Zeile: Raum, Raumhinweis und die beiden Klappen. */
+.commission-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 1.1rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+
+.commission-meta .inline-field {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* Wie beim Codefeld: die globale `input[type="text"]`-Regel gibt jedem
+ * Textfeld 12rem Mindestbreite, damit ein Geraetename nicht abgeschnitten
+ * aussieht. Ein Raumname braucht das nicht und draengte damit die Klappen
+ * in die naechste Zeile. */
+.commission-meta .new-room-input {
+  flex: 0 1 11rem;
+  min-width: 0;
+}
+
+/* Die beiden Klappen stehen UNTEREINANDER in einer eigenen Zeile, nicht
+ * neben dem Raumfeld in derselben.
+ *
+ * Erster Anlauf war genau das - eine Reihe, die Klappen per Fuellstueck
+ * ans rechte Ende geschoben. Im Browser zeigte sich, warum das nicht
+ * traegt: ein aufgeklapptes `<details>` ist ein hohes Flex-Element und
+ * riss die Zeile auseinander - die aufgeklappte Klappe rutschte nach
+ * unten, die zweite blieb mittig neben deren Erklaertext haengen. Ein
+ * Auf- und Zuklappen darf nicht verschieben, was um es herum steht, und
+ * am wenigsten die Schaltflaeche, die man gerade angeklickt hat. */
+.commission-help {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+/* Die beiden `<details>`. Der Standard-Marker faellt weg und wird durch
+ * einen eigenen Winkel ersetzt, wie schon beim Kachel-Menue und bei den
+ * Signalgruppen im Modal - dieselbe Geste soll ueberall gleich aussehen. */
+.commission-disclosure {
+  font-size: 0.85rem;
+}
+
+.commission-disclosure > summary {
+  list-style: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border-bottom: 1px dotted var(--border);
+  padding-bottom: 1px;
+}
+
+.commission-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.commission-disclosure > summary::before {
+  content: "";
+  width: 0.42rem;
+  height: 0.42rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  transition: transform 0.15s ease;
+}
+
+.commission-disclosure[open] > summary::before {
+  transform: rotate(-135deg) translateY(-1px);
+}
+
+.commission-disclosure > summary:hover,
+.commission-disclosure[open] > summary {
+  color: var(--text);
+}
+
+/* Der aufgeklappte Inhalt bekommt eine eigene Flaeche: er gehoert zur
+ * Klappe darueber, nicht zur Zeile, aus der er herauswaechst. */
+.disclosure-body {
+  margin-top: 0.6rem;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  /* Ueber diese Breite hinaus wird ein Fliesstext muehsam zu lesen - und
+   * die beiden Saetze hier sind der laengste Fliesstext der Oberflaeche. */
+  max-width: 62ch;
+}
+
+.disclosure-body input[type="text"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.disclosure-body .hint {
+  margin: 0.5rem 0 0;
+}
+
+/* --- Ablaufanzeige ---------------------------------------------------
+ *
+ * Sie ersetzt das Formular fuer die Dauer eines Laufs. Einlernen dauert
+ * zwanzig bis sechzig Sekunden; vorher war das ein grau werdender Knopf,
+ * also von einer haengenden Seite nicht zu unterscheiden.
+ * ------------------------------------------------------------------- */
+
+.commission-subject {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0 0 0.8rem;
+}
+
+.commission-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.commission-step {
+  position: relative;
+  padding: 0 0 0.9rem 1.9rem;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.commission-step:last-child {
+  padding-bottom: 0;
+}
+
+/* Die Schiene zwischen den Punkten. Sie faerbt sich mit, sobald ein
+ * Schritt durch ist - das ist die eigentliche Auskunft dieser Anzeige:
+ * wie weit es gekommen ist. */
+.commission-step::before {
+  content: "";
+  position: absolute;
+  left: 0.42rem;
+  top: 1.15rem;
+  bottom: -0.1rem;
+  width: 1px;
+  background: var(--border);
+}
+
+.commission-step:last-child::before {
+  display: none;
+}
+
+.commission-step.done::before {
+  background: var(--accent);
+}
+
+.step-marker {
+  position: absolute;
+  left: 0;
+  top: 0.28rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+}
+
+.commission-step.running {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.commission-step.running .step-marker {
+  border-color: var(--accent);
+  border-top-color: transparent;
+  animation: commission-spin 0.8s linear infinite;
+}
+
+.commission-step.done {
+  color: var(--text);
+}
+
+.commission-step.done .step-marker {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/* Der Haken im gefuellten Punkt. `--accent-contrast` ist genau die Farbe,
+ * die auch die Schrift auf der Primaertaste traegt - dieselbe Flaeche,
+ * dieselbe Gegenfarbe. */
+.commission-step.done .step-marker::after {
+  content: "";
+  position: absolute;
+  left: 0.24rem;
+  top: 0.09rem;
+  width: 0.22rem;
+  height: 0.42rem;
+  border-right: 1.5px solid var(--accent-contrast);
+  border-bottom: 1.5px solid var(--accent-contrast);
+  transform: rotate(42deg);
+}
+
+.commission-step.failed {
+  color: var(--danger);
+}
+
+.commission-step.failed .step-marker {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+@keyframes commission-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Ein sich drehender Ring ist genau die Art Dauerbewegung, die
+ * `prefers-reduced-motion` meint. Der laufende Schritt bleibt trotzdem als
+ * solcher erkennbar - gestrichelt statt offen. */
+@media (prefers-reduced-motion: reduce) {
+  .commission-step.running .step-marker {
+    animation: none;
+    border-style: dashed;
+    border-top-color: var(--accent);
+  }
+}
+
+/* Zurueck zum Formular. Bewusst ein stiller Textknopf: der Lauf ist zu
+ * Ende, die Karte hat nichts mehr anzubieten, was eine Primaertaste wert
+ * waere. */
+.commission-restart {
+  margin-top: 1rem;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  text-decoration: underline;
+}
+
+.commission-restart:hover {
+  color: var(--text);
+}
+
 /* Kopfzeile rechts: Abmelde-Knopf und Live-Status nebeneinander, bei
  * schmalem Fenster untereinander - `flex-wrap`, damit keins der beiden das
  * andere aus der Kopfzeile draengt. */
