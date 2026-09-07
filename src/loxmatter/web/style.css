@@ -2336,3 +2336,75 @@ footer.hint-block {
 .signal-group[open] > summary .chevron {
   transform: rotate(90deg);
 }
+
+/* Ein Raster fuer Kopfzeile UND Datenzeile (Entwurf 2026-09-07,
+   Abschnitt 7.2). Die beiden MUESSEN dieselbe Vorlage tragen - genau das
+   fehlte bisher, und deshalb fluchtete nichts: die alte `.row` war ein
+   `flex-wrap`-Container ohne Spaltenmasse, bei `multipress_ongoing` rutschte
+   die zweite Beschriftung allein in die naechste Zeile.
+
+   Die 150 px der Schluessel-Spalte sind an `d4_1_multipress_ongoing`
+   gemessen, dem laengsten Schluessel der Testvorlage. */
+.signal-grid {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 150px 70px 76px 28px;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0;
+}
+
+.signal-grid > * {
+  min-width: 0;
+}
+
+.signal-grid-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.signal-row-cells {
+  border-bottom: 1px solid var(--border);
+}
+
+.signal-row-cells:last-child {
+  border-bottom: none;
+}
+
+.signal-grid .col-right {
+  text-align: right;
+}
+
+.signal-grid .col-center {
+  display: flex;
+  justify-content: center;
+  margin: 0;
+}
+
+/* Die generische Regel `input[type="text"] { min-width: 12rem }` weiter oben
+   gewinnt sonst gegen die Rasterspalte und sprengt sie - dieselbe Falle wie
+   bei `.device-head .device-name`, Begruendung dort. */
+.signal-grid .signal-title {
+  width: 100%;
+  min-width: 0;
+}
+
+/* Der Rohwert-Streifen (index.html, direkt unter `.signal-row-cells`) ist
+   uebergangsweise (siehe Kommentar dort): er bleibt ausserhalb des Rasters,
+   damit er das gemessene Fluchten der Rasterzeilen nicht stoert. `.row`
+   liefert bereits Flex, `gap` und Zentrierung fuer seinen Inhalt - hier
+   reicht ein schmaler oberer Abstand, damit er sich sichtbar vom Raster
+   darueber absetzt, ohne wie eine weitere Rasterzeile auszusehen. */
+.signal-row-cells + .row {
+  margin-top: 0.3rem;
+  padding-left: calc(58px + 0.5rem);
+}

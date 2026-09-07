@@ -1758,7 +1758,10 @@
           </div>
 
           <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
-          <p class="hint" x-text="t('web.signals.key_hint')"></p>
+          <p class="hint">
+            <span x-text="t('web.signals.key_hint')"></span>
+            <span x-text="t('web.signals.resend_explanation')"></span>
+          </p>
 
           <!-- Bleibt als Wiederholung fuer den Fehlerfall: im Normalfall hat
                `startApp` die Signale jedes Geraets laengst geladen, dieser
@@ -1805,6 +1808,21 @@
                 x-show="functionalSignalsFor(signalsModalDevice).length === 0"
                 x-text="t('web.signals.none_functional')"
               ></p>
+              <!-- Der Spaltenkopf klebt beim Scrollen oben: ohne ihn
+                   verlieren die beiden Haekchenspalten ihre Bedeutung,
+                   sobald er bei 173 Signalen aus dem Bild ist. Er traegt
+                   DIESELBE `grid-template-columns` wie jede Datenzeile -
+                   das ist der ganze Grund, warum die Tabelle fluchtet, und
+                   der Test `test_the_signal_rows_and_the_header_share_one_
+                   grid` sperrt genau diese Gleichheit. -->
+              <div class="signal-grid signal-grid-head">
+                <span x-text="t('web.signals.col_export')"></span>
+                <span x-text="t('web.signals.col_signal')"></span>
+                <span x-text="t('web.signals.col_input')"></span>
+                <span class="col-right" x-text="t('web.signals.col_value')"></span>
+                <span class="col-center" x-text="t('web.signals.col_resend')"></span>
+                <span></span>
+              </div>
               <template x-for="group in signalGroupsFor(signalsModalDevice)" :key="group.key">
                 <details class="signal-group" x-init="$el.open = !group.collapsible">
                   <summary>
@@ -1825,21 +1843,32 @@
                     x-show="group.collapsible"
                     x-text="t('web.signals.functional_vs_expert_explanation')"
                   ></p>
+                  <!-- `x-for` verlangt genau EIN Wurzelelement je Signal.
+                       Die Rasterzeile allein waere das normalerweise (siehe
+                       Entwurf 2026-09-07, Abschnitt 7.2) - der
+                       Rohwert-Streifen direkt darunter braucht deshalb diese
+                       Huelle, obwohl er selbst kein Rasterkind ist. -->
                   <template x-for="signal in group.signals" :key="signal.key">
-                    <div class="device-controls">
-                      <div class="row">
-                        <span
-                          class="key"
-                          :title="t('web.signals.key_tooltip')"
-                          x-text="signal.key"
-                        ></span>
+                    <div>
+                      <div class="signal-grid signal-row-cells">
+                        <label class="col-center">
+                          <input
+                            type="checkbox"
+                            :checked="signal.exported"
+                            :disabled="!signal.exportable"
+                            :aria-label="t('web.signals.export_checkbox')"
+                            :title="t('web.signals.export_checkbox')"
+                            @change="toggleExported(signal)"
+                          />
+                        </label>
                         <input
                           type="text"
+                          class="signal-title"
                           :value="signal.title"
                           @input="titleDrafts[signal.key] = $event.target.value"
                           @change="saveTitle(signal)"
                         />
-                        <span class="hint" x-text="signal.path"></span>
+                        <span class="key" :title="t('web.signals.key_tooltip')" x-text="signal.key"></span>
                         <!--
                           Wann der Wert zuletzt kam, steht im `title` - nicht
                           daneben im Textfluss (2026-09-03). Eine Angabe wie
@@ -1851,33 +1880,49 @@
                           bewegt.
                         -->
                         <span
-                          class="value"
+                          class="value col-right"
                           :class="{ 'value-fresh': signalIsFresh(signal) }"
                           :title="signalAgeTitle(signal)"
                           x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                         ></span>
-                        <label x-show="signal.exportable">
-                          <input
-                            type="checkbox"
-                            :checked="signal.exported"
-                            @change="toggleExported(signal)"
-                          />
-                          <span x-text="t('web.signals.export_checkbox')"></span>
-                        </label>
-                        <label x-show="signal.exportable">
+                        <!-- Dasselbe Bedienelement wie in der Export-Spalte,
+                             und das ist Absicht: beides ist ein Ja/Nein je
+                             Signal in derselben Zeile. Der erste Entwurf
+                             hatte hier einen Schiebeschalter - zwei
+                             Bedienelemente fuer denselben Fall, genau die
+                             Inkonsistenz, die dieses Modal schwer lesbar
+                             machte. Die Regel: das Bedienelement folgt dem
+                             BEHAELTER, nicht der Bedeutung. In einer Tabelle
+                             Haekchen - sie fluchten in einer Spalte und
+                             bleiben leise; eine Spalte aus 17
+                             Schiebeschaltern waere eine deutlich lautere
+                             Textur, und Lautstaerke ist genau das Problem
+                             dieses Modals. Ein Schalter gehoert in einen
+                             Detailbereich mit erklaerendem Satz daneben,
+                             nicht in eine Tabellenspalte. -->
+                        <label class="col-center">
                           <input
                             type="checkbox"
                             :checked="signal.resend"
+                            :disabled="!signal.exportable"
+                            :aria-label="t('web.signals.resend_checkbox')"
+                            :title="t('web.signals.resend_checkbox')"
                             @change="toggleResend(signal)"
                           />
-                          <span x-text="t('web.signals.resend_checkbox')"></span>
                         </label>
-                        <span
-                          class="badge warn"
-                          x-show="!signal.exportable"
-                          x-text="signal.reason"
-                        ></span>
+                        <span class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></span>
                       </div>
+                      <!-- UEBERGANGSWEISE: der Brief (Aufgabenblatt 7)
+                           ersetzt hier eigentlich den ganzen Block durch die
+                           Rasterzeile allein und laesst das Rohwert-Feld
+                           kommentarlos wegfallen - dessen neuer Platz, ein
+                           Aufklapper je Zeile, kommt aber erst mit Aufgabe 8.
+                           Bis dahin bliebe sonst eine Luecke, in der sich
+                           kein Rohwert mehr schreiben liesse. Deshalb steht
+                           der Streifen hier UNTER dem Raster, nicht darin,
+                           mit unveraenderter Sichtbarkeit und Bedienlogik.
+                           Aufgabe 8 verlegt ihn in den Aufklapper und
+                           entfernt diesen Streifen wieder. -->
                       <div class="row" x-show="signal.kind === 'attribute'">
                         <input
                           type="text"

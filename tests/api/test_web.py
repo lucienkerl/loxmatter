@@ -419,15 +419,16 @@ async def test_the_signal_row_offers_a_resend_checkbox(api):
     ausgeliefert werden und `signal.resend` lesen/schreiben, nicht dass
     Alpine sie zur Laufzeit korrekt rendert (siehe dortiger Docstring).
 
-    Zusaetzlich (finaler Review, Important #3): das umschliessende `<label>`
-    der Checkbox selbst muss dasselbe `x-show="signal.exportable"` tragen
-    wie das „exportieren“-Label direkt darueber - sonst bleibt die Checkbox
-    auch fuer nicht-exportierbare Signale sichtbar, obwohl `resend_marked()`
-    dort (`_last_values` bleibt fuer sie leer, siehe `Runtime._cache_attribute`)
-    nie etwas bewirken kann. Der Substring-Test allein wuerde das nicht
-    belegen - `x-show="signal.exportable"` steht bereits beim „exportieren“-
-    Label - deshalb wird hier gezielt das `<label>` extrahiert, das die
-    Resend-Checkbox umschliesst, und NUR darin nach dem Guard gesucht."""
+    Aufgabe 7 ersetzt das fruehere `x-show="signal.exportable"` am
+    umschliessenden `<label>` durch `:disabled="!signal.exportable"` am
+    `<input>` selbst: die Rasterzeile (`.signal-grid`) braucht in JEDER
+    Zeile dieselbe Anzahl Zellen, sonst verschieben sich die Spalten der
+    nicht-exportierbaren Signale gegen die Kopfzeile - genau das Fluchten,
+    das diese Aufgabe zusichert. Ein deaktiviertes statt verstecktes
+    Kaestchen belegt denselben Fall: `resend_marked()` kann fuer ein
+    nicht-exportierbares Signal ohnehin nie etwas bewirken (`_last_values`
+    bleibt dort leer, siehe `Runtime._cache_attribute`), es laesst sich nur
+    nicht mehr anklicken."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     page = (await client.get("/")).text
@@ -438,7 +439,7 @@ async def test_the_signal_row_offers_a_resend_checkbox(api):
     label_start = page.rindex("<label", 0, resend_idx)
     label_end = page.index("</label>", resend_idx) + len("</label>")
     resend_label = page[label_start:label_end]
-    assert 'x-show="signal.exportable"' in resend_label
+    assert ':disabled="!signal.exportable"' in resend_label
 
 
 async def test_the_settings_view_offers_a_resend_interval_field(api):
@@ -1904,7 +1905,7 @@ async def test_the_signal_modal_static_text_is_translated(api):
     assert "Kein Signal dieses Geräts gilt als funktional." not in markup
     assert ":title=\"t('web.signals.key_tooltip')\"" in dialog
     assert "Verdrahtung in Loxone – nicht änderbar." not in markup
-    assert "x-text=\"t('web.signals.export_checkbox')\"" in dialog
+    assert ":aria-label=\"t('web.signals.export_checkbox')\"" in dialog
     assert ">exportieren<" not in markup
     assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in dialog
     assert "Rohwert schreiben" not in markup
@@ -2627,7 +2628,7 @@ async def test_the_resend_card_static_text_is_translated(api):
     assert ">Speichern<" not in card
 
     resend_checkbox_label = _label_around(markup, "toggleResend(signal)")
-    assert "x-text=\"t('web.signals.resend_checkbox')\"" in resend_checkbox_label
+    assert ":aria-label=\"t('web.signals.resend_checkbox')\"" in resend_checkbox_label
     assert "periodisch erneut senden" not in resend_checkbox_label
 
 
@@ -4375,3 +4376,71 @@ async def test_the_no_functional_signals_hint_accounts_for_the_battery(api):
 
     hint = page[page.index("no_functional_signals") - 400 : page.index("no_functional_signals")]
     assert "!batterySignalFor(device.id)" in hint
+
+
+async def test_the_signal_rows_and_the_header_share_one_grid(api):
+    """Was heute fehlt und weshalb nichts fluchtet: die Zeile ist ein
+    `flex-wrap`-Container ohne Spaltenmasse. Bei `multipress_ongoing`
+    rutschte "periodisch erneut senden" allein in die naechste Zeile."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    css = (await client.get("/static/style.css")).text
+
+    assert page.count("signal-grid") >= 2
+    assert "grid-template-columns: 58px minmax(0, 1fr) 150px 70px 76px 28px" in css
+
+
+async def test_both_boolean_columns_are_checkboxes(api):
+    """Das Bedienelement folgt dem BEHAELTER, nicht der Bedeutung: in einer
+    Tabelle Haekchen, weil sie in einer Spalte fluchten und leise bleiben -
+    eine Spalte aus 17 Schiebeschaltern waere eine deutlich lautere Textur,
+    und Lautstaerke ist genau das Problem dieses Modals."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    modal = page[page.index('class="signals-modal"') :]
+    for handler in ("toggleExported(signal)", "toggleResend(signal)"):
+        # Das Bedienelement, das den Handler traegt: vom Handler
+        # rueckwaerts bis zum oeffnenden Tag. So prueft der Test das
+        # tatsaechliche Element und nicht irgendein `type="checkbox"`
+        # anderswo im Modal.
+        end = modal.index(handler)
+        element = modal[modal.rindex("<", 0, end) : end]
+        assert 'type="checkbox"' in element, handler
+
+
+async def test_the_boolean_columns_keep_a_label_for_assistive_technology(api):
+    """Die Beschriftung steht als Spaltenkopf einmal statt siebzehnmal neben
+    einem Kaestchen - ein Screenreader liest aber die Zeile, nicht die
+    Tabelle. Beide Kaestchen brauchen deshalb weiterhin ihren eigenen Namen."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert "web.signals.export_checkbox" in page
+    assert "web.signals.resend_checkbox" in page
+    assert ":aria-label=\"t('web.signals.export_checkbox')\"" in page
+
+
+async def test_the_resend_column_is_explained_once_above_the_table(api):
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert "web.signals.resend_explanation" in page
+
+
+async def test_the_raw_write_strip_still_works_alongside_the_grid(api):
+    """Abweichung vom Brief (siehe Aufgabenbeschreibung): Aufgabe 7 ersetzt
+    die alte `.device-controls`-Huelle durch das Raster, aber das
+    Rohwert-Schreibfeld (`writeRaw` und Zubehoer) verschwindet dabei NICHT -
+    sein neuer Platz, ein Aufklapper je Zeile, kommt erst mit Aufgabe 8.
+    Bis dahin bleibt es als eigener Streifen unterhalb der Rasterzeile
+    erhalten, mit unveraenderter Bedienlogik."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+
+    assert "x-show=\"signal.kind === 'attribute'\"" in dialog
+    assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in dialog
+    assert '@input="rawWriteDrafts[signal.key] = $event.target.value"' in dialog
+    assert '@click="writeRaw(signal)"' in dialog
+    assert ':disabled="rawWriteBusyKey === signal.key"' in dialog
+    assert "x-text=\"t('web.signals.raw_write_submit')\"" in dialog

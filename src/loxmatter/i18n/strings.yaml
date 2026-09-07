@@ -916,6 +916,24 @@ web.signals.export_checkbox:
 web.signals.resend_checkbox:
   en: "resend periodically"
   de: "periodisch erneut senden"
+web.signals.col_export:
+  en: "Export"
+  de: "Export"
+web.signals.col_signal:
+  en: "Signal"
+  de: "Signal"
+web.signals.col_input:
+  en: "Loxone input"
+  de: "Loxone-Eingang"
+web.signals.col_value:
+  en: "Value"
+  de: "Wert"
+web.signals.col_resend:
+  en: "Periodic"
+  de: "Periodisch"
+web.signals.resend_explanation:
+  en: "Periodic means the value is sent again regularly, even when it has not changed."
+  de: "Periodisch heißt: der Wert wird regelmäßig erneut gesendet, auch wenn er sich nicht ändert."
 web.signals.raw_write_placeholder:
   en: "Write raw value"
   de: "Rohwert schreiben"
