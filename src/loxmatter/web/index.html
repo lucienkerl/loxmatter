@@ -1880,6 +1880,18 @@
                             :title="t('web.signals.export_checkbox')"
                             @change="toggleExported(signal)"
                           />
+                          <!-- Nur unter 640px sichtbar (`.col-center-label`
+                               in style.css), dort ohne Spaltenkopf die
+                               einzige sichtbare Beschriftung des Kaestchens.
+                               `aria-hidden`, weil das Kaestchen sein
+                               `aria-label` bereits traegt - dieser Text ist
+                               dieselbe Auskunft nur ein zweites Mal sichtbar,
+                               keine zweite fuer Hilfstechnik. -->
+                          <span
+                            class="col-center-label"
+                            aria-hidden="true"
+                            x-text="t('web.signals.export_checkbox')"
+                          ></span>
                         </label>
                         <input
                           type="text"
@@ -1929,6 +1941,15 @@
                             :title="t('web.signals.resend_checkbox')"
                             @change="toggleResend(signal)"
                           />
+                          <!-- Wie bei der Export-Spalte: nur unter 640px
+                               sichtbar, `aria-hidden` aus demselben Grund -
+                               das Kaestchen hat mit `aria-label` schon
+                               seinen Namen. -->
+                          <span
+                            class="col-center-label"
+                            aria-hidden="true"
+                            x-text="t('web.signals.resend_checkbox')"
+                          ></span>
                         </label>
                         <!-- Die letzte Zelle traegt seit Aufgabe 8 nur noch
                              den Kebab, nichts sonst: die Warnpille mit

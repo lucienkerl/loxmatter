@@ -2406,6 +2406,13 @@ footer.hint-block {
   margin: 0;
 }
 
+/* Beschriftung der beiden Haekchen fuer den schmalen Fall (siehe
+   Medienabfrage unten) - hier im breiten Fall verborgen, weil der
+   Spaltenkopf schon beschriftet. */
+.signal-grid .col-center-label {
+  display: none;
+}
+
 /* Die generische Regel `input[type="text"] { min-width: 12rem }` weiter oben
    gewinnt sonst gegen die Rasterspalte und sprengt sie - dieselbe Falle wie
    bei `.device-head .device-name`, Begruendung dort. */
@@ -2458,11 +2465,20 @@ footer.hint-block {
    ueber einer gestapelten Karte beschriftet er nichts mehr, er stuende nur
    als Reihe von fuenf Woertern ohne Bezug da.
 
-   Damit die Haekchen ohne Spaltenkopf ihre Bedeutung behalten, bekommen
-   sie hier ihre Beschriftung zurueck: `.col-center` wird linksbuendig und
-   das `title`-Attribut des Kaestchens erscheint als Text daneben. Das ist
-   dieselbe Auskunft wie im Spaltenkopf, nur am anderen Ort - kein zweiter
-   Uebersetzungsschluessel. */
+   Damit die Haekchen ohne Spaltenkopf ihre Bedeutung behalten, braucht es
+   hier eine ECHTE sichtbare Beschriftung: `title` ist nur ein Hover-Tooltip
+   und auf einem Telefon - genau der Zielgruppe dieser Medienabfrage - gibt
+   es kein Hover, ein `content: attr(title)` o.ae. existiert hier nicht und
+   haette daran auch nichts geaendert. Deshalb traegt jedes Kaestchen im
+   Markup laengst einen zweiten `<span class="col-center-label">` mit
+   demselben Uebersetzungsschluessel wie sein `aria-label` (kein zweiter
+   Schluessel), oben per Grundregel verborgen. Hier wird er gezeigt, `.col-
+   center` bekommt dafuer einen kleinen Abstand und wird linksbuendig, damit
+   Haekchen und Text nebeneinander stehen statt zu ueberlappen. Der Span
+   traegt `aria-hidden="true"`: er wiederholt nur sichtbar, was das
+   Kaestchen mit `aria-label` schon als Namen hat - ohne das wuerde
+   Hilfstechnik denselben Namen zweimal vorlesen oder je nach Browser sogar
+   widerspruechlich zusammensetzen. */
 @media (max-width: 640px) {
   .signal-grid-head {
     display: none;
@@ -2487,6 +2503,11 @@ footer.hint-block {
 
   .signal-grid .col-center {
     justify-content: flex-start;
+    gap: 0.35rem;
+  }
+
+  .signal-grid .col-center-label {
+    display: inline;
   }
 
   .signal-detail {

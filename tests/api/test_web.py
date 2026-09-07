@@ -4711,3 +4711,56 @@ async def test_the_signal_table_stacks_on_a_narrow_screen(api):
     # Die beiden Haekchenspalten bleiben sichtbar und bedienbar - sie
     # verschwinden nicht mit dem Kopf, sie ruecken nur linksbuendig.
     assert "justify-content: flex-start" in rule_body(".signal-grid .col-center")
+
+
+async def test_the_checkbox_labels_become_visible_only_below_640px(api):
+    """Pruefungsfund: der Kommentar ueber der Medienabfrage behauptete,
+    `title` erscheine dort als sichtbarer Text neben dem Kaestchen - es
+    gab aber nirgends ein `content: attr(title)` o.ae., `title` blieb ein
+    reiner Hover-Tooltip, den ein Touch-Nutzer nie zu sehen bekommt. Der
+    Fix zeigt echten Text: ein `<span class="col-center-label">` mit
+    demselben Uebersetzungsschluessel wie das `aria-label` des Kaestchens,
+    per Grundregel verborgen und nur innerhalb der 640px-Medienabfrage
+    gezeigt - umgekehrt zum Spaltenkopf, der genau dort verschwindet."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    css = (await client.get("/static/style.css")).text
+
+    # Beide Labels tragen den Span mit demselben Schluessel wie ihr
+    # `aria-label`, innerhalb desselben `<label>` wie das Kaestchen - kein
+    # neuer Uebersetzungsschluessel, dieselbe Auskunft an einem zweiten Ort.
+    for key in ("export_checkbox", "resend_checkbox"):
+        label_start = dialog.index(f"aria-label=\"t('web.signals.{key}')\"")
+        label_start = dialog.rindex("<label", 0, label_start)
+        label_end = dialog.index("</label>", label_start)
+        label = dialog[label_start:label_end]
+        assert 'class="col-center-label"' in label
+        assert 'aria-hidden="true"' in label
+        assert f"x-text=\"t('web.signals.{key}')\"" in label
+
+    # Grundregel: verborgen, solange der Spaltenkopf beschriftet.
+    base_start = css.index(".signal-grid .col-center-label")
+    media_start = css.index("@media (max-width: 640px)")
+    assert base_start < media_start
+    base_open = css.index("{", base_start)
+    base_close = css.index("}", base_open)
+    assert "display: none" in css[base_open:base_close]
+
+    # Medienabfrage: hier gezeigt, an derselben Klammertiefe wie die
+    # Nachbarregeln - Muster aus
+    # `test_the_signal_table_stacks_on_a_narrow_screen`.
+    body_start = css.index("{", media_start) + 1
+    depth = 1
+    i = body_start
+    while depth:
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+        i += 1
+    media_body = css[body_start : i - 1]
+
+    label_start = media_body.index(".signal-grid .col-center-label")
+    label_open = media_body.index("{", label_start)
+    label_close = media_body.index("}", label_open)
+    assert "display: inline" in media_body[label_open:label_close]
