@@ -1484,22 +1484,60 @@ function app() {
       return signals ? signals.filter((signal) => !signal.functional) : [];
     },
 
-    // Beide Bloecke der Signale-Ansicht als eine Liste (Review-Fix 6,
+    // Alle Gruppen der Signale-Ansicht als eine Liste (Review-Fix 6,
     // Nachbesserung Phase 6): vorher stand die Signalzeilen-Vorlage in
     // index.html zweimal, byte-identisch bis auf `functionalSignalsFor`
     // gegen `expertSignalsFor` - 51 Zeilen doppelt, die bei jeder
     // Aenderung zweimal angefasst werden mussten, ohne dass etwas ein
     // Auseinanderlaufen bemerkt haette. `collapsible` steuert in der
-    // Vorlage nur noch den Startzustand des `<details>` (funktional offen,
-    // Experte zu, siehe `x-init` in index.html) - der Rest (Zeilen-Markup,
-    // leer-Hinweis) ist fuer beide Gruppen identisch. Der erste Satz oben
-    // gilt seit dem Modal-Umbau doppelt: dort teilen sich beide Gruppen
-    // sogar dasselbe `<details>`-Markup, nicht nur dieselbe Zeilenvorlage.
+    // Vorlage nur noch den Startzustand des `<details>` (Endpunktgruppen
+    // offen, Experte zu, siehe `x-init` in index.html) - der Rest
+    // (Zeilen-Markup) ist fuer alle Gruppen identisch. Der
+    // erste Satz oben gilt seit dem Modal-Umbau doppelt: dort teilen sich
+    // alle Gruppen sogar dasselbe `<details>`-Markup, nicht nur dieselbe
+    // Zeilenvorlage.
+    //
+    // Die Gruppen des Signal-Modals: je Endpunkt eine, danach der
+    // Experte-Block (Entwurf 2026-09-07, Abschnitt 7.4).
+    //
+    // Die Reihenfolge der Endpunktgruppen folgt der Cluster-Rangliste, ohne
+    // dass hier sortiert wuerde: `functionalSignalsFor` kommt bereits
+    // sortiert an, und diese Schleife uebernimmt die Reihenfolge des ERSTEN
+    // Auftretens jedes Endpunkts. Am Taster steht "Geraet" (nur Batterie)
+    // deshalb zuletzt, obwohl es Endpunkt 0 ist.
+    //
+    // `group.key` bleibt stabil ueber Neuzeichnungen ("ep1", "expert") -
+    // das ist Voraussetzung fuer das `x-init="$el.open = !group.collapsible"`
+    // im Markup: waere der Schluessel unstabil, baute Alpine den Knoten neu
+    // auf und klappte eine geoeffnete Gruppe wortlos wieder zu.
     signalGroupsFor(deviceId) {
-      return [
-        { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },
-        { key: "expert", title: t("web.signals.group_expert"), collapsible: true, signals: this.expertSignalsFor(deviceId) },
-      ];
+      const groups = [];
+      const byEndpoint = new Map();
+      for (const signal of this.functionalSignalsFor(deviceId)) {
+        let group = byEndpoint.get(signal.endpoint);
+        if (!group) {
+          group = {
+            key: "ep" + signal.endpoint,
+            title: signal.endpoint_label,
+            subtitle: t("web.signals.group_endpoint_subtitle", { endpoint: signal.endpoint }),
+            collapsible: false,
+            signals: [],
+          };
+          byEndpoint.set(signal.endpoint, group);
+          groups.push(group);
+        }
+        group.signals.push(signal);
+      }
+      // Bleibt EINE Gruppe: 156 Signale ueber alle Endpunkte zu gliedern
+      // erzeugte nur mehr Ueberschriften, keine Uebersicht.
+      groups.push({
+        key: "expert",
+        title: t("web.signals.group_expert"),
+        subtitle: "",
+        collapsible: true,
+        signals: this.expertSignalsFor(deviceId),
+      });
+      return groups;
     },
 
     liveValueOf(signal) {

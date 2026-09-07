@@ -922,9 +922,9 @@ web.signals.raw_write_placeholder:
 web.signals.raw_write_submit:
   en: "Write"
   de: "Schreiben"
-web.signals.group_functional:
-  en: "Functional"
-  de: "Funktional"
+web.signals.group_endpoint_subtitle:
+  en: "Endpoint {endpoint}"
+  de: "Endpunkt {endpoint}"
 web.signals.group_expert:
   en: "Expert"
   de: "Experte"

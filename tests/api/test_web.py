@@ -396,10 +396,17 @@ async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
     fester deutscher Literale - siehe
     `test_the_signal_group_titles_are_translated` fuer die Bindung selbst;
     hier bleibt nur der Beleg, dass die Gruppierung (`signal.functional`)
-    unveraendert ist."""
+    unveraendert ist.
+
+    Aufgabe 6: die eine „Funktional"-Gruppe wich Endpunkt-Gruppen (siehe
+    `test_the_groups_follow_the_ranking_not_the_endpoint_number` fuer deren
+    Reihenfolge und Inhalt). Der Schluessel `group_functional` gibt es
+    seither nicht mehr; die urspruengliche Zusicherung dieses Tests -
+    Gruppentitel ueber `t(...)` statt fest verdrahtet - bleibt gueltig,
+    zielt jetzt aber auf den Endpunkt-Untertitel."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    assert 't("web.signals.group_functional")' in script
+    assert 't("web.signals.group_endpoint_subtitle"' in script
     assert 't("web.signals.group_expert")' in script
     # Beide Listen lesen nur das von der API mitgelieferte Feld, keine
     # eigene JavaScript-Fassung von `profiles.relevance.is_functional`.
@@ -772,6 +779,72 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
     assert values["live"] is True
     assert values["fresh"] is True
     assert values["title"]
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_the_groups_follow_the_ranking_not_the_endpoint_number():
+    """Der Grund fuer die Gruppen: `press` steht zweimal in der Liste -
+    1/59/1 und 2/59/1, also zwei verschiedene Tasten derselben
+    Fernbedienung. Ohne Gruppe ist das zweimal dasselbe Wort ohne Auskunft,
+    welche gemeint ist.
+
+    Und die Reihenfolge: "Geraet" (Endpunkt 0, nur die Batterie) steht
+    ZULETZT, obwohl es die kleinste Endpunktnummer traegt - die Gruppen
+    uebernehmen die Reihenfolge des ersten Auftretens in der bereits
+    gerangten Liste, sie sortieren nicht selbst. Genau das kann eine
+    Zeichenketten-Suche in `app.js` nicht belegen.
+
+    `t()` liefert ohne geladene Uebersetzungstabelle den Schluessel selbst
+    zurueck (siehe `t` in app.js) - der Titel der Experte-Gruppe ist hier
+    deshalb der Schluessel, und das genuegt fuer die Zusicherung."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_1_press", title: "press", endpoint: 1, cluster_id: 59,
+            functional: true, endpoint_label: "Taste 1" },
+          { key: "d1_2_press", title: "press", endpoint: 2, cluster_id: 59,
+            functional: true, endpoint_label: "Taste 2" },
+          { key: "d1_0_battery", title: "battery", endpoint: 0, cluster_id: 47,
+            functional: true, endpoint_label: "Gerät" },
+          { key: "d1_0_vendor", title: "VendorName", endpoint: 0, cluster_id: 40,
+            functional: false, endpoint_label: "Gerät" },
+        ] };
+        console.log(JSON.stringify(
+          state.signalGroupsFor(1).map((g) => ({
+            key: g.key, title: g.title, collapsible: g.collapsible,
+            signals: g.signals.map((s) => s.key),
+          }))
+        ));
+        """
+    )
+
+    assert [g["key"] for g in values] == ["ep1", "ep2", "ep0", "expert"]
+    assert [g["title"] for g in values[:3]] == ["Taste 1", "Taste 2", "Gerät"]
+    assert values[0]["signals"] == ["d1_1_press"]
+    assert values[1]["signals"] == ["d1_2_press"]
+    # 156 Signale ueber alle Endpunkte zu gliedern erzeugte nur mehr
+    # Ueberschriften - der Experte-Block bleibt EINE zugeklappte Gruppe.
+    assert values[3]["signals"] == ["d1_0_vendor"]
+    assert values[3]["collapsible"] is True
+    assert [g["collapsible"] for g in values[:3]] == [False, False, False]
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_without_functional_signals_yields_only_the_expert_group():
+    """Der Zustand, fuer den der Hinweis `none_functional` jetzt AUSSERHALB
+    der Gruppenschleife steht: eine Endpunktgruppe ist nie leer, es gibt
+    dann schlicht keine."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_0_vendor", title: "VendorName", endpoint: 0, cluster_id: 40,
+            functional: false, endpoint_label: "Gerät" },
+        ] };
+        console.log(JSON.stringify(state.signalGroupsFor(1).map((g) => g.key)));
+        """
+    )
+
+    assert values == ["expert"]
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
@@ -1841,18 +1914,35 @@ async def test_the_signal_modal_static_text_is_translated(api):
 
 async def test_the_signal_group_titles_are_translated(api):
     """Aufgabe 12, Schritt 4: `signalGroupsFor`'s Gruppentitel (Objekt-
-    Literale) laufen jetzt ueber `t("web.signals.group_functional")` /
-    `t("web.signals.group_expert")` statt fester Literale "Funktional" /
-    "Experte"."""
+    Literale) laufen ueber `t(...)` statt fester Literale "Funktional" /
+    "Experte".
+
+    Aufgabe 6 aendert, WELCHE Objekt-Literale das sind: die Endpunktgruppen
+    tragen `signal.endpoint_label` als Titel (kommt bereits uebersetzt von
+    der API, siehe Aufgabe 4) und `t("web.signals.group_endpoint_subtitle")`
+    als Untertitel; nur die Experte-Gruppe hat noch einen fest ueber `t(...)`
+    gesetzten Titel. Der Schluessel `group_functional` gibt es seither
+    nicht mehr. Die urspruengliche Zusicherung - kein fest verdrahtetes
+    deutsches Literal im Gruppenaufbau - bleibt erhalten: die Sperre gegen
+    `"Experte"` als Literal bleibt, die gegen `"Funktional"` entfaellt mit
+    dem Titel, den es nicht mehr gibt."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     signal_groups_start = script.index("signalGroupsFor(deviceId) {")
     signal_groups_end = script.index("\n    },", signal_groups_start)
     body = script[signal_groups_start:signal_groups_end]
-    assert 'title: t("web.signals.group_functional")' in body
+    assert 'subtitle: t("web.signals.group_endpoint_subtitle"' in body
     assert 'title: t("web.signals.group_expert")' in body
-    assert '"Funktional"' not in body
     assert '"Experte"' not in body
+
+
+async def test_the_group_header_shows_the_endpoint_as_a_subtitle(api):
+    """Aufgabe 6, Schritt 5: die `<summary>` der Gruppe zeigt neben Titel
+    und Anzahl jetzt auch `group.subtitle` ("Endpunkt N")."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert 'x-text="group.subtitle"' in page
 
 
 async def test_the_signal_view_dynamic_errors_and_success_are_translated(api):

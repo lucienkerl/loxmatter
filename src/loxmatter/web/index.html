@@ -1773,7 +1773,7 @@
           <template x-if="signalsByDevice[signalsModalDevice]">
             <div>
               <!--
-                EINE Vorlage fuer beide Gruppen. Der naheliegende Entwurf -
+                EINE Vorlage fuer alle Gruppen. Der naheliegende Entwurf -
                 funktional als schlichter Block, Experte als `<details>` -
                 braeuchte zwei Zweige und in jedem eine eigene Kopie der
                 Signalzeile darunter. Genau diese Verdopplung hat
@@ -1795,10 +1795,21 @@
                 Re-Render nicht neu auf, und der Klick des Nutzers bleibt
                 stehen. NICHT zu `:open` vereinfachen.
               -->
+              <!-- Ausserhalb der Gruppenschleife, seit die Gruppen nach
+                   Endpunkt entstehen (Entwurf 2026-09-07, Abschnitt 7.4):
+                   eine Endpunktgruppe ist nie leer, sie entsteht ja aus
+                   ihren Signalen. "Keine funktionalen Signale" heisst
+                   jetzt "es gibt gar keine Endpunktgruppe". -->
+              <p
+                class="hint"
+                x-show="functionalSignalsFor(signalsModalDevice).length === 0"
+                x-text="t('web.signals.none_functional')"
+              ></p>
               <template x-for="group in signalGroupsFor(signalsModalDevice)" :key="group.key">
                 <details class="signal-group" x-init="$el.open = !group.collapsible">
                   <summary>
                     <span x-text="group.title"></span>
+                    <span class="muted" x-show="group.subtitle" x-text="group.subtitle"></span>
                     <span class="muted" x-text="'(' + group.signals.length + ')'"></span>
                     <!-- `aria-hidden` wie am Kebab-Icon und am Schliessen-Knopf
                          des Modals, NICHT wie am aelteren Chevron der
@@ -1813,11 +1824,6 @@
                     class="hint"
                     x-show="group.collapsible"
                     x-text="t('web.signals.functional_vs_expert_explanation')"
-                  ></p>
-                  <p
-                    class="hint"
-                    x-show="!group.collapsible && group.signals.length === 0"
-                    x-text="t('web.signals.none_functional')"
                   ></p>
                   <template x-for="signal in group.signals" :key="signal.key">
                     <div class="device-controls">
