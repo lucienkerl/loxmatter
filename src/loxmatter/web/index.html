@@ -1845,11 +1845,11 @@
                   ></p>
                   <!-- `x-for` verlangt genau EIN Wurzelelement je Signal.
                        Die Rasterzeile allein waere das normalerweise (siehe
-                       Entwurf 2026-09-07, Abschnitt 7.2) - der
-                       Rohwert-Streifen direkt darunter braucht deshalb diese
-                       Huelle, obwohl er selbst kein Rasterkind ist. -->
+                       Entwurf 2026-09-07, Abschnitt 7.2) - der Aufklapper
+                       direkt darunter braucht deshalb diese Huelle, obwohl
+                       er selbst kein Rasterkind ist. -->
                   <template x-for="signal in group.signals" :key="signal.key">
-                    <div>
+                    <div class="signal-row-wrap" :class="{ 'is-expanded': expandedSignalKey === signal.key }">
                       <div class="signal-grid signal-row-cells">
                         <label class="col-center">
                           <input
@@ -1910,35 +1910,62 @@
                             @change="toggleResend(signal)"
                           />
                         </label>
-                        <span class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></span>
-                      </div>
-                      <!-- UEBERGANGSWEISE: der Brief (Aufgabenblatt 7)
-                           ersetzt hier eigentlich den ganzen Block durch die
-                           Rasterzeile allein und laesst das Rohwert-Feld
-                           kommentarlos wegfallen - dessen neuer Platz, ein
-                           Aufklapper je Zeile, kommt aber erst mit Aufgabe 8.
-                           Bis dahin bliebe sonst eine Luecke, in der sich
-                           kein Rohwert mehr schreiben liesse. Deshalb steht
-                           der Streifen hier UNTER dem Raster, nicht darin,
-                           mit unveraenderter Sichtbarkeit und Bedienlogik.
-                           Aufgabe 8 verlegt ihn in den Aufklapper und
-                           entfernt diesen Streifen wieder. -->
-                      <div class="row" x-show="signal.kind === 'attribute'">
-                        <input
-                          type="text"
-                          :placeholder="t('web.signals.raw_write_placeholder')"
-                          @input="rawWriteDrafts[signal.key] = $event.target.value"
-                        />
+                        <!-- Die letzte Zelle traegt seit Aufgabe 8 nur noch
+                             den Kebab, nichts sonst: die Warnpille mit
+                             `signal.reason` sass hier zuvor in der 28-px-Spalte
+                             und brach dort um, sobald der Text laenger war als
+                             ein paar Zeichen (jedes Geraet mit einem TEXT- oder
+                             listwertigen Signal, siehe `_UNEXPORTABLE_REASONS`
+                             in `api/devices.py`) - gemessen 744px scrollWidth
+                             gegen 719px clientWidth im Modal. Die Pille wohnt
+                             jetzt im Aufklapper, wo Platz fuer echte Saetze
+                             ist. -->
                         <button
-                          @click="writeRaw(signal)"
-                          :disabled="rawWriteBusyKey === signal.key"
-                          x-text="t('web.signals.raw_write_submit')"
-                        ></button>
-                        <span
-                          x-show="rawWriteMessages[signal.key]"
-                          :class="rawWriteMessageClass(signal)"
-                          x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
-                        ></span>
+                          class="signal-more"
+                          :aria-expanded="expandedSignalKey === signal.key"
+                          :aria-label="t('web.signals.row_details')"
+                          :title="t('web.signals.row_details')"
+                          @click="toggleSignalDetails(signal)"
+                        ><svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg></button>
+                      </div>
+                      <!-- Der Aufklapper haengt UNTER genau seiner Zeile,
+                           nicht als zweite `.row` daneben: er gehoert zu
+                           diesem einen Signal, und das soll man sehen.
+                           `x-cloak` verhindert den kurzen Blitz aller
+                           Aufklapper beim ersten Rendern, bevor Alpine
+                           `x-show` ausgewertet hat. -->
+                      <div class="signal-detail" x-show="expandedSignalKey === signal.key" x-cloak>
+                        <!-- `signal.path` traegt dieselbe Auskunft als
+                             "1/59/1", aber das ist ein Raetsel, solange
+                             niemand sagt, welche Zahl was bedeutet - hier ist
+                             endlich Platz, es auszuschreiben. -->
+                        <p
+                          class="hint"
+                          x-text="t('web.signals.origin', { endpoint: signal.endpoint, cluster: signal.cluster_id, element: signal.path.split('/')[2] })"
+                        ></p>
+                        <p class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></p>
+                        <!-- Nur fuer Attribute sinnvoll - ein Ereignis hat
+                             keinen gespeicherten Wert, den man ueberschreiben
+                             koennte. Die Herkunft darueber gilt fuer beide
+                             Signalarten, deshalb traegt nur DIESER Teil das
+                             `x-show`. -->
+                        <div class="row" x-show="isAttributeSignal(signal)">
+                          <input
+                            type="text"
+                            :placeholder="t('web.signals.raw_write_placeholder')"
+                            @input="rawWriteDrafts[signal.key] = $event.target.value"
+                          />
+                          <button
+                            @click="writeRaw(signal)"
+                            :disabled="rawWriteBusyKey === signal.key"
+                            x-text="t('web.signals.raw_write_submit')"
+                          ></button>
+                          <span
+                            x-show="rawWriteMessages[signal.key]"
+                            :class="rawWriteMessageClass(signal)"
+                            x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
+                          ></span>
+                        </div>
                       </div>
                     </div>
                   </template>

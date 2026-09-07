@@ -2398,13 +2398,41 @@ footer.hint-block {
   min-width: 0;
 }
 
-/* Der Rohwert-Streifen (index.html, direkt unter `.signal-row-cells`) ist
-   uebergangsweise (siehe Kommentar dort): er bleibt ausserhalb des Rasters,
-   damit er das gemessene Fluchten der Rasterzeilen nicht stoert. `.row`
-   liefert bereits Flex, `gap` und Zentrierung fuer seinen Inhalt - hier
-   reicht ein schmaler oberer Abstand, damit er sich sichtbar vom Raster
-   darueber absetzt, ohne wie eine weitere Rasterzeile auszusehen. */
-.signal-row-cells + .row {
-  margin-top: 0.3rem;
-  padding-left: calc(58px + 0.5rem);
+.signal-row-wrap.is-expanded {
+  background: var(--bg);
+}
+
+/* Eingerueckt bis zur Namensspalte (58 px Haekchen + 0.5 rem Abstand), damit
+   der Aufklapper sichtbar zu SEINER Zeile gehoert und nicht zur Tabelle.
+
+   Hier wohnt seit Aufgabe 8 auch die Warnpille mit `signal.reason`: in der
+   28-px-Kebab-Spalte des Rasters (`.signal-grid`) brach ein laengerer Text
+   (z. B. "Text - ein virtueller UDP-Eingang kennt nur Zahlen und digitale
+   Werte" aus `_UNEXPORTABLE_REASONS`, `api/devices.py`) mangels Platz um und
+   sprengte damit das gemessene Fluchten der Tabelle (scrollWidth 744px
+   gegen clientWidth 719px). Hier im Aufklapper ist die verfuegbare Breite
+   die halbe Modalbreite statt 28px, normales Wortumbruch-Verhalten reicht
+   also aus - kein `overflow-wrap` noetig. */
+.signal-detail {
+  padding: 0.2rem 0 0.7rem calc(58px + 0.5rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.signal-detail .hint {
+  margin: 0;
+}
+
+.signal-more {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.1rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.signal-more[aria-expanded="true"] {
+  color: var(--accent);
 }

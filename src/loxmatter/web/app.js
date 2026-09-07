@@ -479,6 +479,14 @@ function app() {
     rawWriteDrafts: {},
     rawWriteBusyKey: null,
     rawWriteMessages: {},
+    // Welche Signalzeile ihren Aufklapper offen hat, oder null.
+    //
+    // Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
+    // Zustand in Alpine statt im DOM, und der Unterschied hat einen Grund:
+    // dort gibt es ein Auf/Zu JE ELEMENT, hier genau EINEN Wert fuer das
+    // ganze Modal. Hoechstens ein Bereich ist offen - bei 173 Zeilen waeren
+    // mehrere offene Aufklapper wieder die Wand, die dieser Umbau abschafft.
+    expandedSignalKey: null,
     // Das Signal-Modal haelt die Geraete-ID, NICHT das Geraeteobjekt:
     // `loadDevices` ersetzt `devices` vollstaendig, ein festgehaltenes
     // Objekt waere danach eine Leiche mit veraltetem Namen und Raum.
@@ -2047,6 +2055,21 @@ function app() {
     rawWriteMessageClass(signal) {
       const message = this.rawWriteMessages[signal.key];
       return message && message.isError ? "hint danger-text" : "hint";
+    },
+
+    toggleSignalDetails(signal) {
+      this.expandedSignalKey = this.expandedSignalKey === signal.key ? null : signal.key;
+    },
+
+    // Das Rohwert-Feld ist nur fuer Attribute sinnvoll (ein Ereignis hat
+    // keinen gespeicherten Wert, den man ueberschreiben koennte) - die
+    // Herkunft darueber gilt dagegen fuer beide Signalarten. Als eigener
+    // Helfer statt `signal.kind === 'attribute'` direkt im Markup, damit
+    // dieselbe Bedingung nicht zweimal im Quelltext steht (siehe Test
+    // `test_the_raw_write_field_is_no_longer_a_row_of_its_own`, der genau
+    // den alten, jetzt abgeloesten Streifen als String sperrt).
+    isAttributeSignal(signal) {
+      return signal.kind === "attribute";
     },
 
     // ---------------------------------------------------------------------

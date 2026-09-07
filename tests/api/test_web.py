@@ -4428,19 +4428,90 @@ async def test_the_resend_column_is_explained_once_above_the_table(api):
     assert "web.signals.resend_explanation" in page
 
 
-async def test_the_raw_write_strip_still_works_alongside_the_grid(api):
-    """Abweichung vom Brief (siehe Aufgabenbeschreibung): Aufgabe 7 ersetzt
-    die alte `.device-controls`-Huelle durch das Raster, aber das
-    Rohwert-Schreibfeld (`writeRaw` und Zubehoer) verschwindet dabei NICHT -
-    sein neuer Platz, ein Aufklapper je Zeile, kommt erst mit Aufgabe 8.
-    Bis dahin bleibt es als eigener Streifen unterhalb der Rasterzeile
-    erhalten, mit unveraenderter Bedienlogik."""
+async def test_the_raw_write_field_lives_in_the_row_detail(api):
+    """Nachfolger von `test_the_raw_write_strip_still_works_alongside_the_grid`
+    (Aufgabe 7): der Streifen dort war ausdruecklich uebergangsweise, sein
+    endgueltiger Platz ist der Aufklapper aus Aufgabe 8. Bedienlogik und
+    Handler bleiben unveraendert, nur der Ort und die Sichtbarkeitsbedingung
+    aendern sich - letztere jetzt als `isAttributeSignal(signal)`-Aufruf
+    statt einem zweiten Mal ausgeschriebenem `signal.kind === 'attribute'`
+    (siehe `test_the_raw_write_field_is_no_longer_a_row_of_its_own`, der
+    genau diesen alten, jetzt abgeloesten Streifen als String sperrt)."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    detail = dialog[dialog.index('class="signal-detail"') :]
+
+    assert 'x-show="isAttributeSignal(signal)"' in detail
+    assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in detail
+    assert '@input="rawWriteDrafts[signal.key] = $event.target.value"' in detail
+    assert '@click="writeRaw(signal)"' in detail
+    assert ':disabled="rawWriteBusyKey === signal.key"' in detail
+    assert "x-text=\"t('web.signals.raw_write_submit')\"" in detail
+
+
+async def test_only_one_signal_detail_is_open_at_a_time(api):
+    """Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
+    Zustand in Alpine, nicht im DOM: es gibt genau EINEN Wert fuer das ganze
+    Modal, kein Auf/Zu je Element."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+
+    assert "expandedSignalKey: null," in script
+    body = script[script.index("toggleSignalDetails(signal)") :][:400]
+    assert "this.expandedSignalKey = " in body
+
+
+async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
+    """Frueher beanspruchte das Rohwert-Feld bei JEDEM Attribut eine volle
+    Zeile - ein Werkzeug zum Ausprobieren mit demselben Gewicht wie alles
+    andere."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert "x-show=\"signal.kind === 'attribute'\"" not in page
+    assert 'x-show="expandedSignalKey === signal.key"' in page
+
+
+async def test_the_detail_spells_out_the_path(api):
+    """Der Pfad `1/59/1` bekommt endlich einen Ort, an dem genug Platz ist,
+    ihn auszuschreiben, statt ihn als Raetsel neben den Namen zu stellen."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert "web.signals.origin" in page
+
+
+async def test_the_row_kebab_is_the_only_thing_left_in_the_28px_column(api):
+    """Pflichtergebnis aus der Pruefung von Aufgabe 7: die Warnpille mit
+    `signal.reason` sass in der 28-px-Rasterspalte und brach dort bei jedem
+    Geraet mit einem TEXT- oder listwertigen Signal um (`.badge` hatte kein
+    `overflow-wrap`, `.signal-grid > * { min-width: 0 }` liess die Zelle
+    schrumpfen) - gemessen 744px `scrollWidth` gegen 719px `clientWidth`.
+    Die Pille wohnt jetzt im Aufklapper; die Rasterzeile traegt in ihrer
+    letzten Zelle nur noch den Kebab-Knopf."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
 
-    assert "x-show=\"signal.kind === 'attribute'\"" in dialog
-    assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in dialog
-    assert '@input="rawWriteDrafts[signal.key] = $event.target.value"' in dialog
-    assert '@click="writeRaw(signal)"' in dialog
-    assert ':disabled="rawWriteBusyKey === signal.key"' in dialog
-    assert "x-text=\"t('web.signals.raw_write_submit')\"" in dialog
+    # Innerhalb der Rasterzeile steht kein verschachteltes `<div>` (Zellen
+    # sind `<label>`, `<input>`, `<span>`, `<button>`) - das naechste
+    # `</div>` schliesst also genau diese Zeile, nicht irgendein Kindelement.
+    row_start = dialog.index('class="signal-grid signal-row-cells"')
+    row_end = dialog.index("</div>", row_start)
+    row = dialog[row_start:row_end]
+
+    assert "signal-more" in row
+    assert 'class="badge warn"' not in row
+    assert "signal.reason" not in row
+
+
+async def test_the_kebab_button_is_named_and_reports_its_state(api):
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+
+    button_start = dialog.index('class="signal-more"')
+    button_tag_start = dialog.rindex("<button", 0, button_start)
+    button_tag_end = dialog.index(">", button_start)
+    button = dialog[button_tag_start:button_tag_end]
+
+    assert ":aria-expanded=" in button
+    assert ":aria-label=" in button

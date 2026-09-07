@@ -940,6 +940,12 @@ web.signals.raw_write_placeholder:
 web.signals.raw_write_submit:
   en: "Write"
   de: "Schreiben"
+web.signals.origin:
+  en: "Endpoint {endpoint} · Cluster {cluster} · Element {element}"
+  de: "Endpunkt {endpoint} · Cluster {cluster} · Element {element}"
+web.signals.row_details:
+  en: "Origin and raw write"
+  de: "Herkunft und Rohwert"
 web.signals.group_endpoint_subtitle:
   en: "Endpoint {endpoint}"
   de: "Endpunkt {endpoint}"
