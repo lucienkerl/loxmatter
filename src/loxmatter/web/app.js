@@ -365,7 +365,7 @@ function formatPairingCode(raw) {
 
 function normalizePairingCode(raw) {
   const text = raw.trim();
-  // Muss mit _MANUAL_CODE_SEPARATORS in api/models.py gleichlauten: dort
+  // Muss mit _COMMISSION_CODE_SEPARATORS in api/models.py gleichlauten: dort
   // wird `re.compile(r"[\s-]")` verwendet, um Leerraum und Bindestrich zu
   // entfernen. Dies hier ist das Gegenstueck - nicht /\D/, sondern genau
   // diese Zeichen. Bis eine der QR-Pruefungen unabhaengig geaendert wird,

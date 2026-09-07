@@ -201,8 +201,13 @@ class ValueIn(BaseModel):
 # einem QR-Inhalt (`MT:...`, Base38). Ein Bindestrich DARIN traegt Bedeutung
 # und darf nicht wegfallen - deshalb entscheidet dieses Muster zuerst, bevor
 # ueberhaupt etwas geschnitten wird.
-_QR_PAYLOAD = re.compile(r"[^0-9\s-]")
-_MANUAL_CODE_SEPARATORS = re.compile(r"[\s-]")
+#
+# Diese Regel steht ZWEIMAL: hier und als `isPairingQrCode`/
+# `normalizePairingCode` in `web/app.js`. Das ist Absicht - dort formatiert
+# die Oberflaeche waehrend des Tippens, hier normalisiert die Route fuer
+# JEDEN Aufrufer. Wer eine der beiden Fassungen aendert, aendert die andere.
+_COMMISSION_QR_PAYLOAD = re.compile(r"[^0-9\s-]")
+_COMMISSION_CODE_SEPARATORS = re.compile(r"[\s-]")
 
 
 class CommissionRequest(BaseModel):
@@ -251,9 +256,9 @@ class CommissionRequest(BaseModel):
         waere eine Wette.
         """
         text = value.strip()
-        if _QR_PAYLOAD.search(text):
+        if _COMMISSION_QR_PAYLOAD.search(text):
             return text
-        return _MANUAL_CODE_SEPARATORS.sub("", text)
+        return _COMMISSION_CODE_SEPARATORS.sub("", text)
 
 
 class ExportDeviceOut(BaseModel):
