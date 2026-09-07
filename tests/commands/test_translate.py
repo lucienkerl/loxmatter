@@ -208,3 +208,58 @@ def test_colour_rejects_text():
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError):
         to_matter_call(command, "rot")
+
+
+def test_channel_over_100_percent_names_channel_and_value():
+    """Review-Fix 2026-09-07: die Meldung darf beim Uebersetzen keine
+    Genauigkeit verlieren - eine allgemeine "ungueltiger Farbwert" waere
+    hier ausdruecklich NICHT ausreichend. 100100100 + 1 im gruenen Kanal
+    (Bit 1000) macht Gruen zu 101 %, waehrend Rot und Blau bei 100 % bleiben
+    - siehe `commands/color.py::loxone_rgb_to_rgb`."""
+    command = cmd(768, 6, takes_value=True)
+    with pytest.raises(UnsupportedValueError, match="green") as excinfo:
+        to_matter_call(command, "100101100")
+    assert "101" in str(excinfo.value)
+
+
+def test_channel_over_100_percent_names_channel_and_value_in_german():
+    """Deutsches Gegenstueck zu
+    `test_channel_over_100_percent_names_channel_and_value` oben - vor
+    diesem Review-Fix war die Meldung immer Deutsch, unabhaengig von der
+    Spracheinstellung (`_payload_hue_saturation` reichte `str(exc)` aus
+    `color.py` unveraendert durch)."""
+    i18n.set_language("de")
+    command = cmd(768, 6, takes_value=True)
+    with pytest.raises(UnsupportedValueError, match="gruen") as excinfo:
+        to_matter_call(command, "100101100")
+    assert "101" in str(excinfo.value)
+
+
+def test_negative_colour_number_raises_a_clear_error():
+    command = cmd(768, 6, takes_value=True)
+    with pytest.raises(UnsupportedValueError, match="not be negative"):
+        to_matter_call(command, "-1")
+
+
+def test_negative_colour_number_raises_in_german():
+    """Deutsches Gegenstueck zu
+    `test_negative_colour_number_raises_a_clear_error` oben."""
+    i18n.set_language("de")
+    command = cmd(768, 6, takes_value=True)
+    with pytest.raises(UnsupportedValueError, match="nicht negativ"):
+        to_matter_call(command, "-1")
+
+
+def test_fractional_colour_number_raises_a_clear_error():
+    command = cmd(768, 6, takes_value=True)
+    with pytest.raises(UnsupportedValueError, match="must be an integer"):
+        to_matter_call(command, "20040060.5")
+
+
+def test_fractional_colour_number_raises_in_german():
+    """Deutsches Gegenstueck zu
+    `test_fractional_colour_number_raises_a_clear_error` oben."""
+    i18n.set_language("de")
+    command = cmd(768, 6, takes_value=True)
+    with pytest.raises(UnsupportedValueError, match="ganzzahlig"):
+        to_matter_call(command, "20040060.5")

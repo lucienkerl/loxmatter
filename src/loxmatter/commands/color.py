@@ -71,6 +71,50 @@ Umrechnung ab: Kelvin -> Mired und RGB -> Hue/Saturation.
 from __future__ import annotations
 
 import colorsys
+from typing import Literal
+
+LoxoneColourErrorKind = Literal["not_integer", "negative", "channel_out_of_range"]
+
+
+class LoxoneColourError(ValueError):
+    """Ungueltige Loxone-Farbzahl - Einzelheiten als Felder, nicht nur als Satz.
+
+    `str(self)` liefert weiterhin den deutschen Satz von `loxone_rgb_to_rgb`
+    unten (fuers Server-Log - dieses Modul ist eine reine Rechenschicht ohne
+    i18n-Abhaengigkeit, siehe Moduldocstring). `kind` plus die je nach Fall
+    gesetzten Felder (`value`, `packed`, `channel`, `percent`) tragen
+    dieselbe Information maschinenlesbar, damit ein Aufrufer mit eigener
+    Uebersetzung (aktuell `commands/translate.py`, `_payload_hue_saturation`)
+    eine ebenso genaue, aber sprachabhaengige Meldung bauen kann, ohne den
+    deutschen Satz zu parsen.
+
+    Eine eigene Ausnahmeklasse statt einer Vorab-Pruefung in `translate.py`,
+    weil die Pruefregeln (was ist eine "ungueltige" Loxone-Farbzahl) sonst an
+    zwei Stellen leben muessten und garantiert auseinanderdriften wuerden -
+    derselbe Grund, aus dem `_PAYLOAD_BUILDERS` dort der einzige Ort fuer
+    bediente Kommandos ist (siehe Moduldocstring von `translate.py`). Genau
+    eines der optionalen Felder ist je nach `kind` befuellt:
+    - "not_integer": `value` (die eingegebene, nicht-ganzzahlige Zahl).
+    - "negative": `packed` (die eingegebene, negative Ganzzahl).
+    - "channel_out_of_range": `channel`, `percent` und `packed` gemeinsam.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: LoxoneColourErrorKind,
+        value: float | None = None,
+        packed: int | None = None,
+        channel: str | None = None,
+        percent: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.value = value
+        self.packed = packed
+        self.channel = channel
+        self.percent = percent
 
 
 def kelvin_to_mireds(kelvin: float) -> int:
@@ -114,22 +158,41 @@ def loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]:
     in dieser Codierung nicht vor, und sie stillschweigend zu runden hiesse,
     eine ganz andere Zahl - etwa einen bereits entpackten Kanal - als
     gueltige Farbe durchzuwinken.
+
+    Wirft `LoxoneColourError` (eine `ValueError`-Unterklasse, siehe deren
+    Docstring oben) statt eines nackten `ValueError` - Aufrufer, die nur auf
+    `ValueError` pruefen (z. B. `tests/commands/test_color.py`), bemerken
+    davon nichts; Aufrufer, die die Einzelheiten uebersetzen wollen (z. B.
+    `translate.py`), koennen die Felder auslesen.
     """
     if value != int(value):
-        raise ValueError(f"Loxone-Farbzahl muss ganzzahlig sein, war {value}")
+        raise LoxoneColourError(
+            f"Loxone-Farbzahl muss ganzzahlig sein, war {value}",
+            kind="not_integer",
+            value=value,
+        )
     packed = int(value)
     if packed < 0:
-        raise ValueError(
-            f"Loxone-Farbzahl darf nicht negativ sein, war {packed}"
+        raise LoxoneColourError(
+            f"Loxone-Farbzahl darf nicht negativ sein, war {packed}",
+            kind="negative",
+            packed=packed,
         )
 
     percents = (packed % 1000, packed // 1000 % 1000, packed // 1_000_000)
-    for channel, percent in zip(("rot", "gruen", "blau"), percents,
-                                strict=True):
+    # Deutscher Kanalname fuers Server-Log (str(exc)), englisches Kuerzel als
+    # sprachneutrales Feld fuer Aufrufer wie `translate.py` - siehe
+    # `LoxoneColourError.channel` oben.
+    channels = (("rot", "red"), ("gruen", "green"), ("blau", "blue"))
+    for (channel_de, channel_slug), percent in zip(channels, percents, strict=True):
         if percent > 100:
-            raise ValueError(
-                f"Kanal {channel} liegt bei {percent} %, erlaubt sind 0-100 "
-                f"(Loxone-Farbzahl {packed})"
+            raise LoxoneColourError(
+                f"Kanal {channel_de} liegt bei {percent} %, erlaubt sind 0-100 "
+                f"(Loxone-Farbzahl {packed})",
+                kind="channel_out_of_range",
+                channel=channel_slug,
+                percent=percent,
+                packed=packed,
             )
     red, green, blue = (round(percent * 255 / 100) for percent in percents)
     return red, green, blue

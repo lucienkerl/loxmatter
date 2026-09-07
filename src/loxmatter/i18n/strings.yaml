@@ -266,6 +266,31 @@ api.errors.value_not_a_number:
 api.errors.command_unsupported:
   en: "Cluster {cluster_id} command {command_id} is not supported"
   de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
+# Die folgenden vier Schluessel gehoeren zu `LoxoneColourError` in
+# commands/color.py, uebersetzt in commands/translate.py
+# (`_translate_loxone_colour_error`) - siehe Review-Fix 2026-09-07:
+# `_payload_hue_saturation` reichte zuvor `str(exc)` (hart Deutsch) direkt
+# als HTTP-400-`detail` durch. Drei Fehlerfaelle plus die drei Kanalnamen
+# fuer den dritten Fall, damit auch die Kanalangabe uebersetzt ist und
+# nicht nur der Rahmensatz.
+api.errors.loxone_colour_not_integer:
+  en: "Loxone colour number must be an integer, was {value}"
+  de: "Loxone-Farbzahl muss ganzzahlig sein, war {value}"
+api.errors.loxone_colour_negative:
+  en: "Loxone colour number must not be negative, was {packed}"
+  de: "Loxone-Farbzahl darf nicht negativ sein, war {packed}"
+api.errors.loxone_colour_channel_out_of_range:
+  en: "channel {channel} is at {percent}%, allowed is 0-100 (Loxone colour number {packed})"
+  de: "Kanal {channel} liegt bei {percent} %, erlaubt sind 0-100 (Loxone-Farbzahl {packed})"
+api.errors.loxone_colour_channel_red:
+  en: "red"
+  de: "rot"
+api.errors.loxone_colour_channel_green:
+  en: "green"
+  de: "gruen"
+api.errors.loxone_colour_channel_blue:
+  en: "blue"
+  de: "blau"
 api.errors.listener_stopped_early:
   en: "Listener stopped before reporting readiness"
   de: "Listener wurde beendet, bevor er Bereitschaft meldete"

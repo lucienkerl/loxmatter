@@ -55,7 +55,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from loxmatter import i18n
-from loxmatter.commands.color import kelvin_to_mireds, loxone_rgb_to_rgb, rgb_to_hue_saturation
+from loxmatter.commands.color import (
+    LoxoneColourError,
+    kelvin_to_mireds,
+    loxone_rgb_to_rgb,
+    rgb_to_hue_saturation,
+)
 from loxmatter.model.store import StoredCommand
 
 LEVEL_MAX = 254
@@ -118,19 +123,67 @@ def _payload_color_temperature(value: str) -> dict[str, object]:
     return {"colorTemperatureMireds": kelvin_to_mireds(_as_number(value))}
 
 
+# Kanal-Kuerzel aus `LoxoneColourError.channel` (siehe `commands/color.py`)
+# auf den zugehoerigen i18n-Schluessel fuer den uebersetzten Kanalnamen.
+_LOXONE_COLOUR_CHANNEL_KEYS: dict[str, str] = {
+    "red": "api.errors.loxone_colour_channel_red",
+    "green": "api.errors.loxone_colour_channel_green",
+    "blue": "api.errors.loxone_colour_channel_blue",
+}
+
+
+def _translate_loxone_colour_error(exc: LoxoneColourError) -> str:
+    """Baut aus den Feldern von `LoxoneColourError` eine uebersetzte Meldung.
+
+    `str(exc)` selbst ist hart Deutsch (siehe `LoxoneColourError`-Docstring
+    in `color.py`) - hier wird stattdessen aus `exc.kind` und den je nach
+    Fall gesetzten Feldern neu zusammengesetzt, ueber `i18n.t()` wie jeder
+    andere Fehlerpfad in diesem Modul (Muster: `_as_number` oben). Die
+    `assert`s narrowen fuer mypy nur, was `kind` bereits festlegt - siehe
+    Docstring von `LoxoneColourError`, welches Feld zu welchem `kind`
+    gehoert.
+    """
+    if exc.kind == "not_integer":
+        assert exc.value is not None
+        return i18n.t("api.errors.loxone_colour_not_integer", value=exc.value)
+    if exc.kind == "negative":
+        assert exc.packed is not None
+        return i18n.t("api.errors.loxone_colour_negative", packed=exc.packed)
+    assert exc.kind == "channel_out_of_range"
+    assert exc.channel is not None
+    assert exc.percent is not None
+    assert exc.packed is not None
+    channel = i18n.t(_LOXONE_COLOUR_CHANNEL_KEYS[exc.channel])
+    return i18n.t(
+        "api.errors.loxone_colour_channel_out_of_range",
+        channel=channel,
+        percent=exc.percent,
+        packed=exc.packed,
+    )
+
+
 def _payload_hue_saturation(value: str) -> dict[str, object]:
     """Gepackte Loxone-Farbzahl -> Matter-Hue/Saturation.
 
     Zwei Umrechnungen hintereinander, beide in `commands/color.py` belegt:
     die Loxone-Codierung entpacken und das Ergebnis nach HSV wandeln.
-    `loxone_rgb_to_rgb` wirft `ValueError` fuer eine unmoegliche Zahl - hier
-    wird daraus `UnsupportedValueError`, damit der Aufrufer wie bei jedem
-    anderen unpassenden Wert mit 400 antwortet und nicht mit 500.
+    `loxone_rgb_to_rgb` wirft `LoxoneColourError` fuer eine unmoegliche Zahl
+    - hier wird daraus `UnsupportedValueError`, damit der Aufrufer wie bei
+    jedem anderen unpassenden Wert mit 400 antwortet und nicht mit 500.
+
+    Die Meldung dafuer kommt NICHT aus `str(exc)` - das waere hart Deutsch
+    (siehe `LoxoneColourError`-Docstring in `color.py`), waehrend jeder
+    andere Fehlerpfad in diesem Modul ueber `i18n.t()` laeuft (Review-Fix,
+    2026-09-07: `_payload_hue_saturation` reichte den deutschen `str(exc)`
+    bis dahin unveraendert als HTTP-400-`detail` durch, auch bei
+    englischer Sprachwahl). `_translate_loxone_colour_error` oben baut aus
+    den Feldern von `LoxoneColourError` dieselbe Genauigkeit (welcher Kanal,
+    welcher Wert) neu auf, nur uebersetzt.
     """
     try:
         red, green, blue = loxone_rgb_to_rgb(_as_number(value))
-    except ValueError as exc:
-        raise UnsupportedValueError(str(exc)) from exc
+    except LoxoneColourError as exc:
+        raise UnsupportedValueError(_translate_loxone_colour_error(exc)) from exc
     hue, saturation = rgb_to_hue_saturation(red, green, blue)
     return {"hue": hue, "saturation": saturation, "transitionTime": 0}
 
