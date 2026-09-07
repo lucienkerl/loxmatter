@@ -365,7 +365,13 @@ function formatPairingCode(raw) {
 
 function normalizePairingCode(raw) {
   const text = raw.trim();
-  return isPairingQrCode(text) ? text : text.replace(/\D/g, "");
+  // Muss mit _MANUAL_CODE_SEPARATORS in api/models.py gleichlauten: dort
+  // wird `re.compile(r"[\s-]")` verwendet, um Leerraum und Bindestrich zu
+  // entfernen. Dies hier ist das Gegenstueck - nicht /\D/, sondern genau
+  // diese Zeichen. Bis eine der QR-Pruefungen unabhaengig geaendert wird,
+  // liefern beide Fassungen fuer jede erreichbare Eingabe dieselbe Normalisierung,
+  // aber die Gleichheit war vorher nur ueber eine stille Invariante erschlossen.
+  return isPairingQrCode(text) ? text : text.replace(/[\s-]/g, "");
 }
 
 // Was der Chip im Feld sagt. Gibt einen Schluessel statt eines Textes
