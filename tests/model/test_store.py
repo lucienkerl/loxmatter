@@ -26,6 +26,7 @@ from loxmatter.model.store import (
     UnknownDeviceError,
     _decode_device_types,
     _encode_device_types,
+    _signal_order,
 )
 from loxmatter.profiles.relevance import device_types_by_endpoint, is_functional
 from loxmatter.profiles.table import Exportability, Profile, lookup
@@ -800,25 +801,48 @@ def test_the_plug_still_leads_with_onoff(tmp_path):
 
 def test_signals_of_the_same_cluster_keep_the_previous_order(tmp_path):
     """Die Rangliste ordnet nur die CLUSTER zueinander. Innerhalb eines
-    Clusters bleibt Endpunkt/Element - dort ist die alte Ordnung richtig."""
+    Clusters bleibt Endpunkt/Element - dort ist die alte Ordnung richtig.
+
+    Die alte Ordnung war ORDER BY endpoint, cluster_id, element_id, kind.
+    Diese Ordnung innerhalb eines Clusters muss uebernommen werden."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
 
-    switch = [s for s in store.signals(device_id) if s.ref.cluster_id == 59]
-    keys = [(s.ref.endpoint, s.ref.element_id, s.ref.kind.value) for s in switch]
+    signals = store.signals(device_id)
+    cluster_59 = [s for s in signals if s.ref.cluster_id == 59]
 
+    # Sortiere dieselben Signale nach der alten Ordnung (ohne Rangliste)
+    old_order_sorted = sorted(
+        cluster_59, key=lambda s: (s.ref.endpoint, s.ref.element_id, s.ref.kind.value)
+    )
+
+    # Die aktuelle Reihenfolge muss mit der alten Ordnung uebereinstimmen
+    assert cluster_59 == old_order_sorted
+
+
+def test_the_order_is_total(tmp_path):
+    """Kein Signal teilt seinen Sortierschluessel mit einem anderen.
+
+    Das ist die Eigenschaft, auf die sich der Export verlaesst: `signals()`
+    speist `to_inputs` und damit die Reihenfolge der Eingaenge in der
+    VIU-Vorlage. Waeren zwei Schluessel gleich, entschiede die
+    Eingangsreihenfolge von `sorted` - und die kommt aus SQLite, ist also
+    nichts, worauf sich eine Datei stuetzen darf.
+
+    Ein frueherer Anlauf verglich zwei Aufrufe von `signals()` miteinander.
+    Das war keine Zusicherung: ohne Zufall im Pfad sind zwei Aufrufe auf
+    unveraenderten Daten IMMER gleich, auch bei kollidierenden Schluesseln."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    signals = store.signals(device_id)
+    keys = [_signal_order(s) for s in signals]
+
+    # Kein Sortierschluessel darf doppelt vorkommen (Totalitaet)
+    assert len(set(keys)) == len(keys)
+    # Die gelieferte Reihenfolge muss dem sortierten Schluessel folgen
     assert keys == sorted(keys)
-
-
-def test_the_order_is_total_and_stable(tmp_path):
-    """Zwei Aufrufe muessen dieselbe Reihenfolge liefern - der Export
-    schreibt sie in eine Datei, ein Flattern waere dort ein Diff ohne
-    Aenderung."""
-    store = Store(tmp_path / "t.sqlite")
-    snapshot = load("ikea_bilresa_button.json")
-    device_id = store.register_device(snapshot)
-    store.register_signals(device_id, snapshot)
-
-    assert [s.key for s in store.signals(device_id)] == [s.key for s in store.signals(device_id)]
