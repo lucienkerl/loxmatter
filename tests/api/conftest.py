@@ -157,6 +157,10 @@ class FakeRuntime:
         # /api/diagnostics/resync`): `Runtime.resend_all` schickt ueber
         # denselben Sender und scheitert an denselben Stellen.
         self.fail_resend_with: Exception | None = None
+        # "Zuletzt gehoert" je Geraet-ID, wie es `Runtime._last_heard` fuehrt.
+        # Leer heisst "seit dem Start nichts gehoert" - ein Test, der den
+        # Zeitstempel bis in die JSON-Antwort verfolgen will, setzt ihn hier.
+        self.last_heard: dict[int, str] = {}
         # Was `resend_all` als Anzahl meldet, und wie oft es gerufen wurde -
         # ein Test, der die Zahl bis in die Antwort verfolgt, setzt das
         # erste, ein Test der Verdrahtung liest das zweite.
@@ -172,11 +176,17 @@ class FakeRuntime:
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
 
     def last_heard_for(self, device_id: int) -> str | None:
-        """Erfuellt `RuntimeValues.last_heard_for` fuer diese Fabrik. Kein
-        Test unter `tests/api/` prueft bislang den Zeitstempel selbst -
-        `Runtime.last_heard_for` hat dafuer seine eigene Testsuite unter
-        `tests/loxone/test_runtime.py` -, also bleibt es bei `None`."""
-        return None
+        """Wie `Runtime.last_heard_for`: der Zeitstempel des letzten Empfangs,
+        oder `None`, solange von diesem Geraet nichts kam.
+
+        Die Zeitstempel stehen in `last_heard` und werden vom Test gesetzt.
+        Bis zur Schluss-Review lieferte diese Methode hart `None` - damit
+        pruefte kein einziger Test unter `tests/api/`, ob `api/devices.py` den
+        Wert ueberhaupt liest und durchreicht. Wer den Aufruf dort durch ein
+        festes `last_heard=None` ersetzt haette, waere durchgekommen; ob
+        `Runtime` den Wert richtig fuehrt (eigene Suite unter
+        `tests/loxone/test_runtime.py`) beantwortet diese Frage nicht."""
+        return self.last_heard.get(device_id)
 
     async def set_online(self, device_id: int, online: bool) -> None:
         """Wie `Runtime.set_online`, ohne den UDP-Versand: haelt den Wert

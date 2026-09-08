@@ -401,15 +401,58 @@ class _FailingUvicornServer:
         raise OSError("Adresse bereits verwendet")
 
 
+class _YieldingUvicornServer:
+    """Wie `_SpyUvicornServer` (serve() kehrt von selbst zurueck), gibt aber
+    vorher genau einmal an die Ereignisschleife ab.
+
+    Gebraucht fuer alles, was den Verwalter-Task betrifft: zwischen
+    `asyncio.ensure_future(supervise(...))` und dem `finally` in `_run()`
+    liegt sonst kein einziger Aufhaengepunkt. Der Task wuerde vor seinem
+    ERSTEN Schritt abgebrochen, `supervise()` liefe also nie an - und ein
+    Test saehe "abgebrochen" auch dann, wenn der Verwalter gar nicht
+    gestartet worden waere. Das eine Abgeben laesst ihn anlaufen."""
+
+    def __init__(self, config: Any) -> None:
+        self.config = config
+
+    async def serve(self) -> None:
+        await asyncio.sleep(0)
+
+
+class _SpySupervisor:
+    """Steht fuer `matter.supervisor.supervise` — haelt fest, WOMIT der
+    Verwalter gestartet wurde, und blockiert danach wie das Original.
+
+    Das Blockieren ist kein Beiwerk: das echte `supervise()` kehrt nie von
+    selbst zurueck (Endlosschleife, siehe dessen Docstring). Eine Attrappe,
+    die sofort zurueckkehrt, waere beim Aufraeumen laengst fertig, und der
+    Test koennte nicht mehr unterscheiden, ob `_run()` den Task abbricht
+    oder ob dieser ohnehin schon zu Ende war."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, Any, Any]] = []
+        # Der eigene Task, von innen geholt: nur ueber ihn kann ein Test
+        # `task.cancelled()` pruefen - `_run()` haelt `supervisor_task` in
+        # einer lokalen Variablen und gibt ihn nirgends heraus.
+        self.task: asyncio.Task[None] | None = None
+
+    async def __call__(self, client: Any, store: Any, runtime: Any) -> None:
+        self.calls.append((client, store, runtime))
+        self.task = asyncio.current_task()
+        await asyncio.Event().wait()
+
+
 def _install_run_spies(
     monkeypatch: pytest.MonkeyPatch, *, connect_error: BaseException | None = None
-) -> tuple[list[_SpySender], list[_SpyRuntime], list[BridgeMatterClient]]:
-    """Ersetzt Sender, Laufzeit und matter-Client durch Attrappen, damit
-    _run() ohne Netzwerk/Hardware getestet werden kann. uvicorn.Server bleibt
-    Sache des jeweiligen Tests (unterschiedliches Serve-Verhalten)."""
+) -> tuple[list[_SpySender], list[_SpyRuntime], list[BridgeMatterClient], _SpySupervisor]:
+    """Ersetzt Sender, Laufzeit, matter-Client und Verbindungsverwalter durch
+    Attrappen, damit _run() ohne Netzwerk/Hardware getestet werden kann.
+    uvicorn.Server bleibt Sache des jeweiligen Tests (unterschiedliches
+    Serve-Verhalten)."""
     senders: list[_SpySender] = []
     runtimes: list[_SpyRuntime] = []
     clients: list[BridgeMatterClient] = []
+    supervisor = _SpySupervisor()
 
     def make_sender(host: str, port: int) -> _SpySender:
         sender = _SpySender(host, port)
@@ -434,7 +477,11 @@ def _install_run_spies(
     monkeypatch.setattr(cli, "UdpSender", make_sender)
     monkeypatch.setattr(cli, "Runtime", make_runtime)
     monkeypatch.setattr(cli, "_build_client", make_client)
-    return senders, runtimes, clients
+    # Der echte Verwalter wuerde in jedem dieser Tests endlos auf einen
+    # Verbindungsabriss warten, der nie kommt - deshalb hier mit ersetzt und
+    # nicht in einer zweiten Attrappen-Ebene daneben.
+    monkeypatch.setattr(cli, "supervise", supervisor)
+    return senders, runtimes, clients, supervisor
 
 
 def _assert_store_is_closed(store: Store) -> None:
@@ -516,7 +563,7 @@ def test_reset_loxmatter_logger_removes_every_leaked_log_buffer_handler():
 async def test_run_stops_everything_after_a_clean_shutdown(monkeypatch, tmp_path):
     """uvicorn.Server.serve() kehrt nach einem ersten Strg-C geordnet
     zurück (siehe _run-Docstring) — dieser Test bildet genau das nach."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -535,7 +582,7 @@ async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_pa
     """Live-Lauf vom 2026-09-02 (Spec 6.4): ohne ein Saeen aus dem aktuellen
     Geraetezustand VOR dem ersten `resend_all()` findet dieser Resend einen
     leeren Cache vor und sendet nichts."""
-    _, runtimes, _ = _install_run_spies(monkeypatch)
+    _, runtimes, _, _ = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -543,6 +590,55 @@ async def test_run_seeds_the_runtime_before_the_first_resend(monkeypatch, tmp_pa
 
     assert runtimes[0].seed_calls == 1
     assert runtimes[0].call_order == ["seed", "resend"]
+
+
+async def test_run_starts_the_supervisor_with_the_same_client_store_and_runtime(
+    monkeypatch, tmp_path
+):
+    """Die eine Zeile, um die es beim Ausfall vom 8. September 2026 geht:
+    `asyncio.ensure_future(supervise(client, store, runtime))` in `_run()`.
+
+    Ohne sie merkt niemand, dass das Websocket zu matter-server gestorben
+    ist, und nichts baut es wieder auf - genau der Zustand jenes Abends. Bis
+    zu diesem Test war die Zeile ungeprueft: wer sie loeschte, bekam eine
+    gruene Suite.
+
+    Geprueft wird nicht nur DASS, sondern WOMIT: der Verwalter muss dieselben
+    drei Objekte bekommen, mit denen auch der Rest des Dienstes arbeitet.
+    Bekaeme er einen zweiten Client, verbaende der sich zwar neu, aber die
+    Laufzeit und die HTTP-Ebene haengten weiter am toten."""
+    _, runtimes, clients, supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    task = asyncio.create_task(cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert supervisor.calls == [(clients[0], store, runtimes[0])]
+
+
+async def test_run_cancels_the_supervisor_after_a_clean_shutdown(monkeypatch, tmp_path):
+    """Der Verwalter wartet endlos - laeuft er nach dem Herunterfahren
+    weiter, haelt er `client` und `store` am Leben, die `_run()` gerade
+    geschlossen hat, und der naechste Wiederaufbauversuch liefe gegen eine
+    geschlossene Datenbank.
+
+    `_YieldingUvicornServer` statt `_SpyUvicornServer`: siehe dort, warum ein
+    Test ohne dieses eine Abgeben "abgebrochen" auch dann saehe, wenn der
+    Verwalter nie angelaufen waere. Genau deshalb steht die erste Zusicherung
+    unten davor."""
+    _, _, _, supervisor = _install_run_spies(monkeypatch)
+    monkeypatch.setattr(cli.uvicorn, "Server", _YieldingUvicornServer)
+    store = Store(tmp_path / "t.sqlite")
+
+    await cli._run(store, "ws://test/ws", "127.0.0.1", 7000, 8080)
+
+    assert len(supervisor.calls) == 1  # er ist wirklich angelaufen
+    assert supervisor.task is not None
+    assert supervisor.task.cancelled() is True
 
 
 def test_run_installs_the_log_buffer_before_the_password_warning(monkeypatch, tmp_path):
@@ -680,7 +776,7 @@ async def test__run_forwards_the_given_log_handler_to_build_app(monkeypatch, tmp
 async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_path):
     """Scheitert schon connect(), dürfen weder Runtime noch Sender noch die
     Datenbank offen bleiben — auch wenn runtime.start() nie lief."""
-    senders, runtimes, _clients = _install_run_spies(
+    senders, runtimes, _clients, _supervisor = _install_run_spies(
         monkeypatch, connect_error=CannotConnect("boom")
     )
     monkeypatch.setattr(cli.uvicorn, "Server", _SpyUvicornServer)
@@ -698,7 +794,7 @@ async def test_run_cleans_up_when_matter_server_is_unreachable(monkeypatch, tmp_
 async def test_run_cleans_up_when_serve_raises(monkeypatch, tmp_path):
     """Ein Fehler beim Start des HTTP-Servers (z. B. Port belegt) darf
     Laufzeit, Sender, Client und Datenbank nicht offen lassen."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _FailingUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -717,7 +813,7 @@ async def test_run_cleans_up_on_cancellation(monkeypatch, tmp_path):
     bis der _run-Task abgebrochen wird — asyncio.run() installiert seit
     Python 3.11 selbst einen SIGINT-Handler, der genau das tut (siehe
     _run-Docstring)."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
     monkeypatch.setattr(cli.uvicorn, "Server", _HangingUvicornServer)
     store = Store(tmp_path / "t.sqlite")
 
@@ -738,7 +834,7 @@ async def test_run_continues_cleanup_when_one_step_fails(monkeypatch, tmp_path):
     """Scheitert ein Aufräumschritt (hier: runtime.stop()), müssen die
     folgenden trotzdem laufen — jeder Schritt steht in _run() in seinem
     eigenen try/except, genau dafür."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
 
     def make_broken_runtime(
         store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
@@ -775,7 +871,7 @@ async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path
     eigenen inneren `await` (hier bewusst auf ein nie gesetztes Event), an dem
     eine Cancellation ueberhaupt landen kann - die drei anderen Fake-Aufrufe
     kehren synchron zurueck und boeten keinen Interrupt-Punkt."""
-    senders, runtimes, clients = _install_run_spies(monkeypatch)
+    senders, runtimes, clients, _supervisor = _install_run_spies(monkeypatch)
 
     def make_slow_runtime(
         store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]

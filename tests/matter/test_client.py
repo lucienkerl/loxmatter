@@ -1229,6 +1229,9 @@ class DyingUpstream(FakeUpstream):
         # erst dann prueft es, ob dieser Task schon fertig ist. Mit weniger
         # Runden ist der Task schon fertig, wenn `_start_listener` ihn
         # zurueckgibt, und der Test pruefte einen anderen Fall.
+        # Die Kopplung an `_start_listener` ist fail-loud: reicht die Drei nach
+        # einem Umbau nicht mehr, faellt `assert bridge.connected is True` im
+        # ersten Test unten sofort durch - hohl werden kann er davon nicht.
         for _ in range(3):
             await asyncio.sleep(0)
         raise ConnectionResetError("Websocket weg")
