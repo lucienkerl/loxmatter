@@ -34,7 +34,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+
+from loxmatter.loxone.runtime import Runtime
+from loxmatter.matter.client import BridgeMatterClient
+from loxmatter.model.store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ BACKOFF_START_SECONDS = 1.0
 BACKOFF_MAX_SECONDS = 60.0
 
 
-async def attach(client: Any, store: Any, runtime: Any) -> int:
+async def attach(client: BridgeMatterClient, store: Store, runtime: Runtime) -> int:
     """Bindet eine bestehende Verbindung an Store und Laufzeit.
 
     Genau die Sequenz, die bis zum 8. September 2026 nur in `cli.serve()`
@@ -76,9 +79,9 @@ async def attach(client: Any, store: Any, runtime: Any) -> int:
 
 
 async def supervise(
-    client: Any,
-    store: Any,
-    runtime: Any,
+    client: BridgeMatterClient,
+    store: Store,
+    runtime: Runtime,
     *,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     backoff_start: float = BACKOFF_START_SECONDS,
@@ -106,12 +109,22 @@ async def supervise(
                 gained = await attach(client, store, runtime)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 — jede Ursache soll denselben Backoff
-                # ausloesen: ein nicht erreichbares matter-server ist ebenso ein Grund zum
-                # erneuten Versuch wie ein Zustandsfehler beim Wiederaufbau. Eine engere
-                # Ausnahme wuerde einen dieser Faelle unbemerkt durchlassen.
+            except Exception as exc:
+                # Jede Ursache soll denselben Backoff ausloesen: ein nicht erreichbares
+                # matter-server ist ebenso ein Grund zum erneuten Versuch wie ein
+                # Zustandsfehler beim Wiederaufbau. Eine engere Ausnahme wuerde einen
+                # dieser Faelle unbemerkt durchlassen (ruff erkennt das breite `except
+                # Exception` dank `exc_info=exc` unten nicht mehr als blind - ein `noqa:
+                # BLE001` waere hier ungenutzt und wuerde `ruff check` scheitern lassen).
+                # Der Traceback MUSS mit ins Log: ein Zustandsfehler in `attach()` wiederholt
+                # sich sonst alle paar Sekunden als dieselbe Zeile ohne Ursache - und das war
+                # am 8. September 2026 genau der Grund, warum niemand die eigentliche
+                # Ursache des Ausfalls fand.
                 logger.warning(
-                    "Wiederaufbau gescheitert (%s) - naechster Versuch in %.0f s", exc, delay
+                    "Wiederaufbau gescheitert (%s) - naechster Versuch in %.0f s",
+                    exc,
+                    delay,
+                    exc_info=exc,
                 )
                 await sleep(delay)
                 delay = min(delay * 2, backoff_max)
