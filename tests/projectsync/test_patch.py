@@ -76,16 +76,17 @@ def test_updated_attribute_is_replaced_in_place(sample_project):
     patched = _patch(index, device, signals, include_new_devices=False)
     assert 'Title="Ein/Aus"' in patched
     assert 'Title="Alter Titel"' not in patched
-    # Die U-ID des aktualisierten Objekts bleibt exakt erhalten - Verdrahtung
-    # (Co) darf ein Update nie anfassen.
+    # The u-id of the updated object stays exactly preserved - wiring
+    # (Co) must never be touched by an update.
     assert '"1000-0002-0000-aaaaaaaaaaaaaaaa"' in patched
     assert '<Co K="AQ" U="1000-0003-0000-bbbbbbbbbbbbbbbb"/>' in patched
 
 
 def test_orphaned_object_is_left_untouched(sample_project):
-    """Ein verwaistes Signal wird nur gemeldet, nie veraendert (Entwurf
-    Abschnitt 2). Das ist eine Inhalts-, keine Byte-Identitaets-Zusage - die
-    prueft `test_unchanged_plan_leaves_the_file_byte_identical` unten."""
+    """An orphaned signal is only reported, never changed (draft
+    section 2). That is a content guarantee, not a byte-identity one - that
+    is checked by `test_unchanged_plan_leaves_the_file_byte_identical`
+    below."""
     index = build_index(sample_project)
     device = _device(1, "Altes Geraet")
     signals = [_signal("d1_1_onoff", 1, title="Ein/Aus")]
@@ -94,12 +95,12 @@ def test_orphaned_object_is_left_untouched(sample_project):
     assert 'Check="d9_9_verwaist:\\v"' in patched
 
 
-# Wie `sample_project`, aber der bestehende Ausgangsbefehl traegt ein
-# beschaedigtes `CmdOn` (fehlendes "n": `/cmd/d1_1_o/1` statt
-# `/cmd/d1_1_onoff/1`) bei korrektem Titel "onoff" - der Anwenderbericht
-# "zwei mal onoff drin" (siehe `test_diff.py`,
-# `test_title_collision_with_mismatched_key_is_possible_duplicate`, fuer
-# dieselbe Fixture auf Ebene von `diff.build_plan`).
+# Like `sample_project`, but the existing output command carries a
+# corrupted `CmdOn` (missing "n": `/cmd/d1_1_o/1` instead of
+# `/cmd/d1_1_onoff/1`) with a correct title "onoff" - the user report
+# "onoff shows up twice" (see `test_diff.py`,
+# `test_title_collision_with_mismatched_key_is_possible_duplicate`, for the
+# same fixture at the level of `diff.build_plan`).
 CORRUPTED_ONOFF_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -125,11 +126,11 @@ CORRUPTED_ONOFF_PROJECT = (
 
 
 def test_possible_duplicate_is_not_patched_in():
-    """`apply_plan` behandelt `POSSIBLE_DUPLICATE` wie `ORPHANED`/`CONFLICT`:
-    nur UPDATED/NEW_SIGNAL/NEW_DEVICE erzeugen einen Edit (siehe die
-    `if`/`elif`-Kette dort) - ohne diese Pruefung haette der beschaedigte
-    bestehende "onoff"-Befehl einen zweiten, echten "onoff" im selben
-    Container bekommen."""
+    """`apply_plan` treats `POSSIBLE_DUPLICATE` like `ORPHANED`/`CONFLICT`:
+    only UPDATED/NEW_SIGNAL/NEW_DEVICE produce an edit (see the `if`/`elif`
+    chain there) - without this check, the corrupted existing "onoff"
+    command would have gotten a second, genuine "onoff" in the same
+    container."""
     index = build_index(CORRUPTED_ONOFF_PROJECT)
     device = _device(1, "Altes Geraet")
     commands = [
@@ -137,31 +138,31 @@ def test_possible_duplicate_is_not_patched_in():
         _command("d1_1_off", "off", 1, 0),
     ]
     patched = _patch(index, device, [], include_new_devices=True, commands=commands)
-    # Der beschaedigte Bestandsbefehl bleibt exakt, wie er war ...
+    # The corrupted existing command stays exactly as it was ...
     assert 'CmdOn="/cmd/d1_1_o/1"' in patched
-    # ... und es kommt KEIN zweiter "onoff" hinzu - nur genau EIN
-    # `Title="onoff"` im ganzen Dokument.
+    # ... and NO second "onoff" gets added - only exactly ONE
+    # `Title="onoff"` in the whole document.
     assert patched.count('Title="onoff"') == 1
 
 
 def _unchanged_signals() -> list[StoredSignal]:
-    """Signale, die exakt dem entsprechen, was in `sample_project` steht - der
-    Plan enthaelt damit weder `updated` noch `new_signal`/`new_device` (siehe
+    """Signals that exactly match what is in `sample_project` - so the plan
+    contains neither `updated` nor `new_signal`/`new_device` (see
     `tests/projectsync/test_diff.py`,
     `test_has_changes_is_false_when_everything_matches`)."""
     return [_signal("d1_1_onoff", 1, title="Alter Titel")]
 
 
 def test_unchanged_plan_leaves_the_file_byte_identical(sample_project):
-    """Die Kernzusage des ganzen Entwurfs (Abschnitt 3.2/9): was nicht im Plan
-    steht, wird nicht angefasst. Ein Plan ohne jede geplante Aenderung muss
-    darum EXAKT dieselben Bytes zurueckliefern - einzige erlaubte Abweichung
-    ist ein vorangestelltes BOM, wenn das Original keines hatte (siehe
-    `patch`-Moduldocstring).
+    """The core guarantee of the whole design (section 3.2/9): what is not
+    in the plan is not touched. A plan without any planned change must
+    therefore return EXACTLY the same bytes - the only permitted deviation
+    is a leading BOM if the original had none (see the `patch` module
+    docstring).
 
-    Bewusst ein voller Byte-Vergleich statt einiger Teilstring-Proben: nur so
-    faellt auch eine Aenderung auf, an die beim Schreiben des Tests niemand
-    gedacht hat."""
+    Deliberately a full byte comparison instead of a few substring checks:
+    only that way does a change nobody thought of while writing the test
+    also get noticed."""
     index = build_index(sample_project)
     device = _device(1, "Altes Geraet")
     plan = build_plan(index, [device], {1: _unchanged_signals()}, {1: []})
@@ -173,10 +174,10 @@ def test_unchanged_plan_leaves_the_file_byte_identical(sample_project):
 
 
 def test_existing_bom_is_preserved_and_not_duplicated(sample_project):
-    """Gegenstueck zum Test oben: hatte das Original schon ein BOM, kommt
-    genau EINES zurueck, nicht zwei. Loxone Config schreibt seine Projektdatei
-    mit BOM, dieser Fall ist also der Normalfall - der BOM-lose oben der
-    Sonderfall (siehe `patch`-Moduldocstring)."""
+    """Counterpart to the test above: if the original already had a BOM,
+    exactly ONE comes back, not two. Loxone Config writes its project file
+    with a BOM, so this case is the normal one - the BOM-less one above is
+    the special case (see the `patch` module docstring)."""
     with_bom = BOM + sample_project
     index = build_index(with_bom)
     device = _device(1, "Altes Geraet")
@@ -187,12 +188,12 @@ def test_existing_bom_is_preserved_and_not_duplicated(sample_project):
 
 
 def test_created_u_ids_are_unique_across_the_whole_file(sample_project):
-    """ID-Eindeutigkeit neu erzeugter `U`-Werte gegen ALLE vorhandenen
-    (Entwurf Abschnitt 6/9) - ueber ein Szenario, das beide Neuanlage-Wege
-    gleichzeitig geht: ein neues Signal in einem bestehenden Container
-    (Geraet 1) und ein komplett neues Geraet mit mehreren Signalen und
-    Kommandos (Geraet 2). Jedes davon erzeugt neben dem Objekt selbst noch
-    `Co`-Verdrahtungsstummel mit eigenen IDs."""
+    """Id uniqueness of newly generated `U` values against ALL existing
+    ones (draft section 6/9) - via a scenario that exercises both creation
+    paths at once: a new signal in an existing container (device 1) and a
+    completely new device with several signals and commands (device 2).
+    Each of these generates, besides the object itself, `Co` wiring stubs
+    with their own ids."""
     import re
 
     index = build_index(sample_project)
@@ -203,8 +204,8 @@ def test_created_u_ids_are_unique_across_the_whole_file(sample_project):
     }
     commands = {1: [], 2: [_command("d2_1_on", "on", 2, 1), _command("d2_1_off", "off", 2, 0)]}
     plan = build_plan(index, devices, signals, commands)
-    # Vor dem Patchen festhalten: `new_unique_id` traegt jede erzeugte ID
-    # sofort in `index.all_u_values` nach.
+    # Record before patching: `new_unique_id` immediately adds every
+    # generated id to `index.all_u_values`.
     u_count_before = len(index.all_u_values)
     patched = apply_plan(
         index,
@@ -219,7 +220,7 @@ def test_created_u_ids_are_unique_across_the_whole_file(sample_project):
     ).decode("utf-8-sig")
 
     all_u = re.findall(r'\bU="([^"]*)"', patched)
-    assert len(all_u) > u_count_before  # es wurden wirklich welche erzeugt
+    assert len(all_u) > u_count_before  # some were really created
     assert len(set(all_u)) == len(all_u)
 
 
@@ -232,12 +233,12 @@ def test_new_signal_is_appended_inside_existing_container(sample_project):
     ]
     patched = _patch(index, device, signals, include_new_devices=False)
     assert 'Check="d1_1_temp:\\v"' in patched
-    # Eingefuegt in denselben Container wie das bestehende d1_1_onoff, nicht
-    # irgendwo im Dokument und nicht als neuer Geraete-Container. Ueber
-    # build_index statt Byte-Offset-Arithmetik geprueft: ein naiver
-    # patched.index("</C>", container_start) faende das schliessende Tag des
-    # ERSTEN Kindes (VCI1), nicht das des Containers selbst - derselbe
-    # Fehler, den Task 3 im Scanner schon einmal beheben musste.
+    # Inserted into the same container as the existing d1_1_onoff, not
+    # somewhere in the document and not as a new device container. Checked
+    # via build_index instead of byte-offset arithmetic: a naive
+    # `patched.index("</C>", container_start)` would find the closing tag
+    # of the FIRST child (VCI1), not that of the container itself - the
+    # same bug task 3 already had to fix once in the scanner.
     patched_index = build_index(patched)
     assert "d1_1_temp" in patched_index.input_containers
     assert (
@@ -265,37 +266,38 @@ def test_new_device_is_created_with_the_flag(sample_project):
 
 
 def test_new_device_with_several_signals_gets_exactly_one_container(sample_project):
-    """Ein komplett neues Geraet mit MEHREREN neuen Signalen darf genau EINEN
-    `VirtualUdpIn`-Container bekommen, der alle Kommandos als Kinder traegt -
-    nicht einen eigenen Container je Signal.
+    """A completely new device with SEVERAL new signals may get exactly ONE
+    `VirtualUdpIn` container that carries all commands as children - not
+    its own container per signal.
 
-    Der Fall ist nicht exotisch, sondern der Normalfall: `export.signals.
-    to_inputs` erzeugt je Geraet immer zusaetzlich das Online-Signal, jedes
-    reale neue Geraet hat also mindestens zwei `NEW_DEVICE`-Eintraege. Ein
-    Container je Eintrag ergaebe mehrere gleichnamige Geraete mit identischer
-    Adresse/Port - eine strukturell falsche Projektdatei."""
+    This case is not exotic, it is the normal case: `export.signals.
+    to_inputs` always additionally generates the online signal for every
+    device, so every real new device has at least two `NEW_DEVICE` entries.
+    One container per entry would result in several identically named
+    devices with an identical address/port - a structurally invalid
+    project file."""
     index = build_index(sample_project)
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2), _signal("d2_1_temp", 2, title="Temperatur", unit="°C")]
     commands = [_command("d2_1_on", "on", 2, 1), _command("d2_1_off", "off", 2, 0)]
     patched = _patch(index, device, signals, include_new_devices=True, commands=commands)
 
-    # Je genau ein neuer Container - zusaetzlich zu dem je einen, den die
-    # Beispieldatei fuer Geraet 1 schon mitbringt.
+    # Exactly one new container each - in addition to the one each the
+    # sample file already brings for device 1.
     assert patched.count('Type="VirtualUdpIn"') == 2
     assert patched.count('Type="VirtualOut"') == 2
 
     patched_index = build_index(patched)
     new_input_keys = {key for key in patched_index.input_containers if key.startswith("d2_")}
     assert new_input_keys == {"d2_1_onoff", "d2_1_temp", "d2_online"}
-    # Alle drei haengen im SELBEN Container (gleiche U-ID).
+    # All three hang off the SAME container (same u-id).
     assert len({patched_index.input_containers[key].attrs["U"] for key in new_input_keys}) == 1
 
     new_output_keys = {key for key in patched_index.output_containers if key.startswith("d2_")}
-    # Auch der kombinierte Ein/Aus-Befehl steht unter seinem eigenen
-    # Doppelschluessel im Index - vor der Korrektur an `key_from_output_cmd`
-    # fiel er hier heraus, weil er sich seinen `CmdOn` mit dem einzelnen
-    # `on`-Befehl teilt und einer den anderen ueberschrieb.
+    # The combined on/off command also stands under its own double key in
+    # the index - before the fix to `key_from_output_cmd`, it dropped out
+    # here because it shares its `CmdOn` with the single `on` command and
+    # one overwrote the other.
     assert new_output_keys == {"d2_1_on", "d2_1_off", "d2_1_on + d2_1_off"}
     assert len({patched_index.output_containers[key].attrs["U"] for key in new_output_keys}) == 1
 
@@ -306,7 +308,7 @@ def test_next_obj_is_raised_when_new_objects_were_created(sample_project):
     signals = [_signal("d2_1_onoff", 2)]
     patched = _patch(index, device, signals, include_new_devices=True)
     next_obj = int(patched.split('NextObj="', 1)[1].split('"', 1)[0])
-    assert next_obj > 100  # Ausgangswert in der Beispieldatei
+    assert next_obj > 100  # starting value in the sample file
 
 
 def test_output_is_valid_xml(sample_project):
@@ -316,49 +318,47 @@ def test_output_is_valid_xml(sample_project):
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2)]
     patched = _patch(index, device, signals, include_new_devices=True)
-    ET.fromstring(patched)  # wirft bei ungueltigem XML
+    ET.fromstring(patched)  # raises on invalid XML
 
 
 def test_missing_attribute_is_inserted_into_existing_tag(sample_project):
-    """Der bestehende Ausgangsbefehl `d1_1_on` hat im Beispieldokument gar
-    kein `Analog`-Attribut, `desired_output_cmd_attrs` verlangt aber eines -
-    das deckt den `if span is None`-Einfuege-Zweig in `_update_edits` ab, den
-    sonst kein Test beruehrt (alle anderen Updates aendern nur ein bereits
-    vorhandenes `Title`).
+    """The existing output command `d1_1_on` has no `Analog` attribute at
+    all in the sample document, but `desired_output_cmd_attrs` requires
+    one - this covers the `if span is None` insertion branch in
+    `_update_edits`, which no other test touches (all other updates only
+    change an already-present `Title`).
 
-    Frueher lief dieser Test ueber `Unit` an einem EINGANG. Das geht nicht
-    mehr: `Unit` ist kein verwaltetes Attribut des `<C>`-Tags mehr, weil eine
-    Projektdatei die Einheit gar nicht dort fuehrt (siehe
+    This test used to run via `Unit` on an INPUT. That no longer works:
+    `Unit` is no longer a managed attribute of the `<C>` tag, because a
+    project file does not carry the unit there at all (see
     `MANAGED_INPUT_CMD_ATTRS`)."""
     import xml.etree.ElementTree as ET
 
     index = build_index(sample_project)
-    # Vorher: kein `Analog=` auf dem VQC1-Tag selbst.
+    # Before: no `Analog=` on the VQC1 tag itself.
     assert "Analog" not in index.output_cmds["d1_1_on"].attrs
 
     device = _device(1, "Altes Geraet")
     commands = [_command("d1_1_on", "on", 1, 1)]
     patched = _patch(index, device, [], include_new_devices=False, commands=commands)
 
-    # Neu eingefuegt, in genau das Tag, dem es vorher fehlte - nicht irgendwo
-    # sonst im Dokument.
+    # Newly inserted into exactly the tag it was previously missing from -
+    # not somewhere else in the document.
     patched_index = build_index(patched)
     assert patched_index.output_cmds["d1_1_on"].attrs["Analog"] == "true"
-    # Die uebrigen, unveraenderten Attribute des Tags bleiben erhalten - das
-    # Einfuegen haengt nur vor dem schliessenden '>' an, statt das Tag zu
-    # ersetzen.
+    # The tag's other, unchanged attributes stay preserved - the insertion
+    # only appends before the closing '>', instead of replacing the tag.
     assert 'CmdOn="/cmd/d1_1_on/1"' in patched
     assert 'Title="on"' in patched
 
-    ET.fromstring(patched)  # wirft bei ungueltigem XML
+    ET.fromstring(patched)  # raises on invalid XML
 
 
-# Synthetische Projektdatei, die absichtlich GAR KEINEN `VirtualInCaption`-
-# Abschnitt enthaelt - anders als `sample_project` aus conftest.py, das immer
-# beide Abschnitte hat. Ein reales Projekt, in dem noch nie ein virtueller
-# Eingang angelegt wurde, sieht so aus. Bewusst nicht in conftest.py, weil
-# dieses Dokument nur fuer den Automatisch-anlegen-Pfad in `_new_device_edit`
-# gebraucht wird.
+# Synthetic project file that deliberately contains NO `VirtualInCaption`
+# section at all - unlike `sample_project` from conftest.py, which always
+# has both sections. A real project in which no virtual input has ever been
+# created looks like this. Deliberately not in conftest.py, because this
+# document is only needed for the auto-create path in `_new_device_edit`.
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -373,10 +373,10 @@ NO_VIRTUAL_IN_CAPTION_PROJECT = (
 )
 
 
-# Ein Projekt, in dem VOR dem echten `Title` ein Attribut steht, dessen Name
-# auf einen verwalteten Attributnamen ENDET (`XTitle`). Solche Namen sind in
-# einer echten Projektdatei nicht ausgeschlossen - dieses Projekt kennt laengst
-# nicht alle Bausteintypen, die Loxone Config schreibt.
+# A project in which an attribute whose name ENDS in a managed attribute
+# name (`XTitle`) sits BEFORE the real `Title`. Such names are not ruled out
+# in a real project file - this project by no means knows all the block
+# types Loxone Config writes.
 DECOY_ATTR_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -401,12 +401,12 @@ DECOY_ATTR_PROJECT = (
 
 
 def test_update_does_not_rewrite_an_attribute_that_only_ends_in_the_name():
-    """`_attr_span` suchte `Title="..."` ohne Wortgrenze links - `re.search`
-    lieferte damit den ersten Treffer irgendwo im Tag, also auch die zweite
-    Haelfte eines laengeren Attributnamens wie `XTitle`. Das Update schrieb
-    dann still in das FALSCHE Attribut und liess das echte unberuehrt: genau
-    der Bruch der Zusage, nie Bytes anzufassen, die dieses Projekt nicht
-    versteht (Entwurf Abschnitt 3.2)."""
+    """`_attr_span` searched for `Title="..."` without a word boundary on
+    the left - `re.search` therefore returned the first match anywhere in
+    the tag, including the second half of a longer attribute name like
+    `XTitle`. The update then silently wrote into the WRONG attribute and
+    left the real one untouched: exactly the breach of the promise to never
+    touch bytes this project does not understand (draft section 3.2)."""
     index = build_index(DECOY_ATTR_PROJECT)
     device = _device(1, "Altes Geraet")
     signals = [_signal("d1_1_onoff", 1, title="Neuer Titel")]
@@ -419,13 +419,13 @@ def test_update_does_not_rewrite_an_attribute_that_only_ends_in_the_name():
     assert cmd.attrs["Title"] == "Neuer Titel"
 
 
-# Wie `sample_project`, aber OHNE ein einziges `U`-Attribut irgendwo im
-# Dokument - der Fall, den Entwurf Abschnitt 10 als offenes Risiko nennt
-# (Datei ganz ohne `U`-Attribute, oder eine Config-Version mit abweichendem
-# ID-Format). `d1_1_onoff` existiert schon (bleibt `unchanged`), `d1_1_temp`
-# fehlt noch - das erzwingt eine neue ID ueber `_new_signal_edit` ->
-# `new_unique_id` -> `_installation_suffix`, ohne dass ein komplett neues
-# Geraet (und damit `MissingCaptionError`) noetig waere.
+# Like `sample_project`, but WITHOUT a single `U` attribute anywhere in
+# the document - the case draft section 10 names as an open risk (a file
+# entirely without `U` attributes, or a Config version with a different id
+# format). `d1_1_onoff` already exists (stays `unchanged`), `d1_1_temp` is
+# still missing - that forces a new id via `_new_signal_edit` ->
+# `new_unique_id` -> `_installation_suffix`, without needing a completely
+# new device (and thus `MissingCaptionError`).
 NO_U_ATTR_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -447,12 +447,12 @@ NO_U_ATTR_PROJECT = (
 
 
 def test_new_signal_without_any_existing_u_id_raises_project_format_error():
-    """Finding N1 aus dem Re-Review: `_installation_suffix` warf bislang einen
-    nackten `ValueError`, wenn keine bestehende `U`-ID im erwarteten
-    4-Hex-Gruppen-Format zu finden war - unbehandelt am Upload-Endpunkt eine
-    HTTP 500 statt der ueblichen verstaendlichen 400 (Entwurf Abschnitt 8).
-    Erwartet ist ein `ProjectFormatError`, wie bei jedem anderen erkannten
-    Formatfehler dieser Datei auch."""
+    """Finding N1 from the re-review: `_installation_suffix` used to raise a
+    bare `ValueError` when no existing `U` id in the expected 4-hex-group
+    format could be found - unhandled at the upload endpoint, an HTTP 500
+    instead of the usual understandable 400 (draft section 8). Expected is
+    a `ProjectFormatError`, as for any other recognized format error in
+    this file too."""
     import pytest
 
     from loxmatter.projectsync.scan import ProjectFormatError
@@ -482,36 +482,35 @@ def test_new_signal_without_any_existing_u_id_raises_project_format_error():
 
 
 def test_next_obj_edit_is_skipped_when_next_obj_is_not_numeric(sample_project):
-    """Finding N1 aus dem Re-Review: `_next_obj_edit` rief bislang
-    ungeschuetzt `int(index.root_attrs["NextObj"])` auf - ein nicht-dezimaler
-    Wert warf einen nackten `ValueError`, unbehandelt eine HTTP 500. `NextObj`
-    ist laut Entwurf Abschnitt 6/10 ohnehin nur eine unverifizierte,
-    konservative Bestleistung, kein belegtes Verhalten - ein kaputter Wert
-    darf darum nicht den ganzen (sonst gueltigen) Patch scheitern lassen,
-    sondern nur diese eine Attribut-Aenderung ueberspringen."""
+    """Finding N1 from the re-review: `_next_obj_edit` used to call
+    `int(index.root_attrs["NextObj"])` unprotected - a non-decimal value
+    raised a bare `ValueError`, unhandled an HTTP 500. According to draft
+    section 6/10, `NextObj` is anyway only an unverified, conservative
+    best effort, not documented behavior - so a broken value must not fail
+    the whole (otherwise valid) patch, but only skip this one attribute
+    change."""
     bad_project = sample_project.replace('NextObj="100"', 'NextObj="not-a-number"')
     index = build_index(bad_project)
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2)]
     patched = _patch(index, device, signals, include_new_devices=True)
 
-    # Das kaputte Attribut bleibt unangetastet ...
+    # The broken attribute stays untouched ...
     assert 'NextObj="not-a-number"' in patched
-    # ... aber die eigentliche Neuanlage hat trotzdem stattgefunden (der
-    # `created_count > 0`-Zweig in `_next_obj_edit` wurde also wirklich
-    # erreicht, nicht nur der fruehe `created_count == 0`-Ausstieg).
+    # ... but the actual creation still took place (so the
+    # `created_count > 0` branch in `_next_obj_edit` really was reached,
+    # not just the early `created_count == 0` exit).
     assert 'Check="d2_1_onoff:\\v"' in patched
 
 
 def test_new_device_without_virtual_in_caption_creates_the_caption_too():
-    """`include_new_devices=True` fuer ein Geraet, das einen komplett neuen
-    Eingangs-Container braucht, in einem Projekt ohne jeden bestehenden
-    `VirtualInCaption`-Abschnitt: `_new_device_edit` legt diesen Abschnitt
-    inzwischen selbst mit an (Entwurf Abschnitt 8, Nutzerwunsch nach dem
-    Review) - der Nutzer soll nicht von Hand einmal manuell etwas in Loxone
-    Config anlegen muessen, nur um den experimentellen Pfad ueberhaupt testen
-    zu koennen. Das Geraet-Kommando steckt danach INNERHALB der neu
-    angelegten Caption, nicht daneben."""
+    """`include_new_devices=True` for a device that needs a completely new
+    input container, in a project without any existing `VirtualInCaption`
+    section: `_new_device_edit` now creates this section itself too (draft
+    section 8, user request after the review) - the user should not have
+    to manually create something in Loxone Config by hand just to be able
+    to test the experimental path at all. The device command then sits
+    INSIDE the newly created caption, not next to it."""
     import xml.etree.ElementTree as ET
 
     index = build_index(NO_VIRTUAL_IN_CAPTION_PROJECT)
@@ -535,24 +534,23 @@ def test_new_device_without_virtual_in_caption_creates_the_caption_too():
     patched_text = patched.decode("utf-8-sig")
 
     assert 'Type="VirtualInCaption"' in patched_text
-    ET.fromstring(patched_text)  # wirft bei ungueltigem XML
+    ET.fromstring(patched_text)  # raises on invalid XML
 
     patched_index = build_index(patched_text)
     assert patched_index.virtual_in_caption is not None
     cmd = patched_index.input_cmds["d2_1_onoff"]
     container = patched_index.input_containers["d2_1_onoff"]
-    # Das Kommando steckt in einem Container, der wiederum unter der neu
-    # angelegten Caption haengt - nicht als loses Geschwister-Objekt daneben.
+    # The command sits in a container that in turn hangs off the newly
+    # created caption - not as a loose sibling object next to it.
     assert container in patched_index.virtual_in_caption.children
     assert cmd in container.children
 
 
 def test_new_analog_input_carries_its_unit_into_the_file(sample_project):
-    """Anwenderbericht: "die Einheit ist bei den virtuellen Eingaengen nicht
-    mehr dabei". Ende zu Ende geprueft: ein neu angelegter analoger Eingang
-    muss seine Einheit in der fertigen Datei tragen - und zwar im
-    `<Display>`-Kind, dem einzigen Ort, an dem eine echte Projektdatei sie
-    fuehrt."""
+    """User report: "the unit is no longer there for the virtual inputs".
+    Checked end to end: a newly created analog input must carry its unit
+    in the finished file - specifically in the `<Display>` child, the only
+    place a real project file carries it."""
     index = build_index(sample_project)
     device = _device(2, "Neues Geraet")
     signals = [
@@ -577,19 +575,20 @@ def test_new_analog_input_carries_its_unit_into_the_file(sample_project):
 
 
 def test_patched_file_is_stable_when_synced_again(sample_project):
-    """Anwenderbericht: eine vom Sync erzeugte Datei erneut hochgeladen, und
-    er wollte schon wieder etwas anlegen ("ein neues Feld onoff"). Eine
-    gerade erst geschriebene Datei MUSS beim zweiten Durchlauf vollstaendig
-    `unchanged` sein - alles andere heisst, dass der Abgleich seine eigene
-    Ausgabe nicht wiedererkennt und bei jedem Lauf Dubletten anhaeuft."""
+    """User report: a file generated by the sync uploaded again, and it
+    wanted to create something all over again ("a new onoff field"). A
+    file that was just written MUST be completely `unchanged` on the
+    second pass - anything else means the diff does not recognize its own
+    output and accumulates duplicates on every run."""
     from loxmatter.projectsync.diff import PlanStatus
 
     device = _device(2, "Neues Geraet")
     signals = [
         _signal("d2_1_onoff", 2),
-        # Analog MIT Einheit: deckt zusaetzlich ab, dass die Einheit im
-        # `<Display>` landet und nicht als `Unit`-Attribut am `<C>`-Tag, das
-        # beim zweiten Lauf sonst ewig als "aktualisiert" wiederkaeme.
+        # Analog WITH a unit: additionally covers that the unit ends up in
+        # `<Display>` and not as a `Unit` attribute on the `<C>` tag, which
+        # would otherwise keep coming back as "updated" forever on the
+        # second run.
         StoredSignal(
             key="d2_2_voltage",
             ref=SignalRef(endpoint=2, cluster_id=144, element_id=4, kind=SignalKind.ATTRIBUTE),
@@ -607,10 +606,10 @@ def test_patched_file_is_stable_when_synced_again(sample_project):
     first = _patch(
         build_index(sample_project), device, signals, include_new_devices=True, commands=commands
     )
-    # Der kombinierte Ein/Aus-Ausgang ist genau einmal entstanden ...
+    # The combined on/off output was created exactly once ...
     assert first.count('Title="onoff"') == 1
 
-    # ... und der zweite Lauf ueber dieselbe Datei plant nichts mehr.
+    # ... and the second run over the same file plans nothing more.
     second_index = build_index(first)
     second_plan = build_plan(second_index, [device], {device.id: signals}, {device.id: commands})
     unstable = [

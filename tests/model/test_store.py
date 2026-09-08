@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -52,14 +52,13 @@ def test_device_id_is_stable_across_registrations(store):
 
 
 def test_device_id_is_never_reused(store):
-    """Zwei *verschiedene* Geraete bekommen unterschiedliche ids.
+    """Two *different* devices get different ids.
 
-    Das beweist nur, dass AUTOINCREMENT funktioniert — es waere auch dann
-    gruen, wenn die Spalte `active` gar nicht existierte und
-    `register_device` bei jedem Aufruf blind eine neue Zeile anlegte. Die
-    eigentlich schuetzenswerte Eigenschaft — dasselbe physische Geraet
-    bekommt nach `forget_device` + erneutem Einlernen eine neue id und neue
-    Schluessel — prueft stattdessen
+    This only proves that AUTOINCREMENT works — it would also pass if the
+    `active` column did not exist at all and `register_device` blindly
+    inserted a new row on every call. The property actually worth
+    protecting — the same physical device gets a new id and new keys after
+    `forget_device` + recommissioning — is instead checked by
     `test_recommissioned_device_gets_fresh_id_and_keys`.
     """
     plug = load("ikea_grillplats_plug.json")
@@ -70,13 +69,12 @@ def test_device_id_is_never_reused(store):
 
 
 def test_recommissioned_device_gets_fresh_id_and_keys(store):
-    """Dasselbe physische Geraet, vergessen und neu eingelernt, muss eine
-    neue device_id und neue Schluessel bekommen — sonst wuerde es die alte
-    Loxone-Verdrahtung eines frueheren Eigentuemers stillschweigend erben
-    (siehe Modul-Docstring in store.py). Das ist die Eigenschaft, die das
-    `WHERE unique_id = ? AND active = 1` in `register_device` tatsaechlich
-    schuetzt; faellt das `active = 1` weg, findet die Abfrage die alte,
-    vergessene Zeile wieder und dieser Test schlaegt fehl.
+    """The same physical device, forgotten and recommissioned, must get a
+    new device_id and new keys — otherwise it would silently inherit the
+    old Loxone wiring of a previous owner (see the module docstring in
+    store.py). That is the property the `WHERE unique_id = ? AND active = 1`
+    in `register_device` actually protects; drop the `active = 1` and the
+    query finds the old, forgotten row again and this test fails.
     """
     snap = load("ikea_grillplats_plug.json")
 
@@ -119,12 +117,11 @@ def test_keys_are_unique_within_a_device(store):
 
 
 def test_disambiguates_when_two_signals_share_a_slug_on_the_same_endpoint(store, monkeypatch):
-    """Die Fixtures dieses Projekts erzeugen (noch) keine echte Slug-Kollision
-    (siehe Kommentar in store.py). Damit die Ausweichstrategie trotzdem
-    geprueft ist, wird `lookup` fuer ein einzelnes Cluster gezielt auf einen
-    fixen Slug gezwungen: Cluster 3 traegt auf Endpoint 1 zwei Attribute
-    (Element-ID 0 und 1) der IKEA-Steckdose, die dadurch denselben Slug
-    "fake" erhalten."""
+    """This project's fixtures do not (yet) produce a real slug collision
+    (see the comment in store.py). To still exercise the fallback strategy,
+    `lookup` is deliberately forced to a fixed slug for a single cluster:
+    cluster 3 carries two attributes on endpoint 1 (element id 0 and 1) of
+    the IKEA outlet, which thereby get the same slug "fake"."""
     real_lookup = lookup
 
     def fake_lookup(ref, value):
@@ -145,13 +142,13 @@ def test_disambiguates_when_two_signals_share_a_slug_on_the_same_endpoint(store,
 
 
 def test_irreconcilable_key_collision_raises_instead_of_dropping_silently(store, monkeypatch):
-    """Drei Signale, die auf demselben Endpoint sowohl denselben Slug als auch
-    dieselbe Element-ID (0) tragen, koennen selbst die um die Element-ID
-    erweiterte Ausweichstrategie nicht mehr auseinanderhalten. Das darf
-    register_signals nicht stillschweigend loesen, indem es das dritte Signal
-    verwirft (die Gefahr eines `INSERT OR IGNORE`, siehe Modul-Docstring in
-    store.py) — es muss laut scheitern, und das Geraet darf danach keine
-    Signale aus diesem gescheiterten Aufruf enthalten."""
+    """Three signals that carry both the same slug and the same element id
+    (0) on the same endpoint can no longer be told apart even by the
+    fallback strategy extended with the element id. register_signals must
+    not silently resolve that by dropping the third signal (the danger of an
+    `INSERT OR IGNORE`, see the module docstring in store.py) — it must fail
+    loudly, and the device must not contain any signals from this failed
+    call afterward."""
     real_lookup = lookup
 
     def fake_lookup(ref, value):
@@ -179,13 +176,13 @@ def test_reregistering_keeps_existing_keys_and_adds_new_ones(store):
 
 
 def test_null_attribute_becomes_exportable_once_it_reports_a_real_value(store):
-    """Review-Fix Important #2: `1/6/16387` (StartUpOnOff) meldet bei der
-    IKEA-Steckdose anfangs `null` und ist deshalb exportability=none — nicht
-    weil das Attribut generell unexportierbar waere, sondern weil gerade kein
-    Wert vorliegt. Faengt das Geraet spaeter an, einen echten Wert zu
-    melden, muss die naechste Registrierung das nachziehen, ohne den einmal
-    vergebenen Schluessel zu aendern. Vorher fror `register_signals` `unit`
-    und `exportability` fuer immer ein, sobald ein Signal einmal bekannt war."""
+    """Review-Fix Important #2: `1/6/16387` (StartUpOnOff) initially reports
+    `null` on the IKEA outlet and is therefore exportability=none — not
+    because the attribute is generally unexportable, but because no value is
+    present yet. If the device later starts reporting a real value, the next
+    registration must catch up without changing the key already assigned.
+    Previously, `register_signals` froze `unit` and `exportability` forever
+    once a signal was known."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     before = {s.ref: s for s in store.register_signals(device_id, snap)}
@@ -202,10 +199,9 @@ def test_null_attribute_becomes_exportable_once_it_reports_a_real_value(store):
 
 
 def test_changed_unit_in_the_table_reaches_an_already_stored_signal(store, monkeypatch):
-    """Review-Fix Important #2: eine Korrektur in `clusters.yaml` muss ein
-    schon gespeichertes Signal erreichen. Vorher war die einzige Abhilfe das
-    Loeschen der gesamten Datenbank — was auch jeden Schluessel zerstoert
-    haette."""
+    """Review-Fix Important #2: a correction in `clusters.yaml` must reach a
+    signal that is already stored. Previously the only remedy was deleting
+    the entire database — which would have destroyed every key too."""
     real_lookup = lookup
     target = SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)  # onoff
 
@@ -233,9 +229,9 @@ def test_changed_unit_in_the_table_reaches_an_already_stored_signal(store, monke
 
 
 def test_user_set_title_survives_reregistration(store):
-    """Review-Fix Important #2: `title` ist Nutzereigentum, sobald `set_title`
-    es gesetzt hat, und darf von einem erneuten `register_signals` — anders
-    als `unit`/`exportability` — nicht ueberschrieben werden."""
+    """Review-Fix Important #2: `title` becomes user-owned once `set_title`
+    has set it, and must not be overwritten by a subsequent
+    `register_signals` — unlike `unit`/`exportability`."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
@@ -266,8 +262,9 @@ def test_device_id_for_node_is_none_for_an_unknown_node(store):
 
 
 def test_device_id_for_node_ignores_a_forgotten_device(store):
-    """Ein entferntes Geraet darf ueber seine alte Node-ID nicht mehr auffindbar sein -
-    sonst wuerde eine Laufzeit-Subscription Werte einem inaktiven Geraet zuordnen."""
+    """A removed device must no longer be findable via its old node id -
+    otherwise a runtime subscription would assign values to an inactive
+    device."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     store.forget_device(device_id)
@@ -324,25 +321,24 @@ def test_signal_by_key_is_none_for_an_unknown_key(store):
 
 
 def test_new_signal_is_exported_exactly_when_it_is_exportable_and_functional(store):
-    """Aufgabe 6: `expected` unten wird bewusst NICHT ueber
-    `profiles.table.is_exportable` berechnet, das ist genau die eine Haelfte
-    von `register_signals`s eigener Formel - ein Test, der dieselbe Funktion
-    wie die Produktion aufruft, kann einen Fehler in genau dieser Funktion
-    nie auffangen. Die technische Haelfte bleibt deshalb die unabhaengig
-    ausformulierte Regel aus Spec 6.6 (nur ANALOG/DIGITAL passen auf einen
-    Loxone-Eingang - Review-Fix Important #2, 2026-09-02).
+    """Task 6: `expected` below is deliberately NOT computed via
+    `profiles.table.is_exportable`, since that is exactly one half of
+    `register_signals`'s own formula - a test that calls the same function
+    as production can never catch a bug in that very function. The technical
+    half therefore stays the independently formulated rule from spec 6.6
+    (only ANALOG/DIGITAL fit a Loxone input - Review-Fix Important #2,
+    2026-09-02).
 
-    Die zweite Haelfte, `is_functional`, wird hier dagegen bewusst
-    wiederverwendet statt von Hand nachgebaut: ein erster Versuch, die
-    Feinauswahl der Profiltabelle (welches Element von Cluster 144/145
-    benannt ist) von Hand in dieses Testmodul zu kopieren, driftete beim
-    Schreiben sofort vom echten Stand ab (12 falsche Vorhersagen bei einem
-    Testlauf gegen den echten Store). `is_functional` ist keine Funktion
-    dieser Aufgabe, sondern eine bereits in `tests/profiles/test_relevance.py`
-    unabhaengig gegen genau diese Descriptor-Daten gepruefte Vorstufe
-    (Aufgaben 1-2) - sie hier ein zweites Mal nachzubauen haette nur ein
-    zweites, staendig nachzupflegendes Abbild derselben Tabelle ergeben,
-    keinen staerkeren Test."""
+    The second half, `is_functional`, is deliberately reused here instead of
+    being rebuilt by hand: a first attempt to copy the profile table's fine
+    selection (which element of cluster 144/145 is named) into this test
+    module by hand drifted from the real state immediately while writing it
+    (12 wrong predictions in a test run against the real store).
+    `is_functional` is not a function of this task but a preliminary stage
+    already independently checked against exactly this descriptor data in
+    `tests/profiles/test_relevance.py` (tasks 1-2) - rebuilding it here a
+    second time would have produced only a second, constantly-maintained
+    copy of the same table, not a stronger test."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
@@ -357,9 +353,10 @@ def test_new_signal_is_exported_exactly_when_it_is_exportable_and_functional(sto
 
 
 def test_a_freshly_registered_plug_exports_only_its_meaningful_values(store):
-    """Das Ziel dieses ganzen Entwurfs, am echten Geraet: fuenf Werte, die
-    etwas bedeuten, statt 110 technisch abbildbarer (Entwurf Abschnitt 1 und
-    4.4 - 109 war der Stand vor Umsetzung von Abschnitt 5, dem Zaehlerstand)."""
+    """The goal of this whole design, on the real device: five values that
+    mean something, instead of 110 technically mappable ones (draft section
+    1 and 4.4 - 109 was the state before section 5, the counter reading, was
+    implemented)."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
@@ -375,8 +372,8 @@ def test_a_freshly_registered_plug_exports_only_its_meaningful_values(store):
 
 
 def test_a_freshly_registered_button_keeps_both_rockers_and_the_battery(store):
-    """Der Fall, an dem sich zeigt, ob die Regel zu gierig ist: alle sechs
-    Ereignisse beider Wippen muessen durchkommen, dazu der Batteriestand."""
+    """The case that shows whether the rule is too greedy: all six events of
+    both rockers must get through, plus the battery level."""
     snap = load("ikea_bilresa_button.json")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
@@ -397,14 +394,14 @@ def test_a_freshly_registered_button_keeps_both_rockers_and_the_battery(store):
 
 
 def test_a_thread_counter_is_stored_but_not_exported(store):
-    """Nicht geloescht, nur abgewaehlt: der Experten-Block soll ihn
-    freischalten koennen, ohne dass das Geraet neu eingelernt wird."""
+    """Not deleted, only deselected: the expert block should be able to
+    unlock it without the device being recommissioned."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     store.register_signals(device_id, snap)
 
     counters = [s for s in store.signals(device_id) if s.ref.cluster_id == 53]
-    assert counters, "Thread-Zaehler sollen weiterhin gespeichert werden"
+    assert counters, "Thread counters should still be stored"
     assert all(not s.exported for s in counters)
     assert all(s.exportability is Exportability.ANALOG for s in counters[:1])
 
@@ -422,8 +419,8 @@ def test_set_exported_toggles_the_flag_without_touching_the_key(store):
 
 
 def test_exported_flag_survives_reregistration(store):
-    """Wie `title`: einmal vom Nutzer gesetzt, darf ein erneutes
-    `register_signals` das Export-Flag nicht zuruecksetzen."""
+    """Like `title`: once set by the user, a subsequent `register_signals`
+    must not reset the export flag."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
@@ -440,7 +437,7 @@ def test_set_resend_toggles_the_flag_without_touching_the_key(store):
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
     target = signals[0]
-    assert target.resend is False  # Vorgabewert (Entwurf, Abschnitt 3)
+    assert target.resend is False  # default value (draft, section 3)
 
     store.set_resend(target.key, True)
     after = next(s for s in store.signals(device_id) if s.key == target.key)
@@ -449,8 +446,8 @@ def test_set_resend_toggles_the_flag_without_touching_the_key(store):
 
 
 def test_resend_flag_survives_reregistration(store):
-    """Wie `exported`: einmal vom Nutzer gesetzt, darf ein erneutes
-    `register_signals` das Resend-Flag nicht zuruecksetzen."""
+    """Like `exported`: once set by the user, a subsequent `register_signals`
+    must not reset the resend flag."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
@@ -500,27 +497,26 @@ def test_store_survives_reopening(tmp_path):
 
 
 def test_check_writable_succeeds_on_a_healthy_database(store):
-    """Der einfache Fall: keine offene Transaktion, kein Fehler."""
+    """The simple case: no open transaction, no error."""
     store.check_writable()
 
 
 def test_check_writable_recovers_from_a_leftover_open_transaction(store):
     """Review-Fix Minor (2026-09-02): `rename_device`, `mark_exported`,
-    `set_title` und `set_exported` legen kein eigenes try/except um ihr
-    `UPDATE ...` plus `commit()` (anders als z. B. `register_signals`) -
-    scheitert dort das `UPDATE` selbst oder erst das `commit()`, bleibt die
-    von Python vor dem `UPDATE` automatisch eroeffnete Transaktion auf der
-    Verbindung offen. Dieser Test simuliert genau das (ein `UPDATE` ohne
-    anschliessendes `commit()`/`rollback()`) und prueft, dass
-    `check_writable` das nicht mit "nicht beschreibbar" verwechselt - siehe
-    Docstring dort."""
+    `set_title` and `set_exported` do not wrap their `UPDATE ...` plus
+    `commit()` in their own try/except (unlike e.g. `register_signals`) - if
+    the `UPDATE` itself fails there, or only the `commit()` does, the
+    transaction Python automatically opened before the `UPDATE` stays open
+    on the connection. This test simulates exactly that (an `UPDATE` without
+    a following `commit()`/`rollback()`) and checks that `check_writable`
+    does not mistake that for "not writable" - see the docstring there."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
 
     store._db.execute("UPDATE device SET label = ? WHERE id = ?", ("Zwischenstand", device_id))
     assert store._db.in_transaction
 
-    store.check_writable()  # darf trotz der offenen Transaktion nicht werfen
+    store.check_writable()  # must not raise despite the open transaction
 
 
 def test_decode_device_types_roundtrips_encode_device_types():
@@ -537,10 +533,10 @@ def test_decode_device_types_of_syntactically_broken_json_is_none():
 
 
 def test_decode_device_types_of_non_integer_endpoint_key_is_none():
-    """Review-Fix (2026-09-05): `int("x")` wirft `ValueError`, nicht die
-    bisher abgefangenen `json.JSONDecodeError`/`TypeError` - eine von Hand
-    verstellte Zeile mit einem nicht-numerischen Endpunkt-Schluessel liess
-    `_decode_device_types` bisher durchbrechen."""
+    """Review-Fix (2026-09-05): `int("x")` raises `ValueError`, not the
+    `json.JSONDecodeError`/`TypeError` caught until now - a manually
+    tampered row with a non-numeric endpoint key previously let
+    `_decode_device_types` break through."""
     assert _decode_device_types('{"x": [1, 2]}') is None
 
 
@@ -567,9 +563,9 @@ def test_set_room_stores_the_name_and_trims_it(tmp_path):
 
 
 def test_set_room_with_blank_input_clears_the_room(tmp_path):
-    """Ein Name aus reinem Leerraum hat eine eindeutige Bedeutung - "kein
-    Raum" - und ist deshalb kein Fehlerfall, sondern derselbe Weg wie ein
-    ausdrueckliches `None`."""
+    """A name made of pure whitespace has an unambiguous meaning - "no
+    room" - and is therefore not an error case, but the same path as an
+    explicit `None`."""
     store = Store(tmp_path / "t.sqlite")
     try:
         device_id = store.register_device(load("ikea_grillplats_plug.json"))
@@ -581,12 +577,12 @@ def test_set_room_with_blank_input_clears_the_room(tmp_path):
 
 
 def test_set_room_does_not_touch_updated_at(tmp_path):
-    """Der Kern der Entscheidung aus Abschnitt 3.3 des Entwurfs: der Raum
-    landet in KEINER Exportvorlage. Wuerde `set_room` `updated_at` mitsetzen,
-    bekaeme beim ersten Aufraeumen der Raumzuordnung jedes Geraet eine amber
-    "geaendert seit Export"-Pille und die Aufforderung zu einem Export, der
-    Byte fuer Byte dieselben Dateien erzeugt. `rename_device` setzt es
-    dagegen zu Recht - das Label wird als `Title` exportiert."""
+    """The core of the decision from section 3.3 of the draft: the room
+    ends up in NO export template. If `set_room` also set `updated_at`,
+    every device would get an amber "changed since export" pill and a
+    prompt for an export that produces byte-for-byte the same files the
+    first time the room assignment is cleaned up. `rename_device`, in
+    contrast, rightly does set it - the label is exported as `Title`."""
     store = Store(tmp_path / "t.sqlite")
     try:
         device_id = store.register_device(load("ikea_grillplats_plug.json"))
@@ -619,10 +615,10 @@ def test_rename_room_moves_every_device_and_reports_the_count(tmp_path):
 
 
 def test_rename_room_merges_into_an_existing_room(tmp_path):
-    """Ein Zielname, den es schon gibt, fuehrt beide Raeume zusammen - die
-    naheliegende Bedeutung von "nenne Kueche jetzt Essbereich", wenn es
-    einen Essbereich schon gibt. Die Oberflaeche fragt vorher nach; der
-    Store fuehrt nur aus."""
+    """A target name that already exists merges both rooms - the natural
+    meaning of "rename Kitchen to Dining Area now" when a Dining Area
+    already exists. The UI asks for confirmation beforehand; the store just
+    executes."""
     store = Store(tmp_path / "t.sqlite")
     try:
         plug = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
@@ -635,9 +631,9 @@ def test_rename_room_merges_into_an_existing_room(tmp_path):
 
 
 def test_rename_room_leaves_removed_devices_alone(tmp_path):
-    """`active = 1` in der Bedingung, aus demselben Grund, aus dem
-    `Store.devices()` danach filtert: ein entferntes Geraet ist aus Sicht
-    der Oberflaeche nicht mehr da und soll nicht stillschweigend mitwandern."""
+    """`active = 1` in the condition, for the same reason `Store.devices()`
+    filters by it afterward: a removed device is, from the UI's point of
+    view, no longer there and should not silently tag along."""
     store = Store(tmp_path / "t.sqlite")
     try:
         gone = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
@@ -660,13 +656,13 @@ def test_rename_room_rejects_an_empty_target(tmp_path):
 
 
 def test_rename_room_normalizes_the_source_name_too(tmp_path):
-    """Review-Fund zu Task 2: bislang lief nur `new` durch `_normalized_room`,
-    `old` wurde roh in `WHERE room = ?` verglichen - unbedenklich, solange
-    `old` ausschliesslich aus zurueckgelesenen Werten kam (die sind bereits
-    getrimmt). Die API-Route (Task 5) reicht `from` aber als Freitext aus dem
-    JSON-Koerper durch; " Küche " traefe dort sonst null Zeilen und saehe wie
-    ein Tippfehler in einem nicht existierenden Raum aus, obwohl der Raum
-    ganz offensichtlich existiert."""
+    """Review finding for task 2: previously only `new` went through
+    `_normalized_room`, `old` was compared raw in `WHERE room = ?` -
+    harmless as long as `old` came exclusively from values read back (those
+    are already trimmed). But the API route (task 5) passes `from` through
+    as free text from the JSON body; " Küche " would otherwise match zero
+    rows there and look like a typo for a nonexistent room, even though the
+    room quite obviously exists."""
     store = Store(tmp_path / "t.sqlite")
     try:
         device_id = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
@@ -677,23 +673,22 @@ def test_rename_room_normalizes_the_source_name_too(tmp_path):
 
 
 def test_rename_room_does_not_touch_updated_at(tmp_path):
-    """Dieselbe Begruendung wie bei `set_room` und `backfill_device_types`:
-    der Raum landet in KEINER Exportvorlage, ein Aufraeumen der Raumnamen
-    darf also keinen Export verlangen, der Byte fuer Byte dieselben Dateien
-    erzeugt wie der letzte. `rename_room` ist der dritte Schreibpfad auf
-    `device.room` - anders als seine beiden Geschwister bislang ohne eigenen
-    Test dafuer, obwohl das SQL heute korrekt ist. Gerade das macht die
-    Luecke riskant: es ist die eine Stelle, an der eine kuenftige Aenderung
-    diese Zusicherung brechen koennte, ohne dass ein Test es merkt."""
+    """Same rationale as for `set_room` and `backfill_device_types`: the
+    room ends up in NO export template, so cleaning up room names must not
+    require an export that produces byte-for-byte the same files as the
+    last one. `rename_room` is the third write path to `device.room` -
+    unlike its two siblings, it previously had no test of its own for this,
+    even though the SQL is correct today. That is exactly what makes the
+    gap risky: it is the one place where a future change could break this
+    guarantee without a test noticing."""
     store = Store(tmp_path / "t.sqlite")
     try:
         device_id = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
         before = store.device(device_id).updated_at
 
         assert store.rename_room("Küche", "Essbereich") == 1
-        # Nicht vakuos bestehen: die Umbenennung muss tatsaechlich
-        # stattgefunden haben, sonst bewiese ein unveraendertes `updated_at`
-        # gar nichts.
+        # Not passing vacuously: the rename must actually have taken
+        # place, otherwise an unchanged `updated_at` would prove nothing.
         assert store.device(device_id).room == "Essbereich"
         assert store.device(device_id).updated_at == before
     finally:
@@ -701,9 +696,9 @@ def test_rename_room_does_not_touch_updated_at(tmp_path):
 
 
 def test_register_device_stores_the_matter_device_types(tmp_path):
-    """Endpunkt 1 der Steckdose meldet 266 (0x010A, On/Off Plug-in Unit),
-    Endpunkt 0 die Verwaltungstypen - beide werden roh abgelegt, gefiltert
-    wird erst beim Ableiten der Kategorie."""
+    """Endpoint 1 of the outlet reports 266 (0x010A, On/Off Plug-in Unit),
+    endpoint 0 the administrative types - both are stored raw, filtering
+    only happens when the category is derived."""
     store = Store(tmp_path / "t.sqlite")
     try:
         device_id = store.register_device(load("ikea_grillplats_plug.json"))
@@ -715,8 +710,8 @@ def test_register_device_stores_the_matter_device_types(tmp_path):
 
 
 def test_backfill_fills_only_rows_that_have_none(tmp_path):
-    """Eine Bestandszeile bekommt ihre Typen beim naechsten Bruueckenstart -
-    eine bereits gefuellte wird nicht bei jedem Start neu geschrieben."""
+    """An existing row gets its types on the next bridge startup - one
+    already filled in is not rewritten on every startup."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_grillplats_plug.json")
@@ -732,9 +727,10 @@ def test_backfill_fills_only_rows_that_have_none(tmp_path):
 
 
 def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path):
-    """Ein Geraet, das beim Start gerade offline ist, fehlt in
-    `client.snapshots()`. Es darf dadurch nichts verlieren - deshalb wird
-    nur geschrieben, wo ein Abbild vorliegt, und nie geleert."""
+    """A device that happens to be offline at startup is missing from
+    `client.snapshots()`. It must not lose anything because of that -
+    that is why writes only happen where a snapshot is present, and it is
+    never cleared."""
     store = Store(tmp_path / "t.sqlite")
     try:
         plug = load("ikea_grillplats_plug.json")
@@ -752,9 +748,9 @@ def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path)
 
 
 def test_backfill_does_not_touch_updated_at(tmp_path):
-    """Dieselbe Begruendung wie bei `set_room`: die Geraetetypen landen in
-    keiner Exportvorlage. Ein Bruueckenstart darf nicht die halbe
-    Geraeteliste als "geaendert seit Export" markieren."""
+    """Same rationale as for `set_room`: the device types end up in no
+    export template. A bridge startup must not mark half the device list
+    as "changed since export"."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_grillplats_plug.json")

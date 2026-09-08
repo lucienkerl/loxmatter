@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -61,14 +61,14 @@ def test_unknown_key_raises_with_a_clear_message(store):
     registered(store, "ikea_grillplats_plug.json")
     with pytest.raises(KeyError, match="unknown command key") as excinfo:
         store.resolve_command("d1_1_gibtsnicht")
-    # Review-Fix Minor: str(KeyError(...)) haengt sonst repr()-Anfuehrungszeichen
-    # um die ganze Nachricht — das wuerde Task 6s HTTP-Body verunstalten.
+    # Review-Fix Minor: str(KeyError(...)) would otherwise wrap repr() quotes
+    # around the whole message — that would disfigure task 6's HTTP body.
     assert str(excinfo.value) == "unknown command key 'd1_1_gibtsnicht'"
 
 
 def test_unknown_key_raises_with_a_german_message(store):
-    """Deutsches Gegenstueck zu `test_unknown_key_raises_with_a_clear_message`
-    oben."""
+    """German counterpart to `test_unknown_key_raises_with_a_clear_message`
+    above."""
     i18n.set_language("de")
     registered(store, "ikea_grillplats_plug.json")
     with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel") as excinfo:
@@ -102,17 +102,16 @@ def test_node_id_is_stored_so_the_runtime_can_address_the_device(store):
 
 
 def test_command_key_collision_raises_instead_of_dropping_silently(store, monkeypatch):
-    """Review-Fix Important #1: zwei Kommandos verschiedener Cluster auf
-    demselben Endpoint koennen denselben Slug bekommen — ein zukuenftiger
-    Eintrag in `clusters.yaml` fuer einen zweiten Cluster auf einem Endpoint,
-    der sich schon einen Slug mit `onoff`/`level` teilt, ist eine ganz
-    gewoehnliche Matter-Anordnung. `command_slug` wird hier gezielt auf einen
-    festen Wert gezwungen, um genau das nachzustellen: Cluster 3 (Identify)
-    bekommt auf Endpoint 1 denselben Slug "on" wie Cluster 6s Kommando 1.
-    Das darf `register_commands` nicht stillschweigend mit `INSERT OR
-    IGNORE` loesen (die Gefahr aus dem Modul-Docstring von `register_signals`)
-    — es muss laut scheitern, und das Geraet darf danach keine Kommandos aus
-    diesem gescheiterten Aufruf enthalten."""
+    """Review-Fix Important #1: two commands of different clusters on the
+    same endpoint can get the same slug — a future entry in `clusters.yaml`
+    for a second cluster on an endpoint that already shares a slug with
+    `onoff`/`level` is a perfectly ordinary Matter arrangement.
+    `command_slug` is deliberately forced to a fixed value here to reproduce
+    exactly that: cluster 3 (Identify) gets the same slug "on" on endpoint 1
+    as cluster 6's command 1. `register_commands` must not silently resolve
+    that with `INSERT OR IGNORE` (the danger from the module docstring of
+    `register_signals`) — it must fail loudly, and the device must not
+    contain any commands from this failed call afterward."""
     real_command_slug = table.command_slug
 
     def fake_command_slug(cluster_id: int, command_id: int) -> str | None:
@@ -137,11 +136,11 @@ def test_command_key_collision_raises_instead_of_dropping_silently(store, monkey
 
 
 def test_takes_value_change_is_picked_up_on_reregistration(store):
-    """Review-Fix Important #2: anders als bei Signalen fror `register_commands`
-    `takes_value` beim ersten Einlernen fuer immer ein. Eine Korrektur in
-    `clusters.yaml` — ein Kommando, das nachtraeglich als wertnehmend erkannt
-    wird — erreichte ein schon gespeichertes Kommando nie. Der Schluessel
-    muss dabei unveraendert bleiben (Spec 6.2)."""
+    """Review-Fix Important #2: unlike for signals, `register_commands` froze
+    `takes_value` forever on first commissioning. A correction in
+    `clusters.yaml` — a command later recognized as taking a value — never
+    reached a command that was already stored. The key must stay unchanged
+    in the process (spec 6.2)."""
     device_id, snap, first = registered(store, "ikea_grillplats_plug.json")
     on_before = next(c for c in first if c.slug == "on")
     assert on_before.takes_value is False

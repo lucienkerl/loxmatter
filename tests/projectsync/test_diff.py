@@ -45,13 +45,12 @@ def _device(device_id: int, label: str) -> StoredDevice:
     )
 
 
-# Wie `sample_project`, aber der bestehende Ausgangsbefehl traegt ein
-# beschaedigtes `CmdOn` (fehlendes "n": `/cmd/d1_1_o/1` statt
-# `/cmd/d1_1_onoff/1`) bei korrektem Titel "onoff" - genau der Fall, den der
-# Anwender an seiner echten Datei gemeldet hat ("zwei mal onoff drin"):
-# `key_from_cmd_on` liest daraus den falschen Schluessel `d1_1_o`, das
-# eigentlich gemeinte Objekt taucht also nirgends unter dem gewuenschten
-# Schluessel `d1_1_on + d1_1_off` auf.
+# Like `sample_project`, but the existing output command carries a
+# corrupted `CmdOn` (missing "n": `/cmd/d1_1_o/1` instead of
+# `/cmd/d1_1_onoff/1`) with a correct title "onoff" - exactly the case the
+# user reported on their real file ("onoff shows up twice"):
+# `key_from_cmd_on` reads the wrong key `d1_1_o` from that, so the object
+# actually meant never shows up under the desired key `d1_1_on + d1_1_off`.
 CORRUPTED_ONOFF_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -82,10 +81,10 @@ def test_existing_matching_input_is_unchanged(sample_project):
     signals = [_signal("d1_1_onoff", 1)]
     plan = build_plan(index, [device], {1: signals}, {1: []})
     entry = next(e for e in plan.entries if e.key == "d1_1_onoff")
-    # Titel in der Datei ist "Alter Titel", `to_inputs` erzeugt aber den
-    # Signal-Titel "Ein/Aus" - das MUSS also `updated` sein, nicht
-    # `unchanged`. Dieser Test dokumentiert das erwartete Verhalten fuer
-    # Task-Step 3 unten (siehe dortige Anmerkung zur Titel-Divergenz).
+    # The title in the file is "Alter Titel", but `to_inputs` generates the
+    # signal title "Ein/Aus" - so this MUST be `updated`, not `unchanged`.
+    # This test documents the expected behavior for task step 3 below (see
+    # the note there on the title divergence).
     assert entry.status == PlanStatus.UPDATED
     assert entry.changes["Title"] == ("Alter Titel", "Ein/Aus")
 
@@ -118,12 +117,11 @@ def test_orphaned_signal_is_reported(sample_project):
 
 
 def test_title_collision_with_mismatched_key_is_possible_duplicate():
-    """Anwenderbericht: ein bestehender kombinierter Ausgangsbefehl "onoff"
-    mit beschaedigtem `CmdOn` erzeugte bislang einen zweiten, echten
-    "onoff"-Befehl im selben Container - eine stille Dopplung. Der
-    gewuenschte kombinierte Befehl (Titel "onoff", Schluessel
-    `d1_1_on + d1_1_off`) muss stattdessen als `possible_duplicate` markiert
-    werden, NICHT als `new_signal`."""
+    """User report: an existing combined output command "onoff" with a
+    corrupted `CmdOn` previously generated a second, genuine "onoff"
+    command in the same container - a silent duplication. The desired
+    combined command (title "onoff", key `d1_1_on + d1_1_off`) must instead
+    be marked as `possible_duplicate`, NOT as `new_signal`."""
     index = build_index(CORRUPTED_ONOFF_PROJECT)
     device = _device(1, "Altes Geraet")
     commands = [
@@ -136,16 +134,16 @@ def test_title_collision_with_mismatched_key_is_possible_duplicate():
     assert onoff.status == PlanStatus.POSSIBLE_DUPLICATE
     assert onoff.key == "d1_1_on + d1_1_off"
 
-    # Die beschaedigte alte Zeile selbst bleibt als eigener Eintrag sichtbar
-    # (unter ihrem falschen Schluessel `d1_1_o`) - verwaist, nicht angetastet.
+    # The corrupted old row itself stays visible as its own entry (under
+    # its wrong key `d1_1_o`) - orphaned, left untouched.
     orphaned_keys = {e.key for e in plan.entries if e.status == PlanStatus.ORPHANED}
     assert "d1_1_o" in orphaned_keys
 
-    # Die einzelnen "on"/"off"-Befehle haben keinen Titel-Konflikt (die
-    # Datei kennt nur den kombinierten "onoff") - ganz normale Neuanlage,
-    # macht `has_changes` also wahr (anders als der `possible_duplicate`-
-    # Eintrag selbst, der wie `orphaned`/`conflict` keine geplante Aenderung
-    # ist - siehe `SyncPlan.has_changes`).
+    # The individual "on"/"off" commands have no title conflict (the file
+    # only knows the combined "onoff") - a perfectly normal new creation,
+    # so it does make `has_changes` true (unlike the `possible_duplicate`
+    # entry itself, which, like `orphaned`/`conflict`, is not a planned
+    # change - see `SyncPlan.has_changes`).
     on_entry = next(e for e in plan.entries if e.key == "d1_1_on")
     assert on_entry.status == PlanStatus.NEW_SIGNAL
     assert plan.has_changes
@@ -154,8 +152,8 @@ def test_title_collision_with_mismatched_key_is_possible_duplicate():
 def test_has_changes_is_false_when_everything_matches(sample_project):
     index = build_index(sample_project)
     device = _device(1, "Altes Geraet")
-    # "Ein/Aus" statt "Alter Titel", damit dieser Test wirklich den
-    # unveraenderten Fall prueft.
+    # "Ein/Aus" instead of "Alter Titel", so this test really checks the
+    # unchanged case.
     signal = _signal("d1_1_onoff", 1)
     signal_matching_title = StoredSignal(
         key=signal.key,
@@ -171,6 +169,6 @@ def test_has_changes_is_false_when_everything_matches(sample_project):
     plan = build_plan(index, [device], {1: [signal_matching_title]}, {1: []})
     onoff = next(e for e in plan.entries if e.key == "d1_1_onoff")
     assert onoff.status == PlanStatus.UNCHANGED
-    # "d9_9_verwaist" bleibt in der Datei, macht has_changes aber nicht wahr
-    # - ORPHANED ist eine Meldung, keine geplante Aenderung.
+    # "d9_9_verwaist" stays in the file but does not make has_changes true
+    # - ORPHANED is a notice, not a planned change.
     assert plan.has_changes is False

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,9 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer `ResendSettingsStore` - das Intervall des periodischen
-Resends, gehalten in derselben `setting`-Tabelle wie `LocaleStore.language`
-(siehe dortiges test_locale_store.py fuer das gleiche Muster)."""
+"""Tests for `ResendSettingsStore` - the interval of the periodic resend,
+held in the same `setting` table as `LocaleStore.language` (see
+test_locale_store.py there for the same pattern)."""
 
 from __future__ import annotations
 
@@ -51,16 +51,16 @@ def test_set_interval_rejects_a_value_below_the_minimum(tmp_path):
     try:
         with pytest.raises(ValueError):
             store.resend_settings.set_interval_seconds(MIN_RESEND_INTERVAL_SECONDS - 1)
-        # Kein Teil-Erfolg: der Vorgabewert gilt weiterhin.
+        # No partial success: the default value still applies.
         assert store.resend_settings.get_interval_seconds() == DEFAULT_RESEND_INTERVAL_SECONDS
     finally:
         store.close()
 
 
 def test_an_unparsable_stored_value_falls_back_to_the_default(tmp_path):
-    """Kann nur durch eine manuelle Aenderung der Datenbank entstehen (der
-    einzige Schreibpfad, set_interval_seconds, validiert vorher) - aber
-    get_interval_seconds soll trotzdem nie werfen (finaler Review)."""
+    """Can only arise from a manual change to the database (the only write
+    path, set_interval_seconds, validates beforehand) - but
+    get_interval_seconds should still never raise (final review)."""
     store = Store(tmp_path / "t.sqlite")
     try:
         store._db.execute(

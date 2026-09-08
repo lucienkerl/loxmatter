@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,32 +14,32 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Synthetische Beispiel-Projektdatei fuer `projectsync`-Tests - handgebaut
-nach dem in der Referenzdatei beobachteten Schema (Entwurf Abschnitt 3-6),
-NICHT die echte vom Anwender gelieferte Datei (bleibt aus Datenschutzgruenden
-ausserhalb des Repos, siehe Entwurf Abschnitt 9).
+"""Synthetic sample project file for `projectsync` tests - handcrafted after
+the schema observed in the reference file (draft section 3-6), NOT the real
+file supplied by the user (stays outside the repo for privacy reasons, see
+draft section 9).
 
-**Korrektur nach echtem Praxistest (2026-09-04):** `<ControlList>` hat in
-einer echten Datei genau EIN Kind (`<C Type="Document">`), und jeder darin
-konfigurierte Miniserver bekommt einen eigenen `<C Type="LoxLIVE">`-Block -
-`VirtualInCaption`/`VirtualOutCaption` haengen an DIESEM, nicht an
-`ControlList` direkt (siehe `projectsync.index`-Moduldocstring fuer die
-volle Herleitung). Diese Fixture bildet das jetzt nach: EIN `LoxLIVE`-Block
-(`IntAddr="10.0.0.10"`), damit alle bestehenden Tests ohne `miniserver_ip`
-weiterlaufen - ein zweiter, mehrdeutiger Fall hat seine eigene, kleinere
-Fixture in `tests/projectsync/test_index.py`.
+**Correction after a real practical test (2026-09-04):** in a real file,
+`<ControlList>` has exactly ONE child (`<C Type="Document">`), and every
+Miniserver configured within it gets its own `<C Type="LoxLIVE">` block -
+`VirtualInCaption`/`VirtualOutCaption` hang off THAT, not directly off
+`ControlList` (see the `projectsync.index` module docstring for the full
+derivation). This fixture now mirrors that: ONE `LoxLIVE` block
+(`IntAddr="10.0.0.10"`), so all existing tests keep running without
+`miniserver_ip` - a second, ambiguous case has its own, smaller fixture in
+`tests/projectsync/test_index.py`.
 
-Enthaelt fuer Geraet 1 (``d1_...``) ein bereits bestehendes Eingangssignal
-(``d1_1_onoff``, Titel weicht bewusst vom Soll ab - deckt den `updated`-Fall
-ab), das dazugehoerige Online-Signal (``d1_online`` - `export.signals.
-to_inputs` erzeugt dieses Signal fuer JEDES Geraet automatisch mit, siehe
-dortigen Docstring; ohne einen passenden Eintrag hier waere jeder Diff-Plan
-fuer Geraet 1 niemals `unchanged`, selbst wenn alle uebrigen Signale
-uebereinstimmen) und ein bestehendes Ausgangssignal (``d1_1_on``). Geraet 1
-hat KEIN ``d1_1_temp`` - deckt den `new_signal`-Fall ab (Container
-existiert, Signal fehlt). Geraet 2 existiert in der Datei ueberhaupt nicht -
-deckt den `new_device`-Fall ab. ``d9_9_verwaist`` gehoert zu keinem
-bekannten Geraet mehr - deckt den `orphaned`-Fall ab."""
+For device 1 (``d1_...``) it contains an already existing input signal
+(``d1_1_onoff``, title deliberately deviates from the target - covers the
+`updated` case), the associated online signal (``d1_online`` -
+`export.signals.to_inputs` automatically generates this signal for EVERY
+device, see the docstring there; without a matching entry here, any diff
+plan for device 1 would never be `unchanged`, even if all other signals
+match) and an existing output signal (``d1_1_on``). Device 1 has NO
+``d1_1_temp`` - covers the `new_signal` case (container exists, signal
+missing). Device 2 does not exist in the file at all - covers the
+`new_device` case. ``d9_9_verwaist`` no longer belongs to any known device -
+covers the `orphaned` case."""
 
 import pytest
 
@@ -48,15 +48,15 @@ from loxmatter import i18n
 
 @pytest.fixture(autouse=True)
 def _sample_project_uses_german(reset_language: None) -> None:
-    """`SAMPLE_PROJECT`s ``d1_online``-Titel ("Altes Geraet erreichbar") ist
-    fest als deutscher Text in diese Beispieldatei einprogrammiert (siehe
-    Moduldocstring); `export.signals.to_inputs` erzeugt denselben Titel seit
-    der i18n-Phase B+C sprachabhaengig ueber `i18n.t()` und faellt ohne
-    diesen Fixture-weiten deutschen Kontext auf den neuen Standard Englisch
-    zurueck ("... reachable") - jeder eigentlich unveraenderte Diff-Plan
-    saehe dann faelschlich wie ein `updated`-Fall aus. Haengt explizit von
-    `reset_language` ab (statt sich auf Fixture-Reihenfolge zu verlassen),
-    damit dieser Test-Ordner sicher NACH dem globalen Zuruecksetzen laeuft."""
+    """`SAMPLE_PROJECT`'s ``d1_online`` title ("Altes Geraet erreichbar") is
+    hard-coded as German text into this sample file (see the module
+    docstring); `export.signals.to_inputs` has generated the same title
+    language-dependently via `i18n.t()` since i18n phase B+C, and without
+    this fixture-wide German context it falls back to the new English
+    default ("... reachable") - every actually unchanged diff plan would
+    then falsely look like an `updated` case. Explicitly depends on
+    `reset_language` (instead of relying on fixture ordering) so that this
+    test folder reliably runs AFTER the global reset."""
     i18n.set_language("de")
 
 

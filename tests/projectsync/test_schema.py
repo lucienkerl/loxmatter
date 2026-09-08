@@ -15,11 +15,11 @@ from loxmatter.projectsync.schema import (
 
 
 def test_desired_input_cmd_attrs_covers_only_managed_fields():
-    """Ohne `Unit`: eine Projektdatei fuehrt die Einheit nicht am `<C>`-Tag,
-    sondern im `<Display>`-Kind (siehe `MANAGED_INPUT_CMD_ATTRS`). Ein hier
-    gepflegtes `Unit` liesse jeden analogen Eingang bei jedem Lauf erneut als
-    "aktualisiert" erscheinen und schriebe den Wert an eine Stelle, an der
-    Loxone Config ihn nie liest."""
+    """Without `Unit`: a project file does not carry the unit on the `<C>`
+    tag, but in the `<Display>` child (see `MANAGED_INPUT_CMD_ATTRS`). A
+    `Unit` maintained here would make every analog input appear as
+    "updated" again on every run and would write the value to a place
+    Loxone Config never reads."""
     entry = LoxoneInput("d1_1_temp", "Temperatur", "Kommentar", True, "<v.1> °C")
     desired = desired_input_cmd_attrs(entry)
     assert desired == {
@@ -79,20 +79,20 @@ def test_new_input_cmd_open_tag_is_a_valid_non_self_closing_start_tag():
 
 
 def test_new_input_cmd_open_tag_carries_no_unit_attribute():
-    """Anwenderbericht: "die Einheit ist bei den virtuellen Eingaengen nicht
-    mehr dabei". In einer echten Projektdatei traegt KEIN einziges
-    `<C>`-Objekt ein `Unit`-Attribut (an allen 3710 geprueft) - die Einheit
-    steht dort ausschliesslich im `<Display>`-Kind, siehe
-    `new_cmd_children_xml`. Das `Unit`-Attribut gehoert allein in die
-    Vorlagendatei (`export.documents.virtual_in_udp_cmd_attributes`, ein
-    anderes Dateiformat); hier war es aus dieser Liste mituebernommen worden
-    und landete an einer Stelle, an der Loxone Config es nie liest."""
+    """User report: "the unit is no longer there for the virtual inputs".
+    In a real project file, NOT A SINGLE `<C>` object carries a `Unit`
+    attribute (checked across all 3710) - the unit lives there exclusively
+    in the `<Display>` child, see `new_cmd_children_xml`. The `Unit`
+    attribute belongs only in the template file
+    (`export.documents.virtual_in_udp_cmd_attributes`, a different file
+    format); here it had been carried over from that list and ended up in a
+    place Loxone Config never reads."""
     entry = LoxoneInput("d2_1_temp", "Temperatur", "Kommentar", True, "<v.1> °C")
     tag = new_input_cmd_open_tag(entry, "VCI9", "u-new")
     assert "Unit=" not in tag
-    # An der echten Referenzdatei geprueft: ALLE <C>-Objekte tragen ein
-    # `V`-Attribut (Entwurf Abschnitt 6, Korrektur nach echtem Praxistest) -
-    # ohne ihn blieb ein neu angelegtes Kommando in Loxone Config unsichtbar.
+    # Checked against the real reference file: ALL <C> objects carry a `V`
+    # attribute (draft section 6, correction after a real practical test) -
+    # without it a newly created command stayed invisible in Loxone Config.
     assert 'V="178"' in tag
 
 
@@ -142,10 +142,10 @@ def test_new_cmd_children_xml_contains_one_connector_for_output_with_iodata():
 
 
 def test_new_cmd_children_xml_puts_the_unit_into_the_display_element():
-    """Die Einheit eines analogen Eingangs gehoert ins `<Display>`-Kind, in
-    genau der Form, die eine echte Projektdatei zeigt: `Type="2"` fuer einen
-    analogen Wert und der komplette Formatstring inklusive Einheit
-    (86 Beispiele in der Referenzdatei, z. B. `Type="2" Unit="<v.3> kW"`)."""
+    """The unit of an analog input belongs in the `<Display>` child, in
+    exactly the form a real project file shows: `Type="2"` for an analog
+    value and the complete format string including the unit (86 examples in
+    the reference file, e.g. `Type="2" Unit="<v.3> kW"`)."""
     existing_u: set[str] = {"1000-0001-0000-aaaaaaaaaaaaaaaa"}
     xml = new_cmd_children_xml(
         kind="input",
@@ -158,10 +158,10 @@ def test_new_cmd_children_xml_puts_the_unit_into_the_display_element():
 
 
 def test_new_cmd_children_xml_display_falls_back_to_a_plain_format_string():
-    """Analoges Signal ohne bekannte Einheit (`unit_format` ist dann leer,
-    siehe `profiles.table.unit_format`): der Formatstring bleibt, nur ohne
-    Einheitentext - ebenfalls so in der Referenzdatei zu sehen. Ein leeres
-    `Unit=""` gaebe es dort nirgends."""
+    """Analog signal without a known unit (`unit_format` is then empty, see
+    `profiles.table.unit_format`): the format string stays, just without
+    unit text - also seen this way in the reference file. An empty
+    `Unit=""` would never occur there."""
     existing_u: set[str] = {"1000-0001-0000-aaaaaaaaaaaaaaaa"}
     xml = new_cmd_children_xml(
         kind="input", existing_u=existing_u, iodata_attrs=None, analog=True, unit_format=""
@@ -170,11 +170,11 @@ def test_new_cmd_children_xml_display_falls_back_to_a_plain_format_string():
 
 
 def test_new_cmd_children_xml_display_type_follows_the_analog_flag():
-    """`Type="2"` haengt an genau demselben Schalter wie das `Analog`-Attribut
-    des Tags (`export.documents.virtual_in_udp_cmd_attributes`): in der
-    Referenzdatei steht es ausnahmslos bei `Analog="true"`. Heute markiert
-    `export.signals.to_inputs` zwar jeden Eingang als analog - die beiden
-    duerfen aber nicht auseinanderlaufen, falls sich das aendert."""
+    """`Type="2"` hangs on exactly the same switch as the tag's `Analog`
+    attribute (`export.documents.virtual_in_udp_cmd_attributes`): in the
+    reference file it appears without exception alongside `Analog="true"`.
+    Today `export.signals.to_inputs` does mark every input as analog - but
+    the two must not drift apart if that changes."""
     existing_u: set[str] = {"1000-0001-0000-aaaaaaaaaaaaaaaa"}
     xml = new_cmd_children_xml(
         kind="input", existing_u=existing_u, iodata_attrs=None, analog=False, unit_format=""

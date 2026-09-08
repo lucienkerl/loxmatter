@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,9 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer `LocaleStore` - die gemeinsame Spracheinstellung, gehalten in
-derselben `setting`-Tabelle wie `AuthStore.password_hash` (siehe dortiges
-test_auth_store.py fuer das gleiche Muster)."""
+"""Tests for `LocaleStore` - the shared language setting, held in the same
+`setting` table as `AuthStore.password_hash` (see test_auth_store.py there
+for the same pattern)."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def test_set_language_rejects_an_unsupported_value(tmp_path):
     try:
         with pytest.raises(ValueError):
             store.locale.set_language("fr")
-        # Kein Teil-Erfolg: der Vorgabewert gilt weiterhin.
+        # No partial success: the default value still applies.
         assert store.locale.get_language() == "en"
     finally:
         store.close()

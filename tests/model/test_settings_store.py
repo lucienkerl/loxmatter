@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer `BridgeSettingsStore` - den Teil des Stores, der die
-Verbindungsdaten zur Bruecke (IP, Ports) verwaltet, analog zu `AuthStore`.
+"""Tests for `BridgeSettingsStore` - the part of the store that manages the
+connection data to the bridge (IP, ports), analogous to `AuthStore`.
 
-Siehe docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
-Abschnitt 4."""
+See docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
+section 4."""
 
 from __future__ import annotations
 
@@ -69,8 +69,8 @@ def test_save_overwrites_a_previous_value(tmp_path):
 
 
 def test_settings_survive_a_reopened_connection(tmp_path):
-    """Serverseitig statt localStorage (Entwurf Abschnitt 4): der Punkt ist
-    genau, dass es einen Prozessneustart uebersteht."""
+    """Server-side instead of localStorage (draft section 4): the whole
+    point is that it survives a process restart."""
     path = tmp_path / "t.sqlite"
     store = Store(path)
     try:
