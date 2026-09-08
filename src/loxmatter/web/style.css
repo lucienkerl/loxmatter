@@ -2258,6 +2258,21 @@ footer.hint-block {
   border-color: var(--border);
 }
 
+/* Bedien-Modal (Aufgabe 7): eine Zeile je Regler, Beschriftung ueber dem
+ * Regler statt daneben - auf schmalen Fenstern bleibt der Regler sonst zu
+ * kurz zum Zielen. Nutzt dieselbe `.signals-modal`-Rahmung wie das
+ * Signal-Modal, siehe dort. */
+.control-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.control-row input[type="range"] {
+  width: 100%;
+}
+
 /* Die beiden Signalgruppen im Modal. Der Standard-Marker eines `<summary>`
  * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
  * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren

@@ -395,6 +395,9 @@ function app() {
     controlsByDevice: {},
     commandValueDrafts: {},
     commandBusyKey: null,
+    // Entwurfsspeicher fuer die Regler im Bedien-Modal (Aufgabe 7): einmal
+    // beim Oeffnen aus `readStartValues` befuellt, siehe dort.
+    controlDrafts: {},
     // Kurzmeldungen als Overlay statt im Textfluss (2026-09-03): eine
     // eingeblendete Zeile im Fluss verschiebt alles darunter, und wer
     // gerade einen zweiten Befehl anklicken will, trifft daneben.
@@ -490,6 +493,14 @@ function app() {
     // KEIN Modal-Zustand wie `signalsModalDevice` oben - siehe der
     // `@mousedown.self`/`@click.self`-Kommentar am `<dialog>` in index.html.
     signalsModalBackdropMousedown: false,
+
+    // Wie `signalsModalDevice`: nur die ID, nicht das Objekt - siehe den
+    // Kommentar dort und `controlModalDeviceObject()`. Zurueckgesetzt wird
+    // dieses Feld nach derselben Regel an GENAU EINER Stelle, dem `@close`
+    // des Bedien-Modals in index.html.
+    controlModalDevice: null,
+    // Wie `signalsModalBackdropMousedown`, nur fuer das Bedien-Modal.
+    controlModalBackdropMousedown: false,
 
     // --- Einstellungen ---------------------------------------------------
     // `bridgeSettings` ist der zuletzt vom Server geladene Stand (auch von
@@ -1007,6 +1018,21 @@ function app() {
     hiddenRawCommandsFor(deviceId) {
       const controls = this.controlsByDevice[deviceId];
       return controls ? controls.hidden_raw_commands : 0;
+    },
+
+    /** Alle Kommandos eines Geraets mit genau diesem Bedienelement-Typ
+     * (`CommandOut.control`: "none", "percent", "kelvin", "hue_sat",
+     * "unknown"). Entscheidet, WELCHES Bedienelement gebaut wird - siehe
+     * die Entwurfsregel dazu im Bedien-Modal in index.html: `command.slug`
+     * dient dort nur als Beschriftung, nie als Fallunterscheidung. */
+    controlsByKind(deviceId, kind) {
+      return this.commandsFor(deviceId).filter((command) => command.control === kind);
+    },
+
+    /** Ob dieses Geraet ueberhaupt etwas Wertbehaftetes kann - nur dann
+     * bekommt die Kachel den "Steuern"-Knopf zum Bedien-Modal. */
+    hasAdjustableControls(deviceId) {
+      return this.commandsFor(deviceId).some((command) => command.control !== "none");
     },
 
     exportedAtFor(deviceId) {
@@ -1540,6 +1566,28 @@ function app() {
       }
     },
 
+    /**
+     * Schickt einen Reglerwert. Aufgerufen beim LOSLASSEN (`change`), nicht
+     * waehrend des Ziehens: ein Zug = ein Funkpaket. Thread ist langsam,
+     * und wenn ein Klick etwas beweisen soll, muss die Zuordnung zwischen
+     * Eingabe und Reaktion eindeutig bleiben (Entwurf 2026-09-07,
+     * Abschnitt 6.5).
+     */
+    async sendControl(device, command, value) {
+      this.commandBusyKey = command.key;
+      try {
+        await this.request("POST", `/api/commands/${command.key}`, { value: String(value) });
+        this.showToast(t("web.devices.command_sent", { slug: command.slug, label: device.label }));
+      } catch (error) {
+        this.showToast(
+          t("web.devices.command_failed", { slug: command.slug, message: error.message }),
+          true,
+        );
+      } finally {
+        this.commandBusyKey = null;
+      }
+    },
+
     // ---------------------------------------------------------------------
     // Kurzmeldungen (2026-09-03)
     // ---------------------------------------------------------------------
@@ -1957,6 +2005,79 @@ function app() {
     rawWriteMessageClass(signal) {
       const message = this.rawWriteMessages[signal.key];
       return message && message.isError ? "hint danger-text" : "hint";
+    },
+
+    // ---------------------------------------------------------------------
+    // Bedien-Modal (Aufgabe 7): Regler statt nackter Zahlenfelder fuer
+    // wertbehaftete Kommandos. Aufbau, Oeffnen, Schliessen und Backdrop-
+    // Klick folgen exakt dem Signal-Modal oben - siehe dessen Kommentare
+    // fuer die Begruendung.
+    // ---------------------------------------------------------------------
+
+    controlModalDeviceObject() {
+      return this.devices.find((device) => device.id === this.controlModalDevice) || null;
+    },
+
+    /**
+     * Oeffnet das Bedien-Modal. Das `$nextTick` ist Pflicht, kein Stil -
+     * dieselbe Begruendung wie bei `openSignalsModal`: `showModal()` setzt
+     * den Anfangsfokus auf das erste fokussierbare Element IM Dialog, und
+     * das entsteht erst, nachdem Alpine den `x-if`-Inhalt aufgebaut hat.
+     */
+    openControlModal(device) {
+      this.deviceActionError = null;
+      this.controlModalDevice = device.id;
+      this.controlDrafts = this.readStartValues(device.id);
+      this.$nextTick(() => this.$refs.controlModal.showModal());
+    },
+
+    /** Schliesst ueber `close()`, damit der `close`-Handler in index.html
+     * die eine Stelle bleibt, die `controlModalDevice` zuruecksetzt -
+     * dieselbe Regel wie bei `closeSignalsModal`. */
+    closeControlModal() {
+      this.$refs.controlModal.close();
+    },
+
+    // Die Slugs, unter denen die Signale eines Geraets die Startwerte
+    // tragen. `signalsByDevice` haelt ALLE Signale, nicht nur die
+    // exportierten (siehe api/devices.py, `get_signals`), und ihre Werte
+    // sind bereits skaliert (loxone/values.py, `to_loxone_value`) - level
+    // und saturation in Prozent, hue in Grad. Nur die Farbtemperatur steht
+    // in Mired, weil Kelvin ein Kehrwert ist, den `scale` nicht kann.
+    // Ueber den PFAD gesucht, nicht ueber den Slug im Schluessel: kollidiert
+    // ein Schluessel innerhalb eines Geraets, haengt `Store._assign_key` die
+    // Element-ID an (`d1_1_hue_0`), und ein Vergleich auf `_hue` ginge dann
+    // ins Leere. `SignalOut.path` ist "endpunkt/cluster/element" und damit
+    // exakt.
+    signalValueByPath(deviceId, clusterId, elementId) {
+      const signals = this.signalsByDevice[deviceId] || [];
+      const signal = signals.find((entry) => entry.path.endsWith(`/${clusterId}/${elementId}`));
+      return signal ? this.liveValueOf(signal) : undefined;
+    },
+
+    /**
+     * Einmalig beim Oeffnen gelesen, danach NICHT nachgefuehrt (Entwurf
+     * 2026-09-07, Abschnitt 2). Ohne diese Startwerte stuende jeder Regler
+     * auf einer erfundenen Position, und der erste Schubs risse die Leuchte
+     * irgendwohin - der Klick bewiese dann nichts ueber den Zustand, den er
+     * gerade veraendert hat.
+     *
+     * `undefined` bleibt `undefined` und wird nicht durch eine Null
+     * ersetzt: die Oberflaeche zeigt dafuer den Hinweis "Startwert
+     * unbekannt", statt eine Kenntnis vorzutaeuschen, die nicht besteht.
+     */
+    readStartValues(deviceId) {
+      // Cluster 8 Attribut 0 = CurrentLevel; Cluster 768: 0 = CurrentHue,
+      // 1 = CurrentSaturation, 7 = ColorTemperatureMireds, 8 = ColorMode.
+      // Alle gegen das installierte SDK belegt (siehe Entwurf, Abschnitt 4).
+      const mireds = this.signalValueByPath(deviceId, 768, 7);
+      return {
+        percent: this.signalValueByPath(deviceId, 8, 0),
+        kelvin: mireds > 0 ? Math.round(1000000 / mireds) : undefined,
+        hue: this.signalValueByPath(deviceId, 768, 0),
+        saturation: this.signalValueByPath(deviceId, 768, 1),
+        colormode: this.signalValueByPath(deviceId, 768, 8),
+      };
     },
 
     // ---------------------------------------------------------------------

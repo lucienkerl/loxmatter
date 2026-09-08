@@ -3583,24 +3583,27 @@ async def test_the_room_group_wrapper_does_not_disturb_the_menu_layout(api):
     assert "gap: 1px" in rule
 
 
-async def test_exactly_one_signals_dialog_is_delivered(api):
-    """Entwurf Abschnitt 4: EIN `<dialog>` fuer die ganze Seite, nicht eines
-    je Kachel.
+async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
+    """Entwurf Abschnitt 4: EIN `<dialog>` je Zweck fuer die ganze Seite,
+    nicht eines je Kachel.
 
     Markup innerhalb `x-for` wird einmal PRO GERAET ausgeliefert - bei
     dreissig Geraeten laegen dreissig vollstaendige Signaltabellen im
     Dokument, und jede `id` darin dreissigfach (derselbe Fallstrick, den
     `aria-labelledby` im Kachel-Menue schon einmal umschiffen musste). Die
-    Zaehlung auf 1 ist die einzige Zusicherung, die diesen Rueckfall
-    ueberhaupt bemerken wuerde: ein `<dialog>` in der Kachel saehe im
-    ausgelieferten Text sonst genauso aus wie eines am Seitenende.
+    Zaehlung auf 2 (ein Signal-Modal, ein Bedien-Modal aus Aufgabe 7) ist
+    die einzige Zusicherung, die diesen Rueckfall ueberhaupt bemerken
+    wuerde: ein `<dialog>` in der Kachel saehe im ausgelieferten Text sonst
+    genauso aus wie eines am Seitenende.
 
-    Die Ortspruefung (nach `</main>`) belegt zusaetzlich, dass es ausserhalb
-    der Ansichts-Sections und damit ausserhalb jeder Geraeteschleife steht."""
+    Die Ortspruefung (nach `</main>`) belegt zusaetzlich, dass beide
+    ausserhalb der Ansichts-Sections und damit ausserhalb jeder
+    Geraeteschleife stehen."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 1
+    assert markup.count("<dialog") == 2
     assert 'x-ref="signalsModal"' in markup
+    assert 'x-ref="controlModal"' in markup
     assert markup.index("<dialog") > markup.index("</main>")
 
 
@@ -4131,3 +4134,27 @@ async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
     assert '<span class="room-spacer"></span>' in bar
     css = (await client.get("/static/style.css")).text
     assert "flex: 1 1 auto" in css.split(".room-spacer {", 1)[1].split("}", 1)[0]
+
+
+async def test_the_control_modal_is_delivered(api):
+    """Belegt NUR die Auslieferung. Ob die Alpine-Ausdruecke darin
+    tatsaechlich binden, kann dieser Test nicht sagen - das prueft der
+    Browser-Durchgang in einer spaeteren Aufgabe."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "openControlModal" in script
+    assert "readStartValues" in script
+    assert "controlsByKind" in script
+    assert "sendControl" in script
+
+    page = (await client.get("/")).text
+    assert 'x-ref="controlModal"' in page
+    assert "@close=\"controlModalDevice = null\"" in page
+    assert "openControlModal(device)" in page
+    # Deviation vom Aufgaben-Brief (Projektentscheidung): der Prozent-Regler
+    # traegt seine Beschriftung ueber `command.slug`, nicht ueber einen
+    # festen Uebersetzungsschluessel - die eingecheckte Testleuchte
+    # (`ikea_kajplats_cws_lamp.json`) hat zwei Prozent-Kommandos, die sich
+    # sonst nicht unterscheiden liessen.
+    assert "web.devices.control_brightness" not in page
+    assert "web.devices.control_brightness" not in script

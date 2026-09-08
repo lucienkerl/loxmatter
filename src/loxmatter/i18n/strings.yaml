@@ -916,6 +916,29 @@ web.devices.menu_signals:
   en: "Edit signals…"
   de: "Signale bearbeiten…"
 
+# --- Bedien-Modal (Aufgabe 7): Regler statt nackter Zahlenfelder fuer
+# wertbehaftete Kommandos. `control_brightness` gibt es absichtlich NICHT:
+# ein Geraet kann mehrere Prozent-Kommandos haben (z. B. `level` und
+# `level_onoff`), deren Regler sich sonst nicht unterscheiden liessen -
+# jeder Prozent-Regler traegt stattdessen `command.slug` als Beschriftung.
+# Der Kelvin-Regler bleibt fest beschriftet, davon gibt es je Geraet nur
+# einen.
+web.devices.control_button:
+  en: "Control"
+  de: "Steuern"
+web.devices.control_modal_title:
+  en: "Control {label}"
+  de: "{label} steuern"
+web.devices.control_colortemp:
+  en: "Colour temperature"
+  de: "Farbtemperatur"
+web.devices.control_start_value_unknown:
+  en: "Start value unknown — the device has not reported this value."
+  de: "Startwert unbekannt — das Gerät hat diesen Wert nicht gemeldet."
+web.devices.control_no_range:
+  en: "This lamp does not report its colour temperature range, so there is no slider."
+  de: "Diese Leuchte meldet ihren Farbtemperaturbereich nicht, deshalb gibt es keinen Regler."
+
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
   en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."

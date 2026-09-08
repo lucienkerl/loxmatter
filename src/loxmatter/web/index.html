@@ -688,30 +688,23 @@
                   ></p>
 
                   <div class="device-commands">
-                    <template x-for="command in commandsFor(device.id)" :key="command.key">
-                      <span class="row">
-                        <button
-                          x-show="!command.takes_value"
-                          @click="executeCommand(device, command)"
-                          :disabled="commandBusyKey === command.key || !isOnline(device)"
-                          x-text="command.slug"
-                        ></button>
-                        <span x-show="command.takes_value" class="row">
-                          <span x-text="command.slug"></span>
-                          <input
-                            type="number"
-                            style="width: 4.5rem"
-                            :placeholder="t('web.devices.value_placeholder')"
-                            @input="commandValueDrafts[command.key] = $event.target.value"
-                          />
-                          <button
-                            @click="executeCommand(device, command)"
-                            :disabled="commandBusyKey === command.key || !isOnline(device)"
-                            x-text="t('web.devices.send')"
-                          ></button>
-                        </span>
-                      </span>
+                    <template x-for="command in controlsByKind(device.id, 'none')" :key="command.key">
+                      <button
+                        @click="executeCommand(device, command)"
+                        :disabled="commandBusyKey === command.key || !isOnline(device)"
+                        x-text="command.slug"
+                      ></button>
                     </template>
+                    <!-- Wertbehaftete Kommandos ziehen ins Bedien-Modal
+                         (Aufgabe 7): die Kachel zeigt dafuer nur noch diesen
+                         einen Knopf, statt je Kommando ein nacktes
+                         Zahlenfeld zu rendern. -->
+                    <button
+                      x-show="hasAdjustableControls(device.id)"
+                      @click="openControlModal(device)"
+                      :disabled="!isOnline(device)"
+                      x-text="t('web.devices.control_button')"
+                    ></button>
                     <span
                       class="hint"
                       x-show="hiddenRawCommandsFor(device.id) > 0"
@@ -1857,6 +1850,127 @@
                 </details>
               </template>
             </div>
+          </template>
+        </div>
+      </template>
+    </dialog>
+
+    <!--
+      Bedien-Modal (Aufgabe 7): Regler statt nackter Zahlenfelder fuer
+      wertbehaftete Kommandos. Aufbau, Oeffnen, Schliessen und
+      Backdrop-Klick folgen exakt dem Signal-Modal oben - siehe dessen
+      Kommentare fuer die vollstaendige Begruendung: `@close` bleibt die
+      EINZIGE Stelle, die `controlModalDevice` zuruecksetzt; `@mousedown`
+      merkt in `controlModalBackdropMousedown`, ob die Geste auf dem
+      Backdrop begann, `@click.self` prueft `isBackdropEvent` an BEIDEN
+      Enden; `x-ref` ist unbedenklich, weil dieses `<dialog>` genau einmal
+      im Dokument steht.
+
+      Welches Bedienelement je Kommando entsteht, entscheidet
+      AUSSCHLIESSLICH `command.control` (`controlsByKind` filtert danach) -
+      `command.slug` dient unten nur als Beschriftung, nie als
+      Fallunterscheidung. Deshalb traegt jeder Prozent-Regler seinen
+      eigenen `command.slug` statt einer festen Uebersetzung: die
+      eingecheckte IKEA-Leuchte akzeptiert zwei Prozent-Kommandos (`level`
+      und `level_onoff`), das Modal zeichnet also zwei Regler
+      untereinander, und fuer die Diagnose zaehlt gerade, welches der
+      beiden die Leuchte tatsaechlich befolgt. Der Kelvin-Regler bleibt
+      fest beschriftet - davon gibt es je Geraet nur einen.
+
+      Der `hue_sat`-Block folgt in Aufgabe 8.
+    -->
+    <dialog
+      x-ref="controlModal"
+      class="signals-modal"
+      aria-labelledby="control-modal-heading"
+      @close="controlModalDevice = null"
+      @mousedown="controlModalBackdropMousedown = isBackdropEvent($event, $el)"
+      @click.self="if (controlModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); controlModalBackdropMousedown = false"
+    >
+      <template x-if="controlModalDeviceObject()">
+        <div class="signals-modal-body">
+          <div class="signals-modal-head">
+            <h2
+              id="control-modal-heading"
+              x-text="t('web.devices.control_modal_title', { label: controlModalDeviceObject().label })"
+            ></h2>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              class="signals-modal-close"
+              :title="t('web.signals.modal_close')"
+              :aria-label="t('web.signals.modal_close')"
+              @click="closeControlModal()"
+            ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
+
+          <template x-for="command in controlsByKind(controlModalDevice, 'none')" :key="command.key">
+            <button
+              @click="executeCommand(controlModalDeviceObject(), command)"
+              :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+              x-text="command.slug"
+            ></button>
+          </template>
+
+          <!-- Prozent-Regler: Beschriftung ist `command.slug`, NICHT eine
+               feste Uebersetzung - Begruendung im Kommentar oben am
+               `<dialog>`. -->
+          <template x-for="command in controlsByKind(controlModalDevice, 'percent')" :key="command.key">
+            <div class="control-row">
+              <label x-text="command.slug"></label>
+              <input
+                type="range" min="0" max="100" step="1"
+                :value="controlDrafts.percent ?? 50"
+                :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                @change="sendControl(controlModalDeviceObject(), command, $event.target.value)"
+              />
+              <p
+                class="hint"
+                x-show="controlDrafts.percent === undefined"
+                x-text="t('web.devices.control_start_value_unknown')"
+              ></p>
+            </div>
+          </template>
+
+          <template x-for="command in controlsByKind(controlModalDevice, 'kelvin')" :key="command.key">
+            <div class="control-row">
+              <label x-text="t('web.devices.control_colortemp')"></label>
+              <input
+                x-show="command.range"
+                type="range" :min="command.range?.min" :max="command.range?.max" step="10"
+                :value="controlDrafts.kelvin ?? command.range?.min"
+                :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                @change="sendControl(controlModalDeviceObject(), command, $event.target.value)"
+              />
+              <p class="hint" x-show="!command.range" x-text="t('web.devices.control_no_range')"></p>
+              <span x-show="!command.range" class="row">
+                <input
+                  type="number"
+                  :placeholder="t('web.devices.value_placeholder')"
+                  @input="commandValueDrafts[command.key] = $event.target.value"
+                />
+                <button
+                  @click="executeCommand(controlModalDeviceObject(), command)"
+                  :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                  x-text="t('web.devices.send')"
+                ></button>
+              </span>
+            </div>
+          </template>
+
+          <template x-for="command in controlsByKind(controlModalDevice, 'unknown')" :key="command.key">
+            <span class="row">
+              <span x-text="command.slug"></span>
+              <input
+                type="number"
+                :placeholder="t('web.devices.value_placeholder')"
+                @input="commandValueDrafts[command.key] = $event.target.value"
+              />
+              <button
+                @click="executeCommand(controlModalDeviceObject(), command)"
+                :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                x-text="t('web.devices.send')"
+              ></button>
+            </span>
           </template>
         </div>
       </template>
