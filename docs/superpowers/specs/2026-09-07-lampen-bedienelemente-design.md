@@ -380,9 +380,17 @@ unbekannt“ und die Fehlermeldung für eine ungültige Farbzahl.
    `hue 0, sat 254` — identische Kommandos, Dimmen im Loxone-Baustein
    bewirkt an der Leuchte also nichts. AQa 0 ergibt `hue 0, sat 0`, also
    Weiß statt Aus. Kein Programmierfehler, sondern Folge der bewussten
-   Beschränkung auf ein Farbkommando (Abschnitt 9.3) — aber mangels
-   erreichbarer Hardware mit angeschlossenem Loxone-RGB-Baustein bislang
-   ungetestet (Abschluss-Review 2026-09-08, Befund I-3).
+   Beschränkung auf ein Farbkommando (Abschnitt 9.3).
+
+   **Nachtrag 8. September 2026:** Die Kette gepackte Zahl → Farbe an der
+   Leuchte ist seither an echter Hardware gemessen (siehe
+   `commands/color.py`), das Verhalten oben ist also nicht mehr nur
+   gerechnet, sondern bestätigt — was das Dimm-Problem von einer Vermutung
+   zu einer Tatsache macht. Ungetestet bleibt allein die Loxone-Seite: ein
+   Miniserver mit angeschlossenem RGB-Baustein stand nicht zur Verfügung,
+   geprüft wurde über `POST /api/commands/{key}` mit von Hand gebildeten
+   AQa-Zahlen. Da beide Aufrufer denselben Übersetzer benutzen (Abschnitt
+   3), ist das dieselbe Codestrecke — aber nicht dieselbe Quelle der Zahl.
 6. **Endpunkt-Asymmetrie zwischen Server und Oberfläche.**
    `api/control.py::_kelvin_range` filtert Startwerte korrekt auf
    `signal.ref.endpoint == command.endpoint`; die Oberfläche sucht ihre

@@ -16,29 +16,46 @@
 
 """Farbraum-Umrechnung zwischen Loxone und Matter.
 
-ACHTUNG - dieser Teil ist NICHT an Hardware validiert. Beim Bau stand keine
-Matter-Leuchte zur Verfuegung; geprueft ist er ausschliesslich gegen
-Referenzwerte der HSV-Definition und gegen die unten zitierte
-Loxone-Dokumentation. Von allen Abbildungen im Projekt ist diese die
-fehleranfaelligste, und ein Fehler sieht hier nach einem Geraetefehler aus,
-nicht nach einem Umrechnungsfehler. Vor dem ersten Einsatz an einer echten
-Leuchte gegenpruefen.
+An Hardware gegengeprueft am 8. September 2026, an der eingecheckten
+IKEA KAJPLATS E14 CWS (`tests/fixtures/nodes/ikea_kajplats_cws_lamp.json`,
+Node 21). Bis dahin stand hier die Warnung, dieser Teil sei nie an einer
+echten Leuchte gelaufen - beim Bau stand keine zur Verfuegung.
 
-Stand 8. September 2026: Der Weg WebUI -> `MoveToHueAndSaturation` ist im
-Browser gegen die laufende Anwendung durchgespielt worden. Belegt sind
-Reiterleiste und Farbflaeche nur bei Leuchten, die beides koennen (die
-Farbleuchte bekam beide Reiter und einen Kelvin-Regler 1801-6535 K, die
-Weisston-Leuchte nur den Kelvin-Regler mit ihren echten Grenzen
-2202-6535 K und keine Reiter), Startwerte werden aus den echten
-Geraetesignalen gelesen, und vier Klicks in die Farbflaeche erzeugten vier
-Kommandos (Senden beim Loslassen) mit den richtigen gepackten
-Loxone-Zahlen - Rot 1002100, Gruen 1100001, Blau 100001001, Weiss
-99099100. Diese vier Zahlen sind der aussagekraeftigste Beleg, weil sie die
-gesamte Kette von Mausklick bis gepackter Loxone-Zahl bestaetigen. Nicht
-belegt ist weiterhin, ob eine echte Leuchte tatsaechlich in der erwarteten
-Farbe leuchtet: Beide Testleuchten waren beim Durchgang am matter-server
-als offline gemeldet (`available=False`, stromlos oder ausserhalb der
-Thread-Reichweite), und kein einziges Kommando hat ein Geraet erreicht.
+Gemessen wurde nicht die Umrechnung fuer sich, sondern die ganze Kette:
+gepackte Loxone-Zahl -> `loxone_rgb_to_rgb` -> `rgb_to_hue_saturation` ->
+MoveToHueAndSaturation -> was die Leuchte selbst zurueckmeldet
+(CurrentHue 1/768/0, CurrentSaturation 1/768/1):
+
+    gepackt 100        -> Leuchte meldet   0,0 Grad / 100 %   (Rot)
+    gepackt 100000     -> Leuchte meldet 120,5 Grad / 100 %   (Gruen)
+    gepackt 100000000  -> Leuchte meldet 239,5 Grad / 100 %   (Blau)
+    gepackt 100100     -> Leuchte meldet  59,5 Grad / 100 %   (Gelb)
+    gepackt 100100100  -> Leuchte meldet   0,0 Grad /   0 %   (Weiss)
+
+Die Abweichungen von hoechstens 0,5 Grad sind die Matter-Quantisierung
+(360/254 = 1,417 Grad je Schritt), kein Umrechnungsfehler. ColorMode
+(1/768/8) sprang dabei erwartungsgemaess von 2 (Farbtemperatur) auf 0
+(Hue/Saturation) - die Leuchte hat das Kommando also tatsaechlich
+ausgefuehrt und nicht bloss quittiert.
+
+Der Satz, warum das hier ueberhaupt steht, gilt unveraendert: von allen
+Abbildungen im Projekt ist diese die fehleranfaelligste, und ein Fehler
+sieht hier nach einem Geraetefehler aus, nicht nach einem
+Umrechnungsfehler. Wer sie anfasst, misst besser noch einmal nach.
+
+Die Messung oben beginnt bei der gepackten Zahl. Das Stueck davor - vom
+Mausklick bis zu dieser Zahl - ist am selben Tag im Browser gegen die
+laufende Anwendung geprueft worden: vier Klicks in die Farbflaeche
+erzeugten vier Kommandos (Senden erst beim Loslassen) mit den Zahlen
+1002100, 1100001, 100001001 und 99099100 fuer Rot, Gruen, Blau und Weiss.
+Dabei bekam die Farbleuchte beide Modus-Reiter und einen Kelvin-Regler
+1801-6535 K, die Weisston-Leuchte nur den Kelvin-Regler mit ihren eigenen
+Grenzen 2202-6535 K und keine Reiter - die Abstufung entsteht also
+tatsaechlich aus dem, was das Geraet kann, ohne dass die Oberflaeche sein
+Modell kennt.
+
+Beide Haelften zusammen decken die Kette lueckenlos ab: Klick -> gepackte
+Zahl (Browser) und gepackte Zahl -> Farbe an der Leuchte (oben).
 
 Rechercheergebnis zur Loxone-seitigen Farbcodierung (Schritt 1 dieser Task):
 
