@@ -1494,7 +1494,7 @@ In the export section (line 434-481), replace the first `<div class="row">` (the
 - [ ] **Step 3: Verify manually**
 
 Run: `uv run python scripts/dev_web_server.py`
-Expected: the "Export" tab shows the three fields grayed out/read-only with the value last saved in "Settings" (save `192.168.1.20`/`7000`/`8080` there first, see task 6 step 3). Clicking the "Einstellungen → Verbindung zum Miniserver" link switches the tab. "Vorschau ansehen" and "ZIP herunterladen" keep working (the preview table appears, the ZIP downloads). Without previously saved settings (a fresh database, `--store-path` pointed at a new file), clicking "Vorschau ansehen" shows the error message "Bitte zuerst in Einstellungen …" instead of a server 422.
+Expected: the "Export" tab shows the three fields grayed out/read-only with the value last saved in "Settings" (save `192.168.1.20`/`7000`/`8080` there first, see task 6 step 3). Clicking the `Einstellungen → Verbindung zum Miniserver` link switches the tab. `Vorschau ansehen` and `ZIP herunterladen` keep working (the preview table appears, the ZIP downloads). Without previously saved settings (a fresh database, `--store-path` pointed at a new file), clicking `Vorschau ansehen` shows the error message `Bitte zuerst in Einstellungen …` instead of a server 422.
 
 - [ ] **Step 4: Commit**
 
@@ -1729,7 +1729,7 @@ Replace the complete block from `<template x-for="device in devices" :key="devic
 - [ ] **Step 6: Verify manually**
 
 Run: `uv run python scripts/dev_web_server.py`
-Expected: the "Devices" tab shows both cards immediately with values ("Zustand: Ein", "Leistung: 12,4 W" for the plug — thanks to the values seeded in task 4) and controls, with no click on "Details" needed (that button no longer exists). The plug shows an amber "Geändert seit Export" pill (never exported = `changed_since_export: true`) and an amber edge stripe. Renaming still works (input field, Enter/loss of focus). "Entfernen" still works (confirmation prompt, card disappears).
+Expected: the "Devices" tab shows both cards immediately with values (`Zustand: Ein`, `Leistung: 12,4 W` for the plug — thanks to the values seeded in task 4) and controls, with no click on "Details" needed (that button no longer exists). The plug shows an amber `Geändert seit Export` pill (never exported = `changed_since_export: true`) and an amber edge stripe. Renaming still works (input field, Enter/loss of focus). `Entfernen` still works (confirmation prompt, card disappears).
 
 - [ ] **Step 7: Commit**
 
@@ -1818,9 +1818,9 @@ Run: `uv run python scripts/dev_web_server.py`
 
 First save IP `192.168.1.20`/ports `7000`/`8080` in "Settings" (if not already done). Then in the "Devices" tab:
 
-Expected: every card shows an "Exportieren" button in the footer. Clicking it on "Steckdose Wohnzimmer" → the browser downloads a file `loxmatter-d<id>-export.zip`, a toast "Steckdose Wohnzimmer wurde exportiert." appears, the amber "Geändert seit Export" pill disappears (status reloaded, the device now counts as exported). Unzip the ZIP file and check: it contains only `VIU_d<id>_….xml` and `VO_d<id>_….xml` of this one device, not the button's.
+Expected: every card shows an `Exportieren` button in the footer. Clicking it on `Steckdose Wohnzimmer` → the browser downloads a file `loxmatter-d<id>-export.zip`, a toast `Steckdose Wohnzimmer wurde exportiert.` appears, the amber `Geändert seit Export` pill disappears (status reloaded, the device now counts as exported). Unzip the ZIP file and check: it contains only `VIU_d<id>_….xml` and `VO_d<id>_….xml` of this one device, not the button's.
 
-Without saved settings (a new database via `--store-path` pointed at a new file), the "Exportieren" button is grayed out, with tooltip "Erst in Einstellungen → Verbindung zum Miniserver hinterlegen".
+Without saved settings (a new database via `--store-path` pointed at a new file), the `Exportieren` button is grayed out, with tooltip `Erst in Einstellungen → Verbindung zum Miniserver hinterlegen`.
 
 - [ ] **Step 4: Commit**
 

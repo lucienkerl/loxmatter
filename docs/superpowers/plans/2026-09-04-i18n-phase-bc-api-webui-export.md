@@ -35,7 +35,7 @@
 | `src/loxmatter/matter/client.py`, `src/loxmatter/commands/translate.py` | Modified: exception messages that reach `HTTPException(detail=str(exc))` migrated to `t()`. |
 | `src/loxmatter/export/documents.py`, `src/loxmatter/export/signals.py` | Modified: template `title`/`comment` field text migrated to `i18n.t("export.*", ...)`. |
 | `src/loxmatter/web/vendor/i18n.js` (or similar — exact name decided in Task 9) | New. The client-side `t()` helper + Alpine store, no build step, plain `<script>` include. |
-| `src/loxmatter/web/index.html` | Modified: static text nodes become `x-text="t('web.xyz')"` (or `:attr="t(...)"`); `x-cloak` added to the app shell; the empty "Weitere Einstellungen" settings card becomes the EN/DE language toggle. |
+| `src/loxmatter/web/index.html` | Modified: static text nodes become `x-text="t('web.xyz')"` (or `:attr="t(...)"`); `x-cloak` added to the app shell; the empty `Weitere Einstellungen` settings card becomes the EN/DE language toggle. |
 | `src/loxmatter/web/app.js` | Modified: `init()` fetches `GET /api/i18n` first; every dynamic user-facing string routes through the same `t()`. |
 | `tests/...` | Modified/new throughout, mirroring Phase A's pattern: existing assertions on literal German text move to English, German companions added via `i18n.set_language("de")` (server-side) or a fetched-strings fixture (client-side, exact approach decided per task). |
 
@@ -2374,7 +2374,7 @@ EOF
 This task ONLY adds new entries to `strings.yaml` — no call sites change, that's Task 10+. The complete, verified string inventory this table was built against lives at `.superpowers/sdd/webui-string-inventory.md` (relative to this worktree's repo root) — every later binding task refers to it for exact line numbers.
 
 **Decisions this table already makes (not left to the binding task):**
-- Strings that occur multiple times identically get ONE key, not a separate one per occurrence (session-expiry flow, bridge-IP hint, "Bruecke nicht erreichbar", "IP dieser Bruecke" field label, "Fehler" as system-check badge/log level) — see the inventory, section "Duplicate literals worth collapsing".
+- Strings that occur multiple times identically get ONE key, not a separate one per occurrence (session-expiry flow, bridge-IP hint, `Bruecke nicht erreichbar`, `IP dieser Bruecke` field label, `Fehler` as system-check badge/log level) — see the inventory, section "Duplicate literals worth collapsing".
 - Spelling mistakes in today's German source text (`Geraeteliste`, `unveraendert`, `geaendert`, `haelt`/`Anhaengen`/`waehrend`) are carried over VERBATIM into the `de` value, not silently corrected — the same restraint as in every other migration in this plan (no refactor bundles a content change).
 - `loxmatter` as the product name (title, both `<h1>`) is NOT translated — no entry for it.
 - Text with embedded HTML (`<strong>`, a `<span class="key">`) is carried as a YAML block scalar (`|`), so embedded quotation marks in `class="key"` don't need escaping — the binding task sets them via `x-html`, not `x-text`.
@@ -3236,7 +3236,7 @@ The one task in this group that adds NEW markup, not just translates existing te
 
 - [ ] **Step 3: Bind `index.html:695-730` (inventory §8)** — `web.settings.connection_heading` (697), `web.settings.connection_explanation` via `x-html` (698-705, has `<strong>Nicht</strong>` AND a `<span class="key">` wrapping the URL example), `web.bridge_ip_label` (708, SHARED with Task 13's export-tab label), `web.settings.bridge_ip_placeholder` as `:placeholder` (709), `web.settings.udp_port_label` (711), `web.settings.http_port_label` (713-714), `web.settings.save` (718-720), `web.settings.last_saved_prefix` (721-723, keep the following `x-text="formatTimestamp(...)"` unchanged, only translate the prefix), `web.settings.never_saved` (724-726).
 
-- [ ] **Step 4: Replace the "Weitere Einstellungen" placeholder card (`index.html:731-734`) with the language toggle**
+- [ ] **Step 4: Replace the `Weitere Einstellungen` placeholder card (`index.html:731-734`) with the language toggle**
 
 Current (per Task 9's note, this placeholder text itself never gets a translation key — it's replaced, not translated):
 ```html

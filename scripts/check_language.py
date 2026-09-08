@@ -122,7 +122,31 @@ GERMAN_AS_DATA = (
     # project). loxmatter has to write what Loxone Config writes.
     "Virtuelle Eing",
     "Virtuelle Ausg",
+    # scripts/capture_screenshots.py: the search side of a .replace() pair.
+    # It has to match the German device label the screenshot fixtures carry,
+    # so it is data about those fixtures, not prose about the screenshots.
+    '.replace("Altes Geraet',
+    '.replace("Matter — Altes Geraet',
 )
+
+# Markdown-only quotation markers (see section 2.2 of the spec addendum on
+# docs/): a fence or an inline code span shows what the code, a command, or
+# the UI actually contained, not developer prose. Translating what is inside
+# one would make the document claim something that never happened. This is
+# Markdown syntax, not a general rule - a backtick in a .py comment is not a
+# quotation marker, so these are only ever consulted for `.md` paths.
+FENCE = re.compile(r"^```")
+INLINE_CODE = re.compile(r"`[^`\n]*`")
+
+
+class UnterminatedFenceError(ValueError):
+    """A ``` fenced code block that never closes before EOF.
+
+    An unmatched fence cannot be told apart from a closed one that simply
+    never appears later in the file, so scan_text refuses to guess whether
+    the remaining lines are code (skip) or prose (check). It raises instead
+    of silently skipping to EOF, so the gap in coverage cannot go unnoticed.
+    """
 
 
 class Finding(NamedTuple):
@@ -138,13 +162,24 @@ def _is_exempt(path: str) -> bool:
 def scan_text(text: str, path: str) -> list[Finding]:
     if _is_exempt(path):
         return []
+    is_markdown = path.endswith(".md")
     findings: list[Finding] = []
     # None outside a de: block scalar; otherwise the indentation of the
     # `de:` key that opened it - continuation lines indented deeper than
     # this are still that key's value, and stay exempt until a line at or
     # below this indentation ends the block (blank lines never end it).
     de_block_indent: int | None = None
+    # Markdown fence state: None outside a fence, otherwise the line number
+    # of the opening ``` - kept so an unterminated fence can be reported
+    # with a useful location instead of just "somewhere in this file".
+    fence_start: int | None = None
     for number, line in enumerate(text.splitlines(), start=1):
+        if is_markdown:
+            if FENCE.match(line):
+                fence_start = None if fence_start is not None else number
+                continue
+            if fence_start is not None:
+                continue
         if de_block_indent is not None:
             if line.strip() == "":
                 continue
@@ -159,7 +194,11 @@ def scan_text(text: str, path: str) -> list[Finding]:
             continue
         if any(marker in line for marker in GERMAN_AS_DATA):
             continue
-        for match in WORD.finditer(line):
+        # Inline code spans quote a literal too, but only their contents -
+        # German outside the backticks on the same line is still prose and
+        # must still be checked, so only the span text is removed here.
+        scan_line = INLINE_CODE.sub("", line) if is_markdown else line
+        for match in WORD.finditer(scan_line):
             word = match.group(0)
             lowered = word.lower()
             if lowered in GERMAN_WORDS or lowered in GERMAN_STEMS:
@@ -168,6 +207,10 @@ def scan_text(text: str, path: str) -> list[Finding]:
             if UMLAUT_CHARS.search(word):
                 findings.append(Finding(number, word, line.strip()))
                 break
+    if is_markdown and fence_start is not None:
+        raise UnterminatedFenceError(
+            f"{path}:{fence_start}: fenced code block opened here is never closed"
+        )
     return findings
 
 
@@ -185,7 +228,13 @@ def main(argv: list[str] | None = None) -> int:
             text = file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        for finding in scan_text(text, path):
+        try:
+            findings = scan_text(text, path)
+        except UnterminatedFenceError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            total += 1
+            continue
+        for finding in findings:
             print(f"{path}:{finding.line}: German word {finding.word!r}: {finding.text}")
             total += 1
     if total:

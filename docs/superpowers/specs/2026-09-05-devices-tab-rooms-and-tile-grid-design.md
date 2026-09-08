@@ -81,7 +81,7 @@ sync with the devices.
 
 **Normalization.** Room names are trimmed on write; whatever is empty
 after trimming becomes `NULL`. Comparison and sorting run
-case-sensitively over the stored name — "Küche" and "küche" would be two
+case-sensitively over the stored name — `Küche` and `küche` would be two
 rooms. That is the simpler rule, and because the UI always offers
 existing rooms as a selection list and hides free text behind "+ New
 Room…", a spelling twin only arises if someone
@@ -173,7 +173,7 @@ removed device is, from the UI's perspective, no longer there and
 should not silently tag along either.
 
 **Merging is allowed.** A target name that already exists merges both
-rooms — that is the obvious meaning of "rename Küche to
+rooms — that is the obvious meaning of "rename `Küche` to
 Essbereich now" when an Essbereich already exists. The UI asks for
 confirmation beforehand in this case (section 6.3), because the operation
 cannot be undone: after merging, nobody knows anymore which device was
@@ -263,7 +263,7 @@ Approved after an interactive design ("Mix 2"), top to bottom:
    The hint about unnamed raw commands attaches itself as a dimmed "+3
    unnamed" at the end of the button row instead of its own line.
 4. **Footer** — on the left the **room selector** ("🏠 Wohnzimmer ▾", opens
-   the existing rooms plus "+ Neuer Raum …" plus "Ohne Raum"), next to it
+   the existing rooms plus `+ Neuer Raum …` plus `Ohne Raum`), next to it
    the export hint, on the right the icon buttons Export and Remove.
 
 **Primary-value rule:** the first functional signal in the order that
@@ -280,8 +280,8 @@ those.
 
 ### 6.3 Room Bar and Grouping
 
-Above the list, a chip row: "Alle · Wohnzimmer · Küche · … · Ohne Raum",
-each with its device count. With **Alle** selected, group headings appear per
+Above the list, a chip row: `Alle · Wohnzimmer · Küche · … · Ohne Raum`,
+each with its device count. With `Alle` selected, group headings appear per
 room; with a single room selected, they disappear because there's only one.
 
 **The chip row does not appear at all as long as not a single device
@@ -308,20 +308,20 @@ On every group heading, a pencil that renames the room
 the UI asks for confirmation beforehand and names the merge by
 name (see 4.3). If a single room is selected, there is no heading that
 could carry the pencil — it then sits on the active chip of the room bar.
-"Ohne Raum" is not a room and carries no pencil in either case: it is the
+`Ohne Raum` is not a room and carries no pencil in either case: it is the
 set of devices with no assignment, and a name one could change is
 exactly what these devices lack.
 
 **The filter state is not saved** — no `localStorage`, no
-endpoint. After a reload, the view is back on "Alle". A
+endpoint. After a reload, the view is back on `Alle`. A
 remembered filter otherwise creates the moment, two weeks later, when three
 of twelve devices are shown and nobody remembers why.
 
 ### 6.4 Sorting
 
-Rooms alphabetically, "Ohne Raum" always last. Within a room: by
+Rooms alphabetically, `Ohne Raum` always last. Within a room: by
 `category_rank`, within that alphabetically by label via `localeCompare`
-(so that "Ä" sorts next to "A" and not after "Z"). All plugs in a room
+(so that `Ä` sorts next to `A` and not after `Z`). All plugs in a room
 thus sit together, then the switches, then the rest.
 
 **No second heading level.** The categories get no separate
@@ -346,20 +346,20 @@ the category name is the translated one, "Steckdose" in German and
 "socket" in English find the same devices.
 
 **Search acts within the selected room**, chip and field apply
-together (AND). With "Alle" selected, it searches everything and stays
+together (AND). With `Alle` selected, it searches everything and stays
 grouped by room.
 
 This creates a case the view has to handle: no match in the
 selected room, even though the sought device sits next door. The empty
 state therefore doesn't just show "no match", but also counts the matches
 outside — "3 more matches in other rooms — show all", the link
-switches to "Alle" and keeps the search term.
+switches to `Alle` and keeps the search term.
 
 ### 6.7 Commissioning Card
 
 A third field next to pairing code and Thread dataset: a selection field
-with the existing rooms, default "Ohne Raum", last entry "+ Neuer
-Raum …" reveals a text field for the name.
+with the existing rooms, default `Ohne Raum`, last entry
+`+ Neuer Raum …` reveals a text field for the name.
 
 **The selected room stays after successful commissioning** — unlike
 code and Thread dataset, which continue to be cleared (`app.js:1093`).

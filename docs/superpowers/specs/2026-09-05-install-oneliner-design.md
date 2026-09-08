@@ -399,8 +399,9 @@ into section 6 ("🚀 Quickstart") of the product page.
 > [docs/SETUP.md](docs/SETUP.md).
 
 The two Pi steps the last paragraph refers to currently live in
-[`deploy/testhost/README.md`](../../../deploy/testhost/README.md) ("Bluetooth-Adapter
-ist rfkill-soft-blocked" and "start-stop-daemon haengt auf dem Pi-Kernel") and
+[`deploy/testhost/README.md`](../../../deploy/testhost/README.md)
+(`Bluetooth-Adapter ist rfkill-soft-blocked` and
+`start-stop-daemon haengt auf dem Pi-Kernel`) and
 move to `docs/SETUP.md` with the README rebuild.
 
 ## 11. Boundaries

@@ -165,8 +165,8 @@ that would otherwise be left in the old language.
 ## 8. Export templates (`export.*`) — phase C
 
 The around nine title/comment fields in `export/documents.py` and
-`export/signals.py` (e.g. `"erzeugt von loxmatter"`, `"Bridge
-erreichbar"`, `"Alle Werte neu senden"`, `f"{signal.title} Zähler"`) move
+`export/signals.py` (e.g. `"erzeugt von loxmatter"`, `"Bridge erreichbar"`,
+`"Alle Werte neu senden"`, `f"{signal.title} Zähler"`) move
 behind `i18n.t("export.<purpose>", **values)`. Since the CLI and WebUI
 call the same `export/*.py` code (phase A investigation, confirmed: no
 duplication), the same currently-set-at-export-time language applies to

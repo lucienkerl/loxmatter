@@ -1104,9 +1104,11 @@ MSG
 
 - [ ] **Step 1: Set the repository description**
 
-The current one is German: *"Bindet Matter-Geraete (Thread und WiFi) an einen
-Loxone Miniserver an: erzeugt importierbare Loxone-Vorlagen je Geraet, bruecke
-Werte per UDP und Befehle per HTTP, mit WebUI zum Einlernen und Bedienen."*
+The current one is German:
+
+```
+Bindet Matter-Geraete (Thread und WiFi) an einen Loxone Miniserver an: erzeugt importierbare Loxone-Vorlagen je Geraet, bruecke Werte per UDP und Befehle per HTTP, mit WebUI zum Einlernen und Bedienen.
+```
 
 ```bash
 gh repo edit --description "Bridges Matter devices (Thread and WiFi) to a Loxone Miniserver: generates importable Loxone templates per device, bridges values over UDP and commands over HTTP, with a web UI for commissioning and control."

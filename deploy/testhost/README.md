@@ -29,7 +29,7 @@ dongle, same firmware, same image.
 - From a Mac on the same LAN: `uv run loxmatter inspect --node 1 --url
   ws://10.0.1.56:5580/ws` connects and returns on stderr:
   ```
-  Node 1 ist am matter-server (ws://10.0.1.56:5580/ws) nicht bekannt — kommissioniert?
+  `Node 1 ist am matter-server (ws://10.0.1.56:5580/ws) nicht bekannt — kommissioniert?`
   ```
   Exit code 1 — per the Definition of Done, the proof that the connection stands (no
   commissioned device present, that's Task 7's job).

@@ -363,7 +363,7 @@ git commit -m "docs(screenshots): sieben Aufnahmen der Oberflaeche samt Aufnahme
 
 - [ ] **Step 1: Translate and assemble**
 
-Source is three sections of the old README, in this order: "Prerequisites" ("Voraussetzungen", 84–109), "Getting started" ("Erste Schritte") with both subsections (111–171), "Looking at a device" ("Ein Gerät ansehen", 182–193).
+Source is three sections of the old README, in this order: "Prerequisites" (`Voraussetzungen`, 84–109), "Getting started" (`Erste Schritte`) with both subsections (111–171), "Looking at a device" (`Ein Gerät ansehen`, 182–193).
 
 Translate section by section, don't freely retell. Must be preserved:
 
@@ -422,7 +422,7 @@ This is the largest translation block: 165 lines of dense prose, half of it the 
 
 - [ ] **Step 1: Translate**
 
-Source in this order: "Running it permanently: `loxmatter run`" ("Dauerhaft betreiben", 195–258), "Access control" ("Zugangsschutz", 260–337), "Language: English or German" ("Sprache: Englisch oder Deutsch", 339–360).
+Source in this order: "Running it permanently: `loxmatter run`" (`Dauerhaft betreiben`, 195–258), "Access control" (`Zugangsschutz`, 260–337), "Language: English or German" (`Sprache: Englisch oder Deutsch`, 339–360).
 
 These statements must be preserved verbatim in substance — they are the reason this document exists:
 
@@ -513,7 +513,7 @@ If CI differs, CI wins.
 
 - [ ] **Step 2: Write `docs/LICENSING.md`**
 
-Source: "Third-party software" ("Fremdsoftware", 376–393) and "Notices in the source files" ("Hinweise in den Quelldateien", 395–404). The table of dependencies with their licenses stays complete, as do both justifications: that Apache-2.0 is one-directionally compatible with GPL-3.0, and that the GPL notice in the source files is deliberately in the FSF's English wording.
+Source: "Third-party software" (`Fremdsoftware`, 376–393) and "Notices in the source files" (`Hinweise in den Quelldateien`, 395–404). The table of dependencies with their licenses stays complete, as do both justifications: that Apache-2.0 is one-directionally compatible with GPL-3.0, and that the GPL notice in the source files is deliberately in the FSF's English wording.
 
 Header as above, heading `# Licensing`.
 
@@ -765,7 +765,7 @@ git show 8002484:README.md > /tmp/readme-alt.md
 grep -n '^#' /tmp/readme-alt.md
 ```
 
-For every heading of the old README, name where its content lives now. Expected mapping: "What loxmatter does" ("Was macht loxmatter") → README "Why" plus diagram; "Status" ("Stand") → README "Status"; "Prerequisites", "Getting started", "Looking at a device" ("Voraussetzungen", "Erste Schritte", "Ein Gerät ansehen") → `SETUP.md`; "Developing" ("Entwickeln") → `DEVELOPMENT.md`; "Running it permanently", "Access control", "Language" ("Dauerhaft betreiben", "Zugangsschutz", "Sprache") → `OPERATIONS.md`; "License" ("Lizenz") → README plus `LICENSING.md`; "Third-party software", "Notices in the source files" ("Fremdsoftware", "Hinweise in den Quelldateien") → `LICENSING.md`. Anything without a new home is a finding.
+For every heading of the old README, name where its content lives now. Expected mapping: "What loxmatter does" (`Was macht loxmatter`) → README "Why" plus diagram; "Status" (`Stand`) → README "Status"; "Prerequisites", "Getting started", "Looking at a device" (`Voraussetzungen`, `Erste Schritte`, `Ein Gerät ansehen`) → `SETUP.md`; "Developing" (`Entwickeln`) → `DEVELOPMENT.md`; "Running it permanently", "Access control", "Language" (`Dauerhaft betreiben`, `Zugangsschutz`, `Sprache`) → `OPERATIONS.md`; "License" (`Lizenz`) → README plus `LICENSING.md`; "Third-party software", "Notices in the source files" (`Fremdsoftware`, `Hinweise in den Quelldateien`) → `LICENSING.md`. Anything without a new home is a finding.
 
 - [ ] **Step 4: Test suite as a regression guard**
 

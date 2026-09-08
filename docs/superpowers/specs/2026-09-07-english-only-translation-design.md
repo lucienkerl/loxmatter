@@ -21,17 +21,17 @@ Developer-facing is the operative word. German as a *product* language stays.
 
 ### 2.1 Translated
 
-| Area | Files | What changes |
+| `Area` | Files | What changes |
 | --- | --- | --- |
 | `src/**/*.py` | 75 | Comments, docstrings, and ~60 developer-facing German string literals (log messages, OpenAPI/CLI descriptions, internal exception text, attribute docstrings) |
 | `tests/**/*.py` | 82 | Comments, docstrings, and 67 German test function names |
 | `docs/superpowers/specs` + `plans` | 37 | Full prose, plus 26 German filenames renamed via `git mv` |
-| WebUI | `index.html`, `app.js`, `style.css` | Header comments and inline prose |
-| i18n tables | `strings.yaml`, `clusters.yaml` | YAML **comments** only |
-| Build and ops | `install.sh`, `scripts/*.sh`, `scripts/*.py`, `Dockerfile`, `deploy/`, `.github/workflows/ci.yml`, `pyproject.toml` | Comments |
-| Dotfiles | `.gitignore`, `deploy/testhost/.gitignore`, `deploy/testhost/.env.example` | Comments |
-| Remaining docs | `docs/LICENSING.md`, `deploy/testhost/README.md`, `tests/fixtures/loxone/README.md` | Full prose |
-| GitHub | Repository description | Replaced with an English one |
+| `WebUI` | `index.html`, `app.js`, `style.css` | Header comments and inline prose |
+| `i18n tables` | `strings.yaml`, `clusters.yaml` | YAML **comments** only |
+| `Build and ops` | `install.sh`, `scripts/*.sh`, `scripts/*.py`, `Dockerfile`, `deploy/`, `.github/workflows/ci.yml`, `pyproject.toml` | Comments |
+| `Dotfiles` | `.gitignore`, `deploy/testhost/.gitignore`, `deploy/testhost/.env.example` | Comments |
+| `Remaining docs` | `docs/LICENSING.md`, `deploy/testhost/README.md`, `tests/fixtures/loxone/README.md` | Full prose |
+| `GitHub` | Repository description | Replaced with an English one |
 
 German test names are far less widespread than a first pass suggested. The
 subdirectories under `tests/` (`api`, `matter`, `model`, `projectsync`, …)
@@ -99,56 +99,56 @@ invented.
 
 | German | English | Note |
 | --- | --- | --- |
-| Gerät / Geraet | device | 455 occurrences, the single most common domain noun |
-| Gerätetyp | device type | |
-| Brücke / Bruecke | bridge | the project itself |
-| Miniserver | Miniserver | Loxone product name, unchanged |
-| Einlernen | commissioning | Matter's own term for the pairing flow |
-| Bindung | binding | |
-| Signal | signal | |
-| Signalschlüssel | signal key | |
-| Leitsignal | primary signal | |
-| Eingang / Ausgang | input / output | Loxone virtual input/output |
-| Vorlage | template | the importable Loxone template |
-| Kachel | tile | device dashboard |
-| Raum | room | |
-| Ansicht | view | |
-| Oberfläche | interface / UI | prefer "UI" in short comments |
-| Knopf | button | |
-| Menü / Menue | menu | |
-| Modal | modal | unchanged |
-| Sitzung | session | |
-| Anmeldung | login | |
-| Datei | file | |
-| Projektdatei | project file | the Loxone `.Loxone` project |
-| Schlüssel / Schluessel | key | |
-| Eintrag | entry | |
-| Datenbank | database | |
-| Zustand | state | |
-| Laufzeit | runtime | |
-| Dienst | service | |
-| Beobachter | observer | |
-| Aufrufer | caller | |
-| Aufruf | call | |
-| Abschnitt | section | |
-| Entwurf | design | as in the design spec |
-| Aufgabe | task | plan tasks |
-| Schritt | step | |
-| Regel | rule | |
-| Prüfung / Pruefung | check | |
-| Meldung | message | |
-| Fehlermeldung | error message | |
-| Hinweis | note | |
-| Antwort | response | HTTP context |
-| Quelle | source | |
-| Reihenfolge | order | |
-| Sprache | language | |
-| Rauchtest | smoke test | |
-| Zeile | line | |
-| Endpunkt | endpoint | Matter endpoint |
-| Steckdose | plug | device type |
-| Ausnahme | exception | |
-| Einstellungen | settings | |
+| `Gerät / Geraet` | device | 455 occurrences, the single most common domain noun |
+| `Gerätetyp` | device type | |
+| `Brücke / Bruecke` | bridge | the project itself |
+| `Miniserver` | Miniserver | Loxone product name, unchanged |
+| `Einlernen` | commissioning | Matter's own term for the pairing flow |
+| `Bindung` | binding | |
+| `Signal` | signal | |
+| `Signalschlüssel` | signal key | |
+| `Leitsignal` | primary signal | |
+| `Eingang / Ausgang` | input / output | Loxone virtual input/output |
+| `Vorlage` | template | the importable Loxone template |
+| `Kachel` | tile | device dashboard |
+| `Raum` | room | |
+| `Ansicht` | view | |
+| `Oberfläche` | interface / UI | prefer "UI" in short comments |
+| `Knopf` | button | |
+| `Menü / Menue` | menu | |
+| `Modal` | modal | unchanged |
+| `Sitzung` | session | |
+| `Anmeldung` | login | |
+| `Datei` | file | |
+| `Projektdatei` | project file | the Loxone `.Loxone` project |
+| `Schlüssel / Schluessel` | key | |
+| `Eintrag` | entry | |
+| `Datenbank` | database | |
+| `Zustand` | state | |
+| `Laufzeit` | runtime | |
+| `Dienst` | service | |
+| `Beobachter` | observer | |
+| `Aufrufer` | caller | |
+| `Aufruf` | call | |
+| `Abschnitt` | section | |
+| `Entwurf` | design | as in the design spec |
+| `Aufgabe` | task | plan tasks |
+| `Schritt` | step | |
+| `Regel` | rule | |
+| `Prüfung / Pruefung` | check | |
+| `Meldung` | message | |
+| `Fehlermeldung` | error message | |
+| `Hinweis` | note | |
+| `Antwort` | response | HTTP context |
+| `Quelle` | source | |
+| `Reihenfolge` | order | |
+| `Sprache` | language | |
+| `Rauchtest` | smoke test | |
+| `Zeile` | line | |
+| `Endpunkt` | endpoint | Matter endpoint |
+| `Steckdose` | plug | device type |
+| `Ausnahme` | exception | |
+| `Einstellungen` | settings | |
 
 Umlaut transliterations (`ae`, `oe`, `ue`, `ss`) appear throughout because the
 codebase avoided non-ASCII in comments. They disappear with the German.

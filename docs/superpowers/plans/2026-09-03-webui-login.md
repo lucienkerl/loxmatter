@@ -1773,7 +1773,7 @@ On a 401, `requestJson` throws an `UnauthorizedError`, whose text would be wrong
   }
 ```
 
-This way a failed login carries the server's text ("Falsches Passwort.", "Zu viele Fehlversuche – in X Sekunden wieder möglich."), while a 401 on `/api` still leads to the login screen.
+This way a failed login carries the server's text (`Falsches Passwort.`, `Zu viele Fehlversuche – in X Sekunden wieder möglich.`), while a 401 on `/api` still leads to the login screen.
 
 - [ ] **Step 5: Simplify `connectLive`**
 
@@ -1899,11 +1899,11 @@ rm -f /tmp/loxmatter-ui.sqlite && uv run loxmatter run --miniserver 192.0.2.1 --
 
 Open `http://localhost:8099/` in the browser. Expected, in order:
 1. Setup screen with the warning, no token field anywhere.
-2. Two unequal entries → "Die beiden Eingaben stimmen nicht überein."
-3. A password under 8 characters → "Das Passwort muss mindestens 8 Zeichen haben."
+2. Two unequal entries → `Die beiden Eingaben stimmen nicht überein.`
+3. A password under 8 characters → `Das Passwort muss mindestens 8 Zeichen haben.`
 4. A valid password twice → the app appears without a reload, the connection indicator goes to "connected" (the WebSocket now carries the cookie).
 5. Reload the page → still logged in.
-6. "Abmelden" → login screen. Wrong password → "Falsches Passwort.". Five failed attempts → "Zu viele Fehlversuche – in X Sekunden wieder möglich.".
+6. `Abmelden` → login screen. Wrong password → `Falsches Passwort.`. Five failed attempts → `Zu viele Fehlversuche – in X Sekunden wieder möglich.`.
 7. Right password → app back again.
 
 Then `rm -f /tmp/loxmatter-ui.sqlite`.

@@ -220,7 +220,7 @@ New:
 | --- | --- | --- |
 | `web.devices.menu_signals` | Edit signals… | Signale bearbeiten… |
 | `web.signals.modal_heading` | Signals — {device} | Signale — {device} |
-| `web.signals.modal_close` | Close | Schließen |
+| `web.signals.modal_close` | Close | `Schließen` |
 
 The placeholder in `modal_heading` is unproblematic: `_web_strings()`
 (`api/language.py:56`) delivers unresolved templates via `raw_template()`,

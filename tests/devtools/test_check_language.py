@@ -17,6 +17,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _SPEC = importlib.util.spec_from_file_location(
     "check_language", Path(__file__).parents[2] / "scripts" / "check_language.py"
 )
@@ -149,4 +151,58 @@ def test_ordinary_german_in_the_same_file_is_still_reported():
     # still gets checked for ordinary German prose elsewhere in the file.
     text = "# Diese Zeile ist ganz gewoehnliches deutsches Prosa und muss auffallen.\n"
     findings = check_language.scan_text(text, "src/loxmatter/projectsync/schema.py")
+    assert findings
+
+
+def test_german_inside_a_fenced_code_block_is_not_reported():
+    # A fenced block quotes what the code/command/UI actually contained;
+    # translating it would make the document claim something that never
+    # happened.
+    text = "prose before\n```\ngit commit -m 'Geraet hinzugefuegt'\n```\nprose after\n"
+    assert check_language.scan_text(text, "docs/example.md") == []
+
+
+def test_german_prose_before_and_after_a_fenced_block_is_still_reported():
+    text = (
+        "Dieser Satz davor ist deutsche Prosa.\n"
+        "```\n"
+        "German command output goes here unfazed\n"
+        "```\n"
+        "Dieser Satz danach ist ebenfalls deutsche Prosa.\n"
+    )
+    findings = check_language.scan_text(text, "docs/example.md")
+    assert [f.line for f in findings] == [1, 5]
+
+
+def test_an_unterminated_fence_is_reported_not_silently_skipped():
+    # Chosen behaviour: an unmatched ``` cannot be told apart from a closed
+    # one that simply never appears, so scan_text refuses to guess whether
+    # the remaining lines are code or prose. It raises instead of silently
+    # skipping to EOF - a loud failure the caller cannot miss, rather than
+    # the detector quietly losing coverage over the rest of the file.
+    text = (
+        "prose before\n```\nDeutscher Text der nie durch einen schliessenden Fence beendet wird\n"
+    )
+    with pytest.raises(check_language.UnterminatedFenceError):
+        check_language.scan_text(text, "docs/example.md")
+
+
+def test_german_inside_an_inline_backtick_span_is_not_reported():
+    text = "See the `Geraet` value shown by the old UI.\n"
+    assert check_language.scan_text(text, "docs/example.md") == []
+
+
+def test_german_outside_backticks_on_a_line_with_a_backtick_span_is_reported():
+    text = "the `Geräte` tab shows alle Signale\n"
+    findings = check_language.scan_text(text, "docs/example.md")
+    assert findings
+    assert findings[0].line == 1
+
+
+def test_python_file_backticks_around_german_are_still_reported():
+    # The backtick-quotation rule is Markdown-only. A backtick in a .py
+    # comment is not a Markdown inline-code marker, so it must not exempt
+    # the German inside it.
+    text = "# The `Geraet` lookup failed\n"
+    findings = check_language.scan_text(text, "a.py")
     assert findings
