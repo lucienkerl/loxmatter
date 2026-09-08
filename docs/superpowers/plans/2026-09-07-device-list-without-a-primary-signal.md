@@ -8,7 +8,7 @@
 
 **Tech Stack:** Statisches HTML mit Alpine.js (vendort unter `web/vendor/`), handgeschriebenes CSS mit Custom Properties, Inline-SVG-Sprite. Tests: pytest + httpx gegen die ASGI-App, geprüft wird das **ausgelieferte** Markup und CSS; die drei Node-Tests laufen `app.js` in einem `node`-Prozess.
 
-**Entwurf:** [2026-09-07-geraeteliste-ohne-leitwert-design.md](../specs/2026-09-07-geraeteliste-ohne-leitwert-design.md)
+**Entwurf:** [2026-09-07-device-list-without-a-primary-signal-design.md](../specs/2026-09-07-device-list-without-a-primary-signal-design.md)
 
 ## Global Constraints
 

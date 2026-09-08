@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- **Entwurf:** `docs/superpowers/specs/2026-09-07-signal-rangliste-und-modal-design.md`. Abschnittsnummern in diesem Plan verweisen darauf.
+- **Entwurf:** `docs/superpowers/specs/2026-09-07-signal-ranking-and-modal-design.md`. Abschnittsnummern in diesem Plan verweisen darauf.
 - **Sprache:** Docstrings, Kommentare und Commit-Botschaften auf **Deutsch**, dicht und begründend (warum, nicht nur was). Der GPL-Kopf jeder Quelldatei bleibt in der englischen FSF-Fassung.
 - **Umlaute in Python-Kommentaren:** die bestehenden Dateien schreiben `ue`/`ae`/`oe` statt Umlauten (`ueberhaupt`, `Geraet`). Diese Schreibweise beibehalten. In Markdown und in `strings.yaml`-Werten stehen echte Umlaute.
 - **Laufzeittexte gehen durch `i18n`:** jeder neue sichtbare Text bekommt ein `en`/`de`-Paar in `src/loxmatter/i18n/strings.yaml`. Kein fest verdrahteter deutscher Text in `app.js` oder `index.html`.

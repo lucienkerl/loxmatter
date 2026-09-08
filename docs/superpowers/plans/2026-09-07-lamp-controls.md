@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic, PyYAML, pytest (asyncio_mode=auto), Alpine.js (vendored), uv.
 
-**Spec:** [2026-09-07-lampen-bedienelemente-design.md](../specs/2026-09-07-lampen-bedienelemente-design.md)
+**Spec:** [2026-09-07-lamp-controls-design.md](../specs/2026-09-07-lamp-controls-design.md)
 
 ## Global Constraints
 

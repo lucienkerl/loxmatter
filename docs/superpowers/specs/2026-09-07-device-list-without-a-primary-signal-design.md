@@ -1,9 +1,9 @@
 # Gerätekachel ohne Leitwert: alle Signale gleichrangig
 
 Entwurf, 7. September 2026. Ändert die Kopfzeile der Gerätekachel aus
-[dem Geräte-Dashboard-Entwurf](2026-09-03-geraete-dashboard-und-export-design.md),
+[dem Geräte-Dashboard-Entwurf](2026-09-03-device-dashboard-and-export-design.md),
 Abschnitt 6.2, und räumt damit einen Teil von
-[dem Geräte-Tab-Entwurf](2026-09-05-geraete-tab-raeume-und-kachelraster-design.md)
+[dem Geräte-Tab-Entwurf](2026-09-05-devices-tab-rooms-and-tile-grid-design.md)
 wieder ab.
 
 ## 1. Das Problem

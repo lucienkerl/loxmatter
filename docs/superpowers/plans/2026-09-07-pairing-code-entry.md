@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12 / FastAPI / Pydantic v2 / pytest · Alpine.js (kein Build-Schritt, kein JS-Testframework) · Playwright nur für die Screenshots
 
-**Entwurf:** [`docs/superpowers/specs/2026-09-07-pairing-code-eingabe-design.md`](../specs/2026-09-07-pairing-code-eingabe-design.md)
+**Entwurf:** [`docs/superpowers/specs/2026-09-07-pairing-code-entry-design.md`](../specs/2026-09-07-pairing-code-entry-design.md)
 
 ## Global Constraints
 

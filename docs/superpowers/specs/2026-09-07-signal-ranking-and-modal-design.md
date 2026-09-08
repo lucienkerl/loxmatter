@@ -1,8 +1,8 @@
 # Signale nach Bedeutung ordnen — und das Signal-Modal lesbar machen
 
 Entwurf, 7. September 2026. Betrifft die Gerätekachel aus
-[dem Geräte-Tab-Entwurf](2026-09-05-geraete-tab-raeume-und-kachelraster-design.md)
-und das Signal-Modal aus [Signale als Modal](2026-09-05-signale-als-modal-design.md).
+[dem Geräte-Tab-Entwurf](2026-09-05-devices-tab-rooms-and-tile-grid-design.md)
+und das Signal-Modal aus [Signale als Modal](2026-09-05-signals-as-a-modal-design.md).
 Berührt außerdem `export/signals.py`, weil die Sortierung dort dieselbe
 Quelle hat (Abschnitt 5).
 
