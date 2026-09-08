@@ -24,6 +24,7 @@ from __future__ import annotations
 import secrets
 import time
 
+from loxmatter import i18n
 from loxmatter.projectsync.scan import ProjectFormatError
 
 
@@ -52,10 +53,7 @@ def _installation_suffix(existing: set[str]) -> str:
         parts = value.split("-")
         if len(parts) == 4 and all(_is_hex(part) for part in parts):
             return parts[-1]
-    raise ProjectFormatError(
-        "Keine bestehende U-ID im erwarteten Format in der Datei gefunden, aus der "
-        "sich ein Installations-Suffix ableiten liesse."
-    )
+    raise ProjectFormatError(i18n.t("projectsync.no_uid_found"))
 
 
 def new_unique_id(existing: set[str]) -> str:

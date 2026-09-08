@@ -46,10 +46,14 @@ class FakeSender:
 class BrokenResendSender(FakeSender):
     """Sends normal updates without complaint, but refuses every call -
     simulates a `UdpSender` whose socket is already closed (see
-    `UdpSender.send`, which then unconditionally raises `RuntimeError`)."""
+    `UdpSender.send`, which then unconditionally raises `RuntimeError`).
+
+    Uses `i18n.t()` for the message, same as the real `UdpSender.send` does
+    (task 7) - so this fake stays in sync with the real one and both
+    language-locked resync tests below see the message they expect."""
 
     async def send(self, key, value, *, force: bool = False) -> bool:
-        raise RuntimeError("UdpSender ist geschlossen")
+        raise RuntimeError(i18n.t("api.server.udp_sender_closed"))
 
 
 @pytest.fixture
@@ -195,7 +199,7 @@ async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
         response = await c.get("/resync")
     assert response.status_code == 502
     assert "Traceback" not in response.text
-    assert response.json()["detail"] == "Full resend failed: UdpSender ist geschlossen"
+    assert response.json()["detail"] == "Full resend failed: UdpSender is closed"
     store.close()
 
 

@@ -40,6 +40,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from loxmatter import i18n
 from loxmatter.projectsync.keys import key_from_check, key_from_output_cmd
 from loxmatter.projectsync.scan import Element, ProjectFormatError, parse_root, scan_children
 
@@ -124,7 +125,8 @@ def _find_all_loxlive(elements: list[Element]) -> list[Element]:
 
 def _describe(loxlives: list[Element]) -> str:
     return ", ".join(
-        f"„{ll.attrs.get('Title', '?')}“ ({ll.attrs.get('IntAddr', 'keine IP bekannt')})"
+        f"„{ll.attrs.get('Title', '?')}“ "
+        f"({ll.attrs.get('IntAddr', i18n.t('projectsync.no_ip_known'))})"
         for ll in loxlives
     )
 
@@ -156,24 +158,22 @@ def _resolve_target_loxlive(loxlives: list[Element], miniserver_ip: str | None) 
     comparison could land in the wrong Miniserver half of the file, and
     that is exactly what this feature must never do."""
     if not loxlives:
-        raise AmbiguousMiniserverError(
-            "Diese Projektdatei enthaelt keinen einzigen konfigurierten Miniserver "
-            "(keinen `LoxLIVE`-Block) - es gibt keinen Ort, an dem sich virtuelle "
-            "Ein-/Ausgaenge verorten liessen."
-        )
+        raise AmbiguousMiniserverError(i18n.t("projectsync.no_miniserver_configured"))
     if miniserver_ip:
         matches = [ll for ll in loxlives if ll.attrs.get("IntAddr") == miniserver_ip]
         if not matches:
             raise AmbiguousMiniserverError(
-                f"Kein Miniserver mit der IP {miniserver_ip!r} in dieser Projektdatei "
-                f"gefunden. Vorhanden: {_describe(loxlives)}.",
+                i18n.t(
+                    "projectsync.miniserver_ip_not_found",
+                    ip=repr(miniserver_ip),
+                    candidates=_describe(loxlives),
+                ),
                 _candidates(loxlives),
             )
         return matches[0]
     if len(loxlives) > 1:
         raise AmbiguousMiniserverError(
-            f"Diese Projektdatei enthaelt mehrere Miniserver: {_describe(loxlives)}. "
-            "Bitte den gewuenschten Miniserver auswaehlen.",
+            i18n.t("projectsync.multiple_miniservers", candidates=_describe(loxlives)),
             _candidates(loxlives),
         )
     return loxlives[0]
@@ -187,9 +187,10 @@ def build_index(text: str, miniserver_ip: str | None = None) -> ProjectIndex:
     target_loxlive = _resolve_target_loxlive(loxlives, miniserver_ip)
     if target_loxlive.self_closing or target_loxlive.inner_end is None:
         raise AmbiguousMiniserverError(
-            f"Der Miniserver „{target_loxlive.attrs.get('Title', '?')}“ hat in dieser "
-            "Projektdatei noch keinerlei Konfiguration - kein Ort, an dem sich ein "
-            "virtueller Ein-/Ausgang anlegen liesse."
+            i18n.t(
+                "projectsync.miniserver_without_configuration",
+                title=target_loxlive.attrs.get("Title", "?"),
+            )
         )
 
     virtual_in_caption = next(

@@ -360,6 +360,12 @@ api.devices.room_name_required:
 api.devices.unknown_room:
   en: "No device is assigned to the room “{room}”."
   de: "Dem Raum „{room}“ ist kein Gerät zugeordnet."
+api.devices.unexportable_text:
+  en: "text - a virtual UDP input only knows numbers and digital values"
+  de: "Text - ein virtueller UDP-Eingang kennt nur Zahlen und digitale Werte"
+api.devices.unexportable_none:
+  en: "no mappable value - list, struct, or currently without a value (null)"
+  de: "kein abbildbarer Wert - Liste, Struktur, oder derzeit ohne Wert (null)"
 api.auth.fail_password_too_short:
   en: "The password must be at least {min_length} characters long."
   de: "Das Passwort muss mindestens {min_length} Zeichen haben."
@@ -522,6 +528,56 @@ api.server.fail_login_required:
 api.server.fail_resync:
   en: "Full resend failed: {exc}"
   de: "Full-Resend fehlgeschlagen: {exc}"
+api.server.udp_sender_closed:
+  # Raised by `loxone.sender.UdpSender.send` once its socket is closed -
+  # `{exc}` above, wrapped into `api.server.fail_resync` at the resync
+  # endpoint (`loxone/server.py`). A key rather than a finished sentence,
+  # resolved at call time, for the same reason as
+  # `api.devices.manual_dataset_origin`: the language is not settled at
+  # import time, and a hard German chunk inside an otherwise-translated
+  # sentence is half a translation.
+  en: "UdpSender is closed"
+  de: "UdpSender ist geschlossen"
+
+# --- projectsync — ProjectFormatError/AmbiguousMiniserverError messages.
+# `api.project_sync` catches these and passes `str(exc)` straight through
+# as the HTTPException detail, which the WebUI displays - so these must run
+# through i18n.t() like every other user-facing string (task 7). ---
+projectsync.no_ip_known:
+  # Falls back into `_describe`'s parenthesized IP for a `LoxLIVE` block
+  # that carries no `IntAddr` at all.
+  en: "no IP known"
+  de: "keine IP bekannt"
+projectsync.no_miniserver_configured:
+  en: "This project file contains not a single configured Miniserver (no `LoxLIVE` block) - there is no place virtual inputs/outputs could be located in."
+  de: "Diese Projektdatei enthaelt keinen einzigen konfigurierten Miniserver (keinen `LoxLIVE`-Block) - es gibt keinen Ort, an dem sich virtuelle Ein-/Ausgaenge verorten liessen."
+projectsync.miniserver_ip_not_found:
+  en: "No Miniserver with the IP {ip} found in this project file. Present: {candidates}."
+  de: "Kein Miniserver mit der IP {ip} in dieser Projektdatei gefunden. Vorhanden: {candidates}."
+projectsync.multiple_miniservers:
+  en: "This project file contains several Miniservers: {candidates}. Please select the desired Miniserver."
+  de: "Diese Projektdatei enthaelt mehrere Miniserver: {candidates}. Bitte den gewuenschten Miniserver auswaehlen."
+projectsync.miniserver_without_configuration:
+  en: "The Miniserver “{title}” has no configuration whatsoever in this project file yet - no place a virtual input/output could be created in."
+  de: "Der Miniserver „{title}“ hat in dieser Projektdatei noch keinerlei Konfiguration - kein Ort, an dem sich ein virtueller Ein-/Ausgang anlegen liesse."
+projectsync.no_uid_found:
+  en: "No existing U-ID in the expected format was found in the file, from which an installation suffix could be derived."
+  de: "Keine bestehende U-ID im erwarteten Format in der Datei gefunden, aus der sich ein Installations-Suffix ableiten liesse."
+projectsync.unexpected_eof_attribute:
+  en: "Unexpected end of file: an attribute or tag was not closed."
+  de: "Unerwartetes Dateiende: ein Attribut oder Tag wurde nicht abgeschlossen."
+projectsync.unexpected_eof_control:
+  en: "Unexpected end of file: <C> without a closing </C>."
+  de: "Unerwartetes Dateiende: <C> ohne schliessendes </C>."
+projectsync.missing_control_list_open:
+  en: "Not a valid Loxone project file: <ControlList> root element is missing."
+  de: "Keine gueltige Loxone-Projektdatei: <ControlList>-Wurzelelement fehlt."
+projectsync.missing_control_list_close:
+  en: "Not a valid Loxone project file: </ControlList> is missing."
+  de: "Keine gueltige Loxone-Projektdatei: </ControlList> fehlt."
+projectsync.not_utf8:
+  en: "The uploaded file is not a valid UTF-8 text file - a Loxone project file is saved as UTF-8."
+  de: "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine Loxone-Projektdatei wird als UTF-8 gespeichert."
 
 # --- web.nav — tab bar ---
 web.nav.devices:

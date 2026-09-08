@@ -120,8 +120,31 @@ async def test_rate_limit_staggers_a_burst(receiver):
 async def test_send_after_close_raises():
     sender = UdpSender("127.0.0.1", 7000)
     await sender.close()
-    with pytest.raises(RuntimeError, match="geschlossen"):
+    with pytest.raises(RuntimeError, match="closed"):
         await sender.send("d1_1_temp", 21.5)
+
+
+async def test_the_closed_message_follows_the_selected_language():
+    """The "closed" message must run through i18n.t() like every other
+    user-facing string - not sit hardcoded in German, unreachable by the
+    language switcher."""
+    from loxmatter import i18n
+
+    sender = UdpSender("127.0.0.1", 7000)
+    await sender.close()
+
+    i18n.set_language("en")
+    with pytest.raises(RuntimeError) as english:
+        await sender.send("d1_1_temp", 21.5)
+
+    i18n.set_language("de")
+    with pytest.raises(RuntimeError) as german:
+        await sender.send("d1_1_temp", 21.5)
+    i18n.set_language("en")
+
+    assert str(english.value) and str(german.value)
+    assert str(english.value) != str(german.value)
+    assert str(german.value) == "UdpSender ist geschlossen"
 
 
 async def test_close_during_in_flight_send_does_not_crash(receiver):

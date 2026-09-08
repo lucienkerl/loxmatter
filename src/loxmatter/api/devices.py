@@ -121,9 +121,14 @@ _MANUAL_DATASET_ORIGIN_KEY = "api.devices.manual_dataset_origin"
 # `Exportability` distinguishes from ANALOG/DIGITAL. `NONE` covers both
 # lists/structs and (silently, see Spec 6.6) null values; the table cannot
 # tell these two apart, because `classify()` itself does not either.
-_UNEXPORTABLE_REASONS: dict[Exportability, str] = {
-    Exportability.TEXT: "Text - ein virtueller UDP-Eingang kennt nur Zahlen und digitale Werte",
-    Exportability.NONE: "kein abbildbarer Wert - Liste, Struktur, oder derzeit ohne Wert (null)",
+#
+# Keys rather than finished sentences, resolved at call time, for the same
+# reason as `_MANUAL_DATASET_ORIGIN_KEY` above: a hard German chunk inside an
+# English sentence is half a translation, and the language is not settled at
+# import time.
+_UNEXPORTABLE_REASON_KEYS: dict[Exportability, str] = {
+    Exportability.TEXT: "api.devices.unexportable_text",
+    Exportability.NONE: "api.devices.unexportable_none",
 }
 
 
@@ -153,7 +158,8 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
     even in the UI) would replicate the same rule a second time, without
     having the snapshot it actually needs."""
     exportable = is_exportable(signal.exportability)
-    reason = None if exportable else _UNEXPORTABLE_REASONS.get(signal.exportability)
+    reason_key = None if exportable else _UNEXPORTABLE_REASON_KEYS.get(signal.exportability)
+    reason = i18n.t(reason_key) if reason_key else None
     return SignalOut(
         key=signal.key,
         path=signal.ref.path,

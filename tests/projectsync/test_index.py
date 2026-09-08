@@ -177,6 +177,28 @@ def test_no_loxlive_raises():
         build_index(NO_LOXLIVE_PROJECT)
 
 
+def test_project_errors_follow_the_selected_language():
+    """The `ProjectFormatError`/`AmbiguousMiniserverError` messages reach
+    the WebUI verbatim as the HTTP detail (`api.project_sync`) - they must
+    run through i18n.t() like every other user-facing string, not sit
+    hardcoded in German."""
+    import pytest
+
+    from loxmatter import i18n
+
+    i18n.set_language("de")
+    with pytest.raises(AmbiguousMiniserverError) as german:
+        build_index(NO_LOXLIVE_PROJECT)
+
+    i18n.set_language("en")
+    with pytest.raises(AmbiguousMiniserverError) as english:
+        build_index(NO_LOXLIVE_PROJECT)
+
+    assert "keinen einzigen konfigurierten Miniserver" in str(german.value)
+    assert "not a single configured Miniserver" in str(english.value)
+    assert str(german.value) != str(english.value)
+
+
 # An output container the way this project itself writes it: the combined
 # on/off command sits immediately before its `on` and carries the same
 # `CmdOn` (`export.outputs.to_outputs`).

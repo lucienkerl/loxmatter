@@ -84,6 +84,25 @@ async def test_signal_tree_marks_what_cannot_be_exported(api):
     assert unexportable["reason"]
 
 
+async def test_the_unexportable_reason_follows_the_selected_language(api):
+    """The reasons in `_UNEXPORTABLE_REASON_KEYS` must run through i18n.t()
+    like every other user-facing string, not sit hardcoded in German."""
+    client, store, device_id, _ = api
+
+    async def fetch_reasons() -> set[str]:
+        signals = (await client.get(f"/api/devices/{device_id}/signals")).json()
+        return {s["reason"] for s in signals if s.get("reason")}
+
+    english = await fetch_reasons()
+    store.locale.set_language("de")
+    german = await fetch_reasons()
+
+    assert english, "fixture must contain at least one unexportable signal"
+    assert english != german
+    assert any("virtual UDP input" in reason for reason in english)
+    assert any("virtueller UDP-Eingang" in reason for reason in german)
+
+
 async def test_the_signal_payload_says_whether_a_signal_is_functional(api):
     """The UI must be able to separate the two blocks without rebuilding the
     rule a second time in JavaScript (Task 8)."""

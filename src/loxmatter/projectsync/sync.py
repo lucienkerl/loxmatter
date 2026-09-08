@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from loxmatter import i18n
 from loxmatter.model.store import Store, StoredCommand, StoredSignal
 from loxmatter.projectsync.diff import SyncPlan, build_plan
 from loxmatter.projectsync.index import ProjectFormatError, build_index
@@ -61,10 +62,7 @@ def run_sync(
         # A wrong file (image, ZIP, UTF-16 export) must not deliver a bare
         # UnicodeDecodeError here - at the endpoint that would be an HTTP
         # 500 instead of a comprehensible message (design section 8).
-        raise ProjectFormatError(
-            "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine "
-            "Loxone-Projektdatei wird als UTF-8 gespeichert."
-        ) from exc
+        raise ProjectFormatError(i18n.t("projectsync.not_utf8")) from exc
     # `AmbiguousMiniserverError` (subclass of `ProjectFormatError`) is
     # deliberately left unhandled here and propagates up to
     # `api.project_sync`. There it is caught SPECIFICALLY (not just via

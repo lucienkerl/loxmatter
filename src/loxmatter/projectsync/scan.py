@@ -35,6 +35,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from loxmatter import i18n
+
 _OPEN_OR_SELFCLOSE = re.compile(r"<C(?=[\s/>])")
 _ATTR = re.compile(r'([A-Za-z_][\w]*)="((?:[^"&]|&(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)*)"')
 _CONTROL_LIST_OPEN = re.compile(r"<ControlList\b[^>]*>")
@@ -98,9 +100,7 @@ def _find_tag_close(text: str, start: int) -> int:
         elif char == ">" and not in_quotes:
             return pos
         pos += 1
-    raise ProjectFormatError(
-        "Unerwartetes Dateiende: ein Attribut oder Tag wurde nicht abgeschlossen."
-    )
+    raise ProjectFormatError(i18n.t("projectsync.unexpected_eof_attribute"))
 
 
 def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:
@@ -121,7 +121,7 @@ def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:
         next_open = _OPEN_OR_SELFCLOSE.search(text, pos)
         next_close_pos = text.find("</C>", pos)
         if next_close_pos == -1:
-            raise ProjectFormatError("Unerwartetes Dateiende: <C> ohne schliessendes </C>.")
+            raise ProjectFormatError(i18n.t("projectsync.unexpected_eof_control"))
         if next_open is not None and next_open.start() < next_close_pos:
             inner_tag_close = _find_tag_close(text, next_open.end())
             inner_self_closing = text[inner_tag_close - 1] == "/"
@@ -174,10 +174,8 @@ def parse_root(text: str) -> tuple[dict[str, str], int, int, int]:
     which `scan_children` looks for the top-level `<C>` elements."""
     match = _CONTROL_LIST_OPEN.search(text)
     if match is None:
-        raise ProjectFormatError(
-            "Keine gueltige Loxone-Projektdatei: <ControlList>-Wurzelelement fehlt."
-        )
+        raise ProjectFormatError(i18n.t("projectsync.missing_control_list_open"))
     close_start = text.rfind("</ControlList>")
     if close_start == -1:
-        raise ProjectFormatError("Keine gueltige Loxone-Projektdatei: </ControlList> fehlt.")
+        raise ProjectFormatError(i18n.t("projectsync.missing_control_list_close"))
     return parse_attrs(match.group(0)), match.start(), match.end(), close_start
