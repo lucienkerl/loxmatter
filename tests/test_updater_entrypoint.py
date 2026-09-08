@@ -1,0 +1,253 @@
+# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# Copyright (C) 2026 Lucien Kerl
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""Behavioral tests for deploy/updater/entrypoint.sh (review fix, Important
+#2, updater Stufe 2).
+
+Same idea as test_install_script.py / test_update_script.py: run the real
+script and check WHICH commands it chooses, not what they do. Unlike
+those two, this script has no side-effectful system commands to gate
+behind a sealed PATH - its only external dependencies are `timeout` (a
+harmless, read-only wrapper) and the worker it invokes, and the worker
+path is already overridable via the WORKER environment variable
+specifically so it can be pointed at a throwaway stub instead of the real
+/opt/loxmatter/update-once.sh. So these tests run against the real
+system PATH and point WORKER at small fixture scripts.
+
+LOOP_ONCE=1 makes the otherwise-infinite `while` loop return after one
+pass. It is not a test-only branch that changes what a pass does: it only
+changes how many times the loop condition is re-checked, so every pass a
+test observes goes through the exact same timeout-wrapped worker
+invocation and exit-status handling that an unbounded run in the
+container would use. See the comment beside it in entrypoint.sh.
+
+What this file does NOT claim to test, because it cannot be tested
+honestly without a container runtime:
+- That `docker stop` actually delivers SIGTERM to PID 1 the way a
+  manually-sent `kill -TERM` does in these tests - PID 1 signal
+  disposition and container runtime behavior are not reproducible
+  outside a running container.
+- That Alpine's coreutils `timeout` (musl libc) forwards a received
+  signal to its child exactly like the GNU coreutils build used here
+  (verified by hand against the local `timeout` binary, glibc/macOS
+  build) - the mechanism is documented GNU coreutils behavior and the
+  Alpine package is the same upstream project, but that is inference,
+  not a test result.
+- Anything about update-once.sh itself (its health-check waits, its
+  rollback path, its actual runtime under real load) - it does not exist
+  yet; this task only exercises entrypoint.sh's loop around a stand-in.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import signal
+import subprocess
+import time
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+SCRIPT = ROOT / "deploy" / "updater" / "entrypoint.sh"
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("timeout") is None,
+    reason="entrypoint.sh requires GNU coreutils `timeout`, as the image does",
+)
+
+
+def _script(tmp_path: Path, name: str, body: str) -> Path:
+    path = tmp_path / name
+    path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _run(
+    tmp_path: Path, worker: Path, path_prefix: Path | None = None, **env_overrides: str
+) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "WORKER": str(worker), "LOOP_ONCE": "1", **env_overrides}
+    if path_prefix is not None:
+        env["PATH"] = f"{path_prefix}:{env['PATH']}"
+    return subprocess.run(
+        ["sh", str(SCRIPT)],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=20,
+        check=False,
+    )
+
+
+def _fake_timeout_logging_to(log: Path, tmp_path: Path) -> None:
+    """A stand-in `timeout` that records what it was called with and then
+    behaves like the real one for a command that exits immediately: run
+    the given command and exit with its status. Used only to observe the
+    invocation - actual enforcement of the limit is tested separately
+    against the real `timeout` binary, since a stub cannot honestly prove
+    that."""
+    _script(
+        tmp_path,
+        "timeout",
+        f'printf "%s\\n" "$*" >> "{log}"\nduration="$1"; shift\nexec "$@"\n',
+    )
+
+
+def test_worker_runs_under_timeout_with_the_default_limit(tmp_path: Path) -> None:
+    """No WORKER_TIMEOUT_SECONDS override -> the 600s default from the
+    comment in entrypoint.sh is the one actually passed to `timeout`."""
+    log = tmp_path / "timeout-calls.log"
+    _fake_timeout_logging_to(log, tmp_path)
+    worker = _script(tmp_path, "worker.sh", "exit 0")
+
+    result = _run(tmp_path, worker, path_prefix=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text(encoding="utf-8")
+    assert calls.startswith(f"600 {worker}"), calls
+
+
+def test_worker_runs_under_timeout_with_a_configured_limit(tmp_path: Path) -> None:
+    """WORKER_TIMEOUT_SECONDS is not just read - it is the value `timeout`
+    is actually invoked with."""
+    log = tmp_path / "timeout-calls.log"
+    _fake_timeout_logging_to(log, tmp_path)
+    worker = _script(tmp_path, "worker.sh", "exit 0")
+
+    result = _run(tmp_path, worker, path_prefix=tmp_path, WORKER_TIMEOUT_SECONDS="45")
+
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text(encoding="utf-8")
+    assert calls.startswith(f"45 {worker}"), calls
+
+
+def test_a_timed_out_worker_is_logged_and_does_not_end_the_loop(tmp_path: Path) -> None:
+    """A worker that hangs past WORKER_TIMEOUT_SECONDS is killed by the
+    real `timeout` (no stub - this exercises the actual binary the image
+    ships), the fact that it timed out is reported on stderr, and the
+    entrypoint process itself still exits cleanly rather than hanging or
+    crashing - a hang must be visible, not silent, but it still must not
+    take the sidecar down with it."""
+    worker = _script(tmp_path, "worker.sh", "sleep 30")
+
+    started = time.monotonic()
+    result = _run(tmp_path, worker, WORKER_TIMEOUT_SECONDS="1")
+    elapsed = time.monotonic() - started
+
+    assert result.returncode == 0, result.stderr
+    assert elapsed < 10, f"took {elapsed}s - timeout does not seem to have fired"
+    assert "exceeded 1s" in result.stderr, result.stderr
+
+
+def test_a_failing_worker_does_not_end_the_loop(tmp_path: Path) -> None:
+    """update-once.sh exiting non-zero (a real failure, not a timeout) must
+    not be treated as fatal - this container is the only thing left to
+    report a broken state, and a sidecar that dies on the first failed
+    pass cannot do that."""
+    worker = _script(tmp_path, "worker.sh", "exit 7")
+
+    result = _run(tmp_path, worker, WORKER_TIMEOUT_SECONDS="5")
+
+    assert result.returncode == 0, result.stderr
+    assert "exceeded" not in result.stderr, result.stderr
+
+
+def test_the_loop_keeps_running_across_repeated_failures(tmp_path: Path) -> None:
+    """Beyond a single pass: without LOOP_ONCE, the loop actually comes
+    back around and invokes the worker again after a failed pass, rather
+    than the single-pass tests above coincidentally passing because
+    nothing ever tried a second time."""
+    counter = tmp_path / "count"
+    counter.write_text("", encoding="utf-8")
+    worker = _script(tmp_path, "worker.sh", f'printf "x" >> "{counter}"\nexit 1\n')
+
+    env = {**os.environ, "WORKER": str(worker), "WORKER_TIMEOUT_SECONDS": "5"}
+    env.pop("LOOP_ONCE", None)
+    proc = subprocess.Popen(
+        ["sh", str(SCRIPT)],
+        cwd=str(tmp_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        deadline = time.monotonic() + 15
+        while len(counter.read_text(encoding="utf-8")) < 2 and time.monotonic() < deadline:
+            time.sleep(0.1)
+        passes_seen = len(counter.read_text(encoding="utf-8"))
+        assert passes_seen >= 2, "loop did not survive a second pass after the first one failed"
+    finally:
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=10)
+
+
+def test_sigterm_is_forwarded_to_the_running_worker(tmp_path: Path) -> None:
+    """The whole point of Finding 2's signal handling: entrypoint.sh runs
+    as PID 1 in the container, which gets no default signal disposition -
+    without the trap this test exercises, `docker stop` would do nothing
+    to a mid-run worker until the runtime's grace period expired and
+    SIGKILL landed on both processes uncoordinated. Here the worker
+    installs its own TERM trap and records that it was reached; if the
+    entrypoint did not forward the signal, this file would stay empty and
+    the process would only die once pytest's own subprocess timeout, far
+    longer than a fast local test, forced it."""
+    received = tmp_path / "received-term"
+    worker = _script(
+        tmp_path,
+        "worker.sh",
+        f"trap 'printf x >> \"{received}\"; exit 143' TERM\n"
+        f'printf x >> "{tmp_path / "started"}"\n'
+        "sleep 30 &\n"
+        "wait $!\n",
+    )
+
+    env = {**os.environ, "WORKER": str(worker), "WORKER_TIMEOUT_SECONDS": "60"}
+    env.pop("LOOP_ONCE", None)
+    proc = subprocess.Popen(
+        ["sh", str(SCRIPT)],
+        cwd=str(tmp_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        started = tmp_path / "started"
+        deadline = time.monotonic() + 10
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert started.exists(), "worker never started"
+
+        before = time.monotonic()
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=10)
+        elapsed = time.monotonic() - before
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+    assert elapsed < 10, (
+        f"entrypoint took {elapsed}s to exit after SIGTERM - signal was not forwarded promptly"
+    )
+    assert received.exists(), (
+        "worker's own TERM trap never fired - the signal was not forwarded to it"
+    )
