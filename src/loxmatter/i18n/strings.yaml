@@ -1204,6 +1204,9 @@ web.system.version_built_at:
 web.system.version_dev_hint:
   en: "This bridge was built from a working copy, not from a published version."
   de: "Diese Brücke wurde aus einer Arbeitskopie gebaut, nicht aus einer veröffentlichten Version."
+web.system.version_dev_channel_hint:
+  en: "dev is the rolling channel, built from the latest main after every merge — expect breakage. Switch to stable for a tested release."
+  de: "dev ist der rollende Kanal, gebaut aus dem jeweils neuesten main nach jedem Merge — Aussetzer sind zu erwarten. Für eine getestete Version auf stable wechseln."
 web.system.resync_heading:
   en: "Resend all values"
   de: "Alle Werte erneut senden"

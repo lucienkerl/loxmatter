@@ -482,6 +482,23 @@ async def test_the_settings_view_offers_a_resend_interval_field(api):
     assert "saveResendInterval" in script
 
 
+async def test_the_system_view_shows_the_running_version(api):
+    """Die Versionskarte (Task, Aufgabe "das Image ziehen") holt
+    `GET /api/version` und bindet das Ergebnis an vier Textbausteine -
+    derselbe Beleg wie bei den uebrigen Markup-Tests dieser Datei: nur,
+    dass Markup und Skript ausgeliefert werden, nicht dass Alpine sie zur
+    Laufzeit korrekt befuellt. Ein Tippfehler in `versionInfo` in einer der
+    beiden Dateien liefert sonst dauerhaft eine leere Karte aus, ohne dass
+    ein Test das bemerkt."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+    script = (await client.get("/static/app.js")).text
+    assert 'versionInfo = await this.request("GET", "/api/version")' in script
+    assert "t('web.system.version_running', { version: versionInfo.version })" in page
+    assert "t('web.system.version_commit', { commit: versionInfo.commit })" in page
+    assert "t('web.system.version_built_at', { built_at: versionInfo.built_at })" in page
+
+
 async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api):
     """Review-Fix Fix 9 (2026-09-03) hatte die Ueberschrift „Wichtigste
     Werte“ absichtlich in „Signale (Anfang der Liste)“ umbenannt, weil die

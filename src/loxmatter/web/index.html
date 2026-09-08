@@ -1525,8 +1525,10 @@
                 <span x-show="versionInfo.built_at" x-cloak
                       x-text="t('web.system.version_built_at', { built_at: versionInfo.built_at })"></span>
               </p>
-              <p class="hint" x-show="versionInfo.version === 'dev'" x-cloak
+              <p class="hint" x-show="versionInfo.version === 'dev' && !versionInfo.commit" x-cloak
                  x-text="t('web.system.version_dev_hint')"></p>
+              <p class="hint" x-show="versionInfo.version === 'dev' && versionInfo.commit" x-cloak
+                 x-text="t('web.system.version_dev_channel_hint')"></p>
             </div>
           </template>
         </div>

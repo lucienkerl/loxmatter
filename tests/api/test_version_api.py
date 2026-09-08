@@ -89,10 +89,13 @@ async def test_ohne_sitzung_kein_zugriff(unauthenticated_api):
 async def test_die_oberflaeche_kennt_alle_texte_der_versionskarte():
     """Ein fehlender Schluessel faellt sonst erst im Browser auf - als
     leeres Feld, nicht als Fehler. Dieser Test bestaetigt die Existenz
-    aller fuenf Schluessel. Das beweist aber nicht, dass beide Sprachen
+    aller sechs Schluessel. Das beweist aber nicht, dass beide Sprachen
     vorhanden sind: raw_template() greift auf Englisch zurueck, daher
-    wuerde ein fehlender de-Eintrag hier unentdeckt durchgehen. Die
-    Vollstaendigkeit des web.*-Namensraums prueft tests/test_i18n.py."""
+    wuerde ein fehlender de-Eintrag hier unentdeckt durchgehen. Auch
+    tests/test_i18n.py deckt das nicht ab -
+    test_web_namespace_has_no_missing_english_fallback_gaps prueft dort
+    ebenfalls nur die Existenz von 'en', nicht von 'de'. Eine fehlende
+    deutsche Uebersetzung faellt also nirgends automatisiert auf."""
     from loxmatter import i18n
 
     for key in (
@@ -101,6 +104,7 @@ async def test_die_oberflaeche_kennt_alle_texte_der_versionskarte():
         "web.system.version_commit",
         "web.system.version_built_at",
         "web.system.version_dev_hint",
+        "web.system.version_dev_channel_hint",
     ):
         assert i18n.raw_template(key)
         assert key in i18n.strings_with_prefix("web.")
