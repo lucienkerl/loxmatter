@@ -122,6 +122,28 @@ def test_an_unknown_device_type_is_other():
     assert category_for({1: frozenset({0x0FFF})}) is Category.OTHER
 
 
+def test_the_provisional_heating_cooling_unit_is_other():
+    """0x0300 (HeatingCoolingUnit) fehlt in `CATEGORY_BY_DEVICE_TYPE`
+    absichtlich: der Typ ist im Matter Device Library seit 1.0 durchgehend
+    provisional, steht deshalb nicht in der maschinell erzeugten Tabelle von
+    matter-python-client und waere von
+    `test_every_mapped_type_exists_in_the_matter_table` nicht zu belegen.
+
+    Der Kommentar dort verspricht, dass ein Geraet mit diesem Typ auf
+    `Category.OTHER` faellt und dort vollstaendig bedienbar bleibt. Genau das
+    prueft dieser Test - eine Behauptung im Kommentar, die pruefbar ist,
+    gehoert geprueft. Ohne ihn faellt es niemandem auf, wenn jemand die
+    Nummer spaeter doch eintraegt und die Tabellenpruefung damit rot wird,
+    oder wenn `category_for` fuer nicht zugeordnete Typen einmal etwas
+    anderes liefert als OTHER."""
+    assert 0x0300 not in CATEGORY_BY_DEVICE_TYPE
+    assert category_for({1: frozenset({0x0300})}) is Category.OTHER
+    # Auch neben einem Verwaltungs-Endpunkt, also auf dem Weg, den ein
+    # echtes Geraet nimmt: Endpunkt 0 traegt den Root Node, Endpunkt 1 den
+    # Anwendungstyp.
+    assert category_for({0: frozenset({0x0016}), 1: frozenset({0x0300})}) is Category.OTHER
+
+
 @pytest.mark.parametrize(
     ("device_type", "expected"),
     [
