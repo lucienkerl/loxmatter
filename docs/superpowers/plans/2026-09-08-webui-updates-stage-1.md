@@ -1,70 +1,70 @@
-# Updates über die Oberfläche, Stufe 1: Identität und Auslieferung
+# UI updates, stage 1: identity and delivery
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Brücke weiß und zeigt, welche Fassung sie ist, die CI veröffentlicht fertige Images nach GHCR, und ein Update über die Konsole zieht ein Image, statt auf dem Pi zu bauen.
+**Goal:** The bridge knows and shows which version it is, CI publishes finished images to GHCR, and a console update pulls an image instead of building on the Pi.
 
-**Architecture:** Die Identität kommt aus der Umgebung des Images (`ENV`, gesetzt aus Build-Argumenten der CI), nicht aus dem Checkout auf dem Host — der kann inzwischen woanders stehen. Ein neues Modul `loxmatter.version` liest sie, `GET /api/version` gibt sie aus, die WebUI zeigt sie im System-Tab. Die Compose-Datei wechselt auf `image:` mit einem über `.env` steuerbaren Tag; `build:` bleibt daneben als Rückfallebene stehen.
+**Architecture:** The identity comes from the image environment (`ENV`, set from CI build arguments), not from the host checkout — which may have moved elsewhere in the meantime. A new module `loxmatter.version` reads it, `GET /api/version` returns it, the WebUI shows it in the System tab. The Compose file switches to `image:` with a tag controllable via `.env`; `build:` remains alongside as a fallback.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic, SQLite, Alpine.js (vendort), Docker Compose, GitHub Actions, `docker/build-push-action` (buildx, multi-arch), pytest, ruff, mypy.
 
-**Grundlage:** [`docs/superpowers/specs/2026-09-08-webui-updates-design.md`](../specs/2026-09-08-webui-updates-design.md), Abschnitte 4, 5, 15. Stufe 2 (Beiwagen, `/api/update/*`, die Update-Karte) hat einen eigenen Plan und setzt diesen hier voraus.
+**Basis:** [`docs/superpowers/specs/2026-09-08-webui-updates-design.md`](../specs/2026-09-08-webui-updates-design.md), sections 4, 5, 15. Stage 2 (sidecar, `/api/update/*`, the update card) has its own plan and assumes this one.
 
 ## Global Constraints
 
-- **Jede neue Quelldatei beginnt mit dem GPL-Kopf** in der englischen FSF-Formulierung, wortgleich zu bestehenden Dateien (z. B. `src/loxmatter/api/settings.py:1-15`). Das ist die eine bewusste Ausnahme von der deutschen Prosa — er ist ein Rechtsverweis auf `LICENSE`, kein zu übersetzender Text.
-- **Entwicklerprosa auf Deutsch:** Docstrings, Kommentare, Commit-Nachrichten. Dicht und begründend — *warum* eine Entscheidung so fiel, nicht nur was der Code tut.
-- **Jeder nutzersichtbare Text geht über `i18n.t()`** mit `en`- **und** `de`-Eintrag in `src/loxmatter/i18n/strings.yaml`. Kein fest verdrahtetes Deutsch in `cli.py`, `api/*` oder der WebUI.
-- **Registry und Repository:** `ghcr.io/lucienkerl/loxmatter`, `github.com/lucienkerl/loxmatter`.
-- **Die Vier Build-Argumente heißen exakt** `LOXMATTER_VERSION`, `LOXMATTER_COMMIT`, `LOXMATTER_BUILT_AT`, `LOXMATTER_SCHEMA_VERSION`.
-- **Der Compose-Tag-Schalter heißt exakt** `LOXMATTER_IMAGE_TAG`, Vorgabe `stable`.
-- **Die volle Testsuite braucht rund drei Minuten.** Das sieht aus wie ein Hänger, ist keiner — nicht abbrechen.
-- **Vor jedem Commit müssen durchlaufen:** `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run pytest`.
-- **Jeder Test muss einmal probeweise scheitern.** Ein Test, der eine Struktur nur benennt statt sie zu prüfen, ist in diesem Projekt schon vorgekommen. Schritt „Run test to verify it fails" ist keine Formalie.
+- **Every new source file starts with the GPL header** in English FSF formulation, word-for-word matching existing files (e.g. `src/loxmatter/api/settings.py:1-15`). This is the one intentional exception to German prose — it is a legal reference to `LICENSE`, not translatable text.
+- **Developer prose in English:** docstrings, comments, commit messages. Dense and reasoned — *why* a decision was made, not just what the code does.
+- **Every user-facing text goes through `i18n.t()`** with `en`- **and** `de`-entry in `src/loxmatter/i18n/strings.yaml`. No hardcoded German in `cli.py`, `api/*`, or the WebUI.
+- **Registry and repository:** `ghcr.io/lucienkerl/loxmatter`, `github.com/lucienkerl/loxmatter`.
+- **The four build arguments are exactly named** `LOXMATTER_VERSION`, `LOXMATTER_COMMIT`, `LOXMATTER_BUILT_AT`, `LOXMATTER_SCHEMA_VERSION`.
+- **The Compose tag variable is exactly** `LOXMATTER_IMAGE_TAG`, default `stable`.
+- **The full test suite takes about three minutes.** It looks like a hang, but it's not — don't cancel it.
+- **Before every commit, these must pass:** `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run pytest`.
+- **Every test must fail once as a trial.** A test that names a structure instead of checking it has happened in this project. The step "Run test to verify it fails" is not a formality.
 
 ## File Structure
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `src/loxmatter/version.py` (neu) | Liest die Bau-Identität aus der Umgebung. Einzige Stelle, die `os.environ` dafür anfasst. |
-| `src/loxmatter/model/store.py` (ändern) | Bekommt `schema_version()` als öffentlichen Zugang zur bisher privaten `_SCHEMA_VERSION`. |
-| `src/loxmatter/api/version.py` (neu) | `GET /api/version`. Ein Router, ein Modell, keine Logik. |
-| `src/loxmatter/loxone/server.py` (ändern) | Bindet den neuen Router ein, hinter demselben Wächter wie alle `/api`-Routen. |
-| `src/loxmatter/web/index.html`, `app.js` (ändern) | Karte „Version" im System-Tab. |
-| `src/loxmatter/i18n/strings.yaml` (ändern) | Die neuen `web.system.version.*`-Schlüssel. |
-| `Dockerfile` (ändern) | Vier `ARG`/`ENV`-Paare. |
-| `.github/workflows/ci.yml` (ändern) | Neuer Job `image`: multi-arch bauen und nach GHCR schieben. |
-| `deploy/testhost/docker-compose.yml` (ändern) | `image:` neben `build:`. |
-| `scripts/update.sh` (ändern) | `compose pull` statt `compose build`. |
-| `CHANGELOG.md` (neu), `docs/DEVELOPMENT.md` (ändern), `README.md` (ändern) | Was ein Release ausmacht, und wie man aktualisiert. |
-| `tests/test_version.py`, `tests/api/test_version_api.py`, `tests/test_build_arguments.py`, `tests/test_update_script.py` (neu) | siehe jeweilige Task. |
+| `src/loxmatter/version.py` (new) | Reads build identity from environment. Only place that touches `os.environ` for this. |
+| `src/loxmatter/model/store.py` (modify) | Adds `schema_version()` as public access to the previously private `_SCHEMA_VERSION`. |
+| `src/loxmatter/api/version.py` (new) | `GET /api/version`. One router, one model, no logic. |
+| `src/loxmatter/loxone/server.py` (modify) | Includes the new router, behind the same guard as all `/api` routes. |
+| `src/loxmatter/web/index.html`, `app.js` (modify) | "Version" card in System tab. |
+| `src/loxmatter/i18n/strings.yaml` (modify) | The new `web.system.version.*` keys. |
+| `Dockerfile` (modify) | Four `ARG`/`ENV` pairs. |
+| `.github/workflows/ci.yml` (modify) | New `image` job: build multi-arch and push to GHCR. |
+| `deploy/testhost/docker-compose.yml` (modify) | `image:` alongside `build:`. |
+| `scripts/update.sh` (modify) | `compose pull` instead of `compose build`. |
+| `CHANGELOG.md` (new), `docs/DEVELOPMENT.md` (modify), `README.md` (modify) | What constitutes a release, and how to update. |
+| `tests/test_version.py`, `tests/api/test_version_api.py`, `tests/test_build_arguments.py`, `tests/test_update_script.py` (new) | see respective task. |
 
 ---
 
-### Task 1: `loxmatter.version` — die Identität aus der Umgebung
+### Task 1: `loxmatter.version` — identity from environment
 
 **Files:**
 - Create: `src/loxmatter/version.py`
-- Modify: `src/loxmatter/model/store.py` (neue öffentliche Funktion `schema_version()`, direkt unter `_SCHEMA_VERSION = 7`)
+- Modify: `src/loxmatter/model/store.py` (new public function `schema_version()`, directly under `_SCHEMA_VERSION = 7`)
 - Test: `tests/test_version.py`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: `loxmatter.version.BuildInfo` (frozen dataclass mit `version: str`, `commit: str | None`, `built_at: str | None`, `schema_version: int`) und `loxmatter.version.build_info() -> BuildInfo`. `loxmatter.model.store.schema_version() -> int`.
+- Consumes: nothing.
+- Produces: `loxmatter.version.BuildInfo` (frozen dataclass with `version: str`, `commit: str | None`, `built_at: str | None`, `schema_version: int`) and `loxmatter.version.build_info() -> BuildInfo`. `loxmatter.model.store.schema_version() -> int`.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/test_version.py` (mit GPL-Kopf, wortgleich aus `src/loxmatter/api/settings.py:1-15` übernommen):
+`tests/test_version.py` (with GPL header, copied word-for-word from `src/loxmatter/api/settings.py:1-15`):
 
 ```python
-"""Tests fuer die Bau-Identitaet - Entwurf "Updates ueber die Oberflaeche
-einspielen" (2026-09-08), Abschnitt 4.
+"""Tests for build identity — spec "Ship updates through the UI"
+(2026-09-08), section 4.
 
-Die vier Faelle unten decken genau die vier Wege ab, auf denen diese
-Angaben falsch sein koennten: gar nicht gesetzt (Entwicklungscheckout),
-leer gesetzt (Docker Compose interpoliert eine fehlende .env-Variable zu
-einem leeren String), richtig gesetzt, und - der wichtigste - die
-Schema-Version, die sich aus der Umgebung NICHT faelschen laesst."""
+The four cases below cover exactly the four ways these values could be wrong:
+not set at all (dev checkout), set empty (Docker Compose interpolates a
+missing .env variable to an empty string), set correctly, and — the
+important one — the schema version, which cannot be faked from the
+environment."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ from loxmatter.model import store as store_module
 from loxmatter.version import build_info
 
 
-def test_ohne_umgebung_meldet_sich_die_bruecke_als_entwicklungsstand(monkeypatch):
+def test_without_environment_bridge_reports_dev_status(monkeypatch):
     for name in ("LOXMATTER_VERSION", "LOXMATTER_COMMIT", "LOXMATTER_BUILT_AT"):
         monkeypatch.delenv(name, raising=False)
     info = build_info()
@@ -81,10 +81,10 @@ def test_ohne_umgebung_meldet_sich_die_bruecke_als_entwicklungsstand(monkeypatch
     assert info.built_at is None
 
 
-def test_leere_variablen_gelten_wie_fehlende(monkeypatch):
-    # Docker Compose interpoliert eine in .env fehlende Variable zu einem
-    # LEEREN String, nicht zu "nicht gesetzt" - dieselbe Falle, die bei
-    # LOXMATTER_API_TOKEN schon einmal zuschlug (siehe Compose-Datei).
+def test_empty_variables_count_as_missing(monkeypatch):
+    # Docker Compose interpolates a variable missing from .env to an empty
+    # string, not "not set" — the same trap that caught LOXMATTER_API_TOKEN
+    # once before (see Compose file).
     monkeypatch.setenv("LOXMATTER_VERSION", "")
     monkeypatch.setenv("LOXMATTER_COMMIT", "   ")
     monkeypatch.delenv("LOXMATTER_BUILT_AT", raising=False)
@@ -93,7 +93,7 @@ def test_leere_variablen_gelten_wie_fehlende(monkeypatch):
     assert info.commit is None
 
 
-def test_gesetzte_variablen_kommen_unveraendert_durch(monkeypatch):
+def test_set_variables_pass_unchanged(monkeypatch):
     monkeypatch.setenv("LOXMATTER_VERSION", "0.3.0")
     monkeypatch.setenv("LOXMATTER_COMMIT", "a3f91c2")
     monkeypatch.setenv("LOXMATTER_BUILT_AT", "2026-09-08T10:00:00Z")
@@ -103,14 +103,13 @@ def test_gesetzte_variablen_kommen_unveraendert_durch(monkeypatch):
     assert info.built_at == "2026-09-08T10:00:00Z"
 
 
-def test_die_schema_version_laesst_sich_aus_der_umgebung_nicht_faelschen(monkeypatch):
-    """Die einzige Angabe, die NICHT aus der Umgebung kommt.
+def test_schema_version_cannot_be_faked_from_environment(monkeypatch):
+    """The only value that does NOT come from the environment.
 
-    Im Image steht sie zusaetzlich als ENV - aber fuer den Updater aus
-    Stufe 2, der sie mit `docker inspect` aus einem noch nicht gestarteten
-    Image liest. Der laufende Prozess hat sie ohnehin im Speicher, und eine
-    zweite Quelle waere eine Quelle, die irgendwann etwas anderes
-    behauptet."""
+    In the image it appears as ENV too — but for the updater from stage 2,
+    which reads it with `docker inspect` from an image not yet started.
+    The running process knows it already, and a second source would be a
+    source that claims something different at some point."""
     monkeypatch.setenv("LOXMATTER_SCHEMA_VERSION", "999")
     assert build_info().schema_version == store_module._SCHEMA_VERSION
 ```
@@ -118,44 +117,43 @@ def test_die_schema_version_laesst_sich_aus_der_umgebung_nicht_faelschen(monkeyp
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_version.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.version'`
+Expected: FAIL — module not found
 
 - [ ] **Step 3: Add `schema_version()` to the store**
 
-In `src/loxmatter/model/store.py`, direkt unter der Zeile `_SCHEMA_VERSION = 7`:
+In `src/loxmatter/model/store.py`, directly under the line `_SCHEMA_VERSION = 7`:
 
 ```python
 def schema_version() -> int:
-    """Die Schema-Version dieses Moduls, oeffentlich lesbar.
+    """The schema version of this module, publicly readable.
 
-    `_SCHEMA_VERSION` bleibt privat: wer sie aendert, soll den langen
-    Kommentarblock darueber sehen, der jede einzelne Stufe begruendet.
-    Diese Funktion gibt sie nach aussen, damit `loxmatter.version` und die
-    CI nicht auf einen privaten Namen zugreifen muessen - und damit es
-    genau EINE Quelle fuer diese Zahl gibt.
+    `_SCHEMA_VERSION` stays private: anyone changing it should see the long
+    comment block above it, explaining every step. This function exports it
+    so that `loxmatter.version` and CI don't have to access a private name —
+    and so there is exactly one source for this number.
     """
     return _SCHEMA_VERSION
 ```
 
 - [ ] **Step 4: Write the module**
 
-`src/loxmatter/version.py` (GPL-Kopf, dann):
+`src/loxmatter/version.py` (GPL header, then):
 
 ```python
-"""Woher die laufende Fassung ihre Identitaet kennt - Entwurf "Updates
-ueber die Oberflaeche einspielen" (2026-09-08), Abschnitt 4.
+"""How the running version knows its identity — spec "Ship updates through
+the UI" (2026-09-08), section 4.
 
-Die Angaben kommen aus der UMGEBUNG, nicht aus dem Checkout auf dem Host.
-`Dockerfile` legt sie beim Bau als `ENV` ab, gespeist aus Build-Argumenten,
-die die CI setzt. Der Grund fuer diese Richtung: ein Checkout auf dem Host
-kann inzwischen woanders stehen, weitergewandert oder umgezogen sein, ohne
-dass das je ausgeliefert wurde - das Image dagegen IST, was laeuft.
+The values come from the ENVIRONMENT, not from the host checkout. `Dockerfile`
+lays them down as `ENV` during build, fed from build arguments that CI sets.
+The reason for this direction: a checkout on the host may have moved
+elsewhere, wandered on, or changed location without ever being shipped — the
+image, by contrast, IS what is running.
 
-Ausserhalb eines Images - im Entwicklungscheckout, wo `uv run loxmatter`
-direkt startet - fehlen die Variablen. Das ist kein Fehlerfall, sondern
-der Normalfall beim Entwickeln: `version` heisst dann "dev",
-`commit`/`built_at` sind None. Wer daraus eine Ausnahme machte, koennte
-die Bruecke ausserhalb von Docker nicht mehr starten.
+Outside an image — in the dev checkout, where `uv run loxmatter` starts
+directly — the variables are missing. That is not an error case, but the
+normal case when developing: `version` is then "dev", `commit`/`built_at`
+are None. If someone made an exception here, the bridge couldn't start
+outside Docker.
 """
 
 from __future__ import annotations
@@ -175,13 +173,13 @@ class BuildInfo:
 
 
 def _clean(name: str) -> str | None:
-    """Leere Umgebungsvariablen wie fehlende behandeln.
+    """Treat empty environment variables as missing.
 
-    Docker Compose interpoliert eine in `.env` fehlende Variable zu einem
-    LEEREN String, nicht zu "nicht gesetzt". Genau diese Falle hat bei
-    `LOXMATTER_API_TOKEN` schon einmal zugeschlagen (siehe die ausfuehrliche
-    Begruendung in deploy/testhost/docker-compose.yml); ohne diese Funktion
-    hiesse die Version auf einem Host ohne gesetzten Wert "" statt "dev".
+    Docker Compose interpolates a variable missing from `.env` to an empty
+    string, not "not set". This exact trap caught `LOXMATTER_API_TOKEN` once
+    before (see the detailed explanation in
+    deploy/testhost/docker-compose.yml); without this function, the version
+    on a host with no value set would be "" instead of "dev".
     """
     value = os.environ.get(name, "").strip()
     return value or None
@@ -192,8 +190,8 @@ def build_info() -> BuildInfo:
         version=_clean("LOXMATTER_VERSION") or "dev",
         commit=_clean("LOXMATTER_COMMIT"),
         built_at=_clean("LOXMATTER_BUILT_AT"),
-        # Bewusst NICHT aus der Umgebung: siehe Docstring von
-        # `test_die_schema_version_laesst_sich_aus_der_umgebung_nicht_faelschen`.
+        # Deliberately NOT from the environment: see the docstring of
+        # `test_schema_version_cannot_be_faked_from_environment`.
         schema_version=schema_version(),
     )
 ```
@@ -205,35 +203,33 @@ Expected: 4 passed
 
 - [ ] **Step 6: Prove the last test can fail**
 
-Ändere `version.py` probeweise auf `schema_version=int(os.environ.get("LOXMATTER_SCHEMA_VERSION", schema_version()))`, führe `uv run pytest tests/test_version.py -v` aus.
-Expected: `test_die_schema_version_laesst_sich_aus_der_umgebung_nicht_faelschen` FAILT (`999 != 7`). Danach die Änderung zurücknehmen und erneut laufen lassen: 4 passed.
+Temporarily change `version.py` to `schema_version=int(os.environ.get("LOXMATTER_SCHEMA_VERSION", schema_version()))`, run `uv run pytest tests/test_version.py -v`.
+Expected: `test_schema_version_cannot_be_faked_from_environment` FAILS (`999 != 7`). Then revert the change and run again: 4 passed.
 
 - [ ] **Step 7: Lint, types, full suite**
 
 Run: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`
-Expected: alles grün (die volle Suite braucht rund drei Minuten)
+Expected: all green (full suite takes about three minutes)
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add src/loxmatter/version.py src/loxmatter/model/store.py tests/test_version.py
-git commit -m "feat(version): Bau-Identitaet aus der Umgebung lesen
+git commit -m "feat(version): read build identity from environment
 
-Die Bruecke konnte bisher nicht sagen, welche Fassung sie ist:
-pyproject.toml steht seit 628 Commits auf 0.1.0, und der git-Stand liegt
-im Checkout auf dem Host, den der laufende Prozess nicht kennt. Ein
-Update setzt aber voraus, dass 'vorher' und 'nachher' benennbar sind.
+The bridge couldn't say which version it was: pyproject.toml has been at
+0.1.0 for 628 commits, and the git state lives in the checkout on the host,
+which the running process doesn't know. But an update requires that 'before'
+and 'after' are nameable.
 
-Die Angaben kommen deshalb aus dem Image selbst. Leere Werte gelten wie
-fehlende - Docker Compose interpoliert eine fehlende .env-Variable zu
-einem leeren String, dieselbe Falle wie seinerzeit bei
-LOXMATTER_API_TOKEN.
+The values come from the image itself, therefore. Empty values count as
+missing — Docker Compose interpolates a variable missing from .env to an
+empty string, the same trap that caught LOXMATTER_API_TOKEN once.
 
-Die Schema-Version nimmt bewusst den anderen Weg und kommt aus
-model.store, nicht aus der Umgebung: der laufende Prozess hat sie
-ohnehin, und eine zweite Quelle waere eine, die irgendwann etwas anderes
-behauptet. Ein Test belegt, dass ein gesetztes LOXMATTER_SCHEMA_VERSION
-sie nicht verschieben kann.
+The schema version takes the other road deliberately and comes from
+model.store, not from the environment: the running process knows it anyway,
+and a second source would be one that claims something different at some
+point. A test proves that a set LOXMATTER_SCHEMA_VERSION cannot change it.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
@@ -244,24 +240,24 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/loxmatter/api/version.py`
-- Modify: `src/loxmatter/loxone/server.py` (Import und ein `include_router`-Aufruf neben `build_language_router`, um Zeile 494)
+- Modify: `src/loxmatter/loxone/server.py` (import and an `include_router` call next to `build_language_router`, around line 494)
 - Test: `tests/api/test_version_api.py`
 
 **Interfaces:**
-- Consumes: `loxmatter.version.build_info()` aus Task 1.
-- Produces: `loxmatter.api.version.build_version_router() -> APIRouter` mit Präfix `/api`; Antwortmodell `VersionOut(version: str, commit: str | None, built_at: str | None, schema_version: int)`. Die WebUI in Task 4 liest genau diese vier Felder.
+- Consumes: `loxmatter.version.build_info()` from Task 1.
+- Produces: `loxmatter.api.version.build_version_router() -> APIRouter` with prefix `/api`; response model `VersionOut(version: str, commit: str | None, built_at: str | None, schema_version: int)`. The WebUI in Task 4 reads exactly these four fields.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/api/test_version_api.py` (GPL-Kopf, dann):
+`tests/api/test_version_api.py` (GPL header, then):
 
 ```python
-"""Tests fuer GET /api/version.
+"""Tests for GET /api/version.
 
-Die `api`-Fixture folgt demselben Muster wie in `test_language.py`: eine
-lokale, bereits ANGEMELDETE Fixture. `unauthenticated_api` daneben belegt,
-dass diese Route KEINE der drei bewussten Ausnahmen von der
-Anmeldepflicht ist (`/cmd`, `/resync`, `GET /api/i18n`)."""
+The `api` fixture follows the same pattern as in `test_language.py`: a local,
+already-authenticated fixture. `unauthenticated_api` proves that this route
+is NOT one of the three intentional exceptions to the login requirement
+(`/cmd`, `/resync`, `GET /api/i18n`)."""
 
 from __future__ import annotations
 
@@ -287,7 +283,9 @@ async def api(tmp_path, no_invoke, fake_runtime) -> AsyncIterator[httpx.AsyncCli
 
 
 @pytest.fixture
-async def unauthenticated_api(tmp_path, no_invoke, fake_runtime) -> AsyncIterator[httpx.AsyncClient]:
+async def unauthenticated_api(
+    tmp_path, no_invoke, fake_runtime
+) -> AsyncIterator[httpx.AsyncClient]:
     store = Store(tmp_path / "t.sqlite")
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
@@ -296,7 +294,7 @@ async def unauthenticated_api(tmp_path, no_invoke, fake_runtime) -> AsyncIterato
     store.close()
 
 
-async def test_die_route_nennt_die_vier_angaben(api, monkeypatch):
+async def test_route_returns_four_values(api, monkeypatch):
     monkeypatch.setenv("LOXMATTER_VERSION", "0.3.0")
     monkeypatch.setenv("LOXMATTER_COMMIT", "a3f91c2")
     monkeypatch.setenv("LOXMATTER_BUILT_AT", "2026-09-08T10:00:00Z")
@@ -310,9 +308,9 @@ async def test_die_route_nennt_die_vier_angaben(api, monkeypatch):
     }
 
 
-async def test_im_entwicklungscheckout_antwortet_sie_trotzdem(api, monkeypatch):
-    """Kein 500, wenn die Variablen fehlen - sonst waere die Oberflaeche
-    ausserhalb von Docker unbenutzbar."""
+async def test_responds_even_in_dev_checkout(api, monkeypatch):
+    """No 500 if variables are missing — otherwise the UI would be unusable
+    outside Docker."""
     for name in ("LOXMATTER_VERSION", "LOXMATTER_COMMIT", "LOXMATTER_BUILT_AT"):
         monkeypatch.delenv(name, raising=False)
     response = await api.get("/api/version")
@@ -321,7 +319,7 @@ async def test_im_entwicklungscheckout_antwortet_sie_trotzdem(api, monkeypatch):
     assert response.json()["commit"] is None
 
 
-async def test_ohne_sitzung_kein_zugriff(unauthenticated_api):
+async def test_no_access_without_session(unauthenticated_api):
     response = await unauthenticated_api.get("/api/version")
     assert response.status_code == 401
 ```
@@ -329,30 +327,29 @@ async def test_ohne_sitzung_kein_zugriff(unauthenticated_api):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_version_api.py -v`
-Expected: FAIL — die beiden ersten mit `404`, weil die Route noch nicht existiert
+Expected: FAIL — first two with `404`, because the route doesn't exist yet
 
 - [ ] **Step 3: Write the router**
 
-`src/loxmatter/api/version.py` (GPL-Kopf, dann):
+`src/loxmatter/api/version.py` (GPL header, then):
 
 ```python
-"""Die Bau-Identitaet ueber die API - Entwurf "Updates ueber die
-Oberflaeche einspielen" (2026-09-08), Abschnitt 4.
+"""Build identity through the API — spec "Ship updates through the UI"
+(2026-09-08), section 4.
 
-`build_version_router` baut einen `APIRouter` mit Praefix `/api`, genau wie
-`api.settings.build_settings_router` - eingebunden in
-`loxone.server.build_app` hinter demselben `api_guard`.
+`build_version_router` builds an `APIRouter` with prefix `/api`, just like
+`api.settings.build_settings_router` — included in `loxone.server.build_app`
+behind the same `api_guard`.
 
-Anders als `GET /api/i18n` ist diese Route NICHT von der Anmeldepflicht
-ausgenommen: die Anmeldeseite braucht sie nicht, um sich anzuzeigen. Wer
-die Version wissen will, soll angemeldet sein - eine Versionsnummer ist
-fuer jemanden, der ohnehin schon im Netz steht, ein brauchbarer Hinweis
-darauf, welche bekannten Luecken diese Installation noch hat.
+Unlike `GET /api/i18n`, this route is NOT exempt from login requirement:
+the login page doesn't need it to display. Anyone who wants to know the
+version should be logged in — a version number is, for someone already in
+the network, a useful hint about which known gaps this installation still
+has.
 
-Keine Zwischenspeicherung: `build_info()` liest `os.environ`, und das ist
-im laufenden Prozess unveraenderlich - aber die Tests setzen die Variablen
-mit `monkeypatch` pro Testfall, und ein Cache machte genau diese Tests
-voneinander abhaengig."""
+No caching: `build_info()` reads `os.environ`, which is immutable in the
+running process — but tests set the variables with `monkeypatch` per test,
+and a cache would make exactly these tests depend on each other."""
 
 from __future__ import annotations
 
@@ -387,13 +384,13 @@ def build_version_router() -> APIRouter:
 
 - [ ] **Step 4: Wire it into the app**
 
-In `src/loxmatter/loxone/server.py`, beim Importblock der übrigen Router:
+In `src/loxmatter/loxone/server.py`, at the import block with the other routers:
 
 ```python
 from loxmatter.api.version import build_version_router
 ```
 
-und direkt nach der Zeile `app.include_router(build_language_router(store), dependencies=api_guard)`:
+And directly after the line `app.include_router(build_language_router(store), dependencies=api_guard)`:
 
 ```python
     app.include_router(build_version_router(), dependencies=api_guard)
@@ -406,13 +403,13 @@ Expected: 3 passed
 
 - [ ] **Step 6: Prove the guard test can fail**
 
-Entferne probeweise `dependencies=api_guard` aus dem neuen `include_router`-Aufruf, führe `uv run pytest tests/api/test_version_api.py -v` aus.
-Expected: `test_ohne_sitzung_kein_zugriff` FAILT (`200 != 401`). Danach zurücknehmen, erneut laufen lassen: 3 passed.
+Temporarily remove `dependencies=api_guard` from the new `include_router` call, run `uv run pytest tests/api/test_version_api.py -v`.
+Expected: `test_no_access_without_session` FAILS (`200 != 401`). Then restore it, run again: 3 passed.
 
 - [ ] **Step 7: Lint, types, full suite**
 
 Run: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`
-Expected: alles grün
+Expected: all green
 
 - [ ] **Step 8: Commit**
 
@@ -420,46 +417,44 @@ Expected: alles grün
 git add src/loxmatter/api/version.py src/loxmatter/loxone/server.py tests/api/test_version_api.py
 git commit -m "feat(api): GET /api/version
 
-Gibt die vier Angaben aus Task 1 aus, hinter demselben Waechter wie jede
-andere /api-Route. Bewusst KEINE vierte Ausnahme von der Anmeldepflicht:
-die Anmeldeseite braucht die Version nicht, um sich anzuzeigen, und eine
-Versionsnummer ist fuer jemanden im selben Netz ein brauchbarer Hinweis
-darauf, welche bekannten Luecken diese Installation noch hat.
+Returns the four values from Task 1, behind the same guard as every other
+/api route. Deliberately NOT a fourth exception to the login requirement:
+the login page doesn't need the version to display, and a version number is,
+for someone in the same network, a useful hint about which known gaps this
+installation still has.
 
-Ohne Zwischenspeicherung, obwohl os.environ im laufenden Prozess
-unveraenderlich ist: ein Cache machte die Tests voneinander abhaengig,
-die die Variablen je Fall mit monkeypatch setzen.
+No caching, even though os.environ is immutable in the running process: a
+cache would make the tests depend on each other, and they set the variables
+per test with monkeypatch.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 3: `Dockerfile` — die vier Build-Argumente
+### Task 3: `Dockerfile` — the four build arguments
 
 **Files:**
-- Modify: `Dockerfile` (nach dem `ENV PATH=`-Block, vor `EXPOSE 8080`)
+- Modify: `Dockerfile` (after the `ENV PATH=` block, before `EXPOSE 8080`)
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: vier `ARG`-Deklarationen mit exakt den Namen `LOXMATTER_VERSION`, `LOXMATTER_COMMIT`, `LOXMATTER_BUILT_AT`, `LOXMATTER_SCHEMA_VERSION`, jeweils als gleichnamiges `ENV` gesetzt. Task 4 prüft, dass die CI genau diese vier durchreicht, und liest `LOXMATTER_SCHEMA_VERSION` später (Stufe 2) per `docker inspect`.
+- Consumes: nothing.
+- Produces: four `ARG` declarations with exactly the names `LOXMATTER_VERSION`, `LOXMATTER_COMMIT`, `LOXMATTER_BUILT_AT`, `LOXMATTER_SCHEMA_VERSION`, each set as an equally-named `ENV`. Task 4 verifies that CI passes exactly these four, and reads `LOXMATTER_SCHEMA_VERSION` later (stage 2) via `docker inspect`.
 
 - [ ] **Step 1: Add the arguments**
 
-Im `Dockerfile`, unmittelbar vor der Zeile `EXPOSE 8080`:
+In the `Dockerfile`, directly before the line `EXPOSE 8080`:
 
 ```dockerfile
-# Die Bau-Identitaet (Entwurf "Updates ueber die Oberflaeche einspielen",
-# 2026-09-08, Abschnitt 4). Gesetzt von der CI, gelesen von
-# `loxmatter/version.py` und - fuer LOXMATTER_SCHEMA_VERSION - vom Updater
-# aus Stufe 2, der sie mit `docker inspect` aus einem Image liest, das er
-# noch gar nicht gestartet hat. Genau deshalb steht sie hier als ENV und
-# nicht nur im Code: ein `docker inspect` sieht keine Python-Konstante.
+# Build identity (spec "Ship updates through the UI", 2026-09-08, section 4).
+# Set by CI, read by `loxmatter/version.py` and — for LOXMATTER_SCHEMA_VERSION
+# — by the updater from stage 2, which reads it with `docker inspect` from
+# an image not yet started. That's exactly why it appears here as ENV and not
+# just in code: `docker inspect` sees no Python constant.
 #
-# Die Vorgaben unten machen einen Bau von Hand (`docker compose build`)
-# moeglich, ohne dass jemand vier Argumente kennen muss - er ergibt dann
-# ein Image, das sich ehrlich als "dev" ausgibt, statt eine Version zu
-# behaupten, die es nicht ist.
+# The defaults below make a manual build (`docker compose build`) possible
+# without anyone needing to know four arguments — it produces an image that
+# honestly identifies as "dev" instead of claiming a version it doesn't have.
 ARG LOXMATTER_VERSION=dev
 ARG LOXMATTER_COMMIT=""
 ARG LOXMATTER_BUILT_AT=""
@@ -472,49 +467,49 @@ ENV LOXMATTER_VERSION=${LOXMATTER_VERSION} \
 
 - [ ] **Step 2: Verify the file parses as a Dockerfile**
 
-Run: `docker build --check . 2>&1 | tail -5` (falls Docker vorhanden; sonst überspringen — Task 4 prüft die Konsistenz ohne Docker)
-Expected: keine Fehler zu `ARG`/`ENV`
+Run: `docker build --check . 2>&1 | tail -5` (if Docker is available; otherwise skip — Task 4 verifies consistency without Docker)
+Expected: no errors for `ARG`/`ENV`
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add Dockerfile
-git commit -m "build: vier Build-Argumente fuer die Bau-Identitaet
+git commit -m "build: four build arguments for build identity
 
-LOXMATTER_SCHEMA_VERSION steht bewusst auch dann als ENV im Image, wenn
-der laufende Prozess sie ohnehin aus model.store kennt: der Updater aus
-Stufe 2 liest sie mit \`docker inspect\` aus einem Image, das er noch
-nicht gestartet hat - und ein docker inspect sieht keine Python-Konstante.
+LOXMATTER_SCHEMA_VERSION intentionally appears as ENV in the image even
+though the running process knows it from model.store: the updater from
+stage 2 reads it with \`docker inspect\` from an image not yet started —
+and docker inspect sees no Python constant.
 
-Vorgaben fuer alle vier, damit ein Bau von Hand ohne Argumentkenntnis
-gelingt und ein Image ergibt, das sich ehrlich als 'dev' ausgibt.
+Defaults for all four so a manual build works without argument knowledge,
+producing an image that honestly identifies as 'dev'.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 4: Die WebUI zeigt die Version
+### Task 4: The WebUI shows the version
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (neue Karte als **erste** Karte im `view === 'system'`-Abschnitt, vor der Karte „Erneut senden")
-- Modify: `src/loxmatter/web/app.js` (Zustand `versionInfo`, Laden in `loadSystem()`)
+- Modify: `src/loxmatter/web/index.html` (new card as the **first** card in the `view === 'system'` section, before the "Resync all" card)
+- Modify: `src/loxmatter/web/app.js` (`versionInfo` state, loading in `loadSystem()`)
 - Modify: `src/loxmatter/i18n/strings.yaml`
-- Test: `tests/api/test_version_api.py` (eine Ergänzung, siehe Step 1)
+- Test: `tests/api/test_version_api.py` (an addition, see Step 1)
 
 **Interfaces:**
-- Consumes: `GET /api/version` aus Task 2, `this.request(...)` und `t(...)` aus `app.js`.
-- Produces: Alpine-Zustand `versionInfo` (`{version, commit, built_at, schema_version}` oder `null`), Anzeige im System-Tab. Stufe 2 hängt ihre Update-Karte an genau diese Stelle.
+- Consumes: `GET /api/version` from Task 2, `this.request(...)` and `t(...)` from `app.js`.
+- Produces: Alpine state `versionInfo` (`{version, commit, built_at, schema_version}` or `null`), display in System tab. Stage 2 attaches its update card right at this spot.
 
 - [ ] **Step 1: Write the failing test**
 
-Ans Ende von `tests/api/test_version_api.py`:
+At the end of `tests/api/test_version_api.py`:
 
 ```python
-async def test_die_oberflaeche_kennt_alle_texte_der_versionskarte():
-    """Ein fehlender Schluessel faellt sonst erst im Browser auf - als
-    leeres Feld, nicht als Fehler. Die Liste hier ist die Verbindung
-    zwischen index.html und strings.yaml, die sonst niemand prueft."""
+async def test_ui_knows_all_version_card_strings():
+    """A missing key only shows up in the browser later — as an empty field,
+    not an error. This list is the connection between index.html and
+    strings.yaml that no one else checks."""
     from loxmatter import i18n
 
     for key in (
@@ -530,12 +525,12 @@ async def test_die_oberflaeche_kennt_alle_texte_der_versionskarte():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `uv run pytest tests/api/test_version_api.py::test_die_oberflaeche_kennt_alle_texte_der_versionskarte -v`
+Run: `uv run pytest tests/api/test_version_api.py::test_ui_knows_all_version_card_strings -v`
 Expected: FAIL — `KeyError: 'web.system.version_heading'`
 
 - [ ] **Step 3: Add the strings**
 
-In `src/loxmatter/i18n/strings.yaml`, unmittelbar vor `web.system.resync_heading:`:
+In `src/loxmatter/i18n/strings.yaml`, unmittelbar before `web.system.resync_heading:`:
 
 ```yaml
 web.system.version_heading:
@@ -562,26 +557,26 @@ Expected: 4 passed
 
 - [ ] **Step 5: Add the state and the load call in `app.js`**
 
-Im Alpine-Zustandsobjekt, direkt neben `systemChecks`:
+In the Alpine state object, right next to `systemChecks`:
 
 ```javascript
-    // Die Bau-Identitaet (GET /api/version). `null`, solange der System-Tab
-    // nicht geoeffnet war - die Karte zeigt dann nichts statt "undefined".
+    // Build identity (GET /api/version). `null` as long as the System tab
+    // hasn't been opened — the card shows nothing instead of "undefined".
     versionInfo: null,
 ```
 
-In `loadSystem()`, innerhalb des `try`-Blocks, VOR dem bestehenden `this.systemChecks = ...`:
+In `loadSystem()`, within the `try` block, BEFORE the existing `this.systemChecks = ...`:
 
 ```javascript
-        // Vor den Pruefungen, nicht danach: die Version steht als erste
-        // Karte im Tab, und sie soll nicht erst erscheinen, wenn die
-        // Pruefungen (die echte Netzarbeit machen) durch sind.
+        // Before the checks, not after: the version is the first card in
+        // the tab, and it shouldn't appear only after the checks (which do
+        // real network work) are done.
         this.versionInfo = await this.request("GET", "/api/version");
 ```
 
 - [ ] **Step 6: Add the card in `index.html`**
 
-Als erste Karte innerhalb von `<section x-show="view === 'system'">`, vor der bestehenden Karte mit `t('web.system.resync_heading')`:
+As the first card inside `<section x-show="view === 'system'">`, before the existing card with `t('web.system.resync_heading')`:
 
 ```html
         <div class="card">
@@ -604,75 +599,71 @@ Als erste Karte innerhalb von `<section x-show="view === 'system'">`, vor der be
 
 - [ ] **Step 7: Check the Alpine bindings in a throwaway harness**
 
-Ein Browsertest belegt nur, dass Dateien ausgeliefert werden — die Bindungen müssen laufen. Starte `uv run python scripts/dev_web_server.py`, öffne den System-Tab und prüfe:
+A browser test only proves that files are delivered — the bindings must run. Start `uv run python scripts/dev_web_server.py`, open the System tab and verify:
 
-- Die Karte „Version" steht **oben**, vor „Alle Werte erneut senden".
-- Sie zeigt `Läuft: dev` (im Entwicklungscheckout) und darunter den Hinweis auf die Arbeitskopie.
-- Die Konsole des Browsers zeigt **keine** Alpine-Fehler und keine `t()`-Warnung über einen fehlenden Schlüssel.
+- The "Version" card appears **at the top**, before "Resync all values".
+- It shows `Running: dev` (in dev checkout) and below a note about the working copy.
+- The browser console shows **no** Alpine errors and no `t()` warning about a missing key.
 
-Danach in derselben Sitzung `LOXMATTER_VERSION=0.3.0 LOXMATTER_COMMIT=a3f91c2 uv run python scripts/dev_web_server.py` starten:
+Then in the same session start `LOXMATTER_VERSION=0.3.0 LOXMATTER_COMMIT=a3f91c2 uv run python scripts/dev_web_server.py`:
 
-- Die Karte zeigt `Läuft: 0.3.0` und `Commit a3f91c2`, und der Arbeitskopie-Hinweis ist **weg**.
+- The card shows `Running: 0.3.0` and `Commit a3f91c2`, and the working-copy note is **gone**.
 
 - [ ] **Step 8: Lint, types, full suite**
 
 Run: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`
-Expected: alles grün
+Expected: all green
 
 - [ ] **Step 9: Commit**
 
 ```bash
 git add src/loxmatter/web/index.html src/loxmatter/web/app.js src/loxmatter/i18n/strings.yaml tests/api/test_version_api.py
-git commit -m "feat(web): Versionskarte im System-Tab
+git commit -m "feat(web): version card in System tab
 
-Die Oberflaeche zeigte bisher nirgends, welche Fassung laeuft. Die Karte
-steht als erste im Tab und wird vor den Pruefungen geladen - die machen
-echte Netzarbeit, und die Version soll nicht auf sie warten.
+The UI never showed which version was running. The card appears first in
+the tab and loads before the checks — the checks do real network work, and
+the version shouldn't wait for them.
 
-Im Entwicklungscheckout steht dort 'Laeuft: dev' plus ein Hinweis, dass
-diese Bruecke aus einer Arbeitskopie gebaut wurde. Das ist kein
-Fehlerzustand, sondern der Normalfall beim Entwickeln - und die einzige
-Formulierung, die nicht so tut, als gaebe es hier eine Version.
+In the dev checkout it says 'Running: dev' plus a note that this bridge was
+built from a working copy. That's not an error state but the normal case
+when developing — and the only wording that doesn't pretend there's a
+version here.
 
-Der Test prueft die Uebersetzungsschluessel, nicht das Markup: ein
-fehlender Schluessel faellt sonst erst im Browser auf, und dort als
-leeres Feld statt als Fehler.
+The test verifies translation keys, not markup: a missing key only shows up
+in the browser later, and then as an empty field instead of an error.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 5: CI baut und veröffentlicht multi-arch nach GHCR
+### Task 5: CI builds and publishes multi-arch to GHCR
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`
-- Test: `tests/test_build_arguments.py` (neu)
+- Test: `tests/test_build_arguments.py` (new)
 
 **Interfaces:**
-- Consumes: die vier `ARG`-Namen aus Task 3, `schema_version()` aus Task 1.
-- Produces: die Images `ghcr.io/lucienkerl/loxmatter:dev`, `:sha-<kurz>` (Push auf `main`) und `:<version>`, `:stable` (Tag `v*`). Task 7 und 8 setzen voraus, dass `:stable` existiert.
+- Consumes: the four `ARG` names from Task 3, `schema_version()` from Task 1.
+- Produces: images `ghcr.io/lucienkerl/loxmatter:dev`, `:sha-<short>` (push to `main`) and `:<version>`, `:stable` (tag `v*`). Tasks 7 and 8 require that `:stable` exists.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/test_build_arguments.py` (GPL-Kopf, dann):
+`tests/test_build_arguments.py` (GPL header, then):
 
 ```python
-"""Die CI und das Dockerfile muessen sich ueber dieselben vier Argumente
-einig sein.
+"""CI and Dockerfile must agree on the same four arguments.
 
-Dies ist bewusst KEIN Test, der nur die Existenz von vier Zeilen im
-Dockerfile behauptet - so einer waere wahr, sobald jemand die Namen
-tippt, und bliebe wahr, wenn die CI danach andere durchreicht. Geprueft
-wird der Abgleich zwischen beiden Dateien, also genau der Fehler, der
-sonst erst am Image auffaellt: ein `--build-arg`, das das Dockerfile nicht
-kennt, wird von Docker STILLSCHWEIGEND verworfen (nur eine Warnung), und
-das Image traegt dann eine leere Version.
+This is deliberately NOT a test that just claims four lines exist in the
+Dockerfile — such a test would be true the moment someone types the names,
+and stay true if CI passes different ones after. What's checked is the
+agreement between both files — exactly the error that only shows up at the
+image: a `--build-arg` the Dockerfile doesn't know gets SILENTLY discarded
+by Docker (just a warning), and the image then has an empty version.
 
-Der dritte Test deckt die dritte Quelle ab: die CI liest die
-Schema-Version mit einem grep aus store.py. Aendert sich dort die
-Schreibweise der Zeile, liefert der grep leer - und der Test faellt hier,
-nicht erst beim naechsten Update auf einem fremden Pi."""
+The third test covers the third source: CI reads the schema version with
+grep from store.py. If the line format changes there, grep returns nothing
+— and the test fails here, not on the next update on someone else's Pi."""
 
 from __future__ import annotations
 
@@ -687,9 +678,9 @@ ROOT = Path(__file__).resolve().parent.parent
 DOCKERFILE = ROOT / "Dockerfile"
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
-# Dieselbe Schreibweise, die der grep-Aufruf in der CI benutzt. Beide
-# stehen bewusst nebeneinander: der Test ist nur dann etwas wert, wenn er
-# dasselbe Muster prueft, das die CI wirklich anwendet.
+# Same format the grep call in CI uses. Both are deliberately side by side:
+# the test is only worth anything if it checks the exact pattern CI really
+# applies.
 SCHEMA_PATTERN = r"^_SCHEMA_VERSION = ([0-9]+)$"
 
 
@@ -698,11 +689,15 @@ def _build_push_step() -> dict:
     for step in workflow["jobs"]["image"]["steps"]:
         if str(step.get("uses", "")).startswith("docker/build-push-action"):
             return step
-    raise AssertionError("Kein docker/build-push-action-Schritt im Job 'image'")
+    raise AssertionError("No docker/build-push-action step in job 'image'")
 
 
-def test_die_ci_reicht_genau_die_argumente_durch_die_das_dockerfile_kennt() -> None:
-    declared = set(re.findall(r"^ARG\s+([A-Z_][A-Z0-9_]*)", DOCKERFILE.read_text(encoding="utf-8"), re.MULTILINE))
+def test_ci_passes_exactly_the_args_dockerfile_knows() -> None:
+    declared = set(
+        re.findall(
+            r"^ARG\s+([A-Z_][A-Z0-9_]*)", DOCKERFILE.read_text(encoding="utf-8"), re.MULTILINE
+        )
+    )
     passed = {
         line.split("=", 1)[0].strip()
         for line in _build_push_step()["with"]["build-args"].strip().splitlines()
@@ -711,23 +706,22 @@ def test_die_ci_reicht_genau_die_argumente_durch_die_das_dockerfile_kennt() -> N
     assert passed == declared
 
 
-def test_beide_architekturen_werden_gebaut() -> None:
-    # Der Pi ist der Normalfall dieses Projekts, nicht die Ausnahme. Faellt
-    # arm64 weg, bemerkt das niemand, bis ein Nutzer "no matching manifest"
-    # liest.
+def test_both_architectures_are_built() -> None:
+    # Pi is the normal case for this project, not the exception. If arm64
+    # is missing, no one notices until a user reads "no matching manifest".
     platforms = _build_push_step()["with"]["platforms"]
     assert "linux/arm64" in platforms
     assert "linux/amd64" in platforms
 
 
-def test_der_grep_der_ci_findet_die_schema_version() -> None:
+def test_ci_grep_finds_schema_version() -> None:
     store_source = (ROOT / "src" / "loxmatter" / "model" / "store.py").read_text(encoding="utf-8")
     found = re.findall(SCHEMA_PATTERN, store_source, re.MULTILINE)
-    assert len(found) == 1, "genau eine Zeile muss passen, sonst greift der grep daneben"
+    assert len(found) == 1, "exactly one line must match, else grep misses it"
     assert int(found[0]) == schema_version()
 
 
-def test_die_ci_benutzt_genau_dieses_muster() -> None:
+def test_ci_uses_exactly_this_pattern() -> None:
     workflow_source = WORKFLOW.read_text(encoding="utf-8")
     assert SCHEMA_PATTERN.strip("^$") in workflow_source
 ```
@@ -735,18 +729,18 @@ def test_die_ci_benutzt_genau_dieses_muster() -> None:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_build_arguments.py -v`
-Expected: FAIL — `KeyError: 'image'`, der Job existiert noch nicht
+Expected: FAIL — `KeyError: 'image'`, the job doesn't exist yet
 
 - [ ] **Step 3: Add the `image` job**
 
-Ans Ende von `.github/workflows/ci.yml`:
+At the end of `.github/workflows/ci.yml`:
 
 ```yaml
 
-  # Baut und veroeffentlicht das Image (Entwurf "Updates ueber die
-  # Oberflaeche einspielen", 2026-09-08, Abschnitt 5). `needs: test` ist
-  # nicht Kosmetik: ein Image, das die Testsuite nicht bestanden hat, darf
-  # gar nicht erst unter einem Tag stehen, den jemand einspielen kann.
+  # Builds and publishes the image (spec "Ship updates through the UI",
+  # 2026-09-08, section 5). `needs: test` is not just cosmetic: an image
+  # that hasn't passed the test suite must not appear under a tag someone
+  # can install.
   image:
     needs: test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
@@ -759,15 +753,14 @@ Ans Ende von `.github/workflows/ci.yml`:
       - id: meta
         run: |
           set -eu
-          # Die Schema-Version hat genau eine Quelle: store.py. Schlaegt der
-          # grep fehl, bricht der Bau ab, statt ein Image mit leerem
-          # LOXMATTER_SCHEMA_VERSION zu veroeffentlichen - der Updater aus
-          # Stufe 2 koennte damit seine Vorabpruefung nicht machen und
-          # muesste raten. tests/test_build_arguments.py prueft dasselbe
-          # Muster, damit ein Umbau in store.py hier nicht erst in der CI
-          # auffaellt.
+          # Schema version has exactly one source: store.py. If grep fails,
+          # build aborts instead of publishing an image with empty
+          # LOXMATTER_SCHEMA_VERSION — the stage 2 updater couldn't do its
+          # pre-check and would have to guess. tests/test_build_arguments.py
+          # checks the same pattern so a store.py change doesn't first show
+          # up in CI.
           schema="$(sed -n -E 's/^_SCHEMA_VERSION = ([0-9]+)$/\1/p' src/loxmatter/model/store.py)"
-          [ -n "$schema" ] || { echo "Keine _SCHEMA_VERSION in store.py gefunden"; exit 1; }
+          [ -n "$schema" ] || { echo "No _SCHEMA_VERSION found in store.py"; exit 1; }
           case "$GITHUB_REF" in
             refs/tags/v*) version="${GITHUB_REF#refs/tags/v}" ;;
             *)            version="dev" ;;
@@ -814,37 +807,35 @@ Expected: 4 passed
 
 - [ ] **Step 5: Prove the consistency test can fail**
 
-Entferne probeweise die Zeile `LOXMATTER_BUILT_AT=...` aus `build-args` und führe `uv run pytest tests/test_build_arguments.py -v` aus.
-Expected: `test_die_ci_reicht_genau_die_argumente_durch_die_das_dockerfile_kennt` FAILT. Danach zurücknehmen: 4 passed.
+Temporarily remove the line `LOXMATTER_BUILT_AT=...` from `build-args` and run `uv run pytest tests/test_build_arguments.py -v`.
+Expected: `test_ci_passes_exactly_the_args_dockerfile_knows` FAILS. Then restore it: 4 passed.
 
 - [ ] **Step 6: Commit and push, then watch the run**
 
 ```bash
 git add .github/workflows/ci.yml tests/test_build_arguments.py
-git commit -m "ci: multi-arch Image nach GHCR veroeffentlichen
+git commit -m "ci: publish multi-arch image to GHCR
 
-Push auf main ergibt :dev und :sha-<kurz>, ein Tag v* ergibt :<version>
-und :stable. \`needs: test\` ist nicht Kosmetik - ein Image, das die
-Testsuite nicht bestanden hat, darf gar nicht erst unter einem Tag
-stehen, den jemand einspielen kann.
+Push to main yields :dev and :sha-<short>, a v* tag yields :<version> and
+:stable. \`needs: test\` is not just cosmetic — an image that hasn't passed
+the test suite must not appear under a tag someone can install.
 
-Die Schema-Version kommt per sed aus store.py und bricht den Bau ab, wenn
-sie dort nicht gefunden wird. Ein leeres LOXMATTER_SCHEMA_VERSION im
-Image waere ein Image, dessen Schemasprung der Updater aus Stufe 2 nicht
-vorab pruefen koennte - er muesste raten, und das ist genau der Fall, den
-die Vorabpruefung abschaffen soll.
+Schema version comes via sed from store.py and aborts the build if not found
+there. An empty LOXMATTER_SCHEMA_VERSION in the image would be an image
+whose schema jump the stage 2 updater couldn't pre-check — it would have to
+guess, and that's exactly the case the pre-check is meant to eliminate.
 
-Der Test gleicht Dockerfile und Workflow gegeneinander ab, statt die
-Existenz von vier Zeilen zu behaupten: ein --build-arg, das das
-Dockerfile nicht kennt, verwirft Docker STILLSCHWEIGEND.
+The test compares Dockerfile and workflow against each other instead of just
+claiming four lines exist: a --build-arg the Dockerfile doesn't know gets
+SILENTLY discarded by Docker.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
 
-Danach: `gh run watch` bis der Job `image` durch ist, und
+Then: `gh run watch` until the `image` job is done, and
 `gh api /users/lucienkerl/packages/container/loxmatter/versions --jq '.[0].metadata.container.tags'`
-Expected: enthält `dev`
+Expected: contains `dev`
 
 - [ ] **Step 7: Verify the published image actually carries its identity**
 
@@ -852,116 +843,112 @@ Expected: enthält `dev`
 docker pull ghcr.io/lucienkerl/loxmatter:dev
 docker inspect ghcr.io/lucienkerl/loxmatter:dev --format '{{json .Config.Env}}' | tr ',' '\n' | grep LOXMATTER
 ```
-Expected: vier Zeilen, `LOXMATTER_VERSION=dev`, ein siebenstelliger Commit, ein Zeitstempel, und `LOXMATTER_SCHEMA_VERSION=7`. **Ist eine davon leer, hier anhalten** — Stufe 2 hängt an genau diesen Werten.
+Expected: four lines, `LOXMATTER_VERSION=dev`, a seven-character commit, a timestamp, and `LOXMATTER_SCHEMA_VERSION=7`. **If any of these is empty, stop here** — stage 2 depends on exactly these values.
 
 ---
 
-### Task 6: Was ein Release ausmacht
+### Task 6: What constitutes a release
 
 **Files:**
 - Create: `CHANGELOG.md`
-- Modify: `docs/DEVELOPMENT.md` (neuer Abschnitt am Ende)
+- Modify: `docs/DEVELOPMENT.md` (new section at end)
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: die schriftliche Regel, an die sich Task 7 hält.
+- Consumes: nothing.
+- Produces: the written rule that Task 7 follows.
 
 - [ ] **Step 1: Write `CHANGELOG.md`**
 
 ```markdown
-# Änderungen
+# Changes
 
-Dieses Projekt vergibt ab 0.2.0 Versionsnummern nach [Semantic
-Versioning](https://semver.org/lang/de/). Jede veröffentlichte Version
-trägt hier einen Abschnitt, und die Oberfläche zeigt seinen Text als
-Änderungsnotizen an, bevor jemand ein Update einspielt — er wird also von
-Leuten gelesen, die den Code nicht kennen.
+Starting with 0.2.0, this project assigns version numbers following [Semantic
+Versioning](https://semver.org/). Every published version has a section here,
+and the UI shows its text as release notes before anyone installs an update
+— so it's read by people who don't know the code.
 
-## [Unveröffentlicht]
+## [Unreleased]
 
 ## [0.2.0] — 2026-09-08
 
-### Neu
+### Added
 
-- Die Oberfläche zeigt im System-Tab, welche Version läuft.
-- Fertige Images liegen unter `ghcr.io/lucienkerl/loxmatter` bereit
-  (`arm64` und `amd64`). Ein Update lädt sie, statt auf dem Raspberry Pi
-  zu bauen — das dauert statt fünf bis zehn Minuten rund eine.
+- The UI shows in the System tab which version is running.
+- Finished images are available at `ghcr.io/lucienkerl/loxmatter`
+  (`arm64` and `amd64`). An update pulls them instead of building on the
+  Raspberry Pi — taking about one minute instead of five to ten.
 
-### Geändert
+### Changed
 
-- `scripts/update.sh` zieht das Image, statt lokal zu bauen. `--build`
-  stellt das alte Verhalten wieder her.
-- Der Stack läuft aus einem veröffentlichten Image. **Diese eine
-  Umstellung braucht einmalig die Konsole:** `git pull &&
-  ./scripts/update.sh` auf dem Rechner, auf dem die Brücke läuft.
+- `scripts/update.sh` pulls the image instead of building locally. `--build`
+  restores the old behavior.
+- The stack runs from a published image. **This one change needs the
+  console once:** `git pull && ./scripts/update.sh` on the machine
+  running the bridge.
 ```
 
 - [ ] **Step 2: Add the release rule to `docs/DEVELOPMENT.md`**
 
-Am Ende der Datei:
+At the end of the file:
 
 ```markdown
-## Eine Version veröffentlichen
+## Publishing a release
 
-Ab 0.2.0 verlassen sich fremde Installationen auf Versionsnummern: die
-Oberfläche vergleicht die laufende Version mit dem letzten Release, und
-der Updater spielt genau das ein, was hier veröffentlicht wurde. Diese
-Kette wird nicht von Code getragen, sondern von Disziplin — deshalb steht
-sie hier.
+Starting with 0.2.0, installations elsewhere rely on version numbers: the UI
+compares the running version against the latest release, and the updater
+installs exactly what was published here. This chain is not carried by code
+but by discipline — that's why it's written here.
 
-1. `CHANGELOG.md`: den Abschnitt `[Unveröffentlicht]` auf die neue Nummer
-   umschreiben, mit Datum. **Für Leute schreiben, die den Code nicht
-   kennen** — dieser Text steht im Bestätigungsdialog vor dem Update.
-2. Nummer wählen: `PATCH` für Fehlerbehebungen, `MINOR` für neue
-   Funktionen, `MAJOR` für alles, was eine bestehende Installation
-   von Hand nachziehen muss.
-3. **Steigt `_SCHEMA_VERSION` in `model/store.py`, gehört das in die
-   Notizen.** Ein Schemasprung ist der einzige Fall, in dem ein Rückfall
-   auf die vorherige Version nicht folgenlos ist (siehe Spec-Abschnitt 8).
-4. Commit, dann `git tag -a v0.3.0 -m "0.3.0"` und `git push --tags`.
-5. Die CI baut daraus `:0.3.0` und `:stable`. **Erst wenn beide in der
-   Registry stehen**, ist die Version veröffentlicht — vorher zeigt die
-   Oberfläche sie an, und ein Einspielen liefe ins Leere.
-6. GitHub-Release anlegen, dessen Text der Changelog-Abschnitt ist. Die
-   Oberfläche liest genau diesen Text.
+1. `CHANGELOG.md`: rewrite the `[Unreleased]` section with the new number
+   and date. **Write for people who don't know the code** — this text
+   appears in the confirmation dialog before an update.
+2. Choose a number: `PATCH` for bug fixes, `MINOR` for new features, `MAJOR`
+   for anything an existing installation must handle by hand.
+3. **If `_SCHEMA_VERSION` in `model/store.py` rises, put that in the notes.**
+   A schema jump is the only case where a fallback to the previous version
+   is not consequence-free (see spec section 8).
+4. Commit, then `git tag -a v0.3.0 -m "0.3.0"` and `git push --tags`.
+5. CI builds `:0.3.0` and `:stable` from this. **Only when both are in the
+   registry** is the version published — before that, the UI shows it, but
+   installing would go nowhere.
+6. Create a GitHub release whose text is the changelog section. The UI reads
+   exactly this text.
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add CHANGELOG.md docs/DEVELOPMENT.md
-git commit -m "docs: Changelog und die Regel, was ein Release ausmacht
+git commit -m "docs: changelog and the rule that makes a release
 
-Ab 0.2.0 verlassen sich fremde Installationen auf Versionsnummern - die
-Oberflaeche vergleicht dagegen, der Updater spielt genau das ein. Diese
-Kette wird nicht von Code getragen, sondern von Disziplin; deshalb steht
-sie geschrieben, samt der Vorgabe, den Changelog-Text fuer Leute zu
-schreiben, die den Code nicht kennen: er steht im Bestaetigungsdialog vor
-dem Update.
+Starting with 0.2.0, installations elsewhere rely on version numbers — the
+UI compares against them, the updater installs exactly what was published.
+This chain is not carried by code but by discipline, so it's written here
+with the rule to write the changelog for people who don't know the code:
+it appears in the confirmation dialog before an update.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: Die erste veröffentlichte Version
+### Task 7: The first published version
 
 **Files:**
 - Modify: `pyproject.toml:3` (`version = "0.1.0"` → `version = "0.2.0"`)
 
 **Interfaces:**
-- Consumes: den CI-Job aus Task 5, die Regel aus Task 6.
-- Produces: die Tags `ghcr.io/lucienkerl/loxmatter:0.2.0` und `:stable`. **Task 8 und 9 setzen voraus, dass `:stable` existiert** — ohne diese Task zeigt die Compose-Datei danach auf ein Image, das es nicht gibt.
+- Consumes: the CI job from Task 5, the rule from Task 6.
+- Produces: tags `ghcr.io/lucienkerl/loxmatter:0.2.0` and `:stable`. **Tasks 8 and 9 require that `:stable` exists** — without this task the Compose file afterward points to an image that doesn't exist.
 
 - [ ] **Step 1: Raise the version**
 
-In `pyproject.toml`, Zeile 3: `version = "0.2.0"`
+In `pyproject.toml`, line 3: `version = "0.2.0"`
 
 - [ ] **Step 2: Run the full suite**
 
 Run: `uv run pytest`
-Expected: alles grün
+Expected: all green
 
 - [ ] **Step 3: Commit, tag, push**
 
@@ -969,8 +956,8 @@ Expected: alles grün
 git add pyproject.toml
 git commit -m "release: 0.2.0
 
-Die erste Version, auf die sich eine fremde Installation berufen kann.
-pyproject.toml stand seit 628 Commits auf 0.1.0.
+The first version that an installation elsewhere can rely on.
+pyproject.toml has been at 0.1.0 for 628 commits.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git tag -a v0.2.0 -m "0.2.0"
@@ -986,62 +973,61 @@ docker inspect ghcr.io/lucienkerl/loxmatter:stable --format '{{index .Config.Env
 ```
 Expected: `LOXMATTER_VERSION=0.2.0`
 
-**Ohne dieses Ergebnis darf Task 8 nicht beginnen.**
+**Without this result, Task 8 must not begin.**
 
 - [ ] **Step 5: Create the GitHub release**
 
 ```bash
 gh release create v0.2.0 --title "0.2.0" --notes-file - <<'EOF'
-### Neu
+### Added
 
-- Die Oberfläche zeigt im System-Tab, welche Version läuft.
-- Fertige Images liegen unter `ghcr.io/lucienkerl/loxmatter` bereit (arm64 und amd64). Ein Update lädt sie, statt auf dem Raspberry Pi zu bauen — das dauert statt fünf bis zehn Minuten rund eine.
+- The UI shows in the System tab which version is running.
+- Finished images are available at `ghcr.io/lucienkerl/loxmatter` (arm64 and amd64). An update pulls them instead of building on the Raspberry Pi — taking about one minute instead of five to ten.
 
-### Geändert
+### Changed
 
-- `scripts/update.sh` zieht das Image, statt lokal zu bauen. `--build` stellt das alte Verhalten wieder her.
-- Der Stack läuft aus einem veröffentlichten Image. **Diese eine Umstellung braucht einmalig die Konsole:** `git pull && ./scripts/update.sh` auf dem Rechner, auf dem die Brücke läuft.
+- `scripts/update.sh` pulls the image instead of building locally. `--build` restores the old behavior.
+- The stack runs from a published image. **This one change needs the console once:** `git pull && ./scripts/update.sh` on the machine running the bridge.
 EOF
 ```
 
 ---
 
-### Task 8: Compose läuft aus dem Image
+### Task 8: Compose runs from the image
 
 **Files:**
-- Modify: `deploy/testhost/docker-compose.yml` (Dienst `loxmatter`)
-- Test: `tests/test_compose_profiles.py` (drei Ergänzungen)
+- Modify: `deploy/testhost/docker-compose.yml` (service `loxmatter`)
+- Test: `tests/test_compose_profiles.py` (three additions)
 
 **Interfaces:**
-- Consumes: `ghcr.io/lucienkerl/loxmatter:stable` aus Task 7.
-- Produces: die Umgebungsvariable `LOXMATTER_IMAGE_TAG` als einzige Stelle, an der die laufende Version festgelegt wird. **Stufe 2 schreibt genau diesen Wert in `.env` um, um zurückzufallen.**
+- Consumes: `ghcr.io/lucienkerl/loxmatter:stable` from Task 7.
+- Produces: the environment variable `LOXMATTER_IMAGE_TAG` as the one place where the running version is set. **Stage 2 rewrites exactly this value in `.env` to fall back.**
 
 - [ ] **Step 1: Write the failing tests**
 
-Ans Ende von `tests/test_compose_profiles.py`:
+At the end of `tests/test_compose_profiles.py`:
 
 ```python
-def test_die_bruecke_laeuft_aus_einem_veroeffentlichten_image() -> None:
-    # Vor 0.2.0 baute Compose das Image auf dem Pi - fuenf bis zehn
-    # Minuten, mit PyPI und Speicher als Fehlerquellen mitten im Update.
+def test_bridge_runs_from_published_image() -> None:
+    # Before 0.2.0, Compose built the image on the Pi — five to ten minutes,
+    # with PyPI and storage as error sources in the middle of an update.
     image = _stack()["services"]["loxmatter"]["image"]
     assert image.startswith("ghcr.io/lucienkerl/loxmatter:")
     assert "${LOXMATTER_IMAGE_TAG:-stable}" in image
 
 
-def test_der_bauweg_bleibt_daneben_bestehen() -> None:
-    # `image:` und `build:` am selben Dienst: `compose pull` zieht,
-    # `compose build` baut, und `up` baut nur, wenn lokal kein Image liegt.
-    # Auf einem Host ohne GHCR-Zugang ist das die Rueckfallebene. Ein
-    # Profil waere hier nicht moeglich - Profile gelten fuer Dienste, nicht
-    # fuer einzelne Schluessel eines Dienstes.
+def test_build_path_remains_alongside() -> None:
+    # `image:` and `build:` on the same service: `compose pull` pulls,
+    # `compose build` builds, and `up` builds only if no image exists locally.
+    # On a host without GHCR access, that's the fallback tier. A profile
+    # wouldn't work here — profiles apply to services, not individual keys.
     assert _stack()["services"]["loxmatter"]["build"]["context"] == "../.."
 
 
-def test_die_laufende_version_steht_an_genau_einer_stelle() -> None:
-    # Stufe 2 setzt darauf auf: der Rueckfall schreibt EINE Zeile in .env
-    # zurueck. Taucht der Tag an einer zweiten Stelle auf, faellt nur die
-    # eine zurueck und die andere nicht.
+def test_running_version_appears_at_exactly_one_place() -> None:
+    # Stage 2 relies on this: the fallback rewrites ONE line in .env. If
+    # the tag appears at a second place, only the one falls back and the
+    # other doesn't.
     source = COMPOSE.read_text(encoding="utf-8")
     assert source.count("LOXMATTER_IMAGE_TAG") == 1
 ```
@@ -1053,27 +1039,25 @@ Expected: FAIL — `KeyError: 'image'`
 
 - [ ] **Step 3: Change the compose file**
 
-Im Dienst `loxmatter`, **vor** dem bestehenden `build:`-Block:
+In the service `loxmatter`, **before** the existing `build:` block:
 
 ```yaml
-    # Seit 0.2.0 aus einem veroeffentlichten Image statt auf dem Pi gebaut
-    # (Entwurf "Updates ueber die Oberflaeche einspielen", 2026-09-08,
-    # Abschnitt 5). Der Bau brauchte auf dem Test-Pi fuenf bis zehn Minuten
-    # und konnte an einem PyPI-Ausfall oder am Speicher scheitern - mitten
-    # in einem Update, das jemand ueber den Browser angestossen hat, ist
-    # das die falsche Sorte Ueberraschung.
+    # Since 0.2.0 built from a published image instead of on the Pi (spec
+    # "Ship updates through the UI", 2026-09-08, section 5). Building took
+    # five to ten minutes on the test Pi and could fail on a PyPI outage or
+    # storage — in the middle of an update someone started through the
+    # browser, that's the wrong kind of surprise.
     #
-    # LOXMATTER_IMAGE_TAG steht in der .env und ist die EINZIGE Stelle, an
-    # der die laufende Version festgelegt wird. Genau deshalb: der Updater
-    # (Stufe 2) faellt zurueck, indem er diese eine Zeile zurueckschreibt.
-    # Eine zweite Erwaehnung des Tags waere eine, die dabei stehen bliebe.
+    # LOXMATTER_IMAGE_TAG is in .env and is the ONE place where the running
+    # version is set. Exactly for this reason: the updater (stage 2) falls
+    # back by rewriting this one line. A second mention of the tag would be
+    # one that stays behind.
     #
-    # `build:` bleibt darunter stehen. Ein Compose-Profil kaeme dafuer
-    # nicht in Frage (Profile gelten fuer Dienste, nicht fuer einzelne
-    # Schluessel), und es wird auch keines gebraucht: `compose pull` zieht,
-    # `compose build` baut ausdruecklich, und `up` baut nur, wenn lokal
-    # gar kein Image liegt. Auf einem Host ohne GHCR-Zugang ist genau das
-    # die gewuenschte Rueckfallebene.
+    # `build:` remains below. A Compose profile wouldn't work here (profiles
+    # apply to services, not individual keys), and none is needed: `compose
+    # pull` pulls, `compose build` builds explicitly, and `up` builds only
+    # if no image exists locally. On a host without GHCR access, that's
+    # exactly the desired fallback tier.
     image: ghcr.io/lucienkerl/loxmatter:${LOXMATTER_IMAGE_TAG:-stable}
 ```
 
@@ -1084,67 +1068,63 @@ Expected: 6 passed
 
 - [ ] **Step 5: Prove the single-mention test can fail**
 
-Füge probeweise irgendwo in der Compose-Datei einen Kommentar `# LOXMATTER_IMAGE_TAG` ein, führe die Tests aus.
-Expected: `test_die_laufende_version_steht_an_genau_einer_stelle` FAILT (`2 != 1`). Danach entfernen: 6 passed.
+Temporarily add a comment `# LOXMATTER_IMAGE_TAG` somewhere in the Compose file, run the tests.
+Expected: `test_running_version_appears_at_exactly_one_place` FAILS (`2 != 1`). Then remove it: 6 passed.
 
 - [ ] **Step 6: Verify against the real registry**
 
 ```bash
 cd deploy/testhost && docker compose pull loxmatter && docker compose config | grep 'image: ghcr'
 ```
-Expected: der Pull gelingt, und `config` zeigt `ghcr.io/lucienkerl/loxmatter:stable`
+Expected: pull succeeds, and `config` shows `ghcr.io/lucienkerl/loxmatter:stable`
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add deploy/testhost/docker-compose.yml tests/test_compose_profiles.py
-git commit -m "build(compose): aus dem veroeffentlichten Image statt vom Pi bauen
+git commit -m "build(compose): build from published image instead of on Pi
 
-LOXMATTER_IMAGE_TAG ist die einzige Stelle, an der die laufende Version
-festgelegt wird - der Updater aus Stufe 2 faellt zurueck, indem er genau
-diese eine Zeile in der .env zurueckschreibt. Ein Test haelt fest, dass
-sie einzig bleibt: eine zweite Erwaehnung waere eine, die beim Rueckfall
-stehen bliebe.
+LOXMATTER_IMAGE_TAG is the one place where the running version is set — the
+stage 2 updater falls back by rewriting exactly this one line in .env. A
+test holds that it stays unique: a second mention would be one that persists
+during fallback.
 
-build: bleibt daneben stehen, ohne Profil - Profile gelten fuer Dienste,
-nicht fuer einzelne Schluessel, und gebraucht wird auch keines: up baut
-nur, wenn lokal kein Image liegt. Auf einem Host ohne GHCR-Zugang ist das
-die gewuenschte Rueckfallebene.
+build: remains alongside, without a profile — profiles apply to services,
+not individual keys, and none is needed: up builds only if no image exists
+locally. On a host without GHCR access, that's the desired fallback tier.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 9: `update.sh` zieht, statt zu bauen
+### Task 9: `update.sh` pulls instead of building
 
 **Files:**
-- Modify: `scripts/update.sh` (Argumentauswertung um Zeile 36-46, Bauschritt um Zeile 95-102)
-- Modify: `README.md` (neuer Abschnitt „Aktualisieren", der bisher fehlt)
-- Test: `tests/test_update_script.py` (neu)
+- Modify: `scripts/update.sh` (argument parsing around lines 36-46, build step around lines 95-102)
+- Modify: `README.md` (new "Updating" section, currently missing)
+- Test: `tests/test_update_script.py` (new)
 
 **Interfaces:**
-- Consumes: die Compose-Datei aus Task 8.
-- Produces: `./scripts/update.sh` mit den Schaltern `--no-pull`, `--build`, `--no-cache`, `--help`. Stufe 2 baut denselben Ablauf im Beiwagen nach.
+- Consumes: the Compose file from Task 8.
+- Produces: `./scripts/update.sh` with switches `--no-pull`, `--build`, `--no-cache`, `--help`. Stage 2 builds the same flow in the sidecar afterward.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/test_update_script.py` (GPL-Kopf, dann):
+`tests/test_update_script.py` (GPL header, then):
 
 ```python
-"""Verhaltenstests fuer scripts/update.sh.
+"""Behavior tests for scripts/update.sh.
 
-Dasselbe Verfahren wie in `test_install_script.py`: das Skript laeuft
-gegen einen versiegelten PATH aus gefaelschten Binaries, und geprueft
-wird, WELCHE Befehle es waehlt - nicht, was sie bewirken. Ein echtes
-`docker compose pull` waere weder in der CI noch auf einem
-Entwicklungsrechner zumutbar.
+Same procedure as in `test_install_script.py`: the script runs against a
+sealed PATH of fake binaries, and we check WHICH commands it chooses —
+not what they do. A real `docker compose pull` would be unreasonable
+both in CI and on a dev machine.
 
-Der wichtigste Test unten ist `test_ohne_build_wird_nie_gebaut`: das
-Skript baute vor 0.2.0 immer, und der ganze Sinn dieser Aenderung ist,
-dass ein Update auf einem Pi keine fuenf bis zehn Minuten mehr dauert.
-Ein zurueckgerutschtes `compose build` faellt sonst niemandem auf - es
-funktioniert ja, nur langsam."""
+The key test below is `test_without_build_never_built`: before 0.2.0 the
+script always built, and the whole point of this change is that an update
+on a Pi no longer takes five to ten minutes. A backslidden `compose build`
+would go unnoticed otherwise — it works, just slowly."""
 
 from __future__ import annotations
 
@@ -1157,16 +1137,33 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "scripts" / "update.sh"
 
-SYSTEM_TOOLS = ("bash", "sh", "cat", "grep", "sed", "awk", "tr", "printf", "mkdir", "rm", "sleep", "date", "ls", "xargs", "tail", "seq", "hostname")
+SYSTEM_TOOLS = (
+    "bash",
+    "sh",
+    "cat",
+    "grep",
+    "sed",
+    "awk",
+    "tr",
+    "printf",
+    "mkdir",
+    "rm",
+    "sleep",
+    "date",
+    "ls",
+    "xargs",
+    "tail",
+    "seq",
+    "hostname",
+)
 
 
 @pytest.fixture
 def sealed(tmp_path):
-    """Ein PATH aus zwei Verzeichnissen: gefaelschte Werkzeuge und die
-    echten, die das Skript legitim braucht. Jeder Stub protokolliert seinen
-    Aufruf nach $STUB_LOG und endet erfolgreich - `curl` gibt zusaetzlich
-    eine Gesundheitsantwort aus, damit die Warteschleife sofort
-    weiterlaeuft statt 120 Sekunden zu warten."""
+    """A PATH from two directories: fake tools and the real ones the script
+    legitimately needs. Each stub logs its call to $STUB_LOG and exits
+    success — `curl` also outputs a health response so the wait loop
+    proceeds immediately instead of waiting 120 seconds."""
     bindir = tmp_path / "bin"
     sysdir = tmp_path / "sys"
     bindir.mkdir()
@@ -1175,7 +1172,9 @@ def sealed(tmp_path):
 
     def stub(name: str, body: str = "") -> None:
         path = bindir / name
-        path.write_text(f'#!/bin/sh\nprintf "%s %s\\n" "{name}" "$*" >> "$STUB_LOG"\n{body}\n', encoding="utf-8")
+        path.write_text(
+            f'#!/bin/sh\nprintf "%s %s\\n" "{name}" "$*" >> "$STUB_LOG"\n{body}\n', encoding="utf-8"
+        )
         path.chmod(0o755)
 
     stub("docker")
@@ -1193,48 +1192,53 @@ def sealed(tmp_path):
             cwd=str(ROOT),
             capture_output=True,
             text=True,
-            env={**os.environ, "PATH": f"{bindir}:{sysdir}", "STUB_LOG": str(log), "HOME": str(tmp_path)},
+            env={
+                **os.environ,
+                "PATH": f"{bindir}:{sysdir}",
+                "STUB_LOG": str(log),
+                "HOME": str(tmp_path),
+            },
         )
         return result, log.read_text(encoding="utf-8") if log.exists() else ""
 
     return run
 
 
-def test_es_zieht_das_image_statt_es_zu_bauen(sealed):
+def test_pulls_image_instead_of_building(sealed):
     _, calls = sealed("--no-pull")
     assert "compose pull loxmatter" in calls
 
 
-def test_ohne_build_wird_nie_gebaut(sealed):
+def test_without_build_never_built(sealed):
     _, calls = sealed("--no-pull")
     assert "compose build" not in calls
 
 
-def test_mit_build_wird_gebaut_und_nicht_gezogen(sealed):
+def test_with_build_builds_not_pulls(sealed):
     _, calls = sealed("--no-pull", "--build")
     assert "compose build loxmatter" in calls
     assert "compose pull loxmatter" not in calls
 
 
-def test_das_ziehen_kommt_vor_dem_neustart(sealed):
+def test_pull_comes_before_restart(sealed):
     _, calls = sealed("--no-pull")
     assert calls.index("compose pull") < calls.index("compose up")
 
 
-def test_der_neustart_laesst_die_nachbardienste_in_ruhe(sealed):
-    # --no-deps: OTBRs Thread-Zustand haengt an einem Volume, und ein
-    # Neustart des Thread-Netzes gehoert nicht zu einem Update.
+def test_restart_leaves_neighbor_services_alone(sealed):
+    # --no-deps: OTBR's thread state depends on a volume, and restarting
+    # the thread network is not part of an update.
     _, calls = sealed("--no-pull")
     up_line = next(line for line in calls.splitlines() if "compose up" in line)
     assert "--no-deps" in up_line
 
 
-def test_die_datenbank_wird_vor_allem_anderen_gesichert(sealed):
+def test_database_backed_up_before_everything(sealed):
     _, calls = sealed("--no-pull")
     assert calls.index("volume inspect") < calls.index("compose pull")
 
 
-def test_no_cache_ohne_build_wird_abgewiesen(sealed):
+def test_no_cache_without_build_rejected(sealed):
     result, _ = sealed("--no-pull", "--no-cache")
     assert result.returncode != 0
     assert "--build" in result.stderr
@@ -1243,11 +1247,11 @@ def test_no_cache_ohne_build_wird_abgewiesen(sealed):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_update_script.py -v`
-Expected: FAIL — `test_es_zieht_das_image_statt_es_zu_bauen`, `test_ohne_build_wird_nie_gebaut`, `test_mit_build_...`, `test_das_ziehen_...`, `test_no_cache_...` scheitern; die beiden über `--no-deps` und die Sicherung sollten bereits **passen** (das Skript tut das heute schon)
+Expected: FAIL — `test_pulls_image_instead_of_building`, `test_without_build_never_built`, `test_with_build_builds_not_pulls`, `test_pull_comes_before_restart`, `test_no_cache_without_build_rejected` fail; the two about `--no-deps` and the backup should already **pass** (the script does that already)
 
 - [ ] **Step 3: Rewrite the argument parsing**
 
-In `scripts/update.sh` den `for arg in "$@"`-Block ersetzen durch:
+In `scripts/update.sh` replace the `for arg in "$@"` block with:
 
 ```bash
 PULL=1
@@ -1259,63 +1263,61 @@ for arg in "$@"; do
     --build)    BUILD=1 ;;
     --no-cache) NO_CACHE=1 ;;
     -h|--help)  sed -n '18,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)          printf 'Unbekanntes Argument: %s (erlaubt: --no-pull, --build, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
+    *)          printf 'Unknown argument: %s (allowed: --no-pull, --build, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
   esac
 done
-# --no-cache steuert einen Bau. Ohne --build steuert es gar nichts, und
-# ein Schalter, der stillschweigend wirkungslos bleibt, ist schlimmer als
-# einer, der fehlt: er laesst jemanden glauben, er habe frisch gebaut.
+# --no-cache controls a build. Without --build it controls nothing, and a
+# switch that silently does nothing is worse than one that's missing: it
+# makes someone think they built fresh.
 if [ -n "$NO_CACHE" ] && [ "$BUILD" -eq 0 ]; then
-  printf 'Abbruch: --no-cache wirkt nur zusammen mit --build.\n' >&2
+  printf 'Abort: --no-cache only works together with --build.\n' >&2
   exit 2
 fi
 ```
 
-Und den Kopfkommentar (Zeilen 19-33) auf die neuen Schalter umschreiben:
+And rewrite the header comment (lines 19-33) for the new switches:
 
 ```bash
-# Bringt die laufende Bruecke auf den Stand der veroeffentlichten Version.
+# Brings the running bridge to the state of the published version.
 #
-#   ./scripts/update.sh              # holen, Image ziehen, neu starten
-#   ./scripts/update.sh --no-pull    # nur ziehen und neu starten
-#   ./scripts/update.sh --build      # aus der Quelle bauen statt ziehen
-#   ./scripts/update.sh --build --no-cache   # ohne Layer-Cache bauen
+#   ./scripts/update.sh              # fetch, pull image, restart
+#   ./scripts/update.sh --no-pull    # only pull and restart
+#   ./scripts/update.sh --build      # build from source instead of pulling
+#   ./scripts/update.sh --build --no-cache   # build without layer cache
 #
-# Auf dem Rechner auszufuehren, auf dem die Bruecke laeuft. Der Stack liegt
-# im Repository selbst (deploy/testhost/), das Skript findet ihn ueber
-# seinen eigenen Pfad - kein Konfigurationsschritt.
+# Run on the machine where the bridge runs. The stack is in the repository
+# itself (deploy/testhost/), the script finds it via its own path — no
+# configuration step.
 #
-# Seit 0.2.0 wird gezogen statt gebaut: der Bau brauchte auf dem Test-Pi
-# fuenf bis zehn Minuten und konnte an einem PyPI-Ausfall oder am
-# Speicher scheitern. --build stellt den alten Weg wieder her, fuer
-# Entwicklung und fuer Hosts ohne Zugang zur Registry.
+# Since 0.2.0 it pulls instead of building: building took five to ten
+# minutes on the test Pi and could fail on a PyPI outage or storage.
+# --build restores the old way, for development and for hosts without
+# registry access.
 #
-# Der Dienst wird mit `--no-deps` gestartet: matter-server und OTBR bleiben
-# unangetastet. Ohne das erzeugt Compose sie mit neu, sobald sich die
-# Projektkonfiguration geaendert hat - und OTBRs Thread-Zustand haengt an
-# einem Volume, das ein Neubau zwar ueberlebt, aber ein Neustart des
-# Thread-Netzes ohne Grund gehoert nicht zu einem Update.
+# The service starts with `--no-deps`: matter-server and OTBR are untouched.
+# Without it, Compose recreates them whenever the project config changes —
+# and OTBR's thread state depends on a volume, which a rebuild survives, but
+# restarting the thread network without reason is not part of an update.
 ```
 
 - [ ] **Step 4: Replace the build step**
 
-Den Block `say "Baue das Image"` samt seinem Kommentar ersetzen durch:
+Replace the `say "Building the image"` block and its comment with:
 
 ```bash
-# Ziehen statt bauen (0.2.0). Der lange Kommentar von 2026-09-03 darueber,
-# dass `docker compose build` und nicht ein eigenes `docker build` zu
-# benutzen ist, gilt unveraendert weiter - er betrifft jetzt nur noch den
-# --build-Zweig unten. Die Ursache von damals bleibt dieselbe: der Dienst
-# traegt in der Compose-Datei einen `build:`-Block und baut sein eigenes
-# Image; ein daneben gebautes `loxmatter:local` benutzt niemand.
+# Pull instead of build (0.2.0). The long comment from 2026-09-03 about
+# using `docker compose build` and not a standalone `docker build` stays
+# unchanged — it now only applies to the --build branch below. The reason
+# then stays the same: the service has a `build:` block in the Compose file
+# and builds its own image; nobody uses a separately-built `loxmatter:local`.
 if [ "$BUILD" -eq 1 ]; then
-  say "Baue das Image"
+  say "Building the image"
   (cd "$STACK" && docker compose build ${NO_CACHE:+--no-cache} "$SERVICE") \
-    || die "Build fehlgeschlagen - der laufende Dienst bleibt unveraendert."
+    || die "Build failed — the running service remains unchanged."
 else
-  say "Hole das Image"
+  say "Pulling the image"
   (cd "$STACK" && docker compose pull "$SERVICE") \
-    || die "Kein Image geladen - der laufende Dienst bleibt unveraendert. Ohne Zugang zur Registry hilft --build."
+    || die "No image pulled — the running service remains unchanged. Without registry access, --build helps."
 fi
 ```
 
@@ -1326,12 +1328,12 @@ Expected: 7 passed
 
 - [ ] **Step 6: Prove the central test can fail**
 
-Ändere probeweise den `else`-Zweig auf `docker compose build "$SERVICE"`, führe die Tests aus.
-Expected: `test_ohne_build_wird_nie_gebaut` und `test_es_zieht_das_image_statt_es_zu_bauen` FAILEN. Danach zurücknehmen: 7 passed.
+Temporarily change the `else` branch to `docker compose build "$SERVICE"`, run the tests.
+Expected: `test_without_build_never_built` and `test_pulls_image_instead_of_building` FAIL. Then restore: 7 passed.
 
 - [ ] **Step 7: Add the missing README section**
 
-Im `README.md` nach dem Installationsabschnitt:
+In `README.md` after the installation section:
 
 ```markdown
 ## Updating
@@ -1354,49 +1356,47 @@ The System tab shows which version is running.
 - [ ] **Step 8: Run shellcheck, lint, types, full suite**
 
 Run: `shellcheck scripts/update.sh && uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest`
-Expected: alles grün
+Expected: all green
 
 - [ ] **Step 9: Run it for real on the test host**
 
 ```bash
 ./scripts/update.sh
 ```
-Expected: „Hole das Image", danach ein gesunder Dienst und die Ausgabe des Gerätestands. Im Browser zeigt der System-Tab jetzt `Läuft: 0.2.0`.
+Expected: "Pulling the image", then a healthy service and device status output. In the browser, the System tab now shows `Running: 0.2.0`.
 
 - [ ] **Step 10: Commit**
 
 ```bash
 git add scripts/update.sh README.md tests/test_update_script.py
-git commit -m "feat(update): das Image ziehen statt es auf dem Pi zu bauen
+git commit -m "feat(update): pull image instead of building on Pi
 
-Der Bau brauchte auf dem Test-Pi fuenf bis zehn Minuten und konnte an
-einem PyPI-Ausfall oder am Speicher scheitern. Fuer die Konsole war das
-ein langer Balken; fuer den Knopf in der Oberflaeche (Stufe 2) waere es
-eine Zumutung gewesen.
+Building took five to ten minutes on the test Pi and could fail on a PyPI
+outage or storage. For the console it was a long bar; for the button in the
+UI (stage 2) it would have been unreasonable.
 
---build stellt den alten Weg wieder her, fuer Entwicklung und fuer Hosts
-ohne Zugang zur Registry. --no-cache ohne --build wird jetzt abgewiesen
-statt stillschweigend wirkungslos zu bleiben: ein Schalter, der nichts
-tut, laesst jemanden glauben, er habe frisch gebaut.
+--build restores the old way, for development and for hosts without registry
+access. --no-cache without --build is now rejected instead of silently doing
+nothing: a switch that does nothing makes someone think they built fresh.
 
-Die Tests laufen wie die von install.sh gegen einen versiegelten PATH und
-pruefen, WELCHE Befehle das Skript waehlt. Der wichtigste haelt fest, dass
-ohne --build nie gebaut wird - ein zurueckgerutschtes compose build faellt
-sonst niemandem auf, es funktioniert ja, nur langsam.
+The tests run like install.sh's against a sealed PATH and check WHICH
+commands the script chooses. The key one verifies that without --build it
+never builds — a backslidden compose build would go unnoticed otherwise,
+it works, just slowly.
 
-Das README verlor bisher kein Wort ueber das Aktualisieren.
+The README has so far said nothing about updating.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-## Abschluss von Stufe 1
+## Stage 1 complete
 
-Nach Task 9 gilt:
+After Task 9:
 
-- Die Oberfläche sagt, welche Version läuft.
-- Es gibt eine veröffentlichte Version `0.2.0`, ein `:stable`-Image für `arm64` und `amd64`, und einen Changelog.
-- Ein Update über die Konsole dauert rund eine Minute statt zehn.
+- The UI shows which version is running.
+- There is a published version `0.2.0`, a `:stable` image for `arm64` and `amd64`, and a changelog.
+- A console update takes about one minute instead of ten.
 
-Das trägt für sich. **Stufe 2** — Beiwagen, `/api/update/*`, die Update-Karte mit ihren vier Zuständen und dem selbsttätigen Rückfall — hat einen eigenen Plan: `docs/superpowers/plans/2026-09-08-webui-updates-stage-2.md`.
+This stands on its own. **Stage 2** — sidecar, `/api/update/*`, the update card with its four states and automatic rollback — has its own plan: `docs/superpowers/plans/2026-09-08-webui-updates-stage-2.md`.
