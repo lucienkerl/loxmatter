@@ -4264,7 +4264,7 @@ async def test_the_control_modal_is_delivered(api):
 
     page = (await client.get("/")).text
     assert 'x-ref="controlModal"' in page
-    assert "@close=\"controlModalDevice = null\"" in page
+    assert '@close="controlModalDevice = null"' in page
     assert "openControlModal(device)" in page
     # Deviation vom Aufgaben-Brief (Projektentscheidung): der Prozent-Regler
     # traegt seine Beschriftung ueber `command.slug`, nicht ueber einen
