@@ -709,11 +709,20 @@ docker compose stop matter-server
 ```
 
 Archiv zurückspielen (derselbe Weg wie unter „Fabric-Volume sichern (`./data`)"
-weiter oben, dort steht er ausführlich):
+weiter oben, dort steht er ausführlich). **Das alte `data` vorher wegräumen, nicht
+einfach überschreiben:**
 
 ```bash
+mv data data.nach-migration
 cat matter-server-data-backup.tar.gz | ssh pi@10.0.1.56 'tar xzf - -C ~/matter-loxone/deploy/testhost'
 ```
+
+Das `mv` ist keine Vorsicht, sondern nötig: `tar xzf` legt an und überschreibt,
+aber es **löscht nichts, was im Archiv fehlt**. Entpackte man über das migrierte
+Verzeichnis, blieben alle Dateien liegen, die matterjs-server beim Umzug neu
+angelegt hat — der alte Server fände dann seinen eigenen Zustand neben fremdem
+vor, und was er daraus macht, weiß niemand. `mv` statt `rm`, damit der migrierte
+Stand für eine spätere Fehlersuche erhalten bleibt.
 
 Dann die Besitzverhältnisse zurückdrehen — das alte Image lief als root, der
 `chown` auf `1000:1000` von oben muss also mit:
