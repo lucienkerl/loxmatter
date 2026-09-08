@@ -60,7 +60,14 @@ from loxmatter.profiles.relevance import (
     device_types_by_endpoint,
     is_functional,
 )
-from loxmatter.profiles.table import Exportability, is_exportable, lookup, struct_field
+from loxmatter.profiles.table import (
+    Exportability,
+    element_rank_for,
+    is_exportable,
+    lookup,
+    rank_for,
+    struct_field,
+)
 from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
@@ -745,6 +752,37 @@ def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
         return None
 
 
+def _signal_order(signal: StoredSignal) -> tuple[int, int, int, int, int, str]:
+    """Der Sortierschluessel der Signalliste (Entwurf 2026-09-07, Abschnitt 4,
+    mit dem Elementrang als Nachtrag vom 2026-09-08).
+
+    Zwei Rangebenen, und ihre Stellung im Tupel ist die ganze Aussage: der
+    CLUSTER-Rang steht ganz vorn und ordnet die Cluster zueinander (deshalb
+    faellt PowerSource hinter alles Funktionale); der ELEMENT-Rang steht
+    hinter `cluster_id` und ordnet nur innerhalb desselben Clusters (deshalb
+    faellt `positions` hinter jeden Tastendruck, ohne dass die Tastengruppe
+    als Ganzes ihren Platz aendert).
+
+    Sortiert wird in Python und nicht in SQL, weil beide Raenge aus
+    `clusters.yaml` kommen: SQLite kennt sie nicht, und sie als Spalten in
+    `signal` zu spiegeln hiesse, sie bei jeder Aenderung der YAML-Datei
+    nachtragen zu muessen - eine zweite Wahrheit fuer denselben Wert.
+
+    Die hinteren Glieder sind der bisherige Schluessel. Er ist wegen der
+    UNIQUE-Bedingung auf `signal` bereits eindeutig, damit ist auch dieser
+    Schluessel total - die Reihenfolge flattert nie, was fuer den Export
+    wichtig ist (er schreibt sie in eine Datei).
+    """
+    return (
+        rank_for(signal.ref.cluster_id),
+        signal.ref.endpoint,
+        signal.ref.cluster_id,
+        element_rank_for(signal.ref),
+        signal.ref.element_id,
+        signal.ref.kind.value,
+    )
+
+
 def _normalized_room(room: str | None) -> str | None:
     """Ein Raumname ohne aeusseren Leerraum; was danach leer ist, wird `None`.
 
@@ -1356,12 +1394,27 @@ class Store:
         )
 
     def signals(self, device_id: int) -> list[StoredSignal]:
+        """Alle Signale eines Geraets, nach Bedeutung sortiert.
+
+        Das `ORDER BY` bleibt stehen, obwohl `_signal_order` es
+        ueberschreibt: es haelt die Zeilenfolge schon vor dem Sortieren
+        fest und macht damit einen Fehler in `_signal_order` sichtbar,
+        statt ihn hinter einer zufaelligen SQLite-Reihenfolge zu
+        verstecken.
+
+        Diese Reihenfolge traegt weiter als die Oberflaeche: `to_inputs`
+        in `api.export` schreibt sie unveraendert in die VIU-Vorlage
+        (Entwurf 2026-09-07, Abschnitt 5). Der Projektdatei-Sync gleicht
+        dagegen ueber den Schluessel ab (`projectsync.diff._plan_inputs`),
+        nicht ueber die Position - eine geaenderte Reihenfolge erzeugt
+        dort keine Scheinaenderungen.
+        """
         rows = self._db.execute(
             "SELECT * FROM signal WHERE device_id = ?"
             " ORDER BY endpoint, cluster_id, element_id, kind",
             (device_id,),
         ).fetchall()
-        return [self._as_signal(r) for r in rows]
+        return sorted((self._as_signal(r) for r in rows), key=_signal_order)
 
     def signal_by_key(self, key: str) -> StoredSignal | None:
         """Ein einzelnes Signal ueber seinen Schluessel - fuer `PATCH

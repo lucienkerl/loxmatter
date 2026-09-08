@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from loxmatter.matter.models import SignalKind, SignalRef
+from loxmatter.profiles import table
 from loxmatter.profiles.table import (
     _UNIT_DECIMALS,
     MAX_LOXONE_DECIMALS,
@@ -275,6 +276,93 @@ def test_no_unit_format_exceeds_what_loxone_accepts():
         rendered = unit_format(unit)
         decimals = int(rendered.split("<v.")[1].split(">")[0])
         assert decimals <= MAX_LOXONE_DECIMALS, f"{unit!r} ergibt {rendered!r}"
+
+
+def test_a_cluster_with_a_rank_reports_it():
+    """Der Rang entscheidet, was auf der Kachel als Leitwert erscheint -
+    er muss deshalb aus der Tabelle kommen und nicht aus einer Annahme."""
+    assert table.rank_for(6) == 10  # OnOff
+    assert table.rank_for(59) == 10  # Switch
+    assert table.rank_for(47) == 90  # PowerSource
+
+
+def test_a_cluster_without_a_rank_gets_the_default():
+    """Cluster 3 (Identify) steht nicht in der Tabelle. Er darf weder vorn
+    landen noch hinter der Batterie: die Vorgabe ist die Mitte, damit ein
+    neuer Geraetetyp nie versehentlich mit seinem Batteriestand fuehrt und
+    sein Hauptmerkmal trotzdem vor Verwaltungsangaben steht (Entwurf 4)."""
+    assert table.rank_for(3) == table.DEFAULT_RANK
+    assert table.DEFAULT_RANK == 50
+
+
+def test_the_utility_clusters_rank_behind_everything_functional():
+    """Die eine Regel, wegen der dieser Entwurf ueberhaupt entstand."""
+    functional = [table.rank_for(c) for c in (6, 8, 59, 144, 145, 768, 1026, 1029)]
+    assert max(functional) < table.rank_for(47)
+    assert table.rank_for(47) < table.rank_for(40)
+
+
+def test_an_element_can_carry_its_own_rank():
+    """Der Taster war der konkrete Fall, der diese Ebene noetig gemacht hat:
+    innerhalb von Cluster 59 muss der Tastendruck vor die statische Angabe
+    `NumberOfPositions`, sonst fuehrt die Kachel mit einer Zahl, die sich nie
+    aendert."""
+    press = SignalRef(1, 59, 1, SignalKind.EVENT)
+    positions = SignalRef(1, 59, 0, SignalKind.ATTRIBUTE)
+
+    assert table.element_rank_for(press) < table.element_rank_for(positions)
+
+
+def test_an_element_without_a_rank_gets_the_default():
+    """Dieselbe Vorgabe wie auf Clusterebene, und aus demselben Grund: die
+    Mitte, damit ein nicht eingetragenes Element weder nach vorn noch ganz
+    nach hinten faellt."""
+    longpress = SignalRef(1, 59, 2, SignalKind.EVENT)
+    assert table.element_rank_for(longpress) == table.DEFAULT_RANK
+
+
+def test_an_element_of_an_unknown_cluster_gets_the_default():
+    """Cluster 3 (Identify) steht nicht in der Tabelle - es gibt dort weder
+    einen Abschnitt noch ein Element, in dem ein Rang stehen koennte."""
+    assert table.element_rank_for(SignalRef(1, 3, 0, SignalKind.ATTRIBUTE)) == table.DEFAULT_RANK
+
+
+def test_every_rank_in_the_table_is_an_integer():
+    """Fund (Abschlusspruefung): die alte Schleife lief nur ueber
+    `cluster["rank"]` - die ELEMENTRAENGE unter `attributes:`/`events:`
+    (z. B. `events: {1: {slug: press, rank: 10}}`, siehe Cluster 59 in
+    `clusters.yaml`) sah sie nie, obwohl der Name "every rank in the
+    table" das verspricht. Ein `rank: 10.5` an einem Element (jemand will
+    es zwischen zwei andere schieben) wuerde von `int(10.5)` in
+    `element_rank_for` still zu 10 - die Reihenfolge weicht von der
+    Absicht ab, der alte Test blieb aber gruen, weil er die Elementebene
+    gar nicht ansah.
+
+    Die alte Begruendung war ausserdem falsch: `rank_for` und
+    `element_rank_for` rufen beide `int(rank)` - ein `rank: "10"` aus
+    einem Tippfehler wuerde also NICHT "beim Sortieren gegen eine Zahl
+    werfen", sondern klaglos zu 10 werden. Der tatsaechliche Schaden ist
+    eine stille Abweichung von der Sortierabsicht, kein Absturz.
+
+    Fund (Nachpruefung vor dem Merge): `isinstance(x, int)` ist fuer
+    `True`/`False` ebenfalls wahr, weil `bool` in Python von `int` erbt -
+    ein `rank: true` (YAML-Tippfehler fuer eine Zahl) waere also
+    unentdeckt durchgerutscht. Bestand schon auf Clusterebene, ist mit der
+    Ausweitung auf die Elementebene nur mitgewandert. `not isinstance(x,
+    bool)` schliesst genau diesen Fall auf beiden Ebenen aus."""
+    for cluster_id, cluster in table._table().items():
+        if "rank" in cluster:
+            rank = cluster["rank"]
+            assert isinstance(rank, int) and not isinstance(rank, bool), cluster_id
+        for section in ("attributes", "events"):
+            for element_id, element in (cluster.get(section) or {}).items():
+                if isinstance(element, dict) and "rank" in element:
+                    rank = element["rank"]
+                    assert isinstance(rank, int) and not isinstance(rank, bool), (
+                        cluster_id,
+                        section,
+                        element_id,
+                    )
 
 
 @pytest.mark.parametrize(

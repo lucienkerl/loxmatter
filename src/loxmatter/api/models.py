@@ -59,6 +59,16 @@ class SignalOut(BaseModel):
     exported: bool
     functional: bool
     resend: bool
+    # endpoint/cluster_id (Entwurf 2026-09-07, Abschnitt 7.4): `path` traegt
+    # dieselben Zahlen als "1/59/2", aber als Text. Die Oberflaeche
+    # gruppiert nach Endpunkt und erkennt den Batteriestand an Cluster 47 -
+    # beides aus `path` zu parsen hiesse, `matter.paths` ein zweites Mal in
+    # JavaScript zu pflegen. `endpoint_label` ist der sprechende Name
+    # desselben Endpunkts ("Taste 1"), uebersetzt aus `profiles.endpoints`;
+    # ohne nachgetragene Geraetetypen steht dort "Endpunkt 1".
+    endpoint: int
+    cluster_id: int
+    endpoint_label: str
 
 
 class DeviceOut(BaseModel):

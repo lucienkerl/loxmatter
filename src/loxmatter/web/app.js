@@ -608,6 +608,18 @@ function app() {
     rawWriteDrafts: {},
     rawWriteBusyKey: null,
     rawWriteMessages: {},
+    // Welche Signalzeile ihren Aufklapper offen hat, oder null.
+    //
+    // Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
+    // Zustand in Alpine statt im DOM, und der Unterschied hat einen Grund:
+    // dort gibt es ein Auf/Zu JE ELEMENT, hier genau EINEN Wert fuer das
+    // ganze Modal. Hoechstens ein Bereich ist offen - bei 173 Zeilen waeren
+    // mehrere offene Aufklapper wieder die Wand, die dieser Umbau abschafft.
+    // Zurueckgesetzt wird dieses Feld am `@close` des `<dialog>` in
+    // index.html, zusammen mit `signalsModalDevice` (Fund 3 der
+    // Nachpruefung, 2026-09-07) - sonst stuende der Aufklapper beim
+    // naechsten Oeffnen desselben Geraets sofort wieder offen.
+    expandedSignalKey: null,
     // Das Signal-Modal haelt die Geraete-ID, NICHT das Geraeteobjekt:
     // `loadDevices` ersetzt `devices` vollstaendig, ein festgehaltenes
     // Objekt waere danach eine Leiche mit veraltetem Namen und Raum.
@@ -1245,14 +1257,80 @@ function app() {
       return signals ? signals.filter((signal) => signal.functional) : [];
     },
 
+    // Der Cluster, an dem die Kachel den Batteriestand erkennt. Die Zahl
+    // steht hier statt einer Titel-Pruefung: der Titel ist vom Nutzer frei
+    // umbenennbar ("Akku", "Saft"), der Cluster nicht.
+    POWER_SOURCE_CLUSTER: 47,
+
+    // Der Batteriestand des Geraets, oder null. Er bekommt seit der
+    // Cluster-Rangliste (Entwurf 2026-09-07, Abschnitt 6) eine eigene
+    // Fusszeile: mit Rang 90 steht er hinter allen sechzehn anderen
+    // funktionalen Signalen des Tasters und fiele damit aus den sechs
+    // Vorschauzeilen heraus - er waere auf der Kachel gar nicht mehr zu
+    // sehen. Das ist der Preis der Rangliste, und dies ist die Gegenbuchung.
+    //
+    // `.find()` liefert bei mehreren PowerSource-Signalen (zusammengesetztes
+    // Geraet, oder eine Bruecke mit zwei Batterien unter einem Datensatz)
+    // bewusst nur EINES - das erstplatzierte der Rangliste, deterministisch,
+    // weil die Liste sortiert ankommt. Die Kachel zeigt ohnehin nur eine
+    // Fusszeile, mehr waere dort kein Gewinn. `previewSignalsFor` verlaesst
+    // sich dafuer NICHT auf dieses eine Signal, sondern schliesst den ganzen
+    // Cluster aus - sonst stuende ein zweites PowerSource-Signal ueber die
+    // Hintertuer doch wieder oben im Werteraster.
+    batterySignalFor(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      if (!signals) {
+        return null;
+      }
+      return (
+        signals.find(
+          (signal) => signal.functional && signal.cluster_id === this.POWER_SOURCE_CLUSTER,
+        ) || null
+      );
+    },
+
+    // Die funktionalen Signale OHNE den Batteriestand - die Menge, aus der
+    // sich die Vorschauzeilen und der "+ N weitere"-Zaehler bilden.
+    //
+    // **Die Begruendung hat sich beim Zusammenfuehren geaendert, die Regel
+    // nicht.** Urspruenglich hielt dieser Filter die Batterie aus dem
+    // LEITWERT heraus (Entwurf 2026-09-07): sie stand mit Rang 90 vorn in
+    // der Kopfzeile, obwohl ein Taster nicht nach seinem Batteriestand
+    // benannt ist. Den Leitwert gibt es seit dem Entwurf "Geraetekachel
+    // ohne Leitwert" nicht mehr - alle Signale stehen gleichrangig im
+    // Werteraster. Der Filter bleibt trotzdem noetig, und zwar aus dem
+    // umgekehrten Grund: die Rangliste schiebt die Batterie ans ENDE, und
+    // bei einem Geraet mit mehr als sechs funktionalen Signalen (der
+    // Taster hat siebzehn) faellt sie damit aus den Vorschauzeilen heraus.
+    // Ohne die eigene Fusszeile waere der Batteriestand auf der Kachel
+    // ueberhaupt nicht mehr zu sehen - bei einem Geraet, das genau daran
+    // stirbt.
+    //
+    // Dass Vorschau und Zaehler aus DERSELBEN Menge kommen, bleibt der
+    // Trick: der Zaehler kann die Batterie nie doppelt zaehlen (sie fehlt
+    // in beiden Summanden). Eine Sonderregel an zwei Stellen waere dieselbe
+    // Aussage zweimal - und beim ersten Entwurf ist eine davon vergessen
+    // worden ("+ 11 weitere" auf einer Kachel, die sieben von 17 Signalen
+    // zeigte).
+    //
+    // Gefiltert wird ueber den Cluster, nicht ueber den Schluessel von
+    // `batterySignalFor`: der liefert bei zwei PowerSource-Signalen nur das
+    // erste, ein Schluesselvergleich liesse das zweite im Werteraster - und
+    // zwar an dessen Anfang, weil die Rangliste beide gleich einordnet.
+    previewSignalsFor(deviceId) {
+      return this.functionalSignalsFor(deviceId).filter(
+        (signal) => signal.cluster_id !== this.POWER_SOURCE_CLUSTER,
+      );
+    },
+
     firstSignalsFor(deviceId) {
-      return this.functionalSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT);
+      return this.previewSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT);
     },
 
     remainingSignalCount(deviceId) {
       return Math.max(
         0,
-        this.functionalSignalsFor(deviceId).length - this.FUNCTIONAL_PREVIEW_LIMIT,
+        this.previewSignalsFor(deviceId).length - this.FUNCTIONAL_PREVIEW_LIMIT,
       );
     },
 
@@ -1590,22 +1668,60 @@ function app() {
       return signals ? signals.filter((signal) => !signal.functional) : [];
     },
 
-    // Beide Bloecke der Signale-Ansicht als eine Liste (Review-Fix 6,
+    // Alle Gruppen der Signale-Ansicht als eine Liste (Review-Fix 6,
     // Nachbesserung Phase 6): vorher stand die Signalzeilen-Vorlage in
     // index.html zweimal, byte-identisch bis auf `functionalSignalsFor`
     // gegen `expertSignalsFor` - 51 Zeilen doppelt, die bei jeder
     // Aenderung zweimal angefasst werden mussten, ohne dass etwas ein
     // Auseinanderlaufen bemerkt haette. `collapsible` steuert in der
-    // Vorlage nur noch den Startzustand des `<details>` (funktional offen,
-    // Experte zu, siehe `x-init` in index.html) - der Rest (Zeilen-Markup,
-    // leer-Hinweis) ist fuer beide Gruppen identisch. Der erste Satz oben
-    // gilt seit dem Modal-Umbau doppelt: dort teilen sich beide Gruppen
-    // sogar dasselbe `<details>`-Markup, nicht nur dieselbe Zeilenvorlage.
+    // Vorlage nur noch den Startzustand des `<details>` (Endpunktgruppen
+    // offen, Experte zu, siehe `x-init` in index.html) - der Rest
+    // (Zeilen-Markup) ist fuer alle Gruppen identisch. Der
+    // erste Satz oben gilt seit dem Modal-Umbau doppelt: dort teilen sich
+    // alle Gruppen sogar dasselbe `<details>`-Markup, nicht nur dieselbe
+    // Zeilenvorlage.
+    //
+    // Die Gruppen des Signal-Modals: je Endpunkt eine, danach der
+    // Experte-Block (Entwurf 2026-09-07, Abschnitt 7.4).
+    //
+    // Die Reihenfolge der Endpunktgruppen folgt der Cluster-Rangliste, ohne
+    // dass hier sortiert wuerde: `functionalSignalsFor` kommt bereits
+    // sortiert an, und diese Schleife uebernimmt die Reihenfolge des ERSTEN
+    // Auftretens jedes Endpunkts. Am Taster steht "Geraet" (nur Batterie)
+    // deshalb zuletzt, obwohl es Endpunkt 0 ist.
+    //
+    // `group.key` bleibt stabil ueber Neuzeichnungen ("ep1", "expert") -
+    // das ist Voraussetzung fuer das `x-init="$el.open = !group.collapsible"`
+    // im Markup: waere der Schluessel unstabil, baute Alpine den Knoten neu
+    // auf und klappte eine geoeffnete Gruppe wortlos wieder zu.
     signalGroupsFor(deviceId) {
-      return [
-        { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },
-        { key: "expert", title: t("web.signals.group_expert"), collapsible: true, signals: this.expertSignalsFor(deviceId) },
-      ];
+      const groups = [];
+      const byEndpoint = new Map();
+      for (const signal of this.functionalSignalsFor(deviceId)) {
+        let group = byEndpoint.get(signal.endpoint);
+        if (!group) {
+          group = {
+            key: "ep" + signal.endpoint,
+            title: signal.endpoint_label,
+            subtitle: t("web.signals.group_endpoint_subtitle", { endpoint: signal.endpoint }),
+            collapsible: false,
+            signals: [],
+          };
+          byEndpoint.set(signal.endpoint, group);
+          groups.push(group);
+        }
+        group.signals.push(signal);
+      }
+      // Bleibt EINE Gruppe: 156 Signale ueber alle Endpunkte zu gliedern
+      // erzeugte nur mehr Ueberschriften, keine Uebersicht.
+      groups.push({
+        key: "expert",
+        title: t("web.signals.group_expert"),
+        subtitle: "",
+        collapsible: true,
+        signals: this.expertSignalsFor(deviceId),
+      });
+      return groups;
     },
 
     liveValueOf(signal) {
@@ -2230,9 +2346,12 @@ function app() {
      * Schliesst das Modal ueber die native `close()`-Methode statt den
      * Zustand direkt zu leeren: `close()` loest das `close`-Ereignis aus,
      * und dessen Handler in index.html ist die eine Stelle, die
-     * `signalsModalDevice` zuruecksetzt. Wer hier zusaetzlich
-     * `this.signalsModalDevice = null` schriebe, haette wieder zwei
-     * Wahrheiten ueber denselben Zustand.
+     * `signalsModalDevice` UND `expandedSignalKey` zuruecksetzt (Fund 3 der
+     * Nachpruefung, 2026-09-07: ohne den zweiten Reset stuende beim
+     * naechsten Oeffnen desselben Geraets sofort wieder derselbe Aufklapper
+     * offen, ohne dass der Kebab dafuer geklickt wurde). Wer hier
+     * zusaetzlich `this.signalsModalDevice = null` schriebe, haette wieder
+     * zwei Wahrheiten ueber denselben Zustand.
      */
     closeSignalsModal() {
       this.$refs.signalsModal.close();
@@ -2308,6 +2427,32 @@ function app() {
       }
     },
 
+    // Wie viele Signale dieses Geraets tatsaechlich als Eingang nach Loxone
+    // gehen. `exported` allein reicht nicht: ein Signal, dessen Wert auf
+    // keinen Loxone-Eingang passt (`exportable === false`), erzeugt keinen -
+    // dieselbe Unterscheidung, die `to_inputs` server-seitig macht.
+    exportedSignalCount(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      return signals ? signals.filter((s) => s.exported && s.exportable).length : 0;
+    },
+
+    signalCount(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      return signals ? signals.length : 0;
+    },
+
+    // Nur was AN ist, wird ausgeschaltet. Ein `toggleExported` ueber alle
+    // Signale wuerde die Auswahl invertieren statt sie zu leeren - der
+    // Knopf heisst aber "alle abwaehlen", nicht "umkehren".
+    async deselectAllSignals(deviceId) {
+      const signals = this.signalsByDevice[deviceId] || [];
+      for (const signal of signals) {
+        if (signal.exported) {
+          await this.toggleExported(signal);
+        }
+      }
+    },
+
     async toggleResend(signal) {
       try {
         const updated = await this.request("PATCH", `/api/signals/${signal.key}`, {
@@ -2338,6 +2483,40 @@ function app() {
     rawWriteMessageClass(signal) {
       const message = this.rawWriteMessages[signal.key];
       return message && message.isError ? "hint danger-text" : "hint";
+    },
+
+    toggleSignalDetails(signal) {
+      this.expandedSignalKey = this.expandedSignalKey === signal.key ? null : signal.key;
+    },
+
+    // Das Rohwert-Feld ist nur fuer Attribute sinnvoll (ein Ereignis hat
+    // keinen gespeicherten Wert, den man ueberschreiben koennte) - die
+    // Herkunft darueber gilt dagegen fuer beide Signalarten. Als eigener
+    // Helfer statt `signal.kind === 'attribute'` direkt im Markup, damit
+    // dieselbe Bedingung nicht zweimal im Quelltext steht.
+    isAttributeSignal(signal) {
+      return signal.kind === "attribute";
+    },
+
+    /**
+     * Formuliert die Herkunft eines Signals als Klartext-Satz fuer den
+     * Aufklapper.
+     *
+     * `signal.path` traegt dieselbe Auskunft schon als "1/59/1" - dass
+     * darin das DRITTE Segment das Element ist, ist Wissen ueber das
+     * Pfadformat und gehoert deshalb in eine benannte Funktion, nicht als
+     * `signal.path.split('/')[2]` mitten ins Markup (derselbe Grund wie bei
+     * `commandsFor` weiter oben: eine gewoehnliche Funktion ist lesbarer
+     * als ein Ausdruck mit eingebauter Zerlegungsregel im Markup - und
+     * aendert sich das Pfadformat, gibt es dafuer genau eine Stelle statt
+     * einer Suche in `index.html`).
+     */
+    signalOriginText(signal) {
+      return t("web.signals.origin", {
+        endpoint: signal.endpoint,
+        cluster: signal.cluster_id,
+        element: signal.path.split("/")[2],
+      });
     },
 
     // ---------------------------------------------------------------------

@@ -168,6 +168,38 @@ async def test_the_mark_stands_in_the_interface_in_both_its_sizes(api):
         assert "svg" in response.headers["content-type"]
 
 
+def test_the_stylesheet_has_balanced_braces():
+    """Eine nicht geschlossene CSS-Regel verschluckt ALLES, was ihr folgt -
+    ohne Fehlermeldung, ohne dass ein Test es merkt.
+
+    Genau das ist beim Zusammenfuehren von main passiert (2026-09-08): ein
+    Konfliktmarker schnitt mitten durch `.signals-summary`, die Aufloesung
+    nahm die schliessende Klammer mit, und damit war das gesamte Stylesheet
+    ab dieser Zeile wirkungslos. Das Signal-Modal fiel auf den Zustand
+    zurueck, den der ganze Umbau beseitigt hatte: kein Raster, ausgefranste
+    Zeilen, der Spaltenkopf als Fliesstext.
+
+    Die Testreihe blieb dabei vollstaendig gruen. Sie kann das auch gar
+    nicht sehen: jede CSS-Zusicherung in dieser Datei sucht Zeichenketten in
+    der ausgelieferten Datei, und die Zeichenketten standen ja alle noch
+    darin - nur eben in totem Text. Aufgefallen ist es erst am neu
+    erzeugten Screenshot.
+
+    Dieser Test ist die billigste Absicherung dagegen: er versteht kein CSS,
+    er zaehlt nur. Kommentare werden vorher entfernt, weil `{` und `}` darin
+    vorkommen duerfen (und in diesem Stylesheet reichlich vorkommen, es ist
+    dicht kommentiert)."""
+    css = (WEB_DIR / "style.css").read_text(encoding="utf-8")
+    without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+
+    depth = 0
+    for number, line in enumerate(without_comments.split("\n"), start=1):
+        depth += line.count("{") - line.count("}")
+        assert depth >= 0, f"eine Klammer zuviel geschlossen, Zeile {number}"
+
+    assert depth == 0, f"{depth} Regel(n) nicht geschlossen - alles danach ist wirkungslos"
+
+
 def test_the_icons_are_well_formed_xml():
     """Ein SVG, das nicht als XML parst, zeigt KEIN Browser an - er blendet es
     still als kaputtes Bild aus, ohne Meldung irgendwo.
@@ -190,7 +222,7 @@ async def test_the_inline_icon_symbols_are_well_formed_xml(api):
     STILLSCHWEIGEND nichts - keine Fehlermeldung in der Konsole, nur eine
     Kachel ohne Icon, siehe der Kommentar zu `i-cat-other` in `index.html`.
 
-    Der Block traegt inzwischen zwoelf `<symbol>`-Definitionen, acht davon
+    Der Block traegt inzwischen sechzehn `<symbol>`-Definitionen, acht davon
     aus dem Geraete-Tab-Umbau (Entwurf 2026-09-05, Abschnitt 6.5) - keine
     davon war bislang durch einen Parser gelaufen. Ein einzelner falscher
     Bindestrich oder ein nicht geschlossenes Tag in einem neuen Symbol waere
@@ -396,10 +428,17 @@ async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
     fester deutscher Literale - siehe
     `test_the_signal_group_titles_are_translated` fuer die Bindung selbst;
     hier bleibt nur der Beleg, dass die Gruppierung (`signal.functional`)
-    unveraendert ist."""
+    unveraendert ist.
+
+    Aufgabe 6: die eine „Funktional"-Gruppe wich Endpunkt-Gruppen (siehe
+    `test_the_groups_follow_the_ranking_not_the_endpoint_number` fuer deren
+    Reihenfolge und Inhalt). Der Schluessel `group_functional` gibt es
+    seither nicht mehr; die urspruengliche Zusicherung dieses Tests -
+    Gruppentitel ueber `t(...)` statt fest verdrahtet - bleibt gueltig,
+    zielt jetzt aber auf den Endpunkt-Untertitel."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
-    assert 't("web.signals.group_functional")' in script
+    assert 't("web.signals.group_endpoint_subtitle"' in script
     assert 't("web.signals.group_expert")' in script
     # Beide Listen lesen nur das von der API mitgelieferte Feld, keine
     # eigene JavaScript-Fassung von `profiles.relevance.is_functional`.
@@ -412,15 +451,16 @@ async def test_the_signal_row_offers_a_resend_checkbox(api):
     ausgeliefert werden und `signal.resend` lesen/schreiben, nicht dass
     Alpine sie zur Laufzeit korrekt rendert (siehe dortiger Docstring).
 
-    Zusaetzlich (finaler Review, Important #3): das umschliessende `<label>`
-    der Checkbox selbst muss dasselbe `x-show="signal.exportable"` tragen
-    wie das „exportieren“-Label direkt darueber - sonst bleibt die Checkbox
-    auch fuer nicht-exportierbare Signale sichtbar, obwohl `resend_marked()`
-    dort (`_last_values` bleibt fuer sie leer, siehe `Runtime._cache_attribute`)
-    nie etwas bewirken kann. Der Substring-Test allein wuerde das nicht
-    belegen - `x-show="signal.exportable"` steht bereits beim „exportieren“-
-    Label - deshalb wird hier gezielt das `<label>` extrahiert, das die
-    Resend-Checkbox umschliesst, und NUR darin nach dem Guard gesucht."""
+    Aufgabe 7 ersetzt das fruehere `x-show="signal.exportable"` am
+    umschliessenden `<label>` durch `:disabled="!signal.exportable"` am
+    `<input>` selbst: die Rasterzeile (`.signal-grid`) braucht in JEDER
+    Zeile dieselbe Anzahl Zellen, sonst verschieben sich die Spalten der
+    nicht-exportierbaren Signale gegen die Kopfzeile - genau das Fluchten,
+    das diese Aufgabe zusichert. Ein deaktiviertes statt verstecktes
+    Kaestchen belegt denselben Fall: `resend_marked()` kann fuer ein
+    nicht-exportierbares Signal ohnehin nie etwas bewirken (`_last_values`
+    bleibt dort leer, siehe `Runtime._cache_attribute`), es laesst sich nur
+    nicht mehr anklicken."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     page = (await client.get("/")).text
@@ -431,7 +471,7 @@ async def test_the_signal_row_offers_a_resend_checkbox(api):
     label_start = page.rindex("<label", 0, resend_idx)
     label_end = page.index("</label>", resend_idx) + len("</label>")
     resend_label = page[label_start:label_end]
-    assert 'x-show="signal.exportable"' in resend_label
+    assert ':disabled="!signal.exportable"' in resend_label
 
 
 async def test_the_settings_view_offers_a_resend_interval_field(api):
@@ -773,6 +813,71 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_the_groups_follow_the_ranking_not_the_endpoint_number():
+    """Der Grund fuer die Gruppen: `press` steht zweimal in der Liste -
+    1/59/1 und 2/59/1, also zwei verschiedene Tasten derselben
+    Fernbedienung. Ohne Gruppe ist das zweimal dasselbe Wort ohne Auskunft,
+    welche gemeint ist.
+
+    Und die Reihenfolge: "Geraet" (Endpunkt 0, nur die Batterie) steht
+    ZULETZT, obwohl es die kleinste Endpunktnummer traegt - die Gruppen
+    uebernehmen die Reihenfolge des ersten Auftretens in der bereits
+    gerangten Liste, sie sortieren nicht selbst. Genau das kann eine
+    Zeichenketten-Suche in `app.js` nicht belegen.
+
+    `t()` liefert ohne geladene Uebersetzungstabelle den Schluessel selbst
+    zurueck (siehe `t` in app.js) - der Titel der Experte-Gruppe ist hier
+    deshalb der Schluessel, und das genuegt fuer die Zusicherung."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_1_press", title: "press", endpoint: 1, cluster_id: 59,
+            functional: true, endpoint_label: "Taste 1" },
+          { key: "d1_2_press", title: "press", endpoint: 2, cluster_id: 59,
+            functional: true, endpoint_label: "Taste 2" },
+          { key: "d1_0_battery", title: "battery", endpoint: 0, cluster_id: 47,
+            functional: true, endpoint_label: "Gerät" },
+          { key: "d1_0_vendor", title: "VendorName", endpoint: 0, cluster_id: 40,
+            functional: false, endpoint_label: "Gerät" },
+        ] };
+        console.log(JSON.stringify(
+          state.signalGroupsFor(1).map((g) => ({
+            key: g.key, title: g.title, collapsible: g.collapsible,
+            signals: g.signals.map((s) => s.key),
+          }))
+        ));
+        """
+    )
+
+    assert [g["key"] for g in values] == ["ep1", "ep2", "ep0", "expert"]
+    assert [g["title"] for g in values[:3]] == ["Taste 1", "Taste 2", "Gerät"]
+    assert values[0]["signals"] == ["d1_1_press"]
+    assert values[1]["signals"] == ["d1_2_press"]
+    # 156 Signale ueber alle Endpunkte zu gliedern erzeugte nur mehr
+    # Ueberschriften - der Experte-Block bleibt EINE zugeklappte Gruppe.
+    assert values[3]["signals"] == ["d1_0_vendor"]
+    assert values[3]["collapsible"] is True
+    assert [g["collapsible"] for g in values[:3]] == [False, False, False]
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_without_functional_signals_yields_only_the_expert_group():
+    """Der Zustand, fuer den der Hinweis `none_functional` jetzt AUSSERHALB
+    der Gruppenschleife steht: eine Endpunktgruppe ist nie leer, es gibt
+    dann schlicht keine."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_0_vendor", title: "VendorName", endpoint: 0, cluster_id: 40,
+            functional: false, endpoint_label: "Gerät" },
+        ] };
+        console.log(JSON.stringify(state.signalGroupsFor(1).map((g) => g.key)));
+        """
+    )
+
+    assert values == ["expert"]
+
+
 def test_first_signals_for_filters_orders_and_caps_at_the_preview_limit():
     """Nacharbeit 2026-09-07, Fund 3: Der Umbau auf das Werteraster (Entwurf
     2026-09-05) hat aus `test_a_signal_that_exists_is_unaffected_by_the_guard`
@@ -1926,7 +2031,7 @@ async def test_the_signal_modal_static_text_is_translated(api):
     assert "Kein Signal dieses Geräts gilt als funktional." not in markup
     assert ":title=\"t('web.signals.key_tooltip')\"" in dialog
     assert "Verdrahtung in Loxone – nicht änderbar." not in markup
-    assert "x-text=\"t('web.signals.export_checkbox')\"" in dialog
+    assert ":aria-label=\"t('web.signals.export_checkbox')\"" in dialog
     assert ">exportieren<" not in markup
     assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in dialog
     assert "Rohwert schreiben" not in markup
@@ -1936,18 +2041,35 @@ async def test_the_signal_modal_static_text_is_translated(api):
 
 async def test_the_signal_group_titles_are_translated(api):
     """Aufgabe 12, Schritt 4: `signalGroupsFor`'s Gruppentitel (Objekt-
-    Literale) laufen jetzt ueber `t("web.signals.group_functional")` /
-    `t("web.signals.group_expert")` statt fester Literale "Funktional" /
-    "Experte"."""
+    Literale) laufen ueber `t(...)` statt fester Literale "Funktional" /
+    "Experte".
+
+    Aufgabe 6 aendert, WELCHE Objekt-Literale das sind: die Endpunktgruppen
+    tragen `signal.endpoint_label` als Titel (kommt bereits uebersetzt von
+    der API, siehe Aufgabe 4) und `t("web.signals.group_endpoint_subtitle")`
+    als Untertitel; nur die Experte-Gruppe hat noch einen fest ueber `t(...)`
+    gesetzten Titel. Der Schluessel `group_functional` gibt es seither
+    nicht mehr. Die urspruengliche Zusicherung - kein fest verdrahtetes
+    deutsches Literal im Gruppenaufbau - bleibt erhalten: die Sperre gegen
+    `"Experte"` als Literal bleibt, die gegen `"Funktional"` entfaellt mit
+    dem Titel, den es nicht mehr gibt."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     signal_groups_start = script.index("signalGroupsFor(deviceId) {")
     signal_groups_end = script.index("\n    },", signal_groups_start)
     body = script[signal_groups_start:signal_groups_end]
-    assert 'title: t("web.signals.group_functional")' in body
+    assert 'subtitle: t("web.signals.group_endpoint_subtitle"' in body
     assert 'title: t("web.signals.group_expert")' in body
-    assert '"Funktional"' not in body
     assert '"Experte"' not in body
+
+
+async def test_the_group_header_shows_the_endpoint_as_a_subtitle(api):
+    """Aufgabe 6, Schritt 5: die `<summary>` der Gruppe zeigt neben Titel
+    und Anzahl jetzt auch `group.subtitle` ("Endpunkt N")."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert 'x-text="group.subtitle"' in page
 
 
 async def test_the_signal_view_dynamic_errors_and_success_are_translated(api):
@@ -2632,7 +2754,7 @@ async def test_the_resend_card_static_text_is_translated(api):
     assert ">Speichern<" not in card
 
     resend_checkbox_label = _label_around(markup, "toggleResend(signal)")
-    assert "x-text=\"t('web.signals.resend_checkbox')\"" in resend_checkbox_label
+    assert ":aria-label=\"t('web.signals.resend_checkbox')\"" in resend_checkbox_label
     assert "periodisch erneut senden" not in resend_checkbox_label
 
 
@@ -3679,11 +3801,17 @@ async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api
     Voreinstellung, misst 0 px) ins Leere - dazu deckte sie weder einen
     waagerechten Balken noch eine RTL-Anordnung ab. Der Rechteckvergleich
     in `isBackdropEvent` braucht keine dieser Fallunterscheidungen; taucht
-    `offsetX` hier je wieder auf, ist das ein Rueckschritt."""
+    `offsetX` hier je wieder auf, ist das ein Rueckschritt.
+
+    Fund 3 (Nachpruefung, 2026-09-07): derselbe `@close`-Handler setzt seit
+    da zusaetzlich `expandedSignalKey` zurueck - dediziert geprueft in
+    `test_closing_the_signals_modal_resets_the_open_detail` weiter unten;
+    hier zaehlt nur weiterhin `signalsModalDevice = null`, um genau EINE
+    Ruecksetzstelle fuer dieses Feld zu belegen."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     script = (await client.get("/static/app.js")).text
-    assert '@close="signalsModalDevice = null"' in markup
+    assert '@close="signalsModalDevice = null; expandedSignalKey = null"' in markup
     assert '@mousedown="signalsModalBackdropMousedown = isBackdropEvent($event, $el)"' in markup
     assert "@mousedown.self=" not in markup
     assert (
@@ -4157,6 +4285,885 @@ async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
     assert '<span class="room-spacer"></span>' in bar
     css = (await client.get("/static/style.css")).text
     assert "flex: 1 1 auto" in css.split(".room-spacer {", 1)[1].split("}", 1)[0]
+
+
+# ---------------------------------------------------------------------------
+# Aufgabe 5: Die Batteriezeile der Kachel. Gegenbuchung zur Cluster-
+# Rangliste (Aufgabe 4): mit Rang 90 stuende der Batteriestand hinter allen
+# sechzehn anderen funktionalen Signalen des Tasters und fiele damit aus den
+# sechs Vorschauzeilen - er waere auf der Kachel gar nicht mehr zu sehen.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_the_battery_never_opens_the_value_grid_and_is_never_counted_twice():
+    """Die drei Zusicherungen der Batteriezeile an EINEM Aufbau, weil sie
+    zusammengehoeren: der Batteriestand fuehrt nicht, er steht nicht in der
+    Vorschau, und er zaehlt nicht als "weiteres".
+
+    Der Aufbau ist der Taster: 17 funktionale Signale in der Reihenfolge,
+    in der die Cluster-Rangliste sie liefert - sechzehn Switch-Signale,
+    zuletzt die Batterie. Sechs Vorschauzeilen plus eine Fusszeile lassen
+    zehn uebrig. Nennt die Kachel elf, ist die Batterie doppelt gezaehlt -
+    genau der Fehler, den der Canvas-Entwurf hatte.
+
+    Als node-Lauf statt als Zeichenketten-Suche in `app.js`: eine Suche
+    belegt nur, DASS eine Zeile ausgeliefert wird. Am 2026-09-05 haben drei
+    solche Tests einen Critical durchgelassen, weil sie exakt die
+    Zeichenketten prueften, die den Fehler erzeugten."""
+    values = _app_state(
+        """
+        const signals = [];
+        for (let i = 0; i < 16; i++) {
+          signals.push({
+            key: "d1_1_s" + i, title: "s" + i,
+            endpoint: 1, cluster_id: 59, functional: true,
+          });
+        }
+        signals.push({
+          key: "d1_0_battery", title: "battery",
+          endpoint: 0, cluster_id: 47, functional: true,
+        });
+        state.signalsByDevice = { 1: signals };
+        console.log(JSON.stringify({
+          battery: state.batterySignalFor(1).key,
+          preview: state.firstSignalsFor(1).map((s) => s.key),
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    assert values["preview"][0] == "d1_1_s0"
+    assert values["battery"] == "d1_0_battery"
+    assert "d1_0_battery" not in values["preview"]
+    assert len(values["preview"]) == 6
+    assert values["remaining"] == 10
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_mains_powered_device_has_no_battery_row():
+    """Ohne PowerSource-Signal darf die Kachel keine Fusszeile zeigen - und
+    der Zaehler muss sich genauso verhalten wie vor dieser Aenderung."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_1_onoff", title: "onoff", endpoint: 1, cluster_id: 6, functional: true },
+          { key: "d1_2_power", title: "power", endpoint: 2, cluster_id: 144, functional: true },
+        ] };
+        console.log(JSON.stringify({
+          battery: state.batterySignalFor(1),
+          first: state.firstSignalsFor(1)[0].key,
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    assert values["battery"] is None
+    assert values["first"] == "d1_1_onoff"
+    assert values["remaining"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_whose_only_functional_signal_is_the_battery_shows_an_empty_grid():
+    """Der Randfall, an dem der Hinweis "keine funktionalen Signale" falsch
+    waere: es GIBT eines, es steht nur in der Fusszeile.
+
+    Das Werteraster ist hier leer, obwohl `functionalSignalsFor` ein Signal
+    liefert - `previewSignalsFor` nimmt den Batteriestand ja heraus. Genau
+    deshalb haengt der Hinweis im Markup an `functionalSignalsFor` und nicht
+    an den Rasterzeilen, siehe
+    `test_the_no_functional_signals_hint_asks_the_list_not_the_grid`."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_0_battery", title: "battery", endpoint: 0, cluster_id: 47, functional: true },
+        ] };
+        console.log(JSON.stringify({
+          rows: state.firstSignalsFor(1).length,
+          functional: state.functionalSignalsFor(1).length,
+          battery: state.batterySignalFor(1).key,
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    assert values["rows"] == 0
+    assert values["functional"] == 1
+    assert values["battery"] == "d1_0_battery"
+    assert values["remaining"] == 0
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_device_with_two_power_source_endpoints_keeps_both_out_of_the_grid():
+    """Der Randfall eines zusammengesetzten Geraets oder einer Bruecke mit
+    zwei Batterien unter einem Datensatz: zwei Signale auf Cluster 47, auf
+    verschiedenen Endpunkten.
+
+    `batterySignalFor` waehlt per `.find()` nur das erstplatzierte davon -
+    das zweite bliebe, wenn die Vorschaumenge nur DIESES eine ausschliesst
+    (Schluesselvergleich statt Cluster-Filter), unbemerkt in der Vorschau
+    stehen und koennte als Leitwert enden. Zusicherung hier: der Leitwert
+    ist das Nutzsignal, kein Signal der Vorschaumenge traegt
+    `cluster_id === 47`, und `batterySignalFor` liefert das erstplatzierte
+    der beiden PowerSource-Signale."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "d1_0_battA", title: "battA", endpoint: 0, cluster_id: 47, functional: true },
+          { key: "d1_5_battB", title: "battB", endpoint: 5, cluster_id: 47, functional: true },
+          { key: "d1_1_onoff", title: "onoff", endpoint: 1, cluster_id: 6, functional: true },
+        ] };
+        console.log(JSON.stringify({
+          first: state.firstSignalsFor(1)[0].key,
+          battery: state.batterySignalFor(1).key,
+          preview: state.previewSignalsFor(1).map((s) => s.key),
+          previewClusters: state.previewSignalsFor(1).map((s) => s.cluster_id),
+        }));
+        """
+    )
+
+    assert values["first"] == "d1_1_onoff"
+    assert values["battery"] == "d1_0_battA"
+    assert 47 not in values["previewClusters"]
+    assert values["preview"] == ["d1_1_onoff"]
+
+
+async def test_the_tile_has_a_battery_row_with_its_own_symbol(api):
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert 'id="i-battery"' in page
+    assert "device-battery" in page
+    assert 'x-show="batterySignalFor(device.id)"' in page
+
+
+async def test_the_no_functional_signals_hint_asks_the_list_not_the_grid(api):
+    """Der Hinweis muss an `functionalSignalsFor` haengen, nicht an den
+    Rasterzeilen.
+
+    Der Grund ist die Batteriezeile: `previewSignalsFor` nimmt den
+    Batteriestand aus dem Werteraster heraus, ein Geraet mit NUR einem
+    Batteriesignal hat dort also null Zeilen bei einem funktionalen Signal.
+    Ueber die Rasterzeilen gefragt behauptete der Hinweis dann "keine
+    funktionalen Signale", waehrend die Fusszeile darunter eines zeigt.
+
+    Die Bedingung fragte frueher `!leadSignalFor(device.id)` und nach dem
+    Batterie-Umbau `!leadSignalFor(...) && !batterySignalFor(...)`. Mit dem
+    Wegfall des Leitwerts ist beides hinfaellig - `functionalSignalsFor`
+    beantwortet dieselbe Frage direkt und deckt den Batterie-Randfall von
+    sich aus ab."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    hint = page[page.index("no_functional_signals") - 400 : page.index("no_functional_signals")]
+    assert "functionalSignalsFor(device.id).length === 0" in hint
+    # Weder ueber die Rasterzeilen noch ueber den entfallenen Leitwert.
+    assert "firstSignalsFor" not in hint
+    assert "leadSignalFor" not in hint
+
+
+async def test_the_signal_rows_and_the_header_share_one_grid(api):
+    """Was heute fehlt und weshalb nichts fluchtet: die Zeile ist ein
+    `flex-wrap`-Container ohne Spaltenmasse. Bei `multipress_ongoing`
+    rutschte "periodisch erneut senden" allein in die naechste Zeile.
+
+    200px statt vormals 150px fuer die Schluessel-Spalte (Aufgabe 13, Fund:
+    der alte Kommentar behauptete eine Messung, die nie stattfand - 150px
+    ueberliefen bei `d4_1_multipress_ongoing`, dem tatsaechlich laengsten
+    Schluessel der vier Demo-Geraete, gemessen 183px scrollWidth gegen
+    148px clientWidth). Diese Zusicherung MUSS mitgezogen werden, sonst
+    haette der Umbau eine Kopf- und eine Datenzeile mit verschiedenen
+    Vorlagen hinterlassen - genau die Abweichung, die dieser Test
+    ueberhaupt sperrt.
+
+    Fund (Abschlusspruefung): `page.count("signal-grid") >= 2` zaehlt nur
+    einen Teilstring. Allein `class="signal-grid signal-grid-head"`
+    liefert zwei Treffer, weil "signal-grid-head" mit "signal-grid"
+    beginnt - die Datenzeile koennte ihre Rasterklasse also ganz verlieren
+    (Ausgangszustand des Umbaus) und der zaehlende Assert bliebe gruen.
+    Ebenso pruefte die zweite Zusicherung nur, dass die Spaltenmasse
+    IRGENDWO im CSS stehen, nicht dass Kopf UND Zeile sie ueber dieselbe
+    Regel beziehen - ein spaeterer `.signal-row-cells { grid-template-
+    columns: ... }`-Override waere unsichtbar geblieben. Diese Fassung
+    verlangt beide Klassen einzeln am jeweiligen Element und bindet die
+    Spaltenmasse an den Regelkoerper von `.signal-grid` allein, mit einer
+    Gegenprobe, dass keine der beiden Modifikator-Klassen sie ausserhalb
+    der Medienabfrage nochmal selbst definiert.
+
+    Fund (Nachpruefung vor dem Merge): `rule_body` benutzte `css.index`, das
+    nur die ERSTE Regel mit diesem Selektor findet. Ein spaeterer Override
+    derselben Klasse - genau der Fall, gegen den diese Gegenprobe antreten
+    soll - steht aber am Ende der Datei und gewinnt dort die Kaskade,
+    unabhaengig davon, ob die erste Fassung sauber ist. Beleg: haengt man
+    `.signal-row-cells { grid-template-columns: 40px 1fr; }` ans Ende von
+    `style.css`, bleibt die alte Fassung dieses Tests gruen, obwohl Kopf-
+    und Datenzeile danach nachweislich verschiedene Spaltenmasse haben.
+    `rule_bodies_outside_media` sammelt deshalb ALLE Regelkoerper fuer
+    einen Selektor (nach Entfernen der `@media`-Bloecke, in denen `.signal-
+    grid` bewusst eine andere Vorlage fuer den schmalen Fall traegt), und
+    die Gegenprobe prueft jeden davon."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    css = (await client.get("/static/style.css")).text
+
+    assert 'class="signal-grid signal-grid-head"' in page
+    assert 'class="signal-grid signal-row-cells"' in page
+
+    def _without_media_queries(css: str) -> str:
+        """`css` ohne jeden `@media`-Block, per Klammerzaehlung entfernt -
+        ein einfaches `css.index("}")` braeche bei der ERSTEN Regel im
+        Block ab, nicht am Blockende, weil Regeln selbst auch `{ }` tragen."""
+        pieces = []
+        pos = 0
+        while True:
+            at = css.find("@media", pos)
+            if at == -1:
+                pieces.append(css[pos:])
+                break
+            pieces.append(css[pos:at])
+            open_brace = css.index("{", at)
+            depth = 1
+            i = open_brace + 1
+            while depth:
+                if css[i] == "{":
+                    depth += 1
+                elif css[i] == "}":
+                    depth -= 1
+                i += 1
+            pos = i
+        return "".join(pieces)
+
+    def rule_bodies_outside_media(selector: str, css: str) -> list[str]:
+        """ALLE Regelkoerper fuer `selector` ausserhalb jeder Medienabfrage -
+        nicht nur der erste (siehe Docstring oben: ein Override am
+        Dateiende blieb sonst unsichtbar)."""
+        bodies = []
+        pos = 0
+        while True:
+            start = css.find(selector, pos)
+            if start == -1:
+                return bodies
+            open_brace = css.index("{", start)
+            close_brace = css.index("}", open_brace)
+            bodies.append(css[open_brace:close_brace])
+            pos = close_brace + 1
+
+    css_outside_media = _without_media_queries(css)
+
+    grid_bodies = rule_bodies_outside_media(".signal-grid {", css_outside_media)
+    assert len(grid_bodies) == 1
+    assert "grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px" in grid_bodies[0]
+    # Bei JEDER Fassung von `.signal-grid-head`/`.signal-row-cells` ausserhalb
+    # der Medienabfrage duerfen die Spaltenmasse nicht eigenstaendig
+    # auftauchen, sonst koennten Kopf und Zeile ueber je eine eigene Regel
+    # auseinanderlaufen, ohne dass es hier auffiele.
+    for body in rule_bodies_outside_media(".signal-grid-head {", css_outside_media):
+        assert "grid-template-columns" not in body
+    for body in rule_bodies_outside_media(".signal-row-cells {", css_outside_media):
+        assert "grid-template-columns" not in body
+
+
+async def test_the_key_pill_wraps_instead_of_touching_the_value_column(api):
+    """Fund (Aufgabe 13): 200px reichen fuer die heutigen Schluessel, aber
+    `.key` selbst hatte weder `white-space` noch `overflow` - ein noch
+    laengerer Schluessel (z. B. eine dreistellige Geraete-ID) wuerde die
+    Spalte erneut sprengen, unsichtbar fuer eine Messung, die nur auf
+    abweichende Spaltenkanten prueft. Die Absicherung sitzt bewusst an
+    `.signal-grid .key`, nicht an `.key` global: dieselbe Klasse traegt
+    auch die Firmware-Dateinamen im Diagnose-Tab und den
+    Kommissionierungscode im Kopf (`class="key"` an anderer Stelle in
+    `index.html`) - eine globale Regel haette dort mitgewirkt, ohne dass
+    dieser Test das je gesehen haette.
+
+    `overflow-wrap: break-word` statt `text-overflow: ellipsis`: `.key`
+    traegt `user-select: all`, die Pille ist zum Kopieren gedacht, und es
+    gibt im Signal-Modal keinen zweiten Ort, der denselben Schluessel
+    ungekuerzt zeigt. Eine Ellipse waere beim Kopieren vollstaendig, aber
+    beim Ablesen eine stille Verstuemmelung - deshalb Umbruch, nicht
+    Kappung."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+
+    # Bindung an den Regelkoerper des eigenen Selektors (`.signal-grid
+    # .key`), nicht an ein Stichwort-Fenster - sonst waere der Test auch
+    # dann gruen, wenn `overflow-wrap` zufaellig in einer benachbarten,
+    # unbeteiligten Regel stuende.
+    start = css.index(".signal-grid .key {")
+    open_brace = css.index("{", start)
+    close_brace = css.index("}", open_brace)
+    rule = css[open_brace:close_brace]
+
+    assert "overflow-wrap: break-word" in rule
+    assert "text-overflow" not in rule
+
+
+async def test_both_boolean_columns_are_checkboxes(api):
+    """Das Bedienelement folgt dem BEHAELTER, nicht der Bedeutung: in einer
+    Tabelle Haekchen, weil sie in einer Spalte fluchten und leise bleiben -
+    eine Spalte aus 17 Schiebeschaltern waere eine deutlich lautere Textur,
+    und Lautstaerke ist genau das Problem dieses Modals."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    modal = page[page.index('class="signals-modal"') :]
+    for handler in ("toggleExported(signal)", "toggleResend(signal)"):
+        # Das Bedienelement, das den Handler traegt: vom Handler
+        # rueckwaerts bis zum oeffnenden Tag. So prueft der Test das
+        # tatsaechliche Element und nicht irgendein `type="checkbox"`
+        # anderswo im Modal.
+        end = modal.index(handler)
+        element = modal[modal.rindex("<", 0, end) : end]
+        assert 'type="checkbox"' in element, handler
+
+
+async def test_the_boolean_columns_keep_a_label_for_assistive_technology(api):
+    """Die Beschriftung steht als Spaltenkopf einmal statt siebzehnmal neben
+    einem Kaestchen - ein Screenreader liest aber die Zeile, nicht die
+    Tabelle. Beide Kaestchen brauchen deshalb weiterhin ihren eigenen Namen.
+
+    Fund (Abschlusspruefung): die alte Fassung war asymmetrisch scharf -
+    fuer die Export-Spalte prueft sie `:aria-label` direkt AM Element, fuer
+    Resend genuegte eine lose Textsuche auf der ganzen Seite. Der
+    Resend-Schluessel steht dort ohnehin dreimal (Kaestchen, versteckte
+    Beschriftung fuer den schmalen Fall, Tooltip), ein geloeschtes
+    `:aria-label` am Resend-Kaestchen selbst haette der Test also nie
+    bemerkt. Diese Fassung bindet beide Spalten gleich scharf: vom Handler
+    rueckwaerts zum Element, das ihn traegt - dasselbe Muster wie in
+    `test_both_boolean_columns_are_checkboxes`."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    modal = page[page.index('class="signals-modal"') :]
+
+    for handler, key in (
+        ("toggleExported(signal)", "export_checkbox"),
+        ("toggleResend(signal)", "resend_checkbox"),
+    ):
+        end = modal.index(handler)
+        element = modal[modal.rindex("<", 0, end) : end]
+        assert f":aria-label=\"t('web.signals.{key}')\"" in element, handler
+
+
+async def test_the_resend_column_is_explained_once_above_the_table(api):
+    """Fund (Abschlusspruefung): die alte Fassung pruefte nur, DASS der
+    Schluessel irgendwo auf der Seite steht - weder "einmal" noch "ueber
+    der Tabelle", obwohl der Name genau das verspricht. Der Erklaersatz
+    koennte als Beschriftung neben jedem der siebzehn Kaestchen stehen -
+    genau der Zustand, den der Umbau abgeschafft hat - und der alte Assert
+    bliebe gruen, weil er nur Existenz sieht. Diese Fassung zaehlt die
+    Treffer (genau einer) und bindet die Position an die Tabelle: der Satz
+    muss vor dem Spaltenkopf stehen."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert page.count("web.signals.resend_explanation") == 1
+    assert page.index("web.signals.resend_explanation") < page.index(
+        'class="signal-grid signal-grid-head"'
+    )
+
+
+async def test_the_raw_write_field_lives_in_the_row_detail(api):
+    """Nachfolger von `test_the_raw_write_strip_still_works_alongside_the_grid`
+    (Aufgabe 7): der Streifen dort war ausdruecklich uebergangsweise, sein
+    endgueltiger Platz ist der Aufklapper aus Aufgabe 8. Bedienlogik und
+    Handler bleiben unveraendert, nur der Ort und die Sichtbarkeitsbedingung
+    aendern sich - letztere jetzt als `isAttributeSignal(signal)`-Aufruf
+    statt einem zweiten Mal ausgeschriebenem `signal.kind === 'attribute'`.
+    `test_the_raw_write_field_is_no_longer_a_row_of_its_own` ergaenzt dazu
+    die strukturelle Gegenprobe: dasselbe Feld liegt NICHT als eigenes
+    Geschwister der Rasterzeile daneben."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    detail = dialog[dialog.index('class="signal-detail"') :]
+
+    assert 'x-show="isAttributeSignal(signal)"' in detail
+    assert ":placeholder=\"t('web.signals.raw_write_placeholder')\"" in detail
+    assert '@input="rawWriteDrafts[signal.key] = $event.target.value"' in detail
+    assert '@click="writeRaw(signal)"' in detail
+    assert ':disabled="rawWriteBusyKey === signal.key"' in detail
+    assert "x-text=\"t('web.signals.raw_write_submit')\"" in detail
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_only_one_signal_detail_is_open_at_a_time():
+    """Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
+    Zustand in Alpine, nicht im DOM: es gibt genau EINEN Wert fuer das ganze
+    Modal, kein Auf/Zu je Element.
+
+    Fund (Abschlusspruefung): die alte Fassung prueft nur zwei
+    Zeichenketten - dass `expandedSignalKey` mit `null` startet und dass im
+    Rumpf von `toggleSignalDetails` IRGENDWO `this.expandedSignalKey = `
+    vorkommt. Ein `toggleSignalDetails`, das zu `this.expandedSignalKey =
+    signal.key` verkuerzt wuerde (ohne den Vergleich, der es zum echten
+    Umschalter macht), oeffnete den Kebab nur noch und schloesse nie - der
+    Kebab bliebe dann fuer immer offen, sobald man ihn einmal geklickt hat.
+    Beide alten Asserts haetten das nicht bemerkt, weil sie nur Text sehen,
+    kein Verhalten. Diese Fassung fuehrt `toggleSignalDetails` echt aus
+    (ueber `_app_state`, wie beim Lade-Guard oben in dieser Datei) und
+    prueft die drei Faelle, die den Umschalter ausmachen: zweimal auf
+    dasselbe Signal (auf/zu), danach auf ein anderes Signal (Wechsel)."""
+    values = _app_state(
+        """
+        const signalA = { key: "a" };
+        const signalB = { key: "b" };
+        const seen = [state.expandedSignalKey];
+        state.toggleSignalDetails(signalA);
+        seen.push(state.expandedSignalKey);
+        state.toggleSignalDetails(signalA);
+        seen.push(state.expandedSignalKey);
+        state.toggleSignalDetails(signalA);
+        seen.push(state.expandedSignalKey);
+        state.toggleSignalDetails(signalB);
+        seen.push(state.expandedSignalKey);
+        console.log(JSON.stringify({ seen }));
+        """
+    )
+    initial, after_first_a, after_second_a, after_third_a, after_b = values["seen"]
+
+    assert initial is None
+    assert after_first_a == "a"
+    # Der zweite Klick auf DASSELBE Signal muss schliessen - genau die
+    # Umschalt-Haelfte, an der eine blosse Zuweisung vorbeigeschummelt
+    # haette.
+    assert after_second_a is None, "ein zweiter Klick auf dasselbe Signal muss schliessen"
+    assert after_third_a == "a"
+    # Ein Klick auf ein ANDERES Signal wechselt, statt ein zweites zu
+    # oeffnen - der Zustand ist ein einzelner Wert, kein Set, also hoechstens
+    # eines gleichzeitig offen.
+    assert after_b == "b"
+
+
+async def test_closing_the_signals_modal_resets_the_open_detail(api):
+    """Fund 3 (Nachpruefung, 2026-09-07): `@close="signalsModalDevice = null"`
+    fasste `expandedSignalKey` bisher nicht an - schloss jemand das Modal
+    mit offenem Aufklapper und oeffnete danach dasselbe Geraet erneut, stand
+    der Aufklapper sofort wieder offen, ohne dass der Kebab dafuer geklickt
+    wurde. `@close` ist laut dem Kommentar am `<dialog>` (index.html) der
+    einzige Schliessweg, den ALLE Wege durchlaufen (Escape, Backdrop,
+    Schliessen-Knopf, `close()` aus JavaScript ueber `closeSignalsModal()`)
+    - der Reset gehoert deshalb genau dorthin, nicht an eine einzelne
+    Schliessstelle."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    assert '@close="signalsModalDevice = null; expandedSignalKey = null"' in markup
+
+
+async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
+    """Fund 2 (Nachpruefung, 2026-09-07): dieser Test pruefte zuvor nur die
+    Ab-/Anwesenheit einer Zeichenkette
+    (`'x-show="signal.kind === \\'attribute\\'"' not in page`) - keine
+    Struktur, obwohl der Name "keine eigene Zeile mehr" verspricht. Diese
+    Fassung sichert das strukturell zu: das Rohwert-Eingabefeld liegt
+    INNERHALB des `.signal-detail`-Bereichs, nicht als eigenes Geschwister
+    der Rasterzeile (`.signal-grid.signal-row-cells`) daneben.
+
+    Fund (Abschlusspruefung): das zweite Pruefenster war `dialog[detail_
+    start:]` - nach HINTEN offen bis zum Ende des ganzen Dialogs, nicht auf
+    das Ende von `.signal-detail` begrenzt. Ein ZUSAETZLICH zwischen
+    Rasterzeile und Aufklapper eingefuegtes Rohwertfeld - die alte
+    Fehlerposition aus Aufgabe 7 - verletzte damit keine der beiden
+    Zusicherungen: das erste Fenster reichte nur bis zum eigenen `</div>`
+    der Rasterzeile (das neue Feld liegt DAHINTER), das zweite begann erst
+    bei `class="signal-detail"` (das neue Feld liegt DAVOR) - die Luecke
+    dazwischen sah keines der beiden Fenster.
+
+    Diese Fassung schliesst die Luecke, indem das erste Fenster bis
+    `detail_start` reicht statt nur bis zum eigenen `</div>` der
+    Rasterzeile - alles zwischen Rasterzeile und Aufklapper zaehlt jetzt
+    als "darf das Feld nicht enthalten". Das zweite Fenster wird zusaetzlich
+    ans eigene `</div>` von `.signal-detail` gekappt (Klammertiefe zaehlen,
+    Muster aus `test_the_signal_table_stacks_on_a_narrow_screen`, noetig
+    wegen des verschachtelten `<div class="row">` darin) statt offen bis
+    zum Dialogende zu lesen - sonst haette JEDE spaetere Fundstelle im Rest
+    des Dialogs die Zusicherung erfuellt, selbst wenn das Feld aus
+    `.signal-detail` HERAUSgewandert waere.
+
+    Kein reiner Wiederholung von `test_the_raw_write_field_lives_in_the_
+    row_detail`: jener Test prueft nur Anwesenheit im (offenen)
+    Aufklapper-Fenster, dieser hier ergaenzt dazu die Abwesenheit
+    zwischen Rasterzeile und Aufklapper UND die scharfe obere Grenze -
+    beide Haelften zusammen sichern "kein eigenes Geschwister mehr" zu."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+
+    row_start = dialog.index('class="signal-grid signal-row-cells"')
+    detail_start = dialog.index('class="signal-detail"', row_start)
+    # Nicht nur die Rasterzeile selbst, sondern ALLES bis zum Aufklapper -
+    # die alte Fehlerposition war ein Rohwertfeld als eigenes Geschwister
+    # GENAU dazwischen, und ein bei der Rasterzeile endendes Fenster haette
+    # das nicht gesehen.
+    assert "raw_write_placeholder" not in dialog[row_start:detail_start]
+
+    # Auf das eigene </div> von .signal-detail kappen statt offen bis zum
+    # Dialogende zu lesen. Innerhalb liegt ein verschachteltes
+    # <div class="row"> (das Rohwertfeld selbst) - deshalb Klammertiefe
+    # zaehlen, nicht einfach den naechsten </div> nehmen.
+    open_tag_start = dialog.rindex("<div", 0, detail_start)
+    body_start = dialog.index(">", open_tag_start) + 1
+    depth = 1
+    pos = body_start
+    for match in re.finditer(r"<div\b|</div>", dialog[body_start:]):
+        pos = body_start + match.end()
+        if match.group() == "</div>":
+            depth -= 1
+            if depth == 0:
+                break
+        else:
+            depth += 1
+    assert depth == 0, "kein schliessendes </div> fuer .signal-detail gefunden"
+    detail = dialog[detail_start:pos]
+
+    assert "raw_write_placeholder" in detail
+
+
+async def test_the_detail_spells_out_the_path(api):
+    """Der Pfad `1/59/1` bekommt endlich einen Ort, an dem genug Platz ist,
+    ihn auszuschreiben, statt ihn als Raetsel neben den Namen zu stellen.
+
+    Fund 1 (Nachpruefung, 2026-09-07): die Zerlegung des Pfads
+    (`signal.path.split('/')[2]` fuer das Element) stand zuvor als Ausdruck
+    mitten im Markup - Wissen ueber das Pfadformat, das bei einer Aenderung
+    des Formats im Markup gesucht werden muesste statt an einer Stelle in
+    `app.js`. Ein Test, der nur `GET /` prueft, haette einen Helfer in
+    `app.js` nicht gesehen - dieser Test prueft deshalb wie
+    `test_only_one_signal_detail_is_open_at_a_time` direkt `app.js` und
+    zusaetzlich die Bindung im Markup."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    page = _without_comments((await client.get("/")).text)
+
+    start = script.index("signalOriginText(signal) {")
+    body = script[start:][:300]
+    assert 't("web.signals.origin"' in body
+    assert "signal.endpoint" in body
+    assert "signal.cluster_id" in body
+    assert 'signal.path.split("/")[2]' in body
+
+    assert 'x-text="signalOriginText(signal)"' in page
+
+
+async def test_the_row_kebab_is_the_only_thing_left_in_the_28px_column(api):
+    """Pflichtergebnis aus der Pruefung von Aufgabe 7: die Warnpille mit
+    `signal.reason` sass in der 28-px-Rasterspalte und brach dort bei jedem
+    Geraet mit einem TEXT- oder listwertigen Signal um (`.badge` hatte kein
+    `overflow-wrap`, `.signal-grid > * { min-width: 0 }` liess die Zelle
+    schrumpfen) - gemessen 744px `scrollWidth` gegen 719px `clientWidth`.
+    Die Pille wohnt jetzt im Aufklapper; die Rasterzeile traegt in ihrer
+    letzten Zelle nur noch den Kebab-Knopf.
+
+    Fund (Abschlusspruefung): die alte Fassung prueft nur die Abwesenheit
+    ZWEIER konkreter Zeichenketten (die Warnpille, `signal.reason`) - der
+    Name verspricht aber "nur der Kebab", nicht "diese zwei Dinge nicht".
+    Ein beliebiges DRITTES Element in der letzten Zelle (ein neues Badge,
+    ein Icon, ein zweiter Knopf) waere unbemerkt geblieben. Diese Fassung
+    schneidet die letzte Zelle exakt: alles nach der Resend-Zelle (dem
+    letzten bekannten Geschwister davor) bis zum Ende der Rasterzeile muss
+    GENAU ein Element sein, und das muss der Kebab-Knopf sein."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+
+    # Innerhalb der Rasterzeile steht kein verschachteltes `<div>` (Zellen
+    # sind `<label>`, `<input>`, `<span>`, `<button>`) - das naechste
+    # `</div>` schliesst also genau diese Zeile, nicht irgendein Kindelement.
+    row_start = dialog.index('class="signal-grid signal-row-cells"')
+    row_end = dialog.index("</div>", row_start)
+    row = dialog[row_start:row_end]
+
+    assert "signal-more" in row
+
+    # Von der Resend-Zelle (letztes bekanntes Geschwister vor der letzten
+    # Spalte) bis zum Ende der Zeile darf NUR noch der Kebab-Knopf stehen -
+    # keine Warnpille, kein sonstiges Element, egal wie es heisst.
+    resend_close = row.index("</label>", row.index("toggleResend(signal)"))
+    tail = row[resend_close + len("</label>") :]
+    assert tail.lstrip().startswith("<button"), tail
+    button_close = tail.index("</button>") + len("</button>")
+    assert tail[:button_close].count('class="signal-more"') == 1
+    assert tail[button_close:].strip() == "", tail[button_close:]
+
+
+async def test_the_pill_fix_sits_on_the_pill_not_on_the_container(api):
+    """Fund (Nachpruefung vor dem Merge): ein frueherer Anlauf loeste die
+    gestreckte Warnpille (`.badge.warn`, `signal.reason`) mit `align-items:
+    flex-start` an `.signal-detail` selbst - das trifft aber ALLE Kinder,
+    nicht nur die Pille. Eines davon ist `.row`, das Rohwert-Feld
+    (`input[type="text"]`) darunter: unter `flex-start` verliert auch DAS
+    seine gestreckte Breite und faellt auf sein `min-width: 12rem` zurueck.
+    Gemessen im Wegwerf-Harness (echtes `index.html`/`style.css`, Signal
+    mit `exportable: false` und Text aus `_UNEXPORTABLE_REASONS`): `.row`
+    schrumpft von voller Aufklapperbreite (695.6px) auf 406.6px, das Feld
+    darin von rund 630px auf den 192px-Boden.
+
+    Ein Test kann diese Breiten nicht nachmessen (kein Browser-Layout in
+    der Testsuite) - er kann aber festhalten, WO die Loesung sitzen muss:
+    an der Pille selbst (`align-self: flex-start`), nicht am Container.
+    `.signal-detail` bleibt bei der Vorgabe `stretch` (kein eigenes
+    `align-items`), sonst waeren wir wieder beim Container-Fix und `.row`
+    schrumpfte erneut - genau das soll dieser Test sperren."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+
+    container_start = css.index(".signal-detail {")
+    open_brace = css.index("{", container_start)
+    close_brace = css.index("}", open_brace)
+    container_body = css[open_brace:close_brace]
+    # Der Regelkoerper traegt selbst einen Kommentar, der zur Begruendung
+    # `align-items: flex-start` als Zitat nennt (genau der verworfene
+    # Ansatz) - erst die Kommentare raus, sonst faende die blosse
+    # Zeichenkettensuche ihr eigenes Zitat und der Test waere nie rot.
+    container_declarations = re.sub(r"/\*.*?\*/", "", container_body, flags=re.DOTALL)
+    assert "align-items" not in container_declarations, (
+        "align-items am Container trifft auch .row (Rohwert-Feld) mit, nicht nur die Pille"
+    )
+
+    # Der Selektor, der `align-self: flex-start` tatsaechlich traegt - nicht
+    # per `css.index(".signal-detail .badge {")` gesucht, das faende die
+    # FALSCHE der beiden gleichlautenden Selektorzeilen (die andere gehoert
+    # zur `margin: 0`-Regel fuer `.hint` UND `.badge` zusammen). Stattdessen
+    # von der Deklaration selbst rueckwaerts zu ihrem eigenen Selektor.
+    align_self_pos = css.index("align-self: flex-start;")
+    badge_open_brace = css.rindex("{", 0, align_self_pos)
+    prev_close_brace = css.rindex("}", 0, badge_open_brace)
+    # Der Begruendungskommentar vor der Regel steht in derselben Luecke -
+    # raus damit, sonst bleibt vom Selektor nicht die letzte, sondern die
+    # erste (Kommentar-)Zeile uebrig.
+    preceding = re.sub(
+        r"/\*.*?\*/", "", css[prev_close_brace + 1 : badge_open_brace], flags=re.DOTALL
+    )
+    selector = preceding.strip()
+    assert selector == ".signal-detail .badge"
+
+
+async def test_the_kebab_button_is_named_and_reports_its_state(api):
+    """Fund (Abschlusspruefung): die alte Fassung prueft nur, DASS
+    `:aria-expanded=` und `:aria-label=` als Attributnamen vorkommen - nicht
+    WORAN sie haengen. Ein `:aria-expanded="true"` (an eine Konstante
+    gebunden, meldet also immer denselben Zustand) waere gruen geblieben.
+    Diese Fassung bindet beide an den konkreten Ausdruck, den der Knopf
+    tatsaechlich tragen muss."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+
+    button_start = dialog.index('class="signal-more"')
+    button_tag_start = dialog.rindex("<button", 0, button_start)
+    button_tag_end = dialog.index(">", button_start)
+    button = dialog[button_tag_start:button_tag_end]
+
+    assert ':aria-expanded="expandedSignalKey === signal.key"' in button
+    assert ":aria-label=\"t('web.signals.row_details')\"" in button
+
+
+async def test_the_modal_leads_with_the_number_the_user_came_for(api):
+    """Man oeffnet dieses Modal, um zu sehen und zu aendern, was nach Loxone
+    geht. Diese Zahl stand bisher nirgends.
+
+    Fund (Abschlusspruefung): die alte Fassung prueft weder POSITION
+    ("leads with") noch den NENNER (`total:`) - die Zusammenfassung haette
+    ans Ende des Modals rutschen oder den falschen Nenner zeigen koennen,
+    ohne dass der Test das bemerkt haette. Diese Fassung bindet die Zahl an
+    ihre Position vor dem Spaltenkopf und sichert beide Haelften des
+    Bruchs einzeln zu.
+
+    Entscheidung (bewusst, nicht aendern): der Nenner zaehlt ALLE Signale
+    ueber `signalCount`, nicht nur die funktionalen - am Taster steht
+    "17 von 173", nicht "12 von 17" wie im Entwurf skizziert. Beides ist
+    wahr; der Code zaehlt bewusst alle, weil das Modal auch die
+    Expertengruppe fuehrt und ein freigeschaltetes Expertensignal wirklich
+    mitgehen soll."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+
+    assert "web.signals.export_summary" in page
+    assert "exported: exportedSignalCount(signalsModalDevice)" in page
+    assert "total: signalCount(signalsModalDevice)" in page
+    assert page.index("web.signals.export_summary") < page.index(
+        'class="signal-grid signal-grid-head"'
+    )
+
+
+async def test_the_deselect_all_button_calls_the_correct_function_with_the_device_id(api):
+    """Die Kopfzeile zeigt die Exportzahl und daneben einen "Alle abwaehlen"-
+    Knopf (Task 9, Entwurf 2026-09-07, Abschnitt 4.2). Ein fehlerhafter
+    Funktionsaufruf (vertauschte Variable, falsche Methode, vergessenes
+    Argument) bliebe im Text-Test gruen - der Knopf selbst laeuft nie, ohne
+    Browser-Engine naemlich nur sein Markup. Belegt wird deshalb, dass die
+    ausgelieferte Datei die korrekte Bindung traegt: der Aufruf heisst
+    `deselectAllSignals(signalsModalDevice)` (das Geraet-Argument nicht
+    vergessen, nicht vertauscht) und die Beschriftung kommt aus dem
+    Uebersetzungsschluessel `web.signals.deselect_all`.
+
+    Ein eigener Test, weil er eine andere Frage als
+    `test_the_modal_leads_with_the_number_the_user_came_for` beantwortet:
+    "haengt der Knopf am richtigen Aufruf" vs. "steht die Zahl im Kopf"."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+
+    # Die `signals-summary` Div findet, in der der Knopf sitzt.
+    summary_start = dialog.index('class="signals-summary"')
+    summary_section_end = dialog.index("</div>", summary_start)
+    summary_section = dialog[summary_start:summary_section_end]
+
+    # Den "Alle abwaehlen"-Knopf selbst schneiden, nicht die ganze Div.
+    button_text_idx = summary_section.index("deselectAllSignals")
+    button_start = summary_section.rindex("<button", 0, button_text_idx)
+    button_end = summary_section.index("</button>", button_text_idx)
+    button = summary_section[button_start:button_end]
+
+    assert '@click="deselectAllSignals(signalsModalDevice)"' in button
+    assert "x-text=\"t('web.signals.deselect_all')\"" in button
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_deselect_all_empties_the_selection_instead_of_inverting_it():
+    """Ein `toggleExported` ueber ALLE Signale haette die Auswahl invertiert -
+    der Knopf heisst aber "alle abwaehlen", nicht "umkehren". Ein zweiter
+    Klick muss deshalb nichts mehr tun.
+
+    `toggleExported` wird hier ersetzt, weil es die Route ruft: geprueft
+    wird die Auswahl-Regel dieser Schleife, nicht der Schreibweg."""
+    values = _app_state(
+        """
+        state.signalsByDevice = { 1: [
+          { key: "a", exported: true, exportable: true },
+          { key: "b", exported: false, exportable: true },
+          { key: "c", exported: true, exportable: false },
+        ] };
+        const touched = [];
+        state.toggleExported = (signal) => {
+          touched.push(signal.key);
+          signal.exported = !signal.exported;
+        };
+        const before = state.exportedSignalCount(1);
+        // Async-IIFE, weil `node -e` als CommonJS laeuft und dort kein
+        // `await` auf oberster Ebene erlaubt ist - `deselectAllSignals`
+        // ist async.
+        (async () => {
+          await state.deselectAllSignals(1);
+          const firstRun = touched.slice();
+          await state.deselectAllSignals(1);
+          console.log(JSON.stringify({
+            before,
+            after: state.exportedSignalCount(1),
+            total: state.signalCount(1),
+            firstRun,
+            secondRunTouched: touched.length - firstRun.length,
+          }));
+        })();
+        """
+    )
+
+    # "c" ist zwar `exported`, passt aber auf keinen Loxone-Eingang - es
+    # zaehlt nicht mit, genauso wie `to_inputs` es server-seitig auslaesst.
+    assert values["before"] == 1
+    assert values["total"] == 3
+    assert values["after"] == 0
+    # "b" war bereits aus und darf nicht angefasst worden sein.
+    assert "b" not in values["firstRun"]
+    assert values["secondRunTouched"] == 0
+
+
+async def test_the_signal_table_stacks_on_a_narrow_screen(api):
+    """Sechs Spalten passen unter etwa 640 px nicht. Ohne diesen Umbruch
+    franst die Tabelle dort wieder aus - also genau der Zustand, den der
+    ganze Umbau beseitigt hat, nur auf einem Telefon.
+
+    Prueft nicht nur, DASS "display: none" irgendwo im Umkreis der
+    Medienabfrage steht, sondern dass es im REGELKOERPER von
+    `.signal-grid-head` selbst steht: ein Stichwort-Fenster von 900
+    Zeichen waere auch dann gruen, wenn ein CSS den Spaltenkopf gar
+    nicht ausblendet, weil "display: none" zufaellig in einer
+    benachbarten, unbeteiligten Regel auftaucht (diese Fassung tut das
+    tatsaechlich - die Kaestchen-Spalten selbst tragen `display: flex`,
+    nicht `none`, das koennte man aber nicht am blossen Fenster
+    ablesen). Diese Fassung bindet jede erwartete Deklaration an ihren
+    eigenen Selektor."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+
+    assert "@media (max-width: 640px)" in css
+    media_start = css.index("@media (max-width: 640px)")
+    body_start = css.index("{", media_start) + 1
+
+    # Klammertiefe zaehlen statt eine feste Zeichenzahl zu raten - liefert
+    # exakt den Koerper der Medienabfrage, unabhaengig davon, wie lang die
+    # Regeln darin sind oder in welcher Reihenfolge sie stehen.
+    depth = 1
+    i = body_start
+    while depth:
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+        i += 1
+    media_body = css[body_start : i - 1]
+
+    def rule_body(selector: str) -> str:
+        start = media_body.index(selector)
+        open_brace = media_body.index("{", start)
+        close_brace = media_body.index("}", open_brace)
+        return media_body[open_brace:close_brace]
+
+    # Der Spaltenkopf verschwindet: ueber einer gestapelten Karte
+    # beschriftet er nichts mehr.
+    assert "display: none" in rule_body(".signal-grid-head")
+    # Die Zeile wird zur gestapelten Karte statt der sechs festen Spalten.
+    assert "grid-template-columns: auto minmax(0, 1fr)" in rule_body(".signal-grid {")
+    # Die beiden Haekchenspalten bleiben sichtbar und bedienbar - sie
+    # verschwinden nicht mit dem Kopf, sie ruecken nur linksbuendig.
+    assert "justify-content: flex-start" in rule_body(".signal-grid .col-center")
+
+
+async def test_the_checkbox_labels_become_visible_only_below_640px(api):
+    """Pruefungsfund: der Kommentar ueber der Medienabfrage behauptete,
+    `title` erscheine dort als sichtbarer Text neben dem Kaestchen - es
+    gab aber nirgends ein `content: attr(title)` o.ae., `title` blieb ein
+    reiner Hover-Tooltip, den ein Touch-Nutzer nie zu sehen bekommt. Der
+    Fix zeigt echten Text: ein `<span class="col-center-label">` mit
+    demselben Uebersetzungsschluessel wie das `aria-label` des Kaestchens,
+    per Grundregel verborgen und nur innerhalb der 640px-Medienabfrage
+    gezeigt - umgekehrt zum Spaltenkopf, der genau dort verschwindet."""
+    client, _, _ = api
+    dialog = _signals_dialog(_without_comments((await client.get("/")).text))
+    css = (await client.get("/static/style.css")).text
+
+    # Beide Labels tragen den Span mit demselben Schluessel wie ihr
+    # `aria-label`, innerhalb desselben `<label>` wie das Kaestchen - kein
+    # neuer Uebersetzungsschluessel, dieselbe Auskunft an einem zweiten Ort.
+    for key in ("export_checkbox", "resend_checkbox"):
+        label_start = dialog.index(f"aria-label=\"t('web.signals.{key}')\"")
+        label_start = dialog.rindex("<label", 0, label_start)
+        label_end = dialog.index("</label>", label_start)
+        label = dialog[label_start:label_end]
+        assert 'class="col-center-label"' in label
+        assert 'aria-hidden="true"' in label
+        assert f"x-text=\"t('web.signals.{key}')\"" in label
+
+    # Grundregel: verborgen, solange der Spaltenkopf beschriftet.
+    base_start = css.index(".signal-grid .col-center-label")
+    media_start = css.index("@media (max-width: 640px)")
+    assert base_start < media_start
+    base_open = css.index("{", base_start)
+    base_close = css.index("}", base_open)
+    assert "display: none" in css[base_open:base_close]
+
+    # Medienabfrage: hier gezeigt, an derselben Klammertiefe wie die
+    # Nachbarregeln - Muster aus
+    # `test_the_signal_table_stacks_on_a_narrow_screen`.
+    body_start = css.index("{", media_start) + 1
+    depth = 1
+    i = body_start
+    while depth:
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+        i += 1
+    media_body = css[body_start : i - 1]
+
+    label_start = media_body.index(".signal-grid .col-center-label")
+    label_open = media_body.index("{", label_start)
+    label_close = media_body.index("}", label_open)
+    assert "display: inline" in media_body[label_open:label_close]
 
 
 async def test_the_value_grid_now_carries_every_functional_signal(api):

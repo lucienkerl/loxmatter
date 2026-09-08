@@ -99,6 +99,57 @@ def _table() -> dict[int, dict[str, Any]]:
     return {int(k): v for k, v in (raw.get("clusters") or {}).items()}
 
 
+# Der Rang eines Clusters, den die Tabelle nicht fuehrt (Entwurf
+# 2026-09-07, Abschnitt 4). Die Mitte, nicht das Ende: ein unbekannter
+# Cluster soll nie hinter dem Batteriestand landen, aber auch nicht vor
+# einem Cluster, dessen Bedeutung belegt ist.
+DEFAULT_RANK = 50
+
+
+def rank_for(cluster_id: int) -> int:
+    """Wie wichtig dieser Cluster fuer die Anzeige ist - kleiner ist wichtiger.
+
+    Getrennt von `lookup` und `knows_cluster`, weil diese Frage eine andere
+    ist als "wie heisst das Element" oder "kennt die Tabelle den Cluster":
+    ein Cluster kann in der Tabelle stehen (wegen seiner Kommandos) und
+    trotzdem keinen Rang tragen. Beide Faelle - gar nicht in der Tabelle,
+    und in der Tabelle ohne `rank` - ergeben hier dieselbe Antwort, weil
+    sie fuer die Sortierung dasselbe bedeuten.
+    """
+    cluster = _table().get(cluster_id)
+    if cluster is None:
+        return DEFAULT_RANK
+    rank = cluster.get("rank")
+    return DEFAULT_RANK if rank is None else int(rank)
+
+
+def element_rank_for(ref: SignalRef) -> int:
+    """Wie wichtig dieses Element INNERHALB seines Clusters ist.
+
+    Zweite Ebene neben `rank_for`, und sie ist nachgetragen worden statt von
+    Anfang an dazusein (Entwurf 2026-09-07, Abschnitt 4: "kann nachgetragen
+    werden, wenn ein konkretes Geraet sie verlangt"). Das Geraet, das sie
+    verlangt hat, ist der IKEA-Taster: `NumberOfPositions` (Element 0) traegt
+    denselben Cluster wie der Tastendruck und sortierte mit der kleineren
+    Element-ID davor - die Kachel fuehrte damit mit einer Konstanten.
+
+    Die Vorgabe ist dieselbe wie auf Clusterebene und aus demselben Grund die
+    Mitte: ein nicht eingetragenes Element soll weder nach vorn noch ganz
+    nach hinten fallen. Die grosse Mehrheit der Elemente traegt deshalb gar
+    keinen Rang, und die Element-ID ordnet sie weiterhin - so, wie es bis
+    hierher fuer jeden Cluster ausser 59 richtig war.
+    """
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return DEFAULT_RANK
+    section = "events" if ref.kind is SignalKind.EVENT else "attributes"
+    element = (cluster.get(section) or {}).get(ref.element_id)
+    if not isinstance(element, dict):
+        return DEFAULT_RANK
+    rank = element.get("rank")
+    return DEFAULT_RANK if rank is None else int(rank)
+
+
 def knows_cluster(cluster_id: int) -> bool:
     """Ob die Profiltabelle diesen Cluster ueberhaupt fuehrt."""
     return cluster_id in _table()

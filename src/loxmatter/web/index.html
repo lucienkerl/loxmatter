@@ -172,6 +172,11 @@
         <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
         <circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none" />
       </symbol>
+      <symbol id="i-battery" viewBox="0 0 24 24">
+        <rect x="2" y="8" width="16" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <path d="M21 11v3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+        <path d="M5 12.5h4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+      </symbol>
     </svg>
     <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
          sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
@@ -760,6 +765,31 @@
                       <span></span>
                     </span>
                   </div>
+
+                  <!-- Der Batteriestand steht UNTER den Vorschauzeilen und
+                       unter dem "+ N weitere"-Link, nicht zwischen ihnen
+                       (Entwurf 2026-09-07, Abschnitt 6). Er ist kein
+                       Nutzsignal wie ein Tastendruck, sondern eine Angabe
+                       ueber das Geraet selbst - und mit Rang 90 waere er
+                       aus den sechs Vorschauzeilen gefallen. Eigene Zeile,
+                       eigenes Symbol, gestrichelte Trennung: immer
+                       sichtbar, nie Leitwert.
+
+                       `x-show` statt `x-if`: ein netzbetriebenes Geraet
+                       hat kein PowerSource-Signal und darf nicht um eine
+                       leere Zeile hoeher werden - `.device-battery` traegt
+                       deshalb kein eigenes Aussenmass, das stehen bliebe. -->
+                  <div class="device-battery" x-show="batterySignalFor(device.id)" x-cloak>
+                    <svg class="icon" aria-hidden="true"><use href="#i-battery"></use></svg>
+                    <span class="value-key" x-text="t('web.devices.battery_label')"></span>
+                    <span
+                      class="value"
+                      :class="{ 'value-fresh': signalIsFresh(batterySignalFor(device.id)) }"
+                      :title="signalAgeTitle(batterySignalFor(device.id))"
+                      x-text="formatValue(liveValueOf(batterySignalFor(device.id))) + (batterySignalFor(device.id)?.unit ? ' ' + batterySignalFor(device.id).unit : '')"
+                    ></span>
+                  </div>
+
                   <p class="hint" x-show="!signalsByDevice[device.id]" x-text="t('web.devices.signals_loading')"></p>
                   <!-- Fund 3: ohne diesen Hinweis blieb zwischen Kopfzeile
                        und Befehlsleiste stillschweigend eine Luecke, sobald
@@ -769,7 +799,17 @@
                        unterscheiden. Die Bedingung fragte frueher
                        `!leadSignalFor(device.id)`; ohne Leitwert fragt sie
                        die Liste direkt, was ohnehin die ehrlichere Frage
-                       ist. -->
+                       ist.
+
+                       Und sie ist seit der Batteriezeile auch die einzige
+                       richtige: `previewSignalsFor` nimmt den Batteriestand
+                       aus dem Werteraster heraus (er steht in der Fusszeile
+                       darunter), ein Geraet mit NUR einem Batteriesignal
+                       hat also leere `value-rows` bei einem funktionalen
+                       Signal. Ueber die Rasterzeilen gefragt erschiene dort
+                       faelschlich "keine funktionalen Signale"; ueber
+                       `functionalSignalsFor` gefragt bleibt der Hinweis
+                       richtig aus. -->
                   <p
                     class="hint"
                     x-show="signalsByDevice[device.id] && functionalSignalsFor(device.id).length === 0"
@@ -1728,6 +1768,13 @@
       mehrere Handler war beim Raum-Auswahlfeld die Ursache von sechs
       Reviewrunden.
 
+      Aus demselben Grund setzt derselbe Handler seit Fund 3 der
+      Nachpruefung (2026-09-07) zusaetzlich `expandedSignalKey` zurueck:
+      ohne das stuende beim naechsten Oeffnen desselben Geraets sofort
+      wieder derselbe Aufklapper offen, ohne dass der Kebab dafuer geklickt
+      wurde - `@close` ist ja auch fuer dieses Feld der einzige Weg, auf dem
+      ALLE Schliesspfade zusammenlaufen.
+
       Ein `<dialog>` schliesst bei einem Klick auf den Backdrop NICHT von
       selbst (anders als es Escape tut). `@click.self` allein reicht dafuer
       NICHT: der Klick-Ereignis-Ziel ist `<dialog>` schon dann, wenn ein
@@ -1782,7 +1829,7 @@
       x-ref="signalsModal"
       class="signals-modal"
       aria-labelledby="signals-modal-heading"
-      @close="signalsModalDevice = null"
+      @close="signalsModalDevice = null; expandedSignalKey = null"
       @mousedown="signalsModalBackdropMousedown = isBackdropEvent($event, $el)"
       @click.self="if (signalsModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); signalsModalBackdropMousedown = false"
     >
@@ -1802,8 +1849,24 @@
             ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
           </div>
 
+          <!-- Die eine Zahl, wegen der man dieses Modal oeffnet. Sie stand
+               bisher nirgends - man musste 17 Haekchen zaehlen. -->
+          <div class="signals-summary">
+            <span
+              x-text="t('web.signals.export_summary', { exported: exportedSignalCount(signalsModalDevice), total: signalCount(signalsModalDevice) })"
+            ></span>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              @click="deselectAllSignals(signalsModalDevice)"
+              x-text="t('web.signals.deselect_all')"
+            ></button>
+          </div>
+
           <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
-          <p class="hint" x-text="t('web.signals.key_hint')"></p>
+          <p class="hint">
+            <span x-text="t('web.signals.key_hint')"></span>
+            <span x-text="t('web.signals.resend_explanation')"></span>
+          </p>
 
           <!-- Bleibt als Wiederholung fuer den Fehlerfall: im Normalfall hat
                `startApp` die Signale jedes Geraets laengst geladen, dieser
@@ -1818,7 +1881,7 @@
           <template x-if="signalsByDevice[signalsModalDevice]">
             <div>
               <!--
-                EINE Vorlage fuer beide Gruppen. Der naheliegende Entwurf -
+                EINE Vorlage fuer alle Gruppen. Der naheliegende Entwurf -
                 funktional als schlichter Block, Experte als `<details>` -
                 braeuchte zwei Zweige und in jedem eine eigene Kopie der
                 Signalzeile darunter. Genau diese Verdopplung hat
@@ -1840,10 +1903,36 @@
                 Re-Render nicht neu auf, und der Klick des Nutzers bleibt
                 stehen. NICHT zu `:open` vereinfachen.
               -->
+              <!-- Ausserhalb der Gruppenschleife, seit die Gruppen nach
+                   Endpunkt entstehen (Entwurf 2026-09-07, Abschnitt 7.4):
+                   eine Endpunktgruppe ist nie leer, sie entsteht ja aus
+                   ihren Signalen. "Keine funktionalen Signale" heisst
+                   jetzt "es gibt gar keine Endpunktgruppe". -->
+              <p
+                class="hint"
+                x-show="functionalSignalsFor(signalsModalDevice).length === 0"
+                x-text="t('web.signals.none_functional')"
+              ></p>
+              <!-- Der Spaltenkopf klebt beim Scrollen oben: ohne ihn
+                   verlieren die beiden Haekchenspalten ihre Bedeutung,
+                   sobald er bei 173 Signalen aus dem Bild ist. Er traegt
+                   DIESELBE `grid-template-columns` wie jede Datenzeile -
+                   das ist der ganze Grund, warum die Tabelle fluchtet, und
+                   der Test `test_the_signal_rows_and_the_header_share_one_
+                   grid` sperrt genau diese Gleichheit. -->
+              <div class="signal-grid signal-grid-head">
+                <span x-text="t('web.signals.col_export')"></span>
+                <span x-text="t('web.signals.col_signal')"></span>
+                <span x-text="t('web.signals.col_input')"></span>
+                <span class="col-right" x-text="t('web.signals.col_value')"></span>
+                <span class="col-center" x-text="t('web.signals.col_resend')"></span>
+                <span></span>
+              </div>
               <template x-for="group in signalGroupsFor(signalsModalDevice)" :key="group.key">
                 <details class="signal-group" x-init="$el.open = !group.collapsible">
                   <summary>
                     <span x-text="group.title"></span>
+                    <span class="muted" x-show="group.subtitle" x-text="group.subtitle"></span>
                     <span class="muted" x-text="'(' + group.signals.length + ')'"></span>
                     <!-- `aria-hidden` wie am Kebab-Icon und am Schliessen-Knopf
                          des Modals, NICHT wie am aelteren Chevron der
@@ -1859,26 +1948,44 @@
                     x-show="group.collapsible"
                     x-text="t('web.signals.functional_vs_expert_explanation')"
                   ></p>
-                  <p
-                    class="hint"
-                    x-show="!group.collapsible && group.signals.length === 0"
-                    x-text="t('web.signals.none_functional')"
-                  ></p>
+                  <!-- `x-for` verlangt genau EIN Wurzelelement je Signal.
+                       Die Rasterzeile allein waere das normalerweise (siehe
+                       Entwurf 2026-09-07, Abschnitt 7.2) - der Aufklapper
+                       direkt darunter braucht deshalb diese Huelle, obwohl
+                       er selbst kein Rasterkind ist. -->
                   <template x-for="signal in group.signals" :key="signal.key">
-                    <div class="device-controls">
-                      <div class="row">
-                        <span
-                          class="key"
-                          :title="t('web.signals.key_tooltip')"
-                          x-text="signal.key"
-                        ></span>
+                    <div class="signal-row-wrap" :class="{ 'is-expanded': expandedSignalKey === signal.key }">
+                      <div class="signal-grid signal-row-cells">
+                        <label class="col-center">
+                          <input
+                            type="checkbox"
+                            :checked="signal.exported"
+                            :disabled="!signal.exportable"
+                            :aria-label="t('web.signals.export_checkbox')"
+                            :title="t('web.signals.export_checkbox')"
+                            @change="toggleExported(signal)"
+                          />
+                          <!-- Nur unter 640px sichtbar (`.col-center-label`
+                               in style.css), dort ohne Spaltenkopf die
+                               einzige sichtbare Beschriftung des Kaestchens.
+                               `aria-hidden`, weil das Kaestchen sein
+                               `aria-label` bereits traegt - dieser Text ist
+                               dieselbe Auskunft nur ein zweites Mal sichtbar,
+                               keine zweite fuer Hilfstechnik. -->
+                          <span
+                            class="col-center-label"
+                            aria-hidden="true"
+                            x-text="t('web.signals.export_checkbox')"
+                          ></span>
+                        </label>
                         <input
                           type="text"
+                          class="signal-title"
                           :value="signal.title"
                           @input="titleDrafts[signal.key] = $event.target.value"
                           @change="saveTitle(signal)"
                         />
-                        <span class="hint" x-text="signal.path"></span>
+                        <span class="key" :title="t('web.signals.key_tooltip')" x-text="signal.key"></span>
                         <!--
                           Wann der Wert zuletzt kam, steht im `title` - nicht
                           daneben im Textfluss (2026-09-03). Eine Angabe wie
@@ -1890,49 +1997,104 @@
                           bewegt.
                         -->
                         <span
-                          class="value"
+                          class="value col-right"
                           :class="{ 'value-fresh': signalIsFresh(signal) }"
                           :title="signalAgeTitle(signal)"
                           x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                         ></span>
-                        <label x-show="signal.exportable">
-                          <input
-                            type="checkbox"
-                            :checked="signal.exported"
-                            @change="toggleExported(signal)"
-                          />
-                          <span x-text="t('web.signals.export_checkbox')"></span>
-                        </label>
-                        <label x-show="signal.exportable">
+                        <!-- Dasselbe Bedienelement wie in der Export-Spalte,
+                             und das ist Absicht: beides ist ein Ja/Nein je
+                             Signal in derselben Zeile. Der erste Entwurf
+                             hatte hier einen Schiebeschalter - zwei
+                             Bedienelemente fuer denselben Fall, genau die
+                             Inkonsistenz, die dieses Modal schwer lesbar
+                             machte. Die Regel: das Bedienelement folgt dem
+                             BEHAELTER, nicht der Bedeutung. In einer Tabelle
+                             Haekchen - sie fluchten in einer Spalte und
+                             bleiben leise; eine Spalte aus 17
+                             Schiebeschaltern waere eine deutlich lautere
+                             Textur, und Lautstaerke ist genau das Problem
+                             dieses Modals. Ein Schalter gehoert in einen
+                             Detailbereich mit erklaerendem Satz daneben,
+                             nicht in eine Tabellenspalte. -->
+                        <label class="col-center">
                           <input
                             type="checkbox"
                             :checked="signal.resend"
+                            :disabled="!signal.exportable"
+                            :aria-label="t('web.signals.resend_checkbox')"
+                            :title="t('web.signals.resend_checkbox')"
                             @change="toggleResend(signal)"
                           />
-                          <span x-text="t('web.signals.resend_checkbox')"></span>
+                          <!-- Wie bei der Export-Spalte: nur unter 640px
+                               sichtbar, `aria-hidden` aus demselben Grund -
+                               das Kaestchen hat mit `aria-label` schon
+                               seinen Namen. -->
+                          <span
+                            class="col-center-label"
+                            aria-hidden="true"
+                            x-text="t('web.signals.resend_checkbox')"
+                          ></span>
                         </label>
-                        <span
-                          class="badge warn"
-                          x-show="!signal.exportable"
-                          x-text="signal.reason"
-                        ></span>
-                      </div>
-                      <div class="row" x-show="signal.kind === 'attribute'">
-                        <input
-                          type="text"
-                          :placeholder="t('web.signals.raw_write_placeholder')"
-                          @input="rawWriteDrafts[signal.key] = $event.target.value"
-                        />
+                        <!-- Die letzte Zelle traegt seit Aufgabe 8 nur noch
+                             den Kebab, nichts sonst: die Warnpille mit
+                             `signal.reason` sass hier zuvor in der 28-px-Spalte
+                             und brach dort um, sobald der Text laenger war als
+                             ein paar Zeichen (jedes Geraet mit einem TEXT- oder
+                             listwertigen Signal, siehe `_UNEXPORTABLE_REASONS`
+                             in `api/devices.py`) - gemessen 744px scrollWidth
+                             gegen 719px clientWidth im Modal. Die Pille wohnt
+                             jetzt im Aufklapper, wo Platz fuer echte Saetze
+                             ist. -->
                         <button
-                          @click="writeRaw(signal)"
-                          :disabled="rawWriteBusyKey === signal.key"
-                          x-text="t('web.signals.raw_write_submit')"
-                        ></button>
-                        <span
-                          x-show="rawWriteMessages[signal.key]"
-                          :class="rawWriteMessageClass(signal)"
-                          x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
-                        ></span>
+                          class="signal-more"
+                          :aria-expanded="expandedSignalKey === signal.key"
+                          :aria-label="t('web.signals.row_details')"
+                          :title="t('web.signals.row_details')"
+                          @click="toggleSignalDetails(signal)"
+                        ><svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg></button>
+                      </div>
+                      <!-- Der Aufklapper haengt UNTER genau seiner Zeile,
+                           nicht als zweite `.row` daneben: er gehoert zu
+                           diesem einen Signal, und das soll man sehen.
+                           `x-cloak` verhindert den kurzen Blitz aller
+                           Aufklapper beim ersten Rendern, bevor Alpine
+                           `x-show` ausgewertet hat. -->
+                      <div class="signal-detail" x-show="expandedSignalKey === signal.key" x-cloak>
+                        <!-- `signal.path` traegt dieselbe Auskunft als
+                             "1/59/1", aber das ist ein Raetsel, solange
+                             niemand sagt, welche Zahl was bedeutet - hier ist
+                             endlich Platz, es auszuschreiben. Die Zerlegung
+                             des Pfads (welches Segment das Element ist) steht
+                             in `signalOriginText` (app.js), nicht hier im
+                             Markup - Wissen ueber das Pfadformat gehoert in
+                             eine benannte Funktion, nicht in einen Ausdruck
+                             mitten im Markup (Fund 1 der Nachpruefung,
+                             2026-09-07). -->
+                        <p class="hint" x-text="signalOriginText(signal)"></p>
+                        <p class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></p>
+                        <!-- Nur fuer Attribute sinnvoll - ein Ereignis hat
+                             keinen gespeicherten Wert, den man ueberschreiben
+                             koennte. Die Herkunft darueber gilt fuer beide
+                             Signalarten, deshalb traegt nur DIESER Teil das
+                             `x-show`. -->
+                        <div class="row" x-show="isAttributeSignal(signal)">
+                          <input
+                            type="text"
+                            :placeholder="t('web.signals.raw_write_placeholder')"
+                            @input="rawWriteDrafts[signal.key] = $event.target.value"
+                          />
+                          <button
+                            @click="writeRaw(signal)"
+                            :disabled="rawWriteBusyKey === signal.key"
+                            x-text="t('web.signals.raw_write_submit')"
+                          ></button>
+                          <span
+                            x-show="rawWriteMessages[signal.key]"
+                            :class="rawWriteMessageClass(signal)"
+                            x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
+                          ></span>
+                        </div>
                       </div>
                     </div>
                   </template>

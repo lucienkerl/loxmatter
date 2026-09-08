@@ -966,12 +966,6 @@ button:disabled {
   }
 }
 
-.device-controls {
-  margin-top: 0.6rem;
-  padding-top: 0.6rem;
-  border-top: 1px dashed var(--border);
-}
-
 footer.hint-block {
   margin-top: 0.4rem;
 }
@@ -1858,6 +1852,46 @@ footer.hint-block {
   text-overflow: ellipsis;
 }
 
+/* Der Batteriestand als eigene Zeile am Fuss der Vorschau (Entwurf
+   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt, nicht mit einer
+   durchgezogenen Linie: die gepunktete Trennung signalisiert "gehoert
+   dazu, ist aber eine andere Art von Angabe" statt einer harten Grenze
+   zwischen zwei unabhaengigen Bloecken.
+
+   `margin-top` steht auf dem Element, nicht als `margin-bottom` der
+   Vorschau: ein netzbetriebenes Geraet blendet diese Zeile per `x-show`
+   aus, und ein Aussenmass am Nachbarn bliebe dann als Luecke stehen. */
+.device-battery {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--border);
+}
+
+.device-battery .icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--warn);
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.device-battery .value-key {
+  flex: 1 1 auto;
+}
+
+/* Rechtsbuendig wie in `.value-rows`, damit die Zahl mit den Werten
+   darueber fluchtet - die Zeile ist ein Flex-Container und erbt deren
+   Rasterausrichtung nicht. */
+.device-battery .value {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--warn);
+}
+
 .device-commands {
   display: flex;
   gap: 0.25rem;
@@ -2281,6 +2315,22 @@ footer.hint-block {
   border-color: var(--border);
 }
 
+/* Die Zusammenfassung im Kopf: die Exportzahl links, "Alle abwaehlen"
+ * rechtsbuendig ueber den flexiblen Zwischenraum (wie beim Modal-Kopf
+ * darueber). Eigener Rahmen, damit die Zahl sich von der Signaltabelle
+ * darunter abhebt. */
+.signals-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
 /* Bedien-Modal (Aufgabe 7): eine Zeile je Regler, Beschriftung ueber dem
  * Regler statt daneben - auf schmalen Fenstern bleibt der Regler sonst zu
  * kurz zum Zielen. Nutzt dieselbe `.signals-modal`-Rahmung wie das
@@ -2385,4 +2435,261 @@ footer.hint-block {
 
 .signal-group[open] > summary .chevron {
   transform: rotate(90deg);
+}
+
+/* Ein Raster fuer Kopfzeile UND Datenzeile (Entwurf 2026-09-07,
+   Abschnitt 7.2). Die beiden MUESSEN dieselbe Vorlage tragen - genau das
+   fehlte bisher, und deshalb fluchtete nichts: die alte `.row` war ein
+   `flex-wrap`-Container ohne Spaltenmasse, bei `multipress_ongoing` rutschte
+   die zweite Beschriftung allein in die naechste Zeile.
+
+   Fund (Aufgabe 13): die vormals 150 px der Schluessel-Spalte waren NICHT
+   gemessen, nur geschaetzt - der Kommentar behauptete es trotzdem. `.key`
+   traegt weder `white-space` noch `overflow`, die Pille lief also innerhalb
+   ihrer eigenen Zelle ueber, ohne das Raster selbst zu verschieben (deshalb
+   fiel es der frueheren "keine abweichenden Spaltenkanten"-Messung nicht
+   auf). Tatsaechlich gemessen an den 17 funktionalen Signalen des Tasters
+   (`ikea_bilresa_button.json`, ueber `Store.register_signals` erzeugt):
+   laengster Schluessel `d4_1_multipress_ongoing` mit 23 Zeichen, `.key`
+   dafuer `scrollWidth` 183 px gegen `clientWidth` 148 px bei 150 px
+   Spaltenbreite - mindestens 185 px (inkl. Rahmen) waeren noetig gewesen.
+   200 px geben etwas Luft ueber diesem Minimum und tragen auch noch eine
+   zweistellige Geraete-ID (`d12_...`, 24 Zeichen) ohne die Absicherung
+   unten anzurufen; eine dreistellige ID (`d103_...`) faengt erst diese
+   Absicherung auf. Die dadurch schmalere Namensspalte (`minmax(0, 1fr)`)
+   bleibt bei rund 209 px komfortabel oberhalb der 200-px-Untergrenze aus
+   der Aufgabe. */
+.signal-grid {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0;
+}
+
+.signal-grid > * {
+  min-width: 0;
+}
+
+/* Absicherung gegen einen Schluessel, der selbst diese 200 px sprengt (eine
+   noch laengere Kombination aus Geraete-ID, Endpunkt und Slug, als die
+   heutigen Geraete erzeugen): Umbruch statt Kappen. `.key` traegt
+   `user-select: all` - die Pille ist zum Kopieren gedacht, UND es gibt
+   nirgends sonst im Modal einen Ort, der denselben Schluessel ungekuerzt
+   zeigt (anders als z. B. `.value-rows .value`, dessen Ellipse die
+   Signalliste als Ausweichort hat, siehe dort). `text-overflow: ellipsis`
+   waere deshalb beim Kopieren zwar vollstaendig, aber beim Ablesen eine
+   stille Verstuemmelung, die niemand bemerkt - genau das Gegenteil dessen,
+   wofuer die Pille da ist. `overflow-wrap: break-word` bricht den
+   Schluessel notfalls mitten im Wort um (er hat ohnehin keine Leerzeichen)
+   und macht nur die eine betroffene Zeile hoeher - `align-items: center`
+   am Raster haelt die uebrigen Zellen dabei fluchtend. */
+.signal-grid .key {
+  overflow-wrap: break-word;
+}
+
+.signal-grid-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.signal-row-cells {
+  border-bottom: 1px solid var(--border);
+}
+
+/* Nicht `.signal-row-cells:last-child`: seit dem Umbau auf `.signal-row-
+   wrap` (Entwurf 2026-09-07, Abschnitt 7.2) hat die Rasterzeile IMMER ein
+   zweites Geschwister, `.signal-detail` - `x-show` blendet ihn nur aus,
+   entfernt ihn nicht aus dem DOM. `.signal-row-cells` ist damit nie
+   `:last-child` und die Regel griff nie. Die letzte ZEILE einer Gruppe ist
+   stattdessen der letzte `.signal-row-wrap` unter `<details class=
+   "signal-group">` (Summary und Hinweistext davor sind eigene Elemente,
+   keine `.signal-row-wrap`) - deshalb hier so selektiert.
+
+   Das AENDERT das ausgelieferte Aussehen gegenueber der toten Regel davor
+   (die griff ja nie): die letzte Zeile jeder Gruppe verliert jetzt
+   tatsaechlich ihren unteren Rahmen. `.signal-group` traegt selbst keinen
+   Rahmen, die Gruppentrennung ruht danach allein auf `margin-top: 1rem`
+   (oben an `.signal-group`). Im Wegwerf-Harness mit zwei Gruppen a zwei
+   Zeilen gegengeprueft (echtes Markup samt echtem `style.css`, beide
+   Faelle nebeneinander verglichen - einmal mit, einmal ohne diese Regel):
+   die letzte Zeile der ersten Gruppe verschwimmt NICHT mit der Ueberschrift
+   der naechsten. `margin-top` samt der fett gesetzten `<summary>`
+   (`font-weight: 600`, siehe `.signal-group > summary` oben) traegt die
+   Trennung allein bereits deutlich - der fehlende Rahmen fiel im
+   Seitenvergleich kaum auf. Entscheidung: Regel bleibt, kein zusaetzlicher
+   Ersatz noetig. */
+.signal-row-wrap:last-child .signal-row-cells {
+  border-bottom: none;
+}
+
+.signal-grid .col-right {
+  text-align: right;
+}
+
+.signal-grid .col-center {
+  display: flex;
+  justify-content: center;
+  margin: 0;
+}
+
+/* Beschriftung der beiden Haekchen fuer den schmalen Fall (siehe
+   Medienabfrage unten) - hier im breiten Fall verborgen, weil der
+   Spaltenkopf schon beschriftet. */
+.signal-grid .col-center-label {
+  display: none;
+}
+
+/* Die generische Regel `input[type="text"] { min-width: 12rem }` weiter oben
+   gewinnt sonst gegen die Rasterspalte und sprengt sie - dieselbe Falle wie
+   bei `.device-head .device-name`, Begruendung dort. */
+.signal-grid .signal-title {
+  width: 100%;
+  min-width: 0;
+}
+
+.signal-row-wrap.is-expanded {
+  background: var(--bg);
+}
+
+/* Eingerueckt bis zur Namensspalte (58 px Haekchen + 0.5 rem Abstand), damit
+   der Aufklapper sichtbar zu SEINER Zeile gehoert und nicht zur Tabelle.
+
+   Hier wohnt seit Aufgabe 8 auch die Warnpille mit `signal.reason`: in der
+   28-px-Kebab-Spalte des Rasters (`.signal-grid`) brach ein laengerer Text
+   (z. B. "Text - ein virtueller UDP-Eingang kennt nur Zahlen und digitale
+   Werte" aus `_UNEXPORTABLE_REASONS`, `api/devices.py`) mangels Platz um und
+   sprengte damit das gemessene Fluchten der Tabelle (scrollWidth 744px
+   gegen clientWidth 719px). Hier im Aufklapper ist die verfuegbare Breite
+   die halbe Modalbreite statt 28px, normales Wortumbruch-Verhalten reicht
+   also aus - kein `overflow-wrap` noetig. */
+.signal-detail {
+  padding: 0.2rem 0 0.7rem calc(58px + 0.5rem);
+  display: flex;
+  flex-direction: column;
+  /* KEIN `align-items: flex-start` hier (frueherer Versuch, hat sich als
+     Fehlgriff erwiesen): das loeste zwar die Warnpille, zog aber JEDES
+     Kind auf seine eigene Breite - auch `.row`, das Rohwert-Feld
+     (`input[type="text"]`) darunter. Gemessen im Wegwerf-Harness (echtes
+     `index.html`/`style.css`, Signal mit `exportable: false` und Text aus
+     `_UNEXPORTABLE_REASONS`): `.row` fiel von voller Aufklapperbreite auf
+     406.6px, das Feld darin auf sein `min-width: 12rem` (192px) - nach
+     Flexbox SS 9.9.1 ist die "desired flex fraction" 0, sobald der
+     max-content-Beitrag der Items ihrer Flex-Basisgroesse entspricht,
+     `flex-grow` am `input` vergroessert die max-content-Breite von `.row`
+     also NICHT. Vorgabe `stretch` bleibt deshalb hier stehen, sie ist fuer
+     `.row` richtig; die Warnpille loest ihr eigenes Problem gezielt ueber
+     `align-self` an sich selbst (siehe `.signal-detail .badge` unten),
+     ohne die Geschwister mitzuziehen. */
+  gap: 0.45rem;
+}
+
+/* `.hint` und `.badge` sind beides `<p>`-Elemente und bringen deshalb den
+   Browser-Vorgabewert `margin: 1em 0` mit - hier ungewollt, denn den
+   Abstand zwischen den Kindern setzt bereits `gap` oben. Ungekuerzt kommt
+   dieser Vorgabewert zum `gap` hinzu (gemessen 19.7px Abstand vor der
+   Pille statt der beabsichtigten 7.2px `gap`), da Flex-Items ihre Raender
+   nicht wie Blockelemente zusammenfallen lassen. */
+.signal-detail .hint,
+.signal-detail .badge {
+  margin: 0;
+}
+
+/* `align-self` statt `align-items` am Container (siehe Begruendung an
+   `.signal-detail` oben): NUR dieses eine Kind soll seine eigene
+   Querbreite behalten. Nicht die Blockifizierung selbst haengt an
+   `align-self` - ein Flex-Item wird IMMER blockifiziert, auch mit
+   `flex-start` (gemessen: `getComputedStyle(...).display` bleibt `block`).
+   Was `align-self` steuert, ist die QUERGROESSE: nur bei `stretch` fuellt
+   das Item die Containerbreite, jeder andere Wert sizt es auf seinen
+   Inhalt - `flex-start` hier allein loest also dieselbe Pille, ohne `.row`
+   daneben zu beruehren. Gemessen im selben Harness-Durchlauf (1280px
+   Viewport, gleicher Signal-Fixture): unter reinem `stretch` (kein
+   `align-items`/`align-self` irgendwo) waere die Pille 629.6px breit bei
+   695.6px Containerbreite - genau der Ausgangsbefund, der `align-items:
+   flex-start` am Container ueberhaupt erst ausgeloest hat. Mit `align-
+   self` NUR hier bleibt die Pille bei 440.6px (ihr Inhalt, unveraendert
+   gegenueber der Container-Loesung), aber `.row` ist wieder bei voller
+   Aufklapperbreite (695.6px) und das Rohwert-Feld darin bei 415.0px statt
+   der zuvor gemessenen 192px (sein `min-width`-Boden). */
+.signal-detail .badge {
+  align-self: flex-start;
+}
+
+.signal-more {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.1rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.signal-more[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+/* Sechs Spalten passen hier nicht (Entwurf 2026-09-07, Abschnitt 10). Die
+   Zeile wird zur gestapelten Karte, und der Spaltenkopf verschwindet -
+   ueber einer gestapelten Karte beschriftet er nichts mehr, er stuende nur
+   als Reihe von fuenf Woertern ohne Bezug da.
+
+   Damit die Haekchen ohne Spaltenkopf ihre Bedeutung behalten, braucht es
+   hier eine ECHTE sichtbare Beschriftung: `title` ist nur ein Hover-Tooltip
+   und auf einem Telefon - genau der Zielgruppe dieser Medienabfrage - gibt
+   es kein Hover, ein `content: attr(title)` o.ae. existiert hier nicht und
+   haette daran auch nichts geaendert. Deshalb traegt jedes Kaestchen im
+   Markup laengst einen zweiten `<span class="col-center-label">` mit
+   demselben Uebersetzungsschluessel wie sein `aria-label` (kein zweiter
+   Schluessel), oben per Grundregel verborgen. Hier wird er gezeigt, `.col-
+   center` bekommt dafuer einen kleinen Abstand und wird linksbuendig, damit
+   Haekchen und Text nebeneinander stehen statt zu ueberlappen. Der Span
+   traegt `aria-hidden="true"`: er wiederholt nur sichtbar, was das
+   Kaestchen mit `aria-label` schon als Namen hat - ohne das wuerde
+   Hilfstechnik denselben Namen zweimal vorlesen oder je nach Browser sogar
+   widerspruechlich zusammensetzen. */
+@media (max-width: 640px) {
+  .signal-grid-head {
+    display: none;
+  }
+
+  .signal-grid {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.3rem 0.5rem;
+    padding: 0.5rem 0;
+  }
+
+  /* Name und Schluessel bekommen die volle Breite, die drei kurzen Zellen
+     teilen sich die Zeile darunter. */
+  .signal-grid .signal-title,
+  .signal-grid .key {
+    grid-column: 1 / -1;
+  }
+
+  .signal-grid .col-right {
+    text-align: left;
+  }
+
+  .signal-grid .col-center {
+    justify-content: flex-start;
+    gap: 0.35rem;
+  }
+
+  .signal-grid .col-center-label {
+    display: inline;
+  }
+
+  .signal-detail {
+    padding-left: 0;
+  }
 }

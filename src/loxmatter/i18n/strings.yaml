@@ -776,6 +776,9 @@ web.devices.signals_loading:
 web.devices.no_functional_signals:
   en: "No functional signals."
   de: "Keine funktionalen Signale."
+web.devices.battery_label:
+  en: "Battery"
+  de: "Batterie"
 web.devices.controls_loading:
   en: "Loading commands…"
   de: "Befehle werden geladen…"
@@ -1007,11 +1010,11 @@ web.devices.control_colour_hint:
 
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
-  en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
-  de: "Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
+  en: "The key (in the \"Loxone input\" column, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
+  de: "Der Schlüssel (in der Spalte „Loxone-Eingang“, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
 web.signals.functional_vs_expert_explanation:
-  en: "\"Functional\" are the signals that belong to the recognized device type (on/off, power, and similar) – \"Expert\" is everything else (network, device, and diagnostic values, technical counters). Both sections keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
-  de: "„Funktional“ sind die Signale, die zum erkannten Gerätetyp gehören (Ein/Aus, Leistung und Ähnliches) – „Experte“ alles andere (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Blöcke behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
+  en: "The signals above belong to the recognized device type, grouped by endpoint (e.g. \"Button 1\", \"Device\") – \"Expert\" leads everything else (network, device, and diagnostic values, technical counters). Both areas keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
+  de: "Oben stehen die Signale, die zum erkannten Gerätetyp gehören, gruppiert nach Endpunkt (z. B. „Taste 1“, „Gerät“) – „Experte“ führt alles Übrige (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Bereiche behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
 web.signals.load_button:
   en: "Load signals"
   de: "Signale laden"
@@ -1027,15 +1030,39 @@ web.signals.export_checkbox:
 web.signals.resend_checkbox:
   en: "resend periodically"
   de: "periodisch erneut senden"
+web.signals.col_export:
+  en: "Export"
+  de: "Export"
+web.signals.col_signal:
+  en: "Signal"
+  de: "Signal"
+web.signals.col_input:
+  en: "Loxone input"
+  de: "Loxone-Eingang"
+web.signals.col_value:
+  en: "Value"
+  de: "Wert"
+web.signals.col_resend:
+  en: "Periodic"
+  de: "Periodisch"
+web.signals.resend_explanation:
+  en: "Periodic means the value is sent again regularly, even when it has not changed."
+  de: "Periodisch heißt: der Wert wird regelmäßig erneut gesendet, auch wenn er sich nicht ändert."
 web.signals.raw_write_placeholder:
   en: "Write raw value"
   de: "Rohwert schreiben"
 web.signals.raw_write_submit:
   en: "Write"
   de: "Schreiben"
-web.signals.group_functional:
-  en: "Functional"
-  de: "Funktional"
+web.signals.origin:
+  en: "Endpoint {endpoint} · Cluster {cluster} · Element {element}"
+  de: "Endpunkt {endpoint} · Cluster {cluster} · Element {element}"
+web.signals.row_details:
+  en: "Origin and raw write"
+  de: "Herkunft und Rohwert"
+web.signals.group_endpoint_subtitle:
+  en: "Endpoint {endpoint}"
+  de: "Endpunkt {endpoint}"
 web.signals.group_expert:
   en: "Expert"
   de: "Experte"
@@ -1057,9 +1084,36 @@ web.signals.write_success:
 web.signals.modal_heading:
   en: "Signals — {device}"
   de: "Signale — {device}"
+web.signals.export_summary:
+  en: "{exported} of {total} signals go to Loxone as an input"
+  de: "{exported} von {total} Signalen gehen als Eingang nach Loxone"
+web.signals.deselect_all:
+  en: "Deselect all"
+  de: "Alle abwählen"
 web.signals.modal_close:
   en: "Close"
   de: "Schließen"
+web.signals.endpoint_button:
+  en: "Button"
+  de: "Taste"
+web.signals.endpoint_socket:
+  en: "Socket"
+  de: "Steckdose"
+web.signals.endpoint_light:
+  en: "Light"
+  de: "Leuchte"
+web.signals.endpoint_metering:
+  en: "Metering"
+  de: "Messung"
+web.signals.endpoint_device:
+  en: "Device"
+  de: "Gerät"
+web.signals.endpoint_numbered:
+  en: "{name} {index}"
+  de: "{name} {index}"
+web.signals.endpoint_plain:
+  en: "Endpoint {endpoint}"
+  de: "Endpunkt {endpoint}"
 
 # --- web.export — Export-Tab ---
 web.export.heading:

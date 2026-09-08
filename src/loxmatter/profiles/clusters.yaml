@@ -19,9 +19,37 @@
 #
 # Zieleinheit ist die, die der Loxone-Baustein erwartet, nicht die SI-Einheit
 # (Spec 7.3). Die Umrechnung selbst macht der UDP-Sender in Phase 4.
+#
+# `rank` ordnet die Cluster ZUEINANDER, wenn die Oberflaeche und der Export
+# die Signale eines Geraets sortieren (Entwurf 2026-09-07, Abschnitt 4).
+# Kleiner Rang zuerst: was ein Geraet im Haus TUT, steht bei 10-40; was es
+# ueber sich selbst aussagt, bei 90+. Ein Cluster ohne `rank` bekommt 50 und
+# landet damit in der Mitte - hinter dem, was nachweislich zaehlt, aber vor
+# Batterie und Geraeteangaben. Diese Vorgabe ist Absicht: ein Geraetetyp,
+# den noch niemand eingetragen hat, soll nie mit seinem Batteriestand
+# fuehren (Rang 90), sein tatsaechliches Hauptmerkmal aber auch nicht hinter
+# allem Bekannten verschwinden.
+#
+# INNERHALB eines Rangs bleibt die bisherige Ordnung (Endpunkt, Cluster,
+# Element, Art) - sie ordnet zwei Signale desselben Clusters, und das tut
+# sie meistens gut. Es gibt ZWEI Rangebenen: `rank` je Cluster (oben) UND
+# `rank` je Element, einzeln bei jedem Eintrag unter `attributes:`/
+# `events:` setzbar (siehe Cluster 59 unten). Die Elementebene ist
+# NACHGETRAGEN worden (2026-09-08), weil ein konkretes Geraet sie
+# verlangte: der IKEA-Taster traegt `NumberOfPositions` auf demselben
+# Cluster wie den Tastendruck, und die kleinere Element-ID sortierte die
+# Positionsangabe - eine Konstante, die sich nie aendert - vor jeden
+# Tastendruck; die Kachel fuehrte damit mit einem Leitwert ohne Aussage.
+# Ein Element OHNE `rank` faellt weiter auf die Vorgabe zurueck und bleibt
+# ueber die Element-ID geordnet - die Matter-Spezifikation vergibt sie
+# schon grob nach Wichtigkeit, und das reicht fuer jeden Cluster, der
+# (noch) kein Geraet hat, das etwas anderes verlangt. Ein neuer
+# Elementrang braucht wie hier ein Geraet, das ihn tatsaechlich belegt,
+# nicht nur eine Vermutung.
 clusters:
   6:
     name: onoff
+    rank: 10
     attributes:
       0: {slug: onoff, unit: ""}
     commands:
@@ -32,6 +60,7 @@ clusters:
       2: {slug: toggle, takes_value: false, control: none}
   8:
     name: level
+    rank: 20
     attributes:
       # 0-254 auf 0-100 %: 100/254
       0: {slug: level, unit: "%", scale: 0.3937007874015748}
@@ -40,6 +69,7 @@ clusters:
       4: {slug: level_onoff, takes_value: true, control: percent}
   47:
     name: powersource
+    rank: 90
     attributes:
       # BatPercentRemaining, Attribut-ID gegen
       # chip.clusters.Objects.PowerSource.Attributes belegt.
@@ -62,6 +92,7 @@ clusters:
       12: {slug: battery, unit: "%", scale: 0.5}
   768:
     name: colorcontrol
+    rank: 30
     attributes:
       # Attribut-IDs gegen das installierte SDK belegt (chip.clusters.Objects.
       # ColorControl.Attributes): CurrentHue=0, CurrentSaturation=1,
@@ -145,20 +176,24 @@ clusters:
       6: {slug: color, takes_value: true, control: hue_sat}
   1026:
     name: temperature
+    rank: 10
     attributes:
       0: {slug: temp, unit: "°C", scale: 0.01}
   1029:
     name: humidity
+    rank: 10
     attributes:
       0: {slug: humidity, unit: "%", scale: 0.01}
   144:
     name: power
+    rank: 40
     attributes:
       4: {slug: voltage, unit: "V", scale: 0.001}
       5: {slug: current, unit: "A", scale: 0.001}
       8: {slug: power, unit: "kW", scale: 0.000001}
   145:
     name: energy
+    rank: 40
     attributes:
       # CumulativeEnergyImported/-Exported. Matter liefert beide als
       # EnergyMeasurementStruct - Wert plus Zeitstempel -, nicht als Zahl.
@@ -172,13 +207,30 @@ clusters:
       2: {slug: energy_exported, field: 0, unit: "kWh", scale: 0.000001}
   59:
     name: switch
+    rank: 10
     attributes:
-      0: {slug: positions, unit: ""}
+      # `rank` je Element ordnet INNERHALB dieses Clusters (Nachtrag
+      # 2026-09-08). Cluster 59 ist der bislang einzige, der ihn braucht,
+      # und der Grund ist NumberOfPositions: die Angabe, wie viele
+      # Stellungen diese Taste hat, aendert sich nie. Sie stand mit
+      # Element-ID 0 vor jedem Tastendruck und wurde damit zum Leitwert
+      # der Kachel - eine Konstante als wichtigstes Merkmal eines Tasters.
+      0: {slug: positions, unit: "", rank: 90}
       1: {slug: position, unit: ""}
     events:
-      1: {slug: press}
+      # Der Tastendruck ist, wofuer man einen Taster einlernt.
+      1: {slug: press, rank: 10}
       2: {slug: longpress}
       3: {slug: shortrelease}
       4: {slug: longrelease}
       5: {slug: multipress_ongoing}
       6: {slug: multipress}
+  40:
+    name: basicinformation
+    # Kein `attributes:`-Abschnitt: dieser Cluster steht hier ALLEIN wegen
+    # seines Rangs. Ein leerer `attributes:`-Abschnitt haette eine zweite,
+    # ungewollte Wirkung - `relevance.is_functional` liest ihn ueber
+    # `known_attribute_section` und wuerde dann JEDES Attribut dieses
+    # Clusters als nicht gewollt verwerfen (siehe dessen Docstring,
+    # Schicht 3). Der Rang allein aendert nur die Reihenfolge.
+    rank: 95
