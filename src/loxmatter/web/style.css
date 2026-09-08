@@ -2475,17 +2475,20 @@ footer.hint-block {
   padding: 0.2rem 0 0.7rem calc(58px + 0.5rem);
   display: flex;
   flex-direction: column;
-  /* Ohne `align-items` gilt die Vorgabe `stretch`: jedes Kind wird auf die
-     volle Breite des Flex-Containers gezogen und dabei blockifiziert
-     (Spec: ein Flex-Item mit `stretch` ignoriert sein eigenes `display`).
-     Die Warnpille (`.badge.warn` unten, `signal.reason`) verliert dadurch
-     ihr `display: inline-block` aus `.badge` und zieht sich ueber die
-     ganze Aufklapperbreite statt sich auf ihren Text zusammenzuziehen -
-     gemessen 629.6px Pillenbreite gegen 695.6px Containerbreite, bei
-     JEDEM TEXT- oder listwertigen Signal (Normalfall laut
-     `_UNEXPORTABLE_REASONS`, nicht Randfall). `flex-start` laesst jedes
-     Kind bei seiner eigenen Breite. */
-  align-items: flex-start;
+  /* KEIN `align-items: flex-start` hier (frueherer Versuch, hat sich als
+     Fehlgriff erwiesen): das loeste zwar die Warnpille, zog aber JEDES
+     Kind auf seine eigene Breite - auch `.row`, das Rohwert-Feld
+     (`input[type="text"]`) darunter. Gemessen im Wegwerf-Harness (echtes
+     `index.html`/`style.css`, Signal mit `exportable: false` und Text aus
+     `_UNEXPORTABLE_REASONS`): `.row` fiel von voller Aufklapperbreite auf
+     406.6px, das Feld darin auf sein `min-width: 12rem` (192px) - nach
+     Flexbox SS 9.9.1 ist die "desired flex fraction" 0, sobald der
+     max-content-Beitrag der Items ihrer Flex-Basisgroesse entspricht,
+     `flex-grow` am `input` vergroessert die max-content-Breite von `.row`
+     also NICHT. Vorgabe `stretch` bleibt deshalb hier stehen, sie ist fuer
+     `.row` richtig; die Warnpille loest ihr eigenes Problem gezielt ueber
+     `align-self` an sich selbst (siehe `.signal-detail .badge` unten),
+     ohne die Geschwister mitzuziehen. */
   gap: 0.45rem;
 }
 
@@ -2498,6 +2501,27 @@ footer.hint-block {
 .signal-detail .hint,
 .signal-detail .badge {
   margin: 0;
+}
+
+/* `align-self` statt `align-items` am Container (siehe Begruendung an
+   `.signal-detail` oben): NUR dieses eine Kind soll seine eigene
+   Querbreite behalten. Nicht die Blockifizierung selbst haengt an
+   `align-self` - ein Flex-Item wird IMMER blockifiziert, auch mit
+   `flex-start` (gemessen: `getComputedStyle(...).display` bleibt `block`).
+   Was `align-self` steuert, ist die QUERGROESSE: nur bei `stretch` fuellt
+   das Item die Containerbreite, jeder andere Wert sizt es auf seinen
+   Inhalt - `flex-start` hier allein loest also dieselbe Pille, ohne `.row`
+   daneben zu beruehren. Gemessen im selben Harness-Durchlauf (1280px
+   Viewport, gleicher Signal-Fixture): unter reinem `stretch` (kein
+   `align-items`/`align-self` irgendwo) waere die Pille 629.6px breit bei
+   695.6px Containerbreite - genau der Ausgangsbefund, der `align-items:
+   flex-start` am Container ueberhaupt erst ausgeloest hat. Mit `align-
+   self` NUR hier bleibt die Pille bei 440.6px (ihr Inhalt, unveraendert
+   gegenueber der Container-Loesung), aber `.row` ist wieder bei voller
+   Aufklapperbreite (695.6px) und das Rohwert-Feld darin bei 415.0px statt
+   der zuvor gemessenen 192px (sein `min-width`-Boden). */
+.signal-detail .badge {
+  align-self: flex-start;
 }
 
 .signal-more {

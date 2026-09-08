@@ -4754,6 +4754,58 @@ async def test_the_row_kebab_is_the_only_thing_left_in_the_28px_column(api):
     assert tail[button_close:].strip() == "", tail[button_close:]
 
 
+async def test_the_pill_fix_sits_on_the_pill_not_on_the_container(api):
+    """Fund (Nachpruefung vor dem Merge): ein frueherer Anlauf loeste die
+    gestreckte Warnpille (`.badge.warn`, `signal.reason`) mit `align-items:
+    flex-start` an `.signal-detail` selbst - das trifft aber ALLE Kinder,
+    nicht nur die Pille. Eines davon ist `.row`, das Rohwert-Feld
+    (`input[type="text"]`) darunter: unter `flex-start` verliert auch DAS
+    seine gestreckte Breite und faellt auf sein `min-width: 12rem` zurueck.
+    Gemessen im Wegwerf-Harness (echtes `index.html`/`style.css`, Signal
+    mit `exportable: false` und Text aus `_UNEXPORTABLE_REASONS`): `.row`
+    schrumpft von voller Aufklapperbreite (695.6px) auf 406.6px, das Feld
+    darin von rund 630px auf den 192px-Boden.
+
+    Ein Test kann diese Breiten nicht nachmessen (kein Browser-Layout in
+    der Testsuite) - er kann aber festhalten, WO die Loesung sitzen muss:
+    an der Pille selbst (`align-self: flex-start`), nicht am Container.
+    `.signal-detail` bleibt bei der Vorgabe `stretch` (kein eigenes
+    `align-items`), sonst waeren wir wieder beim Container-Fix und `.row`
+    schrumpfte erneut - genau das soll dieser Test sperren."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+
+    container_start = css.index(".signal-detail {")
+    open_brace = css.index("{", container_start)
+    close_brace = css.index("}", open_brace)
+    container_body = css[open_brace:close_brace]
+    # Der Regelkoerper traegt selbst einen Kommentar, der zur Begruendung
+    # `align-items: flex-start` als Zitat nennt (genau der verworfene
+    # Ansatz) - erst die Kommentare raus, sonst faende die blosse
+    # Zeichenkettensuche ihr eigenes Zitat und der Test waere nie rot.
+    container_declarations = re.sub(r"/\*.*?\*/", "", container_body, flags=re.DOTALL)
+    assert "align-items" not in container_declarations, (
+        "align-items am Container trifft auch .row (Rohwert-Feld) mit, nicht nur die Pille"
+    )
+
+    # Der Selektor, der `align-self: flex-start` tatsaechlich traegt - nicht
+    # per `css.index(".signal-detail .badge {")` gesucht, das faende die
+    # FALSCHE der beiden gleichlautenden Selektorzeilen (die andere gehoert
+    # zur `margin: 0`-Regel fuer `.hint` UND `.badge` zusammen). Stattdessen
+    # von der Deklaration selbst rueckwaerts zu ihrem eigenen Selektor.
+    align_self_pos = css.index("align-self: flex-start;")
+    badge_open_brace = css.rindex("{", 0, align_self_pos)
+    prev_close_brace = css.rindex("}", 0, badge_open_brace)
+    # Der Begruendungskommentar vor der Regel steht in derselben Luecke -
+    # raus damit, sonst bleibt vom Selektor nicht die letzte, sondern die
+    # erste (Kommentar-)Zeile uebrig.
+    preceding = re.sub(
+        r"/\*.*?\*/", "", css[prev_close_brace + 1 : badge_open_brace], flags=re.DOTALL
+    )
+    selector = preceding.strip()
+    assert selector == ".signal-detail .badge"
+
+
 async def test_the_kebab_button_is_named_and_reports_its_state(api):
     """Fund (Abschlusspruefung): die alte Fassung prueft nur, DASS
     `:aria-expanded=` und `:aria-label=` als Attributnamen vorkommen - nicht
