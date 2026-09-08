@@ -185,8 +185,25 @@ fi
 # waiting for a phase to change, would wait forever for an answer that
 # was never going to come. Reject instead: one branch, and the requester
 # finds out.
+#
+# UNREADABLE is recorded rather than rejecting immediately, so the dedup
+# guard below gets a chance to run first. Without this, an unreadable
+# request.json that nothing ever replaces (a crashed writer, say) forced
+# JOB_ID="" on every single pass - and "" can never equal a non-empty
+# LAST, so the guard could never match its own previous rejection. The
+# result was a full state.json rewrite and a full 2000-line log.txt
+# rewrite every two seconds, forever (~43000 of each per day on the Pi
+# this runs on). A synthetic id derived from the request file's own mtime
+# and size stands in for the missing real one instead: the same
+# unreadable file produces the same synthetic id on every pass, so the
+# guard bites on the second pass exactly as it already does for a
+# readable request.
+UNREADABLE=0
 if ! JOB_ID="$(jq -r '.id // empty' "$REQUEST" 2>/dev/null)" || [ -z "$JOB_ID" ]; then
-  JOB_ID="" FROM="" TO="" reject "request is not readable (invalid JSON, a top-level array, or a missing/empty id)"
+  UNREADABLE=1
+  SYNTH_MTIME="$(date -r "$REQUEST" -u +%Y%m%d%H%M%S 2>/dev/null || true)"
+  SYNTH_SIZE="$(wc -c < "$REQUEST" 2>/dev/null | tr -d ' ' || true)"
+  JOB_ID="unreadable-${SYNTH_MTIME}-${SYNTH_SIZE}"
 fi
 CHANNEL="$(jq -r '.channel // empty' "$REQUEST" 2>/dev/null || true)"
 TARGET="$(jq -r '.target // empty' "$REQUEST" 2>/dev/null || true)"
@@ -196,6 +213,10 @@ TARGET="$(jq -r '.target // empty' "$REQUEST" 2>/dev/null || true)"
 # never comes to rest.
 LAST="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
 [ "$JOB_ID" != "$LAST" ] || exit 0
+
+if [ "$UNREADABLE" = 1 ]; then
+  FROM="" TO="" reject "request is not readable (invalid JSON, a top-level array, or a missing/empty id)"
+fi
 
 FROM="$(current_tag)"
 TO="$TARGET"

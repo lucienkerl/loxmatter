@@ -102,6 +102,7 @@ SYSTEM_TOOLS = (
     "seq",
     "ls",
     "cut",
+    "wc",
 )
 
 
