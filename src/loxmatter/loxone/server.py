@@ -144,6 +144,7 @@ from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.settings import build_settings_router
+from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
@@ -492,6 +493,7 @@ def build_app(
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
     app.include_router(build_language_router(store), dependencies=api_guard)
+    app.include_router(build_version_router(), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
     # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
     # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst
