@@ -95,7 +95,7 @@ CLI too.
 
 ## 🖼 The web interface
 
-**Devices**<br>Every commissioned device on one page, with live values and controls, and a badge where signals changed since the last export.
+**Devices**<br>Every commissioned device on one page, with live values and controls, and a badge where signals changed since the last export. Lamps get sliders for brightness and color temperature and a color picker instead of number fields; the mode tab bar only shows up on lamps that support both color and color temperature.
 
 <img src="docs/screenshots/dashboard.png" alt="Device list with live values and controls" />
 

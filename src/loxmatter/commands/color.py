@@ -24,6 +24,22 @@ fehleranfaelligste, und ein Fehler sieht hier nach einem Geraetefehler aus,
 nicht nach einem Umrechnungsfehler. Vor dem ersten Einsatz an einer echten
 Leuchte gegenpruefen.
 
+Stand 8. September 2026: Der Weg WebUI -> `MoveToHueAndSaturation` ist im
+Browser gegen die laufende Anwendung durchgespielt worden. Belegt sind
+Reiterleiste und Farbflaeche nur bei Leuchten, die beides koennen (die
+Farbleuchte bekam beide Reiter und einen Kelvin-Regler 1801-6535 K, die
+Weisston-Leuchte nur den Kelvin-Regler mit ihren echten Grenzen
+2202-6535 K und keine Reiter), Startwerte werden aus den echten
+Geraetesignalen gelesen, und vier Klicks in die Farbflaeche erzeugten vier
+Kommandos (Senden beim Loslassen) mit den richtigen gepackten
+Loxone-Zahlen - Rot 1002100, Gruen 1100001, Blau 100001001, Weiss
+99099100. Diese vier Zahlen sind der aussagekraeftigste Beleg, weil sie die
+gesamte Kette von Mausklick bis gepackter Loxone-Zahl bestaetigen. Nicht
+belegt ist weiterhin, ob eine echte Leuchte tatsaechlich in der erwarteten
+Farbe leuchtet: Beide Testleuchten waren beim Durchgang am matter-server
+als offline gemeldet (`available=False`, stromlos oder ausserhalb der
+Thread-Reichweite), und kein einziges Kommando hat ein Geraet erreicht.
+
 Rechercheergebnis zur Loxone-seitigen Farbcodierung (Schritt 1 dieser Task):
 
 RGB - belegt. Der Baustein "RGB Lighting Controller" gibt Farbe auf einem
