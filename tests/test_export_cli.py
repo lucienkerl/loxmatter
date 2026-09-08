@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -23,6 +24,30 @@ from loxmatter.cli import app
 from loxmatter.model.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures" / "nodes"
+
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Entfernt ANSI-Sequenzen aus CLI-Ausgaben, bevor auf Nachrichtentext
+    geprueft wird.
+
+    Vorfall: `test_export_requires_node_or_fixture(_in_german)` waren fuenf
+    aufeinanderfolgende CI-Laeufe auf main rot, obwohl sie lokal in 1,8s
+    gruen liefen. Ursache ist `typer.rich_utils.FORCE_TERMINAL`, das
+    `GITHUB_ACTIONS` auswertet und Rich damit unter Actions zum Faerben
+    zwingt - lokal erkennt Rich denselben, nicht an ein TTY angehaengten
+    Stream als "kein Terminal" und laesst die Nachricht platt. Rich
+    faerbt dabei Optionsnamen wie `--node` einzeln ein ("-" und "-node"
+    bekommen getrennte Escape-Sequenzen), sodass die reine Teilstring-
+    Pruefung selbst mit `NO_COLOR` fehlschlaegt: `NO_COLOR` unterdrueckt
+    nur Farbe, nicht die Fett-Formatierung, die den Optionsnamen zerlegt.
+    Robuster als Umgebungsvariablen (die `typer.rich_utils.FORCE_TERMINAL`
+    ohnehin nur beim allerersten Import auswertet) ist es, die
+    Rich-Formatierung aus der eingefangenen Ausgabe wieder herauszunehmen,
+    bevor der Nachrichtentext geprueft wird - unabhaengig davon, ob und wie
+    eine bestimmte Rich-Version gerade faerbt."""
+    return _ANSI_ESCAPE.sub("", output)
 
 
 def test_export_writes_both_templates_per_device(tmp_path):
@@ -426,7 +451,7 @@ def test_export_requires_node_or_fixture(tmp_path):
     assert result.exit_code != 0
     assert "Traceback" not in result.output
     # cli.common.error_need_node_or_fixture
-    assert "specify either --node or --fixture" in result.output
+    assert "specify either --node or --fixture" in _plain(result.output)
 
 
 def test_export_requires_node_or_fixture_in_german(tmp_path):
@@ -444,7 +469,7 @@ def test_export_requires_node_or_fixture_in_german(tmp_path):
 
     assert result.exit_code != 0
     assert "Traceback" not in result.output
-    assert "entweder --node oder --fixture angeben" in result.output
+    assert "entweder --node oder --fixture angeben" in _plain(result.output)
 
 
 def test_export_reports_malformed_fixture_missing_node_id(tmp_path):
