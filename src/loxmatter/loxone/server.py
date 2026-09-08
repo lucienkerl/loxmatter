@@ -146,7 +146,7 @@ from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.settings import build_settings_router
 from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
-from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
+from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
@@ -577,12 +577,18 @@ def build_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         try:
-            call = to_matter_call(stored, value)
+            calls = to_matter_calls(stored, value)
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
-            await invoke(call)
+            # Mehrere Aufrufe, weil ein Loxone-Wert mehr als eine Sache
+            # bedeuten kann - der Farb-Ausgang traegt Farbe UND Helligkeit
+            # (siehe `to_matter_calls`). Der erste Fehlschlag bricht ab und
+            # wird gemeldet; ein halb gesetzter Zustand ist dabei moeglich
+            # und dort begruendet.
+            for call in calls:
+                await invoke(call)
         except Exception as exc:  # jedes Geraeteproblem wird zu 502
             # logger.exception schreibt den vollen Traceback ins Server-Log,
             # NICHT in die HTTP-Antwort (siehe

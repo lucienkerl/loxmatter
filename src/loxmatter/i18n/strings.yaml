@@ -276,6 +276,9 @@ api.errors.command_unsupported:
 # als HTTP-400-`detail` durch. Drei Fehlerfaelle plus die drei Kanalnamen
 # fuer den dritten Fall, damit auch die Kanalangabe uebersetzt ist und
 # nicht nur der Rahmensatz.
+api.errors.lumitech_malformed:
+  en: "\"{value}\" carries the Lumitech marker but does not follow the format (marker 20, brightness 0-100, kelvin above 0)."
+  de: "\"{value}\" trägt die Lumitech-Kennung, hält aber das Format nicht ein (Kennung 20, Helligkeit 0-100, Kelvin über 0)."
 api.errors.loxone_colour_not_integer:
   en: "Loxone colour number must be an integer, was {value}"
   de: "Loxone-Farbzahl muss ganzzahlig sein, war {value}"
