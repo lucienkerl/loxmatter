@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Die WebSocket-Mechanik, die sich beide Live-Routen teilen."""
+"""The WebSocket mechanics that both live routes share."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from loxmatter.api.streaming import QUEUE_MAXSIZE, BoundedQueue
 
 
 def test_the_queue_drops_the_oldest_entry_when_it_is_full():
-    """Drop-Oldest, nicht Drop-Newest: eine Live-Ansicht will den aktuellsten
-    Stand, der veraltete Eintrag ist der verzichtbare."""
+    """Drop-oldest, not drop-newest: a live view wants the current state,
+    the stale entry is expendable."""
     queue = BoundedQueue(maxsize=2, connection_label="test")
     queue.put({"n": 1})
     queue.put({"n": 2})
@@ -39,16 +39,15 @@ async def _drain(queue: BoundedQueue, count: int) -> list[dict[str, object]]:
 
 
 def test_putting_never_blocks_and_never_raises():
-    """`put` laeuft im Aufrufpfad des Beobachters - beim Log-Handler sogar in
-    einem fremden Thread. Wuerde es blockieren oder werfen, riss es den
-    beobachteten Pfad mit."""
+    """`put` runs in the observer's call path - even in a foreign thread
+    for the log handler. If it blocked or raised, it would drag the
+    observed path with it."""
     queue = BoundedQueue(maxsize=1, connection_label="test")
     for n in range(1000):
         queue.put({"n": n})
 
 
 def test_the_default_size_matches_what_the_value_stream_used():
-    """Uebernommen aus api/live.py, nicht neu gewaehlt: der Wert ist dort
-    begruendet, und zwei verschiedene Groessen waeren eine Frage, die
-    niemand beantworten kann."""
+    """Taken from api/live.py, not newly chosen: the value is justified
+    there, and two different sizes would be a question nobody could answer."""
     assert QUEUE_MAXSIZE == 512

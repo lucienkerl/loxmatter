@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -31,7 +31,7 @@ class RecordingSender:
 
 
 async def test_observer_sees_every_value_the_sender_sees(tmp_path, plug_store):
-    """Spec 8.3: ein Pfad, nicht zwei."""
+    """Spec 8.3: one path, not two."""
     store, device_id = plug_store
     seen: list[tuple[str, object]] = []
     runtime = Runtime(store, RecordingSender())
@@ -41,7 +41,7 @@ async def test_observer_sees_every_value_the_sender_sees(tmp_path, plug_store):
 
 
 async def test_a_failing_observer_does_not_stop_the_udp_sender(tmp_path, plug_store):
-    """Die Oberflaeche darf die Bruecke nicht mitreissen."""
+    """The UI must not drag down the bridge."""
     store, device_id = plug_store
     sent: list[str] = []
 
@@ -83,7 +83,7 @@ async def test_websocket_delivers_a_value(api_with_runtime):
 
 
 async def test_a_disconnecting_client_is_dropped_without_noise(api_with_runtime):
-    """Ein geschlossener Browser-Tab darf keinen Fehler ins Log schreiben."""
+    """A closed browser tab must not write an error to the log."""
     client, runtime, device_id = api_with_runtime
     async with client.websocket_connect("/api/live"):
         pass
@@ -92,11 +92,11 @@ async def test_a_disconnecting_client_is_dropped_without_noise(api_with_runtime)
 
 
 async def test_bounded_queue_drops_oldest_keeps_newest_and_logs_once(caplog):
-    """Review-Fix Important #1: eine volle Warteschlange wirft den
-    AELTESTEN Eintrag weg, nicht den neuesten - eine Live-Ansicht will den
-    aktuellsten Stand. Das Debug-Log meldet sich nur beim UEBERGANG ins
-    Verwerfen, nicht bei jedem weiteren Verwurf (sonst flutet eine dauerhaft
-    haengende Verbindung das Log, statt sie nur auffindbar zu machen)."""
+    """Review-Fix Important #1: a full queue drops the OLDEST entry, not
+    the newest - a live view wants the current state. The debug log reports
+    only on the TRANSITION to dropping, not on every subsequent drop
+    (otherwise a permanently stuck connection floods the log instead of
+    just making it findable)."""
     queue = BoundedQueue(maxsize=3, connection_label="test-client")
     with caplog.at_level(logging.DEBUG, logger="loxmatter.api.streaming"):
         for i in range(5):
@@ -112,9 +112,9 @@ async def test_bounded_queue_drops_oldest_keeps_newest_and_logs_once(caplog):
 
 
 async def test_full_queue_does_not_affect_sender_or_observer_registration(plug_store):
-    """Ein Ueberlauf der WebUI-Warteschlange betrifft nur die Anzeige - nie
-    den UDP-Pfad (der laengst gesendet hat, siehe `on_attribute`) und nie
-    die Beobachter-Registrierung selbst (Review-Fix Important #1)."""
+    """An overflow of the WebUI queue affects only the display - never the
+    UDP path (which has long since sent, see `on_attribute`) and never the
+    observer registration itself (Review-Fix Important #1)."""
     store, device_id = plug_store
     sent: list[str] = []
 
@@ -129,7 +129,7 @@ async def test_full_queue_does_not_affect_sender_or_observer_registration(plug_s
     queue = BoundedQueue(maxsize=8, connection_label="test-client")
     runtime.add_observer(lambda key, value: queue.put({"key": key, "value": value}))
 
-    total = 20  # deutlich mehr als die Warteschlangengroesse von 8
+    total = 20  # much more than the queue size of 8
     for i in range(total):
         await runtime.on_attribute(device_id, "2/144/4", 230000 + i)
 
@@ -138,11 +138,10 @@ async def test_full_queue_does_not_affect_sender_or_observer_registration(plug_s
 
 
 async def test_a_broken_send_is_treated_like_a_disconnect(api_with_runtime, caplog):
-    """Review-Fix Important #2: manche ASGI-Server werfen bei einem
-    Sendeversuch auf eine bereits verlorene Verbindung kein
-    `WebSocketDisconnect`, sondern ein `RuntimeError` - siehe Modul-Docstring
-    von `api/live.py`. Das darf weder als Fehler geloggt werden noch den
-    Beobachter angemeldet lassen."""
+    """Review-Fix Important #2: some ASGI servers throw a `RuntimeError`
+    instead of a `WebSocketDisconnect` when attempting to send on an already
+    lost connection - see the module docstring of `api/live.py`. This must
+    neither be logged as an error nor leave the observer registered."""
     client, runtime, device_id = api_with_runtime
     conn = client.websocket_connect("/api/live", break_send_after=0)
     await conn.__aenter__()
@@ -153,15 +152,15 @@ async def test_a_broken_send_is_treated_like_a_disconnect(api_with_runtime, capl
 
 
 async def test_a_stuck_reader_does_not_block_another_connection(api_with_runtime):
-    """Jede Verbindung hat ihre eigene Warteschlange (Review-Fix Minor #4) -
-    eine, die nicht liest, darf eine andere nicht ausbremsen, und beide
-    werden beim Trennen sauber abgemeldet."""
+    """Each connection has its own queue (Review-Fix Minor #4) - one that
+    does not read must not slow down another, and both are cleanly
+    unregistered on disconnect."""
     client, runtime, device_id = api_with_runtime
     async with (
         client.websocket_connect("/api/live") as healthy,
         client.websocket_connect("/api/live") as stuck,
     ):
-        assert stuck is not None  # zweite, unabhaengige Verbindung - liest absichtlich nie mit
+        assert stuck is not None  # second, independent connection - deliberately never reads
         assert runtime.observer_count() == 2
         await runtime.on_attribute(device_id, "2/144/4", 230000)
         message = await asyncio.wait_for(healthy.receive_json(), timeout=2)

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,9 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer den Einstellungen-Endpunkt (`api/settings.py`) - siehe
-docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
-Abschnitt 4."""
+"""Tests for the settings endpoint (`api/settings.py`) - see
+docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
+section 4."""
 
 from __future__ import annotations
 
@@ -87,8 +87,8 @@ async def test_an_empty_bridge_ip_yields_422(api):
 
 
 async def test_settings_are_stored_in_the_same_database_the_export_router_reads(api):
-    """Kein zweiter, unabhaengiger Speicher (dieselbe Ueberlegung wie
-    `api/export.py`s Moduldocstring fuer den Store insgesamt)."""
+    """No second, independent store (same reasoning as `api/export.py`'s
+    module docstring for the store overall)."""
     client, store = api
     await client.patch(
         "/api/settings", json={"bridge_ip": "10.0.0.5", "udp_port": 7000, "listen_port": 8080}
@@ -97,10 +97,10 @@ async def test_settings_are_stored_in_the_same_database_the_export_router_reads(
 
 
 async def test_settings_route_requires_a_session(tmp_path, no_invoke, fake_runtime):
-    """Wie jede andere `/api`-Route seit dem WebUI-Login (Spec 9) - kein
-    eigener Test noetig fuer den Waechter selbst (der ist bereits in
-    `tests/api/test_security.py` fuer alle fuenf Router belegt), nur dass
-    dieser sechste Router tatsaechlich dazugehoert."""
+    """Like every other `/api` route since WebUI login (Spec 9) - no
+    separate test needed for the guard itself (it is already covered in
+    `tests/api/test_security.py` for all five routers), only that this
+    sixth router actually belongs."""
     store = Store(tmp_path / "t.sqlite")
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
