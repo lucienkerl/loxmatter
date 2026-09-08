@@ -161,6 +161,23 @@ und dieser ganze Abschnitt waere wirkungslos, ohne dass ein Test es merkt,
 der `link_ok` selbst uebergibt. Test 3 in Abschnitt 7 prueft deshalb die
 Weitergabe aus `serve()` mit, nicht nur das Verhalten von `Runtime`.
 
+> **Berichtigung (Schluss-Review, 9. September 2026).** Der letzte Satz oben
+> beschreibt einen Test, den es nicht gibt und nicht geben wird — und das ist
+> Absicht, nicht Versäumnis. Der Umsetzungsplan begründet in seinem Abschnitt
+> [„Abweichung vom Entwurf, bewusst"](../plans/2026-09-08-matter-server-reconnect.md#abweichung-vom-entwurf-bewusst),
+> warum die Annotation `link_ok: Callable[[], bool]` die **stärkere**
+> Absicherung ist: ein `bool` an dieser Stelle ist damit ein Typfehler, den
+> `mypy --strict` in CI abweist — der Fehler kann gar nicht erst committet
+> werden, während ein Test ihn erst nach dem Commit fände. Probeweise
+> eingesetzt (`link_ok=client.connected` statt `link_ok=lambda:
+> client.connected`) meldet mypy wörtlich: `src/loxmatter/cli.py:591: error:
+> Argument "link_ok" to "Runtime" has incompatible type "bool"; expected
+> "Callable[[], bool]"  [arg-type]`. Was dieser Abschnitt inhaltlich will —
+> dass ein einmal ausgewerteter Wert den Puls nicht anhalten kann —, deckt
+> Test 3 auf der Verhaltensseite ab; siehe die Berichtigung dort. Der falsche
+> Satz bleibt stehen: dieses Projekt schreibt seine Belege nicht rückwirkend
+> um.
+
 Damit merkt **Loxone selbst**, dass etwas nicht stimmt: der Watchdog am
 `bridge_alive`-Eingang schlaegt an, ohne dass jemand eine Oberflaeche
 oeffnet. Genau das fehlte heute Abend.
@@ -221,6 +238,21 @@ Vier Tests, alle ohne Netz, alle gegen die vorhandenen Attrappen in
    Aufrufs uebergibt (siehe Abschnitt 5).
 4. **„Zuletzt gehoert"** — nach `on_attribute` liefert `last_heard_for` einen
    Zeitstempel, vorher `None`.
+
+> **Berichtigung zu Test 3 (Schluss-Review, 9. September 2026).** Der „zweite
+> Test, der die **Weitergabe** prueft", wurde nicht geschrieben — bewusst,
+> siehe die Berichtigung in Abschnitt 5 und den Abschnitt
+> [„Abweichung vom Entwurf, bewusst"](../plans/2026-09-08-matter-server-reconnect.md#abweichung-vom-entwurf-bewusst)
+> im Umsetzungsplan. Die Weitergabe aus `cli.serve()` sichert stattdessen die
+> Annotation `Callable[[], bool]` unter `mypy --strict` ab, und zwar schärfer,
+> als ein Test es könnte. Was der Entwurf inhaltlich verlangt, deckt
+> `test_the_heartbeat_falls_silent_when_the_link_drops` in
+> `tests/loxone/test_runtime.py` auf der Verhaltensseite ab: ein `link_ok`,
+> das erst `True` und dann `False` liefert, muss den Puls tatsächlich
+> anhalten — ein einmal ausgewerteter Wert fiele dort durch. Die geforderte
+> Beißprobe zu Test 3 („die `link_ok`-Prüfung entfernen muss den Test rot
+> machen") gilt unverändert und wurde durchgeführt. Der ursprüngliche
+> Wortlaut oben bleibt stehen und wird nicht getilgt.
 
 Zu Test 1 und 3 gehoert jeweils die Probe, dass der Test wirklich beisst:
 `connected` haendisch auf die alte Bedingung zuruecksetzen bzw. die
