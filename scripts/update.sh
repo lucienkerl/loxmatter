@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,21 +16,21 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-# Bringt die laufende Bruecke auf den Stand des Repositories.
+# Brings the running bridge up to the state of the repository.
 #
-#   ./scripts/update.sh              # holen, bauen, neu starten
-#   ./scripts/update.sh --no-pull    # nur bauen und neu starten
-#   ./scripts/update.sh --no-cache   # ohne Layer-Cache bauen
+#   ./scripts/update.sh              # pull, build, restart
+#   ./scripts/update.sh --no-pull    # only build and restart
+#   ./scripts/update.sh --no-cache   # build without the layer cache
 #
-# Auf dem Rechner auszufuehren, auf dem die Bruecke laeuft. Der Stack liegt
-# im Repository selbst (deploy/testhost/), das Skript findet ihn ueber
-# seinen eigenen Pfad - kein Konfigurationsschritt.
+# Run this on the machine where the bridge runs. The stack lives inside the
+# repository itself (deploy/testhost/), the script finds it via its own
+# path - no configuration step needed.
 #
-# Der Dienst wird mit `--no-deps` gestartet: matter-server und OTBR bleiben
-# unangetastet. Ohne das erzeugt Compose sie mit neu, sobald sich die
-# Projektkonfiguration geaendert hat - und OTBRs Thread-Zustand haengt an
-# einem Volume, das ein Neubau zwar ueberlebt, aber ein Neustart des
-# Thread-Netzes ohne Grund gehoert nicht zu einem Update.
+# The service is started with `--no-deps`: matter-server and OTBR are left
+# untouched. Without that, Compose would recreate them too as soon as the
+# project configuration changes - and OTBR's Thread state hangs off a
+# volume that survives a rebuild, but restarting the Thread network for no
+# reason isn't part of an update.
 set -euo pipefail
 
 PULL=1
@@ -40,7 +40,7 @@ for arg in "$@"; do
     --no-pull)  PULL=0 ;;
     --no-cache) NO_CACHE=1 ;;
     -h|--help)  sed -n '18,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)          printf 'Unbekanntes Argument: %s (erlaubt: --no-pull, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
+    *)          printf 'Unknown argument: %s (allowed: --no-pull, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
   esac
 done
 
@@ -50,62 +50,62 @@ SERVICE="loxmatter"
 BACKUPS="$HOME/loxmatter-backups"
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
-die() { printf '\n\033[31mAbbruch: %s\033[0m\n' "$*" >&2; exit 1; }
+die() { printf '\n\033[31mAborting: %s\033[0m\n' "$*" >&2; exit 1; }
 
-[ -f "$REPO/Dockerfile" ] || die "Kein Dockerfile in $REPO - laeuft das Skript aus dem Repository?"
-[ -f "$STACK/docker-compose.yml" ] || die "Kein docker-compose.yml in $STACK."
-grep -q "^  ${SERVICE}:" "$STACK/docker-compose.yml" || die "Die Compose-Datei kennt keinen Dienst '${SERVICE}'."
-command -v docker >/dev/null || die "docker ist nicht installiert."
+[ -f "$REPO/Dockerfile" ] || die "No Dockerfile in $REPO - is the script running from the repository?"
+[ -f "$STACK/docker-compose.yml" ] || die "No docker-compose.yml in $STACK."
+grep -q "^  ${SERVICE}:" "$STACK/docker-compose.yml" || die "The compose file has no service '${SERVICE}'."
+command -v docker >/dev/null || die "docker is not installed."
 
 if [ "$PULL" -eq 1 ]; then
-  say "Hole den neuesten Stand"
-  git -C "$REPO" pull --ff-only || die "git pull fehlgeschlagen - lokale Aenderungen im Weg?"
+  say "Fetching the latest state"
+  git -C "$REPO" pull --ff-only || die "git pull failed - local changes in the way?"
 fi
-printf '  %s (%s)\n' "$REPO" "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'kein Commit')"
+printf '  %s (%s)\n' "$REPO" "$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'no commit')"
 if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]; then
-  printf '\033[33m  Hinweis: der Arbeitsbaum ist nicht sauber. Es wird ausgeliefert, was da liegt.\033[0m\n'
+  printf '\033[33m  Note: the working tree is not clean. Whatever is there will be shipped.\033[0m\n'
 fi
 
-# Die Signaldatenbank ist das Einzige, was ein misslungenes Update nicht
-# wiederherstellen koennte: darin stehen die Signalschluessel, und die sind
-# die Verdrahtung in der Loxone-Konfiguration. Vor allem anderen eine Kopie.
+# The signal database is the one thing a botched update couldn't restore:
+# it holds the signal keys, and those are the wiring in the Loxone
+# configuration. A copy comes before anything else.
 #
-# Der Volume-Name setzt sich aus dem Projektnamen zusammen, und der steht
-# fest in der Compose-Datei (`name:`) - genau deshalb steht er dort und
-# nicht in einer .env, die jemand neu erzeugen koennte.
+# The volume name is made up of the project name, and that's fixed in the
+# compose file (`name:`) - which is exactly why it lives there and not in
+# an .env that someone could regenerate.
 PROJECT="$(awk '/^name:/ {print $2; exit}' "$STACK/docker-compose.yml")"
-[ -n "$PROJECT" ] || die "Kein 'name:' in der Compose-Datei - ohne Projektnamen ist der Volume-Name nicht bestimmbar."
+[ -n "$PROJECT" ] || die "No 'name:' in the compose file - without a project name the volume name can't be determined."
 VOLUME="${PROJECT}_loxmatter-store"
 if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
-  say "Sichere die Signaldatenbank"
+  say "Backing up the signal database"
   mkdir -p "$BACKUPS"
   STAMP="$(date +%Y-%m-%d-%H%M%S)"
   docker run --rm -v "$VOLUME:/data:ro" -v "$BACKUPS:/backup" alpine:latest \
     tar czf "/backup/store-$STAMP.tgz" -C /data . \
-    || die "Sicherung fehlgeschlagen - es wird nichts geaendert."
+    || die "Backup failed - nothing will be changed."
   printf '  %s\n' "$BACKUPS/store-$STAMP.tgz"
-  # Alte Sicherungen aufraeumen, aber nie die letzten zehn.
+  # Clean up old backups, but never the last ten.
   ls -1t "$BACKUPS"/store-*.tgz 2>/dev/null | tail -n +11 | xargs -r rm --
 else
-  printf '\nKein Datenbank-Volume gefunden (%s) - erster Lauf?\n' "$VOLUME"
+  printf '\nNo database volume found (%s) - first run?\n' "$VOLUME"
 fi
 
-# Ueber `docker compose build`, NICHT ueber ein eigenes `docker build`
-# (2026-09-03): der Dienst traegt in der Compose-Datei einen `build:`-Block,
-# baut also sein eigenes Image. Ein daneben gebautes `loxmatter:local`
-# benutzt niemand - das Skript baute monatelang ein Image, das nirgends
-# ankam, waehrend Compose bei `up` ein vorhandenes Image einfach
-# weiterverwendet, statt neu zu bauen. Der Dienst lief danach unveraendert
-# weiter und meldete trotzdem "Fertig".
-say "Baue das Image"
+# Via `docker compose build`, NOT via a separate `docker build`
+# (2026-09-03): in the compose file the service carries a `build:` block
+# and so builds its own image. Nobody uses a `loxmatter:local` built
+# alongside it - for months the script built an image that never went
+# anywhere, while Compose on `up` simply kept reusing an existing image
+# instead of rebuilding. The service then kept running unchanged and
+# still reported "Done".
+say "Building the image"
 (cd "$STACK" && docker compose build ${NO_CACHE:+--no-cache} "$SERVICE") \
-  || die "Build fehlgeschlagen - der laufende Dienst bleibt unveraendert."
+  || die "Build failed - the running service is unchanged."
 
-say "Starte den Dienst neu"
+say "Restarting the service"
 (cd "$STACK" && docker compose up -d --no-deps --force-recreate "$SERVICE") \
-  || die "Neustart fehlgeschlagen. Zurueck geht es mit der Sicherung oben."
+  || die "Restart failed. The backup above is the way back."
 
-say "Sehe nach, ob er lebt"
+say "Checking whether it's alive"
 PORT="$(grep -A1 -- '--listen' "$STACK/docker-compose.yml" | tail -1 | tr -dc '0-9')"
 PORT="${PORT:-8080}"
 URL="http://127.0.0.1:$PORT/health"
@@ -115,23 +115,23 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 if [ "$OK" -ne 1 ]; then
-  printf '\n\033[31m%s antwortet nicht. Letzte Zeilen aus dem Log:\033[0m\n' "$URL"
+  printf '\n\033[31m%s is not responding. Last lines from the log:\033[0m\n' "$URL"
   docker logs --tail 30 "$SERVICE" 2>&1 || true
-  die "Der Dienst ist oben, meldet sich aber nicht gesund."
+  die "The service is up but not reporting healthy."
 fi
 printf '  %s\n' "$(curl -fsS -m 3 "$URL")"
 
-say "Stand der Geraete"
+say "Device status"
 docker exec "$SERVICE" python3 -c "
 import os, sqlite3
 db = os.environ.get('LOXMATTER_STORE', '/data/loxmatter.sqlite')
 c = sqlite3.connect(db)
-print('  Schema-Version:', c.execute('PRAGMA user_version').fetchone()[0])
+print('  Schema version:', c.execute('PRAGMA user_version').fetchone()[0])
 for did, label in c.execute('SELECT id, label FROM device WHERE active = 1'):
     n = c.execute('SELECT count(*) FROM signal WHERE device_id = ? AND exported = 1', (did,)).fetchone()[0]
     total = c.execute('SELECT count(*) FROM signal WHERE device_id = ?', (did,)).fetchone()[0]
-    print(f'  {label}: {n} von {total} Signalen werden exportiert')
-" 2>/dev/null || printf '  (nicht auslesbar - kein Fehler, nur keine Auskunft)\n'
+    print(f'  {label}: {n} of {total} signals are exported')
+" 2>/dev/null || printf '  (not readable - not an error, just no data)\n'
 
-say "Fertig."
-printf 'Oberflaeche: http://%s:%s/\n' "$(hostname -I 2>/dev/null | awk '{print $1}')" "$PORT"
+say "Done."
+printf 'Interface: http://%s:%s/\n' "$(hostname -I 2>/dev/null | awk '{print $1}')" "$PORT"

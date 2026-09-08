@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -16,52 +16,52 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-# Holt den OTBR-Agenten zurueck, wenn er gestorben ist.
+# Brings the OTBR agent back if it has died.
 #
-# Gedacht fuer einen Cron-Eintrag, siehe deploy/testhost/README.md:
+# Meant for a cron entry, see deploy/testhost/README.md:
 #
 #   */5 * * * * /home/pi/matter-loxone/scripts/otbr-watchdog.sh >> /home/pi/otbr-watchdog.log 2>&1
 #
-# WARUM das noetig ist: der OTBR-Agent bricht ab, wenn das Funkmodul nicht
-# mehr antwortet (RCP-Timeout - USB-Aussetzer, Stromversorgung, das Modul
-# selbst). Der CONTAINER laeuft dabei weiter, weil sein Einstiegsskript nicht
-# der Agent ist. `restart: unless-stopped` greift deshalb nicht, und das
-# Image bringt keinen Aufpasser mit. Am 2026-09-03 blieb ein solcher Ausfall
-# sechseinhalb Stunden unbemerkt; kein Geraet war in dieser Zeit erreichbar.
+# WHY this is needed: the OTBR agent aborts if the radio module stops
+# responding (RCP timeout - a USB dropout, power supply, the module
+# itself). The CONTAINER keeps running regardless, because its entrypoint
+# script is not the agent. `restart: unless-stopped` therefore doesn't
+# kick in, and the image ships no watchdog of its own. On 2026-09-03 such
+# an outage went unnoticed for six and a half hours; no device was
+# reachable during that time.
 #
-# Die Pruefung ist dieselbe, die auch die Ansicht "System" anzeigt: existiert
-# eine Thread-Schnittstelle (wpan*) mit einer Mesh-Adresse? Sie verschwindet
-# mit dem Agenten.
+# The check is the same one the "System" view shows: does a Thread
+# interface (wpan*) with a mesh address exist? It disappears along with
+# the agent.
 #
-# Bewusst KEIN Neustart in Schleife: schlaegt der Neustart fehl, weil das
-# Funkmodul selbst haengt, wuerde ein Wiederholen im Minutentakt nichts
-# bessern und nur das Log fluten. Dann muss jemand hinsehen - und findet im
-# Log, was war.
+# Deliberately NO restart loop: if the restart fails because the radio
+# module itself is stuck, retrying every minute wouldn't help and would
+# just flood the log. At that point someone has to look - and finds what
+# happened in the log.
 set -euo pipefail
 
 SERVICE="otbr"
 STACK="$(cd "$(dirname "${BASH_SOURCE[0]}")/../deploy/testhost" && pwd)"
 STAMP="$(date '+%Y-%m-%d %H:%M:%S')"
 
-# Im WiFi/Ethernet-only-Betrieb (COMPOSE_PROFILES ohne "thread", siehe
-# deploy/testhost/.env) gibt es diesen Dienst gar nicht. Ohne diese Bremse
-# faende der Waechter nie eine Thread-Schnittstelle, versuchte alle fuenf
-# Minuten einen Neustart und schriebe jedes Mal einen Fehlschlag ins Log -
-# aus einem Aufpasser wuerde eine Lawine.
+# In WiFi/Ethernet-only operation (COMPOSE_PROFILES without "thread", see
+# deploy/testhost/.env) this service doesn't exist at all. Without this
+# brake the watchdog would never find a Thread interface, would try a
+# restart every five minutes and write a failure to the log every time -
+# a watchdog would turn into an avalanche.
 #
-# Wichtig: das ist NUR die Abfrage, ob otbr ueberhaupt konfiguriert ist -
-# nicht ob docker funktioniert. Unter `set -euo pipefail` wuerde ein
-# fehlendes oder nicht laufendes docker dazu fuehren, dass `docker ps` mit
-# leerer Ausgabe und Fehlerstatus endet, `grep` faende nichts (Status 1),
-# pipefail hebt diesen Status auf die Pipeline, und `!` machte daraus eine
-# stille 0 - ein kaputtes docker saehe dann genauso aus wie "kein
-# Thread-Betrieb" und der Neustartversuch weiter unten (samt seinem
-# Log-Eintrag bei Fehlschlag) wuerde nie erreicht. Deshalb getrennt pruefen:
-# schlaegt die docker-Abfrage selbst fehl, ist das ein echter Fehler und muss
-# geloggt werden; nur eine erfolgreiche Abfrage, die otbr nicht auflistet,
-# darf still beenden.
+# Important: this is ONLY the check for whether otbr is configured at
+# all - not whether docker works. Under `set -euo pipefail`, a missing or
+# not-running docker would cause `docker ps` to end with empty output and
+# an error status, `grep` would find nothing (status 1), pipefail would
+# raise that status to the pipeline, and `!` would turn it into a silent
+# 0 - a broken docker would then look exactly like "no Thread mode" and
+# the restart attempt further below (including its log entry on failure)
+# would never be reached. So check separately: if the docker query itself
+# fails, that's a real error and must be logged; only a successful query
+# that doesn't list otbr may exit quietly.
 if ! CONTAINERS=$(docker ps -a --format '{{.Names}}' 2>&1); then
-  printf '%s  docker ps fehlgeschlagen - kann otbr-Container nicht pruefen:\n' "$STAMP"
+  printf '%s  docker ps failed - cannot check the otbr container:\n' "$STAMP"
   printf '%s\n' "$CONTAINERS" | sed 's/^/    /'
   exit 1
 fi
@@ -70,8 +70,8 @@ if ! printf '%s\n' "$CONTAINERS" | grep -qx "$SERVICE"; then
 fi
 
 thread_is_up() {
-  # Scope 00 heisst geroutet (ULA eingeschlossen); wpan* ist die
-  # Thread-Schnittstelle von OTBR.
+  # Scope 00 means routed (ULA included); wpan* is OTBR's Thread
+  # interface.
   awk '$4 == "00" && $6 ~ /^wpan/ { found = 1 } END { exit !found }' /proc/net/if_inet6
 }
 
@@ -79,25 +79,25 @@ if thread_is_up; then
   exit 0
 fi
 
-printf '%s  Keine Thread-Schnittstelle - starte %s neu\n' "$STAMP" "$SERVICE"
+printf '%s  No Thread interface - restarting %s\n' "$STAMP" "$SERVICE"
 if ! (cd "$STACK" && docker compose restart "$SERVICE" >/dev/null 2>&1); then
-  printf '%s  Neustart von %s fehlgeschlagen\n' "$STAMP" "$SERVICE"
+  printf '%s  Restarting %s failed\n' "$STAMP" "$SERVICE"
   exit 1
 fi
 
-# Dem Agenten Zeit geben, dem Netz wieder beizutreten. Beobachtet wurden
-# rund 10 s; 60 s Geduld lassen Raum, ohne bei einem echten Defekt ewig zu
-# warten.
+# Give the agent time to rejoin the network. About 10 s was observed;
+# 60 s of patience leaves headroom without waiting forever on a real
+# fault.
 for _ in $(seq 1 12); do
   sleep 5
   if thread_is_up; then
-    printf '%s  Thread-Netz ist zurueck\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf '%s  Thread network is back\n' "$(date '+%Y-%m-%d %H:%M:%S')"
     exit 0
   fi
 done
 
-printf '%s  Nach 60 s immer noch keine Thread-Schnittstelle. Haengt das Funkmodul?\n' \
+printf '%s  Still no Thread interface after 60 s. Is the radio module stuck?\n' \
   "$(date '+%Y-%m-%d %H:%M:%S')"
-printf '%s  Letzte Zeilen aus dem OTBR-Log:\n' "$(date '+%Y-%m-%d %H:%M:%S')"
+printf '%s  Last lines from the OTBR log:\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 docker logs --tail 20 "$SERVICE" 2>&1 | sed 's/^/    /' || true
 exit 1

@@ -1,24 +1,23 @@
-# Minimales Image fuer `loxmatter run` (Phase 4, Review-Fix I5, 2026-09-02).
+# Minimal image for `loxmatter run` (Phase 4, Review-Fix I5, 2026-09-02).
 #
-# Bewusst schlank gehalten: dies ist der erste Dockerfile-Entwurf des Projekts,
-# noch nicht das gehaertete Produktions-Image aus Spec 4.1 (das ist Phase 6 -
-# Nicht-root-User, minimale Basis, gepinnte Digests, o.ae.). Ungeprueft, weil
-# in dieser Umgebung weder Netzwerk noch Docker-Build zur Verfuegung stehen
-# (siehe Review-Fix-Report): kein `docker build` wurde tatsaechlich
-# ausgefuehrt. Insbesondere die Systemabhaengigkeiten von
-# `python-matter-server`/dem chip-SDK (natives Binaerpaket) sind nur so weit
-# nachgezogen, wie das Upstream-Referenz-Image
-# (ghcr.io/home-assistant-libs/python-matter-server) sie dokumentiert
-# (libavahi fuer mDNS-Discovery, D-Bus fuer BLE) - eine vollstaendige Liste
-# ist erst am echten Build-Log zu belegen.
+# Deliberately kept lean: this is the project's first Dockerfile draft, not
+# yet the hardened production image from Spec 4.1 (that is Phase 6 -
+# non-root user, minimal base, pinned digests, etc.). Unverified, because
+# this environment has neither network access nor a Docker build available
+# (see the review-fix report): no `docker build` was actually run. In
+# particular, the system dependencies of `python-matter-server`/the chip SDK
+# (native binary package) are only pulled in as far as the upstream
+# reference image (ghcr.io/home-assistant-libs/python-matter-server)
+# documents them (libavahi for mDNS discovery, D-Bus for BLE) - a complete
+# list can only be confirmed against a real build log.
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# libavahi-client3: mDNS-Discovery, von python-matter-server fuer die
-# Kommissionierung genutzt (wie im Referenz-Image oben). loxmatter selbst
-# braucht kein BLE (das macht ausschliesslich matter-server), deshalb fehlt
-# hier bewusst alles rund um Bluetooth/D-Bus.
+# libavahi-client3: mDNS discovery, used by python-matter-server for
+# commissioning (as in the reference image above). loxmatter itself doesn't
+# need BLE (matter-server handles that exclusively), so everything around
+# Bluetooth/D-Bus is deliberately left out here.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libavahi-client3 \
     && rm -rf /var/lib/apt/lists/*
@@ -32,9 +31,9 @@ RUN pip install --no-cache-dir uv==0.6.* \
 
 ENV PATH="/app/.venv/bin:${PATH}"
 
-# Nur Dokumentation - `network_mode: host` im Compose-File (siehe
-# deploy/testhost/docker-compose.yml) macht diesen Port direkt erreichbar,
-# ohne dass Compose ihn extra veroeffentlichen muesste.
+# Documentation only - `network_mode: host` in the compose file (see
+# deploy/testhost/docker-compose.yml) makes this port directly reachable
+# without Compose having to publish it separately.
 EXPOSE 8080
 
 ENTRYPOINT ["loxmatter"]

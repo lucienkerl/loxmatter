@@ -1,54 +1,53 @@
-# Testumgebung fuer Phase 1 - NICHT der Produktions-Stack aus Spec 4.1.
+# Test environment for Phase 1 - NOT the production stack from Spec 4.1.
 #
-# Laeuft auf einem Raspberry Pi (siehe README.md fuer den Umzug von der Test-VM,
-# die kein Bluetooth-Adapter hatte, und alle Abweichungen vom urspruenglichen
-# Entwurf):
-#   - openthread/otbr:latest       -> Digest sha256:ebebd9f6..., Entrypoint
-#     /app/etc/docker/test/docker_entrypoint.sh (die "test"-Variante des
-#     Images, nicht die neuere s6-overlay/"border-router"-Variante). Diese
-#     Variante liest RADIO_URL als Umgebungsvariable und akzeptiert
-#     --backbone-interface als Kommandozeilenargument, genau wie unten
-#     konfiguriert.
-#   - ghcr.io/home-assistant-libs/python-matter-server:stable -> mit
-#     --bluetooth-adapter ${BLUETOOTH_ADAPTER} fuer BLE-Commissioning ueber hci0
-#     (siehe README).
-#   - loxmatter (Phase 4, Review-Fix I5, 2026-09-02) -> aus diesem Repository
-#     selbst gebaut (siehe ../../Dockerfile, dort auch der Hinweis, dass das
-#     Image noch ungeprueft ist - kein Docker/Netz in der Umgebung, die
-#     diesen Dienst hinzugefuegt hat). Braucht MINISERVER_IP in .env.
-# Der Projektname steht HIER und nicht in der .env (2026-09-03).
+# Runs on a Raspberry Pi (see README.md for the move from the test VM,
+# which had no Bluetooth adapter, and all deviations from the original
+# design):
+#   - openthread/otbr:latest       -> digest sha256:ebebd9f6..., entrypoint
+#     /app/etc/docker/test/docker_entrypoint.sh (the "test" variant of
+#     the image, not the newer s6-overlay/"border-router" variant). This
+#     variant reads RADIO_URL as an environment variable and accepts
+#     --backbone-interface as a command-line argument, exactly as
+#     configured below.
+#   - ghcr.io/home-assistant-libs/python-matter-server:stable -> with
+#     --bluetooth-adapter ${BLUETOOTH_ADAPTER} for BLE commissioning over
+#     hci0 (see README).
+#   - loxmatter (Phase 4, Review-Fix I5, 2026-09-02) -> built from this
+#     repository itself (see ../../Dockerfile, which also notes that the
+#     image is still unverified - no Docker/network in the environment
+#     that added this service). Needs MINISERVER_IP in .env.
+# The project name lives HERE and not in the .env (2026-09-03).
 #
-# Compose leitet ihn sonst aus dem Verzeichnisnamen ab, und daraus entstehen
-# die Namen der benannten Volumes: `<projekt>_loxmatter-store` haelt die
-# Signalschluessel, `<projekt>_otbr-state` den Thread-Netzwerkschluessel.
-# Beides ist unersetzlich - die Schluessel sind die Verdrahtung in der
-# Loxone-Konfiguration, der Thread-Schluessel das Netz, in dem die Geraete
-# stehen.
+# Otherwise Compose derives it from the directory name, and the names of
+# the named volumes are built from that: `<project>_loxmatter-store` holds
+# the signal keys, `<project>_otbr-state` the Thread network key. Both are
+# irreplaceable - the keys are the wiring in the Loxone configuration, the
+# Thread key the network the devices sit in.
 #
-# Haengt der Name am Verzeichnis, aendert ihn jeder Umzug des Checkouts, jedes
-# Umbenennen und jedes Klonen unter anderem Namen - und Compose legt
-# stillschweigend LEERE Volumes an, statt einen Fehler zu melden. Genau das
-# passierte beim Umzug dieses Stacks von ~/loxmatter-testhost in einen
-# Git-Checkout; dort war es nur deshalb harmlos, weil der alte Name von Hand
-# in der .env festgehalten wurde. Wer die .env spaeter neu aus
-# .env.example erzeugt, haette den Schutz wieder verloren. Hier steht er
-# fest.
+# If the name hung off the directory, every move of the checkout, every
+# rename and every clone under a different name would change it - and
+# Compose silently creates EMPTY volumes instead of reporting an error.
+# That's exactly what happened when this stack moved from
+# ~/loxmatter-testhost into a git checkout; it was harmless there only
+# because the old name had been recorded by hand in the .env. Anyone who
+# later regenerates the .env from .env.example would have lost that
+# protection again. Here it's fixed.
 #
-# COMPOSE_PROJECT_NAME in der Umgebung sticht diesen Eintrag weiterhin; wer
-# mehrere Instanzen nebeneinander betreibt, kann ihn also weiter benutzen.
+# COMPOSE_PROJECT_NAME in the environment still overrides this entry;
+# anyone running several instances side by side can keep using it.
 name: loxmatter-testhost
 
 services:
   otbr:
     image: openthread/otbr:latest
     container_name: otbr
-    # Nur mit aktivem Profil "thread" (2026-09-05). Dieser Dienst reicht mit
-    # `devices:` unten ein echtes Geraet durch - fehlt das Funkmodul, scheitert
-    # `docker compose up` fuer den GESAMTEN Stack, auch fuer jemanden, der nur
-    # WLAN-Matter-Geraete anbinden will. Hinter einem Profil bleibt der Rest
-    # startbar; eingeschaltet wird es ueber COMPOSE_PROFILES in der .env, das
-    # Compose von sich aus liest - deshalb braucht kein spaeterer Aufruf und
-    # kein Skript ein `--profile` mitzuschleppen.
+    # Only with the "thread" profile active (2026-09-05). This service
+    # passes through a real device via `devices:` below - if the radio
+    # module is missing, `docker compose up` fails for the ENTIRE stack,
+    # even for someone who only wants to connect WiFi Matter devices.
+    # Behind a profile the rest stays startable; it's switched on via
+    # COMPOSE_PROFILES in the .env, which Compose reads by itself - so no
+    # later call and no script needs to carry a `--profile` along.
     profiles: ["thread"]
     network_mode: host
     privileged: true
@@ -57,56 +56,56 @@ services:
       - ${RADIO_DEVICE}:${RADIO_DEVICE}
     environment:
       RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}
-      # Weder auf der urspruenglichen Test-VM noch auf diesem Pi sind die legacy
-      # iptables-Tabellen (mangle/nat/filter) geladen, und das Image hat kein
-      # modprobe, um sie nachzuladen - NAT64/NAT44 und die legacy-Firewall-Regeln
-      # (fuer beide ist iptables noetig) wuerden deshalb fehlschlagen und den
-      # Container abstuerzen lassen (siehe README, Abweichung 2 in der VM-Historie).
-      # Fuer die Testumgebung unkritisch (siehe README): kein globales IPv6,
-      # kein Bedarf, aus dem Thread-Netz heraus IPv4-Hosts zu erreichen.
+      # Neither the original test VM nor this Pi has the legacy iptables
+      # tables (mangle/nat/filter) loaded, and the image has no modprobe to
+      # load them - NAT64/NAT44 and the legacy firewall rules (both need
+      # iptables) would therefore fail and crash the container (see
+      # README, deviation 2 in the VM history). Uncritical for the test
+      # environment (see README): no global IPv6, no need to reach IPv4
+      # hosts from inside the Thread network.
       NAT64: "0"
       FIREWALL: "0"
     command: --backbone-interface ${BACKBONE_IF}
-    # Ohne diese Grenze startet OTBR nicht (2026-09-03, an einem Pi 4
-    # gemessen). Der Docker-Daemon reicht hier ein `nofile` von
-    # 1_073_741_816 in den Container; `start-stop-daemon`, mit dem das
-    # init-Skript des Images `otbr-agent` startet, schliesst vor dem `exec`
-    # JEDEN Deskriptor von 3 bis zu dieser Grenze einzeln. Das sind ueber
-    # eine Milliarde Systemaufrufe: der Prozess dreht mit 100 % CPU und
-    # kommt praktisch nie zum eigentlichen Agenten. Sichtbar wird das als
-    # "ot-ctl: connect session failed" und einem Container, der laeuft, ohne
-    # dass ein Thread-Netz entsteht.
+    # Without this limit OTBR doesn't start (2026-09-03, measured on a
+    # Pi 4). The Docker daemon passes a `nofile` of 1,073,741,816 into the
+    # container here; `start-stop-daemon`, which the image's init script
+    # uses to start `otbr-agent`, closes EVERY descriptor from 3 up to
+    # this limit individually before the `exec`. That's over a billion
+    # syscalls: the process spins at 100% CPU and practically never
+    # reaches the actual agent. Visible as "ot-ctl: connect session
+    # failed" and a container that runs without a Thread network ever
+    # forming.
     #
-    # Der Fehler traf dieses Projekt schon einmal nach einem Neustart des
-    # Pi und wurde damals von Hand umgangen, ohne die Ursache zu kennen.
+    # This bug already hit the project once after a Pi restart and was
+    # worked around by hand back then, without knowing the cause.
     ulimits:
       nofile:
         soft: 1024
         hard: 4096
     volumes:
-      # Der Thread-Zustand ueberlebt sonst KEINEN Neubau des Containers
-      # (2026-09-03). Das Image sieht dafuer kein Volume vor, und OTBR legt
-      # seine Netzdaten - Netzwerkschluessel, PAN-ID, Kanal - unter
-      # /var/lib/thread in der Schreibschicht ab. Ein `docker compose down`,
-      # ein Image-Update oder ein Umzug des Projektverzeichnisses bildet
-      # damit ein NEUES Thread-Netz, und jedes bereits eingelernte Geraet
-      # muesste zurueckgesetzt und neu gepaart werden - bei einem
-      # Sensor hinter einer Schranktuer keine Kleinigkeit.
+      # The Thread state otherwise survives NO rebuild of the container
+      # (2026-09-03). The image provides no volume for it, and OTBR stores
+      # its network data - network key, PAN ID, channel - under
+      # /var/lib/thread in the writable layer. A `docker compose down`, an
+      # image update or moving the project directory therefore forms a NEW
+      # Thread network, and every already-commissioned device would have
+      # to be reset and re-paired - no small thing for a sensor behind a
+      # cabinet door.
       #
-      # Wer einen laufenden Stack ohne dieses Volume nachruestet, muss den
-      # Zustand zuerst herausholen und in das leere Volume legen, sonst
-      # startet OTBR mit leerem Zustand und das Netz ist trotzdem weg:
+      # Anyone retrofitting a running stack without this volume must first
+      # extract the state and put it into the empty volume, otherwise OTBR
+      # starts with an empty state and the network is gone anyway:
       #
       #   docker cp otbr:/var/lib/thread /tmp/thread-state
-      #   docker volume create <projekt>_otbr-state
-      #   docker run --rm -v <projekt>_otbr-state:/d -v /tmp/thread-state:/s:ro \
+      #   docker volume create <project>_otbr-state
+      #   docker run --rm -v <project>_otbr-state:/d -v /tmp/thread-state:/s:ro \
       #       alpine sh -c 'cp -a /s/. /d/'
       #
-      # Rueckfallweg, falls doch etwas schiefgeht: der aktive Datensatz als
-      # Hex (`docker exec otbr ot-ctl dataset active -x`) laesst sich mit
-      # `ot-ctl dataset set active <hex>` in einen frischen Container
-      # zuruecksetzen. Diese Zeichenkette ist ein Credential und gehoert
-      # weder ins Repository noch in ein Log.
+      # Fallback if something does go wrong: the active dataset as hex
+      # (`docker exec otbr ot-ctl dataset active -x`) can be restored into
+      # a fresh container with `ot-ctl dataset set active <hex>`. That
+      # string is a credential and belongs neither in the repository nor
+      # in a log.
       - otbr-state:/var/lib/thread
 
   matter-server:
@@ -119,11 +118,11 @@ services:
     volumes:
       - ./data:/data
       - /run/dbus:/run/dbus:ro
-    # command ueberschreibt das Image-Default-CMD vollstaendig - die ersten
-    # vier Argumente sind aus dem Default uebernommen (storage-path,
-    # paa-root-cert-dir), --bluetooth-adapter ist neu und aktiviert
-    # BLE-Commissioning ueber den in BLUETOOTH_ADAPTER benannten Adapter
-    # (siehe README, "BLE aktivieren").
+    # command completely overrides the image's default CMD - the first
+    # four arguments are carried over from the default (storage-path,
+    # paa-root-cert-dir), --bluetooth-adapter is new and enables BLE
+    # commissioning over the adapter named in BLUETOOTH_ADAPTER (see
+    # README, "Enable BLE").
     command:
       - --storage-path
       - /data
@@ -131,12 +130,12 @@ services:
       - /data/credentials
       - --bluetooth-adapter
       - "${BLUETOOTH_ADAPTER:-0}"
-    # Kein `depends_on: otbr` mehr (2026-09-05): Compose bricht ab, wenn ein
-    # aktiver Dienst von einem profil-deaktivierten abhaengt. Inhaltlich
-    # folgenlos - `depends_on` steuert die Startreihenfolge, nicht die
-    # Bereitschaft, und matter-server braucht den Border Router beim Start
-    # nicht: Thread-Kommissionierung laeuft spaeter ueber das Host-Netz, in
-    # dem otbr mit `network_mode: host` ohnehin steht.
+    # No more `depends_on: otbr` (2026-09-05): Compose aborts when an
+    # active service depends on one disabled by a profile. No practical
+    # consequence - `depends_on` controls start order, not readiness, and
+    # matter-server doesn't need the Border Router at startup: Thread
+    # commissioning runs later over the host network, which otbr sits on
+    # anyway via `network_mode: host`.
 
   loxmatter:
     build:
@@ -144,88 +143,88 @@ services:
       dockerfile: Dockerfile
     container_name: loxmatter
     restart: unless-stopped
-    # Wie otbr/matter-server: network_mode host statt einer expliziten
-    # `ports:`-Liste, aus zwei Gruenden, nicht nur Konsistenz. Erstens
-    # erreicht `--url` (Default ws://localhost:5580/ws) matter-server nur
-    # ueber 127.0.0.1 - matter-server laeuft selbst mit network_mode: host
-    # und ist deshalb im Compose-eigenen Bridge-Netz kein aufloesbarer
-    # Servicename. Zweitens macht das den HTTP-Port fuer die Loxone-
-    # Ausgangsbefehle (--listen, Default 8080) ohne weitere Portfreigabe vom
-    # Miniserver aus erreichbar - das ist der hier geforderte
-    # "veroeffentlichte" HTTP-Port.
+    # Like otbr/matter-server: network_mode host instead of an explicit
+    # `ports:` list, for two reasons, not just consistency. First, `--url`
+    # (default ws://localhost:5580/ws) reaches matter-server only via
+    # 127.0.0.1 - matter-server itself runs with network_mode: host and is
+    # therefore not a resolvable service name in Compose's own bridge
+    # network. Second, this makes the HTTP port for the Loxone output
+    # commands (--listen, default 8080) reachable from the Miniserver
+    # without publishing any further ports - that's the "published" HTTP
+    # port required here.
     #
-    # Seit Phase 5 traegt genau dieser Port zusaetzlich die Bedienoberflaeche
-    # (`/api/*`, `/`) - derselbe FastAPI-Dienst, dasselbe `--listen`. Wer
-    # `http://<Host>:8080/` im Browser oeffnet, sieht beim allerersten Mal
-    # eine Ersteinrichtung (Passwort vergeben) und danach eine Anmeldung -
-    # seit dem WebUI-Login (Task 9/10, Phase 6) ist `/api/*` durch diese
-    # Anmeldung geschuetzt, nicht mehr durch `LOXMATTER_API_TOKEN` unten.
-    # Das Token bleibt als zusaetzlicher Weg fuer Skripte und `curl`
-    # bestehen (siehe dort). `/cmd` und `/resync` fuer den Miniserver
-    # bleiben bewusst offen (siehe dort).
+    # Since Phase 5 this exact port additionally carries the operator
+    # interface (`/api/*`, `/`) - the same FastAPI service, the same
+    # `--listen`. Anyone opening `http://<host>:8080/` in a browser sees
+    # first-run setup (set a password) the very first time and a login
+    # after that - since the WebUI login (Task 9/10, Phase 6), `/api/*`
+    # is protected by this login, no longer by `LOXMATTER_API_TOKEN`
+    # below. The token remains as an additional path for scripts and
+    # `curl` (see there). `/cmd` and `/resync` for the Miniserver
+    # deliberately stay open (see there).
     network_mode: host
     volumes:
       - loxmatter-store:/data
-      # Aktiv seit Task 8 (Phase 5): der Read-only-Einblick in matter-
-      # server's eigenes Datenverzeichnis - Grundlage fuer `GET
-      # /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5) - war
-      # bis hierher BEWUSST AUSKOMMENTIERT (Review-Fix Critical,
-      # 2026-09-02), weil dieser Dienst mit `network_mode: host` laeuft
-      # (siehe oben, Begruendung) und das Netz ihn deshalb genauso erreicht
-      # wie den Miniserver: ohne Absicherung waere `/api/diagnostics/fabric-
-      # backup` vollkommen ungeschuetzt gewesen, mit dieser Zeile eingehaengt
-      # also der Download der kompletten, unersetzlichen Fabric-Credentials
-      # (Spec 4.1) fuer jeden im selben Netz erreichbar, nicht nur
-      # theoretisch moeglich.
+      # Active since Task 8 (Phase 5): the read-only view into
+      # matter-server's own data directory - the basis for `GET
+      # /api/diagnostics/fabric-backup` (Spec 4.1, Task 6, Phase 5) - was
+      # DELIBERATELY COMMENTED OUT until here (Review-Fix Critical,
+      # 2026-09-02), because this service runs with `network_mode: host`
+      # (see above, rationale) and the network therefore reaches it just
+      # as it reaches the Miniserver: without safeguards,
+      # `/api/diagnostics/fabric-backup` would have been completely
+      # unprotected, and with this line mounted, downloading the complete,
+      # irreplaceable fabric credentials (Spec 4.1) would be reachable for
+      # anyone on the same network, not just theoretically possible.
       #
-      # Diese Begruendung galt zunaechst dem Token: Task 8 lieferte
-      # `build_api_guard` (siehe `src/loxmatter/loxone/server.py`) UND
-      # setzte unten `LOXMATTER_API_TOKEN` voraus - beides zusammen machte
-      # die Einhaengung vertretbar, und ein vergessenes Token liess
-      # `/api/diagnostics/fabric-backup` folgerichtig mit 403 gar nichts
-      # mehr ausliefern (Nachbesserung vom 2026-09-03).
+      # This rationale initially applied to the token: Task 8 delivered
+      # `build_api_guard` (see `src/loxmatter/loxone/server.py`) AND
+      # required `LOXMATTER_API_TOKEN` below - together the two made
+      # mounting this defensible, and a forgotten token consequently made
+      # `/api/diagnostics/fabric-backup` return nothing at all, with 403
+      # (follow-up fix from 2026-09-03).
       #
-      # Seit dem WebUI-Login (Task 9/10, Phase 6, selbes Datum) traegt diese
-      # Rolle stattdessen das Passwort: ohne gueltige Sitzung oder gueltiges
-      # Token liefert JEDE `/api`-Route 401, die Fabric-Sicherung
-      # eingeschlossen - der eigene 403-Zweig dafuer ist ersatzlos
-      # entfallen, weil es die Regel, von der er eine Ausnahme war ("/api
-      # bleibt ohne Token offen"), selbst nicht mehr gibt. `LOXMATTER_API_TOKEN`
-      # unten ist dadurch fuer die Absicherung dieser Einhaengung nicht mehr
-      # Voraussetzung, sondern optional (siehe dort): wer es leer laesst,
-      # verliert nur den Skript-Zugang, nicht den Schutz der Fabric-Daten -
-      # denn ohne ein am Host vergebenes Passwort antwortet keine
-      # `/api`-Route, unabhaengig vom Token.
+      # Since the WebUI login (Task 9/10, Phase 6, same date) this role is
+      # instead carried by the password: without a valid session or a
+      # valid token, EVERY `/api` route returns 401, the fabric backup
+      # included - its own dedicated 403 branch has been dropped without
+      # replacement, because the rule it was an exception to ("/api stays
+      # open without a token") no longer exists itself.
+      # `LOXMATTER_API_TOKEN` below is therefore no longer a prerequisite
+      # for securing this mount, but optional (see there): leaving it
+      # empty only loses script access, not protection of the fabric
+      # data - because without a password set on the host, no `/api`
+      # route responds, regardless of the token.
       - ./data:/matter-data:ro
     environment:
-      # Eigener, fester Ort statt des Nutzer-Home-Defaults (siehe
-      # `_resolve_store_path` in src/loxmatter/cli.py) - das eingehaengte
-      # Volume ueberlebt ein `docker compose down`/`up`, ein Nutzer-Home im
-      # Container tut das nicht.
+      # A dedicated, fixed location instead of the user-home default (see
+      # `_resolve_store_path` in src/loxmatter/cli.py) - the mounted
+      # volume survives a `docker compose down`/`up`, a user home inside
+      # the container does not.
       LOXMATTER_STORE: /data/loxmatter.sqlite
-      # Zusaetzlicher Zugang zu saemtlichen `/api`-Routen (Einlernen,
-      # Entfernen, Fabric-Sicherung) ueber `Authorization: Bearer <Token>` -
-      # siehe `build_api_guard` in src/loxmatter/loxone/server.py und
-      # README.md. `/cmd`/`/resync` bleiben davon unberuehrt, der
-      # Miniserver braucht kein Token (siehe dort).
+      # Additional access to all `/api` routes (commissioning, removal,
+      # fabric backup) via `Authorization: Bearer <token>` - see
+      # `build_api_guard` in src/loxmatter/loxone/server.py and README.md.
+      # `/cmd`/`/resync` are unaffected, the Miniserver needs no token
+      # (see there).
       #
-      # OPTIONAL seit dem WebUI-Login (Task 9/10, Phase 6): der Zugang zur
-      # Oberflaeche selbst laeuft ueber ein Passwort, das beim ersten
-      # Aufruf von `http://<Host>:8080/` vergeben wird, nicht mehr ueber
-      # dieses Token. Dieses Token bleibt trotzdem sinnvoll gesetzt fuer
-      # Skripte und `curl`, die sich nicht per Browser anmelden koennen -
-      # setzen Sie `LOXMATTER_API_TOKEN` in `.env` dafuer auf einen
-      # zufaelligen, langen Wert (z. B. `openssl rand -hex 32`). Fehlt die
-      # Variable in `.env`, interpoliert Docker Compose hier einen leeren
-      # String - `typer`s `envvar`-Aufloesung behandelt eine leere
-      # Umgebungsvariable wie eine fehlende (verifiziert: `api_token` wird
-      # dann `None`, nicht `""`), `loxmatter run` startet also unveraendert
-      # ohne den Token-Weg. Anders als vor dem WebUI-Login bedeutet das
-      # KEINE Luecke: ohne gesetztes Passwort antwortet ohnehin keine
-      # `/api`-Route (401, siehe README) - die Fabric-Sicherung eingeschlossen,
-      # deren fruehere eigene 403-Sperre bei fehlendem Token deshalb entfallen
-      # ist. Die Startwarnung gilt seither dem fehlenden Passwort
-      # (`cli._warn_if_no_password`), nicht mehr dem fehlenden Token.
+      # OPTIONAL since the WebUI login (Task 9/10, Phase 6): access to the
+      # interface itself runs through a password set on the first call to
+      # `http://<host>:8080/`, no longer through this token. This token
+      # nonetheless remains worth setting for scripts and `curl`, which
+      # cannot log in via a browser - set `LOXMATTER_API_TOKEN` in `.env`
+      # to a long, random value for that (e.g. `openssl rand -hex 32`). If
+      # the variable is missing from `.env`, Docker Compose interpolates
+      # an empty string here - `typer`'s `envvar` resolution treats an
+      # empty environment variable as a missing one (verified: `api_token`
+      # then becomes `None`, not `""`), so `loxmatter run` starts
+      # unchanged without the token path. Unlike before the WebUI login,
+      # this is NOT a gap: without a set password, no `/api` route
+      # responds anyway (401, see README) - the fabric backup included,
+      # whose earlier dedicated 403 lock for a missing token has therefore
+      # been dropped. The startup warning has since applied to the
+      # missing password (`cli._warn_if_no_password`), no longer to the
+      # missing token.
       LOXMATTER_API_TOKEN: ${LOXMATTER_API_TOKEN}
     command:
       - run
@@ -235,20 +234,20 @@ services:
       - ${MINISERVER_IP}
       - --listen
       - "8080"
-      # Aktiv seit Task 8 - siehe Kommentar bei der Volume-Zeile oben:
-      # beide gehoeren zusammen. Ohne die Volume-Zeile bliebe dieses
-      # Argument wirkungslos (die Route saehe kein Verzeichnis und
-      # antwortete mit 503), ohne dieses Argument bliebe die
-      # Volume-Zeile ungenutzt (matter_data_dir waere weiterhin `None`).
+      # Active since Task 8 - see the comment at the volume line above:
+      # the two belong together. Without the volume line this argument
+      # would be ineffective (the route would see no directory and
+      # respond with 503), without this argument the volume line would go
+      # unused (matter_data_dir would remain `None`).
       - --matter-data-dir
       - /matter-data
     depends_on:
       - matter-server
 
 volumes:
-  # Der Thread-Zustand von OTBR (siehe dort, ausfuehrliche Begruendung).
+  # OTBR's Thread state (see there for the full rationale).
   otbr-state:
-  # Named Volume statt Bind-Mount (anders als matter-server oben): die
-  # Signalschluessel-Datenbank gehoert nicht in den Projekt-Checkout auf dem
-  # Host, sondern lebt unabhaengig davon (siehe LOXMATTER_STORE oben).
+  # Named volume instead of a bind mount (unlike matter-server above): the
+  # signal key database doesn't belong in the project checkout on the
+  # host, but lives independently of it (see LOXMATTER_STORE above).
   loxmatter-store:

@@ -7,8 +7,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # install.sh wird per `curl | sh` auf fremden Rechnern ausgefuehrt -
-      # ein Quoting-Fehler darin ist teurer als in jedem anderen Skript hier.
+      # install.sh is run via `curl | sh` on other people's machines - a
+      # quoting mistake in it is more expensive than in any other script here.
       - run: shellcheck -s sh install.sh
       - uses: astral-sh/setup-uv@v3
       - run: uv sync

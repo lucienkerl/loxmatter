@@ -1,7 +1,7 @@
 [project]
 name = "loxmatter"
 version = "0.1.0"
-description = "Bindet Matter-Geraete (Thread, Wi-Fi oder Ethernet) an einen Loxone Miniserver an"
+description = "Connects Matter devices (Thread, Wi-Fi or Ethernet) to a Loxone Miniserver"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE", "src/loxmatter/web/vendor/LICENSE"]
@@ -10,25 +10,25 @@ dependencies = [
     "aiohttp>=3.9",
     "fastapi>=0.115",
     "python-matter-server>=8.1.2",
-    # Task 11, Phase 6: FastAPIs `File`/`UploadFile` (api/project_sync.py,
-    # `POST /api/export/project-sync`) brauchen "python-multipart", um
-    # `multipart/form-data`-Bodies ueberhaupt zu parsen - ohne dieses Paket
-    # wirft der Endpunkt schon beim Start von `build_app` ein `RuntimeError`
-    # ("Form data requires python-multipart to be installed"), nicht erst
-    # bei der ersten Anfrage.
+    # Task 11, Phase 6: FastAPI's `File`/`UploadFile` (api/project_sync.py,
+    # `POST /api/export/project-sync`) need "python-multipart" to parse
+    # `multipart/form-data` bodies at all - without this package the
+    # endpoint already raises a `RuntimeError` at `build_app` startup
+    # ("Form data requires python-multipart to be installed"), not only on
+    # the first request.
     "python-multipart>=0.0.32",
     "pyyaml>=6.0",
     "typer>=0.12",
     "uvicorn>=0.30",
-    # Task 7, Phase 5: `uvicorn` allein (ohne das "standard"-Extra) bringt
-    # keine WebSocket-Implementierung mit - `GET /api/live` (Spec 8.3,
-    # api/live.py) antwortet ohne dieses Paket mit 404 "Unsupported upgrade
-    # request", geprueft gegen einen echten `uvicorn.run` dieses Dienstes,
-    # nicht nur vermutet: die bisherige Testsuite lief ausschliesslich ueber
-    # den In-Prozess-ASGI-Pfad (tests/api/conftest.py, `_InProcessWebSocket`)
-    # und damit nie durch uvicorns eigene HTTP/WebSocket-Weiche. Ohne diese
-    # Zeile funktioniert die Live-Aktualisierung der WebUI in keiner
-    # Installation, die genau diese Abhaengigkeitsliste installiert.
+    # Task 7, Phase 5: `uvicorn` alone (without the "standard" extra) does
+    # not bring a WebSocket implementation - `GET /api/live` (Spec 8.3,
+    # api/live.py) answers with 404 "Unsupported upgrade request" without
+    # this package, verified against a real `uvicorn.run` of this service,
+    # not just assumed: the test suite so far ran exclusively over the
+    # in-process ASGI path (tests/api/conftest.py, `_InProcessWebSocket`)
+    # and therefore never through uvicorn's own HTTP/WebSocket switch.
+    # Without this line, the WebUI's live updates do not work in any
+    # installation that installs exactly this dependency list.
     "websockets>=12",
 ]
 
@@ -53,24 +53,24 @@ build-backend = "hatchling.build"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    # Task 7, Review-Fix Important #1: startet einen echten `uvicorn`-Prozess
-    # (siehe tests/api/test_live_smoke.py) - kein Ausschluss per Default,
-    # der Marker dient nur der gezielten Auswahl/Abwahl (`-m slow` /
-    # `-m "not slow"`), nicht dem Vergessen dieses Tests.
-    "slow: startet einen echten Server-Prozess statt des In-Prozess-Testpfads",
+    # Task 7, Review-Fix Important #1: starts a real `uvicorn` process
+    # (see tests/api/test_live_smoke.py) - not excluded by default, the
+    # marker only serves targeted selection/deselection (`-m slow` /
+    # `-m "not slow"`), not forgetting this test.
+    "slow: starts a real server process instead of the in-process test path",
 ]
 
 [tool.ruff]
 line-length = 100
 
 [tool.ruff.lint.flake8-bugbear]
-# `File(...)` als Vorgabewert eines `UploadFile`-Parameters (Task 11,
-# api/project_sync.py) ist das von FastAPI selbst dokumentierte Muster -
-# anders als bei `Query(...)`/`Path(...)` erkennt B008 es nicht automatisch
-# als unveraenderlich, weil `UploadFile` selbst kein unveraenderlicher Typ
-# ist (siehe B008-Erklaerung: "Parameters with immutable type annotations
-# will be ignored by this rule" - `str`/`int` bei Query/Path greifen,
-# `UploadFile` bei File nicht).
+# `File(...)` as the default value of an `UploadFile` parameter (Task 11,
+# api/project_sync.py) is the pattern FastAPI itself documents - unlike
+# `Query(...)`/`Path(...)`, B008 doesn't automatically recognize it as
+# immutable, because `UploadFile` itself is not an immutable type (see the
+# B008 explanation: "Parameters with immutable type annotations will be
+# ignored by this rule" - `str`/`int` apply for Query/Path, `UploadFile`
+# for File does not).
 extend-immutable-calls = ["fastapi.File"]
 
 [tool.mypy]
@@ -78,18 +78,18 @@ strict = true
 files = ["src", "scripts"]
 
 [[tool.mypy.overrides]]
-# chip (Teil des CHIP-SDK, das python-matter-server fuer Cluster-Kommandos
-# nutzt) liefert keine py.typed-Markierung/Stubs - siehe
+# chip (part of the CHIP SDK, which python-matter-server uses for cluster
+# commands) ships no py.typed marker/stubs - see
 # BridgeMatterClient.send_command in matter/client.py.
 module = "chip.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# playwright ist bewusst KEINE Projekt-Abhaengigkeit: es wird nur gebraucht,
-# um die README-Screenshots neu zu erzeugen, und laeuft deshalb ad hoc ueber
-# `uv run --with playwright ... scripts/capture_screenshots.py`. In CI ist es
-# folglich nicht installiert, `files = ["src", "scripts"]` nimmt das Skript
-# aber mit - ohne diese Ausnahme scheitert mypy dort an einem Import, den es
-# gar nicht aufloesen koennen soll.
+# playwright is deliberately NOT a project dependency: it's only needed to
+# regenerate the README screenshots, and so runs ad hoc via
+# `uv run --with playwright ... scripts/capture_screenshots.py`. It is
+# consequently not installed in CI, but `files = ["src", "scripts"]` picks
+# the script up anyway - without this exception mypy would fail there on an
+# import it isn't even supposed to be able to resolve.
 module = "playwright.*"
 ignore_missing_imports = true
