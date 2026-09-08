@@ -16,34 +16,30 @@
 
 """Attribute and event names from the chip SDK's cluster catalog.
 
-Die Matter-Client-Bibliothek installiert `chip.clusters.Objects` ohnehin als
-Abhaengigkeit (Task 4, Hauptdokument 6.2: der Signalschluessel bleibt
-generisch und unveraenderlich - dieses Modul speist ausschliesslich die
-Anzeige, nie den Schluessel). Dort steht fuer jeden Cluster eine
-`Attributes`- und eine `Events`-Klasse mit den von der Matter-Spezifikation
-vergebenen Namen, indiziert ueber `attribute_id` bzw. `event_id`. Diese
-Namen von Hand in `clusters.yaml` nachzupflegen waere Arbeit fuer etwas,
-das die Abhaengigkeit bereits mitbringt.
+The Matter client library installs `chip.clusters.Objects` as a dependency
+anyway (Task 4, main document 6.2: the signal key remains generic and
+unchanging - this module feeds only the display, never the key). For each
+cluster there is an `Attributes` and an `Events` class with names assigned by
+the Matter specification, indexed by `attribute_id` respectively `event_id`.
+Maintaining these names by hand in `clusters.yaml` would be work for something
+the dependency already provides.
 
-Der Katalog ist eine reine Verbesserung der Anzeige, kein Betriebsmittel:
-schlaegt der Import von `chip.clusters.Objects` fehl, oder hat eine
-kuenftige SDK-Fassung eine andere Form als hier erwartet (andere
-Attributnamen, fehlende `attribute_id`/`event_id`), faengt `_catalog()` das
-ab und liefert eine leere Abbildung. `element_name` gibt dann fuer jedes
-Signal `None` zurueck, der Aufrufer (`profiles.table.lookup`) faellt auf
-den generischen Slug zurueck, und das Werkzeug laeuft unveraendert weiter -
-es gibt hier bewusst keinen Pfad, auf dem ein SDK-Problem eine Ausnahme bis
-zum Aufrufer durchreicht.
+The catalog is a pure display enhancement, not an operational resource: if the
+import of `chip.clusters.Objects` fails, or a future SDK version has a
+different form than expected here (different attribute names, missing
+`attribute_id`/`event_id`), `_catalog()` catches that and returns an empty
+mapping. `element_name` then returns `None` for every signal, the caller
+(`profiles.table.lookup`) falls back to the generic slug, and the tool runs
+unchanged - there is deliberately no path here where an SDK problem propagates
+an exception to the caller.
 
-**Nachtrag (8. September 2026): die Bibliothek, die `chip` mitbringt, hat
-gewechselt.** Bis dahin war es `python-matter-server`, seither ist es
-`matter-python-client` aus dem Nachfolgeprojekt `matterjs-server`. Der
-Modulpfad `chip.clusters.Objects` und die Form der `Attributes`-/
-`Events`-Klassen sind dieselben geblieben, deshalb aendert sich hier keine
-Zeile. Die "kuenftige SDK-Fassung" im Absatz darueber ist damit allerdings
-keine hypothetische Sorge mehr, sondern einmal tatsaechlich eingetreten -
-und der Rueckfallweg, den dieses Modul dafuer vorhaelt, hat gehalten, ohne
-gebraucht zu werden.
+**Update (8 September 2026): the library that `chip` provides has changed.**
+Until then it was `python-matter-server`, since then it is `matter-python-client`
+from the successor project `matterjs-server`. The module path `chip.clusters.Objects`
+and the form of the `Attributes`/`Events` classes have remained the same, which is
+why no line changes here. The "future SDK version" in the paragraph above is thus
+no longer a hypothetical concern, but has actually occurred - and the fallback path
+that this module provides for it held up without needing to be used.
 """
 
 from __future__ import annotations

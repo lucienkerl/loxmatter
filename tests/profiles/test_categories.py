@@ -123,24 +123,23 @@ def test_an_unknown_device_type_is_other():
 
 
 def test_the_provisional_heating_cooling_unit_is_other():
-    """0x0300 (HeatingCoolingUnit) fehlt in `CATEGORY_BY_DEVICE_TYPE`
-    absichtlich: der Typ ist im Matter Device Library seit 1.0 durchgehend
-    provisional, steht deshalb nicht in der maschinell erzeugten Tabelle von
-    matter-python-client und waere von
-    `test_every_mapped_type_exists_in_the_matter_table` nicht zu belegen.
+    """0x0300 (HeatingCoolingUnit) is deliberately absent from
+    `CATEGORY_BY_DEVICE_TYPE`: the type is continuously provisional in the
+    Matter Device Library since 1.0, therefore does not appear in the
+    machine-generated table from matter-python-client and would not be
+    populated by `test_every_mapped_type_exists_in_the_matter_table`.
 
-    Der Kommentar dort verspricht, dass ein Geraet mit diesem Typ auf
-    `Category.OTHER` faellt und dort vollstaendig bedienbar bleibt. Genau das
-    prueft dieser Test - eine Behauptung im Kommentar, die pruefbar ist,
-    gehoert geprueft. Ohne ihn faellt es niemandem auf, wenn jemand die
-    Nummer spaeter doch eintraegt und die Tabellenpruefung damit rot wird,
-    oder wenn `category_for` fuer nicht zugeordnete Typen einmal etwas
-    anderes liefert als OTHER."""
+    The comment there promises that a device with this type falls to
+    `Category.OTHER` and remains fully usable there. That is exactly what
+    this test verifies - an assertion in a comment that is testable should
+    be tested. Without it, no one would notice if someone later adds the ID
+    anyway and the table check turns red, or if `category_for` for unmapped
+    types delivers something other than OTHER."""
     assert 0x0300 not in CATEGORY_BY_DEVICE_TYPE
     assert category_for({1: frozenset({0x0300})}) is Category.OTHER
-    # Auch neben einem Verwaltungs-Endpunkt, also auf dem Weg, den ein
-    # echtes Geraet nimmt: Endpunkt 0 traegt den Root Node, Endpunkt 1 den
-    # Anwendungstyp.
+    # Also alongside an administrative endpoint, meaning the path a real
+    # device takes: endpoint 0 carries the root node, endpoint 1 the
+    # application type.
     assert category_for({0: frozenset({0x0016}), 1: frozenset({0x0300})}) is Category.OTHER
 
 

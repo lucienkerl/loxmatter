@@ -695,14 +695,13 @@ async def test_send_command_passes_the_payload_as_command_fields():
 
 
 async def test_send_command_builds_the_colour_temperature_command_from_the_sdk():
-    """ColorControl (768) MoveToColorTemperature (10) durch `chip` hindurch.
+    """ColorControl (768) MoveToColorTemperature (10) through `chip`.
 
-    `tests/commands/test_translate.py` prueft nur das Nutzlast-Dict, das
-    `translate.py` baut - nie, ob `chip.clusters.ClusterObjects.
-    ALL_ACCEPTED_COMMANDS` daraus eine Klasse mit genau diesen Feldern
-    macht. Ohne diesen Test braeche ein umbenanntes SDK-Feld die
-    Farbtemperatur still: der Aufruf ginge hinaus, das Licht bliebe, wie
-    es war.
+    `tests/commands/test_translate.py` only checks the payload dict that
+    `translate.py` builds - never whether `chip.clusters.ClusterObjects.
+    ALL_ACCEPTED_COMMANDS` makes a class from it with exactly these fields.
+    Without this test, a renamed SDK field would silently break color
+    temperature: the call would go out, the light would stay as it was.
     """
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
@@ -723,14 +722,14 @@ async def test_send_command_builds_the_colour_temperature_command_from_the_sdk()
     _node_id, _endpoint_id, command = upstream.sent_commands[0]
     assert command.__class__.__name__ == "MoveToColorTemperature"
     assert command.colorTemperatureMireds == 370
-    # Das Bit, ohne das ein Farbbefehl an einer ausgeschalteten Leuchte
-    # verpufft (siehe `_EXECUTE_IF_OFF` in commands/translate.py).
+    # The bit without which a color command on a switched-off light has no effect
+    # (see `_EXECUTE_IF_OFF` in commands/translate.py).
     assert command.optionsMask == 1
     assert command.optionsOverride == 1
 
 
 async def test_send_command_builds_the_hue_saturation_command_from_the_sdk():
-    """ColorControl (768) MoveToHueAndSaturation (6), gleiche Begruendung."""
+    """ColorControl (768) MoveToHueAndSaturation (6), same reason."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
 
@@ -1004,12 +1003,11 @@ async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node
 
 
 async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_first():
-    """Der Ablauf eines echten Einlernens, in seiner tatsaechlichen
-    Reihenfolge (belegt gegen python-matter-server 8.1.2 - seit dem
-    8. September 2026 ist `matter-python-client` installiert, das dieselbe
-    Ereignisfolge ueber dieselbe Websocket-API fuehrt; die Reihenfolge unten
-    ist eine Eigenschaft des Protokolls, nicht der Bibliothek, und dieser
-    Test prueft sie ohnehin gegen eine Attrappe):
+    """The flow of an actual commissioning, in its real order (verified against
+    python-matter-server 8.1.2 - since 8 September 2026 `matter-python-client`
+    is installed, which delivers the same event sequence over the same WebSocket
+    API; the order below is a property of the protocol, not the library, and this
+    test verifies it against a mock anyway):
 
     1. The commissioning route is still waiting on `commission_with_code`.
     2. matter-server sends `NODE_ADDED` over the same websocket before the

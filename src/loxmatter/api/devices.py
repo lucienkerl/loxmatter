@@ -52,31 +52,26 @@ The second order thus leaves behind a visible, diagnosable state instead
 of a silent one on failure; `remove_device` below therefore implements
 it.
 
-**Unverifizierte Annahme (Minor #3, Review 2026-09-02):** "Ein erneutes
-`DELETE` bleibt moeglich" oben setzt voraus, dass `remove_node` gegen einen
-Node erneut aufgerufen werden darf, der beim ersten (teilweise gescheiterten)
-Versuch schon aus der Fabric entfernt wurde - also gegen `matter-server`
-retry-sicher ist. `tests/api/conftest.py::FakeMatterClient.remove_node`
-haengt jeden Aufruf lediglich an eine Liste an und kann diese Annahme nicht
-pruefen; ob das echte `MatterClient.remove_node` einen bereits entfernten
-Node mit einem Fehler quittiert oder ihn klaglos ignoriert, ist gegen die
-installierte `python-matter-server`-Version bislang nicht belegt (anders als
-die drei Methoden im Docstring von `matter/client.py`, die explizit gegen
-den Quelltext geprueft sind). Ein Fehlschlag dort waere kein neues Problem -
-er landete wie jeder andere `MatterUnavailableError` als 502 -, aber die
-Zusicherung "bleibt moeglich" ist bis dahin eine Annahme, keine belegte
-Tatsache.
+**Unverified assumption (Minor #3, Review 2026-09-02):** "A second
+`DELETE` remains possible" above assumes that `remove_node` may be called again
+against a device that was already removed from the fabric on the first (partially
+failed) attempt - so it is retry-safe against `matter-server`. `tests/api/conftest.py::FakeMatterClient.remove_node`
+merely appends each call to a list and cannot verify this assumption; whether the real
+`MatterClient.remove_node` acknowledges an already-removed device with an error or
+silently ignores it has not been verified against the installed `python-matter-server`
+version (unlike the three methods in the docstring of `matter/client.py`, which are
+explicitly verified against the source code). A failure there would not be a new problem -
+it would land like any other `MatterUnavailableError` as 502 -, but the guarantee
+"remains possible" is until then an assumption, not a verified fact.
 
-**Nachtrag (8. September 2026): die Annahme steht weiter offen, jetzt gegen
-einen anderen Server.** Installiert ist seither `matter-python-client` statt
-`python-matter-server`; `MatterClient.remove_node(node_id)` traegt dort
-dieselbe Signatur und schickt weiterhin nur `APICommand.REMOVE_NODE` mit
-`node_id`. Was der SERVER auf ein zweites `remove_node` gegen einen bereits
-entfernten Node antwortet, ist damit aber nicht geklaert, sondern hoechstens
-noch weniger geklaert als vorher: es ist jetzt eine andere Implementierung
-(matter.js statt CHIP-SDK), und das Verhalten in diesem Randfall haengt an
-ihr, nicht an der Client-Bibliothek. Zu belegen bleibt es am laufenden
-Dienst.
+**Update (8 September 2026): the assumption remains open, now against a different
+server.** Since then `matter-python-client` is installed instead of `python-matter-server`;
+`MatterClient.remove_node(node_id)` carries the same signature there and still sends only
+`APICommand.REMOVE_NODE` with `node_id`. What the server responds with to a second
+`remove_node` against an already-removed device is thus not clarified, but only even less
+clarified than before: it is now a different implementation (matter.js instead of CHIP-SDK),
+and the behavior in this edge case depends on it, not on the client library. Verification
+remains to be done on the live service.
 """
 
 from __future__ import annotations

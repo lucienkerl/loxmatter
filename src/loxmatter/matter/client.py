@@ -499,28 +499,28 @@ class BridgeMatterClient:
         "Required network information not provided" - the controller
         finds the device via BLE, but cannot tell it about a network.
 
-        matter-server haelt sie ausschliesslich im Arbeitsspeicher (siehe
-        `matter/otbr.py` fuer den ganzen Vorgang und den Ernstfall dazu):
-        jeder Neustart des Dienstes loescht sie wieder, und diese Bruecke
-        muss sie danach erneut uebergeben.
+        matter-server holds them exclusively in memory (see
+        `matter/otbr.py` for the entire process and the failure case):
+        every restart of the service deletes them again, and this bridge
+        must hand them over again afterward.
 
-        **Nachtrag (8. September 2026): hier aendert sich die Nutzlast.**
-        Das ist der einzige Aufruf dieses Moduls, bei dem das gilt - und
-        ausgerechnet ihn hatte die erste Fassung des Umstiegs-Entwurfs
-        uebersehen (dort inzwischen berichtigt, Abschnitt 2.2). Die Signatur
-        heisst in `matter-python-client` `set_thread_operational_dataset(
-        dataset, entry_id="default")`, und der Client schickt `dataset`
-        **und** `id=entry_id` ueber den Draht; die alte 8.1.2 schickte nur
-        `dataset`. Der Aufruf hier gibt `entry_id` nicht an, bekommt also
-        `"default"` - und die Fassung mit `entry_id != "default"` ist die
-        einzige, die eine hoehere Schema-Version verlangt.
+        **Update (8 September 2026): the payload changes here.**
+        This is the only call in this module where that is true - and
+        the first version of the migration design had missed exactly that
+        (corrected there meanwhile, section 2.2). The signature is called
+        `set_thread_operational_dataset(dataset, entry_id="default")` in
+        `matter-python-client`, and the client sends `dataset` **and**
+        `id=entry_id` over the wire; the old 8.1.2 sent only `dataset`.
+        The call here does not specify `entry_id`, so gets `"default"` -
+        and the version with `entry_id != "default"` is the only one that
+        requires a higher schema version.
 
-        Dass das auch gegen einen alten 8.1.2-Server traegt, ist geprueft,
-        nicht gehofft: dessen Argument-Aufloesung laeuft mit `strict=False`
-        (`matter_server/common/helpers/api.py:51,57`) und verwirft
-        unbekannte Schluessel stillschweigend, statt den Aufruf abzulehnen.
-        Das ist die Stelle, an der die Zweiteilung dieses Umstiegs - erst die
-        Bibliothek, dann das Server-Image - haette scheitern koennen.
+        That this also works against an old 8.1.2 server is verified, not
+        hoped for: its argument resolution runs with `strict=False`
+        (`matter_server/common/helpers/api.py:51,57`) and silently discards
+        unknown keys instead of rejecting the call. This is the point where
+        the two-part nature of this migration - first the library, then the
+        server image - could have failed.
         """
         await self._require_upstream().set_thread_operational_dataset(dataset)
         self._thread_dataset_set = True
