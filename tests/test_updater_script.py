@@ -20,13 +20,16 @@ Same approach as `test_install_script.py` and `test_update_script.py`: a
 sealed PATH made of fake binaries, and what is checked is WHICH commands
 the script chooses.
 
-The tests around `test_a_target_containing_a_semicolon_*` are the core of this
-file. They substantiate the claim from spec section 10 - "even someone
-who fully takes over the bridge can at most install a published, newer
-version". Without them that would just be an assertion. What matters here
-is not only THAT the request is rejected, but that the call log shows NOT
-A SINGLE docker call: a rejection that has already done something before
-rejecting is not one."""
+The tests around `test_a_target_containing_a_semicolon_*` and
+`test_a_target_with_an_embedded_newline_*` are the core of this file. They
+substantiate the claim from spec section 10 - "even someone who fully
+takes over the bridge can at most install a published, newer version".
+Without them that would just be an assertion. What matters here is not
+only THAT the request is rejected, but that the call log shows NOT A
+SINGLE docker call: a rejection that has already done something before
+rejecting is not one. The newline-embedding tests exist because `grep
+-Eq '^...$'` checks a LINE, not a VALUE - see the comment above the
+newline `case` guard in update-once.sh for the full story."""
 
 from __future__ import annotations
 
@@ -202,6 +205,40 @@ def test_a_target_with_a_foreign_registry_is_rejected(updater):
     # verbatim. A target that looks like an image is therefore simply
     # not a valid target.
     _auftrag(updater, target="evil.example.com/loxmatter:latest")
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert "docker" not in calls
+
+
+# `grep -Eq '^...$'` matches per LINE, not per VALUE - it is satisfied the
+# moment ANY line of a multi-line subject matches, and `jq -r` turns a
+# JSON string's `\n` escapes into real newlines. So each of the three
+# payloads below used to sail through the very check meant to stop it:
+# the first line looks like a valid target, and everything after the
+# newline rode along into `to` in state.json - from where Tasks 3/4 would
+# write it into $STACK/.env as LOXMATTER_IMAGE_TAG, a value that
+# deploy/testhost/docker-compose.yml interpolates straight into `image:`
+# of a `privileged: true` service. These three are exactly the payloads
+# verified end to end against the unfixed script (all three reached
+# `phase: queued`, and the first one forged a line in log.txt); they must
+# now be rejected before a single docker call, same as any other
+# malformed target.
+def test_a_target_with_an_embedded_newline_is_rejected(updater):
+    _auftrag(updater, target="0.3.0\nrm -rf /")
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert "docker" not in calls
+
+
+def test_a_foreign_registry_target_with_an_embedded_newline_is_rejected(updater):
+    _auftrag(updater, target="evil.example.com/loxmatter:latest\n0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert "docker" not in calls
+
+
+def test_a_dev_target_with_an_embedded_newline_is_rejected(updater):
+    _auftrag(updater, channel="dev", target="abcdef1\n; wget evil")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls

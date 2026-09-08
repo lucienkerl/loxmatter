@@ -50,6 +50,13 @@ ENV_FILE="$STACK/.env"
 
 mkdir -p "$UPDATE_DIR" "$BACKUP_DIR"
 
+# A literal newline, for `case ... in *"$NEWLINE"*)` further down - the
+# only reliable way in POSIX sh to test whether a value contains one. A
+# glob/case pattern matches the whole word (newlines included); `grep`
+# cannot be made to do that here, see the validation section below.
+NEWLINE='
+'
+
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # Atomic, always. The bridge reads this file once a second and must never
@@ -148,6 +155,27 @@ reject() {
 case "$CHANNEL" in
   stable|dev) ;;
   *) reject "unknown channel" ;;
+esac
+
+# `grep -Eq '^...$'` further down matches per LINE, not per VALUE: grep
+# considers a multi-line subject a match as soon as ANY one of its lines
+# satisfies the anchored pattern, and `jq -r` turns a JSON string's `\n`
+# escapes into real newlines. So a target like "0.3.0\nrm -rf /" passes
+# the pattern check on its first line and smuggles the rest straight
+# through - verified end to end: it reaches `set_state queued`, and from
+# there Tasks 3/4 write it into $STACK/.env as LOXMATTER_IMAGE_TAG, which
+# deploy/testhost/docker-compose.yml interpolates into `image:` of a
+# `privileged: true` service. A multiline value is an injected extra
+# KEY=VALUE line in that file, not just a bad tag. `sort -V` doesn't catch
+# it either - it just sees the payload as extra lines and still reports
+# the running version as the lowest.
+#
+# Reject any embedded newline before the pattern is even tried, so the
+# anchors below only ever see a single line. Do NOT "simplify" this back
+# to a bare `grep -Eq '^...$'` - that is exactly the check already shown
+# to be bypassable.
+case "$TARGET" in
+  *"$NEWLINE"*) reject "target contains a newline" ;;
 esac
 
 case "$CHANNEL" in
