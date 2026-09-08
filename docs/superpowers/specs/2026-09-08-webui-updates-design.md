@@ -63,8 +63,14 @@ ein langer Balken ist, wäre im Browser eine Zumutung.
   später, mit eigener Warnung für otbr.
 - Signalschlüssel, Räume, Exporteinstellungen: unberührt. Ein Update
   tauscht Code, keine Daten.
-- Der `build:`-Block bleibt erhalten, hinter einem Compose-Profil. Aus der
-  Quelle bauen bleibt möglich.
+- Der `build:`-Block bleibt erhalten, **neben** `image:` am selben Dienst.
+  Aus der Quelle bauen bleibt möglich (`docker compose build`). Ein Profil
+  wäre hier nicht möglich gewesen: Profile gelten für Dienste, nicht für
+  einzelne Schlüssel eines Dienstes. Dass trotzdem nie versehentlich
+  gebaut wird, sichert der Aufrufer, nicht die Datei — `update.sh` und der
+  Updater rufen `compose pull` ausdrücklich vor `up -d`, und `up` baut nur,
+  wenn lokal kein Image liegt. Auf einem Host ohne GHCR-Zugang ist genau
+  das die gewünschte Rückfallebene.
 
 ## 4. Versionsidentität
 
