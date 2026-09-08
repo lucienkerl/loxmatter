@@ -641,8 +641,14 @@ web.devices.commission_heading:
   en: "Commission a new device"
   de: "Neues Gerät einlernen"
 web.devices.code_placeholder:
-  en: "Pairing code (11 digits or MT:…)"
-  de: "Pairing-Code (11-stellig oder MT:…)"
+  # Zeigt die FORM statt sie zu beschreiben. Der fruehere Klammerzusatz
+  # ("11-stellig oder MT:…") nannte die Bauform - wer den Aufkleber in der
+  # Hand haelt, musste das erst in "die untere der beiden Zahlen"
+  # uebersetzen. Diese Auskunft tragen jetzt die Beispielzeile unter dem
+  # Feld und die Aufkleber-Skizze daneben. Beide Sprachen tragen denselben
+  # Wert - eine Ziffernfolge uebersetzt sich nicht.
+  en: "1234-567-8901"
+  de: "1234-567-8901"
 web.devices.thread_dataset_placeholder:
   # Der Platzhalter sagt seit dem Umbau der Einlern-Karte nicht mehr, WOFUER
   # das Feld da ist, sondern WIE der Wert aussieht: wofuer, steht jetzt
@@ -661,6 +667,54 @@ web.devices.commission_submit:
 web.devices.code_label:
   en: "Pairing code"
   de: "Pairing-Code"
+# Der Chip rechts im Eingabefeld (Entwurf vom 2026-09-07, Abschnitt 6). Er
+# benennt, was das Feld erkannt hat - und damit lernt man den Namen des
+# Codes an genau der Stelle, an der man ihn eintippt. Er BESCHREIBT nur:
+# auch "zu lang" sperrt den Einlern-Knopf nicht.
+web.devices.code_detect_manual:
+  en: "numeric code"
+  de: "Zahlencode"
+web.devices.code_detect_manual_long:
+  en: "numeric code, long"
+  de: "Zahlencode, lang"
+web.devices.code_detect_qr:
+  en: "QR code"
+  de: "QR-Code"
+# Zwei Schluessel statt einer mit Plural-Regel: i18n.t kennt keine
+# Pluralformen, und "noch 1 Ziffern" waere in beiden Sprachen falsch.
+web.devices.code_detect_remaining_one:
+  en: "1 digit to go"
+  de: "noch 1 Ziffer"
+web.devices.code_detect_remaining_many:
+  en: "{n} digits to go"
+  de: "noch {n} Ziffern"
+web.devices.code_detect_too_long:
+  en: "too long"
+  de: "zu lang"
+web.devices.code_detect_invalid:
+  en: "not a valid code"
+  de: "kein gültiger Code"
+# Die Beispielzeile unter dem Feld. Die BESCHRIFTUNGEN darin sind dieselben
+# Schluessel wie die des Chips (code_detect_manual/_qr) - es ist derselbe
+# Begriff, und dass er an beiden Stellen gleich lautet, ist der Zweck der
+# Uebung. Nur die beiden Beispielwerte stehen hier, und sie uebersetzen sich
+# nicht.
+web.devices.code_example_manual:
+  en: "1234-567-8901"
+  de: "1234-567-8901"
+web.devices.code_example_qr:
+  en: "MT:Y.K90SO527JA0648G00"
+  de: "MT:Y.K90SO527JA0648G00"
+# Die Aufkleber-Skizze neben dem Feld (Entwurf Abschnitt 7). Sie ist eine
+# Verdeutlichung, keine Informationsquelle - die Beispielzeile darueber
+# traegt denselben Inhalt als Text. Das aria-label beschreibt deshalb, was
+# zu SEHEN ist, statt den Inhalt ein zweites Mal vorzulesen.
+web.devices.sticker_alt:
+  en: "Sketch of a Matter label: the QR code on the left, the numeric code highlighted below it on the right."
+  de: "Skizze eines Matter-Aufklebers: links der QR-Code, rechts darunter der hervorgehobene Zahlencode."
+web.devices.code_where_hint:
+  en: "Printed on the device, its packaging, or in the manual. The text behind the QR code works too."
+  de: "Steht auf dem Gerät, seiner Verpackung oder im Handbuch. Statt der Zahl geht auch der Text hinter dem QR-Code."
 web.devices.room_label:
   en: "Room"
   de: "Raum"

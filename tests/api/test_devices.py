@@ -265,6 +265,61 @@ async def test_commissioning_a_device_registers_it(api):
     assert len(store.devices()) == 2
 
 
+async def test_a_pairing_code_with_dashes_reaches_the_stack_without_them(api):
+    """Der Fall, um den es geht: so steht der Code auf dem Geraet, und so
+    tippt ihn jeder ab. Bis hierher schnitt die Trenner niemand weg - auch
+    `MatterClient.commission_with_code` nicht, das den String unveraendert
+    in den WebSocket-Befehl setzt."""
+    client, _, _, fake_client = api
+    response = await client.post("/api/devices/commission", json={"code": "1234-567-8901"})
+    assert response.status_code == 201
+    assert fake_client.commissioned == ["12345678901"]
+
+
+async def test_a_qr_code_reaches_the_stack_untouched(api):
+    """Der MT:-Text ist Base38-kodiert - ein Bindestrich darin traegt
+    Bedeutung. Die Normalisierung muss ihn deshalb in Ruhe lassen."""
+    client, _, _, fake_client = api
+    response = await client.post(
+        "/api/devices/commission", json={"code": " MT:Y.K90SO527JA0648G00 "}
+    )
+    assert response.status_code == 201
+    assert fake_client.commissioned == ["MT:Y.K90SO527JA0648G00"]
+
+
+async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
+    """Wer aus einer Anleitung kopiert, bringt oft Leerzeichen statt
+    Bindestriche mit."""
+    client, _, _, fake_client = api
+    response = await client.post("/api/devices/commission", json={"code": "3497 011 2332"})
+    assert response.status_code == 201
+    assert fake_client.commissioned == ["34970112332"]
+
+
+async def test_a_code_made_only_of_separators_normalizes_to_an_empty_string(api):
+    """Randfall der Normalisierung, nicht der Validierung (Entwurf Abschnitt
+    8): ein Code aus lauter Trennern hat keine Ziffer, die uebrig bleiben
+    koennte. Das Backend liefert dafuer "" an den Stack - ein leerer Code
+    bleibt ein leerer Code und scheitert dort, wo er heute scheitert."""
+    client, _, _, fake_client = api
+    response = await client.post("/api/devices/commission", json={"code": "---"})
+    assert response.status_code == 201
+    assert fake_client.commissioned == [""]
+
+
+async def test_an_overlong_code_is_passed_on_rather_than_rejected(api):
+    """Der Validator normalisiert, er validiert NICHT (Entwurf Abschnitt 8):
+    ueber die Bauformen der Setup-Codes entscheidet der Matter-Stack, nicht
+    diese Bruecke. Ein zu langer Code geht deshalb durch und scheitert dort,
+    wo er hingehoert."""
+    client, _, _, fake_client = api
+    response = await client.post(
+        "/api/devices/commission", json={"code": "1234-567-8901-2345-678-9012"}
+    )
+    assert response.status_code == 201
+    assert fake_client.commissioned == ["1234567890123456789012"]
+
+
 async def test_a_rejected_pairing_code_yields_422(api):
     client, _, _, fake_client = api
     fake_client.fail_commission_with = CommissioningError("Einlernen fehlgeschlagen: abgelehnt")

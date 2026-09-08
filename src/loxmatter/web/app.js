@@ -314,6 +314,101 @@ function blobFromBase64(base64, mimeType) {
 // genau eine Datei aus (siehe loxone/server.py), ein Pfad brauchte dort eine
 // Auffangroute, die jeden unbekannten Pfad auf `index.html` zurueckfallen
 // laesst. Das Fragment erreicht den Server ohnehin nie.
+
+// --- Pairing-Code (Entwurf vom 2026-09-07) ----------------------------------
+//
+// Auf dem Geraet steht der Zahlencode gruppiert: `1234-567-8901`. Genau so
+// tippt ihn jeder ab - also nimmt ihn das Feld auch so entgegen und schreibt
+// die Bindestriche beim Tippen selbst.
+//
+// Die Regel steht ZWEIMAL: hier und als `_strip_separators` in
+// `api/models.py`. Das ist Absicht - die Oberflaeche formatiert, das Backend
+// normalisiert fuer JEDEN Aufrufer der Route. Wer eine der beiden Fassungen
+// aendert, aendert die andere.
+
+// Alles ausser Ziffern, Leerraum und Bindestrich macht den Wert zu einem
+// QR-Inhalt. Die Pruefung greift damit beim ersten getippten `M` von `MT:`,
+// nicht erst beim Doppelpunkt: eine Regel, die auf `MT:` wartet, wuerde die
+// zwei Zeichen davor als Zifferneingabe behandeln und wegwerfen.
+const PAIRING_QR_PAYLOAD = /[^0-9\s-]/;
+
+// Die belegte Schreibweise gibt es nur fuer die elf Stellen. Fuer den
+// 21-stelligen Code gibt es keine - eine erfundene Gruppierung saehe anders
+// aus als der Aufdruck, das Feld formatierte den Code also WEG vom Vorbild
+// statt hin. Ab der zwoelften Ziffer bleibt er deshalb ungruppiert.
+const PAIRING_GROUPS = [4, 7, 11];
+
+function isPairingQrCode(raw) {
+  return PAIRING_QR_PAYLOAD.test(raw);
+}
+
+function formatPairingCode(raw) {
+  if (isPairingQrCode(raw)) {
+    return raw;
+  }
+  const digits = raw.replace(/\D/g, "");
+  const parts = [];
+  let start = 0;
+  for (let i = 0; i < PAIRING_GROUPS.length; i++) {
+    const end = PAIRING_GROUPS[i];
+    if (digits.length <= start) {
+      break;
+    }
+    // Fuer die letzte Gruppe: alle restlichen Ziffern miteinbeziehen,
+    // ab der zwoelften Ziffer wird nicht weiter gruppiert.
+    const sliceEnd = i === PAIRING_GROUPS.length - 1 ? digits.length : end;
+    parts.push(digits.slice(start, sliceEnd));
+    start = end;
+  }
+  return parts.join("-");
+}
+
+function normalizePairingCode(raw) {
+  const text = raw.trim();
+  // Muss mit _COMMISSION_CODE_SEPARATORS in api/models.py gleichlauten: dort
+  // wird `re.compile(r"[\s-]")` verwendet, um Leerraum und Bindestrich zu
+  // entfernen. Dies hier ist das Gegenstueck - nicht /\D/, sondern genau
+  // diese Zeichen. Bis eine der QR-Pruefungen unabhaengig geaendert wird,
+  // liefern beide Fassungen fuer jede erreichbare Eingabe dieselbe Normalisierung,
+  // aber die Gleichheit war vorher nur ueber eine stille Invariante erschlossen.
+  return isPairingQrCode(text) ? text : text.replace(/[\s-]/g, "");
+}
+
+// Was der Chip im Feld sagt. Gibt einen Schluessel statt eines Textes
+// zurueck, damit diese Funktion ohne geladene Sprachtabelle prueffaehig
+// bleibt - uebersetzt wird erst beim Anzeigen.
+//
+// Der Chip BESCHREIBT, er verbietet nicht: auch bei `bad` bleibt der
+// Einlern-Knopf bedienbar und der Wert geht unveraendert an die Route.
+// Dieselbe Haltung wie beim Validator im Backend - die Bruecke sagt, was sie
+// sieht, und laesst den Matter-Stack entscheiden.
+function describePairingCode(raw) {
+  const text = raw.trim();
+  if (!text) {
+    return { key: "", values: {}, tone: "idle" };
+  }
+  if (isPairingQrCode(text)) {
+    return /^MT:/i.test(text)
+      ? { key: "web.devices.code_detect_qr", values: {}, tone: "ok" }
+      : { key: "web.devices.code_detect_invalid", values: {}, tone: "bad" };
+  }
+  const count = text.replace(/\D/g, "").length;
+  if (count === 11) {
+    return { key: "web.devices.code_detect_manual", values: {}, tone: "ok" };
+  }
+  if (count === 21) {
+    return { key: "web.devices.code_detect_manual_long", values: {}, tone: "ok" };
+  }
+  if (count > 21) {
+    return { key: "web.devices.code_detect_too_long", values: {}, tone: "bad" };
+  }
+  // Gezaehlt wird gegen die naechste gueltige Laenge - erst 11, dann 21.
+  const missing = count < 11 ? 11 - count : 21 - count;
+  return missing === 1
+    ? { key: "web.devices.code_detect_remaining_one", values: {}, tone: "warn" }
+    : { key: "web.devices.code_detect_remaining_many", values: { n: missing }, tone: "warn" };
+}
+
 const VIEWS = ["devices", "export", "system", "settings"];
 const DEFAULT_VIEW = "devices";
 
@@ -1820,9 +1915,100 @@ function app() {
         : t("web.header.unchanged_since_load");
     },
 
+    // Schreibt den Zahlencode beim Tippen so, wie er auf dem Geraet steht.
+    //
+    // `commissionCode` wird hier AUSDRUECKLICH nachgezogen, statt sich auf
+    // x-model zu verlassen: beide haengen am selben `input`-Ereignis, und
+    // welcher Zuhoerer zuerst laeuft, haengt an der Reihenfolge der
+    // Attribute im Markup. Ein Zustand, der von einer Attributreihenfolge
+    // abhaengt, ist ein Fehler, der erst beim Umsortieren auffaellt.
+    formatCommissionCode(input) {
+      const before = input.value;
+      const formatted = formatPairingCode(before);
+      if (formatted !== before) {
+        // Ziffern LINKS vom Cursor zaehlen, nicht Zeichenpositionen: sonst
+        // verschoebe jeder neu gesetzte Bindestrich den Cursor um eins.
+        const caret = input.selectionStart ?? before.length;
+        const digitsLeft = before.slice(0, caret).replace(/\D/g, "").length;
+        input.value = formatted;
+        let seen = 0;
+        let position = 0;
+        while (position < formatted.length && seen < digitsLeft) {
+          if (/\d/.test(formatted[position])) {
+            seen += 1;
+          }
+          position += 1;
+        }
+        input.setSelectionRange(position, position);
+      }
+      this.commissionCode = input.value;
+    },
+
+    // Rueckschritt DIREKT hinter einem Bindestrich loescht die Ziffer davor,
+    // Entf DIREKT davor die Ziffer danach - jeweils den Trenner gleich mit.
+    //
+    // Ohne diese Sonderbehandlung loescht der Tastendruck nur den Trenner,
+    // den `formatCommissionCode` unmittelbar danach wieder setzt: der Wert
+    // aendert sich nicht, der Cursor bleibt stehen, und die Taste wirkt tot.
+    // Das ist der eine Punkt, an dem eine mitformatierende Eingabe
+    // ueblicherweise scheitert - fuer beide Tasten, nicht nur Rueckschritt.
+    //
+    // Gilt NICHT im QR-Inhalt: dort traegt der Bindestrich Bedeutung
+    // (Base38-Alphabet), und dieser Zweig wuerde sonst still Nutzdaten mit
+    // loeschen (siehe `isPairingQrCode`).
+    commissionCodeKeydown(event) {
+      const isBackspace = event.key === "Backspace";
+      const isDelete = event.key === "Delete";
+      if (!isBackspace && !isDelete) {
+        return;
+      }
+      const input = event.target;
+      if (input.selectionStart !== input.selectionEnd) {
+        return;
+      }
+      if (isPairingQrCode(input.value)) {
+        return;
+      }
+      const caret = input.selectionStart;
+      let from;
+      let to;
+      if (isBackspace) {
+        if (caret < 2 || input.value[caret - 1] !== "-") {
+          return;
+        }
+        from = caret - 2;
+        to = caret;
+      } else {
+        if (input.value[caret] !== "-") {
+          return;
+        }
+        from = caret;
+        to = caret + 2;
+      }
+      event.preventDefault();
+      input.value = input.value.slice(0, from) + input.value.slice(to);
+      input.setSelectionRange(from, from);
+      this.formatCommissionCode(input);
+    },
+
+    // Text und Farbe des Chips im Feld.
+    commissionCodeBadge() {
+      const state = describePairingCode(this.commissionCode);
+      return {
+        text: state.key ? t(state.key, state.values) : "",
+        tone: state.tone,
+      };
+    },
+
     async commissionDevice() {
       this.commissionMessage = null;
-      if (!this.commissionCode.trim()) {
+      // Normalisiert, nicht nur getrimmt: die Trenner, die das Feld beim
+      // Tippen selbst gesetzt hat, gehoeren nicht in den Matter-Stack. Das
+      // Backend schneidet sie ohnehin ein zweites Mal weg
+      // (`CommissionRequest._strip_separators`) - hier stehen sie draussen,
+      // damit die Oberflaeche nicht etwas anderes abschickt, als sie zeigt.
+      const code = normalizePairingCode(this.commissionCode);
+      if (!code) {
         this.commissionMessage = t("web.devices.commission_code_required");
         this.commissionMessageIsError = true;
         return;
@@ -1830,9 +2016,12 @@ function app() {
       this.commissionBusy = true;
       this.commissionStep = 0;
       this.commissionFailed = false;
-      this.commissionRunCode = this.commissionCode.trim();
+      // Die Ablaufanzeige zeigt den FORMATIERTEN Code, nicht den
+      // uebertragenen: wer zwanzig bis sechzig Sekunden wartet, soll den
+      // Code wiedererkennen, den er eingetippt hat.
+      this.commissionRunCode = formatPairingCode(this.commissionCode.trim());
       try {
-        const body = { code: this.commissionCode.trim() };
+        const body = { code };
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }

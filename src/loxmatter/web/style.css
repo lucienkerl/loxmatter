@@ -443,6 +443,45 @@ button:disabled {
   margin-bottom: 0.3rem;
 }
 
+/* Feld und Aufkleber-Skizze nebeneinander (Entwurf vom 2026-09-07,
+ * Abschnitt 7). Die Skizze steht dauerhaft da: sie kostet keinen
+ * Lesevorgang, wer sie nicht braucht ueberliest sie, und sie ersetzt den
+ * frueheren Klammerzusatz im Platzhalter - der Text wird also nicht mehr,
+ * sondern weniger. */
+.code-with-sticker {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+}
+
+.code-with-sticker .code-col {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.code-sticker {
+  flex: 0 0 auto;
+}
+
+/* Unter dieser Breite wandert die Skizze unter das Feld statt daneben.
+ *
+ * Die Schwelle ist NICHT dieselbe wie beim Umbruch von Feld und Knopf
+ * weiter unten (480px) - hier geht es um eine andere Enge. `.code-sticker`
+ * (fest 188px breit) und `.code-detect` sind beide unschrumpfbar
+ * (`flex-shrink: 0`), das Eingabefeld ist also der einzige Nachgeber in
+ * dieser Zeile. Zwischen 480px und ~640px reichte der uebrige Platz fuer
+ * Chip und Knopf nicht mehr, ohne dass das Feld schon selbst umgebrochen
+ * waere (siehe der Umbruch weiter unten) - das Feld schrumpfte auf nahezu
+ * null, lange bevor es an der Reihe war. 700px raeumt der Skizze den Weg,
+ * bevor es dazu kommt: das Feld behaelt dann in der ganzen Spanne bis
+ * dorthin reichlich Breite fuer sich allein. */
+@media (max-width: 700px) {
+  .code-with-sticker {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+}
+
 /* Feld und Knopf teilen sich EINE Umrandung: `Enter` im Feld und ein Klick
  * auf den Knopf tun dasselbe, also sollen sie auch wie ein Bedienelement
  * aussehen. `:focus-within` traegt den Fokusrahmen deshalb die aeussere
@@ -485,6 +524,66 @@ button:disabled {
 
 .code-field .code-input:focus {
   outline: none;
+}
+
+/* Der Chip im Eingabefeld (Entwurf vom 2026-09-07). Er benennt, was das Feld
+ * erkannt hat. Bei leerem Feld bleibt er stehen und wird nur unsichtbar -
+ * entfernt aenderte er die Breite des Feldes beim ersten Tastendruck.
+ *
+ * Die drei Farben tragen dieselbe Bedeutung wie ueberall sonst in dieser
+ * Oberflaeche (--ok gelungen, --warn unfertig, --danger falsch); es kommt
+ * keine neue hinzu. */
+.code-field .code-detect {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.code-field .code-detect.tone-idle {
+  visibility: hidden;
+}
+
+.code-field .code-detect.tone-ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.code-field .code-detect.tone-warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.code-field .code-detect.tone-bad {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* Die beiden Bauformen als Beispiel. Ersetzt den frueheren Klammerzusatz im
+ * Platzhalter: der nannte die Bauform, das hier zeigt sie. */
+.code-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.code-examples b {
+  font-weight: 600;
+}
+
+.code-examples code {
+  font-family: var(--mono);
+  font-size: 0.95em;
+  color: var(--text);
 }
 
 .code-field .primary {
