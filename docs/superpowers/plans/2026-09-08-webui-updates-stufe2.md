@@ -1,74 +1,73 @@
-# Updates über die Oberfläche, Stufe 2: der Beiwagen und der Knopf
+# Updates through the web UI, stage 2: the sidecar and the button
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Voraussetzung:** [Stufe 1](2026-09-08-webui-updates-stufe1.md) ist vollständig umgesetzt und die Version `0.2.0` ist als `ghcr.io/lucienkerl/loxmatter:stable` veröffentlicht. Ohne ein Image, auf das man aktualisieren kann, ist hier nichts zu testen — der Rückfall am wenigsten.
+**Prerequisite:** [Stage 1](2026-09-08-webui-updates-stufe1.md) is fully implemented and version `0.2.0` is published as `ghcr.io/lucienkerl/loxmatter:stable`. Without an image to update to, there is nothing to test here — the rollback least of all.
 
-**Goal:** Ein Klick im System-Tab spielt eine neue Version ein, sichtbar Schritt für Schritt, auch während die Brücke selbst gerade nicht antwortet — und setzt sich selbsttätig zurück, wenn die neue Fassung nicht gesund hochkommt.
+**Goal:** A click in the System tab installs a new version, visibly step by step, even while the bridge itself is momentarily not responding — and rolls itself back automatically if the new version does not come up healthy.
 
-**Architecture:** Ein zusätzlicher Container `loxmatter-updater` hält den Docker-Socket, hat keine Ports und kein Host-Netz, und verständigt sich mit der Brücke ausschließlich über drei Dateien im gemeinsamen Volume. Weil der Zustand dort liegt und nicht im Speicher der Brücke, bleibt der Fortschritt während des Neustarts sichtbar. Die Sicherheitsgrenze liegt im Beiwagen, nicht am Login: er setzt den Image-Namen selbst zusammen, prüft das Ziel gegen ein festes Muster und lässt nur vorwärts.
+**Architecture:** An additional container `loxmatter-updater` holds the Docker socket, has no ports and no host network, and communicates with the bridge exclusively through three files in a shared volume. Because the state lives there and not in the bridge's memory, progress stays visible through the restart. The security boundary sits in the sidecar, not at the login: it assembles the image name itself, checks the target against a fixed pattern, and only ever allows moving forward.
 
-**Tech Stack:** POSIX sh (busybox/Alpine), `jq`, Docker CLI + Compose-Plugin, git, curl, Python 3.12/FastAPI/Pydantic, Alpine.js, pytest.
+**Tech Stack:** POSIX sh (busybox/Alpine), `jq`, Docker CLI + Compose plugin, git, curl, Python 3.12/FastAPI/Pydantic, Alpine.js, pytest.
 
-**Grundlage:** [`docs/superpowers/specs/2026-09-08-webui-updates-design.md`](../specs/2026-09-08-webui-updates-design.md), Abschnitte 6–14.
+**Basis:** [`docs/superpowers/specs/2026-09-08-webui-updates-design.md`](../specs/2026-09-08-webui-updates-design.md), sections 6–14.
 
 ## Global Constraints
 
-- **Jede neue Quelldatei beginnt mit dem GPL-Kopf** in der englischen FSF-Formulierung, wortgleich zu bestehenden Dateien (Vorlage: `src/loxmatter/api/settings.py:1-15`). Für Shell-Dateien in der `#`-Kommentarform wie in `scripts/update.sh:1-16`.
-- **Entwicklerprosa auf Deutsch**, dicht und begründend.
-- **Jeder nutzersichtbare Text über `i18n.t()`** mit `en`- **und** `de`-Eintrag in `src/loxmatter/i18n/strings.yaml`.
-- **POSIX sh, nicht bash.** Das Updater-Image ist Alpine; `/bin/sh` ist busybox, und ein `[[` stirbt dort. Jede neue Shell-Datei muss `shellcheck -s sh` bestehen.
-- **Feste Namen**, überall gleich: Volume-Pfad `/data/update/`, Dateien `request.json`, `state.json`, `log.txt`, `LETZTER-FEHLSCHLAG.txt`; Dienstname `loxmatter-updater`; Registry `ghcr.io/lucienkerl/loxmatter` und `ghcr.io/lucienkerl/loxmatter-updater`.
-- **Phasen** (der Wert von `state.json.phase`), abschließend: `idle`, `queued`, `backup`, `pull`, `recreate`, `health`, `rollback`, `done`, `failed`, `rejected`.
-- **Der Updater interpretiert nie Text aus dem Auftrag als Befehl.** Kein `eval`, keine Variable aus `request.json` in einer Kommandoposition, kein Image-Name aus dem Auftrag.
-- **Die volle Testsuite braucht rund drei Minuten.** Nicht abbrechen.
-- **Vor jedem Commit:** `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run pytest`, und für Shell-Änderungen `shellcheck -s sh <datei>`.
-- **Jeder Test muss einmal probeweise scheitern.**
+- **Every new source file starts with the GPL header** in the official English FSF wording, word-for-word identical to existing files (template: `src/loxmatter/api/settings.py:1-15`). For shell files, in the `#`-comment form as in `scripts/update.sh:1-16`.
+- **Developer prose in English**, dense and reasoned.
+- **Every user-visible text goes through `i18n.t()`** with both an `en` **and** a `de` entry in `src/loxmatter/i18n/strings.yaml`.
+- **POSIX sh, not bash.** The updater image is Alpine; `/bin/sh` is busybox, and a `[[` dies there. Every new shell file must pass `shellcheck -s sh`.
+- **Fixed names**, the same everywhere: volume path `/data/update/`, files `request.json`, `state.json`, `log.txt`, `LETZTER-FEHLSCHLAG.txt` (German for "last failure" — the name is a fixed identifier pinned across this plan and a test, and stays as is); service name `loxmatter-updater`; registry `ghcr.io/lucienkerl/loxmatter` and `ghcr.io/lucienkerl/loxmatter-updater`.
+- **Phases** (the value of `state.json.phase`), exhaustively: `idle`, `queued`, `backup`, `pull`, `recreate`, `health`, `rollback`, `done`, `failed`, `rejected`.
+- **The updater never interprets text from the request as a command.** No `eval`, no variable from `request.json` in a command position, no image name taken from the request.
+- **The full test suite takes about three minutes.** Do not interrupt it.
+- **Before every commit:** `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run pytest`, and for shell changes `shellcheck -s sh <file>`.
+- **Every test must be made to fail once, on a trial basis.**
 
 ## File Structure
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `deploy/updater/Dockerfile` (neu) | Das Beiwagen-Image: Alpine + docker-cli + compose + git + curl + jq + coreutils. |
-| `deploy/updater/entrypoint.sh` (neu) | Die Schleife. Drei Zeilen: einmal arbeiten, zwei Sekunden schlafen. |
-| `deploy/updater/update-once.sh` (neu) | Ein Durchlauf: Lebenszeichen, Auftrag prüfen, ausführen, Zustand schreiben. Der ganze Verstand des Beiwagens, und alles davon testbar ohne Schleife. |
-| `deploy/testhost/docker-compose.yml` (ändern) | Der neue Dienst. |
-| `.github/workflows/ci.yml` (ändern) | Zweiter Image-Job für den Beiwagen. |
-| `src/loxmatter/update.py` (neu) | Auftrag schreiben (atomar), Zustand lesen, Anwesenheit des Beiwagens beurteilen. Kennt keine HTTP-Begriffe. |
-| `src/loxmatter/update_check.py` (neu) | Fragt GitHub nach Release bzw. `main`. Kennt keine Dateien. |
-| `src/loxmatter/api/update.py` (neu) | Die drei Routen. Klebt die beiden Module an HTTP, sonst nichts. |
-| `src/loxmatter/model/store.py` (ändern) | Kanaleinstellung und „Prüfung erlaubt"-Schalter, wie die übrigen Einstellungen. |
-| `src/loxmatter/web/index.html`, `app.js`, `i18n/strings.yaml` (ändern) | Die Karte mit vier Zuständen. |
-| `tests/test_updater_script.py`, `tests/test_update_module.py`, `tests/api/test_update_api.py`, `tests/test_update_check.py` (neu) | siehe jeweilige Task. |
+| `deploy/updater/Dockerfile` (new) | The sidecar image: Alpine + docker-cli + compose + git + curl + jq + coreutils. |
+| `deploy/updater/entrypoint.sh` (new) | The loop. Three lines: do one round of work, sleep two seconds. |
+| `deploy/updater/update-once.sh` (new) | One round: refresh the heartbeat, check for a request, execute it, write state. All of the sidecar's logic, and all of it testable without the loop. |
+| `deploy/testhost/docker-compose.yml` (modify) | The new service. |
+| `.github/workflows/ci.yml` (modify) | A second image job for the sidecar. |
+| `src/loxmatter/update.py` (new) | Write the request (atomically), read the state, judge the sidecar's presence. Knows no HTTP concepts. |
+| `src/loxmatter/update_check.py` (new) | Asks GitHub about the release or `main`. Knows no files. |
+| `src/loxmatter/api/update.py` (new) | The three routes. Glues the two modules to HTTP, nothing else. |
+| `src/loxmatter/model/store.py` (modify) | Channel setting and "checking allowed" toggle, like the other settings. |
+| `src/loxmatter/web/index.html`, `app.js`, `i18n/strings.yaml` (modify) | The card with four states. |
+| `tests/test_updater_script.py`, `tests/test_update_module.py`, `tests/api/test_update_api.py`, `tests/test_update_check.py` (new) | see the respective task. |
 
-**Warum drei Python-Module und nicht eines:** `update.py` fasst Dateien an, `update_check.py` das Netz, `api/update.py` weder noch. Getrennt lässt sich jedes für sich testen — der Netzteil ohne Dateisystem, der Dateiteil ohne Netz, und die Routen gegen beide als Attrappe.
+**Why three Python modules and not one:** `update.py` touches files, `update_check.py` touches the network, `api/update.py` touches neither. Kept separate, each can be tested on its own — the network part without a filesystem, the file part without a network, and the routes against both as a fake.
 
 ---
 
-### Task 1: Das Beiwagen-Image
+### Task 1: The sidecar image
 
 **Files:**
 - Create: `deploy/updater/Dockerfile`, `deploy/updater/entrypoint.sh`
-- Modify: `.github/workflows/ci.yml` (zweiter Job `updater-image`)
+- Modify: `.github/workflows/ci.yml` (second job `updater-image`)
 - Test: `tests/test_updater_image.py`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: `ghcr.io/lucienkerl/loxmatter-updater:<version>` und `:stable`. Der Einstiegspunkt ruft `/opt/loxmatter/update-once.sh` (Task 2) in einer Schleife.
+- Consumes: nothing.
+- Produces: `ghcr.io/lucienkerl/loxmatter-updater:<version>` and `:stable`. The entrypoint calls `/opt/loxmatter/update-once.sh` (Task 2) in a loop.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/test_updater_image.py` (GPL-Kopf, dann):
+`tests/test_updater_image.py` (GPL header, then):
 
 ```python
-"""Das Beiwagen-Image bringt genau die Werkzeuge mit, die das Skript
-benutzt.
+"""The sidecar image brings along exactly the tools the script uses.
 
-Der Fehler, gegen den das schuetzt, ist unangenehm leise: fehlt `jq` im
-Image, laeuft der Beiwagen an, schreibt nie einen brauchbaren Zustand, und
-die Oberflaeche zeigt einen Knopf, der nichts tut. Ein Abgleich zwischen
-den `apk add`-Zeilen und den im Skript aufgerufenen Befehlen faellt hier,
-bevor jemand ihn auf einem Pi entdeckt."""
+The failure this guards against is unpleasantly quiet: if `jq` is missing
+from the image, the sidecar starts up, never writes a usable state, and
+the web UI shows a button that does nothing. A comparison between the
+`apk add` lines and the commands invoked in the script catches this here,
+before someone discovers it on a Pi."""
 
 from __future__ import annotations
 
@@ -78,22 +77,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCKERFILE = ROOT / "deploy" / "updater" / "Dockerfile"
 
-# Was das Skript aus Task 2/3/4 aufruft und was Alpine NICHT von sich aus
-# mitbringt. `sh`, `mv`, `printf` stehen bewusst nicht dabei - die sind
-# busybox-eigen und koennen nicht fehlen.
-BENOETIGT = ("docker-cli", "docker-cli-compose", "git", "curl", "jq", "coreutils", "tar")
+# What the script from task 2/3/4 invokes and what Alpine does NOT bring
+# along by itself. `sh`, `mv`, `printf` are deliberately absent here - those
+# are busybox built-ins and cannot be missing.
+REQUIRED_PACKAGES = ("docker-cli", "docker-cli-compose", "git", "curl", "jq", "coreutils", "tar")
 
 
 def test_das_image_bringt_jedes_benutzte_werkzeug_mit() -> None:
     source = DOCKERFILE.read_text(encoding="utf-8")
-    for paket in BENOETIGT:
-        assert re.search(rf"\b{re.escape(paket)}\b", source), paket
+    for package in REQUIRED_PACKAGES:
+        assert re.search(rf"\b{re.escape(package)}\b", source), package
 
 
 def test_die_basis_ist_gepinnt() -> None:
-    # Ein `FROM alpine:latest` machte aus jedem Neubau des Beiwagens eine
-    # Ueberraschung - ausgerechnet bei dem Container, der root-gleichwertig
-    # auf dem Host steht.
+    # A `FROM alpine:latest` would turn every rebuild of the sidecar into a
+    # surprise - of all containers, the one that is root-equivalent on the
+    # host.
     source = DOCKERFILE.read_text(encoding="utf-8")
     assert re.search(r"^FROM alpine:3\.\d+", source, re.MULTILINE)
     assert "alpine:latest" not in source
@@ -102,36 +101,36 @@ def test_die_basis_ist_gepinnt() -> None:
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_updater_image.py -v`
-Expected: FAIL — `FileNotFoundError` für `deploy/updater/Dockerfile`
+Expected: FAIL — `FileNotFoundError` for `deploy/updater/Dockerfile`
 
 - [ ] **Step 3: Write the Dockerfile**
 
 `deploy/updater/Dockerfile`:
 
 ```dockerfile
-# Der Updater-Beiwagen (Entwurf "Updates ueber die Oberflaeche einspielen",
-# 2026-09-08, Abschnitt 6).
+# The updater sidecar (design "Applying updates through the web UI",
+# 2026-09-08, section 6).
 #
-# Dieser Container haelt den Docker-Socket und ist damit root-gleichwertig
-# auf dem Host. Abgesichert wird das durch Enge, nicht durch Rechte: keine
-# Ports, kein Host-Netz (siehe Compose-Datei), ein einziges festes
-# Arbeitsprogramm - und diese Basis hier gepinnt statt `latest`, damit ein
-# Neubau nie eine Ueberraschung ist.
+# This container holds the Docker socket and is thereby root-equivalent
+# on the host. That is secured through narrowness, not through privileges:
+# no ports, no host network (see the Compose file), a single fixed
+# work program - and this base pinned instead of `latest`, so a rebuild
+# is never a surprise.
 #
-# Bewusst NICHT das loxmatter-Image mit anderem Einstiegspunkt: der
-# Beiwagen darf nicht dasselbe Image sein wie das, das er austauscht, sonst
-# ersetzt ein Update den Prozess, der es gerade ausfuehrt.
+# Deliberately NOT the loxmatter image with a different entrypoint: the
+# sidecar must not be the same image as the one it replaces, or an update
+# would replace the process that is running it.
 FROM alpine:3.20
 
-# docker-cli-compose bringt das `docker compose`-Unterkommando mit - der
-# Beiwagen ruft ausschliesslich Compose auf, nie ein nacktes `docker run`
-# oder `docker build`. Der Grund steht seit 2026-09-03 in scripts/update.sh:
-# der Dienst baut ueber seinen `build:`-Block sein eigenes Image, und ein
-# daneben gebautes benutzt niemand.
+# docker-cli-compose brings the `docker compose` subcommand along - the
+# sidecar only ever invokes Compose, never a bare `docker run` or
+# `docker build`. The reason has been in scripts/update.sh since 2026-09-03:
+# the service builds its own image via its `build:` block, and one built
+# alongside it would go unused.
 #
-# coreutils wegen `sort -V`: die Pruefung "nur vorwaerts" (Spec-Abschnitt
-# 10, Regel 3) vergleicht semantische Versionen, und busybox' sort kann
-# das nicht verlaesslich.
+# coreutils for `sort -V`: the "forward only" check (spec section
+# 10, rule 3) compares semantic versions, and busybox's sort cannot
+# do that reliably.
 RUN apk add --no-cache \
       docker-cli \
       docker-cli-compose \
@@ -149,21 +148,20 @@ ENTRYPOINT ["/opt/loxmatter/entrypoint.sh"]
 
 - [ ] **Step 4: Write the entrypoint**
 
-`deploy/updater/entrypoint.sh` (GPL-Kopf in `#`-Form, dann):
+`deploy/updater/entrypoint.sh` (GPL header in `#` form, then):
 
 ```sh
 #!/bin/sh
-# Die Schleife des Beiwagens - Entwurf "Updates ueber die Oberflaeche
-# einspielen" (2026-09-08), Abschnitt 6.
+# The sidecar's loop - design "Applying updates through the web UI"
+# (2026-09-08), section 6.
 #
-# Bewusst duenn: aller Verstand steckt in update-once.sh, und zwar
-# vollstaendig. Nur so laesst sich ein Durchlauf im Test aufrufen, ohne
-# eine Endlosschleife anzuwerfen und wieder abzuwuergen.
+# Deliberately thin: all the logic lives in update-once.sh, entirely. Only
+# that way can a single run be invoked in a test, without spinning up an
+# endless loop and having to kill it again.
 #
-# `|| true`: ein einzelner misslungener Durchlauf darf den Beiwagen nicht
-# beenden. Er ist der Einzige, der einen kaputten Zustand ueberhaupt noch
-# melden kann - ein Container, der sich bei einem Fehler beendet, nimmt
-# genau diese Meldung mit.
+# `|| true`: a single failed run must not terminate the sidecar. It is the
+# only one still able to report a broken state at all - a container that
+# exits on error takes exactly that report down with it.
 set -u
 
 while true; do
@@ -175,18 +173,18 @@ done
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_updater_image.py -v && shellcheck -s sh deploy/updater/entrypoint.sh`
-Expected: 2 passed, shellcheck still
+Expected: 2 passed, shellcheck still clean
 
 - [ ] **Step 6: Add the CI job**
 
-In `.github/workflows/ci.yml`, nach dem Job `image`:
+In `.github/workflows/ci.yml`, after the job `image`:
 
 ```yaml
 
-  # Der Beiwagen. Eigener Job und eigenes Image, weil er NICHT dasselbe
-  # Image sein darf wie das, das er austauscht: sonst ersetzte ein Update
-  # den Prozess, der es gerade ausfuehrt. Er aendert sich selten - deshalb
-  # ohne :dev-Tag, nur auf Releases.
+  # The sidecar. Its own job and its own image, because it must NOT be the
+  # same image as the one it replaces: otherwise an update would replace
+  # the process that is running it. It changes rarely - hence no :dev tag,
+  # only on releases.
   updater-image:
     needs: test
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -217,55 +215,54 @@ In `.github/workflows/ci.yml`, nach dem Job `image`:
 
 ```bash
 git add deploy/updater/ .github/workflows/ci.yml tests/test_updater_image.py
-git commit -m "feat(updater): Beiwagen-Image und Schleife
+git commit -m "feat(updater): sidecar image and loop
 
-Ein eigenes, winziges Image - bewusst NICHT das loxmatter-Image mit
-anderem Einstiegspunkt: der Beiwagen darf nicht dasselbe Image sein wie
-das, das er austauscht, sonst ersetzt ein Update den Prozess, der es
-gerade ausfuehrt.
+A dedicated, tiny image - deliberately NOT the loxmatter image with a
+different entrypoint: the sidecar must not be the same image as the one
+it replaces, or an update would replace the process that is running it.
 
-Die Basis gepinnt statt latest. Bei einem Container, der den Docker-Socket
-haelt und damit root-gleichwertig auf dem Host steht, ist ein
-ueberraschender Neubau die falsche Sorte Bequemlichkeit.
+The base pinned instead of latest. For a container that holds the Docker
+socket and is thereby root-equivalent on the host, a surprising rebuild
+is the wrong kind of convenience.
 
-Die Schleife bleibt duenn, aller Verstand liegt in update-once.sh: nur so
-laesst sich ein Durchlauf testen, ohne eine Endlosschleife anzuwerfen. Ein
-misslungener Durchlauf beendet den Beiwagen nicht - er ist der Einzige,
-der einen kaputten Zustand noch melden kann.
+The loop stays thin, all the logic lives in update-once.sh: only that way
+can a single run be tested, without spinning up an endless loop. A failed
+run does not terminate the sidecar - it is the only one still able to
+report a broken state.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 2: Lebenszeichen und Auftragsprüfung — die Sicherheitsgrenze
+### Task 2: Heartbeat and request validation — the security boundary
 
 **Files:**
 - Create: `deploy/updater/update-once.sh`
 - Test: `tests/test_updater_script.py`
 
 **Interfaces:**
-- Consumes: die Umgebungsvariablen aus der Compose-Datei (Task 5), hier bereits mit Vorgaben belegt.
-- Produces: `update-once.sh` — ein Durchlauf. Schreibt `state.json` mit mindestens `{phase, updater_seen_at}`, verarbeitet eine `id` genau einmal. Task 3 und 4 erweitern dieselbe Datei.
+- Consumes: the environment variables from the Compose file (Task 5), already populated with defaults here.
+- Produces: `update-once.sh` — one run. Writes `state.json` with at least `{phase, updater_seen_at}`, processes an `id` exactly once. Task 3 and 4 extend the same file.
 
 - [ ] **Step 1: Write the failing tests**
 
 `tests/test_updater_script.py` (GPL-Kopf, dann):
 
 ```python
-"""Verhaltenstests fuer den Beiwagen.
+"""Behavioral tests for the sidecar.
 
-Dasselbe Verfahren wie bei `test_install_script.py` und
-`test_update_script.py`: versiegelter PATH aus gefaelschten Binaries, und
-geprueft wird, WELCHE Befehle das Skript waehlt.
+Same approach as `test_install_script.py` and `test_update_script.py`: a
+sealed PATH made of fake binaries, and what is checked is WHICH commands
+the script chooses.
 
-Die Tests um `test_ein_ziel_mit_semikolon_*` sind der Kern dieser Datei.
-Sie belegen die Aussage aus Spec-Abschnitt 10 - "selbst wer die Bruecke
-vollstaendig uebernimmt, kann hoechstens eine veroeffentlichte, neuere
-Version installieren". Ohne sie waere das eine Behauptung. Entscheidend
-ist dabei nicht nur, DASS abgelehnt wird, sondern dass im Aufrufprotokoll
-KEIN EINZIGER docker-Aufruf steht: eine Ablehnung, die vorher schon etwas
-getan hat, ist keine."""
+The tests around `test_ein_ziel_mit_semikolon_*` are the core of this
+file. They substantiate the claim from spec section 10 - "even someone
+who fully takes over the bridge can at most install a published, newer
+version". Without them that would just be an assertion. What matters here
+is not only THAT the request is rejected, but that the call log shows NOT
+A SINGLE docker call: a rejection that has already done something before
+rejecting is not one."""
 
 from __future__ import annotations
 
@@ -284,9 +281,8 @@ SYSTEM_TOOLS = ("sh", "cat", "grep", "sed", "awk", "tr", "printf", "mkdir", "rm"
 
 @pytest.fixture
 def updater(tmp_path):
-    """Liefert `run(**env)` -> (result, calls, state). `calls` ist das
-    Protokoll aller gefaelschten Werkzeuge, `state` der geschriebene
-    Zustand als dict (oder None)."""
+    """Returns `run(**env)` -> (result, calls, state). `calls` is the log
+    of every faked tool, `state` the written state as a dict (or None)."""
     bindir, sysdir = tmp_path / "bin", tmp_path / "sys"
     bindir.mkdir()
     sysdir.mkdir()
@@ -361,9 +357,9 @@ def test_ein_ziel_mit_semikolon_wird_abgelehnt(updater):
 
 
 def test_ein_ziel_mit_fremder_registry_wird_abgelehnt(updater):
-    # Der Image-Name wird im Skript zusammengesetzt, nie uebernommen. Ein
-    # Ziel, das wie ein Image aussieht, ist deshalb schlicht kein
-    # gueltiges Ziel.
+    # The image name is assembled inside the script, never taken over
+    # verbatim. A target that looks like an image is therefore simply
+    # not a valid target.
     _auftrag(updater, target="evil.example.com/loxmatter:latest")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
@@ -378,7 +374,7 @@ def test_ein_unbekannter_kanal_wird_abgelehnt(updater):
 
 
 def test_eine_aeltere_version_wird_abgelehnt(updater):
-    # "Nur vorwaerts", Spec-Abschnitt 10, Regel 3. .env steht auf 0.2.0.
+    # "Forward only", spec section 10, rule 3. .env is at 0.2.0.
     _auftrag(updater, target="0.1.0")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
@@ -408,27 +404,26 @@ def test_derselbe_auftrag_wird_nicht_zweimal_ausgefuehrt(updater):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_updater_script.py -v`
-Expected: FAIL — alle, `No such file or directory` für `update-once.sh`
+Expected: FAIL — all of them, `No such file or directory` for `update-once.sh`
 
 - [ ] **Step 3: Write the script's skeleton, heartbeat and validation**
 
-`deploy/updater/update-once.sh` (GPL-Kopf in `#`-Form, dann):
+`deploy/updater/update-once.sh` (GPL header in `#` form, then):
 
 ```sh
 #!/bin/sh
-# Ein Durchlauf des Beiwagens - Entwurf "Updates ueber die Oberflaeche
-# einspielen" (2026-09-08), Abschnitte 6 bis 8 und 10.
+# One run of the sidecar - design "Applying updates through the web UI"
+# (2026-09-08), sections 6 through 8 and 10.
 #
-# Aufgerufen alle zwei Sekunden von entrypoint.sh. Tut drei Dinge, in
-# dieser Reihenfolge: Lebenszeichen auffrischen, einen neuen Auftrag
-# pruefen, ihn ausfuehren.
+# Invoked every two seconds by entrypoint.sh. Does three things, in this
+# order: refresh the heartbeat, check for a new request, execute it.
 #
-# WAS DIESES SKRIPT NIE TUT: Text aus request.json in eine
-# Kommandoposition setzen. Kein eval, kein "$TARGET" als Teil eines
-# Befehls, kein Image-Name aus dem Auftrag. Der Image-Name wird unten fest
-# zusammengesetzt; aus dem Auftrag kommt nur eine Zeichenkette, die vorher
-# gegen ein festes Muster geprueft wurde. Das ist die Sicherheitsgrenze
-# dieser Loesung - nicht das Login davor.
+# WHAT THIS SCRIPT NEVER DOES: put text from request.json into a command
+# position. No eval, no "$TARGET" as part of a command, no image name
+# taken from the request. The image name is assembled fixed below; from
+# the request comes only a string that was checked beforehand against a
+# fixed pattern. That is this solution's security boundary - not the
+# login in front of it.
 set -eu
 
 UPDATE_DIR="${LOXMATTER_UPDATE_DIR:-/data/update}"
@@ -450,9 +445,9 @@ mkdir -p "$UPDATE_DIR" "$BACKUP_DIR"
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# Atomar, immer. Die Bruecke liest diese Datei im Sekundentakt und darf nie
-# eine halb geschriebene sehen - ein abgeschnittenes JSON waere fuer sie
-# nicht von "kein Beiwagen da" zu unterscheiden.
+# Atomic, always. The bridge reads this file once a second and must never
+# see a half-written one - a truncated JSON would be indistinguishable to
+# it from "no sidecar present".
 write_state() {
   printf '%s\n' "$1" > "$STATE.tmp"
   mv "$STATE.tmp" "$STATE"
@@ -463,19 +458,19 @@ log() {
   tail -n 2000 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
 }
 
-# Was LAEUFT, nicht was beim naechsten Start gezogen wuerde. Das sind zwei
-# verschiedene Fragen, und Stufe 1 hat gezeigt, dass die Verwechslung teuer
-# ist: seit 0.2.0 traegt jede frische Installation LOXMATTER_IMAGE_TAG=stable
-# in der .env (deploy/testhost/.env.example). Der Tag ist ein WANDERNDER
-# ALIAS - "stable" ist keine Version, und ein Vergleich "ist 0.3.0 neuer als
-# stable" hat keine Antwort. Genau daran waere die Vorwaerts-Pruefung aus
-# Spec-Abschnitt 10, Regel 3, auf jeder Standardinstallation stillschweigend
-# vorbeigelaufen.
+# What is RUNNING, not what would be pulled on the next start. Those are
+# two different questions, and stage 1 showed that confusing them is
+# costly: since 0.2.0 every fresh installation carries
+# LOXMATTER_IMAGE_TAG=stable in the .env (deploy/testhost/.env.example).
+# The tag is a MOVING ALIAS - "stable" is not a version, and a comparison
+# "is 0.3.0 newer than stable" has no answer. That is exactly where the
+# forward-only check from spec section 10, rule 3, would have silently
+# slipped past on every standard installation.
 #
-# Die belastbare Auskunft gibt der laufende Container selbst: sein
-# LOXMATTER_VERSION ist beim Bau hineingelegt worden (Stufe 1, Abschnitt 4)
-# und benennt genau die Fassung, die gerade arbeitet - unabhaengig davon,
-# unter welchem Alias sie einmal gezogen wurde.
+# The reliable answer comes from the running container itself: its
+# LOXMATTER_VERSION was baked in at build time (stage 1, section 4) and
+# names exactly the version that is currently at work - regardless of
+# which alias it was once pulled under.
 running_version() {
   version="$(docker inspect "$SERVICE" \
     --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
@@ -483,15 +478,15 @@ running_version() {
   printf '%s' "${version:-unbekannt}"
 }
 
-# Der Tag aus der .env - gebraucht wird er nur noch fuer den Rueckfall, also
-# um zu wissen, was zurueckzuschreiben ist, wenn das Update scheitert.
+# The tag from the .env - needed only for the rollback now, i.e. to know
+# what to write back if the update fails.
 current_tag() {
   tag="$(sed -n -E 's/^LOXMATTER_IMAGE_TAG=(.*)$/\1/p' "$ENV_FILE" 2>/dev/null | tail -1)"
   printf '%s' "${tag:-stable}"
 }
 
 set_state() {
-  # $1 Phase, $2 Fehlermeldung (darf leer sein)
+  # $1 phase, $2 error message (may be empty)
   write_state "$(jq -n \
     --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
     --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
@@ -506,11 +501,11 @@ set_state() {
       updater_seen_at: $seen}')"
 }
 
-# ------------------------------------------------------- Lebenszeichen --
-# Zuerst, vor allem anderen: die Bruecke blendet den Update-Knopf aus,
-# wenn dieser Zeitstempel veraltet (siehe update.py). Ein Beiwagen, der
-# erst nach getaner Arbeit ein Lebenszeichen gibt, sieht waehrend jeder
-# Arbeit aus wie ein abwesender.
+# ------------------------------------------------------------ heartbeat --
+# First, before anything else: the bridge hides the update button when
+# this timestamp goes stale (see update.py). A sidecar that only gives a
+# heartbeat after finishing its work would look absent during every bit
+# of that work.
 if [ -f "$STATE" ]; then
   write_state "$(jq --arg seen "$(now)" '.updater_seen_at = $seen' "$STATE")"
 else
@@ -523,18 +518,18 @@ JOB_ID="$(jq -r '.id // empty' "$REQUEST" 2>/dev/null || true)"
 CHANNEL="$(jq -r '.channel // empty' "$REQUEST" 2>/dev/null || true)"
 TARGET="$(jq -r '.target // empty' "$REQUEST" 2>/dev/null || true)"
 
-# Genau einmal. Ohne das arbeitete der Beiwagen denselben Auftrag alle zwei
-# Sekunden erneut ab - und ein Update, das sich selbst neu startet, kommt
-# nie zur Ruhe.
+# Exactly once. Without this the sidecar would work through the same
+# request again every two seconds - and an update that restarts itself
+# never comes to rest.
 LAST="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
 [ -n "$JOB_ID" ] || exit 0
 [ "$JOB_ID" != "$LAST" ] || exit 0
 
-# Zwei verschiedene Dinge, bewusst getrennt gehalten:
-#   RUNNING - welche Fassung arbeitet gerade (fuer die Vorwaerts-Pruefung
-#             und fuer die Anzeige)
-#   FROM    - was in der .env steht und beim Rueckfall zurueckzuschreiben
-#             waere (kann ein Alias wie "stable" sein)
+# Two different things, deliberately kept apart:
+#   RUNNING - which version is currently at work (for the forward-only
+#             check and for the display)
+#   FROM    - what is in the .env and would be written back on rollback
+#             (can be an alias like "stable")
 RUNNING="$(running_version)"
 FROM="$(current_tag)"
 TO="$TARGET"
@@ -542,109 +537,109 @@ ROLLED=false
 HEALTHY=true
 
 reject() {
-  log "Auftrag $JOB_ID abgelehnt: $1"
+  log "Request $JOB_ID rejected: $1"
   set_state rejected "$1"
   exit 0
 }
 
-# ------------------------------------------------------------ Pruefung --
-# Regel 1: Kanal ist ein Enum, Ziel muss ein Muster erfuellen.
+# --------------------------------------------------------------- validation --
+# Rule 1: channel is an enum, target must satisfy a pattern.
 case "$CHANNEL" in
   stable|dev) ;;
-  *) reject "unbekannter Kanal" ;;
+  *) reject "unknown channel" ;;
 esac
 
 case "$CHANNEL" in
   stable)
     printf '%s' "$TARGET" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+$' \
-      || reject "kein gueltiges Versionsziel" ;;
+      || reject "not a valid version target" ;;
   dev)
     printf '%s' "$TARGET" | grep -Eq '^[0-9a-f]{7,40}$' \
-      || reject "kein gueltiges Commit-Ziel" ;;
+      || reject "not a valid commit target" ;;
 esac
 
-# Regel 3: nur vorwaerts. Im stabilen Kanal nach semantischer Version;
-# `sort -V` aus coreutils, busybox' sort kann das nicht verlaesslich. Der
-# dev-Kanal hat keine Ordnung ueber SHAs - dort prueft Task 3 stattdessen
-# die Abstammung, sobald die Refs geholt sind.
+# Rule 3: forward only. In the stable channel by semantic version;
+# `sort -V` from coreutils, busybox's sort cannot do that reliably. The
+# dev channel has no ordering over SHAs - there Task 3 instead checks
+# ancestry, once the refs have been fetched.
 if [ "$CHANNEL" = "stable" ]; then
-  # Verglichen wird gegen die LAUFENDE Version, nicht gegen den Tag in der
-  # .env - siehe running_version() oben. Ein Tag kann "stable" heissen und
-  # damit gar keine Version sein.
+  # Compared against the RUNNING version, not against the tag in the
+  # .env - see running_version() above. A tag can be named "stable" and
+  # thereby not be a version at all.
   CUR="${RUNNING#v}"
   NEW="${TARGET#v}"
-  # Eine Fassung, die sich nicht zu erkennen gibt (von Hand gebautes Image,
-  # LOXMATTER_VERSION leer), kann nicht Ausgangspunkt eines Vergleichs sein.
-  # Ablehnen statt raten: der Nutzer sieht dann, dass er ein Image faehrt,
-  # das seine Herkunft nicht nennt - eine brauchbare Auskunft.
+  # A version that does not identify itself (a hand-built image,
+  # LOXMATTER_VERSION empty) cannot be the starting point of a comparison.
+  # Reject instead of guessing: the user then sees that they are running
+  # an image that does not state its provenance - a usable piece of
+  # information.
   case "$CUR" in
-    ''|unbekannt|dev) reject "die laufende Fassung nennt keine Version - Update nur ueber die Konsole" ;;
+    ''|unbekannt|dev) reject "the running version does not state a version - update only via the console" ;;
   esac
   if [ "$CUR" = "$NEW" ]; then
-    reject "diese Version laeuft bereits"
+    reject "this version is already running"
   fi
   if [ "$(printf '%s\n%s\n' "$CUR" "$NEW" | sort -V | head -1)" != "$CUR" ]; then
-    reject "aeltere Version - zurueck geht nur der Rueckfall"
+    reject "older version - only the rollback goes backward"
   fi
 fi
 
 set_state queued ""
-log "Auftrag $JOB_ID angenommen: $FROM -> $TO ($CHANNEL)"
+log "Request $JOB_ID accepted: $FROM -> $TO ($CHANNEL)"
 ```
 
 - [ ] **Step 4: Run tests to verify the rejection tests pass**
 
 Run: `uv run pytest tests/test_updater_script.py -v`
-Expected: alle bis auf `test_ein_gueltiges_ziel_wird_angenommen` und `test_derselbe_auftrag_wird_nicht_zweimal_ausgefuehrt` bestehen (die brauchen Task 3 — bis dahin ruft das Skript noch kein `docker` auf). Diese beiden **erwartet FAIL** lassen und in Task 3 grün ziehen.
+Expected: all pass except `test_ein_gueltiges_ziel_wird_angenommen` and `test_derselbe_auftrag_wird_nicht_zweimal_ausgefuehrt` (those need Task 3 — until then the script does not yet call `docker`). Leave these two **expected FAIL** and turn them green in Task 3.
 
 - [ ] **Step 5: Prove the security tests can fail**
 
-Kommentiere probeweise die `case "$CHANNEL"`-Musterprüfung für `stable` aus, führe `uv run pytest tests/test_updater_script.py -v` aus.
-Expected: `test_ein_ziel_mit_semikolon_wird_abgelehnt` und `test_ein_ziel_mit_fremder_registry_wird_abgelehnt` FAILEN. Danach zurücknehmen.
+Comment out the `case "$CHANNEL"` pattern check for `stable` on a trial basis, run `uv run pytest tests/test_updater_script.py -v`.
+Expected: `test_ein_ziel_mit_semikolon_wird_abgelehnt` and `test_ein_ziel_mit_fremder_registry_wird_abgelehnt` FAIL. Then revert.
 
 - [ ] **Step 6: shellcheck**
 
 Run: `shellcheck -s sh deploy/updater/update-once.sh`
-Expected: keine Meldungen
+Expected: no findings
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add deploy/updater/update-once.sh tests/test_updater_script.py
-git commit -m "feat(updater): Lebenszeichen und Auftragspruefung
+git commit -m "feat(updater): heartbeat and request validation
 
-Die Sicherheitsgrenze dieser Loesung liegt hier, nicht am Login: Kanal ist
-ein Enum, das Ziel muss ein festes Muster erfuellen, und weiter geht es
-nur vorwaerts. Der Image-Name wird spaeter im Skript zusammengesetzt, nie
-aus dem Auftrag uebernommen - ein Ziel, das wie ein Image aussieht, ist
-deshalb schlicht kein gueltiges Ziel.
+This solution's security boundary sits here, not at the login: the
+channel is an enum, the target must satisfy a fixed pattern, and from
+there it only ever moves forward. The image name is assembled later in
+the script, never taken over from the request - a target that looks like
+an image is therefore simply not a valid target.
 
-Die Tests belegen nicht nur, DASS abgelehnt wird, sondern dass im
-Aufrufprotokoll kein einziger docker-Aufruf steht. Eine Ablehnung, die
-vorher schon etwas getan hat, ist keine.
+The tests substantiate not only THAT a request is rejected, but that the
+call log shows not a single docker call. A rejection that has already
+done something before rejecting is not one.
 
-Das Lebenszeichen steht bewusst VOR der Auftragspruefung: die Bruecke
-blendet den Knopf aus, wenn es veraltet, und ein Beiwagen, der erst nach
-getaner Arbeit ein Lebenszeichen gibt, saehe waehrend jeder Arbeit wie ein
-abwesender aus.
+The heartbeat deliberately comes BEFORE request validation: the bridge
+hides the button once it goes stale, and a sidecar that only gives a
+heartbeat after finishing its work would look absent during every bit of
+that work.
 
-Zwei Tests bleiben vorerst rot - sie brauchen den Ablauf aus dem naechsten
-Commit.
+Two tests stay red for now - they need the flow from the next commit.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 3: Der Ablauf — sichern, ziehen, neu starten, gesund werden
+### Task 3: The flow — back up, pull, restart, become healthy
 
 **Files:**
-- Modify: `deploy/updater/update-once.sh` (anhängen)
-- Test: `tests/test_updater_script.py` (anhängen)
+- Modify: `deploy/updater/update-once.sh` (append)
+- Test: `tests/test_updater_script.py` (append)
 
 **Interfaces:**
-- Consumes: `JOB_ID`, `FROM`, `TO`, `CHANNEL` aus Task 2.
-- Produces: die Phasenfolge `backup` → `pull` → `recreate` → `health` → `done`, und `set_tag <wert>`, das `LOXMATTER_IMAGE_TAG` in der `.env` setzt. **Task 4 benutzt `set_tag` für den Rückfall.**
+- Consumes: `JOB_ID`, `FROM`, `TO`, `CHANNEL` from Task 2.
+- Produces: the phase sequence `backup` → `pull` → `recreate` → `health` → `done`, and `set_tag <value>`, which sets `LOXMATTER_IMAGE_TAG` in the `.env`. **Task 4 uses `set_tag` for the rollback.**
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -680,8 +675,8 @@ def test_der_tag_landet_in_der_env(updater):
 
 
 def test_die_env_behaelt_ihre_uebrigen_zeilen(updater):
-    # Die .env traegt MINISERVER_IP, RADIO_DEVICE, LOXMATTER_API_TOKEN. Ein
-    # Update, das sie ueberschreibt, nimmt die halbe Installation mit.
+    # The .env carries MINISERVER_IP, RADIO_DEVICE, LOXMATTER_API_TOKEN. An
+    # update that overwrites it takes half the installation down with it.
     env = updater.stack / ".env"
     env.write_text("MINISERVER_IP=10.0.1.9\nLOXMATTER_IMAGE_TAG=0.2.0\nRADIO_DEVICE=/dev/ttyUSB0\n", encoding="utf-8")
     _auftrag(updater, target="0.3.0")
@@ -703,23 +698,23 @@ def test_eine_sicherung_entsteht_vor_dem_ziehen(updater):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_updater_script.py -v`
-Expected: die sechs neuen FAILEN (`ValueError: substring not found` bzw. `phase == 'queued'`)
+Expected: the six new ones FAIL (`ValueError: substring not found` or `phase == 'queued'`)
 
 - [ ] **Step 3: Append the flow to the script**
 
-Ans Ende von `deploy/updater/update-once.sh`:
+Append to `deploy/updater/update-once.sh`:
 
 ```sh
-# ------------------------------------------------------------- Ablauf --
+# ------------------------------------------------------------------- flow --
 
 run() {
   log "\$ $*"
   "$@" >> "$LOG" 2>&1
 }
 
-# Ersetzt GENAU die eine Zeile und laesst den Rest der .env unberuehrt.
-# Dort stehen MINISERVER_IP, RADIO_DEVICE und das API-Token - ein Update,
-# das die Datei neu schreibt, nimmt die halbe Installation mit.
+# Replaces EXACTLY that one line and leaves the rest of the .env untouched.
+# It carries MINISERVER_IP, RADIO_DEVICE and the API token - an update
+# that rewrites the file takes half the installation down with it.
 set_tag() {
   if grep -q '^LOXMATTER_IMAGE_TAG=' "$ENV_FILE" 2>/dev/null; then
     sed -i -E "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$1|" "$ENV_FILE"
@@ -728,13 +723,13 @@ set_tag() {
   fi
 }
 
-# Wartet auf den ersten gesunden Ton. Die 120 Sekunden sind kein neuer
-# Wert, sondern der aus scripts/update.sh - und die Begruendung dort gilt
-# unveraendert: 20 Sekunden gingen genau so lange gut, bis ein Lauf am
-# 8. September knapp darueber kippte und das Skript einen Dienst als krank
-# meldete, der zehn Sekunden spaeter tadellos lief. Ein zu kurzes Fenster
-# ist hier die teurere Sorte Fehlalarm - es sieht aus wie ein kaputtes
-# Update und verleitet zum Zuruecksetzen eines Standes, der in Ordnung ist.
+# Waits for the first healthy beat. The 120 seconds are not a new value but
+# the one from scripts/update.sh - and the reasoning there still holds
+# unchanged: 20 seconds went fine for exactly that long, until a run on
+# September 8th tipped just past it and the script reported a service as
+# unhealthy that was working flawlessly ten seconds later. A window that is
+# too short is the more expensive kind of false alarm here - it looks like
+# a broken update and tempts one into rolling back a state that is fine.
 wait_healthy() {
   i=0
   while [ "$i" -lt "$HEALTH_TIMEOUT" ]; do
@@ -747,31 +742,31 @@ wait_healthy() {
   return 1
 }
 
-# 1. Sichern. Vor allem anderen: die Signaldatenbank ist das Einzige, was
-# ein misslungenes Update nicht wiederherstellen koennte - darin stehen die
-# Signalschluessel, und die sind die Verdrahtung in der Loxone-Konfiguration.
+# 1. Back up. Before anything else: the signal database is the one thing a
+# failed update could not restore - it holds the signal keys, and those
+# are the wiring into the Loxone configuration.
 set_state backup ""
 STAMP="$(date -u +%Y-%m-%d-%H%M%S)"
 if ! run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
-  set_state failed "Sicherung fehlgeschlagen - es wurde nichts geaendert"
+  set_state failed "backup failed - nothing was changed"
   exit 0
 fi
-# Nie die letzten zehn wegraeumen, wie in scripts/update.sh.
+# Never sweep away the last ten, as in scripts/update.sh.
 ls -1t "$BACKUP_DIR"/store-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
 
-# 2. Ziel holen. Die Compose-Datei muss zur Version passen: eine neue
-# Fassung kann einen neuen Dienst oder eine neue Variable brauchen.
+# 2. Fetch the target. The Compose file must match the version: a new
+# release can need a new service or a new variable.
 set_state pull ""
 if ! run git -C "$REPO" fetch --tags --force origin; then
-  set_state failed "git fetch fehlgeschlagen"
+  set_state failed "git fetch failed"
   exit 0
 fi
 
 if [ "$CHANNEL" = "dev" ]; then
-  # Die Entsprechung zu "nur vorwaerts" fuer den dev-Kanal (Spec-Abschnitt
-  # 10, Regel 3): ueber SHAs gibt es keine Ordnung, wohl aber Abstammung.
+  # The dev channel's equivalent of "forward only" (spec section 10,
+  # rule 3): there is no ordering over SHAs, but there is ancestry.
   if ! git -C "$REPO" merge-base --is-ancestor HEAD "$TARGET" 2>/dev/null; then
-    reject "kein Nachfahre des laufenden Standes"
+    reject "not a descendant of the running state"
   fi
   REF="$TARGET"
 else
@@ -779,37 +774,37 @@ else
 fi
 
 if ! run git -C "$REPO" checkout --detach "$REF"; then
-  set_state failed "Ziel $REF im Repository nicht gefunden"
+  set_state failed "target $REF not found in the repository"
   exit 0
 fi
 
-# Der Image-Name wird HIER zusammengesetzt, aus einer festen Konstante und
-# einem geprueften Ziel - er kommt nie aus dem Auftrag (Spec-Abschnitt 10,
-# Regel 2). Deshalb steht $IMAGE unten auch nur im Log, nicht als Argument:
-# den Namen bildet Compose aus der .env-Zeile, die set_tag geschrieben hat.
-log "Ziel-Image: $IMAGE:${TARGET#v}"
+# The image name is assembled HERE, from a fixed constant and a validated
+# target - it never comes from the request (spec section 10, rule 2).
+# That is also why $IMAGE below appears only in the log, not as an
+# argument: Compose forms the name from the .env line that set_tag wrote.
+log "target image: $IMAGE:${TARGET#v}"
 set_tag "${TARGET#v}"
 
 if ! run docker compose --project-directory "$STACK" pull "$SERVICE"; then
   set_tag "$FROM"
-  set_state failed "Image nicht ladbar - der laufende Dienst bleibt unveraendert"
+  set_state failed "image could not be pulled - the running service is unchanged"
   exit 0
 fi
 
-# 3. Austauschen. --no-deps: matter-server und OTBR bleiben unangetastet,
-# und der Beiwagen tauscht sich nicht selbst aus - das beendete ihn mitten
-# im eigenen Auftrag.
+# 3. Replace it. --no-deps: matter-server and OTBR stay untouched, and the
+# sidecar does not replace itself - that would terminate it in the middle
+# of its own request.
 set_state recreate ""
 if ! run docker compose --project-directory "$STACK" up -d --no-deps --force-recreate "$SERVICE"; then
-  set_state failed "Neustart fehlgeschlagen"
+  set_state failed "restart failed"
   exit 0
 fi
 
-# 4. Auf den ersten gesunden Ton warten.
+# 4. Wait for the first healthy beat.
 set_state health ""
 if wait_healthy; then
   set_state done ""
-  log "Update auf $TO abgeschlossen"
+  log "Update to $TO complete"
   exit 0
 fi
 
@@ -819,48 +814,48 @@ set_state rollback ""
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_updater_script.py -v`
-Expected: alle bestehen (die Attrappe `curl` antwortet sofort gesund, also endet der Lauf bei `done`)
+Expected: all pass (the `curl` fake responds healthy immediately, so the run ends at `done`)
 
 - [ ] **Step 5: Prove the `.env` test can fail**
 
-Ersetze `set_tag` probeweise durch `printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" > "$ENV_FILE"` und führe die Tests aus.
-Expected: `test_die_env_behaelt_ihre_uebrigen_zeilen` FAILT. Danach zurücknehmen.
+Replace `set_tag` on a trial basis with `printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" > "$ENV_FILE"` and run the tests.
+Expected: `test_die_env_behaelt_ihre_uebrigen_zeilen` FAILS. Then revert.
 
 - [ ] **Step 6: shellcheck, commit**
 
 ```bash
 shellcheck -s sh deploy/updater/update-once.sh
 git add deploy/updater/update-once.sh tests/test_updater_script.py
-git commit -m "feat(updater): sichern, ziehen, neu starten, gesund werden
+git commit -m "feat(updater): back up, pull, restart, become healthy
 
-Die Reihenfolge ist die von scripts/update.sh, samt der 120 Sekunden und
-ihrer Begruendung: 20 gingen genau so lange gut, bis ein Lauf am
-8. September knapp darueber kippte und einen Dienst als krank meldete, der
-zehn Sekunden spaeter tadellos lief.
+The order is the one from scripts/update.sh, including the 120 seconds
+and their reasoning: 20 went fine for exactly that long, until a run on
+September 8th tipped just past it and reported a service as unhealthy
+that was working flawlessly ten seconds later.
 
-set_tag ersetzt genau eine Zeile der .env statt sie neu zu schreiben -
-dort stehen MINISERVER_IP, RADIO_DEVICE und das API-Token, und ein Update,
-das die Datei ueberbuegelt, nimmt die halbe Installation mit. Ein Test
-haelt das fest.
+set_tag replaces exactly one line of the .env instead of rewriting it -
+it carries MINISERVER_IP, RADIO_DEVICE and the API token, and an update
+that steamrolls the file takes half the installation down with it. A
+test pins this down.
 
-Der dev-Kanal bekommt hier seine Entsprechung zu 'nur vorwaerts': ueber
-SHAs gibt es keine Ordnung, wohl aber Abstammung - merge-base
---is-ancestor gegen den laufenden Stand.
+The dev channel gets its equivalent of 'forward only' here: there is no
+ordering over SHAs, but there is ancestry - merge-base --is-ancestor
+against the running state.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 4: Der Rückfall, die Klartextdatei und der Selbstaustausch
+### Task 4: The rollback, the plain-text file, and the self-replacement
 
 **Files:**
-- Modify: `deploy/updater/update-once.sh` (anhängen)
-- Test: `tests/test_updater_script.py` (anhängen)
+- Modify: `deploy/updater/update-once.sh` (append)
+- Test: `tests/test_updater_script.py` (append)
 
 **Interfaces:**
-- Consumes: `set_tag`, `wait_healthy`, `run`, `FROM`, `TO` aus Task 3.
-- Produces: Endphasen `done` und `failed` mit `rolled_back` und `healthy`; die Datei `LETZTER-FEHLSCHLAG.txt`.
+- Consumes: `set_tag`, `wait_healthy`, `run`, `FROM`, `TO` from Task 3.
+- Produces: end phases `done` and `failed` with `rolled_back` and `healthy`; the file `LETZTER-FEHLSCHLAG.txt`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -869,8 +864,8 @@ Ans Ende von `tests/test_updater_script.py`:
 ```python
 @pytest.fixture
 def kranker_dienst(updater, tmp_path):
-    """Dieselbe Umgebung, aber `curl` antwortet nie gesund - der Fall, fuer
-    den es den Rueckfall gibt."""
+    """The same environment, but `curl` never responds healthy - the case
+    the rollback exists for."""
     curl = tmp_path / "bin" / "curl"
     curl.write_text('#!/bin/sh\nprintf "curl %s\\n" "$*" >> "$STUB_LOG"\nexit 7\n', encoding="utf-8")
     curl.chmod(0o755)
@@ -891,25 +886,25 @@ def test_der_rueckfall_setzt_den_alten_tag_zurueck(kranker_dienst):
 
 
 def test_der_rueckfall_laeuft_genau_einmal(kranker_dienst):
-    # Kein Flattern: zwei `up`-Aufrufe (Update und Rueckfall), nicht mehr.
+    # No flapping: two `up` calls (update and rollback), no more.
     _auftrag(kranker_dienst, target="0.3.0")
     _, calls, _ = kranker_dienst()
     assert len([line for line in calls.splitlines() if "compose up" in line]) == 2
 
 
 def test_der_rueckfall_ruehrt_die_datenbank_nicht_an(kranker_dienst):
-    # Spec-Abschnitt 8: die alte Fassung laeuft auf dem neuen Schema
-    # (`_migrate` kehrt bei version >= _SCHEMA_VERSION sofort zurueck).
-    # Die Sicherung zurueckzuspielen ist der destruktivere Schritt und
-    # bleibt eine ausdrueckliche Handlung in der Oberflaeche.
+    # Spec section 8: the old version runs on the new schema
+    # (`_migrate` returns immediately once version >= _SCHEMA_VERSION).
+    # Restoring the backup is the more destructive step and stays an
+    # explicit action in the web UI.
     _auftrag(kranker_dienst, target="0.3.0")
     _, calls, _ = kranker_dienst()
-    # Genau auf das Entpacken pruefen, nicht auf ein beliebiges "-x": das
-    # traefe sonst jeden kuenftigen Aufruf, der zufaellig ein -x-Flag traegt,
-    # und der Test wuerde aus einem Grund rot, der mit seiner Aussage nichts
-    # zu tun hat.
+    # Check specifically for the unpacking, not for an arbitrary "-x": that
+    # would otherwise trip on any future call that happens to carry an
+    # -x flag, and the test would go red for a reason that has nothing to
+    # do with its claim.
     tar_aufrufe = [line for line in calls.splitlines() if line.startswith("tar ")]
-    assert tar_aufrufe, "die Sicherung selbst muss stattgefunden haben"
+    assert tar_aufrufe, "the backup itself must have taken place"
     for line in tar_aufrufe:
         assert " -x" not in line and "xzf" not in line, line
 
@@ -932,91 +927,90 @@ def test_ein_gelungenes_update_hinterlaesst_keine_fehlschlagdatei(updater):
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `uv run pytest tests/test_updater_script.py -v`
-Expected: die sechs neuen FAILEN — der Lauf endet bislang in `rollback` und tut dort nichts
+Expected: the six new ones FAIL — the run currently ends at `rollback` and does nothing there
 
 - [ ] **Step 3: Append the rollback**
 
-Ans Ende von `deploy/updater/update-once.sh` (die Zeile `set_state rollback ""` aus Task 3 bleibt stehen und wird damit fortgesetzt):
+Append to `deploy/updater/update-once.sh` (the line `set_state rollback ""` from Task 3 stays in place and is thereby continued):
 
 ```sh
-# ----------------------------------------------------------- Rueckfall --
-# Ausgeloest, weil /health binnen HEALTH_TIMEOUT nicht antwortete.
+# --------------------------------------------------------------- rollback --
+# Triggered because /health did not respond within HEALTH_TIMEOUT.
 #
-# Was hier BEWUSST NICHT passiert: die Datenbank wird nicht
-# zurueckgespielt. `_migrate` in model/store.py kehrt bei
-# `version >= _SCHEMA_VERSION` sofort zurueck - die alte Fassung startet
-# also auf dem neuen Schema, und da alle bisherigen Migrationen
-# ALTER TABLE ADD COLUMN sind (in SQLite zwingend nullable oder mit
-# Vorgabewert), schreibt sie weiter gueltige Zeilen. Der Image-Rueckfall
-# allein genuegt, um das Haus wieder ans Laufen zu bringen.
+# What deliberately does NOT happen here: the database is not restored.
+# `_migrate` in model/store.py returns immediately once
+# `version >= _SCHEMA_VERSION` - so the old version starts up on the new
+# schema, and since every migration so far is an ALTER TABLE ADD COLUMN
+# (in SQLite necessarily nullable or with a default), it goes on writing
+# valid rows. The image rollback alone is enough to bring the house back
+# up.
 #
-# Die Sicherung zurueckzuspielen waere der destruktivere Schritt: er
-# verwirft alles seit dem Sicherungszeitpunkt. Das tut man nicht
-# selbsttaetig um zwei Uhr nachts, wenn niemand hinsieht - es steht in der
-# Oberflaeche als eigener, ausdruecklich zu bestaetigender Knopf.
-# WOHIN zurueckgefallen wird, ist nicht dasselbe wie WOHER das Update kam.
-# Stand in der .env ein wandernder Alias ("stable", der Normalfall auf jeder
-# frischen Installation seit 0.2.0), dann zeigt dieser Alias in der Registry
-# INZWISCHEN AUF DIE GESCHEITERTE VERSION. Ihn zurueckzuschreiben hiesse,
-# beim naechsten `compose pull` genau den Stand wiederzuholen, der gerade
-# nicht gesund wurde - und niemand haette eine Erinnerung daran, dass je ein
-# Rueckfall stattfand.
+# Restoring the backup would be the more destructive step: it discards
+# everything since the backup was taken. That is not something to do
+# automatically at two in the morning when nobody is watching - it sits
+# in the web UI as its own button that must be confirmed explicitly.
+# WHERE the rollback lands is not the same as WHERE the update came from.
+# If the .env held a moving alias ("stable", the normal case on every
+# fresh installation since 0.2.0), that alias in the registry now points
+# AT THE FAILED VERSION. Writing it back would mean fetching exactly the
+# state that just failed to become healthy on the next `compose pull` -
+# and nobody would have any record that a rollback ever happened.
 #
-# Zurueckgeschrieben wird deshalb die konkrete Fassung, die vorher LIEF.
-# Nur wenn die sich nicht ermitteln liess, bleibt der alte Eintrag die
-# einzige verfuegbare Auskunft.
+# What gets written back is therefore the concrete version that was
+# RUNNING before. Only when that could not be determined does the old
+# entry remain the only information available.
 case "$RUNNING" in
   ''|unbekannt|dev) BACK="$FROM" ;;
   *)                BACK="${RUNNING#v}" ;;
 esac
-log "Update auf $TO nicht gesund nach ${HEALTH_TIMEOUT}s - Rueckfall auf $BACK"
+log "Update to $TO not healthy after ${HEALTH_TIMEOUT}s - rolling back to $BACK"
 ROLLED=true
 set_state rollback ""
 set_tag "$BACK"
 run git -C "$REPO" checkout --detach "$GIT_BEFORE" || true
 run docker compose --project-directory "$STACK" up -d --no-deps --force-recreate "$SERVICE" || true
 
-# Genau einmal. Kein zweiter Versuch, kein Flattern: waere die Ursache
-# nicht das Image (sondern etwa ein toter matter-server), brachte jeder
-# weitere Durchlauf nur weitere Ausfallzeit.
+# Exactly once. No second attempt, no flapping: if the cause were not the
+# image (but, say, a dead matter-server), every further run would only add
+# more downtime.
 if wait_healthy; then
   HEALTHY=true
 else
   HEALTHY=false
 fi
 
-set_state failed "Version $TO wurde nach ${HEALTH_TIMEOUT}s nicht gesund"
+set_state failed "version $TO did not become healthy after ${HEALTH_TIMEOUT}s"
 
-# Wenn auch der Rueckfall nicht gesund wurde, ist die Oberflaeche
-# wahrscheinlich gar nicht erreichbar - dann ist diese Datei die einzige
-# Antwort, die jemand findet, der doch per SSH nachsieht. Sie steht auch
-# im geglueckten Rueckfall da: wer wissen will, warum seine Version wieder
-# die alte ist, soll es nachlesen koennen.
+# If even the rollback did not become healthy, the web UI is probably not
+# reachable at all - then this file is the only answer someone finds who
+# checks in over SSH after all. It is also written on a successful
+# rollback: anyone who wants to know why their version is the old one
+# again should be able to read up on it.
 {
-  printf 'loxmatter - letzter fehlgeschlagener Updateversuch\n\n'
-  printf 'Zeitpunkt:      %s\n' "$(now)"
-  printf 'Versucht:       %s -> %s (Kanal %s)\n' "$FROM" "$TO" "$CHANNEL"
-  printf 'Zurueckgesetzt: ja, auf %s\n' "$FROM"
-  printf 'Wieder gesund:  %s\n\n' "$([ "$HEALTHY" = true ] && echo ja || echo NEIN)"
-  printf 'Sicherung der Signaldatenbank:\n  %s\n\n' "$BACKUP_DIR/store-$STAMP.tgz"
-  printf 'Von Hand weiter:\n'
+  printf 'loxmatter - last failed update attempt\n\n'
+  printf 'Time:           %s\n' "$(now)"
+  printf 'Attempted:      %s -> %s (channel %s)\n' "$FROM" "$TO" "$CHANNEL"
+  printf 'Rolled back:    yes, to %s\n' "$FROM"
+  printf 'Healthy again:  %s\n\n' "$([ "$HEALTHY" = true ] && echo yes || echo NO)"
+  printf 'Signal database backup:\n  %s\n\n' "$BACKUP_DIR/store-$STAMP.tgz"
+  printf 'Manual next steps:\n'
   printf '  cd %s && docker compose logs --tail 100 %s\n' "$STACK" "$SERVICE"
   printf '  cd %s && ./scripts/update.sh --no-pull\n' "$REPO"
-  printf '  # Sicherung zurueckspielen (verwirft alles seither):\n'
+  printf '  # Restore the backup (discards everything since):\n'
   printf '  #   docker compose stop %s\n' "$SERVICE"
   printf '  #   tar xzf %s -C /var/lib/docker/volumes/.../\n\n' "$BACKUP_DIR/store-$STAMP.tgz"
-  printf 'Letzte Zeilen des Protokolls:\n'
+  printf 'Last lines of the log:\n'
   tail -n 40 "$LOG" 2>/dev/null || true
 } > "$FAILURE"
 ```
 
-Und in Task 3, direkt nach `FROM="$(current_tag)"` in Task 2, ergänzen (damit `GIT_BEFORE` existiert):
+And in Task 3, right after `FROM="$(current_tag)"` from Task 2, add (so that `GIT_BEFORE` exists):
 
 ```sh
 GIT_BEFORE="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo HEAD)"
 ```
 
-Außerdem im Erfolgszweig aus Task 3, vor `set_state done ""`:
+Also, in the success branch from Task 3, before `set_state done ""`:
 
 ```sh
   rm -f "$FAILURE"
@@ -1025,32 +1019,32 @@ Außerdem im Erfolgszweig aus Task 3, vor `set_state done ""`:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/test_updater_script.py -v`
-Expected: alle bestehen
+Expected: all pass
 
-- [ ] **Step 5: Prove the "genau einmal" test can fail**
+- [ ] **Step 5: Prove the "exactly once" test can fail**
 
-Umschließe den Rückfallblock probeweise mit `for _ in 1 2; do … done` und führe die Tests aus.
-Expected: `test_der_rueckfall_laeuft_genau_einmal` FAILT (`3 != 2`). Danach zurücknehmen.
+Wrap the rollback block on a trial basis with `for _ in 1 2; do … done` and run the tests.
+Expected: `test_der_rueckfall_laeuft_genau_einmal` FAILS (`3 != 2`). Then revert.
 
 - [ ] **Step 6: Append the self-replacement**
 
-Ganz ans Ende des Erfolgszweigs, **nach** `set_state done ""`:
+Right at the end of the success branch, **after** `set_state done ""`:
 
 ```sh
-# Zuletzt, und nur nach einem geglueckten Update: der Beiwagen prueft, ob
-# sein eigenes Image veraltet ist, und stoesst abgekoppelt seinen eigenen
-# Austausch an. NACH dem Schreiben von `done`, nie vorher - sonst beendet
-# er sich mitten im Schreiben des Zustands, den die Oberflaeche gerade
-# liest, und ein gelungenes Update saehe aus wie ein haengendes.
+# Last, and only after a successful update: the sidecar checks whether
+# its own image is out of date, and kicks off its own replacement
+# detached. AFTER writing `done`, never before - otherwise it would
+# terminate itself in the middle of writing the state the web UI is
+# currently reading, and a successful update would look like a stuck one.
 #
-# Abgekoppelt ueber `-d`: der Aufruf, der diesen Container ersetzt, darf
-# nicht in diesem Container auf sein eigenes Ende warten.
+# Detached via `-d`: the call that replaces this container must not wait
+# inside this container for its own end.
 if [ "${LOXMATTER_UPDATER_SELF_REPLACE:-1}" = "1" ]; then
   run docker compose --project-directory "$STACK" up -d --no-deps loxmatter-updater || true
 fi
 ```
 
-Im Test-Fixture aus Task 2 die Zeile `"LOXMATTER_UPDATER_SELF_REPLACE": "0",` zum `env`-Wörterbuch hinzufügen — sonst zählt `test_der_neustart_laesst_die_nachbardienste_in_ruhe` einen `up`-Aufruf mit, der den Beiwagen meint. Dazu ein eigener Test:
+Add the line `"LOXMATTER_UPDATER_SELF_REPLACE": "0",` to the `env` dict in the test fixture from Task 2 — otherwise `test_der_neustart_laesst_die_nachbardienste_in_ruhe` would count an `up` call meant for the sidecar itself. Plus a dedicated test:
 
 ```python
 def test_der_beiwagen_tauscht_sich_erst_nach_dem_erfolg_aus(updater):
@@ -1071,58 +1065,56 @@ def test_nach_einem_fehlschlag_tauscht_er_sich_nicht_aus(kranker_dienst):
 - [ ] **Step 7: Run all updater tests, shellcheck, commit**
 
 Run: `uv run pytest tests/test_updater_script.py -v && shellcheck -s sh deploy/updater/update-once.sh`
-Expected: alles grün
+Expected: all green
 
 ```bash
 git add deploy/updater/update-once.sh tests/test_updater_script.py
-git commit -m "feat(updater): Rueckfall, Klartextdatei, Selbstaustausch
+git commit -m "feat(updater): rollback, plain-text file, self-replacement
 
-Der Rueckfall tauscht das Image zurueck und laesst die Datenbank in Ruhe.
-Das steht auf einem gepruefen Befund, nicht auf einer Annahme: _migrate in
-model/store.py kehrt bei version >= _SCHEMA_VERSION sofort zurueck, die
-alte Fassung laeuft also auf dem neuen Schema. Die Sicherung
-zurueckzuspielen ist der destruktivere Schritt - er verwirft alles seit
-dem Sicherungszeitpunkt - und bleibt eine ausdrueckliche Handlung in der
-Oberflaeche.
+The rollback swaps the image back and leaves the database alone. That
+rests on a verified finding, not an assumption: _migrate in
+model/store.py returns immediately once version >= _SCHEMA_VERSION, so
+the old version runs on the new schema. Restoring the backup is the more
+destructive step - it discards everything since the backup was taken -
+and stays an explicit action in the web UI.
 
-Genau einmal, kein Flattern: waere die Ursache nicht das Image, sondern
-etwa ein toter matter-server, brachte jeder weitere Durchlauf nur weitere
-Ausfallzeit.
+Exactly once, no flapping: if the cause were not the image but, say, a
+dead matter-server, every further run would only add more downtime.
 
-LETZTER-FEHLSCHLAG.txt entsteht auch bei gegluecktem Rueckfall. Wenn die
-Oberflaeche nicht hochkommt, ist sie die einzige Antwort, die jemand
-findet, der doch per SSH nachsieht - und wer nur wissen will, warum seine
-Version wieder die alte ist, soll es nachlesen koennen.
+LETZTER-FEHLSCHLAG.txt is written even on a successful rollback. If the
+web UI does not come up, it is the only answer someone finds who checks
+in over SSH after all - and anyone who just wants to know why their
+version is the old one again should be able to read up on it.
 
-Der Selbstaustausch steht NACH dem Schreiben von done: davor beendete er
-sich mitten im Schreiben des Zustands, den die Oberflaeche gerade liest,
-und ein gelungenes Update saehe aus wie ein haengendes.
+The self-replacement sits AFTER writing done: before that it would
+terminate itself in the middle of writing the state the web UI is
+currently reading, and a successful update would look like a stuck one.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 5: Der Beiwagen im Stack
+### Task 5: The sidecar in the stack
 
 **Files:**
 - Modify: `deploy/testhost/docker-compose.yml`
-- Test: `tests/test_compose_profiles.py` (anhängen)
+- Test: `tests/test_compose_profiles.py` (append)
 
 **Interfaces:**
-- Consumes: das Image aus Task 1, die Umgebungsnamen aus Task 2.
-- Produces: den laufenden Dienst `loxmatter-updater` mit Zugriff auf `loxmatter-store`, den Checkout und den Docker-Socket.
+- Consumes: the image from Task 1, the environment variable names from Task 2.
+- Produces: the running service `loxmatter-updater` with access to `loxmatter-store`, the checkout, and the Docker socket.
 
 - [ ] **Step 1: Write the failing tests**
 
-Ans Ende von `tests/test_compose_profiles.py`:
+Append to `tests/test_compose_profiles.py`:
 
 ```python
 def test_der_updater_hat_kein_netz_nach_aussen_offen() -> None:
-    # Die tragende Absicherung dieses Containers: er haelt den
-    # Docker-Socket und ist damit root-gleichwertig auf dem Host. Anders
-    # als die drei uebrigen Dienste steht er deshalb NICHT im Host-Netz und
-    # veroeffentlicht keinen Port.
+    # The load-bearing safeguard for this container: it holds the Docker
+    # socket and is thereby root-equivalent on the host. Unlike the three
+    # other services, it therefore does NOT sit on the host network and
+    # publishes no port.
     updater = _stack()["services"]["loxmatter-updater"]
     assert "ports" not in updater
     assert updater.get("network_mode") != "host"
@@ -1135,13 +1127,13 @@ def test_nur_der_updater_hat_den_docker_socket() -> None:
 
 
 def test_der_updater_sieht_dieselbe_datenbank_wie_die_bruecke() -> None:
-    # Die Verstaendigung laeuft ueber Dateien in genau diesem Volume.
+    # Communication runs through files in exactly this volume.
     updater = _stack()["services"]["loxmatter-updater"]
     assert any(str(v).startswith("loxmatter-store:") for v in updater["volumes"])
 
 
 def test_der_updater_erreicht_die_gesundheitsroute_des_hosts() -> None:
-    # Er haengt im Compose-Standardnetz; 127.0.0.1 waere dort er selbst.
+    # It sits on Compose's default network; 127.0.0.1 there would be itself.
     updater = _stack()["services"]["loxmatter-updater"]
     assert any("host-gateway" in str(h) for h in updater["extra_hosts"])
 
@@ -1158,48 +1150,48 @@ Expected: FAIL — `KeyError: 'loxmatter-updater'`
 
 - [ ] **Step 3: Add the service**
 
-In `deploy/testhost/docker-compose.yml`, nach dem Dienst `loxmatter`:
+In `deploy/testhost/docker-compose.yml`, after the service `loxmatter`:
 
 ```yaml
-  # Der Updater-Beiwagen (Entwurf "Updates ueber die Oberflaeche
-  # einspielen", 2026-09-08, Abschnitt 6). Er existiert, weil die Bruecke
-  # sich nicht selbst ersetzen kann: der Prozess, der `up -d
-  # --force-recreate` aufriefe, waere genau der, den dieser Aufruf beendet.
+  # The updater sidecar (design "Applying updates through the web UI",
+  # 2026-09-08, section 6). It exists because the bridge cannot replace
+  # itself: the process that would invoke `up -d --force-recreate` would
+  # be exactly the one that call terminates.
   #
-  # DIESER CONTAINER IST ROOT-GLEICHWERTIG AUF DEM HOST. Der Docker-Socket
-  # gibt das her, daran laesst sich nichts abschwaechen. Abgesichert wird
-  # es durch Enge, nicht durch Rechte:
+  # THIS CONTAINER IS ROOT-EQUIVALENT ON THE HOST. The Docker socket
+  # grants that, and nothing softens it. It is secured through narrowness,
+  # not through privileges:
   #
-  #   - Kein `network_mode: host` und keine `ports:`. Er haengt im
-  #     Compose-Standardnetz - nach draussen erreichbar (git fetch), aus
-  #     dem LAN nicht. Genau das unterscheidet ihn von den drei anderen
-  #     Diensten hier und ist der Grund, warum er den Socket haben darf.
-  #   - Kein Netzdienst: die Verstaendigung mit der Bruecke laeuft
-  #     ausschliesslich ueber Dateien in loxmatter-store (/data/update/).
-  #   - Ein einziges festes Arbeitsprogramm. Er fuehrt nie Text aus dem
-  #     Auftrag aus (siehe update-once.sh).
+  #   - No `network_mode: host` and no `ports:`. It sits on Compose's
+  #     default network - reachable outward (git fetch), not from the
+  #     LAN. That is exactly what distinguishes it from the three other
+  #     services here and the reason it is allowed to hold the socket.
+  #   - No network service: communication with the bridge runs
+  #     exclusively through files in loxmatter-store (/data/update/).
+  #   - A single fixed work program. It never executes text from the
+  #     request (see update-once.sh).
   #
-  # Wer das nicht will, streicht diesen Dienst. Die Bruecke merkt das am
-  # veralteten Lebenszeichen, blendet den Knopf aus und nennt den
-  # Konsolenweg - kein toter Knopf, keine Meldung, die nach Defekt klingt.
+  # Anyone who does not want this can strike this service. The bridge
+  # notices via the stale heartbeat, hides the button, and names the
+  # console route - no dead button, no message that sounds like a defect.
   loxmatter-updater:
     image: ghcr.io/lucienkerl/loxmatter-updater:stable
     container_name: loxmatter-updater
     restart: unless-stopped
-    # Damit `curl http://host.docker.internal:8080/health` den Dienst auf
-    # dem Host trifft: aus diesem Container heraus waere 127.0.0.1 er
-    # selbst, nicht die Bruecke.
+    # So that `curl http://host.docker.internal:8080/health` reaches the
+    # service on the host: from inside this container, 127.0.0.1 would be
+    # itself, not the bridge.
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # Root-gleichwertig - siehe oben.
+      # Root-equivalent - see above.
       - /var/run/docker.sock:/var/run/docker.sock
-      # Der Checkout: die Compose-Datei muss zur Zielversion passen, eine
-      # neue Fassung kann einen neuen Dienst oder eine neue Variable
-      # brauchen. Schreibbar, weil `git checkout` hineinschreibt.
+      # The checkout: the Compose file must match the target version, a
+      # new release can need a new service or a new variable. Writable,
+      # because `git checkout` writes into it.
       - ../..:/repo
-      # Dasselbe Volume wie die Bruecke: hier liegen Auftrag, Zustand,
-      # Protokoll und die Sicherungen.
+      # The same volume as the bridge: this is where the request, state,
+      # log, and backups live.
       - loxmatter-store:/data
     environment:
       LOXMATTER_UPDATE_DIR: /data/update
@@ -1219,8 +1211,8 @@ Expected: 11 passed
 
 - [ ] **Step 5: Prove the socket test can fail**
 
-Hänge probeweise `/var/run/docker.sock:/var/run/docker.sock` auch beim Dienst `loxmatter` ein und führe die Tests aus.
-Expected: `test_nur_der_updater_hat_den_docker_socket` FAILT. Danach zurücknehmen.
+Mount `/var/run/docker.sock:/var/run/docker.sock` on a trial basis on the `loxmatter` service too, and run the tests.
+Expected: `test_nur_der_updater_hat_den_docker_socket` FAILS. Then revert.
 
 - [ ] **Step 6: Bring it up on the test host and watch it breathe**
 
@@ -1229,55 +1221,55 @@ cd deploy/testhost && docker compose up -d loxmatter-updater
 sleep 5
 docker exec loxmatter cat /data/update/state.json
 ```
-Expected: `{"id":null,"phase":"idle",...,"updater_seen_at":"2026-..."}` — und der Zeitstempel wandert bei jedem erneuten Aufruf weiter.
+Expected: `{"id":null,"phase":"idle",...,"updater_seen_at":"2026-..."}` — and the timestamp keeps moving forward on every further call.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add deploy/testhost/docker-compose.yml tests/test_compose_profiles.py
-git commit -m "feat(compose): den Updater-Beiwagen in den Stack nehmen
+git commit -m "feat(compose): add the updater sidecar to the stack
 
-Er haelt den Docker-Socket und ist damit root-gleichwertig auf dem Host -
-das steht unverkuerzt im Kommentar, es laesst sich nicht abschwaechen.
-Abgesichert wird es durch Enge: kein Host-Netz, keine Ports, kein
-Netzdienst, ein festes Arbeitsprogramm. Genau das unterscheidet ihn von
-den drei anderen Diensten hier, die alle im Host-Netz stehen.
+It holds the Docker socket and is thereby root-equivalent on the host -
+that is stated in full in the comment, and nothing softens it. It is
+secured through narrowness: no host network, no ports, no network
+service, a fixed work program. That is exactly what distinguishes it
+from the three other services here, all of which sit on the host
+network.
 
-Tests halten die drei Eigenschaften fest, auf denen das ruht - und die
-dritte prueft nicht nur, dass der Beiwagen den Socket hat, sondern dass
-sonst NIEMAND ihn hat.
+Tests pin down the three properties this rests on - and the third checks
+not only that the sidecar has the socket, but that NOBODY else does.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 6: `loxmatter.update` — Auftrag schreiben, Zustand lesen
+### Task 6: `loxmatter.update` — write the request, read the state
 
 **Files:**
 - Create: `src/loxmatter/update.py`
 - Test: `tests/test_update_module.py`
 
 **Interfaces:**
-- Consumes: die Dateiformate aus Task 2–4.
+- Consumes: the file formats from Task 2–4.
 - Produces:
   - `UpdateState` (frozen dataclass: `phase: str`, `id: str | None`, `from_version: str | None`, `to_version: str | None`, `error: str | None`, `rolled_back: bool`, `healthy: bool`, `updater_seen_at: str | None`)
   - `read_state(update_dir: Path) -> UpdateState | None`
   - `read_log(update_dir: Path, lines: int = 40) -> list[str]`
   - `updater_present(state: UpdateState | None, *, now: datetime, max_age_seconds: int = 30) -> bool`
-  - `request_update(update_dir: Path, *, channel: str, target: str) -> str` (gibt die neue `id` zurück)
+  - `request_update(update_dir: Path, *, channel: str, target: str) -> str` (returns the new `id`)
   - `UpdateBusyError`
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/test_update_module.py` (GPL-Kopf, dann):
+`tests/test_update_module.py` (GPL header, then):
 
 ```python
-"""Tests fuer die Dateiseite des Updates - Entwurf "Updates ueber die
-Oberflaeche einspielen" (2026-09-08), Abschnitt 7.
+"""Tests for the file side of the update - design "Applying updates
+through the web UI" (2026-09-08), section 7.
 
-Dieses Modul fasst nur Dateien an, nie das Netz und nie HTTP. Deshalb
-laeuft hier alles gegen ein tmp_path-Verzeichnis, ohne Attrappen."""
+This module touches only files, never the network and never HTTP. So
+everything here runs against a tmp_path directory, without fakes."""
 
 from __future__ import annotations
 
@@ -1308,10 +1300,10 @@ def test_ohne_zustandsdatei_gibt_es_keinen_zustand(tmp_path):
 
 
 def test_eine_halb_geschriebene_datei_gilt_als_kein_zustand(tmp_path):
-    # Der Beiwagen schreibt atomar (temp + rename), aber ein abgeschnittenes
-    # JSON darf hier trotzdem keinen 500er ausloesen: die Oberflaeche fragt
-    # diese Route im Sekundentakt, und ein einzelner Fehlschlag saehe dort
-    # aus wie ein kaputtes Update.
+    # The sidecar writes atomically (temp + rename), but a truncated JSON
+    # must still not trigger a 500 here: the web UI polls this route once
+    # a second, and a single failure would look there like a broken
+    # update.
     (tmp_path / "state.json").write_text('{"phase": "pu', encoding="utf-8")
     assert read_state(tmp_path) is None
 
@@ -1333,9 +1325,9 @@ def test_ein_frisches_lebenszeichen_heisst_beiwagen_da(tmp_path):
 
 
 def test_ein_altes_lebenszeichen_heisst_kein_beiwagen(tmp_path):
-    # Er meldet sich alle zwei Sekunden. Eine halbe Minute Stille heisst,
-    # dass niemand den Auftrag abholen wuerde - dann darf die Oberflaeche
-    # keinen Knopf zeigen, der nichts tut.
+    # It reports in every two seconds. Half a minute of silence means
+    # nobody would pick up the request - the web UI must then not show a
+    # button that does nothing.
     _state(tmp_path)
     assert updater_present(read_state(tmp_path), now=JETZT + timedelta(seconds=90)) is False
 
@@ -1374,9 +1366,9 @@ def test_nach_einem_abgeschlossenen_update_geht_ein_neuer(tmp_path):
 
 
 def test_der_auftrag_wird_atomar_geschrieben(tmp_path, monkeypatch):
-    """Der Beiwagen liest alle zwei Sekunden. Saehe er die Datei halb
-    geschrieben, lehnte er einen gueltigen Auftrag als ungueltig ab - und
-    weil er jede id nur einmal anfasst, kaeme dieser Auftrag nie wieder."""
+    """The sidecar reads every two seconds. If it saw the file half
+    written, it would reject a valid request as invalid - and because it
+    touches each id only once, that request would never come again."""
     gesehen = []
     echtes_replace = __import__("os").replace
 
@@ -1387,7 +1379,7 @@ def test_der_auftrag_wird_atomar_geschrieben(tmp_path, monkeypatch):
     monkeypatch.setattr("loxmatter.update.os.replace", spion)
     _state(tmp_path)
     request_update(tmp_path, channel="stable", target="0.3.0")
-    assert gesehen, "request.json muss ueber os.replace an seinen Platz kommen"
+    assert gesehen, "request.json must land in place via os.replace"
 
 
 def test_das_protokoll_liefert_die_letzten_zeilen(tmp_path):
@@ -1406,22 +1398,22 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.update'`
 
 - [ ] **Step 3: Write the module**
 
-`src/loxmatter/update.py` (GPL-Kopf, dann):
+`src/loxmatter/update.py` (GPL header, then):
 
 ```python
-"""Die Dateiseite des Updates - Entwurf "Updates ueber die Oberflaeche
-einspielen" (2026-09-08), Abschnitt 7.
+"""The file side of the update - design "Applying updates through the
+web UI" (2026-09-08), section 7.
 
-Bruecke und Beiwagen verstaendigen sich ausschliesslich ueber Dateien im
-gemeinsamen Volume - kein Netzwerk, kein Socket, keine gemeinsame
-Bibliothek. Der Grund ist nicht Sparsamkeit: der Beiwagen ueberlebt den
-Neustart der Bruecke, und weil der Zustand in einer Datei liegt statt im
-Speicher, kann die Oberflaeche nach dem Neustart einfach weiterlesen. Genau
-das ist die Luecke, in der man vor diesem Entwurf blind war.
+The bridge and the sidecar communicate exclusively through files in a
+shared volume - no network, no socket, no shared library. The reason is
+not frugality: the sidecar survives the bridge's restart, and because the
+state lives in a file instead of in memory, the web UI can simply keep
+reading after the restart. That is exactly the gap one was blind to
+before this design.
 
-Dieses Modul kennt keine HTTP-Begriffe und macht keine Netzzugriffe -
-`update_check.py` macht das Netz, `api/update.py` das HTTP. So laesst sich
-jedes fuer sich pruefen."""
+This module knows no HTTP concepts and makes no network calls -
+`update_check.py` handles the network, `api/update.py` the HTTP. That way
+each can be tested on its own."""
 
 from __future__ import annotations
 
@@ -1432,18 +1424,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Phasen, in denen ein Auftrag noch laeuft. Alles andere ist ein Endzustand
-# (oder `idle`) und laesst einen neuen Auftrag zu.
+# Phases in which a request is still running. Everything else is an end
+# state (or `idle`) and allows a new request.
 _LAUFENDE_PHASEN = frozenset({"queued", "backup", "pull", "recreate", "health", "rollback"})
 
-# Der Beiwagen meldet sich alle zwei Sekunden (entrypoint.sh). Dreissig
-# Sekunden Stille sind grosszuegig genug fuer einen belasteten Pi und kurz
-# genug, dass niemand lange einen Knopf sieht, den keiner abholen wuerde.
+# The sidecar reports in every two seconds (entrypoint.sh). Thirty seconds
+# of silence is generous enough for a loaded Pi and short enough that
+# nobody sees a button for long that no one would pick up.
 _MAX_STILLE_SEKUNDEN = 30
 
 
 class UpdateBusyError(RuntimeError):
-    """Es laeuft bereits ein Auftrag."""
+    """A request is already running."""
 
 
 @dataclass(frozen=True)
@@ -1459,13 +1451,13 @@ class UpdateState:
 
 
 def read_state(update_dir: Path) -> UpdateState | None:
-    """Der zuletzt geschriebene Zustand, oder `None`.
+    """The most recently written state, or `None`.
 
-    Ein unlesbarer Inhalt gilt bewusst wie ein fehlender, statt eine
-    Ausnahme zu werfen: die Oberflaeche fragt diese Angabe im Sekundentakt
-    ab, und ein einzelner Fehlschlag saehe dort aus wie ein kaputtes
-    Update. Der Beiwagen schreibt atomar (temp + rename), ein halber Inhalt
-    ist also ohnehin die Ausnahme - aber eine, die keinen Alarm verdient.
+    Unreadable content is deliberately treated as missing rather than
+    raising an exception: the web UI polls this once a second, and a
+    single failure would look there like a broken update. The sidecar
+    writes atomically (temp + rename), so half-written content is the
+    exception anyway - but one that does not deserve an alarm.
     """
     try:
         raw = json.loads((update_dir / "state.json").read_text(encoding="utf-8"))
@@ -1499,11 +1491,11 @@ def updater_present(
     now: datetime,
     max_age_seconds: int = _MAX_STILLE_SEKUNDEN,
 ) -> bool:
-    """Ob ueberhaupt jemand da ist, der einen Auftrag abholen wuerde.
+    """Whether there is anyone at all who would pick up a request.
 
-    Ohne diese Beurteilung zeigte die Oberflaeche einer Bestandsinstallation
-    - und jedem, der den Beiwagen aus der Compose-Datei gestrichen hat -
-    einen Knopf, der nichts tut und auch nichts meldet.
+    Without this judgment, the web UI would show an existing installation
+    - and anyone who has struck the sidecar from the Compose file - a
+    button that does nothing and reports nothing either.
     """
     if state is None or not state.updater_seen_at:
         return False
@@ -1515,16 +1507,16 @@ def updater_present(
 
 
 def request_update(update_dir: Path, *, channel: str, target: str) -> str:
-    """Legt einen Auftrag ab und liefert seine `id`.
+    """Deposits a request and returns its `id`.
 
-    Atomar ueber `os.replace`: der Beiwagen liest alle zwei Sekunden, und
-    saehe er die Datei halb geschrieben, lehnte er einen gueltigen Auftrag
-    als ungueltig ab - endgueltig, denn er fasst jede `id` nur einmal an.
+    Atomic via `os.replace`: the sidecar reads every two seconds, and if
+    it saw the file half written, it would reject a valid request as
+    invalid - permanently, because it touches each `id` only once.
 
-    Geprueft wird hier NICHT, ob `target` gueltig ist. Das tut der Beiwagen,
-    und zwar bewusst dort: er ist die Sicherheitsgrenze (Spec-Abschnitt 10),
-    und eine Grenze, die sich darauf verlaesst, dass der Aufrufer schon
-    geprueft hat, ist keine. Diese Funktion ist nur der Briefkasten.
+    What is NOT checked here is whether `target` is valid. The sidecar
+    does that, and deliberately there: it is the security boundary (spec
+    section 10), and a boundary that relies on the caller having already
+    checked is not one. This function is only the mailbox.
     """
     state = read_state(update_dir)
     if state is not None and state.phase in _LAUFENDE_PHASEN:
@@ -1551,62 +1543,61 @@ Expected: 13 passed
 
 - [ ] **Step 5: Prove the atomicity test can fail**
 
-Ersetze `os.replace(temp, ...)` probeweise durch `(update_dir / "request.json").write_text(json.dumps(body), encoding="utf-8")` und führe die Tests aus.
-Expected: `test_der_auftrag_wird_atomar_geschrieben` FAILT. Danach zurücknehmen.
+Replace `os.replace(temp, ...)` on a trial basis with `(update_dir / "request.json").write_text(json.dumps(body), encoding="utf-8")` and run the tests.
+Expected: `test_der_auftrag_wird_atomar_geschrieben` FAILS. Then revert.
 
 - [ ] **Step 6: Lint, types, full suite, commit**
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 git add src/loxmatter/update.py tests/test_update_module.py
-git commit -m "feat(update): Auftrag schreiben, Zustand lesen, Beiwagen erkennen
+git commit -m "feat(update): write the request, read the state, detect the sidecar
 
-Die Verstaendigung laeuft ueber Dateien, nicht ueber ein Netz. Das ist
-nicht Sparsamkeit: der Beiwagen ueberlebt den Neustart der Bruecke, und
-weil der Zustand in einer Datei liegt statt im Speicher, kann die
-Oberflaeche nach dem Neustart weiterlesen - genau die Luecke, in der man
-vorher blind war.
+Communication runs through files, not through a network. That is not
+frugality: the sidecar survives the bridge's restart, and because the
+state lives in a file instead of in memory, the web UI can keep reading
+after the restart - exactly the gap one was blind to before.
 
-Ein unlesbarer Zustand gilt wie ein fehlender statt eine Ausnahme zu
-werfen: die Oberflaeche fragt im Sekundentakt, und ein einzelner
-Fehlschlag saehe dort aus wie ein kaputtes Update.
+An unreadable state is treated as a missing one instead of raising an
+exception: the web UI polls once a second, and a single failure would
+look there like a broken update.
 
-request_update prueft das Ziel BEWUSST NICHT. Das tut der Beiwagen - er
-ist die Sicherheitsgrenze, und eine Grenze, die sich darauf verlaesst,
-dass der Aufrufer schon geprueft hat, ist keine.
+request_update deliberately does NOT check the target. The sidecar does
+that - it is the security boundary, and a boundary that relies on the
+caller having already checked is not one.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: `loxmatter.update_check` — was es Neues gibt
+### Task 7: `loxmatter.update_check` — what is new
 
 **Files:**
 - Create: `src/loxmatter/update_check.py`
-- Modify: `src/loxmatter/model/store.py` (zwei Einstellungen, siehe Step 3)
+- Modify: `src/loxmatter/model/store.py` (two settings, see Step 3)
 - Test: `tests/test_update_check.py`
 
 **Interfaces:**
-- Consumes: nichts aus Task 6.
+- Consumes: nothing from Task 6.
 - Produces:
   - `Available` (frozen dataclass: `channel: str`, `target: str | None`, `title: str | None`, `notes: str | None`, `behind: int | None`, `checked_at: str`, `error: str | None`)
   - `async check(channel: str, *, current_version: str, current_commit: str | None, fetch: Fetch) -> Available`
-  - `Fetch = Callable[[str], Awaitable[dict | list]]` — die Netzschicht wird hereingereicht, damit der Test ohne Netz auskommt.
+  - `Fetch = Callable[[str], Awaitable[dict | list]]` — the network layer is passed in, so the test gets by without a network.
   - Store: `store.update_settings.get_channel() -> str`, `.set_channel(str)`, `.get_check_enabled() -> bool`, `.set_check_enabled(bool)`
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/test_update_check.py` (GPL-Kopf, dann):
+`tests/test_update_check.py` (GPL header, then):
 
 ```python
-"""Tests fuer die Abfrage bei GitHub - Entwurf "Updates ueber die
-Oberflaeche einspielen" (2026-09-08), Abschnitt 9.
+"""Tests for the GitHub query - design "Applying updates through the web
+UI" (2026-09-08), section 9.
 
-Die Netzschicht wird als `fetch` hereingereicht: so laeuft jeder Test ohne
-Netz, und der Fall "kein Internet" ist ein Testfall statt eines
-Zufallsereignisses in der CI. Ein Geraet ohne Internetzugang ist hier
-ausdruecklich KEIN Fehler - das haelt der letzte Test fest."""
+The network layer is passed in as `fetch`: that way every test runs
+without a network, and the "no internet" case is a test case instead of
+a random occurrence in CI. A device without internet access is explicitly
+NOT an error here - the last test pins that down."""
 
 from __future__ import annotations
 
@@ -1618,11 +1609,11 @@ from loxmatter.update_check import check
 async def test_der_stabile_kanal_meldet_ein_neueres_release():
     async def fetch(url):
         assert "releases/latest" in url
-        return {"tag_name": "v0.3.0", "name": "0.3.0", "body": "Behebt den Neustart-Haenger."}
+        return {"tag_name": "v0.3.0", "name": "0.3.0", "body": "Fixes the restart hang."}
 
     result = await check("stable", current_version="0.2.0", current_commit=None, fetch=fetch)
     assert result.target == "0.3.0"
-    assert result.notes == "Behebt den Neustart-Haenger."
+    assert result.notes == "Fixes the restart hang."
     assert result.error is None
 
 
@@ -1635,10 +1626,10 @@ async def test_auf_dem_neuesten_stand_gibt_es_kein_ziel():
 
 
 async def test_ein_aelteres_release_gilt_nicht_als_update():
-    # Wer auf einem Entwicklungsstand laeuft, der neuer ist als das letzte
-    # Release, soll nicht zum Herabstufen eingeladen werden - "nur
-    # vorwaerts" faengt das im Beiwagen zwar ab, aber ein Knopf, der
-    # zuverlaessig abgelehnt wird, ist ein kaputter Knopf.
+    # Anyone running a development state newer than the latest release
+    # should not be invited to downgrade - "forward only" does catch that
+    # in the sidecar, but a button that gets reliably rejected is a
+    # broken button.
     async def fetch(url):
         return {"tag_name": "v0.1.0", "name": "0.1.0", "body": ""}
 
@@ -1649,17 +1640,17 @@ async def test_ein_aelteres_release_gilt_nicht_als_update():
 async def test_der_entwicklungskanal_zaehlt_die_commits():
     async def fetch(url):
         assert "compare" in url
-        return {"ahead_by": 14, "commits": [{"commit": {"message": "fix: eins\n\nmehr"}}, {"commit": {"message": "feat: zwei"}}]}
+        return {"ahead_by": 14, "commits": [{"commit": {"message": "fix: one\n\nmore"}}, {"commit": {"message": "feat: two"}}]}
 
     result = await check("dev", current_version="dev", current_commit="a3f91c2", fetch=fetch)
     assert result.behind == 14
-    assert "fix: eins" in result.notes
-    assert "mehr" not in result.notes, "nur die Betreffzeile, nicht der ganze Rumpf"
+    assert "fix: one" in result.notes
+    assert "more" not in result.notes, "only the subject line, not the full body"
 
 
 async def test_der_entwicklungskanal_ohne_bekannten_commit_meldet_nichts():
     async def fetch(url):
-        raise AssertionError("ohne Commit darf gar nicht gefragt werden")
+        raise AssertionError("must not be queried without a commit")
 
     result = await check("dev", current_version="dev", current_commit=None, fetch=fetch)
     assert result.target is None
@@ -1678,7 +1669,7 @@ async def test_ohne_internet_ist_das_kein_fehlerzustand():
 
 async def test_ein_unbekannter_kanal_wird_abgewiesen():
     async def fetch(url):
-        raise AssertionError("darf nicht gefragt werden")
+        raise AssertionError("must not be queried")
 
     with pytest.raises(ValueError):
         await check("beliebig", current_version="0.2.0", current_commit=None, fetch=fetch)
@@ -1691,18 +1682,18 @@ Expected: FAIL — `ModuleNotFoundError`
 
 - [ ] **Step 3: Add the two settings to the store**
 
-In `src/loxmatter/model/store.py`, neben den übrigen Einstellungszugängen (dem Muster von `store.resend_settings` folgend, das bereits in derselben `setting`-Tabelle aus Schema 5 liegt):
+In `src/loxmatter/model/store.py`, alongside the other setting accessors (following the pattern of `store.resend_settings`, which already lives in the same `setting` table from schema 5):
 
 ```python
 class UpdateSettings:
-    """Kanal und Prüfschalter - Entwurf "Updates ueber die Oberflaeche
-    einspielen" (2026-09-08), Abschnitt 9.
+    """Channel and check toggle - design "Applying updates through the
+    web UI" (2026-09-08), section 9.
 
-    Keine neue Tabelle und damit keine neue Schema-Version: beide Werte
-    liegen in `setting`, die es seit Schema 5 gibt. Eine Migration hier
-    waere teuer erkauft - ein Schemasprung ist der einzige Fall, in dem ein
-    Rueckfall auf die vorherige Version nicht folgenlos ist, und
-    ausgerechnet die Update-Funktion sollte ihn nicht ohne Not ausloesen.
+    No new table and thereby no new schema version: both values live in
+    `setting`, which has existed since schema 5. A migration here would
+    come at a steep price - a schema bump is the one case where a
+    rollback to the previous version is not without consequences, and of
+    all things the update feature should not trigger one without need.
     """
 
     _CHANNEL = "update.channel"
@@ -1726,9 +1717,10 @@ class UpdateSettings:
 
     def get_check_enabled(self) -> bool:
         row = self._db.execute("SELECT value FROM setting WHERE key = ?", (self._CHECK,)).fetchone()
-        # Vorgabe an: wer eine Bruecke im Haus betreibt, soll erfahren, dass
-        # eine Fassung mit bekannten Fehlern laeuft. Abschaltbar bleibt es
-        # trotzdem - es ist ein Verbindungsaufbau nach draussen.
+        # Default on: anyone running a bridge in their home should learn
+        # that they are running a version with known bugs. It stays
+        # switchable off regardless - it is a connection out to the
+        # outside world.
         return row[0] != "0" if row else True
 
     def set_check_enabled(self, enabled: bool) -> None:
@@ -1739,26 +1731,26 @@ class UpdateSettings:
         self._db.commit()
 ```
 
-Und im `Store.__init__`, bei den übrigen Zugängen: `self.update_settings = UpdateSettings(self._db)`
+And in `Store.__init__`, alongside the other accessors: `self.update_settings = UpdateSettings(self._db)`
 
 - [ ] **Step 4: Write the check module**
 
-`src/loxmatter/update_check.py` (GPL-Kopf, dann):
+`src/loxmatter/update_check.py` (GPL header, then):
 
 ```python
-"""Was es Neues gibt - Entwurf "Updates ueber die Oberflaeche einspielen"
-(2026-09-08), Abschnitt 9.
+"""What is new - design "Applying updates through the web UI"
+(2026-09-08), section 9.
 
-Die Netzschicht kommt als `fetch` herein, statt hier fest verdrahtet zu
-sein. Das ist kein Selbstzweck: so laeuft jeder Test ohne Netz, und der
-Fall "kein Internet" wird ein Testfall statt eines Zufallsereignisses in
-der CI.
+The network layer comes in as `fetch`, instead of being hardwired here.
+That is not an end in itself: it means every test runs without a
+network, and the "no internet" case becomes a test case instead of a
+random occurrence in CI.
 
-Ein Geraet ohne Internetzugang ist hier ausdruecklich KEIN Fehler. Diese
-Bruecke steht in einem Haus, nicht in einem Rechenzentrum; wer sie ohne
-Weg nach draussen betreibt, hat das so gewollt. Deshalb traegt `Available`
-ein `error`-Feld, statt eine Ausnahme zu werfen - die Oberflaeche zeigt
-daraufhin einen ruhigen Hinweis, kein rotes Banner."""
+A device without internet access is explicitly NOT an error here. This
+bridge sits in a home, not a data center; anyone running it with no path
+outward has chosen that. That is why `Available` carries an `error`
+field instead of raising an exception - the web UI then shows a calm
+notice, not a red banner."""
 
 from __future__ import annotations
 
@@ -1809,10 +1801,10 @@ async def check(
         return Available(channel, None, None, None, None, _now(), error)
 
     if channel == "dev" and not current_commit:
-        # Ein Image ohne LOXMATTER_COMMIT ist ein von Hand gebautes. Der
-        # Vergleich haette keinen Ausgangspunkt, und geraten wird hier
-        # nicht.
-        return leer("Diese Fassung nennt keinen Commit - der Entwicklungskanal kann nicht vergleichen.")
+        # An image without LOXMATTER_COMMIT is a hand-built one. The
+        # comparison would have no starting point, and there is no
+        # guessing here.
+        return leer("This version does not state a commit - the development channel cannot compare.")
 
     try:
         if channel == "stable":
@@ -1820,11 +1812,11 @@ async def check(
             tag = str(body.get("tag_name", "")).lstrip("v")
             neu, alt = _as_tuple(tag), _as_tuple(current_version)
             if not tag or neu is None:
-                return leer("Die Antwort von GitHub nennt keine Version.")
-            # Wer auf einem Entwicklungsstand laeuft, der neuer ist als das
-            # letzte Release, bekommt hier bewusst kein Ziel: "nur
-            # vorwaerts" faengt das im Beiwagen zwar ab, aber ein Knopf,
-            # der zuverlaessig abgelehnt wird, ist ein kaputter Knopf.
+                return leer("GitHub's response does not state a version.")
+            # Anyone running a development state newer than the latest
+            # release deliberately gets no target here: "forward only"
+            # does catch that in the sidecar, but a button that gets
+            # reliably rejected is a broken button.
             if alt is not None and neu <= alt:
                 return leer()
             return Available(
@@ -1835,9 +1827,9 @@ async def check(
         ahead = int(body.get("ahead_by", 0))
         if ahead <= 0:
             return leer()
-        # Nur die Betreffzeilen: der Rumpf einer Commit-Nachricht ist in
-        # diesem Projekt oft ein halber Aufsatz, und die Karte soll eine
-        # Uebersicht geben, keine Lektuere.
+        # Subject lines only: the body of a commit message in this project
+        # is often half an essay, and the card should give an overview,
+        # not a read.
         betreffe = [str(c["commit"]["message"]).splitlines()[0] for c in body.get("commits", [])]
         return Available(channel, "main", None, "\n".join(betreffe), ahead, _now(), None)
     except (OSError, KeyError, ValueError, TypeError) as exc:
