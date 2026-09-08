@@ -288,9 +288,9 @@ git commit -m "feat(color): Loxone-Farbzahl entpacken"
 
 ---
 
-### Task 3: Kommando 6 freischalten — Tabelle und Übersetzer zusammen
+### Task 3: Enable command 6 — table and translator together
 
-Der bestehende Konsistenztest über `known_command_pairs()` erzwingt, dass beide gemeinsam wandern. Deshalb eine Task, kein Paar.
+The existing consistency test via `known_command_pairs()` requires both to change together. That's why this is a single task, not a pair.
 
 **Files:**
 - Modify: `src/loxmatter/profiles/clusters.yaml`
@@ -298,18 +298,18 @@ Der bestehende Konsistenztest über `known_command_pairs()` erzwingt, dass beide
 - Test: `tests/commands/test_translate.py`
 
 **Interfaces:**
-- Consumes: `loxone_rgb_to_rgb` aus Task 2.
-- Produces: das Paar `(768, 6)` mit Slug `color`, `takes_value: true`. Nutzlast `{"hue": int, "saturation": int, "transitionTime": 0}`.
+- Consumes: `loxone_rgb_to_rgb` from Task 2.
+- Produces: the pair `(768, 6)` with slug `color`, `takes_value: true`. Payload `{"hue": int, "saturation": int, "transitionTime": 0}`.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `tests/commands/test_translate.py` anhängen (die dortige Hilfe zum Bauen eines `StoredCommand` wiederverwenden — sie steht am Dateianfang):
+Append to `tests/commands/test_translate.py` (reuse the helper there for building a `StoredCommand` — it is at the start of the file):
 
 ```python
 def test_a_packed_loxone_colour_becomes_hue_and_saturation():
-    """Reines Rot: Farbton 0, volle Saettigung (254). Der Weg ist
-    Loxone-Zahl -> RGB -> Hue/Sat, damit WebUI und Loxone denselben
-    Uebersetzer benutzen (Entwurf 2026-09-07, Abschnitt 6.5)."""
+    """Pure red: hue 0, full saturation (254). The path is
+    Loxone number -> RGB -> Hue/Sat, so that WebUI and Loxone use the same
+    translator (design 2026-09-07, section 6.5)."""
     command = cmd(768, 6, takes_value=True)
     call = to_matter_call(command, "100")
     assert call.cluster_id == 768
@@ -326,8 +326,8 @@ def test_white_has_no_saturation():
 
 
 def test_an_impossible_colour_number_is_rejected():
-    """Ein Kanal ueber 100 % kommt als 400 zurueck, nicht als erfundene
-    Farbe am Geraet."""
+    """A channel above 100% returns 400, not a made-up
+    colour on the device."""
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError):
         to_matter_call(command, "999999999")
@@ -336,7 +336,7 @@ def test_an_impossible_colour_number_is_rejected():
 def test_colour_rejects_text():
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError):
-        to_matter_call(command, "rot")
+        to_matter_call(command, "red")
 ```
 
 `cmd(cluster, command, takes_value=False)` already sits at the top of the file (line 30) and builds the `StoredCommand` — the same helper `(768, 10)` is already checked with there.
@@ -351,12 +351,12 @@ Expected: FAIL — `UnsupportedValueError` for a *valid* red, because `(768, 6)`
 In `src/loxmatter/profiles/clusters.yaml`, cluster 768, under `commands:` next to the existing `10:` entry:
 
 ```yaml
-      # MoveToHueAndSaturation - unlocked on September 7, 2026
+      # MoveToHueAndSaturation - enabled on September 7, 2026
       # (design 2026-09-07). The earlier block was based on a
       # mix-up: `translate.py` justified it with "Loxone RGB not
       # backed", while `commands/color.py` backs RGB with an official
       # source and leaves only Lumitech open. The value is the
-      # packed Loxone color number; backed against the checked-in
+      # packed Loxone colour number; backed against the checked-in
       # RGBW light (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
       # contains 6).
       6: {slug: color, takes_value: true}
@@ -679,38 +679,38 @@ In `src/loxmatter/profiles/relevance.py`, extend the import:
 from loxmatter.profiles.table import known_attribute_section, marked_non_functional, names_element
 ```
 
-(Die vorhandene Importzeile lesen und `marked_non_functional` ergänzen, nicht ersetzen.)
+(Read the existing import line and add `marked_non_functional`, don't replace.)
 
-Den Schluss der Funktion ändern — heute:
+Change the end of the function — currently:
 
 ```python
     if known_attribute_section(ref.cluster_id):
         return names_element(ref)
 ```
 
-wird zu:
+becomes:
 
 ```python
     if known_attribute_section(ref.cluster_id):
         return names_element(ref) and not marked_non_functional(ref)
 ```
 
-Und in Schicht 3 des Docstrings den Zusatz ergänzen:
+And add this to layer 3 of the docstring:
 
 ```
-   ... dort nur die dort benannten Elemente - abzueglich derer, die die
-   Tabelle ausdruecklich mit `functional: false` fuehrt (Geraetekonstanten
-   wie Min/Max-Bereiche, siehe `marked_non_functional`).
+   ... there only the named elements - minus those the
+   table explicitly marks with `functional: false` (device constants
+   like min/max ranges, see `marked_non_functional`).
 ```
 
-- [ ] **Step 6: Tests laufen lassen, Erfolg prüfen**
+- [ ] **Step 6: Run tests, check success**
 
 Run: `uv run pytest tests/profiles/ -v`
-Expected: alle PASS.
+Expected: all PASS.
 
-**Achtung:** `tests/profiles/test_real_device_fixtures.py` zählt Signale des Steckers und des Tasters. Die neuen Attribute liegen in Cluster 768, den beide nicht haben — die Zahlen dürfen sich also nicht ändern. Ändern sie sich doch, ist das ein echter Befund und kein anzupassender Erwartungswert.
+**Warning:** `tests/profiles/test_real_device_fixtures.py` counts signals from the plug and the switch. The new attributes live in cluster 768, which neither has — the numbers must not change. If they do, that's a real finding, not an expected value to adjust.
 
-- [ ] **Step 7: Prüfen und committen**
+- [ ] **Step 7: Check and commit**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run mypy
@@ -721,7 +721,7 @@ git commit -m "feat(profiles): Geraetekonstanten lesbar, aber nicht vorausgewaeh
 
 ---
 
-### Task 6: `CommandOut.control` und `range`
+### Task 6: `CommandOut.control` and `range`
 
 **Files:**
 - Modify: `src/loxmatter/api/models.py`
@@ -730,20 +730,20 @@ git commit -m "feat(profiles): Geraetekonstanten lesbar, aber nicht vorausgewaeh
 - Test: `tests/api/test_control.py`
 
 **Interfaces:**
-- Consumes: `command_control` (Task 4), die Attribute aus Task 5.
-- Produces: `CommandOut` mit `control: str` und `range: ControlRange | None`; `ControlRange` hat `min: int` und `max: int` in **Kelvin**. `build_control_router(store, invoke, values)` — dritter Parameter neu.
+- Consumes: `command_control` (Task 4), the attributes from Task 5.
+- Produces: `CommandOut` with `control: str` and `range: ControlRange | None`; `ControlRange` has `min: int` and `max: int` in **Kelvin**. `build_control_router(store, invoke, values)` — third parameter is new.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_control.py` anhängen. Die vorhandene `api`-Fixture lädt den Stecker; für diese Tests eine eigene Fixture nach demselben Muster, aber mit der RGBW-Leuchte:
+Append to `tests/api/test_control.py`. The existing `api` fixture loads the plug; for these tests create your own fixture following the same pattern, but with the RGBW lamp:
 
 ```python
 @pytest.fixture
 async def api_lamp(
     tmp_path, no_invoke, fake_runtime, fake_client
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int, object]]:
-    """Wie `api`, aber mit der eingecheckten RGBW-Leuchte - der einzigen
-    Vorlage, die Farb- und Farbtemperatur-Kommandos zugleich traegt."""
+    """Like `api`, but with the checked-in RGBW lamp - the only
+    template that carries both colour and colour temperature commands."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_kajplats_cws_lamp.json")
     device_id = store.register_device(snapshot)
@@ -770,16 +770,16 @@ async def test_every_control_names_its_widget(api_lamp):
 
 
 async def test_the_kelvin_range_comes_from_the_device_in_kelvin(api_lamp):
-    """Mired -> Kelvin ist ein Kehrwert: das kleinere Mired ergibt das
-    GROESSERE Kelvin, Min und Max tauschen also (Entwurf 2026-09-07,
-    Abschnitt 5.5)."""
+    """Mired -> Kelvin is a reciprocal: the smaller mired gives the
+    LARGER Kelvin, so min and max swap (design 2026-09-07,
+    section 5.5)."""
     client, store, device_id, runtime = api_lamp
     keys = {
         signal.ref.element_id: signal.key
         for signal in store.signals(device_id)
         if signal.ref.cluster_id == 768 and signal.ref.element_id in (16395, 16396)
     }
-    # Die echten Werte der eingecheckten CWS-Leuchte.
+    # The actual values from the checked-in CWS lamp.
     runtime.seed(keys[16395], 153)  # 153 Mired = 6535 K
     runtime.seed(keys[16396], 555)  # 555 Mired = 1801 K
 
@@ -789,9 +789,9 @@ async def test_the_kelvin_range_comes_from_the_device_in_kelvin(api_lamp):
 
 
 async def test_without_the_limits_there_is_no_range(api_lamp):
-    """Kein Bereich ist besser als ein erfundener - die Oberflaeche faellt
-    dann auf das Zahlenfeld zurueck (Entwurf 2026-09-07, Abschnitt 9.2)."""
-    client, _store, device_id, _runtime = api_lamp  # nichts geseedet
+    """No range is better than a made-up one - the UI then falls
+    back to the number field (design 2026-09-07, section 9.2)."""
+    client, _store, device_id, _runtime = api_lamp  # nothing seeded
     response = await client.get(f"/api/devices/{device_id}/controls")
     colortemp = next(c for c in response.json()["commands"] if c["slug"] == "colortemp")
     assert colortemp["range"] is None
@@ -805,23 +805,23 @@ async def test_commands_without_a_range_carry_none(api_lamp):
             assert command["range"] is None
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, check failure**
 
 Run: `uv run pytest tests/api/test_control.py -v`
-Expected: FAIL mit `KeyError: 'control'`
+Expected: FAIL with `KeyError: 'control'`
 
-- [ ] **Step 3: Die Modelle erweitern**
+- [ ] **Step 3: Extend the models**
 
-In `src/loxmatter/api/models.py`, vor `CommandOut`:
+In `src/loxmatter/api/models.py`, before `CommandOut`:
 
 ```python
 class ControlRange(BaseModel):
-    """Grenzen eines Reglers, in der Einheit, die die Oberflaeche anzeigt.
+    """Limits of a slider, in the unit the UI displays.
 
-    Heute nur fuer die Farbtemperatur, in Kelvin. Die Umrechnung aus Mired
-    passiert im Server und nicht im JavaScript: sie ist ein Kehrwert, bei
-    dem Min und Max tauschen - eine Falle, die man nicht zweimal aufstellen
-    will (Entwurf 2026-09-07, Abschnitt 5.5)."""
+    Today only for colour temperature, in Kelvin. The conversion from mired
+    happens on the server, not in JavaScript: it is a reciprocal where
+    min and max swap - a trap you don't want to set twice (design 2026-09-07,
+    section 5.5)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -829,30 +829,30 @@ class ControlRange(BaseModel):
     max: int
 ```
 
-`CommandOut` um zwei Felder erweitern (die bestehenden Felder und den Docstring stehen lassen, nur ergänzen):
+Extend `CommandOut` with two fields (leave existing fields and the docstring as they are, only add):
 
 ```python
     control: str
     range: ControlRange | None = None
 ```
 
-Und dem `CommandOut`-Docstring anhängen:
+And append to the `CommandOut` docstring:
 
 ```
-    `control` sagt, WELCHES Bedienelement gebaut werden soll (`none`,
-    `percent`, `kelvin`, `hue_sat`, `unknown`) - siehe
-    `profiles.table.command_control`. `takes_value` bleibt daneben
-    bestehen, weil es etwas anderes beantwortet: ob der EXPORT einen
-    analogen oder digitalen Ausgang erzeugt.
+    `control` says WHICH control widget should be built (`none`,
+    `percent`, `kelvin`, `hue_sat`, `unknown`) - see
+    `profiles.table.command_control`. `takes_value` remains alongside
+    it because it answers something different: whether the EXPORT creates
+    an analogue or digital output.
 ```
 
-`ControlsOut` bleibt unverändert.
+`ControlsOut` stays unchanged.
 
-- [ ] **Step 4: Die Route erweitern**
+- [ ] **Step 4: Extend the route**
 
 In `src/loxmatter/api/control.py`:
 
-Importe ergänzen:
+Add imports:
 
 ```python
 from typing import Protocol
@@ -861,48 +861,47 @@ from loxmatter.api.models import CommandOut, ControlRange, ControlsOut, ValueIn
 from loxmatter.profiles.table import command_control, command_slug
 ```
 
-Nach der `Invoker`-Zeile:
+After the `Invoker` line:
 
 ```python
 class ValueReader(Protocol):
-    """Was diese Route von `runtime` braucht - nur Lesen.
+    """What this route needs from `runtime` - read-only.
 
-    Bewusst enger als `api.devices.RuntimeValues`: die Bedienroute setzt
-    nichts online, und ein Protokoll, das mehr verlangt als es benutzt,
-    zwingt jedem Test ein groesseres Double auf, als der Fall braucht.
-    `loxone.runtime.Runtime` erfuellt beide.
+    Deliberately narrower than `api.devices.RuntimeValues`: the control route
+    sets nothing online, and a protocol that demands more than it uses
+    forces every test into a bigger double than the case needs.
+    `loxone.runtime.Runtime` satisfies both.
     """
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]: ...
 
 
-# ColorTempPhysicalMinMireds / ColorTempPhysicalMaxMireds, gegen das
-# installierte SDK belegt (chip.clusters.Objects.ColorControl.Attributes).
+# ColorTempPhysicalMinMireds / ColorTempPhysicalMaxMireds, verified
+# against the installed SDK (chip.clusters.Objects.ColorControl.Attributes).
 _CLUSTER_COLOR = 768
 _ATTR_CT_PHYS_MIN_MIREDS = 16395
 _ATTR_CT_PHYS_MAX_MIREDS = 16396
 ```
 
-Signatur ändern:
+Change the signature:
 
 ```python
 def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> APIRouter:
 ```
 
-Vor der `controls`-Route eine Hilfe einfügen:
+Insert a helper before the `controls` route:
 
 ```python
     def _kelvin_range(device_id: int, endpoint: int) -> ControlRange | None:
-        """Der Farbtemperaturbereich der Leuchte, in Kelvin - oder None.
+        """The colour temperature range of the lamp, in Kelvin - or None.
 
-        Kelvin = 1e6 / Mired ist ein Kehrwert: das KLEINERE Mired ergibt
-        das GROESSERE Kelvin, Min und Max tauschen also beim Umrechnen.
+        Kelvin = 1e6 / Mired is a reciprocal: the SMALLER mired gives the
+        LARGER Kelvin, so min and max swap during conversion.
 
-        None statt eines Ersatzbereichs, wenn die Leuchte die Grenzen nicht
-        meldet: ein Regler, der bei 6500 K endet, obwohl das Geraet bei
-        4000 K aufhoert, laesst einen Wert einstellen, den es still
-        beschneidet - genau der stille Fehlschlag, den diese Ansicht
-        aufdecken soll (Spec 8.1).
+        None instead of a fallback range if the lamp doesn't report the limits:
+        a slider that ends at 6500 K even though the device stops at
+        4000 K lets you set a value it silently clips - exactly the silent
+        failure this view should uncover (Spec 8.1).
         """
         wanted = (_ATTR_CT_PHYS_MIN_MIREDS, _ATTR_CT_PHYS_MAX_MIREDS)
         keys = {
@@ -925,7 +924,7 @@ Vor der `controls`-Route eine Hilfe einfügen:
         return ControlRange(min=kelvins[0], max=kelvins[1])
 ```
 
-In der `controls`-Route die Listenbildung ersetzen:
+In the `controls` route, replace the list building:
 
 ```python
         stored = store.commands(device_id)
@@ -948,33 +947,33 @@ In der `controls`-Route die Listenbildung ersetzen:
         return ControlsOut(commands=named, hidden_raw_commands=len(stored) - len(named))
 ```
 
-- [ ] **Step 5: Den Router verdrahten**
+- [ ] **Step 5: Wire the router**
 
-In `src/loxmatter/loxone/server.py` Zeile 499:
+In `src/loxmatter/loxone/server.py` line 499:
 
 ```python
     app.include_router(build_control_router(store, invoke, runtime), dependencies=api_guard)
 ```
 
-Der Kommentar darüber bleibt.
+The comment above it stays.
 
-- [ ] **Step 6: Tests laufen lassen, Erfolg prüfen**
+- [ ] **Step 6: Run tests, check success**
 
 Run: `uv run pytest tests/api/ -v`
-Expected: alle PASS. Bei 250 Mired → 4000 K und 454 Mired → 2202 K (jeweils abgeschnitten, wie `kelvin_to_mireds` es in der Gegenrichtung tut).
+Expected: all PASS. For 250 Mired → 4000 K and 454 Mired → 2202 K (clipped in each case, as `kelvin_to_mireds` does in the opposite direction).
 
-- [ ] **Step 7: Den Moduldocstring von `control.py` nachziehen**
+- [ ] **Step 7: Update the module docstring of `control.py`**
 
-Der Absatz „Offener Punkt, hier bewusst nicht geloest" nennt als Grund unter anderem, die Schnittstelle `build_control_router(store, invoke)` nehme „dafuer auch keinen zweiten Aufrufer entgegen". Die Signatur hat jetzt drei Parameter — die Aussage über das **Schreiben von Attributen** bleibt aber richtig, denn `values` liest nur. Den Satz entsprechend präzisieren, statt ihn zu streichen:
+The paragraph "Open point, deliberately not solved here" mentions that the interface `build_control_router(store, invoke)` also "takes no second caller". The signature now has three parameters — but the statement about **writing attributes** remains correct because `values` only reads. Refine the sentence instead of removing it:
 
 ```
-... und die Schnittstelle dieses Moduls (`build_control_router(store,
-invoke, values)`) nimmt dafuer auch keinen schreibenden Aufrufer entgegen;
-`invoke` ist ausschliesslich fuer Kommandos typisiert, `values` liest nur
-(siehe `ValueReader`), und ein Attribut-Schreibzugriff ist keins von beidem.
+... and this module's interface (`build_control_router(store,
+invoke, values)`) also takes no writing caller; `invoke` is typed
+exclusively for commands, `values` only reads (see `ValueReader`), and an
+attribute-write access is neither.
 ```
 
-- [ ] **Step 8: Prüfen und committen**
+- [ ] **Step 8: Check and commit**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run mypy
@@ -984,7 +983,7 @@ git commit -m "feat(api): Bedienelement-Typ und Kelvin-Bereich ausliefern"
 
 ---
 
-### Task 7: Kachel-Knopf und Bedien-Modal mit Reglern
+### Task 7: Tile button and control modal with sliders
 
 **Files:**
 - Modify: `src/loxmatter/web/index.html`
@@ -994,12 +993,12 @@ git commit -m "feat(api): Bedienelement-Typ und Kelvin-Bereich ausliefern"
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `CommandOut.control` und `.range` aus Task 6.
-- Produces: Alpine-Zustand `controlModalDevice`, Methoden `openControlModal(device)`, `closeControlModal()`, `controlsByKind(deviceId, kind)`, `sendControl(device, command, value)`. Task 8 baut darauf.
+- Consumes: `CommandOut.control` and `.range` from Task 6.
+- Produces: Alpine state `controlModalDevice`, methods `openControlModal(device)`, `closeControlModal()`, `controlsByKind(deviceId, kind)`, `sendControl(device, command, value)`. Task 8 builds on this.
 
-- [ ] **Step 1: Übersetzungen ergänzen**
+- [ ] **Step 1: Add translations**
 
-In `src/loxmatter/i18n/strings.yaml`, bei den übrigen `web.devices.*`-Schlüsseln:
+In `src/loxmatter/i18n/strings.yaml`, alongside the other `web.devices.*` keys:
 
 ```yaml
 web.devices.control_button:
@@ -1022,17 +1021,17 @@ web.devices.control_no_range:
   de: "Diese Leuchte meldet ihren Farbtemperaturbereich nicht, deshalb gibt es keinen Regler."
 ```
 
-- [ ] **Step 2: Zustand und Methoden in `app.js`**
+- [ ] **Step 2: State and methods in `app.js`**
 
-Neben `signalsModalDevice` (etwa Zeile 488):
+Alongside `signalsModalDevice` (around line 488):
 
 ```javascript
-    // Wie `signalsModalDevice`: nur die ID, nicht das Objekt - siehe den
-    // Kommentar dort und `controlModalDeviceObject()`.
+    // Like `signalsModalDevice`: just the ID, not the object - see the
+    // comment there and `controlModalDeviceObject()`.
     controlModalDevice: null,
 ```
 
-Im Methodenblock, neben den Signal-Modal-Methoden:
+In the methods block, alongside the signal-modal methods:
 
 ```javascript
     controlModalDeviceObject() {
@@ -1040,10 +1039,10 @@ Im Methodenblock, neben den Signal-Modal-Methoden:
     },
 
     /**
-     * Oeffnet das Bedien-Modal. Das `$nextTick` ist Pflicht, kein Stil -
-     * dieselbe Begruendung wie bei `openSignalsModal`: `showModal()` setzt
-     * den Anfangsfokus auf das erste fokussierbare Element IM Dialog, und
-     * das entsteht erst, nachdem Alpine den `x-if`-Inhalt aufgebaut hat.
+     * Opens the control modal. The `$nextTick` is required, not style -
+     * same reasoning as `openSignalsModal`: `showModal()` sets
+     * initial focus to the first focusable element IN the dialog, and
+     * that only exists after Alpine builds the `x-if` content.
      */
     openControlModal(device) {
       this.deviceActionError = null;
@@ -1052,41 +1051,40 @@ Im Methodenblock, neben den Signal-Modal-Methoden:
       this.$nextTick(() => this.$refs.controlModal.showModal());
     },
 
-    /** Schliesst ueber `close()`, damit der `close`-Handler in index.html
-     * die eine Stelle bleibt, die `controlModalDevice` zuruecksetzt -
-     * dieselbe Regel wie bei `closeSignalsModal`. */
+    /** Closes via `close()` so the `close` handler in index.html
+     * remains the one place that resets `controlModalDevice` -
+     * same rule as `closeSignalsModal`. */
     closeControlModal() {
       this.$refs.controlModal.close();
     },
 
-    /** Alle Kommandos eines Geraets mit genau diesem Bedienelement-Typ. */
+    /** All commands of a device with exactly this control widget type. */
     controlsByKind(deviceId, kind) {
       return this.commandsFor(deviceId).filter((command) => command.control === kind);
     },
 
-    /** Ob dieses Geraet ueberhaupt etwas Wertbehaftetes kann - nur dann
-     * bekommt die Kachel den "Steuern"-Knopf. */
+    /** Whether this device can do anything with a value at all - only then
+     * does the tile get a "Control" button. */
     hasAdjustableControls(deviceId) {
       return this.commandsFor(deviceId).some((command) => command.control !== "none");
     },
 ```
 
-- [ ] **Step 3: Startwerte lesen**
+- [ ] **Step 3: Read start values**
 
-Ebenfalls in `app.js`:
+Also in `app.js`:
 
 ```javascript
-    // Die Slugs, unter denen die Signale eines Geraets die Startwerte
-    // tragen. `signalsByDevice` haelt ALLE Signale, nicht nur die
-    // exportierten (siehe api/devices.py, `get_signals`), und ihre Werte
-    // sind bereits skaliert (loxone/values.py, `to_loxone_value`) - level
-    // und saturation in Prozent, hue in Grad. Nur die Farbtemperatur steht
-    // in Mired, weil Kelvin ein Kehrwert ist, den `scale` nicht kann.
-    // Ueber den PFAD gesucht, nicht ueber den Slug im Schluessel: kollidiert
-    // ein Schluessel innerhalb eines Geraets, haengt `Store._assign_key` die
-    // Element-ID an (`d1_1_hue_0`), und ein Vergleich auf `_hue` ginge dann
-    // ins Leere. `SignalOut.path` ist "endpunkt/cluster/element" und damit
-    // exakt.
+    // The paths under which a device's signals carry start values.
+    // `signalsByDevice` holds ALL signals, not just the
+    // exported ones (see api/devices.py, `get_signals`), and their values
+    // are already scaled (loxone/values.py, `to_loxone_value`) - level
+    // and saturation as percent, hue as degrees. Only colour temperature stands
+    // in mired, because Kelvin is a reciprocal that `scale` cannot handle.
+    // Searched by PATH, not by slug in the key: if a key collides within a device,
+    // `Store._assign_key` appends the element ID (`d1_1_hue_0`), and a comparison
+    // on `_hue` would then miss it. `SignalOut.path` is "endpoint/cluster/element",
+    // so it's exact.
     signalValueByPath(deviceId, clusterId, elementId) {
       const signals = this.signalsByDevice[deviceId] || [];
       const signal = signals.find((entry) => entry.path.endsWith(`/${clusterId}/${elementId}`));
@@ -1094,20 +1092,20 @@ Ebenfalls in `app.js`:
     },
 
     /**
-     * Einmalig beim Oeffnen gelesen, danach NICHT nachgefuehrt (Entwurf
-     * 2026-09-07, Abschnitt 2). Ohne diese Startwerte stuende jeder Regler
-     * auf einer erfundenen Position, und der erste Schubs risse die Leuchte
-     * irgendwohin - der Klick bewiese dann nichts ueber den Zustand, den er
-     * gerade veraendert hat.
+     * Read once on opening, then NOT updated (design
+     * 2026-09-07, section 2). Without these start values, every slider
+     * would stand at a made-up position, and the first drag would move the lamp
+     * somewhere - then the click would prove nothing about the state it
+     * just changed.
      *
-     * `undefined` bleibt `undefined` und wird nicht durch eine Null
-     * ersetzt: die Oberflaeche zeigt dafuer den Hinweis "Startwert
-     * unbekannt", statt eine Kenntnis vorzutaeuschen, die nicht besteht.
+     * `undefined` stays `undefined` and is not replaced by null:
+     * the UI shows the hint "Start value unknown" instead,
+     * rather than pretending to know what it doesn't.
      */
     readStartValues(deviceId) {
-      // Cluster 8 Attribut 0 = CurrentLevel; Cluster 768: 0 = CurrentHue,
+      // Cluster 8 attribute 0 = CurrentLevel; Cluster 768: 0 = CurrentHue,
       // 1 = CurrentSaturation, 7 = ColorTemperatureMireds, 8 = ColorMode.
-      // Alle gegen das installierte SDK belegt (siehe Entwurf, Abschnitt 4).
+      // All verified against the installed SDK (see design, section 4).
       const mireds = this.signalValueByPath(deviceId, 768, 7);
       return {
         percent: this.signalValueByPath(deviceId, 8, 0),
@@ -1119,21 +1117,21 @@ Ebenfalls in `app.js`:
     },
 ```
 
-Und den Entwurfsspeicher neben `commandValueDrafts` anlegen:
+And create the draft storage alongside `commandValueDrafts`:
 
 ```javascript
     controlDrafts: {},
 ```
 
-- [ ] **Step 4: Senden**
+- [ ] **Step 4: Send**
 
 ```javascript
     /**
-     * Schickt einen Reglerwert. Aufgerufen beim LOSLASSEN (`change`), nicht
-     * waehrend des Ziehens: ein Zug = ein Funkpaket. Thread ist langsam,
-     * und wenn ein Klick etwas beweisen soll, muss die Zuordnung zwischen
-     * Eingabe und Reaktion eindeutig bleiben (Entwurf 2026-09-07,
-     * Abschnitt 6.5).
+     * Sends a slider value. Called on RELEASE (`change`), not
+     * during dragging: one drag = one radio packet. Thread is slow,
+     * and when a click should prove something, the mapping between
+     * input and reaction must stay unambiguous (design 2026-09-07,
+     * section 6.5).
      */
     async sendControl(device, command, value) {
       this.commandBusyKey = command.key;
@@ -1151,9 +1149,9 @@ Und den Entwurfsspeicher neben `commandValueDrafts` anlegen:
     },
 ```
 
-- [ ] **Step 5: Die Kachel umbauen**
+- [ ] **Step 5: Rebuild the tile**
 
-In `src/loxmatter/web/index.html`, im Block `device-commands`: die `<template x-for>`-Schleife so einschränken, dass sie nur noch wertlose Kommandos rendert, und den Knopf ergänzen. Der Zweig für `command.takes_value` mit dem Zahlenfeld **entfällt hier** — er zieht ins Modal:
+In `src/loxmatter/web/index.html`, in the `device-commands` block: restrict the `<template x-for>` loop to render only valueless commands, and add the button. The branch for `command.takes_value` with the number field **is removed from here** — it goes into the modal:
 
 ```html
                   <div class="device-commands">
@@ -1172,11 +1170,11 @@ In `src/loxmatter/web/index.html`, im Block `device-commands`: die `<template x-
                     ></button>
 ```
 
-Die drei folgenden Hinweiszeilen (`hiddenRawCommandsFor`, `controlsLoading`, `no_known_commands`) bleiben **unverändert** stehen.
+The three following hint lines (`hiddenRawCommandsFor`, `controlsLoading`, `no_known_commands`) remain **unchanged**.
 
-- [ ] **Step 6: Das Modal anlegen**
+- [ ] **Step 6: Create the modal**
 
-Neben das bestehende Signal-Modal in `index.html` ein zweites `<dialog>` setzen, nach demselben Muster (`x-ref="controlModal"`, `@close` setzt `controlModalDevice = null`, `@click` mit `isBackdropEvent`). Inhalt:
+Beside the existing signal modal in `index.html`, add a second `<dialog>` following the same pattern (`x-ref="controlModal"`, `@close` sets `controlModalDevice = null`, `@click` with `isBackdropEvent`). Content:
 
 ```html
         <template x-if="controlModalDeviceObject()">
@@ -1240,16 +1238,15 @@ Neben das bestehende Signal-Modal in `index.html` ein zweites `<dialog>` setzen,
         </template>
 ```
 
-Der `hue_sat`-Block folgt in Task 8.
+The `hue_sat` block follows in Task 8.
 
-- [ ] **Step 7: Stil**
+- [ ] **Step 7: Styling**
 
-In `style.css` neben den vorhandenen Modal-Regeln:
+In `style.css` alongside the existing modal rules:
 
 ```css
-/* Bedien-Modal: eine Zeile je Regler, Beschriftung ueber dem Regler statt
-   daneben - auf schmalen Fenstern bleibt der Regler sonst zu kurz zum
-   Zielen. */
+/* Control modal: one row per slider, label above the slider instead of
+   beside - on narrow windows the slider stays too short to aim at. */
 .control-row {
   display: flex;
   flex-direction: column;
@@ -1262,21 +1259,20 @@ In `style.css` neben den vorhandenen Modal-Regeln:
 }
 ```
 
-- [ ] **Step 8: Auslieferungstest ergänzen**
+- [ ] **Step 8: Add delivery test**
 
-An `tests/api/test_web.py` anhängen (dem dortigen Muster folgend):
+Append to `tests/api/test_web.py` (following the pattern there):
 
 ```python
 async def test_the_control_modal_is_delivered(client):
-    """Belegt NUR die Auslieferung. Ob die Alpine-Ausdruecke darin
-    tatsaechlich binden, kann dieser Test nicht sagen - das prueft der
-    Browser-Durchgang in Task 9."""
+    """Proves ONLY delivery. This test cannot tell whether the Alpine expressions in it
+    actually bind - the browser run-through in Task 9 tests that."""
     response = await client.get("/app.js")
     assert "openControlModal" in response.text
     assert "readStartValues" in response.text
 ```
 
-- [ ] **Step 9: Prüfen und committen**
+- [ ] **Step 9: Check and commit**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run mypy
@@ -1286,7 +1282,7 @@ git commit -m "feat(web): Bedien-Modal mit Reglern statt nackter Zahlenfelder"
 
 ---
 
-### Task 8: Farbfläche und Modus-Tabs
+### Task 8: Colour field and mode tabs
 
 **Files:**
 - Modify: `src/loxmatter/web/index.html`
@@ -1295,10 +1291,10 @@ git commit -m "feat(web): Bedien-Modal mit Reglern statt nackter Zahlenfelder"
 - Modify: `src/loxmatter/i18n/strings.yaml`
 
 **Interfaces:**
-- Consumes: alles aus Task 7.
+- Consumes: everything from Task 7.
 - Produces: `hasColourTabs(deviceId)`, `controlTab`, `hueSatToLoxone(hue, saturation)`, `pickColour(event, device, command)`.
 
-- [ ] **Step 1: Übersetzungen ergänzen**
+- [ ] **Step 1: Add translations**
 
 ```yaml
 web.devices.control_tab_white:
@@ -1312,33 +1308,32 @@ web.devices.control_colour_hint:
   de: "Waagerecht: Farbton. Senkrecht: Sättigung. Beim Loslassen wird gesendet."
 ```
 
-- [ ] **Step 2: Die Umrechnung im JavaScript**
+- [ ] **Step 2: The conversion in JavaScript**
 
 In `app.js`:
 
 ```javascript
     /**
-     * Farbton (Grad) und Saettigung (Prozent) in die gepackte Loxone-Zahl,
-     * die `POST /api/commands/{key}` erwartet.
+     * Hue (degrees) and saturation (percent) to the packed Loxone number
+     * that `POST /api/commands/{key}` expects.
      *
-     * Warum der Umweg ueber die Loxone-Codierung, statt Hue/Sat direkt zu
-     * schicken: WebUI und Loxone benutzen denselben Uebersetzer
-     * (`commands/translate.py`, Spec 4.2). Ein Klick hier durchlaeuft damit
-     * genau den Weg, den Loxone spaeter nimmt - klappt es hier, ist der
-     * Loxone-Pfad bewiesen. Der Preis ist die Quantisierung auf volle
-     * Prozent je Kanal (Entwurf 2026-09-07, Abschnitt 9.1).
+     * Why the detour through Loxone encoding instead of sending Hue/Sat directly:
+     * WebUI and Loxone use the same translator (`commands/translate.py`, Spec 4.2).
+     * A click here goes through exactly the path Loxone later takes - if it works
+     * here, the Loxone path is proven. The price is quantization to whole
+     * percent per channel (design 2026-09-07, section 9.1).
      *
-     * Die Helligkeit steckt NICHT in dieser Zahl - sie laeuft ueber
-     * LevelControl. Deshalb ist der Value-Anteil hier fest 1.
+     * Brightness does NOT go in this number - it goes through
+     * LevelControl. That's why the value part here is fixed at 1.
      */
     hueSatToLoxone(hue, saturation) {
-      // Lehrbuch-HSV nach RGB mit fest v = 1: die Helligkeit steckt NICHT
-      // in dieser Zahl, sie laeuft ueber LevelControl.
+      // Textbook HSV to RGB with fixed v = 1: brightness does NOT
+      // go in this number, it goes through LevelControl.
       const h = (((hue % 360) + 360) % 360) / 60;
       const s = Math.max(0, Math.min(100, saturation)) / 100;
-      const c = s;                                   // Chroma bei v = 1
+      const c = s;                                   // Chroma at v = 1
       const x = c * (1 - Math.abs((h % 2) - 1));
-      const m = 1 - c;                               // Weissanteil
+      const m = 1 - c;                               // White component
       const sectors = [
         [c, x, 0], [x, c, 0], [0, c, x],
         [0, x, c], [x, 0, c], [c, 0, x],
@@ -1350,37 +1345,37 @@ In `app.js`:
     },
 ```
 
-**Diese Funktion braucht einen eigenen Prüfschritt** — siehe Schritt 3. Sie ist die fehleranfälligste Stelle des ganzen Plans, weil ein Fehler hier nach einem Gerätefehler aussieht, nicht nach einem Rechenfehler (dieselbe Warnung, die `color.py` über sich selbst schreibt).
+**This function needs its own verification step** — see step 3. It is the most error-prone place in the whole plan, because an error here looks like a device error, not a calculation error (the same warning `color.py` writes about itself).
 
-- [ ] **Step 3: Die Umrechnung im Browser gegenprüfen**
+- [ ] **Step 3: Verify the conversion in the browser**
 
-Ein Wegwerf-Harness statt eines Unit-Tests, weil die Funktion im Browser lebt (Regel aus früheren Runden: ein Auslieferungstest belegt nur die Auslieferung).
+A throwaway harness instead of a unit test, because the function lives in the browser (rule from earlier rounds: a delivery test only proves delivery).
 
-Eine Datei im Scratchpad anlegen, die `hueSatToLoxone` einbindet und diese Fälle prüft, und sie im Browser öffnen:
+Create a file in the scratchpad that includes `hueSatToLoxone` and tests these cases, and open it in the browser:
 
-| Eingabe | Erwartete gepackte Zahl | Warum |
+| Input | Expected packed number | Why |
 | --- | --- | --- |
-| `(0, 100)` | `100` | reines Rot: r=100 %, g=0, b=0 |
-| `(120, 100)` | `100000` | reines Grün |
-| `(240, 100)` | `100000000` | reines Blau |
-| `(0, 0)` | `100100100` | keine Sättigung = Weiß |
+| `(0, 100)` | `100` | pure red: r=100%, g=0, b=0 |
+| `(120, 100)` | `100000` | pure green |
+| `(240, 100)` | `100000000` | pure blue |
+| `(0, 0)` | `100100100` | no saturation = white |
 
-Weicht ein Wert ab, ist die Formel falsch — **nicht** die Erwartung anpassen, sondern die Formel korrigieren, bis alle vier stimmen. Die drei Grundfarben und Weiß sind genau die Fälle, an denen eine vertauschte Zuordnung auffällt (dieselbe Begründung wie im Docstring von `rgb_to_hue_saturation`).
+If a value differs, the formula is wrong — **don't adjust the expectation**, correct the formula until all four match. The three primary colours and white are exactly the cases where a swapped mapping stands out (same reasoning as in the docstring of `rgb_to_hue_saturation`).
 
-- [ ] **Step 4: Tabs und Fläche**
+- [ ] **Step 4: Tabs and field**
 
 In `app.js`:
 
 ```javascript
-    // Der aktive Reiter des Bedien-Modals. Wird beim Oeffnen aus dem
-    // `colormode`-Signal des Geraets gesetzt (0 = Hue/Sat, 2 = Mired,
-    // gegen das SDK belegt) - das Modal raet den Modus also nicht, es
-    // liest ihn.
+    // The active tab of the control modal. Set on opening from the device's
+    // `colormode` signal (0 = Hue/Sat, 2 = Mired,
+    // verified against the SDK) - the modal doesn't guess the mode, it
+    // reads it.
     controlTab: "white",
 
-    /** Tabs nur, wenn das Geraet BEIDE Wege kann. Eine CCT-Leuchte
-     * bekommt dadurch keine Tableiste - ohne eine einzige Abfrage auf
-     * Geraetetyp oder Modell (Entwurf 2026-09-07, Abschnitt 6.3). */
+    /** Tabs only if the device can do BOTH. A CCT lamp
+     * gets no tab bar this way - without a single query on
+     * device type or model (design 2026-09-07, section 6.3). */
     hasColourTabs(deviceId) {
       return (
         this.controlsByKind(deviceId, "kelvin").length > 0 &&
@@ -1388,9 +1383,9 @@ In `app.js`:
       );
     },
 
-    /** Wandelt einen Klick auf die Farbflaeche in Farbton und Saettigung
-     * und schickt ihn. Die Flaeche ist waagerecht der Farbton (0-360°),
-     * senkrecht die Saettigung (oben 100 %, unten 0 %). */
+    /** Converts a click on the colour field to hue and saturation
+     * and sends it. The field is horizontally the hue (0-360°),
+     * vertically the saturation (top 100%, bottom 0%). */
     pickColour(event, device, command) {
       const rect = event.currentTarget.getBoundingClientRect();
       const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
@@ -1402,15 +1397,15 @@ In `app.js`:
     },
 ```
 
-In `openControlModal` den Reiter aus dem Gerät setzen — die Zeile mit `controlDrafts` ergänzen um:
+In `openControlModal`, set the tab from the device — add to the `controlDrafts` line:
 
 ```javascript
       this.controlTab = this.controlDrafts.colormode === 0 ? "colour" : "white";
 ```
 
-- [ ] **Step 5: Das Markup**
+- [ ] **Step 5: The markup**
 
-Im Modal, vor dem `kelvin`-Block, die Tableiste:
+In the modal, before the `kelvin` block, the tab bar:
 
 ```html
             <div class="control-tabs" x-show="hasColourTabs(controlModalDevice)">
@@ -1423,15 +1418,15 @@ Im Modal, vor dem `kelvin`-Block, die Tableiste:
             </div>
 ```
 
-Den `kelvin`-Block aus Task 7 in ein `x-show` hüllen — sichtbar, wenn es keine Tabs gibt oder der Weiß-Reiter aktiv ist:
+Wrap the `kelvin` block from Task 7 in an `x-show` — visible when there are no tabs or the white tab is active:
 
 ```html
             <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'white'">
-              <!-- der kelvin-Block aus Task 7, unveraendert -->
+              <!-- the kelvin block from Task 7, unchanged -->
             </div>
 ```
 
-Und der Farbblock:
+And the colour block:
 
 ```html
             <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'colour'">
@@ -1450,17 +1445,16 @@ Und der Farbblock:
             </div>
 ```
 
-`@pointerup` statt `@click`: das ist das Loslassen (Abschnitt 6.5), und es deckt Maus und Finger in einem Ereignis ab.
+`@pointerup` instead of `@click`: this is the release (section 6.5), and it covers mouse and touch in one event.
 
-- [ ] **Step 6: Der Farbverlauf im Stil**
+- [ ] **Step 6: The colour gradient in the style**
 
 In `style.css`:
 
 ```css
-/* Farbflaeche: waagerecht der Farbton, senkrecht die Saettigung. Zwei
-   uebereinanderliegende Verlaeufe statt eines Bildes - so bleibt die
-   Flaeche skalierbar und kommt ohne eine Datei aus, die ausgeliefert
-   werden muesste. */
+/* Colour field: horizontally the hue, vertically the saturation. Two
+   overlaid gradients instead of an image - this keeps the
+   field scalable and needs no file to be delivered. */
 .colour-field {
   height: 140px;
   border-radius: 8px;
@@ -1490,7 +1484,7 @@ In `style.css`:
 }
 ```
 
-- [ ] **Step 7: Prüfen und committen**
+- [ ] **Step 7: Check and commit**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run mypy
@@ -1500,74 +1494,74 @@ git commit -m "feat(web): Farbflaeche und Modus-Reiter im Bedien-Modal"
 
 ---
 
-### Task 9: Durchgang im Browser und an der echten Leuchte
+### Task 9: Run through the browser and with the real lamp
 
-Die vorangegangenen Tasks belegen, dass die Dateien ausgeliefert werden. Ob die Alpine-Bindungen greifen und ob die Farben stimmen, kann nur ein echter Durchgang zeigen.
+The prior tasks prove the files are delivered. Whether the Alpine bindings work and whether the colours are correct, only a real run-through can show.
 
 **Files:**
-- Modify: `src/loxmatter/commands/color.py` (nur der Warnabsatz)
-- Modify: `README.md`, ggf. `docs/screenshots/`
+- Modify: `src/loxmatter/commands/color.py` (only the warning paragraph)
+- Modify: `README.md`, possibly `docs/screenshots/`
 
-- [ ] **Step 1: Die Anwendung starten und beide Leuchten öffnen**
+- [ ] **Step 1: Start the application and open both lamps**
 
 ```bash
 uv run loxmatter run --bridge-ip <ip>
 ```
 
-Im Browser: Gerätekachel beider Leuchten, „Steuern" klicken.
+In the browser: device tile for both lamps, click "Control".
 
-- [ ] **Step 2: Diese Punkte einzeln prüfen**
+- [ ] **Step 2: Check these points one by one**
 
-| Prüfung | Erwartung |
+| Check | Expectation |
 | --- | --- |
-| CCT-Leuchte | Kelvin-Regler, **keine** Tableiste, keine Farbfläche |
-| RGBW-Leuchte | Tableiste Weiß/Farbe, beides bedienbar |
-| Kelvin-Regler | Enden entsprechen den Grenzen der Leuchte, nicht 2000–6500 |
-| Startwerte | Regler stehen dort, wo die Leuchte gerade steht — kein Sprung beim ersten Zug |
-| Aktiver Reiter | entspricht dem Modus, in dem die Leuchte gerade ist |
-| Farbfläche | Klick auf Rot/Grün/Blau macht die Leuchte rot/grün/blau |
-| Loslassen | ein Zug erzeugt **ein** Kommando, nicht viele (Browser-Netzwerkfenster) |
-| Offline | Gerät ausschalten → alle Bedienelemente gesperrt |
-| Beide Sprachen | umschalten, keine leeren Beschriftungen |
+| CCT lamp | Kelvin slider, **no** tab bar, no colour field |
+| RGBW lamp | Tab bar White/Colour, both usable |
+| Kelvin slider | Ends match the lamp's limits, not 2000–6500 |
+| Start values | Sliders stand where the lamp currently is — no jump on first drag |
+| Active tab | matches the mode the lamp is currently in |
+| Colour field | Click on red/green/blue makes the lamp red/green/blue |
+| Release | one drag creates **one** command, not many (browser network window) |
+| Offline | Turn device off → all controls locked |
+| Both languages | switch, no empty labels |
 
-Weicht die Farbe sichtbar ab, ist der Fehler in `hueSatToLoxone` (Task 8, Schritt 3) oder in `loxone_rgb_to_rgb` (Task 2) — **nicht** an der Leuchte. Das ist genau der Fall, vor dem `color.py` warnt.
+If the colour noticeably differs, the error is in `hueSatToLoxone` (Task 8, step 3) or in `loxone_rgb_to_rgb` (Task 2) — **not** on the lamp. That is exactly the case `color.py` warns about.
 
-- [ ] **Step 3: Die Hardware-Warnung in `color.py` entfernen**
+- [ ] **Step 3: Remove the hardware warning in `color.py`**
 
-Erst jetzt, und nur wenn Schritt 2 vollständig durchgelaufen ist. Der Absatz „ACHTUNG - dieser Teil ist NICHT an Hardware validiert..." wird ersetzt durch:
+Only now, and only if step 2 ran completely. The paragraph "WARNING - this part is NOT validated against hardware..." is replaced with:
 
 ```
-Gegengeprueft am 7. September 2026 an zwei IKEA-Leuchten (CCT und RGBW),
-eingecheckt als tests/fixtures/nodes/ikea_kajplats_ws_lamp.json und
-ikea_kajplats_cws_lamp.json. Bis dahin stand hier die Warnung, dieser Teil sei nie
-an Hardware gelaufen - beim Bau stand keine Matter-Leuchte zur Verfuegung.
-Die Umrechnung bleibt die fehleranfaelligste im Projekt: ein Fehler hier
-sieht nach einem Geraetefehler aus, nicht nach einem Rechenfehler.
+Verified on 7 September 2026 against two IKEA lamps (CCT and RGBW),
+checked in as tests/fixtures/nodes/ikea_kajplats_ws_lamp.json and
+ikea_kajplats_cws_lamp.json. Until then, the warning stood here that this part was never
+run against hardware - no Matter lamp was available at build time.
+The conversion remains the most error-prone in the project: an error here
+looks like a device error, not a calculation error.
 ```
 
-**Bleibt Schritt 2 unvollständig, bleibt die Warnung stehen.** Sie ist wahr, solange sie nicht widerlegt ist.
+**If step 2 stays incomplete, the warning stays.** It is true as long as it is not disproven.
 
-- [ ] **Step 4: README nachziehen**
+- [ ] **Step 4: Update README**
 
-Im Abschnitt zu den Bedienelementen ergänzen, dass Farbe und Farbtemperatur aus der Oberfläche gesetzt werden können. Wenn dort Screenshots stehen, einen des Modals ergänzen — dem Muster der vorhandenen Bilder in `docs/screenshots/` folgend.
+Add to the controls section that colour and colour temperature can be set from the UI. If screenshots are there, add one of the modal — following the pattern of existing images in `docs/screenshots/`.
 
-- [ ] **Step 5: Prüfen und committen**
+- [ ] **Step 5: Check and commit**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run mypy
 git add -A
-git commit -m "docs: Farbumrechnung an echten Leuchten gegengeprueft"
+git commit -m "docs: colour conversion verified against real lamps"
 ```
 
 ---
 
-## Reihenfolge und Abhängigkeiten
+## Order and dependencies
 
 ```
-Task 1 (Tor)
+Task 1 (Gate)
    └── Task 2 ── Task 3 ─┐
        Task 4 ───────────┼── Task 6 ── Task 7 ── Task 8 ── Task 9
        Task 5 ───────────┘
 ```
 
-Tasks 4 und 5 hängen nicht voneinander ab und können parallel laufen; beide berühren `clusters.yaml` und `table.py`, also nacheinander committen.
+Tasks 4 and 5 do not depend on each other and can run in parallel; both touch `clusters.yaml` and `table.py`, so commit them sequentially.
