@@ -353,6 +353,31 @@ def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
         )
 
     built = build_payload(value)
+
+    # Bei Helligkeit 0 gibt es keine Farbe zu setzen - und ein Farbkommando
+    # waere hier nicht nur ueberfluessig, sondern sichtbar falsch: Loxone
+    # schickt zum Ausschalten den Wert 0, und der ist in der RGB-Codierung
+    # Saettigung 0, also WEISS. Die Leuchte faerbte sich weiss, WAEHREND sie
+    # noch leuchtete, und ging erst danach aus - ein heller Blitz beim
+    # Ausschalten (an der Leuchte beobachtet, 8. September 2026; weiss nutzt
+    # alle LEDs, gesaettigtes Rot nur die roten, der Blitz war deshalb sogar
+    # heller als das Bild davor).
+    #
+    # Verglichen wird der GERUNDETE Pegel, nicht die Prozentzahl: was auf
+    # Stufe 0 rundet, schaltet ohnehin aus, und der Farbbefehl davor waere
+    # derselbe Blitz.
+    level = _level(str(built.brightness_percent)) if built.brightness_percent is not None else None
+    if level == 0:
+        return [
+            MatterCall(
+                node_id=command.node_id,
+                endpoint=command.endpoint,
+                cluster_id=_CLUSTER_LEVEL,
+                command_id=_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF,
+                payload={"level": 0, "transitionTime": 0},
+            )
+        ]
+
     calls = [
         MatterCall(
             node_id=command.node_id,
@@ -370,10 +395,7 @@ def to_matter_calls(command: StoredCommand, value: str) -> list[MatterCall]:
                 endpoint=command.endpoint,
                 cluster_id=_CLUSTER_LEVEL,
                 command_id=_COMMAND_MOVE_TO_LEVEL_WITH_ON_OFF,
-                payload={
-                    "level": _level(str(built.brightness_percent)),
-                    "transitionTime": 0,
-                },
+                payload={"level": level, "transitionTime": 0},
             )
         )
     return calls

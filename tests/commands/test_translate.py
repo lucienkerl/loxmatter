@@ -393,3 +393,41 @@ def test_the_plain_colour_temperature_output_also_applies_while_off():
     call = to_matter_calls(cmd(768, 10, takes_value=True), "2700")[0]
     assert call.payload["optionsMask"] == 1
     assert call.payload["optionsOverride"] == 1
+
+
+def test_switching_off_sends_no_colour_command():
+    """Betriebsbefund vom 8. September 2026: beim Ausschalten blitzte die
+    Leuchte kurz sehr hell WEISS auf.
+
+    Loxone schickt zum Ausschalten den Wert 0. In der RGB-Codierung ist das
+    (0,0,0) - Farbton 0, **Saettigung 0**, also WEISS - und Helligkeit 0.
+    Daraus wurden zwei Kommandos: erst "faerbe weiss", dann "schalte aus".
+    Die Leuchte gehorchte dem ersten, waehrend sie noch leuchtete; weiss
+    nutzt alle LEDs, gesaettigtes Rot nur die roten, also war der Blitz
+    sogar heller als das Bild davor.
+
+    Bei Helligkeit 0 gibt es keine Farbe zu setzen. Es bleibt genau ein
+    Kommando: ausschalten."""
+    calls = to_matter_calls(cmd(768, 6, takes_value=True), "0")
+    assert len(calls) == 1
+    assert calls[0].cluster_id == 8
+    assert calls[0].command_id == 4
+    assert calls[0].payload["level"] == 0
+
+
+def test_lumitech_at_zero_brightness_also_sends_no_colour_command():
+    """Derselbe Fall auf dem Weiss-Weg: 200003691 = Kennung 20 | 0 % |
+    3691 K. Auch hier taucht im Log der Anlage die Helligkeit 0 auf."""
+    calls = to_matter_calls(cmd(768, 6, takes_value=True), "200003691")
+    assert len(calls) == 1
+    assert calls[0].cluster_id == 8
+    assert calls[0].payload["level"] == 0
+
+
+def test_a_barely_dimmed_value_still_carries_its_colour():
+    """Die Gegenprobe: 1 ist (1,0,0) - dunkelrot bei 1 %, NICHT aus. Wer
+    die Bedingung auf 'fast null' aufweicht, verliert hier die Farbe."""
+    calls = to_matter_calls(cmd(768, 6, takes_value=True), "1")
+    assert len(calls) == 2
+    assert calls[0].cluster_id == 768
+    assert calls[1].payload["level"] > 0

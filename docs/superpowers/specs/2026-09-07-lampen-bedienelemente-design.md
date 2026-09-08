@@ -406,7 +406,14 @@ unbekannt“ und die Fehlermeldung für eine ungültige Farbzahl.
    `MoveToLevelWithOnOff`. Damit schaltet der Wert 0 die Leuchte auch
    wirklich aus, statt sie weiß leuchten zu lassen.
 
-   Zwei Dinge, die dabei erst die Hardware zeigte:
+   Drei Dinge, die dabei erst die Hardware zeigte:
+   - **Der Wert 0 darf keinen Farbbefehl auslösen.** In der RGB-Codierung ist
+     `0` gleich (0,0,0) — Farbton 0, **Sättigung 0**, also Weiß. Erst Weiß zu
+     färben und dann auszuschalten erzeugte beim Ausschalten einen hellen
+     weißen Blitz, und zwar heller als das Bild davor: Weiß nutzt alle LEDs,
+     gesättigtes Rot nur die roten. Bei Helligkeit 0 gibt es keine Farbe zu
+     setzen — es bleibt genau ein Kommando, das Ausschalten. Verglichen wird
+     der gerundete Pegel, nicht die Prozentzahl.
    - Ein Farbbefehl an eine **ausgeschaltete** Leuchte verpufft (Matter-Spec).
      Die Farbnutzlast trägt deshalb `ExecuteIfOff`; sonst käme die Leuchte in
      der alten Farbe hoch. Gemessen: ohne das Bit kam sie weiß, mit dem Bit
