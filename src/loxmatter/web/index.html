@@ -1514,6 +1514,23 @@
            Ansicht 3: System
            ================================================================ -->
       <section x-show="view === 'system'" x-cloak>
+        <div class="card">
+          <h2 x-text="t('web.system.version_heading')"></h2>
+          <template x-if="versionInfo">
+            <div>
+              <p x-text="t('web.system.version_running', { version: versionInfo.version })"></p>
+              <p class="hint">
+                <span x-show="versionInfo.commit" x-cloak
+                      x-text="t('web.system.version_commit', { commit: versionInfo.commit })"></span>
+                <span x-show="versionInfo.built_at" x-cloak
+                      x-text="t('web.system.version_built_at', { built_at: versionInfo.built_at })"></span>
+              </p>
+              <p class="hint" x-show="versionInfo.version === 'dev'" x-cloak
+                 x-text="t('web.system.version_dev_hint')"></p>
+            </div>
+          </template>
+        </div>
+
         <!-- Handlung, keine Diagnose - deshalb vor den Systemchecks und
              nicht zwischen den Log-Ansichten weiter unten. Der Knopf loest
              denselben vollen Resend aus wie der Bruecken-Start und wie

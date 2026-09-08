@@ -84,3 +84,20 @@ async def test_im_entwicklungscheckout_antwortet_sie_trotzdem(api, monkeypatch):
 async def test_ohne_sitzung_kein_zugriff(unauthenticated_api):
     response = await unauthenticated_api.get("/api/version")
     assert response.status_code == 401
+
+
+async def test_die_oberflaeche_kennt_alle_texte_der_versionskarte():
+    """Ein fehlender Schluessel faellt sonst erst im Browser auf - als
+    leeres Feld, nicht als Fehler. Die Liste hier ist die Verbindung
+    zwischen index.html und strings.yaml, die sonst niemand prueft."""
+    from loxmatter import i18n
+
+    for key in (
+        "web.system.version_heading",
+        "web.system.version_running",
+        "web.system.version_commit",
+        "web.system.version_built_at",
+        "web.system.version_dev_hint",
+    ):
+        assert i18n.raw_template(key)
+        assert key in i18n.strings_with_prefix("web.")

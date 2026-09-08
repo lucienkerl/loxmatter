@@ -1189,6 +1189,21 @@ web.export.download_failed:
   de: "Download fehlgeschlagen: {message}"
 
 # --- web.system — Resync, Systemcheck, Live-Diagnose, Sicherung ---
+web.system.version_heading:
+  en: "Version"
+  de: "Version"
+web.system.version_running:
+  en: "Running: {version}"
+  de: "Läuft: {version}"
+web.system.version_commit:
+  en: "Commit {commit}"
+  de: "Commit {commit}"
+web.system.version_built_at:
+  en: "built {built_at}"
+  de: "gebaut {built_at}"
+web.system.version_dev_hint:
+  en: "This bridge was built from a working copy, not from a published version."
+  de: "Diese Brücke wurde aus einer Arbeitskopie gebaut, nicht aus einer veröffentlichten Version."
 web.system.resync_heading:
   en: "Resend all values"
   de: "Alle Werte erneut senden"
