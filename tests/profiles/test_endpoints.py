@@ -18,12 +18,6 @@ from loxmatter import i18n
 from loxmatter.profiles import endpoints
 
 
-def endpoint_label_of(device_types, endpoint):
-    return endpoints.endpoint_labels(device_types).get(endpoint) or i18n.t(
-        "web.signals.endpoint_plain", endpoint=endpoint
-    )
-
-
 def test_two_button_endpoints_are_numbered():
     """Der Fall, wegen dessen es dieses Modul gibt: die Fernbedienung traegt
     denselben Geraetetyp auf zwei Endpunkten. Ohne Nummerierung stuenden im
@@ -59,12 +53,17 @@ def test_an_unmapped_type_falls_back_to_the_endpoint_number():
     assert labels[3] == "Endpunkt 3"
 
 
-def test_device_types_never_backfilled_fall_back_for_every_endpoint():
+def test_device_types_never_backfilled_yields_an_empty_mapping():
     """`device.device_types` ist `NULL`, solange `backfill_device_types`
     nicht lief (siehe `_migrate_to_v7`). Das ist kein Fehlerfall, sondern
-    derselbe Ruecktritt wie bei `category_for(None)`."""
-    i18n.set_language("de")
-    assert endpoint_label_of(None, 1) == "Endpunkt 1"
+    derselbe Ruecktritt wie bei `category_for(None)` - und diese Funktion
+    hier schuldet dafuer nur ein leeres Woerterbuch, keinen Rueckfalltext:
+    den bildet der Aufrufer (`api/devices._signal_out`), der `labels.get(...)`
+    ohnehin gegen einen fehlenden Endpunkt absichern muss (siehe dort und
+    `tests/api/test_devices.py`). Ein testeigener Helfer, der diesen
+    Ruecktritt hier nachbaut, wuerde nur die eigene Kopie der Regel pruefen,
+    nicht die ausgelieferte Stelle - das war frueher hier der Fall."""
+    assert endpoints.endpoint_labels(None) == {}
 
 
 def test_every_mapped_type_exists_in_the_matter_table():

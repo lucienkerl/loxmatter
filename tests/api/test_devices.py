@@ -95,6 +95,28 @@ async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_a
     assert press["endpoint_label"] == "Button 1"
 
 
+async def test_signals_fall_back_to_a_plain_endpoint_label_when_types_are_null(button_api):
+    """`device.device_types` ist `NULL`, solange `Store.backfill_device_types`
+    nicht lief - laut dessen Docstring der dokumentierte Normalfall fuer ein
+    Geraet, das beim Bruueckenstart offline war. `endpoints.endpoint_labels(None)`
+    liefert dafuer ein leeres Woerterbuch (siehe `tests/profiles/test_endpoints.py`);
+    dieser Test hier belegt die AUSGELIEFERTE Stelle, die mit dieser leeren
+    Zuordnung tatsaechlich umgehen muss - `_signal_out` in `api/devices.py`.
+    Ohne dessen `.get(..., i18n.t(...))`-Ruecktritt wirft die Route hier einen
+    KeyError statt eines Namens, den es immer gibt."""
+    client, store, device_id = button_api
+    store._db.execute("UPDATE device SET device_types = NULL WHERE id = ?", (device_id,))
+    store._db.commit()
+
+    response = await client.get(f"/api/devices/{device_id}/signals")
+
+    assert response.status_code == 200
+    signals = response.json()
+    assert signals
+    for signal in signals:
+        assert signal["endpoint_label"] == f"Endpoint {signal['endpoint']}"
+
+
 async def test_device_list_carries_name_and_signal_count(api):
     client, _, device_id, _ = api
     response = await client.get("/api/devices")

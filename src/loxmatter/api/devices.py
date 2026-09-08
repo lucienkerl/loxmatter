@@ -161,11 +161,25 @@ def _signal_out(
     (`profiles.endpoints.endpoint_labels`, einmal je Geraet gebildet) statt
     hier je Signal neu berechnet zu werden - bei 173 Signalen eines
     Geraets waere das 173-mal dieselbe Rechnung ueber dieselben
-    Geraetetypen. Ein Endpunkt ohne Eintrag (Geraetetypen noch nicht
-    nachgetragen, siehe `endpoint_labels`-Docstring) faellt hier auf
-    `endpoint_plain` zurueck."""
+    Geraetetypen. Zwei Faelle lassen `labels` fuer einen Endpunkt leer:
+    entweder sind die Geraetetypen fuer das GANZE Geraet noch nicht
+    nachgetragen (`device_types IS NULL`, der laut `Store.
+    backfill_device_types`-Docstring dokumentierte Normalfall fuer ein
+    Geraet, das beim Bruueckenstart offline war - `endpoint_labels(None)`
+    liefert dann `{}`), oder ein EINZELNER Endpunkt meldet gar keinen
+    Descriptor und fehlt deshalb als Schluessel in `device_types`, obwohl
+    das Geraet selbst laengst nachgetragen ist (siehe `endpoint_labels`).
+    Fuer beide Faelle faellt HIER auf `endpoint_plain` zurueck - als
+    eigener Zweig statt als `.get()`-Vorgabe, die bei JEDEM Signal
+    ausgewertet wuerde: bei 173 Signalen eines Geraets waeren das 173
+    ueberfluessige `i18n.t`-Aufrufe je Anfrage, obwohl der Rueckfall fast
+    nie greift - genau die Rechnung, die der Absatz oben ueber `labels`
+    schon einmal vermeidet."""
     exportable = is_exportable(signal.exportability)
     reason = None if exportable else _UNEXPORTABLE_REASONS.get(signal.exportability)
+    endpoint_label = labels.get(signal.ref.endpoint)
+    if endpoint_label is None:
+        endpoint_label = i18n.t("web.signals.endpoint_plain", endpoint=signal.ref.endpoint)
     return SignalOut(
         key=signal.key,
         path=signal.ref.path,
@@ -180,10 +194,7 @@ def _signal_out(
         resend=signal.resend,
         endpoint=signal.ref.endpoint,
         cluster_id=signal.ref.cluster_id,
-        endpoint_label=labels.get(
-            signal.ref.endpoint,
-            i18n.t("web.signals.endpoint_plain", endpoint=signal.ref.endpoint),
-        ),
+        endpoint_label=endpoint_label,
     )
 
 
