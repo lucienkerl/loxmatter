@@ -34,7 +34,7 @@ from typing import Any
 
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.matter.paths import parse_attribute_path
-from loxmatter.profiles.table import known_attribute_section, names_element
+from loxmatter.profiles.table import known_attribute_section, marked_non_functional, names_element
 
 DESCRIPTOR_CLUSTER_ID = 29
 DEVICE_TYPE_LIST_ID = 0
@@ -125,19 +125,22 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
 
     Three layers, in this order:
 
-    1. Boilerplate clusters are never wanted, on any endpoint.
-    2. On a management endpoint (root node or OTA requestor), only
-       something belonging to a functional device type also declared
-       there is even considered at all - everything else is excluded
-       immediately here.
-    3. What layer 2 lets through (and every functional endpoint anyway) is
-       wanted - except for a cluster for which the profile table carries an
-       `attributes:` section: there, only the elements named there. An
-       unknown cluster, AND a known cluster without an `attributes:`
-       section (e.g. one that is in the table only for its commands),
-       remain fully wanted (main document 3.5). This distinction is
-       `known_attribute_section` in `profiles.table` - review fix Phase 6:
-       `knows_cluster` alone was not enough, see its docstring.
+    1. Boilerplate-Cluster sind nie gewollt, auf keinem Endpunkt.
+    2. Auf einem Verwaltungs-Endpunkt (Root Node oder OTA Requestor) ist
+       nur ueberhaupt in Betracht, was zu einem dort ebenfalls deklarierten
+       Nutz-Geraetetyp gehoert - alles andere scheidet hier sofort aus.
+    3. Was Schicht 2 durchlaesst (und jeder Nutz-Endpunkt ohnehin) ist
+       gewollt - ausser bei einem Cluster, fuer den die Profiltabelle einen
+       `attributes:`-Abschnitt fuehrt: dort nur die dort benannten Elemente -
+       abzueglich derer, die die Tabelle ausdruecklich mit `functional:
+       false` fuehrt (Geraetekonstanten wie Min/Max-Bereiche, siehe
+       `marked_non_functional`).
+       Ein unbekannter Cluster, UND ein bekannter Cluster ohne
+       `attributes:`-Abschnitt (etwa einer, der nur wegen seiner Kommandos in
+       der Tabelle steht), bleiben vollstaendig gewollt (Hauptdokument 3.5).
+       Diese Unterscheidung ist `known_attribute_section` in
+       `profiles.table` - review-fix Phase 6: `knows_cluster` allein reichte
+       nicht, siehe dessen Docstring.
 
     Important: layer 2 only grants the cluster a place on the management
     endpoint, not already every one of its elements - layer 3 filters
@@ -165,5 +168,5 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
     if ref.kind is SignalKind.EVENT:
         return True
     if known_attribute_section(ref.cluster_id):
-        return names_element(ref)
+        return names_element(ref) and not marked_non_functional(ref)
     return True

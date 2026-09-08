@@ -260,3 +260,23 @@ def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_
     label = f"{snap.vendor_name} {snap.product_name}".strip()
     inputs = to_inputs(signals, device_id, label)
     assert len(inputs) == 5
+
+
+def test_the_template_lists_the_button_press_before_the_battery(tmp_path):
+    """Die VIU-Vorlage erbt die Reihenfolge aus `Store.signals` (api/export.py
+    ruft `to_inputs(store.signals(...))`). Im Loxone-Baum steht seit der
+    Rangliste (Aufgabe 2) der Tastendruck oben und die Batterie unten - das
+    ist Absicht, kein Nebeneffekt, und gehoert deshalb festgehalten."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snap = load("ikea_bilresa_button.json")
+        device_id = store.register_device(snap)
+        store.register_signals(device_id, snap)
+        signals = store.signals(device_id)
+    finally:
+        store.close()
+
+    inputs = to_inputs(signals, device_id, "Taster")
+    keys = [i.key for i in inputs]
+
+    assert keys.index(f"d{device_id}_1_press") < keys.index(f"d{device_id}_0_battery")

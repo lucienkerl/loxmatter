@@ -302,10 +302,105 @@ function blobFromBase64(base64, mimeType) {
 // bookmarked and shared, and the back button leads to the previous tab
 // instead of out of the application.
 //
-// A fragment and not a path (`/settings`): the server serves exactly one
-// file under `/` (see loxone/server.py); a path would need a catch-all
-// route there that falls back to `index.html` for every unknown path.
-// The fragment never reaches the server at all.
+// Ein Fragment und kein Pfad (`/settings`): der Server liefert unter `/`
+// genau eine Datei aus (siehe loxone/server.py), ein Pfad brauchte dort eine
+// Auffangroute, die jeden unbekannten Pfad auf `index.html` zurueckfallen
+// laesst. Das Fragment erreicht den Server ohnehin nie.
+
+// --- Pairing-Code (Entwurf vom 2026-09-07) ----------------------------------
+//
+// Auf dem Geraet steht der Zahlencode gruppiert: `1234-567-8901`. Genau so
+// tippt ihn jeder ab - also nimmt ihn das Feld auch so entgegen und schreibt
+// die Bindestriche beim Tippen selbst.
+//
+// Die Regel steht ZWEIMAL: hier und als `_strip_separators` in
+// `api/models.py`. Das ist Absicht - die Oberflaeche formatiert, das Backend
+// normalisiert fuer JEDEN Aufrufer der Route. Wer eine der beiden Fassungen
+// aendert, aendert die andere.
+
+// Alles ausser Ziffern, Leerraum und Bindestrich macht den Wert zu einem
+// QR-Inhalt. Die Pruefung greift damit beim ersten getippten `M` von `MT:`,
+// nicht erst beim Doppelpunkt: eine Regel, die auf `MT:` wartet, wuerde die
+// zwei Zeichen davor als Zifferneingabe behandeln und wegwerfen.
+const PAIRING_QR_PAYLOAD = /[^0-9\s-]/;
+
+// Die belegte Schreibweise gibt es nur fuer die elf Stellen. Fuer den
+// 21-stelligen Code gibt es keine - eine erfundene Gruppierung saehe anders
+// aus als der Aufdruck, das Feld formatierte den Code also WEG vom Vorbild
+// statt hin. Ab der zwoelften Ziffer bleibt er deshalb ungruppiert.
+const PAIRING_GROUPS = [4, 7, 11];
+
+function isPairingQrCode(raw) {
+  return PAIRING_QR_PAYLOAD.test(raw);
+}
+
+function formatPairingCode(raw) {
+  if (isPairingQrCode(raw)) {
+    return raw;
+  }
+  const digits = raw.replace(/\D/g, "");
+  const parts = [];
+  let start = 0;
+  for (let i = 0; i < PAIRING_GROUPS.length; i++) {
+    const end = PAIRING_GROUPS[i];
+    if (digits.length <= start) {
+      break;
+    }
+    // Fuer die letzte Gruppe: alle restlichen Ziffern miteinbeziehen,
+    // ab der zwoelften Ziffer wird nicht weiter gruppiert.
+    const sliceEnd = i === PAIRING_GROUPS.length - 1 ? digits.length : end;
+    parts.push(digits.slice(start, sliceEnd));
+    start = end;
+  }
+  return parts.join("-");
+}
+
+function normalizePairingCode(raw) {
+  const text = raw.trim();
+  // Muss mit _COMMISSION_CODE_SEPARATORS in api/models.py gleichlauten: dort
+  // wird `re.compile(r"[\s-]")` verwendet, um Leerraum und Bindestrich zu
+  // entfernen. Dies hier ist das Gegenstueck - nicht /\D/, sondern genau
+  // diese Zeichen. Bis eine der QR-Pruefungen unabhaengig geaendert wird,
+  // liefern beide Fassungen fuer jede erreichbare Eingabe dieselbe Normalisierung,
+  // aber die Gleichheit war vorher nur ueber eine stille Invariante erschlossen.
+  return isPairingQrCode(text) ? text : text.replace(/[\s-]/g, "");
+}
+
+// Was der Chip im Feld sagt. Gibt einen Schluessel statt eines Textes
+// zurueck, damit diese Funktion ohne geladene Sprachtabelle prueffaehig
+// bleibt - uebersetzt wird erst beim Anzeigen.
+//
+// Der Chip BESCHREIBT, er verbietet nicht: auch bei `bad` bleibt der
+// Einlern-Knopf bedienbar und der Wert geht unveraendert an die Route.
+// Dieselbe Haltung wie beim Validator im Backend - die Bruecke sagt, was sie
+// sieht, und laesst den Matter-Stack entscheiden.
+function describePairingCode(raw) {
+  const text = raw.trim();
+  if (!text) {
+    return { key: "", values: {}, tone: "idle" };
+  }
+  if (isPairingQrCode(text)) {
+    return /^MT:/i.test(text)
+      ? { key: "web.devices.code_detect_qr", values: {}, tone: "ok" }
+      : { key: "web.devices.code_detect_invalid", values: {}, tone: "bad" };
+  }
+  const count = text.replace(/\D/g, "").length;
+  if (count === 11) {
+    return { key: "web.devices.code_detect_manual", values: {}, tone: "ok" };
+  }
+  if (count === 21) {
+    return { key: "web.devices.code_detect_manual_long", values: {}, tone: "ok" };
+  }
+  if (count > 21) {
+    return { key: "web.devices.code_detect_too_long", values: {}, tone: "bad" };
+  }
+  // Gezaehlt wird gegen die naechste gueltige Laenge - erst 11, dann 21.
+  const missing = count < 11 ? 11 - count : 21 - count;
+  return missing === 1
+    ? { key: "web.devices.code_detect_remaining_one", values: {}, tone: "warn" }
+    : { key: "web.devices.code_detect_remaining_many", values: { n: missing }, tone: "warn" };
+}
+
 const VIEWS = ["devices", "export", "system", "settings"];
 const DEFAULT_VIEW = "devices";
 
@@ -353,6 +448,32 @@ function writeHash(view) {
   }
 }
 
+// Bedienelement-Typen ("none", "percent", "kelvin", "hue_sat"), fuer die
+// das Bedien-Modal ein eigenes Bedienelement baut - alles ausserhalb
+// dieser Liste (auch "unknown" selbst, und jeder zukuenftige Wert, den
+// `profiles/clusters.yaml` einmal traegt) faellt auf das schlichte
+// Zahlenfeld zurueck. EINE Stelle fuer diese Liste statt eines Vergleichs
+// auf den Wortlaut "unknown" allein (Befund I-2, Abschluss-Review
+// 2026-09-08): sonst verschwindet ein neuer, der Oberflaeche unbekannter
+// `control`-Wert spurlos, obwohl `hasAdjustableControls` bereits den
+// "Steuern"-Knopf zeigt. Die Gegenseite steht in `profiles/table.py`,
+// `command_control` - und `tests/profiles/test_table.py` sichert ab, dass
+// kein Eintrag der Tabelle einen Wert ausserhalb dieser Liste traegt.
+const KNOWN_CONTROL_KINDS = ["none", "percent", "kelvin", "hue_sat"];
+
+// Bedienelement-Typ (`command.control`) -> Feld(er) in `controlDrafts`,
+// die dessen zuletzt GESENDETEN Wert halten. EINE Stelle fuer diese
+// Zuordnung statt einer eigenen Fallunterscheidung an jeder Reglerbindung
+// (Befund I-1, Abschluss-Review 2026-09-08): der Bedienelement-Typ
+// entscheidet hier genau wie bei `controlsByKind`, nie `command.slug`.
+// `hue_sat` traegt zwei Felder, weil die Farbflaeche Farbton UND
+// Saettigung in einem Klick liefert - siehe `recordControlDraft` unten.
+const CONTROL_DRAFT_FIELDS = {
+  percent: ["percent"],
+  kelvin: ["kelvin"],
+  hue_sat: ["hue", "saturation"],
+};
+
 function app() {
   return {
     // --- View --------------------------------------------------------------
@@ -387,9 +508,17 @@ function app() {
     controlsByDevice: {},
     commandValueDrafts: {},
     commandBusyKey: null,
-    // Toasts as an overlay instead of in the text flow (2026-09-03): a
-    // line inserted into the flow shifts everything below it, and anyone
-    // trying to click a second command right then misses.
+    // Entwurfsspeicher fuer die Regler im Bedien-Modal (Aufgabe 7): einmal
+    // beim Oeffnen aus `readStartValues` befuellt, siehe dort.
+    controlDrafts: {},
+    // Der aktive Reiter des Bedien-Modals. Wird beim Oeffnen aus dem
+    // `colormode`-Signal des Geraets gesetzt (0 = Hue/Sat, 2 = Mired,
+    // gegen das SDK belegt) - das Modal raet den Modus also nicht, es
+    // liest ihn.
+    controlTab: "white",
+    // Kurzmeldungen als Overlay statt im Textfluss (2026-09-03): eine
+    // eingeblendete Zeile im Fluss verschiebt alles darunter, und wer
+    // gerade einen zweiten Befehl anklicken will, trifft daneben.
     toasts: [],
     // When a key last came in over the live connection. Makes the
     // difference visible between "nothing is changing" and "nothing is
@@ -471,12 +600,24 @@ function app() {
     rawWriteDrafts: {},
     rawWriteBusyKey: null,
     rawWriteMessages: {},
-    // The signal modal holds the device id, NOT the device object:
-    // `loadDevices` replaces `devices` entirely, and a retained object
-    // would afterwards be a corpse carrying a stale name and room.
-    // `signalsModalDeviceObject()` resolves the id against the current
-    // list each time. This field is reset at EXACTLY ONE place, the
-    // `@close` of the `<dialog>` in index.html - see the comment there.
+    // Welche Signalzeile ihren Aufklapper offen hat, oder null.
+    //
+    // Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
+    // Zustand in Alpine statt im DOM, und der Unterschied hat einen Grund:
+    // dort gibt es ein Auf/Zu JE ELEMENT, hier genau EINEN Wert fuer das
+    // ganze Modal. Hoechstens ein Bereich ist offen - bei 173 Zeilen waeren
+    // mehrere offene Aufklapper wieder die Wand, die dieser Umbau abschafft.
+    // Zurueckgesetzt wird dieses Feld am `@close` des `<dialog>` in
+    // index.html, zusammen mit `signalsModalDevice` (Fund 3 der
+    // Nachpruefung, 2026-09-07) - sonst stuende der Aufklapper beim
+    // naechsten Oeffnen desselben Geraets sofort wieder offen.
+    expandedSignalKey: null,
+    // Das Signal-Modal haelt die Geraete-ID, NICHT das Geraeteobjekt:
+    // `loadDevices` ersetzt `devices` vollstaendig, ein festgehaltenes
+    // Objekt waere danach eine Leiche mit veraltetem Namen und Raum.
+    // `signalsModalDeviceObject()` loest die ID gegen die jeweils aktuelle
+    // Liste auf. Zurueckgesetzt wird dieses Feld an GENAU EINER Stelle, dem
+    // `@close` des `<dialog>` in index.html - siehe den Kommentar dort.
     signalsModalDevice: null,
     // Pure presentation bookkeeping for the modal's backdrop click, NOT
     // modal state like `signalsModalDevice` above - see the
@@ -484,10 +625,18 @@ function app() {
     // index.html.
     signalsModalBackdropMousedown: false,
 
-    // --- Settings --------------------------------------------------------
-    // `bridgeSettings` is the state most recently loaded from the server
-    // (also read by Task 7 and Task 9); `settingsDraft` are the three
-    // input fields on this tab, only adopted after "Save".
+    // Wie `signalsModalDevice`: nur die ID, nicht das Objekt - siehe den
+    // Kommentar dort und `controlModalDeviceObject()`. Zurueckgesetzt wird
+    // dieses Feld nach derselben Regel an GENAU EINER Stelle, dem `@close`
+    // des Bedien-Modals in index.html.
+    controlModalDevice: null,
+    // Wie `signalsModalBackdropMousedown`, nur fuer das Bedien-Modal.
+    controlModalBackdropMousedown: false,
+
+    // --- Einstellungen ---------------------------------------------------
+    // `bridgeSettings` ist der zuletzt vom Server geladene Stand (auch von
+    // Task 7 und Task 9 gelesen); `settingsDraft` sind die drei Eingabefelder
+    // auf diesem Tab, erst nach "Speichern" uebernommen.
     bridgeSettings: { bridge_ip: null, udp_port: 7000, listen_port: 8080, saved_at: null },
     settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
     settingsBusy: false,
@@ -997,6 +1146,46 @@ function app() {
       return controls ? controls.hidden_raw_commands : 0;
     },
 
+    /** Alle Kommandos eines Geraets mit genau diesem Bedienelement-Typ
+     * (`CommandOut.control`: "none", "percent", "kelvin", "hue_sat",
+     * "unknown"). Entscheidet, WELCHES Bedienelement gebaut wird - siehe
+     * die Entwurfsregel dazu im Bedien-Modal in index.html: `command.slug`
+     * dient dort nur als Beschriftung, nie als Fallunterscheidung. */
+    controlsByKind(deviceId, kind) {
+      return this.commandsFor(deviceId).filter((command) => command.control === kind);
+    },
+
+    /** Kommandos, fuer die die ausgelieferte Oberflaeche KEIN eigenes
+     * Bedienelement kennt - der Rueckfall auf das schlichte Zahlenfeld im
+     * Modal. Faengt nicht nur den Wortlaut "unknown" ab (das war der
+     * Fehler in Befund I-2), sondern jeden `control`-Wert ausserhalb
+     * `KNOWN_CONTROL_KINDS`: traegt jemand spaeter z. B. `control: xy` in
+     * `clusters.yaml` ein, liefert die API `control: "xy"` unveraendert
+     * durch, und ohne diese Sammelstelle wuerde das Kommando im Modal
+     * einfach nicht gezeichnet - kein Regler, kein Zahlenfeld, kein
+     * Hinweis. */
+    unhandledControls(deviceId) {
+      return this.commandsFor(deviceId).filter(
+        (command) => !KNOWN_CONTROL_KINDS.includes(command.control),
+      );
+    },
+
+    /** Ob dieses Geraet ueberhaupt etwas Wertbehaftetes kann - nur dann
+     * bekommt die Kachel den "Steuern"-Knopf zum Bedien-Modal. */
+    hasAdjustableControls(deviceId) {
+      return this.commandsFor(deviceId).some((command) => command.control !== "none");
+    },
+
+    /** Tabs nur, wenn das Geraet BEIDE Wege kann. Eine CCT-Leuchte
+     * bekommt dadurch keine Tableiste - ohne eine einzige Abfrage auf
+     * Geraetetyp oder Modell (Entwurf 2026-09-07, Abschnitt 6.3). */
+    hasColourTabs(deviceId) {
+      return (
+        this.controlsByKind(deviceId, "kelvin").length > 0 &&
+        this.controlsByKind(deviceId, "hue_sat").length > 0
+      );
+    },
+
     exportedAtFor(deviceId) {
       const status = this.exportStatusFor(deviceId);
       return status ? status.exported_at : null;
@@ -1055,14 +1244,80 @@ function app() {
       return signals ? signals.filter((signal) => signal.functional) : [];
     },
 
+    // Der Cluster, an dem die Kachel den Batteriestand erkennt. Die Zahl
+    // steht hier statt einer Titel-Pruefung: der Titel ist vom Nutzer frei
+    // umbenennbar ("Akku", "Saft"), der Cluster nicht.
+    POWER_SOURCE_CLUSTER: 47,
+
+    // Der Batteriestand des Geraets, oder null. Er bekommt seit der
+    // Cluster-Rangliste (Entwurf 2026-09-07, Abschnitt 6) eine eigene
+    // Fusszeile: mit Rang 90 steht er hinter allen sechzehn anderen
+    // funktionalen Signalen des Tasters und fiele damit aus den sechs
+    // Vorschauzeilen heraus - er waere auf der Kachel gar nicht mehr zu
+    // sehen. Das ist der Preis der Rangliste, und dies ist die Gegenbuchung.
+    //
+    // `.find()` liefert bei mehreren PowerSource-Signalen (zusammengesetztes
+    // Geraet, oder eine Bruecke mit zwei Batterien unter einem Datensatz)
+    // bewusst nur EINES - das erstplatzierte der Rangliste, deterministisch,
+    // weil die Liste sortiert ankommt. Die Kachel zeigt ohnehin nur eine
+    // Fusszeile, mehr waere dort kein Gewinn. `previewSignalsFor` verlaesst
+    // sich dafuer NICHT auf dieses eine Signal, sondern schliesst den ganzen
+    // Cluster aus - sonst stuende ein zweites PowerSource-Signal ueber die
+    // Hintertuer doch wieder oben im Werteraster.
+    batterySignalFor(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      if (!signals) {
+        return null;
+      }
+      return (
+        signals.find(
+          (signal) => signal.functional && signal.cluster_id === this.POWER_SOURCE_CLUSTER,
+        ) || null
+      );
+    },
+
+    // Die funktionalen Signale OHNE den Batteriestand - die Menge, aus der
+    // sich die Vorschauzeilen und der "+ N weitere"-Zaehler bilden.
+    //
+    // **Die Begruendung hat sich beim Zusammenfuehren geaendert, die Regel
+    // nicht.** Urspruenglich hielt dieser Filter die Batterie aus dem
+    // LEITWERT heraus (Entwurf 2026-09-07): sie stand mit Rang 90 vorn in
+    // der Kopfzeile, obwohl ein Taster nicht nach seinem Batteriestand
+    // benannt ist. Den Leitwert gibt es seit dem Entwurf "Geraetekachel
+    // ohne Leitwert" nicht mehr - alle Signale stehen gleichrangig im
+    // Werteraster. Der Filter bleibt trotzdem noetig, und zwar aus dem
+    // umgekehrten Grund: die Rangliste schiebt die Batterie ans ENDE, und
+    // bei einem Geraet mit mehr als sechs funktionalen Signalen (der
+    // Taster hat siebzehn) faellt sie damit aus den Vorschauzeilen heraus.
+    // Ohne die eigene Fusszeile waere der Batteriestand auf der Kachel
+    // ueberhaupt nicht mehr zu sehen - bei einem Geraet, das genau daran
+    // stirbt.
+    //
+    // Dass Vorschau und Zaehler aus DERSELBEN Menge kommen, bleibt der
+    // Trick: der Zaehler kann die Batterie nie doppelt zaehlen (sie fehlt
+    // in beiden Summanden). Eine Sonderregel an zwei Stellen waere dieselbe
+    // Aussage zweimal - und beim ersten Entwurf ist eine davon vergessen
+    // worden ("+ 11 weitere" auf einer Kachel, die sieben von 17 Signalen
+    // zeigte).
+    //
+    // Gefiltert wird ueber den Cluster, nicht ueber den Schluessel von
+    // `batterySignalFor`: der liefert bei zwei PowerSource-Signalen nur das
+    // erste, ein Schluesselvergleich liesse das zweite im Werteraster - und
+    // zwar an dessen Anfang, weil die Rangliste beide gleich einordnet.
+    previewSignalsFor(deviceId) {
+      return this.functionalSignalsFor(deviceId).filter(
+        (signal) => signal.cluster_id !== this.POWER_SOURCE_CLUSTER,
+      );
+    },
+
     firstSignalsFor(deviceId) {
-      return this.functionalSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT);
+      return this.previewSignalsFor(deviceId).slice(0, this.FUNCTIONAL_PREVIEW_LIMIT);
     },
 
     remainingSignalCount(deviceId) {
       return Math.max(
         0,
-        this.functionalSignalsFor(deviceId).length - this.FUNCTIONAL_PREVIEW_LIMIT,
+        this.previewSignalsFor(deviceId).length - this.FUNCTIONAL_PREVIEW_LIMIT,
       );
     },
 
@@ -1234,25 +1489,7 @@ function app() {
       return groups;
     },
 
-    // --- Primary signal (tile header) ----------------------------------------
-
-    // The first functional signal in the order `firstSignalsFor` returns
-    // anyway - i.e. that of the profile table. Plug socket -> state,
-    // climate sensor -> temperature, blind -> position. No dedicated data
-    // storage, no configuration: a device with no functional signals
-    // simply has no primary signal, and the header stays single-line.
-    leadSignalFor(deviceId) {
-      return this.firstSignalsFor(deviceId)[0] || null;
-    },
-
-    // The rest of the short list. `FUNCTIONAL_PREVIEW_LIMIT` counts the
-    // primary signal IN (design 6.2), so there is no second cutoff here -
-    // `firstSignalsFor` has already done it.
-    restSignalsFor(deviceId) {
-      return this.firstSignalsFor(deviceId).slice(1);
-    },
-
-    // --- Changing a device's room ----------------------------------------------
+    // --- Raum eines Geraets aendern ---------------------------------------
 
     // Sends ONLY the room. A `label` sent along with it would run
     // `rename_device` and set `updated_at` - the device would afterwards
@@ -1416,22 +1653,60 @@ function app() {
       return signals ? signals.filter((signal) => !signal.functional) : [];
     },
 
-    // Both blocks of the signals view as one list (Review-Fix 6, Phase 6
-    // follow-up): the signal-row template used to sit in index.html
-    // twice, byte-identical apart from `functionalSignalsFor` versus
-    // `expertSignalsFor` - 51 duplicated lines that had to be touched
-    // twice on every change, with nothing noticing if they drifted apart.
-    // In the template, `collapsible` now only controls the `<details>`'s
-    // starting state (functional open, expert closed, see `x-init` in
-    // index.html) - the rest (row markup, empty-state note) is identical
-    // for both groups. The first sentence above has applied twice since
-    // the modal rework: there, both groups even share the same
-    // `<details>` markup, not just the same row template.
+    // Alle Gruppen der Signale-Ansicht als eine Liste (Review-Fix 6,
+    // Nachbesserung Phase 6): vorher stand die Signalzeilen-Vorlage in
+    // index.html zweimal, byte-identisch bis auf `functionalSignalsFor`
+    // gegen `expertSignalsFor` - 51 Zeilen doppelt, die bei jeder
+    // Aenderung zweimal angefasst werden mussten, ohne dass etwas ein
+    // Auseinanderlaufen bemerkt haette. `collapsible` steuert in der
+    // Vorlage nur noch den Startzustand des `<details>` (Endpunktgruppen
+    // offen, Experte zu, siehe `x-init` in index.html) - der Rest
+    // (Zeilen-Markup) ist fuer alle Gruppen identisch. Der
+    // erste Satz oben gilt seit dem Modal-Umbau doppelt: dort teilen sich
+    // alle Gruppen sogar dasselbe `<details>`-Markup, nicht nur dieselbe
+    // Zeilenvorlage.
+    //
+    // Die Gruppen des Signal-Modals: je Endpunkt eine, danach der
+    // Experte-Block (Entwurf 2026-09-07, Abschnitt 7.4).
+    //
+    // Die Reihenfolge der Endpunktgruppen folgt der Cluster-Rangliste, ohne
+    // dass hier sortiert wuerde: `functionalSignalsFor` kommt bereits
+    // sortiert an, und diese Schleife uebernimmt die Reihenfolge des ERSTEN
+    // Auftretens jedes Endpunkts. Am Taster steht "Geraet" (nur Batterie)
+    // deshalb zuletzt, obwohl es Endpunkt 0 ist.
+    //
+    // `group.key` bleibt stabil ueber Neuzeichnungen ("ep1", "expert") -
+    // das ist Voraussetzung fuer das `x-init="$el.open = !group.collapsible"`
+    // im Markup: waere der Schluessel unstabil, baute Alpine den Knoten neu
+    // auf und klappte eine geoeffnete Gruppe wortlos wieder zu.
     signalGroupsFor(deviceId) {
-      return [
-        { key: "functional", title: t("web.signals.group_functional"), collapsible: false, signals: this.functionalSignalsFor(deviceId) },
-        { key: "expert", title: t("web.signals.group_expert"), collapsible: true, signals: this.expertSignalsFor(deviceId) },
-      ];
+      const groups = [];
+      const byEndpoint = new Map();
+      for (const signal of this.functionalSignalsFor(deviceId)) {
+        let group = byEndpoint.get(signal.endpoint);
+        if (!group) {
+          group = {
+            key: "ep" + signal.endpoint,
+            title: signal.endpoint_label,
+            subtitle: t("web.signals.group_endpoint_subtitle", { endpoint: signal.endpoint }),
+            collapsible: false,
+            signals: [],
+          };
+          byEndpoint.set(signal.endpoint, group);
+          groups.push(group);
+        }
+        group.signals.push(signal);
+      }
+      // Bleibt EINE Gruppe: 156 Signale ueber alle Endpunkte zu gliedern
+      // erzeugte nur mehr Ueberschriften, keine Uebersicht.
+      groups.push({
+        key: "expert",
+        title: t("web.signals.group_expert"),
+        subtitle: "",
+        collapsible: true,
+        signals: this.expertSignalsFor(deviceId),
+      });
+      return groups;
     },
 
     liveValueOf(signal) {
@@ -1523,6 +1798,127 @@ function app() {
       }
     },
 
+    /**
+     * Schickt einen Reglerwert. Aufgerufen beim LOSLASSEN (`change`), nicht
+     * waehrend des Ziehens: ein Zug = ein Funkpaket. Thread ist langsam,
+     * und wenn ein Klick etwas beweisen soll, muss die Zuordnung zwischen
+     * Eingabe und Reaktion eindeutig bleiben (Entwurf 2026-09-07,
+     * Abschnitt 6.5).
+     */
+    async sendControl(device, command, value) {
+      this.commandBusyKey = command.key;
+      try {
+        await this.request("POST", `/api/commands/${command.key}`, { value: String(value) });
+        this.showToast(t("web.devices.command_sent", { slug: command.slug, label: device.label }));
+      } catch (error) {
+        this.showToast(
+          t("web.devices.command_failed", { slug: command.slug, message: error.message }),
+          true,
+        );
+      } finally {
+        this.commandBusyKey = null;
+      }
+    },
+
+    /**
+     * Schreibt die zuletzt GESENDETE Reglerstellung in `controlDrafts` fort
+     * - ueber `CONTROL_DRAFT_FIELDS`, keyed auf `command.control`, nicht
+     * ueber eine Fallunterscheidung an der jeweiligen Bindung (Befund I-1,
+     * Abschluss-Review 2026-09-08).
+     *
+     * Ohne diesen Nachtrag zeigte der Regler nach dem naechsten Neuzeichnen
+     * (z. B. durch einen Klick in die Farbflaeche, der `controlDrafts`
+     * komplett neu zuweist) wieder den beim Oeffnen gelesenen Startwert -
+     * eine Reglerstellung, die dem zuletzt gesendeten Kommando
+     * widerspricht und damit genau der stille Fehlschlag ist, den der
+     * Entwurf ausschliesst.
+     *
+     * `values` traegt einen Eintrag je Feld aus
+     * `CONTROL_DRAFT_FIELDS[command.control]`, in derselben Reihenfolge
+     * (ein Wert fuer "percent"/"kelvin", zwei fuer "hue_sat"). Ein
+     * Bedienelement-Typ ausserhalb der Zuordnung (siehe
+     * `unhandledControls`) schreibt bewusst nichts fort - fuer den gibt es
+     * keinen Regler, dessen Stellung veralten koennte.
+     */
+    recordControlDraft(command, ...values) {
+      const fields = CONTROL_DRAFT_FIELDS[command.control];
+      if (!fields) {
+        return;
+      }
+      const patch = {};
+      fields.forEach((field, index) => {
+        patch[field] = values[index];
+      });
+      this.controlDrafts = { ...this.controlDrafts, ...patch };
+    },
+
+    /**
+     * Farbton (Grad) und Saettigung (Prozent) in die gepackte Loxone-Zahl,
+     * die `POST /api/commands/{key}` erwartet.
+     *
+     * Warum der Umweg ueber die Loxone-Codierung, statt Hue/Sat direkt zu
+     * schicken: WebUI und Loxone benutzen denselben Uebersetzer
+     * (`commands/translate.py`, Spec 4.2). Ein Klick hier durchlaeuft damit
+     * genau den Weg, den Loxone spaeter nimmt - klappt es hier, ist der
+     * Loxone-Pfad bewiesen. Der Preis ist die Quantisierung auf volle
+     * Prozent je Kanal (Entwurf 2026-09-07, Abschnitt 9.1).
+     *
+     * Die Helligkeit steckt NICHT in dieser Zahl - sie laeuft ueber
+     * LevelControl. Deshalb ist der Value-Anteil hier fest 1.
+     */
+    hueSatToLoxone(hue, saturation) {
+      // Lehrbuch-HSV nach RGB mit fest v = 1: die Helligkeit steckt NICHT
+      // in dieser Zahl, sie laeuft ueber LevelControl.
+      const h = (((hue % 360) + 360) % 360) / 60;
+      const s = Math.max(0, Math.min(100, saturation)) / 100;
+      const c = s;                                   // Chroma bei v = 1
+      const x = c * (1 - Math.abs((h % 2) - 1));
+      const m = 1 - c;                               // Weissanteil
+      const sectors = [
+        [c, x, 0], [x, c, 0], [0, c, x],
+        [0, x, c], [x, 0, c], [c, 0, x],
+      ];
+      const [r, g, b] = sectors[Math.floor(h) % 6].map((channel) =>
+        Math.round((channel + m) * 100),
+      );
+      return r + g * 1000 + b * 1000000;
+    },
+
+    /** Wandelt einen Klick auf die Farbflaeche in Farbton und Saettigung
+     * und schickt ihn. Die Flaeche ist waagerecht der Farbton (0-360°),
+     * senkrecht die Saettigung (oben 100 %, unten 0 %). */
+    /**
+     * Wo der Marker auf der Farbflaeche sitzt und welche Farbe er traegt.
+     *
+     * Die Umkehrung von `pickColour`: dort wird aus einer Klickposition ein
+     * Farbton-Saettigungs-Paar, hier aus dem Paar wieder eine Position.
+     * Beide muessen dieselbe Achsenzuordnung benutzen - waagerecht Farbton
+     * 0-360 Grad, senkrecht oben volle Saettigung -, sonst zeigt der Marker
+     * woanders hin als der Klick, der ihn gesetzt hat.
+     *
+     * Die Fuellfarbe entsteht ueber `hsl()` mit fester Helligkeit 50 %: das
+     * ist dieselbe Annahme wie in `hueSatToLoxone` (Wert fest 1, die
+     * Helligkeit laeuft ueber LevelControl), damit der Punkt zur Flaeche
+     * unter ihm passt und nicht zur Lampenhelligkeit.
+     */
+    colourMarkerStyle() {
+      const hue = this.controlDrafts.hue ?? 0;
+      const saturation = this.controlDrafts.saturation ?? 0;
+      const left = (((hue % 360) + 360) % 360) / 3.6;
+      const top = 100 - Math.max(0, Math.min(100, saturation));
+      return `left: ${left}%; top: ${top}%; background: hsl(${hue} ${saturation}% 50%)`;
+    },
+
+    pickColour(event, device, command) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+      const hue = x * 360;
+      const saturation = (1 - y) * 100;
+      this.recordControlDraft(command, hue, saturation);
+      return this.sendControl(device, command, this.hueSatToLoxone(hue, saturation));
+    },
+
     // ---------------------------------------------------------------------
     // Toasts (2026-09-03)
     // ---------------------------------------------------------------------
@@ -1595,11 +1991,19 @@ function app() {
      * in the row's layout moving at all. Reads `nowTick`, so Alpine drops
      * the class again once the time is up. */
     signalIsFresh(signal) {
-      // `null` is a VALID argument here, not a programming error:
-      // `leadSignalFor` returns it for every device whose signals are not
-      // loaded yet - and that is every device, for at least one render
-      // pass, between `GET /api/devices` and
-      // `GET /api/devices/<id>/signals` (2026-09-06).
+      // `null` ist hier ein GUELTIGES Argument, kein Programmierfehler.
+      // Der Aufrufer, der es lieferte, war `leadSignalFor` - fuer jedes
+      // Geraet, dessen Signale noch nicht geladen waren, also zwischen
+      // `GET /api/devices` und `GET /api/devices/<id>/signals` fuer JEDES
+      // Geraet, mindestens einen Rendering-Durchlauf lang (2026-09-06).
+      //
+      // Diesen Aufrufer gibt es seit dem Wegfall des Leitwerts nicht mehr
+      // (Entwurf 2026-09-07): das `x-for` des Werterasters laeuft ueber
+      // eine leere Liste und wertet gar nichts aus. Die Duldsamkeit bleibt
+      // trotzdem stehen. Sie zu entfernen, weil der eine BEKANNTE Aufrufer
+      // weg ist, waere die Sorte Aufraeumen, die beim naechsten Aufrufer
+      // zurueckschlaegt - und der naechste faende denselben Fehler wieder,
+      // ohne den Kommentar unten zu kennen.
       //
       // The `x-show` on the wrapper in `index.html` did NOT catch this: it
       // only sets `display`, it does not stop Alpine from evaluating the
@@ -1633,9 +2037,100 @@ function app() {
         : t("web.header.unchanged_since_load");
     },
 
+    // Schreibt den Zahlencode beim Tippen so, wie er auf dem Geraet steht.
+    //
+    // `commissionCode` wird hier AUSDRUECKLICH nachgezogen, statt sich auf
+    // x-model zu verlassen: beide haengen am selben `input`-Ereignis, und
+    // welcher Zuhoerer zuerst laeuft, haengt an der Reihenfolge der
+    // Attribute im Markup. Ein Zustand, der von einer Attributreihenfolge
+    // abhaengt, ist ein Fehler, der erst beim Umsortieren auffaellt.
+    formatCommissionCode(input) {
+      const before = input.value;
+      const formatted = formatPairingCode(before);
+      if (formatted !== before) {
+        // Ziffern LINKS vom Cursor zaehlen, nicht Zeichenpositionen: sonst
+        // verschoebe jeder neu gesetzte Bindestrich den Cursor um eins.
+        const caret = input.selectionStart ?? before.length;
+        const digitsLeft = before.slice(0, caret).replace(/\D/g, "").length;
+        input.value = formatted;
+        let seen = 0;
+        let position = 0;
+        while (position < formatted.length && seen < digitsLeft) {
+          if (/\d/.test(formatted[position])) {
+            seen += 1;
+          }
+          position += 1;
+        }
+        input.setSelectionRange(position, position);
+      }
+      this.commissionCode = input.value;
+    },
+
+    // Rueckschritt DIREKT hinter einem Bindestrich loescht die Ziffer davor,
+    // Entf DIREKT davor die Ziffer danach - jeweils den Trenner gleich mit.
+    //
+    // Ohne diese Sonderbehandlung loescht der Tastendruck nur den Trenner,
+    // den `formatCommissionCode` unmittelbar danach wieder setzt: der Wert
+    // aendert sich nicht, der Cursor bleibt stehen, und die Taste wirkt tot.
+    // Das ist der eine Punkt, an dem eine mitformatierende Eingabe
+    // ueblicherweise scheitert - fuer beide Tasten, nicht nur Rueckschritt.
+    //
+    // Gilt NICHT im QR-Inhalt: dort traegt der Bindestrich Bedeutung
+    // (Base38-Alphabet), und dieser Zweig wuerde sonst still Nutzdaten mit
+    // loeschen (siehe `isPairingQrCode`).
+    commissionCodeKeydown(event) {
+      const isBackspace = event.key === "Backspace";
+      const isDelete = event.key === "Delete";
+      if (!isBackspace && !isDelete) {
+        return;
+      }
+      const input = event.target;
+      if (input.selectionStart !== input.selectionEnd) {
+        return;
+      }
+      if (isPairingQrCode(input.value)) {
+        return;
+      }
+      const caret = input.selectionStart;
+      let from;
+      let to;
+      if (isBackspace) {
+        if (caret < 2 || input.value[caret - 1] !== "-") {
+          return;
+        }
+        from = caret - 2;
+        to = caret;
+      } else {
+        if (input.value[caret] !== "-") {
+          return;
+        }
+        from = caret;
+        to = caret + 2;
+      }
+      event.preventDefault();
+      input.value = input.value.slice(0, from) + input.value.slice(to);
+      input.setSelectionRange(from, from);
+      this.formatCommissionCode(input);
+    },
+
+    // Text und Farbe des Chips im Feld.
+    commissionCodeBadge() {
+      const state = describePairingCode(this.commissionCode);
+      return {
+        text: state.key ? t(state.key, state.values) : "",
+        tone: state.tone,
+      };
+    },
+
     async commissionDevice() {
       this.commissionMessage = null;
-      if (!this.commissionCode.trim()) {
+      // Normalisiert, nicht nur getrimmt: die Trenner, die das Feld beim
+      // Tippen selbst gesetzt hat, gehoeren nicht in den Matter-Stack. Das
+      // Backend schneidet sie ohnehin ein zweites Mal weg
+      // (`CommissionRequest._strip_separators`) - hier stehen sie draussen,
+      // damit die Oberflaeche nicht etwas anderes abschickt, als sie zeigt.
+      const code = normalizePairingCode(this.commissionCode);
+      if (!code) {
         this.commissionMessage = t("web.devices.commission_code_required");
         this.commissionMessageIsError = true;
         return;
@@ -1643,9 +2138,12 @@ function app() {
       this.commissionBusy = true;
       this.commissionStep = 0;
       this.commissionFailed = false;
-      this.commissionRunCode = this.commissionCode.trim();
+      // Die Ablaufanzeige zeigt den FORMATIERTEN Code, nicht den
+      // uebertragenen: wer zwanzig bis sechzig Sekunden wartet, soll den
+      // Code wiedererkennen, den er eingetippt hat.
+      this.commissionRunCode = formatPairingCode(this.commissionCode.trim());
       try {
-        const body = { code: this.commissionCode.trim() };
+        const body = { code };
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }
@@ -1829,12 +2327,15 @@ function app() {
     },
 
     /**
-     * Closes the modal via the native `close()` method instead of
-     * clearing the state directly: `close()` fires the `close` event, and
-     * its handler in index.html is the one place that resets
-     * `signalsModalDevice`. Anyone additionally writing
-     * `this.signalsModalDevice = null` here would once again create two
-     * sources of truth for the same state.
+     * Schliesst das Modal ueber die native `close()`-Methode statt den
+     * Zustand direkt zu leeren: `close()` loest das `close`-Ereignis aus,
+     * und dessen Handler in index.html ist die eine Stelle, die
+     * `signalsModalDevice` UND `expandedSignalKey` zuruecksetzt (Fund 3 der
+     * Nachpruefung, 2026-09-07: ohne den zweiten Reset stuende beim
+     * naechsten Oeffnen desselben Geraets sofort wieder derselbe Aufklapper
+     * offen, ohne dass der Kebab dafuer geklickt wurde). Wer hier
+     * zusaetzlich `this.signalsModalDevice = null` schriebe, haette wieder
+     * zwei Wahrheiten ueber denselben Zustand.
      */
     closeSignalsModal() {
       this.$refs.signalsModal.close();
@@ -1910,6 +2411,32 @@ function app() {
       }
     },
 
+    // Wie viele Signale dieses Geraets tatsaechlich als Eingang nach Loxone
+    // gehen. `exported` allein reicht nicht: ein Signal, dessen Wert auf
+    // keinen Loxone-Eingang passt (`exportable === false`), erzeugt keinen -
+    // dieselbe Unterscheidung, die `to_inputs` server-seitig macht.
+    exportedSignalCount(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      return signals ? signals.filter((s) => s.exported && s.exportable).length : 0;
+    },
+
+    signalCount(deviceId) {
+      const signals = this.signalsByDevice[deviceId];
+      return signals ? signals.length : 0;
+    },
+
+    // Nur was AN ist, wird ausgeschaltet. Ein `toggleExported` ueber alle
+    // Signale wuerde die Auswahl invertieren statt sie zu leeren - der
+    // Knopf heisst aber "alle abwaehlen", nicht "umkehren".
+    async deselectAllSignals(deviceId) {
+      const signals = this.signalsByDevice[deviceId] || [];
+      for (const signal of signals) {
+        if (signal.exported) {
+          await this.toggleExported(signal);
+        }
+      }
+    },
+
     async toggleResend(signal) {
       try {
         const updated = await this.request("PATCH", `/api/signals/${signal.key}`, {
@@ -1940,6 +2467,114 @@ function app() {
     rawWriteMessageClass(signal) {
       const message = this.rawWriteMessages[signal.key];
       return message && message.isError ? "hint danger-text" : "hint";
+    },
+
+    toggleSignalDetails(signal) {
+      this.expandedSignalKey = this.expandedSignalKey === signal.key ? null : signal.key;
+    },
+
+    // Das Rohwert-Feld ist nur fuer Attribute sinnvoll (ein Ereignis hat
+    // keinen gespeicherten Wert, den man ueberschreiben koennte) - die
+    // Herkunft darueber gilt dagegen fuer beide Signalarten. Als eigener
+    // Helfer statt `signal.kind === 'attribute'` direkt im Markup, damit
+    // dieselbe Bedingung nicht zweimal im Quelltext steht.
+    isAttributeSignal(signal) {
+      return signal.kind === "attribute";
+    },
+
+    /**
+     * Formuliert die Herkunft eines Signals als Klartext-Satz fuer den
+     * Aufklapper.
+     *
+     * `signal.path` traegt dieselbe Auskunft schon als "1/59/1" - dass
+     * darin das DRITTE Segment das Element ist, ist Wissen ueber das
+     * Pfadformat und gehoert deshalb in eine benannte Funktion, nicht als
+     * `signal.path.split('/')[2]` mitten ins Markup (derselbe Grund wie bei
+     * `commandsFor` weiter oben: eine gewoehnliche Funktion ist lesbarer
+     * als ein Ausdruck mit eingebauter Zerlegungsregel im Markup - und
+     * aendert sich das Pfadformat, gibt es dafuer genau eine Stelle statt
+     * einer Suche in `index.html`).
+     */
+    signalOriginText(signal) {
+      return t("web.signals.origin", {
+        endpoint: signal.endpoint,
+        cluster: signal.cluster_id,
+        element: signal.path.split("/")[2],
+      });
+    },
+
+    // ---------------------------------------------------------------------
+    // Bedien-Modal (Aufgabe 7): Regler statt nackter Zahlenfelder fuer
+    // wertbehaftete Kommandos. Aufbau, Oeffnen, Schliessen und Backdrop-
+    // Klick folgen exakt dem Signal-Modal oben - siehe dessen Kommentare
+    // fuer die Begruendung.
+    // ---------------------------------------------------------------------
+
+    controlModalDeviceObject() {
+      return this.devices.find((device) => device.id === this.controlModalDevice) || null;
+    },
+
+    /**
+     * Oeffnet das Bedien-Modal. Das `$nextTick` ist Pflicht, kein Stil -
+     * dieselbe Begruendung wie bei `openSignalsModal`: `showModal()` setzt
+     * den Anfangsfokus auf das erste fokussierbare Element IM Dialog, und
+     * das entsteht erst, nachdem Alpine den `x-if`-Inhalt aufgebaut hat.
+     */
+    openControlModal(device) {
+      this.deviceActionError = null;
+      this.controlModalDevice = device.id;
+      this.controlDrafts = this.readStartValues(device.id);
+      this.controlTab = this.controlDrafts.colormode === 0 ? "colour" : "white";
+      this.$nextTick(() => this.$refs.controlModal.showModal());
+    },
+
+    /** Schliesst ueber `close()`, damit der `close`-Handler in index.html
+     * die eine Stelle bleibt, die `controlModalDevice` zuruecksetzt -
+     * dieselbe Regel wie bei `closeSignalsModal`. */
+    closeControlModal() {
+      this.$refs.controlModal.close();
+    },
+
+    // Die Slugs, unter denen die Signale eines Geraets die Startwerte
+    // tragen. `signalsByDevice` haelt ALLE Signale, nicht nur die
+    // exportierten (siehe api/devices.py, `get_signals`), und ihre Werte
+    // sind bereits skaliert (loxone/values.py, `to_loxone_value`) - level
+    // und saturation in Prozent, hue in Grad. Nur die Farbtemperatur steht
+    // in Mired, weil Kelvin ein Kehrwert ist, den `scale` nicht kann.
+    // Ueber den PFAD gesucht, nicht ueber den Slug im Schluessel: kollidiert
+    // ein Schluessel innerhalb eines Geraets, haengt `Store._assign_key` die
+    // Element-ID an (`d1_1_hue_0`), und ein Vergleich auf `_hue` ginge dann
+    // ins Leere. `SignalOut.path` ist "endpunkt/cluster/element" und damit
+    // exakt.
+    signalValueByPath(deviceId, clusterId, elementId) {
+      const signals = this.signalsByDevice[deviceId] || [];
+      const signal = signals.find((entry) => entry.path.endsWith(`/${clusterId}/${elementId}`));
+      return signal ? this.liveValueOf(signal) : undefined;
+    },
+
+    /**
+     * Einmalig beim Oeffnen gelesen, danach NICHT nachgefuehrt (Entwurf
+     * 2026-09-07, Abschnitt 2). Ohne diese Startwerte stuende jeder Regler
+     * auf einer erfundenen Position, und der erste Schubs risse die Leuchte
+     * irgendwohin - der Klick bewiese dann nichts ueber den Zustand, den er
+     * gerade veraendert hat.
+     *
+     * `undefined` bleibt `undefined` und wird nicht durch eine Null
+     * ersetzt: die Oberflaeche zeigt dafuer den Hinweis "Startwert
+     * unbekannt", statt eine Kenntnis vorzutaeuschen, die nicht besteht.
+     */
+    readStartValues(deviceId) {
+      // Cluster 8 Attribut 0 = CurrentLevel; Cluster 768: 0 = CurrentHue,
+      // 1 = CurrentSaturation, 7 = ColorTemperatureMireds, 8 = ColorMode.
+      // Alle gegen das installierte SDK belegt (siehe Entwurf, Abschnitt 4).
+      const mireds = this.signalValueByPath(deviceId, 768, 7);
+      return {
+        percent: this.signalValueByPath(deviceId, 8, 0),
+        kelvin: mireds > 0 ? Math.round(1000000 / mireds) : undefined,
+        hue: this.signalValueByPath(deviceId, 768, 0),
+        saturation: this.signalValueByPath(deviceId, 768, 1),
+        colormode: this.signalValueByPath(deviceId, 768, 8),
+      };
     },
 
     // ---------------------------------------------------------------------
@@ -3039,12 +3674,30 @@ function app() {
       }
     },
 
+    // Zahlen bekommen hoechstens zwei Nachkommastellen (2026-09-07). Die
+    // Live-Werte entstehen aus Matter-Attributen, die als ganzzahlige
+    // Hundertstel kommen und beim Umrechnen die uebliche
+    // Fliesskomma-Unschaerfe erben - aus 2253 wird 22.529999999999998, und
+    // das stand so in der Kachel: es sprengt die Spalte und behauptet eine
+    // Genauigkeit, die das Geraet nie geliefert hat.
+    //
+    // `toFixed(2)` rundet auf zwei Stellen und gibt eine Zeichenkette
+    // zurueck, `Number(...)` wirft die dabei entstandenen Nullen am Ende
+    // wieder weg - sonst stuende bei einem glatten Wert "21.00" statt "21".
+    // Der Umweg ueber `Number.isFinite` haelt `NaN` und `Infinity` heraus,
+    // die `toFixed` zwar nicht wirft, aber auch nicht sinnvoll rundet.
+    // Nicht-Zahlen (Zeichenketten aus der Live-Verbindung) bleiben
+    // unangetastet: eine Zeichenkette hier zu zerlegen hiesse raten, was
+    // darin eine Zahl ist.
     formatValue(value) {
       if (value === null || value === undefined) {
         return "-";
       }
       if (typeof value === "boolean") {
         return value ? t("web.format.true") : t("web.format.false");
+      }
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return String(Number(value.toFixed(2)));
       }
       return String(value);
     },

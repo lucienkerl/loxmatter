@@ -613,7 +613,15 @@ async def _run(
         # and therefore missing here keeps its own and is reached on the
         # next start.
         store.backfill_device_types(snapshots)
-        # A bridge restart should act like /resync (spec 6.4).
+        # Kommandos von Bestandsgeraeten auffrischen, aus denselben Abbildern
+        # (Betriebsbefund 2026-09-08): ein Geraet, das eingelernt wurde,
+        # bevor ein Kommando in `clusters.yaml` stand, fuehrte es nie - eine
+        # RGB-Leuchte blieb ohne Farb-Bedienelement, obwohl die Bruecke den
+        # Befehl laengst kannte. Siehe `Store.backfill_commands`.
+        gained = store.backfill_commands(snapshots)
+        if gained:
+            typer.echo(i18n.t("cli.run.echo_commands_backfilled", count=gained))
+        # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
         await runtime.resend_all()
 
         # `log_handler` arrives already finished (see the docstring above,

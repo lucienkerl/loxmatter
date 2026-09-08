@@ -72,6 +72,14 @@ VIEWPORT_NARROW = 820
 # horizontal scrolling in the narrow window.
 VIEWPORT_WIDE = 1440
 VIEWPORT_HEIGHT = 1000
+# Nur fuer das Signal-Modal (siehe dort): `.signals-modal` deckelt sich in
+# style.css auf `max-height: 85vh`, alles darueber blaettert innerhalb des
+# Dialogs statt das Fenster zu wachsen. Gemessen am tatsaechlichen Inhalt
+# (drei Endpunkt-Gruppen der ersten Kachel, Hallway button: 8 + 8 + 1
+# Zeilen samt Kopf- und Gruppenzeilen) sind das rund 1075 px - 85 % von
+# 1350 px sind 1147 px, genug Luft, dass der Dialog sich auf seine
+# tatsaechliche Inhaltshoehe schrumpft, statt selbst noch zu blaettern.
+VIEWPORT_HEIGHT_SIGNALS = 1350
 
 # For the `from tests...` import of the example project file below.
 sys.path.insert(0, str(ROOT))
@@ -222,18 +230,61 @@ def capture(page: Page) -> None:
     # first tile, then the menu item.
     page.click(".device-card .tile-menu > summary")
     page.click('.tile-menu-item:has-text("Edit signals")')
-    page.wait_for_selector("dialog.signals-modal[open]", timeout=5000)
-    # A first attempt additionally expanded the expert group here, to get
-    # more rows into the image. The result was unusable: Playwright
-    # scrolls to the target of a `.click()`, and that target sits behind
-    # 17 functional signals - the image began mid-way through a cropped
-    # row, with no heading, with no way to tell WHAT you're looking at.
-    # The first tile (Hallway button) has enough functional rows to fill
-    # the image. The scroll position is therefore pinned explicitly to
-    # the top: the heading, the key note and the first addresses with
-    # their export checkboxes are the point of this image.
-    page.eval_on_selector("dialog.signals-modal", "el => el.scrollTo(0, 0)")
-    shoot(page, "signals", "dialog.signals-modal", fixed=True)
+    page.wait_for_selector("dialog.signals-modal:not(.control-modal)[open]", timeout=5000)
+    # Ein erster Anlauf klappte hier zusaetzlich die Expertengruppe auf, damit
+    # mehr Zeilen im Bild stehen. Das Ergebnis war unbrauchbar: Playwright
+    # scrollt zum Ziel eines `.click()`, und dieses Ziel liegt hinter 17
+    # funktionalen Signalen - das Bild begann mitten in einer angeschnittenen
+    # Zeile, ohne Ueberschrift, ohne erkennbar zu sein, WAS man da sieht.
+    #
+    # Der urspruengliche Grund, warum kein hoeheres Fenster noetig sei ("die
+    # erste Kachel hat funktional genug Zeilen, um das Bild zu fuellen"),
+    # stimmt seit der Endpunkt-Gruppierung (Entwurf 2026-09-07, Abschnitt
+    # 7.4) nicht mehr: bei `VIEWPORT_HEIGHT` blieb der Dialog auf seinem
+    # `max-height: 85vh` (style.css) geblaettert und das Bild endete mitten
+    # in der zweiten Gruppe ("Button 2") - die dritte Gruppe ("Device", die
+    # Batterie) war nie zu sehen, obwohl gerade die Gruppierung die
+    # sichtbarste Aenderung dieses Umbaus ist. `VIEWPORT_HEIGHT_SIGNALS`
+    # gibt dem Dialog genug Raum, sich auf seine tatsaechliche Hoehe zu
+    # schrumpfen, statt selbst zu blaettern - danach zeigt ein einzelner
+    # Bildlauf ab dem Seitenanfang alle drei Gruppen vollstaendig.
+    page.set_viewport_size({"width": VIEWPORT_NARROW, "height": VIEWPORT_HEIGHT_SIGNALS})
+    page.eval_on_selector("dialog.signals-modal:not(.control-modal)", "el => el.scrollTo(0, 0)")
+    shoot(page, "signals", "dialog.signals-modal:not(.control-modal)", fixed=True)
+    page.set_viewport_size({"width": VIEWPORT_NARROW, "height": VIEWPORT_HEIGHT})
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # Das Bedien-Modal (Entwurf "Bedienelemente fuer Lampen", 2026-09-07).
+    # Motiv ist die Farbleuchte, nicht irgendeine Kachel: nur sie hat beide
+    # Modus-Reiter und die Farbflaeche, und genau diese Abstufung ist der
+    # Punkt des Bildes. Die Karte wird ueber ihren Namen gesucht statt ueber
+    # eine feste Position - die Kachelreihenfolge haengt an Kategorie-Rang
+    # und Raum (siehe DEMO_DEVICES in dev_web_server.py) und darf sich
+    # aendern, ohne dieses Bild stillschweigend auf ein anderes Geraet zu
+    # verschieben. Der Name steht in einem `<input>`, also ueber `.value`
+    # gesucht: ein Textvergleich im Markup ginge daran vorbei.
+    lamp = page.evaluate(
+        """() => [...document.querySelectorAll('.device-card')]
+             .findIndex((c) => c.querySelector('input')?.value === 'Kitchen spots')"""
+    )
+    if lamp < 0:
+        raise SystemExit(
+            "Kachel 'Kitchen spots' nicht gefunden - heisst das Demo-Geraet noch so? "
+            "(DEMO_DEVICES in scripts/dev_web_server.py)"
+        )
+    card = page.locator(".device-card").nth(lamp)
+    card.get_by_role("button", name="Control").click()
+    page.wait_for_selector("dialog.control-modal[open]", timeout=5000)
+    # Der Farbe-Reiter, nicht der voreingestellte Weiss-Reiter: die Leuchte
+    # steht im Fixture auf ColorMode 2 (Farbtemperatur), das Modal oeffnet
+    # deshalb auf "White" - und ein Bild vom Farbwaehler ohne Farbwaehler
+    # waere sinnlos. Die Reiterleiste bleibt dabei im Bild und zeigt beide
+    # Zustaende.
+    page.click("dialog.control-modal .control-tabs button:has-text('Colour')")
+    page.wait_for_selector("dialog.control-modal .colour-field", timeout=5000)
+    page.wait_for_timeout(300)
+    shoot(page, "controls", "dialog.control-modal", fixed=True)
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
 
@@ -274,7 +325,18 @@ def capture(page: Page) -> None:
     # bar for the whole gallery, so here deliberately starting from the
     # top of the page.
     select_view(page, "Devices")
-    page.fill('input[placeholder*="MT:"]', "MT:Y.K9042C00KA0648G00")
+    # Der Selektor haengt am `id`, nicht mehr am Platzhaltertext: der lautete
+    # frueher "Pairing-Code (11-stellig oder MT:…)" und ist seit dem Entwurf
+    # vom 2026-09-07 die Ziffernfolge selbst - `input[placeholder*="MT:"]`
+    # fand danach nichts mehr. Ein `id` aendert sich seltener als ein Text,
+    # der uebersetzt wird.
+    #
+    # Eingesetzt wird jetzt der ZAHLENCODE statt eines MT:-Codes: er ist die
+    # Bauform, die das Bild erklaeren soll, und nur an ihm sind Gruppierung
+    # und Chip ueberhaupt zu sehen. `fill()` loest das `input`-Ereignis aus,
+    # an dem `formatCommissionCode` haengt - im Bild steht die Zahl deshalb
+    # gruppiert, so wie nach dem Tippen.
+    page.fill("#commission-code", "34970112332")
     shoot(
         page,
         "commissioning",

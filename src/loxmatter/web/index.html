@@ -171,6 +171,11 @@
         <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
         <circle cx="12" cy="19" r="1.7" fill="currentColor" stroke="none" />
       </symbol>
+      <symbol id="i-battery" viewBox="0 0 24 24">
+        <rect x="2" y="8" width="16" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.9"/>
+        <path d="M21 11v3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+        <path d="M5 12.5h4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+      </symbol>
     </svg>
     <!-- Until `/auth-info` has answered, the page deliberately shows nothing -
          otherwise the wrong screen would flash up depending on the response. -->
@@ -309,35 +314,113 @@
               selection field with "No room" already gives half the information
               itself.
             -->
-            <label class="field-label" for="commission-code"
-                   x-text="t('web.devices.code_label')"></label>
-            <!--
-              The code gets its own border around both the field AND the button,
-              instead of hanging both as siblings inside a `.row`: it is the
-              only required field on this card, and `Enter` in the field does
-              the same thing as the button next to it. The monospace font is
-              not decoration - that is exactly how the code appears on the label
-              of the device, and in a proportional font an O is indistinguishable
-              from a 0 when typing it in.
-            -->
-            <div class="code-field">
-              <input
-                type="text"
-                id="commission-code"
-                class="code-input"
-                spellcheck="false"
-                x-ref="commissionCode"
-                x-model="commissionCode"
-                :placeholder="t('web.devices.code_placeholder')"
-                @keydown.enter="commissionDevice()"
-              />
-              <button
-                class="primary"
-                @click="commissionDevice()"
-                :disabled="commissionBusy"
-                x-text="t('web.devices.commission_submit')"
-              ></button>
-          </div>
+            <div class="code-with-sticker">
+              <div class="code-col">
+                <label class="field-label" for="commission-code"
+                       x-text="t('web.devices.code_label')"></label>
+                <!--
+                  Der Code bekommt eine eigene Umrandung um Feld UND Knopf, statt
+                  beide als Geschwister in eine `.row` zu haengen: er ist das
+                  einzige Pflichtfeld dieser Karte, und `Enter` im Feld tut
+                  dasselbe wie der Knopf daneben. Die Monospace-Schrift ist
+                  nicht Dekoration - genau so steht der Code auf dem Aufkleber
+                  des Geraets, und in Proportionalschrift ist ein O von einer 0
+                  beim Abtippen nicht zu unterscheiden.
+                -->
+                <div class="code-field">
+                  <input
+                    type="text"
+                    id="commission-code"
+                    class="code-input"
+                    spellcheck="false"
+                    autocomplete="off"
+                    x-ref="commissionCode"
+                    x-model="commissionCode"
+                    :placeholder="t('web.devices.code_placeholder')"
+                    aria-describedby="code-examples code-where-hint"
+                    @input="formatCommissionCode($event.target)"
+                    @keydown="commissionCodeKeydown($event)"
+                    @keydown.enter="commissionDevice()"
+                  />
+                  <!--
+                    Kein `inputmode="numeric"`: auf dem Telefon gaebe es die
+                    Zifferntastatur, und dort steht man beim Ablesen. Es sperrte
+                    aber das Tippen eines QR-Textes hinter eine Umschalttaste,
+                    und diese Karte hat fuer beide Bauformen genau ein Feld.
+
+                    Der Chip bleibt bei leerem Feld sichtbar-aber-leer
+                    (`visibility: hidden` in style.css) statt entfernt, damit das
+                    Feld beim ersten Tastendruck nicht seine Breite aendert.
+                  -->
+                  <span
+                    class="code-detect"
+                    :class="'tone-' + commissionCodeBadge().tone"
+                    x-text="commissionCodeBadge().text"
+                    aria-live="polite"
+                  ></span>
+                  <button
+                    class="primary"
+                    @click="commissionDevice()"
+                    :disabled="commissionBusy"
+                    x-text="t('web.devices.commission_submit')"
+                  ></button>
+                </div>
+                <p class="code-examples" id="code-examples">
+                  <span><b x-text="t('web.devices.code_detect_manual')"></b>
+                    <code x-text="t('web.devices.code_example_manual')"></code></span>
+                  <span><b x-text="t('web.devices.code_detect_qr')"></b>
+                    <code x-text="t('web.devices.code_example_qr')"></code></span>
+                </p>
+                <p class="hint" id="code-where-hint" x-text="t('web.devices.code_where_hint')"></p>
+              </div>
+              <!--
+                Das QR-Quadrat ist eine Andeutung aus Rechtecken - drei
+                Suchmuster plus Rauschen -, kein lesbarer Code. Ein echter QR
+                im Bild waere eine Einladung, ihn zu scannen, und fuehrte
+                nirgendwohin.
+
+                Alle Farben kommen aus den vorhandenen Variablen, damit die
+                Skizze in beiden Themes traegt; --warn hebt die Zahl hervor
+                und traegt damit dieselbe Bedeutung wie ueberall sonst
+                ("sieh hier hin"), statt eine neue einzufuehren.
+              -->
+              <svg class="code-sticker" width="188" height="112"
+                   viewBox="0 0 188 112" role="img"
+                   :aria-label="t('web.devices.sticker_alt')">
+                <rect x="1" y="1" width="186" height="110" rx="6"
+                      fill="var(--bg)" stroke="var(--border)" stroke-width="1" />
+                <g fill="var(--text)">
+                  <rect x="16" y="16" width="22" height="22" rx="1" />
+                  <rect x="20" y="20" width="14" height="14" rx="1" fill="var(--bg)" />
+                  <rect x="24" y="24" width="6" height="6" />
+                  <rect x="62" y="16" width="22" height="22" rx="1" />
+                  <rect x="66" y="20" width="14" height="14" rx="1" fill="var(--bg)" />
+                  <rect x="70" y="24" width="6" height="6" />
+                  <rect x="16" y="62" width="22" height="22" rx="1" />
+                  <rect x="20" y="66" width="14" height="14" rx="1" fill="var(--bg)" />
+                  <rect x="24" y="70" width="6" height="6" />
+                  <rect x="46" y="18" width="4" height="4" /><rect x="54" y="26" width="4" height="4" />
+                  <rect x="46" y="34" width="4" height="4" /><rect x="46" y="46" width="4" height="4" />
+                  <rect x="62" y="46" width="4" height="4" /><rect x="70" y="54" width="4" height="4" />
+                  <rect x="78" y="46" width="4" height="4" /><rect x="54" y="54" width="4" height="4" />
+                  <rect x="62" y="62" width="4" height="4" /><rect x="78" y="70" width="4" height="4" />
+                  <rect x="70" y="78" width="4" height="4" /><rect x="46" y="70" width="4" height="4" />
+                  <rect x="16" y="46" width="4" height="4" /><rect x="30" y="46" width="4" height="4" />
+                  <rect x="62" y="78" width="4" height="4" /><rect x="54" y="70" width="4" height="4" />
+                </g>
+                <rect x="96" y="52" width="86" height="20" rx="4"
+                      fill="var(--warn-bg)" stroke="var(--warn)" stroke-width="1" />
+                <!-- font-family ausgeschrieben statt var(--mono): SVG-Praesentationsattribute
+                     loesen CSS-Variablen nicht in jeder Engine auf, und Monospace ist hier
+                     kein Stilmittel -- 0 und O muessen unterscheidbar bleiben, weil genau so
+                     der Code auf dem Aufkleber steht. -->
+                <text x="100" y="66"
+                      font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+                      font-size="10" fill="var(--text)">1234-567-8901</text>
+                <text x="98" y="44" font-size="8.5" letter-spacing="0.6"
+                      fill="var(--text-muted)">MATTER</text>
+              </svg>
+            </div>
 
           <div class="commission-meta">
             <label class="inline-field">
@@ -608,46 +691,54 @@
                         @input="labelDrafts[device.id] = $event.target.value"
                         @change="saveLabel(device)"
                       />
-                      <!-- The changed-since-export pill used to sit here
-                           (design 6.2), displacing the primary-signal
-                           label for that. Moved into the footer (pill-
-                           into-footer rework, 2026-09-06): it now sits there
-                           next to `exportHintFor`, which already
-                           answers WHEN the device was last exported -
-                           "changed since" is the same question,
-                           not a second one. The header thus stays reserved for
-                           device state (only "Offline" now),
-                           not for export state. -->
-                      <span class="status-pill off" x-show="!isOnline(device)">
-                        <svg class="icon"><use href="#i-offline"></use></svg>
-                        <span x-text="t('web.devices.offline')"></span>
-                      </span>
-                      <!-- Only the offline pill still displaces the
-                           primary-signal label: it claims the same line
-                           under the device name where the label
-                           would otherwise sit. The changed state no longer does that
-                           since the pill moved into the footer - a
-                           changed but online device shows its
-                           primary-signal label ("State", "Temperature") like
-                           any other. -->
-                      <span
-                        class="lead-label"
-                        x-show="isOnline(device) && leadSignalFor(device.id)"
-                        x-text="leadSignalFor(device.id)?.title"
-                      ></span>
                     </span>
-                    <span class="lead-value" x-show="leadSignalFor(device.id)">
-                      <span
-                        :class="{ 'value-fresh': signalIsFresh(leadSignalFor(device.id)) }"
-                        :title="signalAgeTitle(leadSignalFor(device.id))"
-                        x-text="formatValue(liveValueOf(leadSignalFor(device.id)))"
-                      ></span>
-                      <small x-text="leadSignalFor(device.id)?.unit"></small>
+                    <!-- Die Offline-Pille steht seit dem Wegfall des
+                         Leitwerts (Entwurf 2026-09-07) HIER, auf dessen
+                         Platz, und nicht mehr in `.device-ident` unter dem
+                         Namen. Sie verdraengt damit nichts mehr: das
+                         `.lead-label`, mit dem sie sich die Zeile teilte,
+                         gibt es nicht mehr - und mit ihm die Regel "nur die
+                         Offline-Pille verdraengt das Leitwert-Label", die
+                         hier frueher zwei Absaetze Begruendung brauchte.
+
+                         Keine eigene Positionsregel noetig - aber nicht aus
+                         dem Grund, der hier bis zur Nacharbeit vom
+                         2026-09-07 stand: `.status-pill` traegt zwar
+                         `margin-left: auto` (style.css), doch der traegt
+                         hier nichts bei. `.device-ident` daneben hat `flex:
+                         1 1 auto` und verbraucht beim Aufloesen der
+                         flexiblen Laengen (CSS Flexbox 9.7) bereits den
+                         gesamten freien Platz, BEVOR Auto-Raender verteilt
+                         werden (9.5) - fuer den Auto-Rand bleibt nichts
+                         mehr uebrig. Die Pille steht rechts, WEIL
+                         `.device-ident` waechst, nicht weil ihr eigener
+                         Auto-Rand greift. Genau deshalb ist `flex: 1 1
+                         auto` an `.device-ident` hier tragend und nicht
+                         entbehrlich: faellt es weg, bleibt freier Platz
+                         uebrig, und erst dann wuerde `margin-left: auto`
+                         an der Pille etwas bewirken.
+
+                         Die Geaendert-seit-Export-Pille sitzt weiterhin in
+                         der FUSSZEILE (Pille-in-die-Fusszeile-Umbau,
+                         2026-09-06) und ausdruecklich nicht hier: sie
+                         beantwortet dieselbe Frage wie `exportHintFor`
+                         direkt daneben. Die Kopfzeile bleibt dem
+                         Geraetezustand vorbehalten, nicht dem
+                         Exportzustand. -->
+                    <span class="status-pill off" x-show="!isOnline(device)">
+                      <svg class="icon"><use href="#i-offline"></use></svg>
+                      <span x-text="t('web.devices.offline')"></span>
                     </span>
                   </div>
 
                   <div class="value-rows" x-show="signalsByDevice[device.id]">
-                    <template x-for="signal in restSignalsFor(device.id)" :key="signal.key">
+                    <!-- `firstSignalsFor`, nicht `restSignalsFor` (Entwurf
+                         2026-09-07): das Raster zeigt die volle Kurzliste.
+                         `restSignalsFor` lieferte sie ohne ihren ersten
+                         Eintrag, weil genau der oben in der Kopfzeile stand
+                         - mit dem Wegfall der Kopfzeilen-Anzeige waere er
+                         sonst nirgends mehr zu sehen. -->
+                    <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
                       <span class="value-row">
                         <span class="value-key" x-text="signal.title"></span>
                         <span
@@ -671,44 +762,75 @@
                       <span></span>
                     </span>
                   </div>
+
+                  <!-- Der Batteriestand steht UNTER den Vorschauzeilen und
+                       unter dem "+ N weitere"-Link, nicht zwischen ihnen
+                       (Entwurf 2026-09-07, Abschnitt 6). Er ist kein
+                       Nutzsignal wie ein Tastendruck, sondern eine Angabe
+                       ueber das Geraet selbst - und mit Rang 90 waere er
+                       aus den sechs Vorschauzeilen gefallen. Eigene Zeile,
+                       eigenes Symbol, gestrichelte Trennung: immer
+                       sichtbar, nie Leitwert.
+
+                       `x-show` statt `x-if`: ein netzbetriebenes Geraet
+                       hat kein PowerSource-Signal und darf nicht um eine
+                       leere Zeile hoeher werden - `.device-battery` traegt
+                       deshalb kein eigenes Aussenmass, das stehen bliebe. -->
+                  <div class="device-battery" x-show="batterySignalFor(device.id)" x-cloak>
+                    <svg class="icon" aria-hidden="true"><use href="#i-battery"></use></svg>
+                    <span class="value-key" x-text="t('web.devices.battery_label')"></span>
+                    <span
+                      class="value"
+                      :class="{ 'value-fresh': signalIsFresh(batterySignalFor(device.id)) }"
+                      :title="signalAgeTitle(batterySignalFor(device.id))"
+                      x-text="formatValue(liveValueOf(batterySignalFor(device.id))) + (batterySignalFor(device.id)?.unit ? ' ' + batterySignalFor(device.id).unit : '')"
+                    ></span>
+                  </div>
+
                   <p class="hint" x-show="!signalsByDevice[device.id]" x-text="t('web.devices.signals_loading')"></p>
-                  <!-- Finding 3: without this note, a gap silently
-                       remained between the header and the command bar whenever
-                       a device has loaded but empty functional signals
-                       (`leadSignalFor` then returns `null`, the
-                       `value-rows` stay without content) - indistinguishable from
-                       a device that is still loading. -->
+                  <!-- Fund 3: ohne diesen Hinweis blieb zwischen Kopfzeile
+                       und Befehlsleiste stillschweigend eine Luecke, sobald
+                       ein Geraet geladene, aber leere funktionale Signale
+                       hat (die `value-rows` bleiben dann ohne Inhalt) -
+                       nicht von einem noch ladenden Geraet zu
+                       unterscheiden. Die Bedingung fragte frueher
+                       `!leadSignalFor(device.id)`; ohne Leitwert fragt sie
+                       die Liste direkt, was ohnehin die ehrlichere Frage
+                       ist.
+
+                       Und sie ist seit der Batteriezeile auch die einzige
+                       richtige: `previewSignalsFor` nimmt den Batteriestand
+                       aus dem Werteraster heraus (er steht in der Fusszeile
+                       darunter), ein Geraet mit NUR einem Batteriesignal
+                       hat also leere `value-rows` bei einem funktionalen
+                       Signal. Ueber die Rasterzeilen gefragt erschiene dort
+                       faelschlich "keine funktionalen Signale"; ueber
+                       `functionalSignalsFor` gefragt bleibt der Hinweis
+                       richtig aus. -->
                   <p
                     class="hint"
-                    x-show="signalsByDevice[device.id] && !leadSignalFor(device.id)"
+                    x-show="signalsByDevice[device.id] && functionalSignalsFor(device.id).length === 0"
                     x-text="t('web.devices.no_functional_signals')"
                   ></p>
 
                   <div class="device-commands">
-                    <template x-for="command in commandsFor(device.id)" :key="command.key">
-                      <span class="row">
-                        <button
-                          x-show="!command.takes_value"
-                          @click="executeCommand(device, command)"
-                          :disabled="commandBusyKey === command.key || !isOnline(device)"
-                          x-text="command.slug"
-                        ></button>
-                        <span x-show="command.takes_value" class="row">
-                          <span x-text="command.slug"></span>
-                          <input
-                            type="number"
-                            style="width: 4.5rem"
-                            :placeholder="t('web.devices.value_placeholder')"
-                            @input="commandValueDrafts[command.key] = $event.target.value"
-                          />
-                          <button
-                            @click="executeCommand(device, command)"
-                            :disabled="commandBusyKey === command.key || !isOnline(device)"
-                            x-text="t('web.devices.send')"
-                          ></button>
-                        </span>
-                      </span>
+                    <template x-for="command in controlsByKind(device.id, 'none')" :key="command.key">
+                      <button
+                        @click="executeCommand(device, command)"
+                        :disabled="commandBusyKey === command.key || !isOnline(device)"
+                        x-text="command.slug"
+                      ></button>
                     </template>
+                    <!-- Wertbehaftete Kommandos ziehen ins Bedien-Modal
+                         (Aufgabe 7): die Kachel zeigt dafuer nur noch diesen
+                         einen Knopf, statt je Kommando ein nacktes
+                         Zahlenfeld zu rendern. -->
+                    <button
+                      x-show="hasAdjustableControls(device.id)"
+                      @click="openControlModal(device)"
+                      :disabled="!isOnline(device)"
+                      x-text="t('web.devices.control_button')"
+                    ></button>
                     <span
                       class="hint"
                       x-show="hiddenRawCommandsFor(device.id) > 0"
@@ -1272,7 +1394,7 @@
                 x-text="projectSync.plan.new_devices_unavailable_reason"
               ></p>
               <div class="row">
-                <label>
+                <label class="checkbox-label">
                   <input
                     type="checkbox"
                     x-model="projectSync.includeNewDevices"
@@ -1312,11 +1434,11 @@
             <span x-text="t('web.export.settings_hint_suffix')"></span>
           </p>
           <div class="row">
-            <label
+            <label class="checkbox-label"
               ><input type="checkbox" x-model="exportIncludeSystem" />
               <span x-text="t('web.export.include_system')"></span
             ></label>
-            <label
+            <label class="checkbox-label"
               ><input type="checkbox" x-model="exportOnlyPending" />
               <span x-text="t('web.export.only_pending')"></span
             ></label>
@@ -1447,7 +1569,7 @@
               @click="diagnosticsPaused = !diagnosticsPaused"
               x-text="diagnosticsPaused ? t('web.system.resume') : t('web.system.pause')"
             ></button>
-            <label>
+            <label class="checkbox-label">
               <input type="checkbox" x-model="hideNoise" />
               <span x-text="t('web.system.hide_noise')"></span>
             </label>
@@ -1641,21 +1763,28 @@
       several handlers was the cause of six rounds of review for the room
       selection field.
 
-      A `<dialog>` does NOT close on its own on a click on the backdrop
-      (unlike what Escape does). `@click.self` alone is NOT
-      enough for that: the click event target is already `<dialog>` as soon as a
-      mousedown begins WITHIN the content (say, while selecting a signal title)
-      and the mouseup lands on the backdrop after dragging over - `.self`
-      only checks the click target, not where the gesture started. That is why
-      `@mousedown` records in `signalsModalBackdropMousedown` (app.js),
-      whether the mousedown ITSELF was on the backdrop. The click handler
-      only closes when THREE things are true: `.self` (the click target is
-      the `<dialog>`), this recorded field, and `isBackdropEvent` for the
-      click itself - so the position counts at both ends of the gesture, not
-      just at the start (reasoning for that further below). The field is pure
-      presentation bookkeeping for this one gesture, not modal state
-      like `signalsModalDevice` - `@close` remains its only
-      reset point, see above.
+      Aus demselben Grund setzt derselbe Handler seit Fund 3 der
+      Nachpruefung (2026-09-07) zusaetzlich `expandedSignalKey` zurueck:
+      ohne das stuende beim naechsten Oeffnen desselben Geraets sofort
+      wieder derselbe Aufklapper offen, ohne dass der Kebab dafuer geklickt
+      wurde - `@close` ist ja auch fuer dieses Feld der einzige Weg, auf dem
+      ALLE Schliesspfade zusammenlaufen.
+
+      Ein `<dialog>` schliesst bei einem Klick auf den Backdrop NICHT von
+      selbst (anders als es Escape tut). `@click.self` allein reicht dafuer
+      NICHT: der Klick-Ereignis-Ziel ist `<dialog>` schon dann, wenn ein
+      Mousedown IM Inhalt beginnt (etwa beim Markieren eines Signaltitels)
+      und der Mouseup beim Ueberziehen auf dem Backdrop landet - `.self`
+      prueft nur das Klick-Ziel, nicht wo die Geste angefangen hat. Deshalb
+      merkt sich `@mousedown` in `signalsModalBackdropMousedown` (app.js),
+      ob der Mousedown SELBST auf dem Backdrop lag. Der Klick-Handler
+      schliesst nur, wenn DREI Dinge zutreffen: `.self` (das Klick-Ziel ist
+      das `<dialog>`), dieses gemerkte Feld, und `isBackdropEvent` fuer den
+      Klick selbst - die Lage zaehlt also an beiden Enden der Geste, nicht
+      nur am Anfang (Begruendung dafuer weiter unten). Das Feld ist reine
+      Praesentations-Buchfuehrung fuer diese eine Geste, kein Modal-Zustand
+      wie `signalsModalDevice` - `@close` bleibt dessen einzige
+      Ruecksetzstelle, siehe oben.
 
       The mousedown handler deliberately carries NO `.self` (Finding 1 of
       the follow-up check): with `.self`, the field would only be SET when the
@@ -1695,7 +1824,7 @@
       x-ref="signalsModal"
       class="signals-modal"
       aria-labelledby="signals-modal-heading"
-      @close="signalsModalDevice = null"
+      @close="signalsModalDevice = null; expandedSignalKey = null"
       @mousedown="signalsModalBackdropMousedown = isBackdropEvent($event, $el)"
       @click.self="if (signalsModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); signalsModalBackdropMousedown = false"
     >
@@ -1715,8 +1844,24 @@
             ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
           </div>
 
+          <!-- Die eine Zahl, wegen der man dieses Modal oeffnet. Sie stand
+               bisher nirgends - man musste 17 Haekchen zaehlen. -->
+          <div class="signals-summary">
+            <span
+              x-text="t('web.signals.export_summary', { exported: exportedSignalCount(signalsModalDevice), total: signalCount(signalsModalDevice) })"
+            ></span>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              @click="deselectAllSignals(signalsModalDevice)"
+              x-text="t('web.signals.deselect_all')"
+            ></button>
+          </div>
+
           <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
-          <p class="hint" x-text="t('web.signals.key_hint')"></p>
+          <p class="hint">
+            <span x-text="t('web.signals.key_hint')"></span>
+            <span x-text="t('web.signals.resend_explanation')"></span>
+          </p>
 
           <!-- Stays as a retry for the error case: normally
                `startApp` has long since loaded every device's signals, so this
@@ -1731,13 +1876,13 @@
           <template x-if="signalsByDevice[signalsModalDevice]">
             <div>
               <!--
-                ONE template for both groups. The obvious design -
-                functional as a plain block, expert as `<details>` -
-                would need two branches and, in each, its own copy of the
-                signal row below. `signalGroupsFor` (app.js) eliminated
-                exactly that duplication: 51 byte-identical
-                lines that had to be kept in sync at both places on
-                every change.
+                EINE Vorlage fuer alle Gruppen. Der naheliegende Entwurf -
+                funktional als schlichter Block, Experte als `<details>` -
+                braeuchte zwei Zweige und in jedem eine eigene Kopie der
+                Signalzeile darunter. Genau diese Verdopplung hat
+                `signalGroupsFor` (app.js) abgeschafft: 51 byte-identische
+                Zeilen, die bei jeder Aenderung an beiden Stellen
+                nachgezogen werden mussten.
 
                 The open/closed state lives in the DOM, not in Alpine - the same
                 pattern as the tile menu, and the reason why the old
@@ -1753,10 +1898,36 @@
                 re-render, and the user's click stays put. Do NOT simplify this to
                 `:open`.
               -->
+              <!-- Ausserhalb der Gruppenschleife, seit die Gruppen nach
+                   Endpunkt entstehen (Entwurf 2026-09-07, Abschnitt 7.4):
+                   eine Endpunktgruppe ist nie leer, sie entsteht ja aus
+                   ihren Signalen. "Keine funktionalen Signale" heisst
+                   jetzt "es gibt gar keine Endpunktgruppe". -->
+              <p
+                class="hint"
+                x-show="functionalSignalsFor(signalsModalDevice).length === 0"
+                x-text="t('web.signals.none_functional')"
+              ></p>
+              <!-- Der Spaltenkopf klebt beim Scrollen oben: ohne ihn
+                   verlieren die beiden Haekchenspalten ihre Bedeutung,
+                   sobald er bei 173 Signalen aus dem Bild ist. Er traegt
+                   DIESELBE `grid-template-columns` wie jede Datenzeile -
+                   das ist der ganze Grund, warum die Tabelle fluchtet, und
+                   der Test `test_the_signal_rows_and_the_header_share_one_
+                   grid` sperrt genau diese Gleichheit. -->
+              <div class="signal-grid signal-grid-head">
+                <span x-text="t('web.signals.col_export')"></span>
+                <span x-text="t('web.signals.col_signal')"></span>
+                <span x-text="t('web.signals.col_input')"></span>
+                <span class="col-right" x-text="t('web.signals.col_value')"></span>
+                <span class="col-center" x-text="t('web.signals.col_resend')"></span>
+                <span></span>
+              </div>
               <template x-for="group in signalGroupsFor(signalsModalDevice)" :key="group.key">
                 <details class="signal-group" x-init="$el.open = !group.collapsible">
                   <summary>
                     <span x-text="group.title"></span>
+                    <span class="muted" x-show="group.subtitle" x-text="group.subtitle"></span>
                     <span class="muted" x-text="'(' + group.signals.length + ')'"></span>
                     <!-- `aria-hidden` like on the kebab icon and the modal's close
                          button, NOT like on the older chevron of the
@@ -1771,26 +1942,44 @@
                     x-show="group.collapsible"
                     x-text="t('web.signals.functional_vs_expert_explanation')"
                   ></p>
-                  <p
-                    class="hint"
-                    x-show="!group.collapsible && group.signals.length === 0"
-                    x-text="t('web.signals.none_functional')"
-                  ></p>
+                  <!-- `x-for` verlangt genau EIN Wurzelelement je Signal.
+                       Die Rasterzeile allein waere das normalerweise (siehe
+                       Entwurf 2026-09-07, Abschnitt 7.2) - der Aufklapper
+                       direkt darunter braucht deshalb diese Huelle, obwohl
+                       er selbst kein Rasterkind ist. -->
                   <template x-for="signal in group.signals" :key="signal.key">
-                    <div class="device-controls">
-                      <div class="row">
-                        <span
-                          class="key"
-                          :title="t('web.signals.key_tooltip')"
-                          x-text="signal.key"
-                        ></span>
+                    <div class="signal-row-wrap" :class="{ 'is-expanded': expandedSignalKey === signal.key }">
+                      <div class="signal-grid signal-row-cells">
+                        <label class="col-center">
+                          <input
+                            type="checkbox"
+                            :checked="signal.exported"
+                            :disabled="!signal.exportable"
+                            :aria-label="t('web.signals.export_checkbox')"
+                            :title="t('web.signals.export_checkbox')"
+                            @change="toggleExported(signal)"
+                          />
+                          <!-- Nur unter 640px sichtbar (`.col-center-label`
+                               in style.css), dort ohne Spaltenkopf die
+                               einzige sichtbare Beschriftung des Kaestchens.
+                               `aria-hidden`, weil das Kaestchen sein
+                               `aria-label` bereits traegt - dieser Text ist
+                               dieselbe Auskunft nur ein zweites Mal sichtbar,
+                               keine zweite fuer Hilfstechnik. -->
+                          <span
+                            class="col-center-label"
+                            aria-hidden="true"
+                            x-text="t('web.signals.export_checkbox')"
+                          ></span>
+                        </label>
                         <input
                           type="text"
+                          class="signal-title"
                           :value="signal.title"
                           @input="titleDrafts[signal.key] = $event.target.value"
                           @change="saveTitle(signal)"
                         />
-                        <span class="hint" x-text="signal.path"></span>
+                        <span class="key" :title="t('web.signals.key_tooltip')" x-text="signal.key"></span>
                         <!--
                           When the value last arrived is in the `title` - not
                           next to it in the running text (2026-09-03). A note like
@@ -1802,49 +1991,104 @@
                           moving.
                         -->
                         <span
-                          class="value"
+                          class="value col-right"
                           :class="{ 'value-fresh': signalIsFresh(signal) }"
                           :title="signalAgeTitle(signal)"
                           x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                         ></span>
-                        <label x-show="signal.exportable">
-                          <input
-                            type="checkbox"
-                            :checked="signal.exported"
-                            @change="toggleExported(signal)"
-                          />
-                          <span x-text="t('web.signals.export_checkbox')"></span>
-                        </label>
-                        <label x-show="signal.exportable">
+                        <!-- Dasselbe Bedienelement wie in der Export-Spalte,
+                             und das ist Absicht: beides ist ein Ja/Nein je
+                             Signal in derselben Zeile. Der erste Entwurf
+                             hatte hier einen Schiebeschalter - zwei
+                             Bedienelemente fuer denselben Fall, genau die
+                             Inkonsistenz, die dieses Modal schwer lesbar
+                             machte. Die Regel: das Bedienelement folgt dem
+                             BEHAELTER, nicht der Bedeutung. In einer Tabelle
+                             Haekchen - sie fluchten in einer Spalte und
+                             bleiben leise; eine Spalte aus 17
+                             Schiebeschaltern waere eine deutlich lautere
+                             Textur, und Lautstaerke ist genau das Problem
+                             dieses Modals. Ein Schalter gehoert in einen
+                             Detailbereich mit erklaerendem Satz daneben,
+                             nicht in eine Tabellenspalte. -->
+                        <label class="col-center">
                           <input
                             type="checkbox"
                             :checked="signal.resend"
+                            :disabled="!signal.exportable"
+                            :aria-label="t('web.signals.resend_checkbox')"
+                            :title="t('web.signals.resend_checkbox')"
                             @change="toggleResend(signal)"
                           />
-                          <span x-text="t('web.signals.resend_checkbox')"></span>
+                          <!-- Wie bei der Export-Spalte: nur unter 640px
+                               sichtbar, `aria-hidden` aus demselben Grund -
+                               das Kaestchen hat mit `aria-label` schon
+                               seinen Namen. -->
+                          <span
+                            class="col-center-label"
+                            aria-hidden="true"
+                            x-text="t('web.signals.resend_checkbox')"
+                          ></span>
                         </label>
-                        <span
-                          class="badge warn"
-                          x-show="!signal.exportable"
-                          x-text="signal.reason"
-                        ></span>
-                      </div>
-                      <div class="row" x-show="signal.kind === 'attribute'">
-                        <input
-                          type="text"
-                          :placeholder="t('web.signals.raw_write_placeholder')"
-                          @input="rawWriteDrafts[signal.key] = $event.target.value"
-                        />
+                        <!-- Die letzte Zelle traegt seit Aufgabe 8 nur noch
+                             den Kebab, nichts sonst: die Warnpille mit
+                             `signal.reason` sass hier zuvor in der 28-px-Spalte
+                             und brach dort um, sobald der Text laenger war als
+                             ein paar Zeichen (jedes Geraet mit einem TEXT- oder
+                             listwertigen Signal, siehe `_UNEXPORTABLE_REASONS`
+                             in `api/devices.py`) - gemessen 744px scrollWidth
+                             gegen 719px clientWidth im Modal. Die Pille wohnt
+                             jetzt im Aufklapper, wo Platz fuer echte Saetze
+                             ist. -->
                         <button
-                          @click="writeRaw(signal)"
-                          :disabled="rawWriteBusyKey === signal.key"
-                          x-text="t('web.signals.raw_write_submit')"
-                        ></button>
-                        <span
-                          x-show="rawWriteMessages[signal.key]"
-                          :class="rawWriteMessageClass(signal)"
-                          x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
-                        ></span>
+                          class="signal-more"
+                          :aria-expanded="expandedSignalKey === signal.key"
+                          :aria-label="t('web.signals.row_details')"
+                          :title="t('web.signals.row_details')"
+                          @click="toggleSignalDetails(signal)"
+                        ><svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg></button>
+                      </div>
+                      <!-- Der Aufklapper haengt UNTER genau seiner Zeile,
+                           nicht als zweite `.row` daneben: er gehoert zu
+                           diesem einen Signal, und das soll man sehen.
+                           `x-cloak` verhindert den kurzen Blitz aller
+                           Aufklapper beim ersten Rendern, bevor Alpine
+                           `x-show` ausgewertet hat. -->
+                      <div class="signal-detail" x-show="expandedSignalKey === signal.key" x-cloak>
+                        <!-- `signal.path` traegt dieselbe Auskunft als
+                             "1/59/1", aber das ist ein Raetsel, solange
+                             niemand sagt, welche Zahl was bedeutet - hier ist
+                             endlich Platz, es auszuschreiben. Die Zerlegung
+                             des Pfads (welches Segment das Element ist) steht
+                             in `signalOriginText` (app.js), nicht hier im
+                             Markup - Wissen ueber das Pfadformat gehoert in
+                             eine benannte Funktion, nicht in einen Ausdruck
+                             mitten im Markup (Fund 1 der Nachpruefung,
+                             2026-09-07). -->
+                        <p class="hint" x-text="signalOriginText(signal)"></p>
+                        <p class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></p>
+                        <!-- Nur fuer Attribute sinnvoll - ein Ereignis hat
+                             keinen gespeicherten Wert, den man ueberschreiben
+                             koennte. Die Herkunft darueber gilt fuer beide
+                             Signalarten, deshalb traegt nur DIESER Teil das
+                             `x-show`. -->
+                        <div class="row" x-show="isAttributeSignal(signal)">
+                          <input
+                            type="text"
+                            :placeholder="t('web.signals.raw_write_placeholder')"
+                            @input="rawWriteDrafts[signal.key] = $event.target.value"
+                          />
+                          <button
+                            @click="writeRaw(signal)"
+                            :disabled="rawWriteBusyKey === signal.key"
+                            x-text="t('web.signals.raw_write_submit')"
+                          ></button>
+                          <span
+                            x-show="rawWriteMessages[signal.key]"
+                            :class="rawWriteMessageClass(signal)"
+                            x-text="rawWriteMessages[signal.key] ? rawWriteMessages[signal.key].text : ''"
+                          ></span>
+                        </div>
                       </div>
                     </div>
                   </template>
@@ -1857,10 +2101,194 @@
     </dialog>
 
     <!--
-      Toasts as an overlay. `position: fixed` means: they sit
-      outside the text flow and shift nothing. The previous
-      version faded in a line above the device list, which made
-      the whole page jump when it toggled and caused the next click to miss.
+      Bedien-Modal (Aufgabe 7): Regler statt nackter Zahlenfelder fuer
+      wertbehaftete Kommandos. Aufbau, Oeffnen, Schliessen und
+      Backdrop-Klick folgen exakt dem Signal-Modal oben - siehe dessen
+      Kommentare fuer die vollstaendige Begruendung: `@close` bleibt die
+      EINZIGE Stelle, die `controlModalDevice` zuruecksetzt; `@mousedown`
+      merkt in `controlModalBackdropMousedown`, ob die Geste auf dem
+      Backdrop begann, `@click.self` prueft `isBackdropEvent` an BEIDEN
+      Enden; `x-ref` ist unbedenklich, weil dieses `<dialog>` genau einmal
+      im Dokument steht.
+
+      Welches Bedienelement je Kommando entsteht, entscheidet
+      AUSSCHLIESSLICH `command.control` (`controlsByKind` filtert danach) -
+      `command.slug` dient unten nur als Beschriftung, nie als
+      Fallunterscheidung. Deshalb traegt jeder Prozent-Regler seinen
+      eigenen `command.slug` statt einer festen Uebersetzung: die
+      eingecheckte IKEA-Leuchte akzeptiert zwei Prozent-Kommandos (`level`
+      und `level_onoff`), das Modal zeichnet also zwei Regler
+      untereinander, und fuer die Diagnose zaehlt gerade, welches der
+      beiden die Leuchte tatsaechlich befolgt. Der Kelvin-Regler bleibt
+      fest beschriftet - davon gibt es je Geraet nur einen.
+
+      Die Reiterleiste Weiss/Farbe erscheint nur, wenn ein Geraet BEIDE
+      Wege kann (`hasColourTabs`) - eine reine Weisston-Leuchte bekommt
+      ihren Kelvin-Regler ohne Reiter, ohne dass hier eine einzige Abfrage
+      auf Geraetetyp oder Modell stuende.
+    -->
+    <!-- Zwei Klassen mit Absicht: `signals-modal` traegt allein die Rahmung
+         (style.css), die sich beide Modale teilen; `control-modal`
+         unterscheidet dieses hier ueberhaupt erst vom Signal-Modal. Ohne die
+         zweite Klasse trifft `document.querySelector('dialog.signals-modal')`
+         beide, und WELCHEN es liefert, entscheidet allein die Reihenfolge im
+         Dokument - `scripts/capture_screenshots.py` haengt daran. -->
+    <dialog
+      x-ref="controlModal"
+      class="signals-modal control-modal"
+      aria-labelledby="control-modal-heading"
+      @close="controlModalDevice = null"
+      @mousedown="controlModalBackdropMousedown = isBackdropEvent($event, $el)"
+      @click.self="if (controlModalBackdropMousedown && isBackdropEvent($event, $el)) $el.close(); controlModalBackdropMousedown = false"
+    >
+      <template x-if="controlModalDeviceObject()">
+        <div class="signals-modal-body">
+          <div class="signals-modal-head">
+            <h2
+              id="control-modal-heading"
+              x-text="t('web.devices.control_modal_title', { label: controlModalDeviceObject().label })"
+            ></h2>
+            <span style="flex: 1 1 auto"></span>
+            <button
+              class="signals-modal-close"
+              :title="t('web.signals.modal_close')"
+              :aria-label="t('web.signals.modal_close')"
+              @click="closeControlModal()"
+            ><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button>
+          </div>
+
+          <template x-for="command in controlsByKind(controlModalDevice, 'none')" :key="command.key">
+            <button
+              @click="executeCommand(controlModalDeviceObject(), command)"
+              :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+              x-text="command.slug"
+            ></button>
+          </template>
+
+          <!-- Prozent-Regler: Beschriftung ist `command.slug`, NICHT eine
+               feste Uebersetzung - Begruendung im Kommentar oben am
+               `<dialog>`. -->
+          <template x-for="command in controlsByKind(controlModalDevice, 'percent')" :key="command.key">
+            <div class="control-row">
+              <label x-text="command.slug"></label>
+              <input
+                type="range" min="0" max="100" step="1"
+                :value="controlDrafts.percent ?? 50"
+                :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                @change="recordControlDraft(command, Number($event.target.value)); sendControl(controlModalDeviceObject(), command, $event.target.value)"
+              />
+              <p
+                class="hint"
+                x-show="controlDrafts.percent === undefined"
+                x-text="t('web.devices.control_start_value_unknown')"
+              ></p>
+            </div>
+          </template>
+
+          <!-- Tableiste: nur sichtbar, wenn das Geraet beide Wege kann
+               (`hasColourTabs`) - eine CCT- oder eine reine Farbleuchte
+               sieht keine Reiter. -->
+          <div class="control-tabs" x-show="hasColourTabs(controlModalDevice)">
+            <button :class="{ 'is-active': controlTab === 'white' }"
+                    @click="controlTab = 'white'"
+                    x-text="t('web.devices.control_tab_white')"></button>
+            <button :class="{ 'is-active': controlTab === 'colour' }"
+                    @click="controlTab = 'colour'"
+                    x-text="t('web.devices.control_tab_colour')"></button>
+          </div>
+
+          <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'white'">
+            <template x-for="command in controlsByKind(controlModalDevice, 'kelvin')" :key="command.key">
+              <div class="control-row">
+                <label x-text="t('web.devices.control_colortemp')"></label>
+                <input
+                  x-show="command.range"
+                  type="range" :min="command.range?.min" :max="command.range?.max" step="10"
+                  :value="controlDrafts.kelvin ?? command.range?.min"
+                  :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                  @change="recordControlDraft(command, Number($event.target.value)); sendControl(controlModalDeviceObject(), command, $event.target.value)"
+                />
+                <!-- Hinweis fuer fehlenden Startwert, wenn der Regler sichtbar ist -->
+                <p
+                  class="hint"
+                  x-show="command.range && controlDrafts.kelvin === undefined"
+                  x-text="t('web.devices.control_start_value_unknown')"
+                ></p>
+                <p class="hint" x-show="!command.range" x-text="t('web.devices.control_no_range')"></p>
+                <span x-show="!command.range" class="row">
+                  <input
+                    type="number"
+                    :placeholder="t('web.devices.value_placeholder')"
+                    @input="commandValueDrafts[command.key] = $event.target.value"
+                  />
+                  <button
+                    @click="executeCommand(controlModalDeviceObject(), command)"
+                    :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                    x-text="t('web.devices.send')"
+                  ></button>
+                </span>
+              </div>
+            </template>
+          </div>
+
+          <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'colour'">
+            <template x-for="command in controlsByKind(controlModalDevice, 'hue_sat')" :key="command.key">
+              <div class="control-row">
+                <!-- Der Marker sitzt IM Feld, nicht daneben: `hue` und
+                     `saturation` wurden bisher gelesen (`readStartValues`)
+                     und nirgends gezeigt - ein Farbwaehler, der die
+                     eingestellte Farbe verschweigt, ist keiner (Befund M-4,
+                     Abschluss-Review 2026-09-08). `x-show` statt eines
+                     Randfalls in der Position: fehlt der Wert, gibt es
+                     keinen Punkt, und der Hinweis darunter sagt warum. -->
+                <div
+                  class="colour-field"
+                  :class="{ 'is-busy': commandBusyKey === command.key || !isOnline(controlModalDeviceObject()) }"
+                  @pointerup="pickColour($event, controlModalDeviceObject(), command)"
+                >
+                  <span
+                    class="colour-marker"
+                    x-show="controlDrafts.hue !== undefined && controlDrafts.saturation !== undefined"
+                    :style="colourMarkerStyle()"
+                  ></span>
+                </div>
+                <p class="hint" x-text="t('web.devices.control_colour_hint')"></p>
+                <p class="hint" x-show="controlDrafts.hue === undefined"
+                   x-text="t('web.devices.control_start_value_unknown')"></p>
+              </div>
+            </template>
+          </div>
+
+          <!-- Rueckfall auf das schlichte Zahlenfeld: nicht nur fuer
+               `control: "unknown"`, sondern fuer JEDEN `control`-Wert, den
+               diese Oberflaeche nicht kennt (`unhandledControls`, Befund
+               I-2 im Abschluss-Review 2026-09-08) - sonst verschwindet ein
+               kuenftig in `clusters.yaml` eingetragener, hier noch
+               unbekannter Wert spurlos aus dem Modal. -->
+          <template x-for="command in unhandledControls(controlModalDevice)" :key="command.key">
+            <span class="row">
+              <span x-text="command.slug"></span>
+              <input
+                type="number"
+                :placeholder="t('web.devices.value_placeholder')"
+                @input="commandValueDrafts[command.key] = $event.target.value"
+              />
+              <button
+                @click="executeCommand(controlModalDeviceObject(), command)"
+                :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                x-text="t('web.devices.send')"
+              ></button>
+            </span>
+          </template>
+        </div>
+      </template>
+    </dialog>
+
+    <!--
+      Kurzmeldungen als Overlay. `position: fixed` heisst: sie stehen
+      ausserhalb des Textflusses und verschieben nichts. Die vorherige
+      Fassung blendete eine Zeile ueber der Geraeteliste ein, wodurch beim
+      Schalten die ganze Seite sprang und der naechste Klick daneben ging.
     -->
     <div class="toasts" aria-live="polite">
       <template x-for="toast in toasts" :key="toast.id">

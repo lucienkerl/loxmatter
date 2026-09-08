@@ -167,6 +167,9 @@ cli.run.help_miniserver:
 cli.run.help_listen:
   en: "Port for the HTTP commands coming from Loxone"
   de: "Port für die HTTP-Kommandos aus Loxone"
+cli.run.echo_commands_backfilled:
+  en: "{count} device(s) gained commands the bridge did not know when they were commissioned — their tiles now offer the matching controls."
+  de: "{count} Gerät(e) haben Befehle bekommen, die die Brücke beim Einlernen noch nicht kannte — ihre Kacheln bieten jetzt die passenden Bedienelemente."
 cli.run.help_host:
   en: "Address the HTTP service binds to. Default 0.0.0.0, because the Miniserver must be able to reach the service — see --api-token for the corresponding protection of the `/api` routes (Spec 9, Task 8)."
   de: "Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der Miniserver den Dienst erreichen muss — siehe --api-token für die dazugehörige Absicherung der `/api`-Routen (Spec 9, Task 8)."
@@ -265,6 +268,31 @@ api.errors.value_not_a_number:
 api.errors.command_unsupported:
   en: "Cluster {cluster_id} command {command_id} is not supported"
   de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
+# Die folgenden vier Schluessel gehoeren zu `LoxoneColourError` in
+# commands/color.py, uebersetzt in commands/translate.py
+# (`_translate_loxone_colour_error`) - siehe Review-Fix 2026-09-07:
+# `_payload_hue_saturation` reichte zuvor `str(exc)` (hart Deutsch) direkt
+# als HTTP-400-`detail` durch. Drei Fehlerfaelle plus die drei Kanalnamen
+# fuer den dritten Fall, damit auch die Kanalangabe uebersetzt ist und
+# nicht nur der Rahmensatz.
+api.errors.loxone_colour_not_integer:
+  en: "Loxone colour number must be an integer, was {value}"
+  de: "Loxone-Farbzahl muss ganzzahlig sein, war {value}"
+api.errors.loxone_colour_negative:
+  en: "Loxone colour number must not be negative, was {packed}"
+  de: "Loxone-Farbzahl darf nicht negativ sein, war {packed}"
+api.errors.loxone_colour_channel_out_of_range:
+  en: "channel {channel} is at {percent}%, allowed is 0-100 (Loxone colour number {packed})"
+  de: "Kanal {channel} liegt bei {percent} %, erlaubt sind 0-100 (Loxone-Farbzahl {packed})"
+api.errors.loxone_colour_channel_red:
+  en: "red"
+  de: "rot"
+api.errors.loxone_colour_channel_green:
+  en: "green"
+  de: "gruen"
+api.errors.loxone_colour_channel_blue:
+  en: "blue"
+  de: "blau"
 api.errors.listener_stopped_early:
   en: "Listener stopped before reporting readiness"
   de: "Listener wurde beendet, bevor er Bereitschaft meldete"
@@ -674,8 +702,14 @@ web.devices.commission_heading:
   en: "Commission a new device"
   de: "Neues Gerät einlernen"
 web.devices.code_placeholder:
-  en: "Pairing code (11 digits or MT:…)"
-  de: "Pairing-Code (11-stellig oder MT:…)"
+  # Zeigt die FORM statt sie zu beschreiben. Der fruehere Klammerzusatz
+  # ("11-stellig oder MT:…") nannte die Bauform - wer den Aufkleber in der
+  # Hand haelt, musste das erst in "die untere der beiden Zahlen"
+  # uebersetzen. Diese Auskunft tragen jetzt die Beispielzeile unter dem
+  # Feld und die Aufkleber-Skizze daneben. Beide Sprachen tragen denselben
+  # Wert - eine Ziffernfolge uebersetzt sich nicht.
+  en: "1234-567-8901"
+  de: "1234-567-8901"
 web.devices.thread_dataset_placeholder:
   # Since the commissioning card was reworked, the placeholder no longer
   # says WHAT FOR the field is there, but WHAT the value looks like: what
@@ -693,6 +727,54 @@ web.devices.commission_submit:
 web.devices.code_label:
   en: "Pairing code"
   de: "Pairing-Code"
+# Der Chip rechts im Eingabefeld (Entwurf vom 2026-09-07, Abschnitt 6). Er
+# benennt, was das Feld erkannt hat - und damit lernt man den Namen des
+# Codes an genau der Stelle, an der man ihn eintippt. Er BESCHREIBT nur:
+# auch "zu lang" sperrt den Einlern-Knopf nicht.
+web.devices.code_detect_manual:
+  en: "numeric code"
+  de: "Zahlencode"
+web.devices.code_detect_manual_long:
+  en: "numeric code, long"
+  de: "Zahlencode, lang"
+web.devices.code_detect_qr:
+  en: "QR code"
+  de: "QR-Code"
+# Zwei Schluessel statt einer mit Plural-Regel: i18n.t kennt keine
+# Pluralformen, und "noch 1 Ziffern" waere in beiden Sprachen falsch.
+web.devices.code_detect_remaining_one:
+  en: "1 digit to go"
+  de: "noch 1 Ziffer"
+web.devices.code_detect_remaining_many:
+  en: "{n} digits to go"
+  de: "noch {n} Ziffern"
+web.devices.code_detect_too_long:
+  en: "too long"
+  de: "zu lang"
+web.devices.code_detect_invalid:
+  en: "not a valid code"
+  de: "kein gültiger Code"
+# Die Beispielzeile unter dem Feld. Die BESCHRIFTUNGEN darin sind dieselben
+# Schluessel wie die des Chips (code_detect_manual/_qr) - es ist derselbe
+# Begriff, und dass er an beiden Stellen gleich lautet, ist der Zweck der
+# Uebung. Nur die beiden Beispielwerte stehen hier, und sie uebersetzen sich
+# nicht.
+web.devices.code_example_manual:
+  en: "1234-567-8901"
+  de: "1234-567-8901"
+web.devices.code_example_qr:
+  en: "MT:Y.K90SO527JA0648G00"
+  de: "MT:Y.K90SO527JA0648G00"
+# Die Aufkleber-Skizze neben dem Feld (Entwurf Abschnitt 7). Sie ist eine
+# Verdeutlichung, keine Informationsquelle - die Beispielzeile darueber
+# traegt denselben Inhalt als Text. Das aria-label beschreibt deshalb, was
+# zu SEHEN ist, statt den Inhalt ein zweites Mal vorzulesen.
+web.devices.sticker_alt:
+  en: "Sketch of a Matter label: the QR code on the left, the numeric code highlighted below it on the right."
+  de: "Skizze eines Matter-Aufklebers: links der QR-Code, rechts darunter der hervorgehobene Zahlencode."
+web.devices.code_where_hint:
+  en: "Printed on the device, its packaging, or in the manual. The text behind the QR code works too."
+  de: "Steht auf dem Gerät, seiner Verpackung oder im Handbuch. Statt der Zahl geht auch der Text hinter dem QR-Code."
 web.devices.room_label:
   en: "Room"
   de: "Raum"
@@ -751,6 +833,9 @@ web.devices.signals_loading:
 web.devices.no_functional_signals:
   en: "No functional signals."
   de: "Keine funktionalen Signale."
+web.devices.battery_label:
+  en: "Battery"
+  de: "Batterie"
 web.devices.controls_loading:
   en: "Loading commands…"
   de: "Befehle werden geladen…"
@@ -948,13 +1033,45 @@ web.devices.menu_signals:
   en: "Edit signals…"
   de: "Signale bearbeiten…"
 
-# --- web.signals — signal view ---
+# --- Bedien-Modal (Aufgabe 7): Regler statt nackter Zahlenfelder fuer
+# wertbehaftete Kommandos. `control_brightness` gibt es absichtlich NICHT:
+# ein Geraet kann mehrere Prozent-Kommandos haben (z. B. `level` und
+# `level_onoff`), deren Regler sich sonst nicht unterscheiden liessen -
+# jeder Prozent-Regler traegt stattdessen `command.slug` als Beschriftung.
+# Der Kelvin-Regler bleibt fest beschriftet, davon gibt es je Geraet nur
+# einen.
+web.devices.control_button:
+  en: "Control"
+  de: "Steuern"
+web.devices.control_modal_title:
+  en: "Control {label}"
+  de: "{label} steuern"
+web.devices.control_colortemp:
+  en: "Colour temperature"
+  de: "Farbtemperatur"
+web.devices.control_start_value_unknown:
+  en: "Start value unknown — the device has not reported this value."
+  de: "Startwert unbekannt — das Gerät hat diesen Wert nicht gemeldet."
+web.devices.control_no_range:
+  en: "This lamp does not report its colour temperature range, so there is no slider."
+  de: "Diese Leuchte meldet ihren Farbtemperaturbereich nicht, deshalb gibt es keinen Regler."
+web.devices.control_tab_white:
+  en: "White"
+  de: "Weiß"
+web.devices.control_tab_colour:
+  en: "Colour"
+  de: "Farbe"
+web.devices.control_colour_hint:
+  en: "Horizontal: hue. Vertical: saturation. Release to send."
+  de: "Waagerecht: Farbton. Senkrecht: Sättigung. Beim Loslassen wird gesendet."
+
+# --- web.signals — Signalansicht ---
 web.signals.key_hint:
-  en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
-  de: "Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
+  en: "The key (in the \"Loxone input\" column, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
+  de: "Der Schlüssel (in der Spalte „Loxone-Eingang“, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
 web.signals.functional_vs_expert_explanation:
-  en: "\"Functional\" are the signals that belong to the recognized device type (on/off, power, and similar) – \"Expert\" is everything else (network, device, and diagnostic values, technical counters). Both sections keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
-  de: "„Funktional“ sind die Signale, die zum erkannten Gerätetyp gehören (Ein/Aus, Leistung und Ähnliches) – „Experte“ alles andere (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Blöcke behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
+  en: "The signals above belong to the recognized device type, grouped by endpoint (e.g. \"Button 1\", \"Device\") – \"Expert\" leads everything else (network, device, and diagnostic values, technical counters). Both areas keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
+  de: "Oben stehen die Signale, die zum erkannten Gerätetyp gehören, gruppiert nach Endpunkt (z. B. „Taste 1“, „Gerät“) – „Experte“ führt alles Übrige (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Bereiche behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
 web.signals.load_button:
   en: "Load signals"
   de: "Signale laden"
@@ -970,15 +1087,39 @@ web.signals.export_checkbox:
 web.signals.resend_checkbox:
   en: "resend periodically"
   de: "periodisch erneut senden"
+web.signals.col_export:
+  en: "Export"
+  de: "Export"
+web.signals.col_signal:
+  en: "Signal"
+  de: "Signal"
+web.signals.col_input:
+  en: "Loxone input"
+  de: "Loxone-Eingang"
+web.signals.col_value:
+  en: "Value"
+  de: "Wert"
+web.signals.col_resend:
+  en: "Periodic"
+  de: "Periodisch"
+web.signals.resend_explanation:
+  en: "Periodic means the value is sent again regularly, even when it has not changed."
+  de: "Periodisch heißt: der Wert wird regelmäßig erneut gesendet, auch wenn er sich nicht ändert."
 web.signals.raw_write_placeholder:
   en: "Write raw value"
   de: "Rohwert schreiben"
 web.signals.raw_write_submit:
   en: "Write"
   de: "Schreiben"
-web.signals.group_functional:
-  en: "Functional"
-  de: "Funktional"
+web.signals.origin:
+  en: "Endpoint {endpoint} · Cluster {cluster} · Element {element}"
+  de: "Endpunkt {endpoint} · Cluster {cluster} · Element {element}"
+web.signals.row_details:
+  en: "Origin and raw write"
+  de: "Herkunft und Rohwert"
+web.signals.group_endpoint_subtitle:
+  en: "Endpoint {endpoint}"
+  de: "Endpunkt {endpoint}"
 web.signals.group_expert:
   en: "Expert"
   de: "Experte"
@@ -1000,9 +1141,36 @@ web.signals.write_success:
 web.signals.modal_heading:
   en: "Signals — {device}"
   de: "Signale — {device}"
+web.signals.export_summary:
+  en: "{exported} of {total} signals go to Loxone as an input"
+  de: "{exported} von {total} Signalen gehen als Eingang nach Loxone"
+web.signals.deselect_all:
+  en: "Deselect all"
+  de: "Alle abwählen"
 web.signals.modal_close:
   en: "Close"
   de: "Schließen"
+web.signals.endpoint_button:
+  en: "Button"
+  de: "Taste"
+web.signals.endpoint_socket:
+  en: "Socket"
+  de: "Steckdose"
+web.signals.endpoint_light:
+  en: "Light"
+  de: "Leuchte"
+web.signals.endpoint_metering:
+  en: "Metering"
+  de: "Messung"
+web.signals.endpoint_device:
+  en: "Device"
+  de: "Gerät"
+web.signals.endpoint_numbered:
+  en: "{name} {index}"
+  de: "{name} {index}"
+web.signals.endpoint_plain:
+  en: "Endpoint {endpoint}"
+  de: "Endpunkt {endpoint}"
 
 # --- web.export — export tab ---
 web.export.heading:

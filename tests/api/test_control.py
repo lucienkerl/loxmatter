@@ -327,3 +327,70 @@ async def test_command_at_a_removed_device_is_refused_in_german(api):
     assert response.json()["detail"] == (
         f"Kommando {key!r} gehoert zu Geraet {device_id}, das entfernt wurde"
     )
+
+
+@pytest.fixture
+async def api_lamp(
+    tmp_path, no_invoke, fake_runtime, fake_client
+) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int, object]]:
+    """Wie `api`, aber mit der eingecheckten RGBW-Leuchte - der einzigen
+    Vorlage, die Farb- und Farbtemperatur-Kommandos zugleich traegt."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_kajplats_cws_lamp.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    runtime = fake_runtime(store)
+
+    app = build_app(store, no_invoke, runtime, client=fake_client)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        await authenticate(store, client)
+        yield client, store, device_id, runtime
+    store.close()
+
+
+async def test_every_control_names_its_widget(api_lamp):
+    client, _store, device_id, _runtime = api_lamp
+    response = await client.get(f"/api/devices/{device_id}/controls")
+    assert response.status_code == 200
+    by_slug = {c["slug"]: c["control"] for c in response.json()["commands"]}
+    assert by_slug["on"] == "none"
+    assert by_slug["colortemp"] == "kelvin"
+    assert by_slug["color"] == "hue_sat"
+
+
+async def test_the_kelvin_range_comes_from_the_device_in_kelvin(api_lamp):
+    """Mired -> Kelvin ist ein Kehrwert: das kleinere Mired ergibt das
+    GROESSERE Kelvin, Min und Max tauschen also (Entwurf 2026-09-07,
+    Abschnitt 5.5)."""
+    client, store, device_id, runtime = api_lamp
+    keys = {
+        signal.ref.element_id: signal.key
+        for signal in store.signals(device_id)
+        if signal.ref.cluster_id == 768 and signal.ref.element_id in (16395, 16396)
+    }
+    # Die echten Werte der eingecheckten CWS-Leuchte.
+    runtime.seed(keys[16395], 153)  # 153 Mired = 6535 K
+    runtime.seed(keys[16396], 555)  # 555 Mired = 1801 K
+
+    response = await client.get(f"/api/devices/{device_id}/controls")
+    colortemp = next(c for c in response.json()["commands"] if c["slug"] == "colortemp")
+    assert colortemp["range"] == {"min": 1801, "max": 6535}
+
+
+async def test_without_the_limits_there_is_no_range(api_lamp):
+    """Kein Bereich ist besser als ein erfundener - die Oberflaeche faellt
+    dann auf das Zahlenfeld zurueck (Entwurf 2026-09-07, Abschnitt 9.2)."""
+    client, _store, device_id, _runtime = api_lamp  # nichts geseedet
+    response = await client.get(f"/api/devices/{device_id}/controls")
+    colortemp = next(c for c in response.json()["commands"] if c["slug"] == "colortemp")
+    assert colortemp["range"] is None
+
+
+async def test_commands_without_a_range_carry_none(api_lamp):
+    client, _store, device_id, _runtime = api_lamp
+    response = await client.get(f"/api/devices/{device_id}/controls")
+    for command in response.json()["commands"]:
+        if command["slug"] != "colortemp":
+            assert command["range"] is None

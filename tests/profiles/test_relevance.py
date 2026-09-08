@@ -184,17 +184,16 @@ def test_a_cluster_known_only_for_its_commands_keeps_its_attributes_functional(
 
 
 def test_extended_color_light_attributes_are_functional_after_the_cluster_768_fix():
-    """Documents the finding from the final review directly, on the
-    (synthetic) device: before Review-Fix 1, cluster 768 (ColorControl)
-    was in the table only with `commands:` - each of its attributes
-    (`CurrentHue`, `CurrentSaturation`, `ColorTemperatureMireds`,
-    `ColorMode`) therefore counted as not functional, while the output
-    command for color temperature had long been exported: Loxone could
-    set the color but never get it reported back. `tests/fixtures/nodes/
-    synthetic_color_light.json` is synthetic (see the comment there) -
-    device type and attribute IDs are backed by the same sources as
-    `profiles/clusters.yaml` cluster 768 itself."""
-    snapshot = _snapshot("synthetic_color_light.json")
+    """Belegt den Fund aus dem Abschlussreview direkt, am echten Geraet: vor
+    Review-Fix 1 stand Cluster 768 (ColorControl) nur mit `commands:` in der
+    Tabelle - jedes seiner Attribute (`CurrentHue`, `CurrentSaturation`,
+    `ColorTemperatureMireds`, `ColorMode`) galt deshalb als nicht funktional,
+    waehrend der Ausgangsbefehl fuer die Farbtemperatur laengst exportiert
+    wurde: Loxone konnte die Farbe setzen, aber nie zurueckgemeldet bekommen.
+    `tests/fixtures/nodes/ikea_kajplats_cws_lamp.json` ist die echte IKEA
+    KAJPLATS E14 CWS globe 806lm (Phase 1, siehe Kommentar dort) - loeste ab
+    Task 1 das bis dahin verwendete synthetische Abbild ab."""
+    snapshot = _snapshot("ikea_kajplats_cws_lamp.json")
     types = device_types_by_endpoint(snapshot)
     # 0, 1, 7, 8 = CurrentHue, CurrentSaturation, ColorTemperatureMireds, ColorMode
     for element_id in (0, 1, 7, 8):
@@ -212,3 +211,23 @@ def test_an_unnamed_power_source_attribute_on_the_utility_endpoint_is_not_functi
     carries the battery level."""
     ref = SignalRef(0, 47, 0, SignalKind.ATTRIBUTE)
     assert is_functional(ref, _BUTTON_TYPES) is False
+
+
+def test_the_physical_colour_temperature_limits_are_known_but_not_wanted():
+    """Zwei unveraenderliche Geraetekonstanten. Bekannt genug zum Auslesen
+    (der Kelvin-Regler braucht sie), nicht interessant genug, um als
+    virtueller Loxone-Eingang vorausgewaehlt zu werden (Entwurf
+    2026-09-07, Abschnitt 5.2)."""
+    device_types = {1: frozenset({269})}
+    for element_id in (16395, 16396):
+        ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)
+        assert not is_functional(ref, device_types)
+
+
+def test_the_ordinary_colour_attributes_stay_functional():
+    """Die Gegenprobe: `functional: false` darf nicht auf den ganzen
+    Cluster durchschlagen."""
+    device_types = {1: frozenset({269})}
+    for element_id in (0, 1, 7, 8):
+        ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)
+        assert is_functional(ref, device_types)

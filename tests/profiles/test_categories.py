@@ -77,7 +77,7 @@ def test_the_button_fixture_is_a_switch():
 
 
 def test_the_color_light_fixture_is_a_light():
-    types = device_types_by_endpoint(load_snapshot("synthetic_color_light.json"))
+    types = device_types_by_endpoint(load_snapshot("ikea_kajplats_cws_lamp.json"))
     assert category_for(types) is Category.LIGHT
 
 

@@ -23,7 +23,9 @@ changes, the API does not necessarily change along with it.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SignalOut(BaseModel):
@@ -57,6 +59,16 @@ class SignalOut(BaseModel):
     exported: bool
     functional: bool
     resend: bool
+    # endpoint/cluster_id (Entwurf 2026-09-07, Abschnitt 7.4): `path` traegt
+    # dieselben Zahlen als "1/59/2", aber als Text. Die Oberflaeche
+    # gruppiert nach Endpunkt und erkennt den Batteriestand an Cluster 47 -
+    # beides aus `path` zu parsen hiesse, `matter.paths` ein zweites Mal in
+    # JavaScript zu pflegen. `endpoint_label` ist der sprechende Name
+    # desselben Endpunkts ("Taste 1"), uebersetzt aus `profiles.endpoints`;
+    # ohne nachgetragene Geraetetypen steht dort "Endpunkt 1".
+    endpoint: int
+    cluster_id: int
+    endpoint_label: str
 
 
 class DeviceOut(BaseModel):
@@ -151,18 +163,41 @@ class RoomRename(BaseModel):
     to_room: str = Field(alias="to")
 
 
+class ControlRange(BaseModel):
+    """Grenzen eines Reglers, in der Einheit, die die Oberflaeche anzeigt.
+
+    Heute nur fuer die Farbtemperatur, in Kelvin. Die Umrechnung aus Mired
+    passiert im Server und nicht im JavaScript: sie ist ein Kehrwert, bei
+    dem Min und Max tauschen - eine Falle, die man nicht zweimal aufstellen
+    will (Entwurf 2026-09-07, Abschnitt 5.5)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    min: int
+    max: int
+
+
 class CommandOut(BaseModel):
     """A control for `GET /api/devices/{device_id}/controls` (Task 4).
 
-    Deliberately carries only what a click needs - the key to trigger it
-    and the slug as a label. `takes_value` tells the UI whether a simple
-    button is enough (e.g. `on`) or a slider is needed (e.g. `level`)."""
+    Traegt bewusst nur, was ein Klick braucht - der Schluessel zum Ausloesen
+    und der Slug als Beschriftung. `takes_value` sagt der Oberflaeche, ob ein
+    einfacher Knopf reicht (z. B. `on`) oder ein Regler noetig ist (z. B.
+    `level`).
+
+    `control` sagt, WELCHES Bedienelement gebaut werden soll (`none`,
+    `percent`, `kelvin`, `hue_sat`, `unknown`) - siehe
+    `profiles.table.command_control`. `takes_value` bleibt daneben
+    bestehen, weil es etwas anderes beantwortet: ob der EXPORT einen
+    analogen oder digitalen Ausgang erzeugt."""
 
     model_config = ConfigDict(frozen=True)
 
     key: str
     slug: str
     takes_value: bool
+    control: str
+    range: ControlRange | None = None
 
 
 class ControlsOut(BaseModel):
@@ -193,9 +228,26 @@ class ValueIn(BaseModel):
     value: str
 
 
+# Alles, was NICHT Ziffer, Leerraum oder Bindestrich ist, macht den Wert zu
+# einem QR-Inhalt (`MT:...`, Base38). Ein Bindestrich DARIN traegt Bedeutung
+# und darf nicht wegfallen - deshalb entscheidet dieses Muster zuerst, bevor
+# ueberhaupt etwas geschnitten wird.
+#
+# Diese Regel steht ZWEIMAL: hier und als `isPairingQrCode`/
+# `normalizePairingCode` in `web/app.js`. Das ist Absicht - dort formatiert
+# die Oberflaeche waehrend des Tippens, hier normalisiert die Route fuer
+# JEDEN Aufrufer. Wer eine der beiden Fassungen aendert, aendert die andere.
+_COMMISSION_QR_PAYLOAD = re.compile(r"[^0-9\s-]")
+_COMMISSION_CODE_SEPARATORS = re.compile(r"[\s-]")
+
+
 class CommissionRequest(BaseModel):
-    """`POST /api/devices/commission` - the pairing code from the device or
-    its packaging (11 digits, or the 21-character `MT:` code, Spec 7.1).
+    """`POST /api/devices/commission` - der Pairing-Code vom Geraet oder
+    seiner Verpackung (Spec 7.1). Zwei Bauformen: der Zahlencode (11-stellig,
+    auf dem Geraet als `1234-567-8901` aufgedruckt, seltener 21-stellig) oder
+    der Text hinter dem QR-Code (`MT:...`).
+
+    `code` wird beim Eintreffen normalisiert, siehe `_strip_separators`.
 
     `thread_dataset` is optional: only Thread devices need it, and only
     before `commission_with_code` is even attempted (see
@@ -213,6 +265,31 @@ class CommissionRequest(BaseModel):
     # assigned one at any later time. If commissioning fails, no device is
     # created and therefore no room either.
     room: str | None = None
+
+    @field_validator("code")
+    @classmethod
+    def _strip_separators(cls, value: str) -> str:
+        """Nimmt den Code so entgegen, wie er auf dem Geraet steht.
+
+        Dort steht er gruppiert - `1234-567-8901` - und genau so tippt ihn
+        jeder ab. Auf dem Weg zum Matter-Stack schneidet die Trenner sonst
+        niemand weg: `api.devices` reicht den Wert unveraendert an
+        `BridgeMatterClient.commission_with_code` weiter, und
+        `MatterClient.commission_with_code` setzt ihn ebenso unveraendert in
+        den WebSocket-Befehl (geprueft gegen die installierte Fassung,
+        `matter_server/client/client.py:140`).
+
+        Der Validator NORMALISIERT NUR, er validiert nicht (Entwurf
+        Abschnitt 8): ueber die gueltigen Bauformen entscheidet der
+        Matter-Stack. Laege die Regel hier, koennte diese Bruecke einen Code
+        ablehnen, den der Stack angenommen haette - ohne einen Weg daran
+        vorbei. Trenner zu schneiden ist verlustfrei, eine Laengenregel
+        waere eine Wette.
+        """
+        text = value.strip()
+        if _COMMISSION_QR_PAYLOAD.search(text):
+            return text
+        return _COMMISSION_CODE_SEPARATORS.sub("", text)
 
 
 class ExportDeviceOut(BaseModel):

@@ -17,29 +17,59 @@
 # Enrichment for known clusters. The unknown is not discarded, but gets a
 # generic name (Spec 3.5).
 #
-# The target unit is the one the Loxone function block expects, not the SI
-# unit (Spec 7.3). The UDP sender in Phase 4 does the actual conversion.
+# Zieleinheit ist die, die der Loxone-Baustein erwartet, nicht die SI-Einheit
+# (Spec 7.3). Die Umrechnung selbst macht der UDP-Sender in Phase 4.
+#
+# `rank` ordnet die Cluster ZUEINANDER, wenn die Oberflaeche und der Export
+# die Signale eines Geraets sortieren (Entwurf 2026-09-07, Abschnitt 4).
+# Kleiner Rang zuerst: was ein Geraet im Haus TUT, steht bei 10-40; was es
+# ueber sich selbst aussagt, bei 90+. Ein Cluster ohne `rank` bekommt 50 und
+# landet damit in der Mitte - hinter dem, was nachweislich zaehlt, aber vor
+# Batterie und Geraeteangaben. Diese Vorgabe ist Absicht: ein Geraetetyp,
+# den noch niemand eingetragen hat, soll nie mit seinem Batteriestand
+# fuehren (Rang 90), sein tatsaechliches Hauptmerkmal aber auch nicht hinter
+# allem Bekannten verschwinden.
+#
+# INNERHALB eines Rangs bleibt die bisherige Ordnung (Endpunkt, Cluster,
+# Element, Art) - sie ordnet zwei Signale desselben Clusters, und das tut
+# sie meistens gut. Es gibt ZWEI Rangebenen: `rank` je Cluster (oben) UND
+# `rank` je Element, einzeln bei jedem Eintrag unter `attributes:`/
+# `events:` setzbar (siehe Cluster 59 unten). Die Elementebene ist
+# NACHGETRAGEN worden (2026-09-08), weil ein konkretes Geraet sie
+# verlangte: der IKEA-Taster traegt `NumberOfPositions` auf demselben
+# Cluster wie den Tastendruck, und die kleinere Element-ID sortierte die
+# Positionsangabe - eine Konstante, die sich nie aendert - vor jeden
+# Tastendruck; die Kachel fuehrte damit mit einem Leitwert ohne Aussage.
+# Ein Element OHNE `rank` faellt weiter auf die Vorgabe zurueck und bleibt
+# ueber die Element-ID geordnet - die Matter-Spezifikation vergibt sie
+# schon grob nach Wichtigkeit, und das reicht fuer jeden Cluster, der
+# (noch) kein Geraet hat, das etwas anderes verlangt. Ein neuer
+# Elementrang braucht wie hier ein Geraet, das ihn tatsaechlich belegt,
+# nicht nur eine Vermutung.
 clusters:
   6:
     name: onoff
+    rank: 10
     attributes:
       0: {slug: onoff, unit: ""}
     commands:
-      # "off"/"on" must be quoted: otherwise YAML 1.1 reads them as
-      # booleans, not as strings (PyYAML pitfall).
-      0: {slug: "off", takes_value: false}
-      1: {slug: "on", takes_value: false}
-      2: {slug: toggle, takes_value: false}
+      # "off"/"on" muessen in Anfuehrungszeichen stehen: YAML 1.1 liest sie
+      # sonst als Booleans, nicht als Strings (PyYAML-Falle).
+      0: {slug: "off", takes_value: false, control: none}
+      1: {slug: "on", takes_value: false, control: none}
+      2: {slug: toggle, takes_value: false, control: none}
   8:
     name: level
+    rank: 20
     attributes:
       # 0-254 to 0-100 %: 100/254
       0: {slug: level, unit: "%", scale: 0.3937007874015748}
     commands:
-      0: {slug: level, takes_value: true}
-      4: {slug: level_onoff, takes_value: true}
+      0: {slug: level, takes_value: true, control: percent}
+      4: {slug: level_onoff, takes_value: true, control: percent}
   47:
     name: powersource
+    rank: 90
     attributes:
       # BatPercentRemaining, attribute ID confirmed against
       # chip.clusters.Objects.PowerSource.Attributes.
@@ -64,6 +94,7 @@ clusters:
       12: {slug: battery, unit: "%", scale: 0.5}
   768:
     name: colorcontrol
+    rank: 30
     attributes:
       # Attribute IDs confirmed against the installed SDK (chip.clusters.
       # Objects.ColorControl.Attributes): CurrentHue=0, CurrentSaturation=1,
@@ -105,38 +136,66 @@ clusters:
       # Color mode (ColorMode, 8): an enumeration, not a physical
       # quantity - no unit.
       8: {slug: colormode, unit: ""}
+      # ColorTempPhysicalMinMireds (16395) und ColorTempPhysicalMaxMireds
+      # (16396): was die Leuchte an Farbtemperatur ueberhaupt kann. IDs
+      # gegen das installierte SDK belegt (chip.clusters.Objects.
+      # ColorControl.Attributes), Werte gegen beide eingecheckten Leuchten.
+      #
+      # `functional: false`, weil es unveraenderliche Geraetekonstanten
+      # sind: die Oberflaeche braucht sie, um den Kelvin-Regler zu
+      # begrenzen (Entwurf 2026-09-07, Abschnitt 6.2), aber als virtueller
+      # Loxone-Eingang waeren sie zwei Zahlen, die sich nie aendern. Im
+      # Expertenblock bleiben sie von Hand waehlbar.
+      #
+      # Wie 7 oben bleiben sie in Mired stehen - Kelvin = 1e6 / Mired ist
+      # ein Kehrwert, den `scale` nicht ausdruecken kann. Die API rechnet
+      # sie fuer die Oberflaeche um (siehe api/control.py).
+      16395: {slug: colortemp_phys_min_mireds, unit: mired, functional: false}
+      16396: {slug: colortemp_phys_max_mireds, unit: mired, functional: false}
     commands:
-      # MoveToColorTemperature - the only ColorControl command that
-      # commands/translate.py serves (see its _PAYLOAD_BUILDERS there and
-      # its docstring: Hue/Saturation, command 6, is deliberately left out
-      # because the Loxone-side RGB number is not reliably confirmed).
-      # Review fix C2, 2026-09-02: this entry was missing even though
-      # _PAYLOAD_BUILDERS already served the pair (768, 10) - in the raw
-      # export (`raw`), the command was thereby exported as a generic,
-      # digital `c768_cmd10` (takes_value=False per command_takes_value),
-      # and a button press sent the literal text "1" into
-      # _payload_color_temperature, which built 1_000_000 mireds from it -
-      # a made-up color temperature sent to a real device. takes_value:
-      # true turns this into an analog output AND exports the command
-      # immediately in normal (non-raw) mode too, which is correct anyway
-      # for a served command.
-      10: {slug: colortemp, takes_value: true}
+      # MoveToColorTemperature - einer von zwei ColorControl-Befehlen, die
+      # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS; der
+      # zweite ist Hue/Saturation, Kommando 6, weiter unten).
+      # Review-Fix C2, 2026-09-02: dieser Eintrag fehlte, obwohl
+      # _PAYLOAD_BUILDERS das Paar (768, 10) schon bediente - im Rohexport
+      # (`raw`) wurde das Kommando dadurch als generisches, digitales
+      # `c768_cmd10` exportiert (takes_value=False laut command_takes_value),
+      # und ein Tastendruck schickte den woertlichen Text "1" in
+      # _payload_color_temperature, das daraus 1_000_000 mireds baute - eine
+      # erfundene Farbtemperatur an ein echtes Geraet. takes_value: true
+      # macht daraus einen analogen Ausgang UND exportiert das Kommando ab
+      # sofort auch im normalen (nicht-rohen) Modus, was fuer ein bedientes
+      # Kommando ohnehin richtig ist.
+      10: {slug: colortemp, takes_value: true, control: kelvin}
+      # MoveToHueAndSaturation - freigeschaltet am 7. September 2026
+      # (Entwurf 2026-09-07). Die frühere Sperre beruhte auf einer
+      # Verwechslung: `translate.py` begruendete sie mit "Loxone-RGB nicht
+      # belegt", waehrend `commands/color.py` RGB mit offizieller Quelle
+      # belegt und ausschliesslich Lumitech offen laesst. Der Wert ist die
+      # gepackte Loxone-Farbzahl; belegt gegen die eingecheckte
+      # RGBW-Leuchte (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
+      # enthaelt 6).
+      6: {slug: color, takes_value: true, control: hue_sat}
   1026:
     name: temperature
+    rank: 10
     attributes:
       0: {slug: temp, unit: "°C", scale: 0.01}
   1029:
     name: humidity
+    rank: 10
     attributes:
       0: {slug: humidity, unit: "%", scale: 0.01}
   144:
     name: power
+    rank: 40
     attributes:
       4: {slug: voltage, unit: "V", scale: 0.001}
       5: {slug: current, unit: "A", scale: 0.001}
       8: {slug: power, unit: "kW", scale: 0.000001}
   145:
     name: energy
+    rank: 40
     attributes:
       # CumulativeEnergyImported/-Exported. Matter returns both as an
       # EnergyMeasurementStruct - value plus timestamp -, not as a number.
@@ -150,13 +209,30 @@ clusters:
       2: {slug: energy_exported, field: 0, unit: "kWh", scale: 0.000001}
   59:
     name: switch
+    rank: 10
     attributes:
-      0: {slug: positions, unit: ""}
+      # `rank` je Element ordnet INNERHALB dieses Clusters (Nachtrag
+      # 2026-09-08). Cluster 59 ist der bislang einzige, der ihn braucht,
+      # und der Grund ist NumberOfPositions: die Angabe, wie viele
+      # Stellungen diese Taste hat, aendert sich nie. Sie stand mit
+      # Element-ID 0 vor jedem Tastendruck und wurde damit zum Leitwert
+      # der Kachel - eine Konstante als wichtigstes Merkmal eines Tasters.
+      0: {slug: positions, unit: "", rank: 90}
       1: {slug: position, unit: ""}
     events:
-      1: {slug: press}
+      # Der Tastendruck ist, wofuer man einen Taster einlernt.
+      1: {slug: press, rank: 10}
       2: {slug: longpress}
       3: {slug: shortrelease}
       4: {slug: longrelease}
       5: {slug: multipress_ongoing}
       6: {slug: multipress}
+  40:
+    name: basicinformation
+    # Kein `attributes:`-Abschnitt: dieser Cluster steht hier ALLEIN wegen
+    # seines Rangs. Ein leerer `attributes:`-Abschnitt haette eine zweite,
+    # ungewollte Wirkung - `relevance.is_functional` liest ihn ueber
+    # `known_attribute_section` und wuerde dann JEDES Attribut dieses
+    # Clusters als nicht gewollt verwerfen (siehe dessen Docstring,
+    # Schicht 3). Der Rang allein aendert nur die Reihenfolge.
+    rank: 95

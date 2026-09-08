@@ -220,6 +220,41 @@ main {
   margin-top: 0.5rem;
 }
 
+/* WCAG 2.2 AA, Erfolgskriterium 2.5.8 (Target Size Minimum): 24x24 CSS-
+   Pixel Trefferflaeche. Eine Pruefung fand ein Kaestchen mit gemessen
+   13 px Breite - dem nackten `<input type="checkbox">`, der ohne eigene
+   Regel auf reinem Browser-Standard steht. Nicht das Kaestchen wird
+   vergroessert (saehe neben 14-px-Text klobig aus und aendert das
+   Aussehen der ganzen Oberflaeche), sondern das umschliessende `<label>`:
+   ein Label, das sein Eingabefeld umschliesst, leitet die Aktivierung von
+   jeder Stelle seiner Flaeche weiter - es IST also schon die
+   Trefferflaeche, ihr fehlt nur das Mindestmass.
+
+   `.checkbox-label` markiert genau die vier textbeschrifteten Kaestchen
+   in `index.html` (Projektdatei-Sync, Export-Ansicht x2, Systemansicht) -
+   nicht `.row label` allgemein, denn dieselbe Klasse traegt in anderen
+   `.row`-Zeilen auch Textfeld-, Datei- und Auswahllabels (z. B. die
+   Bruecken-IP), die dieses Mass nicht brauchen und deren Layout hier
+   nicht mitgezogen werden soll. `:has()` bewusst vermieden (Projekt-
+   Vorgabe), deshalb die eigene Klasse statt eines Selektors auf das
+   Kaestchen im Inneren.
+
+   Waagerecht war im Wegwerf-Harness (Kopie aus `index.html`, echtes
+   `style.css`) schon vorher genug Platz - der Text daneben allein misst
+   zwischen 131 px und 208 px, weit ueber 24 px, `min-width` bliebe hier
+   Ballast. Gemessen wurde die Hoehe des `<label>.getBoundingClientRect()`
+   selbst, nicht die des `<input>`: 21,5 px vorher (Desktop wie unter
+   640 px, unveraendert - die Zeile haengt an keiner Medienabfrage), damit
+   unter der 24-px-Schwelle. `display: flex` + `align-items: center`
+   halten Kaestchen und Text zentriert, sobald `min-height` die Box um
+   die fehlenden 2,5 px wachsen laesst - ohne das faellt der Inhalt sonst
+   an den oberen Rand der neu gewonnenen Hoehe. */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
 .dot {
   display: inline-block;
   width: 0.6rem;
@@ -443,10 +478,49 @@ button:disabled {
   margin-bottom: 0.3rem;
 }
 
-/* The field and the button share ONE border: `Enter` in the field and a
- * click on the button do the same thing, so they should also look like one
- * control. `:focus-within` therefore puts the focus ring on the outer
- * border, not on the field inside it. */
+/* Feld und Aufkleber-Skizze nebeneinander (Entwurf vom 2026-09-07,
+ * Abschnitt 7). Die Skizze steht dauerhaft da: sie kostet keinen
+ * Lesevorgang, wer sie nicht braucht ueberliest sie, und sie ersetzt den
+ * frueheren Klammerzusatz im Platzhalter - der Text wird also nicht mehr,
+ * sondern weniger. */
+.code-with-sticker {
+  display: flex;
+  gap: 1.25rem;
+  align-items: flex-start;
+}
+
+.code-with-sticker .code-col {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.code-sticker {
+  flex: 0 0 auto;
+}
+
+/* Unter dieser Breite wandert die Skizze unter das Feld statt daneben.
+ *
+ * Die Schwelle ist NICHT dieselbe wie beim Umbruch von Feld und Knopf
+ * weiter unten (480px) - hier geht es um eine andere Enge. `.code-sticker`
+ * (fest 188px breit) und `.code-detect` sind beide unschrumpfbar
+ * (`flex-shrink: 0`), das Eingabefeld ist also der einzige Nachgeber in
+ * dieser Zeile. Zwischen 480px und ~640px reichte der uebrige Platz fuer
+ * Chip und Knopf nicht mehr, ohne dass das Feld schon selbst umgebrochen
+ * waere (siehe der Umbruch weiter unten) - das Feld schrumpfte auf nahezu
+ * null, lange bevor es an der Reihe war. 700px raeumt der Skizze den Weg,
+ * bevor es dazu kommt: das Feld behaelt dann in der ganzen Spanne bis
+ * dorthin reichlich Breite fuer sich allein. */
+@media (max-width: 700px) {
+  .code-with-sticker {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+}
+
+/* Feld und Knopf teilen sich EINE Umrandung: `Enter` im Feld und ein Klick
+ * auf den Knopf tun dasselbe, also sollen sie auch wie ein Bedienelement
+ * aussehen. `:focus-within` traegt den Fokusrahmen deshalb die aeussere
+ * Umrandung, nicht das Feld darin. */
 .code-field {
   display: flex;
   align-items: stretch;
@@ -485,6 +559,66 @@ button:disabled {
 
 .code-field .code-input:focus {
   outline: none;
+}
+
+/* Der Chip im Eingabefeld (Entwurf vom 2026-09-07). Er benennt, was das Feld
+ * erkannt hat. Bei leerem Feld bleibt er stehen und wird nur unsichtbar -
+ * entfernt aenderte er die Breite des Feldes beim ersten Tastendruck.
+ *
+ * Die drei Farben tragen dieselbe Bedeutung wie ueberall sonst in dieser
+ * Oberflaeche (--ok gelungen, --warn unfertig, --danger falsch); es kommt
+ * keine neue hinzu. */
+.code-field .code-detect {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.code-field .code-detect.tone-idle {
+  visibility: hidden;
+}
+
+.code-field .code-detect.tone-ok {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.code-field .code-detect.tone-warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.code-field .code-detect.tone-bad {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* Die beiden Bauformen als Beispiel. Ersetzt den frueheren Klammerzusatz im
+ * Platzhalter: der nannte die Bauform, das hier zeigt sie. */
+.code-examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.code-examples b {
+  font-weight: 600;
+}
+
+.code-examples code {
+  font-family: var(--mono);
+  font-size: 0.95em;
+  color: var(--text);
 }
 
 .code-field .primary {
@@ -866,12 +1000,6 @@ button:disabled {
   .value {
     transition: none;
   }
-}
-
-.device-controls {
-  margin-top: 0.6rem;
-  padding-top: 0.6rem;
-  border-top: 1px dashed var(--border);
 }
 
 footer.hint-block {
@@ -1381,13 +1509,17 @@ footer.hint-block {
 
 /* Devices tab: room bar, grid, tile (design 2026-09-05).
  *
- * The grid is the actual point: a tile used to be as wide
- * as the window and as tall as its content - twelve devices were twelve
- * screen heights. `auto-fill` with a lower bound instead of custom
- * breakpoints: 260px is the width above which the header including the
- * primary signal and the value column no longer wrap. That results in four
- * columns on desktop, two on tablet, one on a phone, without
- * a media query fixing the numbers a second time.
+ * Das Raster ist der eigentliche Punkt: eine Kachel war bisher so breit
+ * wie das Fenster und so hoch wie ihr Inhalt - zwoelf Geraete waren zwoelf
+ * Bildschirmhoehen. `auto-fill` mit einer Untergrenze statt eigener
+ * Breakpoints: 260 px stammt aus einer Messung, bei der die Kopfzeile
+ * noch den Leitwert trug - ab dieser Breite brachen damals weder sie noch
+ * die Wertespalte um. Mit dessen Wegfall (Entwurf 2026-09-07) ist die
+ * Kopfzeile schmaler geworden, die Untergrenze also eher grosszuegig als
+ * knapp bemessen; neu vermessen wurde sie deswegen nicht. Daraus ergeben
+ * sich vier Spalten auf dem Desktop, zwei auf dem Tablet, eine auf dem
+ * Telefon, ohne dass eine Media Query die Zahlen ein zweites Mal
+ * festlegt.
  *
  * Follow-up 2026-09-05, finding 2: `align-items: start` left every tile
  * standing at its own content height - in a row with
@@ -1597,10 +1729,11 @@ footer.hint-block {
   margin: 1rem 0 0.4rem;
 }
 
-/* Header: name on the left, primary signal on the right, both on one visual
- * axis. `min-width: 0` at the middle, so that a long device name truncates
- * instead of pushing the primary signal out of the tile - without this
- * line, in a flex item the content wins against any width declaration. */
+/* Kopfzeile: Icon links, Name in der Mitte, Status-Pille rechts (nur
+ * wenn das Geraet offline ist), alle auf einer Sichtachse. `min-width: 0`
+ * an der Mitte, damit ein langer Geraetename kuerzt statt die Pille aus
+ * der Kachel zu schieben - ohne diese Zeile gewinnt in einem Flex-Element
+ * der Inhalt gegen jede Breitenangabe. */
 .device-head {
   display: flex;
   align-items: flex-start;
@@ -1610,27 +1743,33 @@ footer.hint-block {
 .device-ident {
   flex: 1 1 auto;
   min-width: 0;
+  /* `.device-ident` ist ein <span> - ohne `display: flex` rendert es
+   * inline und schiebt dem `<input>` fremden Zeilenabstand unter. */
   display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
 }
 
-/* `.device-head .device-name` instead of just `.device-name`: the generic
- * rule `input[type="text"] { min-width: 12rem }` further up in this
- * file, as a type-plus-attribute selector, has the same specificity as a
- * class plus one - a plain class rule loses against it. The
- * descendant selector lifts this rule above it, without relying on the
- * order within the file. */
-/* Finding 1 (review from 2026-09-05): an `<input>` clips its text internally
- * at the edge of the content box as soon as it no longer fits - entirely
- * without CSS explicitly requesting that, and entirely without any character
- * that shows that text is missing. At the documented grid lower bound
- * (261px, see `.lead-value` below), this field only gets 65px
- * and MUST truncate; the two properties at the end of this rule make sure
- * that it does so visibly instead of letting a name disappear
- * mid-letter. An additional `white-space: nowrap` for the
- * ellipsis is unnecessary on `<input>` - a text field never wraps anyway,
- * that is already its native behaviour. */
+/* `.device-head .device-name` statt nur `.device-name`: die generische
+ * Regel `input[type="text"] { min-width: 12rem }` weiter oben in dieser
+ * Datei hat als Typ-plus-Attribut-Selektor dieselbe Spezifitaet wie eine
+ * Klasse plus eins - eine einfache Klassenregel verliert gegen sie. Der
+ * Nachfahren-Selektor hebt die Regel darueber, ohne sich auf die
+ * Reihenfolge in der Datei zu verlassen. */
+/* Fund 1 (Review vom 2026-09-05): ein `<input>` clippt seinen Text intern
+ * am Rand der Content-Box, sobald er nicht mehr hineinpasst - ganz ohne
+ * dass CSS das ausdruecklich anfordert, und ganz ohne jedes Zeichen, das
+ * anzeigt, dass Text fehlt. An der dokumentierten Grid-Untergrenze
+ * (261 px) bekam dieses Feld frueher nur 65 px, weil `.lead-value`
+ * daneben die halbe Kopfzeile beanspruchte und nicht schrumpfte; seit
+ * dessen Wegfall (Entwurf 2026-09-07) hat der Name die Kopfzeile
+ * abzueglich Icon-Kachel und Abstaenden fuer sich - ausser bei einem
+ * offline stehenden Geraet, wo die Status-Pille denselben Platz belegt
+ * (index.html, `.device-head`). Kuerzen muss er damit nur noch bei
+ * aussergewoehnlich langen Namen, offline etwas frueher - die beiden
+ * Eigenschaften am Ende dieser Regel sorgen dafuer, dass es das sichtbar
+ * tut statt einen Namen mitten im Buchstaben
+ * verschwinden zu lassen. Ein zusaetzliches `white-space: nowrap` fuer die
+ * Ellipse ist bei `<input>` unnoetig - ein Textfeld umbricht ohnehin nie,
+ * das ist bereits sein natives Verhalten. */
 .device-head .device-name {
   font-weight: 600;
   border: 1px solid transparent;
@@ -1659,110 +1798,21 @@ footer.hint-block {
   background: var(--surface);
 }
 
-.lead-label {
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  padding-left: 0.2rem;
-}
-
-/* `flex: 0 0 auto` with `max-width` instead of `flex: 0 1 auto` (follow-up
- * 2026-09-05): `flex-shrink: 1` was originally meant to only contain a
- * pathologically long value, but shrank just the same in the
- * ORDINARY case - measured at 1440px next to `.device-name`: `12.4%`
- * `clientWidth` 64px against `scrollWidth` 73px, `true` 51px against 54px,
- * both truncated without any actual lack of space. The primary signal
- * yielded to the name, even though it is the actual purpose of the header -
- * it must not yield to it. `flex: 0 0 auto` removes its shrinking entirely;
- * `max-width` alone takes over the role of guarding against the
- * extreme case: no ordinary value is ellipsised any more, a
- * pathologically long list value (`12.4, 55.1, 99.9, 42.0, 17.3, 88.8`)
- * stays within the tile's right edge instead of escaping the
- * tile - `formatValue` (app.js) ends in `String(value)` without
- * truncation, and the functional-signal rule explicitly allows list and
- * text attributes, so this value is reachable, not
- * merely hypothetical. `overflow: hidden` and `text-overflow: ellipsis`
- * now only apply in this one case. `min-width: 0` is dropped: it
- * only had an effect together with `flex-shrink: 1` and would here be
- * a rule with no function at all. `white-space: nowrap` stays
- * nonetheless: a number should not wrap mid-value, it should
- * truncate.
- *
- * Finding 1 (review from 2026-09-05): `max-width: 60%` let, at the
- * documented grid lower bound (261px, two columns at 572px
- * viewport width), the entire lack of space land on the name - measured
- * with the name "Coffee Maker Kitchen" and the list value above: primary
- * signal 134px, name only 43px, cut off there mid-letter without
- * `text-overflow` (see below). That is not truncation, that is silent
- * mutilation - the reader cannot see that the name continues. The
- * rule from above still applies unchanged: the primary signal does not
- * yield to the name. But it may claim at most half of the header,
- * and whatever is left for the name after that, the name uses visibly,
- * truncating (ellipsis, see `.device-head .device-name`) instead of being
- * cut off without comment. Measured with `max-width: 50%` on the same
- * 261px tile: primary signal 112px, name 65px, ellipsis active. In the
- * ORDINARY case (a short value like `true`, a normal name), neither of the
- * two fields is truncated at either 261px or 1440px
- * - 50% still stays above everything an ordinary
- * primary signal needs. */
-/* Finding 4 (follow-up 2026-09-05): `line-height: 1.05` is not enough with
- * this typeface for the descenders of lowercase letters like
- * `g`/`y`/`p`/`q` - measured on the text `gypq`: `scrollHeight` 24px against
- * `clientHeight` 23px, one pixel of descender falls victim to
- * `overflow: hidden` (which only arrived with the tile menu, see above).
- * Only text-valued primary signals are affected, numbers have no
- * descenders.
- *
- * Two approaches were measured: raising `line-height` (e.g. to 1.2) does
- * create room, but also enlarges the line box itself and thereby equally
- * the field height of EVERY tile, including purely numeric ones - a
- * noticeable shift of the `.device-head` header everywhere, just to gain a
- * rarely occurring pixel for text values. `padding-block`, by contrast,
- * counts WITHIN the clip box of `overflow: hidden` (which cuts at the
- * padding edge, not at the edge of the line box) and thereby creates
- * reserve exactly where it is needed, without enlarging the line box
- * itself. Chosen: `padding-block`. Within `.device-head`
- * (`align-items: flex-start`), `.device-ident` with its `.device-name`
- * input field determines the line height anyway (its own padding plus
- * border makes it taller than `.lead-value` even with the surcharge) - the
- * header of a normal, numeric tile therefore does not shift because of
- * this. */
-.lead-value {
-  font-family: var(--mono);
-  font-size: 1.35rem;
-  font-weight: 600;
-  line-height: 1.05;
-  padding-block: 1px;
-  flex: 0 0 auto;
-  max-width: 50%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.lead-value small {
-  font-size: 0.7rem;
-  font-weight: 400;
-  color: var(--text-muted);
-  margin-left: 0.1rem;
-}
-
-/* Value grid instead of chips: the values align across all tiles into
- * one column, instead of meandering as differently wide chips - you
- * scan one column instead of twelve building blocks. */
-/* `fit-content(9rem)` instead of bare `auto` on the second column: an
- * `auto` column grows to the full max-content width of its content,
- * COMPLETELY independent of `min-width` on the grid item - that only
- * limits the minimum size, not the maximum. A single very long
- * (`white-space: nowrap`, see `.value-rows .value` below) value would thus
- * inflate the column to its full width and take the rest away from the
- * `1fr` column next to it (down to 0px, measured) - `min-width: 0` on
- * `.value-key` would not have prevented that, because the problem lies in
- * the column width itself, not in the item. `fit-content(9rem)` caps
- * exactly this column width: short values (`42.3 W`) still only get
- * as much room as they need, a pathologically long value gets capped at
- * 9rem, instead of displacing the title column. */
+/* Werteraster statt Chips: die Werte fluchten ueber alle Kacheln hinweg in
+ * einer Spalte, statt als unterschiedlich breite Chips zu maeandern - man
+ * scannt eine Spalte statt zwoelf Bausteine. */
+/* `fit-content(9rem)` statt nacktem `auto` an der zweiten Spalte: eine
+ * `auto`-Spalte waechst auf die volle Max-Content-Breite ihres Inhalts,
+ * VOELLIG unabhaengig von `min-width` auf dem Grid-Item - das begrenzt nur
+ * die Minimalgroesse, nicht die maximale. Ein einzelner sehr langer
+ * (`white-space: nowrap`, siehe `.value-rows .value` unten) Wert wuerde die
+ * Spalte also auf seine volle Breite aufblasen und der `1fr`-Spalte
+ * daneben den Rest wegnehmen (bis auf 0px, gemessen) - `min-width: 0` auf
+ * `.value-key` haette das nicht verhindert, weil das Problem in der
+ * Spaltenbreite selbst liegt, nicht im Item. `fit-content(9rem)` deckelt
+ * genau diese Spaltenbreite: kurze Werte (`42.3 W`) bekommen weiterhin nur
+ * so viel Platz wie sie brauchen, ein pathologisch langer Wert wird bei
+ * 9rem gekappt, statt die Titel-Spalte zu verdraengen. */
 .value-rows {
   display: grid;
   grid-template-columns: minmax(0, 1fr) fit-content(9rem);
@@ -1840,6 +1890,46 @@ footer.hint-block {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Der Batteriestand als eigene Zeile am Fuss der Vorschau (Entwurf
+   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt, nicht mit einer
+   durchgezogenen Linie: die gepunktete Trennung signalisiert "gehoert
+   dazu, ist aber eine andere Art von Angabe" statt einer harten Grenze
+   zwischen zwei unabhaengigen Bloecken.
+
+   `margin-top` steht auf dem Element, nicht als `margin-bottom` der
+   Vorschau: ein netzbetriebenes Geraet blendet diese Zeile per `x-show`
+   aus, und ein Aussenmass am Nachbarn bliebe dann als Luecke stehen. */
+.device-battery {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--border);
+}
+
+.device-battery .icon {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--warn);
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.device-battery .value-key {
+  flex: 1 1 auto;
+}
+
+/* Rechtsbuendig wie in `.value-rows`, damit die Zahl mit den Werten
+   darueber fluchtet - die Zeile ist ein Flex-Container und erbt deren
+   Rasterausrichtung nicht. */
+.device-battery .value {
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--warn);
 }
 
 .device-commands {
@@ -2266,13 +2356,95 @@ footer.hint-block {
   border-color: var(--border);
 }
 
-/* The two signal groups in the modal. A `<summary>`'s default marker
- * has to be turned off twice: `list-style` applies in Firefox and
- * Chrome, the `::-webkit-details-marker` pseudo-element in older
- * WebKit versions - the same duplication as for `.tile-menu > summary`
- * and `.projectsync-device summary`. In its place comes the same
- * chevron (`#i-chevron`), which rotates 90 degrees when expanded -
- * so the marker looks the same across both browser families. */
+/* Die Zusammenfassung im Kopf: die Exportzahl links, "Alle abwaehlen"
+ * rechtsbuendig ueber den flexiblen Zwischenraum (wie beim Modal-Kopf
+ * darueber). Eigener Rahmen, damit die Zahl sich von der Signaltabelle
+ * darunter abhebt. */
+.signals-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding: 0.55rem 0.75rem;
+  margin-bottom: 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* Bedien-Modal (Aufgabe 7): eine Zeile je Regler, Beschriftung ueber dem
+ * Regler statt daneben - auf schmalen Fenstern bleibt der Regler sonst zu
+ * kurz zum Zielen. Nutzt dieselbe `.signals-modal`-Rahmung wie das
+ * Signal-Modal, siehe dort. */
+.control-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.control-row input[type="range"] {
+  width: 100%;
+}
+
+/* Farbflaeche: waagerecht der Farbton, senkrecht die Saettigung. Zwei
+   uebereinanderliegende Verlaeufe statt eines Bildes - so bleibt die
+   Flaeche skalierbar und kommt ohne eine Datei aus, die ausgeliefert
+   werden muesste. */
+.colour-field {
+  height: 140px;
+  border-radius: 8px;
+  cursor: crosshair;
+  touch-action: none;
+  /* Bezugsrahmen fuer `.colour-marker` - ohne das saesse der Punkt relativ
+     zum naechsten positionierten Vorfahren, also irgendwo im Modal. */
+  position: relative;
+  background:
+    linear-gradient(to top, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0)),
+    linear-gradient(
+      90deg,
+      #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%
+    );
+}
+
+/* Zeigt, welche Farbe eingestellt ist. Zwei Ringe statt einer Umrandung:
+   ein einzelner heller Rand verschwindet ueber Weiss, ein einzelner dunkler
+   ueber Blau - zusammen bleibt der Punkt auf jedem Untergrund sichtbar.
+   `pointer-events: none`, damit ein Klick AUF den Marker die Flaeche
+   darunter trifft und nicht ins Leere geht. */
+.colour-marker {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.colour-field.is-busy {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.control-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.control-tabs .is-active {
+  font-weight: 600;
+}
+
+/* The two signal groups in the modal. A `<summary>`'s default marker has to
+ * be switched off twice: `list-style` takes effect in Firefox and Chrome,
+ * the `::-webkit-details-marker` pseudo-element in older WebKit versions -
+ * the same doubling as for `.tile-menu > summary` and
+ * `.projectsync-device summary`. The same chevron (`#i-chevron`) takes its
+ * place, turning 90 degrees when the group expands - so the marker looks
+ * the same in both browser families. */
 .signal-group {
   margin-top: 1rem;
 }
@@ -2304,4 +2476,282 @@ footer.hint-block {
 
 .signal-group[open] > summary .chevron {
   transform: rotate(90deg);
+}
+
+/* Ein Raster fuer Kopfzeile UND Datenzeile (Entwurf 2026-09-07,
+   Abschnitt 7.2). Die beiden MUESSEN dieselbe Vorlage tragen - genau das
+   fehlte bisher, und deshalb fluchtete nichts: die alte `.row` war ein
+   `flex-wrap`-Container ohne Spaltenmasse, bei `multipress_ongoing` rutschte
+   die zweite Beschriftung allein in die naechste Zeile.
+
+   Fund (Aufgabe 13): die vormals 150 px der Schluessel-Spalte waren NICHT
+   gemessen, nur geschaetzt - der Kommentar behauptete es trotzdem. `.key`
+   traegt weder `white-space` noch `overflow`, die Pille lief also innerhalb
+   ihrer eigenen Zelle ueber, ohne das Raster selbst zu verschieben (deshalb
+   fiel es der frueheren "keine abweichenden Spaltenkanten"-Messung nicht
+   auf). Tatsaechlich gemessen an den 17 funktionalen Signalen des Tasters
+   (`ikea_bilresa_button.json`, ueber `Store.register_signals` erzeugt):
+   laengster Schluessel `d4_1_multipress_ongoing` mit 23 Zeichen, `.key`
+   dafuer `scrollWidth` 183 px gegen `clientWidth` 148 px bei 150 px
+   Spaltenbreite - mindestens 185 px (inkl. Rahmen) waeren noetig gewesen.
+   200 px geben etwas Luft ueber diesem Minimum und tragen auch noch eine
+   zweistellige Geraete-ID (`d12_...`, 24 Zeichen) ohne die Absicherung
+   unten anzurufen; eine dreistellige ID (`d103_...`) faengt erst diese
+   Absicherung auf. Die dadurch schmalere Namensspalte (`minmax(0, 1fr)`)
+   bleibt bei rund 209 px komfortabel oberhalb der 200-px-Untergrenze aus
+   der Aufgabe. */
+.signal-grid {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0;
+}
+
+.signal-grid > * {
+  min-width: 0;
+}
+
+/* Absicherung gegen einen Schluessel, der selbst diese 200 px sprengt (eine
+   noch laengere Kombination aus Geraete-ID, Endpunkt und Slug, als die
+   heutigen Geraete erzeugen): Umbruch statt Kappen. `.key` traegt
+   `user-select: all` - die Pille ist zum Kopieren gedacht, UND es gibt
+   nirgends sonst im Modal einen Ort, der denselben Schluessel ungekuerzt
+   zeigt (anders als z. B. `.value-rows .value`, dessen Ellipse die
+   Signalliste als Ausweichort hat, siehe dort). `text-overflow: ellipsis`
+   waere deshalb beim Kopieren zwar vollstaendig, aber beim Ablesen eine
+   stille Verstuemmelung, die niemand bemerkt - genau das Gegenteil dessen,
+   wofuer die Pille da ist. `overflow-wrap: break-word` bricht den
+   Schluessel notfalls mitten im Wort um (er hat ohnehin keine Leerzeichen)
+   und macht nur die eine betroffene Zeile hoeher - `align-items: center`
+   am Raster haelt die uebrigen Zellen dabei fluchtend. */
+.signal-grid .key {
+  overflow-wrap: break-word;
+}
+
+.signal-grid-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 0.35rem 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.signal-row-cells {
+  border-bottom: 1px solid var(--border);
+}
+
+/* Nicht `.signal-row-cells:last-child`: seit dem Umbau auf `.signal-row-
+   wrap` (Entwurf 2026-09-07, Abschnitt 7.2) hat die Rasterzeile IMMER ein
+   zweites Geschwister, `.signal-detail` - `x-show` blendet ihn nur aus,
+   entfernt ihn nicht aus dem DOM. `.signal-row-cells` ist damit nie
+   `:last-child` und die Regel griff nie. Die letzte ZEILE einer Gruppe ist
+   stattdessen der letzte `.signal-row-wrap` unter `<details class=
+   "signal-group">` (Summary und Hinweistext davor sind eigene Elemente,
+   keine `.signal-row-wrap`) - deshalb hier so selektiert.
+
+   Das AENDERT das ausgelieferte Aussehen gegenueber der toten Regel davor
+   (die griff ja nie): die letzte Zeile jeder Gruppe verliert jetzt
+   tatsaechlich ihren unteren Rahmen. `.signal-group` traegt selbst keinen
+   Rahmen, die Gruppentrennung ruht danach allein auf `margin-top: 1rem`
+   (oben an `.signal-group`). Im Wegwerf-Harness mit zwei Gruppen a zwei
+   Zeilen gegengeprueft (echtes Markup samt echtem `style.css`, beide
+   Faelle nebeneinander verglichen - einmal mit, einmal ohne diese Regel):
+   die letzte Zeile der ersten Gruppe verschwimmt NICHT mit der Ueberschrift
+   der naechsten. `margin-top` samt der fett gesetzten `<summary>`
+   (`font-weight: 600`, siehe `.signal-group > summary` oben) traegt die
+   Trennung allein bereits deutlich - der fehlende Rahmen fiel im
+   Seitenvergleich kaum auf. Entscheidung: Regel bleibt, kein zusaetzlicher
+   Ersatz noetig. */
+.signal-row-wrap:last-child .signal-row-cells {
+  border-bottom: none;
+}
+
+.signal-grid .col-right {
+  text-align: right;
+}
+
+/* WCAG 2.2 AA, Erfolgskriterium 2.5.8 (24x24 px Trefferflaeche) - dieselbe
+   Begruendung wie bei `.checkbox-label` oben: nicht das Kaestchen waechst,
+   das umschliessende `<label class="col-center">` tut es, denn es leitet
+   die Aktivierung schon von jeder Stelle seiner Flaeche weiter. `margin:
+   0` verhindert, dass das Kaestchen aus der Mitte rutscht, `align-items:
+   center` haelt es zentriert, sobald `min-height` die Zeile hoeher macht.
+
+   Nur `min-height`, bewusst KEIN `min-width`: die Breite sitzt hier
+   strukturell fest, nicht am Inhalt - im breiten Fall ueber die feste
+   Spaltenbreite aus `grid-template-columns` (58 px/76 px, siehe oben),
+   der Grid-Standard `justify-items: stretch` zieht das Label auf die
+   volle Spalte; im schmalen Fall (Medienabfrage unten) ueber den
+   sichtbaren Text (kuerzeste Uebersetzung "export", 6 Zeichen). Im
+   Wegwerf-Harness (echtes Markup samt echtem CSS, beide Breiten)
+   gemessen: 58/76 px (Desktop) bzw. 99/193 px (< 640 px) - beides schon
+   vorher weit ueber 24 px, ein `min-width` bliebe hier also Ballast. Nur
+   die Hoehe war knapp: 19 px (Desktop), 21 px (< 640 px), gegen 24 px
+   `min-height` fuer beide Faelle - die Medienabfrage aendert die Hoehe
+   nicht, nur `justify-content` und `gap`. */
+.signal-grid .col-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 0;
+  min-height: 24px;
+}
+
+/* Beschriftung der beiden Haekchen fuer den schmalen Fall (siehe
+   Medienabfrage unten) - hier im breiten Fall verborgen, weil der
+   Spaltenkopf schon beschriftet. */
+.signal-grid .col-center-label {
+  display: none;
+}
+
+/* Die generische Regel `input[type="text"] { min-width: 12rem }` weiter oben
+   gewinnt sonst gegen die Rasterspalte und sprengt sie - dieselbe Falle wie
+   bei `.device-head .device-name`, Begruendung dort. */
+.signal-grid .signal-title {
+  width: 100%;
+  min-width: 0;
+}
+
+.signal-row-wrap.is-expanded {
+  background: var(--bg);
+}
+
+/* Eingerueckt bis zur Namensspalte (58 px Haekchen + 0.5 rem Abstand), damit
+   der Aufklapper sichtbar zu SEINER Zeile gehoert und nicht zur Tabelle.
+
+   Hier wohnt seit Aufgabe 8 auch die Warnpille mit `signal.reason`: in der
+   28-px-Kebab-Spalte des Rasters (`.signal-grid`) brach ein laengerer Text
+   (z. B. "Text - ein virtueller UDP-Eingang kennt nur Zahlen und digitale
+   Werte" aus `_UNEXPORTABLE_REASONS`, `api/devices.py`) mangels Platz um und
+   sprengte damit das gemessene Fluchten der Tabelle (scrollWidth 744px
+   gegen clientWidth 719px). Hier im Aufklapper ist die verfuegbare Breite
+   die halbe Modalbreite statt 28px, normales Wortumbruch-Verhalten reicht
+   also aus - kein `overflow-wrap` noetig. */
+.signal-detail {
+  padding: 0.2rem 0 0.7rem calc(58px + 0.5rem);
+  display: flex;
+  flex-direction: column;
+  /* KEIN `align-items: flex-start` hier (frueherer Versuch, hat sich als
+     Fehlgriff erwiesen): das loeste zwar die Warnpille, zog aber JEDES
+     Kind auf seine eigene Breite - auch `.row`, das Rohwert-Feld
+     (`input[type="text"]`) darunter. Gemessen im Wegwerf-Harness (echtes
+     `index.html`/`style.css`, Signal mit `exportable: false` und Text aus
+     `_UNEXPORTABLE_REASONS`): `.row` fiel von voller Aufklapperbreite auf
+     406.6px, das Feld darin auf sein `min-width: 12rem` (192px) - nach
+     Flexbox SS 9.9.1 ist die "desired flex fraction" 0, sobald der
+     max-content-Beitrag der Items ihrer Flex-Basisgroesse entspricht,
+     `flex-grow` am `input` vergroessert die max-content-Breite von `.row`
+     also NICHT. Vorgabe `stretch` bleibt deshalb hier stehen, sie ist fuer
+     `.row` richtig; die Warnpille loest ihr eigenes Problem gezielt ueber
+     `align-self` an sich selbst (siehe `.signal-detail .badge` unten),
+     ohne die Geschwister mitzuziehen. */
+  gap: 0.45rem;
+}
+
+/* `.hint` und `.badge` sind beides `<p>`-Elemente und bringen deshalb den
+   Browser-Vorgabewert `margin: 1em 0` mit - hier ungewollt, denn den
+   Abstand zwischen den Kindern setzt bereits `gap` oben. Ungekuerzt kommt
+   dieser Vorgabewert zum `gap` hinzu (gemessen 19.7px Abstand vor der
+   Pille statt der beabsichtigten 7.2px `gap`), da Flex-Items ihre Raender
+   nicht wie Blockelemente zusammenfallen lassen. */
+.signal-detail .hint,
+.signal-detail .badge {
+  margin: 0;
+}
+
+/* `align-self` statt `align-items` am Container (siehe Begruendung an
+   `.signal-detail` oben): NUR dieses eine Kind soll seine eigene
+   Querbreite behalten. Nicht die Blockifizierung selbst haengt an
+   `align-self` - ein Flex-Item wird IMMER blockifiziert, auch mit
+   `flex-start` (gemessen: `getComputedStyle(...).display` bleibt `block`).
+   Was `align-self` steuert, ist die QUERGROESSE: nur bei `stretch` fuellt
+   das Item die Containerbreite, jeder andere Wert sizt es auf seinen
+   Inhalt - `flex-start` hier allein loest also dieselbe Pille, ohne `.row`
+   daneben zu beruehren. Gemessen im selben Harness-Durchlauf (1280px
+   Viewport, gleicher Signal-Fixture): unter reinem `stretch` (kein
+   `align-items`/`align-self` irgendwo) waere die Pille 629.6px breit bei
+   695.6px Containerbreite - genau der Ausgangsbefund, der `align-items:
+   flex-start` am Container ueberhaupt erst ausgeloest hat. Mit `align-
+   self` NUR hier bleibt die Pille bei 440.6px (ihr Inhalt, unveraendert
+   gegenueber der Container-Loesung), aber `.row` ist wieder bei voller
+   Aufklapperbreite (695.6px) und das Rohwert-Feld darin bei 415.0px statt
+   der zuvor gemessenen 192px (sein `min-width`-Boden). */
+.signal-detail .badge {
+  align-self: flex-start;
+}
+
+.signal-more {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0.1rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.signal-more[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+/* Sechs Spalten passen hier nicht (Entwurf 2026-09-07, Abschnitt 10). Die
+   Zeile wird zur gestapelten Karte, und der Spaltenkopf verschwindet -
+   ueber einer gestapelten Karte beschriftet er nichts mehr, er stuende nur
+   als Reihe von fuenf Woertern ohne Bezug da.
+
+   Damit die Haekchen ohne Spaltenkopf ihre Bedeutung behalten, braucht es
+   hier eine ECHTE sichtbare Beschriftung: `title` ist nur ein Hover-Tooltip
+   und auf einem Telefon - genau der Zielgruppe dieser Medienabfrage - gibt
+   es kein Hover, ein `content: attr(title)` o.ae. existiert hier nicht und
+   haette daran auch nichts geaendert. Deshalb traegt jedes Kaestchen im
+   Markup laengst einen zweiten `<span class="col-center-label">` mit
+   demselben Uebersetzungsschluessel wie sein `aria-label` (kein zweiter
+   Schluessel), oben per Grundregel verborgen. Hier wird er gezeigt, `.col-
+   center` bekommt dafuer einen kleinen Abstand und wird linksbuendig, damit
+   Haekchen und Text nebeneinander stehen statt zu ueberlappen. Der Span
+   traegt `aria-hidden="true"`: er wiederholt nur sichtbar, was das
+   Kaestchen mit `aria-label` schon als Namen hat - ohne das wuerde
+   Hilfstechnik denselben Namen zweimal vorlesen oder je nach Browser sogar
+   widerspruechlich zusammensetzen. */
+@media (max-width: 640px) {
+  .signal-grid-head {
+    display: none;
+  }
+
+  .signal-grid {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.3rem 0.5rem;
+    padding: 0.5rem 0;
+  }
+
+  /* Name und Schluessel bekommen die volle Breite, die drei kurzen Zellen
+     teilen sich die Zeile darunter. */
+  .signal-grid .signal-title,
+  .signal-grid .key {
+    grid-column: 1 / -1;
+  }
+
+  .signal-grid .col-right {
+    text-align: left;
+  }
+
+  .signal-grid .col-center {
+    justify-content: flex-start;
+    gap: 0.35rem;
+  }
+
+  .signal-grid .col-center-label {
+    display: inline;
+  }
+
+  .signal-detail {
+    padding-left: 0;
+  }
 }

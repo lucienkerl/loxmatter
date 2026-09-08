@@ -48,6 +48,75 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
     store.close()
 
 
+@pytest.fixture
+async def button_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
+    """Wie `api` oben, aber mit `ikea_bilresa_button.json` statt der
+    Steckdose: die Fernbedienung ist der Fall, den `profiles.endpoints`
+    ueberhaupt erst noetig macht - derselbe Geraetetyp (GenericSwitch) auf
+    zwei Endpunkten (Ep 1 und Ep 2)."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+    store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+    fake_client.store = store
+
+    app = build_app(
+        store,
+        no_invoke,
+        fake_runtime(store),
+        client=fake_client,
+        thread_dataset_source=fake_otbr,
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        await authenticate(store, c)
+        yield c, store, device_id
+    store.close()
+
+
+async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_api):
+    """Die Oberflaeche gruppiert nach Endpunkt und erkennt den Batteriestand
+    an seinem Cluster. Beides aus `path` ("1/59/2") in JavaScript
+    herauszuparsen hiesse, die Zerlegung ein zweites Mal zu pflegen -
+    deshalb liefert die API die Zahlen fertig."""
+    client, _store, device_id = button_api
+
+    response = await client.get(f"/api/devices/{device_id}/signals")
+
+    signals = response.json()
+    battery = next(s for s in signals if s["key"].endswith("_0_battery"))
+    assert battery["endpoint"] == 0
+    assert battery["cluster_id"] == 47
+    assert battery["endpoint_label"] == "Device"
+
+    press = next(s for s in signals if s["key"].endswith("_1_press"))
+    assert press["endpoint"] == 1
+    assert press["endpoint_label"] == "Button 1"
+
+
+async def test_signals_fall_back_to_a_plain_endpoint_label_when_types_are_null(button_api):
+    """`device.device_types` ist `NULL`, solange `Store.backfill_device_types`
+    nicht lief - laut dessen Docstring der dokumentierte Normalfall fuer ein
+    Geraet, das beim Bruueckenstart offline war. `endpoints.endpoint_labels(None)`
+    liefert dafuer ein leeres Woerterbuch (siehe `tests/profiles/test_endpoints.py`);
+    dieser Test hier belegt die AUSGELIEFERTE Stelle, die mit dieser leeren
+    Zuordnung tatsaechlich umgehen muss - `_signal_out` in `api/devices.py`.
+    Ohne dessen `.get(..., i18n.t(...))`-Ruecktritt wirft die Route hier einen
+    KeyError statt eines Namens, den es immer gibt."""
+    client, store, device_id = button_api
+    store._db.execute("UPDATE device SET device_types = NULL WHERE id = ?", (device_id,))
+    store._db.commit()
+
+    response = await client.get(f"/api/devices/{device_id}/signals")
+
+    assert response.status_code == 200
+    signals = response.json()
+    assert signals
+    for signal in signals:
+        assert signal["endpoint_label"] == f"Endpoint {signal['endpoint']}"
+
+
 async def test_device_list_carries_name_and_signal_count(api):
     client, _, device_id, _ = api
     response = await client.get("/api/devices")
@@ -284,6 +353,61 @@ async def test_commissioning_a_device_registers_it(api):
     new_device = response.json()
     assert store.device(new_device["id"]).id == new_device["id"]
     assert len(store.devices()) == 2
+
+
+async def test_a_pairing_code_with_dashes_reaches_the_stack_without_them(api):
+    """Der Fall, um den es geht: so steht der Code auf dem Geraet, und so
+    tippt ihn jeder ab. Bis hierher schnitt die Trenner niemand weg - auch
+    `MatterClient.commission_with_code` nicht, das den String unveraendert
+    in den WebSocket-Befehl setzt."""
+    client, _, _, fake_client = api
+    response = await client.post("/api/devices/commission", json={"code": "1234-567-8901"})
+    assert response.status_code == 201
+    assert fake_client.commissioned == ["12345678901"]
+
+
+async def test_a_qr_code_reaches_the_stack_untouched(api):
+    """Der MT:-Text ist Base38-kodiert - ein Bindestrich darin traegt
+    Bedeutung. Die Normalisierung muss ihn deshalb in Ruhe lassen."""
+    client, _, _, fake_client = api
+    response = await client.post(
+        "/api/devices/commission", json={"code": " MT:Y.K90SO527JA0648G00 "}
+    )
+    assert response.status_code == 201
+    assert fake_client.commissioned == ["MT:Y.K90SO527JA0648G00"]
+
+
+async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
+    """Wer aus einer Anleitung kopiert, bringt oft Leerzeichen statt
+    Bindestriche mit."""
+    client, _, _, fake_client = api
+    response = await client.post("/api/devices/commission", json={"code": "3497 011 2332"})
+    assert response.status_code == 201
+    assert fake_client.commissioned == ["34970112332"]
+
+
+async def test_a_code_made_only_of_separators_normalizes_to_an_empty_string(api):
+    """Randfall der Normalisierung, nicht der Validierung (Entwurf Abschnitt
+    8): ein Code aus lauter Trennern hat keine Ziffer, die uebrig bleiben
+    koennte. Das Backend liefert dafuer "" an den Stack - ein leerer Code
+    bleibt ein leerer Code und scheitert dort, wo er heute scheitert."""
+    client, _, _, fake_client = api
+    response = await client.post("/api/devices/commission", json={"code": "---"})
+    assert response.status_code == 201
+    assert fake_client.commissioned == [""]
+
+
+async def test_an_overlong_code_is_passed_on_rather_than_rejected(api):
+    """Der Validator normalisiert, er validiert NICHT (Entwurf Abschnitt 8):
+    ueber die Bauformen der Setup-Codes entscheidet der Matter-Stack, nicht
+    diese Bruecke. Ein zu langer Code geht deshalb durch und scheitert dort,
+    wo er hingehoert."""
+    client, _, _, fake_client = api
+    response = await client.post(
+        "/api/devices/commission", json={"code": "1234-567-8901-2345-678-9012"}
+    )
+    assert response.status_code == 201
+    assert fake_client.commissioned == ["1234567890123456789012"]
 
 
 async def test_a_rejected_pairing_code_yields_422(api):

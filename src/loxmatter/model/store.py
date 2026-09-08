@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from loxmatter import i18n
-from loxmatter.export.commands import DeviceCommand
+from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.auth_store import AuthStore
@@ -59,7 +59,14 @@ from loxmatter.profiles.relevance import (
     device_types_by_endpoint,
     is_functional,
 )
-from loxmatter.profiles.table import Exportability, is_exportable, lookup, struct_field
+from loxmatter.profiles.table import (
+    Exportability,
+    element_rank_for,
+    is_exportable,
+    lookup,
+    rank_for,
+    struct_field,
+)
 from loxmatter.timestamps import now_iso
 
 DEFAULT_UDP_PORT = 7000
@@ -730,6 +737,37 @@ def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
         return None
 
 
+def _signal_order(signal: StoredSignal) -> tuple[int, int, int, int, int, str]:
+    """Der Sortierschluessel der Signalliste (Entwurf 2026-09-07, Abschnitt 4,
+    mit dem Elementrang als Nachtrag vom 2026-09-08).
+
+    Zwei Rangebenen, und ihre Stellung im Tupel ist die ganze Aussage: der
+    CLUSTER-Rang steht ganz vorn und ordnet die Cluster zueinander (deshalb
+    faellt PowerSource hinter alles Funktionale); der ELEMENT-Rang steht
+    hinter `cluster_id` und ordnet nur innerhalb desselben Clusters (deshalb
+    faellt `positions` hinter jeden Tastendruck, ohne dass die Tastengruppe
+    als Ganzes ihren Platz aendert).
+
+    Sortiert wird in Python und nicht in SQL, weil beide Raenge aus
+    `clusters.yaml` kommen: SQLite kennt sie nicht, und sie als Spalten in
+    `signal` zu spiegeln hiesse, sie bei jeder Aenderung der YAML-Datei
+    nachtragen zu muessen - eine zweite Wahrheit fuer denselben Wert.
+
+    Die hinteren Glieder sind der bisherige Schluessel. Er ist wegen der
+    UNIQUE-Bedingung auf `signal` bereits eindeutig, damit ist auch dieser
+    Schluessel total - die Reihenfolge flattert nie, was fuer den Export
+    wichtig ist (er schreibt sie in eine Datei).
+    """
+    return (
+        rank_for(signal.ref.cluster_id),
+        signal.ref.endpoint,
+        signal.ref.cluster_id,
+        element_rank_for(signal.ref),
+        signal.ref.element_id,
+        signal.ref.kind.value,
+    )
+
+
 def _normalized_room(room: str | None) -> str | None:
     """A room name without leading/trailing whitespace; whatever is empty
     afterward becomes `None`.
@@ -999,6 +1037,60 @@ class Store:
             "UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id)
         )
         self._db.commit()
+
+    def backfill_commands(self, snapshots: Sequence[NodeSnapshot]) -> int:
+        """Traegt Kommandos nach, die es beim Einlernen noch nicht gab, und
+        gibt zurueck, bei wie vielen Geraeten etwas dazukam.
+
+        Aufgerufen beim Start der Bruecke, neben `backfill_device_types` -
+        die Abbilder aller erreichbaren Knoten sind dort bereits geholt.
+
+        **Der Fall, um den es geht** (Betrieb, 8. September 2026): Die
+        Kommandoliste eines Geraets entsteht beim Einlernen, aus
+        `extract_commands` gegen den damaligen Stand von `clusters.yaml`.
+        Ein Kommando, das damals nicht in der Tabelle stand, wurde verworfen
+        - und ein spaeteres Update, das es freischaltet, erreichte das
+        Geraet nie: `register_commands` lief nur beim Einlernen und beim
+        CLI-Export. Eine RGB-Leuchte behielt so ihr fehlendes
+        Farb-Bedienelement, obwohl die Bruecke den Befehl laengst kannte.
+        Der einzige Ausweg war ein Export von Hand - auf den niemand kommt,
+        weil nichts darauf hinweist.
+
+        Signale hatten dieses Loch nie: `Runtime.on_node_snapshot` ruft
+        `register_signals` bei jedem nachgezogenen Abbild. Diese Methode
+        schliesst dieselbe Luecke fuer Kommandos.
+
+        **Schreibt bei jedem Start, nicht nur wenn etwas fehlt.**
+        `register_commands` uebernimmt `slug` und `takes_value` fuer
+        bekannte Kommandos neu (siehe dort) - genau dafuer ist es gebaut,
+        und eine Korrektur in `clusters.yaml` soll ein Bestandsgeraet auch
+        dann erreichen, wenn kein Kommando fehlt, sondern nur eines anders
+        heisst. Der Preis ist eine Handvoll UPDATEs je Geraet und Start.
+        Der Rueckgabewert zaehlt trotzdem nur die Geraete, bei denen
+        tatsaechlich ein Kommando DAZUKAM - das ist die meldenswerte
+        Aenderung, nicht das Auffrischen.
+
+        Schluessel bleiben unangetastet: `register_commands` vergibt sie nur
+        fuer neue Kommandos und laesst bestehende Zeilen bei ihrem
+        Schluessel. Anders waere diese Methode gefaehrlich statt nuetzlich -
+        der Schluessel ist die Verdrahtung in Loxone, und dies hier laeuft
+        bei jedem Start.
+
+        Ein Geraet, das gerade offline ist und deshalb in `snapshots()`
+        fehlt, wird uebersprungen - dieselbe Regel wie bei
+        `backfill_device_types`: hier wird gefuellt, nie geleert.
+        """
+        by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
+        gained = 0
+        for device in self.devices():
+            snapshot = by_node.get(device.node_id)
+            if snapshot is None:
+                continue
+            before = len(self.commands(device.id))
+            self.register_commands(device.id, extract_commands(snapshot), device.node_id)
+            if len(self.commands(device.id)) > before:
+                gained += 1
+        return gained
 
     def backfill_device_types(self, snapshots: Sequence[NodeSnapshot]) -> int:
         """Backfills `device.device_types` for devices that do not yet have
@@ -1281,12 +1373,27 @@ class Store:
         )
 
     def signals(self, device_id: int) -> list[StoredSignal]:
+        """Alle Signale eines Geraets, nach Bedeutung sortiert.
+
+        Das `ORDER BY` bleibt stehen, obwohl `_signal_order` es
+        ueberschreibt: es haelt die Zeilenfolge schon vor dem Sortieren
+        fest und macht damit einen Fehler in `_signal_order` sichtbar,
+        statt ihn hinter einer zufaelligen SQLite-Reihenfolge zu
+        verstecken.
+
+        Diese Reihenfolge traegt weiter als die Oberflaeche: `to_inputs`
+        in `api.export` schreibt sie unveraendert in die VIU-Vorlage
+        (Entwurf 2026-09-07, Abschnitt 5). Der Projektdatei-Sync gleicht
+        dagegen ueber den Schluessel ab (`projectsync.diff._plan_inputs`),
+        nicht ueber die Position - eine geaenderte Reihenfolge erzeugt
+        dort keine Scheinaenderungen.
+        """
         rows = self._db.execute(
             "SELECT * FROM signal WHERE device_id = ?"
             " ORDER BY endpoint, cluster_id, element_id, kind",
             (device_id,),
         ).fetchall()
-        return [self._as_signal(r) for r in rows]
+        return sorted((self._as_signal(r) for r in rows), key=_signal_order)
 
     def signal_by_key(self, key: str) -> StoredSignal | None:
         """A single signal by its key - for `PATCH /api/signals/{key}`

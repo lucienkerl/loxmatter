@@ -14,16 +14,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import re
+from pathlib import Path
+
 import pytest
 
 from loxmatter.matter.models import SignalKind, SignalRef
+from loxmatter.profiles import table
 from loxmatter.profiles.table import (
     _UNIT_DECIMALS,
     MAX_LOXONE_DECIMALS,
     Exportability,
     classify,
+    command_control,
     is_exportable,
     known_attribute_section,
+    known_command_pairs,
     lookup,
     names_element,
     scale_factor,
@@ -267,4 +273,178 @@ def test_no_unit_format_exceeds_what_loxone_accepts():
     for unit in _UNIT_DECIMALS:
         rendered = unit_format(unit)
         decimals = int(rendered.split("<v.")[1].split(">")[0])
-        assert decimals <= MAX_LOXONE_DECIMALS, f"{unit!r} yields {rendered!r}"
+        assert decimals <= MAX_LOXONE_DECIMALS, f"{unit!r} ergibt {rendered!r}"
+
+
+def test_a_cluster_with_a_rank_reports_it():
+    """Der Rang entscheidet, was auf der Kachel als Leitwert erscheint -
+    er muss deshalb aus der Tabelle kommen und nicht aus einer Annahme."""
+    assert table.rank_for(6) == 10  # OnOff
+    assert table.rank_for(59) == 10  # Switch
+    assert table.rank_for(47) == 90  # PowerSource
+
+
+def test_a_cluster_without_a_rank_gets_the_default():
+    """Cluster 3 (Identify) steht nicht in der Tabelle. Er darf weder vorn
+    landen noch hinter der Batterie: die Vorgabe ist die Mitte, damit ein
+    neuer Geraetetyp nie versehentlich mit seinem Batteriestand fuehrt und
+    sein Hauptmerkmal trotzdem vor Verwaltungsangaben steht (Entwurf 4)."""
+    assert table.rank_for(3) == table.DEFAULT_RANK
+    assert table.DEFAULT_RANK == 50
+
+
+def test_the_utility_clusters_rank_behind_everything_functional():
+    """Die eine Regel, wegen der dieser Entwurf ueberhaupt entstand."""
+    functional = [table.rank_for(c) for c in (6, 8, 59, 144, 145, 768, 1026, 1029)]
+    assert max(functional) < table.rank_for(47)
+    assert table.rank_for(47) < table.rank_for(40)
+
+
+def test_an_element_can_carry_its_own_rank():
+    """Der Taster war der konkrete Fall, der diese Ebene noetig gemacht hat:
+    innerhalb von Cluster 59 muss der Tastendruck vor die statische Angabe
+    `NumberOfPositions`, sonst fuehrt die Kachel mit einer Zahl, die sich nie
+    aendert."""
+    press = SignalRef(1, 59, 1, SignalKind.EVENT)
+    positions = SignalRef(1, 59, 0, SignalKind.ATTRIBUTE)
+
+    assert table.element_rank_for(press) < table.element_rank_for(positions)
+
+
+def test_an_element_without_a_rank_gets_the_default():
+    """Dieselbe Vorgabe wie auf Clusterebene, und aus demselben Grund: die
+    Mitte, damit ein nicht eingetragenes Element weder nach vorn noch ganz
+    nach hinten faellt."""
+    longpress = SignalRef(1, 59, 2, SignalKind.EVENT)
+    assert table.element_rank_for(longpress) == table.DEFAULT_RANK
+
+
+def test_an_element_of_an_unknown_cluster_gets_the_default():
+    """Cluster 3 (Identify) steht nicht in der Tabelle - es gibt dort weder
+    einen Abschnitt noch ein Element, in dem ein Rang stehen koennte."""
+    assert table.element_rank_for(SignalRef(1, 3, 0, SignalKind.ATTRIBUTE)) == table.DEFAULT_RANK
+
+
+def test_every_rank_in_the_table_is_an_integer():
+    """Fund (Abschlusspruefung): die alte Schleife lief nur ueber
+    `cluster["rank"]` - die ELEMENTRAENGE unter `attributes:`/`events:`
+    (z. B. `events: {1: {slug: press, rank: 10}}`, siehe Cluster 59 in
+    `clusters.yaml`) sah sie nie, obwohl der Name "every rank in the
+    table" das verspricht. Ein `rank: 10.5` an einem Element (jemand will
+    es zwischen zwei andere schieben) wuerde von `int(10.5)` in
+    `element_rank_for` still zu 10 - die Reihenfolge weicht von der
+    Absicht ab, der alte Test blieb aber gruen, weil er die Elementebene
+    gar nicht ansah.
+
+    Die alte Begruendung war ausserdem falsch: `rank_for` und
+    `element_rank_for` rufen beide `int(rank)` - ein `rank: "10"` aus
+    einem Tippfehler wuerde also NICHT "beim Sortieren gegen eine Zahl
+    werfen", sondern klaglos zu 10 werden. Der tatsaechliche Schaden ist
+    eine stille Abweichung von der Sortierabsicht, kein Absturz.
+
+    Fund (Nachpruefung vor dem Merge): `isinstance(x, int)` ist fuer
+    `True`/`False` ebenfalls wahr, weil `bool` in Python von `int` erbt -
+    ein `rank: true` (YAML-Tippfehler fuer eine Zahl) waere also
+    unentdeckt durchgerutscht. Bestand schon auf Clusterebene, ist mit der
+    Ausweitung auf die Elementebene nur mitgewandert. `not isinstance(x,
+    bool)` schliesst genau diesen Fall auf beiden Ebenen aus."""
+    for cluster_id, cluster in table._table().items():
+        if "rank" in cluster:
+            rank = cluster["rank"]
+            assert isinstance(rank, int) and not isinstance(rank, bool), cluster_id
+        for section in ("attributes", "events"):
+            for element_id, element in (cluster.get(section) or {}).items():
+                if isinstance(element, dict) and "rank" in element:
+                    rank = element["rank"]
+                    assert isinstance(rank, int) and not isinstance(rank, bool), (
+                        cluster_id,
+                        section,
+                        element_id,
+                    )
+
+
+@pytest.mark.parametrize(
+    ("cluster_id", "command_id", "control"),
+    [
+        (6, 0, "none"),
+        (6, 1, "none"),
+        (6, 2, "none"),
+        (8, 0, "percent"),
+        (8, 4, "percent"),
+        (768, 10, "kelvin"),
+        (768, 6, "hue_sat"),
+    ],
+)
+def test_every_known_command_names_its_widget(cluster_id, command_id, control):
+    assert command_control(cluster_id, command_id) == control
+
+
+def test_a_command_outside_the_table_is_unknown():
+    assert command_control(768, 7) == "unknown"
+
+
+def test_every_table_command_carries_a_control():
+    """Ein Eintrag ohne `control` erschiene in der Oberflaeche als nacktes
+    Zahlenfeld, ohne dass jemand das entschieden haette (Entwurf
+    2026-09-07, Abschnitt 5.5). Dieser Test macht das Vergessen sichtbar,
+    statt es durchgehen zu lassen."""
+    for cluster_id, command_id in known_command_pairs():
+        assert command_control(cluster_id, command_id) != "unknown"
+
+
+def _control_kinds_known_to_the_ui() -> set[str]:
+    """Liest `KNOWN_CONTROL_KINDS` aus der ausgelieferten `web/app.js`.
+
+    Bewusst gelesen statt hier dupliziert: eine zweite, von Hand gepflegte
+    Liste koennte selbst von der Oberflaeche wegdriften - und dann prueft
+    dieser Test nur noch sich selbst. Genau diese Sorte Duplikat ist das,
+    wogegen `known_command_pairs` und `_PAYLOAD_BUILDERS` an anderer Stelle
+    schon einmal abgesichert wurden (siehe `commands/translate.py`).
+
+    Findet die Suche das Feld nicht, ist das ein Fehler und kein leeres
+    Ergebnis: eine leere Menge liesse jeden `control`-Wert durchfallen und
+    saehe nach einem Befund aus, wo in Wahrheit nur der Zugriff kaputt ist.
+    """
+    source = (Path(__file__).parents[2] / "src/loxmatter/web/app.js").read_text(encoding="utf-8")
+    match = re.search(r"const KNOWN_CONTROL_KINDS = \[(.*?)\];", source, re.DOTALL)
+    if match is None:
+        raise AssertionError(
+            "KNOWN_CONTROL_KINDS nicht in web/app.js gefunden - wurde das Feld "
+            "umbenannt? Ohne es kann dieser Test nichts pruefen."
+        )
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+_CONTROL_KINDS_KNOWN_TO_THE_UI = _control_kinds_known_to_the_ui()
+
+
+def test_every_control_value_is_known_to_the_shipped_ui():
+    """Befund I-2 (Abschluss-Review 2026-09-08): `command_control` liefert
+    einen freien `str`, und die Oberflaeche vergleicht nur auf die
+    Wortlaute, fuer die sie tatsaechlich ein Bedienelement gebaut hat.
+    Traegt jemand in `clusters.yaml` einen `control`-Wert ein, den
+    `web/app.js` (noch) nicht kennt - ein Tippfehler oder ein neu
+    erdachtes Bedienelement, das noch niemand gebaut hat -, rendert das
+    Modal fuer dieses Kommando nichts: kein Regler, kein Zahlenfeld, kein
+    Hinweis, obwohl der "Steuern"-Knopf bereits erscheint
+    (`hasAdjustableControls`). Die Oberflaeche selbst faengt das seit
+    diesem Fix zwar ueber ihren Rueckfall auf das schlichte Zahlenfeld ab
+    (`unhandledControls` in app.js) - aber dieser Test soll den Fehler
+    schon hier, in Python, sichtbar machen, bevor jemand ueberhaupt bis
+    zum Browser kommt, und sagen WELCHER Wert unbekannt ist."""
+    for cluster_id, command_id in known_command_pairs():
+        control = command_control(cluster_id, command_id)
+        assert control in _CONTROL_KINDS_KNOWN_TO_THE_UI, (
+            f"{cluster_id}/{command_id}: control={control!r} kennt die Oberflaeche nicht "
+            "(siehe KNOWN_CONTROL_KINDS in web/app.js)"
+        )
+
+
+def test_the_colour_temperature_limits_remain_exportable():
+    """Nicht vorausgewaehlt heisst nicht gesperrt: im Expertenblock muss
+    man sie weiterhin von Hand waehlen koennen."""
+    ref = SignalRef(1, 768, 16395, SignalKind.ATTRIBUTE)
+    profile = lookup(ref, 250)
+    assert profile.unit == "mired"
+    assert is_exportable(profile.exportability)
+    assert not profile.slug.startswith("c768_a")

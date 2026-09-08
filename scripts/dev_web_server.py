@@ -79,7 +79,7 @@ DEMO_TIMESTAMP = "2026-01-15T09:30:00+00:00"
 DEMO_DEVICES = [
     ("ikea_grillplats_plug.json", "Coffee machine", "Kitchen"),
     ("example_light.json", "Living room lamp", "Living room"),
-    ("synthetic_color_light.json", "Kitchen spots", "Kitchen"),
+    ("ikea_kajplats_cws_lamp.json", "Kitchen spots", "Kitchen"),
     ("ikea_bilresa_button.json", "Hallway button", "Hallway"),
 ]
 

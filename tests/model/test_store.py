@@ -26,6 +26,7 @@ from loxmatter.model.store import (
     UnknownDeviceError,
     _decode_device_types,
     _encode_device_types,
+    _signal_order,
 )
 from loxmatter.profiles.relevance import device_types_by_endpoint, is_functional
 from loxmatter.profiles.table import Exportability, Profile, lookup
@@ -763,3 +764,125 @@ def test_backfill_does_not_touch_updated_at(tmp_path):
         assert store.device(device_id).updated_at == before
     finally:
         store.close()
+
+
+def test_the_button_leads_with_the_button_press(tmp_path):
+    """Ersetzt `test_the_button_leads_with_a_switch_signal_not_the_battery`,
+    der nur `cluster_id == 59` prueft. Das war zu schwach: `positions`
+    (NumberOfPositions, Element 0) traegt denselben Cluster und sortierte
+    davor - die Kachel fuehrte damit mit der statischen Angabe, dass diese
+    Taste zwei Stellungen hat. Der Test sagte trotzdem ja.
+
+    Diese Fassung nennt das Signal beim Namen. Ein Test, der nur den Cluster
+    prueft, laesst genau den Fehler durch, den zu verhindern der Zweck des
+    ganzen Umbaus war."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    functional = [s for s in store.signals(device_id) if s.functional]
+
+    assert functional[0].title == "press"
+    assert functional[0].ref.kind is SignalKind.EVENT
+    assert functional[-1].ref.cluster_id == 47
+
+
+def test_the_static_position_count_sorts_behind_every_button_event(tmp_path):
+    """`positions` aendert sich nie - es gehoert ans Ende der Tastengruppe,
+    nicht an ihren Anfang."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    endpoint1 = [s for s in store.signals(device_id) if s.functional and s.ref.endpoint == 1]
+    titles = [s.title for s in endpoint1]
+
+    assert titles[0] == "press"
+    assert titles[-1] == "positions"
+
+
+def test_the_plug_still_leads_with_onoff(tmp_path):
+    """Die beiden heute richtigen Geraete duerfen sich nicht verstellen."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_grillplats_plug.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    functional = [s for s in store.signals(device_id) if s.functional]
+
+    assert functional[0].ref.cluster_id == 6
+    assert functional[0].title == "onoff"
+
+
+def test_signals_of_the_same_cluster_keep_the_previous_order(tmp_path):
+    """Die Rangliste ordnet die CLUSTER zueinander. Innerhalb eines Clusters
+    bleibt Endpunkt/Element/Art die alte Ordnung - AUSSER ein Element traegt
+    seinerseits einen Rang (Aufgabe 12, bislang nur Cluster 59).
+
+    Ersetzt die Fassung aus Aufgabe 2, die das pauschal fuer JEDEN Cluster
+    behauptet hat und dabei Cluster 59 als Beispiel nahm. Das war seit
+    Aufgabe 12 nicht mehr wahr - `press` (Element 1) sortiert dort bewusst
+    vor `positions` (Element 0), nicht nach Element-ID. Das ist keine
+    zufaellige Abweichung von der alten Ordnung, sondern der Zweck der
+    Aufgabe, deshalb wird hier nicht Cluster 59 gegen die alte Ordnung
+    geprueft, sondern Cluster 47 (PowerSource) - der einzige andere Cluster
+    mit mehreren Elementen in diesem Geraet, und einer, der bis heute
+    keinen Elementrang traegt."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    signals = store.signals(device_id)
+    cluster_47 = [s for s in signals if s.ref.cluster_id == 47]
+
+    # Sortiere dieselben Signale nach der alten Ordnung (ohne Rangliste)
+    old_order_sorted = sorted(
+        cluster_47, key=lambda s: (s.ref.endpoint, s.ref.element_id, s.ref.kind.value)
+    )
+
+    # Die aktuelle Reihenfolge muss mit der alten Ordnung uebereinstimmen
+    assert cluster_47 == old_order_sorted
+
+
+def test_the_order_is_total(tmp_path):
+    """Kein Signal teilt seinen Sortierschluessel mit einem anderen.
+
+    Das ist die Eigenschaft, auf die sich der Export verlaesst: `signals()`
+    speist `to_inputs` und damit die Reihenfolge der Eingaenge in der
+    VIU-Vorlage. Waeren zwei Schluessel gleich, entschiede die
+    Eingangsreihenfolge von `sorted` - und die kommt aus SQLite, ist also
+    nichts, worauf sich eine Datei stuetzen darf.
+
+    Ein frueherer Anlauf verglich zwei Aufrufe von `signals()` miteinander.
+    Das war keine Zusicherung: ohne Zufall im Pfad sind zwei Aufrufe auf
+    unveraenderten Daten IMMER gleich, auch bei kollidierenden Schluesseln.
+
+    Fund (Abschlusspruefung): `assert keys == sorted(keys)` kann bei KEINER
+    Implementierung scheitern - `keys` entsteht aus der bereits mit
+    `_signal_order` sortierten Ausgabe von `signals()`, ist also zwangs-
+    laeufig nicht-fallend, egal was `_signal_order` tut. Der Kommentar
+    darueber behauptete eine eigene Aussage ("die gelieferte Reihenfolge
+    muss dem sortierten Schluessel folgen"), die dieser Assert nicht
+    treffen kann, weil er nichts UNABHAENGIGES gegenprueft. Entfernt statt
+    ersetzt: die tatsaechliche Sortierordnung (Cluster-Rang vor Endpunkt
+    vor Element-Rang, `positions` hinter `press`, PowerSource hinter allem
+    Funktionalen) hat bereits eigene, unabhaengig gerechnete Tests -
+    `test_the_static_position_count_sorts_behind_every_button_event`,
+    `test_the_plug_still_leads_with_onoff` und
+    `test_signals_of_the_same_cluster_keep_the_previous_order`. Dieser Test
+    bleibt bei seiner einzigen tragfaehigen Aussage: der Sortierschluessel
+    ist TOTAL, kein Signal teilt ihn mit einem anderen."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    signals = store.signals(device_id)
+    keys = [_signal_order(s) for s in signals]
+
+    # Kein Sortierschluessel darf doppelt vorkommen (Totalitaet) - das ist
+    # die einzige Eigenschaft, die dieser Test unabhaengig pruefen kann.
+    assert len(set(keys)) == len(keys)

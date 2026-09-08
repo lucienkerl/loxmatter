@@ -99,6 +99,57 @@ def _table() -> dict[int, dict[str, Any]]:
     return {int(k): v for k, v in (raw.get("clusters") or {}).items()}
 
 
+# Der Rang eines Clusters, den die Tabelle nicht fuehrt (Entwurf
+# 2026-09-07, Abschnitt 4). Die Mitte, nicht das Ende: ein unbekannter
+# Cluster soll nie hinter dem Batteriestand landen, aber auch nicht vor
+# einem Cluster, dessen Bedeutung belegt ist.
+DEFAULT_RANK = 50
+
+
+def rank_for(cluster_id: int) -> int:
+    """Wie wichtig dieser Cluster fuer die Anzeige ist - kleiner ist wichtiger.
+
+    Getrennt von `lookup` und `knows_cluster`, weil diese Frage eine andere
+    ist als "wie heisst das Element" oder "kennt die Tabelle den Cluster":
+    ein Cluster kann in der Tabelle stehen (wegen seiner Kommandos) und
+    trotzdem keinen Rang tragen. Beide Faelle - gar nicht in der Tabelle,
+    und in der Tabelle ohne `rank` - ergeben hier dieselbe Antwort, weil
+    sie fuer die Sortierung dasselbe bedeuten.
+    """
+    cluster = _table().get(cluster_id)
+    if cluster is None:
+        return DEFAULT_RANK
+    rank = cluster.get("rank")
+    return DEFAULT_RANK if rank is None else int(rank)
+
+
+def element_rank_for(ref: SignalRef) -> int:
+    """Wie wichtig dieses Element INNERHALB seines Clusters ist.
+
+    Zweite Ebene neben `rank_for`, und sie ist nachgetragen worden statt von
+    Anfang an dazusein (Entwurf 2026-09-07, Abschnitt 4: "kann nachgetragen
+    werden, wenn ein konkretes Geraet sie verlangt"). Das Geraet, das sie
+    verlangt hat, ist der IKEA-Taster: `NumberOfPositions` (Element 0) traegt
+    denselben Cluster wie der Tastendruck und sortierte mit der kleineren
+    Element-ID davor - die Kachel fuehrte damit mit einer Konstanten.
+
+    Die Vorgabe ist dieselbe wie auf Clusterebene und aus demselben Grund die
+    Mitte: ein nicht eingetragenes Element soll weder nach vorn noch ganz
+    nach hinten fallen. Die grosse Mehrheit der Elemente traegt deshalb gar
+    keinen Rang, und die Element-ID ordnet sie weiterhin - so, wie es bis
+    hierher fuer jeden Cluster ausser 59 richtig war.
+    """
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return DEFAULT_RANK
+    section = "events" if ref.kind is SignalKind.EVENT else "attributes"
+    element = (cluster.get(section) or {}).get(ref.element_id)
+    if not isinstance(element, dict):
+        return DEFAULT_RANK
+    rank = element.get("rank")
+    return DEFAULT_RANK if rank is None else int(rank)
+
+
 def knows_cluster(cluster_id: int) -> bool:
     """Whether the profile table carries this cluster at all."""
     return cluster_id in _table()
@@ -139,6 +190,32 @@ def names_element(ref: SignalRef) -> bool:
         return False
     section = "events" if ref.kind is SignalKind.EVENT else "attributes"
     return ref.element_id in (cluster.get(section) or {})
+
+
+def marked_non_functional(ref: SignalRef) -> bool:
+    """Ob die Tabelle dieses Element ausdruecklich als nicht vorausgewaehlt
+    fuehrt (`functional: false`).
+
+    Der Gegenspieler zu `names_element`: benannt zu sein heisst
+    normalerweise gewollt zu sein (siehe `profiles.relevance.is_functional`,
+    Schicht 3). Fuer Geraetekonstanten - Min/Max-Bereiche, Aufloesungen -
+    stimmt das nicht: sie muessen lesbar sein, ohne den Standard-Export
+    aufzublaehen.
+
+    Bewusst ein allgemeines Feld statt eines Sonderfalls fuer Cluster 768:
+    jeder weitere Cluster mit Kapazitaetsangaben trifft dasselbe Problem.
+    Die Alternative - die Werte an der Tabelle vorbei direkt aus dem
+    Snapshot greifen - schuefe eine zweite Stelle, an der Attributwissen
+    lebt (Entwurf 2026-09-07, Abschnitt 5.2).
+    """
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return False
+    section = "events" if ref.kind is SignalKind.EVENT else "attributes"
+    entry = (cluster.get(section) or {}).get(ref.element_id)
+    if not entry:
+        return False
+    return entry.get("functional") is False
 
 
 def struct_field(ref: SignalRef) -> int | None:
@@ -329,6 +406,29 @@ def command_takes_value(cluster_id: int, command_id: int) -> bool:
     """Whether the command expects a value (e.g. MoveToLevel), or none (e.g. Off)."""
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
     return bool(entry and entry.get("takes_value"))
+
+
+def command_control(cluster_id: int, command_id: int) -> str:
+    """Welches Bedienelement die Oberflaeche fuer dieses Kommando bauen soll.
+
+    `none` (Knopf), `percent`, `kelvin`, `hue_sat` - oder `unknown` fuer
+    einen Eintrag, dem noch niemand ein `control` gegeben hat.
+
+    `unknown` ist bewusst ein eigener Wert und keine aus `takes_value`
+    geratene Voreinstellung: ein Regler behauptet einen Wertebereich, und
+    den kennt hier niemand. Die Oberflaeche faellt fuer `unknown` auf das
+    schlichte Zahlenfeld zurueck (Entwurf 2026-09-07, Abschnitt 5.5).
+
+    Der Rueckgabewert ist absichtlich ein `str` und kein Enum: er wandert
+    unveraendert durch die API in das JavaScript, wo ohnehin nur der
+    Wortlaut zaehlt - ein Enum muesste an der Grenze wieder aufgeloest
+    werden und brauchte bei jedem neuen Widget zwei Aenderungen statt einer.
+    """
+    entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
+    if not entry:
+        return "unknown"
+    control = entry.get("control")
+    return str(control) if control else "unknown"
 
 
 def known_command_pairs() -> set[tuple[int, int]]:

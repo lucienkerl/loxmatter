@@ -487,10 +487,10 @@ def build_app(
     app.include_router(build_settings_router(store), dependencies=api_guard)
     app.include_router(build_language_router(store), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
-    # The same `invoke` as below at `/cmd/{key}/{value}` - see
-    # api/control.py's module docstring: one translation, two callers,
-    # otherwise they drift (spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
-    app.include_router(build_control_router(store, invoke), dependencies=api_guard)
+    # Derselbe `invoke` wie unten bei `/cmd/{key}/{value}` - siehe
+    # api/control.py Moduldocstring: eine Uebersetzung, zwei Aufrufer, sonst
+    # driften sie (Spec 4.2, test_the_same_translation_as_the_loxone_endpoint).
+    app.include_router(build_control_router(store, invoke, runtime), dependencies=api_guard)
     app.include_router(
         build_diagnostics_router(
             store,
