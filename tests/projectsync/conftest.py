@@ -48,8 +48,9 @@ from loxmatter import i18n
 
 @pytest.fixture(autouse=True)
 def _sample_project_uses_german(reset_language: None) -> None:
-    """`SAMPLE_PROJECT`'s ``d1_online`` title ("Altes Geraet erreichbar") is
-    hard-coded as German text into this sample file (see the module
+    """`SAMPLE_PROJECT`'s ``d1_online`` title
+    ("Altes Geraet erreichbar") is hard-coded German in this sample file
+    (see the module
     docstring); `export.signals.to_inputs` has generated the same title
     language-dependently via `i18n.t()` since i18n phase B+C, and without
     this fixture-wide German context it falls back to the new English

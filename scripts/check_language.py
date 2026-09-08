@@ -90,7 +90,13 @@ UMLAUT_CHARS = re.compile(r"[ÄÖÜäöüß]")
 WORD = re.compile(r"[A-Za-zÄÖÜäöüß]+")
 
 # Exemptions, each one a decision recorded in section 2.2 of the spec.
-EXEMPT_PREFIXES = ("src/loxmatter/web/vendor/",)
+EXEMPT_PREFIXES = (
+    "src/loxmatter/web/vendor/",
+    # tests/fixtures/ is captured data: real Loxone project exports and
+    # recorded Matter node dumps. Their German is what the devices and
+    # Loxone Config actually wrote, so it is a record, not our prose.
+    "tests/fixtures/",
+)
 EXEMPT_PATHS = frozenset(
     {
         "LICENSE",
@@ -138,6 +144,13 @@ GERMAN_AS_DATA = (
 FENCE = re.compile(r"^```")
 INLINE_CODE = re.compile(r"`[^`\n]*`")
 
+# The same idea one directory over. In tests/, a quoted string is data: the
+# German the product still emits under the de locale (which the suite exists
+# to prove), a fixture's room name, a password, a value an assertion compares
+# against. Test prose - comments, docstrings, assertion failure messages -
+# was translated and is still checked, because it sits outside the quotes.
+QUOTED = re.compile("\"[^\"\n]*\"|'[^'\n]*'")
+
 
 class UnterminatedFenceError(ValueError):
     """A ``` fenced code block that never closes before EOF.
@@ -163,6 +176,7 @@ def scan_text(text: str, path: str) -> list[Finding]:
     if _is_exempt(path):
         return []
     is_markdown = path.endswith(".md")
+    is_test_python = path.startswith("tests/") and path.endswith(".py")
     findings: list[Finding] = []
     # None outside a de: block scalar; otherwise the indentation of the
     # `de:` key that opened it - continuation lines indented deeper than
@@ -198,6 +212,8 @@ def scan_text(text: str, path: str) -> list[Finding]:
         # German outside the backticks on the same line is still prose and
         # must still be checked, so only the span text is removed here.
         scan_line = INLINE_CODE.sub("", line) if is_markdown else line
+        if is_test_python:
+            scan_line = QUOTED.sub("", scan_line)
         for match in WORD.finditer(scan_line):
             word = match.group(0)
             lowered = word.lower()

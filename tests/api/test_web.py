@@ -2111,7 +2111,7 @@ async def test_the_system_tab_dynamic_errors_are_translated(api):
 
 async def test_the_settings_tab_static_text_is_translated(api):
     """Task 15, step 3: the connection card (heading, explanation as
-    `x-html` - it contains an embedded `<strong>Nicht</strong>` and a
+    `x-html` - it contains an embedded "<strong>Nicht</strong>" and a
     `<span class="key">` with the URL example -, the shared
     `web.bridge_ip_label`, the placeholder, the port labels, the save
     button, and the last-saved/not-yet-saved hint) now carry `t(...)`
@@ -2122,8 +2122,8 @@ async def test_the_settings_tab_static_text_is_translated(api):
     Does NOT check the global absence of the text across the whole page
     anymore: the project file sync feature, developed independently on
     main (see its own card in the export tab), links to this settings
-    card with the exact same raw German phrase "Einstellungen →
-    Verbindung zum Miniserver" - a separate, still-untranslated feature
+    card with the exact same raw German phrase
+    "Einstellungen → Verbindung zum Miniserver" - a separate, untranslated
     outside this task, not proof that the heading itself is untranslated
     here. The precise `>...<` form below matches exclusively the heading
     as its own text node."""
@@ -2161,7 +2161,7 @@ async def test_the_settings_tab_static_text_is_translated(api):
 async def test_the_settings_tab_connection_explanation_html_renders_inline_markup(api):
     """Task 15, step 3 (follow-up fix, analogous to Task 13/14):
     `web.settings.connection_explanation` contains both an embedded
-    `<strong>Nicht</strong>` and a `<span class="key">` that encloses the
+    "<strong>Nicht</strong>" and a `<span class="key">` that encloses the
     URL example - the binding must therefore be `x-html`, otherwise the
     browser shows the angle brackets as text. `GET /api/i18n` delivers the
     raw template; the actual rendering is part of the manual browser
@@ -2205,8 +2205,8 @@ async def test_the_settings_tab_dynamic_errors_are_translated(api):
 
 
 async def test_the_settings_tab_has_a_language_toggle(api):
-    """Task 15, step 4: the former placeholder card "Weitere
-    Einstellungen" is replaced (not translated, see its own comment in
+    """Task 15, step 4: the former placeholder card
+    "Weitere Einstellungen" is replaced (not translated, see its comment in
     Task 9) by two buttons that mark the current language via the
     already-existing reactive `language` property (Task 8) and call
     `setLanguage(...)` on click (step 5). Reuses the already-existing
@@ -2764,8 +2764,8 @@ async def test_the_tile_menu_caps_its_width_and_truncates_long_room_names(api):
     upper bound - a freely chosen, long room name inflates the
     shrink-to-fit box to its full word width and, because it is anchored
     at `right: 0`, lets it grow out of the tile to the LEFT. Measured in
-    the browser at 375 px width with the room name "Werkstatt im
-    Untergeschoss hinter der Heizung und dem Regal" (see the task report):
+    the browser at 375 px width with the room name
+    "Werkstatt im Untergeschoss hinter der Heizung und dem Regal":
     menu 384 px wide, left edge at x=-46, the document scrolled
     horizontally. This suite has no browser engine and cannot recompute
     the layout itself - what is proven is only that the delivered rule
@@ -2787,8 +2787,9 @@ async def test_the_current_room_checkmark_survives_the_width_cap(api):
     text at the end of the line - exactly where `.tile-menu-item`'s
     `overflow: hidden; text-overflow: ellipsis` (finding 2 of the
     follow-up fix, see above) cuts it off. Measured in the browser with
-    the room name "Werkstatt im Untergeschoss hinter der Heizung und dem
-    Regal" (see the task report): `clientWidth` 246px, `scrollWidth`
+    the room name
+    "Werkstatt im Untergeschoss hinter der Heizung und dem Regal":
+    `clientWidth` 246px, `scrollWidth`
     413px, the `::after` sat 167px behind the clip edge - invisible, the
     entry showed the ellipsis with no checkmark at all. Without a browser
     engine this suite cannot reproduce the clipping itself - what is

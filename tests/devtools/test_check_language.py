@@ -206,3 +206,25 @@ def test_python_file_backticks_around_german_are_still_reported():
     text = "# The `Geraet` lookup failed\n"
     findings = check_language.scan_text(text, "a.py")
     assert findings
+
+
+def test_a_quoted_string_in_a_test_file_is_data_not_prose():
+    # The suite still asserts on German the product emits under the de
+    # locale, and on fixture values like room names. Those are data.
+    text = 'assert "Das Geraet ist nicht erreichbar" in body\n'
+    assert check_language.scan_text(text, "tests/api/test_web.py") == []
+
+
+def test_german_prose_outside_the_quotes_in_a_test_file_is_still_reported():
+    text = 'assert "Ein/Aus" in body  # das Geraet wird nicht gefunden\n'
+    assert check_language.scan_text(text, "tests/api/test_web.py")
+
+
+def test_the_quoting_rule_does_not_apply_outside_tests():
+    text = 'raise RuntimeError("Das Geraet ist nicht erreichbar")\n'
+    assert check_language.scan_text(text, "src/loxmatter/loxone/sender.py")
+
+
+def test_captured_fixtures_are_exempt():
+    text = '<VirtualOut Comment="erzeugt von loxmatter" />\n'
+    assert check_language.scan_text(text, "tests/fixtures/loxone/VO_working.xml") == []
