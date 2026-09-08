@@ -160,3 +160,102 @@ def test_takes_value_change_is_picked_up_on_reregistration(store):
     on_after = next(c for c in again if c.key == on_before.key)
     assert on_after.takes_value is True
     assert on_after.key == on_before.key
+
+
+def test_backfill_adds_a_command_that_was_locked_when_the_device_was_learned(tmp_path):
+    """Der Fall aus dem Betrieb (8. September 2026): eine RGB-Leuchte wurde
+    eingelernt, als `MoveToHueAndSaturation` (768/6) noch gesperrt war.
+
+    `extract_commands` verwarf den Befehl damals, und in der Tabelle steht
+    seither keine Zeile dafuer. Ein Update des Codes traegt sie nicht nach -
+    `register_commands` lief bis dahin nur beim Einlernen und beim
+    CLI-Export -, und die Kachel zeigte deshalb kein Farb-Bedienelement,
+    obwohl die Leuchte es laengst konnte.
+    """
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snapshot = load("ikea_kajplats_cws_lamp.json")
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        # Der alte Stand: dieselbe Extraktion ohne das damals gesperrte Paar.
+        alt = [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)]
+        store.register_commands(device_id, alt, snapshot.node_id)
+        assert not any(c.cluster_id == 768 and c.command_id == 6 for c in store.commands(device_id))
+
+        assert store.backfill_commands([snapshot]) == 1
+
+        farbe = [c for c in store.commands(device_id) if (c.cluster_id, c.command_id) == (768, 6)]
+        assert len(farbe) == 1
+        assert farbe[0].slug == "color"
+        assert farbe[0].takes_value is True
+    finally:
+        store.close()
+
+
+def test_backfill_keeps_the_keys_of_commands_that_already_exist(tmp_path):
+    """Der Schluessel ist die Verdrahtung in Loxone und darf sich nie
+    bewegen. `backfill_commands` laeuft bei JEDEM Start - wuerde es
+    bestehende Schluessel neu vergeben, zerschoesse der erste Neustart nach
+    einem Update jede Loxone-Konfiguration."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snapshot = load("ikea_kajplats_cws_lamp.json")
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        alt = [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)]
+        store.register_commands(device_id, alt, snapshot.node_id)
+        vorher = {(c.cluster_id, c.command_id): c.key for c in store.commands(device_id)}
+
+        store.backfill_commands([snapshot])
+
+        nachher = {(c.cluster_id, c.command_id): c.key for c in store.commands(device_id)}
+        for paar, key in vorher.items():
+            assert nachher[paar] == key
+
+
+    finally:
+        store.close()
+
+
+def test_backfill_reports_nothing_to_do_when_every_command_is_present(tmp_path):
+    """Zweiter Start nach dem Update: nichts mehr nachzutragen.
+
+    Der Rueckgabewert zaehlt Geraete, bei denen ein Kommando DAZUKAM - nicht
+    Schreibvorgaenge. `backfill_commands` frischt `slug` und `takes_value`
+    bewusst bei jedem Start auf (siehe dort), damit auch eine Umbenennung in
+    `clusters.yaml` ein Bestandsgeraet erreicht; gemeldet wird trotzdem nur
+    die Aenderung, die jemanden interessiert."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        snapshot = load("ikea_kajplats_cws_lamp.json")
+        device_id = store.register_device(snapshot)
+        store.register_signals(device_id, snapshot)
+        store.register_commands(device_id, extract_commands(snapshot), snapshot.node_id)
+
+        assert store.backfill_commands([snapshot]) == 0
+    finally:
+        store.close()
+
+
+def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path):
+    """Ein Geraet, das beim Start gerade offline ist, fehlt in
+    `client.snapshots()`. Es darf dadurch nichts verlieren - dieselbe Regel
+    wie bei `backfill_device_types`."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        lampe = load("ikea_kajplats_cws_lamp.json")
+        stecker = load("ikea_grillplats_plug.json")
+        lampen_id = store.register_device(lampe)
+        store.register_signals(lampen_id, lampe)
+        alt = [c for c in extract_commands(lampe) if (c.cluster_id, c.command_id) != (768, 6)]
+        store.register_commands(lampen_id, alt, lampe.node_id)
+        stecker_id = store.register_device(stecker)
+        store.register_signals(stecker_id, stecker)
+        store.register_commands(stecker_id, extract_commands(stecker), stecker.node_id)
+        stecker_vorher = len(store.commands(stecker_id))
+
+        # Nur das Abbild der Lampe liegt vor - der Stecker ist gerade offline.
+        assert store.backfill_commands([lampe]) == 1
+        assert len(store.commands(stecker_id)) == stecker_vorher
+    finally:
+        store.close()
