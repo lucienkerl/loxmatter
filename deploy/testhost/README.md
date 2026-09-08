@@ -584,9 +584,10 @@ kompletten Fabric-Credentials und gehört weder ins Repository noch in ein Log.
 ### Der Umzug
 
 ```bash
+cd ~/matter-loxone/deploy/testhost
 docker compose stop matter-server
-sudo chown -R 1000:1000 deploy/testhost/data
-sudo chmod -R u+rwX,go+rX deploy/testhost/data
+sudo chown -R 1000:1000 data
+sudo chmod -R u+rwX,go+rX data
 docker compose pull matter-server
 docker compose up -d matter-server
 docker compose logs -f matter-server
@@ -597,8 +598,10 @@ als root und hat das Verzeichnis entsprechend beschrieben, der neue Container l�
 unprivilegiert als UID 1000. Ohne den Schritt startet er nicht.
 
 Die Logzeilen des ersten Starts enthalten die Migration. Erst wenn dort kein Fehler
-steht und `loxmatter` sich wieder verbindet (`GET /api/diagnostics` zeigt den Punkt
-`matter-server` grün), ist der Umzug durch.
+steht und `loxmatter` sich wieder verbindet (`GET /api/diagnostics/system` zeigt
+den Punkt `matter-server` grün — dasselbe, was die Diagnoseseite der WebUI
+anzeigt; `/api/diagnostics` ohne `/system` ist keine Route und antwortet mit 404),
+ist der Umzug durch.
 
 ### Was danach zu prüfen ist
 
