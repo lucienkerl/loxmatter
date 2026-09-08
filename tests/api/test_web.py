@@ -4396,13 +4396,43 @@ async def test_the_signal_rows_and_the_header_share_one_grid(api):
     148px clientWidth). Diese Zusicherung MUSS mitgezogen werden, sonst
     haette der Umbau eine Kopf- und eine Datenzeile mit verschiedenen
     Vorlagen hinterlassen - genau die Abweichung, die dieser Test
-    ueberhaupt sperrt."""
+    ueberhaupt sperrt.
+
+    Fund (Abschlusspruefung): `page.count("signal-grid") >= 2` zaehlt nur
+    einen Teilstring. Allein `class="signal-grid signal-grid-head"`
+    liefert zwei Treffer, weil "signal-grid-head" mit "signal-grid"
+    beginnt - die Datenzeile koennte ihre Rasterklasse also ganz verlieren
+    (Ausgangszustand des Umbaus) und der zaehlende Assert bliebe gruen.
+    Ebenso pruefte die zweite Zusicherung nur, dass die Spaltenmasse
+    IRGENDWO im CSS stehen, nicht dass Kopf UND Zeile sie ueber dieselbe
+    Regel beziehen - ein spaeterer `.signal-row-cells { grid-template-
+    columns: ... }`-Override waere unsichtbar geblieben. Diese Fassung
+    verlangt beide Klassen einzeln am jeweiligen Element und bindet die
+    Spaltenmasse an den Regelkoerper von `.signal-grid` allein, mit einer
+    Gegenprobe, dass keine der beiden Modifikator-Klassen sie ausserhalb
+    der Medienabfrage nochmal selbst definiert."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     css = (await client.get("/static/style.css")).text
 
-    assert page.count("signal-grid") >= 2
-    assert "grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px" in css
+    assert 'class="signal-grid signal-grid-head"' in page
+    assert 'class="signal-grid signal-row-cells"' in page
+
+    def rule_body(selector: str) -> str:
+        start = css.index(selector)
+        open_brace = css.index("{", start)
+        close_brace = css.index("}", open_brace)
+        return css[open_brace:close_brace]
+
+    assert "grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px" in rule_body(
+        ".signal-grid {"
+    )
+    # `css.index` findet die erste (nicht die Medienabfrage-) Fassung der
+    # beiden Modifikator-Klassen - dort duerfen die Spaltenmasse nicht
+    # eigenstaendig auftauchen, sonst koennte Kopf und Zeile ueber je eine
+    # eigene Regel auseinanderlaufen, ohne dass es hier auffiele.
+    assert "grid-template-columns" not in rule_body(".signal-grid-head {")
+    assert "grid-template-columns" not in rule_body(".signal-row-cells {")
 
 
 async def test_the_key_pill_wraps_instead_of_touching_the_value_column(api):
@@ -4461,20 +4491,46 @@ async def test_both_boolean_columns_are_checkboxes(api):
 async def test_the_boolean_columns_keep_a_label_for_assistive_technology(api):
     """Die Beschriftung steht als Spaltenkopf einmal statt siebzehnmal neben
     einem Kaestchen - ein Screenreader liest aber die Zeile, nicht die
-    Tabelle. Beide Kaestchen brauchen deshalb weiterhin ihren eigenen Namen."""
+    Tabelle. Beide Kaestchen brauchen deshalb weiterhin ihren eigenen Namen.
+
+    Fund (Abschlusspruefung): die alte Fassung war asymmetrisch scharf -
+    fuer die Export-Spalte prueft sie `:aria-label` direkt AM Element, fuer
+    Resend genuegte eine lose Textsuche auf der ganzen Seite. Der
+    Resend-Schluessel steht dort ohnehin dreimal (Kaestchen, versteckte
+    Beschriftung fuer den schmalen Fall, Tooltip), ein geloeschtes
+    `:aria-label` am Resend-Kaestchen selbst haette der Test also nie
+    bemerkt. Diese Fassung bindet beide Spalten gleich scharf: vom Handler
+    rueckwaerts zum Element, das ihn traegt - dasselbe Muster wie in
+    `test_both_boolean_columns_are_checkboxes`."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
+    modal = page[page.index('class="signals-modal"') :]
 
-    assert "web.signals.export_checkbox" in page
-    assert "web.signals.resend_checkbox" in page
-    assert ":aria-label=\"t('web.signals.export_checkbox')\"" in page
+    for handler, key in (
+        ("toggleExported(signal)", "export_checkbox"),
+        ("toggleResend(signal)", "resend_checkbox"),
+    ):
+        end = modal.index(handler)
+        element = modal[modal.rindex("<", 0, end) : end]
+        assert f":aria-label=\"t('web.signals.{key}')\"" in element, handler
 
 
 async def test_the_resend_column_is_explained_once_above_the_table(api):
+    """Fund (Abschlusspruefung): die alte Fassung pruefte nur, DASS der
+    Schluessel irgendwo auf der Seite steht - weder "einmal" noch "ueber
+    der Tabelle", obwohl der Name genau das verspricht. Der Erklaersatz
+    koennte als Beschriftung neben jedem der siebzehn Kaestchen stehen -
+    genau der Zustand, den der Umbau abgeschafft hat - und der alte Assert
+    bliebe gruen, weil er nur Existenz sieht. Diese Fassung zaehlt die
+    Treffer (genau einer) und bindet die Position an die Tabelle: der Satz
+    muss vor dem Spaltenkopf stehen."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
-    assert "web.signals.resend_explanation" in page
+    assert page.count("web.signals.resend_explanation") == 1
+    assert page.index("web.signals.resend_explanation") < page.index(
+        'class="signal-grid signal-grid-head"'
+    )
 
 
 async def test_the_raw_write_field_lives_in_the_row_detail(api):
@@ -4499,16 +4555,53 @@ async def test_the_raw_write_field_lives_in_the_row_detail(api):
     assert "x-text=\"t('web.signals.raw_write_submit')\"" in detail
 
 
-async def test_only_one_signal_detail_is_open_at_a_time(api):
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_only_one_signal_detail_is_open_at_a_time():
     """Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
     Zustand in Alpine, nicht im DOM: es gibt genau EINEN Wert fuer das ganze
-    Modal, kein Auf/Zu je Element."""
-    client, _, _ = api
-    script = (await client.get("/static/app.js")).text
+    Modal, kein Auf/Zu je Element.
 
-    assert "expandedSignalKey: null," in script
-    body = script[script.index("toggleSignalDetails(signal)") :][:400]
-    assert "this.expandedSignalKey = " in body
+    Fund (Abschlusspruefung): die alte Fassung prueft nur zwei
+    Zeichenketten - dass `expandedSignalKey` mit `null` startet und dass im
+    Rumpf von `toggleSignalDetails` IRGENDWO `this.expandedSignalKey = `
+    vorkommt. Ein `toggleSignalDetails`, das zu `this.expandedSignalKey =
+    signal.key` verkuerzt wuerde (ohne den Vergleich, der es zum echten
+    Umschalter macht), oeffnete den Kebab nur noch und schloesse nie - der
+    Kebab bliebe dann fuer immer offen, sobald man ihn einmal geklickt hat.
+    Beide alten Asserts haetten das nicht bemerkt, weil sie nur Text sehen,
+    kein Verhalten. Diese Fassung fuehrt `toggleSignalDetails` echt aus
+    (ueber `_app_state`, wie beim Lade-Guard oben in dieser Datei) und
+    prueft die drei Faelle, die den Umschalter ausmachen: zweimal auf
+    dasselbe Signal (auf/zu), danach auf ein anderes Signal (Wechsel)."""
+    values = _app_state(
+        """
+        const signalA = { key: "a" };
+        const signalB = { key: "b" };
+        const seen = [state.expandedSignalKey];
+        state.toggleSignalDetails(signalA);
+        seen.push(state.expandedSignalKey);
+        state.toggleSignalDetails(signalA);
+        seen.push(state.expandedSignalKey);
+        state.toggleSignalDetails(signalA);
+        seen.push(state.expandedSignalKey);
+        state.toggleSignalDetails(signalB);
+        seen.push(state.expandedSignalKey);
+        console.log(JSON.stringify({ seen }));
+        """
+    )
+    initial, after_first_a, after_second_a, after_third_a, after_b = values["seen"]
+
+    assert initial is None
+    assert after_first_a == "a"
+    # Der zweite Klick auf DASSELBE Signal muss schliessen - genau die
+    # Umschalt-Haelfte, an der eine blosse Zuweisung vorbeigeschummelt
+    # haette.
+    assert after_second_a is None, "ein zweiter Klick auf dasselbe Signal muss schliessen"
+    assert after_third_a == "a"
+    # Ein Klick auf ein ANDERES Signal wechselt, statt ein zweites zu
+    # oeffnen - der Zustand ist ein einzelner Wert, kein Set, also hoechstens
+    # eines gleichzeitig offen.
+    assert after_b == "b"
 
 
 async def test_closing_the_signals_modal_resets_the_open_detail(api):
@@ -4534,22 +4627,65 @@ async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
     Struktur, obwohl der Name "keine eigene Zeile mehr" verspricht. Diese
     Fassung sichert das strukturell zu: das Rohwert-Eingabefeld liegt
     INNERHALB des `.signal-detail`-Bereichs, nicht als eigenes Geschwister
-    der Rasterzeile (`.signal-grid.signal-row-cells`) daneben. Die Struktur
-    INNERHALB des Aufklappers deckt bereits
-    `test_the_raw_write_field_lives_in_the_row_detail` robust ab (sie
-    schneidet ab `class="signal-detail"`) - dieser Test ergaenzt dazu die
-    Abwesenheit ausserhalb, in der Rasterzeile, und wird dadurch keine
-    blosse Wiederholung."""
+    der Rasterzeile (`.signal-grid.signal-row-cells`) daneben.
+
+    Fund (Abschlusspruefung): das zweite Pruefenster war `dialog[detail_
+    start:]` - nach HINTEN offen bis zum Ende des ganzen Dialogs, nicht auf
+    das Ende von `.signal-detail` begrenzt. Ein ZUSAETZLICH zwischen
+    Rasterzeile und Aufklapper eingefuegtes Rohwertfeld - die alte
+    Fehlerposition aus Aufgabe 7 - verletzte damit keine der beiden
+    Zusicherungen: das erste Fenster reichte nur bis zum eigenen `</div>`
+    der Rasterzeile (das neue Feld liegt DAHINTER), das zweite begann erst
+    bei `class="signal-detail"` (das neue Feld liegt DAVOR) - die Luecke
+    dazwischen sah keines der beiden Fenster.
+
+    Diese Fassung schliesst die Luecke, indem das erste Fenster bis
+    `detail_start` reicht statt nur bis zum eigenen `</div>` der
+    Rasterzeile - alles zwischen Rasterzeile und Aufklapper zaehlt jetzt
+    als "darf das Feld nicht enthalten". Das zweite Fenster wird zusaetzlich
+    ans eigene `</div>` von `.signal-detail` gekappt (Klammertiefe zaehlen,
+    Muster aus `test_the_signal_table_stacks_on_a_narrow_screen`, noetig
+    wegen des verschachtelten `<div class="row">` darin) statt offen bis
+    zum Dialogende zu lesen - sonst haette JEDE spaetere Fundstelle im Rest
+    des Dialogs die Zusicherung erfuellt, selbst wenn das Feld aus
+    `.signal-detail` HERAUSgewandert waere.
+
+    Kein reiner Wiederholung von `test_the_raw_write_field_lives_in_the_
+    row_detail`: jener Test prueft nur Anwesenheit im (offenen)
+    Aufklapper-Fenster, dieser hier ergaenzt dazu die Abwesenheit
+    zwischen Rasterzeile und Aufklapper UND die scharfe obere Grenze -
+    beide Haelften zusammen sichern "kein eigenes Geschwister mehr" zu."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
 
     row_start = dialog.index('class="signal-grid signal-row-cells"')
-    row_end = dialog.index("</div>", row_start)
-    row = dialog[row_start:row_end]
-    assert "raw_write_placeholder" not in row
+    detail_start = dialog.index('class="signal-detail"', row_start)
+    # Nicht nur die Rasterzeile selbst, sondern ALLES bis zum Aufklapper -
+    # die alte Fehlerposition war ein Rohwertfeld als eigenes Geschwister
+    # GENAU dazwischen, und ein bei der Rasterzeile endendes Fenster haette
+    # das nicht gesehen.
+    assert "raw_write_placeholder" not in dialog[row_start:detail_start]
 
-    detail_start = dialog.index('class="signal-detail"')
-    assert "raw_write_placeholder" in dialog[detail_start:]
+    # Auf das eigene </div> von .signal-detail kappen statt offen bis zum
+    # Dialogende zu lesen. Innerhalb liegt ein verschachteltes
+    # <div class="row"> (das Rohwertfeld selbst) - deshalb Klammertiefe
+    # zaehlen, nicht einfach den naechsten </div> nehmen.
+    open_tag_start = dialog.rindex("<div", 0, detail_start)
+    body_start = dialog.index(">", open_tag_start) + 1
+    depth = 1
+    pos = body_start
+    for match in re.finditer(r"<div\b|</div>", dialog[body_start:]):
+        pos = body_start + match.end()
+        if match.group() == "</div>":
+            depth -= 1
+            if depth == 0:
+                break
+        else:
+            depth += 1
+    assert depth == 0, "kein schliessendes </div> fuer .signal-detail gefunden"
+    detail = dialog[detail_start:pos]
+
+    assert "raw_write_placeholder" in detail
 
 
 async def test_the_detail_spells_out_the_path(api):
@@ -4585,7 +4721,16 @@ async def test_the_row_kebab_is_the_only_thing_left_in_the_28px_column(api):
     `overflow-wrap`, `.signal-grid > * { min-width: 0 }` liess die Zelle
     schrumpfen) - gemessen 744px `scrollWidth` gegen 719px `clientWidth`.
     Die Pille wohnt jetzt im Aufklapper; die Rasterzeile traegt in ihrer
-    letzten Zelle nur noch den Kebab-Knopf."""
+    letzten Zelle nur noch den Kebab-Knopf.
+
+    Fund (Abschlusspruefung): die alte Fassung prueft nur die Abwesenheit
+    ZWEIER konkreter Zeichenketten (die Warnpille, `signal.reason`) - der
+    Name verspricht aber "nur der Kebab", nicht "diese zwei Dinge nicht".
+    Ein beliebiges DRITTES Element in der letzten Zelle (ein neues Badge,
+    ein Icon, ein zweiter Knopf) waere unbemerkt geblieben. Diese Fassung
+    schneidet die letzte Zelle exakt: alles nach der Resend-Zelle (dem
+    letzten bekannten Geschwister davor) bis zum Ende der Rasterzeile muss
+    GENAU ein Element sein, und das muss der Kebab-Knopf sein."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
 
@@ -4597,11 +4742,25 @@ async def test_the_row_kebab_is_the_only_thing_left_in_the_28px_column(api):
     row = dialog[row_start:row_end]
 
     assert "signal-more" in row
-    assert 'class="badge warn"' not in row
-    assert "signal.reason" not in row
+
+    # Von der Resend-Zelle (letztes bekanntes Geschwister vor der letzten
+    # Spalte) bis zum Ende der Zeile darf NUR noch der Kebab-Knopf stehen -
+    # keine Warnpille, kein sonstiges Element, egal wie es heisst.
+    resend_close = row.index("</label>", row.index("toggleResend(signal)"))
+    tail = row[resend_close + len("</label>") :]
+    assert tail.lstrip().startswith("<button"), tail
+    button_close = tail.index("</button>") + len("</button>")
+    assert tail[:button_close].count('class="signal-more"') == 1
+    assert tail[button_close:].strip() == "", tail[button_close:]
 
 
 async def test_the_kebab_button_is_named_and_reports_its_state(api):
+    """Fund (Abschlusspruefung): die alte Fassung prueft nur, DASS
+    `:aria-expanded=` und `:aria-label=` als Attributnamen vorkommen - nicht
+    WORAN sie haengen. Ein `:aria-expanded="true"` (an eine Konstante
+    gebunden, meldet also immer denselben Zustand) waere gruen geblieben.
+    Diese Fassung bindet beide an den konkreten Ausdruck, den der Knopf
+    tatsaechlich tragen muss."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
 
@@ -4610,18 +4769,36 @@ async def test_the_kebab_button_is_named_and_reports_its_state(api):
     button_tag_end = dialog.index(">", button_start)
     button = dialog[button_tag_start:button_tag_end]
 
-    assert ":aria-expanded=" in button
-    assert ":aria-label=" in button
+    assert ':aria-expanded="expandedSignalKey === signal.key"' in button
+    assert ":aria-label=\"t('web.signals.row_details')\"" in button
 
 
 async def test_the_modal_leads_with_the_number_the_user_came_for(api):
     """Man oeffnet dieses Modal, um zu sehen und zu aendern, was nach Loxone
-    geht. Diese Zahl stand bisher nirgends."""
+    geht. Diese Zahl stand bisher nirgends.
+
+    Fund (Abschlusspruefung): die alte Fassung prueft weder POSITION
+    ("leads with") noch den NENNER (`total:`) - die Zusammenfassung haette
+    ans Ende des Modals rutschen oder den falschen Nenner zeigen koennen,
+    ohne dass der Test das bemerkt haette. Diese Fassung bindet die Zahl an
+    ihre Position vor dem Spaltenkopf und sichert beide Haelften des
+    Bruchs einzeln zu.
+
+    Entscheidung (bewusst, nicht aendern): der Nenner zaehlt ALLE Signale
+    ueber `signalCount`, nicht nur die funktionalen - am Taster steht
+    "17 von 173", nicht "12 von 17" wie im Entwurf skizziert. Beides ist
+    wahr; der Code zaehlt bewusst alle, weil das Modal auch die
+    Expertengruppe fuehrt und ein freigeschaltetes Expertensignal wirklich
+    mitgehen soll."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
     assert "web.signals.export_summary" in page
-    assert "exportedSignalCount(signalsModalDevice)" in page
+    assert "exported: exportedSignalCount(signalsModalDevice)" in page
+    assert "total: signalCount(signalsModalDevice)" in page
+    assert page.index("web.signals.export_summary") < page.index(
+        'class="signal-grid signal-grid-head"'
+    )
 
 
 async def test_the_deselect_all_button_calls_the_correct_function_with_the_device_id(api):
