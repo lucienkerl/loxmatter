@@ -72,6 +72,14 @@ VIEWPORT_NARROW = 820
 # im schmalen Fenster einen waagerechten Bildlauf.
 VIEWPORT_WIDE = 1440
 VIEWPORT_HEIGHT = 1000
+# Nur fuer das Signal-Modal (siehe dort): `.signals-modal` deckelt sich in
+# style.css auf `max-height: 85vh`, alles darueber blaettert innerhalb des
+# Dialogs statt das Fenster zu wachsen. Gemessen am tatsaechlichen Inhalt
+# (drei Endpunkt-Gruppen der ersten Kachel, Hallway button: 8 + 8 + 1
+# Zeilen samt Kopf- und Gruppenzeilen) sind das rund 1075 px - 85 % von
+# 1350 px sind 1147 px, genug Luft, dass der Dialog sich auf seine
+# tatsaechliche Inhaltshoehe schrumpft, statt selbst noch zu blaettern.
+VIEWPORT_HEIGHT_SIGNALS = 1350
 
 # Fuer den `from tests...`-Import der Beispiel-Projektdatei unten.
 sys.path.insert(0, str(ROOT))
@@ -226,13 +234,23 @@ def capture(page: Page) -> None:
     # mehr Zeilen im Bild stehen. Das Ergebnis war unbrauchbar: Playwright
     # scrollt zum Ziel eines `.click()`, und dieses Ziel liegt hinter 17
     # funktionalen Signalen - das Bild begann mitten in einer angeschnittenen
-    # Zeile, ohne Ueberschrift, ohne erkennbar zu sein, WAS man da sieht. Die
-    # erste Kachel (Hallway button) hat funktional genug Zeilen, um das Bild
-    # zu fuellen. Der Bildlauf steht deshalb ausdruecklich oben:
-    # Ueberschrift, Schluessel-Hinweis und die ersten Adressen mit ihren
-    # Export-Haken sind der Punkt dieses Bildes.
+    # Zeile, ohne Ueberschrift, ohne erkennbar zu sein, WAS man da sieht.
+    #
+    # Der urspruengliche Grund, warum kein hoeheres Fenster noetig sei ("die
+    # erste Kachel hat funktional genug Zeilen, um das Bild zu fuellen"),
+    # stimmt seit der Endpunkt-Gruppierung (Entwurf 2026-09-07, Abschnitt
+    # 7.4) nicht mehr: bei `VIEWPORT_HEIGHT` blieb der Dialog auf seinem
+    # `max-height: 85vh` (style.css) geblaettert und das Bild endete mitten
+    # in der zweiten Gruppe ("Button 2") - die dritte Gruppe ("Device", die
+    # Batterie) war nie zu sehen, obwohl gerade die Gruppierung die
+    # sichtbarste Aenderung dieses Umbaus ist. `VIEWPORT_HEIGHT_SIGNALS`
+    # gibt dem Dialog genug Raum, sich auf seine tatsaechliche Hoehe zu
+    # schrumpfen, statt selbst zu blaettern - danach zeigt ein einzelner
+    # Bildlauf ab dem Seitenanfang alle drei Gruppen vollstaendig.
+    page.set_viewport_size({"width": VIEWPORT_NARROW, "height": VIEWPORT_HEIGHT_SIGNALS})
     page.eval_on_selector("dialog.signals-modal", "el => el.scrollTo(0, 0)")
     shoot(page, "signals", "dialog.signals-modal", fixed=True)
+    page.set_viewport_size({"width": VIEWPORT_NARROW, "height": VIEWPORT_HEIGHT})
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
 
