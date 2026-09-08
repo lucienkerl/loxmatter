@@ -693,6 +693,67 @@ async def test_send_command_passes_the_payload_as_command_fields():
     assert command.transitionTime == 0
 
 
+async def test_send_command_builds_the_colour_temperature_command_from_the_sdk():
+    """ColorControl (768) MoveToColorTemperature (10) durch `chip` hindurch.
+
+    `tests/commands/test_translate.py` prueft nur das Nutzlast-Dict, das
+    `translate.py` baut - nie, ob `chip.clusters.ClusterObjects.
+    ALL_ACCEPTED_COMMANDS` daraus eine Klasse mit genau diesen Feldern
+    macht. Ohne diesen Test braeche ein umbenanntes SDK-Feld die
+    Farbtemperatur still: der Aufruf ginge hinaus, das Licht bliebe, wie
+    es war.
+    """
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+
+    call = MatterCall(
+        node_id=12,
+        endpoint=1,
+        cluster_id=768,
+        command_id=10,
+        payload={
+            "colorTemperatureMireds": 370,
+            "optionsMask": 1,
+            "optionsOverride": 1,
+        },
+    )
+    await bridge.send_command(call)
+
+    _node_id, _endpoint_id, command = upstream.sent_commands[0]
+    assert command.__class__.__name__ == "MoveToColorTemperature"
+    assert command.colorTemperatureMireds == 370
+    # Das Bit, ohne das ein Farbbefehl an einer ausgeschalteten Leuchte
+    # verpufft (siehe `_EXECUTE_IF_OFF` in commands/translate.py).
+    assert command.optionsMask == 1
+    assert command.optionsOverride == 1
+
+
+async def test_send_command_builds_the_hue_saturation_command_from_the_sdk():
+    """ColorControl (768) MoveToHueAndSaturation (6), gleiche Begruendung."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+
+    call = MatterCall(
+        node_id=12,
+        endpoint=1,
+        cluster_id=768,
+        command_id=6,
+        payload={
+            "hue": 85,
+            "saturation": 254,
+            "transitionTime": 0,
+            "optionsMask": 1,
+            "optionsOverride": 1,
+        },
+    )
+    await bridge.send_command(call)
+
+    _node_id, _endpoint_id, command = upstream.sent_commands[0]
+    assert command.__class__.__name__ == "MoveToHueAndSaturation"
+    assert command.hue == 85
+    assert command.saturation == 254
+
+
 async def test_send_command_raises_for_a_cluster_command_the_sdk_does_not_know():
     bridge, _upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
