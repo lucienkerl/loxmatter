@@ -234,6 +234,11 @@ Das ist der Beweis: `bluetooth_adapter_id` kommt als `0` im Stack an, nicht `Non
 über BLE kommissionieren, sofern der Adapter zum Zeitpunkt des Verbindungsversuchs
 `UP`/`Powered` ist (siehe naechster Abschnitt — das ist getrennt von dieser Prüfung).
 
+> **Seit dem 8. September 2026** läuft hier `matterjs-server`. `--bluetooth-adapter`
+> heißt dort genauso, aber der Container ist unprivilegiert und braucht zusätzlich
+> `NOBLE_BINDINGS=dbus` — siehe „Umzug auf matterjs-server". Das Zitat oben bleibt
+> als Beleg für das alte Image stehen.
+
 ## Bluetooth-Adapter ist rfkill-soft-blocked (neu gegenüber der VM)
 
 `hci0` stand beim Erheben der Zielumgebung auf `DOWN`. Das war zunächst nicht weiter
@@ -543,13 +548,76 @@ Fataler Fehler.
 
 ### 3. matter-server-Image-Pfad
 
-`ghcr.io/home-assistant-libs/python-matter-server:stable` wie im Brief — laesst
-sich weiterhin ziehen. Hinweis fuer spaeter: das Upstream-README verweist
-mittlerweile auf `ghcr.io/matter-js/python-matter-server` als Nachfolgeprojekt
-(`python-matter-server` selbst ist auf Version 8.1.2 eingefroren, keine weiteren
-Updates). Da `pyproject.toml` bereits `python-matter-server>=8.1.2` fixiert, passt
-das zusammen — nur relevant, falls das `home-assistant-libs`-Image irgendwann
-verschwindet.
+Bis zum 8. September 2026 lief hier `ghcr.io/home-assistant-libs/python-matter-server:stable`.
+Der Hinweis, der an dieser Stelle stand, nannte `ghcr.io/matter-js/python-matter-server`
+als Nachfolger — **das war falsch**: dieser Pfad ist nur der Spiegel des alten
+Repositories unter der neuen Organisation und liefert dieselbe eingefrorene 8.1.2.
+
+Das tatsächliche Nachfolgeprojekt ist
+[`matterjs-server`](https://github.com/matter-js/matterjs-server) —
+`ghcr.io/matter-js/matterjs-server:stable`, eine Neuimplementierung auf matter.js
+mit derselben WebSocket-API. Der Umzug steht im nächsten Abschnitt.
+
+## Umzug auf matterjs-server (UNGEPRÜFT)
+
+`deploy/testhost/docker-compose.yml` zeigt seit dem 8. September 2026 auf
+`ghcr.io/matter-js/matterjs-server:stable`. **Dieser Umzug ist noch an keinem Pi
+gelaufen** — er ist aus der Dokumentation des Nachfolgers abgeleitet, nicht gemessen.
+Was hier steht, ist die Reihenfolge, in der er durchzuführen ist, und die zwei
+Stellen, an denen er scheitern kann.
+
+### Vorher: die Fabric sichern
+
+Der erste Start migriert `./data` in das Format des neuen Servers. Diese Migration
+ist **einseitig** — ein Rückweg auf das alte Image ist nirgends zugesagt. Geht sie
+schief, ist die Fabric verloren und jedes eingelernte Gerät muss zurückgesetzt und
+neu gepaart werden.
+
+```bash
+curl -sf -H "Authorization: Bearer $LOXMATTER_API_TOKEN" \
+  http://<Pi>:8080/api/diagnostics/fabric-backup -o matter-fabric-backup.zip
+```
+
+Das Archiv **vom Pi herunterholen**, nicht dort liegen lassen. Es enthält die
+kompletten Fabric-Credentials und gehört weder ins Repository noch in ein Log.
+
+### Der Umzug
+
+```bash
+docker compose stop matter-server
+sudo chown -R 1000:1000 deploy/testhost/data
+sudo chmod -R u+rwX,go+rX deploy/testhost/data
+docker compose pull matter-server
+docker compose up -d matter-server
+docker compose logs -f matter-server
+```
+
+Der `chown` ist keine Vorsichtsmaßnahme, sondern Voraussetzung: das alte Image lief
+als root und hat das Verzeichnis entsprechend beschrieben, der neue Container läuft
+unprivilegiert als UID 1000. Ohne den Schritt startet er nicht.
+
+Die Logzeilen des ersten Starts enthalten die Migration. Erst wenn dort kein Fehler
+steht und `loxmatter` sich wieder verbindet (`GET /api/diagnostics` zeigt den Punkt
+`matter-server` grün), ist der Umzug durch.
+
+### Was danach zu prüfen ist
+
+Zwei Punkte, die aus der Dokumentation nicht folgen und nur am Gerät zu klären sind.
+Bis sie geprüft sind, bleibt dieser Abschnitt mit „UNGEPRÜFT" überschrieben.
+
+1. **BLE-Commissioning.** Das Compose setzt `NOBLE_BINDINGS=dbus`, weil der
+   unprivilegierte Container keinen rohen HCI-Socket öffnen darf. Der Weg über
+   BlueZ setzt voraus, dass `bluetoothd` läuft und `hci0` `Powered` ist — auf
+   diesem Pi war der Adapter schon einmal rfkill-soft-blockiert (siehe Abschnitt
+   weiter oben, das ist unabhängig vom Server). Prüfen, indem ein Gerät über den
+   Pairing-Code in der WebUI eingelernt wird.
+2. **Groß- und Kleinschreibung der Kommandonamen.** Die WebSocket-Doku des
+   Nachfolgers zeigt Kommandonamen in camelCase (`moveToLevelWithOnOff`); der
+   Python-Client sendet PascalCase (`MoveToLevelWithOnOff`), weil er
+   `command.__class__.__name__` weiterreicht. Der Server muss beides annehmen,
+   sonst wäre sein eigener Client kaputt — das ist ein Schluss, keine Messung.
+   Prüfen, indem in der WebUI eine Lampe geschaltet **und** ihre Helligkeit
+   verstellt wird.
 
 ## Dateien in diesem Verzeichnis
 
