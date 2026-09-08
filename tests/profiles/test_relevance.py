@@ -184,15 +184,15 @@ def test_a_cluster_known_only_for_its_commands_keeps_its_attributes_functional(
 
 
 def test_extended_color_light_attributes_are_functional_after_the_cluster_768_fix():
-    """Belegt den Fund aus dem Abschlussreview direkt, am echten Geraet: vor
-    Review-Fix 1 stand Cluster 768 (ColorControl) nur mit `commands:` in der
-    Tabelle - jedes seiner Attribute (`CurrentHue`, `CurrentSaturation`,
-    `ColorTemperatureMireds`, `ColorMode`) galt deshalb als nicht funktional,
-    waehrend der Ausgangsbefehl fuer die Farbtemperatur laengst exportiert
-    wurde: Loxone konnte die Farbe setzen, aber nie zurueckgemeldet bekommen.
-    `tests/fixtures/nodes/ikea_kajplats_cws_lamp.json` ist die echte IKEA
-    KAJPLATS E14 CWS globe 806lm (Phase 1, siehe Kommentar dort) - loeste ab
-    Task 1 das bis dahin verwendete synthetische Abbild ab."""
+    """Proves the finding from the final review directly, on the real device: before
+    review fix 1, cluster 768 (ColorControl) was listed with only `commands:` in
+    the table - each of its attributes (`CurrentHue`, `CurrentSaturation`,
+    `ColorTemperatureMireds`, `ColorMode`) was therefore considered not functional,
+    while the output command for the color temperature had long been exported:
+    Loxone could set the color, but never get it reported back.
+    `tests/fixtures/nodes/ikea_kajplats_cws_lamp.json` is the real IKEA
+    KAJPLATS E14 CWS globe 806lm (phase 1, see the comment there) - it replaced,
+    starting with task 1, the synthetic snapshot used until then."""
     snapshot = _snapshot("ikea_kajplats_cws_lamp.json")
     types = device_types_by_endpoint(snapshot)
     # 0, 1, 7, 8 = CurrentHue, CurrentSaturation, ColorTemperatureMireds, ColorMode
@@ -214,10 +214,10 @@ def test_an_unnamed_power_source_attribute_on_the_utility_endpoint_is_not_functi
 
 
 def test_the_physical_colour_temperature_limits_are_known_but_not_wanted():
-    """Zwei unveraenderliche Geraetekonstanten. Bekannt genug zum Auslesen
-    (der Kelvin-Regler braucht sie), nicht interessant genug, um als
-    virtueller Loxone-Eingang vorausgewaehlt zu werden (Entwurf
-    2026-09-07, Abschnitt 5.2)."""
+    """Two immutable device constants. Known well enough to read
+    (the kelvin slider needs them), not interesting enough to be
+    preselected as a virtual Loxone input (design
+    2026-09-07, section 5.2)."""
     device_types = {1: frozenset({269})}
     for element_id in (16395, 16396):
         ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)
@@ -225,8 +225,8 @@ def test_the_physical_colour_temperature_limits_are_known_but_not_wanted():
 
 
 def test_the_ordinary_colour_attributes_stay_functional():
-    """Die Gegenprobe: `functional: false` darf nicht auf den ganzen
-    Cluster durchschlagen."""
+    """The converse check: `functional: false` must not spill over onto the
+    whole cluster."""
     device_types = {1: frozenset({269})}
     for element_id in (0, 1, 7, 8):
         ref = SignalRef(1, 768, element_id, SignalKind.ATTRIBUTE)

@@ -53,22 +53,22 @@ def _device(device_id: int, label: str) -> StoredDevice:
 
 
 def _load_snapshot(name: str) -> NodeSnapshot:
-    """Wie `tests/export/test_signals.py::load` - eine echte Geraete-Fixture
-    statt der handgebauten `_signal`/`_device`-Helfer oben, weil der Test
-    unten `Store.signals` wirklich durchlaufen muss (die neue Rangordnung
-    aus Aufgabe 2 steckt in `model.store._signal_order`, nicht in etwas, das
-    sich mit einer einzelnen handgebauten `StoredSignal` nachbilden liesse)."""
+    """Like `tests/export/test_signals.py::load` - a real device fixture
+    instead of the hand-built `_signal`/`_device` helpers above, because the
+    test below really has to run through `Store.signals` (the new ranking
+    from task 2 sits in `model.store._signal_order`, not in anything that
+    could be reproduced with a single hand-built `StoredSignal`)."""
     raw = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
     return NodeSnapshot.from_raw(raw["node_id"], raw)
 
 
-# Wie `sample_project`, aber der bestehende Ausgangsbefehl traegt ein
-# beschaedigtes `CmdOn` (fehlendes "n": `/cmd/d1_1_o/1` statt
-# `/cmd/d1_1_onoff/1`) bei korrektem Titel "onoff" - genau der Fall, den der
-# Anwender an seiner echten Datei gemeldet hat ("zwei mal onoff drin"):
-# `key_from_cmd_on` liest daraus den falschen Schluessel `d1_1_o`, das
-# eigentlich gemeinte Objekt taucht also nirgends unter dem gewuenschten
-# Schluessel `d1_1_on + d1_1_off` auf.
+# Like `sample_project`, but the existing output command carries a
+# corrupted `CmdOn` (missing "n": `/cmd/d1_1_o/1` instead of
+# `/cmd/d1_1_onoff/1`) with the correct title "onoff" - exactly the case the
+# user reported on their real file ("onoff shows up twice"):
+# `key_from_cmd_on` reads the wrong key `d1_1_o` from it, so the
+# actually intended object never turns up under the desired
+# key `d1_1_on + d1_1_off`.
 CORRUPTED_ONOFF_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -193,15 +193,15 @@ def test_has_changes_is_false_when_everything_matches(sample_project):
 
 
 def _project_with_inputs(inputs: Sequence[LoxoneInput], device_label: str = "Taster") -> str:
-    """Baut - anders als `SAMPLE_PROJECT`/`CORRUPTED_ONOFF_PROJECT` oben,
-    die als fester Text nicht parametrisierbar sind - eine synthetische
-    Projektdatei mit GENAU einem virtuellen Eingangs-Container, der fuer
-    jeden uebergebenen `LoxoneInput` ein `VirtualUdpInCmd`-Objekt traegt, in
-    der Reihenfolge der uebergebenen Liste. Gleiches Schema wie
-    `SAMPLE_PROJECT` (ein `LoxLIVE`-Block mit `VirtualInCaption` ->
-    `VirtualUdpIn` -> `VirtualUdpInCmd`), nur ueber die Eingaenge geschleift
-    statt ausgeschrieben. Einziger Verwendungszweck bisher: der Test unten,
-    dem es gerade auf die Reihenfolge ankommt."""
+    """Builds - unlike `SAMPLE_PROJECT`/`CORRUPTED_ONOFF_PROJECT` above,
+    which are fixed text and cannot be parametrized - a synthetic
+    project file with EXACTLY one virtual input container that carries a
+    `VirtualUdpInCmd` object for each `LoxoneInput` passed in, in
+    the order of the given list. Same schema as
+    `SAMPLE_PROJECT` (a `LoxLIVE` block with `VirtualInCaption` ->
+    `VirtualUdpIn` -> `VirtualUdpInCmd`), just looped over the inputs
+    instead of spelled out. Only use so far: the test below,
+    for which the order is exactly what matters."""
     cmds = "".join(
         f'\t\t\t\t\t<C Type="VirtualUdpInCmd" IName="VCI{i}" U="1000-{i:04x}-0000-aaaaaaaaaaaaaaaa"'
         f' Title="{entry.title}" Nio="2" WF="16384" Check="{entry.key}:{entry.check_suffix}"'
@@ -232,17 +232,17 @@ def _project_with_inputs(inputs: Sequence[LoxoneInput], device_label: str = "Tas
 
 
 def test_a_project_imported_before_the_reordering_still_matches(tmp_path):
-    """Eine Projektdatei, die ein Anwender VOR der Rangliste (Aufgabe 2)
-    importiert hat, fuehrt ihre Eingaenge in einer anderen Reihenfolge.
-    `_plan_inputs` schlaegt jeden Eintrag ueber `index.input_cmds.get
-    (entry.key)` nach, nicht ueber seine Position - kein Eintrag darf
-    deshalb als neu gelten (`NEW_SIGNAL`/`NEW_DEVICE`) und keiner als
-    verwaist (`ORPHANED`).
+    """A project file that a user imported BEFORE the ranking (task 2)
+    carries its inputs in a different order.
+    `_plan_inputs` looks up every entry via `index.input_cmds.get
+    (entry.key)`, not by its position - no entry may therefore
+    count as new (`NEW_SIGNAL`/`NEW_DEVICE`) and none as
+    orphaned (`ORPHANED`).
 
-    Ohne diesen Test waere die Zusicherung aus Abschnitt 5 des Entwurfs
-    eine Behauptung. Sie ist der einzige Grund, warum die Reihenfolge an
-    der Quelle (`model.store._signal_order`) geaendert werden durfte statt
-    nur in der Anzeige."""
+    Without this test, the assertion in section 5 of the design would be
+    just a claim. It is the only reason the order was allowed to
+    change at the source (`model.store._signal_order`) instead of
+    only in the display."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snap = _load_snapshot("ikea_bilresa_button.json")
@@ -253,11 +253,11 @@ def test_a_project_imported_before_the_reordering_still_matches(tmp_path):
         store.close()
 
     inputs = to_inputs(signals, device_id, "Taster")
-    # EINE andere Reihenfolge als die heutige - welche, ist gleichgueltig:
-    # der Abgleich laeuft ueber den Schluessel, also darf ihn KEINE
-    # Umsortierung stoeren. Alphabetisch nach Schluessel ist eine beliebige
-    # Permutation und beweist damit mehr als die eine alte Ordnung (die vor
-    # der Rangliste galt).
+    # SOME order different from today's - which one is irrelevant:
+    # the matching runs on the key, so NO reordering may
+    # disturb it. Alphabetical by key is an arbitrary
+    # permutation and thereby proves more than the one old order (which
+    # applied before the ranking).
     shuffled = sorted(inputs, key=lambda i: i.key)
     project = _project_with_inputs(shuffled, device_label="Taster")
     index = build_index(project)
@@ -269,13 +269,13 @@ def test_a_project_imported_before_the_reordering_still_matches(tmp_path):
     assert PlanStatus.NEW_SIGNAL not in statuses.values()
     assert PlanStatus.NEW_DEVICE not in statuses.values()
     assert PlanStatus.ORPHANED not in statuses.values()
-    # Staerker als "nicht neu/verwaist": `_project_with_inputs` schreibt zu
-    # jedem Schluessel exakt die von `desired_input_cmd_attrs` erwarteten
-    # Attribute, jeder Eintrag muss also `UNCHANGED` sein. Wichtig, weil eine
-    # falsche (z. B. positionsbasierte statt schluesselbasierte) Zuordnung
-    # NICHT als `NEW_SIGNAL`/`ORPHANED` sichtbar wuerde, sondern als
-    # `UPDATED` mit abweichendem `Check` - am eigenen Leib geprueft: eine
-    # testweise positionale Zuordnung in `_plan_inputs` liess die drei
-    # Asserts oben unveraendert gruen, waehrend jeder Eintrag tatsaechlich
-    # auf `updated` stand. Nur diese zusaetzliche Zeile haette das gefangen.
+    # Stronger than "not new/orphaned": `_project_with_inputs` writes, for
+    # every key, exactly the attributes `desired_input_cmd_attrs` expects,
+    # so every entry must be `UNCHANGED`. This matters because a
+    # wrong (e.g. position-based instead of key-based) mapping
+    # would NOT be visible as `NEW_SIGNAL`/`ORPHANED`, but as
+    # `UPDATED` with a differing `Check` - verified firsthand: a
+    # trial positional mapping in `_plan_inputs` left the three
+    # asserts above green unchanged, while every entry actually
+    # came out as `updated`. Only this extra line would have caught that.
     assert set(statuses.values()) == {PlanStatus.UNCHANGED}

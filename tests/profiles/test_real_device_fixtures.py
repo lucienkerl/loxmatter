@@ -76,19 +76,19 @@ def test_every_button_event_is_named():
 
 
 def test_rgbw_lamp_accepts_move_to_hue_and_saturation():
-    """Der Beleg, auf dem die Freischaltung von (768, 6) steht (Spec 4.1).
+    """The evidence on which the enabling of (768, 6) rests (spec 4.1).
 
-    Schlaegt dieser Test fehl, ist der Entwurf falsch - dann erwartet die
-    Leuchte MoveToColor (7, xy) und es fehlt eine Farbraumumrechnung, die
-    es im Projekt nirgends gibt (Spec 10.2)."""
+    If this test fails, the design is wrong - then the lamp
+    expects MoveToColor (7, xy) and there is a missing color-space
+    conversion that does not exist anywhere in the project (spec 10.2)."""
     snap = load("ikea_kajplats_cws_lamp.json")
     accepted = snap.attributes["1/768/65529"]
     assert 6 in accepted
 
 
 def test_both_lamps_report_their_physical_colour_temperature_limits():
-    """Ohne diese beiden Attribute bliebe `range` leer und der
-    Kelvin-Regler unbegrenzt (Spec 6.4)."""
+    """Without these two attributes, `range` would stay empty and the
+    kelvin slider unbounded (spec 6.4)."""
     for name in ("ikea_kajplats_ws_lamp.json", "ikea_kajplats_cws_lamp.json"):
         snap = load(name)
         assert isinstance(snap.attributes["1/768/16395"], int)
@@ -96,22 +96,22 @@ def test_both_lamps_report_their_physical_colour_temperature_limits():
 
 
 def test_the_ws_lamp_has_no_hue_saturation_command():
-    """Belegt die Abstufung aus Spec 6.3: die WS-Leuchte bekommt keine
-    Tableiste, weil sie kein Hue/Sat-Kommando hat - nicht, weil der Code
-    ihr Modell kennt.
+    """Proves the distinction from spec 6.3: the WS lamp gets no
+    color tab because it has no hue/sat command - not because the code
+    knows its model.
 
-    Sie fuehrt sehr wohl MoveToColor (7) und damit den XY-Farbraum
-    (FeatureMap 24 = XY|CT). Der bleibt bewusst ungenutzt: eine
-    xy-Umrechnung gibt es im Projekt nicht, und fuer eine Weisston-Leuchte
-    waere sie ein Bedienelement fuer eine Faehigkeit, die niemand von ihr
-    erwartet."""
+    It does support MoveToColor (7) and thus the XY color space
+    (FeatureMap 24 = XY|CT). That stays deliberately unused: an
+    xy conversion does not exist in the project, and for a white-tone
+    lamp it would be a control for a capability that nobody expects
+    from it."""
     accepted = load("ikea_kajplats_ws_lamp.json").attributes["1/768/65529"]
     assert 6 not in accepted
     assert 10 in accepted
-    assert 7 in accepted  # XY vorhanden, aber nicht freigeschaltet
+    assert 7 in accepted  # XY present, but not enabled
 
 
 def test_the_cws_lamp_advertises_the_full_colour_feature_set():
-    """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - die Grundlage dafuer, dass
-    genau diese Leuchte beide Reiter bekommt und die WS-Leuchte nicht."""
+    """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - the basis for
+    exactly this lamp getting both tabs and the WS lamp not."""
     assert load("ikea_kajplats_cws_lamp.json").attributes["1/768/65532"] == 31

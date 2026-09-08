@@ -50,10 +50,10 @@ async def api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
 
 @pytest.fixture
 async def button_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
-    """Wie `api` oben, aber mit `ikea_bilresa_button.json` statt der
-    Steckdose: die Fernbedienung ist der Fall, den `profiles.endpoints`
-    ueberhaupt erst noetig macht - derselbe Geraetetyp (GenericSwitch) auf
-    zwei Endpunkten (Ep 1 und Ep 2)."""
+    """Like `api` above, but with `ikea_bilresa_button.json` instead of the
+    plug: the remote is the case that makes `profiles.endpoints`
+    necessary in the first place - the same device type (GenericSwitch) on
+    two endpoints (Ep 1 and Ep 2)."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -76,10 +76,10 @@ async def button_api(tmp_path, no_invoke, fake_runtime, fake_client, fake_otbr):
 
 
 async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_api):
-    """Die Oberflaeche gruppiert nach Endpunkt und erkennt den Batteriestand
-    an seinem Cluster. Beides aus `path` ("1/59/2") in JavaScript
-    herauszuparsen hiesse, die Zerlegung ein zweites Mal zu pflegen -
-    deshalb liefert die API die Zahlen fertig."""
+    """The UI groups by endpoint and recognizes the battery state
+    by its cluster. Parsing both out of `path` ("1/59/2") in JavaScript
+    would mean maintaining the split a second time -
+    so the API delivers the numbers ready-made."""
     client, _store, device_id = button_api
 
     response = await client.get(f"/api/devices/{device_id}/signals")
@@ -96,14 +96,14 @@ async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_a
 
 
 async def test_signals_fall_back_to_a_plain_endpoint_label_when_types_are_null(button_api):
-    """`device.device_types` ist `NULL`, solange `Store.backfill_device_types`
-    nicht lief - laut dessen Docstring der dokumentierte Normalfall fuer ein
-    Geraet, das beim Bruueckenstart offline war. `endpoints.endpoint_labels(None)`
-    liefert dafuer ein leeres Woerterbuch (siehe `tests/profiles/test_endpoints.py`);
-    dieser Test hier belegt die AUSGELIEFERTE Stelle, die mit dieser leeren
-    Zuordnung tatsaechlich umgehen muss - `_signal_out` in `api/devices.py`.
-    Ohne dessen `.get(..., i18n.t(...))`-Ruecktritt wirft die Route hier einen
-    KeyError statt eines Namens, den es immer gibt."""
+    """`device.device_types` is `NULL` as long as `Store.backfill_device_types`
+    has not run - per its docstring the documented normal case for a
+    device that was offline at bridge start. `endpoints.endpoint_labels(None)`
+    returns an empty dict for that (see `tests/profiles/test_endpoints.py`);
+    this test here proves the SHIPPED spot that actually has to handle this
+    empty mapping - `_signal_out` in `api/devices.py`.
+    Without its `.get(..., i18n.t(...))` fallback, the route here would raise a
+    KeyError instead of a name that always exists."""
     client, store, device_id = button_api
     store._db.execute("UPDATE device SET device_types = NULL WHERE id = ?", (device_id,))
     store._db.commit()
@@ -356,10 +356,10 @@ async def test_commissioning_a_device_registers_it(api):
 
 
 async def test_a_pairing_code_with_dashes_reaches_the_stack_without_them(api):
-    """Der Fall, um den es geht: so steht der Code auf dem Geraet, und so
-    tippt ihn jeder ab. Bis hierher schnitt die Trenner niemand weg - auch
-    `MatterClient.commission_with_code` nicht, das den String unveraendert
-    in den WebSocket-Befehl setzt."""
+    """The case this is about: that is how the code is printed on the device,
+    and that is how everyone types it in. Up to here, nobody strips the
+    dashes - not even `MatterClient.commission_with_code`, which puts the
+    string unchanged into the WebSocket command."""
     client, _, _, fake_client = api
     response = await client.post("/api/devices/commission", json={"code": "1234-567-8901"})
     assert response.status_code == 201
@@ -367,8 +367,8 @@ async def test_a_pairing_code_with_dashes_reaches_the_stack_without_them(api):
 
 
 async def test_a_qr_code_reaches_the_stack_untouched(api):
-    """Der MT:-Text ist Base38-kodiert - ein Bindestrich darin traegt
-    Bedeutung. Die Normalisierung muss ihn deshalb in Ruhe lassen."""
+    """The MT: text is Base38-encoded - a dash inside it carries
+    meaning. Normalization must therefore leave it alone."""
     client, _, _, fake_client = api
     response = await client.post(
         "/api/devices/commission", json={"code": " MT:Y.K90SO527JA0648G00 "}
@@ -378,8 +378,8 @@ async def test_a_qr_code_reaches_the_stack_untouched(api):
 
 
 async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
-    """Wer aus einer Anleitung kopiert, bringt oft Leerzeichen statt
-    Bindestriche mit."""
+    """Someone copying from a manual often brings along spaces instead
+    of dashes."""
     client, _, _, fake_client = api
     response = await client.post("/api/devices/commission", json={"code": "3497 011 2332"})
     assert response.status_code == 201
@@ -387,10 +387,10 @@ async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
 
 
 async def test_a_code_made_only_of_separators_normalizes_to_an_empty_string(api):
-    """Randfall der Normalisierung, nicht der Validierung (Entwurf Abschnitt
-    8): ein Code aus lauter Trennern hat keine Ziffer, die uebrig bleiben
-    koennte. Das Backend liefert dafuer "" an den Stack - ein leerer Code
-    bleibt ein leerer Code und scheitert dort, wo er heute scheitert."""
+    """Edge case of normalization, not of validation (design section
+    8): a code made only of separators has no digit that could be
+    left over. The backend therefore passes "" to the stack - an empty code
+    stays an empty code and fails where it fails today."""
     client, _, _, fake_client = api
     response = await client.post("/api/devices/commission", json={"code": "---"})
     assert response.status_code == 201
@@ -398,10 +398,10 @@ async def test_a_code_made_only_of_separators_normalizes_to_an_empty_string(api)
 
 
 async def test_an_overlong_code_is_passed_on_rather_than_rejected(api):
-    """Der Validator normalisiert, er validiert NICHT (Entwurf Abschnitt 8):
-    ueber die Bauformen der Setup-Codes entscheidet der Matter-Stack, nicht
-    diese Bruecke. Ein zu langer Code geht deshalb durch und scheitert dort,
-    wo er hingehoert."""
+    """The validator normalizes, it does NOT validate (design section 8):
+    the Matter stack decides on the shapes of setup codes, not
+    this bridge. An overlong code therefore passes through and fails
+    where it belongs."""
     client, _, _, fake_client = api
     response = await client.post(
         "/api/devices/commission", json={"code": "1234-567-8901-2345-678-9012"}

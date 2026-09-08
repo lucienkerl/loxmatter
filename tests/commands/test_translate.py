@@ -111,12 +111,12 @@ def test_unknown_cluster_command_raises_rather_than_guessing_in_german():
 
 
 def test_known_cluster_with_unknown_command_raises():
-    """Cluster 768 (ColorControl) ist bekannt, Kommando 7 (MoveToColor, xy) ist
-    es hier (noch) nicht - die Bedienflaeche setzt Farbton und Saettigung ueber
-    Kommando 6, weiteres waere unbelegte Flaeche (siehe Moduldocstring von
-    translate.py). Der Fehler darf nicht nur beim voellig unbekannten Cluster
-    greifen, sondern auch bei einem bekannten Cluster mit unbekanntem
-    Kommando."""
+    """Cluster 768 (ColorControl) is known, but command 7 (MoveToColor, xy)
+    is not (yet) here - the UI sets hue and saturation via
+    command 6, anything more would be unclaimed territory (see the module
+    docstring of translate.py). The error must not only apply to a
+    completely unknown cluster, but also to a known cluster with an
+    unknown command."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_call(cmd(768, 7, takes_value=True), "255,0,0")
 
@@ -178,9 +178,9 @@ def test_level_cluster_with_unknown_command_raises_in_german():
 
 
 def test_a_packed_loxone_colour_becomes_hue_and_saturation():
-    """Reines Rot: Farbton 0, volle Saettigung (254). Der Weg ist
-    Loxone-Zahl -> RGB -> Hue/Sat, damit WebUI und Loxone denselben
-    Uebersetzer benutzen (Entwurf 2026-09-07, Abschnitt 6.5)."""
+    """Pure red: hue 0, full saturation (254). The path is
+    Loxone number -> RGB -> hue/sat, so that WebUI and Loxone use the same
+    translator (design 2026-09-07, section 6.5)."""
     command = cmd(768, 6, takes_value=True)
     call = to_matter_call(command, "100")
     assert call.cluster_id == 768
@@ -197,8 +197,8 @@ def test_white_has_no_saturation():
 
 
 def test_an_impossible_colour_number_is_rejected():
-    """Ein Kanal ueber 100 % kommt als 400 zurueck, nicht als erfundene
-    Farbe am Geraet."""
+    """A channel over 100% comes back as 400, not as a made-up
+    color on the device."""
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError):
         to_matter_call(command, "999999999")
@@ -211,11 +211,11 @@ def test_colour_rejects_text():
 
 
 def test_channel_over_100_percent_names_channel_and_value():
-    """Review-Fix 2026-09-07: die Meldung darf beim Uebersetzen keine
-    Genauigkeit verlieren - eine allgemeine "ungueltiger Farbwert" waere
-    hier ausdruecklich NICHT ausreichend. 100100100 + 1 im gruenen Kanal
-    (Bit 1000) macht Gruen zu 101 %, waehrend Rot und Blau bei 100 % bleiben
-    - siehe `commands/color.py::loxone_rgb_to_rgb`."""
+    """Review-Fix 2026-09-07: the message must not lose precision when
+    translated - a generic "invalid color value" would explicitly NOT be
+    sufficient here. 100100100 + 1 in the green channel
+    (bit 1000) makes green 101%, while red and blue stay at 100%
+    - see `commands/color.py::loxone_rgb_to_rgb`."""
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="green") as excinfo:
         to_matter_call(command, "100101100")
@@ -223,11 +223,11 @@ def test_channel_over_100_percent_names_channel_and_value():
 
 
 def test_channel_over_100_percent_names_channel_and_value_in_german():
-    """Deutsches Gegenstueck zu
-    `test_channel_over_100_percent_names_channel_and_value` oben - vor
-    diesem Review-Fix war die Meldung immer Deutsch, unabhaengig von der
-    Spracheinstellung (`_payload_hue_saturation` reichte `str(exc)` aus
-    `color.py` unveraendert durch)."""
+    """German counterpart to
+    `test_channel_over_100_percent_names_channel_and_value` above - before
+    this review fix, the message was always German, regardless of the
+    language setting (`_payload_hue_saturation` passed `str(exc)` from
+    `color.py` through unchanged)."""
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="gruen") as excinfo:
@@ -242,8 +242,8 @@ def test_negative_colour_number_raises_a_clear_error():
 
 
 def test_negative_colour_number_raises_in_german():
-    """Deutsches Gegenstueck zu
-    `test_negative_colour_number_raises_a_clear_error` oben."""
+    """German counterpart to
+    `test_negative_colour_number_raises_a_clear_error` above."""
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="nicht negativ"):
@@ -257,8 +257,8 @@ def test_fractional_colour_number_raises_a_clear_error():
 
 
 def test_fractional_colour_number_raises_in_german():
-    """Deutsches Gegenstueck zu
-    `test_fractional_colour_number_raises_a_clear_error` oben."""
+    """German counterpart to
+    `test_fractional_colour_number_raises_a_clear_error` above."""
     i18n.set_language("de")
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="ganzzahlig"):

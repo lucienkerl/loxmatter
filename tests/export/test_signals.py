@@ -263,10 +263,10 @@ def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_
 
 
 def test_the_template_lists_the_button_press_before_the_battery(tmp_path):
-    """Die VIU-Vorlage erbt die Reihenfolge aus `Store.signals` (api/export.py
-    ruft `to_inputs(store.signals(...))`). Im Loxone-Baum steht seit der
-    Rangliste (Aufgabe 2) der Tastendruck oben und die Batterie unten - das
-    ist Absicht, kein Nebeneffekt, und gehoert deshalb festgehalten."""
+    """The VIU template inherits the order from `Store.signals` (api/export.py
+    calls `to_inputs(store.signals(...))`). In the Loxone tree, since the
+    ranking (task 2), the button press sits above the battery - this
+    is intentional, not a side effect, and is therefore pinned down here."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snap = load("ikea_bilresa_button.json")

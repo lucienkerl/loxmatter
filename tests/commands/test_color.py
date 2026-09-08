@@ -53,8 +53,8 @@ def test_primary_colours_map_to_known_hues(rgb, hue, saturation):
 @pytest.mark.parametrize(
     ("packed", "rgb"),
     [
-        # Das Beispiel aus der Loxone-Knowledge-Base, im Moduldocstring
-        # zitiert: 20040060 = 60 % Rot, 40 % Gruen, 20 % Blau.
+        # The example from the Loxone knowledge base, quoted in the module
+        # docstring: 20040060 = 60% red, 40% green, 20% blue.
         (20040060, (153, 102, 51)),
         (0, (0, 0, 0)),
         (100100100, (255, 255, 255)),
@@ -69,14 +69,14 @@ def test_the_packed_loxone_number_splits_into_three_channels(packed, rgb):
 
 @pytest.mark.parametrize("packed", [-1, 101, 101000, 101000000, 999999999])
 def test_a_channel_above_100_percent_is_rejected(packed):
-    """Lieber ein klarer Fehler als eine erfundene Farbe am echten Geraet -
-    dieselbe Haltung wie `kelvin_to_mireds` bei 0 Kelvin."""
+    """A clear error is better than a made-up color on the real device -
+    the same stance as `kelvin_to_mireds` at 0 Kelvin."""
     with pytest.raises(ValueError):
         loxone_rgb_to_rgb(packed)
 
 
 def test_a_fractional_number_is_rejected():
-    """Die Loxone-Codierung ist ganzzahlig; 20040060.5 waere ein Zeichen
-    dafuer, dass hier eine ganz andere Zahl ankommt."""
+    """The Loxone encoding is integer; 20040060.5 would be a sign
+    that a completely different number is arriving here."""
     with pytest.raises(ValueError):
         loxone_rgb_to_rgb(20040060.5)

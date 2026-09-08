@@ -162,21 +162,21 @@ def test_takes_value_change_is_picked_up_on_reregistration(store):
 
 
 def test_backfill_adds_a_command_that_was_locked_when_the_device_was_learned(tmp_path):
-    """Der Fall aus dem Betrieb (8. September 2026): eine RGB-Leuchte wurde
-    eingelernt, als `MoveToHueAndSaturation` (768/6) noch gesperrt war.
+    """The case from production (September 8, 2026): an RGB lamp was
+    commissioned while `MoveToHueAndSaturation` (768/6) was still locked.
 
-    `extract_commands` verwarf den Befehl damals, und in der Tabelle steht
-    seither keine Zeile dafuer. Ein Update des Codes traegt sie nicht nach -
-    `register_commands` lief bis dahin nur beim Einlernen und beim
-    CLI-Export -, und die Kachel zeigte deshalb kein Farb-Bedienelement,
-    obwohl die Leuchte es laengst konnte.
+    `extract_commands` discarded the command back then, and the table has
+    had no row for it ever since. A code update does not backfill it -
+    `register_commands` used to run only during commissioning and on
+    CLI export -, so the tile showed no color control, even though the
+    lamp had long been capable of it.
     """
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_kajplats_cws_lamp.json")
         device_id = store.register_device(snapshot)
         store.register_signals(device_id, snapshot)
-        # Der alte Stand: dieselbe Extraktion ohne das damals gesperrte Paar.
+        # The old state: the same extraction without the pair that was locked back then.
         alt = [c for c in extract_commands(snapshot) if (c.cluster_id, c.command_id) != (768, 6)]
         store.register_commands(device_id, alt, snapshot.node_id)
         assert not any(c.cluster_id == 768 and c.command_id == 6 for c in store.commands(device_id))
@@ -192,10 +192,10 @@ def test_backfill_adds_a_command_that_was_locked_when_the_device_was_learned(tmp
 
 
 def test_backfill_keeps_the_keys_of_commands_that_already_exist(tmp_path):
-    """Der Schluessel ist die Verdrahtung in Loxone und darf sich nie
-    bewegen. `backfill_commands` laeuft bei JEDEM Start - wuerde es
-    bestehende Schluessel neu vergeben, zerschoesse der erste Neustart nach
-    einem Update jede Loxone-Konfiguration."""
+    """The key is the wiring in Loxone and must never
+    move. `backfill_commands` runs on EVERY start - if it were to
+    reassign existing keys, the first restart after an
+    update would smash every Loxone configuration."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_kajplats_cws_lamp.json")
@@ -216,13 +216,13 @@ def test_backfill_keeps_the_keys_of_commands_that_already_exist(tmp_path):
 
 
 def test_backfill_reports_nothing_to_do_when_every_command_is_present(tmp_path):
-    """Zweiter Start nach dem Update: nichts mehr nachzutragen.
+    """Second start after the update: nothing left to backfill.
 
-    Der Rueckgabewert zaehlt Geraete, bei denen ein Kommando DAZUKAM - nicht
-    Schreibvorgaenge. `backfill_commands` frischt `slug` und `takes_value`
-    bewusst bei jedem Start auf (siehe dort), damit auch eine Umbenennung in
-    `clusters.yaml` ein Bestandsgeraet erreicht; gemeldet wird trotzdem nur
-    die Aenderung, die jemanden interessiert."""
+    The return value counts devices where a command was ADDED - not
+    write operations. `backfill_commands` deliberately refreshes `slug`
+    and `takes_value` on every start (see there), so that a rename in
+    `clusters.yaml` also reaches an existing device; still, only the
+    change that someone actually cares about is reported."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_kajplats_cws_lamp.json")
@@ -236,9 +236,9 @@ def test_backfill_reports_nothing_to_do_when_every_command_is_present(tmp_path):
 
 
 def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path):
-    """Ein Geraet, das beim Start gerade offline ist, fehlt in
-    `client.snapshots()`. Es darf dadurch nichts verlieren - dieselbe Regel
-    wie bei `backfill_device_types`."""
+    """A device that is offline right at start is missing from
+    `client.snapshots()`. It must not lose anything because of that - the
+    same rule as for `backfill_device_types`."""
     store = Store(tmp_path / "t.sqlite")
     try:
         lampe = load("ikea_kajplats_cws_lamp.json")
@@ -252,7 +252,7 @@ def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path)
         store.register_commands(stecker_id, extract_commands(stecker), stecker.node_id)
         stecker_vorher = len(store.commands(stecker_id))
 
-        # Nur das Abbild der Lampe liegt vor - der Stecker ist gerade offline.
+        # Only the lamp's snapshot is present - the plug is currently offline.
         assert store.backfill_commands([lampe]) == 1
         assert len(store.commands(stecker_id)) == stecker_vorher
     finally:

@@ -767,15 +767,15 @@ def test_backfill_does_not_touch_updated_at(tmp_path):
 
 
 def test_the_button_leads_with_the_button_press(tmp_path):
-    """Ersetzt `test_the_button_leads_with_a_switch_signal_not_the_battery`,
-    der nur `cluster_id == 59` prueft. Das war zu schwach: `positions`
-    (NumberOfPositions, Element 0) traegt denselben Cluster und sortierte
-    davor - die Kachel fuehrte damit mit der statischen Angabe, dass diese
-    Taste zwei Stellungen hat. Der Test sagte trotzdem ja.
+    """Replaces `test_the_button_leads_with_a_switch_signal_not_the_battery`,
+    which only checked `cluster_id == 59`. That was too weak: `positions`
+    (NumberOfPositions, element 0) carries the same cluster and used to sort
+    before it - the tile then led with the static fact that this
+    button has two positions. The test still said yes.
 
-    Diese Fassung nennt das Signal beim Namen. Ein Test, der nur den Cluster
-    prueft, laesst genau den Fehler durch, den zu verhindern der Zweck des
-    ganzen Umbaus war."""
+    This version names the signal explicitly. A test that only checks the
+    cluster lets through exactly the bug that the whole rework was meant
+    to prevent."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -789,8 +789,8 @@ def test_the_button_leads_with_the_button_press(tmp_path):
 
 
 def test_the_static_position_count_sorts_behind_every_button_event(tmp_path):
-    """`positions` aendert sich nie - es gehoert ans Ende der Tastengruppe,
-    nicht an ihren Anfang."""
+    """`positions` never changes - it belongs at the end of the button
+    group, not at its start."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -804,7 +804,7 @@ def test_the_static_position_count_sorts_behind_every_button_event(tmp_path):
 
 
 def test_the_plug_still_leads_with_onoff(tmp_path):
-    """Die beiden heute richtigen Geraete duerfen sich nicht verstellen."""
+    """The two devices that are correct today must not move."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -817,19 +817,19 @@ def test_the_plug_still_leads_with_onoff(tmp_path):
 
 
 def test_signals_of_the_same_cluster_keep_the_previous_order(tmp_path):
-    """Die Rangliste ordnet die CLUSTER zueinander. Innerhalb eines Clusters
-    bleibt Endpunkt/Element/Art die alte Ordnung - AUSSER ein Element traegt
-    seinerseits einen Rang (Aufgabe 12, bislang nur Cluster 59).
+    """The ranking orders the CLUSTERS relative to each other. Within a
+    cluster, endpoint/element/kind keeps the old order - UNLESS an element
+    itself carries a rank (task 12, so far only cluster 59).
 
-    Ersetzt die Fassung aus Aufgabe 2, die das pauschal fuer JEDEN Cluster
-    behauptet hat und dabei Cluster 59 als Beispiel nahm. Das war seit
-    Aufgabe 12 nicht mehr wahr - `press` (Element 1) sortiert dort bewusst
-    vor `positions` (Element 0), nicht nach Element-ID. Das ist keine
-    zufaellige Abweichung von der alten Ordnung, sondern der Zweck der
-    Aufgabe, deshalb wird hier nicht Cluster 59 gegen die alte Ordnung
-    geprueft, sondern Cluster 47 (PowerSource) - der einzige andere Cluster
-    mit mehreren Elementen in diesem Geraet, und einer, der bis heute
-    keinen Elementrang traegt."""
+    Replaces the version from task 2, which claimed this across the board
+    for EVERY cluster, using cluster 59 as its example. That has not
+    been true since task 12 - `press` (element 1) there deliberately sorts
+    before `positions` (element 0), not by element ID. That is not a
+    random deviation from the old order, but the whole point of the
+    task, so this test does not check cluster 59 against the old order,
+    but cluster 47 (PowerSource) - the only other cluster with multiple
+    elements on this device, and one that to this day carries no element
+    rank."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -838,43 +838,43 @@ def test_signals_of_the_same_cluster_keep_the_previous_order(tmp_path):
     signals = store.signals(device_id)
     cluster_47 = [s for s in signals if s.ref.cluster_id == 47]
 
-    # Sortiere dieselben Signale nach der alten Ordnung (ohne Rangliste)
+    # Sort the same signals by the old order (without the ranking)
     old_order_sorted = sorted(
         cluster_47, key=lambda s: (s.ref.endpoint, s.ref.element_id, s.ref.kind.value)
     )
 
-    # Die aktuelle Reihenfolge muss mit der alten Ordnung uebereinstimmen
+    # The current order must match the old order
     assert cluster_47 == old_order_sorted
 
 
 def test_the_order_is_total(tmp_path):
-    """Kein Signal teilt seinen Sortierschluessel mit einem anderen.
+    """No signal shares its sort key with another.
 
-    Das ist die Eigenschaft, auf die sich der Export verlaesst: `signals()`
-    speist `to_inputs` und damit die Reihenfolge der Eingaenge in der
-    VIU-Vorlage. Waeren zwei Schluessel gleich, entschiede die
-    Eingangsreihenfolge von `sorted` - und die kommt aus SQLite, ist also
-    nichts, worauf sich eine Datei stuetzen darf.
+    That is the property the export relies on: `signals()`
+    feeds `to_inputs` and thereby the order of the inputs in the
+    VIU template. If two keys were equal, the input order of
+    `sorted` would decide - and that comes from SQLite, so it is
+    nothing a file may rely on.
 
-    Ein frueherer Anlauf verglich zwei Aufrufe von `signals()` miteinander.
-    Das war keine Zusicherung: ohne Zufall im Pfad sind zwei Aufrufe auf
-    unveraenderten Daten IMMER gleich, auch bei kollidierenden Schluesseln.
+    An earlier attempt compared two calls to `signals()` against each
+    other. That was not an assertion: without randomness in the path, two
+    calls on unchanged data are ALWAYS equal, even with colliding keys.
 
-    Fund (Abschlusspruefung): `assert keys == sorted(keys)` kann bei KEINER
-    Implementierung scheitern - `keys` entsteht aus der bereits mit
-    `_signal_order` sortierten Ausgabe von `signals()`, ist also zwangs-
-    laeufig nicht-fallend, egal was `_signal_order` tut. Der Kommentar
-    darueber behauptete eine eigene Aussage ("die gelieferte Reihenfolge
-    muss dem sortierten Schluessel folgen"), die dieser Assert nicht
-    treffen kann, weil er nichts UNABHAENGIGES gegenprueft. Entfernt statt
-    ersetzt: die tatsaechliche Sortierordnung (Cluster-Rang vor Endpunkt
-    vor Element-Rang, `positions` hinter `press`, PowerSource hinter allem
-    Funktionalen) hat bereits eigene, unabhaengig gerechnete Tests -
-    `test_the_static_position_count_sorts_behind_every_button_event`,
-    `test_the_plug_still_leads_with_onoff` und
-    `test_signals_of_the_same_cluster_keep_the_previous_order`. Dieser Test
-    bleibt bei seiner einzigen tragfaehigen Aussage: der Sortierschluessel
-    ist TOTAL, kein Signal teilt ihn mit einem anderen."""
+    Finding (final review): `assert keys == sorted(keys)` cannot fail for
+    ANY implementation - `keys` results from the output of `signals()`,
+    which is already sorted by `_signal_order`, so it is necessarily
+    non-decreasing regardless of what `_signal_order` does. The comment
+    above it claimed a statement of its own ("the delivered order
+    must follow the sorted key") that this assert cannot actually
+    verify, because it checks nothing INDEPENDENT. Removed rather than
+    replaced: the actual sort order (cluster rank before endpoint
+    before element rank, `positions` behind `press`, PowerSource behind
+    everything functional) already has its own, independently computed
+    tests - `test_the_static_position_count_sorts_behind_every_button_event`,
+    `test_the_plug_still_leads_with_onoff` and
+    `test_signals_of_the_same_cluster_keep_the_previous_order`. This test
+    sticks to its one sound statement: the sort key
+    is TOTAL, no signal shares it with another."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -883,6 +883,6 @@ def test_the_order_is_total(tmp_path):
     signals = store.signals(device_id)
     keys = [_signal_order(s) for s in signals]
 
-    # Kein Sortierschluessel darf doppelt vorkommen (Totalitaet) - das ist
-    # die einzige Eigenschaft, die dieser Test unabhaengig pruefen kann.
+    # No sort key may occur twice (totality) - that is
+    # the only property this test can check independently.
     assert len(set(keys)) == len(keys)
