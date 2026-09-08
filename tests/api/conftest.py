@@ -171,6 +171,13 @@ class FakeRuntime:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
 
+    def last_heard_for(self, device_id: int) -> str | None:
+        """Erfuellt `RuntimeValues.last_heard_for` fuer diese Fabrik. Kein
+        Test unter `tests/api/` prueft bislang den Zeitstempel selbst -
+        `Runtime.last_heard_for` hat dafuer seine eigene Testsuite unter
+        `tests/loxone/test_runtime.py` -, also bleibt es bei `None`."""
+        return None
+
     async def set_online(self, device_id: int, online: bool) -> None:
         """Wie `Runtime.set_online`, ohne den UDP-Versand: haelt den Wert
         unter demselben Schluessel, den `_device_out` liest. Gebraucht,

@@ -49,6 +49,7 @@ from typing import Protocol
 from loxmatter.loxone.values import to_loxone_value
 from loxmatter.matter.models import NodeSnapshot, SignalKind
 from loxmatter.model.store import Store, StoredSignal
+from loxmatter.timestamps import now_iso
 
 PULSE_MILLISECONDS = 200
 HEARTBEAT_KEY = "bridge_alive"
@@ -89,6 +90,21 @@ class Runtime:
         # in CI abweist. Ohne diese Annotation haenge der Heartbeat still am
         # Zustand des Startmoments und verstummte nie.
         self._link_ok = link_ok
+        # Wann von einem Geraet zuletzt ueberhaupt etwas eintraf - je
+        # Geraete-ID ein ISO-Zeitstempel. NUR IM SPEICHER, nicht in der
+        # Datenbank: dieselbe Begruendung, die im Docstring von
+        # `StoredDevice` schon fuer `online` steht - Erreichbarkeit ist
+        # Laufzeitzustand. Ein Zeitstempel, der einen Neustart ueberlebt,
+        # behauptet nach dem Start etwas, das niemand geprueft hat; `None`
+        # heisst dagegen ehrlich "seit dem Start dieser Bruecke nichts
+        # gehoert".
+        #
+        # Der Anlass (8. September 2026): ein Fensterkontakt, der nur bei
+        # Aenderung sendet, sah in der Oberflaeche exakt so aus wie ein
+        # Taster, von dem seit fuenf Tagen nichts kam - beide `online: true`.
+        # `online` bleibt, was es ist; dies ist die zweite Zahl, die die
+        # Frage erst beantwortbar macht.
+        self._last_heard: dict[int, str] = {}
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
@@ -230,6 +246,7 @@ class Runtime:
         return signal.key
 
     async def on_attribute(self, device_id: int, path: str, raw: object) -> None:
+        self._mark_heard(device_id)
         key = self._cache_attribute(device_id, path, raw)
         if key is None:
             return
@@ -329,6 +346,7 @@ class Runtime:
         noch gar keinen virtuellen Eingang - der entsteht erst, wenn die
         Vorlage exportiert und importiert wurde.
         """
+        self._mark_heard(device_id)
         self._store.register_signals(device_id, snapshot)
         self.invalidate_index(device_id)
         self._cache_online(device_id, snapshot.available)
@@ -336,6 +354,7 @@ class Runtime:
             self._cache_attribute(device_id, path, raw)
 
     async def on_event(self, device_id: int, path: str) -> None:
+        self._mark_heard(device_id)
         signal = self._signal_for(device_id, path, SignalKind.EVENT)
         if signal is None:
             return
@@ -384,6 +403,25 @@ class Runtime:
         key = self._online_key(device_id)
         await self._sender.send(key, online)
         self._notify_observers(key, online)
+
+    def _mark_heard(self, device_id: int) -> None:
+        """Haelt fest, dass von diesem Geraet gerade etwas eintraf.
+
+        Steht in `on_attribute`/`on_event`/`on_node_snapshot` jeweils GANZ
+        OBEN, vor jedem fruehen Abbruch: ob ein Pfad einem exportierten
+        Signal zugeordnet werden kann, ist eine Frage der Konfiguration -
+        angekommen ist die Meldung so oder so, und nur das sagt dieser
+        Zeitstempel aus.
+        """
+        self._last_heard[device_id] = now_iso()
+
+    def last_heard_for(self, device_id: int) -> str | None:
+        """Wann von diesem Geraet zuletzt etwas eintraf, oder `None`.
+
+        `None` heisst "seit dem Start dieser Bruecke nichts gehoert" - siehe
+        `_last_heard` im Konstruktor, warum das nicht persistiert wird.
+        """
+        return self._last_heard.get(device_id)
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         """Alle zuletzt bekannten Werte eines Geraets, indiziert nach

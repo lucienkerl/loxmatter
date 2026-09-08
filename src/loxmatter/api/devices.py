@@ -142,15 +142,17 @@ _UNEXPORTABLE_REASONS: dict[Exportability, str] = {
 
 class RuntimeValues(Protocol):
     """Was diese Route von `runtime` braucht - `loxone.runtime.Runtime`
-    erfuellt das bereits unveraendert (siehe dort `last_values_for` und
-    `set_online`), ein Test kann es mit einem einfachen Double erfuellen,
-    ohne eine echte `Runtime` samt Sender aufzubauen.
+    erfuellt das bereits unveraendert (siehe dort `last_values_for`,
+    `last_heard_for` und `set_online`), ein Test kann es mit einem einfachen
+    Double erfuellen, ohne eine echte `Runtime` samt Sender aufzubauen.
 
     `set_online` kam dazu, als das Einlernen die Erreichbarkeit eines frisch
     eingelernten Geraets selbst saeen musste (siehe `commission_device`) -
     lesen allein reicht dafuer nicht."""
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]: ...
+
+    def last_heard_for(self, device_id: int) -> str | None: ...
 
     async def set_online(self, device_id: int, online: bool) -> None: ...
 
@@ -221,6 +223,7 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
     signals = store.signals(device.id)
     values = runtime.last_values_for(device.id)
     online = bool(values.get(f"d{device.id}_online", False))
+    last_heard = runtime.last_heard_for(device.id)
     exportable_count = sum(1 for s in signals if is_exportable(s.exportability))
     # next_export_count (Nachbesserung Fix 7, Phase 6): dieselbe Zusammensetzung
     # wie `ExportDeviceOut.inputs` in `api/export.py` (`to_inputs`, gefiltert
@@ -235,6 +238,7 @@ def _device_out(device: StoredDevice, store: Store, runtime: RuntimeValues) -> D
         node_id=device.node_id,
         label=device.label,
         online=online,
+        last_heard=last_heard,
         signal_count=len(signals),
         exportable_count=exportable_count,
         next_export_count=next_export_count,

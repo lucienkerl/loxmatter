@@ -122,7 +122,7 @@ def _load_snapshot(name: str) -> NodeSnapshot:
 class _SeededRuntime:
     """Erfuellt `loxone.server._RuntimeDependency` - alles, was `build_app`
     selbst und die Router, denen es `runtime` weiterreicht, brauchen:
-    `api.devices.RuntimeValues.last_values_for` mit ein paar erfundenen,
+    `api.devices.RuntimeValues.last_values_for`/`last_heard_for` mit ein paar erfundenen,
     aber plausiblen Werten (genug, damit die Geraetekarten nicht nur "-"
     zeigen), `api.live.ObservableRuntime.add_observer`/`remove_observer`
     als No-Ops (`/api/live` ruft sie bei jedem Verbindungsaufbau bzw.
@@ -139,6 +139,12 @@ class _SeededRuntime:
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
         prefix = f"d{device_id}_"
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
+
+    def last_heard_for(self, device_id: int) -> str | None:
+        """Dieser Dienst hoert nie etwas Echtes (kein Matter-Client) - `None`
+        ist hier also nicht bloss der Erfuellungs-Minimalwert, sondern die
+        ehrliche Aussage."""
+        return None
 
     async def set_online(self, device_id: int, online: bool) -> None:
         """Wie `Runtime.set_online`, nur ohne UDP-Versand: haelt den Wert

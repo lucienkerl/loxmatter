@@ -89,6 +89,12 @@ class DeviceOut(BaseModel):
     node_id: int
     label: str
     online: bool
+    # Wann von diesem Geraet zuletzt ueberhaupt etwas eintraf; `None`, wenn
+    # seit dem Start der Bruecke nichts kam. `online` allein beantwortet die
+    # Frage nicht, die am 8. September 2026 offenblieb: ein Geraet, das nur
+    # bei Aenderung sendet und gerade still ist, sieht dort genauso aus wie
+    # eines, von dem seit Tagen nichts kommt.
+    last_heard: str | None
     signal_count: int
     exportable_count: int
     next_export_count: int

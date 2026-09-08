@@ -761,3 +761,38 @@ async def test_the_heartbeat_falls_silent_when_the_link_drops(tmp_path):
     await runtime.stop()
 
     assert after == before
+
+
+async def test_last_heard_is_none_until_something_arrives(tmp_path):
+    store = Store(tmp_path / "s.sqlite")
+    runtime = Runtime(store, FakeSender())
+    assert runtime.last_heard_for(1) is None
+
+
+async def test_last_heard_is_set_even_for_an_unmapped_path(tmp_path):
+    """Auch ein Pfad ohne Signal zaehlt als "gehoert".
+
+    `on_attribute` bricht bei einem unbekannten Pfad frueh ab - aber
+    ANGEKOMMEN ist die Meldung trotzdem, und genau das soll der Zeitstempel
+    sagen. Wuerde er erst nach der Zuordnung gesetzt, meldete ein Geraet,
+    dessen Signale niemand exportiert hat, auf ewig "nie gehoert".
+    """
+    store = Store(tmp_path / "s.sqlite")
+    runtime = Runtime(store, FakeSender())
+
+    await runtime.on_attribute(1, "1/6/0", True)
+
+    stamp = runtime.last_heard_for(1)
+    assert stamp is not None
+    assert stamp.startswith("20")
+
+
+async def test_last_heard_is_set_by_an_event(tmp_path):
+    store = Store(tmp_path / "s.sqlite")
+    runtime = Runtime(store, FakeSender())
+
+    await runtime.on_event(2, "1/59/1")
+
+    assert runtime.last_heard_for(2) is not None
+    # Ein anderes Geraet bleibt unberuehrt - der Zeitstempel ist je Geraet.
+    assert runtime.last_heard_for(3) is None
