@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,18 +14,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die Sprachaufloesung der CLI (`cli._resolve_cli_language`) und
-das `set-language`-Kommando.
+"""Tests for the CLI's language resolution (`cli._resolve_cli_language`) and
+the `set-language` command.
 
-`_resolve_cli_language` wird als reine Funktion getestet, nicht ueber einen
-Modul-Reload von `cli.py` - das Modul wird pro Testsession genau einmal
-importiert (siehe `tests/test_cli.py`s `from loxmatter.cli import app`),
-seine Modul-Top-Level-Aufloesung laesst sich deshalb nicht pro Test mit
-unterschiedlichen Umgebungsvariablen wiederholen. Der EINE Test, der die
-tatsaechliche `--help`-Ausgabe in einer anderen Sprache als der beim
-Session-Start aufgeloesten belegt, startet dafuer bewusst einen echten
-Unterprozess (siehe `test_help_text_is_german_when_loxmatter_lang_is_set`,
-markiert `slow` wie `tests/api/test_live_smoke.py`)."""
+`_resolve_cli_language` is tested as a pure function, not through a
+module reload of `cli.py` - the module is imported exactly once per
+test session (see `tests/test_cli.py`'s `from loxmatter.cli import app`),
+so its module-top-level resolution cannot be repeated per test with
+different environment variables. The ONE test that proves the
+actual `--help` output in a language other than the one resolved at
+session start deliberately starts a real subprocess for that (see
+`test_help_text_is_german_when_loxmatter_lang_is_set`, marked `slow`
+like `tests/api/test_live_smoke.py`)."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ def test_falls_back_to_default_when_the_database_file_is_not_a_database(tmp_path
 
 def test_set_language_command_persists_the_choice(tmp_path):
     store_path = tmp_path / "t.sqlite"
-    Store(store_path).close()  # set-language legt absichtlich keine neue Datenbank an
+    Store(store_path).close()  # set-language deliberately does not create a new database
     result = CliRunner().invoke(app, ["set-language", "de", "--store-path", str(store_path)])
     assert result.exit_code == 0, result.stdout
 
@@ -98,9 +98,9 @@ def test_set_language_command_persists_the_choice(tmp_path):
 
 
 def test_set_language_command_confirms_in_the_newly_set_language(tmp_path):
-    # set_language_cmd aktualisiert auch die prozessweite Sprache, bevor es
-    # die Bestaetigung ausgibt - sonst wuerde die Bestaetigung selbst noch
-    # in der Sprache erscheinen, die gerade verlassen wird.
+    # set_language_cmd also updates the process-wide language before
+    # printing the confirmation - otherwise the confirmation itself would
+    # still appear in the language that is being left.
     store_path = tmp_path / "t.sqlite"
     Store(store_path).close()
     result = CliRunner().invoke(app, ["set-language", "de", "--store-path", str(store_path)])
@@ -123,10 +123,10 @@ def test_set_language_command_rejects_an_unsupported_language(tmp_path):
 
 @pytest.mark.slow
 def test_help_text_is_german_when_loxmatter_lang_is_set(tmp_path):
-    """Der einzige Beleg dafuer, dass `--help`-Text tatsaechlich die
-    Modul-Import-Zeit-Aufloesung durchlaeuft - `_resolve_cli_language`
-    (oben) prueft nur die Aufloesungsfunktion fuer sich, nicht ihre
-    Verdrahtung in `cli.py`s Modul-Top-Level."""
+    """The only proof that `--help` text actually goes through the
+    module-import-time resolution - `_resolve_cli_language` (above)
+    only tests the resolution function on its own, not its
+    wiring into `cli.py`'s module top level."""
     env = dict(os.environ)
     env["LOXMATTER_LANG"] = "de"
     env["LOXMATTER_STORE"] = str(tmp_path / "unused.sqlite")
@@ -140,11 +140,11 @@ def test_help_text_is_german_when_loxmatter_lang_is_set(tmp_path):
     assert result.returncode == 0, result.stderr
     assert "Statt matter-server ein gespeichertes Abbild" in result.stdout
 
-    # Zusaetzlich die App-Level-Beschreibung (`--help` ohne Unterkommando):
-    # sie haengt an der dateiordnungsabhaengigen Verdrahtung aus einer
-    # frueheren Nachbesserung, die pro-Kommando-Hilfetexte wie oben nicht
-    # abdecken - ein Revert dieser Verdrahtung wuerde vom Test oben allein
-    # nicht bemerkt.
+    # Additionally the app-level description (`--help` without a
+    # subcommand): it depends on the file-ordering-dependent wiring from
+    # an earlier fix, which per-command help texts like the ones above do
+    # not cover - a revert of that wiring would not be noticed by the
+    # test above alone.
     app_result = subprocess.run(
         [sys.executable, "-c", "from loxmatter.cli import app; app()", "--help"],
         env=env,

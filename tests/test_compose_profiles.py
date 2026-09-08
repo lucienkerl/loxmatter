@@ -1,10 +1,10 @@
-"""Die Compose-Datei muss ohne Thread-Funkmodul brauchbar bleiben.
+"""The compose file must stay usable without a Thread radio module.
 
-`otbr` reicht mit `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}` ein Geraet
-durch. Fehlt es, scheitert `docker compose up` ("error gathering device
-information") - auch bei jemandem, der ausschliesslich WLAN-Matter-Geraete
-anbinden will. Diese Tests halten fest, dass `otbr` deshalb hinter einem
-Profil steht und niemand ausserhalb dieses Profils davon abhaengt.
+`otbr` passes through a device with `devices: - ${RADIO_DEVICE}:${RADIO_DEVICE}`.
+If it's missing, `docker compose up` fails ("error gathering device
+information") - even for someone who only wants to connect WiFi Matter
+devices. These tests pin down that `otbr` therefore sits behind a
+profile and nobody outside that profile depends on it.
 """
 
 from pathlib import Path
@@ -18,23 +18,23 @@ def _stack() -> dict:
     return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
 
 
-def test_otbr_steht_hinter_dem_thread_profil() -> None:
+def test_otbr_is_behind_the_thread_profile() -> None:
     assert _stack()["services"]["otbr"]["profiles"] == ["thread"]
 
 
-def test_kein_dienst_ausserhalb_des_profils_haengt_an_otbr() -> None:
-    # Compose bricht ab, wenn ein aktiver Dienst von einem profil-
-    # deaktivierten abhaengt. matter-server darf otbr also nicht mehr
-    # in depends_on fuehren.
+def test_no_service_outside_the_profile_depends_on_otbr() -> None:
+    # Compose aborts if an active service depends on one that's disabled by a
+    # profile. matter-server must therefore no longer list otbr in
+    # depends_on.
     for name, service in _stack()["services"].items():
         if service.get("profiles") == ["thread"]:
             continue
         assert "otbr" not in service.get("depends_on", []), name
 
 
-def test_nur_otbr_braucht_das_funkmodul() -> None:
-    # Alles, was RADIO_DEVICE beruehrt, muss im Profil liegen - sonst
-    # scheitert der WiFi-Betrieb doch wieder an einem fehlenden Geraet.
+def test_only_otbr_needs_the_radio_module() -> None:
+    # Anything that touches RADIO_DEVICE must sit in the profile - otherwise
+    # WiFi-only operation fails again on a missing device.
     for name, service in _stack()["services"].items():
         if service.get("profiles") == ["thread"]:
             continue
