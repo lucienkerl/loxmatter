@@ -11,6 +11,11 @@ uv run pytest
 
 The test suite runs without hardware and without network access.
 
+## Commit messages
+
+English, Conventional Commits — see [CLAUDE.md](../CLAUDE.md) for the full
+language rules. Subjects before September 2026 are German and stay that way.
+
 ## Checks that CI runs
 
 ```bash
@@ -18,6 +23,7 @@ uv run ruff check .
 uv run ruff format --check .
 uv run mypy
 uv run pytest -v
+uv run python scripts/check_language.py
 ```
 
 ## Releasing a version

@@ -271,8 +271,10 @@ HTML, CSS and Alpine.js — no build step, nothing fetched from a CDN at runtime
 ## Contributing
 
 Issues and pull requests are welcome. Please run the checks from
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) before opening one; the commit messages in
-this repository are written in German.
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) before opening one. Everything here is
+written in English — code, comments, documents and commit messages; the conventions
+are in [CLAUDE.md](CLAUDE.md). Commit subjects before September 2026 are German and
+stay that way: they are a record of what happened.
 
 ## License
 
