@@ -88,8 +88,11 @@ async def test_ohne_sitzung_kein_zugriff(unauthenticated_api):
 
 async def test_die_oberflaeche_kennt_alle_texte_der_versionskarte():
     """Ein fehlender Schluessel faellt sonst erst im Browser auf - als
-    leeres Feld, nicht als Fehler. Die Liste hier ist die Verbindung
-    zwischen index.html und strings.yaml, die sonst niemand prueft."""
+    leeres Feld, nicht als Fehler. Dieser Test bestaetigt die Existenz
+    aller fuenf Schluessel. Das beweist aber nicht, dass beide Sprachen
+    vorhanden sind: raw_template() greift auf Englisch zurueck, daher
+    wuerde ein fehlender de-Eintrag hier unentdeckt durchgehen. Die
+    Vollstaendigkeit des web.*-Namensraums prueft tests/test_i18n.py."""
     from loxmatter import i18n
 
     for key in (
