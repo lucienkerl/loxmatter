@@ -16,7 +16,7 @@
 - Projektsprache in Kommentaren und Docstrings ist Deutsch. **Neue** Kommentarblöcke ohne Umlaute (`waere`, `Geraet`, `fuehrt`); bestehende Umlaute in unberührten Zeilen bleiben.
 - Zeilenlänge 100 (`[tool.ruff] line-length = 100`).
 - Die vier Prüfungen: `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run pytest`. Die volle Suite braucht rund **vier Minuten** — das sieht aus wie ein Hänger, ist keiner, nicht abbrechen.
-- Ausgangsstand der Suite auf diesem Branch: **1392 passed, 2 skipped**. Jede Aufgabe nennt, um wie viel die Zahl steigen muss.
+- Ausgangsstand der Suite auf diesem Branch: **1419 passed, 2 skipped**. Jede Aufgabe nennt, um wie viel die Zahl steigen muss.
 - Zeitstempel kommen ausschließlich aus `loxmatter.timestamps.now_iso()` — die Codebasis hat dafür genau einen Helfer, und der bleibt es.
 - `mypy` läuft mit `strict = true` über `src` und `scripts`. Das ist in Aufgabe 3 ein tragender Teil der Absicherung, nicht nur Formsache.
 
@@ -237,7 +237,7 @@ Erwartung: **1 failed** mit `assert True is False`. Danach zurücknehmen und Sch
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
 
-Erwartung: alle vier grün, **1395 passed, 2 skipped** (drei neue Tests).
+Erwartung: alle vier grün, **1422 passed, 2 skipped** (drei neue Tests).
 
 ```bash
 git add src/loxmatter/matter/client.py tests/matter/test_client.py
@@ -662,7 +662,7 @@ Falls `contextlib` in `cli.py` noch nicht importiert ist, `import contextlib` zu
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
 
-Erwartung: alle vier grün, **1400 passed, 2 skipped** (fünf neue Tests).
+Erwartung: alle vier grün, **1427 passed, 2 skipped** (fünf neue Tests).
 
 Schlägt ein bestehender CLI-Test fehl, ist das ein Befund über die Umstellung in Schritt 5 und **kein** Anlass, den Test anzupassen — melden.
 
@@ -910,7 +910,7 @@ Bleibt mypy hier still, ist die Absicherung aus der Abweichungsnotiz oben wirkun
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
 
-Erwartung: alle vier grün, **1403 passed, 2 skipped** (drei neue Tests).
+Erwartung: alle vier grün, **1430 passed, 2 skipped** (drei neue Tests).
 
 ```bash
 git add src/loxmatter/loxone/runtime.py src/loxmatter/cli.py tests/loxone/test_runtime.py
@@ -1114,7 +1114,7 @@ und im `return DeviceOut(...)` hinter `online=online`:
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
 
-Erwartung: alle vier grün, **1406 passed, 2 skipped** (drei neue Tests).
+Erwartung: alle vier grün, **1433 passed, 2 skipped** (drei neue Tests).
 
 Schlägt ein bestehender API-Test fehl, weil `DeviceOut` ein Pflichtfeld mehr hat, ist das erwartet: die betroffenen Testaufbauten bekommen `last_heard=None` ergänzt. Das ist die einzige erlaubte Anpassung bestehender Tests in dieser Aufgabe — jeder andere Fehlschlag gehört gemeldet.
 
