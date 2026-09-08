@@ -11,6 +11,15 @@
 # (ghcr.io/home-assistant-libs/python-matter-server) sie dokumentiert
 # (libavahi fuer mDNS-Discovery, D-Bus fuer BLE) - eine vollstaendige Liste
 # ist erst am echten Build-Log zu belegen.
+#
+# NACHTRAG (8. September 2026): DIESE BEGRUENDUNG IST ENTFALLEN. loxmatter
+# haengt seither nicht mehr an `python-matter-server`, sondern an
+# `matter-python-client`, und das ist ein reines Python-Wheel
+# (`py3-none-any`, Abhaengigkeiten aiohttp/dacite/orjson) ohne native
+# Chip-Komponente. Ein natives Binaerpaket, dessen Systemabhaengigkeiten hier
+# nachzuziehen waeren, gibt es nicht mehr, und das genannte Referenz-Image ist
+# archiviert. Was das fuer libavahi-client3 heisst, steht unten bei der
+# apt-Zeile.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -19,6 +28,20 @@ WORKDIR /app
 # Kommissionierung genutzt (wie im Referenz-Image oben). loxmatter selbst
 # braucht kein BLE (das macht ausschliesslich matter-server), deshalb fehlt
 # hier bewusst alles rund um Bluetooth/D-Bus.
+#
+# NACHTRAG (8. September 2026): DER GRUND OBEN IST WEG, DAS PAKET BLEIBT.
+# `matter-python-client` ist ein reines Python-Wheel und bringt kein natives
+# Chip-SDK mehr mit, das gegen libavahi gebaut waere - die Zeile begruendet
+# sich also nicht mehr aus der Abhaengigkeit. Sie steht trotzdem weiter hier:
+# ob der Dienst ohne das Paket startet, ist an dieser Maschine nicht zu
+# klaeren (kein Docker-Build, siehe oben), und ein Umzug, der nebenbei eine
+# Systemabhaengigkeit zieht, waere genau die Vermischung, die dieser Branch
+# sonst vermeidet. ZU PRUEFEN am ersten echten Build: die Zeile entfernen,
+# Image bauen, `loxmatter run` starten - laeuft es, kann sie weg.
+#
+# Zu erwarten ist genau das, denn die verbliebene Begruendung ist duenn:
+# loxmatter selbst loest keine mDNS-Namen auf, es spricht matter-server ueber
+# eine feste Websocket-Adresse an. Erwartung ist aber keine Messung.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libavahi-client3 \
     && rm -rf /var/lib/apt/lists/*

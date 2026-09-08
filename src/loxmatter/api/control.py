@@ -39,6 +39,8 @@ Pakete, nicht geraten:
   `must_use_timed_write` - keine Eigenschaft, die Lese- von Schreibzugriff
   unterscheidet. `must_use_timed_write` ist etwas anderes: ob ein *erlaubter*
   Schreibzugriff ein Timed-Write-Envelope braucht, nicht ob er erlaubt ist.
+  (Gilt unveraendert: `ClusterAttributeDescriptor` traegt dieselben vier
+  Felder auch in der Nachfolge-Distribution, siehe Nachtrag unten.)
 - `matter_server.client.client.MatterClient.write_attribute(node_id,
   attribute_path, value)` fragt vorher nichts ab - der Aufruf geht
   ungeprueft an den Controller; eine Ablehnung kaeme, wenn ueberhaupt, als
@@ -76,6 +78,32 @@ Form, die diese Bruecke nicht zuverlaessig von einem Verbindungsfehler
 unterscheiden koennte. Genau das darf bei einem Diagnosewerkzeug nicht
 passieren: ein Klick, der nichts bewirkt, muss als klare Absage ankommen,
 nicht als stiller Fehlschlag irgendwo zwischen Bruecke und Geraet.
+
+**Nachtrag (8. September 2026): die Tabelle gibt es nicht mehr.** Alles
+oben bleibt stehen - es ist gemessen worden und war zu seiner Zeit richtig -,
+aber wer das zitierte `grep` heute nachvollzieht, bekommt nichts. Seit dem
+Umstieg von `python-matter-server` auf `matter-python-client` ist
+`home_assistant_chip_clusters` nicht mehr installiert, und die neue
+Distribution liefert `chip/clusters/CHIPClusters.py` **ueberhaupt nicht**:
+ihr `chip`-Baum besteht aus `ChipUtility.py`, `clusters/ClusterObjects.py`,
+`clusters/Objects.py`, `clusters/Types.py`, `clusters/enum.py` und `tlv/`.
+Eine Volltextsuche nach `writable` ueber diesen Baum liefert null Treffer.
+
+Die Begruendung wechselt damit ein zweites Mal, die Schlussfolgerung nicht:
+
+- Zuerst hiess es, die Schreibbarkeit stehe nirgends. Das war falsch.
+- Dann: sie steht in einer Tabelle, die diese Installation nicht laden kann
+  und die python-matter-server selbst nicht benutzt.
+- Jetzt: diese Tabelle existiert in der installierten Distribution gar
+  nicht. Der Grund ist der schlichteste der drei und zugleich der
+  belastbarste - eine Datei, die es nicht gibt, kann sich auch nicht
+  aendern.
+
+`ClusterAttributeDescriptor` traegt weiterhin nur `cluster_id`,
+`attribute_id`, `attribute_type`, `must_use_timed_write` (dazu
+`standard_attribute`, das ebenfalls kein Zugriffsrecht ist) - der erste
+Aufzaehlungspunkt oben gilt also unveraendert und aus demselben Grund wie
+damals. `_WRITABLE_ATTRIBUTES` unten bleibt aus alldem eine Erlaubnisliste.
 
 Also gilt hier dieselbe Asymmetrie wie bei Kommandos (Spec 6.7): eine
 **Erlaubnisliste** statt der grosszuegigen Durchreiche, die fuer den

@@ -66,6 +66,17 @@ den Quelltext geprueft sind). Ein Fehlschlag dort waere kein neues Problem -
 er landete wie jeder andere `MatterUnavailableError` als 502 -, aber die
 Zusicherung "bleibt moeglich" ist bis dahin eine Annahme, keine belegte
 Tatsache.
+
+**Nachtrag (8. September 2026): die Annahme steht weiter offen, jetzt gegen
+einen anderen Server.** Installiert ist seither `matter-python-client` statt
+`python-matter-server`; `MatterClient.remove_node(node_id)` traegt dort
+dieselbe Signatur und schickt weiterhin nur `APICommand.REMOVE_NODE` mit
+`node_id`. Was der SERVER auf ein zweites `remove_node` gegen einen bereits
+entfernten Node antwortet, ist damit aber nicht geklaert, sondern hoechstens
+noch weniger geklaert als vorher: es ist jetzt eine andere Implementierung
+(matter.js statt CHIP-SDK), und das Verhalten in diesem Randfall haengt an
+ihr, nicht an der Client-Bibliothek. Zu belegen bleibt es am laufenden
+Dienst.
 """
 
 from __future__ import annotations

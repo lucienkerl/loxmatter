@@ -264,7 +264,7 @@ can claim the bridge. Set it within minutes of the first start, not days.
 ## 🧰 Tech stack
 
 Python 3.12+ with FastAPI and uvicorn for the HTTP service, Typer for the CLI,
-[`python-matter-server`](https://github.com/home-assistant-libs/python-matter-server)
+[`matter-python-client`](https://github.com/matter-js/matterjs-server/tree/main/python_client)
 for the Matter side, SQLite for stored devices and settings. The web interface is plain
 HTML, CSS and Alpine.js — no build step, nothing fetched from a CDN at runtime.
 

@@ -14,7 +14,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Verbindung zu python-matter-server.
+"""Verbindung zum matter-server ueber dessen Websocket-API.
+
+**Nachtrag (8. September 2026): der Upstream heisst inzwischen anders.**
+Dieser Docstring belegt seine Aussagen durchgehend gegen die damals
+installierte `python-matter-server==8.1.2`. Diese Belege bleiben unveraendert
+stehen: sie waren gegen den Quelltext geprueft und sind fuer jene Fassung
+weiterhin richtig. Installiert ist seither aber `matter-python-client` aus
+dem Nachfolgeprojekt `matterjs-server` - dasselbe Paket `matter_server*` und
+dasselbe `chip*` unter denselben Modulpfaden, weshalb hier kein Import und
+keine Anweisung wechseln musste. Jede unten belegte Signatur wurde gegen den
+neuen Quelltext nachgeprueft; die einzige Abweichung steht bei
+`set_thread_dataset()`. Wo unten "python-matter-server" steht, ist also die
+Fassung gemeint, GEGEN DIE GEMESSEN WURDE, nicht die heute installierte. Der
+vollstaendige Vergleich steht im Entwurf
+docs/superpowers/specs/2026-09-08-matterjs-server-umstieg-design.md,
+Abschnitt 2 (dort auch, welche Aufrufe die erste Fassung uebersehen hatte).
 
 Bewusst dünn gehalten: holt Rohdaten und macht NodeSnapshots daraus. Die
 Zerlegung in Signale passiert in discovery.py und ist dort ohne Netz getestet.
@@ -485,6 +500,24 @@ class BridgeMatterClient:
         `matter/otbr.py` fuer den ganzen Vorgang und den Ernstfall dazu):
         jeder Neustart des Dienstes loescht sie wieder, und diese Bruecke
         muss sie danach erneut uebergeben.
+
+        **Nachtrag (8. September 2026): hier aendert sich die Nutzlast.**
+        Das ist der einzige Aufruf dieses Moduls, bei dem das gilt - und
+        ausgerechnet ihn hatte die erste Fassung des Umstiegs-Entwurfs
+        uebersehen (dort inzwischen berichtigt, Abschnitt 2.2). Die Signatur
+        heisst in `matter-python-client` `set_thread_operational_dataset(
+        dataset, entry_id="default")`, und der Client schickt `dataset`
+        **und** `id=entry_id` ueber den Draht; die alte 8.1.2 schickte nur
+        `dataset`. Der Aufruf hier gibt `entry_id` nicht an, bekommt also
+        `"default"` - und die Fassung mit `entry_id != "default"` ist die
+        einzige, die eine hoehere Schema-Version verlangt.
+
+        Dass das auch gegen einen alten 8.1.2-Server traegt, ist geprueft,
+        nicht gehofft: dessen Argument-Aufloesung laeuft mit `strict=False`
+        (`matter_server/common/helpers/api.py:51,57`) und verwirft
+        unbekannte Schluessel stillschweigend, statt den Aufruf abzulehnen.
+        Das ist die Stelle, an der die Zweiteilung dieses Umstiegs - erst die
+        Bibliothek, dann das Server-Image - haette scheitern koennen.
         """
         await self._require_upstream().set_thread_operational_dataset(dataset)
         self._thread_dataset_set = True

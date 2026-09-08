@@ -9,8 +9,12 @@
 #     Variante liest RADIO_URL als Umgebungsvariable und akzeptiert
 #     --backbone-interface als Kommandozeilenargument, genau wie unten
 #     konfiguriert.
-#   - ghcr.io/home-assistant-libs/python-matter-server:stable -> mit
-#     --bluetooth-adapter ${BLUETOOTH_ADAPTER} fuer BLE-Commissioning ueber hci0
+#   - ghcr.io/matter-js/matterjs-server:stable (8. September 2026, UNGEPRUEFT -
+#     siehe README, Abschnitt "Umzug auf matterjs-server (UNGEPRUEFT)"; der
+#     README schreibt den Zusatz mit Umlaut, hier steht er umlautfrei wie jeder
+#     Kommentar in dieser Datei) -> --bluetooth-adapter
+#     ${BLUETOOTH_ADAPTER} gilt weiterhin fuer BLE-Commissioning ueber hci0,
+#     zusaetzlich NOBLE_BINDINGS=dbus, weil der Container unprivilegiert laeuft
 #     (siehe README).
 #   - loxmatter (Phase 4, Review-Fix I5, 2026-09-02) -> aus diesem Repository
 #     selbst gebaut (siehe ../../Dockerfile, dort auch der Hinweis, dass das
@@ -110,25 +114,86 @@ services:
       - otbr-state:/var/lib/thread
 
   matter-server:
-    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    # matterjs-server statt python-matter-server (8. September 2026,
+    # UNGEPRUEFT - siehe README, Abschnitt "Umzug auf matterjs-server
+    # (UNGEPRUEFT)").
+    # python-matter-server ist mit 8.1.2 archiviert; der Nachfolger spricht
+    # dieselbe WebSocket-API und benutzt dasselbe Datenverzeichnis, migriert
+    # es aber beim ERSTEN Start in sein eigenes Format. Diese Migration ist
+    # einseitig: geht sie schief, ist die Fabric weg und jedes eingelernte
+    # Geraet muss zurueckgesetzt und neu gepaart werden. Vorher
+    # `GET /api/diagnostics/fabric-backup` ziehen und das Archiv vom Pi
+    # herunterholen - genau dafuer gibt es die Route.
+    image: ghcr.io/matter-js/matterjs-server:stable
     container_name: matter-server
     network_mode: host
     restart: unless-stopped
+    # UNVERAENDERT UEBERNOMMEN vom alten Image, und das ist eine offene Frage,
+    # keine Entscheidung (8. September 2026). Dieser Eintrag stand hier fuer den
+    # rohen HCI-Zugriff von python-matter-server: das AppArmor-Profil `docker-
+    # default` verbietet die dafuer noetigen Bluetooth-Rohsockets. Der neue
+    # Container geht BLE ueber den D-Bus-Weg an (NOBLE_BINDINGS=dbus, siehe
+    # unten) und braucht ihn moeglicherweise nicht mehr.
+    #
+    # Er bleibt trotzdem stehen, weil das an dieser Maschine nicht zu klaeren
+    # ist: ihn versuchsweise zu entfernen hiesse, das BLE-Commissioning zu
+    # riskieren, das ohnehin schon als UNGEPRUEFT gilt - und ein Fehlschlag dort
+    # sieht in den Logs aus wie kein Fehlschlag (siehe README, "BLE aktivieren").
+    # Zu pruefen ist deshalb am Pi, und zwar erst, nachdem BLE ueber D-Bus
+    # nachweislich einmal funktioniert hat: Zeile entfernen, Container neu
+    # anlegen, ein Geraet einlernen. Geht das, kann sie weg.
+    #
+    # Der Widerspruch zum Block weiter unten, der `user: 0:0` ausdruecklich aus
+    # Isolationsgruenden ablehnt, ist gesehen: eine aufgehobene AppArmor-
+    # Beschraenkung ist ebenfalls weniger Isolierung. Der Unterschied ist nur,
+    # dass fuer `user: 0:0` eine belegte Alternative vorliegt (der D-Bus-Weg)
+    # und hier bislang keine Messung.
     security_opt:
       - apparmor=unconfined
     volumes:
+      # Dasselbe Verzeichnis wie zuvor. WICHTIG: der neue Container laeuft
+      # unprivilegiert als UID 1000, das alte Image lief als root. Vor dem
+      # ersten Start deshalb einmalig auf dem Pi:
+      #     sudo chown -R 1000:1000 deploy/testhost/data
+      #     sudo chmod -R u+rwX,go+rX deploy/testhost/data
+      # Ohne das startet der Container nicht - er kommt in sein eigenes
+      # Datenverzeichnis nicht hinein.
       - ./data:/data
       - /run/dbus:/run/dbus:ro
-    # command ueberschreibt das Image-Default-CMD vollstaendig - die ersten
-    # vier Argumente sind aus dem Default uebernommen (storage-path,
-    # paa-root-cert-dir), --bluetooth-adapter ist neu und aktiviert
-    # BLE-Commissioning ueber den in BLUETOOTH_ADAPTER benannten Adapter
-    # (siehe README, "BLE aktivieren").
+    environment:
+      # BLE ueber den BlueZ-Daemon des Hosts statt ueber einen rohen
+      # HCI-Socket. Der Standard waere `hci`, und der verlangt Rechte, die
+      # der unprivilegierte Container-Nutzer nicht hat - BLE-Commissioning
+      # bliebe damit still aus. Der dafuer noetige /run/dbus-Mount steht
+      # oben schon.
+      #
+      # Die von der Doku genannte Alternative - Container als root fahren
+      # (`user: 0:0`) - wird hier BEWUSST NICHT gewaehlt: sie hebt die
+      # Container-Isolierung auf, und dieser Dienst laeuft mit
+      # `network_mode: host` ohnehin schon offen im Netz.
+      NOBLE_BINDINGS: dbus
+    # ACHTUNG: `command` ueberschreibt das Image-Default-CMD VOLLSTAENDIG -
+    # Compose ergaenzt es nicht, es ersetzt es. Fuer das alte Image war dessen
+    # CMD bekannt (`--storage-path /data --paa-root-cert-dir /data/credentials`,
+    # per `docker inspect --format '{{.Config.Cmd}}'` geprueft, siehe README,
+    # "BLE aktivieren"), und die Liste hier war bewusst dessen Nachbau plus
+    # `--bluetooth-adapter`.
+    #
+    # Fuer dieses Image ist das Default-CMD UNGEPRUEFT. Traegt es etwas, worauf
+    # loxmatter baut - etwa einen abweichenden `--port`, waehrend loxmatter fest
+    # `ws://127.0.0.1:5580/ws` anspricht -, faellt es hier still weg. Deshalb vor
+    # dem ersten `up` nachsehen und mit dieser Liste vergleichen (README, "Was
+    # danach zu pruefen ist", Punkt 3):
+    #     docker inspect --format '{{.Config.Cmd}}' \
+    #         ghcr.io/matter-js/matterjs-server:stable
     command:
       - --storage-path
       - /data
-      - --paa-root-cert-dir
-      - /data/credentials
+      # `--paa-root-cert-dir` ist ERSATZLOS ENTFALLEN (nicht vergessen):
+      # die CLI-Doku des Nachfolgers fuehrt die Option unter "Deprecated
+      # Options (were used in Python Matter Server) - not supported", weil
+      # matter.js die PAA-Wurzelzertifikate ueber seinen eigenen
+      # DCL-Client bezieht.
       - --bluetooth-adapter
       - "${BLUETOOTH_ADAPTER:-0}"
     # Kein `depends_on: otbr` mehr (2026-09-05): Compose bricht ab, wenn ein
