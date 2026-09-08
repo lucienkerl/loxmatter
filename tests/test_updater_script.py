@@ -34,6 +34,7 @@ newline `case` guard in update-once.sh for the full story."""
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -148,7 +149,7 @@ def updater(tmp_path):
         if real:
             (sysdir / tool).symlink_to(real)
 
-    def run(**extra_env):
+    def run(_timeout=None, **extra_env):
         env = {
             "PATH": f"{bindir}:{sysdir}",
             "STUB_LOG": str(log),
@@ -159,7 +160,9 @@ def updater(tmp_path):
             "LOXMATTER_HEALTH_TIMEOUT": "3",
             **extra_env,
         }
-        result = subprocess.run([str(SCRIPT)], capture_output=True, text=True, env=env, check=False)
+        result = subprocess.run(
+            [str(SCRIPT)], capture_output=True, text=True, env=env, check=False, timeout=_timeout
+        )
         calls = log.read_text(encoding="utf-8") if log.exists() else ""
         state_file = update_dir / "state.json"
         # `.is_file()`, not `.exists()`: state.json can legitimately be a
@@ -369,6 +372,17 @@ def test_the_same_job_is_not_run_twice(updater):
     assert zweite["to"] == "0.3.0"
 
 
+# ---------------------------------------------------------- Stufe 2 round --
+# The tests below close the second security-review pass on this file (see
+# .superpowers/sdd/task-2-stufe2-fix-report.md for the full write-up). One
+# Critical (an oversized target/id silently emptying state.json through the
+# same "discarded command-substitution exit status" bug the first round
+# fixed only at the heartbeat call site), one Important on the heartbeat
+# recovery guard accepting a non-state, one Important on id going through
+# unvalidated, and four fixes from the FIRST round that had no test at all
+# (each is called out at its own test below).
+
+
 def test_an_oversized_target_is_rejected_without_corrupting_state(updater):
     # Critical. A target long enough blows jq's own execve inside
     # set_state - E2BIG - because `write_state "$(jq -n ... --arg to
@@ -425,13 +439,13 @@ def test_an_id_with_an_embedded_newline_does_not_forge_a_log_line(updater):
 
 def test_a_corrupt_state_file_recovers_to_a_fresh_idle_state(updater):
     # Kills the mutant that reverts set_state's heartbeat-refresh check
-    # (the FIRST round's own "Important 2" fix) back to
-    # `write_state "$(jq ... || true)"` - i.e. feeding write_state
-    # whatever jq's stdout happened to be, success or failure, without
-    # ever checking. There was no permanent test for this at all; the
-    # first round's report shows only a manual before/after. Also doubles
-    # as required coverage for "a corrupt-state test" from this round's
-    # brief.
+    # (this round's Important 1, and the FIRST round's own "Important 2"
+    # fix at what is now :199-241) back to `write_state "$(jq ... ||
+    # true)"` - i.e. feeding write_state whatever jq's stdout happened to
+    # be, success or failure, without ever checking. There was no
+    # permanent test for this at all; the first round's report shows only
+    # a manual before/after. Also doubles as required coverage for "a
+    # corrupt-state test" from this round's brief.
     (updater.update_dir / "state.json").write_text("garbage{", encoding="utf-8")
     result, calls, state = updater()
     assert result.returncode == 0
@@ -474,3 +488,57 @@ def test_a_state_directory_makes_write_state_fail_loudly(updater):
     assert result.returncode != 0
     assert state_dir.is_dir()
     assert list(state_dir.iterdir()) == []  # nothing got moved into it
+
+
+def test_reject_records_state_before_logging(updater):
+    # Kills the mutant that reorders reject() back to log-then-state (the
+    # FIRST round's "Important 3", part 1, at what is now :188-192) - no
+    # permanent test existed for the ordering itself. $LOG is a FIFO with
+    # no reader: opening it for the log() append blocks forever, at the OS
+    # level, regardless of log()'s own `|| true` (that only matters once a
+    # command RETURNS - it cannot un-block an open() call that hasn't
+    # returned yet). So this distinguishes the two orders cleanly: with
+    # state-before-log (fixed), the rejection is already on disk by the
+    # time the script wedges on the log write; with log-before-state
+    # (mutant), the wedge happens before set_state ever runs, and
+    # state.json is left exactly as the heartbeat wrote it moments earlier
+    # ("idle") - never "rejected".
+    _auftrag(updater, channel="invalid-channel")
+    os.mkfifo(updater.update_dir / "log.txt")
+    with pytest.raises(subprocess.TimeoutExpired):
+        updater(_timeout=2)
+    state = json.loads((updater.update_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "rejected"
+
+
+def test_an_unwritable_log_does_not_prevent_a_rejection_from_being_recorded(updater):
+    # Kills the mutant that removes log()'s `|| true` (the FIRST round's
+    # "Important 3", part 2, at what is now :94-98) - no permanent test
+    # existed for it either. Distinct failure mode from the FIFO test
+    # above: here $LOG fails immediately (permission denied) rather than
+    # blocking, so it is `|| true` specifically - not ordering - that has
+    # to keep the failure from propagating through `set -eu` and killing
+    # the script after set_state already ran.
+    _auftrag(updater, channel="invalid-channel")
+    log_path = updater.update_dir / "log.txt"
+    log_path.write_text("", encoding="utf-8")
+    log_path.chmod(0o444)
+    try:
+        result, _, state = updater()
+    finally:
+        log_path.chmod(0o644)  # let tmp_path's own cleanup remove it
+    assert result.returncode == 0
+    assert state["phase"] == "rejected"
+
+
+def test_a_leading_v_is_stripped_from_the_target(updater):
+    # Kills the mutant that removes the `v`-prefix normalisation (the
+    # FIRST round's Minor 7, at what is now :395-398) - no test exercised
+    # the `v`-prefix acceptance path at all before this. Without the
+    # normalisation, Task 3 would write LOXMATTER_IMAGE_TAG=v0.3.0 into
+    # .env instead of the bare version the rest of the system expects.
+    _auftrag(updater, target="v0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "queued"
+    assert state["to"] == "0.3.0"
+    assert "docker" in calls
