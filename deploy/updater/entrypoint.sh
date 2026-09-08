@@ -76,6 +76,26 @@ while [ "$terminated" -eq 0 ]; do
   timeout "$WORKER_TIMEOUT_SECONDS" "$WORKER" &
   child_pid=$!
 
+  # The two lines above are not one atomic step. `child_pid` was reset to
+  # "" at the end of the previous pass (below), and stays "" for however
+  # long it takes the shell to get from starting the background job to
+  # storing its PID. A SIGTERM landing in exactly that gap runs
+  # forward_signal with child_pid still "" - its `[ -n "$child_pid" ]`
+  # guard is false, so the trap only records terminated=1 and forwards
+  # nothing. The while loop below then sees terminated=1 and exits
+  # promptly, so `docker stop` is satisfied and PID 1 is gone - but the
+  # worker it just forked is still running, never signaled, parented to
+  # nothing. That is the orphaned-mid-update outcome this whole trap
+  # exists to prevent. This line re-checks the flag now that child_pid is
+  # finally known, and forwards late if a signal already arrived in that
+  # gap: a signal arriving any earlier only sets terminated (child_pid
+  # was ""), a signal arriving any later runs the trap with child_pid
+  # already set (so the trap forwards it directly). Either way the
+  # worker gets its TERM. It looks redundant next to a trap that sends
+  # the same signal - it is not; it is the only thing that closes the
+  # gap between backgrounding the worker and knowing its PID.
+  [ "$terminated" -eq 1 ] && kill -TERM "$child_pid" 2>/dev/null
+
   # `wait` returns as soon as a trapped signal arrives (POSIX 2.9.3.1),
   # which can be before the child has actually exited - the trap above
   # only just sent it TERM. Keep waiting on the same PID until it is

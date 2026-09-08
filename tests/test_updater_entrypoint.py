@@ -48,6 +48,18 @@ honestly without a container runtime:
 - Anything about update-once.sh itself (its health-check waits, its
   rollback path, its actual runtime under real load) - it does not exist
   yet; this task only exercises entrypoint.sh's loop around a stand-in.
+- The actual `timeout ... & ; child_pid=$!` race (two statements, a
+  signal landing in the gap between them finds child_pid still empty).
+  It cannot be reproduced by racing real process scheduling from outside
+  the shell: whatever we spawn to send the signal back has to be forked
+  and exec'd first, while the parent's next statement is a plain
+  variable assignment with no syscall in it - the assignment has
+  effectively always already happened by the time an external signal
+  could arrive. Reliably hitting that gap requires slowing the
+  production script down, which is a debugging trick for a scratch
+  copy, not something to ship. See the test below for what is
+  deterministically testable instead: the fix's actual mechanism, given
+  the precondition the race produces.
 """
 
 from __future__ import annotations
@@ -250,4 +262,70 @@ def test_sigterm_is_forwarded_to_the_running_worker(tmp_path: Path) -> None:
     )
     assert received.exists(), (
         "worker's own TERM trap never fired - the signal was not forwarded to it"
+    )
+
+
+def _read_late_forward_line() -> str:
+    """Pull the late-forward-signal line straight out of entrypoint.sh
+    instead of retyping it, so this test fails loudly - marker not found
+    - rather than quietly testing a stale copy if that line ever moves
+    or changes."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    marker = '[ "$terminated" -eq 1 ] && kill -TERM "$child_pid" 2>/dev/null'
+    assert marker in text, "late-forward-signal line not found in entrypoint.sh"
+    return marker
+
+
+def test_late_forward_line_signals_an_already_known_pid(tmp_path: Path) -> None:
+    """Covers what the real `timeout ... & ; child_pid=$!` race is NOT
+    reproducible for in a test (see the module docstring): the fix's
+    actual mechanism. The race leaves the entrypoint with terminated=1
+    already set at the moment child_pid finally becomes known. This
+    drives that exact precondition directly - terminated=1, child_pid
+    pointing at a real running process - and runs the literal
+    late-forward line extracted from entrypoint.sh against it, to
+    confirm it does what the fix claims: deliver TERM to that PID.
+
+    This does not prove the two-statement gap is ever hit in practice
+    (it cannot honestly be timed into existence from outside the
+    shell) - it proves that if it is hit, the recovery line actually
+    recovers, rather than being dead code beside a trap that looks like
+    it already does the same job."""
+    line = _read_late_forward_line()
+    received = tmp_path / "received-term"
+    ready = tmp_path / "trap-ready"
+    target_script = (
+        f"trap 'printf x >> \"{received}\"; exit 0' TERM\n"
+        f'printf x >> "{ready}"\n'
+        "sleep 30 &\n"
+        "wait $!\n"
+    )
+    target = subprocess.Popen(
+        ["sh", "-c", target_script],
+        start_new_session=True,
+    )
+    try:
+        # Wait for confirmation that the trap is actually installed
+        # before signaling - a TERM arriving before the `trap` builtin
+        # has run would just kill the target outright (default
+        # disposition) and prove nothing about the line under test.
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert ready.exists(), "target process never installed its TERM trap"
+
+        subprocess.run(
+            ["sh", "-c", f"terminated=1; child_pid={target.pid}; {line}"],
+            check=True,
+            timeout=5,
+        )
+        target.wait(timeout=5)
+    finally:
+        if target.poll() is None:
+            target.kill()
+            target.wait(timeout=5)
+
+    assert received.exists(), (
+        "late-forward line did not deliver TERM to a PID already known "
+        "when terminated was already set"
     )
