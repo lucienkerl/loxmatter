@@ -188,9 +188,32 @@ def test_without_a_job_it_only_writes_a_heartbeat(updater):
 
 
 def test_the_heartbeat_is_written_on_every_pass(updater):
-    _, _, erst = updater()
-    _, _, dann = updater()
-    assert dann["updater_seen_at"] >= erst["updater_seen_at"]
+    # `>=` on two live-clock reads cannot fail: `now()` is second-grained,
+    # so two passes taken close together routinely land in the same
+    # second, and a heartbeat that silently stopped updating (the jq
+    # refresh at the top of the script failing open, say) would satisfy
+    # `>=` just as well as a working one. Seed a timestamp that is
+    # unambiguously in the past instead, and require the pass to move
+    # strictly beyond it - a frozen heartbeat then fails on equality.
+    alt = "2000-01-01T00:00:00Z"
+    state_file = updater.update_dir / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "id": None,
+                "phase": "idle",
+                "from": None,
+                "to": None,
+                "error": None,
+                "rolled_back": False,
+                "healthy": True,
+                "updater_seen_at": alt,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _, _, state = updater()
+    assert state["updater_seen_at"] > alt
 
 
 def test_a_target_containing_a_semicolon_is_rejected(updater):
@@ -244,6 +267,46 @@ def test_a_dev_target_with_an_embedded_newline_is_rejected(updater):
     assert "docker" not in calls
 
 
+# The `dev` pattern check (`^[0-9a-f]{7,40}$`) is the only validation a
+# dev-channel request meets in this half of the script - nothing else
+# would notice if it were wrong, or missing, without these three.
+def test_a_valid_dev_target_is_accepted(updater):
+    # No forward-only check exists yet for `dev` (see the comment above
+    # "Rule 3" in update-once.sh - Task 3 adds ancestry checking once refs
+    # are fetched), so a well-formed commit target is accepted without
+    # ever needing a `docker inspect` call.
+    _auftrag(updater, channel="dev", target="abcdef1")
+    _, calls, state = updater()
+    assert state["phase"] != "rejected"
+    assert "docker" not in calls
+
+
+def test_a_malformed_dev_target_is_rejected(updater):
+    _auftrag(updater, channel="dev", target="not-a-commit-sha")
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert "docker" not in calls
+
+
+def test_an_unparseable_request_is_rejected(updater):
+    # Invalid JSON used to be indistinguishable here from "no request at
+    # all" - `jq -r '.id // empty'` fails, the failure is swallowed by
+    # `|| true`, and an empty JOB_ID takes the same silent `exit 0` as
+    # nothing-to-do. The bridge, polling this file for a phase change,
+    # would then wait forever for an answer that was never coming.
+    (updater.update_dir / "request.json").write_text("not valid json{", encoding="utf-8")
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert "docker" not in calls
+
+
+def test_a_request_with_an_empty_id_is_rejected(updater):
+    _auftrag(updater, id="")
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert "docker" not in calls
+
+
 def test_an_unknown_channel_is_rejected(updater):
     _auftrag(updater, channel="beliebig")
     _, calls, state = updater()
@@ -282,7 +345,20 @@ def test_a_valid_target_is_accepted(updater):
 
 
 def test_the_same_job_is_not_run_twice(updater):
+    # There is no `compose pull` yet to check against (Task 3) - but the
+    # dedup guard's own effect is observable without it. Re-decide the
+    # SAME job id with a DIFFERENT (still well-formed, still forward)
+    # target between the two passes. If the guard fires, id "auftrag-1"
+    # is already recorded as decided and the second request must never be
+    # looked at - `to` in state.json stays whatever the first pass wrote.
+    # If the guard were missing (e.g. replaced with a no-op), the second
+    # pass would re-validate the new request and overwrite `to` with it.
     _auftrag(updater, target="0.3.0")
-    updater()
-    _, zweite_calls, _ = updater()
-    assert "compose pull" not in zweite_calls
+    _, _, erste = updater()
+    assert erste["phase"] == "queued"
+    assert erste["to"] == "0.3.0"
+
+    _auftrag(updater, target="0.4.0")  # same id "auftrag-1", new target
+    _, _, zweite = updater()
+    assert zweite["id"] == "auftrag-1"
+    assert zweite["to"] == "0.3.0"

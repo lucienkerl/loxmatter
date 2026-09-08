@@ -67,9 +67,17 @@ write_state() {
   mv "$STATE.tmp" "$STATE"
 }
 
+# Best-effort. The log is an audit trail, not part of the state machine -
+# a full disk or an unwritable $LOG must not be able to kill the script
+# under `set -eu` and thereby stop `set_state` from ever running. (It did:
+# an unwritable $LOG previously took down reject() before it recorded the
+# rejection - see reject() below.) So log() swallows its own failure
+# instead of letting a diagnostic side effect become fatal to the one
+# thing the bridge actually depends on: an honest state.json.
 log() {
-  printf '%s %s\n' "$(now)" "$*" >> "$LOG"
-  tail -n 2000 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+  { printf '%s %s\n' "$(now)" "$*" >> "$LOG"
+    tail -n 2000 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+  } 2>/dev/null || true
 }
 
 # What is RUNNING, not what would be pulled on the next start. Those are
@@ -86,17 +94,22 @@ log() {
 # names exactly the version that is currently at work - regardless of
 # which alias it was once pulled under.
 running_version() {
-  version="$(docker inspect "$SERVICE" \
+  # POSIX sh has no `local` - this is a global. Named after the function,
+  # not "version", so Tasks 3/4 adding their own bookkeeping to this file
+  # cannot silently collide with it.
+  running_version_raw="$(docker inspect "$SERVICE" \
     --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
     | sed -n -E 's/^LOXMATTER_VERSION=(.+)$/\1/p' | head -1)"
-  printf '%s' "${version:-unbekannt}"
+  printf '%s' "${running_version_raw:-unbekannt}"
 }
 
 # The tag from the .env - needed only for the rollback now, i.e. to know
 # what to write back if the update fails.
 current_tag() {
-  tag="$(sed -n -E 's/^LOXMATTER_IMAGE_TAG=(.*)$/\1/p' "$ENV_FILE" 2>/dev/null | tail -1)"
-  printf '%s' "${tag:-stable}"
+  # Same reasoning as running_version_raw above: a global, deliberately
+  # named after its function rather than "tag".
+  current_tag_raw="$(sed -n -E 's/^LOXMATTER_IMAGE_TAG=(.*)$/\1/p' "$ENV_FILE" 2>/dev/null | tail -1)"
+  printf '%s' "${current_tag_raw:-stable}"
 }
 
 set_state() {
@@ -115,20 +128,66 @@ set_state() {
       updater_seen_at: $seen}')"
 }
 
+# Defined here, ahead of the heartbeat and request-reading sections below,
+# so it is available to the "request is not readable at all" branch there
+# too - rejecting is needed the moment a request is found to be bad, not
+# only once validation proper starts.
+#
+# State first, THEN log - not the other way round. reject() used to log
+# before writing the state; under `set -eu` a failing `log` (LOG unwritable,
+# disk full) killed the script right there, before `set_state rejected` ran.
+# The state stayed whatever it was before (e.g. "idle"), so the bridge saw
+# no rejection, and request.json - never consumed - sat there to be picked
+# up and rejected the exact same broken way on every following pass,
+# forever. Recording the rejection is the part that must not be skippable;
+# the log line is secondary (and, per log()'s own comment above, can no
+# longer abort the script anyway - this reordering is belt and suspenders).
+reject() {
+  set_state rejected "$1"
+  log "Request ${JOB_ID:-?} rejected: $1"
+  exit 0
+}
+
 # ------------------------------------------------------------ heartbeat --
 # First, before anything else: the bridge hides the update button when
 # this timestamp goes stale (see update.py). A sidecar that only gives a
 # heartbeat after finishing its work would look absent during every bit
 # of that work.
 if [ -f "$STATE" ]; then
-  write_state "$(jq --arg seen "$(now)" '.updater_seen_at = $seen' "$STATE")"
+  # `jq` on an existing state.json can fail (corrupt file, truncated by an
+  # unrelated crash, hand edited). In `write_state "$(jq ...)"` above, the
+  # command substitution's exit status was being discarded - it is an
+  # argument to write_state, not the command `set -e` sees - so a failing
+  # jq used to write write_state an EMPTY string, which write_state then
+  # dutifully persisted as the new state.json. That is unrecoverable by
+  # itself: updater_seen_at is gone, so the bridge concludes the sidecar is
+  # absent and hides the update button for good, and every later pass
+  # reads the same broken file and does it again. Check the substitution's
+  # own exit status explicitly (assigning it directly, not nesting it) and
+  # fall back to a fresh idle state instead of persisting jq's failure.
+  if REFRESHED="$(jq --arg seen "$(now)" '.updater_seen_at = $seen' "$STATE" 2>/dev/null)" \
+    && [ -n "$REFRESHED" ]; then
+    write_state "$REFRESHED"
+  else
+    JOB_ID="" FROM="" TO="" set_state idle ""
+  fi
 else
   JOB_ID="" FROM="" TO="" set_state idle ""
 fi
 
 [ -f "$REQUEST" ] || exit 0
 
-JOB_ID="$(jq -r '.id // empty' "$REQUEST" 2>/dev/null || true)"
+# A request.json that isn't valid JSON, is a top-level array (`.id` on an
+# array is a jq type error), or carries no id is indistinguishable here
+# from "no request" unless checked for explicitly - jq's failure was being
+# swallowed by `|| true` and an empty JOB_ID then took the same silent
+# `exit 0` as "nothing to do". The bridge, which is polling this file
+# waiting for a phase to change, would wait forever for an answer that
+# was never going to come. Reject instead: one branch, and the requester
+# finds out.
+if ! JOB_ID="$(jq -r '.id // empty' "$REQUEST" 2>/dev/null)" || [ -z "$JOB_ID" ]; then
+  JOB_ID="" FROM="" TO="" reject "request is not readable (invalid JSON, a top-level array, or a missing/empty id)"
+fi
 CHANNEL="$(jq -r '.channel // empty' "$REQUEST" 2>/dev/null || true)"
 TARGET="$(jq -r '.target // empty' "$REQUEST" 2>/dev/null || true)"
 
@@ -136,19 +195,12 @@ TARGET="$(jq -r '.target // empty' "$REQUEST" 2>/dev/null || true)"
 # request again every two seconds - and an update that restarts itself
 # never comes to rest.
 LAST="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
-[ -n "$JOB_ID" ] || exit 0
 [ "$JOB_ID" != "$LAST" ] || exit 0
 
 FROM="$(current_tag)"
 TO="$TARGET"
 ROLLED=false
 HEALTHY=true
-
-reject() {
-  log "Request $JOB_ID rejected: $1"
-  set_state rejected "$1"
-  exit 0
-}
 
 # --------------------------------------------------------------- validation --
 # Rule 1: channel is an enum, target must satisfy a pattern.
@@ -187,6 +239,17 @@ case "$CHANNEL" in
       || reject "not a valid commit target" ;;
 esac
 
+# The pattern above accepts an optional leading "v" for the stable channel
+# but treats it as equivalent to the bare number. Collapse it once, right
+# here, so every consumer from this point on - the CUR/NEW comparison
+# just below, and Task 3, which will use $TO verbatim as an image tag
+# written into .env - sees exactly one spelling instead of each having to
+# strip "v" itself.
+if [ "$CHANNEL" = "stable" ]; then
+  TARGET="${TARGET#v}"
+  TO="$TARGET"
+fi
+
 # Rule 3: forward only. In the stable channel by semantic version;
 # `sort -V` from coreutils, busybox's sort cannot do that reliably. The
 # dev channel has no ordering over SHAs - there Task 3 instead checks
@@ -203,7 +266,8 @@ if [ "$CHANNEL" = "stable" ]; then
   # .env - see running_version() above. A tag can be named "stable" and
   # thereby not be a version at all.
   CUR="${RUNNING#v}"
-  NEW="${TARGET#v}"
+  # TARGET was already normalised (leading "v" stripped) right above.
+  NEW="$TARGET"
   # A version that does not identify itself (a hand-built image,
   # LOXMATTER_VERSION empty) cannot be the starting point of a comparison.
   # Reject instead of guessing: the user then sees that they are running
