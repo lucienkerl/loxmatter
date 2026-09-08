@@ -212,7 +212,6 @@ def test_backfill_keeps_the_keys_of_commands_that_already_exist(tmp_path):
         for paar, key in vorher.items():
             assert nachher[paar] == key
 
-
     finally:
         store.close()
 
