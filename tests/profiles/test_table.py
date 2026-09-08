@@ -14,6 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import re
+from pathlib import Path
+
 import pytest
 
 from loxmatter.matter.models import SignalKind, SignalRef
@@ -303,12 +306,30 @@ def test_every_table_command_carries_a_control():
         assert command_control(cluster_id, command_id) != "unknown"
 
 
-# Bedienelement-Typen, fuer die die ausgelieferte Oberflaeche ein eigenes
-# Bedienelement baut - siehe `KNOWN_CONTROL_KINDS` in `web/app.js`. Diese
-# Liste hier duplizieren statt aus der JS-Datei zu lesen: Python hat keinen
-# eingebauten Weg, ein Alpine-Skript auszuwerten, und eine Textsuche waere
-# fragiler als ein bewusst gepflegtes Duplikat mit Verweis auf das Original.
-_CONTROL_KINDS_KNOWN_TO_THE_UI = {"none", "percent", "kelvin", "hue_sat"}
+def _control_kinds_known_to_the_ui() -> set[str]:
+    """Liest `KNOWN_CONTROL_KINDS` aus der ausgelieferten `web/app.js`.
+
+    Bewusst gelesen statt hier dupliziert: eine zweite, von Hand gepflegte
+    Liste koennte selbst von der Oberflaeche wegdriften - und dann prueft
+    dieser Test nur noch sich selbst. Genau diese Sorte Duplikat ist das,
+    wogegen `known_command_pairs` und `_PAYLOAD_BUILDERS` an anderer Stelle
+    schon einmal abgesichert wurden (siehe `commands/translate.py`).
+
+    Findet die Suche das Feld nicht, ist das ein Fehler und kein leeres
+    Ergebnis: eine leere Menge liesse jeden `control`-Wert durchfallen und
+    saehe nach einem Befund aus, wo in Wahrheit nur der Zugriff kaputt ist.
+    """
+    source = (Path(__file__).parents[2] / "src/loxmatter/web/app.js").read_text(encoding="utf-8")
+    match = re.search(r"const KNOWN_CONTROL_KINDS = \[(.*?)\];", source, re.DOTALL)
+    if match is None:
+        raise AssertionError(
+            "KNOWN_CONTROL_KINDS nicht in web/app.js gefunden - wurde das Feld "
+            "umbenannt? Ohne es kann dieser Test nichts pruefen."
+        )
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+_CONTROL_KINDS_KNOWN_TO_THE_UI = _control_kinds_known_to_the_ui()
 
 
 def test_every_control_value_is_known_to_the_shipped_ui():
