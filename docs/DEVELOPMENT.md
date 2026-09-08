@@ -36,7 +36,7 @@ sie hier.
    von Hand nachziehen muss.
 3. **Steigt `_SCHEMA_VERSION` in `model/store.py`, gehört das in die
    Notizen.** Ein Schemasprung ist der einzige Fall, in dem ein Rückfall
-   auf die vorherige Version nicht folgenlos ist (siehe Spec-Abschnitt 8).
+   auf die vorherige Version nicht folgenlos ist (siehe [docs/superpowers/specs/2026-09-08-webui-updates-design.md, Abschnitt 8](superpowers/specs/2026-09-08-webui-updates-design.md)).
 4. Commit, dann `git tag -a v0.3.0 -m "0.3.0"` und `git push --tags`.
 5. Die CI baut daraus `:0.3.0` und `:stable`. **Erst wenn beide in der
    Registry stehen**, ist die Version veröffentlicht — vorher zeigt die
