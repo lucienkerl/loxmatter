@@ -310,6 +310,22 @@ if [ "${#JOB_ID}" -gt 128 ]; then
   JOB_ID="" FROM="" TO="" reject "id is too long"
 fi
 
+# id's character set, same reasoning: unrestricted, an id containing a
+# newline forges an arbitrary extra line in log.txt. state.json itself
+# stays safe regardless (jq escapes --arg), but the log is the only
+# forensic record of what the sidecar was ever asked to do, and log()
+# interpolates the id verbatim. Verified end to end: id =
+# "a1\n<forged 'accepted' line>" produced a syntactically perfect forged
+# log entry, and the request still reached phase: queued. Restricted to
+# [A-Za-z0-9._-] via a `case` glob - not `grep`, which matches per LINE
+# not per VALUE (see the TARGET newline comment further down for the full
+# mechanism) - blocks the newline and every other injection vector in the
+# same motion, since `case` matches the WHOLE word including newlines.
+case "$JOB_ID" in
+  *[!A-Za-z0-9._-]*)
+    JOB_ID="" FROM="" TO="" reject "id contains an invalid character" ;;
+esac
+
 # Rule 2: target is bounded in length before it can reach ANYTHING further
 # down - including FROM/TO, assigned right after this check, and every
 # reject() from here on that reports on a bad TARGET (unknown channel,

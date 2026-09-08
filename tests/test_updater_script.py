@@ -404,6 +404,25 @@ def test_an_oversized_id_is_rejected(updater):
     assert "docker" not in calls
 
 
+def test_an_id_with_an_embedded_newline_does_not_forge_a_log_line(updater):
+    # Important 2. state.json stays safe regardless (jq escapes --arg),
+    # but log() interpolates the id verbatim into an audit line - so an
+    # id containing a newline can forge an arbitrary extra line. Verified
+    # against the unfixed script: this exact id produced a syntactically
+    # perfect forged "accepted" line, and the request still reached
+    # phase: queued. The log must contain ONLY the real rejection line.
+    evil_id = "a1\n2026-01-01T00:00:00Z Request evil accepted: 0.2.0 -> 9.9.9 (stable)"
+    _auftrag(updater, id=evil_id)
+    result, calls, state = updater()
+    assert result.returncode == 0
+    assert state["phase"] == "rejected"
+    assert state["error"] == "id contains an invalid character"
+    log_text = (updater.update_dir / "log.txt").read_text(encoding="utf-8")
+    assert len(log_text.strip("\n").split("\n")) == 1
+    assert "evil accepted" not in log_text
+    assert "docker" not in calls
+
+
 def test_a_corrupt_state_file_recovers_to_a_fresh_idle_state(updater):
     # Kills the mutant that reverts set_state's heartbeat-refresh check
     # (the FIRST round's own "Important 2" fix) back to
