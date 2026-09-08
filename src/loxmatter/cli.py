@@ -585,8 +585,11 @@ async def _run(
     von `None`, wie ihn jeder Aufrufer von `_run()` bekommt, der keinen
     übergibt, z. B. ein Test)."""
     sender = UdpSender(miniserver, port)
-    runtime = Runtime(store, sender)
     client = _build_client(url)
+    # `lambda: client.connected`, NICHT `client.connected`: die zweite Form
+    # waere ein einmal ausgewerteter Bool, und der Heartbeat haenge damit
+    # fuer immer am Zustand des Startmoments. `mypy --strict` weist das ab.
+    runtime = Runtime(store, sender, link_ok=lambda: client.connected)
 
     async def invoke(call: MatterCall) -> None:
         await client.send_command(call)

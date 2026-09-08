@@ -74,11 +74,21 @@ class Runtime:
         *,
         heartbeat_seconds: float = 30.0,
         resend_poll_seconds: float = 5.0,
+        link_ok: Callable[[], bool] = lambda: True,
     ) -> None:
         self._store = store
         self._sender = sender
         self._heartbeat_seconds = heartbeat_seconds
         self._resend_poll_seconds = resend_poll_seconds
+        # Ob die Verbindung zu matter-server gerade traegt - vom Heartbeat
+        # bei JEDEM Takt neu gefragt (siehe `_heartbeat_loop`). Die
+        # Annotation `Callable[[], bool]` ist hier tragende Absicherung,
+        # nicht Formsache: `cli.serve()` uebergibt `lambda: client.connected`,
+        # und `client.connected` allein - eine Property, also ein einmal
+        # ausgewerteter Bool - waere damit ein Typfehler, den `mypy --strict`
+        # in CI abweist. Ohne diese Annotation haenge der Heartbeat still am
+        # Zustand des Startmoments und verstummte nie.
+        self._link_ok = link_ok
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
@@ -511,18 +521,38 @@ class Runtime:
     async def _heartbeat_loop(self) -> None:
         while True:
             try:
-                self._heartbeat_on = not self._heartbeat_on
-                await self._sender.send(HEARTBEAT_KEY, self._heartbeat_on, force=True)
-                # Auch an die Oberflaeche (2026-09-03). Vorher ging der
-                # Heartbeat nur an Loxone, und eine Bruecke, an der sich
-                # gerade nichts aendert - eine Steckdose ohne Last meldet
-                # weder Strom noch Leistung -, war in der Live-Ansicht von
-                # einer abgestuerzten nicht zu unterscheiden: kein Wert
-                # bewegte sich, und niemand konnte sagen, ob nichts passiert
-                # oder nichts ankommt. Der Heartbeat ist genau das Signal,
-                # das diese Frage beantwortet; ihn der Oberflaeche
-                # vorzuenthalten war eine Luecke, keine Entscheidung.
-                self._notify_observers(HEARTBEAT_KEY, self._heartbeat_on)
+                # Kein Puls ohne Matter-Verbindung (8. September 2026): der
+                # Heartbeat ist der Watchdog-Eingang in Loxone. Pulst er
+                # weiter, waehrend die Bruecke taub ist, meldet Loxone
+                # "alles in Ordnung" - und genau daran ist ein
+                # stundenlanger Ausfall niemandem aufgefallen.
+                #
+                # Das ist etwas ANDERES als der Fehlerfall unten: scheitert
+                # das SENDEN, laeuft die Schleife weiter und pulst weiter,
+                # damit der Fehler sichtbar wird. Fehlt die VERBINDUNG,
+                # schweigt sie, damit er sichtbar wird. Zwei Zustaende, zwei
+                # richtige Antworten - der Unterschied ist, wovon der Puls
+                # eine Aussage macht.
+                #
+                # Der Wechsel von `_heartbeat_on` steht bewusst INNERHALB
+                # der Bedingung: sonst liefe die Phase waehrend des Ausfalls
+                # weiter und der erste Puls danach kaeme zufaellig auf
+                # demselben Wert heraus wie der letzte davor - fuer einen
+                # flankengesteuerten Watchdog waere das ein verschluckter
+                # Takt.
+                if self._link_ok():
+                    self._heartbeat_on = not self._heartbeat_on
+                    await self._sender.send(HEARTBEAT_KEY, self._heartbeat_on, force=True)
+                    # Auch an die Oberflaeche (2026-09-03). Vorher ging der
+                    # Heartbeat nur an Loxone, und eine Bruecke, an der sich
+                    # gerade nichts aendert - eine Steckdose ohne Last meldet
+                    # weder Strom noch Leistung -, war in der Live-Ansicht von
+                    # einer abgestuerzten nicht zu unterscheiden: kein Wert
+                    # bewegte sich, und niemand konnte sagen, ob nichts passiert
+                    # oder nichts ankommt. Der Heartbeat ist genau das Signal,
+                    # das diese Frage beantwortet; ihn der Oberflaeche
+                    # vorzuenthalten war eine Luecke, keine Entscheidung.
+                    self._notify_observers(HEARTBEAT_KEY, self._heartbeat_on)
             except asyncio.CancelledError:
                 raise
             except Exception:

@@ -18,7 +18,7 @@ import asyncio
 import json
 import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -325,9 +325,16 @@ class _SpySender:
 class _SpyRuntime:
     """Steht für Runtime — erfüllt RuntimeEventHandler und zählt Aufrufe."""
 
-    def __init__(self, store: Store, sender: _SpySender) -> None:
+    def __init__(
+        self, store: Store, sender: _SpySender, *, link_ok: Callable[[], bool] = lambda: True
+    ) -> None:
         self.store = store
         self.sender = sender
+        # Festgehalten wie store/sender oben, aus demselben Grund: ein Test
+        # koennte spaeter belegen wollen, WAS cli.serve() als link_ok
+        # uebergeben hat (siehe cli.py: `lambda: client.connected`), statt
+        # das Schluesselwort nur entgegenzunehmen und zu verwerfen.
+        self.link_ok = link_ok
         self.started = False
         self.stop_calls = 0
         self.resend_calls = 0
@@ -409,8 +416,13 @@ def _install_run_spies(
         senders.append(sender)
         return sender
 
-    def make_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        # Als benannter Parameter statt **kwargs entgegengenommen und an die
+        # Attrappe durchgereicht: verschluckte cli.serve() `link_ok` kuenftig
+        # nicht mehr, faellt hier ein TypeError statt ein still gruener Test.
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
         runtimes.append(runtime)
         return runtime
 
@@ -728,8 +740,10 @@ async def test_run_continues_cleanup_when_one_step_fails(monkeypatch, tmp_path):
     eigenen try/except, genau dafür."""
     senders, runtimes, clients = _install_run_spies(monkeypatch)
 
-    def make_broken_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_broken_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
 
         async def broken_stop() -> None:
             runtime.stop_calls += 1
@@ -763,8 +777,10 @@ async def test_run_cleans_up_when_cancelled_during_startup(monkeypatch, tmp_path
     kehren synchron zurueck und boeten keinen Interrupt-Punkt."""
     senders, runtimes, clients = _install_run_spies(monkeypatch)
 
-    def make_slow_runtime(store: Store, sender: _SpySender) -> _SpyRuntime:
-        runtime = _SpyRuntime(store, sender)
+    def make_slow_runtime(
+        store: Store, sender: _SpySender, *, link_ok: Callable[[], bool]
+    ) -> _SpyRuntime:
+        runtime = _SpyRuntime(store, sender, link_ok=link_ok)
 
         async def resend_all_blocks_until_cancelled() -> int:
             runtime.resend_calls += 1

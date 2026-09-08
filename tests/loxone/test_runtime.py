@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from loxmatter.export.commands import extract_commands
-from loxmatter.loxone.runtime import Runtime
+from loxmatter.loxone.runtime import HEARTBEAT_KEY, Runtime
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.store import Store
@@ -704,3 +704,60 @@ async def test_on_node_snapshot_invalidates_before_seeding_a_stale_cache(environ
     await runtime.on_node_snapshot(device_id, snapshot)
 
     assert key in runtime._last_values
+
+
+async def test_the_heartbeat_stays_silent_without_a_matter_link(tmp_path):
+    """Ohne Matter-Verbindung darf `bridge_alive` NICHT pulsen.
+
+    Der Heartbeat ist der Watchdog-Eingang in Loxone. Pulst er weiter,
+    waehrend die Bruecke taub ist, meldet Loxone "alles in Ordnung" - genau
+    das ist am 8. September 2026 passiert, und deshalb fiel der Ausfall
+    stundenlang niemandem auf.
+    """
+    store = Store(tmp_path / "s.sqlite")
+    sender = FakeSender()
+    runtime = Runtime(store, sender, heartbeat_seconds=0.01, link_ok=lambda: False)
+    await runtime.start()
+    await asyncio.sleep(0.05)
+    await runtime.stop()
+
+    assert HEARTBEAT_KEY not in sender
+
+
+async def test_the_heartbeat_pulses_with_a_matter_link(tmp_path):
+    """Gegenprobe - sonst prueft der Test oben nur, dass nichts passiert."""
+    store = Store(tmp_path / "s.sqlite")
+    sender = FakeSender()
+    runtime = Runtime(store, sender, heartbeat_seconds=0.01, link_ok=lambda: True)
+    await runtime.start()
+    await asyncio.sleep(0.05)
+    await runtime.stop()
+
+    assert HEARTBEAT_KEY in sender
+
+
+async def test_the_heartbeat_falls_silent_when_the_link_drops(tmp_path):
+    """`link_ok` wird bei JEDEM Takt neu gefragt, nicht einmal beim Aufbau.
+
+    Wuerde `cli.serve()` versehentlich `client.connected` statt
+    `lambda: client.connected` uebergeben - eine Property, also ein einmal
+    ausgewerteter Bool -, haenge der Heartbeat fuer immer am Zustand des
+    Startmoments und verstummte nie. `mypy --strict` weist das inzwischen
+    als Typfehler ab; dieser Test deckt dieselbe Luecke auf der
+    Verhaltensseite ab.
+    """
+    store = Store(tmp_path / "s.sqlite")
+    sender = FakeSender()
+    alive = [True]
+    runtime = Runtime(store, sender, heartbeat_seconds=0.01, link_ok=lambda: alive[0])
+    await runtime.start()
+    await asyncio.sleep(0.05)
+    assert HEARTBEAT_KEY in sender
+
+    alive[0] = False
+    before = len([k for k in sender if k == HEARTBEAT_KEY])
+    await asyncio.sleep(0.05)
+    after = len([k for k in sender if k == HEARTBEAT_KEY])
+    await runtime.stop()
+
+    assert after == before
