@@ -502,20 +502,36 @@ set_tag() {
   fi
 }
 
-# Waits for the first healthy beat. The 120 seconds are not a new value but
-# the one from scripts/update.sh - and the reasoning there still holds
-# unchanged: 20 seconds went fine for exactly that long, until a run on
-# September 8th tipped just past it and the script reported a service as
-# unhealthy that was working flawlessly ten seconds later. A window that is
-# too short is the more expensive kind of false alarm here - it looks like
-# a broken update and tempts one into rolling back a state that is fine.
+# Waits for the first healthy beat, bounded by WALL-CLOCK seconds, not by
+# a count of loop iterations. The old loop counted iterations
+# (`i=$((i + 1))`, one per pass) and treated HEALTH_TIMEOUT as an
+# iteration budget - but each iteration is `curl -m 3` PLUS `sleep 1`, so
+# an iteration only costs one second when curl returns instantly. Measured
+# against a curl that consumes its own timeout - a container that binds
+# the port and then wedges, or a lost path to host.docker.internal, i.e.
+# exactly the failure this window exists to survive: HEALTH_TIMEOUT=5 took
+# 20.7 seconds, a 4.1x factor. entrypoint.sh sizes its 600s parent
+# `timeout` on "240s of known waiting" for two such waits; at that factor
+# the real ceiling is closer to 960s, and when the parent `timeout` fires
+# mid-rollback this script has no trap of its own - the host is left on
+# the broken image with a frozen phase and a dedup guard that will not
+# retouch that job id. Bounding on the clock instead makes the slow case
+# cost what it says it costs, exactly once, regardless of how long any
+# single curl call takes.
+#
+# The 120-second production value is unchanged - it is not a new number
+# but the one from scripts/update.sh, and the reasoning there still holds:
+# 20 seconds went fine for exactly that long, until a run on September 8th
+# tipped just past it and reported a service unhealthy that was working
+# flawlessly ten seconds later. A window that is too short is the more
+# expensive false alarm here - it looks like a broken update and tempts
+# one into rolling back a state that is fine.
 wait_healthy() {
-  i=0
-  while [ "$i" -lt "$HEALTH_TIMEOUT" ]; do
+  wait_healthy_deadline=$(($(date +%s) + HEALTH_TIMEOUT))
+  while [ "$(date +%s)" -lt "$wait_healthy_deadline" ]; do
     if curl -fsS -m 3 "$HEALTH_URL" >/dev/null 2>&1; then
       return 0
     fi
-    i=$((i + 1))
     sleep 1
   done
   return 1
@@ -576,10 +592,45 @@ fi
 # any command: Compose forms the name from the .env line that set_tag
 # writes next.
 log "target image: $IMAGE:${TARGET#v}"
-set_tag "${TARGET#v}"
+if ! set_tag "${TARGET#v}"; then
+  # Proven with $STACK made unwritable: set_tag exited non-zero
+  # ("Permission denied" creating its own temp file), and this call used
+  # to be unguarded under `set -eu` - the shell simply stopped right
+  # here. state.json stayed frozen at "pull" with no `error` field and
+  # no "failed" phase ever written, while the heartbeat kept refreshing
+  # (it is rewritten at the top of every pass, before this point is ever
+  # reached again) - a live sidecar visibly stuck in a phase that had, at
+  # that exact moment, already stopped being true: $REPO's checkout had
+  # already moved to the new ref while the container still ran the old
+  # image. Recording a real failure here is what makes that legible
+  # instead of just frozen.
+  set_state failed "could not write the new image tag into $ENV_FILE"
+  exit 0
+fi
 
 if ! compose pull "$SERVICE"; then
-  set_tag "$FROM"
+  # $FROM is what .env held before this run touched it - the ALIAS a
+  # fresh installation ships with ("stable"), not necessarily a version
+  # (see current_tag()'s own comment above). Restoring it is correct
+  # HERE specifically: the pull failed, nothing was recreated, and the
+  # only right thing is to put .env back exactly as it was. Do NOT copy
+  # this call for Task 4's rollback, though - by the time that runs,
+  # `--force-recreate` has already happened, and the concrete version
+  # that was actually RUNNING may no longer be what "stable" resolves to
+  # in the registry (it can already point AT the release that just
+  # failed to become healthy). Task 4's rollback restores the concrete
+  # running version instead, precisely for that reason - see the plan's
+  # own rollback step, which computes what it writes back from
+  # `$RUNNING`, never from `$FROM`.
+  if ! set_tag "$FROM"; then
+    # Same class of failure as the guard above, at the one point where it
+    # is worse: the pull already failed, and now .env cannot even be put
+    # back either. Say so explicitly - the plain "unchanged" message just
+    # below would be a lie here: .env may still read the new, un-pulled
+    # target.
+    set_state failed "image could not be pulled, and the tag could not be restored in $ENV_FILE - it may still read $TARGET"
+    exit 0
+  fi
   set_state failed "image could not be pulled - the running service is unchanged"
   exit 0
 fi
@@ -589,7 +640,25 @@ fi
 # of its own request.
 set_state recreate ""
 if ! compose up -d --no-deps --force-recreate "$SERVICE"; then
-  set_state failed "restart failed"
+  # Proven with a `compose up` stub that exits 1: unlike the pull failure
+  # above, "the running service is unchanged" is not true here -
+  # `--force-recreate` removes the old container before creating its
+  # replacement, so a failure partway through can leave the service
+  # genuinely down, on neither the old image nor the new one. Restoring
+  # just the .env tag (as the pull-failure branch does) would not
+  # restart anything - the service would stay down until an operator or
+  # a watchdog happens to run `docker compose up` again, and if that
+  # ever happens it starts the NEW, unhealthy image, because .env would
+  # still read it. What actually recovers this is a further `compose up`
+  # attempt against the OLD, known-good image, which is exactly what
+  # Task 4's rollback performs - so hand off to it here instead of just
+  # recording "failed" and stopping. Deliberately NOT restoring $FROM
+  # first: Task 4's rollback computes its own tag from $RUNNING (see the
+  # comment on `set_tag "$FROM"` above for why $FROM - possibly the
+  # alias "stable" - is the wrong value for that), so writing $FROM here
+  # would only be overwritten a moment later by the rollback anyway.
+  log "docker compose up failed for $TO - handing off to the same rollback phase a failed health check reaches, since --force-recreate can already have removed the old container"
+  set_state rollback ""
   exit 0
 fi
 

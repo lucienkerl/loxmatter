@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -104,6 +105,7 @@ SYSTEM_TOOLS = (
     "ls",
     "cut",
     "wc",
+    "chmod",
 )
 
 
@@ -686,3 +688,164 @@ def test_an_env_file_with_no_trailing_newline_and_no_tag_line_keeps_its_other_va
     assert "MINISERVER_IP=10.0.1.9" in lines
     assert "LOXMATTER_API_TOKEN=deadbeefcafe" in lines
     assert "LOXMATTER_IMAGE_TAG=0.3.0" in lines
+
+
+def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
+    # Important 2. The old loop counted iterations (`i=$((i + 1))`, one
+    # increment per pass) and only ever slept 1s per iteration ON TOP OF
+    # whatever curl itself took - so a curl that consumes its own `-m 3`
+    # budget inflates the real wait by roughly 4x. Measured against the
+    # unpatched script: HEALTH_TIMEOUT=5 took 20.7 wall-clock seconds.
+    # This curl stub plays that wedged container: it always fails, but
+    # only after sleeping 2 REAL seconds - long enough that the old
+    # iteration-counting loop, with HEALTH_TIMEOUT=2, would run two
+    # iterations at ~3s each (2s curl + 1s sleep) for roughly 6s total,
+    # while a wall-clock-bounded loop stops within about a second of the
+    # 2s deadline regardless of how long any single curl call takes.
+    curl_path = updater.bindir / "curl"
+    curl_path.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
+    curl_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    start = time.monotonic()
+    _, _calls, state = updater(LOXMATTER_HEALTH_TIMEOUT="2", _timeout=30)
+    elapsed = time.monotonic() - start
+    assert state["phase"] == "rollback"
+    assert elapsed < 6, f"took {elapsed:.1f}s - the old iteration-counting loop took ~6-9s here"
+
+
+def test_a_failed_restart_hands_off_to_rollback_instead_of_stranding_the_tag(updater):
+    # Important 3. Proven against the unpatched script with a `compose
+    # up` stub that exits 1: the run ended `phase: failed`, `error:
+    # restart failed`, and .env was left reading the NEW tag forever -
+    # neither restored (as the pull-failure path does) nor handed to the
+    # rollback Task 4 attaches after `set_state rollback ""`. Since
+    # `--force-recreate` removes the old container before creating its
+    # replacement, the service can genuinely be down at this point, and
+    # only a further `compose up` - what the rollback performs, against
+    # the OLD image - can recover it; restoring just the tag would not
+    # restart anything by itself.
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
+        '  compose) [ "$2" = "up" ] && exit 1; exit 0 ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "rollback"
+    assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=0.3.0\n"
+
+
+def test_a_tag_write_that_cannot_be_made_is_recorded_as_a_failure(updater):
+    # Important 4, first of its two call sites (writing the new tag,
+    # before the pull). Proven against the unpatched script with $STACK
+    # made unwritable: set_tag's own temp-file create failed
+    # ("Permission denied"), and since that call was unguarded under
+    # `set -eu`, the WHOLE SCRIPT stopped right there - state.json stayed
+    # frozen at "pull" with no `error` field and no "failed" phase ever
+    # written, while the heartbeat kept refreshing (it is rewritten at
+    # the top of every pass, before this point is ever reached again)
+    # and $REPO's checkout had already moved to the new ref while the
+    # container still ran the old image.
+    updater.stack.chmod(0o555)
+    try:
+        _auftrag(updater, target="0.3.0")
+        result, _calls, state = updater()
+    finally:
+        updater.stack.chmod(0o755)
+    assert result.returncode == 0
+    assert state is not None
+    assert state["phase"] == "failed"
+    assert state["error"]
+
+
+def test_a_pull_failure_that_cannot_restore_the_tag_is_recorded_as_a_failure(updater):
+    # Important 4, second call site: restoring $FROM after a failed
+    # `compose pull`. The docker stub below makes $STACK unwritable AS
+    # PART OF failing `compose pull` - i.e. exactly at the moment
+    # `set_tag "$FROM"` would run - while the FIRST set_tag call (writing
+    # the new tag, before the pull) still runs normally beforehand,
+    # isolating this second call site specifically. Proven against the
+    # unpatched script this way: rc=1, "Permission denied", and
+    # state.json frozen at "pull" - further from the truth than even the
+    # caught pull failure alone, since $FROM could not be restored either.
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
+        "  compose)\n"
+        '    if [ "$2" = "pull" ]; then chmod 0555 "$LOXMATTER_STACK"; exit 1; fi\n'
+        "    exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    try:
+        result, _calls, state = updater()
+    finally:
+        updater.stack.chmod(0o755)
+    assert result.returncode == 0
+    assert state is not None
+    assert state["phase"] == "failed"
+    assert "restored" in state["error"]
+
+
+def test_an_unhealthy_service_falls_through_to_rollback_not_done(updater):
+    # Kills three of Important 5's five surviving mutants at once:
+    # `wait_healthy() { return 0; ... }` (the health gate deleted
+    # entirely), `curl -fsS` weakened to `curl -sS` (an HTTP 500 then
+    # counts as healthy), and the final `set_state rollback ""` replaced
+    # with `:` (the hand-off this task exists to produce for Task 4).
+    # This curl stub only SUCCEEDS when invoked WITHOUT `-f` - i.e. it
+    # plays a real curl seeing an HTTP 500: with `-f` present (the
+    # correct code), that is a failure; drop `-f` (one of the mutants)
+    # and the identical response counts as success. Under the "return 0"
+    # mutant curl is never even consulted; under the "set_state rollback"
+    # -> ":" mutant, phase is left at whatever `set_state health ""` (the
+    # immediately preceding write) set it to. All three converge on the
+    # same wrong answer this test rules out: phase != "rollback".
+    curl_path = updater.bindir / "curl"
+    curl_path.write_text(
+        '#!/bin/sh\ncase "$*" in\n  *-f*) exit 1 ;;\n  *) exit 0 ;;\nesac\n',
+        encoding="utf-8",
+    )
+    curl_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "rollback"
+
+
+def test_the_checkout_uses_the_v_prefixed_ref(updater):
+    # Kills two more of Important 5's mutants: the whole `git checkout
+    # --detach` block replaced by `:` (a release is then never actually
+    # checked out - the comment on that block explains the compose file
+    # must match the version), and `REF="v${TARGET#v}"` weakened to
+    # `REF="${TARGET#v}"` (releases are tagged `v0.2.0`, not bare
+    # `0.2.0`, so a real host's checkout would fail on every single
+    # stable update and nothing here would notice). Deleting the
+    # checkout block leaves no such call-log line at all; dropping the
+    # `v` produces "checkout --detach 0.3.0" instead - the exact
+    # substring below, "v" included, distinguishes both from the correct
+    # call.
+    _auftrag(updater, target="0.3.0")
+    _, calls, _state = updater()
+    assert "checkout --detach v0.3.0" in calls
+
+
+def test_the_target_is_fetched_before_checkout(updater):
+    # Kills the mutant that deletes the `git fetch` block entirely - a
+    # checkout could then only ever succeed against whatever the
+    # repository already happened to have locally, silently, with
+    # nothing here to notice a target that was never actually fetched.
+    _auftrag(updater, target="0.3.0")
+    _, calls, _state = updater()
+    assert "fetch --tags --force origin" in calls
+    assert calls.index("fetch --tags --force origin") < calls.index("checkout --detach v0.3.0")
