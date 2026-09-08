@@ -5280,3 +5280,91 @@ async def test_the_control_modal_is_delivered(api):
     # sonst nicht unterscheiden liessen.
     assert "web.devices.control_brightness" not in page
     assert "web.devices.control_brightness" not in script
+
+
+async def test_the_checkbox_hit_targets_reach_24px(api):
+    """WCAG 2.2 AA, Erfolgskriterium 2.5.8 (Target Size Minimum): 24x24
+    CSS-Pixel Trefferflaeche. Eine Pruefung fand ein Kaestchen mit
+    gemessen 13 px Breite auf einem schmalen Fenster - der nackte
+    `<input type="checkbox">` steht in `style.css` ohne eigene Regel auf
+    reinem Browser-Standard.
+
+    Dieser Test kann NICHT selbst messen (keine Layout-Engine hier) -
+    das Ausmessen lief in einem Wegwerf-Harness ausserhalb des Repos
+    (echtes Markup aus `index.html` herausgeschnitten, echtes `style.css`,
+    ueber http mit Alpine geladen, `label.getBoundingClientRect()`
+    gemessen, nicht die des `<input>`). Ergebnis vorher/nachher (Desktop
+    px, unter 640 px identisch fuer die vier Text-Label-Zeilen, da sie an
+    keiner Medienabfrage haengen):
+      - projectSync.includeNewDevices: 204x21.5 -> 200x24
+      - exportIncludeSystem:           208x21.5 -> 204x24
+      - exportOnlyPending:             131x21.5 -> 128x24
+      - hideNoise:                     166x21.5 -> 162x24
+      - Signal-Modal Export-Spalte:     58x19   ->  58x24 (Desktop),
+                                         99x21   ->  99x24 (< 640 px)
+      - Signal-Modal Periodisch-Spalte: 76x19   ->  76x24 (Desktop),
+                                        193x21   -> 193x24 (< 640 px)
+    Alle sechs waren waagerecht schon VORHER ueber 24 px - vier durch den
+    Text neben dem Kaestchen, die beiden Signal-Modal-Spalten durch die
+    feste Spaltenbreite aus `grid-template-columns` (Desktop) bzw. den
+    sichtbaren `.col-center-label`-Text (< 640 px). Nur die Hoehe fehlte,
+    darum setzen beide Regeln unten NUR `min-height`, kein `min-width` -
+    eine wirkungslose Regel waere Ballast. Das Signal-Modal-Raster blieb
+    dabei fluchtend (linke Kantenabweichung weiterhin 0 gegen den Kopf,
+    siehe `test_the_signal_rows_and_the_header_share_one_grid`) und ohne
+    waagerechten Ueberlauf (`scrollWidth - clientWidth` weiterhin 0), in
+    beiden Breiten.
+
+    Die Loesung sitzt am `<label>`, nicht am `<input>`: ein Label, das
+    sein Kaestchen umschliesst, leitet die Aktivierung von jeder Stelle
+    seiner Flaeche weiter - es IST also schon die Trefferflaeche, ihr
+    fehlte nur das Mindestmass. Ein groesseres Kaestchen saehe neben dem
+    14-px-Text klobig aus und haette das Aussehen der ganzen Oberflaeche
+    veraendert."""
+    client, _, _ = api
+    page = _without_comments((await client.get("/")).text)
+    css = (await client.get("/static/style.css")).text
+
+    # Die vier Text-Label-Kaestchen tragen jetzt `checkbox-label` - nicht
+    # `.row label` allgemein, denn dieselbe Zeilenklasse traegt anderswo
+    # auch Textfeld-, Datei- und Auswahllabels (z. B. die Bruecken-IP),
+    # deren Layout hier nicht mitgezogen werden soll. `:has()` bewusst
+    # vermieden (Projekt-Vorgabe).
+    for model in (
+        'x-model="projectSync.includeNewDevices"',
+        'x-model="exportIncludeSystem"',
+        'x-model="exportOnlyPending"',
+        'x-model="hideNoise"',
+    ):
+        at = page.index(model)
+        label_start = page.rindex("<label", 0, at)
+        label_end = page.index(">", label_start)
+        opening_tag = page[label_start:label_end]
+        assert 'class="checkbox-label"' in opening_tag, model
+
+    # Bindung an den Regelkoerper des eigenen Selektors, nicht an ein
+    # Stichwort-Fenster - siehe `test_the_key_pill_wraps_instead_of_
+    # touching_the_value_column` fuer dasselbe Muster.
+    start = css.index(".checkbox-label {")
+    open_brace = css.index("{", start)
+    close_brace = css.index("}", open_brace)
+    checkbox_label_rule = css[open_brace:close_brace]
+    assert "min-height: 24px" in checkbox_label_rule
+    assert "align-items: center" in checkbox_label_rule
+    # Kein `min-width`: der Text neben dem Kaestchen traegt die Breite
+    # schon laengst ueber 24 px, siehe Docstring-Messung oben.
+    assert "min-width" not in checkbox_label_rule
+
+    # `.signal-grid .col-center` traegt zusaetzlich eine Regel INNERHALB
+    # der 640-px-Medienabfrage (justify-content, gap) - `css.index` findet
+    # die ERSTE, die ausserhalb liegende Basisregel, in der `min-height`
+    # jetzt stehen muss.
+    media_start = css.index("@media (max-width: 640px)")
+    start = css.index(".signal-grid .col-center {")
+    assert start < media_start
+    open_brace = css.index("{", start)
+    close_brace = css.index("}", open_brace)
+    col_center_rule = css[open_brace:close_brace]
+    assert "min-height: 24px" in col_center_rule
+    assert "align-items: center" in col_center_rule
+    assert "min-width" not in col_center_rule

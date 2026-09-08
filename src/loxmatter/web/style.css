@@ -220,6 +220,41 @@ main {
   margin-top: 0.5rem;
 }
 
+/* WCAG 2.2 AA, Erfolgskriterium 2.5.8 (Target Size Minimum): 24x24 CSS-
+   Pixel Trefferflaeche. Eine Pruefung fand ein Kaestchen mit gemessen
+   13 px Breite - dem nackten `<input type="checkbox">`, der ohne eigene
+   Regel auf reinem Browser-Standard steht. Nicht das Kaestchen wird
+   vergroessert (saehe neben 14-px-Text klobig aus und aendert das
+   Aussehen der ganzen Oberflaeche), sondern das umschliessende `<label>`:
+   ein Label, das sein Eingabefeld umschliesst, leitet die Aktivierung von
+   jeder Stelle seiner Flaeche weiter - es IST also schon die
+   Trefferflaeche, ihr fehlt nur das Mindestmass.
+
+   `.checkbox-label` markiert genau die vier textbeschrifteten Kaestchen
+   in `index.html` (Projektdatei-Sync, Export-Ansicht x2, Systemansicht) -
+   nicht `.row label` allgemein, denn dieselbe Klasse traegt in anderen
+   `.row`-Zeilen auch Textfeld-, Datei- und Auswahllabels (z. B. die
+   Bruecken-IP), die dieses Mass nicht brauchen und deren Layout hier
+   nicht mitgezogen werden soll. `:has()` bewusst vermieden (Projekt-
+   Vorgabe), deshalb die eigene Klasse statt eines Selektors auf das
+   Kaestchen im Inneren.
+
+   Waagerecht war im Wegwerf-Harness (Kopie aus `index.html`, echtes
+   `style.css`) schon vorher genug Platz - der Text daneben allein misst
+   zwischen 131 px und 208 px, weit ueber 24 px, `min-width` bliebe hier
+   Ballast. Gemessen wurde die Hoehe des `<label>.getBoundingClientRect()`
+   selbst, nicht die des `<input>`: 21,5 px vorher (Desktop wie unter
+   640 px, unveraendert - die Zeile haengt an keiner Medienabfrage), damit
+   unter der 24-px-Schwelle. `display: flex` + `align-items: center`
+   halten Kaestchen und Text zentriert, sobald `min-height` die Box um
+   die fehlenden 2,5 px wachsen laesst - ohne das faellt der Inhalt sonst
+   an den oberen Rand der neu gewonnenen Hoehe. */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+
 .dot {
   display: inline-block;
   width: 0.6rem;
@@ -2537,10 +2572,31 @@ footer.hint-block {
   text-align: right;
 }
 
+/* WCAG 2.2 AA, Erfolgskriterium 2.5.8 (24x24 px Trefferflaeche) - dieselbe
+   Begruendung wie bei `.checkbox-label` oben: nicht das Kaestchen waechst,
+   das umschliessende `<label class="col-center">` tut es, denn es leitet
+   die Aktivierung schon von jeder Stelle seiner Flaeche weiter. `margin:
+   0` verhindert, dass das Kaestchen aus der Mitte rutscht, `align-items:
+   center` haelt es zentriert, sobald `min-height` die Zeile hoeher macht.
+
+   Nur `min-height`, bewusst KEIN `min-width`: die Breite sitzt hier
+   strukturell fest, nicht am Inhalt - im breiten Fall ueber die feste
+   Spaltenbreite aus `grid-template-columns` (58 px/76 px, siehe oben),
+   der Grid-Standard `justify-items: stretch` zieht das Label auf die
+   volle Spalte; im schmalen Fall (Medienabfrage unten) ueber den
+   sichtbaren Text (kuerzeste Uebersetzung "export", 6 Zeichen). Im
+   Wegwerf-Harness (echtes Markup samt echtem CSS, beide Breiten)
+   gemessen: 58/76 px (Desktop) bzw. 99/193 px (< 640 px) - beides schon
+   vorher weit ueber 24 px, ein `min-width` bliebe hier also Ballast. Nur
+   die Hoehe war knapp: 19 px (Desktop), 21 px (< 640 px), gegen 24 px
+   `min-height` fuer beide Faelle - die Medienabfrage aendert die Hoehe
+   nicht, nur `justify-content` und `gap`. */
 .signal-grid .col-center {
   display: flex;
   justify-content: center;
+  align-items: center;
   margin: 0;
+  min-height: 24px;
 }
 
 /* Beschriftung der beiden Haekchen fuer den schmalen Fall (siehe

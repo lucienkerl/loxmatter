@@ -1399,7 +1399,7 @@
                 x-text="projectSync.plan.new_devices_unavailable_reason"
               ></p>
               <div class="row">
-                <label>
+                <label class="checkbox-label">
                   <input
                     type="checkbox"
                     x-model="projectSync.includeNewDevices"
@@ -1439,11 +1439,11 @@
             <span x-text="t('web.export.settings_hint_suffix')"></span>
           </p>
           <div class="row">
-            <label
+            <label class="checkbox-label"
               ><input type="checkbox" x-model="exportIncludeSystem" />
               <span x-text="t('web.export.include_system')"></span
             ></label>
-            <label
+            <label class="checkbox-label"
               ><input type="checkbox" x-model="exportOnlyPending" />
               <span x-text="t('web.export.only_pending')"></span
             ></label>
@@ -1574,7 +1574,7 @@
               @click="diagnosticsPaused = !diagnosticsPaused"
               x-text="diagnosticsPaused ? t('web.system.resume') : t('web.system.pause')"
             ></button>
-            <label>
+            <label class="checkbox-label">
               <input type="checkbox" x-model="hideNoise" />
               <span x-text="t('web.system.hide_noise')"></span>
             </label>
