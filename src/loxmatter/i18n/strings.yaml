@@ -268,13 +268,16 @@ api.errors.value_not_a_number:
 api.errors.command_unsupported:
   en: "Cluster {cluster_id} command {command_id} is not supported"
   de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
-# The following four keys belong to `LoxoneColourError` in
-# commands/color.py, translated in commands/translate.py
-# (`_translate_loxone_colour_error`) - see review fix 2026-09-07:
-# `_payload_hue_saturation` previously passed `str(exc)` (hard-coded German)
-# straight through as the HTTP-400 `detail`. Three error cases plus the
-# three channel names for the third case, so the channel name is also
-# translated and not just the surrounding sentence.
+# Die folgenden vier Schluessel gehoeren zu `LoxoneColourError` in
+# commands/color.py, uebersetzt in commands/translate.py
+# (`_translate_loxone_colour_error`) - siehe Review-Fix 2026-09-07:
+# `_payload_hue_saturation` reichte zuvor `str(exc)` (hart Deutsch) direkt
+# als HTTP-400-`detail` durch. Drei Fehlerfaelle plus die drei Kanalnamen
+# fuer den dritten Fall, damit auch die Kanalangabe uebersetzt ist und
+# nicht nur der Rahmensatz.
+api.errors.lumitech_malformed:
+  en: "\"{value}\" carries the Lumitech marker but does not follow the format (marker 20, brightness 0-100, kelvin above 0)."
+  de: "\"{value}\" trägt die Lumitech-Kennung, hält aber das Format nicht ein (Kennung 20, Helligkeit 0-100, Kelvin über 0)."
 api.errors.loxone_colour_not_integer:
   en: "Loxone colour number must be an integer, was {value}"
   de: "Loxone-Farbzahl muss ganzzahlig sein, war {value}"
@@ -1245,7 +1248,25 @@ web.export.download_failed:
   en: "Download failed: {message}"
   de: "Download fehlgeschlagen: {message}"
 
-# --- web.system — resync, system check, live diagnostics, backup ---
+# --- web.system — Resync, Systemcheck, Live-Diagnose, Sicherung ---
+web.system.version_heading:
+  en: "Version"
+  de: "Version"
+web.system.version_running:
+  en: "Running: {version}"
+  de: "Läuft: {version}"
+web.system.version_commit:
+  en: "Commit {commit}"
+  de: "Commit {commit}"
+web.system.version_built_at:
+  en: "built {built_at}"
+  de: "gebaut {built_at}"
+web.system.version_dev_hint:
+  en: "This bridge was built from a working copy, not from a published version."
+  de: "Diese Brücke wurde aus einer Arbeitskopie gebaut, nicht aus einer veröffentlichten Version."
+web.system.version_dev_channel_hint:
+  en: "dev is the rolling channel, built from the latest main after every merge — expect breakage. Switch to stable for a tested release."
+  de: "dev ist der rollende Kanal, gebaut aus dem jeweils neuesten main nach jedem Merge — Aussetzer sind zu erwarten. Für eine getestete Version auf stable wechseln."
 web.system.resync_heading:
   en: "Resend all values"
   de: "Alle Werte erneut senden"

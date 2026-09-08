@@ -143,8 +143,9 @@ from loxmatter.api.language import build_i18n_router, build_language_router
 from loxmatter.api.live import BEARER_SUBPROTOCOL, ObservableRuntime, build_live_router
 from loxmatter.api.project_sync import build_project_sync_router
 from loxmatter.api.settings import build_settings_router
+from loxmatter.api.version import build_version_router
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
-from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
+from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_calls
 from loxmatter.diagnostics.logbuffer import LogBufferHandler
 from loxmatter.loxone.sender import UdpSender
 from loxmatter.matter.client import BridgeMatterClient
@@ -486,6 +487,7 @@ def build_app(
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
     app.include_router(build_language_router(store), dependencies=api_guard)
+    app.include_router(build_version_router(), dependencies=api_guard)
     app.include_router(build_live_router(runtime), dependencies=api_guard)
     # The same `invoke` as below at `/cmd/{key}/{value}` - see the
     # api/control.py module docstring: one translation, two callers, or
@@ -569,22 +571,28 @@ def build_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         try:
-            call = to_matter_call(stored, value)
+            calls = to_matter_calls(stored, value)
         except UnsupportedValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
-            await invoke(call)
-        except Exception as exc:  # every device problem becomes a 502
-            # logger.exception writes the full traceback into the server
-            # log, NOT into the HTTP response (see
-            # test_a_failing_matter_call_yields_502_not_a_traceback).
-            # Without that, a genuine bug in the invoker would look in the
-            # log exactly like a device that just is not responding -
-            # both would be nothing more than "device unreachable:
-            # <message>" without a traceback, and the difference between
-            # "Zigbee mesh gone" and "typo in the invoker" would be lost.
-            logger.exception("Matter call for key %r failed", key)
+            # Mehrere Aufrufe, weil ein Loxone-Wert mehr als eine Sache
+            # bedeuten kann - der Farb-Ausgang traegt Farbe UND Helligkeit
+            # (siehe `to_matter_calls`). Der erste Fehlschlag bricht ab und
+            # wird gemeldet; ein halb gesetzter Zustand ist dabei moeglich
+            # und dort begruendet.
+            for call in calls:
+                await invoke(call)
+        except Exception as exc:  # jedes Geraeteproblem wird zu 502
+            # logger.exception schreibt den vollen Traceback ins Server-Log,
+            # NICHT in die HTTP-Antwort (siehe
+            # test_a_failing_matter_call_yields_502_not_a_traceback). Ohne
+            # das saehe ein echter Programmfehler im Invoker im Log genauso
+            # aus wie ein Geraet, das gerade nicht antwortet - beides waere
+            # nur noch "Geraet nicht erreichbar: <Meldung>" ohne Traceback,
+            # und der Unterschied zwischen "Zigbee-Mesh weg" und "Tippfehler
+            # im Invoker" ginge verloren.
+            logger.exception("Matter-Aufruf fuer Schluessel %r fehlgeschlagen", key)
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc

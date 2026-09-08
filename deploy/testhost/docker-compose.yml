@@ -138,6 +138,25 @@ services:
     # anyway via `network_mode: host`.
 
   loxmatter:
+    # Seit 0.2.0 aus einem veroeffentlichten Image statt auf dem Pi gebaut
+    # (Entwurf "Updates ueber die Oberflaeche einspielen", 2026-09-08,
+    # Abschnitt 5). Der Bau brauchte auf dem Test-Pi fuenf bis zehn Minuten
+    # und konnte an einem PyPI-Ausfall oder am Speicher scheitern - mitten
+    # in einem Update, das jemand ueber den Browser angestossen hat, ist
+    # das die falsche Sorte Ueberraschung.
+    #
+    # Der Tag darunter steht in der .env und ist die EINZIGE Stelle, an der
+    # die laufende Version festgelegt wird. Genau deshalb: der Updater
+    # (Stufe 2) faellt zurueck, indem er diese eine Zeile zurueckschreibt.
+    # Eine zweite Erwaehnung des Tags waere eine, die dabei stehen bliebe.
+    #
+    # `build:` bleibt darunter stehen. Ein Compose-Profil kaeme dafuer
+    # nicht in Frage (Profile gelten fuer Dienste, nicht fuer einzelne
+    # Schluessel), und es wird auch keines gebraucht: `compose pull` zieht,
+    # `compose build` baut ausdruecklich, und `up` baut nur, wenn lokal
+    # gar kein Image liegt. Auf einem Host ohne GHCR-Zugang ist genau das
+    # die gewuenschte Rueckfallebene.
+    image: ghcr.io/lucienkerl/loxmatter:${LOXMATTER_IMAGE_TAG:-stable}
     build:
       context: ../..
       dockerfile: Dockerfile

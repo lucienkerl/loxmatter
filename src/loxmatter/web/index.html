@@ -1509,11 +1509,30 @@
            View 3: System
            ================================================================ -->
       <section x-show="view === 'system'" x-cloak>
-        <!-- An action, not a diagnostic - hence before the system checks and
-             not between the log views further down. The button triggers
-             the same full resend as the bridge start and as
-             /resync from the config project (Spec 6.4), just via
-             POST /api/diagnostics/resync, which sits behind the guard. -->
+        <div class="card">
+          <h2 x-text="t('web.system.version_heading')"></h2>
+          <template x-if="versionInfo">
+            <div>
+              <p x-text="t('web.system.version_running', { version: versionInfo.version })"></p>
+              <p class="hint">
+                <span x-show="versionInfo.commit" x-cloak
+                      x-text="t('web.system.version_commit', { commit: versionInfo.commit })"></span>
+                <span x-show="versionInfo.built_at" x-cloak
+                      x-text="t('web.system.version_built_at', { built_at: versionInfo.built_at })"></span>
+              </p>
+              <p class="hint" x-show="versionInfo.version === 'dev' && !versionInfo.commit" x-cloak
+                 x-text="t('web.system.version_dev_hint')"></p>
+              <p class="hint" x-show="versionInfo.version === 'dev' && versionInfo.commit" x-cloak
+                 x-text="t('web.system.version_dev_channel_hint')"></p>
+            </div>
+          </template>
+        </div>
+
+        <!-- Handlung, keine Diagnose - deshalb vor den Systemchecks und
+             nicht zwischen den Log-Ansichten weiter unten. Der Knopf loest
+             denselben vollen Resend aus wie der Bruecken-Start und wie
+             /resync aus dem Config-Projekt (Spec 6.4), nur ueber
+             POST /api/diagnostics/resync, das hinter dem Waechter liegt. -->
         <div class="card">
           <h2 x-text="t('web.system.resync_heading')"></h2>
           <p class="hint" x-text="t('web.system.resync_explanation')"></p>

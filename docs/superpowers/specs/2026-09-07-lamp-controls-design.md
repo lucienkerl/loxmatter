@@ -199,6 +199,10 @@ absence of command 6 is factually wrong (Section 1). In its place
 comes the reference to the documented RGB formula and the clear note that
 **Lumitech** remains open.
 
+> **Addendum, 8 September 2026:** This paragraph describes the state at
+> the time of writing this design. Lumitech has since been documented and
+> implemented — see Section 10, point 1.
+
 ### 5.5 API
 
 `CommandOut` (`api/models.py`) gets two fields:
@@ -351,11 +355,24 @@ unknown” and the error message for an invalid colour number.
 
 ## 10. Open Items
 
-1. **Lumitech remains unsolved.** The combined brightness and
-   Kelvin output of the Loxone light control still has no documented
-   formula; `colortemp` therefore still expects an already-unpacked
-   Kelvin number. This design changes nothing about that, it just stops
-   wrongly condemning RGB as well.
+1. ~~**Lumitech remains unsolved.**~~ **Solved on 8 September 2026.** The combined brightness and
+   Kelvin output had no documented formula — only a forum assumption which this
+   design explicitly identified as unreliable. An installation with Lumitech DMX output
+   has confirmed it: 24 measured values in the bridge's command log, read as `AA BBB
+   CCCC` (identifier 20, brightness, Kelvin). Decisive was not the quantity but that two
+   different brightness levels appeared (28 % and 100 %) — only that shows that the
+   middle field moves independently of the rear field, rather than coincidentally matching.
+
+   The finding came from an error pattern: the White slider of the Loxone app did
+   nothing. The light control module sends colour **and** white over the same analogue
+   output, and the bridge read every white value as a colour with a channel over 100 % —
+   50 rejections with 400 in the log. `_payload_hue_saturation` now distinguishes the two.
+   This is not a heuristic: the largest RGB number is 100 100 100, the smallest
+   Lumitech number 200 000 000, so the value ranges cannot overlap. A white value could
+   therefore never have passed as a wrong colour even before, only been rejected.
+
+   The only thing that remains open at this point is what point 5 describes: brightness
+   from `BBB` is discarded, as it is on the RGB path as well.
 2. **xy colour space.** If the fixtures show that devices
    expect `MoveToColor` (7) instead of command 6, the
    xy conversion is completely missing.
@@ -366,25 +383,34 @@ unknown” and the error message for an invalid colour number.
    the modal is open, the sliders silently become stale. Deliberately so — expanding to
    a real control panel would be a separate design with its own
    justification against Main Spec 8.1.
-5. **The Loxone colour path discards brightness.** The AQa output of the
-   Loxone RGB module carries both colour AND brightness in one number;
-   `MoveToHueAndSaturation` transports only the colour (see
-   `commands/translate.py`, `_payload_hue_saturation`). Calculated: AQa
-   100, 50 and 25 (red at 100 %, 50 %, 25 % brightness) all yield
-   `hue 0, sat 254` — identical commands, dimming in the Loxone module
-   thus has no effect on the lamp. AQa 0 yields `hue 0, sat 0`, i.e.
-   white instead of off. Not a programming error, but a consequence of the deliberate
-   restriction to one colour command (Section 9.3).
+5. ~~**The Loxone colour path discards brightness.**~~ **Solved on 8 September
+   2026.** Loxone encodes brightness in the magnitude of the RGB number (the
+   Value component of HSV) or in the `BBB` field of Lumitech; the bridge sent
+   only hue and saturation and thus discarded brightness. Documented by two values
+   from the same installation: `18004020` and `85019094` have the same hue
+   (307.5° / 307.2°) and the same saturation (80.0 % / 79.8 %), but 20 %
+   vs 94 % brightness — the same colour, once dimmed.
 
-   **Note 8 September 2026:** The chain packed number → colour on the
-   lamp has since been measured against real hardware (see
-   `commands/color.py`), so the behaviour above is no longer just
-   calculated, but confirmed — which turns the dimming problem from a
-   suspicion into a fact. The only thing untested remains the Loxone side: a
-   Miniserver with connected RGB module was not available,
-   verification was done via `POST /api/commands/{key}` with hand-formed
-   AQa numbers. Since both callers use the same translator (Section
-   3), that is the same code path — but not the same source of the number.
+   `to_matter_calls` (formerly `to_matter_call`) therefore returns a **list**:
+   one Loxone value can mean more than one thing. First the colour, then
+   `MoveToLevelWithOnOff`. This way the value 0 actually turns the lamp off,
+   instead of leaving it glowing white.
+
+   Three things that only hardware revealed:
+   - **The value 0 must not trigger a colour command.** In RGB encoding,
+     `0` equals (0,0,0) — hue 0, **saturation 0**, i.e. white. First colouring
+     white and then turning off produced a bright white flash on shutdown, even brighter
+     than the image before: white uses all LEDs, saturated red only the red ones. At
+     brightness 0 there is no colour to set — only one command remains, turning off.
+     Comparison is against the rounded level, not the percentage.
+   - A colour command to an **off** lamp vanishes (Matter spec).
+     The colour payload therefore carries `ExecuteIfOff`; otherwise the lamp would
+     come up in the old colour. Measured: without the bit it came up white, with the bit
+     at hue 120.5° and 60 % brightness.
+   - A failure on the second call leaves a half-state
+     (colour set, brightness not). That is the price for Loxone sending both in one
+     value and Matter requiring them separately; the caller reports the failure as 502 instead
+     of swallowing it.
 6. **Endpoint asymmetry between server and UI.**
    `api/control.py::_kelvin_range` correctly filters initial values to
    `signal.ref.endpoint == command.endpoint`; the UI searches for its

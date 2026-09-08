@@ -73,30 +73,41 @@ umrechnen" (same digit split, explained with Shelly RGBW examples):
 https://loxwiki.atlassian.net/wiki/spaces/LOX/pages/1602650263 (community
 wiki, unofficial, cited here only as confirmation of the official source).
 
-Lumitech (brightness + colour temperature) - NOT documented. No formula
-could be found in the official Loxone documentation (the "Lighting
-Controller" knowledge-base page, the structure-file PDF) for the
-"Lumitech" output mode of the light controller (brightness plus Kelvin in
-one number). The only hit is a forum post with self-logged DMX values that
-guesses at a format "AABBBCCCC" (AA=20 as a white marker, BBB=brightness
-0-100, CCCC=Kelvin); the author himself explicitly calls this a guess, not
-a documented source:
+Lumitech (Helligkeit + Farbtemperatur) - seit dem 8. September 2026 belegt,
+davor jahrelang nicht. In der offiziellen Loxone-Dokumentation
+(Knowledge-Base-Seite "Lighting Controller", Structure-File-PDF) steht die
+Formel bis heute nicht. Der einzige Fund war ein Forumsbeitrag mit selbst
+mitgeloggten DMX-Werten, der das Format "AABBBCCCC" vermutete (AA=20 als
+Weiss-Marker, BBB=Helligkeit 0-100, CCCC=Kelvin) - der Autor nannte das
+ausdruecklich eine Vermutung:
 https://www.loxforum.com/forum/hardware-zubehoer-sensorik/143867-lumitech-
-ausgang-dmx-dimmer (post #2, Jan W., 2018-12-01). That is not a source that
-should be relied on - which is why decoding the raw Loxone Lumitech number
-stays open here (see spec 7.3 / open points).
-This reservation never applied to RGB - `translate.py` wrongly
-applied it to the RGB encoding too, until September 7, 2026,
-and therefore blocked command 6 (see design 2026-09-07,
-section 1).
+ausgang-dmx-dimmer (Beitrag #2, Jan W., 01.12.2018).
 
-`to_matter_call` in `translate.py` therefore deliberately accepts an
-already-unpacked Kelvin value for color temperature, not the raw
-Loxone number - unpacking is the caller's job (task 6 / WebUI), once
-a reliable source for it exists.
+Diese Vermutung ist jetzt an einer echten Anlage bestaetigt - siehe
+`lumitech_to_kelvin` unten fuer die 24 gemessenen Werte. Entscheidend war
+dabei nicht die Menge, sondern dass zwei verschiedene Helligkeiten
+auftraten (28 % und 100 %): erst das zeigt, dass das mittlere Feld sich
+unabhaengig vom hinteren bewegt, statt zufaellig zu passen.
 
-The two functions here only implement the (uncontroversial) Matter-side
-conversion: Kelvin -> mired and RGB -> hue/saturation.
+Der Befund kam aus einem Fehlerbild, nicht aus einer Recherche: der
+Weiss-Regler der Loxone-App bewirkte nichts, und das Kommando-Log der
+Bruecke zeigte 50 Ablehnungen mit 400. Der Lichtsteuerungs-Baustein
+schickt Farbe UND Weiss ueber denselben Analogausgang, und die Bruecke las
+jeden Weisswert als Farbe mit einem Kanal weit ueber 100 Prozent.
+
+Zu keiner Zeit hat dieser Vorbehalt fuer RGB gegolten - `translate.py` hat
+ihn bis zum 7. September 2026 faelschlich auch auf die RGB-Codierung
+bezogen und deshalb Kommando 6 gesperrt (siehe Entwurf 2026-09-07,
+Abschnitt 1).
+
+Der Farb-Ausgang traegt deshalb beide Bedeutungen: `translate.py` fragt
+`is_lumitech` und schickt je nachdem MoveToHueAndSaturation oder
+MoveToColorTemperature. Das ist keine Heuristik - die Wertebereiche beider
+Codierungen koennen sich nicht ueberschneiden (siehe `is_lumitech`).
+
+Der `colortemp`-Ausgang nimmt weiterhin eine blanke Kelvinzahl entgegen,
+nicht die rohe Lumitech-Zahl: er ist der Weg fuer eine Lichtsteuerung, die
+Farbtemperatur getrennt ausgibt, und die WebUI benutzt ihn ebenso.
 """
 
 from __future__ import annotations
@@ -164,6 +175,29 @@ def kelvin_to_mireds(kelvin: float) -> int:
     return int(1_000_000 / kelvin)
 
 
+def rgb_to_brightness(r: int, g: int, b: int) -> float:
+    """Die Helligkeit einer Loxone-Farbzahl, in Prozent.
+
+    Loxone codiert die Helligkeit NICHT getrennt, sondern im Betrag der drei
+    Kanaele: dieselbe Farbe halb so hell ist derselbe Farbton mit halbierten
+    Prozentwerten. Das ist der Value-Anteil von HSV - genau der, den
+    `rgb_to_hue_saturation` verwirft, weil Matter Farbe und Helligkeit in
+    zwei getrennten Clustern fuehrt (ColorControl und LevelControl).
+
+    Belegt an zwei Werten derselben Anlage (8. September 2026):
+
+        18004020 -> (20,  4, 18)  Farbton 307,5 Grad  Saettigung 80,0 %  V 20 %
+        85019094 -> (94, 19, 85)  Farbton 307,2 Grad  Saettigung 79,8 %  V 94 %
+
+    Gleiche Farbe, einmal gedimmt. Wer nur Hue und Saturation schickt, wirft
+    das Dimmen weg - und genau das hat die Bruecke bis zum 8. September 2026
+    getan: der Helligkeitsregler der Loxone-App bewegte sich, die Leuchte
+    blieb gleich hell.
+    """
+    _, _, value = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return value * 100
+
+
 def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
     """RGB (0-255) to Matter hue and saturation (both 0-254).
 
@@ -175,6 +209,97 @@ def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
     """
     h, s, _ = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
     return round(h * 254), round(s * 254)
+
+
+# Lumitech: Kennung, Helligkeit, Kelvin in einer Zahl - `AA BBB CCCC`.
+# Siehe `is_lumitech` und `lumitech_to_kelvin` unten.
+LUMITECH_MARKER = 20
+_LUMITECH_MIN = 200_000_000
+_LUMITECH_MAX = 209_999_999
+
+
+def is_lumitech(value: int) -> bool:
+    """Ob diese Loxone-Zahl eine Farbtemperatur traegt statt einer Farbe.
+
+    Der Lichtsteuerungs-Baustein schickt beides ueber DENSELBEN
+    Analogausgang: RGB nach der Formel im Moduldocstring oben, Weisstoene im
+    Lumitech-Format `AA BBB CCCC` (Kennung 20, Helligkeit 0-100, Kelvin).
+    Wer nur RGB entpackt, liest einen Weisswert als Farbe mit einem Kanal
+    weit ueber 100 Prozent - genau das ist im Betrieb passiert (8. September
+    2026): der Weiss-Regler in der Loxone-App bewegte sich, die Bruecke
+    antwortete 50-mal mit 400, und an der Leuchte aenderte sich nichts.
+
+    **Die beiden Formate koennen sich nicht ueberschneiden**, und das ist
+    keine gluecklose Faustregel, sondern rechnerisch: die groesste
+    RGB-Zahl ist 100 + 100*1000 + 100*1_000_000 = 100_100_100, die
+    kleinste Lumitech-Zahl 200_000_000. Ein Wert kann also nie beides
+    bedeuten - deshalb darf diese Unterscheidung ueberhaupt automatisch
+    getroffen werden.
+
+    Die Stellenzahl gehoert zur Bedingung: `20100270` (acht Stellen) traegt
+    zwar dieselben ersten Ziffern, ist aber eine gewoehnliche RGB-Zahl
+    (r=270? nein - 270 > 100, sie waere ungueltig) beziehungsweise schlicht
+    kein Lumitech-Wert. Der Bereichsvergleich deckt beides ab.
+    """
+    return _LUMITECH_MIN <= value <= _LUMITECH_MAX
+
+
+def lumitech_to_brightness(value: int) -> int:
+    """Die Helligkeit aus einer Lumitech-Zahl, in Prozent (Feld `BBB`).
+
+    Gegenstueck zu `lumitech_to_kelvin`. Getrennte Funktionen statt eines
+    Tupels, weil die beiden Werte in Matter in zwei verschiedene Cluster
+    gehen - LevelControl und ColorControl - und die Aufrufer sie deshalb
+    ohnehin einzeln brauchen.
+    """
+    if not is_lumitech(value):
+        raise ValueError(f"Keine Lumitech-Zahl (Kennung {LUMITECH_MARKER} fehlt): {value}")
+    brightness = value // 10_000 % 1000
+    if brightness > 100:
+        raise ValueError(
+            f"Lumitech-Helligkeit liegt bei {brightness} %, erlaubt sind 0-100 (Zahl {value})"
+        )
+    return brightness
+
+
+def lumitech_to_kelvin(value: int) -> int:
+    """Die Farbtemperatur aus einer Lumitech-Zahl, in Kelvin.
+
+    **Diese Codierung galt in diesem Projekt lange als unbelegt** (siehe
+    Moduldocstring oben, Abschnitt Lumitech): die einzige Quelle war ein
+    Forumsbeitrag, dessen Autor sein Format ausdruecklich eine Vermutung
+    nannte. Belegt ist sie seit dem 8. September 2026 an einer echten
+    Loxone-Installation mit Lumitech-DMX-Ausgang - 24 verschiedene Werte aus
+    dem Kommando-Log der Bruecke, darunter zwei verschiedene Helligkeiten,
+    die das mittlere Feld unabhaengig vom hinteren bewegen:
+
+        200283057 -> Kennung 20 | Helligkeit  28 % | 3057 K
+        200285742 -> Kennung 20 | Helligkeit  28 % | 5742 K
+        201002700 -> Kennung 20 | Helligkeit 100 % | 2700 K
+        201006500 -> Kennung 20 | Helligkeit 100 % | 6500 K
+
+    Die Kelvinwerte spannen 2700 bis 6500 - der uebliche Bereich einer
+    Tunable-White-Leuchte, mit 6500 K als Reglerende.
+
+    **Die Helligkeit wird verworfen**, so wie beim RGB-Weg auch: sie laeuft
+    ueber LevelControl, nicht ueber das Farbkommando (siehe
+    `rgb_to_hue_saturation` und den Docstring von
+    `commands/translate.py`). Ein Lumitech-Wert loest deshalb genau ein
+    Matter-Kommando aus, nicht zwei - dieselbe Zurueckhaltung wie
+    ueberall sonst hier, und ein halb gesetzter Zustand nach einem
+    fehlgeschlagenen zweiten Aufruf kann so gar nicht entstehen.
+    """
+    if not is_lumitech(value):
+        raise ValueError(f"Keine Lumitech-Zahl (Kennung {LUMITECH_MARKER} fehlt): {value}")
+    brightness = value // 10_000 % 1000
+    kelvin = value % 10_000
+    if brightness > 100:
+        raise ValueError(
+            f"Lumitech-Helligkeit liegt bei {brightness} %, erlaubt sind 0-100 (Zahl {value})"
+        )
+    if kelvin <= 0:
+        raise ValueError(f"Lumitech-Farbtemperatur muss groesser als 0 K sein (Zahl {value})")
+    return kelvin
 
 
 def loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]:

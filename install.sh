@@ -745,16 +745,29 @@ start_stack() {
   else
     note "matter-server, loxmatter - no Thread border router in this mode"
   fi
-  note "The first build takes several minutes on a Raspberry Pi. It is not stuck."
+  note "Pulling the published image from ghcr.io. If that host cannot be"
+  note "reached, Docker falls back to building from source instead - that"
+  note "takes several minutes on a Raspberry Pi. It is not stuck."
   if [ "$DRY_RUN" -eq 1 ]; then
-    note "would run: docker compose up -d --build in $STACK_DIR"
+    note "would run: docker compose up -d in $STACK_DIR"
     return 0
   fi
   mkdir -p "$STACK_DIR/data"
-  # No --profile here on purpose: COMPOSE_PROFILES lives in .env, which Compose
-  # reads by itself. Every later call in this directory - by hand, or from
-  # scripts/update.sh - then picks the same services without a flag to remember.
-  ( cd "$STACK_DIR" && dk compose up -d --build ) ||
+  # No --build: deploy/testhost/docker-compose.yml names a published image,
+  # and `up` only falls back to building when no such image can be obtained
+  # at all (see the comment above that file's `image:` line) - the exact
+  # fallback a host without GHCR access needs. Building here on purpose
+  # would tag the result with the service's `image:` value, so a fresh
+  # install would end up with a LOCAL image called
+  # ghcr.io/lucienkerl/loxmatter:stable that reports itself as `dev` -
+  # the working-copy hint in the web UI would then fire on a brand-new
+  # installation of a released version.
+  #
+  # No --profile either, on purpose: COMPOSE_PROFILES lives in .env, which
+  # Compose reads by itself. Every later call in this directory - by hand,
+  # or from scripts/update.sh - then picks the same services without a flag
+  # to remember.
+  ( cd "$STACK_DIR" && dk compose up -d ) ||
     die "Could not start the stack in $STACK_DIR. The checkout and .env are in place; fix the
 cause and run this again. The logs are in:
   cd $STACK_DIR && docker compose logs"

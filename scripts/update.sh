@@ -16,33 +16,48 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-# Brings the running bridge up to the state of the repository.
+# Bringt die laufende Bruecke auf den Stand der veroeffentlichten Version.
 #
-#   ./scripts/update.sh              # pull, build, restart
-#   ./scripts/update.sh --no-pull    # only build and restart
-#   ./scripts/update.sh --no-cache   # build without the layer cache
+#   ./scripts/update.sh              # holen, Image ziehen, neu starten
+#   ./scripts/update.sh --no-pull    # nur ziehen und neu starten
+#   ./scripts/update.sh --build      # aus der Quelle bauen statt ziehen
+#   ./scripts/update.sh --build --no-cache   # ohne Layer-Cache bauen
 #
 # Run this on the machine where the bridge runs. The stack lives inside the
 # repository itself (deploy/testhost/), the script finds it via its own
 # path - no configuration step needed.
 #
-# The service is started with `--no-deps`: matter-server and OTBR are left
-# untouched. Without that, Compose would recreate them too as soon as the
-# project configuration changes - and OTBR's Thread state hangs off a
-# volume that survives a rebuild, but restarting the Thread network for no
-# reason isn't part of an update.
+# Seit 0.2.0 wird gezogen statt gebaut: der Bau brauchte auf dem Test-Pi
+# fuenf bis zehn Minuten und konnte an einem PyPI-Ausfall oder am
+# Speicher scheitern. --build stellt den alten Weg wieder her, fuer
+# Entwicklung und fuer Hosts ohne Zugang zur Registry.
+#
+# Der Dienst wird mit `--no-deps` gestartet: matter-server und OTBR bleiben
+# unangetastet. Ohne das erzeugt Compose sie mit neu, sobald sich die
+# Projektkonfiguration geaendert hat - und OTBRs Thread-Zustand haengt an
+# einem Volume, das ein Neubau zwar ueberlebt, aber ein Neustart des
+# Thread-Netzes ohne Grund gehoert nicht zu einem Update.
 set -euo pipefail
 
 PULL=1
+BUILD=0
 NO_CACHE=""
 for arg in "$@"; do
   case "$arg" in
     --no-pull)  PULL=0 ;;
+    --build)    BUILD=1 ;;
     --no-cache) NO_CACHE=1 ;;
-    -h|--help)  sed -n '18,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)          printf 'Unknown argument: %s (allowed: --no-pull, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
+    -h|--help)  sed -n '18,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)          printf 'Unbekanntes Argument: %s (erlaubt: --no-pull, --build, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
   esac
 done
+# --no-cache steuert einen Bau. Ohne --build steuert es gar nichts, und
+# ein Schalter, der stillschweigend wirkungslos bleibt, ist schlimmer als
+# einer, der fehlt: er laesst jemanden glauben, er habe frisch gebaut.
+if [ -n "$NO_CACHE" ] && [ "$BUILD" -eq 0 ]; then
+  printf 'Abbruch: --no-cache wirkt nur zusammen mit --build.\n' >&2
+  exit 2
+fi
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STACK="$REPO/deploy/testhost"
@@ -90,16 +105,21 @@ else
   printf '\nNo database volume found (%s) - first run?\n' "$VOLUME"
 fi
 
-# Via `docker compose build`, NOT via a separate `docker build`
-# (2026-09-03): in the compose file the service carries a `build:` block
-# and so builds its own image. Nobody uses a `loxmatter:local` built
-# alongside it - for months the script built an image that never went
-# anywhere, while Compose on `up` simply kept reusing an existing image
-# instead of rebuilding. The service then kept running unchanged and
-# still reported "Done".
-say "Building the image"
-(cd "$STACK" && docker compose build ${NO_CACHE:+--no-cache} "$SERVICE") \
-  || die "Build failed - the running service is unchanged."
+# Ziehen statt bauen (0.2.0). Der lange Kommentar von 2026-09-03 darueber,
+# dass `docker compose build` und nicht ein eigenes `docker build` zu
+# benutzen ist, gilt unveraendert weiter - er betrifft jetzt nur noch den
+# --build-Zweig unten. Die Ursache von damals bleibt dieselbe: der Dienst
+# traegt in der Compose-Datei einen `build:`-Block und baut sein eigenes
+# Image; ein daneben gebautes `loxmatter:local` benutzt niemand.
+if [ "$BUILD" -eq 1 ]; then
+  say "Baue das Image"
+  (cd "$STACK" && docker compose build ${NO_CACHE:+--no-cache} "$SERVICE") \
+    || die "Build fehlgeschlagen - der laufende Dienst bleibt unveraendert."
+else
+  say "Hole das Image"
+  (cd "$STACK" && docker compose pull "$SERVICE") \
+    || die "Kein Image geladen - der laufende Dienst bleibt unveraendert. Ohne Zugang zur Registry hilft --build."
+fi
 
 say "Restarting the service"
 (cd "$STACK" && docker compose up -d --no-deps --force-recreate "$SERVICE") \
