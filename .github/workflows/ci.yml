@@ -16,3 +16,71 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy
       - run: uv run pytest -v
+
+  # Baut und veroeffentlicht das Image (Entwurf "Updates ueber die
+  # Oberflaeche einspielen", 2026-09-08, Abschnitt 5). `needs: test` ist
+  # nicht Kosmetik: ein Image, das die Testsuite nicht bestanden hat, darf
+  # gar nicht erst unter einem Tag stehen, den jemand einspielen kann.
+  image:
+    needs: test
+    # Der eigene Branch steht hier nur voruebergehend mit drin: solange
+    # Aufgabe 5 noch nicht auf main gelandet ist, wuerde die Bedingung ohne
+    # ihn schweigend ueberspringen, und main bekaeme diesen Job erst
+    # ungeprueft zu Gesicht. Aufgabe 7 nimmt die Branch-Bedingung mit dem
+    # Freigabe-Commit wieder heraus.
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/software-updates-webui-ef5564' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          set -eu
+          # Die Schema-Version hat genau eine Quelle: store.py. Schlaegt der
+          # grep fehl, bricht der Bau ab, statt ein Image mit leerem
+          # LOXMATTER_SCHEMA_VERSION zu veroeffentlichen - der Updater aus
+          # Stufe 2 koennte damit seine Vorabpruefung nicht machen und
+          # muesste raten. tests/test_build_arguments.py prueft dasselbe
+          # Muster, damit ein Umbau in store.py hier nicht erst in der CI
+          # auffaellt.
+          schema="$(sed -n -E 's/^_SCHEMA_VERSION = ([0-9]+)$/\1/p' src/loxmatter/model/store.py)"
+          [ -n "$schema" ] || { echo "Keine _SCHEMA_VERSION in store.py gefunden"; exit 1; }
+          case "$GITHUB_REF" in
+            refs/tags/v*) version="${GITHUB_REF#refs/tags/v}" ;;
+            *)            version="dev" ;;
+          esac
+          {
+            echo "schema=$schema"
+            echo "version=$version"
+            echo "commit=$(git rev-parse --short HEAD)"
+            echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+      - id: tags
+        run: |
+          set -eu
+          image="ghcr.io/lucienkerl/loxmatter"
+          if [ "${{ steps.meta.outputs.version }}" = "dev" ]; then
+            echo "list=$image:dev,$image:sha-${{ steps.meta.outputs.commit }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "list=$image:${{ steps.meta.outputs.version }},$image:stable" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          build-args: |
+            LOXMATTER_VERSION=${{ steps.meta.outputs.version }}
+            LOXMATTER_COMMIT=${{ steps.meta.outputs.commit }}
+            LOXMATTER_BUILT_AT=${{ steps.meta.outputs.built_at }}
+            LOXMATTER_SCHEMA_VERSION=${{ steps.meta.outputs.schema }}
