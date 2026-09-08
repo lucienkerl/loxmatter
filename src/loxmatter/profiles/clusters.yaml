@@ -32,9 +32,20 @@
 #
 # INNERHALB eines Rangs bleibt die bisherige Ordnung (Endpunkt, Cluster,
 # Element, Art) - sie ordnet zwei Signale desselben Clusters, und das tut
-# sie gut. Es gibt bewusst KEINEN Rang je Element: die Element-IDs sind in
-# der Matter-Spezifikation bereits grob nach Wichtigkeit vergeben, eine
-# zweite Rangebene waere Aufwand ohne belegten Gewinn.
+# sie meistens gut. Es gibt ZWEI Rangebenen: `rank` je Cluster (oben) UND
+# `rank` je Element, einzeln bei jedem Eintrag unter `attributes:`/
+# `events:` setzbar (siehe Cluster 59 unten). Die Elementebene ist
+# NACHGETRAGEN worden (2026-09-08), weil ein konkretes Geraet sie
+# verlangte: der IKEA-Taster traegt `NumberOfPositions` auf demselben
+# Cluster wie den Tastendruck, und die kleinere Element-ID sortierte die
+# Positionsangabe - eine Konstante, die sich nie aendert - vor jeden
+# Tastendruck; die Kachel fuehrte damit mit einem Leitwert ohne Aussage.
+# Ein Element OHNE `rank` faellt weiter auf die Vorgabe zurueck und bleibt
+# ueber die Element-ID geordnet - die Matter-Spezifikation vergibt sie
+# schon grob nach Wichtigkeit, und das reicht fuer jeden Cluster, der
+# (noch) kein Geraet hat, das etwas anderes verlangt. Ein neuer
+# Elementrang braucht wie hier ein Geraet, das ihn tatsaechlich belegt,
+# nicht nur eine Vermutung.
 clusters:
   6:
     name: onoff
