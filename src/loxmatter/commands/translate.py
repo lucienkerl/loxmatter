@@ -57,8 +57,10 @@ from dataclasses import dataclass, field
 from loxmatter import i18n
 from loxmatter.commands.color import (
     LoxoneColourError,
+    is_lumitech,
     kelvin_to_mireds,
     loxone_rgb_to_rgb,
+    lumitech_to_kelvin,
     rgb_to_hue_saturation,
 )
 from loxmatter.model.store import StoredCommand
@@ -111,16 +113,38 @@ def _level(value: str) -> int:
     return max(0, min(LEVEL_MAX, round(percent * LEVEL_MAX / 100)))
 
 
-def _payload_none(_value: str) -> dict[str, object]:
-    return {}
+@dataclass(frozen=True)
+class _Built:
+    """Was ein Payload-Bauer liefert.
+
+    Normalerweise nur die Nutzlast; das Kommando steht dann im
+    Tabelleneintrag. `command_id` setzt ein Bauer nur, wenn der WERT ein
+    anderes Kommando desselben Clusters verlangt als der Eintrag - der
+    Fall existiert genau einmal, siehe `_payload_hue_saturation`: der
+    Loxone-Lichtsteuerungsbaustein schickt Farbe und Weiss ueber denselben
+    Ausgang.
+
+    Ein eigener Rueckgabetyp statt einer zweiten Tabelle "Wert -> Kommando"
+    neben `_PAYLOAD_BUILDERS`: die Entscheidung, WELCHES Kommando ein Wert
+    bedeutet, und die Nutzlast dafuer gehoeren untrennbar zusammen. Zwei
+    Tabellen dafuer liefen frueher oder spaeter auseinander, und das faellt
+    erst am echten Geraet auf.
+    """
+
+    payload: dict[str, object]
+    command_id: int | None = None
 
 
-def _payload_level(value: str) -> dict[str, object]:
-    return {"level": _level(value), "transitionTime": 0}
+def _payload_none(_value: str) -> _Built:
+    return _Built({})
 
 
-def _payload_color_temperature(value: str) -> dict[str, object]:
-    return {"colorTemperatureMireds": kelvin_to_mireds(_as_number(value))}
+def _payload_level(value: str) -> _Built:
+    return _Built({"level": _level(value), "transitionTime": 0})
+
+
+def _payload_color_temperature(value: str) -> _Built:
+    return _Built({"colorTemperatureMireds": kelvin_to_mireds(_as_number(value))})
 
 
 # Kanal-Kuerzel aus `LoxoneColourError.channel` (siehe `commands/color.py`)
@@ -162,7 +186,7 @@ def _translate_loxone_colour_error(exc: LoxoneColourError) -> str:
     )
 
 
-def _payload_hue_saturation(value: str) -> dict[str, object]:
+def _payload_hue_saturation(value: str) -> _Built:
     """Gepackte Loxone-Farbzahl -> Matter-Hue/Saturation.
 
     Zwei Umrechnungen hintereinander, beide in `commands/color.py` belegt:
@@ -196,12 +220,35 @@ def _payload_hue_saturation(value: str) -> dict[str, object]:
     angeschlossenem Loxone-RGB-Baustein bislang UNGETESTET. Offener Punkt,
     siehe Entwurf Abschnitt 10.
     """
+    number = _as_number(value)
+
+    # Weiss statt Farbe: derselbe Loxone-Ausgang traegt beide Bedeutungen,
+    # unterschieden durch die Kennung 20 (siehe `color.is_lumitech` fuer den
+    # Beleg und dafuer, warum sich die Wertebereiche nicht ueberschneiden
+    # koennen). Vor dem 8. September 2026 fiel ein solcher Wert hier in die
+    # RGB-Entpackung, scheiterte an einem Kanal ueber 100 Prozent und kam
+    # als 400 zurueck - der Weiss-Regler der Loxone-App bewirkte nichts.
+    # Nur ganzzahlige Werte kommen ueberhaupt in Frage - `is_lumitech`
+    # erwartet eine Ganzzahl, und eine gebrochene Zahl ist in keiner der
+    # beiden Codierungen vorgesehen.
+    if number == int(number) and is_lumitech(int(number)):
+        try:
+            kelvin = lumitech_to_kelvin(int(number))
+        except ValueError as exc:
+            raise UnsupportedValueError(
+                i18n.t("api.errors.lumitech_malformed", value=value)
+            ) from exc
+        return _Built(
+            {"colorTemperatureMireds": kelvin_to_mireds(kelvin)},
+            command_id=_COMMAND_COLOR_TEMPERATURE,
+        )
+
     try:
-        red, green, blue = loxone_rgb_to_rgb(_as_number(value))
+        red, green, blue = loxone_rgb_to_rgb(number)
     except LoxoneColourError as exc:
         raise UnsupportedValueError(_translate_loxone_colour_error(exc)) from exc
     hue, saturation = rgb_to_hue_saturation(red, green, blue)
-    return {"hue": hue, "saturation": saturation, "transitionTime": 0}
+    return _Built({"hue": hue, "saturation": saturation, "transitionTime": 0})
 
 
 # Einziger Ort, an dem festgelegt ist, welche (Cluster-ID, Kommando-ID)-Paare
@@ -209,7 +256,7 @@ def _payload_hue_saturation(value: str) -> dict[str, object]:
 # noch aus - ein weiteres Kommando zu unterstuetzen ist eine Datenaenderung
 # hier, keine neue Verzweigung dort, und die Menge der bedienten Paare ist auf
 # einen Blick vollstaendig.
-_PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
+_PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], _Built]] = {
     (_CLUSTER_ONOFF, _COMMAND_OFF): _payload_none,
     (_CLUSTER_ONOFF, _COMMAND_ON): _payload_none,
     (_CLUSTER_ONOFF, _COMMAND_TOGGLE): _payload_none,
@@ -233,10 +280,13 @@ def to_matter_call(command: StoredCommand, value: str) -> MatterCall:
             )
         )
 
+    built = build_payload(value)
     return MatterCall(
         node_id=command.node_id,
         endpoint=command.endpoint,
         cluster_id=command.cluster_id,
-        command_id=command.command_id,
-        payload=build_payload(value),
+        # Der Wert darf das Kommando bestimmen - siehe `_Built`. Ohne
+        # Weiche bliebe es beim Eintrag aus der Tabelle.
+        command_id=command.command_id if built.command_id is None else built.command_id,
+        payload=built.payload,
     )

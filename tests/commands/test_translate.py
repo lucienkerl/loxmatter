@@ -17,6 +17,7 @@
 import pytest
 
 from loxmatter import i18n
+from loxmatter.commands.color import kelvin_to_mireds
 from loxmatter.commands.translate import (
     _PAYLOAD_BUILDERS,
     MatterCall,
@@ -263,3 +264,45 @@ def test_fractional_colour_number_raises_in_german():
     command = cmd(768, 6, takes_value=True)
     with pytest.raises(UnsupportedValueError, match="ganzzahlig"):
         to_matter_call(command, "20040060.5")
+
+
+def test_a_lumitech_value_becomes_a_colour_temperature_command():
+    """Betriebsbefund vom 8. September 2026: der Lichtsteuerungs-Baustein
+    schickt Farbe UND Weiss ueber denselben Analogausgang. Ein Weisswert
+    muss deshalb aus DEMSELBEN Loxone-Schluessel ein anderes
+    Matter-Kommando ausloesen - MoveToColorTemperature (10) statt
+    MoveToHueAndSaturation (6).
+
+    201002700 = Kennung 20 | Helligkeit 100 % | 2700 K. Gemessener Wert aus
+    einer echten Anlage."""
+    call = to_matter_call(cmd(768, 6, takes_value=True), "201002700")
+    assert call.cluster_id == 768
+    assert call.command_id == 10
+    assert call.payload["colorTemperatureMireds"] == kelvin_to_mireds(2700)
+
+
+def test_an_rgb_value_still_becomes_a_hue_saturation_command():
+    """Die Gegenprobe: derselbe Schluessel, eine RGB-Zahl, unveraendertes
+    Verhalten. Ohne diesen Test koennte die Weiche den Farbweg kapern, ohne
+    dass es auffaellt."""
+    call = to_matter_call(cmd(768, 6, takes_value=True), "100")
+    assert call.command_id == 6
+    assert call.payload["hue"] == 0
+    assert call.payload["saturation"] == 254
+
+
+@pytest.mark.parametrize(
+    ("packed", "kelvin"),
+    [("200283057", 3057), ("201004324", 4324), ("201006500", 6500)],
+)
+def test_measured_lumitech_values_reach_their_kelvin(packed, kelvin):
+    call = to_matter_call(cmd(768, 6, takes_value=True), packed)
+    assert call.command_id == 10
+    assert call.payload["colorTemperatureMireds"] == kelvin_to_mireds(kelvin)
+
+
+def test_a_malformed_lumitech_value_is_rejected_not_guessed():
+    """20|101|2700 - eine Helligkeit ueber 100 %. Das Format ist verletzt,
+    und eine Farbtemperatur daraus zu rechnen hiesse raten."""
+    with pytest.raises(UnsupportedValueError):
+        to_matter_call(cmd(768, 6, takes_value=True), "201012700")

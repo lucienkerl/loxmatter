@@ -203,6 +203,10 @@ Fehlen von Kommando 6 ist sachlich falsch (Abschnitt 1). An ihre Stelle
 tritt der Verweis auf die belegte RGB-Formel und der klare Hinweis, dass
 **Lumitech** weiterhin offen ist.
 
+> **Nachtrag 8. September 2026:** Dieser Absatz beschreibt den Stand bei
+> Abfassung des Entwurfs. Lumitech ist seither belegt und umgesetzt — siehe
+> Abschnitt 10, Punkt 1.
+
 ### 5.5 API
 
 `CommandOut` (`api/models.py`) bekommt zwei Felder:
@@ -357,11 +361,28 @@ unbekannt“ und die Fehlermeldung für eine ungültige Farbzahl.
 
 ## 10. Offene Punkte
 
-1. **Lumitech bleibt ungelöst.** Der kombinierte Helligkeits- und
-   Kelvin-Ausgang der Loxone-Lichtsteuerung hat weiterhin keine belegte
-   Formel; `colortemp` nimmt deshalb nach wie vor eine bereits entpackte
-   Kelvinzahl entgegen. Dieser Entwurf ändert daran nichts, er hört nur auf,
-   RGB fälschlich mitzuverurteilen.
+1. ~~**Lumitech bleibt ungelöst.**~~ **Gelöst am 8. September 2026.** Der
+   kombinierte Helligkeits- und Kelvin-Ausgang hatte keine belegte Formel —
+   nur eine Forumsvermutung, die dieser Entwurf ausdrücklich als
+   unbelastbar führte. Eine Installation mit Lumitech-DMX-Ausgang hat sie
+   bestätigt: 24 gemessene Werte im Kommando-Log der Brücke, nach `AA BBB
+   CCCC` gelesen (Kennung 20, Helligkeit, Kelvin). Ausschlaggebend war
+   nicht die Menge, sondern dass zwei verschiedene Helligkeiten auftraten
+   (28 % und 100 %) — erst das zeigt, dass das mittlere Feld sich
+   unabhängig vom hinteren bewegt, statt zufällig zu passen.
+
+   Der Befund kam aus einem Fehlerbild: Der Weiß-Regler der Loxone-App
+   bewirkte nichts. Der Lichtsteuerungs-Baustein schickt Farbe **und** Weiß
+   über denselben Analogausgang, und die Brücke las jeden Weißwert als
+   Farbe mit einem Kanal über 100 % — 50 Ablehnungen mit 400 im Log.
+   `_payload_hue_saturation` unterscheidet die beiden jetzt. Das ist keine
+   Heuristik: die größte RGB-Zahl ist 100 100 100, die kleinste
+   Lumitech-Zahl 200 000 000, die Wertebereiche können sich also nicht
+   überschneiden. Ein Weißwert konnte deshalb auch vorher nie als falsche
+   Farbe durchgehen, nur abgelehnt werden.
+
+   Offen bleibt an dieser Stelle nur, was Punkt 5 beschreibt: die
+   Helligkeit aus `BBB` wird verworfen, wie beim RGB-Weg auch.
 2. **xy-Farbraum.** Sollte sich an den Fixtures zeigen, dass Geräte
    `MoveToColor` (7) statt Kommando 6 erwarten, fehlt die
    xy-Umrechnung vollständig.
