@@ -144,3 +144,52 @@ def test_lumitech_rejects_a_number_that_is_not_lumitech():
     waere schlimmer als abzubrechen."""
     with pytest.raises(ValueError):
         lumitech_to_kelvin(100100100)
+
+
+# --- Helligkeit aus beiden Codierungen ---------------------------------------
+from loxmatter.commands.color import lumitech_to_brightness, rgb_to_brightness
+
+
+@pytest.mark.parametrize(
+    ("rgb", "prozent"),
+    [
+        ((255, 255, 255), 100),
+        ((0, 0, 0), 0),
+        ((255, 0, 0), 100),
+        ((128, 0, 0), 50),
+        ((51, 10, 46), 20),
+    ],
+)
+def test_brightness_is_the_v_of_hsv(rgb, prozent):
+    """Loxone codiert die Helligkeit im BETRAG der RGB-Zahl, nicht getrennt.
+    Belegt an zwei gemessenen Werten derselben Anlage: 18004020 = (20,4,18)
+    und 85019094 = (94,19,85) haben denselben Farbton (307,5 / 307,2 Grad)
+    und dieselbe Saettigung (80,0 / 79,8 %), aber 20 % gegen 94 %
+    Helligkeit - dieselbe Farbe, einmal gedimmt."""
+    assert rgb_to_brightness(*rgb) == pytest.approx(prozent, abs=1)
+
+
+def test_the_two_measured_values_differ_only_in_brightness():
+    """Die Gegenprobe zum Docstring oben, an den echten Zahlen."""
+    from loxmatter.commands.color import loxone_rgb_to_rgb, rgb_to_hue_saturation
+
+    dunkel = loxone_rgb_to_rgb(18004020)
+    hell = loxone_rgb_to_rgb(85019094)
+    assert rgb_to_hue_saturation(*dunkel)[0] == pytest.approx(
+        rgb_to_hue_saturation(*hell)[0], abs=2
+    )
+    assert rgb_to_brightness(*dunkel) == pytest.approx(20, abs=1)
+    assert rgb_to_brightness(*hell) == pytest.approx(94, abs=1)
+
+
+@pytest.mark.parametrize(
+    ("packed", "prozent"),
+    [(200283057, 28), (201002700, 100), (200000001, 0)],
+)
+def test_lumitech_brightness_is_the_middle_field(packed, prozent):
+    assert lumitech_to_brightness(packed) == prozent
+
+
+def test_lumitech_brightness_rejects_a_number_that_is_not_lumitech():
+    with pytest.raises(ValueError):
+        lumitech_to_brightness(100100100)

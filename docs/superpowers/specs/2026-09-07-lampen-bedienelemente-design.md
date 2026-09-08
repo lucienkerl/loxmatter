@@ -393,25 +393,29 @@ unbekannt“ und die Fehlermeldung für eine ungültige Farbzahl.
    das Modal offen ist, veralten die Regler still. Bewusst so — der Ausbau
    zum echten Bedienfeld wäre ein eigener Entwurf mit eigener Begründung
    gegenüber Hauptspec 8.1.
-5. **Der Loxone-Farbweg verwirft Helligkeit.** Der AQa-Ausgang des
-   Loxone-RGB-Bausteins trägt Farbe UND Helligkeit in einer Zahl;
-   `MoveToHueAndSaturation` transportiert nur die Farbe (siehe
-   `commands/translate.py`, `_payload_hue_saturation`). Nachgerechnet: AQa
-   100, 50 und 25 (Rot bei 100 %, 50 %, 25 % Helligkeit) ergeben alle drei
-   `hue 0, sat 254` — identische Kommandos, Dimmen im Loxone-Baustein
-   bewirkt an der Leuchte also nichts. AQa 0 ergibt `hue 0, sat 0`, also
-   Weiß statt Aus. Kein Programmierfehler, sondern Folge der bewussten
-   Beschränkung auf ein Farbkommando (Abschnitt 9.3).
+5. ~~**Der Loxone-Farbweg verwirft Helligkeit.**~~ **Gelöst am 8. September
+   2026.** Loxone codiert die Helligkeit im Betrag der RGB-Zahl (dem
+   Value-Anteil von HSV) bzw. im Feld `BBB` von Lumitech; die Brücke schickte
+   nur Farbton und Sättigung und warf sie damit weg. Belegt an zwei Werten
+   derselben Anlage: `18004020` und `85019094` haben denselben Farbton
+   (307,5° / 307,2°) und dieselbe Sättigung (80,0 % / 79,8 %), aber 20 %
+   gegen 94 % Helligkeit — dieselbe Farbe, einmal gedimmt.
 
-   **Nachtrag 8. September 2026:** Die Kette gepackte Zahl → Farbe an der
-   Leuchte ist seither an echter Hardware gemessen (siehe
-   `commands/color.py`), das Verhalten oben ist also nicht mehr nur
-   gerechnet, sondern bestätigt — was das Dimm-Problem von einer Vermutung
-   zu einer Tatsache macht. Ungetestet bleibt allein die Loxone-Seite: ein
-   Miniserver mit angeschlossenem RGB-Baustein stand nicht zur Verfügung,
-   geprüft wurde über `POST /api/commands/{key}` mit von Hand gebildeten
-   AQa-Zahlen. Da beide Aufrufer denselben Übersetzer benutzen (Abschnitt
-   3), ist das dieselbe Codestrecke — aber nicht dieselbe Quelle der Zahl.
+   `to_matter_calls` (vorher `to_matter_call`) liefert deshalb eine **Liste**:
+   ein Loxone-Wert kann mehr als eine Sache bedeuten. Erst die Farbe, dann
+   `MoveToLevelWithOnOff`. Damit schaltet der Wert 0 die Leuchte auch
+   wirklich aus, statt sie weiß leuchten zu lassen.
+
+   Zwei Dinge, die dabei erst die Hardware zeigte:
+   - Ein Farbbefehl an eine **ausgeschaltete** Leuchte verpufft (Matter-Spec).
+     Die Farbnutzlast trägt deshalb `ExecuteIfOff`; sonst käme die Leuchte in
+     der alten Farbe hoch. Gemessen: ohne das Bit kam sie weiß, mit dem Bit
+     bei Farbton 120,5° und 60 % hoch.
+   - Ein Fehlschlag beim zweiten Aufruf hinterlässt einen halben Zustand
+     (Farbe sitzt, Helligkeit nicht). Das ist der Preis dafür, dass Loxone
+     beides in einem Wert schickt und Matter es getrennt verlangt; der
+     Aufrufer meldet den Fehlschlag als 502, statt ihn zu verschlucken.
+
 6. **Endpunkt-Asymmetrie zwischen Server und Oberfläche.**
    `api/control.py::_kelvin_range` filtert Startwerte korrekt auf
    `signal.ref.endpoint == command.endpoint`; die Oberfläche sucht ihre

@@ -176,6 +176,29 @@ def kelvin_to_mireds(kelvin: float) -> int:
     return int(1_000_000 / kelvin)
 
 
+def rgb_to_brightness(r: int, g: int, b: int) -> float:
+    """Die Helligkeit einer Loxone-Farbzahl, in Prozent.
+
+    Loxone codiert die Helligkeit NICHT getrennt, sondern im Betrag der drei
+    Kanaele: dieselbe Farbe halb so hell ist derselbe Farbton mit halbierten
+    Prozentwerten. Das ist der Value-Anteil von HSV - genau der, den
+    `rgb_to_hue_saturation` verwirft, weil Matter Farbe und Helligkeit in
+    zwei getrennten Clustern fuehrt (ColorControl und LevelControl).
+
+    Belegt an zwei Werten derselben Anlage (8. September 2026):
+
+        18004020 -> (20,  4, 18)  Farbton 307,5 Grad  Saettigung 80,0 %  V 20 %
+        85019094 -> (94, 19, 85)  Farbton 307,2 Grad  Saettigung 79,8 %  V 94 %
+
+    Gleiche Farbe, einmal gedimmt. Wer nur Hue und Saturation schickt, wirft
+    das Dimmen weg - und genau das hat die Bruecke bis zum 8. September 2026
+    getan: der Helligkeitsregler der Loxone-App bewegte sich, die Leuchte
+    blieb gleich hell.
+    """
+    _, _, value = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    return value * 100
+
+
 def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
     """RGB (0-255) nach Matter-Hue und -Saturation (beide 0-254).
 
@@ -220,6 +243,24 @@ def is_lumitech(value: int) -> bool:
     kein Lumitech-Wert. Der Bereichsvergleich deckt beides ab.
     """
     return _LUMITECH_MIN <= value <= _LUMITECH_MAX
+
+
+def lumitech_to_brightness(value: int) -> int:
+    """Die Helligkeit aus einer Lumitech-Zahl, in Prozent (Feld `BBB`).
+
+    Gegenstueck zu `lumitech_to_kelvin`. Getrennte Funktionen statt eines
+    Tupels, weil die beiden Werte in Matter in zwei verschiedene Cluster
+    gehen - LevelControl und ColorControl - und die Aufrufer sie deshalb
+    ohnehin einzeln brauchen.
+    """
+    if not is_lumitech(value):
+        raise ValueError(f"Keine Lumitech-Zahl (Kennung {LUMITECH_MARKER} fehlt): {value}")
+    brightness = value // 10_000 % 1000
+    if brightness > 100:
+        raise ValueError(
+            f"Lumitech-Helligkeit liegt bei {brightness} %, erlaubt sind 0-100 (Zahl {value})"
+        )
+    return brightness
 
 
 def lumitech_to_kelvin(value: int) -> int:
