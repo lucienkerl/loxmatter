@@ -115,6 +115,19 @@ DEFAULT_LISTEN_PORT = 8080
 # daran, wann sie geschrieben wurden.
 _SCHEMA_VERSION = 7
 
+
+def schema_version() -> int:
+    """Die Schema-Version dieses Moduls, oeffentlich lesbar.
+
+    `_SCHEMA_VERSION` bleibt privat: wer sie aendert, soll den langen
+    Kommentarblock darueber sehen, der jede einzelne Stufe begruendet.
+    Diese Funktion gibt sie nach aussen, damit `loxmatter.version` und die
+    CI nicht auf einen privaten Namen zugreifen muessen - und damit es
+    genau EINE Quelle fuer diese Zahl gibt.
+    """
+    return _SCHEMA_VERSION
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS device (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
