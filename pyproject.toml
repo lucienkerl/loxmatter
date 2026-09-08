@@ -62,14 +62,14 @@ markers = [
 
 [tool.ruff]
 line-length = 100
-# Die Entwuerfe und Plaene unter docs/ sind Prosa, nicht Quelltext. Ihre
-# Python-Bloecke sind Zitate und Ausschnitte - oft aus der Mitte einer
-# Funktion, mit genau der Einrueckung, die zeigt, wohin der Ausschnitt
-# gehoert. `ruff format` liest solche Bloecke trotzdem als eigenstaendige
-# Moduldateien und zieht sie auf Spalte 0: aus einem Ausschnitt einer Route
-# wird dann Code auf Modulebene, und das Dokument sagt etwas anderes, als es
-# meint. Ein Formatierer, der Dokumentation umschreibt, hat hier nichts zu
-# entscheiden - `mypy` sieht aus demselben Grund nur `src` und `scripts`.
+# The designs and plans under docs/ are prose, not source code. Their
+# Python blocks are quotations and excerpts - often from the middle of a
+# function, with exactly the indentation that shows where the excerpt
+# belongs. `ruff format` still reads such blocks as standalone module
+# files and pulls them to column 0: an excerpt from a route then becomes
+# module-level code, and the document says something other than what it
+# means. A formatter that rewrites documentation has no business deciding
+# that here - `mypy` sees only `src` and `scripts` for the same reason.
 extend-exclude = ["docs"]
 
 [tool.ruff.lint.flake8-bugbear]

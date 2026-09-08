@@ -109,31 +109,32 @@ say "Checking whether it's alive"
 PORT="$(grep -A1 -- '--listen' "$STACK/docker-compose.yml" | tail -1 | tr -dc '0-9')"
 PORT="${PORT:-8080}"
 URL="http://127.0.0.1:$PORT/health"
-# Der Dienst braucht vor seiner ersten Antwort spuerbar Zeit: er verbindet
-# sich mit matter-server, holt ein Abbild jedes Knotens, saet daraus die
-# Startwerte, traegt Bestandsgeraete nach und schickt einmal alles an den
-# Miniserver - erst danach geht uvicorn ans Netz. Auf dem Test-Pi mit neun
-# Geraeten sind das gemessen 18 Sekunden, allein 5 davon die Verbindung.
+# The service needs noticeably long before its first response: it connects
+# to matter-server, fetches a snapshot of every node, seeds the starting
+# values from that, backfills existing devices, and sends everything to the
+# Miniserver once - only after that does uvicorn go live on the network. On
+# the test Pi with nine devices that measured 18 seconds, 5 of it alone
+# for the connection.
 #
-# Hier standen 20 Sekunden. Das ging genau so lange gut, bis es das nicht
-# mehr tat (8. September 2026): ein Lauf kippte knapp darueber, das Skript
-# brach ab und meldete einen Dienst als krank, der zehn Sekunden spaeter
-# tadellos lief. Ein zu kurzes Zeitfenster ist hier die teurere Sorte
-# Fehlalarm - es sieht aus wie ein kaputtes Update und verleitet zum
-# Zurueckrollen eines Standes, der in Ordnung ist. Wer mehr Geraete hat,
-# wartet laenger; 120 Sekunden lassen dafuer Luft, ohne dass ein
-# tatsaechlich toter Dienst unzumutbar lange haengt.
+# This used to say 20 seconds. That held up fine until it didn't (8
+# September 2026): one run tipped just past it, the script aborted and
+# reported a service as unhealthy that was running flawlessly ten seconds
+# later. Too short a window is the more expensive kind of false alarm here
+# - it looks like a broken update and tempts you to roll back a state that
+# is actually fine. Anyone with more devices waits longer; 120 seconds
+# leaves room for that without letting an actually dead service hang
+# unreasonably long.
 WAIT_SECONDS=120
 OK=0
 for i in $(seq 1 "$WAIT_SECONDS"); do
   if curl -fsS -m 3 "$URL" >/dev/null 2>&1; then OK=1; break; fi
-  # Ein Lebenszeichen alle zehn Sekunden: ohne das sieht ein normaler,
-  # nur langsamer Start genauso aus wie ein haengender.
-  if [ $((i % 10)) -eq 0 ]; then printf '  ... %s s gewartet\n' "$i"; fi
+  # A sign of life every ten seconds: without it, a normal, merely slow
+  # start looks exactly like a hung one.
+  if [ $((i % 10)) -eq 0 ]; then printf '  ... waited %s s\n' "$i"; fi
   sleep 1
 done
 if [ "$OK" -ne 1 ]; then
-  printf '\n\033[31m%s antwortet nach %s s nicht. Letzte Zeilen aus dem Log:\033[0m\n' \
+  printf '\n\033[31m%s is not responding after %s s. Last lines from the log:\033[0m\n' \
     "$URL" "$WAIT_SECONDS"
   docker logs --tail 30 "$SERVICE" 2>&1 || true
   die "The service is up but not reporting healthy."

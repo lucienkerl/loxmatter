@@ -1,10 +1,10 @@
-# Bedienelemente für Lampen — Implementierungsplan
+# Controls for Lamps — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Gerätekachel bekommt Bedienelemente, die zum Werttyp eines Kommandos passen — inklusive Farbwähler — und der Farbweg `MoveToHueAndSaturation` (768/6) wird für WebUI und Loxone freigeschaltet.
+**Goal:** The device tile gets controls that match a command's value type — including a colour picker — and the colour path `MoveToHueAndSaturation` (768/6) is enabled for WebUI and Loxone.
 
-**Architecture:** `profiles/clusters.yaml` bleibt die einzige Quelle: ein neues Kommandofeld `control:` bestimmt das Widget, ein neues Attributfeld `functional: false` erlaubt das Auslesen von Gerätekonstanten ohne sie zu exportieren. Die Oberfläche liest ausschließlich `control` und vergleicht keine Slugs. WebUI und Loxone teilen sich weiterhin `to_matter_call` als einzigen Übersetzer.
+**Architecture:** `profiles/clusters.yaml` stays the single source: a new command field `control:` determines the widget, a new attribute field `functional: false` allows reading device constants without exporting them. The UI reads only `control` and compares no slugs. WebUI and Loxone continue to share `to_matter_call` as their one translator.
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic, PyYAML, pytest (asyncio_mode=auto), Alpine.js (vendored), uv.
 
@@ -12,36 +12,36 @@
 
 ## Global Constraints
 
-- **Dev-Prosa auf Deutsch.** Docstrings, Kommentare und Commit-Botschaften auf Deutsch, ohne Umlaute in Commit-Botschaften (siehe bestehende Historie). Code-Bezeichner auf Englisch.
-- **Jede neue Zeichenkette der Oberfläche braucht `en` UND `de`** in `src/loxmatter/i18n/strings.yaml`.
-- **Erlaubnisliste, keine Sperrliste.** Nur freischalten, was gegen ein echtes Gerät belegt ist — oder ausdrücklich als „nur Spezifikation" gekennzeichnet.
-- **`ruff` (line-length 100) und `mypy --strict`** müssen über `src` und `scripts` durchlaufen.
-- **Kein zweiter Übersetzungsweg.** Alles Wertbehaftete geht durch `commands.translate.to_matter_call`.
-- **Prüfbefehl nach jeder Task:** `uv run pytest -q && uv run ruff check . && uv run mypy`
+- **Dev prose in English.** Docstrings, comments, and commit messages in English, no umlauts in commit messages (see existing history). Code identifiers in English.
+- **Every new UI string needs both `en` AND `de`** in `src/loxmatter/i18n/strings.yaml`.
+- **Allowlist, not a blocklist.** Only enable what is proven against a real device — or explicitly marked "spec only".
+- **`ruff` (line-length 100) and `mypy --strict`** must pass over `src` and `scripts`.
+- **No second translation path.** Everything value-bearing goes through `commands.translate.to_matter_call`.
+- **Check command after every task:** `uv run pytest -q && uv run ruff check . && uv run mypy`
 
 ---
 
-## Dateiübersicht
+## File Overview
 
-| Datei | Verantwortung | Task |
+| File | Responsibility | Task |
 | --- | --- | --- |
-| `tests/fixtures/nodes/ikea_*_cct.json`, `ikea_*_rgbw.json` | Belege der echten Leuchten | 1 |
-| `src/loxmatter/commands/color.py` | Farbraum- und Loxone-Codierung | 2 |
-| `src/loxmatter/commands/translate.py` | Wunschzustand → Matter-Kommando | 3 |
-| `src/loxmatter/profiles/clusters.yaml` | Tabelle: Slugs, Einheiten, `control`, `functional` | 3, 4, 5 |
-| `src/loxmatter/profiles/table.py` | Zugriff auf die Tabelle | 4, 5 |
-| `src/loxmatter/profiles/relevance.py` | Was standardmäßig gewollt ist | 5 |
+| `tests/fixtures/nodes/ikea_*_cct.json`, `ikea_*_rgbw.json` | Evidence from the real lamps | 1 |
+| `src/loxmatter/commands/color.py` | Colour-space and Loxone encoding | 2 |
+| `src/loxmatter/commands/translate.py` | Desired state → Matter command | 3 |
+| `src/loxmatter/profiles/clusters.yaml` | Table: slugs, units, `control`, `functional` | 3, 4, 5 |
+| `src/loxmatter/profiles/table.py` | Access to the table | 4, 5 |
+| `src/loxmatter/profiles/relevance.py` | What's wanted by default | 5 |
 | `src/loxmatter/api/models.py` | `CommandOut` | 6 |
-| `src/loxmatter/api/control.py` | Controls-Route, Kommandoausführung | 6 |
-| `src/loxmatter/loxone/server.py` | Router-Verdrahtung | 6 |
-| `src/loxmatter/web/{index.html,app.js,style.css}` | Kachel und Bedien-Modal | 7, 8 |
-| `src/loxmatter/i18n/strings.yaml` | Übersetzungen | 7, 8 |
+| `src/loxmatter/api/control.py` | Controls route, command execution | 6 |
+| `src/loxmatter/loxone/server.py` | Router wiring | 6 |
+| `src/loxmatter/web/{index.html,app.js,style.css}` | Tile and control modal | 7, 8 |
+| `src/loxmatter/i18n/strings.yaml` | Translations | 7, 8 |
 
 ---
 
-### Task 1: Fixtures der echten Leuchten — das Tor
+### Task 1: Fixtures from the real lamps — the gate
 
-Ohne diese Task ist jeder Whitelist-Eintrag geraten. **Ergibt die Prüfung in Schritt 4, dass Kommando 6 fehlt, wird der Plan hier angehalten** und die Spec fortgeschrieben (Spec 4.1, 10.2).
+Without this task, every allowlist entry is a guess. **If the check in Step 4 finds that command 6 is missing, the plan halts here** and the spec gets updated (Spec 4.1, 10.2).
 
 **Files:**
 - Create: `tests/fixtures/nodes/ikea_kajplats_ws_lamp.json`
@@ -49,55 +49,55 @@ Ohne diese Task ist jeder Whitelist-Eintrag geraten. **Ergibt die Prüfung in Sc
 - Modify: `tests/profiles/test_real_device_fixtures.py`
 
 **Interfaces:**
-- Produces: zwei Fixture-Dateien im Format `{"node_id", "available", "attributes"}`, ladbar über die dort bereits vorhandene `load(name)`-Hilfe.
+- Produces: two fixture files in the format `{"node_id", "available", "attributes"}`, loadable via the `load(name)` helper already there.
 
-- [x] **Step 1: Beide Nodes abziehen — ERLEDIGT am 7. September 2026**
+- [x] **Step 1: Pull both nodes — DONE on 7 September 2026**
 
-Abgezogen von `ws://10.0.1.56:5580/ws` (dem Pi aus `deploy/testhost/README.md`). Neun Nodes insgesamt; die beiden Leuchten liegen im Scratchpad unter `nodes/`:
+Pulled from `ws://10.0.1.56:5580/ws` (the Pi from `deploy/testhost/README.md`). Nine nodes in total; the two lamps sit in the scratchpad under `nodes/`:
 
-| Datei im Scratchpad | Node | Gerät |
+| File in the scratchpad | Node | Device |
 | --- | --- | --- |
-| `node_14_ikea_of_sweden_kajplats_e27_ws_g60_clear_470lm.json` | 14 | KAJPLATS E27 WS G60 clear 470lm (Weisston) |
-| `node_21_ikea_of_sweden_kajplats_e14_cws_globe_806lm.json` | 21 | KAJPLATS E14 CWS globe 806lm (Farbe) |
+| `node_14_ikea_of_sweden_kajplats_e27_ws_g60_clear_470lm.json` | 14 | KAJPLATS E27 WS G60 clear 470lm (white tone) |
+| `node_21_ikea_of_sweden_kajplats_e14_cws_globe_806lm.json` | 21 | KAJPLATS E14 CWS globe 806lm (colour) |
 
-Befunde, auf denen der Rest des Plans steht:
+Findings the rest of the plan rests on:
 
 | | WS (Node 14) | CWS (Node 21) |
 | --- | --- | --- |
-| ColorControl-Endpunkt | 1 | 1 |
+| ColorControl endpoint | 1 | 1 |
 | AcceptedCommandList | `[7, 8, 9, 10, 71, 75, 76]` | `[0…10, 64…68, 71, 75, 76]` |
 | FeatureMap | 24 = XY\|CT | 31 = HS\|EHUE\|ColorLoop\|XY\|CT |
-| Kommando 6 (Hue/Sat) | **fehlt** | **vorhanden** ✓ |
+| Command 6 (Hue/Sat) | **missing** | **present** ✓ |
 | PhysMin/Max Mired | 153 / 454 | 153 / 555 |
-| daraus Kelvin | 2202–6535 K | 1801–6535 K |
+| Kelvin derived from that | 2202–6535 K | 1801–6535 K |
 
-**Das Tor ist damit offen:** die CWS-Leuchte nimmt Kommando 6 an, die geplante Freischaltung ist belegt.
+**The gate is therefore open:** the CWS lamp accepts command 6, the planned enabling is proven.
 
-- [x] **Step 2: Auf nicht-öffentliche Inhalte prüfen — ERLEDIGT**
+- [x] **Step 2: Check for non-public content — DONE**
 
-Beide Abbilder geprüft: keine IPv4-Adressen, keine Seriennummer (`0/40/15` fehlt), `NodeLabel` leer, `Location` = `"XX"`. `0/40/18` (UniqueID) bleibt drin — dieselbe Entscheidung wie beim eingecheckten `ikea_grillplats_plug.json`.
+Both snapshots checked: no IPv4 addresses, no serial number (`0/40/15` missing), `NodeLabel` empty, `Location` = `"XX"`. `0/40/18` (UniqueID) stays in - the same call as with the checked-in `ikea_grillplats_plug.json`.
 
-Zu tun: die beiden Dateien nach `tests/fixtures/nodes/ikea_kajplats_ws_lamp.json` bzw. `ikea_kajplats_cws_lamp.json` kopieren und jeder ein `"_comment"`-Feld voranstellen, das Aufnahmedatum, Quelle (`ws://10.0.1.56:5580/ws`) und Gerät nennt — Muster: die bestehenden Fixtures.
+To do: copy the two files to `tests/fixtures/nodes/ikea_kajplats_ws_lamp.json` and `ikea_kajplats_cws_lamp.json` respectively, and prepend each with a `"_comment"` field naming the capture date, source (`ws://10.0.1.56:5580/ws`), and device — pattern: the existing fixtures.
 
-- [ ] **Step 3: Belegtest schreiben**
+- [ ] **Step 3: Write the evidence test**
 
-An `tests/profiles/test_real_device_fixtures.py` anhängen:
+Append to `tests/profiles/test_real_device_fixtures.py`:
 
 ```python
 def test_rgbw_lamp_accepts_move_to_hue_and_saturation():
-    """Der Beleg, auf dem die Freischaltung von (768, 6) steht (Spec 4.1).
+    """The evidence on which the enabling of (768, 6) rests (spec 4.1).
 
-    Schlaegt dieser Test fehl, ist der Entwurf falsch - dann erwartet die
-    Leuchte MoveToColor (7, xy) und es fehlt eine Farbraumumrechnung, die
-    es im Projekt nirgends gibt (Spec 10.2)."""
+    If this test fails, the design is wrong - then the lamp
+    expects MoveToColor (7, xy) and there is a missing color-space
+    conversion that does not exist anywhere in the project (spec 10.2)."""
     snap = load("ikea_kajplats_cws_lamp.json")
     accepted = snap.attributes["1/768/65529"]
     assert 6 in accepted
 
 
 def test_both_lamps_report_their_physical_colour_temperature_limits():
-    """Ohne diese beiden Attribute bliebe `range` leer und der
-    Kelvin-Regler unbegrenzt (Spec 6.4)."""
+    """Without these two attributes, `range` would stay empty and the
+    kelvin slider unbounded (spec 6.4)."""
     for name in ("ikea_kajplats_ws_lamp.json", "ikea_kajplats_cws_lamp.json"):
         snap = load(name)
         assert isinstance(snap.attributes["1/768/16395"], int)
@@ -105,59 +105,59 @@ def test_both_lamps_report_their_physical_colour_temperature_limits():
 
 
 def test_the_ws_lamp_has_no_hue_saturation_command():
-    """Belegt die Abstufung aus Spec 6.3: die WS-Leuchte bekommt keine
-    Tableiste, weil sie kein Hue/Sat-Kommando hat - nicht, weil der Code
-    ihr Modell kennt.
+    """Proves the distinction from spec 6.3: the WS lamp gets no
+    color tab because it has no hue/sat command - not because the code
+    knows its model.
 
-    Sie fuehrt sehr wohl MoveToColor (7) und damit den XY-Farbraum
-    (FeatureMap 24 = XY|CT). Der bleibt bewusst ungenutzt: eine
-    xy-Umrechnung gibt es im Projekt nicht, und fuer eine Weisston-Leuchte
-    waere sie ein Bedienelement fuer eine Faehigkeit, die niemand von ihr
-    erwartet."""
+    It does support MoveToColor (7) and thus the XY color space
+    (FeatureMap 24 = XY|CT). That stays deliberately unused: an
+    xy conversion does not exist in the project, and for a white-tone
+    lamp it would be a control for a capability that nobody expects
+    from it."""
     accepted = load("ikea_kajplats_ws_lamp.json").attributes["1/768/65529"]
     assert 6 not in accepted
     assert 10 in accepted
-    assert 7 in accepted  # XY vorhanden, aber nicht freigeschaltet
+    assert 7 in accepted  # XY present, but not enabled
 
 
 def test_the_cws_lamp_advertises_the_full_colour_feature_set():
-    """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - die Grundlage dafuer, dass
-    genau diese Leuchte beide Reiter bekommt und die WS-Leuchte nicht."""
+    """FeatureMap 31 = HS|EHUE|ColorLoop|XY|CT - the basis for
+    exactly this lamp getting both tabs and the WS lamp not."""
     assert load("ikea_kajplats_cws_lamp.json").attributes["1/768/65532"] == 31
 ```
 
-- [ ] **Step 4: Test laufen lassen — das Tor**
+- [ ] **Step 4: Run the test — the gate**
 
 Run: `uv run pytest tests/profiles/test_real_device_fixtures.py -v`
-Expected: alle drei neuen Tests PASS.
+Expected: all three new tests PASS.
 
-Schlägt `test_rgbw_lamp_accepts_move_to_hue_and_saturation` fehl: **anhalten**, Befund melden, Spec fortschreiben. Schlägt `test_the_cct_lamp_offers_no_colour_command` fehl (die CCT-Lampe kann doch Farbe), ist das kein Fehler des Plans — dann den Test an den Befund anpassen und weitermachen.
+If `test_rgbw_lamp_accepts_move_to_hue_and_saturation` fails: **stop**, report the finding, update the spec. If `test_the_cct_lamp_offers_no_colour_command` fails (the CCT lamp can do colour after all), that is not a fault of the plan — then adjust the test to the finding and continue.
 
-- [ ] **Step 5: Das synthetische Fixture ablösen**
+- [ ] **Step 5: Retire the synthetic fixture**
 
-`synthetic_color_light.json` steht heute an zwei Stellen:
+`synthetic_color_light.json` currently sits in two places:
 
-- `tests/profiles/test_relevance.py:198` (über `_snapshot`)
-- `tests/profiles/test_categories.py:80` (über `load_snapshot`)
+- `tests/profiles/test_relevance.py:198` (via `_snapshot`)
+- `tests/profiles/test_categories.py:80` (via `load_snapshot`)
 
-Beide auf `ikea_kajplats_cws_lamp.json` umstellen. Die Erwartungswerte dabei **an
-das echte Gerät anpassen, nicht umgekehrt** — eine echte Leuchte hat mehr
-Attribute als das synthetische Abbild, die Zahlen ändern sich also
-voraussichtlich.
+Switch both to `ikea_kajplats_cws_lamp.json`. Adjust the expected values
+**to match the real device, not the other way around** — a real lamp has
+more attributes than the synthetic snapshot, so the numbers are expected
+to change.
 
-Der Docstring in `test_relevance.py:195` verweist ausdrücklich darauf, dass
-das Fixture synthetisch sei („siehe Kommentar dort"). Dieser Satz wird
-gegenstandslos und muss mit umgeschrieben werden — sonst behauptet der Test
-das Gegenteil dessen, was er tut.
+The docstring in `test_relevance.py:195` explicitly points out that
+the fixture is synthetic ("see comment there"). That sentence becomes
+moot and must be rewritten along with it — otherwise the test claims
+the opposite of what it does.
 
-Danach `tests/fixtures/nodes/synthetic_color_light.json` löschen. Vorher
-prüfen, dass es wirklich nirgends mehr vorkommt:
+Then delete `tests/fixtures/nodes/synthetic_color_light.json`. First
+check that it really no longer appears anywhere:
 
 ```bash
 grep -rn "synthetic_color_light" . --exclude-dir=.git
 ```
 
-Expected: keine Treffer außer im Entwurf und in diesem Plan.
+Expected: no hits except in the design and in this plan.
 
 - [ ] **Step 6: Commit**
 
@@ -169,18 +169,18 @@ git commit -m "test(fixtures): echte IKEA-Leuchten statt des synthetischen Abbil
 
 ---
 
-### Task 2: `loxone_rgb_to_rgb` — die Loxone-Farbzahl entpacken
+### Task 2: `loxone_rgb_to_rgb` — unpacking the Loxone colour number
 
 **Files:**
 - Modify: `src/loxmatter/commands/color.py`
 - Test: `tests/commands/test_color.py`
 
 **Interfaces:**
-- Produces: `loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]` — drei Kanäle je 0–255. Wirft `ValueError` bei ungültiger Eingabe. Task 3 baut darauf.
+- Produces: `loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]` — three channels, each 0–255. Raises `ValueError` on invalid input. Task 3 builds on this.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `tests/commands/test_color.py` anhängen:
+Append to `tests/commands/test_color.py`:
 
 ```python
 from loxmatter.commands.color import loxone_rgb_to_rgb
@@ -189,8 +189,8 @@ from loxmatter.commands.color import loxone_rgb_to_rgb
 @pytest.mark.parametrize(
     ("packed", "rgb"),
     [
-        # Das Beispiel aus der Loxone-Knowledge-Base, im Moduldocstring
-        # zitiert: 20040060 = 60 % Rot, 40 % Gruen, 20 % Blau.
+        # The example from the Loxone knowledge base, quoted in the module
+        # docstring: 20040060 = 60% red, 40% green, 20% blue.
         (20040060, (153, 102, 51)),
         (0, (0, 0, 0)),
         (100100100, (255, 255, 255)),
@@ -205,42 +205,42 @@ def test_the_packed_loxone_number_splits_into_three_channels(packed, rgb):
 
 @pytest.mark.parametrize("packed", [-1, 101, 101000, 101000000, 999999999])
 def test_a_channel_above_100_percent_is_rejected(packed):
-    """Lieber ein klarer Fehler als eine erfundene Farbe am echten Geraet -
-    dieselbe Haltung wie `kelvin_to_mireds` bei 0 Kelvin."""
+    """A clear error is better than a made-up color on the real device -
+    the same stance as `kelvin_to_mireds` at 0 Kelvin."""
     with pytest.raises(ValueError):
         loxone_rgb_to_rgb(packed)
 
 
 def test_a_fractional_number_is_rejected():
-    """Die Loxone-Codierung ist ganzzahlig; 20040060.5 waere ein Zeichen
-    dafuer, dass hier eine ganz andere Zahl ankommt."""
+    """The Loxone encoding is integer; 20040060.5 would be a sign
+    that a completely different number is arriving here."""
     with pytest.raises(ValueError):
         loxone_rgb_to_rgb(20040060.5)
 ```
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run the test, check the failure**
 
 Run: `uv run pytest tests/commands/test_color.py -v`
-Expected: FAIL mit `ImportError: cannot import name 'loxone_rgb_to_rgb'`
+Expected: FAIL with `ImportError: cannot import name 'loxone_rgb_to_rgb'`
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
-In `src/loxmatter/commands/color.py` anhängen:
+Append to `src/loxmatter/commands/color.py`:
 
 ```python
 def loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]:
-    """Entpackt die Loxone-Farbzahl in drei Kanaele zu je 0-255.
+    """Unpacks the Loxone color number into three channels of 0-255 each.
 
-    Die Codierung ist oben im Moduldocstring mit offizieller Quelle belegt:
-    `AQa = rot% + gruen% * 1000 + blau% * 1_000_000`. Sie transportiert je
-    Kanal nur volle Prozent - die Farbe ist also bereits beim Verlassen von
-    Loxone quantisiert, und diese Funktion kann das nicht zurueckholen
-    (Entwurf 2026-09-07, Abschnitt 9.1).
+    The encoding is backed by an official source above in the module
+    docstring: `AQa = red% + green% * 1000 + blue% * 1_000_000`. It carries
+    only whole percent per channel - so the color is already quantized on
+    leaving Loxone, and this function cannot recover that
+    (design 2026-09-07, section 9.1).
 
-    Ganzzahlig statt gerundet entgegengenommen: eine gebrochene Zahl kommt
-    in dieser Codierung nicht vor, und sie stillschweigend zu runden hiesse,
-    eine ganz andere Zahl - etwa einen bereits entpackten Kanal - als
-    gueltige Farbe durchzuwinken.
+    Accepted as an integer rather than rounded: a fractional number does
+    not occur in this encoding, and silently rounding it would mean
+    waving through a completely different number - say, an already
+    unpacked channel - as a valid color.
     """
     if value != int(value):
         raise ValueError(f"Loxone-Farbzahl muss ganzzahlig sein, war {value}")
@@ -259,27 +259,26 @@ def loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]:
     return red, green, blue
 ```
 
-Ausdrücklich entpackt statt `tuple(...)` zurückgegeben: ein Generator-`tuple` hat für mypy keine feste Länge und bräuchte ein `type: ignore`, das der Plan sich nicht leisten will (`mypy --strict` gehört zu den globalen Vorgaben).
+Explicitly unpacked rather than returned as `tuple(...)`: a generator `tuple` has no fixed length for mypy and would need a `type: ignore`, which this plan does not want to afford (`mypy --strict` is one of the global constraints).
 
-- [ ] **Step 4: Test laufen lassen, Erfolg prüfen**
+- [ ] **Step 4: Run the test, check success**
 
 Run: `uv run pytest tests/commands/test_color.py -v`
-Expected: alle PASS.
+Expected: all PASS.
 
-Bei `(20040060, (153, 102, 51))`: 60 % von 255 = 153, 40 % = 102, 20 % = 51.
+For `(20040060, (153, 102, 51))`: 60% of 255 = 153, 40% = 102, 20% = 51.
 
-- [ ] **Step 5: Den falschen Moduldocstring in `color.py` berichtigen**
+- [ ] **Step 5: Fix the incorrect module docstring in `color.py`**
 
-Der Kopf von `color.py` warnt heute: „ACHTUNG - dieser Teil ist NICHT an Hardware validiert. Beim Bau stand keine Matter-Leuchte zur Verfuegung". Diesen Absatz **noch nicht entfernen** — er fällt erst in Task 9, nach der Prüfung an der echten Leuchte. Stattdessen den Abschnitt zur Lumitech-Frage um einen Satz ergänzen, direkt nach dem Absatz „Lumitech ... NICHT belegt":
+The header of `color.py` currently warns: "ATTENTION - this part is NOT validated against hardware. No Matter lamp was available at build time". **Do not remove** this paragraph yet — it only goes away in Task 9, after checking against the real lamp. Instead, add a sentence to the Lumitech section, directly after the paragraph "Lumitech ... NOT backed":
 
 ```
-Zu keiner Zeit hat dieser Vorbehalt fuer RGB gegolten - `translate.py` hat
-ihn bis zum 7. September 2026 faelschlich auch auf die RGB-Codierung
-bezogen und deshalb Kommando 6 gesperrt (siehe Entwurf 2026-09-07,
-Abschnitt 1).
+This reservation never applied to RGB - `translate.py` mistakenly applied
+it to the RGB encoding too, up until 7 September 2026, and therefore
+blocked command 6 (see design 2026-09-07, section 1).
 ```
 
-- [ ] **Step 6: Prüfen und committen**
+- [ ] **Step 6: Check and commit**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run mypy
@@ -340,58 +339,59 @@ def test_colour_rejects_text():
         to_matter_call(command, "rot")
 ```
 
-`cmd(cluster, command, takes_value=False)` steht bereits am Dateianfang (Zeile 30) und baut den `StoredCommand` — dieselbe Hilfe, mit der `(768, 10)` dort schon geprüft wird.
+`cmd(cluster, command, takes_value=False)` already sits at the top of the file (line 30) and builds the `StoredCommand` — the same helper `(768, 10)` is already checked with there.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run the test, check the failure**
 
 Run: `uv run pytest tests/commands/test_translate.py -v`
-Expected: FAIL — `UnsupportedValueError` für ein *gültiges* Rot, weil `(768, 6)` noch in keinem Builder steht.
+Expected: FAIL — `UnsupportedValueError` for a *valid* red, because `(768, 6)` is not yet in any builder.
 
-- [ ] **Step 3: Tabelleneintrag ergänzen**
+- [ ] **Step 3: Add the table entry**
 
-In `src/loxmatter/profiles/clusters.yaml`, Cluster 768, unter `commands:` neben dem bestehenden `10:`-Eintrag:
+In `src/loxmatter/profiles/clusters.yaml`, cluster 768, under `commands:` next to the existing `10:` entry:
 
 ```yaml
-      # MoveToHueAndSaturation - freigeschaltet am 7. September 2026
-      # (Entwurf 2026-09-07). Die frühere Sperre beruhte auf einer
-      # Verwechslung: `translate.py` begruendete sie mit "Loxone-RGB nicht
-      # belegt", waehrend `commands/color.py` RGB mit offizieller Quelle
-      # belegt und ausschliesslich Lumitech offen laesst. Der Wert ist die
-      # gepackte Loxone-Farbzahl; belegt gegen die eingecheckte
-      # RGBW-Leuchte (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
-      # enthaelt 6).
+      # MoveToHueAndSaturation - unlocked on September 7, 2026
+      # (design 2026-09-07). The earlier block was based on a
+      # mix-up: `translate.py` justified it with "Loxone RGB not
+      # backed", while `commands/color.py` backs RGB with an official
+      # source and leaves only Lumitech open. The value is the
+      # packed Loxone color number; backed against the checked-in
+      # RGBW light (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
+      # contains 6).
       6: {slug: color, takes_value: true}
 ```
 
-`control:` kommt in Task 4 dazu — hier bewusst noch nicht, damit diese Task genau eine Sache tut.
+`control:` gets added in Task 4 — deliberately not yet here, so this task does exactly one thing.
 
-- [ ] **Step 4: Payload-Builder ergänzen**
+- [ ] **Step 4: Add the payload builder**
 
 In `src/loxmatter/commands/translate.py`:
 
-Import erweitern:
+Extend the import:
 
 ```python
 from loxmatter.commands.color import kelvin_to_mireds, loxone_rgb_to_rgb, rgb_to_hue_saturation
 ```
 
-Konstante neben die vorhandenen:
+Constant next to the existing ones:
 
 ```python
 _COMMAND_HUE_SATURATION = 6
 ```
 
-Builder neben `_payload_color_temperature`:
+Builder next to `_payload_color_temperature`:
 
 ```python
 def _payload_hue_saturation(value: str) -> dict[str, object]:
-    """Gepackte Loxone-Farbzahl -> Matter-Hue/Saturation.
+    """Packed Loxone color number -> Matter hue/saturation.
 
-    Zwei Umrechnungen hintereinander, beide in `commands/color.py` belegt:
-    die Loxone-Codierung entpacken und das Ergebnis nach HSV wandeln.
-    `loxone_rgb_to_rgb` wirft `ValueError` fuer eine unmoegliche Zahl - hier
-    wird daraus `UnsupportedValueError`, damit der Aufrufer wie bei jedem
-    anderen unpassenden Wert mit 400 antwortet und nicht mit 500.
+    Two conversions in a row, both backed by a source in
+    `commands/color.py`: unpacking the Loxone encoding and converting the
+    result to HSV. `loxone_rgb_to_rgb` raises `ValueError` for an
+    impossible number - here that becomes `UnsupportedValueError`, so the
+    caller answers with 400 rather than 500, as for any other unsuitable
+    value.
     """
     try:
         red, green, blue = loxone_rgb_to_rgb(_as_number(value))
@@ -401,37 +401,37 @@ def _payload_hue_saturation(value: str) -> dict[str, object]:
     return {"hue": hue, "saturation": saturation, "transitionTime": 0}
 ```
 
-Eintrag in `_PAYLOAD_BUILDERS`:
+Entry in `_PAYLOAD_BUILDERS`:
 
 ```python
     (_CLUSTER_COLOR, _COMMAND_HUE_SATURATION): _payload_hue_saturation,
 ```
 
-- [ ] **Step 5: Den falschen Moduldocstring in `translate.py` berichtigen**
+- [ ] **Step 5: Fix the incorrect module docstring in `translate.py`**
 
-Der heutige Absatz behauptet, Kommando 6 werde „bewusst nicht bedient, weil die Loxone-seitige RGB-Zahl nicht verlaesslich dokumentiert ist (siehe `color.py`)". Das ist sachlich falsch und war der einzige Grund der Sperre. Ersetzen durch:
+The current paragraph claims command 6 is "deliberately not served, because the Loxone-side RGB number is not reliably documented (see `color.py`)". That is factually wrong and was the sole reason for the block. Replace it with:
 
 ```
-Cluster 768 Kommando 6 (Hue/Saturation) wird seit dem 7. September 2026
-bedient: die Loxone-seitige RGB-Codierung ist in `color.py` mit offizieller
-Quelle belegt (Knowledge Base, "RGB Lighting Controller"). Bis dahin stand
-hier die Begruendung, sie sei unbelegt - das verwechselte RGB mit
-**Lumitech**, dem kombinierten Helligkeits- und Kelvin-Ausgang, der
-weiterhin ohne belastbare Quelle ist (siehe `color.py` und Entwurf
-2026-09-07, Abschnitt 10.1). Nicht bedient bleiben MoveToHue (0),
-MoveToSaturation (3), MoveToColor (7, xy) und Enhanced (67) - die
-Bedienflaeche setzt Farbton und Saettigung in einem Kommando, alles weitere
-waere unbelegte Flaeche.
+Cluster 768 command 6 (Hue/Saturation) has been served since 7 September
+2026: the Loxone-side RGB encoding is backed by an official source in
+`color.py` (Knowledge Base, "RGB Lighting Controller"). Until then the
+justification here was that it was unbacked - that confused RGB with
+**Lumitech**, the combined brightness-and-kelvin output, which remains
+without a solid source (see `color.py` and design 2026-09-07, section
+10.1). MoveToHue (0), MoveToSaturation (3), MoveToColor (7, xy), and
+Enhanced (67) remain unserved - the control surface sets hue and
+saturation in one command, anything beyond that would be unbacked
+surface.
 ```
 
-Die Aufzählung darunter, die Kommando 6 als Beispiel für „bekanntes Cluster, unbekannte Kommando-ID" nennt, mitziehen: `test_known_cluster_with_unknown_command_raises` prüft dort Kommando 6. **Diesen Test auf Kommando 7 umstellen**, sonst schlägt er ab jetzt fehl — und die Aussage („bekannter Cluster schützt nicht vor unbekanntem Kommando") bleibt dabei erhalten.
+Carry the enumeration below it along too, which names command 6 as an example of "known cluster, unknown command ID": `test_known_cluster_with_unknown_command_raises` checks command 6 there. **Switch this test to command 7**, or it fails from now on — while the statement ("a known cluster does not protect against an unknown command") is preserved.
 
-- [ ] **Step 6: Alle Tests laufen lassen**
+- [ ] **Step 6: Run all tests**
 
 Run: `uv run pytest -q`
-Expected: PASS, insbesondere der Konsistenztest zwischen `known_command_pairs()` und `_PAYLOAD_BUILDERS`.
+Expected: PASS, in particular the consistency test between `known_command_pairs()` and `_PAYLOAD_BUILDERS`.
 
-- [ ] **Step 7: Prüfen und committen**
+- [ ] **Step 7: Check and commit**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run mypy
@@ -441,7 +441,7 @@ git commit -m "feat(commands): MoveToHueAndSaturation freischalten"
 
 ---
 
-### Task 4: Das Tabellenfeld `control:`
+### Task 4: The table field `control:`
 
 **Files:**
 - Modify: `src/loxmatter/profiles/clusters.yaml`
@@ -449,11 +449,11 @@ git commit -m "feat(commands): MoveToHueAndSaturation freischalten"
 - Test: `tests/profiles/test_table.py`
 
 **Interfaces:**
-- Produces: `command_control(cluster_id: int, command_id: int) -> str` — liefert `"none"`, `"percent"`, `"kelvin"`, `"hue_sat"` oder `"unknown"`. Task 6 baut darauf.
+- Produces: `command_control(cluster_id: int, command_id: int) -> str` — returns `"none"`, `"percent"`, `"kelvin"`, `"hue_sat"`, or `"unknown"`. Task 6 builds on this.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `tests/profiles/test_table.py` anhängen:
+Append to `tests/profiles/test_table.py`:
 
 ```python
 from loxmatter.profiles.table import command_control
@@ -480,22 +480,22 @@ def test_a_command_outside_the_table_is_unknown():
 
 
 def test_every_table_command_carries_a_control():
-    """Ein Eintrag ohne `control` erschiene in der Oberflaeche als nacktes
-    Zahlenfeld, ohne dass jemand das entschieden haette (Entwurf
-    2026-09-07, Abschnitt 5.5). Dieser Test macht das Vergessen sichtbar,
-    statt es durchgehen zu lassen."""
+    """An entry without `control` would appear in the UI as a bare
+    number field, without anyone having decided that (design
+    2026-09-07, section 5.5). This test makes the oversight visible,
+    instead of letting it slide."""
     for cluster_id, command_id in known_command_pairs():
         assert command_control(cluster_id, command_id) != "unknown"
 ```
 
-`known_command_pairs` ist in der Datei bereits importiert; sonst ergänzen.
+`known_command_pairs` is already imported in the file; otherwise add it.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run the test, check the failure**
 
 Run: `uv run pytest tests/profiles/test_table.py -v`
-Expected: FAIL mit `ImportError: cannot import name 'command_control'`
+Expected: FAIL with `ImportError: cannot import name 'command_control'`
 
-- [ ] **Step 3: `control:` in alle Kommandoeinträge eintragen**
+- [ ] **Step 3: Add `control:` to every command entry**
 
 In `src/loxmatter/profiles/clusters.yaml`:
 
@@ -515,28 +515,29 @@ In `src/loxmatter/profiles/clusters.yaml`:
       10: {slug: colortemp, takes_value: true, control: kelvin}
 ```
 
-**Nur den `control:`-Schlüssel ergänzen** — Slugs, `takes_value` und die umgebenden Kommentare bleiben Wort für Wort stehen. Die Slugs oben sind die tatsächlich vorhandenen; vor dem Bearbeiten in der Datei gegenlesen. Achtung: `off` und `on` stehen dort in Anführungszeichen, weil YAML sie sonst als Wahrheitswerte liest — das muss so bleiben.
+**Add only the `control:` key** — slugs, `takes_value`, and the surrounding comments stay word for word as they are. The slugs above are the ones actually present; proofread against the file before editing. Careful: `off` and `on` sit there in quotes, because YAML would otherwise read them as booleans — that must stay that way.
 
-- [ ] **Step 4: `command_control` implementieren**
+- [ ] **Step 4: Implement `command_control`**
 
-In `src/loxmatter/profiles/table.py`, neben `command_takes_value`:
+In `src/loxmatter/profiles/table.py`, next to `command_takes_value`:
 
 ```python
 def command_control(cluster_id: int, command_id: int) -> str:
-    """Welches Bedienelement die Oberflaeche fuer dieses Kommando bauen soll.
+    """Which control the UI should build for this command.
 
-    `none` (Knopf), `percent`, `kelvin`, `hue_sat` - oder `unknown` fuer
-    einen Eintrag, dem noch niemand ein `control` gegeben hat.
+    `none` (button), `percent`, `kelvin`, `hue_sat` - or `unknown` for
+    an entry that no one has yet given a `control`.
 
-    `unknown` ist bewusst ein eigener Wert und keine aus `takes_value`
-    geratene Voreinstellung: ein Regler behauptet einen Wertebereich, und
-    den kennt hier niemand. Die Oberflaeche faellt fuer `unknown` auf das
-    schlichte Zahlenfeld zurueck (Entwurf 2026-09-07, Abschnitt 5.5).
+    `unknown` is deliberately its own value and not a default guessed
+    from `takes_value`: a slider asserts a value range, and
+    no one here knows it. The UI falls back to the
+    plain number field for `unknown` (design 2026-09-07, section 5.5).
 
-    Der Rueckgabewert ist absichtlich ein `str` und kein Enum: er wandert
-    unveraendert durch die API in das JavaScript, wo ohnehin nur der
-    Wortlaut zaehlt - ein Enum muesste an der Grenze wieder aufgeloest
-    werden und brauchte bei jedem neuen Widget zwei Aenderungen statt einer.
+    The return value is deliberately a `str` and not an enum: it travels
+    unchanged through the API into the JavaScript, where only the
+    wording matters anyway - an enum would have to be resolved again at
+    the boundary and would need two changes instead of one for every new
+    widget.
     """
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
     if not entry:
@@ -545,12 +546,12 @@ def command_control(cluster_id: int, command_id: int) -> str:
     return str(control) if control else "unknown"
 ```
 
-- [ ] **Step 5: Test laufen lassen, Erfolg prüfen**
+- [ ] **Step 5: Run the test, check success**
 
 Run: `uv run pytest tests/profiles/test_table.py -v`
-Expected: alle PASS, einschließlich `test_every_table_command_carries_a_control`.
+Expected: all PASS, including `test_every_table_command_carries_a_control`.
 
-- [ ] **Step 6: Prüfen und committen**
+- [ ] **Step 6: Check and commit**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run mypy
@@ -560,7 +561,7 @@ git commit -m "feat(profiles): Bedienelement-Typ je Kommando in der Tabelle"
 
 ---
 
-### Task 5: `functional: false` und die CT-Grenzen
+### Task 5: `functional: false` and the CT limits
 
 **Files:**
 - Modify: `src/loxmatter/profiles/clusters.yaml`
@@ -569,18 +570,18 @@ git commit -m "feat(profiles): Bedienelement-Typ je Kommando in der Tabelle"
 - Test: `tests/profiles/test_relevance.py`, `tests/profiles/test_table.py`
 
 **Interfaces:**
-- Produces: `marked_non_functional(ref: SignalRef) -> bool` in `table.py`; `is_functional` beachtet es. Die Attribute `1/768/16395` und `1/768/16396` sind bekannt, tragen die Einheit `mired`, sind `exportable`, aber nicht `functional`.
+- Produces: `marked_non_functional(ref: SignalRef) -> bool` in `table.py`; `is_functional` honours it. The attributes `1/768/16395` and `1/768/16396` are known, carry the unit `mired`, are `exportable`, but not `functional`.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `tests/profiles/test_relevance.py` anhängen (die dort übliche Art, einen `SignalRef` und `device_types` zu bauen, aus den vorhandenen Tests übernehmen):
+Append to `tests/profiles/test_relevance.py` (take over the usual way of building a `SignalRef` and `device_types` there from the existing tests):
 
 ```python
 def test_the_physical_colour_temperature_limits_are_known_but_not_wanted():
-    """Zwei unveraenderliche Geraetekonstanten. Bekannt genug zum Auslesen
-    (der Kelvin-Regler braucht sie), nicht interessant genug, um als
-    virtueller Loxone-Eingang vorausgewaehlt zu werden (Entwurf
-    2026-09-07, Abschnitt 5.2)."""
+    """Two immutable device constants. Known well enough to read
+    (the kelvin slider needs them), not interesting enough to be
+    preselected as a virtual Loxone input (design
+    2026-09-07, section 5.2)."""
     device_types = {1: frozenset({269})}
     for element_id in (16395, 16396):
         ref = SignalRef(endpoint=1, cluster_id=768, element_id=element_id,
@@ -589,8 +590,8 @@ def test_the_physical_colour_temperature_limits_are_known_but_not_wanted():
 
 
 def test_the_ordinary_colour_attributes_stay_functional():
-    """Die Gegenprobe: `functional: false` darf nicht auf den ganzen
-    Cluster durchschlagen."""
+    """The converse check: `functional: false` must not spill over onto the
+    whole cluster."""
     device_types = {1: frozenset({269})}
     for element_id in (0, 1, 7, 8):
         ref = SignalRef(endpoint=1, cluster_id=768, element_id=element_id,
@@ -598,12 +599,12 @@ def test_the_ordinary_colour_attributes_stay_functional():
         assert is_functional(ref, device_types)
 ```
 
-An `tests/profiles/test_table.py` anhängen:
+Append to `tests/profiles/test_table.py`:
 
 ```python
 def test_the_colour_temperature_limits_remain_exportable():
-    """Nicht vorausgewaehlt heisst nicht gesperrt: im Expertenblock muss
-    man sie weiterhin von Hand waehlen koennen."""
+    """Not preselected does not mean locked: in the expert block,
+    it must still be possible to select them by hand."""
     ref = SignalRef(endpoint=1, cluster_id=768, element_id=16395,
                     kind=SignalKind.ATTRIBUTE)
     profile = lookup(ref, 250)
@@ -612,54 +613,55 @@ def test_the_colour_temperature_limits_remain_exportable():
     assert not profile.slug.startswith("c768_a")
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run the tests, check the failure**
 
 Run: `uv run pytest tests/profiles/ -v`
-Expected: FAIL — die Grenzen sind noch nicht in der Tabelle, `lookup` erfindet den generischen Slug `c768_a16395`, und `is_functional` liefert für sie noch `True`.
+Expected: FAIL — the limits are not yet in the table, `lookup` invents the generic slug `c768_a16395`, and `is_functional` still returns `True` for them.
 
-- [ ] **Step 3: Die Attribute eintragen**
+- [ ] **Step 3: Add the attributes**
 
-In `src/loxmatter/profiles/clusters.yaml`, Cluster 768, unter `attributes:` nach dem `8:`-Eintrag:
+In `src/loxmatter/profiles/clusters.yaml`, cluster 768, under `attributes:` after the `8:` entry:
 
 ```yaml
-      # ColorTempPhysicalMinMireds (16395) und ColorTempPhysicalMaxMireds
-      # (16396): was die Leuchte an Farbtemperatur ueberhaupt kann. IDs
-      # gegen das installierte SDK belegt (chip.clusters.Objects.
-      # ColorControl.Attributes), Werte gegen beide eingecheckten Leuchten.
+      # ColorTempPhysicalMinMireds (16395) and ColorTempPhysicalMaxMireds
+      # (16396): what color temperature the light can do at all. IDs
+      # checked against the installed SDK (chip.clusters.Objects.
+      # ColorControl.Attributes), values checked against both checked-in
+      # lights.
       #
-      # `functional: false`, weil es unveraenderliche Geraetekonstanten
-      # sind: die Oberflaeche braucht sie, um den Kelvin-Regler zu
-      # begrenzen (Entwurf 2026-09-07, Abschnitt 6.2), aber als virtueller
-      # Loxone-Eingang waeren sie zwei Zahlen, die sich nie aendern. Im
-      # Expertenblock bleiben sie von Hand waehlbar.
+      # `functional: false`, because they are immutable device constants:
+      # the UI needs them to limit the Kelvin slider
+      # (design 2026-09-07, section 6.2), but as a virtual
+      # Loxone input they would be two numbers that never change. In
+      # the expert block they remain manually selectable.
       #
-      # Wie 7 oben bleiben sie in Mired stehen - Kelvin = 1e6 / Mired ist
-      # ein Kehrwert, den `scale` nicht ausdruecken kann. Die API rechnet
-      # sie fuer die Oberflaeche um (siehe api/control.py).
+      # Like 7 above, they stay in mired - Kelvin = 1e6 / mired is
+      # a reciprocal that `scale` cannot express. The API converts
+      # them for the UI (see api/control.py).
       16395: {slug: colortemp_phys_min_mireds, unit: mired, functional: false}
       16396: {slug: colortemp_phys_max_mireds, unit: mired, functional: false}
 ```
 
-- [ ] **Step 4: `marked_non_functional` implementieren**
+- [ ] **Step 4: Implement `marked_non_functional`**
 
-In `src/loxmatter/profiles/table.py`, direkt nach `names_element`:
+In `src/loxmatter/profiles/table.py`, directly after `names_element`:
 
 ```python
 def marked_non_functional(ref: SignalRef) -> bool:
-    """Ob die Tabelle dieses Element ausdruecklich als nicht vorausgewaehlt
-    fuehrt (`functional: false`).
+    """Whether the table explicitly marks this element as not preselected
+    (`functional: false`).
 
-    Der Gegenspieler zu `names_element`: benannt zu sein heisst
-    normalerweise gewollt zu sein (siehe `profiles.relevance.is_functional`,
-    Schicht 3). Fuer Geraetekonstanten - Min/Max-Bereiche, Aufloesungen -
-    stimmt das nicht: sie muessen lesbar sein, ohne den Standard-Export
-    aufzublaehen.
+    The counterpart to `names_element`: being named normally means
+    being wanted (see `profiles.relevance.is_functional`,
+    layer 3). For device constants - min/max ranges, resolutions -
+    that is not true: they must be readable without bloating the
+    standard export.
 
-    Bewusst ein allgemeines Feld statt eines Sonderfalls fuer Cluster 768:
-    jeder weitere Cluster mit Kapazitaetsangaben trifft dasselbe Problem.
-    Die Alternative - die Werte an der Tabelle vorbei direkt aus dem
-    Snapshot greifen - schuefe eine zweite Stelle, an der Attributwissen
-    lebt (Entwurf 2026-09-07, Abschnitt 5.2).
+    Deliberately a general field rather than a special case for cluster 768:
+    every further cluster with capacity figures hits the same problem.
+    The alternative - reaching for the values past the table directly from
+    the snapshot - would create a second place where attribute knowledge
+    lives (design 2026-09-07, section 5.2).
     """
     cluster = _table().get(ref.cluster_id)
     if cluster is None:
@@ -669,9 +671,9 @@ def marked_non_functional(ref: SignalRef) -> bool:
     return bool(entry) and entry.get("functional") is False
 ```
 
-- [ ] **Step 5: `is_functional` daran anschließen**
+- [ ] **Step 5: Hook `is_functional` up to it**
 
-In `src/loxmatter/profiles/relevance.py` den Import erweitern:
+In `src/loxmatter/profiles/relevance.py`, extend the import:
 
 ```python
 from loxmatter.profiles.table import known_attribute_section, marked_non_functional, names_element

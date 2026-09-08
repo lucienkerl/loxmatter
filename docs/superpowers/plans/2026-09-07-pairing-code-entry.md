@@ -1,62 +1,62 @@
-# Pairing-Code-Eingabe: Umsetzungsplan
+# Pairing Code Entry: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Das Einlern-Feld schreibt den Pairing-Code so, wie er auf dem Gerät steht (`1234-567-8901`), benennt was es erkannt hat, und die Brücke schneidet die Trenner vor dem Matter-Stack selbst weg.
+**Goal:** The commissioning field writes the pairing code the way it appears on the device (`1234-567-8901`), names what it has recognized, and the bridge strips the separators before the Matter stack itself sees them.
 
-**Architecture:** Drei reine Funktionen auf Modulebene in `web/app.js` tragen die ganze Frontend-Logik (formatieren, normalisieren, beschreiben); die Alpine-Komponente ruft sie aus zwei Ereignis-Handlern auf. Im Backend spiegelt ein `field_validator` auf `CommissionRequest.code` dieselbe Normalisierungsregel, damit sie für jeden Aufrufer der Route gilt und nicht nur für unsere Oberfläche.
+**Architecture:** Three pure module-level functions in `web/app.js` carry the whole frontend logic (formatting, normalizing, describing); the Alpine component calls them from two event handlers. In the backend, a `field_validator` on `CommissionRequest.code` mirrors the same normalization rule, so it applies to every caller of the route and not only to our UI.
 
-**Tech Stack:** Python 3.12 / FastAPI / Pydantic v2 / pytest · Alpine.js (kein Build-Schritt, kein JS-Testframework) · Playwright nur für die Screenshots
+**Tech Stack:** Python 3.12 / FastAPI / Pydantic v2 / pytest · Alpine.js (no build step, no JS test framework) · Playwright only for the screenshots
 
-**Entwurf:** [`docs/superpowers/specs/2026-09-07-pairing-code-entry-design.md`](../specs/2026-09-07-pairing-code-entry-design.md)
+**Design:** [`docs/superpowers/specs/2026-09-07-pairing-code-entry-design.md`](../specs/2026-09-07-pairing-code-entry-design.md)
 
 ## Global Constraints
 
-- **Kommentare und Docstrings auf Deutsch, ohne Umlaute im Quelltext** (`Geraet`, `zurueck`) — wie im gesamten Repo. Nutzertexte in `strings.yaml` tragen dagegen echte Umlaute.
-- **Alle `web.*`-Schlüssel in `en` UND `de`.** `tests/test_i18n.py::test_web_namespace_has_no_missing_english_fallback_gaps` erzwingt mindestens `en`.
-- **Keine typografischen Anführungszeichen als äußerste Zeichen eines `strings.yaml`-Werts** — `tests/test_i18n.py::test_no_value_is_wrapped_in_typographic_quotes` bricht sonst.
-- **Farben nur aus den vorhandenen CSS-Variablen** (`--ok`, `--warn`, `--danger`, `--off`, `--border`, `--bg`, `--text`, `--text-muted`, `--accent`). Keine neue Farbe.
-- **Nach jeder Aufgabe grün:** `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`.
-- **Die Regel steht zweimal** — einmal in JS, einmal in Python. Beide Fassungen müssen zeichengleich dasselbe tun; wer eine ändert, ändert die andere.
+- **Comments and docstrings in English, no umlauts in source code** (`Geraet`, `zurueck`) — as throughout the repo. User-facing text in `strings.yaml`, by contrast, carries real umlauts.
+- **All `web.*` keys in both `en` AND `de`.** `tests/test_i18n.py::test_web_namespace_has_no_missing_english_fallback_gaps` enforces at least `en`.
+- **No typographic quotation marks as the outermost characters of a `strings.yaml` value** — `tests/test_i18n.py::test_no_value_is_wrapped_in_typographic_quotes` otherwise fails.
+- **Colours only from the existing CSS variables** (`--ok`, `--warn`, `--danger`, `--off`, `--border`, `--bg`, `--text`, `--text-muted`, `--accent`). No new colour.
+- **Green after every task:** `uv run pytest`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`.
+- **The rule exists twice** — once in JS, once in Python. Both versions must do exactly the same thing character for character; whoever changes one changes the other.
 
 ## File Structure
 
-| Datei | Verantwortung | Aufgabe |
+| File | Responsibility | Task |
 |---|---|---|
-| `src/loxmatter/api/models.py` | `field_validator` auf `CommissionRequest.code` — die Normalisierung für jeden Aufrufer | 1 |
-| `tests/api/test_devices.py` | Nachweis, dass Trenner den Stack nicht erreichen | 1 |
-| `src/loxmatter/web/app.js` (Modulebene) | Die drei reinen Funktionen: formatieren, normalisieren, beschreiben | 2 |
-| `src/loxmatter/web/app.js` (in `app()`) | Zwei Ereignis-Handler und der Chip-Zustand | 3 |
-| `src/loxmatter/web/index.html` | Feld, Chip, Beispielzeile, Skizze | 3, 4 |
-| `src/loxmatter/i18n/strings.yaml` | Neun neue Schlüssel, einer geändert | 3, 4 |
+| `src/loxmatter/api/models.py` | `field_validator` on `CommissionRequest.code` — the normalization for every caller | 1 |
+| `tests/api/test_devices.py` | Proof that separators don't reach the stack | 1 |
+| `src/loxmatter/web/app.js` (module level) | The three pure functions: format, normalize, describe | 2 |
+| `src/loxmatter/web/app.js` (in `app()`) | Two event handlers and the chip state | 3 |
+| `src/loxmatter/web/index.html` | Field, chip, example line, sketch | 3, 4 |
+| `src/loxmatter/i18n/strings.yaml` | Nine new keys, one changed | 3, 4 |
 | `src/loxmatter/web/style.css` | `.code-detect`, `.code-examples`, `.code-sticker` | 3, 4 |
-| `scripts/capture_screenshots.py` | Selektor, der heute am Platzhalter hängt | 5 |
-| `docs/screenshots/commissioning.png` | Das Bild dieser Karte | 5 |
+| `scripts/capture_screenshots.py` | Selector that currently hangs off the placeholder | 5 |
+| `docs/screenshots/commissioning.png` | The image of this card | 5 |
 
 ---
 
-### Task 1: Die Normalisierung im Backend
+### Task 1: Normalization in the backend
 
-Steht zuerst, weil sie allein schon wirkt: danach kann ein von Hand abgesetzter Aufruf den abgetippten Code tragen, unabhängig von jeder Oberfläche.
+Comes first because it already works on its own: after this, a manually issued call can carry the code as typed, independent of any UI.
 
 **Files:**
-- Modify: `src/loxmatter/api/models.py:26` (Import), `src/loxmatter/api/models.py:198-217` (`CommissionRequest`)
-- Test: `tests/api/test_devices.py` (ans Ende der Einlern-Tests, nach `test_commissioning_a_device_registers_it` bei Zeile 258)
+- Modify: `src/loxmatter/api/models.py:26` (import), `src/loxmatter/api/models.py:198-217` (`CommissionRequest`)
+- Test: `tests/api/test_devices.py` (at the end of the commissioning tests, after `test_commissioning_a_device_registers_it` at line 258)
 
 **Interfaces:**
-- Consumes: nichts
-- Produces: `CommissionRequest.code` ist nach der Validierung getrimmt und beim Zahlencode ziffernrein. `api/devices.py:419` reicht es unverändert weiter — dort ändert sich kein Zeichen.
+- Consumes: nothing
+- Produces: `CommissionRequest.code` is trimmed after validation and digit-pure for the numeric code. `api/devices.py:419` passes it on unchanged — no character changes there.
 
-- [ ] **Step 1: Die vier Tests schreiben**
+- [ ] **Step 1: Write the four tests**
 
-An `tests/api/test_devices.py` anhängen:
+Append to `tests/api/test_devices.py`:
 
 ```python
 async def test_a_pairing_code_with_dashes_reaches_the_stack_without_them(api):
-    """Der Fall, um den es geht: so steht der Code auf dem Geraet, und so
-    tippt ihn jeder ab. Bis hierher schnitt die Trenner niemand weg - auch
-    `MatterClient.commission_with_code` nicht, das den String unveraendert
-    in den WebSocket-Befehl setzt."""
+    """The case this is about: this is how the code appears on the device,
+    and this is how everyone types it in. Until now nobody stripped the
+    separators - not even `MatterClient.commission_with_code`, which puts
+    the string unchanged into the WebSocket command."""
     client, _, _, fake_client = api
     response = await client.post("/api/devices/commission", json={"code": "1234-567-8901"})
     assert response.status_code == 200
@@ -64,8 +64,8 @@ async def test_a_pairing_code_with_dashes_reaches_the_stack_without_them(api):
 
 
 async def test_a_qr_code_reaches_the_stack_untouched(api):
-    """Der MT:-Text ist Base38-kodiert - ein Bindestrich darin traegt
-    Bedeutung. Die Normalisierung muss ihn deshalb in Ruhe lassen."""
+    """The MT: text is Base38-encoded - a dash in it carries meaning.
+    Normalization must therefore leave it alone."""
     client, _, _, fake_client = api
     response = await client.post(
         "/api/devices/commission", json={"code": " MT:Y.K90SO527JA0648G00 "}
@@ -75,8 +75,8 @@ async def test_a_qr_code_reaches_the_stack_untouched(api):
 
 
 async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
-    """Wer aus einer Anleitung kopiert, bringt oft Leerzeichen statt
-    Bindestriche mit."""
+    """Anyone copying from a manual often brings spaces instead of
+    dashes."""
     client, _, _, fake_client = api
     response = await client.post("/api/devices/commission", json={"code": "3497 011 2332"})
     assert response.status_code == 200
@@ -84,10 +84,9 @@ async def test_spaces_inside_a_pairing_code_are_removed_as_well(api):
 
 
 async def test_an_overlong_code_is_passed_on_rather_than_rejected(api):
-    """Der Validator normalisiert, er validiert NICHT (Entwurf Abschnitt 8):
-    ueber die Bauformen der Setup-Codes entscheidet der Matter-Stack, nicht
-    diese Bruecke. Ein zu langer Code geht deshalb durch und scheitert dort,
-    wo er hingehoert."""
+    """The validator normalizes, it does NOT validate (design section 8):
+    the setup code forms are decided by the Matter stack, not this bridge.
+    An overlong code therefore passes through and fails where it belongs."""
     client, _, _, fake_client = api
     response = await client.post(
         "/api/devices/commission", json={"code": "1234-567-8901-2345-678-9012"}
@@ -96,17 +95,17 @@ async def test_an_overlong_code_is_passed_on_rather_than_rejected(api):
     assert fake_client.commissioned == ["1234567890123456789012"]
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run the tests, confirm failure**
 
 ```bash
 uv run pytest tests/api/test_devices.py -k "pairing_code or qr_code_reaches or spaces_inside or overlong" -v
 ```
 
-Erwartet: 4 FAILED. Der erste mit `AssertionError: assert ['1234-567-8901'] == ['12345678901']` — der Code kommt heute ungefiltert an.
+Expected: 4 FAILED. The first with `AssertionError: assert ['1234-567-8901'] == ['12345678901']` — the code arrives unfiltered today.
 
-- [ ] **Step 3: Den Validator schreiben**
+- [ ] **Step 3: Write the validator**
 
-In `src/loxmatter/api/models.py`, Zeile 26, den Import erweitern:
+In `src/loxmatter/api/models.py`, line 26, extend the import:
 
 ```python
 import re
@@ -114,39 +113,38 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 ```
 
-Über `class CommissionRequest` die beiden Muster setzen:
+Set the two patterns above `class CommissionRequest`:
 
 ```python
-# Alles, was NICHT Ziffer, Leerraum oder Bindestrich ist, macht den Wert zu
-# einem QR-Inhalt (`MT:...`, Base38). Ein Bindestrich DARIN traegt Bedeutung
-# und darf nicht wegfallen - deshalb entscheidet dieses Muster zuerst, bevor
-# ueberhaupt etwas geschnitten wird.
+# Anything that is NOT a digit, whitespace, or dash turns the value into a
+# QR payload (`MT:...`, Base38). A dash INSIDE that carries meaning and
+# must not be dropped - which is why this pattern decides first, before
+# anything gets stripped at all.
 _QR_PAYLOAD = re.compile(r"[^0-9\s-]")
 _MANUAL_CODE_SEPARATORS = re.compile(r"[\s-]")
 ```
 
-Und in `CommissionRequest`, hinter `code: str`:
+And in `CommissionRequest`, after `code: str`:
 
 ```python
     @field_validator("code")
     @classmethod
     def _strip_separators(cls, value: str) -> str:
-        """Nimmt den Code so entgegen, wie er auf dem Geraet steht.
+        """Accepts the code the way it appears on the device.
 
-        Dort steht er gruppiert - `1234-567-8901` - und genau so tippt ihn
-        jeder ab. Auf dem Weg zum Matter-Stack schneidet die Trenner sonst
-        niemand weg: `api.devices` reicht den Wert unveraendert an
-        `BridgeMatterClient.commission_with_code` weiter, und
-        `MatterClient.commission_with_code` setzt ihn ebenso unveraendert in
-        den WebSocket-Befehl (geprueft gegen die installierte Fassung,
+        There it is grouped - `1234-567-8901` - and that is exactly how
+        everyone types it in. On the way to the Matter stack nobody else
+        strips the separators: `api.devices` passes the value on unchanged
+        to `BridgeMatterClient.commission_with_code`, and
+        `MatterClient.commission_with_code` likewise puts it unchanged into
+        the WebSocket command (checked against the installed version,
         `matter_server/client/client.py:140`).
 
-        Der Validator NORMALISIERT NUR, er validiert nicht (Entwurf
-        Abschnitt 8): ueber die gueltigen Bauformen entscheidet der
-        Matter-Stack. Laege die Regel hier, koennte diese Bruecke einen Code
-        ablehnen, den der Stack angenommen haette - ohne einen Weg daran
-        vorbei. Trenner zu schneiden ist verlustfrei, eine Laengenregel
-        waere eine Wette.
+        The validator ONLY NORMALIZES, it does not validate (design
+        section 8): the valid forms are decided by the Matter stack. If
+        the rule lived here, this bridge could reject a code the stack
+        would have accepted - with no way around it. Stripping separators
+        is lossless; a length rule would be a bet.
         """
         text = value.strip()
         if _QR_PAYLOAD.search(text):
@@ -154,32 +152,32 @@ Und in `CommissionRequest`, hinter `code: str`:
         return _MANUAL_CODE_SEPARATORS.sub("", text)
 ```
 
-Zusätzlich den Klassen-Docstring ab `src/loxmatter/api/models.py:199` an die neue Lage anpassen — der erste Satz behauptet heute, der 21-stellige sei der `MT:`-Code; das sind zwei verschiedene Dinge:
+Also update the class docstring starting at `src/loxmatter/api/models.py:199` to match the new state — its first sentence currently claims the 21-digit form is the `MT:` code; those are two different things:
 
 ```python
-    """`POST /api/devices/commission` - der Pairing-Code vom Geraet oder
-    seiner Verpackung (Spec 7.1). Zwei Bauformen: der Zahlencode (11-stellig,
-    auf dem Geraet als `1234-567-8901` aufgedruckt, seltener 21-stellig) oder
-    der Text hinter dem QR-Code (`MT:...`).
+    """`POST /api/devices/commission` - the pairing code from the device
+    or its packaging (Spec 7.1). Two forms: the numeric code (11 digits,
+    printed on the device as `1234-567-8901`, more rarely 21 digits) or
+    the text behind the QR code (`MT:...`).
 
-    `code` wird beim Eintreffen normalisiert, siehe `_strip_separators`.
+    `code` is normalized on arrival, see `_strip_separators`.
 ```
 
-- [ ] **Step 4: Tests laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run the tests, confirm success**
 
 ```bash
 uv run pytest tests/api/test_devices.py -v
 ```
 
-Erwartet: alle PASSED. Besonders die bestehenden Einlern-Tests bleiben grün — sie schicken `MT:ABC123`, einen QR-Inhalt, den der Validator nicht anfasst.
+Expected: all PASSED. In particular the existing commissioning tests stay green — they send `MT:ABC123`, a QR payload the validator doesn't touch.
 
-- [ ] **Step 5: Die ganze Suite und die Prüfer**
+- [ ] **Step 5: The whole suite and the checkers**
 
 ```bash
 uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
-Erwartet: alles grün.
+Expected: all green.
 
 - [ ] **Step 6: Commit**
 
@@ -196,25 +194,25 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 2: Die reinen Funktionen in app.js
+### Task 2: The pure functions in app.js
 
-Drei Funktionen ohne DOM-Bezug, damit sie sich einzeln prüfen lassen. `app.js` hat **keine Nebenwirkungen auf Modulebene** (die Datei endet mit `function app() {...}`, jedes `addEventListener` steht innerhalb einer Funktion) — sie lässt sich deshalb in Node laden und die Funktionen echt durchrechnen, statt sie nur im Browser durchzuklicken.
+Three functions with no DOM reference, so they can be checked individually. `app.js` has **no side effects at module level** (the file ends with `function app() {...}`, every `addEventListener` sits inside a function) — it can therefore be loaded in Node and the functions actually run through, instead of only clicking through them in the browser.
 
 **Files:**
-- Modify: `src/loxmatter/web/app.js` — neuer Block direkt vor `const VIEWS = [...]` (Zeile 317)
-- Test: Wegwerf-Prüfskript im Scratchpad, kommt nicht ins Repo
+- Modify: `src/loxmatter/web/app.js` — new block directly before `const VIEWS = [...]` (line 317)
+- Test: throwaway check script in the scratchpad, does not go into the repo
 
 **Interfaces:**
-- Consumes: nichts
+- Consumes: nothing
 - Produces:
   - `isPairingQrCode(raw: string) -> boolean`
-  - `formatPairingCode(raw: string) -> string` — für die Anzeige
-  - `normalizePairingCode(raw: string) -> string` — für die Übertragung
-  - `describePairingCode(raw: string) -> { key: string, values: object, tone: "ok"|"warn"|"bad"|"idle" }` — `key` ist ein `strings.yaml`-Schlüssel, `values` sind seine Platzhalter; die Übersetzung geschieht erst in Aufgabe 3, damit diese Funktionen ohne geladene Sprachtabelle prüfbar bleiben
+  - `formatPairingCode(raw: string) -> string` — for display
+  - `normalizePairingCode(raw: string) -> string` — for transmission
+  - `describePairingCode(raw: string) -> { key: string, values: object, tone: "ok"|"warn"|"bad"|"idle" }` — `key` is a `strings.yaml` key, `values` are its placeholders; translation only happens in Task 3, so these functions stay checkable without a loaded language table
 
-- [ ] **Step 1: Das Prüfskript schreiben**
+- [ ] **Step 1: Write the check script**
 
-Nach `/tmp/pairing-probe.mjs` (Wegwerf, nicht ins Repo):
+To `/tmp/pairing-probe.mjs` (throwaway, does not go into the repo):
 
 ```js
 import fs from "node:fs";
@@ -241,7 +239,7 @@ function check(label, actual, expected) {
   }
 }
 
-// --- formatPairingCode: die Gruppierung 4-3-4 ---
+// --- formatPairingCode: the 4-3-4 grouping ---
 check("leer", formatPairingCode(""), "");
 check("vier Ziffern", formatPairingCode("1234"), "1234");
 check("fuenfte Ziffer oeffnet die zweite Gruppe", formatPairingCode("12345"), "1234-5");
@@ -251,7 +249,7 @@ check("elf Ziffern", formatPairingCode("12345678901"), "1234-567-8901");
 check("schon gruppiert bleibt gleich", formatPairingCode("1234-567-8901"), "1234-567-8901");
 check("Leerzeichen werden zu Bindestrichen", formatPairingCode("3497 011 2332"), "3497-011-2332");
 
-// --- ab der zwoelften Ziffer wird NICHT weiter gruppiert ---
+// --- from the twelfth digit on, grouping STOPS ---
 check("zwoelfte Ziffer haengt an", formatPairingCode("123456789012"), "1234-567-89012");
 check(
   "einundzwanzig Ziffern",
@@ -264,7 +262,7 @@ check(
   "1234-567-890123456789012",
 );
 
-// --- QR-Inhalt bleibt unangetastet ---
+// --- QR payload is left untouched ---
 check("MT-Code", formatPairingCode("MT:Y.K90SO527JA0648G00"), "MT:Y.K90SO527JA0648G00");
 check("erstes M schaltet schon um", formatPairingCode("M"), "M");
 check("MT ohne Doppelpunkt", formatPairingCode("MT"), "MT");
@@ -272,13 +270,13 @@ check("Bindestrich im QR-Inhalt bleibt", formatPairingCode("MT:A-B"), "MT:A-B");
 check("isPairingQrCode bei Ziffern", isPairingQrCode("1234-567"), false);
 check("isPairingQrCode beim ersten Buchstaben", isPairingQrCode("M"), true);
 
-// --- normalizePairingCode: was uebertragen wird ---
+// --- normalizePairingCode: what gets transmitted ---
 check("Trenner raus", normalizePairingCode("1234-567-8901"), "12345678901");
 check("Leerraum aussen raus", normalizePairingCode("  1234-567-8901  "), "12345678901");
 check("QR getrimmt, sonst gleich", normalizePairingCode(" MT:A-B "), "MT:A-B");
 check("leer bleibt leer", normalizePairingCode("   "), "");
 
-// --- describePairingCode: der Chip ---
+// --- describePairingCode: the chip ---
 check("leer ist unsichtbar", describePairingCode("").tone, "idle");
 check("sieben Ziffern", describePairingCode("1234567"), {
   key: "web.devices.code_detect_remaining_many",
@@ -325,40 +323,41 @@ console.log(failures === 0 ? "\nAlles gruen." : `\n${failures} Fehlschlaege.`);
 process.exit(failures === 0 ? 0 : 1);
 ```
 
-- [ ] **Step 2: Prüfskript laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run the check script, confirm failure**
 
 ```bash
 node /tmp/pairing-probe.mjs
 ```
 
-Erwartet: Abbruch mit `ReferenceError: isPairingQrCode is not defined` — die Funktionen gibt es noch nicht.
+Expected: aborts with `ReferenceError: isPairingQrCode is not defined` — the functions don't exist yet.
 
-- [ ] **Step 3: Die Funktionen schreiben**
+- [ ] **Step 3: Write the functions**
 
-In `src/loxmatter/web/app.js`, unmittelbar **vor** `const VIEWS = ["devices", ...]` (Zeile 317) einfügen:
+In `src/loxmatter/web/app.js`, insert immediately **before** `const VIEWS = ["devices", ...]` (line 317):
 
 ```js
-// --- Pairing-Code (Entwurf vom 2026-09-07) ----------------------------------
+// --- Pairing code (design of 2026-09-07) -----------------------------------
 //
-// Auf dem Geraet steht der Zahlencode gruppiert: `1234-567-8901`. Genau so
-// tippt ihn jeder ab - also nimmt ihn das Feld auch so entgegen und schreibt
-// die Bindestriche beim Tippen selbst.
+// On the device the numeric code is grouped: `1234-567-8901`. That is
+// exactly how everyone types it in - so the field accepts it the same way
+// and writes the dashes itself while typing.
 //
-// Die Regel steht ZWEIMAL: hier und als `_strip_separators` in
-// `api/models.py`. Das ist Absicht - die Oberflaeche formatiert, das Backend
-// normalisiert fuer JEDEN Aufrufer der Route. Wer eine der beiden Fassungen
-// aendert, aendert die andere.
+// The rule exists TWICE: here and as `_strip_separators` in
+// `api/models.py`. That is deliberate - the UI formats, the backend
+// normalizes for EVERY caller of the route. Whoever changes one of the
+// two versions changes the other.
 
-// Alles ausser Ziffern, Leerraum und Bindestrich macht den Wert zu einem
-// QR-Inhalt. Die Pruefung greift damit beim ersten getippten `M` von `MT:`,
-// nicht erst beim Doppelpunkt: eine Regel, die auf `MT:` wartet, wuerde die
-// zwei Zeichen davor als Zifferneingabe behandeln und wegwerfen.
+// Anything other than digits, whitespace, and dashes turns the value into
+// a QR payload. This check therefore fires on the first typed `M` of
+// `MT:`, not only at the colon: a rule that waited for `MT:` would treat
+// the two characters before it as digit input and discard them.
 const PAIRING_QR_PAYLOAD = /[^0-9\s-]/;
 
-// Die belegte Schreibweise gibt es nur fuer die elf Stellen. Fuer den
-// 21-stelligen Code gibt es keine - eine erfundene Gruppierung saehe anders
-// aus als der Aufdruck, das Feld formatierte den Code also WEG vom Vorbild
-// statt hin. Ab der zwoelften Ziffer bleibt er deshalb ungruppiert.
+// The documented notation exists only for the eleven-digit form. There is
+// none for the 21-digit code - an invented grouping would look different
+// from what's printed, so the field would format the code AWAY from the
+// original rather than toward it. From the twelfth digit on it therefore
+// stays ungrouped.
 const PAIRING_GROUPS = [4, 7, 11];
 
 function isPairingQrCode(raw) {
@@ -379,9 +378,10 @@ function formatPairingCode(raw) {
     parts.push(digits.slice(start, end));
     start = end;
   }
-  // Es wird NICHTS abgeschnitten: eine Kuerzung liesse Zeichen still
-  // verschwinden, und `describePairingCode`s "zu lang" waere unerreichbar -
-  // eine Regel, die nie greift. Wer sich vertippt, soll das lesen koennen.
+  // NOTHING gets cut off: truncating would let characters silently
+  // disappear, and `describePairingCode`'s "too long" would be
+  // unreachable - a rule that never fires. Anyone who mistypes should be
+  // able to read that.
   if (digits.length > start) {
     parts.push(digits.slice(start));
   }
@@ -393,14 +393,14 @@ function normalizePairingCode(raw) {
   return isPairingQrCode(text) ? text : text.replace(/\D/g, "");
 }
 
-// Was der Chip im Feld sagt. Gibt einen Schluessel statt eines Textes
-// zurueck, damit diese Funktion ohne geladene Sprachtabelle prueffaehig
-// bleibt - uebersetzt wird erst beim Anzeigen.
+// What the chip in the field says. Returns a key instead of text so this
+// function stays checkable without a loaded language table - translation
+// only happens at display time.
 //
-// Der Chip BESCHREIBT, er verbietet nicht: auch bei `bad` bleibt der
-// Einlern-Knopf bedienbar und der Wert geht unveraendert an die Route.
-// Dieselbe Haltung wie beim Validator im Backend - die Bruecke sagt, was sie
-// sieht, und laesst den Matter-Stack entscheiden.
+// The chip DESCRIBES, it does not forbid: even at `bad` the commissioning
+// button stays usable and the value goes to the route unchanged. Same
+// stance as the validator in the backend - the bridge says what it sees
+// and lets the Matter stack decide.
 function describePairingCode(raw) {
   const text = raw.trim();
   if (!text) {
@@ -421,7 +421,7 @@ function describePairingCode(raw) {
   if (count > 21) {
     return { key: "web.devices.code_detect_too_long", values: {}, tone: "bad" };
   }
-  // Gezaehlt wird gegen die naechste gueltige Laenge - erst 11, dann 21.
+  // Counted against the next valid length - 11 first, then 21.
   const missing = count < 11 ? 11 - count : 21 - count;
   return missing === 1
     ? { key: "web.devices.code_detect_remaining_one", values: {}, tone: "warn" }
@@ -429,13 +429,13 @@ function describePairingCode(raw) {
 }
 ```
 
-- [ ] **Step 4: Prüfskript laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run the check script, confirm success**
 
 ```bash
 node /tmp/pairing-probe.mjs
 ```
 
-Erwartet: jede Zeile `ok`, am Ende `Alles gruen.`, Exit-Code 0.
+Expected: every line `ok`, `Alles gruen.` at the end, exit code 0.
 
 - [ ] **Step 5: Commit**
 
@@ -451,41 +451,41 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Das Feld verdrahten
+### Task 3: Wire up the field
 
 **Files:**
-- Modify: `src/loxmatter/i18n/strings.yaml:618` (`code_placeholder` ändern, acht Schlüssel ergänzen)
-- Modify: `src/loxmatter/web/app.js` — Handler in `app()`, hinter `commissionDevice()` (Zeile 1653); dazu `commissionRunCode` bei Zeile 1663
-- Modify: `src/loxmatter/web/index.html:325-341` (Feld) und `:412` (Ablaufanzeige)
-- Modify: `src/loxmatter/web/style.css:470` (nach `.code-field .code-input`)
+- Modify: `src/loxmatter/i18n/strings.yaml:618` (change `code_placeholder`, add eight keys)
+- Modify: `src/loxmatter/web/app.js` — handler in `app()`, after `commissionDevice()` (line 1653); plus `commissionRunCode` at line 1663
+- Modify: `src/loxmatter/web/index.html:325-341` (field) and `:412` (progress display)
+- Modify: `src/loxmatter/web/style.css:470` (after `.code-field .code-input`)
 
 **Interfaces:**
-- Consumes: `formatPairingCode`, `normalizePairingCode`, `describePairingCode` aus Aufgabe 2
-- Produces: `app().formatCommissionCode(input)`, `app().commissionCodeKeydown(event)`, `app().commissionCodeBadge()` — letztere gibt `{ text: string, tone: string }` mit fertig übersetztem Text
+- Consumes: `formatPairingCode`, `normalizePairingCode`, `describePairingCode` from Task 2
+- Produces: `app().formatCommissionCode(input)`, `app().commissionCodeKeydown(event)`, `app().commissionCodeBadge()` — the last one returns `{ text: string, tone: string }` with the text already translated
 
-- [ ] **Step 1: Die Texte eintragen**
+- [ ] **Step 1: Add the strings**
 
-In `src/loxmatter/i18n/strings.yaml` den vorhandenen Eintrag bei Zeile 618 ersetzen:
+In `src/loxmatter/i18n/strings.yaml`, replace the existing entry at line 618:
 
 ```yaml
 web.devices.code_placeholder:
-  # Zeigt die FORM statt sie zu beschreiben. Der fruehere Klammerzusatz
-  # ("11-stellig oder MT:…") nannte die Bauform - wer den Aufkleber in der
-  # Hand haelt, musste das erst in "die untere der beiden Zahlen"
-  # uebersetzen. Diese Auskunft tragen jetzt die Beispielzeile unter dem
-  # Feld und die Aufkleber-Skizze daneben. Beide Sprachen tragen denselben
-  # Wert - eine Ziffernfolge uebersetzt sich nicht.
+  # Shows the FORM instead of describing it. The former parenthetical
+  # ("11 digits or MT:…") named the form - anyone holding the sticker in
+  # their hand first had to translate that into "the lower of the two
+  # numbers". That information is now carried by the example line below
+  # the field and the sticker sketch next to it. Both languages carry the
+  # same value - a digit sequence doesn't translate.
   en: "1234-567-8901"
   de: "1234-567-8901"
 ```
 
-Und direkt hinter `web.devices.code_label` (Zeile 638) einfügen:
+And insert directly after `web.devices.code_label` (line 638):
 
 ```yaml
-# Der Chip rechts im Eingabefeld (Entwurf vom 2026-09-07, Abschnitt 6). Er
-# benennt, was das Feld erkannt hat - und damit lernt man den Namen des
-# Codes an genau der Stelle, an der man ihn eintippt. Er BESCHREIBT nur:
-# auch "zu lang" sperrt den Einlern-Knopf nicht.
+# The chip on the right of the input field (design of 2026-09-07, section
+# 6). It names what the field has recognized - so you learn the name of
+# the code at exactly the spot where you type it. It only DESCRIBES: even
+# "too long" doesn't lock the commissioning button.
 web.devices.code_detect_manual:
   en: "Numeric code"
   de: "Zahlencode"
@@ -495,8 +495,8 @@ web.devices.code_detect_manual_long:
 web.devices.code_detect_qr:
   en: "QR code"
   de: "QR-Code"
-# Zwei Schluessel statt einer mit Plural-Regel: i18n.t kennt keine
-# Pluralformen, und "noch 1 Ziffern" waere in beiden Sprachen falsch.
+# Two keys instead of one with a plural rule: i18n.t doesn't know plural
+# forms, and "1 digits to go" would be wrong in both languages.
 web.devices.code_detect_remaining_one:
   en: "1 digit to go"
   de: "noch 1 Ziffer"
@@ -509,11 +509,10 @@ web.devices.code_detect_too_long:
 web.devices.code_detect_invalid:
   en: "not a valid code"
   de: "kein gültiger Code"
-# Die Beispielzeile unter dem Feld. Die BESCHRIFTUNGEN darin sind dieselben
-# Schluessel wie die des Chips (code_detect_manual/_qr) - es ist derselbe
-# Begriff, und dass er an beiden Stellen gleich lautet, ist der Zweck der
-# Uebung. Nur die beiden Beispielwerte stehen hier, und sie uebersetzen sich
-# nicht.
+# The example line below the field. The LABELS in it are the same keys as
+# the chip's (code_detect_manual/_qr) - it's the same term, and that it
+# reads identically in both places is the whole point of the exercise.
+# Only the two example values live here, and they don't translate.
 web.devices.code_example_manual:
   en: "1234-567-8901"
   de: "1234-567-8901"
@@ -522,24 +521,26 @@ web.devices.code_example_qr:
   de: "MT:Y.K90SO527JA0648G00"
 ```
 
-- [ ] **Step 2: Die Handler in `app()` schreiben**
+- [ ] **Step 2: Write the handlers in `app()`**
 
-In `src/loxmatter/web/app.js`, unmittelbar **vor** `async commissionDevice()` (Zeile 1653) einfügen:
+In `src/loxmatter/web/app.js`, insert immediately **before** `async commissionDevice()` (line 1653):
 
 ```js
-    // Schreibt den Zahlencode beim Tippen so, wie er auf dem Geraet steht.
+    // Writes the numeric code while typing the way it appears on the
+    // device.
     //
-    // `commissionCode` wird hier AUSDRUECKLICH nachgezogen, statt sich auf
-    // x-model zu verlassen: beide haengen am selben `input`-Ereignis, und
-    // welcher Zuhoerer zuerst laeuft, haengt an der Reihenfolge der
-    // Attribute im Markup. Ein Zustand, der von einer Attributreihenfolge
-    // abhaengt, ist ein Fehler, der erst beim Umsortieren auffaellt.
+    // `commissionCode` is EXPLICITLY updated here rather than relying on
+    // x-model: both hang off the same `input` event, and which listener
+    // runs first depends on the order of the attributes in the markup. A
+    // state that depends on attribute order is a bug that only surfaces
+    // when things get reordered.
     formatCommissionCode(input) {
       const before = input.value;
       const formatted = formatPairingCode(before);
       if (formatted !== before) {
-        // Ziffern LINKS vom Cursor zaehlen, nicht Zeichenpositionen: sonst
-        // verschoebe jeder neu gesetzte Bindestrich den Cursor um eins.
+        // Count digits to the LEFT of the cursor, not character positions:
+        // otherwise every newly inserted dash would shift the cursor by
+        // one.
         const caret = input.selectionStart ?? before.length;
         const digitsLeft = before.slice(0, caret).replace(/\D/g, "").length;
         input.value = formatted;
@@ -556,13 +557,12 @@ In `src/loxmatter/web/app.js`, unmittelbar **vor** `async commissionDevice()` (Z
       this.commissionCode = input.value;
     },
 
-    // Rueckschritt DIREKT hinter einem Bindestrich loescht die Ziffer davor.
+    // Backspace DIRECTLY after a dash deletes the digit before it.
     //
-    // Ohne diesen Zweig loescht der Tastendruck den Trenner, den
-    // `formatCommissionCode` unmittelbar danach wieder setzt: der Wert
-    // aendert sich nicht, der Cursor bleibt stehen, und die Taste wirkt tot.
-    // Das ist der eine Punkt, an dem eine mitformatierende Eingabe
-    // ueblicherweise scheitert.
+    // Without this branch, the keypress deletes the separator that
+    // `formatCommissionCode` immediately re-adds afterwards: the value
+    // doesn't change, the cursor stays put, and the key appears dead.
+    // That is the one point where a self-formatting input usually fails.
     commissionCodeKeydown(event) {
       if (event.key !== "Backspace") {
         return;
@@ -581,7 +581,7 @@ In `src/loxmatter/web/app.js`, unmittelbar **vor** `async commissionDevice()` (Z
       this.formatCommissionCode(input);
     },
 
-    // Text und Farbe des Chips im Feld.
+    // Text and colour of the chip in the field.
     commissionCodeBadge() {
       const state = describePairingCode(this.commissionCode);
       return {
@@ -591,18 +591,18 @@ In `src/loxmatter/web/app.js`, unmittelbar **vor** `async commissionDevice()` (Z
     },
 ```
 
-- [ ] **Step 3: Den übertragenen Wert normalisieren**
+- [ ] **Step 3: Normalize the transmitted value**
 
-In `commissionDevice()` die drei Stellen ersetzen, die heute `this.commissionCode.trim()` benutzen (Zeilen 1655, 1663, 1665):
+In `commissionDevice()`, replace the three places that currently use `this.commissionCode.trim()` (lines 1655, 1663, 1665):
 
 ```js
     async commissionDevice() {
       this.commissionMessage = null;
-      // Normalisiert, nicht nur getrimmt: die Trenner, die das Feld beim
-      // Tippen selbst gesetzt hat, gehoeren nicht in den Matter-Stack. Das
-      // Backend schneidet sie ohnehin ein zweites Mal weg
-      // (`CommissionRequest._strip_separators`) - hier stehen sie draussen,
-      // damit die Oberflaeche nicht etwas anderes abschickt, als sie zeigt.
+      // Normalized, not just trimmed: the separators the field itself
+      // inserted while typing don't belong in the Matter stack. The
+      // backend strips them a second time anyway
+      // (`CommissionRequest._strip_separators`) - they're kept out here so
+      // the UI doesn't send something other than what it shows.
       const code = normalizePairingCode(this.commissionCode);
       if (!code) {
         this.commissionMessage = t("web.devices.commission_code_required");
@@ -612,19 +612,19 @@ In `commissionDevice()` die drei Stellen ersetzen, die heute `this.commissionCod
       this.commissionBusy = true;
       this.commissionStep = 0;
       this.commissionFailed = false;
-      // Die Ablaufanzeige zeigt den FORMATIERTEN Code, nicht den
-      // uebertragenen: wer zwanzig bis sechzig Sekunden wartet, soll den
-      // Code wiedererkennen, den er eingetippt hat.
+      // The progress display shows the FORMATTED code, not the
+      // transmitted one: anyone waiting twenty to sixty seconds should
+      // recognize the code they typed in.
       this.commissionRunCode = formatPairingCode(this.commissionCode.trim());
       try {
         const body = { code };
 ```
 
-Der Rest von `commissionDevice()` bleibt unverändert.
+The rest of `commissionDevice()` stays unchanged.
 
-- [ ] **Step 4: Das Markup verdrahten**
+- [ ] **Step 4: Wire up the markup**
 
-In `src/loxmatter/web/index.html` den Block ab Zeile 325 ersetzen:
+In `src/loxmatter/web/index.html`, replace the block starting at line 325:
 
 ```html
             <div class="code-field">
@@ -642,14 +642,15 @@ In `src/loxmatter/web/index.html` den Block ab Zeile 325 ersetzen:
                 @keydown.enter="commissionDevice()"
               />
               <!--
-                Kein `inputmode="numeric"`: auf dem Telefon gaebe es die
-                Zifferntastatur, und dort steht man beim Ablesen. Es sperrte
-                aber das Tippen eines QR-Textes hinter eine Umschalttaste,
-                und diese Karte hat fuer beide Bauformen genau ein Feld.
+                No `inputmode="numeric"`: on a phone that would bring up
+                the numeric keyboard, and that's where you'd be reading it
+                off. But it would lock typing a QR text behind a shift
+                key, and this card has exactly one field for both forms.
 
-                Der Chip bleibt bei leerem Feld sichtbar-aber-leer
-                (`visibility: hidden` in style.css) statt entfernt, damit das
-                Feld beim ersten Tastendruck nicht seine Breite aendert.
+                The chip stays visible-but-empty on an empty field
+                (`visibility: hidden` in style.css) rather than removed,
+                so the field doesn't change its width on the first
+                keystroke.
               -->
               <span
                 class="code-detect"
@@ -672,18 +673,18 @@ In `src/loxmatter/web/index.html` den Block ab Zeile 325 ersetzen:
           </p>
 ```
 
-- [ ] **Step 5: Die Gestalt**
+- [ ] **Step 5: The look**
 
-In `src/loxmatter/web/style.css` hinter `.code-field .code-input:focus` (Zeile 488) einfügen:
+In `src/loxmatter/web/style.css`, insert after `.code-field .code-input:focus` (line 488):
 
 ```css
-/* Der Chip im Eingabefeld (Entwurf vom 2026-09-07). Er benennt, was das Feld
- * erkannt hat. Bei leerem Feld bleibt er stehen und wird nur unsichtbar -
- * entfernt aenderte er die Breite des Feldes beim ersten Tastendruck.
+/* The chip in the input field (design of 2026-09-07). It names what the
+ * field has recognized. On an empty field it stays in place and only
+ * becomes invisible - removing it would change the field's width on the
+ * first keystroke.
  *
- * Die drei Farben tragen dieselbe Bedeutung wie ueberall sonst in dieser
- * Oberflaeche (--ok gelungen, --warn unfertig, --danger falsch); es kommt
- * keine neue hinzu. */
+ * The three colours carry the same meaning as everywhere else in this UI
+ * (--ok success, --warn incomplete, --danger wrong); no new one is added. */
 .code-field .code-detect {
   display: inline-flex;
   align-items: center;
@@ -716,8 +717,8 @@ In `src/loxmatter/web/style.css` hinter `.code-field .code-input:focus` (Zeile 4
   color: var(--danger);
 }
 
-/* Die beiden Bauformen als Beispiel. Ersetzt den frueheren Klammerzusatz im
- * Platzhalter: der nannte die Bauform, das hier zeigt sie. */
+/* The two forms as an example. Replaces the former parenthetical in the
+ * placeholder: that named the form, this shows it. */
 .code-examples {
   display: flex;
   flex-wrap: wrap;
@@ -738,44 +739,44 @@ In `src/loxmatter/web/style.css` hinter `.code-field .code-input:focus` (Zeile 4
 }
 ```
 
-**An der `@media (max-width: 480px)`-Regel bei Zeile 501 ist nichts zu tun.** Sie gibt dem Feld dort `flex: 1 1 100%` und dem Knopf `width: 100%`; der Chip fällt damit von selbst in eine eigene Zeile zwischen beide. Ein `order` einzuführen wäre nicht nur überflüssig, es schöbe ihn hinter den Knopf. Nachgesehen wird das trotzdem — Schritt 8, Punkt 8.
+**Nothing to do about the `@media (max-width: 480px)` rule at line 501.** It gives the field `flex: 1 1 100%` and the button `width: 100%` there; the chip falls into its own line between the two on its own as a result. Introducing an `order` would not only be redundant, it would push it behind the button. Checked anyway - Step 8, item 8.
 
-- [ ] **Step 6: Die Sprachtabelle prüfen**
+- [ ] **Step 6: Check the language table**
 
 ```bash
 uv run pytest tests/test_i18n.py -v
 ```
 
-Erwartet: alle PASSED — besonders `test_web_namespace_has_no_missing_english_fallback_gaps` und `test_no_value_is_wrapped_in_typographic_quotes`.
+Expected: all PASSED — especially `test_web_namespace_has_no_missing_english_fallback_gaps` and `test_no_value_is_wrapped_in_typographic_quotes`.
 
-- [ ] **Step 7: Die reinen Funktionen erneut prüfen**
+- [ ] **Step 7: Check the pure functions again**
 
 ```bash
 node /tmp/pairing-probe.mjs
 ```
 
-Erwartet: `Alles gruen.` — der Verdrahtungsschritt darf sie nicht verändert haben.
+Expected: `Alles gruen.` — the wiring step must not have changed them.
 
-- [ ] **Step 8: Die Bindung im Browser ansehen**
+- [ ] **Step 8: Look at the binding in the browser**
 
-Das Prüfskript belegt die Regel, nicht die Bindung. Dafür die Anwendung starten:
+The check script proves the rule, not the binding. Start the application for that:
 
 ```bash
 uv run python scripts/dev_web_server.py --demo
 ```
 
-Auf der Geräteansicht durchspielen und **jeweils hinsehen**, statt es anzunehmen:
+Play through it on the device view and **actually look each time**, rather than assuming:
 
-1. `12345678901` Ziffer für Ziffer tippen — die Bindestriche erscheinen bei der 5. und der 8. Ziffer, der Cursor bleibt hinter der zuletzt getippten Ziffer.
-2. Cursor zwischen `1234-` und `567` setzen, eine `9` tippen — sie landet an der Cursorstelle, nicht am Ende.
-3. Cursor direkt hinter einen Bindestrich setzen, Rückschritt — die Ziffer davor verschwindet, der Trenner rutscht nach.
-4. `1234-567-8901` einfügen — Feld zeigt es unverändert, Chip sagt „Zahlencode".
-5. `MT:Y.K90SO527JA0648G00` einfügen — unverändert, Chip sagt „QR-Code".
-6. Feld leeren — der Chip verschwindet, das Feld ändert seine Breite nicht.
-7. Auf Deutsch umschalten — der Chip wechselt mit.
-8. Fenster auf 400px verschmälern — Feld, Chip und Knopf stehen untereinander.
+1. Type `12345678901` digit by digit — the dashes appear at the 5th and 8th digit, the cursor stays right after the last digit typed.
+2. Place the cursor between `1234-` and `567`, type a `9` — it lands at the cursor position, not at the end.
+3. Place the cursor directly after a dash, backspace — the digit before it disappears, the separator shifts back.
+4. Paste `1234-567-8901` — the field shows it unchanged, the chip says "Numeric code".
+5. Paste `MT:Y.K90SO527JA0648G00` — unchanged, the chip says "QR code".
+6. Clear the field — the chip disappears, the field doesn't change its width.
+7. Switch to German — the chip switches along with it.
+8. Narrow the window to 400px — field, chip, and button stack vertically.
 
-- [ ] **Step 9: Die ganze Suite und die Prüfer**
+- [ ] **Step 9: The whole suite and the checkers**
 
 ```bash
 uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy
@@ -796,26 +797,26 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: Die Aufkleber-Skizze
+### Task 4: The sticker sketch
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (Skizze neben das Feld, um beides ein `.code-with-sticker`)
+- Modify: `src/loxmatter/web/index.html` (sketch next to the field, `.code-with-sticker` around both)
 - Modify: `src/loxmatter/web/style.css` (`.code-with-sticker`, `.code-sticker`)
 - Modify: `src/loxmatter/i18n/strings.yaml` (`sticker_alt`, `code_where_hint`)
 
 **Interfaces:**
-- Consumes: die Feldstruktur aus Aufgabe 3
-- Produces: nichts, worauf spätere Aufgaben zugreifen
+- Consumes: the field structure from Task 3
+- Produces: nothing that later tasks access
 
-- [ ] **Step 1: Die beiden Texte eintragen**
+- [ ] **Step 1: Add the two strings**
 
-Hinter `web.devices.code_example_qr` in `src/loxmatter/i18n/strings.yaml`:
+After `web.devices.code_example_qr` in `src/loxmatter/i18n/strings.yaml`:
 
 ```yaml
-# Die Aufkleber-Skizze neben dem Feld (Entwurf Abschnitt 7). Sie ist eine
-# Verdeutlichung, keine Informationsquelle - die Beispielzeile darueber
-# traegt denselben Inhalt als Text. Das aria-label beschreibt deshalb, was
-# zu SEHEN ist, statt den Inhalt ein zweites Mal vorzulesen.
+# The sticker sketch next to the field (design section 7). It's an
+# illustration, not a source of information - the example line above it
+# carries the same content as text. The aria-label therefore describes
+# what there is to SEE, instead of reading out the content a second time.
 web.devices.sticker_alt:
   en: "Sketch of a Matter label: the QR code on the left, the numeric code highlighted below it on the right."
   de: "Skizze eines Matter-Aufklebers: links der QR-Code, rechts darunter der hervorgehobene Zahlencode."
@@ -824,9 +825,9 @@ web.devices.code_where_hint:
   de: "Steht auf dem Gerät, seiner Verpackung oder im Handbuch. Statt der Zahl geht auch der Text hinter dem QR-Code."
 ```
 
-- [ ] **Step 2: Die Skizze ins Markup**
+- [ ] **Step 2: Put the sketch into the markup**
 
-In `src/loxmatter/web/index.html` das in Aufgabe 3 entstandene `<div class="code-field">…</div>` samt der Beispielzeile in einen Rahmen setzen und die Skizze daneben stellen. Aus
+In `src/loxmatter/web/index.html`, wrap the `<div class="code-field">…</div>` from Task 3, together with the example line, in a frame and put the sketch next to it. From
 
 ```html
             <label class="field-label" for="commission-code" …></label>
@@ -834,7 +835,7 @@ In `src/loxmatter/web/index.html` das in Aufgabe 3 entstandene `<div class="code
             <p class="code-examples"> … </p>
 ```
 
-wird der folgende Block. Er zeigt das Markup vollständig, damit er sich ohne Rückgriff auf Aufgabe 3 anwenden lässt — **die beiden HTML-Kommentare aus Aufgabe 3 (zum fehlenden `inputmode` und zum stehenbleibenden Chip) wandern unverändert mit**, sie sind hier nur der Länge wegen nicht wiederholt:
+becomes the following block. It shows the markup in full, so it can be applied without referring back to Task 3 — **the two HTML comments from Task 3 (about the missing `inputmode` and the chip staying in place) carry over unchanged**, they are just not repeated here for length:
 
 ```html
             <div class="code-with-sticker">
@@ -877,15 +878,15 @@ wird der folgende Block. Er zeigt das Markup vollständig, damit er sich ohne R�
                 <p class="hint" x-text="t('web.devices.code_where_hint')"></p>
               </div>
               <!--
-                Das QR-Quadrat ist eine Andeutung aus Rechtecken - drei
-                Suchmuster plus Rauschen -, kein lesbarer Code. Ein echter QR
-                im Bild waere eine Einladung, ihn zu scannen, und fuehrte
-                nirgendwohin.
+                The QR square is a suggestion made of rectangles - three
+                finder patterns plus noise -, not a readable code. A real
+                QR code in the image would be an invitation to scan it,
+                and it would lead nowhere.
 
-                Alle Farben kommen aus den vorhandenen Variablen, damit die
-                Skizze in beiden Themes traegt; --warn hebt die Zahl hervor
-                und traegt damit dieselbe Bedeutung wie ueberall sonst
-                ("sieh hier hin"), statt eine neue einzufuehren.
+                All colours come from the existing variables, so the
+                sketch holds up in both themes; --warn highlights the
+                number and thereby carries the same meaning as everywhere
+                else ("look here"), instead of introducing a new one.
               -->
               <svg class="code-sticker" width="188" height="112"
                    viewBox="0 0 188 112" role="img"
@@ -921,16 +922,15 @@ wird der folgende Block. Er zeigt das Markup vollständig, damit er sich ohne R�
             </div>
 ```
 
-- [ ] **Step 3: Die Gestalt**
+- [ ] **Step 3: The look**
 
-In `src/loxmatter/web/style.css` vor `.code-field` (Zeile 450) einfügen:
+In `src/loxmatter/web/style.css`, insert before `.code-field` (line 450):
 
 ```css
-/* Feld und Aufkleber-Skizze nebeneinander (Entwurf vom 2026-09-07,
- * Abschnitt 7). Die Skizze steht dauerhaft da: sie kostet keinen
- * Lesevorgang, wer sie nicht braucht ueberliest sie, und sie ersetzt den
- * frueheren Klammerzusatz im Platzhalter - der Text wird also nicht mehr,
- * sondern weniger. */
+/* Field and sticker sketch side by side (design of 2026-09-07, section
+ * 7). The sketch is permanently there: it costs no reading effort,
+ * anyone who doesn't need it skips over it, and it replaces the former
+ * parenthetical in the placeholder - so there's less text, not more. */
 .code-with-sticker {
   display: flex;
   gap: 1.25rem;
@@ -946,9 +946,10 @@ In `src/loxmatter/web/style.css` vor `.code-field` (Zeile 450) einfügen:
   flex: 0 0 auto;
 }
 
-/* Unter dieser Breite wandert die Skizze unter das Feld - dieselbe Schwelle
- * wie beim Umbruch von Feld und Knopf weiter unten, und aus demselben
- * Grund: dort steht man mit dem Telefon vor dem Geraet. */
+/* Below this width the sketch moves under the field - the same threshold
+ * as for wrapping the field and button further down, and for the same
+ * reason: that's where you stand with your phone in front of the
+ * device. */
 @media (max-width: 480px) {
   .code-with-sticker {
     flex-wrap: wrap;
@@ -957,28 +958,28 @@ In `src/loxmatter/web/style.css` vor `.code-field` (Zeile 450) einfügen:
 }
 ```
 
-- [ ] **Step 4: Sprachtabelle prüfen**
+- [ ] **Step 4: Check the language table**
 
 ```bash
 uv run pytest tests/test_i18n.py -v
 ```
 
-Erwartet: alle PASSED.
+Expected: all PASSED.
 
-- [ ] **Step 5: Im Browser ansehen**
+- [ ] **Step 5: Look at it in the browser**
 
 ```bash
 uv run python scripts/dev_web_server.py --demo
 ```
 
-Prüfen, jeweils mit Hinsehen:
+Check, each time by actually looking:
 
-1. Die Skizze steht rechts vom Feld, oben bündig mit der Beschriftung.
-2. Im Dunkelmodus (Systemeinstellung umschalten) sind Rand, QR-Muster und Zahl lesbar und die Hervorhebung sichtbar.
-3. Auf 400px Breite steht die Skizze unter dem Feld, nichts läuft waagerecht davon.
-4. Die Zahl in der Skizze steht in Monospace — trägt `font-family="var(--mono)"` im SVG nicht, stattdessen `font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"` schreiben (SVG-Attribute lösen CSS-Variablen nicht überall auf; **diesen Punkt tatsächlich ansehen**, nicht annehmen).
+1. The sketch sits to the right of the field, top-aligned with the label.
+2. In dark mode (toggle the system setting), the border, QR pattern, and number are readable and the highlight is visible.
+3. At 400px width, the sketch sits below the field, nothing runs off horizontally.
+4. The number in the sketch is in monospace — `font-family="var(--mono)"` doesn't work in the SVG, write `font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"` instead (SVG attributes don't resolve CSS variables everywhere; **actually look at this point**, don't assume).
 
-- [ ] **Step 6: Die ganze Suite und die Prüfer**
+- [ ] **Step 6: The whole suite and the checkers**
 
 ```bash
 uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy
@@ -999,60 +1000,60 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 5: Screenshot-Skript und Bild
+### Task 5: Screenshot script and image
 
-Das Skript wählt das Eingabefeld heute über seinen Platzhaltertext aus — **dieser Selektor bricht durch Aufgabe 3**, weil dort genau dieser Text ersetzt wird.
+The script currently selects the input field via its placeholder text — **this selector breaks because of Task 3**, because that's exactly the text replaced there.
 
 **Files:**
 - Modify: `scripts/capture_screenshots.py:275`
 - Replace: `docs/screenshots/commissioning.png`
 
 **Interfaces:**
-- Consumes: `id="commission-code"` aus `index.html` (steht dort schon seit dem Umbau „Code zuerst")
-- Produces: nichts
+- Consumes: `id="commission-code"` from `index.html` (has been there since the "code first" rework)
+- Produces: nothing
 
-- [ ] **Step 1: Den Selektor lösen**
+- [ ] **Step 1: Fix the selector**
 
-In `scripts/capture_screenshots.py` Zeile 275 ersetzen:
+In `scripts/capture_screenshots.py`, replace line 275:
 
 ```python
-    # Der Selektor haengt am `id`, nicht mehr am Platzhaltertext: der lautete
-    # frueher "Pairing-Code (11-stellig oder MT:…)" und ist seit dem Entwurf
-    # vom 2026-09-07 die Ziffernfolge selbst - `input[placeholder*="MT:"]`
-    # fand danach nichts mehr. Ein `id` aendert sich seltener als ein Text,
-    # der uebersetzt wird.
+    # The selector hangs off the `id`, no longer off the placeholder text:
+    # that used to be "Pairing code (11 digits or MT:…)" and, since the
+    # design of 2026-09-07, is the digit sequence itself -
+    # `input[placeholder*="MT:"]` found nothing anymore after that. An
+    # `id` changes less often than a text that gets translated.
     #
-    # Eingesetzt wird jetzt der ZAHLENCODE statt eines MT:-Codes: er ist die
-    # Bauform, die das Bild erklaeren soll, und nur an ihm sind Gruppierung
-    # und Chip ueberhaupt zu sehen. `fill()` loest das `input`-Ereignis aus,
-    # an dem `formatCommissionCode` haengt - im Bild steht die Zahl deshalb
-    # gruppiert, so wie nach dem Tippen.
+    # What's entered now is the NUMERIC CODE rather than an MT: code: it is
+    # the form this image is meant to explain, and only with it are the
+    # grouping and the chip visible at all. `fill()` triggers the `input`
+    # event that `formatCommissionCode` hangs off of - the number in the
+    # image is therefore grouped, the same as after typing.
     page.fill("#commission-code", "34970112332")
 ```
 
-- [ ] **Step 2: Bilder neu aufnehmen**
+- [ ] **Step 2: Recapture the images**
 
 ```bash
 uv run --with playwright python scripts/capture_screenshots.py
 ```
 
-- [ ] **Step 3: Den Diff prüfen**
+- [ ] **Step 3: Check the diff**
 
 ```bash
 git status --short docs/screenshots/
 ```
 
-Erwartet: `commissioning.png` geändert, `system.png` geändert (das ist laut Kopfkommentar des Skripts **nicht** reproduzierbar — es zeigt das Protokoll des Laufs selbst). **Die übrigen fünf müssen unverändert sein.** Sind sie es nicht, hat diese Änderung etwas berührt, das sie nicht berühren sollte — dann nachsehen, nicht wegwinken.
+Expected: `commissioning.png` changed, `system.png` changed (per the script's header comment that one is **not** reproducible — it shows the log of the run itself). **The remaining five must be unchanged.** If they are not, this change touched something it shouldn't have — look into it then, don't wave it off.
 
-`system.png` verwerfen:
+Discard `system.png`:
 
 ```bash
 git checkout docs/screenshots/system.png
 ```
 
-- [ ] **Step 4: Das neue Bild ansehen**
+- [ ] **Step 4: Look at the new image**
 
-`docs/screenshots/commissioning.png` öffnen und prüfen: der Code steht als `3497-011-2332` im Feld, der Chip daneben sagt „Numeric code" (die Bilder entstehen auf Englisch), und die Aufkleber-Skizze ist im Bild.
+Open `docs/screenshots/commissioning.png` and check: the code appears as `3497-011-2332` in the field, the chip next to it says "Numeric code" (the images are generated in English), and the sticker sketch is in the image.
 
 - [ ] **Step 5: Commit**
 
@@ -1068,14 +1069,14 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 ---
 
-## Abschluss
+## Wrap-up
 
-Nach Aufgabe 5 einmal vollständig:
+Once, in full, after Task 5:
 
 ```bash
 uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy && node /tmp/pairing-probe.mjs
 ```
 
-Dann `superpowers:finishing-a-development-branch` für den Weg zurück nach `main`.
+Then `superpowers:finishing-a-development-branch` for the way back to `main`.
 
-Das Prüfskript unter `/tmp` ist Wegwerf und kommt **nicht** ins Repo — es gibt hier kein JS-Testframework, und ein einzelnes Node-Skript, das in keiner Pipeline läuft, wäre toter Ballast. Wer die Regel später ändert, schreibt es aus Aufgabe 2, Schritt 1 neu.
+The check script under `/tmp` is throwaway and does **not** go into the repo — there's no JS test framework here, and a single Node script that runs in no pipeline would be dead weight. Whoever changes the rule later rewrites it from Task 2, Step 1.
