@@ -662,7 +662,7 @@ Falls `contextlib` in `cli.py` noch nicht importiert ist, `import contextlib` zu
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
 
-Erwartung: alle vier grün, **1427 passed, 2 skipped** (fünf neue Tests).
+Erwartung: alle vier grün, **1426 passed, 2 skipped** (vier neue Tests).
 
 Schlägt ein bestehender CLI-Test fehl, ist das ein Befund über die Umstellung in Schritt 5 und **kein** Anlass, den Test anzupassen — melden.
 
@@ -910,7 +910,7 @@ Bleibt mypy hier still, ist die Absicherung aus der Abweichungsnotiz oben wirkun
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
 
-Erwartung: alle vier grün, **1430 passed, 2 skipped** (drei neue Tests).
+Erwartung: alle vier grün, **1429 passed, 2 skipped** (drei neue Tests).
 
 ```bash
 git add src/loxmatter/loxone/runtime.py src/loxmatter/cli.py tests/loxone/test_runtime.py
@@ -1114,7 +1114,7 @@ und im `return DeviceOut(...)` hinter `online=online`:
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 ```
 
-Erwartung: alle vier grün, **1433 passed, 2 skipped** (drei neue Tests).
+Erwartung: alle vier grün, **1432 passed, 2 skipped** (drei neue Tests).
 
 Schlägt ein bestehender API-Test fehl, weil `DeviceOut` ein Pflichtfeld mehr hat, ist das erwartet: die betroffenen Testaufbauten bekommen `last_heard=None` ergänzt. Das ist die einzige erlaubte Anpassung bestehender Tests in dieser Aufgabe — jeder andere Fehlschlag gehört gemeldet.
 
