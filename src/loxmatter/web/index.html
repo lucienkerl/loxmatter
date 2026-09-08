@@ -1941,6 +1941,12 @@
                 :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
                 @change="sendControl(controlModalDeviceObject(), command, $event.target.value)"
               />
+              <!-- Hinweis fuer fehlenden Startwert, wenn der Regler sichtbar ist -->
+              <p
+                class="hint"
+                x-show="command.range && controlDrafts.kelvin === undefined"
+                x-text="t('web.devices.control_start_value_unknown')"
+              ></p>
               <p class="hint" x-show="!command.range" x-text="t('web.devices.control_no_range')"></p>
               <span x-show="!command.range" class="row">
                 <input
