@@ -862,7 +862,23 @@ def test_the_order_is_total(tmp_path):
 
     Ein frueherer Anlauf verglich zwei Aufrufe von `signals()` miteinander.
     Das war keine Zusicherung: ohne Zufall im Pfad sind zwei Aufrufe auf
-    unveraenderten Daten IMMER gleich, auch bei kollidierenden Schluesseln."""
+    unveraenderten Daten IMMER gleich, auch bei kollidierenden Schluesseln.
+
+    Fund (Abschlusspruefung): `assert keys == sorted(keys)` kann bei KEINER
+    Implementierung scheitern - `keys` entsteht aus der bereits mit
+    `_signal_order` sortierten Ausgabe von `signals()`, ist also zwangs-
+    laeufig nicht-fallend, egal was `_signal_order` tut. Der Kommentar
+    darueber behauptete eine eigene Aussage ("die gelieferte Reihenfolge
+    muss dem sortierten Schluessel folgen"), die dieser Assert nicht
+    treffen kann, weil er nichts UNABHAENGIGES gegenprueft. Entfernt statt
+    ersetzt: die tatsaechliche Sortierordnung (Cluster-Rang vor Endpunkt
+    vor Element-Rang, `positions` hinter `press`, PowerSource hinter allem
+    Funktionalen) hat bereits eigene, unabhaengig gerechnete Tests -
+    `test_the_static_position_count_sorts_behind_every_button_event`,
+    `test_the_plug_still_leads_with_onoff` und
+    `test_signals_of_the_same_cluster_keep_the_previous_order`. Dieser Test
+    bleibt bei seiner einzigen tragfaehigen Aussage: der Sortierschluessel
+    ist TOTAL, kein Signal teilt ihn mit einem anderen."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -871,7 +887,6 @@ def test_the_order_is_total(tmp_path):
     signals = store.signals(device_id)
     keys = [_signal_order(s) for s in signals]
 
-    # Kein Sortierschluessel darf doppelt vorkommen (Totalitaet)
+    # Kein Sortierschluessel darf doppelt vorkommen (Totalitaet) - das ist
+    # die einzige Eigenschaft, die dieser Test unabhaengig pruefen kann.
     assert len(set(keys)) == len(keys)
-    # Die gelieferte Reihenfolge muss dem sortierten Schluessel folgen
-    assert keys == sorted(keys)
