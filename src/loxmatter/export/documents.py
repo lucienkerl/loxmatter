@@ -136,7 +136,7 @@ def virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]:
     writes them.
 
     Documented against a template that Config produced after a working
-    import (`tests/fixtures/loxone/VO_Funktionierend.xml`, supplied by the
+    import (`tests/fixtures/loxone/VO_working.xml`, supplied by the
     user, 2026-09-03). Two rules are embedded in it, and both were
     previously wrong:
 
@@ -155,7 +155,7 @@ def virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]:
     every output without an off command and leaves them out entirely for
     the digital one.
 
-    The older `VO_Referenz.xml` contradicts this on the `Analog` value. It
+    The older `VO_reference.xml` contradicts this on the `Analog` value. It
     is a hand-cleaned derivative; this file comes unmodified from Config -
     when in doubt, Config wins. The reference remains valid for everything
     else (attribute names, order, document structure).
@@ -201,7 +201,7 @@ def render_virtual_out(
         "VirtualOut",
         [
             # Order as in the template Loxone Config itself writes
-            # (tests/fixtures/loxone/VO_Funktionierend.xml):
+            # (tests/fixtures/loxone/VO_working.xml):
             # `HintText` sits at the front there, not after `CmdInit`.
             ("HintText", ""),
             ("Title", f"Matter — {device_label}"),

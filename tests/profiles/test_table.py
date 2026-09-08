@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -46,14 +46,14 @@ def test_strings_are_text():
 
 
 def test_lists_and_structs_are_not_exportable():
-    """Spec 6.6: Loxone hat fuer verschachtelte Werte keine Entsprechung."""
+    """Spec 6.6: Loxone has no equivalent for nested values."""
     assert classify([29, 31, 40]) is Exportability.NONE
     assert classify([{"0": 5, "1": True}]) is Exportability.NONE
     assert classify({"0": 5}) is Exportability.NONE
 
 
 def test_null_is_not_exportable():
-    """Spec 6.6: gelieferte Nullwerte sind eine eigene Kategorie."""
+    """Spec 6.6: delivered null values are their own category."""
     assert classify(None) is Exportability.NONE
 
 
@@ -66,7 +66,7 @@ def test_known_attribute_gets_name_and_unit():
 
 
 def test_power_is_named_and_carries_kw():
-    """Spec 7.3: Zieleinheit ist die des Loxone-Bausteins, nicht die SI-Einheit."""
+    """Spec 7.3: the target unit is the Loxone block's, not the SI unit."""
     ref = SignalRef(2, 144, 8, SignalKind.ATTRIBUTE)  # ActivePower
     profile = lookup(ref, 5000)
     assert profile.slug == "power"
@@ -74,7 +74,7 @@ def test_power_is_named_and_carries_kw():
 
 
 def test_unknown_cluster_still_gets_a_profile():
-    """Spec 3.5: die Tabelle ist Anreicherung, kein Gatekeeper."""
+    """Spec 3.5: the table is enrichment, not a gatekeeper."""
     ref = SignalRef(1, 64999, 7, SignalKind.ATTRIBUTE)
     profile = lookup(ref, 42)
     assert profile.exportability is Exportability.ANALOG
@@ -88,24 +88,24 @@ def test_unknown_cluster_with_unmappable_value_is_not_exportable():
 
 
 def test_events_are_digital_regardless_of_value():
-    """Spec 6.3: ein Event wird zum Impuls, es hat keinen Wert."""
+    """Spec 6.3: an event becomes a pulse, it has no value."""
     ref = SignalRef(1, 59, 1, SignalKind.EVENT)
     assert lookup(ref, None).exportability is Exportability.DIGITAL
 
 
 def test_power_gets_the_finest_resolution_loxone_accepts():
-    """Frueher forderte dieser Test `<v.6>`, mit gutem Grund: von mW nach kW
-    liegen sechs Groessenordnungen, und mit drei Stellen verschwindet ein
-    300-mW-Standby-Verbraucher als 0.000 (Spec 7.3).
+    """This test used to require `<v.6>`, for good reason: mW to kW spans
+    six orders of magnitude, and with three digits a 300 mW standby
+    consumer disappears as 0.000 (Spec 7.3).
 
-    Der Miniserver nimmt sechs Stellen aber nicht an - am Geraet geprueft am
-    2026-09-03. Drei ist damit nicht die gewuenschte, sondern die
-    erreichbare Aufloesung, und ein Formatstring, den der Miniserver
-    ablehnt, waere schlimmer als eine grobe Anzeige.
+    But the Miniserver doesn't accept six digits - checked on the device
+    on 2026-09-03. Three is thus not the desired but the achievable
+    resolution, and a format string the Miniserver rejects would be worse
+    than a coarse display.
 
-    Verloren geht dabei nur die DARSTELLUNG unterhalb eines Watts: der
-    Formatstring beschreibt, wie Loxone die Zahl zeigt, nicht welche Zahl
-    ankommt. Bausteine und Statistik rechnen weiter mit dem vollen Wert.
+    All that's lost is the DISPLAY below one watt: the format string
+    describes how Loxone shows the number, not which number arrives.
+    Blocks and statistics keep computing with the full value.
     """
     assert unit_format("kW") == "<v.3> kW"
     assert unit_format("kWh") == "<v.3> kWh"
@@ -123,9 +123,9 @@ def test_unit_format_for_empty_unit_is_empty():
 
 
 def test_names_element_separates_named_from_generic_within_a_known_cluster():
-    """Die Tabelle kennt Cluster 6 und benennt dort nur Attribut 0. Genau
-    diese Unterscheidung traegt die Feinauswahl: `onoff` ist gewollt,
-    StartUpOnOff (0x4003) nicht."""
+    """The table knows cluster 6 and names only attribute 0 there. This
+    exact distinction is what the fine-grained selection relies on:
+    `onoff` is wanted, StartUpOnOff (0x4003) is not."""
     known = SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)
     generic = SignalRef(1, 6, 0x4003, SignalKind.ATTRIBUTE)
     assert names_element(known) is True
@@ -133,14 +133,14 @@ def test_names_element_separates_named_from_generic_within_a_known_cluster():
 
 
 def test_names_element_is_false_for_a_cluster_the_table_does_not_know():
-    """Ein unbekannter Cluster benennt nichts. Der Aufrufer (relevance)
-    darf daraus NICHT 'alles aus' folgern - siehe dort."""
+    """An unknown cluster names nothing. The caller (relevance) must NOT
+    conclude 'everything off' from that - see there."""
     assert names_element(SignalRef(1, 4711, 0, SignalKind.ATTRIBUTE)) is False
 
 
 def test_names_element_covers_events_too():
-    """Cluster 59 benennt seine Ereignisse; die Feinauswahl darf einen
-    Tastendruck nicht als unbenannt verwerfen."""
+    """Cluster 59 names its events; the fine-grained selection must not
+    discard a button press as unnamed."""
     assert names_element(SignalRef(1, 59, 1, SignalKind.EVENT)) is True
 
 
@@ -155,13 +155,12 @@ def test_known_attribute_section_false_for_a_cluster_the_table_does_not_know():
 def test_known_attribute_section_false_for_a_cluster_known_only_for_its_commands(
     monkeypatch,
 ):
-    """Review-Fix 1b (Nachbesserung Phase 6): ein Cluster kann in der
-    Tabelle stehen, ohne etwas ueber seine Attribute zu sagen - genau die
-    Form, in der Cluster 768 (ColorControl) bis zu dieser Nachbesserung
-    stand (nur `commands:`, kein `attributes:`). Mit einer synthetischen
-    Tabelle statt an Cluster 768 selbst geprueft, damit dieser Test die
-    Falle als solche festhaelt und nicht verstummt, jetzt wo 768 einen
-    `attributes:`-Abschnitt hat."""
+    """Review-Fix 1b (follow-up fix, phase 6): a cluster can be in the
+    table without saying anything about its attributes - exactly the
+    shape cluster 768 (ColorControl) was in until this fix (only
+    `commands:`, no `attributes:`). Checked with a synthetic table instead
+    of on cluster 768 itself, so this test captures the trap as such and
+    doesn't go silent now that 768 has an `attributes:` section."""
     monkeypatch.setattr(
         "loxmatter.profiles.table._table",
         lambda: {
@@ -175,8 +174,8 @@ def test_known_attribute_section_false_for_a_cluster_known_only_for_its_commands
 
 
 def test_the_battery_level_is_named_and_scaled_to_percent():
-    """Matter zaehlt BatPercentRemaining in halben Prozent (0-200). Ohne
-    den Faktor zeigte Loxone bei voller Batterie 200 %."""
+    """Matter counts BatPercentRemaining in half percent (0-200). Without
+    the factor, Loxone would show 200% at a full battery."""
     ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
     profile = lookup(ref, 190)
     assert profile.slug == "battery"
@@ -185,8 +184,8 @@ def test_the_battery_level_is_named_and_scaled_to_percent():
 
 
 def test_a_generic_signal_keeps_its_slug_but_gains_a_readable_title():
-    """Der Schluessel bleibt generisch - er ist die Verdrahtung in Loxone
-    und darf sich nie bewegen. Nur die Anzeige wird lesbar."""
+    """The key stays generic - it is the wiring in Loxone and must never
+    move. Only the display becomes readable."""
     ref = SignalRef(0, 51, 1, SignalKind.ATTRIBUTE)
     profile = lookup(ref, 3)
     assert profile.slug == "c51_a1"
@@ -194,8 +193,9 @@ def test_a_generic_signal_keeps_its_slug_but_gains_a_readable_title():
 
 
 def test_a_table_named_signal_uses_its_own_name_for_both():
-    """Wo die eigene Tabelle etwas weiss, gewinnt sie: `onoff` ist
-    sprechender als `OnOff`, und die Einheit kennt das SDK ohnehin nicht."""
+    """Where the project's own table knows something, it wins: `onoff` is
+    more descriptive than `OnOff`, and the SDK doesn't know the unit
+    anyway."""
     profile = lookup(SignalRef(1, 6, 0, SignalKind.ATTRIBUTE), True)
     assert profile.slug == "onoff"
     assert profile.title == "onoff"
@@ -212,30 +212,28 @@ _ENERGY = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
 
 
 def test_a_struct_member_becomes_an_analog_signal():
-    """Matter liefert den Zaehlerstand als Struktur aus Wert und
-    Zeitstempeln. Ohne das Herausziehen faellt er als 'nicht abbildbar'
-    durch - und das ist der Wert, wegen dem man eine messende Steckdose
-    kauft."""
+    """Matter delivers the meter reading as a struct of value and
+    timestamps. Without pulling it out, it falls through as 'not
+    mappable' - and that's the value someone buys a metering plug for."""
     raw = {"0": 12_345_678, "1": 1_700_000_000, "2": 1_700_003_600}
     assert lookup(_ENERGY, raw).exportability is Exportability.ANALOG
     assert lookup(_ENERGY, raw).slug == "energy_imported"
 
 
 def test_a_struct_without_the_named_member_stays_unexportable():
-    """Nicht raten. Eine erfundene Zahl an einem echten Energiebaustein
-    waere schlimmer als ein fehlender Wert."""
+    """Don't guess. A made-up number on a real energy block would be
+    worse than a missing value."""
     assert lookup(_ENERGY, {"1": 1_700_000_000}).exportability is Exportability.NONE
 
 
 def test_a_struct_member_that_is_not_a_number_stays_unexportable():
-    """Abweichung vom Aufgabenzettel: der extrahierte Wert laeuft durch das
-    unveraenderte `classify` (Aufgabenvorgabe), und das stuft eine
-    Zeichenkette als TEXT ein, nicht als NONE - beides zaehlt aber laut
-    `is_exportable` (Spec 6.6) als nicht exportierbar. Die urspruengliche
-    Zusicherung `is Exportability.NONE` waere nur erfuellbar gewesen, wenn
-    `struct_member` selbst zwischen Zahl und Text unterschieden haette -
-    das ist Aufgabe von `classify`, nicht von `struct_member`, sonst gaebe
-    es die Einstufungslogik zweimal."""
+    """Deviation from the task sheet: the extracted value runs through the
+    unchanged `classify` (task requirement), and that classifies a string
+    as TEXT, not as NONE - but both count as not exportable per
+    `is_exportable` (Spec 6.6). The original assertion
+    `is Exportability.NONE` could only have held if `struct_member` itself
+    distinguished between number and text - that's `classify`'s job, not
+    `struct_member`'s, or the classification logic would exist twice."""
     assert not is_exportable(lookup(_ENERGY, {"0": "viel"}).exportability)
 
 
@@ -244,29 +242,29 @@ def test_a_null_value_stays_unexportable_even_with_a_field():
 
 
 def test_an_integer_key_is_accepted_as_well_as_a_string_key():
-    """Die Zeichenkette ist, was matter-server heute liefert; eine andere
-    Serialisierung derselben Struktur waere mit Zahl genauso plausibel."""
+    """The string is what matter-server delivers today; a different
+    serialization of the same struct would be just as plausible with a
+    number."""
     assert lookup(_ENERGY, {0: 5_000_000}).exportability is Exportability.ANALOG
 
 
 def test_a_cluster_without_a_field_entry_still_sees_the_whole_value():
-    """Nur ein Cluster, den die Tabelle kennt, darf ein Element benennen.
-    Eine unbekannte Struktur bleibt unbekannt."""
+    """Only a cluster the table knows may name an element. An unknown
+    struct stays unknown."""
     ref = SignalRef(1, 4711, 0, SignalKind.ATTRIBUTE)
     assert lookup(ref, {"0": 5}).exportability is Exportability.NONE
 
 
 def test_no_unit_format_exceeds_what_loxone_accepts():
-    """Der Miniserver nimmt hoechstens drei Nachkommastellen an; `<v.4>` und
-    mehr funktioniert nicht (am Geraet geprueft, 2026-09-03).
+    """The Miniserver accepts at most three decimal places; `<v.4>` and
+    higher doesn't work (checked on the device, 2026-09-03).
 
-    Die Pruefung laeuft ueber ALLE Eintraege der Tabelle, nicht ueber eine
-    Auswahl: der Fehler entstand dadurch, dass jemand - zu Recht - mehr
-    Stellen fuer die Leistung wollte und niemand die Grenze kannte. Ein
-    Formatstring, den der Miniserver ablehnt, faellt sonst erst beim Import
-    auf, also beim Anwender.
+    The check runs over ALL entries of the table, not a selection: the bug
+    arose because someone - rightly - wanted more digits for power and
+    nobody knew the limit. A format string the Miniserver rejects would
+    otherwise only surface at import time, i.e. for the user.
     """
     for unit in _UNIT_DECIMALS:
         rendered = unit_format(unit)
         decimals = int(rendered.split("<v.")[1].split(">")[0])
-        assert decimals <= MAX_LOXONE_DECIMALS, f"{unit!r} ergibt {rendered!r}"
+        assert decimals <= MAX_LOXONE_DECIMALS, f"{unit!r} yields {rendered!r}"

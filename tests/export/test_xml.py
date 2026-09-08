@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -35,7 +35,7 @@ def test_declaration_comes_first():
 
 
 def test_loxone_value_placeholder_is_escaped():
-    """Ein unescaptes <v> macht die Datei fuer Loxone Config unlesbar."""
+    """An unescaped <v> makes the file unreadable for Loxone Config."""
     out = render_document(
         "VirtualOut",
         [("Title", "T")],
@@ -47,7 +47,7 @@ def test_loxone_value_placeholder_is_escaped():
 
 
 def test_backslash_v_in_check_is_left_alone():
-    """\\v ist Loxones Wertplatzhalter in der Befehlserkennung, kein XML."""
+    """\\v is Loxone's value placeholder in command recognition, not XML."""
     out = render_document(
         "VirtualInUdp",
         [("Title", "T")],

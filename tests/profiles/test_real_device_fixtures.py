@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Prueft die Tabelle an den echten Geraeten aus Phase 1."""
+"""Checks the table against the real devices from phase 1."""
 
 import json
 from pathlib import Path
@@ -32,34 +32,34 @@ def load(name: str) -> NodeSnapshot:
 
 
 def test_plug_matches_the_breakdown_recorded_in_spec_6_6():
-    """Spec 6.6, Tabelle: 102 analog, 7 digital, 13 Text, 37 nicht abbildbar -
-    plus Aufgabe 5: der Zaehlerstand (2/145/1) ist eine Struktur mit
-    numerischem Element und wandert seither von NONE zu ANALOG (103/36)."""
+    """Spec 6.6, table: 102 analog, 7 digital, 13 text, 37 not mappable -
+    plus task 5: the meter reading (2/145/1) is a struct with a numeric
+    element and has since moved from NONE to ANALOG (103/36)."""
     snap = load("ikea_grillplats_plug.json")
     signals = extract_signals(snap)
-    zaehlung = {kind: 0 for kind in Exportability}
+    counts = {kind: 0 for kind in Exportability}
     for ref in signals:
-        zaehlung[lookup(ref, snap.attributes.get(ref.path)).exportability] += 1
+        counts[lookup(ref, snap.attributes.get(ref.path)).exportability] += 1
 
     assert len(signals) == 159
-    assert zaehlung[Exportability.ANALOG] == 103
-    assert zaehlung[Exportability.DIGITAL] == 7
-    assert zaehlung[Exportability.TEXT] == 13
-    assert zaehlung[Exportability.NONE] == 36  # 32 Listen/Structs - 1 + 5 Nullwerte
+    assert counts[Exportability.ANALOG] == 103
+    assert counts[Exportability.DIGITAL] == 7
+    assert counts[Exportability.TEXT] == 13
+    assert counts[Exportability.NONE] == 36  # 32 lists/structs - 1 + 5 null values
 
 
 def test_only_110_of_the_plugs_signals_reach_a_udp_input():
-    """Nicht 45, sondern 49 fallen weg - die 5 Nullwerte kommen zu den
-    verbleibenden 44 Listen/Structs dazu (Aufgabe 5 zieht den Zaehlerstand
-    aus seiner Struktur und macht ihn abbildbar)."""
+    """Not 45 but 49 drop out - the 5 null values are added to the
+    remaining 44 lists/structs (task 5 pulls the meter reading out of its
+    struct and makes it mappable)."""
     snap = load("ikea_grillplats_plug.json")
-    abbildbar = [
+    exportable = [
         ref
         for ref in extract_signals(snap)
         if lookup(ref, snap.attributes.get(ref.path)).exportability
         in (Exportability.ANALOG, Exportability.DIGITAL)
     ]
-    assert len(abbildbar) == 110
+    assert len(exportable) == 110
 
 
 def test_plug_power_attribute_carries_kw():

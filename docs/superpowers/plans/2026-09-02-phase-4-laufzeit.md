@@ -2242,7 +2242,7 @@ import pytest
 
 from loxmatter.devtools.fake_miniserver import FakeMiniserver
 
-REFERENZ = Path(__file__).parents[1] / "fixtures" / "loxone" / "VIU_Referenz.xml"
+REFERENZ = Path(__file__).parents[1] / "fixtures" / "loxone" / "VIU_reference.xml"
 
 
 async def test_records_incoming_datagrams():

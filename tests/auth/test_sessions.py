@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,11 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die Sitzungsverwaltung (Spec 7).
+"""Tests for session management (Spec 7).
 
-`now` ist in beiden Funktionen ein Parameter, damit diese Tests Zeit
-vergehen lassen koennen, ohne zu schlafen - eine Sitzung mit 30 Tagen
-Laufzeit liesse sich sonst gar nicht pruefen.
+`now` is a parameter in both functions so that these tests can let time
+pass without sleeping - a session with a 30-day lifetime could otherwise
+not be tested at all.
 """
 
 from __future__ import annotations
@@ -71,8 +71,8 @@ def test_a_session_expires(tmp_path):
 
 
 def test_an_expired_session_is_removed_when_it_is_checked(tmp_path):
-    """Sonst blieben abgelaufene Zeilen liegen, bis zufaellig jemand eine
-    neue Sitzung anlegt."""
+    """Otherwise expired rows would just sit there until someone happens to
+    create a new session."""
     store = _store(tmp_path)
     try:
         session_id = open_session(store.auth, now=1000)
@@ -84,9 +84,9 @@ def test_an_expired_session_is_removed_when_it_is_checked(tmp_path):
 
 
 def test_a_session_is_extended_only_after_a_day(tmp_path):
-    """Gleitende Verlaengerung ohne Schreibzugriff bei JEDEM Aufruf: eine
-    Oberflaeche mit Live-Ansicht stellt viele Anfragen je Minute, und jede
-    davon eine SQLite-Schreiboperation waere reine Verschwendung."""
+    """Sliding extension without a write on EVERY call: a UI with a live
+    view makes many requests per minute, and a SQLite write for each one
+    would be pure waste."""
     store = _store(tmp_path)
     try:
         session_id = open_session(store.auth, now=1000)

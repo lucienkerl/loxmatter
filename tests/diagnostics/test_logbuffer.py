@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Der Log-Ring, aus dem die Oberflaeche ihre Zeilen bekommt."""
+"""The log ring the UI gets its lines from."""
 
 from __future__ import annotations
 
@@ -35,30 +35,27 @@ from loxmatter.diagnostics.logbuffer import (
 
 @pytest.fixture
 def logger_with_handler() -> Iterator[tuple[logging.Logger, LogBufferHandler]]:
-    """Legt einen frischen Logger mit garantiert eindeutigem Namen und
-    angehaengtem `LogBufferHandler` an, und meldet den Handler nach dem Test
-    wieder ab.
+    """Sets up a fresh logger with a guaranteed-unique name and an attached
+    `LogBufferHandler`, and unregisters the handler again after the test.
 
-    `uuid4().hex` statt `id(object())` (wie im urspruenglichen Brief-Code):
-    `id()` liefert die Speicheradresse eines Objekts, und CPython gibt die
-    Adresse eines sofort wieder freigegebenen temporaeren Objekts fast immer
-    an das naechste `object()` weiter - ein Lauf von 200 Aufrufen von
-    `id(object())` ergab genau EINE einzige unterschiedliche ID, nicht 200
-    eindeutige Namen. Ohne diese Aenderung haetten mehrere Tests denselben
-    Loggernamen geteilt (mit je einem eigenen `LogBufferHandler` daran) -
-    heute folgenlos, weil kein Test eine Aussage ueber einen ANDEREN,
-    gleichzeitig aktiven `test.*`-Logger trifft, aber ein Zufall, kein
-    Entwurf, und beim naechsten Test, der genau das prueft, eine stille
-    Fehlerquelle.
+    `uuid4().hex` instead of `id(object())` (as in the original task brief):
+    `id()` returns an object's memory address, and CPython almost always hands
+    the address of an immediately-freed temporary object straight to the next
+    `object()` - a run of 200 calls to `id(object())` produced exactly ONE
+    distinct id, not 200 unique names. Without this change, several tests
+    would have shared the same logger name (each with its own
+    `LogBufferHandler` attached) - harmless today, since no test makes an
+    assertion about another, simultaneously active `test.*` logger, but that's
+    a coincidence, not a design, and a silent source of failure the moment a
+    future test checks exactly that.
 
-    Meldet den Handler ueber `removeHandler` wieder ab (nicht
-    `.handlers.clear()`, siehe auch `_cleanup_test_recursion_proof_logger`
-    unten): ohne das blieben fuenf Handler an fuenf `test.*`-Loggern haengen
-    (einer je Testfunktion unten, die diese Fixture benutzt) - heute
-    folgenlos, weil jeder Loggername einzigartig ist und niemand mehr
-    hinschaut, aber unnoetiger Ballast in `logging.Logger.manager.
-    loggerDict`, der bei einem kuenftigen, absichtlichen Wiederverwenden
-    eines Namens ploetzlich sichtbar wuerde."""
+    Unregisters the handler via `removeHandler` (not `.handlers.clear()`, see
+    also `_cleanup_test_recursion_proof_logger` below): without that, five
+    handlers would stay attached to five `test.*` loggers (one per test
+    function below that uses this fixture) - harmless today, since every
+    logger name is unique and nobody looks at them again, but needless
+    baggage in `logging.Logger.manager.loggerDict` that would suddenly become
+    visible the moment a name is deliberately reused in the future."""
     logger = logging.getLogger(f"test.{uuid4().hex}")
     logger.setLevel(logging.INFO)
     handler = LogBufferHandler()
@@ -81,15 +78,14 @@ def test_a_log_line_lands_in_the_ring(
 def test_a_line_from_another_thread_arrives(
     logger_with_handler: tuple[logging.Logger, LogBufferHandler],
 ) -> None:
-    """Logzeilen entstehen in diesem Projekt auch in fremden Threads - aiohttp
-    und das chip-SDK. `emit` laeuft dort, wo die Zeile entsteht.
+    """In this project, log lines also originate in foreign threads - aiohttp
+    and the chip SDK. `emit` runs wherever the line originates.
 
-    Streng sequenziell (`start()` dann sofort `join()`), keine echte
-    Nebenlaeufigkeit - das reicht, um zu belegen, dass `emit()` aus einem
-    fremden Thread funktioniert, beweist aber NICHTS ueber gleichzeitiges
-    Protokollieren aus zwei Threads (siehe Moduldocstring, Abschnitt
-    "Warum thread-lokal...", wo eine fruehere Fassung dieses Docstrings
-    genau das faelschlich behauptet hatte)."""
+    Strictly sequential (`start()` then immediately `join()`), no real
+    concurrency - that's enough to prove that `emit()` works from a foreign
+    thread, but proves NOTHING about concurrent logging from two threads (see
+    the module docstring, section "Why thread-local...", where an earlier
+    version of this docstring wrongly claimed exactly that)."""
     logger, handler = logger_with_handler
     thread = threading.Thread(target=lambda: logger.info("aus einem Thread"))
     thread.start()
@@ -99,22 +95,20 @@ def test_a_line_from_another_thread_arrives(
 
 
 def _throwing_observer(entry: LogEntry) -> None:
-    """Ersetzt das Brief-Lambda `lambda entry: (_ for _ in ()).throw(...)` -
-    wie in Task 2 laesst sich das werfende Lambda unter
-    `from __future__ import annotations` und Mypy strict nicht sauber
-    typisieren, und Ruff flaggt den Generator-throw-Trick ohnehin
-    (siehe Task-2-Bericht, Abweichung 1). Die gepruefte Aussage ist
-    unveraendert: ein Beobachter, der wirft."""
+    """Replaces the task-brief lambda `lambda entry: (_ for _ in ()).throw(...)`
+    - as in Task 2, the throwing lambda can't be cleanly typed under
+    `from __future__ import annotations` and Mypy strict, and Ruff flags the
+    generator-throw trick regardless (see Task 2 report, deviation 1). The
+    behavior under test is unchanged: an observer that raises."""
     raise RuntimeError("kaputt")
 
 
 def test_a_throwing_observer_neither_breaks_logging_nor_logs(
     logger_with_handler: tuple[logging.Logger, LogBufferHandler],
 ) -> None:
-    """Die eine Stelle im Projekt, an der ein verschluckter Fehler NICHT
-    durch einen Logeintrag ausgeglichen werden darf: der Ausgleich waere
-    selbst eine Logzeile, die denselben Handler aufruft - eine
-    Endlosschleife."""
+    """The one place in the project where a swallowed error must NOT be
+    compensated for with a log entry: the compensation would itself be a log
+    line calling the same handler - an infinite loop."""
     logger, handler = logger_with_handler
     handler.add_observer(_throwing_observer)
 
@@ -139,8 +133,8 @@ def test_the_observer_sees_each_entry_once(
 def test_an_exception_is_kept_as_text(
     logger_with_handler: tuple[logging.Logger, LogBufferHandler],
 ) -> None:
-    """Bei einer Stoerung ist der Traceback das Interessanteste - er darf
-    nicht verlorengehen, nur weil er nicht in `message` steht."""
+    """During a failure, the traceback is the most interesting part - it must
+    not be lost just because it doesn't live in `message`."""
     logger, handler = logger_with_handler
     try:
         raise ValueError("etwas ging schief")
@@ -155,9 +149,9 @@ def test_an_exception_is_kept_as_text(
 def test_remove_observer_stops_further_notifications(
     logger_with_handler: tuple[logging.Logger, LogBufferHandler],
 ) -> None:
-    """Bislang ungeprueft, obwohl Teil des Interfaces (Task-3-Brief): eine
-    abgemeldete Beobachterin darf keine spaetere Zeile mehr sehen, auch
-    wenn die Zeile selbst weiterhin im Ring landet."""
+    """Untested so far, even though it's part of the interface (Task 3
+    brief): an unregistered observer must not see any later line, even
+    though the line itself still lands in the ring."""
     logger, handler = logger_with_handler
     seen: list[LogEntry] = []
     handler.add_observer(seen.append)
@@ -171,9 +165,9 @@ def test_remove_observer_stops_further_notifications(
 
 
 def test_removing_an_unknown_observer_is_ignored() -> None:
-    """Ein nie angemeldeter (oder bereits entfernter) Beobachter ist kein
-    Fehler - dieselbe Regel wie bei `Runtime.remove_observer` (siehe
-    Docstring von `remove_observer`), bislang ungeprueft."""
+    """An observer that was never registered (or already removed) is not an
+    error - the same rule as for `Runtime.remove_observer` (see the
+    docstring of `remove_observer`), untested so far."""
     handler = LogBufferHandler()
     handler.remove_observer(lambda entry: None)
 
@@ -181,10 +175,10 @@ def test_removing_an_unknown_observer_is_ignored() -> None:
 def test_the_ring_evicts_the_oldest_entry_once_full(
     logger_with_handler: tuple[logging.Logger, LogBufferHandler],
 ) -> None:
-    """`LOG_BUFFER_SIZE` ist Teil des oeffentlichen Interfaces (Task-3-Brief),
-    aber die Verdraengung selbst war bislang ungeprueft - nur `RingBuffer`
-    (in `api.diagnostics`) hat einen eigenen Verdraengungstest, nicht dieser
-    Handler, der ihn benutzt."""
+    """`LOG_BUFFER_SIZE` is part of the public interface (Task 3 brief), but
+    the eviction itself was untested so far - only `RingBuffer` (in
+    `api.diagnostics`) has its own eviction test, not this handler that
+    uses it."""
     logger, handler = logger_with_handler
     for i in range(LOG_BUFFER_SIZE + 1):
         logger.info("Zeile %d", i)
@@ -196,37 +190,35 @@ def test_the_ring_evicts_the_oldest_entry_once_full(
 
 
 def _log_via_same_logger_observer(entry: LogEntry) -> None:
-    """Beobachter, der selbst ueber den GLEICHEN Logger protokolliert -
-    also einen Aufruf ausloest, der wieder bei `LogBufferHandler.emit`
-    ankommt. Siehe `test_an_observer_that_logs_through_the_same_handler_
-    terminates` fuer die Beweisfuehrung, warum das trotzdem terminiert."""
+    """Observer that itself logs through the SAME logger - i.e. triggers a
+    call that ends up back at `LogBufferHandler.emit`. See
+    `test_an_observer_that_logs_through_the_same_handler_terminates` for the
+    proof of why this still terminates."""
     logging.getLogger("test.recursion-proof").info("Beobachter-Echo: %s", entry.message)
 
 
 def test_an_observer_that_logs_through_the_same_handler_terminates() -> None:
-    """Beweist, dass ein Beobachter, der selbst ueber denselben Logger
-    protokolliert, KEINE Endlosschleife ausloest.
+    """Proves that an observer which itself logs through the same logger does
+    NOT trigger an infinite loop.
 
-    Ohne Gegenmassnahme WAERE das echt rekursiv: der Beobachter unten ruft
-    `logger.info` auf demselben Logger auf, an dem `handler` haengt - das
-    fuehrt zu einem zweiten, verschachtelten `emit()`-Aufruf im selben
-    Thread-Stack (`Logger.callHandlers` ruft Handler synchron im
-    aufrufenden Stack auf, siehe Aufgabenbeschreibung). Dieser zweite
-    Aufruf haengt seinen eigenen Eintrag an den Ring und ruft seinerseits
-    die Beobachterliste auf - darunter wieder denselben Beobachter, der
-    wieder protokolliert, mit einer bei jeder Ebene laenger werdenden
-    "Beobachter-Echo: ..."-Zeile. Das ist eine ECHTE, unbegrenzte
-    Python-Rekursion ohne eingebaute Bremse - genau der Fund aus Schritt 5
-    des Auftrags: `LogBufferHandler.emit` traegt deshalb ein
-    Thread-lokales Wiedereintritts-Flag (`_ThreadState.active`, siehe
-    Klassendocstring): der ZWEITE, verschachtelte `emit()`-Aufruf im selben
-    Thread haengt seinen Eintrag zwar noch an den Ring an (die Zeile geht
-    nicht verloren), benachrichtigt aber KEINE Beobachter mehr - die Kette
-    bricht dort garantiert nach genau einer Ebene ab, nicht erst, wenn
-    Pythons Rekursionslimit anschlaegt.
+    Without a countermeasure this WOULD be genuinely recursive: the observer
+    below calls `logger.info` on the same logger `handler` is attached to -
+    that leads to a second, nested `emit()` call on the same thread stack
+    (`Logger.callHandlers` calls handlers synchronously on the calling stack,
+    see the task description). This second call appends its own entry to the
+    ring and in turn calls the observer list - which includes the same
+    observer again, which logs again, with a "Beobachter-Echo: ..." line that
+    grows longer at every level. That is REAL, unbounded Python recursion
+    with no built-in brake - exactly the finding from step 5 of the task:
+    `LogBufferHandler.emit` therefore carries a thread-local reentrancy flag
+    (`_ThreadState.active`, see the class docstring): the SECOND, nested
+    `emit()` call on the same thread still appends its entry to the ring (the
+    line is not lost), but no longer notifies any observers - the chain is
+    guaranteed to break there after exactly one level, rather than only when
+    Python's recursion limit kicks in.
 
-    Genau zwei Zeilen landen deshalb im Ring: die urspruengliche und GENAU
-    EINE Echo-Zeile - keine dritte, vierte, ... Ebene.
+    Exactly two lines therefore land in the ring: the original one and EXACTLY
+    ONE echo line - no third, fourth, ... level.
     """
     logger = logging.getLogger("test.recursion-proof")
     logger.setLevel(logging.INFO)
@@ -246,13 +238,13 @@ def test_an_observer_that_logs_through_the_same_handler_terminates() -> None:
 def test_a_directly_nested_emit_call_bypassing_the_lock_still_terminates(
     logger_with_handler: tuple[logging.Logger, LogBufferHandler],
 ) -> None:
-    """Belegt die im Moduldocstring (Abschnitt "Warum thread-lokal...")
-    genannte tatsaechliche Notwendigkeit der Wiedereintrittssperre: nicht
-    Nebenlaeufigkeit (dagegen schuetzt bereits `logging.Handler.lock`),
-    sondern ein Beobachter, der `handler.emit(...)` DIREKT aufruft und damit
-    `Handler.handle()` samt Schloss vollstaendig umgeht. Auch dieser Fall
-    bricht nach genau einer Ebene ab - die Sperre wirkt unabhaengig davon,
-    ueber welchen Weg der verschachtelte Aufruf ankommt."""
+    """Substantiates the actual need for the reentrancy lock named in the
+    module docstring (section "Why thread-local..."): not concurrency
+    (already guarded against by `logging.Handler.lock`), but an observer
+    that calls `handler.emit(...)` DIRECTLY and thereby bypasses
+    `Handler.handle()` and its lock entirely. This case, too, breaks off
+    after exactly one level - the lock works regardless of which path the
+    nested call arrives by."""
     logger, handler = logger_with_handler
     direct_record = logging.LogRecord(
         name=logger.name,
@@ -265,7 +257,7 @@ def test_a_directly_nested_emit_call_bypassing_the_lock_still_terminates(
     )
 
     def _direct_emit_observer(entry: LogEntry) -> None:
-        handler.emit(direct_record)  # bewusst NICHT ueber logger.info() -> Handler.handle()
+        handler.emit(direct_record)  # deliberately NOT via logger.info() -> Handler.handle()
 
     handler.add_observer(_direct_emit_observer)
     logger.info("erste Zeile")
@@ -277,9 +269,9 @@ def test_a_directly_nested_emit_call_bypassing_the_lock_still_terminates(
 
 
 def test_install_log_buffer_attaches_to_the_loxmatter_logger_only() -> None:
-    """`install_log_buffer` haengt NICHT an den Root-Logger - Zeilen fremder
-    Bibliotheken (aiohttp, chip-SDK) gehoeren nicht in eine Bedienoberflaeche
-    (siehe Moduldocstring)."""
+    """`install_log_buffer` does NOT attach to the root logger - lines from
+    foreign libraries (aiohttp, chip SDK) don't belong in a UI (see the
+    module docstring)."""
     handler = install_log_buffer()
     try:
         assert handler in logging.getLogger("loxmatter").handlers
@@ -292,29 +284,28 @@ def test_install_log_buffer_attaches_to_the_loxmatter_logger_only() -> None:
         assert "aus der Bruecke" in messages
         assert "sollte NICHT im Ring landen" not in messages
     finally:
-        # Aufraeumen: "loxmatter" ist ein globaler, ueber die Testsuite
-        # geteilter Logger - ohne das bliebe dieser Handler an ihm haengen
-        # und wuerde spaetere Tests verfaelschen (Randbedingung des Auftrags).
-        # Seit `install_log_buffer` auch die Logger-Stufe selbst setzt (Fix
-        # 3, siehe Docstring dort), muss diese Stufe hier ebenfalls
-        # zurueckgesetzt werden - sonst bliebe `loxmatter` fuer den Rest des
-        # Testlaufs auf INFO stehen statt auf der urspruenglichen,
-        # unveraenderten Stufe (NOTSET).
+        # Cleanup: "loxmatter" is a global logger shared across the test
+        # suite - without this, the handler would stay attached to it and
+        # taint later tests (a constraint of the task). Since
+        # `install_log_buffer` now also sets the logger level itself (Fix
+        # 3, see the docstring there), that level must be reset here as
+        # well - otherwise `loxmatter` would stay at INFO for the rest of
+        # the test run instead of its original, unchanged level (NOTSET).
         logging.getLogger("loxmatter").removeHandler(handler)
         logging.getLogger("loxmatter").setLevel(logging.NOTSET)
 
 
 def test_install_log_buffer_default_level_captures_info_lines() -> None:
-    """Reproduziert den Fund aus Fix 3: mit der Vorgabe (Stufe INFO) muss
-    eine INFO-Zeile im Ring landen. Vor der Behebung wurde sie von
-    `Logger.isEnabledFor` verworfen, bevor sie den Handler je erreichte -
-    `install_log_buffer` setzte nur `handler.setLevel(level)`, nicht die
-    Stufe des Loggers `loxmatter` selbst, und dessen effektive Stufe blieb
-    ohne das auf der von Python vorgegebenen WARNING (kein `basicConfig`,
-    kein `setLevel`, kein `dictConfig` fuer `loxmatter` irgendwo im
-    Projekt). `install_log_buffer()` waere damit fuer die im Entwurf
-    (Live-Feed-Spec, Abschnitt 4) verlangte Stufe "ab INFO" praktisch
-    wirkungslos gewesen."""
+    """Reproduces the finding from Fix 3: with the default (level INFO), an
+    INFO line must land in the ring. Before the fix it was discarded by
+    `Logger.isEnabledFor` before it ever reached the handler -
+    `install_log_buffer` only set `handler.setLevel(level)`, not the level of
+    the `loxmatter` logger itself, and its effective level, without that,
+    stayed at the WARNING Python defaults to (no `basicConfig`, no
+    `setLevel`, no `dictConfig` for `loxmatter` anywhere in the project).
+    `install_log_buffer()` would thus have been practically ineffective for
+    the "from INFO up" level the design (live-feed spec, section 4)
+    requires."""
     handler = install_log_buffer()
     try:
         logging.getLogger("loxmatter").info("Testzeile auf INFO")
@@ -325,14 +316,13 @@ def test_install_log_buffer_default_level_captures_info_lines() -> None:
 
 
 def test_install_log_buffer_only_captures_from_the_given_level() -> None:
-    """Ersetzt `test_install_log_buffer_sets_the_given_level` (Fix 3): die
-    alte Fassung pruefte nur `handler.level == logging.WARNING` - eine
-    Wiederholung der Zuweisung eine Zeile zuvor, die auch dann gruen
-    gemeldet haette, wenn `install_log_buffer` die Stufe des LOGGERS gar
-    nicht gesetzt haette (der eigentliche Fehler aus Fix 3). Diese
-    verhaltensbezogene Fassung protokolliert tatsaechlich unterhalb UND auf
-    der gesetzten Stufe und prueft, was davon im Ring ankommt: eine
-    INFO-Zeile muss verworfen werden, eine WARNING-Zeile muss ankommen."""
+    """Replaces `test_install_log_buffer_sets_the_given_level` (Fix 3): the
+    old version only checked `handler.level == logging.WARNING` - a repeat
+    of the assignment one line above, which would have reported green even
+    if `install_log_buffer` had never set the LOGGER's level at all (the
+    actual bug from Fix 3). This behavior-based version actually logs both
+    below AND at the configured level and checks what of that arrives in the
+    ring: an INFO line must be discarded, a WARNING line must arrive."""
     handler = install_log_buffer(level=logging.WARNING)
     try:
         assert handler.level == logging.WARNING
@@ -348,20 +338,18 @@ def test_install_log_buffer_only_captures_from_the_given_level() -> None:
 
 @pytest.fixture(autouse=True)
 def _cleanup_test_recursion_proof_logger() -> Iterator[None]:
-    """Der Rekursionsbeweis-Test haengt einen Handler an
-    `test.recursion-proof` - kein globaler Logger, aber zur Sicherheit
-    trotzdem im `finally` des jeweiligen Tests abgemeldet. Dieses Fixture
-    ist ein zusaetzliches Netz, falls ein kuenftiger Test denselben Namen
-    wiederverwendet.
+    """The recursion-proof test attaches a handler to `test.recursion-proof`
+    - not a global logger, but unregistered in the respective test's
+    `finally` anyway, for safety. This fixture is an extra safety net in
+    case a future test reuses the same name.
 
-    `-> Iterator[None]`, nicht `-> None`: diese Funktion enthaelt `yield`
-    und ist damit ein Generator, keine gewoehnliche Funktion - die
-    Rueckgabeannotation hatte das bislang verschwiegen. Entfernt Handler
-    einzeln ueber `removeHandler` statt pauschal ueber `.handlers.clear()`:
-    Letzteres wuerde JEDEN Handler an diesem Logger entfernen, auch einen,
-    der - anders als heute - aus einem anderen Grund als diesem Testnetz
-    dort haengen sollte; `removeHandler` je Handler ist die dafuer
-    vorgesehene, gezielte Methode."""
+    `-> Iterator[None]`, not `-> None`: this function contains `yield` and is
+    thus a generator, not an ordinary function - the return annotation had
+    concealed that so far. Removes handlers individually via `removeHandler`
+    instead of wholesale via `.handlers.clear()`: the latter would remove
+    EVERY handler on this logger, including one that - unlike today - should
+    be hanging there for some reason other than this test safety net;
+    `removeHandler` per handler is the targeted method meant for that."""
     yield
     recursion_logger = logging.getLogger("test.recursion-proof")
     for handler in list(recursion_logger.handlers):

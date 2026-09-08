@@ -258,7 +258,7 @@ Codeblöcke oben bleiben unverändert. Zwei Dinge, die seither gelernt wurden:**
   erwartet, unbrauchbar.
 - **Die Referenzvorlagen sind da.** Schritt 5–7 dieser Task sind erledigt: Zwei
   sanitisierte Ableitungen aus echten Vorlagen liegen unter
-  `tests/fixtures/loxone/VIU_Referenz.xml` und `tests/fixtures/loxone/VO_Referenz.xml`.
+  `tests/fixtures/loxone/VIU_reference.xml` und `tests/fixtures/loxone/VO_reference.xml`.
   Der volle Fundus aus einer echten Installation (91 `VirtualInUdpCmd`,
   19 `VirtualOutCmd` über 26 Dateien) hat die vier Abweichungen in Spec 6.1,
   „Korrektur 2026-09-02" belegt, die die folgenden Tasks nachziehen.

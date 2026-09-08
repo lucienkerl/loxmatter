@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -64,13 +64,13 @@ def test_analog_attribute_becomes_one_analog_input():
 
 
 def test_a_boolean_state_becomes_an_analog_input():
-    """Frueher digital. Am Miniserver zeigte sich (2026-09-03), dass ein
-    digitaler UDP-Eingang schon beim Erkennen des Musters ausloest und den
-    Wert dahinter nicht auswertet: `d1_1_onoff:1` und `d1_1_onoff:0` passen
-    beide auf `...:\v`, der Eingang stand also dauerhaft auf Ein.
+    """Previously digital. On the Miniserver it turned out (2026-09-03) that
+    a digital UDP input already triggers on recognizing the pattern and does
+    not evaluate the value behind it: `d1_1_onoff:1` and `d1_1_onoff:0` both
+    match `...:\v`, so the input stayed permanently on.
 
-    Analog liest Loxone die Zahl, und 1 und 0 werden unterscheidbar. Der
-    Wert bleibt boolesch - nur der Eingangstyp aendert sich."""
+    Analog has Loxone read the number, and 1 and 0 become distinguishable.
+    The value stays boolean - only the input type changes."""
     inputs = to_inputs([signal("d1_1_onoff", exportability=Exportability.DIGITAL)], 1, "Steckdose")
     assert inputs[0].analog is True
     assert inputs[0].check_suffix == "\\v"
@@ -78,7 +78,7 @@ def test_a_boolean_state_becomes_an_analog_input():
 
 
 def test_event_becomes_a_pulse_and_a_counter():
-    """Spec 6.3: der Impuls erzeugt die Flanke, der Zaehler ueberlebt ein verlorenes Paket."""
+    """Spec 6.3: the pulse creates the edge, the counter survives a lost packet."""
     inputs = to_inputs(
         [signal("d1_1_press", kind=SignalKind.EVENT, exportability=Exportability.DIGITAL)],
         1,
@@ -120,24 +120,24 @@ def test_event_pulse_and_counter_title_and_comment_follow_the_current_language()
 
 
 def test_non_exportable_signals_are_skipped():
-    """Spec 6.6: Listen und Strukturen werden nie zu Loxone-Objekten."""
+    """Spec 6.6: lists and structs never become Loxone objects."""
     inputs = to_inputs([signal("d1_1_parts", exportability=Exportability.NONE)], 1, "X")
     assert [i.key for i in inputs] == ["d1_online"]
 
 
 def test_text_signals_are_skipped_for_now():
-    """Der virtuelle Texteingang ist ein eigener Vorlagentyp — spaetere Ausbaustufe."""
+    """The virtual text input is a template type of its own - a later expansion stage."""
     inputs = to_inputs([signal("d1_1_vendor", exportability=Exportability.TEXT)], 1, "X")
     assert [i.key for i in inputs] == ["d1_online"]
 
 
 def test_online_signal_is_added_once_per_device():
-    """Spec 6.5: kostet nichts und beantwortet die haeufigste Frage."""
-    inputs = to_inputs([signal("d1_1_a"), signal("d1_1_b")], 1, "Geraet")
+    """Spec 6.5: costs nothing and answers the most common question."""
+    inputs = to_inputs([signal("d1_1_a"), signal("d1_1_b")], 1, "Device")
     assert [i.key for i in inputs].count("d1_online") == 1
     online = next(i for i in inputs if i.key == "d1_online")
-    # Ein Zustand, kein Impuls - also analog, aus demselben Grund wie
-    # `onoff` (siehe test_a_boolean_state_becomes_an_analog_input).
+    # A state, not a pulse - so analog, for the same reason as
+    # `onoff` (see test_a_boolean_state_becomes_an_analog_input).
     assert online.analog is True
 
 
@@ -151,7 +151,7 @@ def test_online_title_follows_the_current_language():
 
 
 def test_unit_no_longer_lands_in_the_comment():
-    """Die Einheit stand frueher im Kommentar; jetzt traegt sie unit_format (Spec 7.3)."""
+    """The unit used to be in the comment; now unit_format carries it (Spec 7.3)."""
     inputs = to_inputs([signal("d1_1_power", unit="kW")], 1, "Steckdose")
     power = next(i for i in inputs if i.key == "d1_1_power")
     assert "kW" not in power.comment
@@ -159,11 +159,11 @@ def test_unit_no_longer_lands_in_the_comment():
 
 
 def test_power_unit_uses_the_finest_format_loxone_accepts():
-    """Frueher <v.6>, weil ein 300-mW-Standby-Verbraucher mit drei Stellen
-    als 0.000 verschwindet (Spec 7.3). Der Miniserver nimmt aber hoechstens
-    drei an — am Geraet geprueft am 2026-09-03 —, und ein abgelehnter
-    Formatstring waere schlimmer als eine grobe Anzeige. Betroffen ist nur
-    die Darstellung, nicht der Wert, mit dem Loxone rechnet."""
+    """Previously <v.6>, because a 300 mW standby load with three digits
+    disappears as 0.000 (Spec 7.3). But the Miniserver accepts at most
+    three - checked on the device on 2026-09-03 - and a rejected format
+    string would be worse than a coarse display. Only the presentation is
+    affected, not the value Loxone computes with."""
     inputs = to_inputs([signal("d1_1_power", unit="kW")], 1, "Steckdose")
     power = next(i for i in inputs if i.key == "d1_1_power")
     assert power.unit_format == "<v.3> kW"
@@ -174,9 +174,9 @@ def test_empty_signal_list_still_yields_the_online_input():
 
 
 def test_event_counter_key_colliding_with_another_signal_raises():
-    """Regression: die `_n`-Endung ist nirgends reserviert. Ein `clusters.yaml`-
-    Slug kann zufaellig genau auf den Zaehler-Schluessel eines Events treffen —
-    das darf nie still zwei identische `LoxoneInput`s erzeugen (siehe Review)."""
+    """Regression: the `_n` suffix is not reserved anywhere. A `clusters.yaml`
+    slug can coincidentally hit exactly the counter key of an event - that
+    must never silently produce two identical `LoxoneInput`s (see review)."""
     event = signal("d3_1_press", kind=SignalKind.EVENT, exportability=Exportability.DIGITAL)
     collider = signal("d3_1_press_n")
     with pytest.raises(ValueError, match="d3_1_press_n"):
@@ -184,18 +184,18 @@ def test_event_counter_key_colliding_with_another_signal_raises():
 
 
 def test_signal_from_a_different_device_raises():
-    """Regression: der Praefix wurde frueher aus den Daten geraten und ist
-    jetzt ein expliziter Parameter — ein falsch zugeordnetes Signal muss laut
-    scheitern statt ein Geraet stillschweigend falsch zu beschriften."""
+    """Regression: the prefix used to be guessed from the data and is now an
+    explicit parameter - a misattributed signal must fail loudly instead of
+    silently mislabeling a device."""
     foreign = signal("d9_1_temp")
     with pytest.raises(ValueError, match="d9_1_temp"):
         to_inputs([foreign], 3, "Taster")
 
 
 def test_an_unexported_analog_signal_produces_no_input():
-    """Review-Fix Important #3: `exported=False` war bisher wirkungslos -
-    `to_inputs` filterte ausschliesslich nach `exportability`, egal was das
-    Flag aus `PATCH /api/signals/{key}` sagte."""
+    """Review-Fix Important #3: `exported=False` previously had no effect -
+    `to_inputs` filtered exclusively by `exportability`, regardless of what
+    the flag from `PATCH /api/signals/{key}` said."""
     inputs = to_inputs([signal("d1_1_temp", exported=False)], 1, "X")
     assert [i.key for i in inputs] == ["d1_online"]
 
@@ -209,23 +209,23 @@ def test_an_unexported_event_produces_neither_pulse_nor_counter():
 
 
 def test_the_online_signal_is_unaffected_by_any_signals_export_flag():
-    """Das Online-Signal gehoert dem Geraet, nicht einem einzelnen Signal
-    (Spec 6.5) - es bleibt auch da, wenn kein einziges Signal exportiert
-    wird."""
+    """The online signal belongs to the device, not to any single signal
+    (Spec 6.5) - it stays present even when not a single signal is
+    exported."""
     inputs = to_inputs([signal("d1_1_a", exported=False), signal("d1_1_b", exported=False)], 1, "X")
     assert [i.key for i in inputs] == ["d1_online"]
 
 
 def test_plug_fixture_yields_6_inputs_with_the_relevance_default(tmp_path):
-    """Aufgabe 6: der `exported`-Default heisst seither nicht mehr nur
-    `profiles.table.is_exportable` (technisch abbildbar), sondern zusaetzlich
-    `profiles.relevance.is_functional` (auch tatsaechlich gewollt) - von den
-    110 technisch abbildbaren Signalen der IKEA-Steckdose (siehe
+    """Task 6: since then, the `exported` default no longer means only
+    `profiles.table.is_exportable` (technically mappable), but additionally
+    `profiles.relevance.is_functional` (also actually wanted) - of the
+    110 technically mappable signals of the IKEA outlet (see
     `tests/api/test_devices.py::test_signal_tree_marks_what_cannot_be_exported`)
-    bleiben nur die fuenf uebrig, die etwas bedeuten: `onoff` sowie Spannung,
-    Strom, Wirkleistung und Zaehlerstand der Energiemessung (siehe
+    only the five remain that mean something: `onoff` plus voltage, current,
+    active power, and the energy meter reading (see
     `tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`).
-    Plus das Online-Signal, macht 6."""
+    Plus the online signal, makes 6."""
     snap = load("ikea_grillplats_plug.json")
     store = Store(tmp_path / "t.sqlite")
     try:
@@ -240,12 +240,12 @@ def test_plug_fixture_yields_6_inputs_with_the_relevance_default(tmp_path):
 
 
 def test_unchecking_one_signal_reduces_the_plug_fixtures_input_count_by_one(tmp_path):
-    """Regression Important #3: das Abschalten genau eines Signals in der
-    WebUI muss den erzeugten Export exakt um einen Eingang verkleinern - ein
-    Attribut, kein Event, damit der Effekt nicht durch Impuls+Zaehler auf
-    zwei Eingaenge springt. Basiszahl seit Aufgabe 6: 6 (siehe
-    `test_plug_fixture_yields_6_inputs_with_the_relevance_default`), also
-    5 nach dem Abschalten."""
+    """Regression Important #3: unchecking exactly one signal in the WebUI
+    must shrink the generated export by exactly one input - an attribute,
+    not an event, so the effect does not jump to two inputs via
+    pulse+counter. Base count since Task 6: 6 (see
+    `test_plug_fixture_yields_6_inputs_with_the_relevance_default`), so 5
+    after unchecking."""
     snap = load("ikea_grillplats_plug.json")
     store = Store(tmp_path / "t.sqlite")
     try:

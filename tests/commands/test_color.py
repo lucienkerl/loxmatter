@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -40,7 +40,7 @@ def test_mireds_reject_zero_kelvin():
     ],
 )
 def test_primary_colours_map_to_known_hues(rgb, hue, saturation):
-    """Referenzwerte aus der HSV-Definition, nicht aus einem Geraet."""
+    """Reference values from the HSV definition, not from a device."""
     h, s = rgb_to_hue_saturation(*rgb)
     assert h == pytest.approx(hue, abs=1)
     assert s == pytest.approx(saturation, abs=1)

@@ -298,7 +298,7 @@ werden und wirkt sich nur auf den nächsten Export aus.
 ### 6.1 Verifiziertes Vorlagen-Schema
 
 Gemessen an 26 Vorlagen aus einer echten Loxone-Config-Installation — bereinigte Auszüge
-liegen unter `tests/fixtures/loxone/VIU_Referenz.xml` und `VO_Referenz.xml`,
+liegen unter `tests/fixtures/loxone/VIU_reference.xml` und `VO_reference.xml`,
 `loxmatter.export.documents` baut dieses Schema nach:
 
 ```xml

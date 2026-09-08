@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -55,7 +55,7 @@ def test_level_hundred_percent_is_full():
 
 
 def test_level_is_clamped_not_wrapped():
-    """Loxone kann durch Rundung 100.4 schicken - das darf nicht zu 255 werden."""
+    """Loxone can send 100.4 due to rounding - that must not become 255."""
     assert to_matter_call(cmd(8, 4, takes_value=True), "100.4").payload["level"] == 254
     assert to_matter_call(cmd(8, 4, takes_value=True), "-3").payload["level"] == 0
 
@@ -66,8 +66,8 @@ def test_non_numeric_value_raises_a_clear_error():
 
 
 def test_non_numeric_value_raises_in_german():
-    """Deutsches Gegenstueck zu `test_non_numeric_value_raises_a_clear_error`
-    oben."""
+    """German counterpart to `test_non_numeric_value_raises_a_clear_error`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="keine Zahl"):
         to_matter_call(cmd(8, 4, takes_value=True), "hell")
@@ -75,17 +75,17 @@ def test_non_numeric_value_raises_in_german():
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
 def test_non_finite_value_raises_a_clear_error(value: str):
-    """`float()` akzeptiert "nan"/"inf" anstandslos - das darf nicht bis zu
-    `round()` durchrutschen, wo es als englischer `ValueError` explodiert,
-    statt als `UnsupportedValueError` mit klarer Meldung."""
+    """`float()` accepts "nan"/"inf" without complaint - that must not slip
+    through to `round()`, where it explodes as an English `ValueError`
+    instead of as an `UnsupportedValueError` with a clear message."""
     with pytest.raises(UnsupportedValueError, match="is not a number"):
         to_matter_call(cmd(8, 4, takes_value=True), value)
 
 
 @pytest.mark.parametrize("value", ["nan", "inf", "-inf", "Infinity"])
 def test_non_finite_value_raises_in_german(value: str):
-    """Deutsches Gegenstueck zu `test_non_finite_value_raises_a_clear_error`
-    oben."""
+    """German counterpart to `test_non_finite_value_raises_a_clear_error`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="keine Zahl"):
         to_matter_call(cmd(8, 4, takes_value=True), value)
@@ -97,80 +97,80 @@ def test_color_temperature_converts_kelvin_to_mireds():
 
 
 def test_unknown_cluster_command_raises_rather_than_guessing():
-    """Lieber ein klarer Fehler als ein Kommando mit erfundener Nutzlast."""
+    """A clear error is better than a command with a made-up payload."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_call(cmd(64999, 3, takes_value=True), "1")
 
 
 def test_unknown_cluster_command_raises_rather_than_guessing_in_german():
-    """Deutsches Gegenstueck zu
-    `test_unknown_cluster_command_raises_rather_than_guessing` oben."""
+    """German counterpart to
+    `test_unknown_cluster_command_raises_rather_than_guessing` above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(64999, 3, takes_value=True), "1")
 
 
 def test_known_cluster_with_unknown_command_raises():
-    """Cluster 768 (ColorControl) ist bekannt, Kommando 6 (Hue/Saturation) ist es
-    hier (noch) nicht - siehe color.py: die Loxone-seitige RGB-Zahl ist nicht
-    verlaesslich belegt. Der Fehler darf nicht nur beim voellig unbekannten
-    Cluster greifen, sondern auch bei einem bekannten Cluster mit unbekanntem
-    Kommando."""
+    """Cluster 768 (ColorControl) is known, command 6 (Hue/Saturation) is not
+    (yet) handled here - see color.py: the Loxone-side RGB number is not
+    reliably populated. The error must not only apply to a completely
+    unknown cluster, but also to a known cluster with an unknown
+    command."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_call(cmd(768, 6, takes_value=True), "255,0,0")
 
 
 def test_known_cluster_with_unknown_command_raises_in_german():
-    """Deutsches Gegenstueck zu `test_known_cluster_with_unknown_command_raises`
-    oben."""
+    """German counterpart to `test_known_cluster_with_unknown_command_raises`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(768, 6, takes_value=True), "255,0,0")
 
 
 def test_onoff_cluster_with_unknown_command_raises():
-    """Cluster 6 (OnOff) ist bekannt, aber nur Kommando 0/1/2 sind es. Der
-    Dispatch darf nicht schon beim Cluster stehen bleiben - sonst bekaeme ein
-    unbekanntes OnOff-Kommando eine erfundene leere Nutzlast statt eines
-    Fehlers."""
+    """Cluster 6 (OnOff) is known, but only commands 0/1/2 are handled. The
+    dispatch must not stop at the cluster level - otherwise an unknown
+    OnOff command would get a made-up empty payload instead of an
+    error."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_call(cmd(6, 99, takes_value=True), "1")
 
 
 def test_onoff_cluster_with_unknown_command_raises_in_german():
-    """Deutsches Gegenstueck zu `test_onoff_cluster_with_unknown_command_raises`
-    oben."""
+    """German counterpart to `test_onoff_cluster_with_unknown_command_raises`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(6, 99, takes_value=True), "1")
 
 
 def test_payload_builders_match_clusters_yaml_commands():
-    """Review-Fix C2, 2026-09-02: `_PAYLOAD_BUILDERS` und `clusters.yaml`
-    sind zwei unabhaengig gepflegte Erlaubnislisten fuer dasselbe - ein
-    Kommando, das die eine bedient, muss die andere kennen, sonst driften
-    sie auseinander (wie hier: (768, 10) stand in `_PAYLOAD_BUILDERS`, fehlte
-    aber in `clusters.yaml`, wodurch der Rohexport ein digitales `c768_cmd10`
-    baute, dessen Builder in Wirklichkeit einen Wert erwartete - siehe
-    Cluster-768-Eintrag in `clusters.yaml`). Dieser Test ist der Punkt: ohne
-    ihn kehrt genau diese Drift unbemerkt zurueck."""
+    """Review-Fix C2, 2026-09-02: `_PAYLOAD_BUILDERS` and `clusters.yaml`
+    are two independently maintained allow-lists for the same thing - a
+    command served by one must be known to the other, or the two drift
+    apart (as happened here: (768, 10) was in `_PAYLOAD_BUILDERS` but
+    missing from `clusters.yaml`, so the raw export built a digital
+    `c768_cmd10`, whose builder actually expected a value - see the
+    cluster-768 entry in `clusters.yaml`). This test is the point: without
+    it, exactly this drift returns unnoticed."""
     assert set(_PAYLOAD_BUILDERS) == known_command_pairs()
 
 
 def test_level_cluster_with_unknown_command_raises():
-    """Cluster 8 (LevelControl) ist bekannt, aber nur Kommando 0/4 sind es hier
-    bedient. Move/Step/Stop (u. a. Kommando-IDs 1, 2, 3, 5, 6, 7) sind reale
-    LevelControl-Kommandos, die z. B. bei Rohexport (`raw`) ohne Eintrag in
-    `clusters.yaml` auftauchen koennen - ihnen faelschlich eine
-    MoveToLevelWithOnOff-Nutzlast (level/transitionTime) unterzuschieben waere
-    genau der Fehler, den dieses Modul verhindern soll."""
+    """Cluster 8 (LevelControl) is known, but only commands 0/4 are handled
+    here. Move/Step/Stop (among others, command IDs 1, 2, 3, 5, 6, 7) are
+    real LevelControl commands that can, for instance, turn up in a raw
+    export (`raw`) without an entry in `clusters.yaml` - mistakenly giving
+    them a MoveToLevelWithOnOff payload (level/transitionTime) would be
+    exactly the error this module is meant to prevent."""
     with pytest.raises(UnsupportedValueError, match="is not supported"):
         to_matter_call(cmd(8, 1, takes_value=True), "50")
 
 
 def test_level_cluster_with_unknown_command_raises_in_german():
-    """Deutsches Gegenstueck zu `test_level_cluster_with_unknown_command_raises`
-    oben."""
+    """German counterpart to `test_level_cluster_with_unknown_command_raises`
+    above."""
     i18n.set_language("de")
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(8, 1, takes_value=True), "50")

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -32,7 +32,7 @@ def load(name: str) -> NodeSnapshot:
 
 
 def test_administrative_clusters_are_named():
-    """Diese Cluster duerfen nie als Loxone-Ausgang erscheinen."""
+    """These clusters must never appear as a Loxone output."""
     for cluster in (31, 41, 42, 48, 49, 50, 51, 56, 60, 62, 63):
         assert cluster in ADMINISTRATIVE_CLUSTERS
 
@@ -55,33 +55,33 @@ def test_plug_yields_only_the_onoff_commands():
 
 
 def test_button_yields_no_commands():
-    """Ein Taster ist ein Eingabegeraet."""
+    """A button is an input device."""
     assert extract_commands(load("ikea_bilresa_button.json")) == []
 
 
 def test_administrative_commands_never_appear():
-    """Sanity-Check an der echten Steckdosen-Fixture - kein Beweis fuer die Sperre.
+    """Sanity check against the real plug fixture - not proof of the gate.
 
-    Im Normalmodus liefert `command_slug()` fuer jeden Verwaltungscluster ohnehin
-    `None`, weil keiner einen `commands`-Eintrag in `clusters.yaml` hat. Dieser
-    Test wuerde also auch dann noch gruen sein, wenn die ADMINISTRATIVE_CLUSTERS-
-    Sperre in `extract_commands()` komplett entfernt wuerde. Der tatsaechliche
-    Beweis fuer die Sperre steht in
-    `test_raw_mode_adds_unknown_clusters_but_not_administrative_ones` (Rohmodus)
-    und in `test_gate_blocks_administrative_cluster_even_with_table_entry` unten,
-    die die Sperre unabhaengig von Fixture-Daten pinnt.
+    In normal mode `command_slug()` returns `None` for every administrative
+    cluster anyway, because none of them has a `commands` entry in
+    `clusters.yaml`. So this test would still be green even if the
+    ADMINISTRATIVE_CLUSTERS gate in `extract_commands()` were removed
+    entirely. The actual proof of the gate lives in
+    `test_raw_mode_adds_unknown_clusters_but_not_administrative_ones` (raw
+    mode) and in `test_gate_blocks_administrative_cluster_even_with_table_entry`
+    below, which pins the gate independently of fixture data.
     """
     commands = extract_commands(load("ikea_grillplats_plug.json"))
     assert not any(c.cluster_id in ADMINISTRATIVE_CLUSTERS for c in commands)
 
 
 def test_raw_mode_adds_unknown_clusters_but_not_administrative_ones():
-    """Der Rohmodus erweitert die Erlaubnisliste - er hebt die Sicherheitsregel nicht auf."""
+    """Raw mode extends the allow list - it does not lift the safety rule."""
     plug = load("ikea_grillplats_plug.json")
     roh = extract_commands(plug, raw=True)
     assert not any(c.cluster_id in ADMINISTRATIVE_CLUSTERS for c in roh)
     assert len(roh) > len(extract_commands(plug))
-    assert any(c.cluster_id == 4 for c in roh)  # Groups, unbekannt aber harmlos
+    assert any(c.cluster_id == 4 for c in roh)  # Groups, unknown but harmless
 
 
 def test_raw_mode_names_unknown_commands_generically():
@@ -91,14 +91,14 @@ def test_raw_mode_names_unknown_commands_generically():
 
 
 def test_gate_blocks_administrative_cluster_even_with_table_entry(monkeypatch):
-    """Pinnt die ADMINISTRATIVE_CLUSTERS-Sperre selbst, unabhaengig von Fixture-Daten.
+    """Pins the ADMINISTRATIVE_CLUSTERS gate itself, independently of fixture data.
 
-    Cluster 62 (OperationalCredentials) bekommt fuer diesen Test einen echten
-    `commands`-Eintrag in der Profiltabelle - im Normalmodus wuerde `command_slug()`
-    das Kommando also finden und `extract_commands()` wuerde es ausgeben, waere die
-    ADMINISTRATIVE_CLUSTERS-Pruefung in `extract_commands()` nicht mehr da. Faellt
-    dieser Test, wurde die Sperre entfernt oder umgangen - unabhaengig davon, ob
-    `clusters.yaml` fuer Verwaltungscluster zufaellig leer bleibt.
+    Cluster 62 (OperationalCredentials) gets a real `commands` entry in the
+    profile table for this test - in normal mode `command_slug()` would then
+    find the command and `extract_commands()` would emit it, were the
+    ADMINISTRATIVE_CLUSTERS check in `extract_commands()` no longer there. If
+    this test fails, the gate was removed or bypassed - regardless of whether
+    `clusters.yaml` happens to stay empty for administrative clusters.
     """
     assert 62 in ADMINISTRATIVE_CLUSTERS
     patched = dict(table._table())
