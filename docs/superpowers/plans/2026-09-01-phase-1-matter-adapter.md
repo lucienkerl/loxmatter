@@ -1,44 +1,44 @@
-# Phase 1: Matter-Adapter und Signal-Extraktion — Implementation Plan
+# Phase 1: Matter Adapter and Signal Extraction — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eine CLI, die für ein reales Matter-Gerät jedes Attribut und jedes Event auflistet und meldet, was sie *nicht* zerlegen konnte — damit die Grundannahme aus Spec 3.5 belegt oder widerlegt ist.
+**Goal:** A CLI that, for a real Matter device, lists every attribute and every event and reports what it *could not* decompose — so the base assumption from Spec 3.5 is confirmed or refuted.
 
-**Architecture:** Ein Paket `loxmatter.matter` mit vier Modulen ohne gegenseitige Zyklen: `paths` (Pfad-Parsing, reine Funktionen), `models` (unveränderliche Datenklassen), `discovery` (Zerlegung eines Node-Abbilds in Signale, rein), `client` (der einzige Teil mit I/O, dünne Hülle um `matter_server.client.MatterClient`). Die Zerlegung ist bewusst von der Verbindung getrennt: sie arbeitet auf einem JSON-Abbild und ist damit gegen eingecheckte Fixtures echter Geräte testbar, ohne Hardware und ohne Netz.
+**Architecture:** A package `loxmatter.matter` with four modules with no cycles between them: `paths` (path parsing, pure functions), `models` (immutable data classes), `discovery` (decomposing a node snapshot into signals, pure), `client` (the only part with I/O, a thin shell around `matter_server.client.MatterClient`). Decomposition is deliberately separated from the connection: it works on a JSON snapshot and is thus testable against checked-in fixtures of real devices, without hardware and without a network.
 
-**Tech Stack:** Python 3.12, `uv` als Paketmanager, `python-matter-server>=8.1.2`, `pytest`, `pytest-asyncio`, `ruff`, `mypy`, `typer` für die CLI.
+**Tech Stack:** Python 3.12, `uv` as package manager, `python-matter-server>=8.1.2`, `pytest`, `pytest-asyncio`, `ruff`, `mypy`, `typer` for the CLI.
 
 ## Global Constraints
 
-Aus der Spec, gelten für jede Task:
+From the spec, apply to every task:
 
-- **Tests laufen ohne Hardware und ohne Netzwerkzugriff.** Ein Test, der ein echtes Gerät braucht, wird übersprungen und verrottet (Spec 10.1).
-- **Generisch, nicht kuratiert.** Jedes lesbare Attribut und jedes Event wird zum Signal. Unbekannte Cluster werden roh durchgereicht, nie verworfen (Spec 3.5).
-- **Deutsch in Fehlermeldungen und Logs**, Englisch in Bezeichnern und Commit-Präfixen.
-- **Alle Datenklassen unveränderlich** (`frozen=True`), solange kein Grund dagegen spricht.
-- Zieleinheiten und Formatierung (kW, 6 Nachkommastellen) sind **Phase 3**, nicht hier. Diese Phase liefert Rohwerte.
+- **Tests run without hardware and without network access.** A test that needs a real device is skipped and rots (Spec 10.1).
+- **Generic, not curated.** Every readable attribute and every event becomes a signal. Unknown clusters are passed through raw, never discarded (Spec 3.5).
+- **German in error messages and logs**, English in identifiers and commit prefixes.
+- **All data classes immutable** (`frozen=True`), unless there is a reason against it.
+- Target units and formatting (kW, 6 decimal places) are **Phase 3**, not here. This phase delivers raw values.
 
 ---
 
 ## File Structure
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `pyproject.toml` | Projekt, Abhängigkeiten, Tool-Konfiguration |
-| `src/loxmatter/matter/paths.py` | Attributpfade parsen, globale Attribut-IDs kennen. Reine Funktionen |
-| `src/loxmatter/matter/models.py` | `SignalKind`, `SignalRef`, `NodeSnapshot`. Nur Daten |
-| `src/loxmatter/matter/discovery.py` | `extract_signals`, `find_unreported_attributes`. Rein, kein I/O |
-| `src/loxmatter/matter/client.py` | Verbindung zu matter-server, liefert `NodeSnapshot` |
+| `pyproject.toml` | Project, dependencies, tool configuration |
+| `src/loxmatter/matter/paths.py` | Parse attribute paths, know global attribute IDs. Pure functions |
+| `src/loxmatter/matter/models.py` | `SignalKind`, `SignalRef`, `NodeSnapshot`. Data only |
+| `src/loxmatter/matter/discovery.py` | `extract_signals`, `find_unreported_attributes`. Pure, no I/O |
+| `src/loxmatter/matter/client.py` | Connection to matter-server, returns `NodeSnapshot` |
 | `src/loxmatter/cli.py` | `loxmatter inspect` |
-| `scripts/record_node.py` | Node-Abbild von echter Hardware als Fixture speichern |
-| `tests/fixtures/nodes/*.json` | Eingecheckte Abbilder echter Geräte |
-| `deploy/testhost/` | Compose-Datei und Protokoll der Testumgebung (Task 6, ursprünglich `deploy/testvm/` — Umzug auf den Raspberry Pi wegen fehlendem Bluetooth auf der VM, siehe README dort) |
+| `scripts/record_node.py` | Save a node snapshot from real hardware as a fixture |
+| `tests/fixtures/nodes/*.json` | Checked-in snapshots of real devices |
+| `deploy/testhost/` | Compose file and log of the test environment (Task 6, originally `deploy/testvm/` — moved to the Raspberry Pi because the VM lacked Bluetooth, see the README there) |
 
 ---
 
-### Task 1: Projektgerüst und Pfad-Parsing
+### Task 1: Project Scaffolding and Path Parsing
 
-Das Gerüst wird hier eingerichtet, weil `paths.py` das erste Modul ist, das es braucht.
+The scaffolding is set up here because `paths.py` is the first module that needs it.
 
 **Files:**
 - Create: `pyproject.toml`
@@ -48,13 +48,13 @@ Das Gerüst wird hier eingerichtet, weil `paths.py` das erste Modul ist, das es 
 - Test: `tests/matter/test_paths.py`
 
 **Interfaces:**
-- Consumes: nichts
+- Consumes: nothing
 - Produces:
-  - `parse_attribute_path(path: str) -> tuple[int, int, int]` — gibt `(endpoint, cluster_id, attribute_id)`, wirft `ValueError` bei allem anderen
+  - `parse_attribute_path(path: str) -> tuple[int, int, int]` — returns `(endpoint, cluster_id, attribute_id)`, raises `ValueError` for anything else
   - `GLOBAL_ATTRIBUTE_IDS: frozenset[int]`
   - `ATTRIBUTE_LIST_ID: int` (`0xFFFB`), `EVENT_LIST_ID: int` (`0xFFFA`)
 
-- [ ] **Step 1: Projektgerüst anlegen**
+- [ ] **Step 1: Set up project scaffolding**
 
 `pyproject.toml`:
 
@@ -90,7 +90,7 @@ strict = true
 files = ["src"]
 ```
 
-Dann:
+Then:
 
 ```bash
 mkdir -p src/loxmatter/matter tests/matter tests/fixtures/nodes scripts
@@ -136,23 +136,23 @@ def test_global_attribute_ids_cover_the_matter_reserved_range():
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/matter/test_paths.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.matter.paths'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.matter.paths'`
 
 - [ ] **Step 4: Write minimal implementation**
 
 `src/loxmatter/matter/paths.py`:
 
 ```python
-"""Attributpfade von matter-server parsen.
+"""Parse attribute paths from matter-server.
 
-matter-server adressiert Attribute als "<endpoint>/<cluster>/<attribute>",
-z.B. "1/6/0" für OnOff.OnOff auf Endpoint 1.
+matter-server addresses attributes as "<endpoint>/<cluster>/<attribute>",
+e.g. "1/6/0" for OnOff.OnOff on endpoint 1.
 """
 
 from __future__ import annotations
 
-# Globale Attribute nach Matter-Spezifikation. Sie beschreiben das Gerät,
-# statt einen Messwert zu tragen, und werden nicht zu Loxone-Signalen.
+# Global attributes per the Matter specification. They describe the device
+# instead of carrying a measured value, and do not become Loxone signals.
 GENERATED_COMMAND_LIST_ID = 0xFFF8
 ACCEPTED_COMMAND_LIST_ID = 0xFFF9
 EVENT_LIST_ID = 0xFFFA
@@ -173,7 +173,7 @@ GLOBAL_ATTRIBUTE_IDS: frozenset[int] = frozenset(
 
 
 def parse_attribute_path(path: str) -> tuple[int, int, int]:
-    """Zerlegt "1/6/0" in (endpoint, cluster_id, attribute_id)."""
+    """Decompose "1/6/0" into (endpoint, cluster_id, attribute_id)."""
     parts = path.split("/")
     if len(parts) != 3:
         raise ValueError(f"unerwarteter Attributpfad: {path!r}")
@@ -187,7 +187,7 @@ def parse_attribute_path(path: str) -> tuple[int, int, int]:
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_paths.py -v`
-Expected: PASS, 8 Tests
+Expected: PASS, 8 tests
 
 - [ ] **Step 6: Commit**
 
@@ -198,18 +198,18 @@ git commit -m "feat(matter): Projektgerüst und Attributpfad-Parsing"
 
 ---
 
-### Task 2: Datenmodell für Signale
+### Task 2: Data Model for Signals
 
 **Files:**
 - Create: `src/loxmatter/matter/models.py`
 - Test: `tests/matter/test_models.py`
 
 **Interfaces:**
-- Consumes: nichts
+- Consumes: nothing
 - Produces:
-  - `SignalKind` — `str`-Enum mit `ATTRIBUTE = "attribute"`, `EVENT = "event"`
-  - `SignalRef(endpoint: int, cluster_id: int, element_id: int, kind: SignalKind)` — frozen, sortierbar, mit `.path -> str`
-  - `NodeSnapshot(node_id: int, vendor_name: str, product_name: str, unique_id: str, attributes: dict[str, object])` — frozen, mit `.from_raw(node_id: int, raw: Mapping[str, object]) -> NodeSnapshot`
+  - `SignalKind` — `str` enum with `ATTRIBUTE = "attribute"`, `EVENT = "event"`
+  - `SignalRef(endpoint: int, cluster_id: int, element_id: int, kind: SignalKind)` — frozen, sortable, with `.path -> str`
+  - `NodeSnapshot(node_id: int, vendor_name: str, product_name: str, unique_id: str, attributes: dict[str, object])` — frozen, with `.from_raw(node_id: int, raw: Mapping[str, object]) -> NodeSnapshot`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -273,14 +273,14 @@ def test_node_snapshot_tolerates_missing_basic_information():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/matter/test_models.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.matter.models'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.matter.models'`
 
 - [ ] **Step 3: Write minimal implementation**
 
 `src/loxmatter/matter/models.py`:
 
 ```python
-"""Unveränderliches Abbild dessen, was matter-server über ein Gerät weiß."""
+"""Immutable snapshot of what matter-server knows about a device."""
 
 from __future__ import annotations
 
@@ -289,7 +289,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-# BasicInformation-Cluster auf Endpoint 0.
+# BasicInformation cluster on endpoint 0.
 _VENDOR_NAME_PATH = "0/40/1"
 _PRODUCT_NAME_PATH = "0/40/3"
 _UNIQUE_ID_PATH = "0/40/18"
@@ -302,10 +302,10 @@ class SignalKind(str, Enum):
 
 @dataclass(frozen=True, order=True)
 class SignalRef:
-    """Verweis auf genau eine Datenquelle eines Geräts.
+    """Reference to exactly one data source of a device.
 
-    Attribut und Event können dieselben Zahlen tragen und sind trotzdem
-    verschiedene Dinge — `kind` gehört deshalb zur Identität.
+    An attribute and an event can carry the same numbers and still be
+    different things — `kind` therefore belongs to the identity.
     """
 
     endpoint: int
@@ -346,7 +346,7 @@ class NodeSnapshot:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_models.py -v`
-Expected: PASS, 6 Tests
+Expected: PASS, 6 tests
 
 - [ ] **Step 5: Commit**
 
@@ -357,34 +357,34 @@ git commit -m "feat(matter): Datenmodell für Signale und Node-Abbilder"
 
 ---
 
-### Task 3: Zerlegung eines Node-Abbilds in Signale
+### Task 3: Decomposing a Node Snapshot into Signals
 
-Das Kernstück der Phase. `extract_signals` beantwortet „welche Werte hat dieses Gerät",
-`find_unreported_attributes` beantwortet „und welche haben wir übersehen" — die zweite
-Funktion ist der eigentliche Prüfstein für Spec 3.5.
+The centerpiece of the phase. `extract_signals` answers "what values does this device have",
+`find_unreported_attributes` answers "and which ones did we miss" — the second
+function is the actual touchstone for Spec 3.5.
 
 **Files:**
 - Create: `src/loxmatter/matter/discovery.py`
 - Test: `tests/matter/test_discovery.py`
 
 **Interfaces:**
-- Consumes: `parse_attribute_path`, `GLOBAL_ATTRIBUTE_IDS`, `EVENT_LIST_ID`, `ATTRIBUTE_LIST_ID`, `FEATURE_MAP_ID` aus Task 1; `SignalRef`, `SignalKind`, `NodeSnapshot` aus Task 2
+- Consumes: `parse_attribute_path`, `GLOBAL_ATTRIBUTE_IDS`, `EVENT_LIST_ID`, `ATTRIBUTE_LIST_ID`, `FEATURE_MAP_ID` from Task 1; `SignalRef`, `SignalKind`, `NodeSnapshot` from Task 2
 - Produces:
-  - `extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]` — sortiert, Attribute und Events
-  - `find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]` — Attribute, die das Gerät in seiner `AttributeList` nennt, für die aber kein Wert vorliegt
-  - `find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]` — Pfade, an denen das Parsen scheiterte
-  - `FEATURE_MAP_EVENTS: dict[int, tuple[_FeatureEventRule, ...]]` — Cluster-spezifisches Wissen, welche Events eine FeatureMap impliziert
+  - `extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]` — sorted, attributes and events
+  - `find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]` — attributes the device names in its `AttributeList` but for which no value is present
+  - `find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]` — paths where parsing failed
+  - `FEATURE_MAP_EVENTS: dict[int, tuple[_FeatureEventRule, ...]]` — cluster-specific knowledge of which events a FeatureMap implies
 
-> **Nachtrag, siehe Task 7:** Der Code unten zeigt bereits den korrigierten Stand.
-> Task 3 wurde ursprünglich ohne `FEATURE_MAP_EVENTS` umgesetzt — reine
-> EventList-Ableitung, 10 Tests. Die Validierung an echten Geräten in Task 7
-> (2026-09-01) zeigte, dass keins der beiden geprüften IKEA-Geräte die
-> EventList führt; ein Taster, der nachweislich Tastendrücke sendet, lieferte
-> darüber null Events. Die Korrektur — eine zweite, FeatureMap-basierte
-> Event-Quelle — landete deshalb erst nachträglich in `discovery.py` (Commit
-> `6af2de7`, siehe Task 7 und Spec 3.5/6.3). Diese Sektion wurde im Nachhinein
-> auf den gelieferten Stand aktualisiert, damit sie nicht die längst überholte
-> EventList-only-Fassung als aktuell ausgibt.
+> **Addendum, see Task 7:** The code below already shows the corrected state.
+> Task 3 was originally implemented without `FEATURE_MAP_EVENTS` — pure
+> EventList derivation, 10 tests. Validation against real devices in Task 7
+> (2026-09-01) showed that neither of the two IKEA devices checked carries
+> the EventList; a button demonstrably sending button presses delivered
+> zero events through it. The fix — a second, FeatureMap-based
+> event source — therefore only landed in `discovery.py` afterward (commit
+> `6af2de7`, see Task 7 and Spec 3.5/6.3). This section was subsequently
+> updated to the delivered state so it does not present the long-superseded
+> EventList-only version as current.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -433,7 +433,7 @@ def test_empty_or_absent_event_list_produces_nothing():
 
 
 def test_unknown_cluster_is_still_extracted():
-    """Spec 3.5: profiles/ ist Anreicherung, kein Gatekeeper."""
+    """Spec 3.5: profiles/ is enrichment, not a gatekeeper."""
     signals = extract_signals(snapshot({"1/64999/7": 42}))
     assert signals == [SignalRef(1, 64999, 7, SignalKind.ATTRIBUTE)]
 
@@ -444,7 +444,7 @@ def test_signals_are_sorted_deterministically():
 
 
 def test_finds_attributes_the_device_claims_but_did_not_report():
-    # AttributeList (65531) nennt 0 und 16, geliefert wurde nur 0.
+    # AttributeList (65531) names 0 and 16, only 0 was delivered.
     missing = find_unreported_attributes(snapshot({"1/6/65531": [0, 16], "1/6/0": True}))
     assert missing == [SignalRef(1, 6, 16, SignalKind.ATTRIBUTE)]
 
@@ -464,18 +464,19 @@ def test_unparsable_paths_are_collected_not_raised():
     assert extract_signals(snap) == [SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)]
 
 
-# Zweite Event-Quelle: FeatureMap des Switch-Clusters (0x003B / 59).
+# Second event source: FeatureMap of the Switch cluster (0x003B / 59).
 #
-# EventList (65530) ist optional und laut Validierung an echten IKEA-Geräten
-# (siehe tests/matter/test_real_devices.py) in der Praxis nicht implementiert —
-# ein Taster ohne diese Ableitung liefert null Event-Signale. Die Bedingungen
-# unten sind aus data_model/1.4/clusters/Switch.xml (project-chip/connectedhomeip,
-# maschinenlesbare Transkription der Matter Application Cluster Specification)
-# übernommen: je Event ein mandatoryConform über Feature-Bits.
+# EventList (65530) is optional and, per validation against real IKEA
+# devices (see tests/matter/test_real_devices.py), not implemented in
+# practice — a button without this derivation delivers zero event signals.
+# The conditions below are taken from data_model/1.4/clusters/Switch.xml
+# (project-chip/connectedhomeip, machine-readable transcription of the
+# Matter Application Cluster Specification): one mandatoryConform per
+# event, via feature bits.
 
 
 def test_feature_map_ms_only_yields_initial_press_only():
-    # MS (Bit 1) = 0b10 = 2
+    # MS (bit 1) = 0b10 = 2
     signals = extract_signals(snapshot({"1/59/65532": 2}))
     assert signals == [SignalRef(1, 59, 1, SignalKind.EVENT)]  # InitialPress
 
@@ -490,16 +491,16 @@ def test_feature_map_ms_msr_yields_initial_press_and_short_release():
 
 
 def test_feature_map_ls_only_yields_switch_latched_only():
-    # LS (Bit 0) = 1
+    # LS (bit 0) = 1
     signals = extract_signals(snapshot({"1/59/65532": 1}))
     assert signals == [SignalRef(1, 59, 0, SignalKind.EVENT)]  # SwitchLatched
 
 
 def test_feature_map_30_matches_ikea_bilresa_button():
-    # MS + MSR + MSL + MSM = 2 + 4 + 8 + 16 = 30, das reale FeatureMap des
-    # IKEA BILRESA-Tasters (node 4, Endpoints 1 und 2). AS ist nicht gesetzt,
-    # also feuert MultiPressOngoing zusätzlich zu MultiPressComplete; LS ist
-    # nicht gesetzt, SwitchLatched fehlt entsprechend.
+    # MS + MSR + MSL + MSM = 2 + 4 + 8 + 16 = 30, the real FeatureMap of the
+    # IKEA BILRESA button (node 4, endpoints 1 and 2). AS is not set, so
+    # MultiPressOngoing fires in addition to MultiPressComplete; LS is not
+    # set, so SwitchLatched is absent accordingly.
     signals = extract_signals(snapshot({"1/59/65532": 30}))
     assert signals == [
         SignalRef(1, 59, 1, SignalKind.EVENT),  # InitialPress
@@ -512,7 +513,7 @@ def test_feature_map_30_matches_ikea_bilresa_button():
 
 
 def test_feature_map_msm_with_action_switch_excludes_multi_press_ongoing():
-    # MSM + AS = 16 + 32 = 48. MultiPressOngoing verlangt MSM UND NICHT AS.
+    # MSM + AS = 16 + 32 = 48. MultiPressOngoing requires MSM AND NOT AS.
     signals = extract_signals(snapshot({"1/59/65532": 48}))
     assert signals == [SignalRef(1, 59, 6, SignalKind.EVENT)]  # MultiPressComplete
 
@@ -522,14 +523,14 @@ def test_feature_map_zero_yields_no_events():
 
 
 def test_feature_map_is_ignored_for_clusters_without_a_table_entry():
-    """Die FeatureMap-Ableitung ist Cluster-spezifisches Wissen — für Cluster
-    ohne Eintrag in FEATURE_MAP_EVENTS darf sie nichts erfinden."""
+    """The FeatureMap derivation is cluster-specific knowledge — for clusters
+    without an entry in FEATURE_MAP_EVENTS it must not invent anything."""
     assert extract_signals(snapshot({"1/6/65532": 30})) == []
 
 
 def test_event_list_and_feature_map_are_unioned_and_deduplicated():
     signals = extract_signals(snapshot({"1/59/65530": [1, 3], "1/59/65532": 6}))
-    # EventList nennt {1, 3}, FeatureMap (MS+MSR) auch {1, 3} — kein Duplikat.
+    # EventList names {1, 3}, FeatureMap (MS+MSR) also {1, 3} — no duplicate.
     assert signals == [
         SignalRef(1, 59, 1, SignalKind.EVENT),
         SignalRef(1, 59, 3, SignalKind.EVENT),
@@ -544,34 +545,34 @@ def test_feature_map_attribute_itself_is_not_an_attribute_signal():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/matter/test_discovery.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.matter.discovery'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.matter.discovery'`
 
 - [ ] **Step 3: Write minimal implementation**
 
 `src/loxmatter/matter/discovery.py`:
 
 ```python
-"""Zerlegt ein Node-Abbild in einzelne Signale.
+"""Decomposes a node snapshot into individual signals.
 
-Rein funktional und ohne I/O — arbeitet auf einem NodeSnapshot und ist damit
-gegen eingecheckte Fixtures echter Geräte testbar.
+Purely functional and without I/O — works on a NodeSnapshot and is thus
+testable against checked-in fixtures of real devices.
 
-Grundsatz aus Spec 3.5: bei Attributen wird nichts verworfen. Unbekannte
-Cluster werden genauso zu Signalen wie bekannte; die Anreicherung um Namen
-und Skalierung passiert später in profiles/.
+Principle from Spec 3.5: nothing is discarded for attributes. Unknown
+clusters become signals just like known ones; enrichment with names
+and scaling happens later, in profiles/.
 
-Für Events gilt dieser Grundsatz **nicht mehr uneingeschränkt** — das ist die
-Korrektur aus der Validierung an echten Geräten (Phase 1, 2026-09-01, siehe
-Spec 3.5 und 6.3). Die EventList (0xFFFA) ist im Matter-Standard optional und
-in der Praxis bei den geprüften IKEA-Geräten nicht implementiert: ein Taster,
-der nachweislich Tastendrücke sendet, lieferte über die EventList null
-Events. Als zweite, cluster-spezifische Quelle wird deshalb aus der FeatureMap
-(0xFFFC) abgeleitet, welche Events ein Cluster laut Matter-Spezifikation
-generieren *kann* — das Gerät muss die Events dafür nicht selbst auflisten.
-Dieses Wissen steht in `FEATURE_MAP_EVENTS`, einer Tabelle, nicht in
-verzweigendem Code, damit weitere Cluster ergänzbar sind, ohne den Algorithmus
-hier anzufassen. Beide Quellen werden vereinigt und dedupliziert (SignalRef
-ist hashable, das Ergebnis-Set übernimmt das automatisch).
+For events, this principle **no longer holds without qualification** — that
+is the fix from validation against real devices (Phase 1, 2026-09-01, see
+Spec 3.5 and 6.3). The EventList (0xFFFA) is optional in the Matter standard
+and, in practice, not implemented by the IKEA devices checked: a button
+that demonstrably sends button presses delivered zero events through the
+EventList. As a second, cluster-specific source, the events a cluster *can*
+generate per the Matter specification are therefore derived from the
+FeatureMap (0xFFFC) — the device does not need to list the events itself for
+this. This knowledge lives in `FEATURE_MAP_EVENTS`, a table, not in
+branching code, so further clusters can be added without touching the
+algorithm here. Both sources are unioned and deduplicated (SignalRef
+is hashable, the result set handles that automatically).
 """
 
 from __future__ import annotations
@@ -588,8 +589,8 @@ from loxmatter.matter.paths import (
     parse_attribute_path,
 )
 
-# Switch-Cluster (0x003B / 59) — Feature-Bits der FeatureMap nach Matter
-# Application Cluster Specification.
+# Switch cluster (0x003B / 59) — feature bits of the FeatureMap per the
+# Matter Application Cluster Specification.
 _SWITCH_CLUSTER_ID = 59
 _LATCHING_SWITCH = 0x01
 _MOMENTARY_SWITCH = 0x02
@@ -601,8 +602,8 @@ _ACTION_SWITCH = 0x20
 
 @dataclass(frozen=True)
 class _FeatureEventRule:
-    """Ein Event, das ein Cluster generiert, wenn bestimmte FeatureMap-Bits
-    gesetzt und andere nicht gesetzt sind."""
+    """An event a cluster generates when certain FeatureMap bits are
+    set and others are not."""
 
     event_id: int
     requires: int
@@ -612,23 +613,23 @@ class _FeatureEventRule:
         return (feature_map & self.requires) == self.requires and (feature_map & self.excludes) == 0
 
 
-# Welche Events ein Cluster laut Spezifikation abhängig von seiner FeatureMap
-# generieren kann. Quelle geprüft gegen
-# data_model/1.4/clusters/Switch.xml aus project-chip/connectedhomeip
-# (maschinenlesbare Transkription der Matter Application Cluster
-# Specification) — je Event ein mandatoryConform über Feature-Bits:
+# Which events a cluster can generate per the specification, depending on
+# its FeatureMap. Source checked against
+# data_model/1.4/clusters/Switch.xml from project-chip/connectedhomeip
+# (machine-readable transcription of the Matter Application Cluster
+# Specification) — one mandatoryConform per event, via feature bits:
 #
 #   SwitchLatched (0)        ← LS
 #   InitialPress (1)         ← MS
 #   LongPress (2)            ← MSL
 #   ShortRelease (3)         ← MSR
 #   LongRelease (4)          ← MSL
-#   MultiPressOngoing (5)    ← MSM UND NICHT AS
+#   MultiPressOngoing (5)    ← MSM AND NOT AS
 #   MultiPressComplete (6)   ← MSM
 #
-# Weitere Cluster mit Events ohne EventList-Unterstützung kommen hier als
-# weitere Einträge dazu — der Algorithmus in extract_signals ändert sich
-# dafür nicht.
+# Further clusters with events lacking EventList support are added here as
+# additional entries — the algorithm in extract_signals does not change for
+# that.
 FEATURE_MAP_EVENTS: dict[int, tuple[_FeatureEventRule, ...]] = {
     _SWITCH_CLUSTER_ID: (
         _FeatureEventRule(event_id=0, requires=_LATCHING_SWITCH),
@@ -662,10 +663,10 @@ def _as_id_list(value: object) -> list[int]:
 
 
 def _feature_map_event_ids(cluster_id: int, value: object) -> list[int]:
-    """Event-IDs, die laut FEATURE_MAP_EVENTS aus der FeatureMap eines Clusters folgen.
+    """Event IDs that follow from a cluster's FeatureMap per FEATURE_MAP_EVENTS.
 
-    Leer für Cluster ohne Tabelleneintrag oder eine FeatureMap, die keine der
-    dort hinterlegten Bit-Bedingungen erfüllt.
+    Empty for clusters without a table entry, or a FeatureMap that satisfies
+    none of the bit conditions recorded there.
     """
     rules = FEATURE_MAP_EVENTS.get(cluster_id)
     if not rules or not isinstance(value, (int, float)):
@@ -675,9 +676,9 @@ def _feature_map_event_ids(cluster_id: int, value: object) -> list[int]:
 
 
 def extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
-    """Jedes nicht-globale Attribut wird ein Signal. Events kommen aus zwei
-    vereinigten Quellen: der EventList (falls das Gerät sie führt) und, für
-    Cluster mit Eintrag in FEATURE_MAP_EVENTS, aus der FeatureMap."""
+    """Every non-global attribute becomes a signal. Events come from two
+    unioned sources: the EventList (if the device carries it) and, for
+    clusters with an entry in FEATURE_MAP_EVENTS, the FeatureMap."""
     signals: set[SignalRef] = set()
 
     for endpoint, cluster_id, attribute_id, value in _parsed_paths(snapshot):
@@ -697,10 +698,10 @@ def extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
 
 
 def find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]:
-    """Attribute, die das Gerät in seiner AttributeList nennt, aber nicht geliefert hat.
+    """Attributes the device names in its AttributeList but did not deliver.
 
-    Das ist der Prüfstein für Spec 3.5: eine nicht-leere Liste bedeutet, dass die
-    generische Zerlegung Werte übersieht, die das Gerät eigentlich anbietet.
+    This is the touchstone for Spec 3.5: a non-empty list means the generic
+    decomposition misses values the device actually offers.
     """
     present: set[tuple[int, int, int]] = set()
     claimed: set[tuple[int, int, int]] = set()
@@ -719,7 +720,7 @@ def find_unreported_attributes(snapshot: NodeSnapshot) -> list[SignalRef]:
 
 
 def find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]:
-    """Pfade, die nicht dem erwarteten Format entsprachen. Sollte leer sein."""
+    """Paths that did not match the expected format. Should be empty."""
     broken: list[str] = []
     for path in snapshot.attributes:
         try:
@@ -732,7 +733,7 @@ def find_unparsable_paths(snapshot: NodeSnapshot) -> list[str]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_discovery.py -v`
-Expected: PASS, 19 Tests
+Expected: PASS, 19 tests
 
 - [ ] **Step 5: Commit**
 
@@ -741,36 +742,36 @@ git add src/loxmatter/matter/discovery.py tests/matter/test_discovery.py
 git commit -m "feat(matter): generische Zerlegung eines Node-Abbilds in Signale"
 ```
 
-Task 3 wurde ursprünglich mit reiner EventList-Ableitung committet (10 Tests, kein
-`FEATURE_MAP_EVENTS`). Die Validierung an echten Geräten in Task 7 zeigte, dass diese
-Ableitung für Events nicht trägt — siehe die Nachtrags-Box am Anfang dieses Tasks und
-Task 7 für den vollständigen Befund. Der Code und die 19 Tests oben spiegeln bereits
-den korrigierten Stand aus Commit `6af2de7`.
+Task 3 was originally committed with pure EventList derivation (10 tests, no
+`FEATURE_MAP_EVENTS`). Validation against real devices in Task 7 showed that this
+derivation does not hold for events — see the addendum box at the start of this task and
+Task 7 for the full finding. The code and the 19 tests above already reflect the
+corrected state from commit `6af2de7`.
 
 ---
 
-### Task 4: Verbindung zu matter-server
+### Task 4: Connection to matter-server
 
-Die einzige Stelle mit I/O. Bewusst dünn: sie holt Node-Rohdaten und macht
-`NodeSnapshot` daraus, mehr nicht. Alles Interessante ist in Task 3 schon getestet.
+The only place with I/O. Deliberately thin: it fetches raw node data and
+turns it into a `NodeSnapshot`, nothing more. Everything interesting is already tested in Task 3.
 
 **Files:**
 - Create: `src/loxmatter/matter/client.py`
 - Test: `tests/matter/test_client.py`
 
 **Interfaces:**
-- Consumes: `NodeSnapshot` aus Task 2
+- Consumes: `NodeSnapshot` from Task 2
 - Produces:
-  - `class BridgeMatterClient` mit `async def connect(self) -> None`, `async def disconnect(self) -> None`, `async def snapshots(self) -> list[NodeSnapshot]`, `async def snapshot(self, node_id: int) -> NodeSnapshot`
-  - `MatterUnavailableError(RuntimeError)` — geworfen, wenn keine Verbindung besteht
-  - Konstruktor: `BridgeMatterClient(url: str, session_factory: Callable[[Any], Any] | None = None, http_session_factory: Callable[[], Any] | None = None)` — `http_session_factory` baut die aiohttp-`ClientSession`, `session_factory` bekommt diese Session und baut daraus den Upstream-`MatterClient`. `BridgeMatterClient` erzeugt die Session selbst und schließt sie auch selbst wieder (in `disconnect()` und bei einem gescheiterten `connect()`) — `MatterClientConnection.disconnect()` aus python-matter-server schließt nur das Websocket, nicht die ihr übergebene Session.
+  - `class BridgeMatterClient` with `async def connect(self) -> None`, `async def disconnect(self) -> None`, `async def snapshots(self) -> list[NodeSnapshot]`, `async def snapshot(self, node_id: int) -> NodeSnapshot`
+  - `MatterUnavailableError(RuntimeError)` — raised when there is no connection
+  - Constructor: `BridgeMatterClient(url: str, session_factory: Callable[[Any], Any] | None = None, http_session_factory: Callable[[], Any] | None = None)` — `http_session_factory` builds the aiohttp `ClientSession`, `session_factory` receives that session and builds the upstream `MatterClient` from it. `BridgeMatterClient` creates the session itself and also closes it itself again (in `disconnect()` and on a failed `connect()`) — `MatterClientConnection.disconnect()` from python-matter-server only closes the websocket, not the session passed to it.
 
 - [ ] **Step 1: Write the failing test**
 
-Die Tests fahren gegen Attrappen des Upstream-Clients und der aiohttp-Session
-— kein Netz, kein Server. Die Attrappe der Session zählt ihre `close()`-Aufrufe,
-damit die Tests das Leck aus der Praxis (Session wird nie geschlossen) auch
-wirklich erkennen.
+The tests run against stand-ins for the upstream client and the aiohttp
+session — no network, no server. The session stand-in counts its `close()`
+calls, so the tests really do catch the leak seen in practice (the session
+is never closed).
 
 `tests/matter/test_client.py`:
 
@@ -785,12 +786,13 @@ from loxmatter.matter.client import BridgeMatterClient, MatterUnavailableError
 
 
 class FakeNode:
-    """Steht für matter_server.client.models.node.MatterNode.
+    """Stands in for matter_server.client.models.node.MatterNode.
 
-    Die echte MatterNode trägt ihre Rohattribute nicht direkt, sondern unter
-    node_data.attributes — node_id bleibt aber ein Attribut direkt am Node
-    (dort eine Property auf node_data.node_id). Diese Attrappe bildet genau
-    diese Form nach, statt sie der Einfachheit halber abzuflachen.
+    The real MatterNode does not carry its raw attributes directly but
+    under node_data.attributes — node_id, however, remains an attribute
+    directly on the node (there a property on node_data.node_id). This
+    stand-in reproduces exactly that shape instead of flattening it for
+    simplicity.
     """
 
     def __init__(self, node_id: int, attributes: dict[str, object]):
@@ -799,14 +801,14 @@ class FakeNode:
 
 
 class FakeUpstream:
-    """Steht für matter_server.client.MatterClient.
+    """Stands in for matter_server.client.MatterClient.
 
-    start_listening() bildet den echten Vertrag nach: Sie füllt den
-    Node-Cache, setzt (sofern gewünscht) init_ready und blockiert danach,
-    bis sie abgebrochen wird — genau wie MatterClient.start_listening().
-    get_nodes() liefert bewusst erst etwas zurück, nachdem start_listening()
-    gelaufen ist: Ein Test, der den Listener nie startet, muss den
-    ursprünglichen Fehler (leerer Node-Cache) reproduzieren können.
+    start_listening() reproduces the real contract: it fills the node
+    cache, sets init_ready (if requested), and then blocks until it is
+    cancelled — exactly like MatterClient.start_listening().
+    get_nodes() deliberately returns nothing until start_listening() has
+    run: a test that never starts the listener must be able to reproduce
+    the original defect (empty node cache).
     """
 
     def __init__(
@@ -833,7 +835,7 @@ class FakeUpstream:
         if self._signal_ready and init_ready is not None:
             init_ready.set()
         try:
-            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+            await asyncio.Event().wait()  # blocks until cancelled
         except asyncio.CancelledError:
             self.cancelled = True
             raise
@@ -848,7 +850,7 @@ class FakeUpstream:
 
 
 class FakeSession:
-    """Steht für aiohttp.ClientSession — zählt, wie oft close() lief."""
+    """Stands in for aiohttp.ClientSession — counts how often close() ran."""
 
     def __init__(self) -> None:
         self.close_calls = 0
@@ -864,7 +866,7 @@ def make_client(
     fail_disconnect: bool = False,
     signal_ready: bool = True,
 ) -> tuple[BridgeMatterClient, FakeSession]:
-    """Baut einen BridgeMatterClient mit Attrappen für HTTP-Session und Upstream."""
+    """Builds a BridgeMatterClient with stand-ins for the HTTP session and upstream."""
     session = FakeSession()
     upstream = FakeUpstream(
         nodes or [],
@@ -924,7 +926,7 @@ async def test_disconnect_is_idempotent(client):
 
 
 async def test_connect_disconnect_closes_session_exactly_once():
-    """BridgeMatterClient erzeugt die Session selbst und muss sie wieder schließen."""
+    """BridgeMatterClient creates the session itself and must close it again."""
     bridge, session = make_client([FakeNode(1, {})])
     await bridge.connect()
     assert session.close_calls == 0
@@ -941,8 +943,8 @@ async def test_disconnect_twice_closes_session_once_and_does_not_raise():
 
 
 async def test_failed_connect_closes_session_and_allows_retry():
-    """Ein scheiternder connect() darf die Session nicht leaken und muss einen
-    späteren, erfolgreichen connect() zulassen."""
+    """A failing connect() must not leak the session and must allow a
+    later, successful connect()."""
     sessions: list[FakeSession] = []
 
     def http_session_factory() -> FakeSession:
@@ -977,9 +979,9 @@ async def test_failed_connect_closes_session_and_allows_retry():
 
 
 async def test_connect_twice_closes_previous_session_and_does_not_leak():
-    """Ein zweiter connect() ohne dazwischenliegendes disconnect() darf die
-    erste Session nicht unerreichbar hinterlassen — sie muss geschlossen
-    werden, bevor die zweite Session entsteht."""
+    """A second connect() without an intervening disconnect() must not
+    leave the first session unreachable — it must be closed before the
+    second session is created."""
     sessions: list[FakeSession] = []
 
     def http_session_factory() -> FakeSession:
@@ -1007,8 +1009,8 @@ async def test_connect_twice_closes_previous_session_and_does_not_leak():
 
 
 async def test_disconnect_closes_session_even_if_upstream_disconnect_raises():
-    """Wirft der Upstream in disconnect(), muss die Session trotzdem
-    geschlossen und der Client danach als nicht verbunden erkennbar sein."""
+    """If the upstream raises in disconnect(), the session must still be
+    closed and the client afterward recognizable as not connected."""
     bridge, session = make_client([FakeNode(1, {})], fail_disconnect=True)
     await bridge.connect()
 
@@ -1021,9 +1023,9 @@ async def test_disconnect_closes_session_even_if_upstream_disconnect_raises():
 
 
 async def test_connect_cancelled_closes_session_and_propagates_cancellation():
-    """asyncio.CancelledError erbt von BaseException, nicht Exception — ein
-    während des Verbindungsaufbaus abgebrochener connect() darf die Session
-    trotzdem nicht leaken und muss den Abbruch weiterreichen."""
+    """asyncio.CancelledError inherits from BaseException, not Exception — a
+    connect() cancelled during connection setup must still not leak the
+    session and must propagate the cancellation."""
     session = FakeSession()
 
     class CancellingUpstream:
@@ -1043,11 +1045,11 @@ async def test_connect_cancelled_closes_session_and_propagates_cancellation():
 
 
 async def test_connect_times_out_when_listener_never_signals_readiness(monkeypatch):
-    """Der Defekt, den dieser Test verhindert: Ohne Zeitlimit würde connect()
-    entweder ewig auf ein Event warten, das nie kommt, oder — schlimmer — sich
-    fälschlich als verbunden melden, ohne dass der Node-Cache je gefüllt
-    wurde. Ein Listener, der init_ready nie setzt, muss connect() innerhalb
-    des Zeitlimits scheitern lassen."""
+    """The defect this test prevents: without a time limit, connect() would
+    either wait forever for an event that never comes or — worse — falsely
+    report itself as connected without the node cache ever having been
+    filled. A listener that never sets init_ready must make connect()
+    fail within the time limit."""
     monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     bridge, _session = make_client([FakeNode(1, {})], signal_ready=False)
 
@@ -1058,10 +1060,9 @@ async def test_connect_times_out_when_listener_never_signals_readiness(monkeypat
 async def test_connect_timeout_closes_session_and_allows_a_later_successful_connect(
     monkeypatch,
 ):
-    """Nach einer Bereitschafts-Zeitüberschreitung muss die eigene Session
-    geschlossen sein, der Client als nicht verbunden gelten, und ein
-    späterer connect() mit einem funktionierenden Upstream muss trotzdem
-    gelingen."""
+    """After a readiness timeout, the client's own session must be closed,
+    the client must count as not connected, and a later connect() with a
+    working upstream must still succeed."""
     monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     sessions: list[FakeSession] = []
 
@@ -1097,9 +1098,9 @@ async def test_connect_timeout_closes_session_and_allows_a_later_successful_conn
 
 
 async def test_disconnect_cancels_the_listener_task():
-    """disconnect() muss den Listener-Task abbrechen, statt ihn einfach
-    herumlaufen zu lassen — sonst bleibt eine Coroutine aktiv, die auf eine
-    inzwischen geschlossene Verbindung wartet."""
+    """disconnect() must cancel the listener task instead of just letting
+    it keep running — otherwise a coroutine stays active, waiting on a
+    connection that has since been closed."""
     session = FakeSession()
     upstream = FakeUpstream([FakeNode(1, {})])
     bridge = BridgeMatterClient(
@@ -1116,13 +1117,13 @@ async def test_disconnect_cancels_the_listener_task():
 
 
 async def test_snapshots_reflect_nodes_populated_by_the_listener():
-    """Regressionstest für den eigentlichen Defekt: Der alte connect() rief
-    upstream.start_listening() nie auf, wodurch der Node-Cache des Upstreams
-    für immer leer blieb — jedes reale Gerät erschien als unbekannt, egal wie
-    viele kommissioniert waren. get_nodes() liefert hier — wie beim echten
-    MatterClient — bewusst erst etwas zurück, nachdem start_listening()
-    gelaufen ist; gegen den alten Code (kein Aufruf von start_listening())
-    schlägt dieser Test fehl."""
+    """Regression test for the actual defect: the old connect() never
+    called upstream.start_listening(), which left the upstream's node
+    cache empty forever — every real device appeared unknown, no matter
+    how many were commissioned. get_nodes() here — like the real
+    MatterClient — deliberately returns nothing until start_listening()
+    has run; against the old code (no call to start_listening()), this
+    test fails."""
     bridge, _session = make_client([FakeNode(3, {"0/40/1": "Aqara", "1/6/0": True})])
 
     await bridge.connect()
@@ -1135,32 +1136,33 @@ async def test_snapshots_reflect_nodes_populated_by_the_listener():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/matter/test_client.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.matter.client'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.matter.client'`
 
 - [ ] **Step 3: Write minimal implementation**
 
 `src/loxmatter/matter/client.py`:
 
 ```python
-"""Verbindung zu python-matter-server.
+"""Connection to python-matter-server.
 
-Bewusst dünn gehalten: holt Rohdaten und macht NodeSnapshots daraus. Die
-Zerlegung in Signale passiert in discovery.py und ist dort ohne Netz getestet.
+Deliberately kept thin: fetches raw data and turns it into NodeSnapshots.
+Decomposition into signals happens in discovery.py and is tested there
+without a network.
 
-BridgeMatterClient erzeugt die aiohttp-ClientSession selbst und bleibt damit
-ihr alleiniger Besitzer: MatterClientConnection.disconnect() aus
-python-matter-server schließt nur das Websocket, nicht die Session, die ihr
-übergeben wurde — laut aiohttp-Konvention muss das tun, wer die Session
-erzeugt hat. Deshalb hält diese Klasse die Session-Referenz selbst und
-schließt sie in disconnect() bzw. bei einem gescheiterten connect().
+BridgeMatterClient creates the aiohttp ClientSession itself and thus remains
+its sole owner: MatterClientConnection.disconnect() from python-matter-server
+only closes the websocket, not the session passed to it — per aiohttp
+convention, whoever created the session must do that. This class therefore
+holds the session reference itself and closes it in disconnect() or on a
+failed connect().
 
-Der Upstream-`MatterClient` füllt seinen Node-Cache ausschließlich in
-`start_listening()` — eine langlaufende Coroutine, die den initialen
-Node-Dump holt, ein `init_ready`-Event setzt und danach weiterläuft, um
-Push-Updates zu empfangen. `connect()` startet sie deshalb als Hintergrund-
-Task und wartet auf das Bereitschafts-Event, bevor der Client sich als
-verbunden meldet; `disconnect()` bricht diesen Task wieder ab, bevor die
-Verbindung geschlossen wird.
+The upstream `MatterClient` fills its node cache exclusively in
+`start_listening()` — a long-running coroutine that fetches the initial
+node dump, sets an `init_ready` event, and then keeps running to receive
+push updates. `connect()` therefore starts it as a background task and
+waits for the readiness event before the client reports itself as
+connected; `disconnect()` cancels this task again before the connection
+is closed.
 """
 
 from __future__ import annotations
@@ -1172,26 +1174,26 @@ from typing import Any, Final
 
 from loxmatter.matter.models import NodeSnapshot
 
-# Wie lange connect() auf das Bereitschafts-Event des Listeners wartet, bevor
-# es aufgibt. matter-server schickt den initialen Node-Dump normalerweise
-# binnen weniger Sekunden; das Vielfache dient als Sicherheitsmarge gegen
-# einen langsamen oder hängenden Server.
+# How long connect() waits for the listener's readiness event before
+# giving up. matter-server usually sends the initial node dump within a
+# few seconds; the multiple serves as a safety margin against a slow or
+# hanging server.
 LISTENER_READY_TIMEOUT_SECONDS: Final = 10.0
 
 
 class MatterUnavailableError(RuntimeError):
-    """matter-server ist nicht verbunden oder kennt den gefragten Node nicht."""
+    """matter-server is not connected, or does not know the requested node."""
 
 
 async def _cancel_and_await(task: asyncio.Task[Any]) -> None:
-    """Bricht einen Task ab und wartet sein Ende ab.
+    """Cancels a task and awaits its end.
 
-    Rein für Aufräumzwecke gedacht: Ausnahmen aus dem abgebrochenen Task
-    (typischerweise CancelledError, aber auch andere, falls der Task schon
-    vorher mit einem Fehler geendet hat) werden hier verschluckt, damit sie
-    nicht den eigentlichen, bereits laufenden Fehlerpfad überdecken — der
-    Aufrufer hat die relevante Ausnahme an der eigentlichen Fehlerquelle
-    bereits gesehen oder sieht sie dort noch.
+    Purely intended for cleanup: exceptions from the cancelled task
+    (typically CancelledError, but also others, if the task had already
+    ended with an error beforehand) are swallowed here so they do not
+    mask the actual, already-running error path — the caller has already
+    seen the relevant exception at its actual source, or will still see
+    it there.
     """
     task.cancel()
     with contextlib.suppress(BaseException):
@@ -1213,24 +1215,24 @@ class BridgeMatterClient:
         self._listener_task: asyncio.Task[Any] | None = None
 
     def _default_session_factory(self, session: Any) -> Any:
-        # Lazy importiert, damit Tests matter_server nie laden müssen.
+        # Lazily imported so tests never have to load matter_server.
         from matter_server.client.client import MatterClient
 
         return MatterClient(self._url, session)
 
     @staticmethod
     def _default_http_session_factory() -> Any:
-        # Lazy importiert, damit Tests aiohttp nie laden müssen.
+        # Lazily imported so tests never have to load aiohttp.
         import aiohttp
 
         return aiohttp.ClientSession()
 
     async def _start_listener(self, upstream: Any) -> asyncio.Task[Any]:
-        """Startet upstream.start_listening() als Hintergrund-Task und
-        wartet, bis er den Node-Cache gefüllt und Bereitschaft signalisiert
-        hat. Scheitert der Listener oder meldet er sich nicht rechtzeitig,
-        räumt diese Methode den Task vollständig ab und wirft, statt einen
-        halb verbundenen Task zurückzugeben."""
+        """Starts upstream.start_listening() as a background task and waits
+        until it has filled the node cache and signaled readiness. If the
+        listener fails or does not respond in time, this method fully
+        cleans up the task and raises, instead of returning a half-connected
+        task."""
         ready = asyncio.Event()
         listener_task: asyncio.Task[Any] = asyncio.ensure_future(upstream.start_listening(ready))
         ready_task = asyncio.ensure_future(ready.wait())
@@ -1241,17 +1243,17 @@ class BridgeMatterClient:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if ready_task in done:
-                # Bereitschaft gemeldet — der Listener läuft jetzt im
-                # Hintergrund weiter, um Push-Updates zu empfangen.
+                # Readiness reported — the listener now keeps running in
+                # the background to receive push updates.
                 return listener_task
 
             await _cancel_and_await(ready_task)
 
             if listener_task in done:
-                # Der Listener ist beendet, bevor er Bereitschaft gemeldet
-                # hat. .result() wirft seine ursprüngliche Ausnahme
-                # unverändert weiter (z. B. CannotConnect) — Aufrufer wie
-                # die CLI können sie damit weiterhin gezielt behandeln.
+                # The listener ended before reporting readiness.
+                # .result() re-raises its original exception unchanged
+                # (e.g. CannotConnect) — callers like the CLI can thus
+                # continue to handle it specifically.
                 listener_task.result()
                 msg = "Listener wurde beendet, bevor er Bereitschaft meldete"
                 raise MatterUnavailableError(msg)
@@ -1266,10 +1268,10 @@ class BridgeMatterClient:
             raise
 
     async def connect(self) -> None:
-        # Ein bereits verbundener Client wird bei erneutem connect() sauber
-        # getrennt, bevor neu verbunden wird — sonst würde die alte, noch
-        # offene Session beim Überschreiben von self._upstream/self._http_session
-        # unerreichbar und nie geschlossen.
+        # An already-connected client is cleanly disconnected on a renewed
+        # connect() before reconnecting — otherwise the old, still-open
+        # session would become unreachable and never closed when
+        # self._upstream/self._http_session are overwritten.
         if self._upstream is not None:
             await self.disconnect()
         http_session = self._http_session_factory()
@@ -1277,10 +1279,10 @@ class BridgeMatterClient:
             upstream = self._session_factory(http_session)
             listener_task = await self._start_listener(upstream)
         except BaseException:
-            # BaseException statt Exception: asyncio.CancelledError erbt von
-            # BaseException, nicht von Exception. Ein während des Verbindungs-
-            # aufbaus abgebrochenes connect() (z. B. durch asyncio.wait_for)
-            # muss die Session trotzdem schließen und den Abbruch weiterreichen.
+            # BaseException instead of Exception: asyncio.CancelledError
+            # inherits from BaseException, not from Exception. A connect()
+            # cancelled during connection setup (e.g. via asyncio.wait_for)
+            # must still close the session and propagate the cancellation.
             await http_session.close()
             raise
         self._http_session = http_session
@@ -1293,18 +1295,19 @@ class BridgeMatterClient:
         upstream = self._upstream
         http_session = self._http_session
         listener_task = self._listener_task
-        # Felder vor dem await auf None setzen: so ist der Client sofort als
-        # nicht verbunden erkennbar, auch wenn einer der Schritte unten eine
-        # Ausnahme wirft — disconnect() bleibt idempotent und der
-        # Objektzustand sauber, ganz gleich, wie die Trennung ausgeht.
+        # Set fields to None before the await: this way the client is
+        # immediately recognizable as not connected, even if one of the
+        # steps below raises an exception — disconnect() stays idempotent
+        # and object state stays clean, no matter how the disconnection
+        # turns out.
         self._upstream = None
         self._http_session = None
         self._listener_task = None
         if http_session is None:
-            # Invariante: Ist _upstream gesetzt, ist auch _http_session gesetzt
-            # (beide werden nur gemeinsam in connect() gesetzt). Als expliziter
-            # Fehler statt assert, damit die Prüfung auch unter `python -O`
-            # greift.
+            # Invariant: if _upstream is set, _http_session is also set
+            # (both are only ever set together in connect()). An explicit
+            # error instead of assert, so the check also takes effect
+            # under `python -O`.
             msg = "interner Fehler: _http_session fehlt trotz aktivem _upstream"
             raise RuntimeError(msg)
         try:
@@ -1324,10 +1327,11 @@ class BridgeMatterClient:
     async def snapshots(self) -> list[NodeSnapshot]:
         upstream = self._require_upstream()
         return [
-            # Die Rohattribute liegen bei matter_server.MatterNode nicht
-            # direkt auf dem Node, sondern auf node.node_data.attributes —
-            # war bislang unbeobachtbar, weil der Node-Cache vor der
-            # Listener-Anbindung immer leer war (siehe Modul-Docstring).
+            # The raw attributes on matter_server.MatterNode do not sit
+            # directly on the node but on node.node_data.attributes — this
+            # was previously unobservable because the node cache was
+            # always empty before the listener was wired up (see the
+            # module docstring).
             NodeSnapshot.from_raw(node.node_id, {"attributes": node.node_data.attributes})
             for node in upstream.get_nodes()
         ]
@@ -1342,7 +1346,7 @@ class BridgeMatterClient:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_client.py -v`
-Expected: PASS, 15 Tests
+Expected: PASS, 15 tests
 
 - [ ] **Step 5: Commit**
 
@@ -1355,9 +1359,8 @@ git commit -m "feat(matter): Client für matter-server mit Snapshot-Abbildung"
 
 ### Task 5: CLI `loxmatter inspect`
 
-Der sichtbare Ertrag der Phase. Arbeitet wahlweise gegen einen laufenden
-matter-server oder gegen eine Fixture-Datei — Letzteres macht sie im Test
-netzfrei benutzbar.
+The phase's visible payoff. Works either against a running matter-server or
+against a fixture file — the latter makes it usable network-free in tests.
 
 **Files:**
 - Create: `src/loxmatter/cli.py`
@@ -1366,9 +1369,9 @@ netzfrei benutzbar.
 
 **Interfaces:**
 - Consumes: `BridgeMatterClient`, `NodeSnapshot`, `extract_signals`, `find_unreported_attributes`, `find_unparsable_paths`
-- Produces: `app: typer.Typer` mit Kommando `inspect`; `render_report(snapshot: NodeSnapshot) -> str`
+- Produces: `app: typer.Typer` with command `inspect`; `render_report(snapshot: NodeSnapshot) -> str`
 
-- [ ] **Step 1: Fixture anlegen**
+- [ ] **Step 1: Create the fixture**
 
 `tests/fixtures/nodes/example_light.json`:
 
@@ -1422,7 +1425,7 @@ def test_report_lists_attribute_and_event_signals():
     report = render_report(load())
     assert "1/6/0" in report
     assert "1/8/0" in report
-    assert "1/59/0" in report  # Event aus der EventList
+    assert "1/59/0" in report  # event from the EventList
     assert "1/59/1" in report
 
 
@@ -1431,7 +1434,7 @@ def test_report_hides_global_attributes():
 
 
 def test_report_flags_attributes_the_device_claimed_but_did_not_report():
-    # AttributeList nennt 0 und 16, geliefert wurde nur 0.
+    # AttributeList names 0 and 16, only 0 was delivered.
     report = render_report(load())
     assert "NICHT GELIEFERT" in report
     assert "1/6/16" in report
@@ -1444,7 +1447,7 @@ def test_cli_reads_a_fixture_without_network():
 
 
 class _FakeUpstream:
-    """Attrappe für matter_server.client.MatterClient — offline, kein Socket."""
+    """Stand-in for matter_server.client.MatterClient — offline, no socket."""
 
     def __init__(
         self,
@@ -1532,14 +1535,14 @@ def test_cli_reports_unreachable_server(monkeypatch):
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_cli.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.cli'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.cli'`
 
 - [ ] **Step 4: Write minimal implementation**
 
 `src/loxmatter/cli.py`:
 
 ```python
-"""Kommandozeile der Bridge."""
+"""Command line for the bridge."""
 
 from __future__ import annotations
 
@@ -1564,8 +1567,8 @@ app = typer.Typer(help="Matter → Loxone Bridge")
 
 @app.callback()
 def main() -> None:
-    """Ohne diesen Callback macht Typer bei genau einem Kommando aus
-    `loxmatter inspect ...` ein `loxmatter ...` — der Unterbefehl verschwindet."""
+    """Without this callback, Typer turns `loxmatter inspect ...` into
+    `loxmatter ...` when there is exactly one command — the subcommand disappears."""
 
 
 def render_report(snapshot: NodeSnapshot) -> str:
@@ -1604,15 +1607,15 @@ def render_report(snapshot: NodeSnapshot) -> str:
 
 
 def _fail(message: str) -> NoReturn:
-    """Meldet einen erwarteten CLI-Fehler: eine Zeile auf stderr, danach
-    Programmende mit Exit-Code ≠ 0 — statt eines Tracebacks."""
+    """Reports an expected CLI error: one line to stderr, then program
+    exit with exit code ≠ 0 — instead of a traceback."""
     typer.echo(message, err=True)
     raise typer.Exit(code=1)
 
 
 def _load_fixture(path: Path) -> NodeSnapshot:
-    """Lädt eine Fixture-Datei; meldet kaputten Inhalt als CLI-Fehler statt
-    mit einem rohen KeyError/JSONDecodeError abzubrechen."""
+    """Loads a fixture file; reports broken content as a CLI error instead
+    of aborting with a raw KeyError/JSONDecodeError."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -1625,21 +1628,21 @@ def _load_fixture(path: Path) -> NodeSnapshot:
 
 
 def _build_client(url: str) -> BridgeMatterClient:
-    """Eigener Konstruktions-Schritt, damit Tests den Client per Monkeypatch
-    durch eine mit Fake-Factories bestückte Instanz ersetzen können — ohne
-    Netzwerk zu berühren (siehe BridgeMatterClient.session_factory)."""
+    """A dedicated construction step, so tests can monkeypatch the client
+    with an instance built from fake factories — without touching the
+    network (see BridgeMatterClient.session_factory)."""
     return BridgeMatterClient(url)
 
 
 @app.command()
 def inspect(
     node: int | None = typer.Option(None, help="Node-ID am laufenden matter-server"),
-    fixture: Path | None = typer.Option(  # noqa: B008 — typer-Idiom, `Path` gilt Ruff nicht als unveränderlich
+    fixture: Path | None = typer.Option(  # noqa: B008 — typer idiom, Ruff does not consider `Path` immutable
         None, help="Statt matter-server ein gespeichertes Abbild"
     ),
     url: str = typer.Option("ws://localhost:5580/ws", help="Adresse von matter-server"),
 ) -> None:
-    """Listet alle Attribute und Events eines Geräts auf."""
+    """Lists all attributes and events of a device."""
     if fixture is not None:
         typer.echo(render_report(_load_fixture(fixture)))
         return
@@ -1667,7 +1670,7 @@ def inspect(
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/test_cli.py -v`
-Expected: PASS, 9 Tests
+Expected: PASS, 9 tests
 
 - [ ] **Step 6: Commit**
 
@@ -1676,21 +1679,21 @@ git add src/loxmatter/cli.py tests/test_cli.py tests/fixtures/nodes/example_ligh
 git commit -m "feat(cli): loxmatter inspect listet Signale eines Geräts"
 ```
 
-Eine spätere Fehlerbehebung ergänzte drei Fehlerpfade — kaputte Fixture (ungültiges
-JSON oder fehlendes `node_id`), unbekannter Node, unerreichbarer matter-server —, die
-zuvor rohe Tracebacks statt sauberer deutscher Meldungen erzeugten. Der obige Code und
-die vier zusätzlichen Tests spiegeln bereits diesen Stand.
+A later bug fix added three error paths — broken fixture (invalid
+JSON or missing `node_id`), unknown node, unreachable matter-server —, which
+previously produced raw tracebacks instead of clean German messages. The code above and
+the four additional tests already reflect this state.
 
 ---
 
-### Task 6: matter-server und OTBR auf dem Test-Host (Raspberry Pi)
+### Task 6: matter-server and OTBR on the Test Host (Raspberry Pi)
 
-Diese Task stand ursprünglich in Phase 6. Sie musste vorgezogen werden, weil Task 7
-ohne laufenden Controller nicht ausführbar ist — die Annahme aus Spec 3.5 lässt sich
-nur an echten Geräten prüfen, und an echte Geräte kommt man nur über einen Controller.
+This task was originally in Phase 6. It had to be pulled forward because Task 7
+cannot run without a running controller — the assumption from Spec 3.5 can only
+be checked against real devices, and real devices are only reachable through a controller.
 
-Ziel ist ausdrücklich **nicht** der fertige Produktions-Stack aus Spec 4.1. Es ist die
-Testumgebung, die Phase 1 abschließen kann. Phase 6 baut darauf auf.
+The goal is explicitly **not** the finished production stack from Spec 4.1. It is the
+test environment that can complete Phase 1. Phase 6 builds on it.
 
 **Files:**
 - Create: `deploy/testhost/docker-compose.yml`
@@ -1698,44 +1701,44 @@ Testumgebung, die Phase 1 abschließen kann. Phase 6 baut darauf auf.
 - Create: `deploy/testhost/README.md`
 
 **Interfaces:**
-- Consumes: nichts aus früheren Tasks
-- Produces: eine erreichbare WebSocket-URL `ws://10.0.1.56:5580/ws`, die Task 7 als `--url` benutzt
-  (siehe `deploy/testhost/README.md`)
+- Consumes: nothing from earlier tasks
+- Produces: a reachable WebSocket URL `ws://10.0.1.56:5580/ws`, which Task 7 uses as `--url`
+  (see `deploy/testhost/README.md`)
 
-#### Die Umgebung, bereits erhoben
+#### The Environment, Already Surveyed
 
-Nicht erneut ermitteln — diese Werte sind auf dem Pi nachgesehen:
+Do not determine again — these values were looked up on the Pi:
 
-| | Wert |
+| | Value |
 |---|---|
-| Host | `pi@10.0.1.56`, SSH-Key eingerichtet |
+| Host | `pi@10.0.1.56`, SSH key set up |
 | OS | Debian 13 "trixie" (Raspberry Pi OS), aarch64 |
-| Modell | Raspberry Pi 4 Model B Rev 1.5, 8 GB RAM |
-| Backbone-Interface | `wlan0` (kein Ethernet-Kabel gesteckt) |
-| Funkmodul | SONOFF Dongle Plus MG24 (Silicon Labs CP210x), Thread-Firmware bereits aufgespielt |
-| Geräteknoten | `/dev/ttyUSB0`, Gruppe `dialout` |
-| Bluetooth | eingebauter Adapter `hci0` |
-| IPv6 | nur link-local, `forwarding=0` |
-| Docker | nicht installiert |
+| Model | Raspberry Pi 4 Model B Rev 1.5, 8 GB RAM |
+| Backbone interface | `wlan0` (no Ethernet cable plugged in) |
+| Radio module | SONOFF Dongle Plus MG24 (Silicon Labs CP210x), Thread firmware already flashed |
+| Device node | `/dev/ttyUSB0`, group `dialout` |
+| Bluetooth | built-in adapter `hci0` |
+| IPv6 | link-local only, `forwarding=0` |
+| Docker | not installed |
 
-**Warum ein Pi und keine VM:** Diese Umgebung lief zuerst auf einer Ubuntu-VM
-(`lucienkerl@10.0.1.215`, Backbone-Interface `ens18`). Sie musste auf den Pi umziehen,
-weil die VM **keinen Bluetooth-Adapter hatte** — Matter-Commissioning läuft über BLE,
-und ohne Adapter kann kein Gerät je eingelernt werden. Der Pi hat mit `hci0` einen
-eingebauten Adapter. Alle sonstigen Funde von der VM (Baudrate, OTBR-Image-Variante,
-NAT64/Firewall-Workaround) gelten unverändert für den Pi — derselbe Dongle, dieselbe
-Firmware, dasselbe Image — und sind in `deploy/testhost/README.md` unter "Historie:
-die VM" festgehalten.
+**Why a Pi and not a VM:** This environment first ran on an Ubuntu VM
+(`lucienkerl@10.0.1.215`, backbone interface `ens18`). It had to move to the Pi
+because the VM **had no Bluetooth adapter** — Matter commissioning runs over BLE,
+and without an adapter no device can ever be commissioned. The Pi has a built-in
+adapter in `hci0`. All other findings from the VM (baud rate, OTBR image variant,
+NAT64/firewall workaround) apply unchanged to the Pi — the same dongle, the same
+firmware, the same image — and are recorded in `deploy/testhost/README.md` under
+"History: the VM".
 
-**Zum fehlenden globalen IPv6:** für Thread-Geräte unkritisch. Der OTBR spannt auf
-`wpan0` ein eigenes ULA-Präfix auf, und matter-server läuft mit `network_mode: host`
-daneben und erreicht die Geräte über die Route dorthin. Erst Matter-über-WLAN bräuchte
-globales IPv6 im LAN. Notwendig ist lediglich `forwarding=1`.
+**On the missing global IPv6:** not critical for Thread devices. The OTBR sets up
+its own ULA prefix on `wpan0`, and matter-server runs alongside it with
+`network_mode: host` and reaches the devices via the route there. Only Matter-over-WLAN
+would need global IPv6 on the LAN. All that's necessary is `forwarding=1`.
 
-#### Schritt 0: Root-Schritte (vom Menschen auszuführen)
+#### Step 0: Root Steps (to be Run by a Human)
 
-`sudo` verlangt auf diesem Pi ein Passwort, das der Agent weder erfragen noch benutzen
-darf. Diese Befehle führt der Betreiber selbst aus, danach übernimmt der Agent:
+`sudo` on this Pi requires a password that the agent must neither ask for nor use.
+These commands are run by the operator themselves, after which the agent takes over:
 
 ```bash
 sudo apt update && sudo apt install -y docker.io docker-compose-v2
@@ -1744,18 +1747,18 @@ printf 'net.ipv6.conf.all.forwarding=1\nnet.ipv4.ip_forward=1\n' | sudo tee /etc
 sudo sysctl --system
 ```
 
-Danach **neu anmelden** (Gruppenmitgliedschaften greifen erst in einer neuen Sitzung).
+Afterward, **log in again** (group memberships only take effect in a new session).
 
-- [ ] **Step 1: Voraussetzungen bestätigen**
+- [ ] **Step 1: Confirm prerequisites**
 
 ```bash
 ssh pi@10.0.1.56 'id -nG; docker ps >/dev/null && echo docker-ok; ls -l /dev/ttyUSB0; sysctl net.ipv6.conf.all.forwarding'
 ```
 
-Erwartet: `docker` und `dialout` in den Gruppen, `docker-ok`, `forwarding = 1`.
-Fehlt etwas, ist Schritt 0 unvollständig — melde das, statt es mit `sudo` zu umgehen.
+Expected: `docker` and `dialout` in the groups, `docker-ok`, `forwarding = 1`.
+If anything is missing, Step 0 is incomplete — report that instead of working around it with `sudo`.
 
-- [ ] **Step 2: Compose-Dateien schreiben**
+- [ ] **Step 2: Write the compose files**
 
 `deploy/testhost/.env.example`:
 
@@ -1763,15 +1766,15 @@ Fehlt etwas, ist Schritt 0 unvollständig — melde das, statt es mit `sudo` zu 
 RADIO_DEVICE=/dev/ttyUSB0
 RADIO_BAUDRATE=460800
 BACKBONE_IF=wlan0
-# id des Bluetooth-Adapters (aus `hci0` -> 0) fuer BLE-Commissioning durch
-# matter-server. Der Pi hat nur hci0, daher 0; siehe README "BLE aktivieren".
+# id of the Bluetooth adapter (from `hci0` -> 0) for BLE commissioning by
+# matter-server. The Pi only has hci0, hence 0; see README "Enable BLE".
 BLUETOOTH_ADAPTER=0
 ```
 
 `deploy/testhost/docker-compose.yml`:
 
 ```yaml
-# Testumgebung fuer Phase 1 - NICHT der Produktions-Stack aus Spec 4.1.
+# Test environment for Phase 1 - NOT the production stack from Spec 4.1.
 services:
   otbr:
     image: openthread/otbr:latest
@@ -1783,9 +1786,9 @@ services:
       - ${RADIO_DEVICE}:${RADIO_DEVICE}
     environment:
       RADIO_URL: spinel+hdlc+uart://${RADIO_DEVICE}?uart-baudrate=${RADIO_BAUDRATE}
-      # Ohne modprobe im Image sind legacy-iptables-Tabellen nicht ladbar —
-      # NAT64/NAT44 und die legacy-Firewall wuerden den Container abstuerzen
-      # lassen. Fuer die Testumgebung unkritisch (kein globales IPv6 noetig).
+      # Without modprobe in the image, legacy iptables tables cannot be
+      # loaded — NAT64/NAT44 and the legacy firewall would crash the
+      # container. Not critical for the test environment (no global IPv6 needed).
       NAT64: "0"
       FIREWALL: "0"
     command: --backbone-interface ${BACKBONE_IF}
@@ -1800,9 +1803,9 @@ services:
     volumes:
       - ./data:/data
       - /run/dbus:/run/dbus:ro
-    # --bluetooth-adapter aktiviert BLE-Commissioning ueber den in
-    # BLUETOOTH_ADAPTER benannten Adapter — der Grund, warum diese
-    # Testumgebung ueberhaupt auf den Pi umgezogen ist (siehe oben).
+    # --bluetooth-adapter enables BLE commissioning via the adapter named
+    # in BLUETOOTH_ADAPTER — the reason this test environment moved to
+    # the Pi at all (see above).
     command:
       - --storage-path
       - /data
@@ -1814,19 +1817,19 @@ services:
       - otbr
 ```
 
-Kopiere `.env.example` auf dem Pi nach `.env`. Die Compose-Syntax von
-`openthread/otbr` ändert sich zwischen Versionen — prüfe sie gegen die Dokumentation
-des Images, bevor du Fehler suchst, die keine sind, und trage Abweichungen im README ein.
+Copy `.env.example` on the Pi to `.env`. The compose syntax of
+`openthread/otbr` changes between versions — check it against the image's
+documentation before hunting for bugs that aren't, and record deviations in the README.
 
-**Baudrate:** 460800 ist der wahrscheinlichste Wert für den SONOFF MG24. Verbindet
-sich der RCP nicht, ist 115200 der nächste Kandidat. Rate nicht mehr als zweimal —
-danach lies die Firmware-Dokumentation des Dongles.
+**Baud rate:** 460800 is the most likely value for the SONOFF MG24. If the
+RCP does not connect, 115200 is the next candidate. Do not guess more than twice —
+after that, read the dongle's firmware documentation.
 
-- [ ] **Step 3: Starten und Thread-Netz bilden**
+- [ ] **Step 3: Start and Form the Thread Network**
 
 ```bash
 cd ~/loxmatter-testhost && docker compose up -d
-docker compose logs -f otbr        # bis der RCP verbunden ist
+docker compose logs -f otbr        # until the RCP is connected
 ```
 
 ```bash
@@ -1834,32 +1837,32 @@ docker exec -it otbr ot-ctl dataset init new
 docker exec -it otbr ot-ctl dataset commit active
 docker exec -it otbr ot-ctl ifconfig up
 docker exec -it otbr ot-ctl thread start
-docker exec -it otbr ot-ctl state          # erwartet: leader
+docker exec -it otbr ot-ctl state          # expected: leader
 docker exec -it otbr ot-ctl dataset active -x
 ```
 
-Den ausgegebenen aktiven Datensatz sichern — er wird zum Einlernen von Thread-Geräten
-gebraucht. **Nicht ins Repository committen**, er ist ein Netzwerk-Credential.
+Save the printed active dataset — it is needed to commission Thread devices.
+**Do not commit it to the repository**, it is a network credential.
 
-- [ ] **Step 4: Erreichbarkeit vom Entwicklungsrechner prüfen**
+- [ ] **Step 4: Check Reachability from the Development Machine**
 
-Auf dem Mac, im Projektverzeichnis:
+On the Mac, in the project directory:
 
 ```bash
 uv run loxmatter inspect --node 1 --url ws://10.0.1.56:5580/ws
 ```
 
-Erwartet: ein Bericht oder `unbekannter Node 1`. Beides beweist, dass die Verbindung
-steht. Ein Verbindungsfehler bedeutet, dass Port 5580 nicht erreichbar ist — dann
-Firewall und `network_mode: host` prüfen.
+Expected: a report, or `unbekannter Node 1`. Either proves that the connection
+holds. A connection error means port 5580 is not reachable — then
+check the firewall and `network_mode: host`.
 
-- [ ] **Step 5: README schreiben**
+- [ ] **Step 5: Write the README**
 
-`deploy/testhost/README.md` hält fest, was tatsächlich funktionierte: die konkrete
-Baudrate, jede Abweichung von Step 2, den Befehl zum Sichern des Fabric-Volumes unter
-`./data`, und den Hinweis, dass der Thread-Datensatz nicht ins Repository gehört.
-Dieses Dokument ist der Rohstoff für den Deployment-Guide in Phase 6 — schreib auf,
-was schiefging, nicht nur was am Ende lief.
+`deploy/testhost/README.md` records what actually worked: the concrete
+baud rate, every deviation from Step 2, the command to back up the fabric volume under
+`./data`, and the note that the Thread dataset does not belong in the repository.
+This document is the raw material for the deployment guide in Phase 6 — write down
+what went wrong, not just what ended up working.
 
 - [ ] **Step 6: Commit**
 
@@ -1870,29 +1873,29 @@ git commit -m "feat(deploy): Testumgebung mit matter-server und OTBR"
 
 ---
 
-### Task 7: Fixtures echter Geräte aufnehmen und Annahme prüfen
+### Task 7: Record Fixtures of Real Devices and Check the Assumption
 
-Der Zweck der ganzen Phase. Hier wird Spec 3.5 belegt oder widerlegt.
+The purpose of the whole phase. This is where Spec 3.5 is confirmed or refuted.
 
 **Files:**
 - Create: `scripts/record_node.py`
-- Create: `tests/fixtures/nodes/<hersteller>_<produkt>.json` (je Gerät)
+- Create: `tests/fixtures/nodes/<manufacturer>_<product>.json` (per device)
 - Create: `tests/matter/test_real_devices.py`
-- Modify: `docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md` (nur falls die Annahme bricht)
+- Modify: `docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md` (only if the assumption breaks)
 
 **Interfaces:**
 - Consumes: `BridgeMatterClient`, `extract_signals`, `find_unreported_attributes`, `find_unparsable_paths`
-- Produces: Fixture-Dateien im Format aus Task 5 (`{"node_id": int, "attributes": {...}}`)
+- Produces: fixture files in the format from Task 5 (`{"node_id": int, "attributes": {...}}`)
 
-- [ ] **Step 1: Aufnahmewerkzeug schreiben**
+- [ ] **Step 1: Write the Recording Tool**
 
 `scripts/record_node.py`:
 
 ```python
-"""Speichert das Abbild eines echten Geräts als Fixture.
+"""Saves the snapshot of a real device as a fixture.
 
-Aufruf: uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb.json
-Mit abweichendem matter-server:
+Usage: uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb.json
+With a different matter-server:
        uv run python scripts/record_node.py 3 tests/fixtures/nodes/ikea_plug.json \\
            --url ws://10.0.1.56:5580/ws
 """
@@ -1946,20 +1949,20 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-`--url` statt eines zweiten `sys.argv`-Felds, weil der Test-Host (`deploy/testhost/`,
-Task 6) unter einer festen IP im LAN läuft, nicht auf localhost — siehe Aufrufbeispiel
-oben.
+`--url` instead of a second `sys.argv` field, because the test host (`deploy/testhost/`,
+Task 6) runs at a fixed IP on the LAN, not on localhost — see the usage example
+above.
 
-- [ ] **Step 2: Echte Geräte aufnehmen**
+- [ ] **Step 2: Record Real Devices**
 
-Mit laufendem matter-server und eingelernten IKEA-Geräten je Gerät einmal ausführen.
-Ziel: mindestens ein Gerät pro Klasse aus Spec 3.5, sonst prüft die Phase nur die halbe
-Annahme.
+Run once per device, with matter-server running and IKEA devices commissioned.
+Goal: at least one device per class from Spec 3.5, otherwise the phase only checks half
+the assumption.
 
-**Die Node-IDs unten sind Platzhalter** — die echten stehen in der matter-server-Oberfläche
-oder kommen aus `uv run loxmatter inspect --node <id>`, bis eine passt. Bei den
-Dateinamen zählt nur, dass `test_real_devices.py` sie über `*.json` findet und
-`example_*` ausschließt — nicht ihr genauer Wortlaut:
+**The node IDs below are placeholders** — the real ones are in the matter-server UI,
+or come from `uv run loxmatter inspect --node <id>`, tried until one matches. For the
+file names, all that matters is that `test_real_devices.py` finds them via `*.json` and
+excludes `example_*` — not their exact wording:
 
 ```bash
 uv run python scripts/record_node.py 12 tests/fixtures/nodes/ikea_bulb_color.json
@@ -1968,23 +1971,23 @@ uv run python scripts/record_node.py 14 tests/fixtures/nodes/ikea_button.json
 uv run python scripts/record_node.py 15 tests/fixtures/nodes/ikea_sensor.json
 ```
 
-**Ergebnis:** Verfügbar waren nur zwei IKEA-Geräte, keine vier — Bulb (mit
-ColorControl) und Sensor fehlten schlicht in der Wohnung. Aufgenommen wurden
-`tests/fixtures/nodes/ikea_grillplats_plug.json` (Node 3, messende Steckdose) und
-`tests/fixtures/nodes/ikea_bilresa_button.json` (Node 4, zweikanaliger Taster) — Namen
-nach Gerätemodell statt nach Geräteklasse, aus demselben Grund wie oben: der genaue
-Wortlaut war nie die Anforderung. Was das für die Abdeckung der Annahme heißt, steht
-im Befund am Ende dieses Tasks.
+**Result:** Only two IKEA devices were available, not four — the bulb (with
+ColorControl) and the sensor simply weren't present in the apartment. Recorded were
+`tests/fixtures/nodes/ikea_grillplats_plug.json` (node 3, metering plug) and
+`tests/fixtures/nodes/ikea_bilresa_button.json` (node 4, two-channel button) — named
+after the device model rather than the device class, for the same reason as above: the
+exact wording was never the requirement. What this means for the assumption's coverage
+is in the finding at the end of this task.
 
 - [ ] **Step 3: Write the failing test**
 
 `tests/matter/test_real_devices.py`:
 
 ```python
-"""Prüft Spec 3.5 gegen Abbilder echter Geräte.
+"""Checks Spec 3.5 against snapshots of real devices.
 
-Schlägt einer dieser Tests fehl, ist nicht der Test falsch — dann trägt die
-generische Zerlegung nicht, und die Spec muss geändert werden.
+If one of these tests fails, the test is not wrong — then the generic
+decomposition does not hold, and the spec must be changed.
 """
 
 import json
@@ -2028,7 +2031,7 @@ def test_device_yields_at_least_one_signal(path):
 
 
 def test_at_least_one_fixture_carries_events():
-    """Taster sind der Sonderfall aus Spec 6.3 — ohne sie ist die Annahme halb geprüft."""
+    """Buttons are the special case from Spec 6.3 — without them the assumption is only half-checked."""
     with_events = [
         p for p in REAL_DEVICES if any(s.kind is SignalKind.EVENT for s in extract_signals(load(p)))
     ]
@@ -2036,7 +2039,7 @@ def test_at_least_one_fixture_carries_events():
 
 
 def test_at_least_one_fixture_carries_energy_measurement():
-    """Spec 7.3: messende Steckdose, Cluster 144 ElectricalPowerMeasurement."""
+    """Spec 7.3: metering plug, cluster 144 ElectricalPowerMeasurement."""
     with_energy = [
         p for p in REAL_DEVICES if any(s.cluster_id == 144 for s in extract_signals(load(p)))
     ]
@@ -2047,22 +2050,22 @@ def test_at_least_one_fixture_carries_energy_measurement():
 
 Run: `uv run pytest tests/matter/test_real_devices.py -v`
 
-Erwartung: PASS. Diese Tests sind das Experiment der Phase, nicht Formsache.
+Expectation: PASS. These tests are the phase's experiment, not a formality.
 
-Bei Fehlschlag **nicht den Test anpassen**, sondern den Befund festhalten:
+On failure, **do not adjust the test**, record the finding instead:
 
-- `test_every_path_is_parsable` schlägt fehl → matter-server benutzt Pfadformen, die
-  `parse_attribute_path` nicht kennt. `paths.py` erweitern, Task 1 nachziehen.
-- `test_no_claimed_attribute_is_missing` schlägt fehl → das Gerät bietet Attribute an,
-  die nicht im Snapshot landen. Ursache klären: liest matter-server sie gar nicht, oder
-  fehlt eine Subscription? **Das ist der Fall, der Spec 3.5 gefährdet.**
-- `test_at_least_one_fixture_carries_events` schlägt fehl → Events stehen nicht in der
-  EventList, sondern kommen nur über Subscriptions. Dann braucht `discovery` eine
-  zweite Quelle und die Spec einen Zusatz in 6.3.
+- `test_every_path_is_parsable` fails → matter-server uses path forms that
+  `parse_attribute_path` does not know. Extend `paths.py`, revise Task 1.
+- `test_no_claimed_attribute_is_missing` fails → the device offers attributes that
+  do not end up in the snapshot. Clarify the cause: does matter-server not read them at
+  all, or is a subscription missing? **This is the case that endangers Spec 3.5.**
+- `test_at_least_one_fixture_carries_events` fails → events are not in the
+  EventList and only come via subscriptions. Then `discovery` needs a
+  second source and the spec needs an addition in 6.3.
 
-- [ ] **Step 5: Befund in der Spec festhalten**
+- [ ] **Step 5: Record the Finding in the Spec**
 
-Ergänze in der Spec unter 3.5 einen Absatz mit dem Ergebnis — auch wenn es positiv ist:
+Add a paragraph with the result under 3.5 in the spec — even if it is positive:
 
 ```markdown
 **Validierung (Phase 1, <Datum>).** Geprüft an <n> realen IKEA-Geräten
@@ -2070,17 +2073,17 @@ Ergänze in der Spec unter 3.5 einen Absatz mit dem Ergebnis — auch wenn es po
 fehlten, Events über die EventList auffindbar. Die generische Zerlegung trägt.
 ```
 
-Bei negativem Befund stattdessen beschreiben, was nicht trägt und wie 3.5 sich ändert.
+On a negative finding, describe instead what does not hold and how 3.5 changes.
 
-**Nachtrag zur Abdeckungs-Latte aus Step 2:** "mindestens ein Gerät pro Klasse, sonst
-prüft die Phase nur die halbe Annahme" wurde **nicht erreicht**. Verfügbar und geprüft
-waren nur zwei Klassen — messende Steckdose (`ikea_grillplats_plug.json`) und Taster
-(`ikea_bilresa_button.json`). Eine Lampe mit ColorControl-Cluster und ein Sensor waren
-nicht vorhanden und blieben ungeprüft. Die Spec ist an der Stelle ehrlich (n=2), aber
-sie hat bislang nicht festgehalten, dass die Latte selbst gerissen wurde. Konsequenz:
-ColorControl geht ungeprüft in Phase 4, wo die Farbraum-Umrechnung liegt — dort muss
-das nachgeholt werden, bevor die generische Zerlegung für diesen Cluster als belegt
-gilt.
+**Addendum on the coverage bar from Step 2:** "at least one device per class, otherwise
+the phase only checks half the assumption" was **not met**. Only two classes were
+available and checked — metering plug (`ikea_grillplats_plug.json`) and button
+(`ikea_bilresa_button.json`). A lamp with a ColorControl cluster and a sensor were
+not available and stayed unchecked. The spec is honest about this (n=2), but it has
+so far not recorded that the bar itself was missed. Consequence:
+ColorControl goes unchecked into Phase 4, where the color-space conversion lives — that
+must be made up there before the generic decomposition counts as confirmed for that
+cluster.
 
 - [ ] **Step 6: Commit**
 
@@ -2091,17 +2094,17 @@ git commit -m "test(matter): Spec 3.5 an echten IKEA-Geräten validiert"
 
 ---
 
-### Task 8: CI und Qualitätsschranke
+### Task 8: CI and Quality Gate
 
 **Files:**
 - Create: `.github/workflows/ci.yml`
 - Create: `README.md`
 
 **Interfaces:**
-- Consumes: alle vorherigen Tasks
-- Produces: nichts für spätere Tasks
+- Consumes: all previous tasks
+- Produces: nothing for later tasks
 
-- [ ] **Step 1: CI anlegen**
+- [ ] **Step 1: Set Up CI**
 
 `.github/workflows/ci.yml`:
 
@@ -2151,17 +2154,17 @@ Die Testsuite läuft ohne Hardware und ohne Netzwerkzugriff.
 
 ```bash
 uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
-uv run loxmatter inspect --node 12          # gegen laufenden matter-server
+uv run loxmatter inspect --node 12          # against a running matter-server
 ```
 ```
 
-- [ ] **Step 3: Alles lokal grün bekommen**
+- [ ] **Step 3: Get Everything Green Locally**
 
 ```bash
 uv run ruff check . && uv run ruff format . && uv run mypy && uv run pytest -v
 ```
 
-Expected: alle Prüfungen ohne Befund, alle Tests PASS.
+Expected: all checks with no findings, all tests PASS.
 
 - [ ] **Step 4: Commit**
 
@@ -2172,14 +2175,14 @@ git commit -m "ci: Lint, Typprüfung und Tests bei jedem Push"
 
 ---
 
-## Abschluss der Phase
+## Completion of the Phase
 
-Die Phase ist fertig, wenn:
+The phase is done when:
 
-1. `uv run pytest` ohne Hardware und ohne Netz durchläuft,
-2. `uv run loxmatter inspect --node <id>` für jedes echte IKEA-Gerät eine
-   vollständige Signalliste druckt,
-3. der Befund zu Spec 3.5 in der Spec steht — positiv oder negativ.
+1. `uv run pytest` passes without hardware and without a network,
+2. `uv run loxmatter inspect --node <id>` prints a complete signal list for
+   every real IKEA device,
+3. the finding on Spec 3.5 is in the spec — positive or negative.
 
-Erst dann wird der Plan für Phase 2 geschrieben. Fällt der Befund negativ aus, wird
-vorher die Spec überarbeitet: sie bleibt das maßgebliche Dokument, nicht dieser Plan.
+Only then is the plan for Phase 2 written. If the finding turns out negative, the
+spec is revised first: it remains the authoritative document, not this plan.

@@ -1,191 +1,192 @@
-# Geräte-Tab: Räume, Kategorien und ein mehrspaltiges Kachelraster
+# Devices Tab: Rooms, Categories, and a Multi-Column Tile Grid
 
-Entwurf, 5. September 2026. Führt
-[den Geräte-Dashboard-Entwurf](2026-09-03-device-dashboard-and-export-design.md)
-fort — dessen Kachel („kein Aufklappen mehr", Abschnitt 3) bleibt inhaltlich
-unangetastet und wird hier nur neu angeordnet. Löst nebenbei dessen offenen
-Punkt 1 (Zuordnung Gerätetyp → Icon) ein, weil die Kategorie, die dieser
-Entwurf ohnehin braucht, genau diese Zuordnung ist.
+Design, September 5, 2026. Continues
+[the device dashboard design](2026-09-03-device-dashboard-and-export-design.md)
+— its tile ("no more expanding", section 3) stays untouched in content
+and is only rearranged here. Along the way, it resolves that design's open
+point 1 (mapping device type → icon), because the category this
+design needs anyway is exactly that mapping.
 
-## 1. Das Problem
+## 1. The Problem
 
-Die Geräteansicht ist eine einspaltige Liste immer offener Kacheln
-(`index.html:214-340`), sortiert nach `device.id`, also nach der Reihenfolge
-des Einlernens. Das trägt bis etwa acht Geräte. Darüber hinaus hat die
-Ansicht drei Schwächen, die sich gegenseitig verstärken:
+The device view is a single-column list of always-open tiles
+(`index.html:214-340`), sorted by `device.id`, i.e. by commissioning
+order. That holds up to about eight devices. Beyond that, the
+view has three weaknesses that reinforce each other:
 
-1. **Eine Spalte verschenkt zwei Drittel der Breite.** Eine Kachel ist so
-   hoch wie ihre Werte- und Bedienblöcke, aber so breit wie das Fenster.
-   Zwölf Geräte sind zwölf Bildschirmhöhen.
-2. **Es gibt keine Ordnung außer dem Einlerndatum.** Wer die Steckdose im
-   Bad sucht, scrollt und liest Namen — die Ansicht hilft nicht mit.
-3. **Ein Gerät trägt keinen Ort.** Der Raum steckt bestenfalls im
-   selbstvergebenen Label („Steckdose Bad"), womit er nicht sortierbar,
-   nicht filterbar und nicht korrigierbar ist, ohne den Namen umzuschreiben,
-   der als `Title` im Loxone-Export landet.
+1. **One column wastes two-thirds of the width.** A tile is as
+   tall as its value and control blocks, but as wide as the window.
+   Twelve devices are twelve screen heights.
+2. **There is no ordering besides the commissioning date.** Someone
+   looking for the plug in the bathroom scrolls and reads names — the view
+   doesn't help.
+3. **A device carries no location.** At best, the room sits in the
+   self-assigned label ("Steckdose Bad"), which means it is not sortable,
+   not filterable, and not correctable without rewriting the name,
+   which ends up as `Title` in the Loxone export.
 
-Dazu kommt eine Lücke beim Einlernen: ein frisch eingelerntes Gerät heißt
-zunächst so, wie der Hersteller es nennt, und liegt am Ende der Liste. Die
-Zuordnung „das ist die Lampe im Wohnzimmer" passiert im Kopf des
-Bedienenden und nirgends sonst.
+On top of that, there's a gap at commissioning time: a freshly commissioned
+device is initially named whatever the manufacturer calls it, and sits at
+the end of the list. The mapping "that's the lamp in the living room"
+happens in the operator's head and nowhere else.
 
-## 2. Was unverändert bleibt
+## 2. What Stays Unchanged
 
-- **Der Inhalt der Kachel.** Werte, Bedienelemente, Export-Hinweis, Export-
-  und Entfernen-Taste bleiben ohne Klick sichtbar. Der Verzicht auf den
-  Aufklapp-Umschalter aus dem Dashboard-Entwurf gilt weiter; dieser Entwurf
-  ordnet nur um.
-- **Die Signalansicht** und der globale Export-Tab. Räume erscheinen dort
-  nicht — die Signalansicht ist die vollständige Sicht auf *ein* Gerät, der
-  Export-Tab die Sicht auf *alle*; beide brauchen keine Ortsordnung.
-- **Der Loxone-Export.** Weder Raum noch Kategorie landen in einer
-  Vorlagendatei. Das ist keine Sparsamkeit, sondern die Begründung für
-  Abschnitt 3.3: was nicht exportiert wird, darf ein Gerät auch nicht als
-  „seit dem Export geändert" markieren.
-- **Die Statusfarben** (grün unauffällig, amber geändert, grau offline) und
-  die Akzentfarbe Kupfer, samt der Begründung, warum beide getrennt bleiben
-  (Dashboard-Entwurf, Abschnitt 3).
+- **The tile's content.** Values, controls, export hint, export
+  and remove button stay visible without a click. Doing away with the
+  expand toggle from the dashboard design still stands; this design
+  only rearranges.
+- **The signal view** and the global export tab. Rooms do not appear
+  there — the signal view is the complete view of *one* device, the
+  export tab the view of *all*; neither needs location ordering.
+- **The Loxone export.** Neither room nor category ends up in a
+  template file. That is not frugality, but the justification for
+  section 3.3: what is not exported must also not mark a device as
+  "changed since export".
+- **The status colors** (green unremarkable, amber changed, gray offline)
+  and the copper accent color, along with the reasoning for why both stay
+  separate (dashboard design, section 3).
 
-## 3. Datenhaltung
+## 3. Data Storage
 
-### 3.1 Migration v7: zwei Spalten
+### 3.1 Migration v7: Two Columns
 
-`_SCHEMA_VERSION` geht von 6 auf 7. `_migrate_to_v7` legt über das
-bestehende `_add_column_if_missing` zwei Spalten an `device` an — dasselbe
-Muster und derselbe Grund wie bei `_migrate_to_v2`, das ebenfalls zwei
-Spalten in einem Schritt nachzieht:
+`_SCHEMA_VERSION` goes from 6 to 7. `_migrate_to_v7` adds two columns to
+`device` via the existing `_add_column_if_missing` — the same
+pattern and the same reason as with `_migrate_to_v2`, which likewise
+adds two columns in one step:
 
 ```sql
-room         TEXT   -- NULL = "Ohne Raum"
-device_types TEXT   -- JSON, Endpunkt -> Liste der Matter-Typ-IDs; NULL = noch nicht nachgetragen
+room         TEXT   -- NULL = "no room"
+device_types TEXT   -- JSON, endpoint -> list of Matter type IDs; NULL = not yet backfilled
 ```
 
-Kein Backfill für `room`: `NULL` bedeutet dort dasselbe wie bei einem frisch
-eingelernten Gerät ohne Raumwahl, es gibt keinen Bestandswert, aus dem sich
-ein Raum ableiten ließe. `device_types` wird dagegen sehr wohl nachgetragen,
-nur nicht in der Migration — siehe 3.4.
+No backfill for `room`: `NULL` there means the same thing as for a freshly
+commissioned device without a room choice, there is no existing value from
+which a room could be derived. `device_types`, by contrast, is very much
+backfilled, just not in the migration — see 3.4.
 
-### 3.2 Räume sind kein eigenes Objekt
+### 3.2 Rooms Are Not Their Own Object
 
-Es gibt keine `room`-Tabelle, keine Raum-IDs und keine Raumverwaltung. Ein
-Raum existiert genau so lange, wie mindestens ein aktives Gerät seinen Namen
-trägt; die Raumliste ist das `DISTINCT` über `device.room`, das die
-Oberfläche ohnehin aus `GET /api/devices` ableiten kann.
+There is no `room` table, no room IDs, and no room management. A
+room exists for exactly as long as at least one active device carries its
+name; the room list is the `DISTINCT` over `device.room`, which the
+UI can derive from `GET /api/devices` anyway.
 
-Der Preis dieser Entscheidung ist, dass „Raum umbenennen" keine Operation
-auf einem Objekt ist, sondern ein Massenschreibvorgang über alle Geräte des
-Raums — dafür gibt es die eine Route in 4.3. Der Gewinn: keine verwaisten
-Räume, keine Aufräumregeln, keine zweite Entität, die mit den Geräten in
-Deckung gehalten werden muss.
+The price of this decision is that "rename room" is not an operation
+on an object, but a bulk write across all devices of the
+room — that's what the one route in 4.3 is for. The payoff: no orphaned
+rooms, no cleanup rules, no second entity that has to be kept in
+sync with the devices.
 
-**Normalisierung.** Raumnamen werden beim Schreiben getrimmt; was nach dem
-Trimmen leer ist, wird `NULL`. Vergleich und Sortierung laufen
-case-sensitiv über den gespeicherten Namen — „Küche" und „küche" wären zwei
-Räume. Das ist die schlichtere Regel, und weil die Oberfläche vorhandene
-Räume immer als Auswahlliste anbietet und Freitext nur hinter „+ Neuer
-Raum …" versteckt, entsteht ein Schreibweise-Zwilling nur, wenn man ihn
-aktiv eintippt.
+**Normalization.** Room names are trimmed on write; whatever is empty
+after trimming becomes `NULL`. Comparison and sorting run
+case-sensitively over the stored name — "Küche" and "küche" would be two
+rooms. That is the simpler rule, and because the UI always offers
+existing rooms as a selection list and hides free text behind "+ New
+Room…", a spelling twin only arises if someone
+actively types it in.
 
-### 3.3 `set_room` fasst `updated_at` nicht an
+### 3.3 `set_room` Does Not Touch `updated_at`
 
-`store.set_room(device_id, room)` schreibt ausschließlich `device.room`.
-Das ist der einzige nicht offensichtliche Punkt der Datenhaltung und
-verdient die Begründung:
+`store.set_room(device_id, room)` writes exclusively `device.room`.
+That is the one non-obvious point of the data storage and
+deserves the justification:
 
-`rename_device` setzt `updated_at` mit, und sein Docstring sagt auch warum
-(`store.py:874-878`) — das Label landet im nächsten Export als `Title` in
-der Vorlage, also führt `GET /api/export/status` das Gerät danach zu Recht
-als „seither geändert". Der Raum landet nirgends im Export. Würde
-`set_room` `updated_at` mitsetzen, bekäme beim ersten Aufräumen der
-Raumzuordnung *jedes* Gerät eine amber „geändert seit Export"-Pille und die
-Aufforderung zu einem Export, der Byte für Byte dieselben Dateien erzeugt
-wie der letzte. Dieselbe Überlegung gilt für `backfill_device_types`.
+`rename_device` also sets `updated_at`, and its docstring says why too
+(`store.py:874-878`) — the label ends up in the next export as `Title` in
+the template, so `GET /api/export/status` rightly leads the device
+afterward as "changed since". The room ends up nowhere in the export. If
+`set_room` also set `updated_at`, on the first cleanup of the
+room assignment *every* device would get an amber "changed since export"
+pill and the prompt for an export that produces byte-for-byte the same
+files as the last one. The same reasoning applies to `backfill_device_types`.
 
-### 3.4 `device_types`: gespeichert wird die Quelle, nicht die Ableitung
+### 3.4 `device_types`: the Source Is Stored, Not the Derivation
 
-In die Datenbank geht die rohe Auskunft des Geräts — die Ausgabe von
-`relevance.device_types_by_endpoint(snapshot)`, als JSON serialisiert. Die
-Kategorie (Abschnitt 5) wird bei jedem Lesen daraus abgeleitet und **nicht**
-gespeichert.
+What goes into the database is the device's raw information — the output
+of `relevance.device_types_by_endpoint(snapshot)`, serialized as JSON. The
+category (section 5) is derived from it on every read and **not**
+stored.
 
-Der Grund steht schon in der Migrationsgeschichte dieses Projekts:
-`signal.functional` und `signal.title` sind abgeleitete Werte, die
-gespeichert wurden, und `_migrate_to_v3` musste sie für Bestandszeilen
-nachträglich neu berechnen, als sich die Ableitungsregel verbesserte
-(`store.py:78-83`). Eine Zuordnungstabelle Matter-Typ → Kategorie wird
-wachsen, sobald ein Gerätetyp auftaucht, an den beim Schreiben niemand
-gedacht hat. Wird nur die Quelle gespeichert, ist ein solcher Zuwachs ein
-Codewechsel ohne Migration.
+The reason is already in this project's migration history:
+`signal.functional` and `signal.title` are derived values that
+were stored, and `_migrate_to_v3` had to recompute them for existing rows
+afterward, when the derivation rule improved
+(`store.py:78-83`). A mapping table from Matter type to category will
+grow as soon as a device type shows up that nobody thought of when
+writing it. If only the source is stored, such growth is a
+code change without a migration.
 
-`StoredDevice` bekommt entsprechend `room: str | None` und
-`device_types: dict[int, frozenset[int]] | None`; `_as_device` parst das
-JSON, `None` heißt „noch nicht nachgetragen" (siehe 5.3).
+`StoredDevice` accordingly gets `room: str | None` and
+`device_types: dict[int, frozenset[int]] | None`; `_as_device` parses the
+JSON, `None` means "not yet backfilled" (see 5.3).
 
-**Befüllung an zwei Stellen:**
+**Populated in two places:**
 
-1. `register_device(snapshot, room=None)` schreibt die Typen bei der
-   Registrierung mit — das Abbild liegt dort ohnehin vor.
-2. `store.backfill_device_types(snapshots)`, aufgerufen beim Start der
-   Brücke direkt neben dem bestehenden
+1. `register_device(snapshot, room=None)` writes the types along with the
+   registration — the snapshot is already there anyway.
+2. `store.backfill_device_types(snapshots)`, called at bridge startup
+   directly next to the existing
    `await runtime.seed_from_snapshot(await client.snapshots())`
-   (`cli.py:606`). Die Abbilder aller bekannten Knoten sind dort bereits
-   geholt; ein zweiter Abruf wäre reine Verschwendung. Der Aufruf
-   aktualisiert **ausschließlich Zeilen mit `device_types IS NULL`** — ein
-   bereits nachgetragenes Gerät wird nicht bei jedem Start neu geschrieben,
-   und ein Gerät, das gerade offline ist und deshalb in `snapshots()` fehlt,
-   verliert seine Typen nicht.
+   (`cli.py:606`). The snapshots of all known nodes are already
+   fetched there; a second fetch would be pure waste. The call
+   updates **exclusively rows with `device_types IS NULL`** — a
+   device already backfilled is not rewritten on every start,
+   and a device that is currently offline and therefore missing from
+   `snapshots()` does not lose its types.
 
 ## 4. API
 
-### 4.1 Modelle (`api/models.py`)
+### 4.1 Models (`api/models.py`)
 
-- `DeviceOut` bekommt `room: str | None`, `category: str` (Kennung, siehe
-  5.1) und `category_rank: int`. Der Rang kommt aus dem Backend statt aus
-  einer zweiten Liste im Frontend — die Reihenfolge der Kategorien ist eine
-  Eigenschaft der Kategorientabelle, nicht der Oberfläche.
-- `DeviceRename` wird zu **`DevicePatch`** mit `label: str | None = None`
-  und `room: str | None = None`. `None` heißt „unverändert" (dasselbe
-  Prinzip wie bei `SignalPatch`), der Leerstring `""` heißt „Raum
-  entfernen" → `NULL`. Der Klassenname zieht mit, weil „Rename" nicht mehr
-  stimmt; Aufrufe mit nur `label` bleiben gültig.
-- `CommissionRequest` bekommt `room: str | None = None`.
-- Neu: `RoomRename` mit `from_room: str` und `to_room: str` (Feldnamen mit
-  Suffix, weil `from` ein Python-Schlüsselwort ist; nach außen über
+- `DeviceOut` gets `room: str | None`, `category: str` (identifier, see
+  5.1), and `category_rank: int`. The rank comes from the backend instead of
+  a second list in the frontend — the order of the categories is a
+  property of the category table, not of the UI.
+- `DeviceRename` becomes **`DevicePatch`** with `label: str | None = None`
+  and `room: str | None = None`. `None` means "unchanged" (the same
+  principle as with `SignalPatch`), the empty string `""` means "remove
+  room" → `NULL`. The class name follows along, because "Rename" no longer
+  fits; calls with only `label` remain valid.
+- `CommissionRequest` gets `room: str | None = None`.
+- New: `RoomRename` with `from_room: str` and `to_room: str` (field names
+  with a suffix, because `from` is a Python keyword; exposed via
   `alias="from"`/`alias="to"`).
 
 ### 4.2 `PATCH /api/devices/{id}`
 
-Erweitert, kein neuer Endpunkt. Setzt `label` über `rename_device` (mit
-`updated_at`) und `room` über `set_room` (ohne). Ein Aufruf, der beides
-mitbringt, macht beides.
+Extended, no new endpoint. Sets `label` via `rename_device` (with
+`updated_at`) and `room` via `set_room` (without). A call that brings
+both does both.
 
 ### 4.3 `POST /api/rooms/rename`
 
-Die einzige neue Route: ein `UPDATE device SET room = ? WHERE room = ? AND
-active = 1`, Antwort `{"renamed": n}`.
+The one new route: an `UPDATE device SET room = ? WHERE room = ? AND
+active = 1`, response `{"renamed": n}`.
 
-Ohne sie müsste man einen Raum umbenennen, indem man an jedem Gerät einzeln
-„+ Neuer Raum …" tippt — bei fünf Geräten fünf Gelegenheiten für einen
-Tippfehler, der einen sechsten Raum erzeugt. `active = 1` in der Bedingung
-aus demselben Grund, aus dem `store.devices()` danach filtert: ein
-entferntes Gerät ist aus Sicht der Oberfläche nicht mehr da und soll auch
-nicht stillschweigend mitwandern.
+Without it, renaming a room would mean typing "+ New Room…" on
+each device individually — with five devices, five opportunities for a
+typo that creates a sixth room. `active = 1` in the condition for
+the same reason `store.devices()` filters on it afterward: a
+removed device is, from the UI's perspective, no longer there and
+should not silently tag along either.
 
-**Zusammenführen ist erlaubt.** Ein Zielname, den es schon gibt, führt beide
-Räume zusammen — das ist die naheliegende Bedeutung von „nenne Küche jetzt
-Essbereich", wenn es einen Essbereich schon gibt. Die Oberfläche fragt in
-diesem Fall vorher nach (Abschnitt 6.3), weil der Vorgang nicht rückgängig
-zu machen ist: nach dem Zusammenführen weiß niemand mehr, welches Gerät
-vorher in welchem der beiden Räume stand.
+**Merging is allowed.** A target name that already exists merges both
+rooms — that is the obvious meaning of "rename Küche to
+Essbereich now" when an Essbereich already exists. The UI asks for
+confirmation beforehand in this case (section 6.3), because the operation
+cannot be undone: after merging, nobody knows anymore which device was
+previously in which of the two rooms.
 
-## 5. Kategorie
+## 5. Category
 
-### 5.1 Die Kategorien und ihr Rang
+### 5.1 The Categories and Their Rank
 
-Ein neues Modul `profiles/categories.py`, neben `relevance.py`, weil es
-dieselbe Quelle auswertet:
+A new module `profiles/categories.py`, next to `relevance.py`, because it
+evaluates the same source:
 
-| Rang | Kennung | Deutsch | Englisch |
+| Rank | Identifier | German | English |
 |---|---|---|---|
 | 0 | `light` | Licht | Light |
 | 1 | `socket` | Steckdose | Socket |
@@ -196,249 +197,251 @@ dieselbe Quelle auswertet:
 | 6 | `lock` | Schloss | Lock |
 | 7 | `other` | Sonstige | Other |
 
-Der Rang ist fest verdrahtet und **nicht** die alphabetische Reihenfolge der
-Namen: ein Sprachwechsel würde die Gruppen sonst umsortieren, und eine
-Ansicht, die je nach Sprache anders aufgebaut ist, ist zweimal zu erklären.
+The rank is hardwired and **not** the alphabetical order of the
+names: a language switch would otherwise reorder the groups, and a
+view that is structured differently depending on the language has to be
+explained twice.
 
-Die vollständige Tabelle Matter-Typ-ID → Kategorie ist Sache des
-Implementierungsplans, nicht dieser Spec — dieselbe Abgrenzung wie beim
-Icon-Punkt des Dashboard-Entwurfs. Belegt sind hier die Kategorien selbst
-und ihre Reihenfolge; die Zuordnung muss pro Typ-ID gegen
-`matter_server.client.models.device_types` belegt werden, nicht geraten.
+The complete table of Matter type ID → category is a matter for the
+implementation plan, not this spec — the same boundary as with the
+icon point of the dashboard design. Confirmed here are the categories
+themselves and their order; the mapping must be confirmed per type ID
+against `matter_server.client.models.device_types`, not guessed.
 
-### 5.2 Der Primärtyp
+### 5.2 The Primary Type
 
-Ein Matter-Knoten deklariert Typen pro Endpunkt. Maßgeblich ist:
+A Matter node declares types per endpoint. What counts:
 
-1. Verwaltungs-Endpunkte fallen raus — dieselbe Menge, die `is_functional`
-   schon kennt (`UTILITY_DEVICE_TYPES` plus `POWER_SOURCE_DEVICE_TYPE`), und
-   aus demselben Grund: Root Node, OTA Requestor und PowerSource sagen nichts
-   darüber, was das Gerät im Haus tut.
-2. Vom Rest zählt der **niedrigste Endpunkt** — bei Matter üblicherweise
-   Endpunkt 1, der Anwendungs-Endpunkt.
-3. Deklariert dieser mehrere Typen, gewinnt der mit dem niedrigsten
-   Kategorierang. Damit ist das Ergebnis unabhängig von der Reihenfolge, in
-   der das Gerät seine Typen aufzählt.
-4. Nichts Zuordenbares, oder `device_types IS NULL` → `other`.
+1. Administrative endpoints fall away — the same set `is_functional`
+   already knows (`UTILITY_DEVICE_TYPES` plus `POWER_SOURCE_DEVICE_TYPE`),
+   and for the same reason: Root Node, OTA Requestor, and PowerSource say
+   nothing about what the device does in the house.
+2. Of the rest, the **lowest endpoint** counts — with Matter usually
+   endpoint 1, the application endpoint.
+3. If it declares multiple types, the one with the lowest
+   category rank wins. This makes the result independent of the order in
+   which the device lists its types.
+4. Nothing mappable, or `device_types IS NULL` → `other`.
 
-### 5.3 Bis der Nachtrag greift
+### 5.3 Until the Backfill Takes Effect
 
-Ein Bestandsgerät steht bis zum nächsten Start der Brücke in „Sonstige" —
-sichtbar, bedienbar, vollständig, nur unsortiert. Das ist die ehrlichere
-Übergangslösung gegenüber einer Migration, die aus gespeicherten Signalen
-eine Kategorie errät: eine solche Heuristik wäre eine zweite
-Klassifikationsregel neben den Matter-Gerätetypen, also genau die
-Doppelquelle, vor der `relevance.py` in seinem Kommentar zu
-`UTILITY_ENDPOINT_KEEP_CLUSTERS` warnt.
+An existing device sits in "Other" until the next bridge startup —
+visible, controllable, complete, just unsorted. That is the more honest
+transitional solution compared to a migration that guesses a category
+from stored signals: such a heuristic would be a second
+classification rule alongside the Matter device types, i.e. exactly the
+double source that `relevance.py` warns against in its comment on
+`UTILITY_ENDPOINT_KEEP_CLUSTERS`.
 
-## 6. Oberfläche
+## 6. UI
 
-### 6.1 Raster
+### 6.1 Grid
 
-`grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))` — vier
-Spalten bei üblicher Desktopbreite, zwei auf dem Tablet, eine auf dem
-Telefon, ohne eigene Breakpoints. Die 260 px sind die Untergrenze, ab der
-Kopfzeile samt Leitwert und die Wertespalte nicht mehr umbrechen.
+`grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))` — four
+columns at usual desktop width, two on tablet, one on
+phone, with no custom breakpoints. The 260 px is the lower bound above
+which the header row with its primary value and the value column stop
+wrapping.
 
-### 6.2 Die Kachel
+### 6.2 The Tile
 
-Freigegeben nach interaktivem Entwurf („Mix 2"), von oben nach unten:
+Approved after an interactive design ("Mix 2"), top to bottom:
 
-1. **Kopfzeile** — Kategorie-Icon in getöntem Feld · Name (editierbar wie
-   heute) · rechts der **Leitwert** in Mono-Ziffern. Darunter, klein, das
-   Label des Leitwerts („Zustand", „Temperatur").
-   **Ist eine Status-Pille fällig (offline / geändert seit Export),
-   verdrängt sie dieses Label.** Der Zustand der Kachel wiegt schwerer als
-   die Beschriftung einer Zahl, die zwei Zentimeter daneben steht.
-2. **Werteraster** — die restlichen funktionalen Signale als Label/Wert-
-   Zeilen, Werte rechtsbündig in Mono. Das bestehende
-   `FUNCTIONAL_PREVIEW_LIMIT = 6` bleibt und **zählt den Leitwert mit**:
-   Leitwert plus bis zu fünf Zeilen. Der bisherige Hinweis „*n* weitere in
-   der Signalansicht" wird zur letzten Rasterzeile („+ 7 weitere", verlinkt
-   auf die Signalansicht) statt zu einem eigenen Absatz.
-3. **Bedienleiste** — die Befehle als Textknöpfe, unverändert in Funktion.
-   Der Hinweis auf unbenannte Rohbefehle hängt sich als gedimmtes „+3
-   unbenannt" hinten an die Knopfreihe statt in eine eigene Zeile.
-4. **Fußzeile** — links die **Raum-Auswahl** („🏠 Wohnzimmer ▾", öffnet die
-   vorhandenen Räume plus „+ Neuer Raum …" plus „Ohne Raum"), daneben der
-   Export-Hinweis, rechts die Icon-Tasten Exportieren und Entfernen.
+1. **Header row** — category icon in a tinted field · name (editable as
+   today) · the **primary value** in monospace digits on the right. Below
+   it, small, the primary value's label ("Zustand", "Temperatur").
+   **If a status pill is due (offline / changed since export), it
+   displaces this label.** The tile's state weighs more than
+   the caption of a number sitting two centimeters away.
+2. **Value grid** — the remaining functional signals as label/value
+   rows, values right-aligned in monospace. The existing
+   `FUNCTIONAL_PREVIEW_LIMIT = 6` stays and **counts the primary value**:
+   primary value plus up to five rows. The previous hint "*n* more in
+   the signal view" becomes the last grid row ("+ 7 more", linked
+   to the signal view) instead of its own paragraph.
+3. **Control bar** — the commands as text buttons, unchanged in function.
+   The hint about unnamed raw commands attaches itself as a dimmed "+3
+   unnamed" at the end of the button row instead of its own line.
+4. **Footer** — on the left the **room selector** ("🏠 Wohnzimmer ▾", opens
+   the existing rooms plus "+ Neuer Raum …" plus "Ohne Raum"), next to it
+   the export hint, on the right the icon buttons Export and Remove.
 
-**Leitwert-Regel:** das erste funktionale Signal in der Reihenfolge, die
-`firstSignalsFor` heute schon liefert — also die Reihenfolge der
-Profiltabelle. Steckdose → Zustand, Klimasensor → Temperatur, Rollo →
-Position. Keine neue Spalte, kein Endpunkt, keine Konfiguration; ein Gerät
-ohne funktionale Signale zeigt schlicht keinen Leitwert und die Kopfzeile
-bleibt einzeilig.
+**Primary-value rule:** the first functional signal in the order that
+`firstSignalsFor` already delivers today — i.e. the order of the
+profile table. Socket → state, climate sensor → temperature, blind →
+position. No new column, no endpoint, no configuration; a device
+without functional signals simply shows no primary value and the header
+stays single-line.
 
-Der Raum steht bewusst in der Fußzeile und nicht unter dem Namen: die
-Kopfzeile trägt bereits Name, Leitwert-Label und im Ernstfall die
-Status-Pille, ein vierter Bestandteil hätte einen davon verdrängt.
+The room deliberately sits in the footer and not under the name: the
+header already carries the name, the primary-value label, and in a
+worst case the status pill — a fourth element would have displaced one of
+those.
 
-### 6.3 Raumleiste und Gruppierung
+### 6.3 Room Bar and Grouping
 
-Über der Liste eine Chip-Reihe: „Alle · Wohnzimmer · Küche · … · Ohne Raum",
-jeweils mit der Gerätezahl. Bei **Alle** erscheinen Gruppenüberschriften pro
-Raum; bei einem gewählten Raum entfallen sie, weil es nur einen gibt.
+Above the list, a chip row: "Alle · Wohnzimmer · Küche · … · Ohne Raum",
+each with its device count. With **Alle** selected, group headings appear per
+room; with a single room selected, they disappear because there's only one.
 
-**Die Chip-Reihe zeigt sich gar nicht, solange kein einziges Gerät einen
-Raum trägt** (`hasAnyRoom()` in `app.js`). Bei drei Geräten und keinem Raum
-wäre sie eine Zeile Lärm über einer Liste, die ohnehin auf einen Blick
-passt.
+**The chip row does not appear at all as long as not a single device
+carries a room** (`hasAnyRoom()` in `app.js`). With three devices and no
+room, it would be a line of noise above a list that fits in one glance
+anyway.
 
-Das Suchfeld aus 6.6 bleibt davon unberührt und steht auch dann, wenn kein
-einziges Gerät einen Raum trägt — es ist Teil derselben Zeile, aber an
-keine Bedingung geknüpft (Korrektur, 2026-09-05: eine frühere Fassung
-dieses Abschnitts verlangte, die ganze Leiste inklusive Suchfeld
-auszublenden; die Umsetzung hat sich bewusst dagegen entschieden, und die
-Review hat das als die richtige Entscheidung bestätigt). Der Grund: die
-Suche greift laut 6.6 über Name, Kategoriename **und** Raumname — die
-beiden ersten Kriterien sind völlig unabhängig davon, ob irgendein Gerät
-einen Raum trägt. Ein Suchfeld, das erst nach der ersten Raumzuordnung
-erschiene, würde genau in dem Moment fehlen, in dem eine wachsende, noch
-raumlose Geräteliste es am nötigsten hätte — nach Namen oder Kategorie
-suchen zu können, ist von Räumen unabhängig und darf nicht an sie geknüpft
-werden.
+The search field from 6.6 is unaffected by this and is present even when
+not a single device carries a room — it is part of the same row, but tied
+to no condition (correction, 2026-09-05: an earlier version of
+this section required hiding the whole bar including the search field;
+the implementation deliberately decided against that, and the
+review confirmed that as the right decision). The reason: per 6.6, search
+reaches across name, category name, **and** room name — the
+first two criteria are entirely independent of whether any device
+carries a room. A search field that only appeared after the first room
+assignment would be missing exactly at the moment a growing, still
+roomless device list would need it most — being able to
+search by name or category is independent of rooms and must not be tied
+to them.
 
-An jeder Gruppenüberschrift ein Stift, der den Raum umbenennt
-(`POST /api/rooms/rename`). Trägt der Zielname bereits Geräte, fragt die
-Oberfläche vorher nach und benennt das Zusammenführen beim Namen (siehe
-4.3). Ist ein einzelner Raum gewählt, gibt es keine Überschrift, die den
-Stift tragen könnte — er sitzt dann am aktiven Chip der Raumleiste. „Ohne
-Raum" ist kein Raum und trägt in beiden Fällen keinen Stift: es ist die
-Menge der Geräte ohne Zuordnung, und ein Name, den man ändern könnte, ist
-gerade das, was diesen Geräten fehlt.
+On every group heading, a pencil that renames the room
+(`POST /api/rooms/rename`). If the target name already carries devices,
+the UI asks for confirmation beforehand and names the merge by
+name (see 4.3). If a single room is selected, there is no heading that
+could carry the pencil — it then sits on the active chip of the room bar.
+"Ohne Raum" is not a room and carries no pencil in either case: it is the
+set of devices with no assignment, and a name one could change is
+exactly what these devices lack.
 
-**Der Filterzustand wird nicht gespeichert** — kein `localStorage`, kein
-Endpunkt. Nach einem Neuladen steht die Ansicht wieder auf „Alle". Ein
-gemerkter Filter erzeugt sonst den Moment, in dem nach zwei Wochen drei von
-zwölf Geräten dastehen und niemand mehr weiß, warum.
+**The filter state is not saved** — no `localStorage`, no
+endpoint. After a reload, the view is back on "Alle". A
+remembered filter otherwise creates the moment, two weeks later, when three
+of twelve devices are shown and nobody remembers why.
 
-### 6.4 Sortierung
+### 6.4 Sorting
 
-Räume alphabetisch, „Ohne Raum" immer zuletzt. Innerhalb eines Raums: nach
-`category_rank`, darin alphabetisch nach Label über `localeCompare` (damit
-„Ä" bei „A" einsortiert und nicht hinter „Z"). Alle Steckdosen eines Raums
-stehen damit beieinander, dann die Taster, dann der Rest.
+Rooms alphabetically, "Ohne Raum" always last. Within a room: by
+`category_rank`, within that alphabetically by label via `localeCompare`
+(so that "Ä" sorts next to "A" and not after "Z"). All plugs in a room
+thus sit together, then the switches, then the rest.
 
-**Keine zweite Überschriftenebene.** Die Kategorien bekommen keine eigenen
-Zwischenüberschriften unterhalb der Raumüberschrift: die Reihenfolge plus
-die kategoriespezifischen Icons machen die Blöcke sichtbar, und zwei
-Überschriftenebenen über vierspaltigen Kacheln wären mehr Struktur als
-Inhalt.
+**No second heading level.** The categories get no separate
+sub-headings below the room heading: the order plus the category-specific
+icons make the blocks visible, and two heading levels above
+four-column tiles would be more structure than content.
 
 ### 6.5 Icons
 
-Acht `<symbol>`-Einträge im bestehenden Inline-SVG-Block
-(`index.html:64-86`), einer je Kategorie, `#i-device` bleibt als `other`.
-Weiterhin inline und ohne Icon-Bibliothek, aus demselben Grund wie das
-eingecheckte `vendor/alpine.min.js`: die Oberfläche läuft offline. Damit ist
-offener Punkt 1 des Dashboard-Entwurfs erledigt.
+Eight `<symbol>` entries in the existing inline SVG block
+(`index.html:64-86`), one per category, `#i-device` stays as `other`.
+Still inline and without an icon library, for the same reason as the
+checked-in `vendor/alpine.min.js`: the UI runs offline. This
+resolves open point 1 of the dashboard design.
 
-### 6.6 Suche
+### 6.6 Search
 
-Ein Feld rechts in der Raumleiste, rein clientseitig über die ohnehin
-geladene Geräteliste — kein Endpunkt, keine Abfrage. Getroffen wird
-case-insensitiv in **Name, Kategoriename und Raumname**. Weil der
-Kategoriename der übersetzte ist, findet „Steckdose" auf Deutsch und
-„socket" auf Englisch dieselben Geräte.
+A field on the right of the room bar, purely client-side over the
+already-loaded device list — no endpoint, no query. It matches
+case-insensitively across **name, category name, and room name**. Because
+the category name is the translated one, "Steckdose" in German and
+"socket" in English find the same devices.
 
-**Die Suche wirkt innerhalb des gewählten Raums**, Chip und Feld gelten
-zusammen (UND). Bei „Alle" durchsucht sie alles und bleibt nach Raum
-gruppiert.
+**Search acts within the selected room**, chip and field apply
+together (AND). With "Alle" selected, it searches everything and stays
+grouped by room.
 
-Damit entsteht ein Fall, den die Ansicht auffangen muss: kein Treffer im
-gewählten Raum, obwohl das gesuchte Gerät nebenan steht. Der Leerzustand
-zeigt deshalb nicht nur „kein Treffer", sondern zählt die Treffer außerhalb
-mit — „3 weitere Treffer in anderen Räumen — alle anzeigen", der Verweis
-schaltet auf „Alle" um und behält den Suchbegriff.
+This creates a case the view has to handle: no match in the
+selected room, even though the sought device sits next door. The empty
+state therefore doesn't just show "no match", but also counts the matches
+outside — "3 more matches in other rooms — show all", the link
+switches to "Alle" and keeps the search term.
 
-### 6.7 Einlern-Karte
+### 6.7 Commissioning Card
 
-Drittes Feld neben Pairing-Code und Thread-Datensatz: ein Auswahlfeld mit
-den vorhandenen Räumen, Vorgabe „Ohne Raum", letzter Eintrag „+ Neuer
-Raum …" blendet ein Textfeld für den Namen ein.
+A third field next to pairing code and Thread dataset: a selection field
+with the existing rooms, default "Ohne Raum", last entry "+ Neuer
+Raum …" reveals a text field for the name.
 
-**Der gewählte Raum bleibt nach erfolgreichem Einlernen stehen** — anders
-als Code und Thread-Datensatz, die weiterhin geleert werden (`app.js:1093`).
-Wer vier Geräte in der Küche einlernt, wählt den Raum einmal; ein
-Pairing-Code dagegen ist nach Gebrauch wertlos und ein stehengebliebener
-wäre eine Fehlerquelle.
+**The selected room stays after successful commissioning** — unlike
+code and Thread dataset, which continue to be cleared (`app.js:1093`).
+Someone commissioning four devices in the kitchen selects the room once; a
+pairing code, by contrast, is worthless after use, and one left
+behind would be a source of error.
 
-## 7. Sprache
+## 7. Language
 
-Jeder neue Text läuft über `i18n.t()` mit `en`/`de`-Paar in
-`strings.yaml` — die WebUI ist seit i18n-Phase B durchgehend übersetzt,
-hartkodierter deutscher Text wäre ein Rückschritt. Neue Schlüssel im
-Namensraum `web.devices.*` (Raumleiste, Raumwahl, Suche, Leerzustände),
-`web.devices.category.*` (die acht Kategorienamen aus 5.1) und
-`api.devices.*` für die Fehlermeldungen aus Abschnitt 8.
+Every new text goes through `i18n.t()` with an `en`/`de` pair in
+`strings.yaml` — the WebUI has been translated throughout since i18n
+Phase B, hardcoded German text would be a step backward. New keys in
+the namespace `web.devices.*` (room bar, room selection, search, empty
+states), `web.devices.category.*` (the eight category names from 5.1), and
+`api.devices.*` for the error messages from section 8.
 
-## 8. Fehlerbehandlung
+## 8. Error Handling
 
-| Fall | Verhalten |
+| Case | Behavior |
 |---|---|
-| `PATCH /api/devices/{id}` mit `room: ""` | Raum wird entfernt (`NULL`), 200 — das ist die dokumentierte Bedeutung, kein Fehler |
-| `PATCH` mit einem Raumnamen aus reinem Leerraum | wird getrimmt und damit zu `NULL`, wie oben — keine 422 für etwas, das eine eindeutige Bedeutung hat |
-| `POST /api/rooms/rename`, Quellraum trägt kein aktives Gerät | 404, mit dem Namen in der Meldung — analog zu `GET /devices/{id}` für ein entferntes Gerät |
-| `POST /api/rooms/rename` mit leerem Zielnamen | 422 — „Raum umbenennen" ist nicht der Weg, einen Raum aufzulösen; dafür gibt es die Raumwahl an der Kachel |
-| `POST /api/devices/commission` mit `room` | Raum wird mitgeschrieben; scheitert das Einlernen, entsteht kein Gerät und damit auch kein Raum |
-| Gerät offline | unverändert wie bisher: Werte zeigen den letzten Stand, Kachel gedimmt, Befehle deaktiviert. Raumwahl und Export bleiben bedienbar — beide brauchen das Gerät nicht |
-| `device_types IS NULL` (noch nicht nachgetragen) | Kategorie `other`, Icon `#i-device`, einsortiert ans Ende des Raums. Kein Hinweis, keine Warnung — der Zustand behebt sich beim nächsten Start von selbst |
+| `PATCH /api/devices/{id}` with `room: ""` | room is removed (`NULL`), 200 — that is the documented meaning, not an error |
+| `PATCH` with a room name made of pure whitespace | is trimmed and thus becomes `NULL`, as above — no 422 for something that has an unambiguous meaning |
+| `POST /api/rooms/rename`, source room carries no active device | 404, with the name in the message — analogous to `GET /devices/{id}` for a removed device |
+| `POST /api/rooms/rename` with an empty target name | 422 — "rename room" is not the way to dissolve a room; the room selector on the tile exists for that |
+| `POST /api/devices/commission` with `room` | room is written along with it; if commissioning fails, no device and thus no room is created |
+| Device offline | unchanged from before: values show the last state, tile dimmed, commands disabled. Room selection and export remain usable — neither needs the device |
+| `device_types IS NULL` (not yet backfilled) | category `other`, icon `#i-device`, sorted to the end of the room. No hint, no warning — the state resolves itself on the next start |
 
-## 9. Prüfung
+## 9. Verification
 
-**Store und Migration**
+**Store and Migration**
 
-- Eine Datenbank auf Version 6 bekommt beide Spalten und steht danach auf 7;
-  eine frisch angelegte hat sie durch `_SCHEMA` bereits und übersteht
-  `_migrate_to_v7` ohne „duplicate column".
-- `set_room` verändert `updated_at` **nicht**: ein Gerät, das laut
-  `GET /api/export/status` nicht ausstehend ist, ist es nach einer
-  Raumzuweisung immer noch nicht. Dasselbe für `backfill_device_types`.
-- `rename_device` setzt `updated_at` weiterhin — der bestehende Test dazu
-  muss unverändert grün bleiben.
-- `backfill_device_types` überschreibt eine bereits gefüllte Zeile nicht,
-  und ein Gerät, das in den übergebenen Abbildern fehlt, behält seine Typen.
-- `rename_room` fasst nur aktive Geräte an: ein über `forget_device`
-  entferntes Gerät im selben Raum behält seinen alten Raumnamen in der
-  Zeile.
+- A database at version 6 gets both columns and is at 7 afterward;
+  a freshly created one already has them via `_SCHEMA` and survives
+  `_migrate_to_v7` without a "duplicate column".
+- `set_room` does **not** change `updated_at`: a device that per
+  `GET /api/export/status` is not pending is still not pending after a
+  room assignment. The same for `backfill_device_types`.
+- `rename_device` continues to set `updated_at` — the existing test for
+  that must stay green unchanged.
+- `backfill_device_types` does not overwrite an already-filled row,
+  and a device missing from the passed snapshots keeps its types.
+- `rename_room` only touches active devices: a device removed via
+  `forget_device` in the same room keeps its old room name in its
+  row.
 
-**Kategorie**
+**Category**
 
-- Ein Knoten mit Root Node auf Endpunkt 0 und On/Off Plug-in Unit auf
-  Endpunkt 1 ergibt `socket` — Endpunkt 0 wird übersprungen.
-- Ein Endpunkt mit zwei zuordenbaren Typen ergibt den mit dem niedrigeren
-  Rang, unabhängig von der Reihenfolge in der Deklaration.
-- Unbekannte Typ-ID und `device_types = NULL` ergeben beide `other`.
+- A node with Root Node on endpoint 0 and On/Off Plug-in Unit on
+  endpoint 1 gives `socket` — endpoint 0 is skipped.
+- An endpoint with two mappable types gives the one with the lower
+  rank, independent of the order in the declaration.
+- An unknown type ID and `device_types = NULL` both give `other`.
 
 **API**
 
-- `PATCH /api/devices/{id}` mit nur `room` lässt das Label unangetastet, mit
-  nur `label` den Raum.
-- `POST /api/rooms/rename` auf einen bestehenden Zielnamen führt zusammen
-  und meldet die Gesamtzahl der geänderten Geräte.
-- `POST /api/devices/commission` mit `room` liefert ein `DeviceOut`, dessen
-  `room` gesetzt ist.
+- `PATCH /api/devices/{id}` with only `room` leaves the label untouched, with
+  only `label` leaves the room untouched.
+- `POST /api/rooms/rename` onto an existing target name merges
+  and reports the total number of changed devices.
+- `POST /api/devices/commission` with `room` returns a `DeviceOut` whose
+  `room` is set.
 
-**Oberfläche** (im Stil der bestehenden `tests/api/test_web.py`)
+**UI** (in the style of the existing `tests/api/test_web.py`)
 
-- Raumleiste, Suchfeld und Raumwahl an der Kachel sind im ausgelieferten
-  HTML vorhanden.
-- Alle neuen sichtbaren Texte kommen über `t(...)` und haben in
-  `strings.yaml` sowohl `en` als auch `de` — dafür gibt es in
-  `tests/test_i18n.py` bereits die Vollständigkeitsprüfung.
+- Room bar, search field, and room selector on the tile are present in
+  the served HTML.
+- All new visible text goes through `t(...)` and has both `en` and `de`
+  in `strings.yaml` — `tests/test_i18n.py` already has the
+  completeness check for that.
 
-## 10. Offene Punkte
+## 10. Open Points
 
-1. Die vollständige Tabelle Matter-Typ-ID → Kategorie (5.1) gehört in den
-   Implementierungsplan und muss pro Eintrag gegen
-   `matter_server.client.models.device_types` belegt werden.
-2. Ob ein Gerät, dessen Typen sich beim erneuten Interview ändern (etwa nach
-   einem Firmware-Update), seine `device_types` aktualisiert bekommen soll,
-   ist bewusst offen gelassen: `backfill_device_types` schreibt nur
-   `NULL`-Zeilen. Der Fall ist bisher nie beobachtet worden und bekommt
-   keine Mechanik auf Verdacht.
-3. Die Suche greift nur auf das zu, was `GET /api/devices` liefert — Name,
-   Kategorie, Raum. Ob sie später auch Signaltitel durchsuchen soll, ist
-   eine eigene Frage; sie bräuchte die Signale aller Geräte im Frontend und
-   damit einen anderen Ladeweg.
+1. The complete table of Matter type ID → category (5.1) belongs in the
+   implementation plan and must be confirmed per entry against
+   `matter_server.client.models.device_types`.
+2. Whether a device whose types change on re-interview (e.g. after
+   a firmware update) should get its `device_types` updated
+   is deliberately left open: `backfill_device_types` only writes
+   `NULL` rows. This case has never been observed so far and gets
+   no mechanism on spec.
+3. Search only reaches into what `GET /api/devices` delivers — name,
+   category, room. Whether it should later also search signal titles is
+   its own question; it would need the signals of all devices in the frontend and
+   thus a different loading path.
