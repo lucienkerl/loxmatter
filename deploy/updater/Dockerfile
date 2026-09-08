@@ -1,26 +1,26 @@
-# Der Updater-Beiwagen (Entwurf "Updates ueber die Oberflaeche einspielen",
-# 2026-09-08, Abschnitt 6).
+# The updater sidecar (design "Applying updates through the web UI",
+# 2026-09-08, section 6).
 #
-# Dieser Container haelt den Docker-Socket und ist damit root-gleichwertig
-# auf dem Host. Abgesichert wird das durch Enge, nicht durch Rechte: keine
-# Ports, kein Host-Netz (siehe Compose-Datei), ein einziges festes
-# Arbeitsprogramm - und diese Basis hier gepinnt statt `latest`, damit ein
-# Neubau nie eine Ueberraschung ist.
+# This container holds the Docker socket and is thereby root-equivalent
+# on the host. That is secured through narrowness, not through privileges:
+# no ports, no host network (see the Compose file), a single fixed
+# work program - and this base pinned instead of `latest`, so a rebuild
+# is never a surprise.
 #
-# Bewusst NICHT das loxmatter-Image mit anderem Einstiegspunkt: der
-# Beiwagen darf nicht dasselbe Image sein wie das, das er austauscht, sonst
-# ersetzt ein Update den Prozess, der es gerade ausfuehrt.
+# Deliberately NOT the loxmatter image with a different entrypoint: the
+# sidecar must not be the same image as the one it replaces, or an update
+# would replace the process that is running it.
 FROM alpine:3.20
 
-# docker-cli-compose bringt das `docker compose`-Unterkommando mit - der
-# Beiwagen ruft ausschliesslich Compose auf, nie ein nacktes `docker run`
-# oder `docker build`. Der Grund steht seit 2026-09-03 in scripts/update.sh:
-# der Dienst baut ueber seinen `build:`-Block sein eigenes Image, und ein
-# daneben gebautes benutzt niemand.
+# docker-cli-compose brings the `docker compose` subcommand along - the
+# sidecar only ever invokes Compose, never a bare `docker run` or
+# `docker build`. The reason has been in scripts/update.sh since 2026-09-03:
+# the service builds its own image via its `build:` block, and one built
+# alongside it would go unused.
 #
-# coreutils wegen `sort -V`: die Pruefung "nur vorwaerts" (Spec-Abschnitt
-# 10, Regel 3) vergleicht semantische Versionen, und busybox' sort kann
-# das nicht verlaesslich.
+# coreutils for `sort -V`: the "forward only" check (spec section
+# 10, rule 3) compares semantic versions, and busybox's sort cannot
+# do that reliably.
 RUN apk add --no-cache \
       docker-cli \
       docker-cli-compose \

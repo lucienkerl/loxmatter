@@ -89,10 +89,10 @@ jobs:
             LOXMATTER_BUILT_AT=${{ steps.meta.outputs.built_at }}
             LOXMATTER_SCHEMA_VERSION=${{ steps.meta.outputs.schema }}
 
-  # Der Beiwagen. Eigener Job und eigenes Image, weil er NICHT dasselbe
-  # Image sein darf wie das, das er austauscht: sonst ersetzte ein Update
-  # den Prozess, der es gerade ausfuehrt. Er aendert sich selten - deshalb
-  # ohne :dev-Tag, nur auf Releases.
+  # The sidecar. Its own job and its own image, because it must NOT be the
+  # same image as the one it replaces: otherwise an update would replace
+  # the process that is running it. It changes rarely - hence no :dev tag,
+  # only on releases.
   updater-image:
     needs: test
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')

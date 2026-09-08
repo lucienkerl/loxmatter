@@ -14,17 +14,16 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-# Die Schleife des Beiwagens - Entwurf "Updates ueber die Oberflaeche
-# einspielen" (2026-09-08), Abschnitt 6.
+# The sidecar's loop - design "Applying updates through the web UI"
+# (2026-09-08), section 6.
 #
-# Bewusst duenn: aller Verstand steckt in update-once.sh, und zwar
-# vollstaendig. Nur so laesst sich ein Durchlauf im Test aufrufen, ohne
-# eine Endlosschleife anzuwerfen und wieder abzuwuergen.
+# Deliberately thin: all the logic lives in update-once.sh, entirely. Only
+# that way can a single run be invoked in a test, without spinning up an
+# endless loop and having to kill it again.
 #
-# `|| true`: ein einzelner misslungener Durchlauf darf den Beiwagen nicht
-# beenden. Er ist der Einzige, der einen kaputten Zustand ueberhaupt noch
-# melden kann - ein Container, der sich bei einem Fehler beendet, nimmt
-# genau diese Meldung mit.
+# `|| true`: a single failed run must not terminate the sidecar. It is the
+# only one still able to report a broken state at all - a container that
+# exits on error takes exactly that report down with it.
 set -u
 
 while true; do
