@@ -66,13 +66,48 @@ zusaetzlich neue, die uns nicht stoeren.
 
 ### 2.2 Methodensignaturen
 
-`matter/client.py` ruft genau sechs Methoden des Upstream-Clients auf:
-`start_listening`, `disconnect`, `get_nodes`, `subscribe_events`,
-`send_device_command`, `commission_with_code` (`connect` gehoert **nicht**
-dazu — `BridgeMatterClient.connect()` startet stattdessen `start_listening`
-als Hintergrund-Task und wartet auf dessen Bereitschafts-Event, siehe
-Moduldocstring). Alle sechs sind vorhanden, und die drei heiklen sind
-zeichengleich:
+> **Berichtigung (Schluss-Review, 8. September 2026).** Dieser Abschnitt sagte
+> zuerst „genau sechs Methoden" und zaehlte `start_listening`, `disconnect`,
+> `get_nodes`, `subscribe_events`, `send_device_command`, `commission_with_code`.
+> Das war falsch: es sind **acht Methoden und zusaetzlich eine gelesene
+> Eigenschaft**. Uebersehen waren `remove_node`, `set_thread_operational_dataset`
+> und der Zugriff auf `upstream.server_info`. Die Auslassung ist nicht harmlos —
+> sie trifft ausgerechnet den einen Aufruf, dessen Nutzlast sich aendert (siehe
+> unten). Ein Entwurf, der seine eigene Berichtigung verschweigt, ist als Beleg
+> weniger wert; deshalb steht die falsche Fassung hier und wird nicht getilgt.
+> Der Commit `beee42f` wiederholt die Zahl sechs in seiner Nachricht — die ist
+> Geschichte und bleibt stehen.
+
+`matter/client.py` ruft acht Methoden des Upstream-Clients auf und liest
+zusaetzlich eine Eigenschaft. `connect` gehoert **nicht** dazu —
+`BridgeMatterClient.connect()` startet stattdessen `start_listening` als
+Hintergrund-Task und wartet auf dessen Bereitschafts-Event, siehe
+Moduldocstring.
+
+| Beruehrstelle | Aufruf | im neuen Paket |
+| --- | --- | --- |
+| `matter/client.py:282` | `start_listening(ready)` | vorhanden |
+| `matter/client.py:378` | `disconnect()` | vorhanden |
+| `matter/client.py:413,676,777` | `get_nodes()` | vorhanden, liefert weiterhin `MatterNode` |
+| `matter/client.py:444` | `commission_with_code(code)` | vorhanden, siehe unten |
+| `matter/client.py:461` | `remove_node(node_id)` | vorhanden, zeichengleich |
+| `matter/client.py:489` | `server_info` (gelesen) | vorhanden als `property -> ServerInfoMessage \| None` |
+| `matter/client.py:522` | `set_thread_operational_dataset(dataset)` | vorhanden, **Nutzlast geaendert**, siehe unten |
+| `matter/client.py:564` | `send_device_command(...)` | vorhanden, siehe unten |
+| `matter/client.py:604,667` | `subscribe_events(...)` | vorhanden, siehe unten |
+
+Die Zeilennummern sind der Stand **nach** den Kommentar-Berichtigungen der
+Schluss-Review (Befund B6). Die Nummern in Abschnitt 2.1 stammen von davor
+und sind deshalb um 15 bzw. 33 Zeilen kleiner als die heutigen — die
+Ergaenzungen sind Docstring-Prosa, keine Anweisungen.
+
+Weder `remove_node` noch `set_thread_operational_dataset` noch
+`upstream.server_info` sind von der Testsuite gedeckt — die Tests benutzen
+durchgehend eine Attrappe — und keiner von mypy, weil `_upstream` als `Any`
+gefuehrt wird. Fuer diese drei ist der Quelltextvergleich unten die einzige
+Absicherung, die es gibt.
+
+Die drei heiklen sind zeichengleich:
 
 - `subscribe_events(callback, event_filter, node_filter, attr_path_filter)` —
   identische Signatur, identisches Schluessel-Matching ueber
@@ -91,6 +126,36 @@ zeichengleich:
 `MatterNode` traegt weiterhin `node_data` als Attribut, `get_nodes()` liefert
 weiterhin `MatterNode`. Der Unterschied zwischen beiden Typen, den
 `matter/client.py` im Docstring festhaelt, besteht unveraendert fort.
+
+#### `set_thread_operational_dataset` — der einzige Aufruf mit geaenderter Nutzlast
+
+Das ist die Stelle, die die erste Fassung dieses Abschnitts uebersehen hatte,
+und zugleich die einzige, an der sich etwas aendert:
+
+| | Signatur | ueber den Draht |
+| --- | --- | --- |
+| `python-matter-server` 8.1.2 | `set_thread_operational_dataset(dataset)` | `dataset` |
+| `matter-python-client` 1.4.0 | `set_thread_operational_dataset(dataset, entry_id="default")` | `dataset`, **`id`** |
+
+loxmatter gibt `entry_id` nicht an (`matter/client.py:522`), bekommt also
+`"default"` — und nur fuer `entry_id != "default"` verlangt der neue Client
+ueberhaupt eine hoehere Schema-Version (`require_schema=12`, sonst `None`).
+Der Aufruf faellt damit nicht unter die Schema-Pruefung aus Abschnitt 2.5.
+
+**Warum das trotzdem traegt, auch gegen einen alten 8.1.2-Server:** dessen
+Argument-Aufloesung laeuft mit `strict=False`
+(`matter_server/common/helpers/api.py:51,57`) und verwirft unbekannte
+Schluessel stillschweigend, statt den Aufruf abzulehnen. Das zusaetzliche `id`
+kommt an und wird ignoriert.
+
+**Warum das hier trotzdem als Befund steht, obwohl es harmlos ist:** die
+gesamte Sicherheit der Zweiteilung dieses Umstiegs — erst die Bibliothek
+tauschen, dann das Server-Image — beruht auf Drahtkompatibilitaet in beide
+Richtungen. Der Entwurf hat diese Zweiteilung damit begruendet und
+ausgerechnet den einen Aufruf nicht geprueft, bei dem sie haette scheitern
+koennen. Dass sie haelt, ist jetzt belegt; vorher war es unbelegt und wurde
+als belegt dargestellt. Derselbe Sachverhalt steht im Docstring von
+`BridgeMatterClient.set_thread_dataset`.
 
 ### 2.3 Kommandoklassen
 

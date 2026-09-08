@@ -605,3 +605,36 @@ EOF
 | 6. Nicht Teil dieses Entwurfs | keine Aufgabe — bewusst |
 
 **Abweichung vom Entwurf:** Der Entwurf nennt zwei Commits, dieser Plan hat drei. Aufgabe 1 kam hinzu, weil beim Schreiben des Plans auffiel, dass Abschnitt 2.3 sich auf die Kommandoklassen stützt, für `ColorControl` aber kein Test durch `chip` läuft. Ohne diesen Test bewachte die Suite den Austausch für `LevelControl`, nicht für die zuletzt gebaute Fähigkeit.
+
+---
+
+## Nachtrag (Schluss-Review, 8. September 2026)
+
+Der Plantext oben bleibt unverändert. Er ist das Protokoll dessen, was
+beauftragt war — nicht dessen, was am Ende im Repository steht. Wer ihn
+abtippt, tippt zwei Fehler mit ab, die die Umsetzung inzwischen behoben hat.
+Beide stecken in **Aufgabe 3, Schritt 4** (dem Markdown-Block, der die
+Umzugsanleitung setzt), beide sind mit Commit `0bfd53b` behoben:
+
+1. **`GET /api/diagnostics` ist keine Route.** Der Plan nennt sie als Beleg
+   dafür, dass der Umzug durch ist. Der Router trägt `/api/diagnostics` als
+   Präfix, die Route darunter heißt `/system` (`api/diagnostics.py`) — ein
+   blanker Aufruf antwortet mit 404, also mit demselben Fehlschlag, den er
+   ausschließen soll. Richtig ist **`GET /api/diagnostics/system`**. Der
+   README sagt seit `0bfd53b` zusätzlich dazu, dass der kurze Pfad nicht
+   existiert, damit niemand ihn für einen Tippfehler hält.
+2. **Der Befehlsblock mischte zwei Arbeitsverzeichnisse.** `chown`/`chmod`
+   nahmen einen Pfad ab Repo-Wurzel (`deploy/testhost/data`), `docker
+   compose` hätte aus `deploy/testhost` laufen müssen. Als Block gelesen
+   scheitert der erste `docker compose`-Aufruf mit „no configuration file
+   provided". Richtig ist ein `cd ~/matter-loxone/deploy/testhost` voran und
+   danach das relative `data`, wie der Rest des README es hält.
+
+Ein dritter Punkt betrifft nicht den Plan, sondern den Entwurf, auf den er
+sich stützt: Abschnitt 2.2 zählte die Berührpunkte falsch („genau sechs
+Methoden"). Die Zahl steht so auch in der Commit-Nachricht, die Aufgabe 2,
+Schritt 10 vorgibt („alle sechs benutzten Methodensignaturen"), und ist damit
+in `beee42f` eingegangen. Beides bleibt stehen; die Berichtigung — es sind
+acht Methoden und eine gelesene Eigenschaft, und die Nutzlast von
+`set_thread_operational_dataset` ändert sich — steht im Entwurf,
+Abschnitt 2.2.
