@@ -323,9 +323,25 @@ def test_an_element_of_an_unknown_cluster_gets_the_default():
 
 
 def test_every_rank_in_the_table_is_an_integer():
-    """Ein `rank: "10"` aus einem Tippfehler waere in YAML eine Zeichenkette
-    und wuerde beim Sortieren gegen eine Zahl werfen - erst zur Laufzeit,
-    beim Oeffnen einer Geraeteansicht."""
+    """Fund (Abschlusspruefung): die alte Schleife lief nur ueber
+    `cluster["rank"]` - die ELEMENTRAENGE unter `attributes:`/`events:`
+    (z. B. `events: {1: {slug: press, rank: 10}}`, siehe Cluster 59 in
+    `clusters.yaml`) sah sie nie, obwohl der Name "every rank in the
+    table" das verspricht. Ein `rank: 10.5` an einem Element (jemand will
+    es zwischen zwei andere schieben) wuerde von `int(10.5)` in
+    `element_rank_for` still zu 10 - die Reihenfolge weicht von der
+    Absicht ab, der alte Test blieb aber gruen, weil er die Elementebene
+    gar nicht ansah.
+
+    Die alte Begruendung war ausserdem falsch: `rank_for` und
+    `element_rank_for` rufen beide `int(rank)` - ein `rank: "10"` aus
+    einem Tippfehler wuerde also NICHT "beim Sortieren gegen eine Zahl
+    werfen", sondern klaglos zu 10 werden. Der tatsaechliche Schaden ist
+    eine stille Abweichung von der Sortierabsicht, kein Absturz."""
     for cluster_id, cluster in table._table().items():
         if "rank" in cluster:
             assert isinstance(cluster["rank"], int), cluster_id
+        for section in ("attributes", "events"):
+            for element_id, element in (cluster.get(section) or {}).items():
+                if isinstance(element, dict) and "rank" in element:
+                    assert isinstance(element["rank"], int), (cluster_id, section, element_id)
