@@ -16,27 +16,27 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-# Bringt die laufende Bruecke auf den Stand der veroeffentlichten Version.
+# Brings the running bridge to the state of the published version.
 #
-#   ./scripts/update.sh              # holen, Image ziehen, neu starten
-#   ./scripts/update.sh --no-pull    # nur ziehen und neu starten
-#   ./scripts/update.sh --build      # aus der Quelle bauen statt ziehen
-#   ./scripts/update.sh --build --no-cache   # ohne Layer-Cache bauen
+#   ./scripts/update.sh              # fetch, pull image, restart
+#   ./scripts/update.sh --no-pull    # pull and restart only
+#   ./scripts/update.sh --build      # build from source instead of pulling
+#   ./scripts/update.sh --build --no-cache   # build without layer cache
 #
 # Run this on the machine where the bridge runs. The stack lives inside the
 # repository itself (deploy/testhost/), the script finds it via its own
 # path - no configuration step needed.
 #
-# Seit 0.2.0 wird gezogen statt gebaut: der Bau brauchte auf dem Test-Pi
-# fuenf bis zehn Minuten und konnte an einem PyPI-Ausfall oder am
-# Speicher scheitern. --build stellt den alten Weg wieder her, fuer
-# Entwicklung und fuer Hosts ohne Zugang zur Registry.
+# Since 0.2.0 we pull instead of building: building took five to ten
+# minutes on the test Pi and could fail on a PyPI outage or
+# out of memory. --build restores the old way for
+# development and for hosts without access to the registry.
 #
-# Der Dienst wird mit `--no-deps` gestartet: matter-server und OTBR bleiben
-# unangetastet. Ohne das erzeugt Compose sie mit neu, sobald sich die
-# Projektkonfiguration geaendert hat - und OTBRs Thread-Zustand haengt an
-# einem Volume, das ein Neubau zwar ueberlebt, aber ein Neustart des
-# Thread-Netzes ohne Grund gehoert nicht zu einem Update.
+# The service is started with `--no-deps`: matter-server and OTBR remain
+# untouched. Without this, Compose recreates them whenever
+# the project configuration changes - and OTBR's Thread state is tied to
+# a volume that a rebuild survives, but a restart of the
+# Thread network for no reason is not part of an update.
 set -euo pipefail
 
 PULL=1
@@ -48,14 +48,14 @@ for arg in "$@"; do
     --build)    BUILD=1 ;;
     --no-cache) NO_CACHE=1 ;;
     -h|--help)  sed -n '18,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)          printf 'Unbekanntes Argument: %s (erlaubt: --no-pull, --build, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
+    *)          printf 'Unknown argument: %s (allowed: --no-pull, --build, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
   esac
 done
-# --no-cache steuert einen Bau. Ohne --build steuert es gar nichts, und
-# ein Schalter, der stillschweigend wirkungslos bleibt, ist schlimmer als
-# einer, der fehlt: er laesst jemanden glauben, er habe frisch gebaut.
+# --no-cache controls a build. Without --build it does nothing at all, and
+# a switch that silently has no effect is worse than
+# one that is missing: it makes someone believe they built fresh.
 if [ -n "$NO_CACHE" ] && [ "$BUILD" -eq 0 ]; then
-  printf 'Abbruch: --no-cache wirkt nur zusammen mit --build.\n' >&2
+  printf 'Aborting: --no-cache only works together with --build.\n' >&2
   exit 2
 fi
 
@@ -105,20 +105,20 @@ else
   printf '\nNo database volume found (%s) - first run?\n' "$VOLUME"
 fi
 
-# Ziehen statt bauen (0.2.0). Der lange Kommentar von 2026-09-03 darueber,
-# dass `docker compose build` und nicht ein eigenes `docker build` zu
-# benutzen ist, gilt unveraendert weiter - er betrifft jetzt nur noch den
-# --build-Zweig unten. Die Ursache von damals bleibt dieselbe: der Dienst
-# traegt in der Compose-Datei einen `build:`-Block und baut sein eigenes
-# Image; ein daneben gebautes `loxmatter:local` benutzt niemand.
+# Pull instead of build (0.2.0). The long comment from 2026-09-03 about
+# using `docker compose build` and not a separate `docker build`
+# still holds - it now only affects the
+# --build branch below. The reason from then remains the same: the service
+# carries a `build:` block in the Compose file and builds its own
+# image; no one uses a separate built `loxmatter:local`.
 if [ "$BUILD" -eq 1 ]; then
-  say "Baue das Image"
+  say "Building the image"
   (cd "$STACK" && docker compose build ${NO_CACHE:+--no-cache} "$SERVICE") \
-    || die "Build fehlgeschlagen - der laufende Dienst bleibt unveraendert."
+    || die "Build failed - the running service remains unchanged."
 else
-  say "Hole das Image"
+  say "Pulling the image"
   (cd "$STACK" && docker compose pull "$SERVICE") \
-    || die "Kein Image geladen - der laufende Dienst bleibt unveraendert. Ohne Zugang zur Registry hilft --build."
+    || die "No image loaded - the running service remains unchanged. Without access to the registry, --build helps."
 fi
 
 say "Restarting the service"

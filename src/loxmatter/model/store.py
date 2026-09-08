@@ -114,13 +114,13 @@ _SCHEMA_VERSION = 7
 
 
 def schema_version() -> int:
-    """Die Schema-Version dieses Moduls, oeffentlich lesbar.
+    """The schema version of this module, publicly readable.
 
-    `_SCHEMA_VERSION` bleibt privat: wer sie aendert, soll den langen
-    Kommentarblock darueber sehen, der jede einzelne Stufe begruendet.
-    Diese Funktion gibt sie nach aussen, damit `loxmatter.version` und die
-    CI nicht auf einen privaten Namen zugreifen muessen - und damit es
-    genau EINE Quelle fuer diese Zahl gibt.
+    `_SCHEMA_VERSION` remains private: whoever changes it should see the long
+    comment block above it, which justifies each step.
+    This function exposes it outward so that `loxmatter.version` and the
+    CI don't need to access a private name - and so there is
+    exactly ONE source for this number.
     """
     return _SCHEMA_VERSION
 

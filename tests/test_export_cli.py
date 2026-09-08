@@ -29,24 +29,22 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _plain(output: str) -> str:
-    """Entfernt ANSI-Sequenzen aus CLI-Ausgaben, bevor auf Nachrichtentext
-    geprueft wird.
+    """Removes ANSI sequences from CLI output before checking message text.
 
-    Vorfall: `test_export_requires_node_or_fixture(_in_german)` waren fuenf
-    aufeinanderfolgende CI-Laeufe auf main rot, obwohl sie lokal in 1,8s
-    gruen liefen. Ursache ist `typer.rich_utils.FORCE_TERMINAL`, das
-    `GITHUB_ACTIONS` auswertet und Rich damit unter Actions zum Faerben
-    zwingt - lokal erkennt Rich denselben, nicht an ein TTY angehaengten
-    Stream als "kein Terminal" und laesst die Nachricht platt. Rich
-    faerbt dabei Optionsnamen wie `--node` einzeln ein ("-" und "-node"
-    bekommen getrennte Escape-Sequenzen), sodass die reine Teilstring-
-    Pruefung selbst mit `NO_COLOR` fehlschlaegt: `NO_COLOR` unterdrueckt
-    nur Farbe, nicht die Fett-Formatierung, die den Optionsnamen zerlegt.
-    Robuster als Umgebungsvariablen (die `typer.rich_utils.FORCE_TERMINAL`
-    ohnehin nur beim allerersten Import auswertet) ist es, die
-    Rich-Formatierung aus der eingefangenen Ausgabe wieder herauszunehmen,
-    bevor der Nachrichtentext geprueft wird - unabhaengig davon, ob und wie
-    eine bestimmte Rich-Version gerade faerbt."""
+    Incident: `test_export_requires_node_or_fixture(_in_german)` were five
+    consecutive CI runs on main that were red, even though they ran green locally in 1.8s.
+    Cause is `typer.rich_utils.FORCE_TERMINAL`, which
+    evaluates `GITHUB_ACTIONS` and forces Rich to color output under Actions - locally,
+    Rich sees the same stream without a TTY as "not a terminal" and leaves the message plain.
+    Rich colors option names like `--node` individually ("-" and "-node"
+    get separate escape sequences), so the pure substring
+    check fails even with `NO_COLOR`: `NO_COLOR` suppresses
+    only color, not the bold formatting that breaks up the option name.
+    More robust than environment variables (which `typer.rich_utils.FORCE_TERMINAL`
+    only evaluates at the very first import anyway) is to
+    remove the Rich formatting from the captured output
+    before the message text is checked - regardless of whether and how
+    a specific Rich version is currently coloring."""
     return _ANSI_ESCAPE.sub("", output)
 
 

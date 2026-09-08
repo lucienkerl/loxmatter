@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,19 +14,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Verhaltenstests fuer scripts/update.sh.
+"""Behavior tests for scripts/update.sh.
 
-Dasselbe Verfahren wie in `test_install_script.py`: das Skript laeuft
-gegen einen versiegelten PATH aus gefaelschten Binaries, und geprueft
-wird, WELCHE Befehle es waehlt - nicht, was sie bewirken. Ein echtes
-`docker compose pull` waere weder in der CI noch auf einem
-Entwicklungsrechner zumutbar.
+Same procedure as in `test_install_script.py`: the script runs
+against a sealed PATH of fake binaries, and what's tested is
+WHICH commands it chooses - not what they do. A real
+`docker compose pull` would be unreasonable in CI or on a
+development machine.
 
-Der wichtigste Test unten ist `test_ohne_build_wird_nie_gebaut`: das
-Skript baute vor 0.2.0 immer, und der ganze Sinn dieser Aenderung ist,
-dass ein Update auf einem Pi keine fuenf bis zehn Minuten mehr dauert.
-Ein zurueckgerutschtes `compose build` faellt sonst niemandem auf - es
-funktioniert ja, nur langsam."""
+The most important test below is `test_without_build_never_builds`: the
+script always built before 0.2.0, and the whole point of this change is
+that an update on a Pi no longer takes five to ten minutes.
+A regressed `compose build` otherwise goes unnoticed - it
+works, just slowly."""
 
 from __future__ import annotations
 
@@ -63,11 +63,11 @@ SYSTEM_TOOLS = (
 
 @pytest.fixture
 def sealed(tmp_path):
-    """Ein PATH aus zwei Verzeichnissen: gefaelschte Werkzeuge und die
-    echten, die das Skript legitim braucht. Jeder Stub protokolliert seinen
-    Aufruf nach $STUB_LOG und endet erfolgreich - `curl` gibt zusaetzlich
-    eine Gesundheitsantwort aus, damit die Warteschleife sofort
-    weiterlaeuft statt 120 Sekunden zu warten."""
+    """A PATH from two directories: fake tools and the
+    real ones the script legitimately needs. Each stub logs its
+    call to $STUB_LOG and exits successfully - `curl` additionally
+    outputs a health response so the wait loop
+    continues immediately instead of waiting 120 seconds."""
     bindir = tmp_path / "bin"
     sysdir = tmp_path / "sys"
     bindir.mkdir()
@@ -81,13 +81,13 @@ def sealed(tmp_path):
         )
         path.chmod(0o755)
 
-    # "docker run ... tar czf X ..." (die Datenbanksicherung) muss die
-    # Zieldatei wirklich anlegen: das anschliessende `ls store-*.tgz` im
-    # Skript laeuft unter `pipefail`, und ohne Treffer scheitert `ls` mit
-    # Exitstatus 1 - das Skript braeche ab, bevor es je zum Ziehen oder
-    # Bauen kaeme. Ein Stub, der nur protokolliert, waere hier zu duenn.
-    # Der Zielpfad steckt im Container hinter `/backup/...` - der Stub
-    # sucht das `-v HOSTDIR:/backup` und schreibt dorthin zurueck.
+    # "docker run ... tar czf X ..." (the database backup) must actually
+    # create the target file: the following `ls store-*.tgz` in the
+    # script runs under `pipefail`, and without a match `ls` fails with
+    # exit status 1 - the script would break before it ever got to pulling or
+    # building. A stub that only logs would be too thin here.
+    # The target path is hidden in the container behind `/backup/...` - the stub
+    # looks for the `-v HOSTDIR:/backup` and writes back there.
     stub(
         "docker",
         'if [ "$1" = "run" ]; then\n'
@@ -134,41 +134,41 @@ def sealed(tmp_path):
     return run
 
 
-def test_es_zieht_das_image_statt_es_zu_bauen(sealed):
+def test_it_pulls_the_image_instead_of_building_it(sealed):
     _, calls = sealed("--no-pull")
     assert "compose pull loxmatter" in calls
 
 
-def test_ohne_build_wird_nie_gebaut(sealed):
+def test_without_build_never_builds(sealed):
     _, calls = sealed("--no-pull")
     assert "compose build" not in calls
 
 
-def test_mit_build_wird_gebaut_und_nicht_gezogen(sealed):
+def test_with_build_it_builds_and_does_not_pull(sealed):
     _, calls = sealed("--no-pull", "--build")
     assert "compose build loxmatter" in calls
     assert "compose pull loxmatter" not in calls
 
 
-def test_das_ziehen_kommt_vor_dem_neustart(sealed):
+def test_pulling_comes_before_restarting(sealed):
     _, calls = sealed("--no-pull")
     assert calls.index("compose pull") < calls.index("compose up")
 
 
-def test_der_neustart_laesst_die_nachbardienste_in_ruhe(sealed):
-    # --no-deps: OTBRs Thread-Zustand haengt an einem Volume, und ein
-    # Neustart des Thread-Netzes gehoert nicht zu einem Update.
+def test_restart_leaves_neighbor_services_alone(sealed):
+    # --no-deps: OTBR's Thread state is tied to a volume, and restarting
+    # the Thread network is not part of an update.
     _, calls = sealed("--no-pull")
     up_line = next(line for line in calls.splitlines() if "compose up" in line)
     assert "--no-deps" in up_line
 
 
-def test_die_datenbank_wird_vor_allem_anderen_gesichert(sealed):
+def test_database_is_backed_up_before_everything_else(sealed):
     _, calls = sealed("--no-pull")
     assert calls.index("volume inspect") < calls.index("compose pull")
 
 
-def test_no_cache_ohne_build_wird_abgewiesen(sealed):
+def test_no_cache_without_build_is_rejected(sealed):
     result, _ = sealed("--no-pull", "--no-cache")
     assert result.returncode != 0
     assert "--build" in result.stderr

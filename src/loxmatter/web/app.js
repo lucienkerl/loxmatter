@@ -657,8 +657,8 @@ function app() {
     exportError: null,
 
     // --- System ----------------------------------------------------------
-    // Die Bau-Identitaet (GET /api/version). `null`, solange der System-Tab
-    // nicht geoeffnet war - die Karte zeigt dann nichts statt "undefined".
+    // Build identity (GET /api/version). `null` as long as the System tab
+    // hasn't been opened - the card then shows nothing instead of "undefined".
     versionInfo: null,
     systemChecks: [],
     systemError: null,
@@ -2832,9 +2832,9 @@ function app() {
       this.systemError = null;
       this.diagnosticsBusy = true;
       try {
-        // Vor den Pruefungen, nicht danach: die Version steht als erste
-        // Karte im Tab, und sie soll nicht erst erscheinen, wenn die
-        // Pruefungen (die echte Netzarbeit machen) durch sind.
+        // Before the checks, not after: the version is the first
+        // card in the tab, and it should not appear only after the
+        // checks (which do real network work) are done.
         this.versionInfo = await this.request("GET", "/api/version");
         this.systemChecks = await this.request("GET", "/api/diagnostics/system");
       } catch (error) {

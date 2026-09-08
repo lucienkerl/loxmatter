@@ -215,21 +215,21 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
         """Only named commands become a control (Spec 6.7: output commands
         come from AcceptedCommandList, not from attributes).
 
-        Der Rohexport (`loxmatter export --raw`, `export.commands.
-        extract_commands(..., raw=True)`) kann Kommandos ohne Eintrag in
-        `clusters.yaml` in den Store schreiben - ihr Slug ist dann ein
-        generischer Platzhalter wie `c4_cmd0` (siehe dort). Ein Knopf mit
-        dieser Beschriftung waere fuer die Bedienoberflaeche nutzlos: niemand
-        weiss, was `c4_cmd0` bewirkt, ohne die Vorlage zu lesen - und ein
-        Klick auf einen Knopf ohne erkennbare Bedeutung ist das Gegenteil
-        von Spec 8.1s "ein Klick trennt die beiden moeglichen Ursachen".
-        `command_slug` ist dieselbe Quelle, die auch `to_matter_calls`
-        letztlich bedient (ueber `commands.translate._PAYLOAD_BUILDERS`,
-        gegen `clusters.yaml` synchron gehalten von
-        `profiles.table.known_command_pairs` - siehe dort) - ein hier
-        gefilterter Rohbefehl war ohnehin nie ausfuehrbar, sondern haette
-        sofort mit 400 quittiert. Diese Route zeigt deshalb nur, was ein
-        Klick tatsaechlich ausloesen kann.
+        Raw export (`loxmatter export --raw`, `export.commands.
+        extract_commands(..., raw=True)`) can write commands without an entry in
+        `clusters.yaml` to the store - their slug is then a
+        generic placeholder like `c4_cmd0` (see there). A button with
+        this label would be useless for the UI: no one
+        knows what `c4_cmd0` does without reading the template - and a
+        click on a button with no visible meaning is the opposite
+        of Spec 8.1's "one click separates the two possible causes".
+        `command_slug` is the same source that `to_matter_calls`
+        ultimately serves (via `commands.translate._PAYLOAD_BUILDERS`,
+        kept in sync with `clusters.yaml` by
+        `profiles.table.known_command_pairs` - see there) - a
+        raw command filtered here was never executable anyway, it would have
+        responded immediately with 400. This route therefore only shows what a
+        click can actually trigger.
 
         The filter does not go unnoticed, though (review fix Minor #4,
         2026-09-02): `hidden_raw_commands` counts how many of the device's
@@ -295,18 +295,18 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
-            # Mehrere Aufrufe, weil ein Loxone-Wert mehr als eine Sache
-            # bedeuten kann - der Farb-Ausgang traegt Farbe UND Helligkeit
-            # (siehe `to_matter_calls`). Der erste Fehlschlag bricht ab und
-            # wird gemeldet; ein halb gesetzter Zustand ist dabei moeglich
-            # und dort begruendet.
+            # Multiple calls because a Loxone value can mean more than one thing
+            # - the color output carries color AND brightness
+            # (see `to_matter_calls`). The first failure stops and is
+            # reported; a partial state is possible
+            # and justified there.
             for call in calls:
                 await invoke(call)
-        except Exception as exc:  # jedes Geraeteproblem wird zu 502
-            # logger.exception schreibt den vollen Traceback ins Server-Log,
-            # NICHT in die HTTP-Antwort - dieselbe Begruendung wie beim
-            # Loxone-Endpunkt in loxone/server.py.
-            logger.exception("Matter-Aufruf fuer Schluessel %r fehlgeschlagen", key)
+        except Exception as exc:  # every device problem becomes 502
+            # logger.exception writes the full traceback to the server log,
+            # NOT to the HTTP response - the same justification as for the
+            # Loxone endpoint in loxone/server.py.
+            logger.exception("Matter call for key %r failed", key)
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc

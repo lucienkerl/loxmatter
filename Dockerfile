@@ -31,17 +31,17 @@ RUN pip install --no-cache-dir uv==0.6.* \
 
 ENV PATH="/app/.venv/bin:${PATH}"
 
-# Die Bau-Identitaet (Entwurf "Updates ueber die Oberflaeche einspielen",
-# 2026-09-08, Abschnitt 4). Gesetzt von der CI, gelesen von
-# `loxmatter/version.py` und - fuer LOXMATTER_SCHEMA_VERSION - vom Updater
-# aus Stufe 2, der sie mit `docker inspect` aus einem Image liest, das er
-# noch gar nicht gestartet hat. Genau deshalb steht sie hier als ENV und
-# nicht nur im Code: ein `docker inspect` sieht keine Python-Konstante.
+# Build identity (draft "Deploy updates via the UI",
+# 2026-09-08, section 4). Set by CI, read by
+# `loxmatter/version.py` and - for LOXMATTER_SCHEMA_VERSION - by the updater
+# from stage 2, who reads it with `docker inspect` from an image that hasn't
+# even started yet. That's exactly why it stands here as ENV and
+# not only in the code: `docker inspect` doesn't see a Python constant.
 #
-# Die Vorgaben unten machen einen Bau von Hand (`docker compose build`)
-# moeglich, ohne dass jemand vier Argumente kennen muss - er ergibt dann
-# ein Image, das sich ehrlich als "dev" ausgibt, statt eine Version zu
-# behaupten, die es nicht ist.
+# The defaults below make a manual build (`docker compose build`)
+# possible without anyone needing to know four arguments - it then produces
+# an image that honestly reports itself as "dev", instead of claiming
+# a version it doesn't have.
 ARG LOXMATTER_VERSION=dev
 ARG LOXMATTER_COMMIT=""
 ARG LOXMATTER_BUILT_AT=""
@@ -51,9 +51,9 @@ ENV LOXMATTER_VERSION=${LOXMATTER_VERSION} \
     LOXMATTER_BUILT_AT=${LOXMATTER_BUILT_AT} \
     LOXMATTER_SCHEMA_VERSION=${LOXMATTER_SCHEMA_VERSION}
 
-# Nur Dokumentation - `network_mode: host` im Compose-File (siehe
-# deploy/testhost/docker-compose.yml) macht diesen Port direkt erreichbar,
-# ohne dass Compose ihn extra veroeffentlichen muesste.
+# Documentation only - `network_mode: host` in the Compose file (see
+# deploy/testhost/docker-compose.yml) makes this port directly reachable,
+# without Compose needing to publish it separately.
 EXPOSE 8080
 
 ENTRYPOINT ["loxmatter"]

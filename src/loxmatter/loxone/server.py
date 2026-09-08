@@ -576,23 +576,23 @@ def build_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         try:
-            # Mehrere Aufrufe, weil ein Loxone-Wert mehr als eine Sache
-            # bedeuten kann - der Farb-Ausgang traegt Farbe UND Helligkeit
-            # (siehe `to_matter_calls`). Der erste Fehlschlag bricht ab und
-            # wird gemeldet; ein halb gesetzter Zustand ist dabei moeglich
-            # und dort begruendet.
+            # Multiple calls because a Loxone value can mean more than one thing
+            # - the color output carries color AND brightness
+            # (see `to_matter_calls`). The first failure stops and is
+            # reported; a partial state is possible
+            # and justified there.
             for call in calls:
                 await invoke(call)
-        except Exception as exc:  # jedes Geraeteproblem wird zu 502
-            # logger.exception schreibt den vollen Traceback ins Server-Log,
-            # NICHT in die HTTP-Antwort (siehe
-            # test_a_failing_matter_call_yields_502_not_a_traceback). Ohne
-            # das saehe ein echter Programmfehler im Invoker im Log genauso
-            # aus wie ein Geraet, das gerade nicht antwortet - beides waere
-            # nur noch "Geraet nicht erreichbar: <Meldung>" ohne Traceback,
-            # und der Unterschied zwischen "Zigbee-Mesh weg" und "Tippfehler
-            # im Invoker" ginge verloren.
-            logger.exception("Matter-Aufruf fuer Schluessel %r fehlgeschlagen", key)
+        except Exception as exc:  # every device problem becomes 502
+            # logger.exception writes the full traceback to the server log,
+            # NOT to the HTTP response (see
+            # test_a_failing_matter_call_yields_502_not_a_traceback). Without
+            # this, a real bug in the invoker would look the same in the log
+            # as a device that's not responding now - both would then be
+            # just "Device unreachable: <message>" without a traceback,
+            # and the difference between "Zigbee mesh gone" and "typo
+            # in invoker" would be lost.
+            logger.exception("Matter call for key %r failed", key)
             raise HTTPException(
                 status_code=502, detail=i18n.t("api.errors.device_unreachable", exc=exc)
             ) from exc

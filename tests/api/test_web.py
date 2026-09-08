@@ -479,13 +479,13 @@ async def test_the_settings_view_offers_a_resend_interval_field(api):
 
 
 async def test_the_system_view_shows_the_running_version(api):
-    """Die Versionskarte (Task, Aufgabe "das Image ziehen") holt
-    `GET /api/version` und bindet das Ergebnis an vier Textbausteine -
-    derselbe Beleg wie bei den uebrigen Markup-Tests dieser Datei: nur,
-    dass Markup und Skript ausgeliefert werden, nicht dass Alpine sie zur
-    Laufzeit korrekt befuellt. Ein Tippfehler in `versionInfo` in einer der
-    beiden Dateien liefert sonst dauerhaft eine leere Karte aus, ohne dass
-    ein Test das bemerkt."""
+    """The version card (task "pull the image") fetches
+    `GET /api/version` and binds the result to four text modules -
+    the same proof as the other markup tests in this file: only that
+    markup and script are delivered, not that Alpine fills them correctly at
+    runtime. A typo in `versionInfo` in one of the
+    two files otherwise delivers a blank card permanently, with
+    no test noticing it."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text

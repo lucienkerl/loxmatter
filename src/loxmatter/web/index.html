@@ -1528,11 +1528,11 @@
           </template>
         </div>
 
-        <!-- Handlung, keine Diagnose - deshalb vor den Systemchecks und
-             nicht zwischen den Log-Ansichten weiter unten. Der Knopf loest
-             denselben vollen Resend aus wie der Bruecken-Start und wie
-             /resync aus dem Config-Projekt (Spec 6.4), nur ueber
-             POST /api/diagnostics/resync, das hinter dem Waechter liegt. -->
+        <!-- Action, not diagnosis - that's why before system checks and
+             not between the log views below. The button triggers
+             the same full resend as the bridge start and as
+             /resync from the config project (Spec 6.4), just via
+             POST /api/diagnostics/resync, which is behind the guard. -->
         <div class="card">
           <h2 x-text="t('web.system.resync_heading')"></h2>
           <p class="hint" x-text="t('web.system.resync_explanation')"></p>

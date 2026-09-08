@@ -1,34 +1,34 @@
-# Änderungen
+# Changes
 
-Dieses Projekt vergibt ab 0.2.0 Versionsnummern nach [Semantic
-Versioning](https://semver.org/lang/de/). Jede veröffentlichte Version
-trägt hier einen Abschnitt, und die Oberfläche zeigt seinen Text als
-Änderungsnotizen an, bevor jemand ein Update einspielt — er wird also von
-Leuten gelesen, die den Code nicht kennen.
+This project uses [Semantic
+Versioning](https://semver.org/) starting with 0.2.0. Each published version
+has a section here, and the UI shows its text as
+change notes before someone installs an update — it will be read by
+people who don't know the code.
 
-## [Unveröffentlicht]
+## [Unreleased]
 
 ## [0.2.0] — 2026-09-08
 
-### Neu
+### Added
 
-- Die Oberfläche zeigt im System-Tab, welche Version läuft.
-- Fertige Images liegen unter `ghcr.io/lucienkerl/loxmatter` bereit
-  (`arm64` und `amd64`). Ein Update lädt jetzt ein solches Image, statt
-  es auf dem Raspberry Pi selbst zu bauen — der lokale Build hat bisher
-  fünf bis zehn Minuten gebraucht, und ein fertiges Image herunterzuladen
-  sollte das deutlich abkürzen. Gemessen ist das noch nicht: es gibt
-  bislang keinen Rechner, auf dem ein Update diesen Weg gegangen ist.
+- The UI shows which version is running in the System tab.
+- Ready-made images are available at `ghcr.io/lucienkerl/loxmatter`
+  (`arm64` and `amd64`). An update now downloads such an image instead of
+  building it on the Raspberry Pi itself — the local build took
+  five to ten minutes, and downloading a ready-made image
+  should speed that up significantly. This hasn't been measured yet: there is
+  no device on which an update has taken this path yet.
 
-### Geändert
+### Changed
 
-- `scripts/update.sh` zieht das Image, statt lokal zu bauen. `--build`
-  stellt das alte Verhalten wieder her.
-- `install.sh` startet den Stack jetzt ebenfalls ohne `--build`: `docker
-  compose up -d` zieht das veröffentlichte Image. Ein `--build` hätte das
-  Ergebnis unter dem Namen `ghcr.io/lucienkerl/loxmatter:stable` getaggt,
-  auch wenn lokal gebaut wurde - eine frische Installation hätte dann ein
-  lokales Image getragen, das sich selbst als `dev` meldet.
-- Der Stack läuft aus einem veröffentlichten Image. **Diese eine
-  Umstellung braucht einmalig die Konsole:** `git pull &&
-  ./scripts/update.sh` auf dem Rechner, auf dem die Brücke läuft.
+- `scripts/update.sh` pulls the image instead of building locally. `--build`
+  restores the old behavior.
+- `install.sh` now also starts the stack without `--build`: `docker
+  compose up -d` pulls the published image. A `--build` would have
+  tagged the result with the name `ghcr.io/lucienkerl/loxmatter:stable`,
+  even if built locally - a fresh installation would then have had a
+  local image that reported itself as `dev`.
+- The stack runs from a published image. **This one
+  change needs the console once:** `git pull &&
+  ./scripts/update.sh` on the device running the bridge.

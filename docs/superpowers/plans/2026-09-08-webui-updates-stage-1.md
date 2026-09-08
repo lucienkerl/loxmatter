@@ -1399,4 +1399,4 @@ Nach Task 9 gilt:
 - Es gibt eine veröffentlichte Version `0.2.0`, ein `:stable`-Image für `arm64` und `amd64`, und einen Changelog.
 - Ein Update über die Konsole dauert rund eine Minute statt zehn.
 
-Das trägt für sich. **Stufe 2** — Beiwagen, `/api/update/*`, die Update-Karte mit ihren vier Zuständen und dem selbsttätigen Rückfall — hat einen eigenen Plan: `docs/superpowers/plans/2026-09-08-webui-updates-stufe2.md`.
+Das trägt für sich. **Stufe 2** — Beiwagen, `/api/update/*`, die Update-Karte mit ihren vier Zuständen und dem selbsttätigen Rückfall — hat einen eigenen Plan: `docs/superpowers/plans/2026-09-08-webui-updates-stage-2.md`.

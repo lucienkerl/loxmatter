@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Voraussetzung:** [Stufe 1](2026-09-08-webui-updates-stufe1.md) ist vollständig umgesetzt und die Version `0.2.0` ist als `ghcr.io/lucienkerl/loxmatter:stable` veröffentlicht. Ohne ein Image, auf das man aktualisieren kann, ist hier nichts zu testen — der Rückfall am wenigsten.
+**Voraussetzung:** [Stufe 1](2026-09-08-webui-updates-stage-1.md) ist vollständig umgesetzt und die Version `0.2.0` ist als `ghcr.io/lucienkerl/loxmatter:stable` veröffentlicht. Ohne ein Image, auf das man aktualisieren kann, ist hier nichts zu testen — der Rückfall am wenigsten.
 
 **Goal:** Ein Klick im System-Tab spielt eine neue Version ein, sichtbar Schritt für Schritt, auch während die Brücke selbst gerade nicht antwortet — und setzt sich selbsttätig zurück, wenn die neue Fassung nicht gesund hochkommt.
 

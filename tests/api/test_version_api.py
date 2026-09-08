@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,12 +14,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer GET /api/version.
+"""Tests for GET /api/version.
 
-Die `api`-Fixture folgt demselben Muster wie in `test_language.py`: eine
-lokale, bereits ANGEMELDETE Fixture. `unauthenticated_api` daneben belegt,
-dass diese Route KEINE der drei bewussten Ausnahmen von der
-Anmeldepflicht ist (`/cmd`, `/resync`, `GET /api/i18n`)."""
+The `api` fixture follows the same pattern as in `test_language.py`: a
+local, already LOGGED-IN fixture. `unauthenticated_api` alongside proves
+that this route is NOT one of the three deliberate exceptions from
+login requirements (`/cmd`, `/resync`, `GET /api/i18n`)."""
 
 from __future__ import annotations
 
@@ -70,9 +70,9 @@ async def test_die_route_nennt_die_vier_angaben(api, monkeypatch):
     }
 
 
-async def test_im_entwicklungscheckout_antwortet_sie_trotzdem(api, monkeypatch):
-    """Kein 500, wenn die Variablen fehlen - sonst waere die Oberflaeche
-    ausserhalb von Docker unbenutzbar."""
+async def test_it_responds_even_in_development_checkout(api, monkeypatch):
+    """No 500 when variables are missing - otherwise the UI
+    would be unusable outside of Docker."""
     for name in ("LOXMATTER_VERSION", "LOXMATTER_COMMIT", "LOXMATTER_BUILT_AT"):
         monkeypatch.delenv(name, raising=False)
     response = await api.get("/api/version")
@@ -81,21 +81,21 @@ async def test_im_entwicklungscheckout_antwortet_sie_trotzdem(api, monkeypatch):
     assert response.json()["commit"] is None
 
 
-async def test_ohne_sitzung_kein_zugriff(unauthenticated_api):
+async def test_no_access_without_session(unauthenticated_api):
     response = await unauthenticated_api.get("/api/version")
     assert response.status_code == 401
 
 
-async def test_die_oberflaeche_kennt_alle_texte_der_versionskarte():
-    """Ein fehlender Schluessel faellt sonst erst im Browser auf - als
-    leeres Feld, nicht als Fehler. Dieser Test bestaetigt die Existenz
-    aller sechs Schluessel. Das beweist aber nicht, dass beide Sprachen
-    vorhanden sind: raw_template() greift auf Englisch zurueck, daher
-    wuerde ein fehlender de-Eintrag hier unentdeckt durchgehen. Auch
-    tests/test_i18n.py deckt das nicht ab -
-    test_web_namespace_has_no_missing_english_fallback_gaps prueft dort
-    ebenfalls nur die Existenz von 'en', nicht von 'de'. Eine fehlende
-    deutsche Uebersetzung faellt also nirgends automatisiert auf."""
+async def test_the_ui_knows_all_texts_of_the_version_card():
+    """A missing key shows up in the browser otherwise - as an
+    empty field, not as an error. This test confirms the existence
+    of all six keys. But this doesn't prove both languages
+    are present: raw_template() falls back to English, so
+    a missing de entry would go undetected here. Also
+    tests/test_i18n.py doesn't cover that -
+    test_web_namespace_has_no_missing_english_fallback_gaps checks
+    only the existence of 'en', not of 'de'. A missing
+    German translation thus goes undetected automatically nowhere."""
     from loxmatter import i18n
 
     for key in (

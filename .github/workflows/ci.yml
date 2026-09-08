@@ -21,10 +21,10 @@ jobs:
       - run: uv run python scripts/check_language.py
       - run: uv run pytest -v
 
-  # Baut und veroeffentlicht das Image (Entwurf "Updates ueber die
-  # Oberflaeche einspielen", 2026-09-08, Abschnitt 5). `needs: test` ist
-  # nicht Kosmetik: ein Image, das die Testsuite nicht bestanden hat, darf
-  # gar nicht erst unter einem Tag stehen, den jemand einspielen kann.
+  # Builds and publishes the image (draft "Deploy updates via the UI",
+  # 2026-09-08, section 5). `needs: test` is
+  # not cosmetic: an image that failed the test suite must not
+  # be put under a tag that someone can deploy.
   image:
     needs: test
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
@@ -37,15 +37,15 @@ jobs:
       - id: meta
         run: |
           set -eu
-          # Die Schema-Version hat genau eine Quelle: store.py. Schlaegt der
-          # grep fehl, bricht der Bau ab, statt ein Image mit leerem
-          # LOXMATTER_SCHEMA_VERSION zu veroeffentlichen - der Updater aus
-          # Stufe 2 koennte damit seine Vorabpruefung nicht machen und
-          # muesste raten. tests/test_build_arguments.py prueft dasselbe
-          # Muster, damit ein Umbau in store.py hier nicht erst in der CI
-          # auffaellt.
+          # The schema version has exactly one source: store.py. If the
+          # grep fails, the build aborts instead of publishing an image with empty
+          # LOXMATTER_SCHEMA_VERSION - the updater from
+          # stage 2 couldn't do its pre-check and
+          # would have to guess. tests/test_build_arguments.py checks the same
+          # pattern so a refactoring in store.py doesn't only show up in CI
+          # later.
           schema="$(sed -n -E 's/^_SCHEMA_VERSION = ([0-9]+)$/\1/p' src/loxmatter/model/store.py)"
-          [ -n "$schema" ] || { echo "Keine _SCHEMA_VERSION in store.py gefunden"; exit 1; }
+          [ -n "$schema" ] || { echo "No _SCHEMA_VERSION found in store.py"; exit 1; }
           case "$GITHUB_REF" in
             refs/tags/v*) version="${GITHUB_REF#refs/tags/v}" ;;
             *)            version="dev" ;;
@@ -57,12 +57,12 @@ jobs:
             echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
       - id: tags
-        # version stammt aus einem Git-Tag (refs/tags/v...), und
-        # `git check-ref-format` erlaubt darin Backticks, $(...) und
-        # Anfuehrungszeichen. Stuende der Wert per ${{ }} direkt im
-        # run-Skript, wuerde ein Tag wie "v1.0.0$(...)" als Shell-Code
-        # ausgefuehrt - in einem Job mit packages: write. Ueber env:
-        # kommt er nur als Variableninhalt an, nie als Quelltext.
+        # version comes from a Git tag (refs/tags/v...), and
+        # `git check-ref-format` allows backticks, $(...) and
+        # quotes in it. If the value were directly in the
+        # run script via ${{ }}, a tag like "v1.0.0$(...)" would be executed as shell code
+        # - in a job with packages: write. Via env:
+        # it only arrives as a variable value, never as source code.
         env:
           VERSION: ${{ steps.meta.outputs.version }}
           COMMIT: ${{ steps.meta.outputs.commit }}

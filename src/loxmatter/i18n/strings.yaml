@@ -268,13 +268,13 @@ api.errors.value_not_a_number:
 api.errors.command_unsupported:
   en: "Cluster {cluster_id} command {command_id} is not supported"
   de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
-# Die folgenden vier Schluessel gehoeren zu `LoxoneColourError` in
-# commands/color.py, uebersetzt in commands/translate.py
-# (`_translate_loxone_colour_error`) - siehe Review-Fix 2026-09-07:
-# `_payload_hue_saturation` reichte zuvor `str(exc)` (hart Deutsch) direkt
-# als HTTP-400-`detail` durch. Drei Fehlerfaelle plus die drei Kanalnamen
-# fuer den dritten Fall, damit auch die Kanalangabe uebersetzt ist und
-# nicht nur der Rahmensatz.
+# The following four keys belong to `LoxoneColourError` in
+# commands/color.py, translated in commands/translate.py
+# (`_translate_loxone_colour_error`) - see Review-Fix 2026-09-07:
+# `_payload_hue_saturation` previously passed `str(exc)` (hard German) directly
+# as HTTP-400-`detail`. Three error cases plus the three channel names
+# for the third case, so the channel information is translated too and
+# not just the frame sentence.
 api.errors.lumitech_malformed:
   en: "\"{value}\" carries the Lumitech marker but does not follow the format (marker 20, brightness 0-100, kelvin above 0)."
   de: "\"{value}\" trägt die Lumitech-Kennung, hält aber das Format nicht ein (Kennung 20, Helligkeit 0-100, Kelvin über 0)."
