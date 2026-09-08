@@ -610,46 +610,54 @@
                         @input="labelDrafts[device.id] = $event.target.value"
                         @change="saveLabel(device)"
                       />
-                      <!-- Die Geaendert-seit-Export-Pille sass hier frueher
-                           (Entwurf 6.2) und verdraengte dafuer das
-                           Leitwert-Label. Verlegt in die Fusszeile (Pille-
-                           in-die-Fusszeile-Umbau, 2026-09-06): sie steht
-                           dort neben `exportHintFor`, das ohnehin schon
-                           beantwortet, WANN zuletzt exportiert wurde -
-                           "seither geaendert" ist dieselbe Fragestellung,
-                           keine zweite. Die Kopfzeile bleibt damit dem
-                           Geraetezustand vorbehalten (nur noch "Offline"),
-                           nicht dem Exportzustand. -->
-                      <span class="status-pill off" x-show="!isOnline(device)">
-                        <svg class="icon"><use href="#i-offline"></use></svg>
-                        <span x-text="t('web.devices.offline')"></span>
-                      </span>
-                      <!-- Nur noch die Offline-Pille verdraengt das
-                           Leitwert-Label: sie beansprucht dieselbe Zeile
-                           unter dem Geraetenamen, auf der sonst das Label
-                           steht. Der Geaendert-Zustand tut das seit dem
-                           Umzug der Pille in die Fusszeile nicht mehr - ein
-                           geaendertes, aber online Geraet zeigt sein
-                           Leitwert-Label ("Zustand", "Temperatur") wie
-                           jedes andere auch. -->
-                      <span
-                        class="lead-label"
-                        x-show="isOnline(device) && leadSignalFor(device.id)"
-                        x-text="leadSignalFor(device.id)?.title"
-                      ></span>
                     </span>
-                    <span class="lead-value" x-show="leadSignalFor(device.id)">
-                      <span
-                        :class="{ 'value-fresh': signalIsFresh(leadSignalFor(device.id)) }"
-                        :title="signalAgeTitle(leadSignalFor(device.id))"
-                        x-text="formatValue(liveValueOf(leadSignalFor(device.id)))"
-                      ></span>
-                      <small x-text="leadSignalFor(device.id)?.unit"></small>
+                    <!-- Die Offline-Pille steht seit dem Wegfall des
+                         Leitwerts (Entwurf 2026-09-07) HIER, auf dessen
+                         Platz, und nicht mehr in `.device-ident` unter dem
+                         Namen. Sie verdraengt damit nichts mehr: das
+                         `.lead-label`, mit dem sie sich die Zeile teilte,
+                         gibt es nicht mehr - und mit ihm die Regel "nur die
+                         Offline-Pille verdraengt das Leitwert-Label", die
+                         hier frueher zwei Absaetze Begruendung brauchte.
+
+                         Keine eigene Positionsregel noetig - aber nicht aus
+                         dem Grund, der hier bis zur Nacharbeit vom
+                         2026-09-07 stand: `.status-pill` traegt zwar
+                         `margin-left: auto` (style.css), doch der traegt
+                         hier nichts bei. `.device-ident` daneben hat `flex:
+                         1 1 auto` und verbraucht beim Aufloesen der
+                         flexiblen Laengen (CSS Flexbox 9.7) bereits den
+                         gesamten freien Platz, BEVOR Auto-Raender verteilt
+                         werden (9.5) - fuer den Auto-Rand bleibt nichts
+                         mehr uebrig. Die Pille steht rechts, WEIL
+                         `.device-ident` waechst, nicht weil ihr eigener
+                         Auto-Rand greift. Genau deshalb ist `flex: 1 1
+                         auto` an `.device-ident` hier tragend und nicht
+                         entbehrlich: faellt es weg, bleibt freier Platz
+                         uebrig, und erst dann wuerde `margin-left: auto`
+                         an der Pille etwas bewirken.
+
+                         Die Geaendert-seit-Export-Pille sitzt weiterhin in
+                         der FUSSZEILE (Pille-in-die-Fusszeile-Umbau,
+                         2026-09-06) und ausdruecklich nicht hier: sie
+                         beantwortet dieselbe Frage wie `exportHintFor`
+                         direkt daneben. Die Kopfzeile bleibt dem
+                         Geraetezustand vorbehalten, nicht dem
+                         Exportzustand. -->
+                    <span class="status-pill off" x-show="!isOnline(device)">
+                      <svg class="icon"><use href="#i-offline"></use></svg>
+                      <span x-text="t('web.devices.offline')"></span>
                     </span>
                   </div>
 
                   <div class="value-rows" x-show="signalsByDevice[device.id]">
-                    <template x-for="signal in restSignalsFor(device.id)" :key="signal.key">
+                    <!-- `firstSignalsFor`, nicht `restSignalsFor` (Entwurf
+                         2026-09-07): das Raster zeigt die volle Kurzliste.
+                         `restSignalsFor` lieferte sie ohne ihren ersten
+                         Eintrag, weil genau der oben in der Kopfzeile stand
+                         - mit dem Wegfall der Kopfzeilen-Anzeige waere er
+                         sonst nirgends mehr zu sehen. -->
+                    <template x-for="signal in firstSignalsFor(device.id)" :key="signal.key">
                       <span class="value-row">
                         <span class="value-key" x-text="signal.title"></span>
                         <span
@@ -678,12 +686,15 @@
                   <!-- Fund 3: ohne diesen Hinweis blieb zwischen Kopfzeile
                        und Befehlsleiste stillschweigend eine Luecke, sobald
                        ein Geraet geladene, aber leere funktionale Signale
-                       hat (`leadSignalFor` liefert dann `null`, die
-                       `value-rows` bleiben ohne Inhalt) - nicht von einem
-                       noch ladenden Geraet zu unterscheiden. -->
+                       hat (die `value-rows` bleiben dann ohne Inhalt) -
+                       nicht von einem noch ladenden Geraet zu
+                       unterscheiden. Die Bedingung fragte frueher
+                       `!leadSignalFor(device.id)`; ohne Leitwert fragt sie
+                       die Liste direkt, was ohnehin die ehrlichere Frage
+                       ist. -->
                   <p
                     class="hint"
-                    x-show="signalsByDevice[device.id] && !leadSignalFor(device.id)"
+                    x-show="signalsByDevice[device.id] && functionalSignalsFor(device.id).length === 0"
                     x-text="t('web.devices.no_functional_signals')"
                   ></p>
 
