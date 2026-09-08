@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,14 +14,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die vier Zugangs-Routen (Spec 8).
+"""Tests for the four access routes (Spec 8).
 
-Sie haengen als einzige unter `/auth` ausserhalb des Waechters - sie muessen
-unangemeldet erreichbar sein, sonst koennte sich niemand anmelden.
+They are the only ones hanging under `/auth` outside the guard - they must
+be reachable while signed out, or nobody could ever sign in.
 
-`httpx.AsyncClient` fuehrt einen eigenen Cookie-Speicher: was `POST
-/auth/login` setzt, schickt jede weitere Anfrage desselben Clients von
-selbst mit. Genau so verhaelt sich auch der Browser.
+`httpx.AsyncClient` carries its own cookie store: whatever `POST
+/auth/login` sets, every further request from the same client sends along
+on its own. That's exactly how the browser behaves too.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ class _NullSender:
 async def auth_client(
     tmp_path: Path, no_invoke: Any
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
-    """Eine App ohne gesetztes Passwort - der Zustand der Ersteinrichtung."""
+    """An app with no password set - the state of initial setup."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -99,7 +99,8 @@ async def test_setup_is_closed_for_good_once_a_password_is_set(auth_client):
 
 
 async def test_setup_is_closed_for_good_once_a_password_is_set_in_german(auth_client):
-    """Deutscher Begleittest zu test_setup_is_closed_for_good_once_a_password_is_set."""
+    """German companion test to
+    test_setup_is_closed_for_good_once_a_password_is_set."""
     client, store = auth_client
     store.locale.set_language("de")
     await client.post("/auth/setup", json={"password": PASSWORT})
@@ -115,11 +116,12 @@ async def test_setup_is_closed_for_good_once_a_password_is_set_in_german(auth_cl
 
 
 async def test_setup_does_not_hash_once_a_password_is_already_set(auth_client, monkeypatch):
-    """Regressionsfund: `hash_password(body.password)` stand als Argument da
-    und wurde deshalb IMMER ausgewertet, auch auf einer laengst eingerichteten
-    Bruecke - 16 MiB scrypt, synchron im Event-Loop, bei jedem Aufruf dieser
-    ungeschuetzten Route. Die billige Pruefung `password_hash() is not None`
-    muss VOR dem Hashen greifen, nicht nur VOR dem Schreiben."""
+    """Regression finding: `hash_password(body.password)` stood there as an
+    argument and was therefore ALWAYS evaluated, even on a bridge that had
+    long since been set up - 16 MiB scrypt, synchronous in the event loop,
+    on every call to this unprotected route. The cheap check
+    `password_hash() is not None` must apply BEFORE hashing, not just
+    before writing."""
     client, _ = auth_client
     await client.post("/auth/setup", json={"password": PASSWORT})
 
@@ -143,7 +145,7 @@ async def test_setup_rejects_a_short_password(auth_client):
 
 
 async def test_setup_rejects_a_short_password_in_german(auth_client):
-    """Deutscher Begleittest zu test_setup_rejects_a_short_password."""
+    """German companion test to test_setup_rejects_a_short_password."""
     client, store = auth_client
     store.locale.set_language("de")
     response = await client.post("/auth/setup", json={"password": "kurz"})
@@ -172,7 +174,7 @@ async def test_login_with_a_wrong_password_is_rejected(auth_client):
 
 
 async def test_login_with_a_wrong_password_is_rejected_in_german(auth_client):
-    """Deutscher Begleittest zu test_login_with_a_wrong_password_is_rejected."""
+    """German companion test to test_login_with_a_wrong_password_is_rejected."""
     client, store = auth_client
     store.auth.set_password_hash(hash_password(PASSWORT))
     store.locale.set_language("de")
@@ -183,8 +185,8 @@ async def test_login_with_a_wrong_password_is_rejected_in_german(auth_client):
 
 
 async def test_login_before_setup_says_so(auth_client):
-    """409 und nicht 401: es gibt kein Passwort, mit dem dieser Aufruf
-    gelingen koennte - eine Wiederholung mit Zugangsdaten hilft nicht."""
+    """409, not 401: there is no password this call could ever succeed
+    with - retrying with credentials doesn't help."""
     client, _ = auth_client
     response = await client.post("/auth/login", json={"password": PASSWORT})
     assert response.status_code == 409
@@ -194,7 +196,7 @@ async def test_login_before_setup_says_so(auth_client):
 
 
 async def test_login_before_setup_says_so_in_german(auth_client):
-    """Deutscher Begleittest zu test_login_before_setup_says_so."""
+    """German companion test to test_login_before_setup_says_so."""
     client, store = auth_client
     store.locale.set_language("de")
     response = await client.post("/auth/login", json={"password": PASSWORT})
@@ -218,7 +220,7 @@ async def test_repeated_wrong_passwords_are_throttled(auth_client):
 
 
 async def test_repeated_wrong_passwords_are_throttled_in_german(auth_client):
-    """Deutscher Begleittest zu test_repeated_wrong_passwords_are_throttled."""
+    """German companion test to test_repeated_wrong_passwords_are_throttled."""
     client, store = auth_client
     store.auth.set_password_hash(hash_password(PASSWORT))
     store.locale.set_language("de")
@@ -232,9 +234,9 @@ async def test_repeated_wrong_passwords_are_throttled_in_german(auth_client):
 
 
 async def test_setup_is_also_throttled_after_repeated_login_failures(auth_client):
-    """Setup und Login teilen sich dieselbe LoginThrottle (siehe `_client_id`-
-    Docstring) - deckt damit auch den zweiten Aufrufort der 429-Meldung ab,
-    nicht nur den in `/auth/login`."""
+    """Setup and login share the same LoginThrottle (see the `_client_id`
+    docstring) - this therefore also covers the second call site of the
+    429 message, not just the one in `/auth/login`."""
     client, store = auth_client
     store.auth.set_password_hash(hash_password(PASSWORT))
     for _ in range(FAILURES_BEFORE_THROTTLING):
@@ -247,7 +249,7 @@ async def test_setup_is_also_throttled_after_repeated_login_failures(auth_client
 
 
 async def test_setup_is_also_throttled_after_repeated_login_failures_in_german(auth_client):
-    """Deutscher Begleittest zu
+    """German companion test to
     test_setup_is_also_throttled_after_repeated_login_failures."""
     client, store = auth_client
     store.auth.set_password_hash(hash_password(PASSWORT))
@@ -262,24 +264,23 @@ async def test_setup_is_also_throttled_after_repeated_login_failures_in_german(a
 
 
 async def test_concurrent_wrong_passwords_are_still_throttled(auth_client):
-    """Regressionsfund (Review, 2026-09-03): der `await` in
-    `anyio.to_thread.run_sync` (vormals `run_in_threadpool`) unterbricht den
-    Rumpf von `/auth/login` an einer Stelle, die der fruehere synchrone
-    Code nicht hatte. Bucht die Route den Fehlversuch erst NACH diesem
-    `await`, laufen gleichzeitige Anfragen alle an `throttle.retry_after`
-    vorbei, BEVOR auch nur eine von ihnen den Zaehler erhoeht - die
-    Drosselung liesse sich durch reine Parallelitaet vollstaendig umgehen
-    (nachgemessen vor der Behebung: 60 gleichzeitige Anfragen einer
-    Adresse ergaben 60 statt hoechstens `FAILURES_BEFORE_THROTTLING`
-    echten Rateversuchen). Deutlich mehr Anfragen als
-    `FAILURES_BEFORE_THROTTLING`, damit ein zufaelliges Durchrutschen
-    einzelner Anfragen den Test nicht verdeckt. `asyncio.gather` reicht
-    hier ohne echte Threads: `client.post(...)` erzeugt bei jedem Aufruf
-    unten sofort eine Coroutine, `gather` startet alle nahezu gleichzeitig
-    als eigene Tasks - und der Rumpf von `/auth/login` laeuft bis zum
-    ersten `await` (das `retry_after`-Pruefen eingeschlossen) synchron,
-    ohne dass der Event-Loop dazwischen an eine andere Anfrage abgeben
-    kann."""
+    """Regression finding (review, 2026-09-03): the `await` in
+    `anyio.to_thread.run_sync` (formerly `run_in_threadpool`) interrupts the
+    body of `/auth/login` at a point the earlier synchronous code didn't
+    have. If the route only books the failed attempt AFTER this `await`,
+    concurrent requests all get past `throttle.retry_after` before even one
+    of them increments the counter - the throttling could be bypassed
+    entirely through pure parallelism (measured before the fix: 60
+    concurrent requests from one address produced 60 real rate attempts
+    instead of at most `FAILURES_BEFORE_THROTTLING`). Noticeably more
+    requests than `FAILURES_BEFORE_THROTTLING`, so a random slip-through of
+    individual requests doesn't mask the test. `asyncio.gather` is enough
+    here with no real threads: `client.post(...)` immediately produces a
+    coroutine on every call below, `gather` starts all of them as their own
+    tasks nearly simultaneously - and the body of `/auth/login` runs
+    synchronously up to the first `await` (including the `retry_after`
+    check), with no chance for the event loop to hand control to another
+    request in between."""
     client, store = auth_client
     store.auth.set_password_hash(hash_password(PASSWORT))
 
@@ -292,39 +293,39 @@ async def test_concurrent_wrong_passwords_are_still_throttled(auth_client):
     )
     statuses = [response.status_code for response in responses]
 
-    # Genau `FAILURES_BEFORE_THROTTLING` echte Pruefungen des Passworts -
-    # alles danach muss die Drosselung mit 429 abfangen, egal wie viele
-    # Anfragen gleichzeitig ankamen. `<=` waere hier zahnlos: die Aussage
-    # bliebe auch wahr, wenn die Route ausnahmslos 429 antwortete (0 ist
-    # ebenfalls <= `FAILURES_BEFORE_THROTTLING`). Der Wert ist deterministisch,
-    # weil der Rumpf von `/auth/login` bis zur Buchung synchron gegenueber dem
-    # Event-Loop laeuft - kein `await` liegt dazwischen, siehe Kommentar oben.
+    # Exactly `FAILURES_BEFORE_THROTTLING` real password checks - everything
+    # after that must be caught by the throttle with 429, no matter how
+    # many requests arrived at the same time. `<=` would be toothless here:
+    # the statement would still hold even if the route answered 429
+    # without exception (0 is also <= `FAILURES_BEFORE_THROTTLING`). The
+    # value is deterministic because the body of `/auth/login` runs
+    # synchronously with respect to the event loop up to the booking - no
+    # `await` sits in between, see the comment above.
     assert statuses.count(401) == FAILURES_BEFORE_THROTTLING
     assert statuses.count(429) == attempts - statuses.count(401)
 
 
 async def test_concurrent_setup_attempts_are_still_throttled(auth_client, monkeypatch):
-    """Regressionsfund (Fund 1, 2026-09-03): dieselbe Luecke wie im Test
-    oben, nur in `/auth/setup` statt `/auth/login` - dort bucht vor dieser
-    Behebung nichts VOR dem `await anyio.to_thread.run_sync(hash_password, ...)`,
-    also kommen beliebig viele gleichzeitige Einrichtungsversuche an
-    `throttle.retry_after` vorbei, bevor auch nur einer den Zaehler erhoeht
-    (nachgemessen vor der Behebung: 20 von 20 gleichzeitigen Versuchen gegen
-    eine noch nicht eingerichtete Bruecke drangen bis zum 16-MiB-Hashen vor).
+    """Regression finding (Finding 1, 2026-09-03): the same gap as in the
+    test above, just in `/auth/setup` instead of `/auth/login` - before
+    this fix, nothing there booked anything BEFORE the `await
+    anyio.to_thread.run_sync(hash_password, ...)`, so any number of
+    concurrent setup attempts got past `throttle.retry_after` before even
+    one of them incremented the counter (measured before the fix: 20 of 20
+    concurrent attempts against a not-yet-set-up bridge made it through to
+    the 16 MiB hashing).
 
-    Statuscodes allein verraten das hier NICHT, anders als beim Login: der
-    Verlierer eines Wettlaufs um `set_password_hash_if_unset` bekommt
-    ebenfalls 409, obwohl er zuvor gehasht hat - ein 409 heisst also nicht
-    "wurde gedrosselt". Deshalb zaehlt dieser Test direkt die Aufrufe von
-    `hash_password` per Monkeypatch mit, statt sich auf die Statuscodes zu
-    verlassen."""
+    Status codes alone don't reveal this here, unlike with login: the
+    loser of a race for `set_password_hash_if_unset` also gets a 409 even
+    though it hashed beforehand - so a 409 doesn't mean "was throttled".
+    This test therefore counts the calls to `hash_password` directly via a
+    monkeypatch, instead of relying on the status codes."""
     client, _ = auth_client
 
-    # Eine Liste und kein Zaehler: `hash_password` laeuft seit dem
-    # `CapacityLimiter` in bis zu vier Worker-Threads gleichzeitig, und
-    # `int += 1` ist in CPython nicht atomar - ein verlorener Zaehlschritt
-    # ergaebe ein sporadisch rotes `4 == 5` in der CI. `list.append` ist
-    # atomar und hat dieses Fenster nicht.
+    # A list, not a counter: since the `CapacityLimiter`, `hash_password`
+    # runs in up to four worker threads concurrently, and `int += 1` isn't
+    # atomic in CPython - a lost increment would produce a sporadically red
+    # `4 == 5` in CI. `list.append` is atomic and doesn't have this window.
     calls: list[None] = []
     original_hash_password = hash_password
 
@@ -339,16 +340,16 @@ async def test_concurrent_setup_attempts_are_still_throttled(auth_client, monkey
         *(client.post("/auth/setup", json={"password": f"{PASSWORT}-{i}"}) for i in range(attempts))
     )
 
-    # Genau `FAILURES_BEFORE_THROTTLING` Versuche drangen bis zum Hashen vor -
-    # derselbe deterministische Grund wie beim Login: der Rumpf von
-    # `/auth/setup` laeuft bis zur Buchung synchron.
+    # Exactly `FAILURES_BEFORE_THROTTLING` attempts made it through to
+    # hashing - the same deterministic reason as with login: the body of
+    # `/auth/setup` runs synchronously up to the booking.
     assert len(calls) == FAILURES_BEFORE_THROTTLING
     assert [response.status_code for response in responses].count(200) == 1
 
 
 async def test_logout_ends_the_session_on_the_server(auth_client):
-    """Nicht nur das Cookie loeschen: derselbe Wert darf danach nicht mehr
-    gelten, sonst lebt eine gestohlene Kennung weiter."""
+    """Not just clearing the cookie: the same value must no longer be valid
+    afterward, or a stolen identifier keeps living on."""
     client, _ = auth_client
     await client.post("/auth/setup", json={"password": PASSWORT})
     session_id = client.cookies.get("loxmatter_session")
@@ -362,11 +363,11 @@ async def test_logout_ends_the_session_on_the_server(auth_client):
 
 
 async def test_no_response_ever_contains_the_password_or_its_hash(auth_client):
-    """Deckt neben den erfolgreichen 200er-Antworten auch die vier
-    Fehlerzweige ab (401, 409, 422, 429, Fund D) - genau dort wuerde ein
-    spaeter versehentlich eingebauter Wert ("Falsches Passwort: <x>") am
-    ehesten landen, weil ein Fehlertext haeufiger von Hand nachgebessert
-    wird als ein schlichtes `{"status": "ok"}`."""
+    """Covers, besides the successful 200 responses, the four error
+    branches too (401, 409, 422, 429, Finding D) - exactly where a value
+    accidentally built in later ("Wrong password: <x>") would most likely
+    end up, because an error text gets touched up by hand more often than
+    a plain `{"status": "ok"}`."""
     client, store = auth_client
     responses = [await client.post("/auth/setup", json={"password": "kurz"})]  # 422
     assert responses[-1].status_code == 422
@@ -379,21 +380,21 @@ async def test_no_response_ever_contains_the_password_or_its_hash(auth_client):
     assert stored is not None
     responses.append(await client.get("/auth-info"))
 
-    # 409 auf einer laengst eingerichteten Bruecke - deckt den Fehlerzweig
-    # zwar ab, zaehlt aber SEIT DEM FUND ZU 3 UNTEN nicht mehr als
-    # Fehlversuch fuer die Drosselung (es gibt dort nichts mehr zu
-    # schuetzen, siehe Kommentar am 409-Zweig in `api/auth.py`).
+    # 409 on a bridge that has long since been set up - covers the error
+    # branch, but SINCE FINDING 3 BELOW no longer counts as a failed
+    # attempt for the throttle (there's nothing left to protect there, see
+    # the comment on the 409 branch in `api/auth.py`).
     already_set_up = await client.post("/auth/setup", json={"password": "ein-anderes-passwort"})
     assert already_set_up.status_code == 409
     responses.append(already_set_up)
 
     wrong = await client.post("/auth/login", json={"password": "falsch-aber-lang"})
-    assert wrong.status_code == 401  # 1. (und einziger bisheriger) Fehlversuch
+    assert wrong.status_code == 401  # 1st (and so far only) failed attempt
     responses.append(wrong)
 
-    # /auth/setup und /auth/login teilen sich dieselbe LoginThrottle - ein
-    # Fehlversuch steht aus der Anfrage oben bereits zu Buche, hier folgen
-    # die restlichen bis zur Drosselung.
+    # /auth/setup and /auth/login share the same LoginThrottle - one failed
+    # attempt is already booked from the request above, here follow the
+    # rest up to the throttle.
     for _ in range(FAILURES_BEFORE_THROTTLING - 1):
         responses.append(await client.post("/auth/login", json={"password": "falsch-aber-lang"}))
 

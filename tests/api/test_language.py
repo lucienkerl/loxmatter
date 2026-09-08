@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,16 +14,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer GET /api/i18n (ungeschuetzt) und PATCH /api/language
-(geschuetzt) sowie die sync_language-Middleware, die die gespeicherte
-Spracheinstellung bei jeder Anfrage frisch liest.
+"""Tests for GET /api/i18n (unprotected) and PATCH /api/language
+(protected), as well as the sync_language middleware that reads the stored
+language setting fresh on every request.
 
-`api` folgt demselben Muster wie in `test_settings_api.py`: eine lokale,
-bereits ANGEMELDETE Fixture (`authenticate` aus `conftest.py`), die
-`(client, store)` liefert. `GET /api/i18n` ist die dritte, bewusste
-Ausnahme von der Anmeldepflicht (Spec-Abschnitt 5, neben `/cmd` und
-`/resync`) - dafuer baut `unauthenticated_client` unten dieselbe App
-OHNE `authenticate()` auf, genau wie
+`api` follows the same pattern as in `test_settings_api.py`: a local,
+already SIGNED-IN fixture (`authenticate` from `conftest.py`) that returns
+`(client, store)`. `GET /api/i18n` is the third, deliberate exception to
+the login requirement (Spec section 5, alongside `/cmd` and `/resync`) -
+for that, `unauthenticated_client` below builds the same app WITHOUT
+`authenticate()`, exactly like
 `test_settings_route_requires_a_session` in `test_settings_api.py`."""
 
 from __future__ import annotations
@@ -54,9 +54,9 @@ async def api(tmp_path, no_invoke, fake_runtime) -> AsyncIterator[tuple[httpx.As
 async def unauthenticated_api(
     tmp_path, no_invoke, fake_runtime
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
-    """Dieselbe App wie `api`, aber ohne `authenticate()` - fuer die beiden
-    Tests, die genau die Anmeldefreiheit (bzw. -pflicht) einer Route
-    belegen sollen."""
+    """The same app as `api`, but without `authenticate()` - for the two
+    tests meant to prove exactly a route's freedom from (or requirement
+    for) login."""
     store = Store(tmp_path / "t.sqlite")
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
@@ -66,8 +66,8 @@ async def unauthenticated_api(
 
 
 async def test_get_i18n_works_without_a_session(unauthenticated_api):
-    """Die dritte, bewusste Ausnahme von der Anmeldepflicht (Spec-Abschnitt
-    5) - ohne Cookie, ohne Token, trotzdem 200."""
+    """The third, deliberate exception to the login requirement (Spec
+    section 5) - no cookie, no token, still 200."""
     client, _ = unauthenticated_api
     response = await client.get("/api/i18n")
     assert response.status_code == 200
@@ -86,28 +86,26 @@ async def test_get_i18n_only_returns_the_web_namespace(unauthenticated_api):
 async def test_get_i18n_does_not_crash_on_a_web_key_with_a_placeholder(
     unauthenticated_api, monkeypatch
 ):
-    """Der eigentliche Regressionstest fuer den Befund aus dem
-    Aufgabe-8-Bericht (siehe web.test.smoke in strings.yaml):
-    `_web_strings()` rief frueher `i18n.t(key)` OHNE `values` fuer JEDEN
-    `web.*`-Schluessel auf - `t()` ruft immer `.format(**values)` auf, und
-    ein Schluessel mit einem `{platzhalter}` liess das dort mit `KeyError`
-    abstuerzen. Weil `_web_strings()` das in einer einzigen
-    dict-comprehension tut, riss das nicht nur den einen Schluessel mit
-    sich, sondern die GESAMTE `GET /api/i18n`-Antwort (bestaetigt an vier
-    davon unabhaengigen, laengst zusammengefuehrten Tests in dieser Datei,
-    die dadurch ploetzlich fehlschlugen).
+    """The actual regression test for the finding from the Task 8 report
+    (see web.test.smoke in strings.yaml): `_web_strings()` used to call
+    `i18n.t(key)` with NO `values` for EVERY `web.*` key - `t()` always
+    calls `.format(**values)`, and a key with a `{placeholder}` made that
+    crash there with `KeyError`. Because `_web_strings()` does this in a
+    single dict comprehension, that took down not just the one key, but the
+    ENTIRE `GET /api/i18n` response (confirmed by four independent tests in
+    this file, merged long ago, that suddenly started failing because of
+    it).
 
-    Ein temporaerer, ueber `monkeypatch` in `i18n._STRINGS` eingefuegter
-    `web.*`-Schluessel statt einer dauerhaften Ergaenzung von
-    `strings.yaml`: dieser Test soll nur das Zusammenspiel von
-    `_web_strings()` und `i18n` pruefen, nicht eine weitere dauerhafte
-    Testschablone in der echten Tabelle anlegen (die es mit
-    `web.test.smoke` - bewusst OHNE Platzhalter - bereits gibt).
+    A temporary `web.*` key inserted into `i18n._STRINGS` via `monkeypatch`
+    instead of a permanent addition to `strings.yaml`: this test is only
+    meant to check the interplay of `_web_strings()` and `i18n`, not to add
+    yet another permanent test entry to the real table (one already exists
+    for that, `web.test.smoke` - deliberately WITHOUT a placeholder).
 
-    Erwartet wird 200 mit der UNAUFGELOESTEN Vorlage im Antwortkoerper -
-    `i18n.raw_template()` statt `i18n.t()`, weil der Browser den
-    Platzhalter selbst befuellt (siehe app.js, `t()`), mit Werten, die der
-    Server nicht kennen kann."""
+    Expects 200 with the UNRESOLVED template in the response body -
+    `i18n.raw_template()` instead of `i18n.t()`, because the browser fills
+    in the placeholder itself (see app.js, `t()`), with values the server
+    cannot know."""
     monkeypatch.setitem(
         i18n._STRINGS,
         "web.test.placeholder_smoke",
@@ -120,13 +118,12 @@ async def test_get_i18n_does_not_crash_on_a_web_key_with_a_placeholder(
 
 
 async def test_get_i18n_carries_the_real_placeholder_keys_unresolved(unauthenticated_api):
-    """Derselbe Befund, aber an einem ECHTEN Eintrag der Tabelle statt an
-    einer eingeschleusten Schablone: `web.devices.commission_success` traegt
-    seit jeher `{label}`, und mit dem Einlern-Zweig kam mit
-    `web.devices.thread_dataset_hint` ein weiterer web.*-Eintrag dazu. Waere
-    `_web_strings()` je wieder auf `i18n.t()` umgestellt, schluege genau
-    dieser Test fehl - und zwar mit 500 fuer die gesamte Antwort, nicht nur
-    fuer den einen Schluessel."""
+    """The same finding, but on a REAL entry of the table instead of an
+    injected stand-in: `web.devices.commission_success` has always carried
+    `{label}`, and the commissioning branch added another web.* entry with
+    `web.devices.thread_dataset_hint`. If `_web_strings()` were ever
+    switched back to `i18n.t()`, this exact test would fail - with 500 for
+    the entire response, not just for the one key."""
     client, _ = unauthenticated_api
 
     response = await client.get("/api/i18n")
@@ -134,8 +131,8 @@ async def test_get_i18n_carries_the_real_placeholder_keys_unresolved(unauthentic
     assert response.status_code == 200
     strings = response.json()["strings"]
     assert "{label}" in strings["web.devices.commission_success"]
-    # Die Grenze aus Spec 12.3 gibt es nicht mehr - der Text darf sie also
-    # auch nicht mehr ankuendigen.
+    # The boundary from Spec 12.3 no longer exists - so the text must no
+    # longer announce it either.
     assert "Spec 12.3" not in strings["web.devices.commission_success"]
     assert "from now on" in strings["web.devices.commission_success"]
     assert strings["web.devices.thread_dataset_hint"]
@@ -148,9 +145,9 @@ async def test_patch_language_requires_a_session(unauthenticated_api):
 
 
 async def test_patch_language_persists_and_is_reflected_by_the_next_request(api):
-    """Beweist die Middleware, nicht nur die Route: eine ZWEITE, unabhaengige
-    Anfrage (hier /api/i18n, das keine Anmeldung braucht) muss die neue
-    Sprache sehen - nicht nur store.locale direkt."""
+    """Proves the middleware, not just the route: a SECOND, independent
+    request (here /api/i18n, which needs no login) must see the new
+    language - not just store.locale directly."""
     client, store = api
     response = await client.patch("/api/language", json={"language": "de"})
     assert response.status_code == 200
@@ -169,10 +166,10 @@ async def test_patch_language_rejects_an_unsupported_value(api):
 async def test_sync_language_middleware_sees_a_change_made_directly_through_the_store(
     unauthenticated_api,
 ):
-    """Die Luecke aus Spec-Abschnitt 4: eine Aenderung, die NICHT ueber
-    PATCH /api/language lief (hier direkt ueber store.locale, wie es
-    `loxmatter set-language` in einem anderen Prozess taete), muss die
-    NAECHSTE Anfrage trotzdem sehen."""
+    """The gap from Spec section 4: a change that did NOT go through PATCH
+    /api/language (here directly via store.locale, the way
+    `loxmatter set-language` would in another process) must still be seen
+    by the NEXT request."""
     client, store = unauthenticated_api
     store.locale.set_language("de")
     response = await client.get("/api/i18n")
@@ -180,8 +177,8 @@ async def test_sync_language_middleware_sees_a_change_made_directly_through_the_
 
 
 def test_a_request_does_not_leak_language_state_to_i18n_t_outside_the_request():
-    """Nach jeder Anfrage soll die globale i18n-Sprache wieder auf den von
-    tests/conftest.pys reset_language-Fixture gesetzten Wert stehen - dieser
-    Test dokumentiert nur die Erwartung; reset_language selbst erledigt die
-    eigentliche Absicherung."""
+    """After every request, the global i18n language should be back to the
+    value set by tests/conftest.py's reset_language fixture - this test
+    only documents the expectation; reset_language itself does the actual
+    enforcing."""
     assert i18n.current_language() == i18n.DEFAULT_LANGUAGE

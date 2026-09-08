@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer POST /api/export/project-sync - siehe api/project_sync.py."""
+"""Tests for POST /api/export/project-sync - see api/project_sync.py."""
 
 from __future__ import annotations
 
@@ -47,14 +47,14 @@ SAMPLE_PROJECT = (
     "</ControlList>\r\n"
 )
 
-# Absichtlich OHNE `VirtualInCaption`-Abschnitt - anders als SAMPLE_PROJECT
-# oben. Ein reales Projekt, in dem noch nie ein virtueller Eingang angelegt
-# wurde, sieht so aus (siehe `tests/projectsync/test_patch.py`,
-# NO_VIRTUAL_IN_CAPTION_PROJECT, fuer dasselbe Muster auf Ebene von
-# `patch.apply_plan`). `apply_plan` legt diesen Abschnitt im experimentellen
-# Pfad selbst mit an (Entwurf Abschnitt 8: Sonderfall der Neuanlage, ebenfalls
-# hinter dem Experimentell-Haken) - kein manuelles Vorbereiten in Loxone
-# Config mehr noetig.
+# Deliberately WITHOUT a `VirtualInCaption` section - unlike SAMPLE_PROJECT
+# above. A real project in which no virtual input has ever been created
+# looks like this (see `tests/projectsync/test_patch.py`,
+# NO_VIRTUAL_IN_CAPTION_PROJECT, for the same pattern at the level of
+# `patch.apply_plan`). `apply_plan` creates this section itself on the
+# experimental path (design section 8: the special case of first-time
+# creation, also behind the experimental toggle) - no manual prep in Loxone
+# Config needed any more.
 NO_VIRTUAL_IN_CAPTION_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -69,10 +69,11 @@ NO_VIRTUAL_IN_CAPTION_PROJECT = (
 )
 
 
-# Zwei `LoxLIVE`-Bloecke - loest `AmbiguousMiniserverError` mit `candidates`
-# aus, wenn `miniserver_ip` fehlt (siehe `tests/projectsync/test_index.py`,
+# Two `LoxLIVE` blocks - triggers `AmbiguousMiniserverError` with
+# `candidates` when `miniserver_ip` is missing (see
+# `tests/projectsync/test_index.py`,
 # `test_multi_loxlive_without_ip_carries_candidates_for_a_selection_field`,
-# fuer dieselbe Fixture auf Ebene von `index.build_index`).
+# for the same fixture at the level of `index.build_index`).
 TWO_LOXLIVE_PROJECT = (
     '<?xml version="1.0" encoding="utf-8"?>\r\n'
     '<ControlList Version="275" NextObj="100">\r\n'
@@ -120,7 +121,7 @@ async def test_project_sync_returns_plan_and_both_variants(api):
     assert body["new_devices_unavailable_reason"] is None
     conservative = base64.b64decode(body["patched_conservative_base64"])
     with_new_devices = base64.b64decode(body["patched_with_new_devices_base64"])
-    assert b"VirtualUdpIn" not in conservative  # Neuanlage nur mit dem Haken
+    assert b"VirtualUdpIn" not in conservative  # new creation only with the toggle
     assert b"VirtualUdpIn" in with_new_devices
 
 
@@ -135,10 +136,10 @@ async def test_project_sync_rejects_invalid_file(api):
 
 
 async def test_project_sync_offers_a_selection_for_multiple_miniservers(api):
-    """Nutzerwunsch nach dem Review: bei mehreren Miniservern in der Datei
-    soll die WebUI ein Auswahlfeld zeigen koennen statt den Anwender die IP
-    von Hand eintippen zu lassen - das braucht eine normale 200-Antwort mit
-    den gefundenen Miniservern, keinen Fehler."""
+    """User request from the review: with multiple Miniservers in the file,
+    the WebUI should be able to show a selection field instead of making
+    the user type the IP by hand - that needs a normal 200 response with
+    the Miniservers found, not an error."""
     client, _store = api
     response = await client.post(
         "/api/export/project-sync",
@@ -154,14 +155,14 @@ async def test_project_sync_offers_a_selection_for_multiple_miniservers(api):
         {"title": "Erster Miniserver", "int_addr": "10.0.0.10"},
         {"title": "Zweiter Miniserver", "int_addr": "10.0.0.20"},
     ]
-    # Alle plan-spezifischen Felder bleiben leer - es gibt (noch) keinen Plan.
+    # All plan-specific fields stay empty - there is no plan (yet).
     assert body["entries"] == []
     assert body["patched_conservative_base64"] is None
 
 
 async def test_project_sync_with_selected_miniserver_returns_the_plan(api):
-    """Derselbe Upload, diesmal mit der aus dem Auswahlfeld gewaehlten IP -
-    liefert den normalen Plan, kein Auswahlfeld mehr."""
+    """The same upload, this time with the IP chosen from the selection
+    field - returns the normal plan, no more selection field."""
     client, _store = api
     response = await client.post(
         "/api/export/project-sync",
@@ -192,13 +193,13 @@ async def test_project_sync_requires_authentication(tmp_path, no_invoke, fake_ru
 
 
 async def test_project_sync_missing_caption_is_auto_created(api):
-    """Ein wohlgeformtes Projekt ohne `VirtualInCaption`-Abschnitt, hochgeladen
-    fuer ein Geraet, das komplett neu ist (die Steckdose aus der `api`-Fixture
-    hat keinen passenden Container in `NO_VIRTUAL_IN_CAPTION_PROJECT`): die
-    Variante mit neuen Geraete-Containern legt den fehlenden Abschnitt seit
-    dem Nutzerwunsch nach dem Review selbst mit an, statt den experimentellen
-    Pfad nur mit einer Begruendung zu sperren. Die konservative Datei bleibt
-    davon unberuehrt."""
+    """A well-formed project with no `VirtualInCaption` section, uploaded
+    for a device that is completely new (the plug from the `api` fixture
+    has no matching container in `NO_VIRTUAL_IN_CAPTION_PROJECT`): the
+    variant with new device containers now creates the missing section
+    itself, following the user request from the review, instead of just
+    locking the experimental path with a justification. The conservative
+    file stays unaffected by this."""
     client, _store = api
     response = await client.post(
         "/api/export/project-sync",

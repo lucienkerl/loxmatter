@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,34 +14,33 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die Diagnose-API (Task 6, Phase 5) - siehe api/diagnostics.py.
+"""Tests for the diagnostics API (Task 6, Phase 5) - see api/diagnostics.py.
 
-Drei lokale Fixtures, dem Muster der uebrigen Dateien unter tests/api/
-folgend (jede Testdatei baut ihre eigene `api`-Fixture passend zu ihrem
-Bedarf, siehe conftest.py-Moduldocstring):
+Three local fixtures, following the pattern of the other files under
+tests/api/ (every test file builds its own `api` fixture to match its
+needs, see the conftest.py module docstring):
 
-`api` - Grundausstattung mit echtem `fake_client` (verbunden) UND einem
-echten `matter_data_dir` (fuer die Sicherung), aber OHNE echten `UdpSender`
-(die meisten Tests hier brauchen keinen Mitschnitt).
+`api` - basic setup with a real `fake_client` (connected) AND a real
+`matter_data_dir` (for the backup), but WITHOUT a real `UdpSender` (most
+tests here need no recording).
 
-`api_with_sender` - zusaetzlich ein echter `UdpSender`, der an einen lokalen
-UDP-Socket sendet (`receiver`, wie in tests/loxone/test_sender.py) - fuer
-die beiden Mitschnitt-Tests. Der Mitschnitt haengt in `UdpSender` selbst
-(siehe Moduldocstring von sender.py), ein Fake-Sender wuerde ihn deshalb gar
-nicht ausloesen.
+`api_with_sender` - additionally a real `UdpSender` that sends to a local
+UDP socket (`receiver`, as in tests/loxone/test_sender.py) - for the two
+recording tests. The recording lives in `UdpSender` itself (see the module
+docstring of sender.py), so a fake sender wouldn't trigger it at all.
 
-`api_without_matter` - `client=None`, wie in server.py dokumentiert bedeutet
-das "die Bruecke laeuft ohne Matter-Verbindung" - fuer den Test, dass eine
-rote Zeile im Systemcheck einen brauchbaren Hinweis traegt.
+`api_without_matter` - `client=None`, which as documented in server.py
+means "the bridge is running without a Matter connection" - for the test
+that a red line in the system check carries a useful hint.
 
-`api_with_token` - wie `api`, aber mit gesetztem API-Token statt einer
-angemeldeten Sitzung. `GET /api/diagnostics/fabric-backup` verlangt - wie
-jede `/api`-Route - einen der beiden Nachweise (Task 8, Phase 5, Spec 9);
-die Tests, die die Sicherung selbst betrachten, weisen sich hier ueber den
-Token-Header statt ueber eine Anmeldung aus, um beide Wege abzudecken. Die
-uebrigen Fixtures bleiben absichtlich ohne Token: alle anderen
-Diagnose-Routen sind davon unberuehrt, und das soll hier weiterhin so
-gepruft werden, wie ein Betrieb ohne Token sie tatsaechlich sieht.
+`api_with_token` - like `api`, but with a configured API token instead of
+a signed-in session. `GET /api/diagnostics/fabric-backup` requires - like
+every `/api` route - one of the two proofs (Task 8, Phase 5, Spec 9); the
+tests that look at the backup itself identify via the token header rather
+than a login here, to cover both paths. The remaining fixtures
+deliberately stay without a token: every other diagnostics route is
+unaffected by it, and that should keep being checked here the way an
+operation without a token actually sees them.
 """
 
 from __future__ import annotations
@@ -64,8 +63,8 @@ from loxmatter.model.store import Store
 
 
 class _ClientWithThreadDataset:
-    """Steht fuer `BridgeMatterClient` - nur die zwei Eigenschaften, die
-    `_check_thread_credentials` liest."""
+    """Stands in for `BridgeMatterClient` - only the two attributes
+    `_check_thread_credentials` reads."""
 
     def __init__(self, thread_dataset_set: bool, connected: bool = True) -> None:
         self.thread_dataset_set = thread_dataset_set
@@ -73,13 +72,13 @@ class _ClientWithThreadDataset:
 
 
 def _matter_data_dir(tmp_path: Path) -> Path:
-    """Ein Verzeichnis mit einer harmlosen Testdatei - steht fuer das
-    matter-server-Datenverzeichnis, ohne echtes Schluesselmaterial zu
-    beruehren (siehe Task-Brief: tests/fixtures/VirtualIn|VirtualOut sind
-    tabu, aber die haben mit dieser Datei nichts zu tun)."""
+    """A directory with a harmless test file - standing in for the
+    matter-server data directory without touching any real key material
+    (see the task brief: tests/fixtures/VirtualIn|VirtualOut are off
+    limits, but those have nothing to do with this file)."""
     directory = tmp_path / "matter-data"
     directory.mkdir()
-    (directory / "credentials.json").write_text('{"fixture": "keine echten Schluessel"}')
+    (directory / "credentials.json").write_text('{"fixture": "no real keys"}')
     return directory
 
 
@@ -89,8 +88,8 @@ _BACKUP_HEADERS = {"Authorization": f"Bearer {_BACKUP_TOKEN}"}
 
 @pytest.fixture
 def receiver() -> Iterator[socket.socket]:
-    """Wie in tests/loxone/test_sender.py - ein UDP-Socket auf 127.0.0.1,
-    der die Maschine nicht verlaesst."""
+    """Like in tests/loxone/test_sender.py - a UDP socket on 127.0.0.1 that
+    never leaves the machine."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
     sock.setblocking(False)
@@ -148,7 +147,7 @@ async def api_with_sender(tmp_path, no_invoke, fake_runtime, fake_client, receiv
 
 @pytest.fixture
 async def api_with_token(tmp_path, no_invoke, fake_runtime, fake_client):
-    """Wie `api`, aber mit gesetztem `api_token` - siehe Moduldocstring."""
+    """Like `api`, but with `api_token` configured - see the module docstring."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -193,7 +192,7 @@ def test_ring_buffer_drops_the_oldest():
 
 
 def test_ring_buffer_of_a_long_running_bridge_stays_bounded():
-    """Eine Bruecke laeuft monatelang - der Mitschnitt darf nicht mitwachsen."""
+    """A bridge runs for months at a time - the recording must not keep growing."""
     buffer = RingBuffer(maxlen=100)
     for i in range(1_000_000):
         buffer.append(i)
@@ -237,7 +236,7 @@ async def test_system_check_reports_each_line_with_a_verdict(api):
 
 
 async def test_fabric_backup_is_a_real_archive(api_with_token):
-    """Spec 4.1: das einzige unersetzliche Datum des Systems."""
+    """Spec 4.1: the one piece of data in the system that can't be replaced."""
     client, _, _ = api_with_token
     response = await client.get("/api/diagnostics/fabric-backup", headers=_BACKUP_HEADERS)
     assert response.status_code == 200
@@ -248,11 +247,11 @@ async def test_fabric_backup_is_a_real_archive(api_with_token):
 async def test_fabric_backup_is_503_without_a_configured_directory(
     no_invoke, fake_runtime, fake_client, tmp_path
 ):
-    """Der erste der beiden 503-Zweige (Task-6-Review, Punkt 3):
-    `matter_data_dir is None` - der Dienst laeuft ohne `--matter-data-dir`,
-    z. B. weil die Bereitstellung diese Option (noch) nicht setzt (siehe
-    deploy/testhost/docker-compose.yml, dort bewusst auskommentiert, bis
-    Task 8 den Token-Schutz liefert)."""
+    """The first of the two 503 branches (Task 6 review, point 3):
+    `matter_data_dir is None` - the service runs without
+    `--matter-data-dir`, e.g. because the deployment doesn't set this
+    option (yet) (see deploy/testhost/docker-compose.yml, deliberately
+    commented out there until Task 8 delivers token protection)."""
     store = Store(tmp_path / "t.sqlite")
     app = build_app(
         store, no_invoke, fake_runtime(store), client=fake_client, api_token=_BACKUP_TOKEN
@@ -273,7 +272,7 @@ async def test_fabric_backup_is_503_without_a_configured_directory(
 async def test_fabric_backup_is_503_without_a_configured_directory_in_german(
     no_invoke, fake_runtime, fake_client, tmp_path
 ):
-    """Deutscher Begleittest zu
+    """German companion test to
     test_fabric_backup_is_503_without_a_configured_directory."""
     store = Store(tmp_path / "t.sqlite")
     app = build_app(
@@ -296,11 +295,11 @@ async def test_fabric_backup_is_503_without_a_configured_directory_in_german(
 async def test_fabric_backup_is_503_when_the_configured_directory_is_missing(
     no_invoke, fake_runtime, fake_client, tmp_path
 ):
-    """Der zweite 503-Zweig: `matter_data_dir` ist gesetzt, aber der Pfad
-    existiert (mehr) nicht - z. B. eine Einhaengung, die zwischenzeitlich
-    ausgehaengt wurde."""
+    """The second 503 branch: `matter_data_dir` is set, but the path
+    doesn't exist (any more) - e.g. a mount that was detached in the
+    meantime."""
     store = Store(tmp_path / "t.sqlite")
-    missing = tmp_path / "existiert-nicht"
+    missing = tmp_path / "does-not-exist"
     app = build_app(
         store,
         no_invoke,
@@ -324,10 +323,10 @@ async def test_fabric_backup_is_503_when_the_configured_directory_is_missing(
 async def test_fabric_backup_is_503_when_the_configured_directory_is_missing_in_german(
     no_invoke, fake_runtime, fake_client, tmp_path
 ):
-    """Deutscher Begleittest zu
+    """German companion test to
     test_fabric_backup_is_503_when_the_configured_directory_is_missing."""
     store = Store(tmp_path / "t.sqlite")
-    missing = tmp_path / "existiert-nicht"
+    missing = tmp_path / "does-not-exist"
     app = build_app(
         store,
         no_invoke,
@@ -352,12 +351,12 @@ async def test_fabric_backup_is_503_when_the_configured_directory_is_missing_in_
 async def test_fabric_backup_is_503_when_the_configured_path_is_a_file(
     no_invoke, fake_runtime, fake_client, tmp_path
 ):
-    """Derselbe Zweig wie oben (`not matter_data_dir.is_dir()`), aber ueber
-    den bislang unbetrachteten dritten Fall: der Pfad existiert durchaus,
-    ist aber kein Verzeichnis, sondern eine gewoehnliche Datei."""
+    """The same branch as above (`not matter_data_dir.is_dir()`), but via
+    the third case not covered so far: the path does exist, but isn't a
+    directory - just an ordinary file."""
     store = Store(tmp_path / "t.sqlite")
-    not_a_directory = tmp_path / "matter-data-ist-eine-datei"
-    not_a_directory.write_text("keine Fabric-Sicherung, nur eine gewoehnliche Datei")
+    not_a_directory = tmp_path / "matter-data-is-a-file"
+    not_a_directory.write_text("no fabric backup, just an ordinary file")
     app = build_app(
         store,
         no_invoke,
@@ -375,7 +374,7 @@ async def test_fabric_backup_is_503_when_the_configured_path_is_a_file(
 
 
 async def test_a_failing_check_says_what_to_do(api_without_matter):
-    """Ein roter Punkt ohne Hinweis hilft niemandem."""
+    """A red dot with no hint helps nobody."""
     client, _, _ = api_without_matter
     checks = (await client.get("/api/diagnostics/system")).json()
     failing = next(c for c in checks if not c["ok"])
@@ -390,7 +389,7 @@ async def test_a_failing_check_says_what_to_do(api_without_matter):
 
 
 async def test_a_failing_check_says_what_to_do_in_german(api_without_matter):
-    """Deutscher Begleittest zu test_a_failing_check_says_what_to_do."""
+    """German companion test to test_a_failing_check_says_what_to_do."""
     client, store, _ = api_without_matter
     store.locale.set_language("de")
     checks = (await client.get("/api/diagnostics/system")).json()
@@ -404,9 +403,9 @@ async def test_a_failing_check_says_what_to_do_in_german(api_without_matter):
 
 
 async def test_command_log_does_not_record_diagnostics_polling(api):
-    """Signal/Rausch-Entscheidung (siehe Moduldocstring von diagnostics.py):
-    ein Client, der die Diagnoseseite offen laesst und alle paar Sekunden
-    pollt, soll den knappen Ringpuffer nicht mit sich selbst fluten."""
+    """Signal/noise decision (see the module docstring of diagnostics.py):
+    a client that keeps the diagnostics page open and polls every few
+    seconds should not flood the small ring buffer with itself."""
     client, _, _ = api
     for _ in range(5):
         await client.get("/api/diagnostics/commands")
@@ -416,11 +415,11 @@ async def test_command_log_does_not_record_diagnostics_polling(api):
 
 
 async def test_command_log_never_carries_a_query_string(api):
-    """Ausblick auf Task 8 (Token-Schutz fuer die Sicherung): wird das Token
-    irgendwo als Query-Parameter gefuehrt, darf es nicht im fuer jeden
-    Diagnose-Betrachter sichtbaren Kommando-Log landen. Query-Strings werden
-    deshalb grundsaetzlich nie mitgeschnitten, unabhaengig davon, welche
-    Route sie traegt."""
+    """Looking ahead to Task 8 (token protection for the backup): if the
+    token is ever carried as a query parameter somewhere, it must not end
+    up in the command log that's visible to every diagnostics viewer.
+    Query strings are therefore never recorded at all, on principle,
+    regardless of which route carries them."""
     client, _, device_id = api
     await client.get(f"/cmd/d{device_id}_1_on/1?secret=should-not-be-logged")
     entries = (await client.get("/api/diagnostics/commands")).json()
@@ -428,13 +427,13 @@ async def test_command_log_never_carries_a_query_string(api):
 
 
 async def test_a_check_that_raises_unexpectedly_fails_gracefully(api, monkeypatch):
-    """Punkt 3 des Auftrags: ein Check, der selbst wirft (nicht nur eine der
-    erwarteten Fehlerarten, sondern ein echter Bug), darf den ganzen
-    Endpunkt nicht mit 500 abschiessen - er wird zu genau einer roten Zeile."""
+    """Point 3 of the brief: a check that raises itself (not just one of the
+    expected error kinds, but an actual bug) must not shoot down the
+    entire endpoint with 500 - it turns into exactly one red line."""
     client, store, _ = api
 
     def _broken_check_writable() -> None:
-        raise RuntimeError("Simulierter Programmfehler in der Pruefung selbst")
+        raise RuntimeError("Simulated bug in the check itself")
 
     monkeypatch.setattr(store, "check_writable", _broken_check_writable)
 
@@ -445,18 +444,19 @@ async def test_a_check_that_raises_unexpectedly_fails_gracefully(api, monkeypatc
     assert store_check["ok"] is False
     assert len(store_check["detail"]) > 20
     assert store_check["detail"] == (
-        "This check itself failed (Simulierter Programmfehler in der Pruefung selbst) "
+        "This check itself failed (Simulated bug in the check itself) "
         "— that is a bug in the check, not necessarily in the checked system. The full "
         "traceback is in the server log."
     )
 
 
 async def test_a_check_that_raises_unexpectedly_fails_gracefully_in_german(api, monkeypatch):
-    """Deutscher Begleittest zu test_a_check_that_raises_unexpectedly_fails_gracefully."""
+    """German companion test to
+    test_a_check_that_raises_unexpectedly_fails_gracefully."""
     client, store, _ = api
 
     def _broken_check_writable() -> None:
-        raise RuntimeError("Simulierter Programmfehler in der Pruefung selbst")
+        raise RuntimeError("Simulated bug in the check itself")
 
     monkeypatch.setattr(store, "check_writable", _broken_check_writable)
     store.locale.set_language("de")
@@ -467,19 +467,19 @@ async def test_a_check_that_raises_unexpectedly_fails_gracefully_in_german(api, 
     store_check = next(c for c in checks if c["name"] == "store")
     assert store_check["ok"] is False
     assert store_check["detail"] == (
-        "Diese Pruefung selbst ist fehlgeschlagen (Simulierter Programmfehler in der "
-        "Pruefung selbst) - das ist ein Fehler in der Pruefung, nicht zwangslaeufig im "
+        "Diese Pruefung selbst ist fehlgeschlagen (Simulated bug in the check itself) "
+        "- das ist ein Fehler in der Pruefung, nicht zwangslaeufig im "
         "gepruerften System. Der volle Traceback steht im Server-Log."
     )
 
 
 # ---------------------------------------------------------------------------
-# IPv6- und Thread-Pruefung (2026-09-03)
+# IPv6 and Thread checks (2026-09-03)
 # ---------------------------------------------------------------------------
 
-# Auszug aus einem echten `/proc/net/if_inet6` des Testhosts. Spalten:
-# Adresse (hex, ohne Doppelpunkte), Interface-Index, Praefixlaenge, Scope,
-# Flags, Name.
+# Excerpt from a real `/proc/net/if_inet6` of the test host. Columns:
+# address (hex, no colons), interface index, prefix length, scope, flags,
+# name.
 _IF_INET6_WITH_THREAD = """\
 fe80000000000000da3addfffe99419e 03 40 20 80 wlan0
 00000000000000000000000000000001 01 80 10 80 lo
@@ -487,8 +487,8 @@ fd2745d78c7800010e26ce8e4edd7c50 07 40 00 00 wpan0
 fd7df0629267d2e0000000fffe00fc10 07 40 00 00 wpan0
 """
 
-# Derselbe Host, nachdem der OTBR-Agent an einem RCP-Timeout gestorben ist:
-# `wpan0` ist verschwunden, uebrig bleiben link-lokal und Loopback.
+# The same host, after the OTBR agent died on an RCP timeout: `wpan0` is
+# gone, leaving only link-local and loopback.
 _IF_INET6_WITHOUT_THREAD = """\
 fe80000000000000da3addfffe99419e 03 40 20 80 wlan0
 00000000000000000000000000000001 01 80 10 80 lo
@@ -496,8 +496,8 @@ fe80000000000000da3addfffe99419e 03 40 20 80 wlan0
 
 
 def _with_if_inet6(monkeypatch, tmp_path, content: str | None) -> None:
-    """Legt `_IF_INET6` auf eine Datei mit diesem Inhalt - oder auf einen
-    Pfad, den es nicht gibt, wenn `content is None` (Nicht-Linux)."""
+    """Points `_IF_INET6` at a file with this content - or at a path that
+    doesn't exist, when `content is None` (non-Linux)."""
     path = tmp_path / "if_inet6"
     if content is not None:
         path.write_text(content, encoding="ascii")
@@ -505,10 +505,10 @@ def _with_if_inet6(monkeypatch, tmp_path, content: str | None) -> None:
 
 
 def test_ipv6_accepts_a_unique_local_address(monkeypatch, tmp_path):
-    """Der Fehler, den dieser Check frueher hatte: er verlangte eine Route zu
-    einer GLOBALEN Adresse und meldete auf einem gesunden Thread-Aufbau rot.
-    Thread laeuft ueber Unique-Local-Adressen, und die meisten Heimnetze
-    haben ueberhaupt kein globales IPv6."""
+    """The bug this check used to have: it required a route to a GLOBAL
+    address and reported red on a healthy Thread setup. Thread runs over
+    unique-local addresses, and most home networks have no global IPv6 at
+    all."""
     _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITH_THREAD)
     ok, detail = diagnostics._check_ipv6()
     assert ok is True
@@ -517,9 +517,9 @@ def test_ipv6_accepts_a_unique_local_address(monkeypatch, tmp_path):
 
 
 def test_ipv6_accepts_a_unique_local_address_in_german(monkeypatch, tmp_path):
-    """Deutscher Begleittest zu test_ipv6_accepts_a_unique_local_address.
-    `_check_ipv6` ist eine reine Funktion ohne HTTP-Aufruf, daher genuegt hier
-    `i18n.set_language` direkt."""
+    """German companion test to test_ipv6_accepts_a_unique_local_address.
+    `_check_ipv6` is a pure function with no HTTP call, so `i18n.set_language`
+    directly is enough here."""
     i18n.set_language("de")
     _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITH_THREAD)
     ok, detail = diagnostics._check_ipv6()
@@ -536,10 +536,10 @@ def test_ipv6_fails_when_only_link_local_and_loopback_remain(monkeypatch, tmp_pa
 
 
 def test_ipv6_fails_when_only_link_local_and_loopback_remain_in_german(monkeypatch, tmp_path):
-    """Deutscher Begleittest zu
+    """German companion test to
     test_ipv6_fails_when_only_link_local_and_loopback_remain. `_check_ipv6`
-    ist eine reine Funktion ohne HTTP-Aufruf, daher genuegt hier
-    `i18n.set_language` direkt - keine Middleware liest die Sprache neu ein."""
+    is a pure function with no HTTP call, so `i18n.set_language` directly is
+    enough here - no middleware re-reads the language."""
     i18n.set_language("de")
     _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITHOUT_THREAD)
     ok, detail = diagnostics._check_ipv6()
@@ -556,9 +556,9 @@ def test_thread_check_finds_the_mesh_interface(monkeypatch, tmp_path):
 
 
 def test_thread_check_finds_the_mesh_interface_in_german(monkeypatch, tmp_path):
-    """Deutscher Begleittest zu test_thread_check_finds_the_mesh_interface.
-    `_check_thread` ist eine reine Funktion ohne HTTP-Aufruf, daher genuegt
-    hier `i18n.set_language` direkt."""
+    """German companion test to test_thread_check_finds_the_mesh_interface.
+    `_check_thread` is a pure function with no HTTP call, so
+    `i18n.set_language` directly is enough here."""
     i18n.set_language("de")
     _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITH_THREAD)
     ok, detail = diagnostics._check_thread()
@@ -568,11 +568,11 @@ def test_thread_check_finds_the_mesh_interface_in_german(monkeypatch, tmp_path):
 
 
 def test_thread_check_fails_when_the_interface_is_gone(monkeypatch, tmp_path):
-    """Der echte Ausfall vom 2026-09-03: das Funkmodul antwortete nicht mehr,
-    der OTBR-Agent brach mit einem RCP-Timeout ab, `wpan0` verschwand - und
-    der Container lief weiter, sodass `restart: unless-stopped` nicht griff.
-    Sechseinhalb Stunden lang war kein Geraet erreichbar. Dieser Check haette
-    es gezeigt."""
+    """The real outage from 2026-09-03: the radio module stopped
+    responding, the OTBR agent aborted with an RCP timeout, `wpan0`
+    disappeared - and the container kept running, so `restart:
+    unless-stopped` never kicked in. No device was reachable for six and a
+    half hours. This check would have shown it."""
     _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITHOUT_THREAD)
     ok, detail = diagnostics._check_thread()
     assert ok is False
@@ -582,9 +582,10 @@ def test_thread_check_fails_when_the_interface_is_gone(monkeypatch, tmp_path):
 
 
 def test_thread_check_fails_when_the_interface_is_gone_in_german(monkeypatch, tmp_path):
-    """Deutscher Begleittest zu test_thread_check_fails_when_the_interface_is_gone.
-    `_check_thread` ist eine reine Funktion ohne HTTP-Aufruf, daher genuegt
-    hier `i18n.set_language` direkt."""
+    """German companion test to
+    test_thread_check_fails_when_the_interface_is_gone.
+    `_check_thread` is a pure function with no HTTP call, so
+    `i18n.set_language` directly is enough here."""
     i18n.set_language("de")
     _with_if_inet6(monkeypatch, tmp_path, _IF_INET6_WITHOUT_THREAD)
     ok, detail = diagnostics._check_thread()
@@ -595,9 +596,9 @@ def test_thread_check_fails_when_the_interface_is_gone_in_german(monkeypatch, tm
 
 
 def test_both_checks_stay_quiet_where_they_cannot_look(monkeypatch, tmp_path):
-    """Auf einem Nicht-Linux-System gibt es /proc/net/if_inet6 nicht. Das ist
-    kein Fehler des Aufbaus, sondern eine Grenze der Pruefung - ein roter
-    Punkt dafuer waere eine Falschmeldung auf jedem Entwicklungsrechner."""
+    """On a non-Linux system, /proc/net/if_inet6 doesn't exist. That's not a
+    fault in the setup, but a limit of the check - a red dot for it would be
+    a false alarm on every development machine."""
     _with_if_inet6(monkeypatch, tmp_path, None)
     for ok, detail in (diagnostics._check_ipv6(), diagnostics._check_thread()):
         assert ok is True
@@ -605,9 +606,10 @@ def test_both_checks_stay_quiet_where_they_cannot_look(monkeypatch, tmp_path):
 
 
 def test_both_checks_stay_quiet_where_they_cannot_look_in_german(monkeypatch, tmp_path):
-    """Deutscher Begleittest zu test_both_checks_stay_quiet_where_they_cannot_look.
-    Beide Pruefungen sind reine Funktionen ohne HTTP-Aufruf, daher genuegt
-    hier `i18n.set_language` direkt."""
+    """German companion test to
+    test_both_checks_stay_quiet_where_they_cannot_look.
+    Both checks are pure functions with no HTTP call, so `i18n.set_language`
+    directly is enough here."""
     i18n.set_language("de")
     _with_if_inet6(monkeypatch, tmp_path, None)
     for ok, detail in (diagnostics._check_ipv6(), diagnostics._check_thread()):
@@ -616,25 +618,24 @@ def test_both_checks_stay_quiet_where_they_cannot_look_in_german(monkeypatch, tm
 
 
 # ---------------------------------------------------------------------------
-# Thread-Zugangsdaten im matter-server
+# Thread credentials in matter-server
 #
-# Der aufgezeichnete Ernstfall vom 2026-09-04: matter-server war am Vortag neu
-# gestartet und hatte damit die Thread-Zugangsdaten verloren (er haelt sie nur
-# im Arbeitsspeicher, siehe `loxmatter/matter/otbr.py`). Nichts hat es
-# gemeldet - kein Check, keine Zeile in der Oberflaeche. Sichtbar wurde es
-# erst, als drei Einlernversuche hintereinander mit "Commission with code
-# failed for node N" scheiterten, und selbst dann nannte die Meldung die
-# Ursache nicht.
+# The recorded real-world incident from 2026-09-04: matter-server had been
+# restarted the day before and had thereby lost the Thread credentials (it
+# only holds them in memory, see `loxmatter/matter/otbr.py`). Nothing
+# reported it - no check, no line in the UI. It only became visible when
+# three commissioning attempts in a row failed with "Commission with code
+# failed for node N", and even then the message didn't name the cause.
 #
-# Dieser Punkt macht den Zustand sichtbar - er ist aber KEIN Alarm mehr. Seit
-# das Einlernen sich den Datensatz selbst beim Border Router holt (siehe
-# `api/devices.py`), ist "nicht gesetzt" der voellig gesunde Regelzustand
-# nach jedem Neustart des Pi: matter-server startet ohne die Daten, niemand
-# lernt etwas ein, und der Zustand loest sich beim naechsten Einlernen von
-# selbst auf. Ein Punkt, der dabei dauerhaft rot stuende und dessen Text
-# erklaert, dass nichts zu tun ist, entwertet die roten Punkte daneben. Der
-# Alarm, der wirklich Handlung verlangt, sitzt im Punkt `thread`: er wird
-# rot, wenn gar kein Border Router laeuft.
+# This point makes the state visible - but it is NO LONGER an alarm. Ever
+# since commissioning fetches the dataset itself from the border router
+# (see `api/devices.py`), "not set" is the perfectly healthy normal state
+# after every restart of the Pi: matter-server starts without the data,
+# nobody commissions anything, and the state resolves itself on the next
+# commissioning. A point that stayed red the whole time for this, with text
+# explaining that there's nothing to do, devalues the red dots next to it.
+# The alarm that actually demands action sits in the `thread` point: it
+# turns red when no border router is running at all.
 # ---------------------------------------------------------------------------
 
 
@@ -645,28 +646,29 @@ def test_thread_credentials_check_is_green_when_matter_server_has_them():
 
 
 def test_thread_credentials_check_stays_green_when_matter_server_lacks_them():
-    """Der gesunde Regelzustand nach jedem Neustart des Pi - kein Alarm,
-    sondern eine Zustandszeile. Sie muss trotzdem zwei Dinge sagen: dass das
-    naechste Einlernen die Daten automatisch vom Border Router holt, und wo
-    der Punkt sitzt, der rot wird, wenn dort gar keiner laeuft.
+    """The healthy normal state after every restart of the Pi - not an
+    alarm, but a status line. It still has to say two things: that the
+    next commissioning fetches the data from the border router
+    automatically, and where the point sits that turns red when none is
+    running at all there.
 
-    Geprueft wird in der Standardsprache (Englisch); die deutsche Fassung
-    steht im Test darunter - dasselbe Paar-Muster wie bei den
-    IPv6-/Thread-Pruefungen weiter oben."""
+    Checked in the default language (English); the German version is in
+    the test below - the same pairing pattern as the IPv6/Thread checks
+    above."""
     ok, detail = _check_thread_credentials(_ClientWithThreadDataset(False))
     assert ok
     assert "commissioning" in detail
     assert "Border Router" in detail
-    # Verweist auf den Nachbarpunkt `thread` - genau den Namen, unter dem er
-    # in `GET /api/diagnostics/system` steht. Der ist eine feste Kennung und
-    # bleibt deshalb in beiden Sprachen gleich.
+    # Refers to the neighboring point `thread` - exactly the name it has
+    # under `GET /api/diagnostics/system`. That's a fixed identifier and
+    # therefore stays the same in both languages.
     assert "thread" in detail
 
 
 def test_thread_credentials_check_says_the_same_in_german():
-    """Die Zeile ist ein Oberflaechentext und wechselt mit der Sprache. Kein
-    HTTP-Aufruf noetig - der Check ist eine reine Funktion, deshalb hier
-    `i18n.set_language` direkt."""
+    """This line is UI text and changes with the language. No HTTP call
+    needed - the check is a pure function, hence `i18n.set_language`
+    directly here."""
     i18n.set_language("de")
 
     ok, detail = _check_thread_credentials(_ClientWithThreadDataset(False))
@@ -678,9 +680,9 @@ def test_thread_credentials_check_says_the_same_in_german():
 
 
 def test_thread_credentials_check_stays_quiet_without_a_matter_connection():
-    """Ohne Verbindung ist der Zustand nicht feststellbar - das ist die
-    Aussage des matter-server-Checks daneben, nicht die dieses hier. Zwei
-    rote Punkte fuer dieselbe Ursache verteilen die Aufmerksamkeit."""
+    """Without a connection, the state can't be determined - that is the
+    point of the matter-server check next to it, not of this one. Two red
+    dots for the same cause split attention."""
     ok, detail = _check_thread_credentials(None)
     assert ok
     assert "Not determinable" in detail
@@ -698,27 +700,27 @@ def test_thread_credentials_check_stays_quiet_without_a_matter_connection_in_ger
 
 
 async def test_the_system_check_carries_the_thread_credentials_line(api):
-    """Der Name des Punktes ist eine feste Kennung, keine Uebersetzung -
-    genau wie "matter-server", "store", "ipv6", "thread" und "miniserver"
-    daneben. Er wandert deshalb NICHT mit der Sprache, und ein Log oder ein
-    Fehlerbericht bleibt ueber Sprachgrenzen hinweg lesbar."""
+    """The point's name is a fixed identifier, not a translation - exactly
+    like "matter-server", "store", "ipv6", "thread" and "miniserver" next
+    to it. It therefore does NOT change with the language, and a log or an
+    error report stays readable across language boundaries."""
     client, _, _ = api
     checks = (await client.get("/api/diagnostics/system")).json()
     assert "thread-credentials" in {c["name"] for c in checks}
 
 
 # ---------------------------------------------------------------------------
-# POST /api/diagnostics/resync - der Resync-Knopf im System-Tab
+# POST /api/diagnostics/resync - the resync button in the system tab
 # ---------------------------------------------------------------------------
 #
-# Dieselbe Wirkung wie `GET /resync` (siehe tests/loxone/test_server.py), nur
-# von der anderen Seite: `/resync` gehoert dem Miniserver und bleibt bewusst
-# offen, diese Route gehoert der Oberflaeche und liegt wie jede `/api`-Route
-# hinter dem Waechter. Beide rufen dieselbe `Runtime.resend_all`.
+# The same effect as `GET /resync` (see tests/loxone/test_server.py), just
+# from the other side: `/resync` belongs to the Miniserver and deliberately
+# stays open, this route belongs to the UI and sits behind the guard like
+# every `/api` route. Both call the same `Runtime.resend_all`.
 #
-# Eigene Fixture, weil `api` oben die Runtime nicht herausgibt: die Tests hier
-# muessen sie anfassen (Anzahl setzen, Fehlschlag ausloesen), waehrend jeder
-# andere Test in dieser Datei sie nur als Beiwerk von `build_app` braucht.
+# A dedicated fixture, because `api` above doesn't hand out the runtime: the
+# tests here need to touch it (set a count, trigger a failure), while every
+# other test in this file only needs it as incidental to `build_app`.
 
 
 @pytest.fixture
@@ -739,8 +741,8 @@ async def api_with_runtime(tmp_path, no_invoke, fake_runtime, fake_client):
 
 
 async def test_resync_triggers_a_full_resend(api_with_runtime):
-    """Der Knopf soll dasselbe ausloesen wie der Systemstart-Baustein im
-    Config-Projekt - nicht etwas Aehnliches."""
+    """The button should trigger the same thing as the system-start block in
+    the Config project - not something similar."""
     client, runtime = api_with_runtime
     runtime.resend_result = 7
 
@@ -751,9 +753,9 @@ async def test_resync_triggers_a_full_resend(api_with_runtime):
 
 
 async def test_resync_reports_how_many_values_went_out(api_with_runtime):
-    """Die Zahl ist die einzige Rueckmeldung, die der Anwender bekommt (die
-    Oberflaeche zeigt sie als Kurzmeldung) - sie muss die echte sein.
-    Englischer Schluessel im Wire-Format, wie bei `/resync`."""
+    """The number is the only feedback the user gets (the UI shows it as a
+    brief message) - it has to be the real one. English key in the wire
+    format, as with `/resync`."""
     client, runtime = api_with_runtime
     runtime.resend_result = 42
 
@@ -763,23 +765,23 @@ async def test_resync_reports_how_many_values_went_out(api_with_runtime):
 
 
 async def test_resync_reports_a_broken_sender_as_502(api_with_runtime):
-    """Wie `/resync` (Review-Fix Minor #3 dort): ein toter Sender ist kein
-    Programmfehler dieser Route. 502 statt 500, und die Meldung sagt, was
-    schiefging."""
+    """Like `/resync` (review fix Minor #3 there): a dead sender is not a
+    bug in this route. 502 instead of 500, and the message says what went
+    wrong."""
     client, runtime = api_with_runtime
-    runtime.fail_resend_with = OSError("Socket ist zu")
+    runtime.fail_resend_with = OSError("Socket is closed")
 
     response = await client.post("/api/diagnostics/resync")
 
     assert response.status_code == 502
-    assert "Socket ist zu" in response.json()["detail"]
+    assert "Socket is closed" in response.json()["detail"]
 
 
 async def test_resync_keeps_the_traceback_out_of_the_answer(api_with_runtime):
-    """Derselbe Grund wie bei `/resync` und `/cmd`: der volle Traceback
-    gehoert ins Log, nicht in eine HTTP-Antwort."""
+    """Same reason as with `/resync` and `/cmd`: the full traceback belongs
+    in the log, not in an HTTP response."""
     client, runtime = api_with_runtime
-    runtime.fail_resend_with = OSError("Socket ist zu")
+    runtime.fail_resend_with = OSError("Socket is closed")
 
     response = await client.post("/api/diagnostics/resync")
 
@@ -787,12 +789,12 @@ async def test_resync_keeps_the_traceback_out_of_the_answer(api_with_runtime):
 
 
 async def test_resync_fails_in_german(no_invoke, fake_runtime, fake_client, tmp_path):
-    """Deutscher Begleittest zu test_resync_reports_a_broken_sender_as_502 -
-    die Sprache haengt am Store, nicht am Prozess (siehe die
-    `_in_german`-Tests der Sicherung weiter oben)."""
+    """German companion test to test_resync_reports_a_broken_sender_as_502 -
+    the language hangs off the store, not the process (see the `_in_german`
+    tests of the security suite above)."""
     store = Store(tmp_path / "t.sqlite")
     runtime = fake_runtime(store)
-    runtime.fail_resend_with = OSError("Socket ist zu")
+    runtime.fail_resend_with = OSError("Socket is closed")
     app = build_app(store, no_invoke, runtime, client=fake_client)
     store.locale.set_language("de")
     transport = httpx.ASGITransport(app=app)
@@ -803,4 +805,4 @@ async def test_resync_fails_in_german(no_invoke, fake_runtime, fake_client, tmp_
 
     assert response.status_code == 502
     assert "fehlgeschlagen" in response.json()["detail"]
-    assert "Socket ist zu" in response.json()["detail"]
+    assert "Socket is closed" in response.json()["detail"]

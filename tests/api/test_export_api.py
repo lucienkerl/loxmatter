@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer den Export ueber die API (Task 5, Phase 5) - siehe api/export.py."""
+"""Tests for the export via the API (Task 5, Phase 5) - see api/export.py."""
 
 from __future__ import annotations
 
@@ -40,8 +40,8 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 async def api(
     tmp_path, no_invoke, fake_runtime
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store, int]]:
-    """Wie die `api`-Fixture in `test_devices.py`, aber als 3-Tupel ohne
-    `fake_client` - der Export-Router braucht keinen Matter-Client."""
+    """Like the `api` fixture in `test_devices.py`, but as a 3-tuple with no
+    `fake_client` - the export router needs no Matter client."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -57,11 +57,11 @@ async def api(
 
 
 async def test_preview_reports_what_would_be_written(api):
-    """`inputs` seit Aufgabe 6: 5 relevante Signale der Steckdose (siehe
+    """`inputs` since Task 6: 5 relevant signals of the plug (see
     `tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`)
-    plus das Online-Signal, macht 6. `skipped` bleibt bei 49 - das zaehlt
-    weiterhin nur technisch nicht Abbildbares (`is_exportable`), unberuehrt
-    von der neuen Relevanz-Auswahl."""
+    plus the online signal, makes 6. `skipped` stays at 49 - it still only
+    counts what's technically not mappable (`is_exportable`), unaffected by
+    the new relevance selection."""
     client, _, device_id = api
     preview = (await client.get("/api/export/preview?bridge_ip=192.168.1.50")).json()
     device = next(d for d in preview["devices"] if d["device_id"] == device_id)
@@ -71,10 +71,10 @@ async def test_preview_reports_what_would_be_written(api):
 
 
 async def test_the_preview_reports_how_many_signals_are_hidden(api):
-    """`hidden_count` (Aufgabe 8): wie viele Signale die Oberflaeche im
-    zugeklappten "Experte"-Block der Signale-Ansicht versteckt - fuer die
-    Steckdose der Testvorlage 154 von 159 (siehe `_signal_out`-Test in
-    `test_devices.py`, nur 5 sind funktional)."""
+    """`hidden_count` (Task 8): how many signals the UI hides in the
+    collapsed "expert" block of the signals view - for the plug in the test
+    template, 154 of 159 (see the `_signal_out` test in `test_devices.py`,
+    only 5 are functional)."""
     client, _, device_id = api
     body = (await client.get("/api/export/preview?bridge_ip=10.0.0.1")).json()
     plug = next(d for d in body["devices"] if d["device_id"] == device_id)
@@ -82,7 +82,7 @@ async def test_the_preview_reports_how_many_signals_are_hidden(api):
 
 
 async def test_preview_does_not_write_anything(api, tmp_path):
-    """Vorschau heisst Vorschau."""
+    """Preview means preview."""
     client, _, _ = api
     before = set(tmp_path.iterdir())
     await client.get("/api/export/preview?bridge_ip=192.168.1.50")
@@ -90,8 +90,8 @@ async def test_preview_does_not_write_anything(api, tmp_path):
 
 
 async def test_preview_never_marks_a_device_as_exported(api):
-    """Ergaenzt den obigen Test: nicht nur das Dateisystem, auch die
-    Datenbank selbst bleibt unberuehrt (Entscheidung 1, api/export.py)."""
+    """Complements the test above: not just the filesystem, the database
+    itself stays untouched too (Decision 1, api/export.py)."""
     client, store, device_id = api
     await client.get("/api/export/preview?bridge_ip=192.168.1.50")
     assert store.device(device_id).exported_at is None
@@ -110,10 +110,11 @@ async def test_download_returns_a_zip_with_both_templates(api):
 async def test_download_skips_the_vo_file_for_a_device_without_commands(
     tmp_path, no_invoke, fake_runtime
 ):
-    """Ein Taster hat keine Ausgangsbefehle - ohne diese Ausnahme waere die
-    VO_-Datei nur ihr leeres Grundgeruest, und ein Import in Loxone Config
-    braechte nichts ausser einer leeren Vorlage im Baum (dieselbe Regel wie
-    in `tests/test_export_cli.py::test_button_gets_no_output_commands`)."""
+    """A button has no output commands - without this exception, the VO_
+    file would be nothing but its empty skeleton, and importing it into
+    Loxone Config would produce nothing but an empty template in the tree
+    (the same rule as in
+    `tests/test_export_cli.py::test_button_gets_no_output_commands`)."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -143,9 +144,9 @@ async def test_zip_contains_the_system_templates_and_a_readme(api):
 
 
 async def test_the_readme_explains_how_to_import_the_templates(api):
-    """Task 6: `_readme_text()` loest `api.export.readme_text` frisch pro
-    Aufruf auf - siehe `test_the_readme_is_german_when_the_language_is_de`
-    fuer den deutschen Begleittest."""
+    """Task 6: `_readme_text()` resolves `api.export.readme_text` fresh on
+    every call - see `test_the_readme_is_german_when_the_language_is_de`
+    for the German companion test."""
     client, _, _ = api
     response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
     archive = zipfile.ZipFile(io.BytesIO(response.content))
@@ -154,18 +155,18 @@ async def test_the_readme_explains_how_to_import_the_templates(api):
     text = raw.decode("utf-8")
     assert "IMPORT INSTRUCTIONS" in text
     assert "Templates\\VirtualIn\\" in text
-    # `_readme_text()` haengt die CRLF-Umwandlung weiterhin an ihren
-    # Rueckgabewert - dieselbe Notepad-Freundlichkeit wie vor Task 6.
+    # `_readme_text()` still appends the CRLF conversion to its return
+    # value - the same Notepad-friendliness as before Task 6.
     assert b"\r\n" in raw
     assert b"\n" not in raw.replace(b"\r\n", b"")
 
 
 async def test_the_readme_is_german_when_the_language_is_de(api):
-    """Deutscher Begleittest zu
+    """German companion test to
     `test_the_readme_explains_how_to_import_the_templates` -
-    `store.locale.set_language`, nicht `i18n.set_language` direkt: die
-    `sync_language`-Middleware liest bei jeder Anfrage aus dem Store neu
-    (siehe Task 1)."""
+    `store.locale.set_language`, not `i18n.set_language` directly: the
+    `sync_language` middleware reads from the store fresh on every request
+    (see Task 1)."""
     client, store, _ = api
     store.locale.set_language("de")
     response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
@@ -177,13 +178,14 @@ async def test_the_readme_is_german_when_the_language_is_de(api):
 
 
 async def test_the_readme_filename_stays_language_neutral(api):
-    """Review-Fix Important (Whole-Branch-Review, 2026-09-04): Task 6
-    uebersetzte nur den INHALT der Anleitungsdatei (`api.export.readme_text`)
-    - der Dateiname selbst blieb hartcodiert `Import-Anleitung.txt`, auch im
-    englischsprachigen Export. Ein Dateiname, der sich mit der UI-Sprache
-    aendert, wuerde jedes Skript erschweren, das die ZIP-Struktur erwartet -
-    er ist deshalb jetzt EIN fester, sprachneutraler Wert (`README.txt`),
-    unabhaengig davon, ob der Store auf Englisch oder Deutsch steht."""
+    """Review-fix Important (whole-branch review, 2026-09-04): Task 6
+    translated only the CONTENT of the instructions file
+    (`api.export.readme_text`) - the filename itself stayed hardcoded as
+    `Import-Anleitung.txt`, even in an English-language export. A filename
+    that changes with the UI language would complicate every script that
+    expects the ZIP structure - it is therefore now ONE fixed,
+    language-neutral value (`README.txt`), regardless of whether the store
+    is set to English or German."""
     client, store, _ = api
 
     response_en = await client.get("/api/export/download?bridge_ip=192.168.1.50")
@@ -199,7 +201,7 @@ async def test_the_readme_filename_stays_language_neutral(api):
 
 
 async def test_files_in_the_zip_keep_bom_and_crlf(api):
-    """Spec 6.1: das Format ist gemessen, nicht verhandelbar - auch im Archiv."""
+    """Spec 6.1: the format is measured, not negotiable - in the archive too."""
     client, _, _ = api
     response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
     archive = zipfile.ZipFile(io.BytesIO(response.content))
@@ -239,15 +241,14 @@ async def test_download_marks_a_device_as_exported(api):
 
 
 async def test_a_failure_partway_through_the_archive_marks_no_device(api, monkeypatch):
-    """Review-Fix Important #1, 2026-09-02: `download` markierte bislang
-    jedes Geraet SOFORT, waehrend das ZIP noch aufgebaut wurde - schlug der
-    Aufbau eines spaeteren Geraets fehl (500, kein ZIP beim Client), blieben
-    die zuvor verarbeiteten Geraete trotzdem dauerhaft als exportiert
-    vermerkt. Zwei Geraete im Store, das zweite laesst `to_inputs`
-    (aufgerufen aus `api.export.download`) absichtlich scheitern - das
-    erste Geraet ist zu diesem Zeitpunkt schon vollstaendig ins Archiv
-    geschrieben. Nach dem Fix darf trotzdem KEINS der beiden markiert
-    sein, weil das Archiv nie fertig wurde."""
+    """Review-fix Important #1, 2026-09-02: `download` used to mark every
+    device IMMEDIATELY, while the ZIP was still being built - if building a
+    later device failed (500, no ZIP for the client), the devices already
+    processed still stayed marked as exported permanently. Two devices in
+    the store, the second one deliberately makes `to_inputs` (called from
+    `api.export.download`) fail - the first device has, by this point,
+    already been fully written into the archive. After the fix, NEITHER of
+    the two may be marked, because the archive never finished."""
     client, store, first_device_id = api
     second_snapshot = load_snapshot("example_light.json")
     second_device_id = store.register_device(second_snapshot)
@@ -255,7 +256,7 @@ async def test_a_failure_partway_through_the_archive_marks_no_device(api, monkey
     store.register_commands(
         second_device_id, extract_commands(second_snapshot), second_snapshot.node_id
     )
-    assert store.devices()[0].id == first_device_id  # erstes Geraet wird zuerst verarbeitet
+    assert store.devices()[0].id == first_device_id  # first device is processed first
 
     import loxmatter.api.export as export_module
 
@@ -263,12 +264,12 @@ async def test_a_failure_partway_through_the_archive_marks_no_device(api, monkey
 
     def boom(signals, device_id, label):  # type: ignore[no-untyped-def]
         if device_id == second_device_id:
-            raise RuntimeError("simulierter Absturz beim Rendern des zweiten Geraets")
+            raise RuntimeError("simulated crash while rendering the second device")
         return original_to_inputs(signals, device_id, label)
 
     monkeypatch.setattr(export_module, "to_inputs", boom)
 
-    with pytest.raises(RuntimeError, match="simulierter Absturz"):
+    with pytest.raises(RuntimeError, match="simulated crash"):
         await client.get("/api/export/download?bridge_ip=192.168.1.50")
 
     assert store.device(first_device_id).exported_at is None
@@ -276,8 +277,8 @@ async def test_a_failure_partway_through_the_archive_marks_no_device(api, monkey
 
 
 async def test_a_rename_after_export_marks_the_device_changed_again(api):
-    """Ein Export ist kein Einfrieren: aendert sich das Geraet danach - hier
-    ueber eine Umbenennung -, muss `GET /api/export/status` das melden."""
+    """An export is not a freeze: if the device changes afterward - here via
+    a rename - `GET /api/export/status` must report it."""
     client, _, device_id = api
     await client.get("/api/export/download?bridge_ip=192.168.1.50")
 
@@ -290,8 +291,8 @@ async def test_a_rename_after_export_marks_the_device_changed_again(api):
 
 
 async def test_removed_devices_do_not_appear_in_preview_download_or_status(api):
-    """Ein entferntes Geraet behaelt seine id (Spec 6.2), aber eine Vorlage
-    fuer ein Geraet, das nicht mehr existiert, ist schlimmer als keine."""
+    """A removed device keeps its id (Spec 6.2), but a template for a device
+    that no longer exists is worse than none at all."""
     client, store, device_id = api
     store.forget_device(device_id)
 
@@ -309,8 +310,8 @@ async def test_removed_devices_do_not_appear_in_preview_download_or_status(api):
 async def test_an_empty_installation_yields_an_empty_preview_and_a_non_empty_zip(
     tmp_path, no_invoke, fake_runtime
 ):
-    """Kein Geraet eingelernt: weder eine leere ZIP-Datei noch ein 500 sind
-    akzeptable Antworten - siehe api/export.py, `download`."""
+    """No device commissioned: neither an empty ZIP file nor a 500 are
+    acceptable responses - see api/export.py, `download`."""
     store = Store(tmp_path / "empty.sqlite")
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
@@ -322,7 +323,7 @@ async def test_an_empty_installation_yields_an_empty_preview_and_a_non_empty_zip
         response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
         assert response.status_code == 200
         names = zipfile.ZipFile(io.BytesIO(response.content)).namelist()
-        assert names  # nicht leer - die Kurzanleitung liegt immer bei
+        assert names  # not empty - the quick-start guide is always included
         assert not any(n.startswith(("VIU_d", "VO_d")) for n in names)
 
         status = (await client.get("/api/export/status")).json()
@@ -331,10 +332,10 @@ async def test_an_empty_installation_yields_an_empty_preview_and_a_non_empty_zip
 
 
 async def test_api_export_writes_the_same_database_as_the_cli(tmp_path, no_invoke, fake_runtime):
-    """Kernanforderung des Tasks: API und CLI muessen dieselbe Datenbank
-    schreiben - sonst bekommt ein Geraet, das einmal per CLI und einmal per
-    WebUI exportiert wird, zwei Saetze Signalschluessel (siehe Modul-
-    Docstring von api/export.py)."""
+    """The core requirement of this task: the API and the CLI must write the
+    same database - otherwise a device exported once via the CLI and once
+    via the WebUI gets two sets of signal keys (see the module docstring of
+    api/export.py)."""
     db_path = tmp_path / "shared.sqlite"
     out_dir = tmp_path / "cli_out"
 
@@ -356,15 +357,15 @@ async def test_api_export_writes_the_same_database_as_the_cli(tmp_path, no_invok
     cli_viu = next(out_dir.glob("VIU_*.xml")).read_bytes()
     cli_vo = next(out_dir.glob("VO_*.xml")).read_bytes()
 
-    # Dieselbe Datei, wie sie `loxmatter run`/die WebUI beim Start oeffnen
-    # wuerde - kein zweiter, unabhaengiger Speicher fuer die API.
+    # The same file that `loxmatter run`/the WebUI would open on startup -
+    # no second, independent store for the API.
     store = Store(db_path)
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         await authenticate(store, client)
         devices = (await client.get("/api/devices")).json()
-        assert len(devices) == 1  # nicht zwei - CLI und API sehen dasselbe Geraet
+        assert len(devices) == 1  # not two - CLI and API see the same device
         device_id = devices[0]["id"]
 
         response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
@@ -376,26 +377,25 @@ async def test_api_export_writes_the_same_database_as_the_cli(tmp_path, no_invok
     )
     api_vo = archive.read(next(n for n in archive.namelist() if n.startswith(f"VO_d{device_id}_")))
 
-    # Byte-identisch: dieselben Schluessel, derselbe Titel, dieselbe
-    # device_id - der einzig moegliche Ausgang, wenn beide Werkzeuge
-    # dieselbe Datenbank lesen.
+    # Byte-identical: the same keys, the same title, the same device_id -
+    # the only possible outcome when both tools read the same database.
     assert api_viu == cli_viu
     assert api_vo == cli_vo
 
 
 # ---------------------------------------------------------------------------
-# Der Filter "nur noch nicht exportierte Geraete" (Review-Fix Fix 4,
-# 2026-09-03). Er galt vorher nur fuer die Vorschautabelle in der
-# Oberflaeche; `/api/export/download` kannte ihn gar nicht, lieferte immer
-# alle Geraete und markierte auch alle als exportiert. Wer filterte, ein
-# ausstehendes Geraet sah und herunterlud, bekam alles - und der Filter war
-# danach dauerhaft leer.
+# The "only devices not yet exported" filter (review fix Fix 4,
+# 2026-09-03). It previously applied only to the preview table in the UI;
+# `/api/export/download` didn't know about it at all, always delivered
+# every device and marked all of them as exported too. Anyone who filtered,
+# saw a pending device and downloaded it got everything - and the filter
+# was permanently empty afterward.
 # ---------------------------------------------------------------------------
 
 
 def _second_device(store: Store) -> int:
-    """Ein zweites Geraet im selben Store - die Fixture oben baut nur eines,
-    und ein Filter laesst sich an einem einzigen Geraet nicht zeigen."""
+    """A second device in the same store - the fixture above only builds
+    one, and a filter can't be demonstrated with a single device."""
     snapshot = load_snapshot("example_light.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
@@ -404,14 +404,13 @@ def _second_device(store: Store) -> int:
 
 
 async def test_a_filtered_download_contains_exactly_the_devices_the_preview_shows(api):
-    """Vorschau und Download muessen dieselbe Auswahl treffen. Die
-    Oberflaeche filtert ihre Tabelle nach `changed_since_export` aus
-    `GET /api/export/status`; genau diese Bedingung entscheidet hier auch
-    ueber den Inhalt des Archivs."""
+    """Preview and download must make the same selection. The UI filters
+    its table by `changed_since_export` from `GET /api/export/status`;
+    exactly this condition also decides the content of the archive here."""
     client, store, first_id = api
     second_id = _second_device(store)
 
-    # Beide exportieren, danach nur das erste Geraet wieder aendern.
+    # Export both, then change only the first device again.
     await client.get("/api/export/download?bridge_ip=192.168.1.50")
     assert (
         await client.patch(f"/api/devices/{first_id}", json={"label": "Neu"})
@@ -428,10 +427,10 @@ async def test_a_filtered_download_contains_exactly_the_devices_the_preview_show
 
 
 async def test_a_filtered_download_marks_only_what_it_delivered(api):
-    """Der eigentliche Schaden der alten Fassung war nicht das zu grosse
-    ZIP, sondern das `mark_exported` fuer Geraete, deren Vorlage nie im
-    Archiv lag: danach galt alles als exportiert und der Filter blieb fuer
-    immer leer."""
+    """The real damage of the old version wasn't the ZIP being too big, but
+    the `mark_exported` for devices whose template never made it into the
+    archive: afterward, everything counted as exported and the filter
+    stayed empty forever."""
     client, store, first_id = api
     second_id = _second_device(store)
 
@@ -450,8 +449,8 @@ async def test_a_filtered_download_marks_only_what_it_delivered(api):
 
 
 async def test_an_unfiltered_download_still_contains_every_device(api):
-    """Die Voreinstellung bleibt "alles": `only_pending` ist ein Filter, den
-    jemand ausdruecklich setzt, kein neues Standardverhalten."""
+    """The default stays "everything": `only_pending` is a filter someone
+    explicitly sets, not a new default behavior."""
     client, store, first_id = api
     second_id = _second_device(store)
 
@@ -463,23 +462,22 @@ async def test_an_unfiltered_download_still_contains_every_device(api):
 
 
 async def test_the_interface_asks_for_the_filter_it_shows(api):
-    """Die beiden Haelften des Filters stehen in verschiedenen Dateien und
-    verschiedenen Sprachen: das Kaestchen in `index.html`/`app.js`, die
-    Auswertung in `api/export.py`. Genau dieses Auseinanderlaufen war der
-    Fehler - die Oberflaeche filterte die Tabelle und schickte den Filter
-    nie mit. Belegt wird hier nur, dass die Download-URL den Parameter
-    traegt; ob das Kaestchen im Browser richtig verdrahtet ist, kann ohne
-    Browser-Engine kein Test dieser Suite sagen."""
+    """The two halves of the filter live in different files and different
+    languages: the checkbox in `index.html`/`app.js`, the evaluation in
+    `api/export.py`. Exactly this kind of drift was the bug - the UI
+    filtered the table and never sent the filter along. All that's proven
+    here is that the download URL carries the parameter; whether the
+    checkbox is wired up correctly in the browser is something no test in
+    this suite can say without a browser engine."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     assert "only_pending" in script
 
 
 # ---------------------------------------------------------------------------
-# device_id: Export eines einzelnen Geraets ueber den Export-Knopf an der
-# Geraetekarte (Geraete-Dashboard-Entwurf, 2026-09-03, Abschnitt 6). Kein
-# eigener Endpunkt - derselbe `/api/export/download`, nur auf ein Geraet
-# eingeschraenkt.
+# device_id: exporting a single device via the export button on the device
+# tile (device dashboard design, 2026-09-03, section 6). No dedicated
+# endpoint - the same `/api/export/download`, just restricted to one device.
 # ---------------------------------------------------------------------------
 
 
@@ -504,12 +502,12 @@ async def test_download_with_device_id_marks_only_that_device_exported(api):
 
 
 async def test_download_with_device_id_ignores_only_pending(api):
-    """`device_id` gewinnt gegen `only_pending` (Entwurf Abschnitt 6): das
-    angeforderte Geraet wird exportiert, auch wenn es laut
-    `changed_since_export` gar nicht ausstuende."""
+    """`device_id` wins over `only_pending` (design section 6): the
+    requested device is exported even if, per `changed_since_export`, it
+    wasn't pending at all."""
     client, store, first_id = api
     await client.get(f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}")
-    assert store.device(first_id).exported_at is not None  # bereits exportiert, "nicht aenderend"
+    assert store.device(first_id).exported_at is not None  # already exported, "not changing"
 
     response = await client.get(
         f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}&only_pending=true"

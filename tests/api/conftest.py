@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,62 +14,59 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Gemeinsame Fixtures fuer die WebUI-API-Tests (Phase 5).
+"""Shared fixtures for the WebUI API tests (Phase 5).
 
-Jede Task dieser Phase, die einen `httpx2`-Client gegen `build_app` aufbaut,
-braucht dieselben drei Dinge: einen Invoker, der nie wirklich ein
-Matter-Kommando verschickt, eine `Runtime`, die keinen echten UDP-Sender
-braucht, und einen Matter-Client, der ohne Netzwerk auskommt. `no_invoke`,
-`fake_runtime` und `fake_client` sind dafuer als eigenstaendige
-`@pytest.fixture`-Funktionen gebaut, nicht als Modul-Funktionen zum manuellen
-Importieren: Pytest liefert Wiederverwendbarkeit ueber die eingebaute
-Fixture-Vererbung kostenlos - jede Testdatei unter `tests/api/` bekommt sie
-automatisch als Parameter, ganz ohne Import.
+Every task in this phase that builds an `httpx2` client against `build_app`
+needs the same three things: an invoker that never actually sends a Matter
+command, a `Runtime` that needs no real UDP sender, and a Matter client that
+gets by without a network. `no_invoke`, `fake_runtime` and `fake_client` are
+built for that as standalone `@pytest.fixture` functions rather than module
+functions to import by hand: pytest gives reusability via its built-in
+fixture inheritance for free - every test file under `tests/api/` picks them
+up automatically as a parameter, with no import at all.
 
-`load_snapshot` ist die eine Ausnahme: eine Fixture kann keinen Dateinamen
-entgegennehmen, deshalb bleibt sie eine gewoehnliche Funktion, importiert per
-`from conftest import load_snapshot` - das funktioniert, weil Pytest das
-Verzeichnis dieser Datei (`tests/api/`, ohne `__init__.py`) beim Einlesen von
-Testdateien bereits vorn in `sys.path` einreiht (siehe restliche Testsuite,
-die ebenfalls ohne `__init__.py`-Pakete auskommt).
+`load_snapshot` is the one exception: a fixture cannot take a filename, so
+it stays a plain function, imported via `from conftest import
+load_snapshot` - that works because pytest already puts this file's
+directory (`tests/api/`, with no `__init__.py`) at the front of `sys.path`
+when it collects test files (see the rest of the test suite, which also
+gets by without `__init__.py` packages).
 
-Erweiterung fuer spaetere Tasks dieser Phase: `fake_runtime` nimmt bereits
-`store` entgegen wie die echte `Runtime`, und `FakeMatterClient` sammelt
-seine Aufrufe in Listen wie `FakeUpstream` in
-`tests/matter/test_client_commissioning.py` - fuer einen Test, der eine
-Fehlschlag-Simulation braucht, reicht `fake_client.fail_commission_with =
-CommissioningError(...)` vor dem Aufruf zu setzen, ganz ohne diese Datei
-anzufassen. Ein Taster-Geraet laedt sich ueber `load_snapshot
-("ikea_bilresa_button.json")`.
+Extension for later tasks in this phase: `fake_runtime` already takes
+`store` the way the real `Runtime` does, and `FakeMatterClient` collects its
+calls in lists the way `FakeUpstream` does in
+`tests/matter/test_client_commissioning.py` - for a test that needs a
+failure simulation, it's enough to set `fake_client.fail_commission_with =
+CommissioningError(...)` before the call, with no need to touch this file.
+A button device loads via `load_snapshot("ikea_bilresa_button.json")`.
 
-`plug_store` und `api_with_runtime` (Task 3, Live-Werte): manche Tests
-brauchen eine ECHTE `Runtime` statt `FakeRuntime` - z. B. jeder Test der
-Beobachter-Verdrahtung (`Runtime.add_observer`), denn nur die echte
-`Runtime` kennt Beobachter ueberhaupt. `plug_store` ist die Grundlage dafuer:
-derselbe Aufbau wie die `api`-Fixture in `test_devices.py`, aber ohne
-bereits eine App/einen Client zu bauen, damit auch `tests/loxone/
-test_runtime.py`-artige Tests, die nur den Store brauchen, sie nutzen
-koennen. `api_with_runtime` baut darauf die App inklusive WebSocket-Route
-(`/api/live`) und liefert einen Client, der zusaetzlich zu den ueblichen
-HTTP-Methoden `websocket_connect` anbietet.
+`plug_store` and `api_with_runtime` (Task 3, live values): some tests need a
+REAL `Runtime` instead of `FakeRuntime` - e.g. any test of the observer
+wiring (`Runtime.add_observer`), since only the real `Runtime` knows about
+observers at all. `plug_store` is the basis for that: the same setup as the
+`api` fixture in `test_devices.py`, but without already building an app/a
+client, so that tests in the style of `tests/loxone/test_runtime.py`, which
+only need the store, can use it too. `api_with_runtime` builds the app on
+top of that, including the WebSocket route (`/api/live`), and returns a
+client that offers `websocket_connect` in addition to the usual HTTP
+methods.
 
-**Warum `websocket_connect` nicht `httpx2` selbst benutzt:** `httpx2`
-bietet mit `.websocket()`/`ASGIWebSocketTransport` grundsaetzlich denselben
-inprozess-WebSocket-Test-Mechanismus - er haelt aber seine `anyio`-
-Task-Gruppe ueber die komplette Verbindung offen, vom Verbindungsaufbau bis
-zum Trennen. Unter `pytest-asyncio` laufen Setup und Teardown einer
-Async-Generator-Fixture (das `yield` unten) nachweislich in ZWEI
-verschiedenen `asyncio.Task`-Objekten, selbst innerhalb derselben
-Event-Loop - `anyio`s `CancelScope` verlangt aber zwingend denselben Task
-fuer Eintritt und Austritt und wirft sonst `RuntimeError: Attempted to exit
-cancel scope in a different task than it was entered in` (reproduziert:
-schon ein einzeiliger `async with client.websocket(...): pass` in einem
-Test reicht, unabhaengig vom Rest dieser Datei). `_InProcessWebSocket`
-unten umgeht das, indem es ganz ohne `anyio`-Task-Gruppen auskommt - nur
-eine ASGI-App als `asyncio.Task` plus zwei `asyncio.Queue`s, komplett
-lebend innerhalb des EINEN Tasks, der den jeweiligen Test ausfuehrt (`__aenter__`
-und `__aexit__` werden beide direkt aus dem Testkoerper aufgerufen, nie ueber
-eine Fixture-Grenze hinweg)."""
+**Why `websocket_connect` doesn't use `httpx2` itself:** `httpx2` offers,
+with `.websocket()`/`ASGIWebSocketTransport`, fundamentally the same
+in-process WebSocket test mechanism - but it holds its `anyio` task group
+open across the whole connection, from connect to disconnect. Under
+`pytest-asyncio`, setup and teardown of an async-generator fixture (the
+`yield` below) demonstrably run in TWO different `asyncio.Task` objects,
+even within the same event loop - but `anyio`'s `CancelScope` strictly
+requires the same task for entry and exit and otherwise raises
+`RuntimeError: Attempted to exit cancel scope in a different task than it
+was entered in` (reproduced: even a one-line `async with
+client.websocket(...): pass` in a single test is enough, independent of the
+rest of this file). `_InProcessWebSocket` below works around that by
+getting by without any `anyio` task groups at all - just an ASGI app as an
+`asyncio.Task` plus two `asyncio.Queue`s, living entirely within the ONE
+task that runs the given test (`__aenter__` and `__aexit__` are both called
+directly from the test body, never across a fixture boundary)."""
 
 from __future__ import annotations
 
@@ -99,35 +96,34 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
 
 def load_snapshot(name: str) -> NodeSnapshot:
-    """Laedt ein aufgezeichnetes Geraet aus `tests/fixtures/nodes/`."""
+    """Loads a recorded device from `tests/fixtures/nodes/`."""
     raw = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
     return NodeSnapshot.from_raw(raw["node_id"], raw)
 
 
-# Das Passwort, mit dem sich jede Testfixture anmeldet. Ein fester Wert und
-# kein zufaelliger: er taucht in Fehlermeldungen fehlschlagender Tests auf,
-# und dort ist "test-passwort" hilfreicher als eine Zufallsfolge.
+# The password every test fixture logs in with. A fixed value rather than a
+# random one: it shows up in failure messages of failing tests, and there
+# "test-passwort" is more helpful than a random string.
 TEST_PASSWORD = "test-passwort"
 
 
 async def authenticate(store: Store, client: httpx.AsyncClient) -> None:
-    """Setzt ein Passwort und meldet `client` an.
+    """Sets a password and logs `client` in.
 
-    Gebraucht seit der Waechter ohne Nachweis nichts mehr durchlaesst (Spec 4):
-    eine Testfixture, die `/api` aufruft, muss angemeldet sein wie ein
-    Browser. `httpx.AsyncClient` fuehrt einen eigenen Cookie-Speicher, ein
-    einziger Aufruf hier genuegt also fuer alle folgenden Anfragen desselben
-    Clients."""
+    Needed ever since the guard stopped letting anything through without
+    proof (Spec 4): a test fixture that calls `/api` must be logged in like
+    a browser. `httpx.AsyncClient` carries its own cookie store, so a single
+    call here is enough for every following request from the same client."""
     store.auth.set_password_hash(hash_password(TEST_PASSWORD))
     response = await client.post("/auth/login", json={"password": TEST_PASSWORD})
-    assert response.status_code == 200, "Anmeldung in der Testfixture fehlgeschlagen"
+    assert response.status_code == 200, "Login in the test fixture failed"
 
 
 @pytest.fixture
 def no_invoke():
-    """Ein Invoker, der `build_app` erfuellt, aber nie wirklich gebraucht
-    wird - die Geraete-API loest keine `/cmd`-Aufrufe aus. Ruft ein Test ihn
-    doch auf, tut er nichts, statt gegen ein echtes Geraet zu senden."""
+    """An invoker that satisfies `build_app` but is never actually needed -
+    the device API doesn't trigger any `/cmd` calls. If a test does call it
+    anyway, it does nothing instead of sending to a real device."""
 
     async def _invoke(call: MatterCall) -> None:
         return None
@@ -136,35 +132,35 @@ def no_invoke():
 
 
 class FakeRuntime:
-    """Erfuellt `api.devices.RuntimeValues`, ohne einen UdpSender oder eine
-    Matter-Subscription aufzubauen - fuer Tests, die nur die Geraete-API
-    pruefen wollen. Die volle `Runtime` (Sender, Impulse, Heartbeat) hat
-    ihre eigene Testsuite unter `tests/loxone/test_runtime.py`.
+    """Satisfies `api.devices.RuntimeValues` without setting up a UdpSender
+    or a Matter subscription - for tests that only exercise the device API.
+    The full `Runtime` (sender, pulses, heartbeat) has its own test suite
+    under `tests/loxone/test_runtime.py`.
 
-    `store` wird entgegengenommen, aber (noch) nicht benutzt - allein damit
-    die Fabrik dieselbe Form wie `Runtime(store, sender)` hat, falls eine
-    spaetere Task hier doch einmal nachschlagen muss."""
+    `store` is accepted but (still) unused - purely so the factory has the
+    same shape as `Runtime(store, sender)`, in case a later task ever needs
+    to look it up here after all."""
 
     def __init__(self, store: Store) -> None:
         self._store = store
         self._values: dict[str, float | bool] = {}
-        # Im Stil von `FakeMatterClient.fail_commission_with`: die echte
-        # `Runtime.set_online` schickt ein UDP-Datagramm, und `socket.sendto`
-        # wirft `OSError`, wenn das Miniserver-Netz kurz weg ist. Ein Test,
-        # der diesen Fall braucht, setzt hier eine Ausnahme.
+        # In the style of `FakeMatterClient.fail_commission_with`: the real
+        # `Runtime.set_online` sends a UDP datagram, and `socket.sendto`
+        # raises `OSError` when the Miniserver network is briefly down. A
+        # test that needs that case sets an exception here.
         self.fail_set_online_with: Exception | None = None
-        # Dasselbe Muster fuer den vollen Resend (`POST
-        # /api/diagnostics/resync`): `Runtime.resend_all` schickt ueber
-        # denselben Sender und scheitert an denselben Stellen.
+        # Same pattern for the full resend (`POST
+        # /api/diagnostics/resync`): `Runtime.resend_all` sends over the
+        # same sender and fails at the same places.
         self.fail_resend_with: Exception | None = None
-        # Was `resend_all` als Anzahl meldet, und wie oft es gerufen wurde -
-        # ein Test, der die Zahl bis in die Antwort verfolgt, setzt das
-        # erste, ein Test der Verdrahtung liest das zweite.
+        # What `resend_all` reports as its count, and how often it was
+        # called - a test that traces the number all the way into the
+        # response sets the first, a test of the wiring reads the second.
         self.resend_result = 0
         self.resend_calls = 0
 
     def seed(self, key: str, value: float | bool) -> None:
-        """Traegt einen Wert ein, als haette eine Subscription ihn gerade gemeldet."""
+        """Records a value as if a subscription had just reported it."""
         self._values[key] = value
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]:
@@ -172,20 +168,20 @@ class FakeRuntime:
         return {k: v for k, v in self._values.items() if k.startswith(prefix)}
 
     async def set_online(self, device_id: int, online: bool) -> None:
-        """Wie `Runtime.set_online`, ohne den UDP-Versand: haelt den Wert
-        unter demselben Schluessel, den `_device_out` liest. Gebraucht,
-        seit das Einlernen die Erreichbarkeit eines neuen Geraets selbst
-        saeet (siehe `api/devices.py`)."""
+        """Like `Runtime.set_online`, without the UDP send: holds the value
+        under the same key that `_device_out` reads. Needed ever since
+        commissioning started seeding a freshly commissioned device's
+        reachability itself (see `api/devices.py`)."""
         if self.fail_set_online_with is not None:
             raise self.fail_set_online_with
         self._values[f"d{device_id}_online"] = online
 
     async def resend_all(self) -> int:
-        """Wie `Runtime.resend_all`, ohne den UDP-Versand: meldet nur, wie
-        viele Werte gegangen waeren. Gebraucht, seit der System-Tab einen
-        Resync-Knopf hat (`POST /api/diagnostics/resync`) - `build_app`
-        verlangte `resend_all` zwar schon fuer `/resync`, aber keine
-        Testfixture hier rief es je auf."""
+        """Like `Runtime.resend_all`, without the UDP send: only reports how
+        many values would have gone out. Needed ever since the system tab
+        got a resync button (`POST /api/diagnostics/resync`) - `build_app`
+        already required `resend_all` for `/resync`, but no test fixture
+        here had ever called it."""
         if self.fail_resend_with is not None:
             raise self.fail_resend_with
         self.resend_calls += 1
@@ -194,18 +190,18 @@ class FakeRuntime:
 
 @pytest.fixture
 def fake_runtime():
-    """Fabrik statt fertigem Objekt: der Store steht erst innerhalb des
-    jeweiligen Tests fest (siehe `api`-Fixture in `test_devices.py`)."""
+    """A factory rather than a finished object: the store is only known
+    inside the given test (see the `api` fixture in `test_devices.py`)."""
     return FakeRuntime
 
 
 class FakeMatterClient:
-    """Erfuellt genau die drei `BridgeMatterClient`-Methoden, die die
-    Geraete-API aufruft: Einlernen, Entfernen, Thread-Datensatz. Dasselbe
-    Aufzeichnungs-Muster wie `FakeUpstream` in
-    `tests/matter/test_client_commissioning.py`, nur auf der Ebene von
-    `BridgeMatterClient` statt seines `session_factory`-Seams - die
-    Geraete-API ruft `BridgeMatterClient` direkt auf, nicht dessen Upstream.
+    """Satisfies exactly the three `BridgeMatterClient` methods that the
+    device API calls: commission, remove, thread dataset. The same
+    recording pattern as `FakeUpstream` in
+    `tests/matter/test_client_commissioning.py`, just at the level of
+    `BridgeMatterClient` instead of its `session_factory` seam - the device
+    API calls `BridgeMatterClient` directly, not its upstream.
     """
 
     def __init__(self) -> None:
@@ -214,53 +210,54 @@ class FakeMatterClient:
         self.datasets: list[str] = []
         self.fail_commission_with: Exception | None = None
         self.fail_remove_with: Exception | None = None
-        # Der Fall, um den dieser Zweig kreist: matter-server wird unmittelbar
-        # nach dem Einlernen neu gestartet, und `follow_node` laeuft in
-        # `MatterUnavailableError` - nachdem das Geraet laengst in der Fabric
-        # UND im Store steht.
+        # The case this branch is built around: matter-server restarts
+        # right after commissioning, and `follow_node` runs into
+        # `MatterUnavailableError` - after the device is already in the
+        # fabric AND in the store.
         self.fail_follow_with: Exception | None = None
         self._next_node_id = 100
-        # Fuer den Systemcheck der Diagnose (Task 6, Phase 5) - spiegelt
-        # `BridgeMatterClient.connected`. Ein Test, der eine getrennte
-        # Verbindung simulieren will, setzt es einfach auf `False`, ganz
-        # ohne diese Datei anzufassen (siehe conftest-Moduldocstring,
-        # "Erweiterung fuer spaetere Tasks").
+        # For the diagnostics system check (Task 6, Phase 5) - mirrors
+        # `BridgeMatterClient.connected`. A test that wants to simulate a
+        # dropped connection simply sets it to `False`, with no need to
+        # touch this file (see the conftest module docstring, "Extension
+        # for later tasks").
         self.connected = True
-        # Was `commission_with_code` als Erreichbarkeit des frisch
-        # eingelernten Nodes meldet - beim echten Client kommt sie aus
-        # `MatterNodeData.available`. Ein Test, der ein Geraet simulieren
-        # will, das matter-server nicht erreicht, setzt es auf `False`.
+        # What `commission_with_code` reports as the reachability of the
+        # freshly commissioned node - on the real client it comes from
+        # `MatterNodeData.available`. A test that wants to simulate a
+        # device matter-server can't reach sets it to `False`.
         self.available = True
-        # Spiegelt `BridgeMatterClient.thread_dataset_set`: ob matter-server
-        # die Thread-Zugangsdaten gerade hat. `False` als Vorgabe, weil das
-        # der Zustand nach jedem Neustart des Dienstes ist - genau der, in
-        # dem das Einlernen eines Thread-Geraets bisher scheiterte.
+        # Mirrors `BridgeMatterClient.thread_dataset_set`: whether
+        # matter-server currently holds the Thread credentials. `False` by
+        # default, because that is the state after every restart of the
+        # service - exactly the one in which commissioning a Thread device
+        # used to fail.
         self.thread_dataset_set = False
-        # Die Reihenfolge der Aufrufe: der Datensatz muss VOR dem Einlernen
-        # gesetzt sein, sonst kommt er fuer dieses Geraet zu spaet.
+        # The order of the calls: the dataset must be set BEFORE
+        # commissioning, or it arrives too late for this device.
         self.order: list[str] = []
-        # Die Node-IDs, fuer die die Route das Nachziehen der Abonnements
-        # angestossen hat (`BridgeMatterClient.follow_node`).
+        # The node IDs for which the route has triggered catching up on
+        # subscriptions (`BridgeMatterClient.follow_node`).
         self.followed: list[int] = []
-        # Der Store, gegen den `follow_node` prueft, ob das Geraet zum
-        # Zeitpunkt des Aufrufs bereits registriert war. Die `api`-Fixture
-        # setzt ihn; ohne ihn zeichnet `follow_node` nur den Aufruf auf.
+        # The store `follow_node` checks against to see whether the device
+        # was already registered at the time of the call. The `api` fixture
+        # sets it; without it, `follow_node` only records the call.
         self.store: Store | None = None
         self.followed_resolved: list[int | None] = []
-        # Ob der jeweilige Aufruf das Saeen erzwungen hat
-        # (`seed_even_without_new_paths`). Fuer die Route ist das kein
-        # Beiwerk: zu dem Zeitpunkt, an dem sie nachzieht, hat die
-        # Dispatch-Schleife die Pfade des neuen Node laengst abonniert - ohne
-        # den Schalter faende sie einen leeren Diff und saete nie (siehe
+        # Whether the given call forced the seeding
+        # (`seed_even_without_new_paths`). For the route this isn't
+        # incidental: by the time it catches up, the dispatch loop has long
+        # since subscribed to the new node's paths - without the switch it
+        # would find an empty diff and never seed (see
         # `BridgeMatterClient.follow_node`).
         self.followed_forced: list[bool] = []
-        # Das Abbild, das `commission_with_code` zurueckgibt, wenn gesetzt
-        # (Kategorie am frisch eingelernten Geraet, Task 5 Geraete-Tab): das
-        # Attrappen-Abbild unten traegt `attributes={}`, `category_for`
-        # liefert dafuer ausnahmslos `OTHER` - ein Test, der eine andere
-        # Kategorie nach dem Einlernen sehen will, braucht ein echtes,
-        # aufgezeichnetes Abbild (`load_snapshot`). `None` (Vorgabe) laesst
-        # das bisherige Verhalten unveraendert.
+        # The snapshot `commission_with_code` returns when set (category on
+        # the freshly commissioned device, Task 5 device tab): the stub
+        # snapshot below carries `attributes={}`, so `category_for` always
+        # returns `OTHER` - a test that wants to see a different category
+        # after commissioning needs a real, recorded snapshot
+        # (`load_snapshot`). `None` (the default) leaves the existing
+        # behavior unchanged.
         self.snapshot_to_return: NodeSnapshot | None = None
 
     async def commission_with_code(self, code: str) -> NodeSnapshot:
@@ -275,7 +272,7 @@ class FakeMatterClient:
         return NodeSnapshot(
             node_id=node_id,
             vendor_name="Fake",
-            product_name="Geraet",
+            product_name="Device",
             unique_id=f"fake-{node_id}",
             attributes={},
             available=self.available,
@@ -297,11 +294,11 @@ class FakeMatterClient:
         self.followed.append(node_id)
         self.followed_forced.append(seed_even_without_new_paths)
         self.order.append("follow")
-        # Der eigentliche Nachweis: das echte
-        # `BridgeMatterClient.follow_node` loest die Node-ID ueber den Store
-        # auf und tut ohne Treffer nichts weiter als zu abonnieren. Wird sie
-        # hier nicht aufgeloest, zieht die Route zu frueh nach - dasselbe
-        # Wettrennen, das das NODE_ADDED-Ereignis bereits verloren hat.
+        # The actual point: the real `BridgeMatterClient.follow_node`
+        # resolves the node ID via the store and, without a match, does
+        # nothing but subscribe. If it isn't resolved here, the route
+        # catches up too early - the same race the NODE_ADDED event already
+        # lost.
         self.followed_resolved.append(
             None if self.store is None else self.store.device_id_for_node(node_id)
         )
@@ -313,15 +310,15 @@ def fake_client():
 
 
 class FakeThreadDatasetSource:
-    """Steht fuer `loxmatter.matter.otbr.fetch_active_dataset` - die Quelle,
-    aus der sich das Einlernen den Thread-Datensatz holt, wenn matter-server
-    ihn nicht (mehr) hat. Zaehlt die Aufrufe, damit ein Test belegen kann,
-    dass der Border Router NICHT gefragt wurde."""
+    """Stands in for `loxmatter.matter.otbr.fetch_active_dataset` - the
+    source commissioning fetches the Thread dataset from when matter-server
+    doesn't (or no longer) has it. Counts the calls so a test can prove that
+    the border router was NOT asked."""
 
     def __init__(self) -> None:
-        # Gestalt wie ein echter (Hex-TLV), aber ohne jeden Bezug zu einem
-        # existierenden Netz - ein echter Datensatz ist ein Credential und
-        # gehoert weder ins Repository noch in ein Log.
+        # Shaped like a real one (hex TLV), but with no relation to any
+        # existing network - a real dataset is a credential and belongs in
+        # neither the repository nor a log.
         self.dataset = "0e08000000000001" + "00" * 24
         self.calls = 0
         self.fail_with: Exception | None = None
@@ -340,11 +337,11 @@ def fake_otbr():
 
 @pytest.fixture
 def plug_store(tmp_path):
-    """Ein `Store` mit der IKEA-Steckdose, registriert wie bei einem
-    echten Einlernen (Geraet, Signale, Ausgangsbefehle) - Grundlage fuer
-    Tests, die eine ECHTE `Runtime` brauchen statt `FakeRuntime` (z. B.
-    die Beobachter-Verdrahtung aus Task 3). Liefert `(store, device_id)`,
-    wie `environment` es in `tests/loxone/test_runtime.py` tut."""
+    """A `Store` with the IKEA plug, registered the way a real commissioning
+    would (device, signals, output commands) - the basis for tests that
+    need a REAL `Runtime` instead of `FakeRuntime` (e.g. the observer
+    wiring from Task 3). Returns `(store, device_id)`, the way `environment`
+    does in `tests/loxone/test_runtime.py`."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -355,36 +352,35 @@ def plug_store(tmp_path):
 
 
 class _InProcessWebSocket:
-    """Minimaler inprozess-ASGI-WebSocket-Testclient - siehe Modul-Docstring
-    fuer den Grund, warum das nicht einfach `httpx2.AsyncClient.websocket`
-    ist. Treibt die ASGI-App als eigenen `asyncio.Task` an, verbunden ueber
-    zwei `asyncio.Queue`s (eingehend/ausgehend) - ganz ohne `anyio`-
-    Task-Gruppen, die eine Fixture-Grenze ueberleben muessten.
+    """Minimal in-process ASGI WebSocket test client - see the module
+    docstring for why this isn't simply `httpx2.AsyncClient.websocket`.
+    Drives the ASGI app as its own `asyncio.Task`, connected via two
+    `asyncio.Queue`s (inbound/outbound) - with no `anyio` task groups that
+    would have to survive a fixture boundary.
 
-    Implementiert nur, was diese Testsuite braucht: verbinden, `receive_json`,
-    sauber trennen. Kein Text-/Bytes-Versand, kein Ping/Pong - die WebUI
-    schickt auf dieser Route nichts, sie hoert nur zu (siehe `api/live.py`).
+    Implements only what this test suite needs: connect, `receive_json`,
+    disconnect cleanly. No text/bytes send, no ping/pong - the WebUI sends
+    nothing on this route, it only listens (see `api/live.py`).
 
-    `break_send_after` (Review-Fix Important #2 in `api/live.py`,
-    2026-09-02): rein additiv, `None` (Default) aendert am obigen Verhalten
-    nichts. Gesetzt, laesst es den ASGI-`send`-Aufrufer selbst ein
-    `RuntimeError` werfen, sobald mehr als `break_send_after`
-    `websocket.send`-Nachrichten durchgelaufen sind - simuliert damit genau
-    den Fall aus dem Modul-Docstring von `api/live.py`: eine ASGI-Schicht,
-    die beim Versand auf eine bereits verlorene Verbindung kein
-    `WebSocketDisconnect`, sondern ein `RuntimeError` wirft. Ohne dieses
-    Werkzeug liesse sich dieser Pfad in diesem Inprozess-Harness gar nicht
-    erreichen: `_from_app` unten ist unbegrenzt, ein Test, der einfach nicht
-    liest, erzeugt hier - anders als ein echter, volles TCP-Sendepuffer
-    blockierender Client - keinen echten Sendefehler.
+    `break_send_after` (review fix Important #2 in `api/live.py`,
+    2026-09-02): purely additive, `None` (the default) changes nothing about
+    the behavior above. When set, it makes the ASGI `send` caller itself
+    raise a `RuntimeError` once more than `break_send_after`
+    `websocket.send` messages have gone through - simulating exactly the
+    case from the module docstring of `api/live.py`: an ASGI layer that, on
+    send to an already-lost connection, raises a `RuntimeError` rather than
+    a `WebSocketDisconnect`. Without this tool this path couldn't be
+    reached at all in this in-process harness: `_from_app` below is
+    unbounded, so a test that simply doesn't read produces no real send
+    failure here - unlike a real client blocking on a full TCP send buffer.
 
-    `cookies` (Task 8, Phase 5): das Sitzungs-Cookie, mit dem sich
-    `WebSocketClient` bereits ueber `authenticate()` angemeldet hat, reist
-    hier NICHT von selbst mit - dieser Scope wird von Hand gebaut, nicht aus
-    einer echten Verbindung abgeleitet, die den Cookie-Header eines Browsers
-    automatisch mitschickt. Ohne diesen Parameter wuerde jeder Test, der
-    `websocket_connect` benutzt, am seit Task 8 geschlossenen Waechter
-    scheitern, obwohl `client` laengst angemeldet ist."""
+    `cookies` (Task 8, Phase 5): the session cookie that `WebSocketClient`
+    has already logged in with via `authenticate()` does NOT travel here on
+    its own - this scope is built by hand, not derived from a real
+    connection that automatically carries a browser's cookie header along.
+    Without this parameter, every test that uses `websocket_connect` would
+    fail at the guard closed since Task 8, even though `client` has long
+    since logged in."""
 
     def __init__(
         self,
@@ -438,13 +434,15 @@ class _InProcessWebSocket:
         await self._to_app.put({"type": "websocket.connect"})
         message = await self._from_app.get()
         if message["type"] != "websocket.accept":
-            raise AssertionError(f"WebSocket wurde nicht akzeptiert: {message!r}")
+            raise AssertionError(f"WebSocket was not accepted: {message!r}")
         return self
 
     async def receive_json(self) -> Any:
         message = await self._from_app.get()
         if message["type"] == "websocket.close":
-            raise AssertionError("WebSocket wurde vom Server getrennt, bevor eine Nachricht kam")
+            raise AssertionError(
+                "WebSocket was disconnected by the server before a message arrived"
+            )
         return json.loads(message["text"])
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
@@ -458,22 +456,22 @@ class _InProcessWebSocket:
                 await self._task
 
     async def wait_closed(self, timeout: float = 2) -> None:
-        """Wartet, bis die SERVER-Seite die Verbindung von sich aus beendet
-        hat - ohne, anders als `__aexit__`, selbst ein
-        `websocket.disconnect` zu schicken. Fuer Tests, die pruefen wollen,
-        dass die Route sich selbst aufraeumt (z. B. nach einem simulierten
-        Sendefehler ueber `break_send_after`), statt dass der Client die
-        Trennung ausloest."""
+        """Waits until the SERVER side ends the connection on its own -
+        without itself sending a `websocket.disconnect`, unlike
+        `__aexit__`. For tests that want to check that the route cleans up
+        after itself (e.g. after a simulated send failure via
+        `break_send_after`), rather than the client triggering the
+        disconnect."""
         assert self._task is not None
         await asyncio.wait_for(self._task, timeout=timeout)
 
 
 class WebSocketClient:
-    """Duenner Wrapper um `httpx2.AsyncClient`, der zusaetzlich
-    `websocket_connect` anbietet (siehe `_InProcessWebSocket`). Jeder andere
-    Aufruf (`get`, `post`, `patch`, ...) wird unveraendert an den
-    zugrunde liegenden Client durchgereicht, damit `api_with_runtime` sich
-    fuer REST- und WebSocket-Tests gleichermassen eignet."""
+    """Thin wrapper around `httpx2.AsyncClient` that additionally offers
+    `websocket_connect` (see `_InProcessWebSocket`). Every other call
+    (`get`, `post`, `patch`, ...) is passed through unchanged to the
+    underlying client, so that `api_with_runtime` works equally well for
+    REST and WebSocket tests."""
 
     def __init__(self, client: httpx.AsyncClient, app: Any) -> None:
         self._client = client
@@ -482,10 +480,10 @@ class WebSocketClient:
     def websocket_connect(
         self, url: str, *, break_send_after: int | None = None
     ) -> _InProcessWebSocket:
-        # `dict(self._client.cookies)` statt des Cookie-Jars selbst: das
-        # Sitzungs-Cookie aus `authenticate()` soll unveraendert mitreisen,
-        # wie es bei einem echten Browser-WebSocket vom selben Ursprung aus
-        # geschaehe (siehe `_InProcessWebSocket`-Docstring).
+        # `dict(self._client.cookies)` rather than the cookie jar itself:
+        # the session cookie from `authenticate()` should travel along
+        # unchanged, the way it would for a real browser WebSocket from the
+        # same origin (see the `_InProcessWebSocket` docstring).
         return _InProcessWebSocket(
             self._app,
             url,
@@ -501,30 +499,30 @@ class WebSocketClient:
 async def api_with_runtime(
     plug_store, no_invoke, fake_client
 ) -> AsyncIterator[tuple[WebSocketClient, Runtime, int]]:
-    """Wie die `api`-Fixture in `test_devices.py`, aber mit einer ECHTEN
-    `Runtime` statt `FakeRuntime` - fuer Tests der Beobachter-Verdrahtung
-    und der WebSocket-Routen `/api/live` (Task 3, Spec 8.3) und
+    """Like the `api` fixture in `test_devices.py`, but with a REAL
+    `Runtime` instead of `FakeRuntime` - for tests of the observer wiring
+    and the WebSocket routes `/api/live` (Task 3, Spec 8.3) and
     `/api/diagnostics/live` (Task 4, Spec 10.5).
 
-    **Ein ECHTER `UdpSender` statt eines Fuellmaterial-Objekts** (anders als
-    noch in Task 3) - `api.diagnostics_live.build_diagnostics_live_router`
-    haengt an `sender.add_datagram_observer` (Task 2), und dieser Zweig
-    haengt an `UdpSender.send`s Mitschnitt (`_record_sent`), nicht an
-    `Runtime`s Beobachterkette (siehe dort). Ein Fake-Sender, der nur
-    `send()`/`close()` erfuellt, wuerde diesen Mitschnitt nie ausloesen -
-    `test_a_fresh_datagram_arrives_as_a_message` braucht also denselben
-    Aufbau wie `api_with_sender` in `test_diagnostics.py` (ein UDP-Socket
-    auf `127.0.0.1`, der die Maschine nicht verlaesst, Port `0` fuer einen
-    vom Betriebssystem zugeteilten, freien Port).
+    **A REAL `UdpSender` instead of a filler object** (unlike still in
+    Task 3) - `api.diagnostics_live.build_diagnostics_live_router` hangs off
+    `sender.add_datagram_observer` (Task 2), and this branch hangs off
+    `UdpSender.send`'s recording (`_record_sent`), not `Runtime`'s observer
+    chain (see there). A fake sender that only satisfies `send()`/`close()`
+    would never trigger that recording -
+    `test_a_fresh_datagram_arrives_as_a_message` therefore needs the same
+    setup as `api_with_sender` in `test_diagnostics.py` (a UDP socket on
+    `127.0.0.1` that never leaves the machine, port `0` for a free port
+    assigned by the operating system).
 
-    **`install_log_buffer()` fuer denselben Grund** - der Log-Zweig der
-    neuen Route (`log_handler.add_observer`, Task 3) braucht einen echten
-    `LogBufferHandler`, angehaengt an den Logger `loxmatter`. Wird nach dem
-    Test wieder abgemeldet, UND die Stufe des Loggers zurueckgesetzt -
-    sonst haeufte jeder Test, der diese Fixture benutzt, einen weiteren
-    Handler am selben, PROZESSWEITEN Logger an, und dessen Stufe bliebe
-    auf INFO stehen (siehe `tests/diagnostics/test_logbuffer.py` fuer
-    dasselbe Muster)."""
+    **`install_log_buffer()` for the same reason** - the log branch of the
+    new route (`log_handler.add_observer`, Task 3) needs a real
+    `LogBufferHandler`, attached to the `loxmatter` logger. It is
+    unregistered again after the test, AND the logger's level is reset -
+    otherwise every test that uses this fixture would pile up yet another
+    handler on the same, PROCESS-WIDE logger, and its level would stay
+    stuck at INFO (see `tests/diagnostics/test_logbuffer.py` for the same
+    pattern)."""
     store, device_id = plug_store
     loxmatter_logger = logging.getLogger("loxmatter")
     previous_level = loxmatter_logger.level
@@ -551,11 +549,11 @@ async def api_with_runtime(
     finally:
         await sender.close()
         loxmatter_logger.removeHandler(log_handler)
-        # Auch die STUFE zuruecksetzen (2026-09-03): `install_log_buffer`
-        # setzt seit Task 3 nicht nur die Stufe des Handlers, sondern auch
-        # die des Loggers - sonst blieb `loxmatter` nach dieser Fixture
-        # dauerhaft auf INFO stehen, obwohl der Handler laengst abgemeldet
-        # ist. Ein Test, der spaeter laeuft und eine andere Stufe erwartet,
-        # saehe dann etwas, das kein Test gesetzt hat.
+        # Also reset the LEVEL (2026-09-03): `install_log_buffer` has, since
+        # Task 3, set not just the handler's level but the logger's too -
+        # otherwise `loxmatter` stayed stuck at INFO after this fixture,
+        # even though the handler had long since been unregistered. A test
+        # that runs later and expects a different level would then see
+        # something no test had set.
         loxmatter_logger.setLevel(previous_level)
         receiver.close()
