@@ -4410,7 +4410,20 @@ async def test_the_signal_rows_and_the_header_share_one_grid(api):
     verlangt beide Klassen einzeln am jeweiligen Element und bindet die
     Spaltenmasse an den Regelkoerper von `.signal-grid` allein, mit einer
     Gegenprobe, dass keine der beiden Modifikator-Klassen sie ausserhalb
-    der Medienabfrage nochmal selbst definiert."""
+    der Medienabfrage nochmal selbst definiert.
+
+    Fund (Nachpruefung vor dem Merge): `rule_body` benutzte `css.index`, das
+    nur die ERSTE Regel mit diesem Selektor findet. Ein spaeterer Override
+    derselben Klasse - genau der Fall, gegen den diese Gegenprobe antreten
+    soll - steht aber am Ende der Datei und gewinnt dort die Kaskade,
+    unabhaengig davon, ob die erste Fassung sauber ist. Beleg: haengt man
+    `.signal-row-cells { grid-template-columns: 40px 1fr; }` ans Ende von
+    `style.css`, bleibt die alte Fassung dieses Tests gruen, obwohl Kopf-
+    und Datenzeile danach nachweislich verschiedene Spaltenmasse haben.
+    `rule_bodies_outside_media` sammelt deshalb ALLE Regelkoerper fuer
+    einen Selektor (nach Entfernen der `@media`-Bloecke, in denen `.signal-
+    grid` bewusst eine andere Vorlage fuer den schmalen Fall traegt), und
+    die Gegenprobe prueft jeden davon."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     css = (await client.get("/static/style.css")).text
@@ -4418,21 +4431,58 @@ async def test_the_signal_rows_and_the_header_share_one_grid(api):
     assert 'class="signal-grid signal-grid-head"' in page
     assert 'class="signal-grid signal-row-cells"' in page
 
-    def rule_body(selector: str) -> str:
-        start = css.index(selector)
-        open_brace = css.index("{", start)
-        close_brace = css.index("}", open_brace)
-        return css[open_brace:close_brace]
+    def _without_media_queries(css: str) -> str:
+        """`css` ohne jeden `@media`-Block, per Klammerzaehlung entfernt -
+        ein einfaches `css.index("}")` braeche bei der ERSTEN Regel im
+        Block ab, nicht am Blockende, weil Regeln selbst auch `{ }` tragen."""
+        pieces = []
+        pos = 0
+        while True:
+            at = css.find("@media", pos)
+            if at == -1:
+                pieces.append(css[pos:])
+                break
+            pieces.append(css[pos:at])
+            open_brace = css.index("{", at)
+            depth = 1
+            i = open_brace + 1
+            while depth:
+                if css[i] == "{":
+                    depth += 1
+                elif css[i] == "}":
+                    depth -= 1
+                i += 1
+            pos = i
+        return "".join(pieces)
 
-    assert "grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px" in rule_body(
-        ".signal-grid {"
-    )
-    # `css.index` findet die erste (nicht die Medienabfrage-) Fassung der
-    # beiden Modifikator-Klassen - dort duerfen die Spaltenmasse nicht
-    # eigenstaendig auftauchen, sonst koennte Kopf und Zeile ueber je eine
-    # eigene Regel auseinanderlaufen, ohne dass es hier auffiele.
-    assert "grid-template-columns" not in rule_body(".signal-grid-head {")
-    assert "grid-template-columns" not in rule_body(".signal-row-cells {")
+    def rule_bodies_outside_media(selector: str, css: str) -> list[str]:
+        """ALLE Regelkoerper fuer `selector` ausserhalb jeder Medienabfrage -
+        nicht nur der erste (siehe Docstring oben: ein Override am
+        Dateiende blieb sonst unsichtbar)."""
+        bodies = []
+        pos = 0
+        while True:
+            start = css.find(selector, pos)
+            if start == -1:
+                return bodies
+            open_brace = css.index("{", start)
+            close_brace = css.index("}", open_brace)
+            bodies.append(css[open_brace:close_brace])
+            pos = close_brace + 1
+
+    css_outside_media = _without_media_queries(css)
+
+    grid_bodies = rule_bodies_outside_media(".signal-grid {", css_outside_media)
+    assert len(grid_bodies) == 1
+    assert "grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px" in grid_bodies[0]
+    # Bei JEDER Fassung von `.signal-grid-head`/`.signal-row-cells` ausserhalb
+    # der Medienabfrage duerfen die Spaltenmasse nicht eigenstaendig
+    # auftauchen, sonst koennten Kopf und Zeile ueber je eine eigene Regel
+    # auseinanderlaufen, ohne dass es hier auffiele.
+    for body in rule_bodies_outside_media(".signal-grid-head {", css_outside_media):
+        assert "grid-template-columns" not in body
+    for body in rule_bodies_outside_media(".signal-row-cells {", css_outside_media):
+        assert "grid-template-columns" not in body
 
 
 async def test_the_key_pill_wraps_instead_of_touching_the_value_column(api):
