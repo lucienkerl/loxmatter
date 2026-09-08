@@ -23,12 +23,7 @@ jobs:
   # gar nicht erst unter einem Tag stehen, den jemand einspielen kann.
   image:
     needs: test
-    # Der eigene Branch steht hier nur voruebergehend mit drin: solange
-    # Aufgabe 5 noch nicht auf main gelandet ist, wuerde die Bedingung ohne
-    # ihn schweigend ueberspringen, und main bekaeme diesen Job erst
-    # ungeprueft zu Gesicht. Aufgabe 7 nimmt die Branch-Bedingung mit dem
-    # Freigabe-Commit wieder heraus.
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/software-updates-webui-ef5564' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
