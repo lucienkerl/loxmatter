@@ -74,12 +74,14 @@ With real hardware:
 3. Start the stack:
 
    ```bash
-   docker compose up -d --build
+   docker compose up -d
    ```
 
-   This builds and starts three containers. See
-   [how the pieces fit together](../README.md#-how-it-works) for what each
-   of the three containers does.
+   This pulls the published `loxmatter` image from `ghcr.io` and starts
+   three containers. Only a host that cannot reach the registry falls back
+   to building from source — that takes several minutes on a Raspberry Pi.
+   See [how the pieces fit together](../README.md#-how-it-works) for what
+   each of the three containers does.
 
 4. Open `http://<Host>:8080/` in your browser. On the very first visit, the
    interface shows an initial setup step — pick a password, see the

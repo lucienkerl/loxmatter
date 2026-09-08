@@ -514,18 +514,18 @@ def test_zweiter_lauf_bietet_das_update_an_ohne_es_zu_tun(installer):
     assert "Apply them with" in second.output
 
 
-def test_update_angebot_kommt_vor_dem_bau(installer):
-    # main baute bisher zuerst - mit dem ALTEN Checkout, das eigene Hinweis
-    # warnt sogar, das dauere Minuten auf einem Pi - und bot das Update erst
-    # danach an. Ein erneuter Lauf ist der dokumentierte Update-Weg, also der
-    # haeufige Fall: hier darf nicht doppelt gebaut werden.
+def test_update_angebot_kommt_vor_dem_neustart(installer):
+    # main startete bisher zuerst - mit dem ALTEN Checkout - und bot das
+    # Update erst danach an. Ein erneuter Lauf ist der dokumentierte
+    # Update-Weg, also der haeufige Fall: hier darf nicht mit der alten
+    # Version neu gestartet werden, bevor das Update angeboten wurde.
     first = installer()
     assert first.returncode == 0
     second = installer(env={"FAKE_BEHIND": "3"})
     assert second.returncode == 0
     fetch_index = next(i for i, c in enumerate(second.calls) if "fetch --quiet origin main" in c)
-    build_index = next(i for i, c in enumerate(second.calls) if "compose up -d --build" in c)
-    assert fetch_index < build_index
+    up_index = next(i for i, c in enumerate(second.calls) if "compose up -d" in c)
+    assert fetch_index < up_index
 
 
 def test_erster_lauf_prueft_nicht_auf_updates(installer):
@@ -868,11 +868,27 @@ def test_altinstallation_behaelt_ihren_border_router(installer):
 # --------------------------------------------------------- phase fuenf/sechs --
 
 
-def test_stack_wird_gebaut_und_gestartet(installer):
+def test_stack_wird_gestartet(installer):
     result = installer()
     assert result.returncode == 0
-    assert result.called("docker compose up -d --build")
+    assert result.called("docker compose up -d")
     assert (result.home / "loxmatter" / "deploy" / "testhost" / "data").is_dir()
+
+
+def test_kein_lokaler_bau_bei_der_installation(installer):
+    # ghcr.io liefert seit 0.2.0 fertige Images (arm64, amd64). Ein `--build`
+    # zwaenge compose, lokal zu bauen UND das Ergebnis unter dem `image:`-Namen
+    # des Dienstes zu taggen - eine frische Installation truege dann ein
+    # LOKALES Image namens ghcr.io/lucienkerl/loxmatter:stable, das sich
+    # selbst als `dev` meldet, und genau das loest den Arbeitskopie-Hinweis
+    # der Oberflaeche auf einer frisch installierten, veroeffentlichten
+    # Version aus. Ohne --build baut `up` nur noch, wenn compose ueberhaupt
+    # kein Image beschaffen kann (siehe der Kommentar ueber `image:` in
+    # docker-compose.yml) - der gewuenschte Rueckfall fuer einen Host ohne
+    # GHCR-Zugang.
+    result = installer()
+    assert result.returncode == 0
+    assert not any("--build" in call for call in result.calls)
 
 
 def test_gesundheitspruefung_laeuft(installer):

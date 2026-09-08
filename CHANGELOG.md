@@ -24,6 +24,11 @@ Leuten gelesen, die den Code nicht kennen.
 
 - `scripts/update.sh` zieht das Image, statt lokal zu bauen. `--build`
   stellt das alte Verhalten wieder her.
+- `install.sh` startet den Stack jetzt ebenfalls ohne `--build`: `docker
+  compose up -d` zieht das veröffentlichte Image. Ein `--build` hätte das
+  Ergebnis unter dem Namen `ghcr.io/lucienkerl/loxmatter:stable` getaggt,
+  auch wenn lokal gebaut wurde - eine frische Installation hätte dann ein
+  lokales Image getragen, das sich selbst als `dev` meldet.
 - Der Stack läuft aus einem veröffentlichten Image. **Diese eine
   Umstellung braucht einmalig die Konsole:** `git pull &&
   ./scripts/update.sh` auf dem Rechner, auf dem die Brücke läuft.
