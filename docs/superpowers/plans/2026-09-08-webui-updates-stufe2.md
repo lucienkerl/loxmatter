@@ -83,13 +83,13 @@ DOCKERFILE = ROOT / "deploy" / "updater" / "Dockerfile"
 REQUIRED_PACKAGES = ("docker-cli", "docker-cli-compose", "git", "curl", "jq", "coreutils", "tar")
 
 
-def test_das_image_bringt_jedes_benutzte_werkzeug_mit() -> None:
+def test_the_image_brings_every_tool_it_uses() -> None:
     source = DOCKERFILE.read_text(encoding="utf-8")
     for package in REQUIRED_PACKAGES:
         assert re.search(rf"\b{re.escape(package)}\b", source), package
 
 
-def test_die_basis_ist_gepinnt() -> None:
+def test_the_base_image_is_pinned() -> None:
     # A `FROM alpine:latest` would turn every rebuild of the sidecar into a
     # surprise - of all containers, the one that is root-equivalent on the
     # host.
@@ -256,7 +256,7 @@ Same approach as `test_install_script.py` and `test_update_script.py`: a
 sealed PATH made of fake binaries, and what is checked is WHICH commands
 the script chooses.
 
-The tests around `test_ein_ziel_mit_semikolon_*` are the core of this
+The tests around `test_a_target_containing_a_semicolon_*` are the core of this
 file. They substantiate the claim from spec section 10 - "even someone
 who fully takes over the bridge can at most install a published, newer
 version". Without them that would just be an assertion. What matters here
@@ -336,27 +336,27 @@ def _auftrag(updater, **fields) -> None:
     (updater.update_dir / "request.json").write_text(json.dumps(body), encoding="utf-8")
 
 
-def test_ohne_auftrag_schreibt_es_nur_ein_lebenszeichen(updater):
+def test_without_a_job_it_only_writes_a_heartbeat(updater):
     _, calls, state = updater()
     assert state["phase"] == "idle"
     assert state["updater_seen_at"]
     assert "docker" not in calls
 
 
-def test_das_lebenszeichen_kommt_bei_jedem_durchlauf(updater):
+def test_the_heartbeat_is_written_on_every_pass(updater):
     _, _, erst = updater()
     _, _, dann = updater()
     assert dann["updater_seen_at"] >= erst["updater_seen_at"]
 
 
-def test_ein_ziel_mit_semikolon_wird_abgelehnt(updater):
+def test_a_target_containing_a_semicolon_is_rejected(updater):
     _auftrag(updater, target="0.3.0; rm -rf /")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
 
 
-def test_ein_ziel_mit_fremder_registry_wird_abgelehnt(updater):
+def test_a_target_with_a_foreign_registry_is_rejected(updater):
     # The image name is assembled inside the script, never taken over
     # verbatim. A target that looks like an image is therefore simply
     # not a valid target.
@@ -366,14 +366,14 @@ def test_ein_ziel_mit_fremder_registry_wird_abgelehnt(updater):
     assert "docker" not in calls
 
 
-def test_ein_unbekannter_kanal_wird_abgelehnt(updater):
+def test_an_unknown_channel_is_rejected(updater):
     _auftrag(updater, channel="beliebig")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
     assert "docker" not in calls
 
 
-def test_eine_aeltere_version_wird_abgelehnt(updater):
+def test_an_older_version_is_rejected(updater):
     # "Forward only", spec section 10, rule 3. .env is at 0.2.0.
     _auftrag(updater, target="0.1.0")
     _, calls, state = updater()
@@ -381,20 +381,20 @@ def test_eine_aeltere_version_wird_abgelehnt(updater):
     assert "docker" not in calls
 
 
-def test_dieselbe_version_wird_abgelehnt(updater):
+def test_the_same_version_is_rejected(updater):
     _auftrag(updater, target="0.2.0")
     _, _, state = updater()
     assert state["phase"] == "rejected"
 
 
-def test_ein_gueltiges_ziel_wird_angenommen(updater):
+def test_a_valid_target_is_accepted(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, state = updater()
     assert state["phase"] != "rejected"
     assert "docker" in calls
 
 
-def test_derselbe_auftrag_wird_nicht_zweimal_ausgefuehrt(updater):
+def test_the_same_job_is_not_run_twice(updater):
     _auftrag(updater, target="0.3.0")
     updater()
     _, zweite_calls, _ = updater()
@@ -591,12 +591,12 @@ log "Request $JOB_ID accepted: $FROM -> $TO ($CHANNEL)"
 - [ ] **Step 4: Run tests to verify the rejection tests pass**
 
 Run: `uv run pytest tests/test_updater_script.py -v`
-Expected: all pass except `test_ein_gueltiges_ziel_wird_angenommen` and `test_derselbe_auftrag_wird_nicht_zweimal_ausgefuehrt` (those need Task 3 — until then the script does not yet call `docker`). Leave these two **expected FAIL** and turn them green in Task 3.
+Expected: all pass except `test_a_valid_target_is_accepted` and `test_the_same_job_is_not_run_twice` (those need Task 3 — until then the script does not yet call `docker`). Leave these two **expected FAIL** and turn them green in Task 3.
 
 - [ ] **Step 5: Prove the security tests can fail**
 
 Comment out the `case "$CHANNEL"` pattern check for `stable` on a trial basis, run `uv run pytest tests/test_updater_script.py -v`.
-Expected: `test_ein_ziel_mit_semikolon_wird_abgelehnt` and `test_ein_ziel_mit_fremder_registry_wird_abgelehnt` FAIL. Then revert.
+Expected: `test_a_target_containing_a_semicolon_is_rejected` and `test_a_target_with_a_foreign_registry_is_rejected` FAIL. Then revert.
 
 - [ ] **Step 6: shellcheck**
 
@@ -646,7 +646,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 Ans Ende von `tests/test_updater_script.py`:
 
 ```python
-def test_der_ablauf_haelt_seine_reihenfolge_ein(updater):
+def test_the_flow_keeps_its_order(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, state = updater()
     assert calls.index("tar") < calls.index("compose pull")
@@ -654,7 +654,7 @@ def test_der_ablauf_haelt_seine_reihenfolge_ein(updater):
     assert state["phase"] == "done"
 
 
-def test_der_neustart_laesst_die_nachbardienste_in_ruhe(updater):
+def test_the_restart_leaves_the_neighboring_services_alone(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, _ = updater()
     up = next(line for line in calls.splitlines() if "compose up" in line)
@@ -662,19 +662,19 @@ def test_der_neustart_laesst_die_nachbardienste_in_ruhe(updater):
     assert "loxmatter-updater" not in up
 
 
-def test_der_image_name_kommt_nicht_aus_dem_auftrag(updater):
+def test_the_image_name_does_not_come_from_the_job(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, _ = updater()
     assert "ghcr.io/lucienkerl/loxmatter" in calls
 
 
-def test_der_tag_landet_in_der_env(updater):
+def test_the_tag_lands_in_the_env_file(updater):
     _auftrag(updater, target="0.3.0")
     updater()
     assert "LOXMATTER_IMAGE_TAG=0.3.0" in (updater.stack / ".env").read_text(encoding="utf-8")
 
 
-def test_die_env_behaelt_ihre_uebrigen_zeilen(updater):
+def test_the_env_file_keeps_its_other_lines(updater):
     # The .env carries MINISERVER_IP, RADIO_DEVICE, LOXMATTER_API_TOKEN. An
     # update that overwrites it takes half the installation down with it.
     env = updater.stack / ".env"
@@ -688,7 +688,7 @@ def test_die_env_behaelt_ihre_uebrigen_zeilen(updater):
     assert "0.2.0" not in text
 
 
-def test_eine_sicherung_entsteht_vor_dem_ziehen(updater):
+def test_a_backup_is_made_before_the_pull(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, _ = updater()
     tar_line = next(line for line in calls.splitlines() if line.startswith("tar"))
@@ -819,7 +819,7 @@ Expected: all pass (the `curl` fake responds healthy immediately, so the run end
 - [ ] **Step 5: Prove the `.env` test can fail**
 
 Replace `set_tag` on a trial basis with `printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" > "$ENV_FILE"` and run the tests.
-Expected: `test_die_env_behaelt_ihre_uebrigen_zeilen` FAILS. Then revert.
+Expected: `test_the_env_file_keeps_its_other_lines` FAILS. Then revert.
 
 - [ ] **Step 6: shellcheck, commit**
 
@@ -872,27 +872,27 @@ def kranker_dienst(updater, tmp_path):
     return updater
 
 
-def test_ein_kranker_dienst_wird_zurueckgesetzt(kranker_dienst):
+def test_an_unhealthy_service_is_rolled_back(kranker_dienst):
     _auftrag(kranker_dienst, target="0.3.0")
     _, _, state = kranker_dienst()
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
 
 
-def test_der_rueckfall_setzt_den_alten_tag_zurueck(kranker_dienst):
+def test_the_rollback_restores_the_old_tag(kranker_dienst):
     _auftrag(kranker_dienst, target="0.3.0")
     kranker_dienst()
     assert "LOXMATTER_IMAGE_TAG=0.2.0" in (kranker_dienst.stack / ".env").read_text(encoding="utf-8")
 
 
-def test_der_rueckfall_laeuft_genau_einmal(kranker_dienst):
+def test_the_rollback_runs_exactly_once(kranker_dienst):
     # No flapping: two `up` calls (update and rollback), no more.
     _auftrag(kranker_dienst, target="0.3.0")
     _, calls, _ = kranker_dienst()
     assert len([line for line in calls.splitlines() if "compose up" in line]) == 2
 
 
-def test_der_rueckfall_ruehrt_die_datenbank_nicht_an(kranker_dienst):
+def test_the_rollback_does_not_touch_the_database(kranker_dienst):
     # Spec section 8: the old version runs on the new schema
     # (`_migrate` returns immediately once version >= _SCHEMA_VERSION).
     # Restoring the backup is the more destructive step and stays an
@@ -909,7 +909,7 @@ def test_der_rueckfall_ruehrt_die_datenbank_nicht_an(kranker_dienst):
         assert " -x" not in line and "xzf" not in line, line
 
 
-def test_ein_fehlschlag_hinterlaesst_eine_lesbare_datei(kranker_dienst):
+def test_a_failure_leaves_a_readable_file(kranker_dienst):
     _auftrag(kranker_dienst, target="0.3.0")
     kranker_dienst()
     text = (kranker_dienst.update_dir / "LETZTER-FEHLSCHLAG.txt").read_text(encoding="utf-8")
@@ -918,7 +918,7 @@ def test_ein_fehlschlag_hinterlaesst_eine_lesbare_datei(kranker_dienst):
     assert "scripts/update.sh" in text
 
 
-def test_ein_gelungenes_update_hinterlaesst_keine_fehlschlagdatei(updater):
+def test_a_successful_update_leaves_no_failure_file(updater):
     _auftrag(updater, target="0.3.0")
     updater()
     assert not (updater.update_dir / "LETZTER-FEHLSCHLAG.txt").exists()
@@ -1024,7 +1024,7 @@ Expected: all pass
 - [ ] **Step 5: Prove the "exactly once" test can fail**
 
 Wrap the rollback block on a trial basis with `for _ in 1 2; do … done` and run the tests.
-Expected: `test_der_rueckfall_laeuft_genau_einmal` FAILS (`3 != 2`). Then revert.
+Expected: `test_the_rollback_runs_exactly_once` FAILS (`3 != 2`). Then revert.
 
 - [ ] **Step 6: Append the self-replacement**
 
@@ -1044,10 +1044,10 @@ if [ "${LOXMATTER_UPDATER_SELF_REPLACE:-1}" = "1" ]; then
 fi
 ```
 
-Add the line `"LOXMATTER_UPDATER_SELF_REPLACE": "0",` to the `env` dict in the test fixture from Task 2 — otherwise `test_der_neustart_laesst_die_nachbardienste_in_ruhe` would count an `up` call meant for the sidecar itself. Plus a dedicated test:
+Add the line `"LOXMATTER_UPDATER_SELF_REPLACE": "0",` to the `env` dict in the test fixture from Task 2 — otherwise `test_the_restart_leaves_the_neighboring_services_alone` would count an `up` call meant for the sidecar itself. Plus a dedicated test:
 
 ```python
-def test_der_beiwagen_tauscht_sich_erst_nach_dem_erfolg_aus(updater):
+def test_the_sidecar_replaces_itself_only_after_success(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, _ = updater(LOXMATTER_UPDATER_SELF_REPLACE="1")
     zeilen = calls.splitlines()
@@ -1056,7 +1056,7 @@ def test_der_beiwagen_tauscht_sich_erst_nach_dem_erfolg_aus(updater):
     assert fremd < eigen
 
 
-def test_nach_einem_fehlschlag_tauscht_er_sich_nicht_aus(kranker_dienst):
+def test_after_a_failure_it_does_not_replace_itself(kranker_dienst):
     _auftrag(kranker_dienst, target="0.3.0")
     _, calls, _ = kranker_dienst(LOXMATTER_UPDATER_SELF_REPLACE="1")
     assert "loxmatter-updater" not in calls
@@ -1110,7 +1110,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 Append to `tests/test_compose_profiles.py`:
 
 ```python
-def test_der_updater_hat_kein_netz_nach_aussen_offen() -> None:
+def test_the_updater_has_no_network_open_to_the_outside() -> None:
     # The load-bearing safeguard for this container: it holds the Docker
     # socket and is thereby root-equivalent on the host. Unlike the three
     # other services, it therefore does NOT sit on the host network and
@@ -1120,25 +1120,25 @@ def test_der_updater_hat_kein_netz_nach_aussen_offen() -> None:
     assert updater.get("network_mode") != "host"
 
 
-def test_nur_der_updater_hat_den_docker_socket() -> None:
+def test_only_the_updater_has_the_docker_socket() -> None:
     for name, service in _stack()["services"].items():
         socket = any("docker.sock" in str(v) for v in service.get("volumes", []))
         assert socket == (name == "loxmatter-updater"), name
 
 
-def test_der_updater_sieht_dieselbe_datenbank_wie_die_bruecke() -> None:
+def test_the_updater_sees_the_same_database_as_the_bridge() -> None:
     # Communication runs through files in exactly this volume.
     updater = _stack()["services"]["loxmatter-updater"]
     assert any(str(v).startswith("loxmatter-store:") for v in updater["volumes"])
 
 
-def test_der_updater_erreicht_die_gesundheitsroute_des_hosts() -> None:
+def test_the_updater_reaches_the_host_health_route() -> None:
     # It sits on Compose's default network; 127.0.0.1 there would be itself.
     updater = _stack()["services"]["loxmatter-updater"]
     assert any("host-gateway" in str(h) for h in updater["extra_hosts"])
 
 
-def test_der_updater_ist_gepinnt() -> None:
+def test_the_updater_is_pinned() -> None:
     image = _stack()["services"]["loxmatter-updater"]["image"]
     assert "@sha256:" in image or ":latest" not in image
 ```
@@ -1212,7 +1212,7 @@ Expected: 11 passed
 - [ ] **Step 5: Prove the socket test can fail**
 
 Mount `/var/run/docker.sock:/var/run/docker.sock` on a trial basis on the `loxmatter` service too, and run the tests.
-Expected: `test_nur_der_updater_hat_den_docker_socket` FAILS. Then revert.
+Expected: `test_only_the_updater_has_the_docker_socket` FAILS. Then revert.
 
 - [ ] **Step 6: Bring it up on the test host and watch it breathe**
 
@@ -1295,11 +1295,11 @@ def _state(tmp_path, **fields):
     (tmp_path / "state.json").write_text(json.dumps(body), encoding="utf-8")
 
 
-def test_ohne_zustandsdatei_gibt_es_keinen_zustand(tmp_path):
+def test_without_a_state_file_there_is_no_state(tmp_path):
     assert read_state(tmp_path) is None
 
 
-def test_eine_halb_geschriebene_datei_gilt_als_kein_zustand(tmp_path):
+def test_a_half_written_file_counts_as_no_state(tmp_path):
     # The sidecar writes atomically (temp + rename), but a truncated JSON
     # must still not trigger a 500 here: the web UI polls this route once
     # a second, and a single failure would look there like a broken
@@ -1308,7 +1308,7 @@ def test_eine_halb_geschriebene_datei_gilt_als_kein_zustand(tmp_path):
     assert read_state(tmp_path) is None
 
 
-def test_der_zustand_wird_vollstaendig_gelesen(tmp_path):
+def test_the_state_is_read_in_full(tmp_path):
     _state(tmp_path, phase="failed", from_version="0.2.0", to_version="0.3.0",
            error="nicht gesund", rolled_back=True, healthy=True)
     state = read_state(tmp_path)
@@ -1319,12 +1319,12 @@ def test_der_zustand_wird_vollstaendig_gelesen(tmp_path):
     assert state.rolled_back is True
 
 
-def test_ein_frisches_lebenszeichen_heisst_beiwagen_da(tmp_path):
+def test_a_fresh_heartbeat_means_the_sidecar_is_present(tmp_path):
     _state(tmp_path)
     assert updater_present(read_state(tmp_path), now=JETZT + timedelta(seconds=5)) is True
 
 
-def test_ein_altes_lebenszeichen_heisst_kein_beiwagen(tmp_path):
+def test_a_stale_heartbeat_means_no_sidecar(tmp_path):
     # It reports in every two seconds. Half a minute of silence means
     # nobody would pick up the request - the web UI must then not show a
     # button that does nothing.
@@ -1332,11 +1332,11 @@ def test_ein_altes_lebenszeichen_heisst_kein_beiwagen(tmp_path):
     assert updater_present(read_state(tmp_path), now=JETZT + timedelta(seconds=90)) is False
 
 
-def test_ohne_zustand_gibt_es_keinen_beiwagen(tmp_path):
+def test_without_state_there_is_no_sidecar(tmp_path):
     assert updater_present(None, now=JETZT) is False
 
 
-def test_ein_auftrag_wird_geschrieben_und_bekommt_eine_id(tmp_path):
+def test_a_job_is_written_and_gets_an_id(tmp_path):
     _state(tmp_path)
     job = request_update(tmp_path, channel="stable", target="0.3.0")
     body = json.loads((tmp_path / "request.json").read_text(encoding="utf-8"))
@@ -1346,7 +1346,7 @@ def test_ein_auftrag_wird_geschrieben_und_bekommt_eine_id(tmp_path):
     assert body["requested_at"]
 
 
-def test_zwei_auftraege_bekommen_verschiedene_ids(tmp_path):
+def test_two_jobs_get_different_ids(tmp_path):
     _state(tmp_path)
     erste = request_update(tmp_path, channel="stable", target="0.3.0")
     _state(tmp_path, id=erste, phase="done")
@@ -1354,18 +1354,18 @@ def test_zwei_auftraege_bekommen_verschiedene_ids(tmp_path):
     assert erste != zweite
 
 
-def test_waehrend_eines_laufenden_updates_wird_kein_zweiter_angenommen(tmp_path):
+def test_while_an_update_is_running_a_second_one_is_not_accepted(tmp_path):
     _state(tmp_path, id="laeuft", phase="pull")
     with pytest.raises(UpdateBusyError):
         request_update(tmp_path, channel="stable", target="0.3.0")
 
 
-def test_nach_einem_abgeschlossenen_update_geht_ein_neuer(tmp_path):
+def test_after_a_finished_update_a_new_one_goes_through(tmp_path):
     _state(tmp_path, id="alt", phase="done")
     assert request_update(tmp_path, channel="stable", target="0.4.0")
 
 
-def test_der_auftrag_wird_atomar_geschrieben(tmp_path, monkeypatch):
+def test_the_job_is_written_atomically(tmp_path, monkeypatch):
     """The sidecar reads every two seconds. If it saw the file half
     written, it would reject a valid request as invalid - and because it
     touches each id only once, that request would never come again."""
@@ -1382,12 +1382,12 @@ def test_der_auftrag_wird_atomar_geschrieben(tmp_path, monkeypatch):
     assert gesehen, "request.json must land in place via os.replace"
 
 
-def test_das_protokoll_liefert_die_letzten_zeilen(tmp_path):
+def test_the_log_returns_the_last_lines(tmp_path):
     (tmp_path / "log.txt").write_text("\n".join(f"zeile {i}" for i in range(100)), encoding="utf-8")
     assert read_log(tmp_path, lines=5) == [f"zeile {i}" for i in range(95, 100)]
 
 
-def test_ohne_protokoll_ist_die_liste_leer(tmp_path):
+def test_without_a_log_the_list_is_empty(tmp_path):
     assert read_log(tmp_path) == []
 ```
 
@@ -1544,7 +1544,7 @@ Expected: 13 passed
 - [ ] **Step 5: Prove the atomicity test can fail**
 
 Replace `os.replace(temp, ...)` on a trial basis with `(update_dir / "request.json").write_text(json.dumps(body), encoding="utf-8")` and run the tests.
-Expected: `test_der_auftrag_wird_atomar_geschrieben` FAILS. Then revert.
+Expected: `test_the_job_is_written_atomically` FAILS. Then revert.
 
 - [ ] **Step 6: Lint, types, full suite, commit**
 
@@ -1606,7 +1606,7 @@ import pytest
 from loxmatter.update_check import check
 
 
-async def test_der_stabile_kanal_meldet_ein_neueres_release():
+async def test_the_stable_channel_reports_a_newer_release():
     async def fetch(url):
         assert "releases/latest" in url
         return {"tag_name": "v0.3.0", "name": "0.3.0", "body": "Fixes the restart hang."}
@@ -1617,7 +1617,7 @@ async def test_der_stabile_kanal_meldet_ein_neueres_release():
     assert result.error is None
 
 
-async def test_auf_dem_neuesten_stand_gibt_es_kein_ziel():
+async def test_up_to_date_there_is_no_target():
     async def fetch(url):
         return {"tag_name": "v0.2.0", "name": "0.2.0", "body": ""}
 
@@ -1625,7 +1625,7 @@ async def test_auf_dem_neuesten_stand_gibt_es_kein_ziel():
     assert result.target is None
 
 
-async def test_ein_aelteres_release_gilt_nicht_als_update():
+async def test_an_older_release_does_not_count_as_an_update():
     # Anyone running a development state newer than the latest release
     # should not be invited to downgrade - "forward only" does catch that
     # in the sidecar, but a button that gets reliably rejected is a
@@ -1637,7 +1637,7 @@ async def test_ein_aelteres_release_gilt_nicht_als_update():
     assert result.target is None
 
 
-async def test_der_entwicklungskanal_zaehlt_die_commits():
+async def test_the_development_channel_counts_the_commits():
     async def fetch(url):
         assert "compare" in url
         return {"ahead_by": 14, "commits": [{"commit": {"message": "fix: one\n\nmore"}}, {"commit": {"message": "feat: two"}}]}
@@ -1648,7 +1648,7 @@ async def test_der_entwicklungskanal_zaehlt_die_commits():
     assert "more" not in result.notes, "only the subject line, not the full body"
 
 
-async def test_der_entwicklungskanal_ohne_bekannten_commit_meldet_nichts():
+async def test_the_development_channel_without_a_known_commit_reports_nothing():
     async def fetch(url):
         raise AssertionError("must not be queried without a commit")
 
@@ -1657,7 +1657,7 @@ async def test_der_entwicklungskanal_ohne_bekannten_commit_meldet_nichts():
     assert result.error
 
 
-async def test_ohne_internet_ist_das_kein_fehlerzustand():
+async def test_without_internet_it_is_not_an_error_state():
     async def fetch(url):
         raise OSError("Name or service not known")
 
@@ -1667,7 +1667,7 @@ async def test_ohne_internet_ist_das_kein_fehlerzustand():
     assert result.checked_at
 
 
-async def test_ein_unbekannter_kanal_wird_abgewiesen():
+async def test_an_unknown_channel_is_refused():
     async def fetch(url):
         raise AssertionError("must not be queried")
 
@@ -1843,40 +1843,40 @@ Expected: 7 passed
 
 - [ ] **Step 6: Prove the downgrade test can fail**
 
-Entferne probeweise die Bedingung `if alt is not None and neu <= alt:` und führe die Tests aus.
-Expected: `test_ein_aelteres_release_gilt_nicht_als_update` und `test_auf_dem_neuesten_stand_gibt_es_kein_ziel` FAILEN. Danach zurücknehmen.
+Temporarily remove the condition `if alt is not None and neu <= alt:` and run the tests.
+Expected: `test_an_older_release_does_not_count_as_an_update` and `test_up_to_date_there_is_no_target` FAIL. Then revert.
 
 - [ ] **Step 7: Lint, types, full suite, commit**
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 git add src/loxmatter/update_check.py src/loxmatter/model/store.py tests/test_update_check.py
-git commit -m "feat(update): Abfrage bei GitHub, Kanal und Pruefschalter
+git commit -m "feat(update): query GitHub, channel and check toggle
 
-Die Netzschicht kommt als fetch herein statt fest verdrahtet zu sein: so
-laeuft jeder Test ohne Netz, und 'kein Internet' wird ein Testfall statt
-eines Zufallsereignisses in der CI.
+The network layer comes in as fetch instead of being hard-wired: that
+way every test runs without a network, and 'no internet' becomes a test
+case instead of a random event in CI.
 
-Ein Geraet ohne Internetzugang ist ausdruecklich KEIN Fehler - diese
-Bruecke steht in einem Haus, nicht in einem Rechenzentrum. Available
-traegt deshalb ein error-Feld, statt zu werfen; die Oberflaeche zeigt
-daraufhin einen ruhigen Hinweis.
+A device with no internet access is explicitly NOT an error - this
+bridge sits in a house, not in a data center. Available therefore
+carries an error field instead of raising; the web UI then shows a calm
+notice.
 
-Ein aelteres Release gilt nicht als Update. 'Nur vorwaerts' faengt das im
-Beiwagen zwar ab, aber ein Knopf, der zuverlaessig abgelehnt wird, ist ein
-kaputter Knopf.
+An older release does not count as an update. 'Forward only' catches
+that in the sidecar, but a button that reliably gets rejected is a
+broken button.
 
-Kanal und Pruefschalter liegen in der setting-Tabelle aus Schema 5, ohne
-neue Schema-Version: ein Schemasprung ist der einzige Fall, in dem ein
-Rueckfall nicht folgenlos ist, und ausgerechnet die Update-Funktion sollte
-ihn nicht ohne Not ausloesen.
+Channel and check toggle live in the setting table from schema 5,
+without a new schema version: a schema bump is the one case where a
+rollback is not consequence-free, and the update function of all things
+should not trigger one without need.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 8: Die drei Routen
+### Task 8: The three routes
 
 **Files:**
 - Create: `src/loxmatter/api/update.py`
@@ -1888,20 +1888,20 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 - Produces:
   - `GET /api/update/status` → `{state: {...} | null, updater_present: bool, log: [str], channel: str, check_enabled: bool}`
   - `GET /api/update/check` → `{channel, target, title, notes, behind, checked_at, error}`
-  - `POST /api/update/apply` `{target}` → `{id}`; 409 wenn schon einer läuft, 503 wenn kein Beiwagen da ist
+  - `POST /api/update/apply` `{target}` → `{id}`; 409 if one is already running, 503 if there is no sidecar
   - `PATCH /api/update/settings` `{channel?, check_enabled?}` → wie `status`
   - `build_update_router(store, update_dir) -> APIRouter`
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/api/test_update_api.py` (GPL-Kopf, dann):
+`tests/api/test_update_api.py` (GPL header, then):
 
 ```python
-"""Tests fuer /api/update/*.
+"""Tests for /api/update/*.
 
-Die Routen kleben `loxmatter.update` und `loxmatter.update_check` an HTTP
-und tun sonst nichts - entsprechend pruefen diese Tests genau die Klebe-
-stellen: welcher Statuscode aus welchem Modulzustand folgt."""
+The routes glue `loxmatter.update` and `loxmatter.update_check` to HTTP
+and do nothing else - accordingly these tests check exactly the glue
+points: which status code follows from which module state."""
 
 from __future__ import annotations
 
@@ -1940,14 +1940,14 @@ async def api(tmp_path, no_invoke, fake_runtime) -> AsyncIterator[tuple[httpx.As
     store.close()
 
 
-async def test_ohne_beiwagen_meldet_der_status_das_ehrlich(api):
+async def test_without_a_sidecar_the_status_says_so_honestly(api):
     client, _ = api
     body = (await client.get("/api/update/status")).json()
     assert body["updater_present"] is False
     assert body["state"] is None
 
 
-async def test_mit_beiwagen_meldet_der_status_ihn(api):
+async def test_with_a_sidecar_the_status_reports_it(api):
     client, update_dir = api
     _lebenszeichen(update_dir)
     body = (await client.get("/api/update/status")).json()
@@ -1955,16 +1955,16 @@ async def test_mit_beiwagen_meldet_der_status_ihn(api):
     assert body["state"]["phase"] == "idle"
 
 
-async def test_ohne_beiwagen_wird_kein_auftrag_angenommen(api):
-    """503 und nicht 200: sonst schriebe die Bruecke einen Auftrag in ein
-    Volume, das niemand liest, und die Oberflaeche zeigte einen Fortschritt,
-    der nie beginnt."""
+async def test_without_a_sidecar_no_job_is_accepted(api):
+    """503 and not 200: otherwise the bridge would write a job into a
+    volume nobody reads, and the web UI would show progress that never
+    begins."""
     client, _ = api
     response = await client.post("/api/update/apply", json={"target": "0.3.0"})
     assert response.status_code == 503
 
 
-async def test_mit_beiwagen_wird_ein_auftrag_angenommen(api):
+async def test_with_a_sidecar_a_job_is_accepted(api):
     client, update_dir = api
     _lebenszeichen(update_dir)
     response = await client.post("/api/update/apply", json={"target": "0.3.0"})
@@ -1973,7 +1973,7 @@ async def test_mit_beiwagen_wird_ein_auftrag_angenommen(api):
     assert json.loads((update_dir / "request.json").read_text(encoding="utf-8"))["target"] == "0.3.0"
 
 
-async def test_der_kanal_aus_der_einstellung_landet_im_auftrag(api):
+async def test_the_channel_from_settings_lands_in_the_job(api):
     client, update_dir = api
     _lebenszeichen(update_dir)
     await client.patch("/api/update/settings", json={"channel": "dev"})
@@ -1981,19 +1981,19 @@ async def test_der_kanal_aus_der_einstellung_landet_im_auftrag(api):
     assert json.loads((update_dir / "request.json").read_text(encoding="utf-8"))["channel"] == "dev"
 
 
-async def test_waehrend_eines_laufenden_updates_gibt_es_409(api):
+async def test_while_an_update_is_running_it_returns_409(api):
     client, update_dir = api
     _lebenszeichen(update_dir, phase="pull", id="laeuft")
     response = await client.post("/api/update/apply", json={"target": "0.3.0"})
     assert response.status_code == 409
 
 
-async def test_ein_unbekannter_kanal_wird_abgewiesen(api):
+async def test_an_unknown_channel_is_refused(api):
     client, _ = api
     assert (await client.patch("/api/update/settings", json={"channel": "beliebig"})).status_code == 422
 
 
-async def test_ohne_sitzung_kein_zugriff(tmp_path, no_invoke, fake_runtime):
+async def test_without_a_session_there_is_no_access(tmp_path, no_invoke, fake_runtime):
     store = Store(tmp_path / "t.sqlite")
     app = build_app(store, no_invoke, fake_runtime(store), update_dir=tmp_path)
     transport = httpx.ASGITransport(app=app)
@@ -2003,7 +2003,7 @@ async def test_ohne_sitzung_kein_zugriff(tmp_path, no_invoke, fake_runtime):
     store.close()
 
 
-async def test_die_pruefung_laesst_sich_abschalten(api):
+async def test_the_check_can_be_switched_off(api):
     client, _ = api
     await client.patch("/api/update/settings", json={"check_enabled": False})
     body = (await client.get("/api/update/check")).json()
@@ -2021,21 +2021,21 @@ Expected: FAIL — `TypeError: build_app() got an unexpected keyword argument 'u
 `src/loxmatter/api/update.py` (GPL-Kopf, dann):
 
 ```python
-"""Die Update-Routen - Entwurf "Updates ueber die Oberflaeche einspielen"
-(2026-09-08), Abschnitte 9 und 10.
+"""The update routes - design "Applying updates through the web UI"
+(2026-09-08), sections 9 and 10.
 
-Dieses Modul klebt `loxmatter.update` (Dateien) und
-`loxmatter.update_check` (Netz) an HTTP und tut sonst nichts. Insbesondere
-prueft es das Ziel NICHT - das ist Sache des Beiwagens (Spec-Abschnitt 10),
-und eine Grenze, die sich auf eine Vorpruefung eine Schicht hoeher
-verlaesst, ist keine.
+This module glues `loxmatter.update` (files) and
+`loxmatter.update_check` (network) to HTTP and does nothing else. In
+particular it does NOT check the target - that is the sidecar's job
+(spec section 10), and a boundary that relies on a precheck one layer up
+is no boundary at all.
 
-Alle Routen liegen hinter demselben `api_guard` wie jede andere
-`/api`-Route. Bewusst KEINE erneute Passwortabfrage: dieselbe Sitzung
-laedt heute schon die Fabric-Sicherung herunter, also die unersetzlichen
-Anmeldedaten des gesamten Matter-Netzes. Ein Update auf eine
-veroeffentlichte Version ist demgegenueber der kleinere Preis; eine zweite
-Abfrage wuerde Sicherheit behaupten, die woanders laengst nicht besteht."""
+All routes sit behind the same `api_guard` as every other `/api` route.
+Deliberately NO repeated password prompt: the same session already
+downloads the fabric backup today, i.e. the irreplaceable credentials of
+the entire Matter network. An update to a published version is the
+smaller price by comparison; a second prompt would claim a security that
+does not exist elsewhere anyway."""
 
 from __future__ import annotations
 
@@ -2066,11 +2066,10 @@ class UpdateSettingsIn(BaseModel):
     check_enabled: bool | None = None
 
 
-async def _fetch(url: str) -> Any:
-    """Die einzige Stelle, die tatsaechlich nach draussen greift.
+    """The only place that actually reaches outside.
 
-    Kurzer Zeitrahmen: die Oberflaeche wartet auf diese Antwort, und ein
-    haengender GitHub-Aufruf duerfte den System-Tab nicht blockieren.
+    Short timeout: the web UI waits for this response, and a hanging
+    GitHub call must not block the System tab.
     """
     timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -2119,14 +2118,14 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
     async def check() -> dict[str, Any]:
         info = build_info()
         if not store.update_settings.get_check_enabled():
-            # Kein Fehler, sondern eine Einstellung - und trotzdem im
-            # `error`-Feld, damit die Oberflaeche einen Satz zu zeigen hat
-            # statt eines leeren Kastens.
+            # Not an error, but a setting - and still in the `error`
+            # field, so the web UI has a sentence to show instead of an
+            # empty box.
             return {
                 "channel": store.update_settings.get_channel(),
                 "target": None, "title": None, "notes": None, "behind": None,
                 "checked_at": None,
-                "error": "Die Suche nach Updates ist abgeschaltet.",
+                "error": "The search for updates is switched off.",
             }
         result = await update_check.check(
             store.update_settings.get_channel(),
@@ -2144,10 +2143,10 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
     async def apply(body: ApplyIn) -> ApplyOut:
         state = update_files.read_state(update_dir)
         if not update_files.updater_present(state, now=datetime.now(timezone.utc)):
-            # 503 und nicht 200: sonst schriebe die Bruecke einen Auftrag in
-            # ein Volume, das niemand liest, und die Oberflaeche zeigte
-            # einen Fortschritt, der nie beginnt.
-            raise HTTPException(status_code=503, detail="Kein Updater vorhanden.")
+            # 503 and not 200: otherwise the bridge would write a job
+            # into a volume nobody reads, and the web UI would show
+            # progress that never begins.
+            raise HTTPException(status_code=503, detail="No updater present.")
         try:
             job_id = update_files.request_update(
                 update_dir,
@@ -2163,7 +2162,7 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
 
 - [ ] **Step 4: Wire it into `build_app`**
 
-In `src/loxmatter/loxone/server.py`: `build_app` bekommt einen neuen Parameter mit Vorgabe, damit alle bestehenden Aufrufer unverändert bleiben:
+In `src/loxmatter/loxone/server.py`: `build_app` gets a new parameter with a default, so all existing callers stay unchanged:
 
 ```python
 def build_app(
@@ -2171,21 +2170,21 @@ def build_app(
     invoke: Invoke,
     runtime: BuildAppRuntime,
     *,
-    # Vorgabe passt zum eingehaengten Volume (siehe Compose-Datei). Als
-    # Parameter, damit die Tests gegen ein tmp_path-Verzeichnis laufen -
-    # ohne das brauchte jeder Test dieser Routen einen Patch auf einen
-    # Modulkonstanten, und zwei Tests nebeneinander stoerten sich.
+    # Default matches the mounted volume (see the compose file). As a
+    # parameter so the tests run against a tmp_path directory - without
+    # this, every test of these routes would need a patch on a module
+    # constant, and two tests side by side would interfere.
     update_dir: Path = Path("/data/update"),
     ...
 ```
 
-und bei den übrigen Routern:
+and next to the other routers:
 
 ```python
     app.include_router(build_update_router(store, update_dir), dependencies=api_guard)
 ```
 
-Dazu in `cli.py`, beim `run`-Kommando, `update_dir` aus `LOXMATTER_UPDATE_DIR` (Vorgabe `/data/update`) durchreichen.
+Also in `cli.py`, in the `run` command, pass `update_dir` through from `LOXMATTER_UPDATE_DIR` (default `/data/update`).
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -2194,8 +2193,8 @@ Expected: 9 passed
 
 - [ ] **Step 6: Prove the 503 test can fail**
 
-Entferne probeweise die `updater_present`-Prüfung in `apply` und führe die Tests aus.
-Expected: `test_ohne_beiwagen_wird_kein_auftrag_angenommen` FAILT (`200 != 503`). Danach zurücknehmen.
+Temporarily remove the `updater_present` check in `apply` and run the tests.
+Expected: `test_without_a_sidecar_no_job_is_accepted` FAILS (`200 != 503`). Then revert.
 
 - [ ] **Step 7: Lint, types, full suite, commit**
 
@@ -2204,47 +2203,48 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pyt
 git add src/loxmatter/api/update.py src/loxmatter/loxone/server.py src/loxmatter/cli.py tests/api/test_update_api.py
 git commit -m "feat(api): /api/update/status, /check, /apply, /settings
 
-Die Routen kleben die Datei- und die Netzseite an HTTP und tun sonst
-nichts. Insbesondere pruefen sie das Ziel NICHT - das ist Sache des
-Beiwagens, und eine Grenze, die sich auf eine Vorpruefung eine Schicht
-hoeher verlaesst, ist keine.
+The routes glue the file side and the network side to HTTP and do
+nothing else. In particular they do NOT check the target - that is the
+sidecar's job, and a boundary that relies on a precheck one layer up is
+no boundary at all.
 
-Ohne Beiwagen antwortet /apply mit 503 statt 200: sonst schriebe die
-Bruecke einen Auftrag in ein Volume, das niemand liest, und die
-Oberflaeche zeigte einen Fortschritt, der nie beginnt.
+Without a sidecar, /apply answers with 503 instead of 200: otherwise the
+bridge would write a job into a volume nobody reads, and the web UI
+would show progress that never begins.
 
-Keine erneute Passwortabfrage. Dieselbe Sitzung laedt heute schon die
-Fabric-Sicherung herunter, also die unersetzlichen Anmeldedaten des
-gesamten Matter-Netzes; eine zweite Abfrage wuerde Sicherheit behaupten,
-die woanders laengst nicht besteht.
+No repeated password prompt. The same session already downloads the
+fabric backup today, i.e. the irreplaceable credentials of the entire
+Matter network; a second prompt would claim a security that does not
+exist elsewhere anyway.
 
-update_dir kommt als Parameter in build_app, damit die Tests gegen ein
-tmp_path-Verzeichnis laufen statt sich ueber eine Modulkonstante zu
-stoeren.
+update_dir comes in as a parameter to build_app, so the tests run
+against a tmp_path directory instead of interfering with each other over
+a module constant.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 9: Die Karte mit ihren vier Zuständen
+### Task 9: The card with its four states
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (die Karte aus Stufe 1, Task 4, wird erweitert)
+**Files:**
+- Modify: `src/loxmatter/web/index.html` (extends the card from Stage 1, Task 4)
 - Modify: `src/loxmatter/web/app.js`
 - Modify: `src/loxmatter/i18n/strings.yaml`
-- Test: `tests/api/test_update_api.py` (ein Textschlüssel-Test)
+- Test: `tests/api/test_update_api.py` (one text-key test)
 
 **Interfaces:**
-- Consumes: die vier Routen aus Task 8.
-- Produces: die fertige Oberfläche.
+- Consumes: the four routes from Task 8.
+- Produces: the finished web UI.
 
 - [ ] **Step 1: Write the failing test**
 
-Ans Ende von `tests/api/test_update_api.py`:
+At the end of `tests/api/test_update_api.py`:
 
 ```python
-def test_die_oberflaeche_kennt_alle_texte_der_update_karte():
+def test_the_interface_knows_every_text_of_the_update_card():
     from loxmatter import i18n
 
     for key in (
@@ -2281,7 +2281,7 @@ Expected: FAIL — `KeyError: 'web.system.update_available'`
 
 - [ ] **Step 3: Add the strings**
 
-In `src/loxmatter/i18n/strings.yaml`, hinter den `web.system.version_*`-Schlüsseln aus Stufe 1:
+In `src/loxmatter/i18n/strings.yaml`, after the `web.system.version_*` keys from Stage 1:
 
 ```yaml
 web.system.update_available:
@@ -2354,25 +2354,25 @@ web.system.update_behind:
 
 - [ ] **Step 4: Add the state and the polling in `app.js`**
 
-Neben `versionInfo` aus Stufe 1:
+Next to `versionInfo` from Stage 1:
 
 ```javascript
-    // Der Update-Zustand, wie ihn der Beiwagen in state.json schreibt.
+    // The update state, exactly as the sidecar writes it to state.json.
     updateStatus: null,
     updateAvailable: null,
     updateConfirming: false,
     updateError: null,
-    // Der Zeitgeber laeuft NUR, solange ein Auftrag laeuft. Ein dauerhaftes
-    // Pollen waere fuer eine Angabe, die sich zehnmal im Jahr aendert, eine
-    // Anfrage pro Sekunde auf einem Pi - und der Rest der Oberflaeche haengt
-    // ohnehin am Live-Kanal.
+    // The timer runs ONLY while a job is in progress. Polling
+    // continuously would mean a request per second on a Pi for a value
+    // that changes maybe ten times a year - and the rest of the web UI
+    // already hangs off the live channel anyway.
     updateTimer: null,
 ```
 
 Methoden:
 
 ```javascript
-    /** Die vier laufenden Phasen. Ausserhalb davon ruht der Zeitgeber. */
+    /** The four running phases. Outside of these, the timer rests. */
     updateRunning() {
       const phase = this.updateStatus?.state?.phase;
       return ["queued", "backup", "pull", "recreate", "health", "rollback"].includes(phase);
@@ -2383,9 +2383,9 @@ Methoden:
         this.updateStatus = await this.request("GET", "/api/update/status");
         this.updateError = null;
       } catch (error) {
-        // Waehrend des Neustarts ist die Bruecke weg - das ist der
-        // Normalfall dieses Ablaufs und kein Fehler. Der zuletzt bekannte
-        // Zustand bleibt stehen, und der Zeitgeber versucht es weiter.
+        // During the restart the bridge is gone - that is the normal
+        // case for this flow, not an error. The last known state stays
+        // in place, and the timer keeps trying.
         if (!this.updateRunning()) {
           this.updateError = error.message;
         }
@@ -2396,8 +2396,8 @@ Methoden:
       if (!this.updateRunning() && this.updateTimer) {
         clearInterval(this.updateTimer);
         this.updateTimer = null;
-        // Nach dem Ende einmal die Version neu holen: die Karte oben soll
-        // die neue Nummer zeigen, nicht die, mit der die Seite geladen wurde.
+        // Fetch the version once more after the end: the card up top
+        // should show the new number, not the one the page loaded with.
         this.versionInfo = await this.request("GET", "/api/version");
       }
     },
@@ -2427,7 +2427,7 @@ Methoden:
     },
 ```
 
-In `loadSystem()`, nach dem `versionInfo`-Aufruf aus Stufe 1:
+In `loadSystem()`, after the `versionInfo` call from Stage 1:
 
 ```javascript
         await this.loadUpdateStatus();
@@ -2436,14 +2436,14 @@ In `loadSystem()`, nach dem `versionInfo`-Aufruf aus Stufe 1:
 
 - [ ] **Step 5: Extend the card in `index.html`**
 
-Innerhalb der Karte aus Stufe 1, nach dem `<template x-if="versionInfo">`-Block:
+Inside the card from Stage 1, after the `<template x-if="versionInfo">` block:
 
 ```html
-          <!-- Kein Beiwagen: kein toter Knopf, sondern der Konsolenweg. -->
+          <!-- No sidecar: not a dead button, but the console path. -->
           <p class="hint" x-show="updateStatus && !updateStatus.updater_present && !updateRunning()" x-cloak
              x-text="t('web.system.update_no_updater')"></p>
 
-          <!-- 1: Ein Update steht bereit. -->
+          <!-- 1: An update is ready. -->
           <template x-if="updateStatus?.updater_present && !updateRunning() && updateAvailable?.target">
             <div>
               <p class="banner warn"
@@ -2460,7 +2460,7 @@ Innerhalb der Karte aus Stufe 1, nach dem `<template x-if="versionInfo">`-Block:
           <p class="hint" x-show="!updateRunning() && updateAvailable?.error" x-cloak
              x-text="updateAvailable.error"></p>
 
-          <!-- 2: Bestätigung. -->
+          <!-- 2: Confirmation. -->
           <template x-if="updateConfirming">
             <div class="confirm">
               <h3 x-text="t('web.system.update_confirm_title', { version: updateAvailable.target })"></h3>
@@ -2472,7 +2472,7 @@ Innerhalb der Karte aus Stufe 1, nach dem `<template x-if="versionInfo">`-Block:
             </div>
           </template>
 
-          <!-- 3: Läuft — inklusive des Moments, in dem die Brücke weg ist. -->
+          <!-- 3: Running - including the moment the bridge is gone. -->
           <template x-if="updateRunning()">
             <div>
               <h3 x-show="updateStatus.state.phase !== 'health'" x-cloak
@@ -2494,7 +2494,7 @@ Innerhalb der Karte aus Stufe 1, nach dem `<template x-if="versionInfo">`-Block:
             </div>
           </template>
 
-          <!-- 4: Ergebnis. -->
+          <!-- 4: Result. -->
           <p class="banner ok" x-show="updateStatus?.state?.phase === 'done'" x-cloak
              x-text="t('web.system.update_done', { version: updateStatus.state.to })"></p>
           <template x-if="updateStatus?.state?.phase === 'failed'">
@@ -2510,18 +2510,18 @@ Innerhalb der Karte aus Stufe 1, nach dem `<template x-if="versionInfo">`-Block:
 
 - [ ] **Step 6: Change the disconnect banner's text during an update**
 
-Am bestehenden Verbindungsbanner (`index.html:271`) die Bedingung um `&& !updateRunning()` erweitern und daneben eine zweite Zeile stellen:
+On the existing connection banner (`index.html:271`), extend the condition with `&& !updateRunning()` and add a second line next to it:
 
 ```html
     <div class="banner warn" x-show="!socketConnected && updateRunning()" x-cloak
          x-text="t('web.system.update_restarting')"></div>
 ```
 
-Ohne das sähe der geplante Neustart aus wie eine Störung — der Zustand, den dieser ganze Entwurf sichtbar machen soll.
+Without that, the planned restart would look like an outage — exactly the state this whole design is meant to make visible.
 
 - [ ] **Step 7: Check the Alpine bindings in a throwaway harness**
 
-Ein Browsertest belegt nur die Auslieferung. Fahre die vier Zustände gegen erfundene Zustandsdateien:
+A browser test only proves delivery. Drive the four states against invented state files:
 
 ```bash
 mkdir -p /tmp/lox-update
@@ -2529,50 +2529,49 @@ export LOXMATTER_UPDATE_DIR=/tmp/lox-update
 uv run python scripts/dev_web_server.py
 ```
 
-Dann nacheinander, jeweils den System-Tab neu laden:
+Then, one after another, reloading the System tab each time:
 
 ```bash
-# kein Beiwagen
+# no sidecar
 rm -f /tmp/lox-update/state.json
-# bereit
+# ready
 printf '{"id":null,"phase":"idle","updater_seen_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/lox-update/state.json
-# läuft, Brücke weg
+# running, bridge gone
 printf '{"id":"a","phase":"health","from":"0.2.0","to":"0.3.0","updater_seen_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/lox-update/state.json
-# fehlgeschlagen, zurückgesetzt
+# failed, rolled back
 printf '{"id":"a","phase":"failed","from":"0.2.0","to":"0.3.0","rolled_back":true,"healthy":true,"error":"nicht gesund","updater_seen_at":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /tmp/lox-update/state.json
 ```
 
-Prüfe je Zustand: die richtige Darstellung erscheint, die Browserkonsole zeigt **keine** Alpine-Fehler, und im Zustand „läuft" sind die ersten drei Schritte abgehakt und der vierte hervorgehoben.
+Check for each state: the correct rendering appears, the browser console shows **no** Alpine errors, and in the "running" state the first three steps are checked off and the fourth is highlighted.
 
 - [ ] **Step 8: Lint, types, full suite, commit**
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
 git add src/loxmatter/web/ src/loxmatter/i18n/strings.yaml tests/api/test_update_api.py
-git commit -m "feat(web): die Update-Karte mit ihren vier Zustaenden
+git commit -m "feat(web): the update card with its four states
 
-Der dritte Zustand ist der Grund fuer den ganzen Beiwagen: waehrend die
-Bruecke neu startet, ist sie selbst nicht befragbar - der Fortschritt
-kommt aus state.json im gemeinsamen Volume. Das Verbindungsbanner
-bekommt fuer diese Zeit einen anderen Text, sonst saehe der geplante
-Neustart aus wie eine Stoerung.
+The third state is the reason for the whole sidecar: while the bridge
+restarts, it cannot itself be asked - progress comes from state.json in
+the shared volume. The connection banner gets a different text for this
+time, otherwise the planned restart would look like an outage.
 
-Der Zeitgeber laeuft nur waehrend eines Auftrags. Eine Anfrage pro
-Sekunde fuer eine Angabe, die sich zehnmal im Jahr aendert, waere auf
-einem Pi verschwendet.
+The timer runs only while a job is in progress. A request per second for
+a value that changes maybe ten times a year would be wasted on a Pi.
 
-Waehrend des Updates wird nichts gesperrt: eine Minute Bevormundung waere
-der hoehere Preis, und wer mitten im Neustart etwas versucht, bekommt die
-Erklaerung im Banner.
+Nothing is locked during the update: a minute of hand-holding would be
+the higher price, and anyone who tries something mid-restart gets the
+explanation in the banner.
 
-Ohne Beiwagen steht dort der Konsolenweg statt eines toten Knopfes.
+Without a sidecar, the console path stands there instead of a dead
+button.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 10: Der erste echte Durchlauf, das README und 0.3.0
+### Task 10: The first real run, the README, and 0.3.0
 
 **Files:**
 - Modify: `README.md`, `CHANGELOG.md`, `docs/OPERATIONS.md`, `scripts/capture_screenshots.py`, `pyproject.toml`
@@ -2580,46 +2579,46 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Run a real update on the test host**
 
-Voraussetzung: der Beiwagen läuft (Task 5), und es gibt eine neuere veröffentlichte Version als die laufende. Notfalls `v0.2.1` mit einer belanglosen Änderung taggen.
+Prerequisite: the sidecar is running (Task 5), and there is a newer published version than the running one. If necessary, tag `v0.2.1` with an inconsequential change.
 
-Im Browser, System-Tab: Knopf drücken, bestätigen, **hinsehen**. Erwartet:
+In the browser, System tab: press the button, confirm, **watch it happen**. Expected:
 
-- Die vier Schritte laufen sichtbar durch.
-- Beim Neustart verschwindet die Verbindung, und es steht „Die Brücke startet neu" da — **kein rotes Störungsbanner**.
-- Danach steht oben die neue Versionsnummer.
-- `docker exec loxmatter ls /data/backups/` zeigt eine frische Sicherung.
+- The four steps visibly run through in order.
+- On restart the connection drops, and it says "The bridge is restarting" — **no red outage banner**.
+- Afterwards the new version number is shown up top.
+- `docker exec loxmatter ls /data/backups/` shows a fresh backup.
 
 - [ ] **Step 2: Provoke a real rollback**
 
-Der wichtigste Prüfpunkt des ganzen Vorhabens, und er lässt sich nicht simulieren:
+The single most important checkpoint of the whole undertaking, and it cannot be simulated:
 
 ```bash
-# Ein Image, das absichtlich nicht gesund wird
+# An image that deliberately does not become healthy
 cd deploy/testhost
 docker tag ghcr.io/lucienkerl/loxmatter:0.2.0 ghcr.io/lucienkerl/loxmatter:0.2.99
 ```
 
-Dann in der Compose-Datei probeweise `LOXMATTER_HEALTH_TIMEOUT: "20"` setzen, den Beiwagen neu starten, in der Oberfläche auf `0.2.99` aktualisieren, und **den Netzstecker von matter-server ziehen** (`docker stop matter-server`), damit die Brücke nicht gesund wird.
+Then, in the compose file, temporarily set `LOXMATTER_HEALTH_TIMEOUT: "20"`, restart the sidecar, update to `0.2.99` in the web UI, and **pull the plug on matter-server** (`docker stop matter-server`) so the bridge does not become healthy.
 
-Erwartet:
+Expected:
 
-- Nach 20 s wechselt die Karte auf „Update fehlgeschlagen" mit „0.2.0 läuft wieder".
-- `docker exec loxmatter cat /data/update/LETZTER-FEHLSCHLAG.txt` nennt beide Versionen, den Sicherungspfad und die drei Befehle.
-- In der `.env` steht wieder `LOXMATTER_IMAGE_TAG=0.2.0`.
-- **Genau zwei** `compose up`-Zeilen im Protokoll.
+- After 20s the card switches to "Update failed" with "0.2.0 is running again".
+- `docker exec loxmatter cat /data/update/LETZTER-FEHLSCHLAG.txt` (the file name is German for "last failure" — kept as a fixed identifier, see the Global Constraints note above) names both versions, the backup path, and the three commands.
+- The `.env` again reads `LOXMATTER_IMAGE_TAG=0.2.0`.
+- **Exactly two** `compose up` lines in the log.
 
-Danach `docker start matter-server`, den Timeout zurücksetzen, den Testtag löschen.
+Afterwards, `docker start matter-server`, reset the timeout, delete the test tag.
 
 - [ ] **Step 3: Screenshot**
 
-In `scripts/capture_screenshots.py`, im System-Ablauf: `shoot(page, "update", "card:Version")`
+In `scripts/capture_screenshots.py`, in the System flow: `shoot(page, "update", "card:Version")`
 
 Run: `uv run python scripts/capture_screenshots.py`
-Expected: `docs/screenshots/update.png` zeigt die Karte mit einem bereitstehenden Update. **`system.png` dabei verwerfen** — es ist nicht reproduzierbar.
+Expected: `docs/screenshots/update.png` shows the card with an update ready to install. **Discard `system.png` in the process** — it is not reproducible.
 
 - [ ] **Step 4: README and OPERATIONS**
 
-Im `README.md`, den Abschnitt „Updating" aus Stufe 1 ergänzen:
+In `README.md`, extend the "Updating" section from Stage 1:
 
 ```markdown
 Since 0.3.0 you can do this from the browser instead: **System → Version**
@@ -2642,44 +2641,44 @@ If you would rather not have it, delete the service; the bridge notices and
 points you back to the console.
 ```
 
-In `docs/OPERATIONS.md` einen Abschnitt „Wenn ein Update schiefgeht" mit dem Pfad von `LETZTER-FEHLSCHLAG.txt`, dem Sicherungsverzeichnis und dem Hinweis, dass die Datenbank bewusst nicht mit zurückgesetzt wird.
+In `docs/OPERATIONS.md`, add a section "When an update goes wrong" with the path of `LETZTER-FEHLSCHLAG.txt`, the backup directory, and a note that the database is deliberately not rolled back along with it.
 
 - [ ] **Step 5: Release 0.3.0**
 
-`pyproject.toml` auf `0.3.0`, `CHANGELOG.md` ergänzen, dann nach der Regel aus `docs/DEVELOPMENT.md`:
+`pyproject.toml` to `0.3.0`, extend `CHANGELOG.md`, then following the rule from `docs/DEVELOPMENT.md`:
 
 ```bash
 git add -A && git commit -m "release: 0.3.0
 
-Updates lassen sich ueber die Oberflaeche einspielen.
+Updates can now be installed through the web UI.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git tag -a v0.3.0 -m "0.3.0" && git push && git push --tags
 gh release create v0.3.0 --title "0.3.0" --notes-file -
 ```
 
-Der Release-Text ist der Changelog-Abschnitt — **er ist der erste, den die Oberfläche jemandem im Bestätigungsdialog zeigt.** Entsprechend schreiben.
+The release text is the changelog section — **it is the first thing the web UI shows someone in the confirmation dialog.** Write it accordingly.
 
 - [ ] **Step 6: Verify the loop closes**
 
-Nach dem Release auf dem Test-Pi (der noch auf `0.2.x` steht): der System-Tab meldet von selbst „Version 0.3.0 verfügbar", und ein Klick spielt sie ein.
+After the release, on the test Pi (still on `0.2.x`): the System tab reports "Version 0.3.0 available" on its own, and a click installs it.
 
-Damit ist der Weg über SSH für ein gewöhnliches Update abgeschafft — das Ziel dieses Entwurfs.
+That retires the SSH path for an ordinary update — the goal of this design.
 
 ---
 
-## Selbstprüfung dieses Plans
+## Self-review of this plan
 
-**Spec-Abdeckung** — jeder Abschnitt der Spec hat eine Task: 4 → Stufe 1/1–2; 5 → Stufe 1/5; 6 → Tasks 1, 5; 7 → Tasks 2, 6; 8 → Tasks 3, 4; 9 → Tasks 7, 9; 10 → Tasks 2, 5, 8; 11 → Tasks 6, 8, 9 (Erkennung), 10 (README); 12 → Task 9; 13 → jede Task; 14 → nichts zu bauen; 15 → die Aufteilung in zwei Pläne.
+**Spec coverage** — every section of the spec has a task: 4 → Stage 1/1–2; 5 → Stage 1/5; 6 → Tasks 1, 5; 7 → Tasks 2, 6; 8 → Tasks 3, 4; 9 → Tasks 7, 9; 10 → Tasks 2, 5, 8; 11 → Tasks 6, 8, 9 (detection), 10 (README); 12 → Task 9; 13 → every task; 14 → nothing to build; 15 → the split into two plans.
 
-**Namensabgleich:** `update_dir` heißt in allen Signaturen gleich; `UpdateState.from_version`/`to_version` (Python, weil `from` ein Schlüsselwort ist) entsprechen `from`/`to` im JSON — die Umsetzung steht in `read_state` und in `_status()`; die Phasennamen sind in Task 2 abschließend aufgezählt und werden in Task 6 (`_LAUFENDE_PHASEN`) und Task 9 (`updateRunning()`) identisch benutzt.
+**Name consistency:** `update_dir` is called the same in every signature; `UpdateState.from_version`/`to_version` (Python, because `from` is a keyword) correspond to `from`/`to` in the JSON — the mapping lives in `read_state` and in `_status()`; the phase names are enumerated exhaustively in Task 2 and used identically in Task 6 (`_LAUFENDE_PHASEN`) and Task 9 (`updateRunning()`).
 
-**Erledigt:** `test_der_rueckfall_ruehrt_die_datenbank_nicht_an` prüfte ursprünglich mit `"-x" not in calls` auch auf ein entpackendes `tar` — grob genug, um an einem beliebigen anderen `-x`-Flag anzuschlagen. Der Test sieht sich jetzt nur die `tar`-Aufrufe an.
+**Done:** `test_the_rollback_does_not_touch_the_database` originally also checked for an unpacking `tar` with `"-x" not in calls` — coarse enough to trip on any other `-x` flag. The test now looks only at the `tar` calls.
 
-## Nachträge aus Stufe 1 (8. September 2026, nach dem Release 0.2.0)
+## Addenda from Stage 1 (September 8, 2026, after the 0.2.0 release)
 
-Drei Dinge wurden erst sichtbar, als Stufe 1 tatsächlich lief:
+Three things only became visible once Stage 1 actually ran:
 
-1. **Die laufende Version kommt aus dem laufenden Container, nicht aus der `.env`.** Seit 0.2.0 trägt jede frische Installation `LOXMATTER_IMAGE_TAG=stable`, und „stable" ist keine Version. Der Vergleich „ist 0.3.0 neuer als stable" hat keine Antwort, und die Vorwärts-Prüfung aus Spec-Abschnitt 10, Regel 3, wäre auf jeder Standardinstallation stillschweigend wirkungslos geblieben. `running_version()` liest stattdessen `LOXMATTER_VERSION` aus dem laufenden Container — die Angabe, die Stufe 1 genau dafür ins Image gelegt hat.
-2. **Der Rückfall pinnt eine konkrete Version.** Stand in der `.env` ein Alias, zeigt dieser in der Registry inzwischen auf die gescheiterte Fassung; ihn zurückzuschreiben hieße, sie beim nächsten `compose pull` wiederzuholen — ohne dass irgendetwas sich erinnert, dass je ein Rückfall stattfand.
-3. **Eine Fassung ohne Versionsangabe wird abgelehnt**, statt geraten. Wer ein von Hand gebautes Image fährt, bekommt eine ehrliche Auskunft und den Konsolenweg.
+1. **The running version comes from the running container, not from the `.env`.** Since 0.2.0, every fresh installation carries `LOXMATTER_IMAGE_TAG=stable`, and "stable" is not a version. The comparison "is 0.3.0 newer than stable" has no answer, and the forward-only check from spec section 10, rule 3, would have silently stayed ineffective on every default installation. `running_version()` instead reads `LOXMATTER_VERSION` from the running container — the value Stage 1 put into the image for exactly this purpose.
+2. **The rollback pins a concrete version.** If the `.env` held an alias, it would by then point in the registry to the failed build; writing it back would mean fetching that same build again on the next `compose pull` — with nothing remembering that a rollback ever happened.
+3. **A build with no version information is rejected**, rather than guessed at. Anyone running a hand-built image gets an honest answer and the console path.
