@@ -33,13 +33,14 @@ snapshot (`NodeSnapshot.attributes`) carries only values, no access
 rights - "writable" appears nowhere there. Checked against the installed
 packages, not guessed:
 
-- `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` (the base
-  class of every generated attribute class such as
-  `BasicInformation.Attributes.NodeLabel`) carries `cluster_id`,
-  `attribute_id`, `attribute_type`, `must_use_timed_write` - no property
-  that distinguishes read from write access. `must_use_timed_write` is
-  something else: whether an *allowed* write access needs a timed-write
-  envelope, not whether it is allowed.
+- `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` (the base class of
+  every generated attribute class like `BasicInformation.Attributes.
+  NodeLabel`) carries `cluster_id`, `attribute_id`, `attribute_type`,
+  `must_use_timed_write` - no property that distinguishes read from write access.
+  `must_use_timed_write` is something different: whether an *allowed*
+  write access needs a Timed-Write envelope, not whether it is allowed.
+  (Unchanged: `ClusterAttributeDescriptor` carries the same four
+  fields also in the successor distribution, see addendum below.)
 - `matter_server.client.client.MatterClient.write_attribute(node_id,
   attribute_path, value)` does not check anything beforehand - the call
   goes to the controller unchecked; a rejection would come, if at all, as
@@ -78,16 +79,42 @@ not happen with a diagnostic tool: a click that has no effect must arrive
 as a clear refusal, not as a silent failure somewhere between bridge and
 device.
 
-So the same asymmetry applies here as for commands (Spec 6.7): an
-**allowlist** instead of the generous pass-through that applies to the
+**Addendum (8 September 2026): the table no longer exists.** Everything
+above remains — it was measured and was correct at the time —,
+but anyone who follows the quoted `grep` today gets nothing. Since the
+migration from `python-matter-server` to `matter-python-client`,
+`home_assistant_chip_clusters` is no longer installed, and the new
+distribution does **not** deliver `chip/clusters/CHIPClusters.py` at all:
+its `chip` tree consists of `ChipUtility.py`, `clusters/ClusterObjects.py`,
+`clusters/Objects.py`, `clusters/Types.py`, `clusters/enum.py` and `tlv/`.
+A full-text search for `writable` across this tree yields zero hits.
+
+The rationale thus changes a second time, the conclusion does not:
+
+- First it said writability appears nowhere. That was wrong.
+- Then: it stands in a table that this installation cannot load
+  and that python-matter-server itself does not use.
+- Now: this table does not exist in the installed distribution at all.
+  The reason is the simplest of the three and at the same time the
+  most robust - a file that doesn't exist can't change either.
+
+`ClusterAttributeDescriptor` still carries only `cluster_id`,
+`attribute_id`, `attribute_type`, `must_use_timed_write` (plus
+`standard_attribute`, which also is not an access right) - the first
+bullet point above thus holds unchanged and for the same reason as
+then. `_WRITABLE_ATTRIBUTES` below remains a permission list.
+
+So the same asymmetry applies here as for commands (Spec 6.7): a
+**permission list** instead of the lenient pass-through that applies to
 *export* of signals (Spec 3.5). `_WRITABLE_ATTRIBUTES` below is
-deliberately small and populated exclusively with entries that can either
-be proven against a real device checked into this test suite (IKEA
-GRILLPLATS, `tests/fixtures/nodes/ikea_grillplats_plug.json`) or, clearly
-marked as such, rest solely on the Matter specification, without a
-matching device available to cross-check - the same restraint as in
-`commands/color.py`. A wrongly blocked attribute costs a missing control
-option; a wrongly allowed one can misconfigure a device.
+deliberately small and contains only entries that either
+verify against a real, checked-in device in this test suite
+(IKEA GRILLPLATS, `tests/fixtures/nodes/ikea_grillplats_plug.json`) or,
+clearly so marked, rest exclusively on the Matter specification
+without a matching device to counter-check against - the same
+restraint as in `commands/color.py`. An incorrectly locked
+attribute costs a missing control option; an incorrectly
+released one can misconfigure a device.
 
 **Further open point (see spec, section 12, point 7):** the manually
 maintained allowlist does not scale beyond a handful of devices - every

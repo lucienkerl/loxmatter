@@ -14,7 +14,22 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Connection to python-matter-server.
+"""Connection to matter-server via its WebSocket API.
+
+**Addendum (8 September 2026): the upstream now has a different name.**
+This docstring verifies its statements consistently against the then-
+installed `python-matter-server==8.1.2`. These verifications remain unchanged:
+they were verified against source code and remain correct for that version.
+Installed now is instead `matter-python-client` from
+the successor project `matterjs-server` - the same `matter_server*` package and
+the same `chip*` under the same module paths, which is why no import and
+no instruction here had to change. Every signature verified below was checked
+against the new source code; the only deviation is at
+`set_thread_dataset()`. Where "python-matter-server" stands below, it means the
+version THAT WAS MEASURED AGAINST, not the one installed today. The
+complete comparison is in the design
+docs/superpowers/specs/2026-09-08-matterjs-server-migration-design.md,
+section 2 (also there, which calls the first version had overlooked).
 
 Deliberately kept thin: fetches raw data and turns it into NodeSnapshots.
 The decomposition into signals happens in discovery.py and is tested there
@@ -484,10 +499,28 @@ class BridgeMatterClient:
         "Required network information not provided" - the controller
         finds the device via BLE, but cannot tell it about a network.
 
-        matter-server keeps them exclusively in memory (see
-        `matter/otbr.py` for the whole story and the real-world incident
-        that goes with it): every restart of the service erases them
-        again, and this bridge must hand them over again afterwards.
+        matter-server haelt sie ausschliesslich im Arbeitsspeicher (siehe
+        `matter/otbr.py` fuer den ganzen Vorgang und den Ernstfall dazu):
+        jeder Neustart des Dienstes loescht sie wieder, und diese Bruecke
+        muss sie danach erneut uebergeben.
+
+        **Nachtrag (8. September 2026): hier aendert sich die Nutzlast.**
+        Das ist der einzige Aufruf dieses Moduls, bei dem das gilt - und
+        ausgerechnet ihn hatte die erste Fassung des Umstiegs-Entwurfs
+        uebersehen (dort inzwischen berichtigt, Abschnitt 2.2). Die Signatur
+        heisst in `matter-python-client` `set_thread_operational_dataset(
+        dataset, entry_id="default")`, und der Client schickt `dataset`
+        **und** `id=entry_id` ueber den Draht; die alte 8.1.2 schickte nur
+        `dataset`. Der Aufruf hier gibt `entry_id` nicht an, bekommt also
+        `"default"` - und die Fassung mit `entry_id != "default"` ist die
+        einzige, die eine hoehere Schema-Version verlangt.
+
+        Dass das auch gegen einen alten 8.1.2-Server traegt, ist geprueft,
+        nicht gehofft: dessen Argument-Aufloesung laeuft mit `strict=False`
+        (`matter_server/common/helpers/api.py:51,57`) und verwirft
+        unbekannte Schluessel stillschweigend, statt den Aufruf abzulehnen.
+        Das ist die Stelle, an der die Zweiteilung dieses Umstiegs - erst die
+        Bibliothek, dann das Server-Image - haette scheitern koennen.
         """
         await self._require_upstream().set_thread_operational_dataset(dataset)
         self._thread_dataset_set = True

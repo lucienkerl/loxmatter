@@ -105,7 +105,13 @@ CATEGORY_BY_DEVICE_TYPE: dict[int, Category] = {
     0x0840: Category.SWITCH,  # ControlBridge
     0x0202: Category.COVERING,  # WindowCovering
     0x0203: Category.COVERING,  # WindowCoveringController
-    0x0300: Category.CLIMATE,  # HeatingCoolingUnit
+    # 0x0300 (HeatingCoolingUnit) fehlt hier absichtlich: der Typ ist im Matter
+    # Device Library seit 1.0 durchgehend provisional und damit nicht
+    # zertifizierbar. Die Tabelle von matter-python-client wird aus der
+    # Spezifikation erzeugt und fuehrt provisorische Typen nicht - deshalb kann
+    # `test_every_mapped_type_exists_in_the_matter_table` diese Nummer nicht
+    # belegen. Ein Geraet mit diesem Typ faellt ueber `category_for` auf
+    # `Category.OTHER` und bleibt dort vollstaendig bedienbar.
     0x0301: Category.CLIMATE,  # Thermostat
     0x0309: Category.CLIMATE,  # HeatPump
     0x002B: Category.CLIMATE,  # Fan

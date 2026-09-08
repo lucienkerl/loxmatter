@@ -1,23 +1,47 @@
 # Minimal image for `loxmatter run` (Phase 4, Review-Fix I5, 2026-09-02).
 #
-# Deliberately kept lean: this is the project's first Dockerfile draft, not
-# yet the hardened production image from Spec 4.1 (that is Phase 6 -
-# non-root user, minimal base, pinned digests, etc.). Unverified, because
-# this environment has neither network access nor a Docker build available
-# (see the review-fix report): no `docker build` was actually run. In
-# particular, the system dependencies of `python-matter-server`/the chip SDK
-# (native binary package) are only pulled in as far as the upstream
-# reference image (ghcr.io/home-assistant-libs/python-matter-server)
-# documents them (libavahi for mDNS discovery, D-Bus for BLE) - a complete
-# list can only be confirmed against a real build log.
+# Deliberately minimal: this is the project's first Dockerfile design,
+# not yet the hardened production image from Spec 4.1 (that is Phase 6 -
+# non-root user, minimal base, pinned digests, etc.). Untested because
+# in this environment neither network nor Docker build is available
+# (see Review-Fix Report): no `docker build` was actually
+# executed. In particular, the system dependencies of
+# `python-matter-server`/the chip SDK (native binary package) are only as far
+# as the upstream reference image
+# (ghcr.io/home-assistant-libs/python-matter-server) documents them
+# (libavahi for mDNS discovery, D-Bus for BLE) - a complete list
+# can only be verified at the real build log.
+#
+# ADDENDUM (8 September 2026): THIS RATIONALE HAS FALLEN AWAY. loxmatter
+# no longer depends on `python-matter-server`, but on
+# `matter-python-client`, and it is a pure Python wheel
+# (`py3-none-any`, dependencies aiohttp/dacite/orjson) without native
+# Chip component. A native binary package whose system dependencies
+# would need to be pulled in here no longer exists, and the mentioned reference image is
+# archived. What that means for libavahi-client3 is shown below in the
+# apt line.
 FROM python:3.12-slim
 
 WORKDIR /app
 
 # libavahi-client3: mDNS discovery, used by python-matter-server for
-# commissioning (as in the reference image above). loxmatter itself doesn't
-# need BLE (matter-server handles that exclusively), so everything around
-# Bluetooth/D-Bus is deliberately left out here.
+# commissioning (as in the reference image above). loxmatter itself
+# does not need BLE (matter-server handles that exclusively), so
+# everything related to Bluetooth/D-Bus is deliberately omitted here.
+#
+# ADDENDUM (8 September 2026): THE RATIONALE ABOVE IS GONE, THE PACKAGE STAYS.
+# `matter-python-client` is a pure Python wheel and brings no native
+# Chip SDK anymore that would be built against libavahi - the line is justified
+# no longer by the dependency. It still stands here anyway:
+# whether the service starts without the package cannot be determined on this machine
+# (no Docker build, see above), and a move that incidentally pulls
+# a system dependency would be exactly the mixing that this branch
+# otherwise avoids. TO CHECK on the first real build: remove the line,
+# build image, start `loxmatter run` - if it runs, it can go.
+#
+# That's exactly what to expect, because the remaining rationale is thin:
+# loxmatter itself does not resolve mDNS names, it speaks to matter-server via
+# a fixed WebSocket address. But expectation is not measurement.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libavahi-client3 \
     && rm -rf /var/lib/apt/lists/*

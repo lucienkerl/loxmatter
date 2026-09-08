@@ -694,6 +694,67 @@ async def test_send_command_passes_the_payload_as_command_fields():
     assert command.transitionTime == 0
 
 
+async def test_send_command_builds_the_colour_temperature_command_from_the_sdk():
+    """ColorControl (768) MoveToColorTemperature (10) durch `chip` hindurch.
+
+    `tests/commands/test_translate.py` prueft nur das Nutzlast-Dict, das
+    `translate.py` baut - nie, ob `chip.clusters.ClusterObjects.
+    ALL_ACCEPTED_COMMANDS` daraus eine Klasse mit genau diesen Feldern
+    macht. Ohne diesen Test braeche ein umbenanntes SDK-Feld die
+    Farbtemperatur still: der Aufruf ginge hinaus, das Licht bliebe, wie
+    es war.
+    """
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+
+    call = MatterCall(
+        node_id=12,
+        endpoint=1,
+        cluster_id=768,
+        command_id=10,
+        payload={
+            "colorTemperatureMireds": 370,
+            "optionsMask": 1,
+            "optionsOverride": 1,
+        },
+    )
+    await bridge.send_command(call)
+
+    _node_id, _endpoint_id, command = upstream.sent_commands[0]
+    assert command.__class__.__name__ == "MoveToColorTemperature"
+    assert command.colorTemperatureMireds == 370
+    # Das Bit, ohne das ein Farbbefehl an einer ausgeschalteten Leuchte
+    # verpufft (siehe `_EXECUTE_IF_OFF` in commands/translate.py).
+    assert command.optionsMask == 1
+    assert command.optionsOverride == 1
+
+
+async def test_send_command_builds_the_hue_saturation_command_from_the_sdk():
+    """ColorControl (768) MoveToHueAndSaturation (6), gleiche Begruendung."""
+    bridge, upstream = make_connected_pair([FakeNode(12, {})])
+    await bridge.connect()
+
+    call = MatterCall(
+        node_id=12,
+        endpoint=1,
+        cluster_id=768,
+        command_id=6,
+        payload={
+            "hue": 85,
+            "saturation": 254,
+            "transitionTime": 0,
+            "optionsMask": 1,
+            "optionsOverride": 1,
+        },
+    )
+    await bridge.send_command(call)
+
+    _node_id, _endpoint_id, command = upstream.sent_commands[0]
+    assert command.__class__.__name__ == "MoveToHueAndSaturation"
+    assert command.hue == 85
+    assert command.saturation == 254
+
+
 async def test_send_command_raises_for_a_cluster_command_the_sdk_does_not_know():
     bridge, _upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
@@ -943,8 +1004,12 @@ async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node
 
 
 async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_first():
-    """The sequence of a real commissioning, in its actual order (verified
-    against the installed python-matter-server):
+    """Der Ablauf eines echten Einlernens, in seiner tatsaechlichen
+    Reihenfolge (belegt gegen python-matter-server 8.1.2 - seit dem
+    8. September 2026 ist `matter-python-client` installiert, das dieselbe
+    Ereignisfolge ueber dieselbe Websocket-API fuehrt; die Reihenfolge unten
+    ist eine Eigenschaft des Protokolls, nicht der Bibliothek, und dieser
+    Test prueft sie ohnehin gegen eine Attrappe):
 
     1. The commissioning route is still waiting on `commission_with_code`.
     2. matter-server sends `NODE_ADDED` over the same websocket before the

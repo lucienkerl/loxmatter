@@ -9,13 +9,20 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.9",
     "fastapi>=0.115",
-    "python-matter-server>=8.1.2",
+    # matter-python-client instead of python-matter-server (8 September 2026):
+    # `python-matter-server` is ARCHIVED at 8.1.2 - that is the last
+    # version that will ever be released. The successor `matterjs-server`
+    # (matter.js, Matter 1.6.0) delivers this package under `python_client/`,
+    # which provides `matter_server*` AND `chip*` under the same module
+    # paths. Therefore only this line changes here, no module under
+    # src/ - see design 2026-09-08, section 2.
+    "matter-python-client>=1.4.0",
     # Task 11, Phase 6: FastAPI's `File`/`UploadFile` (api/project_sync.py,
-    # `POST /api/export/project-sync`) need "python-multipart" to parse
-    # `multipart/form-data` bodies at all - without this package the
-    # endpoint already raises a `RuntimeError` at `build_app` startup
-    # ("Form data requires python-multipart to be installed"), not only on
-    # the first request.
+    # `POST /api/export/project-sync`) need "python-multipart" to
+    # parse `multipart/form-data` bodies at all - without this package
+    # the endpoint throws a `RuntimeError` already at startup of `build_app`
+    # ("Form data requires python-multipart to be installed"), not just
+    # at the first request.
     "python-multipart>=0.0.32",
     "pyyaml>=6.0",
     "typer>=0.12",
@@ -87,9 +94,11 @@ strict = true
 files = ["src", "scripts"]
 
 [[tool.mypy.overrides]]
-# chip (part of the CHIP SDK, which python-matter-server uses for cluster
-# commands) ships no py.typed marker/stubs - see
-# BridgeMatterClient.send_command in matter/client.py.
+# chip provides no py.typed marking/stubs - see
+# BridgeMatterClient.send_command in matter/client.py. As of 8 September
+# 2026 the package comes from the same distribution as `matter_server`
+# (matter-python-client) and is generated from matter.js models, not
+# from the CHIP SDK anymore; the missing type marking doesn't change.
 module = "chip.*"
 ignore_missing_imports = true
 

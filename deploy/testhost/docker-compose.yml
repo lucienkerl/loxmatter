@@ -1,22 +1,26 @@
 # Test environment for Phase 1 - NOT the production stack from Spec 4.1.
 #
-# Runs on a Raspberry Pi (see README.md for the move from the test VM,
+# Runs on a Raspberry Pi (see README.md for the migration from the test VM,
 # which had no Bluetooth adapter, and all deviations from the original
 # design):
-#   - openthread/otbr:latest       -> digest sha256:ebebd9f6..., entrypoint
-#     /app/etc/docker/test/docker_entrypoint.sh (the "test" variant of
-#     the image, not the newer s6-overlay/"border-router" variant). This
+#   - openthread/otbr:latest       -> Digest sha256:ebebd9f6..., Entrypoint
+#     /app/etc/docker/test/docker_entrypoint.sh (the "test" variant of the
+#     image, not the newer s6-overlay/"border-router" variant). This
 #     variant reads RADIO_URL as an environment variable and accepts
 #     --backbone-interface as a command-line argument, exactly as
 #     configured below.
-#   - ghcr.io/home-assistant-libs/python-matter-server:stable -> with
-#     --bluetooth-adapter ${BLUETOOTH_ADAPTER} for BLE commissioning over
-#     hci0 (see README).
-#   - loxmatter (Phase 4, Review-Fix I5, 2026-09-02) -> built from this
-#     repository itself (see ../../Dockerfile, which also notes that the
-#     image is still unverified - no Docker/network in the environment
-#     that added this service). Needs MINISERVER_IP in .env.
-# The project name lives HERE and not in the .env (2026-09-03).
+#   - ghcr.io/matter-js/matterjs-server:stable (8 September 2026, UNTESTED -
+#     see README, section "Migration to matterjs-server (UNTESTED)"; the
+#     README writes the addition with umlauts, here it stands without umlauts like every
+#     comment in this file) -> --bluetooth-adapter
+#     ${BLUETOOTH_ADAPTER} still applies for BLE commissioning via hci0,
+#     plus NOBLE_BINDINGS=dbus because the container runs unprivileged
+#     (see README).
+#   - loxmatter (Phase 4, Review-Fix I5, 2026-09-02) -> built from this repository
+#     itself (see ../../Dockerfile, also the note there that the
+#     image is still untested - no Docker/network in the environment that
+#     added this service). Requires MINISERVER_IP in .env.
+# The project name stands HERE, not in .env (2026-09-03).
 #
 # Otherwise Compose derives it from the directory name, and the names of
 # the named volumes are built from that: `<project>_loxmatter-store` holds
@@ -109,25 +113,86 @@ services:
       - otbr-state:/var/lib/thread
 
   matter-server:
-    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    # matterjs-server instead of python-matter-server (8 September 2026,
+    # UNTESTED - see README, section "Migration to matterjs-server
+    # (UNTESTED)").
+    # python-matter-server is archived at 8.1.2; the successor speaks
+    # the same WebSocket API and uses the same data directory, but migrates
+    # it on the FIRST start to its own format. This migration is
+    # one-way: if it fails, the Fabric is gone and every commissioned
+    # device must be reset and re-paired. Beforehand
+    # pull `GET /api/diagnostics/fabric-backup` and download the archive from the Pi
+    # - that's exactly what the route is for.
+    image: ghcr.io/matter-js/matterjs-server:stable
     container_name: matter-server
     network_mode: host
     restart: unless-stopped
+    # CARRIED OVER UNCHANGED from the old image, and this is an open question,
+    # not a decision (8 September 2026). This entry stood here for the
+    # raw HCI access of python-matter-server: the AppArmor profile `docker-
+    # default` forbids the Bluetooth raw sockets needed for it. The new
+    # container handles BLE via the D-Bus path (NOBLE_BINDINGS=dbus, see
+    # below) and may not need it anymore.
+    #
+    # It remains anyway because that cannot be determined on this machine:
+    # removing it experimentally would mean risking BLE commissioning,
+    # which is already considered UNTESTED - and a failure there
+    # looks like a non-failure in the logs (see README, "Enable BLE").
+    # So it should be checked on the Pi, and only after BLE via D-Bus
+    # has demonstrably worked once: remove the line, recreate the container,
+    # commission a device. If that works, it can go.
+    #
+    # The contradiction to the block further below, which explicitly rejects `user: 0:0`
+    # for isolation reasons, is acknowledged: lifting an AppArmor
+    # restriction is also less isolation. The difference is only
+    # that for `user: 0:0` a proven alternative exists (the D-Bus path)
+    # and here so far no measurement.
     security_opt:
       - apparmor=unconfined
     volumes:
+      # Same directory as before. IMPORTANT: the new container runs
+      # unprivileged as UID 1000, the old image ran as root. Therefore, once on the Pi
+      # before the first start:
+      #     sudo chown -R 1000:1000 deploy/testhost/data
+      #     sudo chmod -R u+rwX,go+rX deploy/testhost/data
+      # Without this the container won't start - it cannot access its own
+      # data directory.
       - ./data:/data
       - /run/dbus:/run/dbus:ro
-    # command completely overrides the image's default CMD - the first
-    # four arguments are carried over from the default (storage-path,
-    # paa-root-cert-dir), --bluetooth-adapter is new and enables BLE
-    # commissioning over the adapter named in BLUETOOTH_ADAPTER (see
-    # README, "Enable BLE").
+    environment:
+      # BLE via the host's BlueZ daemon instead of via a raw
+      # HCI socket. The standard would be `hci`, and that requires permissions that
+      # the unprivileged container user doesn't have - BLE commissioning
+      # would then silently fail. The /run/dbus mount needed for it
+      # is already above.
+      #
+      # The alternative mentioned in the docs - run container as root
+      # (`user: 0:0`) - is DELIBERATELY NOT chosen here: it lifts the
+      # container isolation, and this service runs with
+      # `network_mode: host` anyway, already open on the network.
+      NOBLE_BINDINGS: dbus
+    # ATTENTION: `command` overrides the image default CMD COMPLETELY -
+    # Compose does not supplement it, it replaces it. For the old image its
+    # CMD was known (`--storage-path /data --paa-root-cert-dir /data/credentials`,
+    # verified via `docker inspect --format '{{.Config.Cmd}}'`, see README,
+    # "Enable BLE"), and the list here was deliberately its replica plus
+    # `--bluetooth-adapter`.
+    #
+    # For this image the default CMD is UNTESTED. If it carries something that
+    # loxmatter builds on - e.g. a different `--port`, while loxmatter firmly
+    # addresses `ws://127.0.0.1:5580/ws` - it would silently be gone here. So before
+    # the first `up`, check and compare with this list (README, "What
+    # to check afterwards", point 3):
+    #     docker inspect --format '{{.Config.Cmd}}' \
+    #         ghcr.io/matter-js/matterjs-server:stable
     command:
       - --storage-path
       - /data
-      - --paa-root-cert-dir
-      - /data/credentials
+      # `--paa-root-cert-dir` has been DROPPED WITHOUT REPLACEMENT (don't forget):
+      # the successor's CLI docs list the option under "Deprecated
+      # Options (were used in Python Matter Server) - not supported" because
+      # matter.js obtains PAA root certificates via its own
+      # DCL client.
       - --bluetooth-adapter
       - "${BLUETOOTH_ADAPTER:-0}"
     # No more `depends_on: otbr` (2026-09-05): Compose aborts when an

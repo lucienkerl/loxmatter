@@ -132,14 +132,31 @@ The `start-stop-daemon` workaround further down is needed again from that point 
 
 ## Updating
 
-**Existing Thread installation:** if `COMPOSE_PROFILES` is missing from the `.env`
-(every installation from before September 5, 2026), this branch silently lands in
-WiFi mode without re-running the installer — the running
-`otbr` container isn't stopped in the process, but on the next
-configuration change it's no longer recreated, and a `docker compose down
-&& up -d` won't bring the Thread router back afterwards. Anyone using Thread
-should therefore add `COMPOSE_PROFILES=thread` to the `.env` before the next
-`docker compose up`.
+> **⚠ As of 8 September 2026, a `git pull` brings an image switch.**
+> `docker-compose.yml` no longer points to `python-matter-server`, but to
+> `ghcr.io/matter-js/matterjs-server:stable`. A bare `docker compose up -d`
+> after that recreates the `matter-server` service on the new image — and
+> **executes the one-way migration of the Fabric directory**, without
+> the previously required `chown` and without backup. If it fails, the Fabric
+> is gone and every commissioned device must be reset and re-paired.
+>
+> Anyone updating from a state before this date should therefore
+> **first** work through "Migration to matterjs-server (UNTESTED)" further below — backup,
+> `chown`, then the first start — and only then continue here.
+>
+> `./scripts/update.sh` is not affected by this: it operates with `--no-deps
+> --force-recreate loxmatter` exclusively on its own service and leaves
+> `matter-server` untouched. The risk lies solely in manually running
+> `docker compose up -d`.
+
+**Existing Thread installation:** If `COMPOSE_PROFILES` is missing from the `.env`
+(every installation before 5 September 2026), this branch silently lands in WiFi mode without
+re-running the installer — the running
+> `otbr` container is not stopped, but will not be recreated on the next
+configuration change, and a `docker compose down
+&& up -d` will not bring the Thread router back after that. Anyone using Thread
+should therefore add `COMPOSE_PROFILES=thread`
+to the `.env` before the next `docker compose up`.
 
 On the machine where the bridge runs:
 
@@ -233,6 +250,11 @@ That's the proof: `bluetooth_adapter_id` arrives as `0` in the stack, not `None`
 "give the fake adapter id of 999 to disable bluetooth"). So Task 7 can actually
 commission over BLE, provided the adapter is
 `UP`/`Powered` at the moment of the connection attempt (see the next section — that's separate from this check).
+
+> **As of 8 September 2026**, `matterjs-server` runs here. `--bluetooth-adapter`
+> is named the same there, but the container is unprivileged and additionally needs
+> `NOBLE_BINDINGS=dbus` — see "Migration to matterjs-server". The quote above remains
+> as evidence for the old image.
 
 ## Bluetooth adapter is rfkill-soft-blocked (new compared to the VM)
 
@@ -433,6 +455,20 @@ cat matter-server-data-backup.tar.gz | ssh pi@10.0.1.56 'tar xzf - -C ~/matter-l
 ssh pi@10.0.1.56 'cd ~/matter-loxone/deploy/testhost && docker compose start matter-server'
 ```
 
+**Verify that the archive contains something** — a backup you have not verified
+is not a backup:
+
+```bash
+tar tzf matter-server-data-backup.tar.gz | grep chip.json
+```
+
+> **As of 8 September 2026**, this exact backup is also the
+> prerequisite for the image switch to `matterjs-server`: its first start
+> migrates `./data` **one-way** to a new format. The way above is there the
+> first backup route, because it needs neither an API token nor a running service
+> — see "Migration to matterjs-server (UNTESTED)" further below and the
+> warning box in "Updating".
+
 ## Thread dataset — NOT into the repository
 
 `docker exec otbr ot-ctl dataset active -x` prints the active Thread operational dataset
@@ -543,13 +579,170 @@ fatal error.
 
 ### 3. matter-server image path
 
-`ghcr.io/home-assistant-libs/python-matter-server:stable` as in the briefing — still
-pullable. Note for later: the upstream README now points
-to `ghcr.io/matter-js/python-matter-server` as the successor project
-(`python-matter-server` itself is frozen at version 8.1.2, no further
-updates). Since `pyproject.toml` already pins `python-matter-server>=8.1.2`,
-that's consistent — only relevant if the `home-assistant-libs` image ever
-disappears.
+Until 8 September 2026, `ghcr.io/home-assistant-libs/python-matter-server:stable` ran here.
+The note that stood at this point named `ghcr.io/matter-js/python-matter-server`
+as the successor — **that was wrong**: this path is only a mirror of the old
+repository under the new organization and delivers the same frozen 8.1.2.
+
+The actual successor project is
+[`matterjs-server`](https://github.com/matter-js/matterjs-server) —
+`ghcr.io/matter-js/matterjs-server:stable`, a re-implementation on matter.js
+with the same WebSocket API. The migration is in the next section.
+
+## Migration to matterjs-server (UNTESTED)
+
+`deploy/testhost/docker-compose.yml` has pointed to
+`ghcr.io/matter-js/matterjs-server:stable` since 8 September 2026. **This migration has not yet
+run on a Pi** — it is derived from the successor's documentation, not measured.
+What stands here is the order in which it should be performed, and the two
+places where it can fail.
+
+### Before: back up the Fabric
+
+The first start migrates `./data` to the format of the new server. This migration
+is **one-way** — a path back to the old image is nowhere promised. If it fails,
+the Fabric is lost and every commissioned device must be reset and
+re-paired.
+
+**Path 1 — `tar` over SSH. This is the path that applies.** It needs neither a token
+nor a running service, only the SSH access that this document assumes
+everywhere anyway. The same command appears above under "Backing up the fabric volume
+(`./data`)", together with the restore path:
+
+```bash
+ssh pi@10.0.1.56 'tar czf - -C ~/matter-loxone/deploy/testhost data' > matter-server-data-backup.tar.gz
+tar tzf matter-server-data-backup.tar.gz | grep chip.json
+```
+
+**The second line is not optional.** If there's no output, the
+archive does not contain the Fabric state — then abort and search for the cause, rather than
+proceeding to an irreversible migration. **A backup you have not verified
+is not a backup.**
+
+**Path 2 — the `GET /api/diagnostics/fabric-backup` route.** In addition to Path 1, not instead of it.
+It delivers the same directory as a ZIP, but has two pitfalls
+that hit silently: `LOXMATTER_API_TOKEN` is in the `.env` **on the Pi** and
+is not set in the operator's shell, and since the WebUI login the
+token is per `.env.example` **optional** — on the Pi it can therefore also be empty.
+If it is empty, `curl` sends a blank `Bearer `, gets 401, and `-s -f`
+writes **neither a file nor a message**. Whoever doesn't check this proceeds with
+a non-existent backup into the migration.
+
+```bash
+LOXMATTER_API_TOKEN="$(ssh pi@10.0.1.56 \
+  'sed -n "s/^LOXMATTER_API_TOKEN=//p" ~/matter-loxone/deploy/testhost/.env')"
+[ -n "$LOXMATTER_API_TOKEN" ] || echo "Token empty — this path is not available"
+curl -sf -H "Authorization: Bearer $LOXMATTER_API_TOKEN" \
+  http://10.0.1.56:8080/api/diagnostics/fabric-backup -o matter-fabric-backup.zip
+unzip -l matter-fabric-backup.zip | grep chip.json
+```
+
+**Download the archive from the Pi**, don't leave it there. It contains the
+complete Fabric credentials and belongs neither in the repository nor in a log.
+
+### The Migration
+
+```bash
+cd ~/matter-loxone/deploy/testhost
+docker compose stop matter-server
+sudo chown -R 1000:1000 data
+sudo chmod -R u+rwX,go+rX data
+docker compose pull matter-server
+docker compose up -d matter-server
+docker compose logs -f matter-server
+```
+
+The `chown` is not a precaution, but a requirement: the old image ran
+as root and wrote the directory accordingly, the new container runs
+unprivileged as UID 1000. Without this step, it won't start.
+
+The log lines of the first start contain the migration. Only when there's no error
+there and `loxmatter` connects again (`GET /api/diagnostics/system` shows
+the `matter-server` point green — the same thing the WebUI diagnostics page
+displays; `/api/diagnostics` without `/system` is not a route and responds with 404),
+is the migration complete.
+
+### What to check afterwards
+
+Three points that don't follow from the documentation and can only be clarified on the device.
+Until they are checked, this section remains titled "UNTESTED". Point 3
+belongs in the order **before** the first `up` — it stands here because it belongs to
+the same open questions.
+
+1. **BLE commissioning.** The Compose sets `NOBLE_BINDINGS=dbus` because the
+   unprivileged container cannot open a raw HCI socket. The path via
+   BlueZ assumes that `bluetoothd` is running and `hci0` is `Powered` — on
+   this Pi the adapter was already rfkill-soft-blocked once (see section
+   above, that is independent of the server). Check by commissioning a device via the
+   pairing code in the WebUI.
+2. **Capitalization of command names.** The successor's WebSocket documentation
+   shows command names in camelCase (`moveToLevelWithOnOff`); the
+   Python client sends PascalCase (`MoveToLevelWithOnOff`) because it
+   forwards `command.__class__.__name__`. The server must accept both,
+   otherwise its own client would be broken — that is a conclusion, not a measurement.
+   Check by switching a light in the WebUI **and** adjusting its
+   brightness.
+3. **The default `CMD` of the new image.** `command:` in the Compose file
+   overrides it **completely** — if it carried something that loxmatter builds on, e.g.
+   a different `--port` (loxmatter firmly addresses `ws://127.0.0.1:5580/ws`),
+   that would silently be gone. For the old image the CMD was checked via `docker inspect`
+   (see "Enable BLE"); for this one it is not. **Before** the
+   first `up`, run and compare with the `command:` block in
+   `docker-compose.yml`:
+
+   ```bash
+   docker inspect --format '{{.Config.Cmd}}' ghcr.io/matter-js/matterjs-server:stable
+   ```
+
+   If something stands there that the Compose file doesn't carry, it belongs either in the
+   `command:` block or noted alongside with justification.
+
+### If it fails
+
+The way back, for which the backup above exists — otherwise it would be just ritual.
+**Equally untested as the migration itself**: it is derived from the steps
+that it reverses, not measured on a Pi.
+
+```bash
+cd ~/matter-loxone/deploy/testhost
+docker compose stop matter-server
+```
+
+Restore the archive (same path as under "Backing up the fabric volume (`./data`)"
+above, the detail is there). **Remove the old `data` first, don't
+just overwrite it:**
+
+```bash
+mv data data.post-migration
+cat matter-server-data-backup.tar.gz | ssh pi@10.0.1.56 'tar xzf - -C ~/matter-loxone/deploy/testhost'
+```
+
+The `mv` is not a precaution, but necessary: `tar xzf` creates and overwrites,
+but it **deletes nothing that's missing from the archive**. If you unpacked over the migrated
+directory, all files that matterjs-server created during the migration would remain —
+the old server would then find its own state alongside foreign data,
+and no one knows what it would do with that. `mv` instead of `rm`, so the migrated
+state is preserved for later troubleshooting.
+
+Then reverse the ownership — the old image ran as root, so the
+`chown` to `1000:1000` from above must become:
+
+```bash
+sudo chown -R root:root data
+```
+
+And in `docker-compose.yml` reset the `image:` line of the `matter-server`
+service to `ghcr.io/home-assistant-libs/python-matter-server:stable`.
+Then `docker compose up -d matter-server`.
+
+This restores the state **before** the migration, nothing more: everything
+commissioned or renamed since then is at the state of the archive.
+
+The reset `image:` line is then a local change to a
+versioned file — the next `git pull` will therefore abort instead of
+silently overwriting it. That is intentional: the switch should not
+come back incidentally, but deliberately and with backup (see the warning box in
+"Updating").
 
 ## Files in this directory
 
