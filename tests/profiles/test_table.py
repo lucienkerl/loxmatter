@@ -337,11 +337,24 @@ def test_every_rank_in_the_table_is_an_integer():
     `element_rank_for` rufen beide `int(rank)` - ein `rank: "10"` aus
     einem Tippfehler wuerde also NICHT "beim Sortieren gegen eine Zahl
     werfen", sondern klaglos zu 10 werden. Der tatsaechliche Schaden ist
-    eine stille Abweichung von der Sortierabsicht, kein Absturz."""
+    eine stille Abweichung von der Sortierabsicht, kein Absturz.
+
+    Fund (Nachpruefung vor dem Merge): `isinstance(x, int)` ist fuer
+    `True`/`False` ebenfalls wahr, weil `bool` in Python von `int` erbt -
+    ein `rank: true` (YAML-Tippfehler fuer eine Zahl) waere also
+    unentdeckt durchgerutscht. Bestand schon auf Clusterebene, ist mit der
+    Ausweitung auf die Elementebene nur mitgewandert. `not isinstance(x,
+    bool)` schliesst genau diesen Fall auf beiden Ebenen aus."""
     for cluster_id, cluster in table._table().items():
         if "rank" in cluster:
-            assert isinstance(cluster["rank"], int), cluster_id
+            rank = cluster["rank"]
+            assert isinstance(rank, int) and not isinstance(rank, bool), cluster_id
         for section in ("attributes", "events"):
             for element_id, element in (cluster.get(section) or {}).items():
                 if isinstance(element, dict) and "rank" in element:
-                    assert isinstance(element["rank"], int), (cluster_id, section, element_id)
+                    rank = element["rank"]
+                    assert isinstance(rank, int) and not isinstance(rank, bool), (
+                        cluster_id,
+                        section,
+                        element_id,
+                    )

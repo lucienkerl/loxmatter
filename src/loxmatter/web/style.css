@@ -1830,11 +1830,10 @@ footer.hint-block {
 }
 
 /* Der Batteriestand als eigene Zeile am Fuss der Vorschau (Entwurf
-   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt wie frueher
-   `.device-controls` im Modal (inzwischen entfernt, seit die Signalzeile
-   dort `.signal-row-wrap` heisst und keine gestrichelte Trennlinie mehr
-   braucht) - dieselbe Geste fuer dasselbe: "gehoert dazu, ist aber eine
-   andere Art von Angabe".
+   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt, nicht mit einer
+   durchgezogenen Linie: die gepunktete Trennung signalisiert "gehoert
+   dazu, ist aber eine andere Art von Angabe" statt einer harten Grenze
+   zwischen zwei unabhaengigen Bloecken.
 
    `margin-top` steht auf dem Element, nicht als `margin-bottom` der
    Vorschau: ein netzbetriebenes Geraet blendet diese Zeile per `x-show`
@@ -2426,7 +2425,21 @@ footer.hint-block {
    `:last-child` und die Regel griff nie. Die letzte ZEILE einer Gruppe ist
    stattdessen der letzte `.signal-row-wrap` unter `<details class=
    "signal-group">` (Summary und Hinweistext davor sind eigene Elemente,
-   keine `.signal-row-wrap`) - deshalb hier so selektiert. */
+   keine `.signal-row-wrap`) - deshalb hier so selektiert.
+
+   Das AENDERT das ausgelieferte Aussehen gegenueber der toten Regel davor
+   (die griff ja nie): die letzte Zeile jeder Gruppe verliert jetzt
+   tatsaechlich ihren unteren Rahmen. `.signal-group` traegt selbst keinen
+   Rahmen, die Gruppentrennung ruht danach allein auf `margin-top: 1rem`
+   (oben an `.signal-group`). Im Wegwerf-Harness mit zwei Gruppen a zwei
+   Zeilen gegengeprueft (echtes Markup samt echtem `style.css`, beide
+   Faelle nebeneinander verglichen - einmal mit, einmal ohne diese Regel):
+   die letzte Zeile der ersten Gruppe verschwimmt NICHT mit der Ueberschrift
+   der naechsten. `margin-top` samt der fett gesetzten `<summary>`
+   (`font-weight: 600`, siehe `.signal-group > summary` oben) traegt die
+   Trennung allein bereits deutlich - der fehlende Rahmen fiel im
+   Seitenvergleich kaum auf. Entscheidung: Regel bleibt, kein zusaetzlicher
+   Ersatz noetig. */
 .signal-row-wrap:last-child .signal-row-cells {
   border-bottom: none;
 }
