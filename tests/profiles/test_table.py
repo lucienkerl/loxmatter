@@ -297,6 +297,31 @@ def test_the_utility_clusters_rank_behind_everything_functional():
     assert table.rank_for(47) < table.rank_for(40)
 
 
+def test_an_element_can_carry_its_own_rank():
+    """Der Taster war der konkrete Fall, der diese Ebene noetig gemacht hat:
+    innerhalb von Cluster 59 muss der Tastendruck vor die statische Angabe
+    `NumberOfPositions`, sonst fuehrt die Kachel mit einer Zahl, die sich nie
+    aendert."""
+    press = SignalRef(1, 59, 1, SignalKind.EVENT)
+    positions = SignalRef(1, 59, 0, SignalKind.ATTRIBUTE)
+
+    assert table.element_rank_for(press) < table.element_rank_for(positions)
+
+
+def test_an_element_without_a_rank_gets_the_default():
+    """Dieselbe Vorgabe wie auf Clusterebene, und aus demselben Grund: die
+    Mitte, damit ein nicht eingetragenes Element weder nach vorn noch ganz
+    nach hinten faellt."""
+    longpress = SignalRef(1, 59, 2, SignalKind.EVENT)
+    assert table.element_rank_for(longpress) == table.DEFAULT_RANK
+
+
+def test_an_element_of_an_unknown_cluster_gets_the_default():
+    """Cluster 3 (Identify) steht nicht in der Tabelle - es gibt dort weder
+    einen Abschnitt noch ein Element, in dem ein Rang stehen koennte."""
+    assert table.element_rank_for(SignalRef(1, 3, 0, SignalKind.ATTRIBUTE)) == table.DEFAULT_RANK
+
+
 def test_every_rank_in_the_table_is_an_integer():
     """Ein `rank: "10"` aus einem Tippfehler waere in YAML eine Zeichenkette
     und wuerde beim Sortieren gegen eine Zahl werfen - erst zur Laufzeit,

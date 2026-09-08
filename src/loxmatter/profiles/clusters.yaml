@@ -174,10 +174,17 @@ clusters:
     name: switch
     rank: 10
     attributes:
-      0: {slug: positions, unit: ""}
+      # `rank` je Element ordnet INNERHALB dieses Clusters (Nachtrag
+      # 2026-09-08). Cluster 59 ist der bislang einzige, der ihn braucht,
+      # und der Grund ist NumberOfPositions: die Angabe, wie viele
+      # Stellungen diese Taste hat, aendert sich nie. Sie stand mit
+      # Element-ID 0 vor jedem Tastendruck und wurde damit zum Leitwert
+      # der Kachel - eine Konstante als wichtigstes Merkmal eines Tasters.
+      0: {slug: positions, unit: "", rank: 90}
       1: {slug: position, unit: ""}
     events:
-      1: {slug: press}
+      # Der Tastendruck ist, wofuer man einen Taster einlernt.
+      1: {slug: press, rank: 10}
       2: {slug: longpress}
       3: {slug: shortrelease}
       4: {slug: longrelease}

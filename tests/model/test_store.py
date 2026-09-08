@@ -770,11 +770,16 @@ def test_backfill_does_not_touch_updated_at(tmp_path):
         store.close()
 
 
-def test_the_button_leads_with_a_switch_signal_not_the_battery(tmp_path):
-    """Der Befund, wegen dessen dieser Entwurf entstand: PowerSource sitzt
-    auf Endpunkt 0, das Nutz-Cluster auf Endpunkt 1 - nach Endpunktnummer
-    sortiert gewinnt damit bei JEDEM batteriebetriebenen Geraet die
-    Batterie."""
+def test_the_button_leads_with_the_button_press(tmp_path):
+    """Ersetzt `test_the_button_leads_with_a_switch_signal_not_the_battery`,
+    der nur `cluster_id == 59` prueft. Das war zu schwach: `positions`
+    (NumberOfPositions, Element 0) traegt denselben Cluster und sortierte
+    davor - die Kachel fuehrte damit mit der statischen Angabe, dass diese
+    Taste zwei Stellungen hat. Der Test sagte trotzdem ja.
+
+    Diese Fassung nennt das Signal beim Namen. Ein Test, der nur den Cluster
+    prueft, laesst genau den Fehler durch, den zu verhindern der Zweck des
+    ganzen Umbaus war."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -782,8 +787,24 @@ def test_the_button_leads_with_a_switch_signal_not_the_battery(tmp_path):
 
     functional = [s for s in store.signals(device_id) if s.functional]
 
-    assert functional[0].ref.cluster_id == 59
+    assert functional[0].title == "press"
+    assert functional[0].ref.kind is SignalKind.EVENT
     assert functional[-1].ref.cluster_id == 47
+
+
+def test_the_static_position_count_sorts_behind_every_button_event(tmp_path):
+    """`positions` aendert sich nie - es gehoert ans Ende der Tastengruppe,
+    nicht an ihren Anfang."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    endpoint1 = [s for s in store.signals(device_id) if s.functional and s.ref.endpoint == 1]
+    titles = [s.title for s in endpoint1]
+
+    assert titles[0] == "press"
+    assert titles[-1] == "positions"
 
 
 def test_the_plug_still_leads_with_onoff(tmp_path):
@@ -800,26 +821,34 @@ def test_the_plug_still_leads_with_onoff(tmp_path):
 
 
 def test_signals_of_the_same_cluster_keep_the_previous_order(tmp_path):
-    """Die Rangliste ordnet nur die CLUSTER zueinander. Innerhalb eines
-    Clusters bleibt Endpunkt/Element - dort ist die alte Ordnung richtig.
+    """Die Rangliste ordnet die CLUSTER zueinander. Innerhalb eines Clusters
+    bleibt Endpunkt/Element/Art die alte Ordnung - AUSSER ein Element traegt
+    seinerseits einen Rang (Aufgabe 12, bislang nur Cluster 59).
 
-    Die alte Ordnung war ORDER BY endpoint, cluster_id, element_id, kind.
-    Diese Ordnung innerhalb eines Clusters muss uebernommen werden."""
+    Ersetzt die Fassung aus Aufgabe 2, die das pauschal fuer JEDEN Cluster
+    behauptet hat und dabei Cluster 59 als Beispiel nahm. Das war seit
+    Aufgabe 12 nicht mehr wahr - `press` (Element 1) sortiert dort bewusst
+    vor `positions` (Element 0), nicht nach Element-ID. Das ist keine
+    zufaellige Abweichung von der alten Ordnung, sondern der Zweck der
+    Aufgabe, deshalb wird hier nicht Cluster 59 gegen die alte Ordnung
+    geprueft, sondern Cluster 47 (PowerSource) - der einzige andere Cluster
+    mit mehreren Elementen in diesem Geraet, und einer, der bis heute
+    keinen Elementrang traegt."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
     store.register_signals(device_id, snapshot)
 
     signals = store.signals(device_id)
-    cluster_59 = [s for s in signals if s.ref.cluster_id == 59]
+    cluster_47 = [s for s in signals if s.ref.cluster_id == 47]
 
     # Sortiere dieselben Signale nach der alten Ordnung (ohne Rangliste)
     old_order_sorted = sorted(
-        cluster_59, key=lambda s: (s.ref.endpoint, s.ref.element_id, s.ref.kind.value)
+        cluster_47, key=lambda s: (s.ref.endpoint, s.ref.element_id, s.ref.kind.value)
     )
 
     # Die aktuelle Reihenfolge muss mit der alten Ordnung uebereinstimmen
-    assert cluster_59 == old_order_sorted
+    assert cluster_47 == old_order_sorted
 
 
 def test_the_order_is_total(tmp_path):
