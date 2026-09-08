@@ -162,7 +162,11 @@ def updater(tmp_path):
         result = subprocess.run([str(SCRIPT)], capture_output=True, text=True, env=env, check=False)
         calls = log.read_text(encoding="utf-8") if log.exists() else ""
         state_file = update_dir / "state.json"
-        state = json.loads(state_file.read_text(encoding="utf-8")) if state_file.exists() else None
+        # `.is_file()`, not `.exists()`: state.json can legitimately be a
+        # directory in one of the tests below (write_state's own guard
+        # against exactly that) - reading it as text would raise
+        # IsADirectoryError before the test ever gets to its assertions.
+        state = json.loads(state_file.read_text(encoding="utf-8")) if state_file.is_file() else None
         return result, calls, state
 
     run.update_dir = update_dir
@@ -398,3 +402,56 @@ def test_an_oversized_id_is_rejected(updater):
     assert state["error"] == "id is too long"
     assert state["id"] is None
     assert "docker" not in calls
+
+
+def test_a_corrupt_state_file_recovers_to_a_fresh_idle_state(updater):
+    # Kills the mutant that reverts set_state's heartbeat-refresh check
+    # (the FIRST round's own "Important 2" fix) back to
+    # `write_state "$(jq ... || true)"` - i.e. feeding write_state
+    # whatever jq's stdout happened to be, success or failure, without
+    # ever checking. There was no permanent test for this at all; the
+    # first round's report shows only a manual before/after. Also doubles
+    # as required coverage for "a corrupt-state test" from this round's
+    # brief.
+    (updater.update_dir / "state.json").write_text("garbage{", encoding="utf-8")
+    result, calls, state = updater()
+    assert result.returncode == 0
+    assert state is not None
+    assert state["phase"] == "idle"
+    assert state["updater_seen_at"]
+    assert "docker" not in calls
+
+
+def test_a_state_file_containing_null_recovers_to_a_fresh_idle_state(updater):
+    # Important 1, the `null` case: `null | .updater_seen_at = $seen` is
+    # legal jq and yields a non-empty `{"updater_seen_at": "..."}` -
+    # exactly the shape the old `[ -n "$REFRESHED" ]` check alone accepted
+    # as a valid refresh, permanently losing "phase" and "id" from that
+    # point on. The new check requires the parsed value to be an object
+    # carrying "phase" before accepting it; `null` fails that and falls
+    # through to the same "no usable state yet" recovery as a missing file.
+    (updater.update_dir / "state.json").write_text("null", encoding="utf-8")
+    result, calls, state = updater()
+    assert result.returncode == 0
+    assert state is not None
+    assert state["phase"] == "idle"
+    assert state["updater_seen_at"]
+    assert "docker" not in calls
+
+
+def test_a_state_directory_makes_write_state_fail_loudly(updater):
+    # Important 1, the directory case: `[ -f "$STATE" ]` is false for a
+    # directory too, so the heartbeat block's `else` calls `set_state idle`
+    # on it exactly as it would for a missing file - and the OLD
+    # write_state's `mv "$STATE.tmp" "$STATE"` onto a directory does not
+    # error, it silently moves the tmp file INTO the directory and returns
+    # 0. state.json then stays a directory forever, permanently unreadable,
+    # with the script reporting success on every pass. write_state now
+    # refuses to write onto anything but a regular file, so this has to
+    # fail loudly (non-zero exit) instead.
+    state_dir = updater.update_dir / "state.json"
+    state_dir.mkdir()
+    result, _, _ = updater()
+    assert result.returncode != 0
+    assert state_dir.is_dir()
+    assert list(state_dir.iterdir()) == []  # nothing got moved into it

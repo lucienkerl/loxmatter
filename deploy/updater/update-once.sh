@@ -62,7 +62,25 @@ now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # Atomic, always. The bridge reads this file once a second and must never
 # see a half-written one - a truncated JSON would be indistinguishable to
 # it from "no sidecar present".
+#
+# Refuses to write when $STATE exists but is not a regular file (a
+# directory, reachable via the heartbeat block below: `[ -f "$STATE" ]`
+# is false for a directory too, so that block's `else` calls `set_state
+# idle` - i.e. this function - on it same as it would for a missing file).
+# Without this check, `mv "$STATE.tmp" "$STATE"` onto a directory does not
+# error: mv moves the tmp file INTO the directory, under the same
+# basename, and returns 0 - the write "succeeds" while state.json stays a
+# directory forever, permanently unreadable to the bridge, and every later
+# pass repeats the same silent no-op with the dedup guard permanently
+# unable to read a LAST id. Failing loudly here (non-zero return, which
+# `set -eu` turns into the script stopping) is deliberate: a sidecar that
+# visibly stops is something an operator notices; one that keeps running
+# and silently no-ops forever is not.
 write_state() {
+  if [ -e "$STATE" ] && [ ! -f "$STATE" ]; then
+    printf 'write_state: %s exists and is not a regular file - refusing to write\n' "$STATE" >&2
+    return 1
+  fi
   printf '%s\n' "$1" > "$STATE.tmp"
   mv "$STATE.tmp" "$STATE"
 }
@@ -189,7 +207,29 @@ if [ -f "$STATE" ]; then
   # reads the same broken file and does it again. Check the substitution's
   # own exit status explicitly (assigning it directly, not nesting it) and
   # fall back to a fresh idle state instead of persisting jq's failure.
-  if REFRESHED="$(jq --arg seen "$(now)" '.updater_seen_at = $seen' "$STATE" 2>/dev/null)" \
+  #
+  # Non-empty is not sufficient by itself, though - two things jq can
+  # produce that are perfectly valid, non-empty JSON and still not usable
+  # as a state:
+  #   * state.json containing the literal `null`: `null | .updater_seen_at
+  #     = $seen` is legal jq and yields `{"updater_seen_at": "..."}` - a
+  #     real, non-empty object, just missing "phase" and every other
+  #     field. Recorded as-is, that state permanently loses them: a live
+  #     heartbeat with no phase and no id, forever, and nothing about it
+  #     ever looks broken enough to self-heal.
+  #   * state.json as a directory: `[ -f "$STATE" ]` above is false, so
+  #     this whole branch is skipped and the `else` runs `set_state idle`
+  #     instead - see write_state's own guard for what that used to do
+  #     (mv the tmp file silently into the directory).
+  # Require the parsed value to be a JSON object carrying "phase" before
+  # accepting it as a refresh target; anything else - `null`, a bare
+  # string, a number, an array - falls through to the same "no usable
+  # state yet" recovery the `else` branch already uses for a missing file.
+  if REFRESHED="$(jq --arg seen "$(now)" \
+       'if (type == "object" and has("phase"))
+        then .updater_seen_at = $seen
+        else empty end' \
+       "$STATE" 2>/dev/null)" \
     && [ -n "$REFRESHED" ]; then
     write_state "$REFRESHED"
   else
