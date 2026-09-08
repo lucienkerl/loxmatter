@@ -9,7 +9,14 @@ requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.9",
     "fastapi>=0.115",
-    "python-matter-server>=8.1.2",
+    # matter-python-client statt python-matter-server (8. September 2026):
+    # `python-matter-server` ist mit 8.1.2 ARCHIVIERT - das ist die letzte
+    # Version, die je erscheint. Der Nachfolger `matterjs-server`
+    # (matter.js, Matter 1.6.0) liefert unter `python_client/` dieses Paket,
+    # das `matter_server*` UND `chip*` unter denselben Modulpfaden
+    # bereitstellt. Deshalb wechselt hier nur die Zeile, kein Modul unter
+    # src/ - siehe Entwurf 2026-09-08, Abschnitt 2.
+    "matter-python-client>=1.4.0",
     # Task 11, Phase 6: FastAPIs `File`/`UploadFile` (api/project_sync.py,
     # `POST /api/export/project-sync`) brauchen "python-multipart", um
     # `multipart/form-data`-Bodies ueberhaupt zu parsen - ohne dieses Paket
@@ -87,9 +94,11 @@ strict = true
 files = ["src", "scripts"]
 
 [[tool.mypy.overrides]]
-# chip (Teil des CHIP-SDK, das python-matter-server fuer Cluster-Kommandos
-# nutzt) liefert keine py.typed-Markierung/Stubs - siehe
-# BridgeMatterClient.send_command in matter/client.py.
+# chip liefert keine py.typed-Markierung/Stubs - siehe
+# BridgeMatterClient.send_command in matter/client.py. Seit dem 8. September
+# 2026 kommt das Paket aus derselben Distribution wie `matter_server`
+# (matter-python-client) und ist aus den matter.js-Modellen erzeugt, nicht
+# mehr aus dem CHIP-SDK; an der fehlenden Typmarkierung aendert das nichts.
 module = "chip.*"
 ignore_missing_imports = true
 
