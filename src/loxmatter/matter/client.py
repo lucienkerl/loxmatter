@@ -381,14 +381,66 @@ class BridgeMatterClient:
 
     @property
     def connected(self) -> bool:
-        """Ob `connect()` erfolgreich lief und `disconnect()` seither nicht
-        aufgerufen wurde - fuer den Systemcheck der Diagnose (Spec 10.5,
-        Task 6, Phase 5; siehe `api.diagnostics._check_matter_server`), der
-        einzige bisherige Aufrufer. Spiegelt exakt dieselbe Bedingung wie
-        `_require_upstream` unten (`self._upstream is not None`), nur ohne
-        zu werfen - eine Pruefung soll einen fehlenden Zustand melden
-        koennen, nicht ihn signalisieren muessen."""
-        return self._upstream is not None
+        """Ob die Verbindung zu matter-server gerade TRAEGT.
+
+        Frueher war das `self._upstream is not None` - also die Antwort auf
+        "hat jemand connect() aufgerufen?", nicht auf "steht die
+        Verbindung?". Das Feld wird einmal in `connect()` gesetzt und
+        ausschliesslich von `disconnect()` geleert; stirbt das Websocket,
+        blieb es stehen. Am 8. September 2026 hat genau das einen Ausfall
+        unsichtbar gemacht: `GET /api/diagnostics/system` meldete
+        "Connected", waehrend kein Geraetewert mehr ankam und jeder
+        Loxone-Befehl mit 502 scheiterte (siehe Entwurf 2026-09-08,
+        Abschnitt 1.3).
+
+        Deshalb zaehlt jetzt zusaetzlich der Listener-Task: solange er
+        laeuft, empfaengt dieser Client Push-Updates; ist er beendet, ist
+        die Verbindung weg, ganz gleich was `_upstream` noch enthaelt.
+
+        Anders als frueher ist das damit NICHT mehr dieselbe Bedingung wie
+        in `_require_upstream`. Das ist Absicht: ein Aufruf gegen einen
+        toten Upstream soll weiterhin an der Stelle scheitern, an der er
+        stattfindet, und nicht schon hier.
+        """
+        return (
+            self._upstream is not None
+            and self._listener_task is not None
+            and not self._listener_task.done()
+        )
+
+    async def wait_for_link_loss(self) -> None:
+        """Kehrt zurueck, sobald der Listener endet - gleich aus welchem Grund.
+
+        Das Signal fuer einen Verbindungsabriss existiert bereits: der Task
+        aus `upstream.start_listening()`. Er wurde bis zum 8. September 2026
+        nur nirgends abgeholt - kein `add_done_callback`, keine
+        Ueberwachung -, sodass seine Ausnahme still versickerte und niemand
+        merkte, dass die Bruecke taub war.
+
+        `asyncio.wait` statt `await task`: ein `await` auf einen Task
+        UEBERTRAEGT die Abbruchanforderung des Wartenden auf den Task. Wird
+        der Verwalter (siehe `matter/supervisor.py`) beim Herunterfahren
+        abgebrochen, risse er damit den Listener mit - und `disconnect()`
+        faende ihn bereits abgebrochen vor. `asyncio.wait` beruehrt die
+        uebergebenen Tasks nicht.
+
+        Die Ausnahme des Listeners wird abgeholt und protokolliert, nicht
+        weitergeworfen: der Aufrufer will wissen, DASS die Verbindung weg
+        ist, und soll nicht zwischen Abbruchgruenden unterscheiden muessen.
+        Ohne das `exception()` wuerde Python beim Aufraeumen des Tasks
+        ausserdem "Task exception was never retrieved" ins Log schreiben.
+        """
+        task = self._listener_task
+        if task is None:
+            return
+        await asyncio.wait({task})
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("Verbindung zu matter-server verloren: %s", exc)
+        else:
+            logger.warning("Listener von matter-server endete ohne Fehler")
 
     def _require_upstream(self) -> Any:
         if self._upstream is None:

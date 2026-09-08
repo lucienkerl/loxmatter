@@ -1205,3 +1205,75 @@ async def test_an_availability_update_without_new_paths_touches_no_handler():
 
     assert handler.snapshot_calls == []
     assert handler.availability_calls == [(5, True)]
+
+
+class DyingUpstream(FakeUpstream):
+    """Ein Listener, der Bereitschaft meldet und danach stirbt.
+
+    Genau der Fall aus dem Betriebsausfall vom 8. September 2026: die
+    Verbindung steht, `connect()` ist laengst zurueck, und dann bricht das
+    Websocket weg. `FakeUpstream(fail_connect=True)` bildet das NICHT ab -
+    das scheitert schon vor der Bereitschaft und wird von `_start_listener`
+    abgeraeumt, bevor ein Client entsteht.
+    """
+
+    async def start_listening(self, init_ready=None) -> None:
+        self.start_listening_calls += 1
+        self._nodes = self._configured_nodes
+        if init_ready is not None:
+            init_ready.set()
+        # Mehrfach warten, damit `connect()` den Task uebernehmen kann, bevor
+        # er endet - ein einzelnes `asyncio.sleep(0)` reicht empirisch NICHT:
+        # `_start_listener`s `asyncio.wait(..., FIRST_COMPLETED)` nimmt das
+        # Bereitschaftssignal erst zwei Event-Loop-Runden spaeter wahr, und
+        # erst dann prueft es, ob dieser Task schon fertig ist. Mit weniger
+        # Runden ist der Task schon fertig, wenn `_start_listener` ihn
+        # zurueckgibt, und der Test pruefte einen anderen Fall.
+        for _ in range(3):
+            await asyncio.sleep(0)
+        raise ConnectionResetError("Websocket weg")
+
+
+async def test_connected_becomes_false_when_the_listener_dies():
+    """`connected` sagte bisher nur, ob `connect()` gelaufen ist.
+
+    Die alte Bedingung war `self._upstream is not None` - gesetzt in
+    `connect()`, geleert einzig von `disconnect()`. Stirbt das Websocket,
+    blieb sie stehen, und der Diagnosepunkt `matter-server` meldete
+    "Connected", waehrend kein Wert mehr ankam und jedes /cmd mit 502
+    scheiterte.
+    """
+    upstream = DyingUpstream()
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: FakeSession(),
+    )
+    await bridge.connect()
+    assert bridge.connected is True
+
+    # Dem Listener-Task Gelegenheit geben, tatsaechlich zu sterben.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert bridge.connected is False
+
+
+async def test_wait_for_link_loss_returns_when_the_listener_dies():
+    upstream = DyingUpstream()
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: FakeSession(),
+    )
+    await bridge.connect()
+
+    # Kehrt zurueck, statt zu haengen - und wirft die Ausnahme des Listeners
+    # NICHT weiter: der Aufrufer will wissen, DASS die Verbindung weg ist.
+    await asyncio.wait_for(bridge.wait_for_link_loss(), timeout=1.0)
+
+
+async def test_wait_for_link_loss_returns_immediately_without_a_listener():
+    """Ein nie verbundener Client darf hier nicht haengen."""
+    bridge, _upstream = make_connected_pair()
+    await asyncio.wait_for(bridge.wait_for_link_loss(), timeout=1.0)
