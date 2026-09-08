@@ -1,124 +1,124 @@
-# Live-Feed für Logs, UDP-Mitschnitt und Kommandos
+# Live feed for logs, UDP capture, and commands
 
-Entwurf, 3. September 2026. Ergänzt
-[das Hauptdokument](2026-09-01-matter-loxone-bridge-design.md), Abschnitte 8.3
-(WebSocket aus derselben Subscription) und 10.5 (Diagnose).
+Design, September 3, 2026. Extends
+[the main document](2026-09-01-matter-loxone-bridge-design.md), sections
+8.3 (WebSocket from the same subscription) and 10.5 (diagnostics).
 
-## 1. Das Problem
+## 1. The problem
 
-Die Ansicht „System" holt Mitschnitt, Kommando-Log und Systemcheck **einmal**
-beim Öffnen. Wer eine Störung sucht, drückt also fortwährend neu laden — und
-sieht dabei nie, was gerade passiert, sondern nur, was beim letzten Klick
-schon vorbei war.
+The "System" view fetches the capture, command log, and system check
+**once**, on open. Anyone hunting for a fault therefore keeps hitting
+reload — and never sees what is happening right now, only what was
+already over at the last click.
 
-Für Logzeilen gibt es überhaupt keine Erfassung. Sie gehen nach `stderr` und
-damit nach `docker logs`. Wer sie sehen will, braucht eine Shell auf dem Host —
-und genau in dem Moment, in dem man sie braucht, sitzt man vor dem Browser.
+For log lines there is no capture at all. They go to `stderr` and
+therefore to `docker logs`. Anyone who wants to see them needs a shell on
+the host — and exactly at the moment you need them, you're sitting in
+front of the browser.
 
-## 2. Drei Ströme, jeder an seiner ehrlichen Quelle
+## 2. Three streams, each from its honest source
 
-### 2.1 UDP-Mitschnitt: aus dem Sender, nicht aus der Laufzeit
+### 2.1 UDP capture: from the sender, not from the runtime
 
-`UdpSender._record_sent` schreibt **nach** dem `sendto` mit. Das ist die
-einzige Stelle, die weiß, was tatsächlich auf der Leitung war.
+`UdpSender._record_sent` records **after** the `sendto`. That is the only
+place that knows what was actually on the wire.
 
-Der bequemere Weg wäre die vorhandene Beobachterkette der Laufzeit
-(`Runtime._notify_observers`), die schon die Werte-Oberfläche speist. Sie ist
-für diesen Zweck aber **falsch**: sie benachrichtigt bewusst nicht beim
-Full-Resend und nicht beim Absenken eines Impulses (beides in `runtime.py`
-begründet). Ein Feed darauf hieße „Mitschnitt" und zeigte etwas anderes als
-den Verkehr — und zwar ausgerechnet in dem Fall, für den man ihn aufmacht:
-„ging überhaupt etwas raus?"
+The more convenient path would be the runtime's existing observer chain
+(`Runtime._notify_observers`), which already feeds the values UI. For this
+purpose, though, it is **wrong**: it deliberately does not notify on a
+full resend and not on the falling edge of a pulse (both justified in
+`runtime.py`). A feed built on it would be called "capture" and would show
+something other than the traffic — in exactly the case it exists for:
+"did anything even go out?"
 
-`UdpSender` bekommt deshalb eine Beobachterkette nach demselben Muster wie
-`Runtime`: Aufruf erst nach dem Senden, Fehler eines Beobachters werden
-verschluckt, damit ein Diagnosewerkzeug nie den Pfad anhält, den es beobachtet.
+`UdpSender` therefore gets an observer chain following the same pattern as
+`Runtime`: called only after sending, an observer's error is swallowed, so
+that a diagnostic tool never halts the path it is observing.
 
-### 2.2 Kommando-Log: vorhanden, wird nur nicht geschoben
+### 2.2 Command log: already present, just not pushed
 
-Die `/cmd`-Aufrufe aus Loxone liegen bereits als `RingBuffer` in
-`loxone/server.py`. Sie kommen als dritte Nachrichtenart mit — dieselbe
-Mechanik, und in der Ansicht stehen sie ohnehin nebeneinander.
+The `/cmd` calls from Loxone already live as a `RingBuffer` in
+`loxone/server.py`. They come along as a third message kind — the same
+mechanism, and in the view they already sit next to each other.
 
-### 2.3 Logzeilen: neu
+### 2.3 Log lines: new
 
-Ein `logging.Handler`, der in einen Ring schreibt und Beobachter benachrichtigt.
-Er hängt am Logger `loxmatter` (nicht am Root-Logger: die Zeilen fremder
-Bibliotheken gehören nicht in eine Bedienoberfläche), Stufe INFO.
+A `logging.Handler` that writes into a ring and notifies observers. It
+attaches to the `loxmatter` logger (not to the root logger: lines from
+third-party libraries don't belong in a UI), level INFO.
 
-Drei Eigenschaften, die nicht offensichtlich sind und den Entwurf bestimmen:
+Three properties that are not obvious and shape the design:
 
-**Er protokolliert nie selbst.** Ein Handler, der beim Verarbeiten einer Zeile
-eine Zeile erzeugt, ruft sich endlos auf. Das gilt auch für seine Beobachter:
-ein Fehler dort wird verschluckt und **nicht geloggt**. Das ist die eine Stelle
-im Projekt, an der ein verschluckter Fehler nicht durch einen Logeintrag
-ausgeglichen werden darf.
+**It never logs itself.** A handler that produces a line while processing
+a line calls itself endlessly. That also applies to its observers: an
+error there is swallowed and **not logged**. This is the one place in the
+project where a swallowed error must not be offset by a log entry.
 
-Die Absicherung dafür ist eine Wiedereintrittssperre um die
-Beobachterschleife, thread-lokal geführt (`LogBufferHandler`,
-`diagnostics/logbuffer.py`, umgesetzt). **Sie deckt bewusst nicht
-`self.format(record)` selbst ab** — das ist eine Lücke, keine Behauptung des
-Gegenteils: ein Log-Argument, dessen `__str__`/`__repr__` seinerseits über
-denselben Logger protokolliert, rekursiert durch `format()` ungebremst bis
-`RecursionError`, ohne dass die Sperre je zum Zug käme. Kein heutiger
-Aufrufer im Projekt tut das (alle `%`-Argumente sind einfache Werte); wer die
-Sperre auf `format()` ausdehnt, muss den Eintrag trotzdem an den Ring
-anhängen, bevor er abbricht — die Zeile soll nicht verlorengehen, nur weil
-sie den Fehler ausgelöst hat.
+The safeguard for this is a re-entrancy lock around the observer loop,
+kept thread-local (`LogBufferHandler`, `diagnostics/logbuffer.py`,
+implemented). **It deliberately does not cover `self.format(record)`
+itself** — that is a gap, not a claim to the contrary: a log argument
+whose `__str__`/`__repr__` itself logs through the same logger recurses
+through `format()` unchecked until `RecursionError`, without the lock ever
+kicking in. No caller in the project today does that (all `%` arguments
+are simple values); whoever extends the lock to `format()` still has to
+append the entry to the ring before it aborts — the line should not be
+lost just because it triggered the error.
 
-**Er läuft im aufrufenden Thread.** `logging.Handler.emit` wird dort
-ausgeführt, wo die Zeile entsteht — bei diesem Projekt auch aus aiohttp und dem
-chip-SDK, also aus fremden Threads. Der Handler selbst hängt deshalb nur an
-den Ring an (`collections.deque.append` ist unter CPython atomar) und ruft
-seine Beobachter synchron im selben Thread auf; er wartet nie und kennt
-selbst keine asyncio-Primitive (siehe `diagnostics/logbuffer.py`,
-`LogBufferHandler.add_observer`: ein Beobachter darf laut Vertrag ebenfalls
-nicht blockieren). **Das Wecken des Event-Loops ist deshalb Sache des
-jeweiligen Beobachters, nicht des Handlers** — anders, als eine frühere
-Fassung dieses Entwurfs hier behauptete. Für den Diagnose-Feed ist dieser
-Beobachter `on_log` in `api/diagnostics_live.py`: er hält den laufenden Loop
-fest, bevor er sich anmeldet, und reiht über
-`loop.call_soon_threadsafe(queue.put, ...)` ein statt `queue.put(...)` direkt
-aufzurufen — die erste Umsetzung tat das nicht, und eine Logzeile aus einem
-echten fremden Thread wäre unter Umständen nie angekommen, weil ein
-bereits schlafender Event-Loop nur über `call_soon_threadsafe` (nicht über
-gewöhnlichen Queue-Zugriff) zuverlässig aus einem fremden Thread geweckt
-wird.
+**It runs on the calling thread.** `logging.Handler.emit` is executed
+wherever the line originates — in this project, that also means from
+aiohttp and the chip SDK, i.e. from foreign threads. The handler itself
+therefore only appends to the ring (`collections.deque.append` is atomic
+under CPython) and calls its observers synchronously on the same thread;
+it never waits and knows no asyncio primitives itself (see
+`diagnostics/logbuffer.py`, `LogBufferHandler.add_observer`: an observer
+is likewise not allowed to block, per the contract). **Waking the event
+loop is therefore the responsibility of the respective observer, not of
+the handler** — unlike what an earlier version of this design claimed
+here. For the diagnostics feed, this observer is `on_log` in
+`api/diagnostics_live.py`: it captures the running loop before it
+registers, and enqueues via
+`loop.call_soon_threadsafe(queue.put, ...)` instead of calling
+`queue.put(...)` directly — the first implementation did not do that, and
+a log line from a genuine foreign thread could under some circumstances
+never have arrived, because an already-sleeping event loop is only
+reliably woken from a foreign thread via `call_soon_threadsafe` (not via
+ordinary queue access).
 
-**Er verschiebt keine Geheimnisse.** Der Feed zeigt, was ohnehin in
-`docker logs` steht, und liegt hinter demselben Token-Schutz wie alle
-`/api`-Routen. Die Fabric-Sicherung protokolliert bewusst gar nichts (siehe
-`api/diagnostics.py`); das bleibt so.
+**It moves no secrets.** The feed shows what is in `docker logs` anyway,
+and sits behind the same token protection as all `/api` routes. The
+fabric backup deliberately logs nothing at all (see
+`api/diagnostics.py`); that stays that way.
 
-### 2.4 Größen
+### 2.4 Sizes
 
-Alle drei Ringe fassen 500 Einträge, wie die bestehenden. Bei zwei Geräten
-deckt das rund eine Viertelstunde ab: alle 300 s läuft ein Full-Resend mit rund
-140 Datagrammen, dazu alle 30 s der Heartbeat.
+All three rings hold 500 entries, like the existing ones. With two
+devices that covers around a quarter hour: every 300s a full resend runs
+with around 140 datagrams, plus the heartbeat every 30s.
 
 ## 3. Transport
 
-Ein zweiter WebSocket, `GET /api/diagnostics/live`. Er liegt unter `/api` und
-erbt damit den Token-Schutz samt Subprotokoll-Weg ohne eine Zeile Zusatzcode
-(Abschnitt 9.1 des Hauptdokuments).
+A second WebSocket, `GET /api/diagnostics/live`. It sits under `/api` and
+thereby inherits the token protection along with the subprotocol path
+without a single line of extra code (section 9.1 of the main document).
 
-**Getrennt vom Wertekanal `/api/live`, nicht angehängt.** Die beiden haben
-verschiedene Lebensdauern und verschiedene Mengen: der Wertekanal läuft,
-solange die Oberfläche offen ist, der Diagnosekanal nur, solange jemand
-hinsieht. Wäre alles ein Kanal, bekäme jeder vergessene Browsertab auf der
-Ansicht „Geräte" wochenlang jede Logzeile. Ausserdem trüge `/api/live` dann
-dreierlei statt einem.
+**Separate from the values channel `/api/live`, not attached to it.** The
+two have different lifetimes and different volumes: the values channel
+runs as long as the UI is open, the diagnostics channel only as long as
+someone is actually looking. If everything were one channel, every
+forgotten browser tab on the "Devices" view would get every log line for
+weeks. Also, `/api/live` would then carry three kinds instead of one.
 
-**Die gemeinsame Maschinerie wandert in ein eigenes Modul.** Begrenzte
-Warteschlange mit Drop-Oldest, Trennungserkennung über `receive_text`, sauberes
-Abräumen beider Teil-Tasks — das steckt heute in `api/live.py` und wird von
-beiden Routen gebraucht. Zweimal gehalten hieße, jede künftige Korrektur
-zweimal zu machen; die erste war schon nötig (die unbegrenzte Warteschlange,
-Review-Fix Phase 5).
+**The shared machinery moves into its own module.** Bounded queue with
+drop-oldest, disconnect detection via `receive_text`, clean teardown of
+both sub-tasks — that currently lives in `api/live.py` and is needed by
+both routes. Keeping it twice would mean making every future fix twice;
+the first one was already necessary (the unbounded queue, review fix
+phase 5).
 
-**Nachrichtenformat.** Jede Nachricht trägt ihre Art und einen Zeitstempel
-(Feldname korrigiert in Nachbesserung Task 7, Fix 3e — die Umsetzung nennt
-ihn `timestamp`, nicht `at`; das Feld `forced` fehlte hier ganz):
+**Message format.** Every message carries its kind and a timestamp (field
+name corrected in follow-up task 7, fix 3e — the implementation calls it
+`timestamp`, not `at`; the field `forced` was missing here entirely):
 
 ```json
 {"kind": "datagram", "timestamp": "…", "key": "d1_2_power", "value": "0", "forced": false}
@@ -126,108 +126,109 @@ ihn `timestamp`, nicht `at`; das Feld `forced` fehlte hier ganz):
 {"kind": "log",      "timestamp": "…", "level": "WARNING", "logger": "…", "message": "…"}
 ```
 
-Die tatsächlichen Feldnamen übernimmt die Umsetzung aus den bestehenden
-Ring-Einträgen (`DatagramLogEntry`, `CommandLogEntry`), damit nicht dieselbe
-Angabe zweimal verschieden heisst.
+The actual field names are taken by the implementation from the existing
+ring entries (`DatagramLogEntry`, `CommandLogEntry`), so the same piece of
+data isn't named differently twice.
 
-**Beim Verbinden zuerst eine Momentaufnahme**, dann live. Damit ist die Ansicht
-sofort gefüllt. **Das verhindert eine Lücke zwischen „einmal abrufen" und „ab
-jetzt zuhören" nicht — anders, als eine frühere Fassung dieses Entwurfs hier
-behauptete** (richtiggestellt in Nachbesserung Task 7, Fix 3a): genau diese
-Reihenfolge lässt einen Eintrag fallen, der exakt dazwischen entsteht (die
-Momentaufnahme ist schon gezogen, der Beobachter noch nicht angemeldet); die
-umgekehrte Reihenfolge würde ihn stattdessen verdoppeln. Verlieren statt
-verdoppeln ist die bewusste Wahl. Für Datagramme und Kommandos bleibt das
-Fenster folgenlos (kein `await` dazwischen, beide möglichen Schreiber laufen
-im Event-Loop-Thread dieser Route), für Logzeilen aus einem fremden Thread
-(siehe Abschnitt 2.3) ist die Lücke dagegen real — siehe
-`api/diagnostics_live.py`-Moduldocstring für die ausführliche Fassung. Die
-vorhandenen GET-Routen bleiben unverändert für Skripte und `curl`.
+**On connect, a snapshot first**, then live. This means the view is filled
+immediately. **It does NOT prevent a gap between "fetch once" and "listen
+from now on" — unlike what an earlier version of this design claimed here**
+(corrected in follow-up task 7, fix 3a): this exact order drops an entry
+that arises exactly in between (the snapshot has already been taken, the
+observer not yet registered); the reverse order would instead duplicate
+it. Losing rather than duplicating is the deliberate choice. For
+datagrams and commands, the window has no consequence (no `await` in
+between, both possible writers run on this route's event-loop thread);
+for log lines from a foreign thread (see section 2.3), the gap is real,
+however — see the `api/diagnostics_live.py` module docstring for the
+full account. The existing GET routes stay unchanged for scripts and
+`curl`.
 
-## 4. Oberfläche
+## 4. UI
 
-Die Ansicht „System" behält ihre Bereiche; sie füllen sich laufend statt
-einmalig. Dazu vier Bedienelemente:
+The "System" view keeps its sections; they fill continuously instead of
+once. Four controls for that:
 
-| | Vorgabe | warum |
+| | Default | why |
 |---|---|---|
-| **Anhalten** | läuft | ohne das lässt sich nichts lesen, was scrollt |
-| **Heartbeat und Resend ausblenden** | an | sonst spülen alle 300 s rund 140 Zeilen alles weg |
-| **Stufenfilter Logs** | ab INFO | INFO ist die Stufe, auf der dieses Projekt die Ereignisse protokolliert, die man bei einer Störung sucht |
-| **Zeilenobergrenze im Browser** | fest | ein tagelang offener Tab soll keinen Speicher füllen |
+| **Pause** | running | without it, nothing that scrolls can be read |
+| **Hide heartbeat and resend** | on | otherwise every 300s around 140 lines flush everything away |
+| **Log level filter** | from INFO up | INFO is the level at which this project logs the events you look for during a fault |
+| **Line cap in the browser** | fixed | a tab left open for days should not fill up memory |
 
-Der Filter „ausblenden" wirkt nur auf die **Anzeige**, nicht auf den Ring: wer
-ihn ausschaltet, sieht die vorhandenen Zeilen sofort, ohne auf neue zu warten.
+The "hide" filter only affects the **display**, not the ring: whoever
+turns it off sees the existing lines immediately, without waiting for new
+ones.
 
-**Woran „Heartbeat und Resend" erkannt wird, entschied erst die Umsetzung —
-dieser Entwurf ließ es offen.** Der erste Anlauf maß die Ankunftsrate im
-Browser (ein `DATAGRAM_BURST_GAP_MS`-Fenster) und blendete alles aus, was zu
-schnell aufeinanderfolgte — und traf damit auch einen echten Tastendruck:
-`Runtime.on_event` sendet Impuls und Zähler binnen Mikrosekunden
-hintereinander, genau das Muster, das die Heuristik für Rauschen hielt. Die
-tatsächlich umgesetzte Fassung fragt stattdessen eine Tatsache statt einer
-Vermutung ab: `UdpSender.send` reicht sein `force`-Argument unverändert als
-Feld `forced` bis in `DatagramLogEntry` und von dort in die Live-Nachricht
-durch (`api/diagnostics_live.py`). `force=True` setzen im ganzen Projekt
-genau zwei Aufrufer, `Runtime.resend_all()` (Full-Resend) und der Heartbeat
-— `False` heißt dagegen immer eine echte Wertänderung, wie schnell sie auch
-kommt. `hideNoise` in `app.js` filtert seither auf `!entry.forced`, nicht
-mehr auf die Ankunftsrate.
+**How "heartbeat and resend" are recognized was only decided during
+implementation — this design left it open.** The first attempt measured
+the arrival rate in the browser (a `DATAGRAM_BURST_GAP_MS` window) and
+hid anything that followed in too quick succession — and thereby also
+caught a genuine key press: `Runtime.on_event` sends a pulse and a counter
+within microseconds of each other, exactly the pattern the heuristic took
+for noise. The version actually implemented instead queries a fact rather
+than a guess: `UdpSender.send` passes its `force` argument through
+unchanged as a field `forced`, all the way into `DatagramLogEntry` and
+from there into the live message (`api/diagnostics_live.py`). Exactly two
+callers in the whole project set `force=True`, `Runtime.resend_all()`
+(full resend) and the heartbeat — `False`, on the other hand, always means
+a genuine value change, however fast it arrives. `hideNoise` in `app.js`
+has since filtered on `!entry.forced`, no longer on the arrival rate.
 
-Der Kanal geht auf beim Wechsel auf „System" und beim Verlassen wieder zu.
-**Genau eine Verbindung** — die Lehre aus Phase 5, wo ein zusätzliches
-`x-init="init()"` pro Tab dauerhaft zwei offene Kanäle erzeugte, weil Alpine 3
-`init()` schon von sich aus aufruft.
+The channel opens on switching to "System" and closes again on leaving.
+**Exactly one connection** — the lesson from phase 5, where an additional
+`x-init="init()"` per tab permanently produced two open channels, because
+Alpine 3 already calls `init()` on its own.
 
-## 5. Fehlerbehandlung
+## 5. Error handling
 
-| Fall | Verhalten |
+| Case | Behavior |
 |---|---|
-| Ein Beobachter wirft | verschluckt; Log- und Sendepfad laufen weiter |
-| Fehler im Log-Beobachter | verschluckt und **nicht geloggt** — das wäre die Endlosschleife |
-| Browser liest nicht mehr | Warteschlange gedeckelt, ältester Eintrag fällt heraus |
-| Verbindung bricht ab | Wiederverbindung mit wachsender Wartezeit, nur solange die Ansicht offen ist |
-| Logzeile aus fremdem Thread | landet im Ring, weckt den Loop, blockiert den Aufrufer nie |
-| Kein laufender Event-Loop | der Handler schreibt trotzdem in den Ring; nur die Benachrichtigung entfällt |
+| An observer raises | swallowed; the log and send paths keep running |
+| Error in the log observer | swallowed and **not logged** — that would be the infinite loop |
+| Browser stops reading | queue capped, oldest entry drops out |
+| Connection drops | reconnect with growing backoff, only while the view is open |
+| Log line from a foreign thread | lands in the ring, wakes the loop, never blocks the caller |
+| No running event loop | the handler still writes into the ring; only the notification is skipped |
 
-## 6. Prüfung
+## 6. Verification
 
-Alle Tests laufen ohne Hardware und ohne Netzzugriff.
+All tests run without hardware and without network access.
 
-- **Gegen die echte ASGI-Anwendung**, nicht gegen eine Nachbildung — nach dem
-  Muster der WebSocket-Tests aus Phase 5. Der Grund steht dort: ein
-  In-Process-Test war grün, während `/api/live` in **jeder** echten
-  Installation 404 lieferte, weil uvicorn gar keine WebSocket-Implementierung
-  installiert hatte. Ein Rauchtest mit rohem RFC-6455-Handshake gehört dazu.
-- Eine Logzeile aus einem **fremden Thread** kommt an.
-- Ein **werfender Beobachter** hält weder das Logging noch den UDP-Sender an.
-- Der Handler erzeugt **keine** neue Logzeile, auch nicht im Fehlerfall
-  (Prüfung auf Rekursionsfreiheit).
-- Der Mitschnitt enthält, was der Sender geschickt hat — **einschliesslich**
-  Impulsende und Full-Resend, die die Laufzeit-Beobachter auslassen. Das ist
-  der Test, der Abschnitt 2.1 bewacht.
-- Ohne Token antwortet die Route mit 401, wie jede `/api`-Route.
-- Die Momentaufnahme beim Verbinden enthält vorhandene Einträge, danach kommen
-  neue an.
+- **Against the real ASGI application**, not against a stand-in — following
+  the pattern of the WebSocket tests from phase 5. The reason is stated
+  there: an in-process test was green while `/api/live` returned 404 in
+  **every** real installation, because uvicorn had no WebSocket
+  implementation installed at all. A smoke test with a raw RFC-6455
+  handshake belongs here.
+- A log line from a **foreign thread** arrives.
+- A **raising observer** halts neither the logging nor the UDP sender.
+- The handler produces **no** new log line, not even in the error case
+  (checked for recursion-freedom).
+- The capture contains what the sender actually sent — **including**
+  falling pulse edges and full resends, which the runtime observers omit.
+  This is the test that guards section 2.1.
+- Without a token, the route answers with 401, like every `/api` route.
+- The snapshot on connect contains existing entries, new ones arrive
+  afterward.
 
-## 7. Offene Punkte
+## 7. Open points
 
-1. **Entschieden: gleich.** `DIAGNOSTICS_LINE_LIMIT` in `app.js` und alle drei
-   Ringgrößen im Dienst (`DATAGRAM_LOG_SIZE` in `loxone/sender.py`,
-   `COMMAND_LOG_SIZE` in `loxone/server.py`, `LOG_BUFFER_SIZE` in
-   `diagnostics/logbuffer.py`) stehen auf 500 — wie vorgeschlagen, ohne dass
-   ein Grund für eine Abweichung genannt wurde.
-2. **Teilweise entschärft, nicht geschlossen.** Der Stufenfilter wirkt
-   weiterhin clientseitig — daran hat sich nichts geändert. Was sich
-   geändert hat: `install_log_buffer()` setzt beim Start nicht nur die Stufe
-   des Handlers, sondern auch die des Loggers `loxmatter` selbst (siehe
-   Abschnitt 2.3-Ergänzung oben) — ohne diese Zeile hätte die Vorgabe „ab
-   INFO" gar nichts erfasst, weil in diesem Projekt sonst niemand die
-   Loggerstufe setzt. Solange niemand `install_log_buffer(level=logging.
-   DEBUG)` aufruft — wofür `loxmatter run` heute keinen Schalter anbietet —,
-   kann DEBUG den Ring gar nicht erreichen; der ursprüngliche Punkt bleibt
-   aber unverändert gültig, sobald das einmal möglich wird: der Ring speichert
-   dann ungefiltert, das Stufenfilter der Oberfläche wirkt weiter nur auf die
-   Anzeige.
-3. Ein Herunterladen des Mitschnitts als Datei ist weiterhin nicht Teil
-   dieses Entwurfs.
+1. **Decided: the same.** `DIAGNOSTICS_LINE_LIMIT` in `app.js` and all
+   three ring sizes in the service (`DATAGRAM_LOG_SIZE` in
+   `loxone/sender.py`, `COMMAND_LOG_SIZE` in `loxone/server.py`,
+   `LOG_BUFFER_SIZE` in `diagnostics/logbuffer.py`) are set to 500 — as
+   proposed, with no reason given for a deviation.
+2. **Partly defused, not closed.** The level filter still acts
+   client-side — nothing has changed about that. What has changed:
+   `install_log_buffer()` sets, at start, not only the handler's level but
+   also that of the `loxmatter` logger itself (see the section 2.3
+   addendum above) — without this line, the "from INFO up" default would
+   have captured nothing at all, because nobody else in this project sets
+   the logger level otherwise. As long as nobody calls
+   `install_log_buffer(level=logging.DEBUG)` — for which `loxmatter run`
+   offers no switch today — DEBUG cannot reach the ring at all; the
+   original point, however, remains valid unchanged once that becomes
+   possible: the ring then stores unfiltered, the UI's level filter still
+   only affects the display.
+3. Downloading the capture as a file is still not part of this design.

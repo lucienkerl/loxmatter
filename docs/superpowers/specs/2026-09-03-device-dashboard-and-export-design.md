@@ -1,214 +1,204 @@
-# Geräte-Dashboard: Werte ohne Aufklappen, Export pro Gerät
+# Device dashboard: values without expanding, export per device
 
-Entwurf, 3. September 2026. Ergänzt
-[das Hauptdokument](2026-09-01-matter-loxone-bridge-design.md), Abschnitt 8
-(Bedienoberfläche), sowie [den Login-Entwurf](2026-09-03-webui-login-design.md),
-Abschnitt 14.2 (Restliche Konfiguration in der Oberfläche) — dessen
-`setting`-Tabelle war genau für diesen Zweck vorgesehen, ist bisher aber nur
-mit dem Passwort-Hash belegt.
+Design, September 3, 2026. Extends
+[the main document](2026-09-01-matter-loxone-bridge-design.md), section 8
+(UI), as well as [the login design](2026-09-03-webui-login-design.md),
+section 14.2 (Remaining configuration in the UI) — whose `setting` table
+was intended for exactly this purpose, but so far only holds the password
+hash.
 
-## 1. Das Problem
+## 1. The problem
 
-Zwei getrennte Beschwerden, ein gemeinsamer Auslöser: die Gerätekachel in der
-Ansicht „Geräte" zeigt im eingeklappten Zustand nur den Status-Punkt, den
-Namen und einen Hinweistext auf die Export-Anzahl. Wer wissen will, ob eine
-Steckdose gerade an ist oder wie warm ein Sensor misst, muss pro Gerät auf
-„Details" klicken.
+Two separate complaints, one shared trigger: the device tile in the
+"Devices" view shows, in its collapsed state, only the status dot, the
+name, and a hint text about the export count. Anyone who wants to know
+whether a plug is currently on, or how warm a sensor reads, has to click
+"Details" on each device.
 
-Zweitens: ein Export ist heute ausschließlich eine Alle-oder-Ausstehende-
-Operation im eigenen Tab, mit eigenen Eingabefeldern für die Brücken-Adresse
-und die Ports. Ein einzelnes, gerade fertig eingerichtetes Gerät zu
-exportieren heißt: Tab wechseln, Adresse erneut eingeben (sie wird nirgends
-gespeichert), Vorschau oder direkt herunterladen.
+Second: an export today is exclusively an all-or-pending operation in its
+own tab, with its own input fields for the bridge address and the ports.
+Exporting a single, just-finished-commissioning device means: switch tabs,
+re-enter the address (it is stored nowhere), preview or download directly.
 
-## 2. Was unverändert bleibt
+## 2. What stays unchanged
 
-Die Ansicht „Signale" (voller Baum, Funktional/Experte, einzeln umschaltbare
-Exportierbarkeit) bleibt exakt wie sie ist — sie ist der Ort für die
-vollständige Sicht auf ein Gerät, nicht die Gerätekachel. Der globale
-Export-Tab bleibt ebenfalls bestehen; er ist weiterhin der einzige Weg,
-mehrere oder alle Geräte auf einmal zu exportieren.
+The "Signals" view (full tree, functional/expert, individually togglable
+exportability) stays exactly as it is — it is the place for the complete
+view of a device, not the device tile. The global Export tab also stays;
+it remains the only way to export several or all devices at once.
 
-Ausdrücklich **nicht** Teil dieses Entwurfs: die übrige Konfiguration aus
-Abschnitt 14.2 des Login-Entwurfs (Miniserver-Adresse, matter-server-Adresse,
-Datenverzeichnis) — die kommt weiterhin aus `docker-compose.yml`/CLI-Optionen
-und bekommt, wie dort angekündigt, ihre eigene Spec. Dieser Entwurf belegt
-die `setting`-Tabelle mit genau drei weiteren Schlüsseln: den Feldern, die
-heute im Export-Tab stehen (Brücken-IP, UDP-Port, HTTP-Port).
+Explicitly **not** part of this design: the remaining configuration from
+section 14.2 of the login design (Miniserver address, matter-server
+address, data directory) — that continues to come from
+`docker-compose.yml`/CLI options and, as announced there, gets its own
+spec. This design fills the `setting` table with exactly three more keys:
+the fields currently in the Export tab (bridge IP, UDP port, HTTP port).
 
-## 3. Gerätekachel: immer offen
+## 3. Device tile: always open
 
-**Kein Aufklappen mehr.** Der „Details"/„Einklappen"-Umschalter
-(`toggleExpanded`, `expandedDeviceId`, `index.html:206-291`) entfällt. Jede
-Kachel lädt und zeigt beim Betreten der Ansicht sofort, was heute erst nach
-einem Klick da ist: die funktionalen Signale (`firstSignalsFor`,
-`FUNCTIONAL_PREVIEW_LIMIT` bleibt bei 6) und die Bedienelemente
-(`commandsFor`).
+**No more expanding.** The "Details"/"Collapse" toggle
+(`toggleExpanded`, `expandedDeviceId`, `index.html:206-291`) is dropped.
+Every tile loads and shows, immediately on entering the view, what today
+is only there after a click: the functional signals (`firstSignalsFor`,
+`FUNCTIONAL_PREVIEW_LIMIT` stays at 6) and the controls (`commandsFor`).
 
-**Aufbau einer Kachel, von oben nach unten:**
+**Structure of a tile, top to bottom:**
 
-1. **Kopfzeile** — Typ-Icon in getöntem Kreis, editierbarer Name, rechts eine
-   Status-Pille.
-2. **Werte** — die funktionalen Signale als Chips (Label über/neben dem
-   Wert, Wert in Mono-Zahlen).
-3. **Bedienung** — die bekannten Befehle als Tasten, wie bisher.
-4. **Fußzeile** — Export-Hinweis (zuletzt exportiert / geändert seit Export)
-   links, rechts die Tasten „Exportieren" und „Entfernen".
+1. **Header row** — type icon in a tinted circle, editable name, a status
+   pill on the right.
+2. **Values** — the functional signals as chips (label above/next to the
+   value, value in monospace numbers).
+3. **Controls** — the known commands as buttons, as before.
+4. **Footer** — export hint (last exported / changed since export) on the
+   left, "Export" and "Remove" buttons on the right.
 
-**Status-Pille, drei Zustände, konsistent farbcodiert:**
+**Status pill, three states, consistently color-coded:**
 
-| Zustand | Bedingung | Farbe | Icon |
+| State | Condition | Color | Icon |
 |---|---|---|---|
-| Unauffällig | online, `!changed_since_export` | kein Pillentext, nur grüner Rand-Streifen an der Kachel | — |
-| Geändert seit Export | online, `changed_since_export` (bereits vorhanden, `ExportStatusOut`, siehe Abschnitt 5) | Amber | Warndreieck |
-| Offline | `!isOnline(device)` | Grau | „wifi-off" |
+| Unremarkable | online, `!changed_since_export` | no pill text, just a green edge stripe on the tile | — |
+| Changed since export | online, `changed_since_export` (already exists, `ExportStatusOut`, see section 5) | Amber | Warning triangle |
+| Offline | `!isOnline(device)` | Gray | "wifi-off" |
 
-Der Rand-Streifen (4 px, linke Kante) trägt zusätzlich zur Pille dieselbe
-Bedeutung — bewusst redundant, damit der Zustand einer Kachel auch beim
-schnellen Scrollen über viele Geräte auffällt, ohne die Pille lesen zu
-müssen.
+The edge stripe (4 px, left edge) carries the same meaning in addition to
+the pill — deliberately redundant, so that a tile's state stands out even
+when scrolling quickly over many devices, without having to read the pill.
 
-`changed_since_export` kommt heute nur über `GET /api/export/status` an,
-aufgerufen von `loadExportStatus()` (`app.js:896-908`), bislang ausschließlich
-aus dem Export-Tab heraus. Die Geräte-Ansicht muss diesen Aufruf künftig
-selbst mit auslösen (analog, keine neue Route), sonst hat die Status-Pille
-dort keine Datengrundlage.
+`changed_since_export` currently only arrives via `GET /api/export/status`,
+called by `loadExportStatus()` (`app.js:896-908`), so far exclusively from
+within the Export tab. The Devices view must in future trigger this call
+itself too (analogous, no new route), otherwise the status pill there has
+no data to work from.
 
-**Typ-Icon.** Ein kleines, eigenes Satz an Strich-Icons (kein Icon-Font,
-keine externe Bibliothek — die Oberfläche läuft offline, `vendor/alpine.min.js`
-ist aus genau diesem Grund eingecheckt statt von einem CDN geladen). Die
-Zuordnung Gerätetyp → Icon kommt aus derselben Quelle, die heute schon
-`device_types` für die Relevanz-Regel auswertet
-([Signalauswahl-Entwurf](2026-09-03-signal-selection-design.md) Abschnitt 4.1):
-Steckdose/Relais → Stecker-Symbol, Sensor mit Bewegungs-Cluster →
-Bewegungs-Symbol, Fenster/Beschattung → Lamellen-Symbol, alles nicht
-zugeordnete → ein neutrales Platzhalter-Symbol. Eine vollständige Zuordnungs-
-tabelle ist Sache des Implementierungsplans, nicht dieser Spec.
+**Type icon.** A small, dedicated set of stroke icons (no icon font, no
+external library — the UI runs offline, `vendor/alpine.min.js` is checked
+in instead of loaded from a CDN for exactly that reason). The mapping from
+device type to icon comes from the same source that already evaluates
+`device_types` for the relevance rule today
+([signal-selection design](2026-09-03-signal-selection-design.md) section
+4.1): plug/relay → plug symbol, sensor with a motion cluster → motion
+symbol, window/shading → louver symbol, anything unmapped → a neutral
+placeholder symbol. A complete mapping table is a matter for the
+implementation plan, not this spec.
 
-**Farbe.** Akzentfarbe wird von Grün auf Kupfer/Amber (`#a15a2c` hell,
-`#e2915c` dunkel) umgestellt — für Primär-Tasten, Marke, Typ-Icon-Hintergrund.
-Die Statusfarben (grün = unauffällig, amber = geändert, grau = offline)
-bleiben davon getrennt und ändern sich nicht: eine amber Primär-Taste neben
-einer amber Status-Pille wäre sonst missverständlich, deshalb bleibt „amber"
-ausschließlich für den Status „geändert seit Export" reserviert und die
-Akzentfarbe der Primär-Taste ist Kupfer, ein sichtbar anderer Ton. Rest der
-Palette (Hintergrund, Fläche, Rahmen, Text) bleibt unverändert
+**Color.** The accent color switches from green to copper/amber (`#a15a2c`
+light, `#e2915c` dark) — for primary buttons, brand, type-icon background.
+The status colors (green = unremarkable, amber = changed, gray = offline)
+stay separate from that and do not change: an amber primary button next to
+an amber status pill would otherwise be confusing, so "amber" stays
+reserved exclusively for the "changed since export" status, and the
+primary button's accent color is copper, a visibly different tone. The
+rest of the palette (background, surface, border, text) stays unchanged
 (`style.css:27-61`).
 
-Diese drei Punkte (Layout, Status-Pillen, Kupfer/Amber) sind mit dem
-Auftraggeber an einem interaktiven HTML-Entwurf durchgesprochen und
-freigegeben.
+These three points (layout, status pills, copper/amber) were walked
+through and approved with the client on an interactive HTML mockup.
 
-## 4. Neuer Tab „Einstellungen"
+## 4. New "Settings" tab
 
-Fünfter Tab, gleichrangig zu Geräte/Signale/Export/System
-(`nav.tabs`, `index.html`). Eine Karte „Verbindung zum Miniserver" (nicht
-„Miniserver", um denselben Denkfehler zu vermeiden, vor dem der bestehende
-Hinweistext im Export-Tab schon warnt — gemeint ist die Adresse **dieser
-Brücke**, wie der Miniserver sie sieht, nicht die Adresse des Miniservers
-selbst):
+Fifth tab, on par with Devices/Signals/Export/System (`nav.tabs`,
+`index.html`). A card "Miniserver connection" (not "Miniserver", to avoid
+the same mix-up the existing hint text in the Export tab already warns
+against — this means the address of **this bridge**, as seen by the
+Miniserver, not the Miniserver's own address):
 
-- IP dieser Brücke
-- UDP-Port (virtueller Eingang)
-- HTTP-Port (Befehle empfangen)
-- Taste „Speichern", Hinweis „Zuletzt gespeichert vor …"
+- IP of this bridge
+- UDP port (virtual input)
+- HTTP port (receiving commands)
+- "Save" button, "Last saved … ago" hint
 
-**Speicherung.** Die drei Werte gehen in die bestehende generische
-`setting`-Tabelle (`store.py:128-131`, angelegt in `_migrate_to_v5` für den
-Passwort-Hash, laut eigenem Docstring in `auth_store.py:42-45` genau für
-diese Erweiterung gedacht). Neue Schlüssel `bridge_ip`, `bridge_udp_port`,
-`bridge_listen_port`, gelesen/geschrieben über denselben
-Upsert-Zugriff (`INSERT … ON CONFLICT DO UPDATE`), wie ihn `AuthStore` schon
-für `password_hash` vormacht (`auth_store.py:55-90`) — eigene kleine Klasse
-oder Erweiterung von `AuthStore`, das ist Sache des Implementierungsplans.
-Zwei neue Endpunkte nach dem Muster von `GET`/`PATCH /devices/{id}`
-(`api/devices.py:191-206`): `GET /api/settings` und `PATCH /api/settings`.
+**Storage.** The three values go into the existing generic `setting` table
+(`store.py:128-131`, created in `_migrate_to_v5` for the password hash,
+intended per its own docstring in `auth_store.py:42-45` exactly for this
+extension). New keys `bridge_ip`, `bridge_udp_port`,
+`bridge_listen_port`, read/written via the same upsert access
+(`INSERT … ON CONFLICT DO UPDATE`) that `AuthStore` already demonstrates
+for `password_hash` (`auth_store.py:55-90`) — its own small class or an
+extension of `AuthStore` is a matter for the implementation plan. Two new
+endpoints following the pattern of `GET`/`PATCH /devices/{id}`
+(`api/devices.py:191-206`): `GET /api/settings` and `PATCH /api/settings`.
 
-Server-seitig statt `localStorage`, weil die Brücken-Adresse eine
-Eigenschaft der Installation ist, nicht des Browsers — mehrere Personen oder
-Geräte, die dasselbe Dashboard öffnen, sollen dieselbe Adresse sehen, ohne
-sie erneut einzutippen.
+Server-side instead of `localStorage`, because the bridge address is a
+property of the installation, not of the browser — several people or
+devices opening the same dashboard should see the same address without
+retyping it.
 
-Eine zweite Karte „Weitere Einstellungen" mit einem Platzhaltersatz markiert
-sichtbar, dass hier künftig mehr hinzukommt (vgl. Abschnitt 2 — nicht Teil
-dieses Entwurfs).
+A second card "More settings" with a placeholder sentence visibly marks
+that more will be added here in future (cf. section 2 — not part of this
+design).
 
-## 5. Export-Tab: Felder werden schreibgeschützt, Vorschau/Download bleiben
+## 5. Export tab: fields become read-only, preview/download stay
 
-Die drei Eingabefelder im bestehenden Export-Tab
-(`exportBridgeIp`/`exportPort`/`exportListenPort`, `app.js:249-251`) werden
-`readonly`, vorbelegt aus `GET /api/settings`, mit einem Verweis
-„Wird in Einstellungen → Verbindung zum Miniserver verwaltet". Checkboxen,
-„Vorschau ansehen", „ZIP herunterladen" bleiben unverändert
-(`index.html:456-479`, `app.js:914-999`) — dieser Tab bleibt der Weg für
-„alle" oder „alle ausstehenden" Geräte.
+The three input fields in the existing Export tab
+(`exportBridgeIp`/`exportPort`/`exportListenPort`, `app.js:249-251`)
+become `readonly`, pre-filled from `GET /api/settings`, with a reference
+"Managed in Settings → Miniserver connection". Checkboxes, "View preview",
+"Download ZIP" stay unchanged (`index.html:456-479`, `app.js:914-999`) —
+this tab remains the way to export "all" or "all pending" devices.
 
-## 6. Export pro Gerät (neuer Button in der Fußzeile der Kachel)
+## 6. Export per device (new button in the tile footer)
 
-**Kein Vorschauschritt.** Ein Klick auf „Exportieren" an der Kachel lädt
-sofort das ZIP für genau dieses eine Gerät — die Werte stehen ja bereits
-offen auf der Kachel, eine zusätzliche Vorschau wäre doppelte Information.
+**No preview step.** A click on "Export" on the tile immediately downloads
+the ZIP for exactly this one device — the values are already visible on
+the tile, so an additional preview would be duplicate information.
 
-**Backend-Änderung, keine neue Route.** `GET /api/export/download`
-(`api/export.py:238-257`) bekommt einen optionalen Parameter `device_id`.
-Ist er gesetzt, iteriert die Auswahl (heute `for device in store.devices()`,
-`export.py:305`) nur über dieses eine Gerät, unabhängig vom
-`only_pending`-Haken, und markiert nach erfolgreichem Bau des ZIP nur dieses
-eine Gerät als exportiert (dieselbe deferred-`mark_exported`-Logik wie
-heute, siehe Kommentare in `export.py`). `GET /api/export/preview` bleibt
-unverändert — sie wird von der Kachel aus nicht aufgerufen (Abschnitt „Kein
-Vorschauschritt" oben).
+**Backend change, no new route.** `GET /api/export/download`
+(`api/export.py:238-257`) gets an optional parameter `device_id`. If it is
+set, the selection (currently `for device in store.devices()`,
+`export.py:305`) iterates over only this one device, regardless of the
+`only_pending` checkbox, and after successfully building the ZIP marks
+only this one device as exported (the same deferred `mark_exported` logic
+as today, see comments in `export.py`). `GET /api/export/preview` stays
+unchanged — it is not called from the tile (see "No preview step" above).
 
-Frontend: `downloadUrl()`/`downloadExport()` (`app.js:956-999`) werden um
-eine zweite, kachel-eigene Variante ergänzt, die denselben `download()`-Weg
-nutzt (Fehlerantworten laufen über die Oberfläche, nicht als roher Text —
-derselbe Grund, aus dem der globale Export schon kein `<a href>` ist,
-`index.html:472-477`), aber `device_id` statt der Checkbox-Parameter
-mitgibt.
+Frontend: `downloadUrl()`/`downloadExport()` (`app.js:956-999`) get a
+second, tile-specific variant that uses the same `download()` path
+(error responses go through the UI, not as raw text — the same reason the
+global export is already not a plain `<a href>`, `index.html:472-477`),
+but passes `device_id` instead of the checkbox parameters.
 
-## 7. Fehlerbehandlung
+## 7. Error handling
 
-| Fall | Verhalten |
+| Case | Behavior |
 |---|---|
-| Einstellungen noch leer (kein `bridge_ip` gespeichert) | „Exportieren"-Taste an jeder Kachel deaktiviert, Hinweistext „Erst in Einstellungen → Verbindung zum Miniserver hinterlegen", mit Link auf den Tab |
-| Gerät offline | Werte zeigen den letzten bekannten Stand (Kachel gedimmt, wie im Entwurf), Befehle-Tasten deaktiviert, „Exportieren" bleibt aktiv — die zuletzt bekannte Konfiguration ist weiterhin ein gültiger Export |
-| `device_id` in `/api/export/download` unbekannt (Gerät zwischenzeitlich entfernt) | 404, wie es `GET /devices/{id}` heute schon für denselben Fall liefert |
-| `PATCH /api/settings` mit leerer Brücken-IP | 422, analog zur bestehenden Pflichtfeld-Prüfung von `bridge_ip` in `export.py` |
+| Settings still empty (no `bridge_ip` stored) | "Export" button on every tile disabled, hint text "Please set the bridge IP in Settings → Miniserver connection first", with a link to the tab |
+| Device offline | Values show the last known state (tile dimmed, as in the mockup), command buttons disabled, "Export" stays active — the last known configuration is still a valid export |
+| `device_id` in `/api/export/download` unknown (device removed in the meantime) | 404, as `GET /devices/{id}` already returns today for the same case |
+| `PATCH /api/settings` with an empty bridge IP | 422, analogous to the existing required-field check for `bridge_ip` in `export.py` |
 
-## 8. Prüfung
+## 8. Verification
 
-- Ein Gerät ohne gespeicherte Einstellungen: „Exportieren"-Taste an der
-  Kachel ist deaktiviert, kein Aufruf gegen `/api/export/download` möglich.
-- `GET /api/export/download?device_id=…` liefert ein ZIP mit genau den
-  Dateien dieses einen Geräts und markiert ausschließlich dieses eine Gerät
-  als exportiert — ein zweites vorhandenes Gerät bleibt unangetastet
-  (`exported_at` unverändert).
-- `only_pending=true` zusammen mit `device_id` gesetzt: `device_id` gewinnt,
-  das Gerät wird exportiert, auch wenn es laut `changed_since_export` nicht
-  ausstehend wäre (Abschnitt 6).
-- `GET`/`PATCH /api/settings` — Werte überstehen einen Neustart des
-  Prozesses (Migration/Tabelle bereits vorhanden, kein Schema-Update nötig).
-- Bestehende Tests für `toggleExpanded`/`expandedDeviceId` entfallen mit der
-  Funktion; neue Tests decken ab, dass Werte und Bedienelemente ohne Klick
-  sichtbar sind.
+- A device with no stored settings: the "Export" button on the tile is
+  disabled, no call against `/api/export/download` is possible.
+- `GET /api/export/download?device_id=…` delivers a ZIP with exactly the
+  files of this one device and marks exclusively this one device as
+  exported — a second, existing device stays untouched (`exported_at`
+  unchanged).
+- `only_pending=true` set together with `device_id`: `device_id` wins, the
+  device is exported even if it would not be pending per
+  `changed_since_export` (section 6).
+- `GET`/`PATCH /api/settings` — values survive a process restart
+  (migration/table already present, no schema update needed).
+- Existing tests for `toggleExpanded`/`expandedDeviceId` are dropped along
+  with the function; new tests cover that values and controls are visible
+  without a click.
 
-## 9. Offene Punkte
+## 9. Open points
 
-1. Die vollständige Zuordnungstabelle Gerätetyp → Icon (Abschnitt 3) ist
-   Sache des Implementierungsplans, nicht dieser Spec — die drei im Entwurf
-   gezeigten Typen (Stecker, Bewegung, Lamellen) sind ausreichend belegt,
-   weitere Matter-Gerätetypen brauchen ein Platzhalter-Symbol, bis sie
-   einzeln ergänzt werden.
+1. The complete device-type-to-icon mapping table (section 3) is a matter
+   for the implementation plan, not this spec — the three types shown in
+   the mockup (plug, motion, louver) are sufficiently covered; further
+   Matter device types need a placeholder symbol until they are added
+   individually.
 
-   **Erledigt** durch den [Geräte-Tab-Entwurf vom 5. September 2026](2026-09-05-devices-tab-rooms-and-tile-grid-design.md):
-   die Zuordnung ist `profiles/categories.py`, und sie liefert nicht nur das
-   Icon, sondern auch die Sortierung innerhalb eines Raums und den
-   Suchbegriff.
-2. Ob ein HTTP-Port-Konflikt (z. B. zwei Bridges auf demselben Host) beim
-   Speichern der Einstellungen geprüft werden soll, ist offen — bis jemand
-   danach fragt: nein, wie schon beim bestehenden Export-Tab.
-3. Migration bestehender Installationen: wer heute schon Bridge-IP/Ports im
-   Export-Tab eingetragen hat, verliert diese Eingabe beim ersten Start
-   dieser Fassung (sie stand nie in der Datenbank, s. Abschnitt 1) und muss
-   sie einmalig in Einstellungen neu eintragen. Keine automatische
-   Übernahme möglich, weil der bisherige Wert nirgends abgelegt war.
+   **Resolved** by the [devices-tab design from September 5, 2026](2026-09-05-devices-tab-rooms-and-tile-grid-design.md):
+   the mapping is `profiles/categories.py`, and it delivers not only the
+   icon but also the sort order within a room and the search term.
+2. Whether an HTTP-port conflict (e.g. two bridges on the same host)
+   should be checked when saving the settings is open — until someone asks
+   for it: no, as with the existing Export tab already.
+3. Migration of existing installations: whoever has already entered a
+   bridge IP/ports in the Export tab today loses that entry on the first
+   start of this version (it was never in the database, see section 1)
+   and has to re-enter it once in Settings. No automatic carry-over
+   possible, because the previous value was never stored anywhere.

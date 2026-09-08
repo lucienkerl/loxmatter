@@ -1,44 +1,44 @@
-# Live-Feed für Diagnose — Implementierungsplan
+# Live feed for diagnostics — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Ansicht „System" zeigt Logzeilen, UDP-Mitschnitt und Kommando-Log laufend statt einmalig beim Öffnen.
+**Goal:** The "System" view shows log lines, UDP capture, and command log continuously instead of once on open.
 
-**Architecture:** Drei Quellen bekommen eine Beobachterkette nach dem Muster von `Runtime._notify_observers` — der UDP-Sender (er allein weiß, was auf der Leitung war), das vorhandene Kommando-Log, und ein neuer `logging.Handler`. Ein zweiter WebSocket `GET /api/diagnostics/live` schiebt alle drei in den Browser, aufgemacht erst beim Wechsel auf „System". Die Warteschlangen- und Pump-Mechanik wandert dafür aus `api/live.py` in ein gemeinsames Modul.
+**Architecture:** Three sources get an observer chain following the pattern of `Runtime._notify_observers` — the UDP sender (it alone knows what was on the wire), the existing command log, and a new `logging.Handler`. A second WebSocket `GET /api/diagnostics/live` pushes all three into the browser, opened only on switching to "System". For this, the queue and pump mechanics move out of `api/live.py` into a shared module.
 
-**Tech Stack:** Python 3.12, FastAPI/Starlette WebSockets, `logging`, Alpine.js 3.17.1 (vendort, kein Build-Schritt), pytest, ruff, mypy strict.
+**Tech Stack:** Python 3.12, FastAPI/Starlette WebSockets, `logging`, Alpine.js 3.17.1 (vendored, no build step), pytest, ruff, mypy strict.
 
-**Entwurfsdokument:** [`docs/superpowers/specs/2026-09-03-diagnostics-live-feed-design.md`](../specs/2026-09-03-diagnostics-live-feed-design.md). Bei Widerspruch zwischen Plan und Entwurf gilt der Entwurf; melde den Widerspruch.
+**Design document:** [`docs/superpowers/specs/2026-09-03-diagnostics-live-feed-design.md`](../specs/2026-09-03-diagnostics-live-feed-design.md). If plan and design conflict, the design wins; report the conflict.
 
 ## Global Constraints
 
-- **Deutsch** in Prosa, Kommentaren, Docstrings, Beschriftungen und Fehlermeldungen; **Englisch** in allen Bezeichnern — auch in Testnamen, JS-Variablen und JSON-Feldnamen.
-- Tests laufen **ohne Hardware und ohne Netzzugriff**.
-- `uv run pytest`, `uv run ruff check`, `uv run ruff format --check`, `uv run mypy` (strict über `src` und `scripts`) müssen sauber sein. Ausgangslage: **598 Tests grün**.
-- **Der Log-Handler darf niemals selbst protokollieren** — auch nicht im Fehlerfall. Ein Handler, der beim Verarbeiten einer Zeile eine Zeile erzeugt, ruft sich endlos auf. Das ist die einzige Stelle im Projekt, an der ein verschluckter Fehler nicht durch einen Logeintrag ausgeglichen wird.
-- **Ein Beobachter darf nie den Pfad anhalten, den er beobachtet.** Weder der UDP-Versand noch das Logging dürfen an einem werfenden Beobachter scheitern.
-- Jede neue Quelldatei trägt den GPL-Kopf, wie ihn die übrigen Dateien tragen (Kopf einer bestehenden Datei kopieren, vor dem Modul-Docstring).
-- Kein `sudo`. **Keine Verbindung zu einem Host im Heimnetz des Anwenders** — unter `10.0.1.56` läuft eine echte Installation.
-- `tests/fixtures/VirtualIn/` und `tests/fixtures/VirtualOut/` **nicht lesen**.
+- **German** in prose, comments, docstrings, labels, and error messages; **English** in all identifiers — including test names, JS variables, and JSON field names.
+- Tests run **without hardware and without network access**.
+- `uv run pytest`, `uv run ruff check`, `uv run ruff format --check`, `uv run mypy` (strict over `src` and `scripts`) must be clean. Starting point: **598 tests green**.
+- **The log handler must never log itself** — not even in the error case. A handler that produces a line while processing a line calls itself endlessly. This is the one place in the project where a swallowed error is not offset by a log entry.
+- **An observer must never halt the path it observes.** Neither the UDP send nor the logging may fail because of a raising observer.
+- Every new source file carries the GPL header, as the other files do (copy the header of an existing file, before the module docstring).
+- No `sudo`. **No connection to a host on the user's home network** — a real installation runs at `10.0.1.56`.
+- **Do not read** `tests/fixtures/VirtualIn/` and `tests/fixtures/VirtualOut/`.
 
-## Dateien
+## Files
 
-| Datei | Zuständigkeit |
+| File | Responsibility |
 |---|---|
-| `src/loxmatter/api/streaming.py` | **neu** — Warteschlange und Pumpe, von beiden WebSocket-Routen benutzt |
-| `src/loxmatter/api/live.py` | gekürzt — benutzt `streaming` statt eigener Kopie |
-| `src/loxmatter/diagnostics/logbuffer.py` | **neu** — `logging.Handler` mit Ring und Beobachtern |
-| `src/loxmatter/loxone/sender.py` | ergänzt — Beobachterkette am Mitschnitt |
-| `src/loxmatter/api/diagnostics_live.py` | **neu** — die Route `/api/diagnostics/live` |
-| `src/loxmatter/loxone/server.py` | ergänzt — Router einhängen, Kommando-Log-Beobachter |
-| `src/loxmatter/cli.py` | ergänzt — Handler beim Start anhängen |
-| `src/loxmatter/web/index.html`, `app.js`, `style.css` | ergänzt — laufende Anzeige, Filter, Anhalten |
+| `src/loxmatter/api/streaming.py` | **new** — queue and pump, used by both WebSocket routes |
+| `src/loxmatter/api/live.py` | shortened — uses `streaming` instead of its own copy |
+| `src/loxmatter/diagnostics/logbuffer.py` | **new** — `logging.Handler` with a ring and observers |
+| `src/loxmatter/loxone/sender.py` | extended — observer chain on the capture |
+| `src/loxmatter/api/diagnostics_live.py` | **new** — the `/api/diagnostics/live` route |
+| `src/loxmatter/loxone/server.py` | extended — hook up router, command-log observer |
+| `src/loxmatter/cli.py` | extended — attach handler at start |
+| `src/loxmatter/web/index.html`, `app.js`, `style.css` | extended — continuous display, filters, pause |
 
 ---
 
-### Task 1: Gemeinsame WebSocket-Mechanik herauslösen
+### Task 1: Extract the shared WebSocket mechanics
 
-Ohne diesen Schritt gäbe es die Warteschlange zweimal — und die erste Korrektur daran war schon nötig (die unbegrenzte Warteschlange, Review-Fix Phase 5).
+Without this step the queue would exist twice — and the first fix to it was already necessary (the unbounded queue, review fix phase 5).
 
 **Files:**
 - Create: `src/loxmatter/api/streaming.py`
@@ -46,23 +46,23 @@ Ohne diesen Schritt gäbe es die Warteschlange zweimal — und die erste Korrekt
 - Test: `tests/api/test_streaming.py`
 
 **Interfaces:**
-- Consumes: nichts Neues.
+- Consumes: nothing new.
 - Produces:
-  - `QUEUE_MAXSIZE: int` (= 512, Wert aus `api/live.py` übernehmen)
-  - `BoundedQueue` — wie `api.live._BoundedQueue`, aber mit **einem** Nutzlast-Objekt statt `(key, value)`: `put(payload: dict[str, object]) -> None`, `async get() -> dict[str, object]`
+  - `QUEUE_MAXSIZE: int` (= 512, take the value over from `api/live.py`)
+  - `BoundedQueue` — like `api.live._BoundedQueue`, but with **one** payload object instead of `(key, value)`: `put(payload: dict[str, object]) -> None`, `async get() -> dict[str, object]`
   - `async watch_for_disconnect(websocket: WebSocket) -> None`
   - `async send_loop(websocket: WebSocket, queue: BoundedQueue) -> None`
   - `accepted_subprotocol(websocket: WebSocket) -> str | None`
-  - `async pump(websocket: WebSocket) -> …` ist **nicht** Teil dieser Aufgabe.
+  - `async pump(websocket: WebSocket) -> …` is **not** part of this task.
 
-- [ ] **Step 1: Den vorhandenen Code lesen**
+- [ ] **Step 1: Read the existing code**
 
-`src/loxmatter/api/live.py` enthält `_BoundedQueue`, `_watch_for_disconnect`, `_send_loop` und die Subprotokoll-Logik in `build_live_router`. Lies alle vier samt ihrer Docstrings — die Begründungen dort (Drop-Oldest statt Drop-Newest, Log nur beim Übergang, `RuntimeError` als Trennung behandeln, Subprotokoll nur echoen wenn angeboten und **nie** das Token) sind das Ergebnis von Review-Runden und wandern **wörtlich mit**.
+`src/loxmatter/api/live.py` contains `_BoundedQueue`, `_watch_for_disconnect`, `_send_loop`, and the subprotocol logic in `build_live_router`. Read all four along with their docstrings — the reasoning there (drop-oldest instead of drop-newest, log only on transitions, treat `RuntimeError` as a disconnect, echo the subprotocol only if offered and **never** the token) is the result of review rounds and moves over **verbatim**.
 
-- [ ] **Step 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
 ```python
-"""Die WebSocket-Mechanik, die sich beide Live-Routen teilen."""
+"""The WebSocket mechanics shared by both live routes."""
 
 from __future__ import annotations
 
@@ -74,8 +74,8 @@ from loxmatter.api.streaming import QUEUE_MAXSIZE, BoundedQueue
 
 
 def test_the_queue_drops_the_oldest_entry_when_it_is_full():
-    """Drop-Oldest, nicht Drop-Newest: eine Live-Ansicht will den aktuellsten
-    Stand, der veraltete Eintrag ist der verzichtbare."""
+    """Drop-oldest, not drop-newest: a live view wants the most current
+    state, the stale entry is the dispensable one."""
     queue = BoundedQueue(maxsize=2, connection_label="test")
     queue.put({"n": 1})
     queue.put({"n": 2})
@@ -89,47 +89,47 @@ async def _drain(queue: BoundedQueue, count: int) -> list[dict[str, object]]:
 
 
 def test_putting_never_blocks_and_never_raises():
-    """`put` laeuft im Aufrufpfad des Beobachters - beim Log-Handler sogar in
-    einem fremden Thread. Wuerde es blockieren oder werfen, riss es den
-    beobachteten Pfad mit."""
+    """`put` runs in the observer's call path - for the log handler even
+    on a foreign thread. If it blocked or raised, it would take the
+    observed path down with it."""
     queue = BoundedQueue(maxsize=1, connection_label="test")
     for n in range(1000):
         queue.put({"n": n})
 
 
 def test_the_default_size_matches_what_the_value_stream_used():
-    """Uebernommen aus api/live.py, nicht neu gewaehlt: der Wert ist dort
-    begruendet, und zwei verschiedene Groessen waeren eine Frage, die
-    niemand beantworten kann."""
+    """Taken over from api/live.py, not newly chosen: the value is
+    justified there, and two different sizes would be a question nobody
+    could answer."""
     assert QUEUE_MAXSIZE == 512
 ```
 
-- [ ] **Step 3: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 3: Run test, confirm failure**
 
 Run: `uv run pytest tests/api/test_streaming.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.api.streaming'`
 
-- [ ] **Step 4: Das Modul anlegen**
+- [ ] **Step 4: Create the module**
 
-Verschiebe `_BoundedQueue`, `_watch_for_disconnect`, `_send_loop` und die Subprotokoll-Entscheidung nach `src/loxmatter/api/streaming.py`. Dabei:
+Move `_BoundedQueue`, `_watch_for_disconnect`, `_send_loop`, and the subprotocol decision to `src/loxmatter/api/streaming.py`. While doing so:
 
-- `BoundedQueue` trägt jetzt **ein** Nutzlast-Objekt (`dict[str, object]`) statt `(key, value)`. Grund: der Diagnosekanal schickt verschiedene Nachrichtenarten, ein festes Zweiertupel passt nicht mehr.
-- `send_loop` schickt die Nutzlast unverändert (`await websocket.send_json(payload)`).
-- `accepted_subprotocol(websocket)` kapselt die Zeilen aus `build_live_router`, die `scope["subprotocols"]` auswerten. Der Kommentar dazu wandert mit — er erklärt, warum nur der Marker und **nie** das Token zurückgegeben wird.
-- Die Namen verlieren ihren Unterstrich, weil sie jetzt modulübergreifend benutzt werden.
+- `BoundedQueue` now carries **one** payload object (`dict[str, object]`) instead of `(key, value)`. Reason: the diagnostics channel sends different kinds of messages, a fixed pair no longer fits.
+- `send_loop` sends the payload unchanged (`await websocket.send_json(payload)`).
+- `accepted_subprotocol(websocket)` encapsulates the lines from `build_live_router` that evaluate `scope["subprotocols"]`. The comment on it moves along — it explains why only the marker is returned and **never** the token.
+- The names lose their leading underscore, because they are now used across modules.
 
-- [ ] **Step 5: `api/live.py` auf das neue Modul umstellen**
+- [ ] **Step 5: Switch `api/live.py` to the new module**
 
-`build_live_router` benutzt `BoundedQueue`, `watch_for_disconnect`, `send_loop`, `accepted_subprotocol`. Der Beobachter baut die Nutzlast selbst:
+`build_live_router` uses `BoundedQueue`, `watch_for_disconnect`, `send_loop`, `accepted_subprotocol`. The observer builds the payload itself:
 
 ```python
         def observer(key: str, value: object) -> None:
             queue.put({"key": key, "value": value})
 ```
 
-Das Nachrichtenformat auf der Leitung bleibt damit **unverändert** — `{"key": …, "value": …}`, genau wie `app.js` es heute liest. Ein Test in `tests/api/test_live_smoke.py` prüft das bereits; er muss ohne Änderung grün bleiben. **Wird er rot, hast du das Format gebrochen und nicht den Test.**
+The message format on the wire therefore stays **unchanged** — `{"key": …, "value": …}`, exactly as `app.js` reads it today. A test in `tests/api/test_live_smoke.py` already checks this; it must stay green without changes. **If it goes red, you broke the format, not the test.**
 
-- [ ] **Step 6: Prüfungen und Commit**
+- [ ] **Step 6: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -139,27 +139,27 @@ git commit -m "refactor(api): WebSocket-Mechanik fuer beide Live-Routen herauslo
 
 ---
 
-### Task 2: Beobachterkette am UDP-Mitschnitt
+### Task 2: Observer chain on the UDP capture
 
 **Files:**
 - Modify: `src/loxmatter/loxone/sender.py`
 - Test: `tests/loxone/test_sender.py`
 
 **Interfaces:**
-- Consumes: `RingBuffer`, `DatagramLogEntry` aus `api.diagnostics` (bereits importiert).
-- Produces: auf `UdpSender`
+- Consumes: `RingBuffer`, `DatagramLogEntry` from `api.diagnostics` (already imported).
+- Produces: on `UdpSender`
   - `add_datagram_observer(callback: Callable[[DatagramLogEntry], None]) -> None`
   - `remove_datagram_observer(callback: Callable[[DatagramLogEntry], None]) -> None`
 
-**Warum hier und nicht an der Laufzeit:** `Runtime._notify_observers` benachrichtigt bewusst **nicht** beim Full-Resend und nicht beim Absenken eines Impulses (dort begründet). Ein Mitschnitt darauf zeigte etwas anderes als den Verkehr — ausgerechnet im Fall „ging überhaupt etwas raus?". `UdpSender._record_sent` läuft dagegen **nach** jedem `sendto`.
+**Why here and not on the runtime:** `Runtime._notify_observers` deliberately does **not** notify on a full resend and not on the falling edge of a pulse (justified there). A capture built on it would show something other than the traffic — in exactly the case "did anything even go out?". `UdpSender._record_sent`, on the other hand, runs **after** every `sendto`.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```python
 def test_a_datagram_observer_sees_every_send():
-    """Auch das, was die Laufzeit-Beobachter auslassen: den Full-Resend und
-    das Absenken eines Impulses. Das ist der Grund, warum der Mitschnitt am
-    Sender haengt und nicht an der Laufzeit."""
+    """Including what the runtime observers omit: the full resend and the
+    falling edge of a pulse. This is the reason the capture hangs off the
+    sender and not off the runtime."""
     sender = UdpSender("127.0.0.1", 7000)
     seen: list[str] = []
     sender.add_datagram_observer(lambda entry: seen.append(f"{entry.key}={entry.value}"))
@@ -171,9 +171,9 @@ def test_a_datagram_observer_sees_every_send():
 
 
 def test_a_throwing_observer_does_not_break_the_send_path():
-    """Ein Diagnosewerkzeug, das den Pfad anhaelt, den es beobachtet, waere
-    schlimmer als gar keins - dieselbe Begruendung wie beim Mitschreiben
-    selbst (siehe `_record_sent`)."""
+    """A diagnostic tool that halts the path it observes would be worse
+    than none at all - the same reasoning as for the capture itself (see
+    `_record_sent`)."""
     sender = UdpSender("127.0.0.1", 7000)
     sender.add_datagram_observer(lambda entry: (_ for _ in ()).throw(RuntimeError("kaputt")))
 
@@ -194,25 +194,25 @@ def test_a_removed_observer_is_no_longer_called():
     assert seen == []
 ```
 
-Prüfe zuerst, wie die vorhandenen Tests in dieser Datei einen `UdpSender` bauen und ob sie einen echten Socket öffnen — richte dich danach, statt einen zweiten Weg einzuführen. Falls `send` dort anders aufgerufen wird als oben, gilt der vorhandene Weg.
+Check first how the existing tests in this file construct a `UdpSender` and whether they open a real socket — follow that instead of introducing a second way. If `send` is called there differently than above, the existing way wins.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run test, confirm failure**
 
 Run: `uv run pytest tests/loxone/test_sender.py -k observer -v`
 Expected: FAIL — `AttributeError: 'UdpSender' object has no attribute 'add_datagram_observer'`
 
-- [ ] **Step 3: Die Kette einbauen**
+- [ ] **Step 3: Build the chain**
 
-In `UdpSender.__init__` eine Beobachterliste anlegen. `_record_sent` benachrichtigt **nach** dem Anhängen an den Ring, in einem eigenen `try/except` je Beobachter — nach demselben Muster wie `Runtime._notify_observers` (dort nachlesen, inklusive der Kopie der Liste beim Iterieren: ein Beobachter, der sich während seines Aufrufs abmeldet, darf die übrigen nicht stören).
+In `UdpSender.__init__`, create an observer list. `_record_sent` notifies **after** appending to the ring, in its own `try/except` per observer — following the same pattern as `Runtime._notify_observers` (read it there, including the copy of the list made while iterating: an observer that unregisters itself during its own call must not disturb the rest).
 
-Ein Fehler eines Beobachters wird geloggt und übersprungen. Anders als beim Log-Handler in Task 3 ist das hier **erlaubt und richtig**: der UDP-Pfad protokolliert ohnehin, und eine stille Verschluckung wäre hier die schlechtere Wahl.
+An observer's error is logged and skipped. Unlike the log handler in task 3, that is **allowed and correct** here: the UDP path already logs anyway, and silently swallowing it here would be the worse choice.
 
-- [ ] **Step 4: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run test, confirm success**
 
 Run: `uv run pytest tests/loxone/test_sender.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Prüfungen und Commit**
+- [ ] **Step 5: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -222,26 +222,26 @@ git commit -m "feat(loxone): Beobachterkette am UDP-Mitschnitt"
 
 ---
 
-### Task 3: Log-Handler mit Ring und Beobachtern
+### Task 3: Log handler with a ring and observers
 
-Die heikelste Aufgabe des Plans. Lies die Randbedingungen oben noch einmal, bevor du anfängst.
+The trickiest task of the plan. Re-read the constraints above before starting.
 
 **Files:**
 - Create: `src/loxmatter/diagnostics/__init__.py`, `src/loxmatter/diagnostics/logbuffer.py`
 - Test: `tests/diagnostics/test_logbuffer.py`
 
 **Interfaces:**
-- Consumes: `RingBuffer` aus `loxmatter.api.diagnostics`.
+- Consumes: `RingBuffer` from `loxmatter.api.diagnostics`.
 - Produces:
   - `LOG_BUFFER_SIZE: int` (= 500)
-  - `LogEntry` — Dataclass mit `timestamp: str`, `level: str`, `logger: str`, `message: str`
-  - `LogBufferHandler(logging.Handler)` mit `entries: RingBuffer[LogEntry]`, `add_observer(cb)`, `remove_observer(cb)`
+  - `LogEntry` — dataclass with `timestamp: str`, `level: str`, `logger: str`, `message: str`
+  - `LogBufferHandler(logging.Handler)` with `entries: RingBuffer[LogEntry]`, `add_observer(cb)`, `remove_observer(cb)`
   - `install_log_buffer(logger_name: str = "loxmatter", level: int = logging.INFO) -> LogBufferHandler`
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```python
-"""Der Log-Ring, aus dem die Oberflaeche ihre Zeilen bekommt."""
+"""The log ring the UI gets its lines from."""
 
 from __future__ import annotations
 
@@ -269,8 +269,8 @@ def test_a_log_line_lands_in_the_ring():
 
 
 def test_a_line_from_another_thread_arrives():
-    """Logzeilen entstehen in diesem Projekt auch in fremden Threads - aiohttp
-    und das chip-SDK. `emit` laeuft dort, wo die Zeile entsteht."""
+    """Log lines in this project also arise on foreign threads - aiohttp
+    and the chip SDK. `emit` runs wherever the line originates."""
     logger, handler = _logger_with_handler()
     thread = threading.Thread(target=lambda: logger.info("aus einem Thread"))
     thread.start()
@@ -280,10 +280,9 @@ def test_a_line_from_another_thread_arrives():
 
 
 def test_a_throwing_observer_neither_breaks_logging_nor_logs():
-    """Die eine Stelle im Projekt, an der ein verschluckter Fehler NICHT
-    durch einen Logeintrag ausgeglichen werden darf: der Ausgleich waere
-    selbst eine Logzeile, die denselben Handler aufruft - eine
-    Endlosschleife."""
+    """The one place in the project where a swallowed error must NOT be
+    offset by a log entry: the offsetting entry would itself be a log
+    line, which calls the same handler - an infinite loop."""
     logger, handler = _logger_with_handler()
     handler.add_observer(lambda entry: (_ for _ in ()).throw(RuntimeError("kaputt")))
 
@@ -304,8 +303,8 @@ def test_the_observer_sees_each_entry_once():
 
 
 def test_an_exception_is_kept_as_text():
-    """Bei einer Stoerung ist der Traceback das Interessanteste - er darf
-    nicht verlorengehen, nur weil er nicht in `message` steht."""
+    """During a fault, the traceback is the most interesting part - it
+    must not be lost just because it isn't in `message`."""
     logger, handler = _logger_with_handler()
     try:
         raise ValueError("etwas ging schief")
@@ -316,34 +315,34 @@ def test_an_exception_is_kept_as_text():
     assert "etwas ging schief" in list(handler.entries)[0].message
 ```
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run test, confirm failure**
 
 Run: `uv run pytest tests/diagnostics/test_logbuffer.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.diagnostics'`
 
-- [ ] **Step 3: Den Handler schreiben**
+- [ ] **Step 3: Write the handler**
 
-`emit` muss:
-1. den Datensatz zu einem `LogEntry` formen (`self.format(record)` liefert die Nachricht **einschliesslich** Traceback, wenn einer anhängt),
-2. an den Ring anhängen (`collections.deque.append` ist unter CPython atomar, daher kein Schloss nötig — schreib das in den Docstring),
-3. die Beobachter aufrufen, **jeden in seinem eigenen `try/except`, das nichts protokolliert und nichts weiterreicht**.
+`emit` must:
+1. shape the record into a `LogEntry` (`self.format(record)` delivers the message **including** the traceback, if one is attached),
+2. append it to the ring (`collections.deque.append` is atomic under CPython, so no lock is needed — write that into the docstring),
+3. call the observers, **each in its own `try/except` that logs nothing and re-raises nothing**.
 
-Der Zeitstempel kommt aus `loxmatter.timestamps` — schau nach, welche Funktion die übrigen Ringe benutzen (`DatagramLogEntry.timestamp`), und benutze dieselbe. Zwei verschiedene Zeitformate in einer Ansicht wären für den Leser ein Rätsel.
+The timestamp comes from `loxmatter.timestamps` — check which function the other rings use (`DatagramLogEntry.timestamp`), and use the same one. Two different timestamp formats in one view would be a puzzle for the reader.
 
-`install_log_buffer` hängt einen Handler an den benannten Logger, setzt seine Stufe und gibt ihn zurück. **Nicht** an den Root-Logger: die Zeilen fremder Bibliotheken gehören nicht in eine Bedienoberfläche.
+`install_log_buffer` attaches a handler to the named logger, sets its level, and returns it. **Not** to the root logger: lines from third-party libraries don't belong in a UI.
 
-- [ ] **Step 4: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run test, confirm success**
 
 Run: `uv run pytest tests/diagnostics/ -v`
 Expected: PASS
 
-- [ ] **Step 5: Belegen, dass keine Rekursion möglich ist**
+- [ ] **Step 5: Prove no recursion is possible**
 
-Schreib zusätzlich einen Test, der einen Beobachter anhängt, welcher **selbst über denselben Logger protokolliert**. Er muss beweisen, dass das terminiert und nicht in eine Endlosschleife läuft. Beschreib in der Docstring, welche Eigenschaft des Handlers das sicherstellt.
+Additionally write a test that attaches an observer which **itself logs through the same logger**. It must prove that this terminates and does not run into an infinite loop. Describe in the docstring which property of the handler ensures that.
 
-Findest du dabei, dass es **doch** rekursiv würde, ist das ein echter Fund: melde ihn und behebe ihn, statt den Test abzuschwächen.
+If you find it **would** actually be recursive, that is a real finding: report it and fix it, instead of weakening the test.
 
-- [ ] **Step 6: Prüfungen und Commit**
+- [ ] **Step 6: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -353,7 +352,7 @@ git commit -m "feat(diagnostics): Log-Ring mit Beobachtern, ohne Rekursionsgefah
 
 ---
 
-### Task 4: Die Route `/api/diagnostics/live`
+### Task 4: The `/api/diagnostics/live` route
 
 **Files:**
 - Create: `src/loxmatter/api/diagnostics_live.py`
@@ -361,7 +360,7 @@ git commit -m "feat(diagnostics): Log-Ring mit Beobachtern, ohne Rekursionsgefah
 - Test: `tests/api/test_diagnostics_live.py`
 
 **Interfaces:**
-- Consumes: `BoundedQueue`, `watch_for_disconnect`, `send_loop`, `accepted_subprotocol`, `QUEUE_MAXSIZE` (Task 1); `UdpSender.add_datagram_observer` (Task 2); `LogBufferHandler.add_observer` (Task 3); `RingBuffer[CommandLogEntry]` aus `loxone/server.py`.
+- Consumes: `BoundedQueue`, `watch_for_disconnect`, `send_loop`, `accepted_subprotocol`, `QUEUE_MAXSIZE` (task 1); `UdpSender.add_datagram_observer` (task 2); `LogBufferHandler.add_observer` (task 3); `RingBuffer[CommandLogEntry]` from `loxone/server.py`.
 - Produces:
 
 ```python
@@ -372,12 +371,12 @@ def build_diagnostics_live_router(
 ) -> APIRouter: ...
 ```
 
-  `sender` und `log_handler` sind optional, weil `build_app` beide schon heute
-  optional führt (siehe dort: ein Aufruf ohne Sender ist ein gültiger Zustand).
-  Fehlt einer, entfällt der zugehörige Strom — die Route antwortet trotzdem und
-  liefert, was sie hat.
+  `sender` and `log_handler` are optional, because `build_app` already
+  treats both as optional today (see there: a call without a sender is a
+  valid state). If one is missing, the corresponding stream is dropped —
+  the route still answers and delivers what it has.
 
-**Nachrichtenformat.** Jede Nachricht trägt `kind` und die Felder des jeweiligen Eintrags:
+**Message format.** Every message carries `kind` and the fields of the respective entry:
 
 ```json
 {"kind": "datagram", "key": "d1_2_power", "value": "0",   "timestamp": "…"}
@@ -385,17 +384,14 @@ def build_diagnostics_live_router(
 {"kind": "log",      "level": "WARNING", "logger": "…", "message": "…", "timestamp": "…"}
 ```
 
-Die Feldnamen kommen aus `DatagramLogEntry`, `CommandLogEntry` und `LogEntry` — **nicht neu erfinden**, sonst heißt dieselbe Angabe zweimal verschieden.
+The field names come from `DatagramLogEntry`, `CommandLogEntry`, and `LogEntry` — **don't invent new ones**, or the same piece of data ends up named differently twice.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-Die Fixture `api_with_runtime` aus `tests/api/conftest.py` liefert einen Client mit
-`websocket_connect(url)` gegen die echte ASGI-Anwendung. Prüfe zuerst ihre
-tatsächliche Signatur und was sie zurückgibt — der folgende Code richtet sich
-danach:
+The `api_with_runtime` fixture from `tests/api/conftest.py` provides a client with `websocket_connect(url)` against the real ASGI application. Check its actual signature and what it returns first — the code below follows that:
 
 ```python
-"""Der Live-Kanal fuer Logs, Mitschnitt und Kommando-Log."""
+"""The live channel for logs, capture, and command log."""
 
 from __future__ import annotations
 
@@ -405,9 +401,10 @@ import pytest
 
 
 async def test_a_fresh_datagram_arrives_as_a_message(api_with_runtime):
-    """Der Strom haengt am SENDER, nicht an der Laufzeit: nur dort ist
-    sichtbar, was tatsaechlich auf der Leitung war - einschliesslich
-    Full-Resend und Impulsende, die die Laufzeit-Beobachter auslassen."""
+    """The stream hangs off the SENDER, not off the runtime: only there
+    is it visible what was actually on the wire - including the full
+    resend and the falling edge of a pulse, which the runtime observers
+    omit."""
     client, runtime, device_id = api_with_runtime
     async with client.websocket_connect("/api/diagnostics/live") as socket:
         await _drain_snapshot(socket)
@@ -431,9 +428,9 @@ async def test_a_fresh_log_line_arrives_as_a_message(api_with_runtime):
 
 
 async def test_the_connection_starts_with_a_snapshot(api_with_runtime):
-    """Ohne die Momentaufnahme klaffte eine Luecke zwischen 'einmal
-    abrufen' und 'ab jetzt zuhoeren' - und die Ansicht waere beim Oeffnen
-    leer, bis zufaellig etwas passiert."""
+    """Without the snapshot, a gap would open between 'fetch once' and
+    'listen from now on' - and the view would be empty on open, until
+    something happened to occur."""
     client, runtime, device_id = api_with_runtime
     await runtime.on_attribute(device_id, "2/144/4", 230000)
 
@@ -444,41 +441,42 @@ async def test_the_connection_starts_with_a_snapshot(api_with_runtime):
     assert first["key"] == f"d{device_id}_2_voltage"
 ```
 
-`_drain_snapshot` liest die Momentaufnahme weg, bis der erste Live-Eintrag
-kommt. Schreib sie so, dass sie **nicht** unbegrenzt wartet, wenn nichts
-kommt — ein Test, der haengt, statt fehlzuschlagen, ist schlimmer als keiner.
+`_drain_snapshot` reads away the snapshot until the first live entry
+arrives. Write it so it does **not** wait indefinitely if nothing comes —
+a test that hangs instead of failing is worse than none.
 
-Der Test für den Token-Fall gehört nach `tests/api/test_security.py`, wo die
-übrigen stehen. **Steht dort eine Liste aller geschützten Routen, muss die neue
-darin auftauchen** — genau so fällt eine vergessene Route auf.
+The test for the token case belongs in `tests/api/test_security.py`, where
+the others live. **If a list of all protected routes exists there, the new
+one must show up in it** — that is exactly how a forgotten route gets
+noticed.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run test, confirm failure**
 
 Run: `uv run pytest tests/api/test_diagnostics_live.py -v`
-Expected: FAIL — Modul fehlt
+Expected: FAIL — module missing
 
-- [ ] **Step 3: Die Route bauen**
+- [ ] **Step 3: Build the route**
 
-Nach dem Muster von `build_live_router` (lies sie zuerst): Subprotokoll auswerten, `accept`, Warteschlange anlegen, Beobachter anmelden, `watch_for_disconnect` und `send_loop` nebeneinander laufen lassen, im `finally` **alle drei** Beobachter wieder abmelden.
+Following the pattern of `build_live_router` (read it first): evaluate the subprotocol, `accept`, create a queue, register observers, run `watch_for_disconnect` and `send_loop` side by side, unregister **all three** observers again in `finally`.
 
-Vor dem Anmelden der Beobachter die Momentaufnahme schicken: die letzten Einträge je Ring, jeder in der Form oben. Wähle eine Obergrenze je Strom und begründe sie im Docstring — 500 × 3 auf einen Schlag wären beim Öffnen der Ansicht eine spürbare Nachricht.
+Before registering the observers, send the snapshot: the latest entries per ring, each in the form above. Choose an upper bound per stream and justify it in the docstring — 500 × 3 all at once would be a noticeable burst of messages when opening the view.
 
-- [ ] **Step 4: Router einhängen**
+- [ ] **Step 4: Hook up the router**
 
-In `loxone/server.py`, neben `build_live_router`, mit `dependencies=api_guard` — sonst wäre die Route ungeschützt. Der Kommando-Log-Ring liegt dort bereits als lokale Variable; er braucht ebenfalls eine Beobachterkette. Entscheide, ob du sie an `RingBuffer` selbst hängst oder an die Middleware `_record_command`, und begründe es.
+In `loxone/server.py`, next to `build_live_router`, with `dependencies=api_guard` — otherwise the route would be unprotected. The command-log ring already sits there as a local variable; it also needs an observer chain. Decide whether to hang it off `RingBuffer` itself or off the `_record_command` middleware, and justify it.
 
-Hängst du sie an `RingBuffer`, gilt dieselbe Regel wie überall: ein werfender Beobachter darf den Aufrufpfad nicht anhalten.
+If you hang it off `RingBuffer`, the same rule applies as everywhere: a raising observer must not halt the calling path.
 
-- [ ] **Step 5: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 5: Run test, confirm success**
 
 Run: `uv run pytest tests/api/ -v`
 Expected: PASS
 
-- [ ] **Step 6: Rauchtest gegen echtes uvicorn**
+- [ ] **Step 6: Smoke test against real uvicorn**
 
-`tests/api/test_live_smoke.py` prüft `/api/live` mit einem rohen RFC-6455-Handshake, **ohne** WebSocket-Bibliothek. Der Grund steht dort und im Ledger: ein In-Process-Test war grün, während `/api/live` in **jeder** echten Installation 404 lieferte, weil uvicorn gar keine WebSocket-Implementierung installiert hatte. Ergänze die neue Route dort in derselben Form.
+`tests/api/test_live_smoke.py` checks `/api/live` with a raw RFC-6455 handshake, **without** a WebSocket library. The reason is documented there and in the ledger: an in-process test was green while `/api/live` returned 404 in **every** real installation, because uvicorn had no WebSocket implementation installed at all. Add the new route there in the same form.
 
-- [ ] **Step 7: Prüfungen und Commit**
+- [ ] **Step 7: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -488,37 +486,37 @@ git commit -m "feat(api): WebSocket fuer Logs, Mitschnitt und Kommando-Log"
 
 ---
 
-### Task 5: Handler beim Start anhängen
+### Task 5: Attach the handler at start
 
 **Files:**
 - Modify: `src/loxmatter/cli.py`
 - Test: `tests/test_cli.py`
 
 **Interfaces:**
-- Consumes: `install_log_buffer` (Task 3), `build_diagnostics_live_router` (Task 4).
-- Produces: nichts Neues.
+- Consumes: `install_log_buffer` (task 3), `build_diagnostics_live_router` (task 4).
+- Produces: nothing new.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-Ein Test, der belegt: nach dem Aufbau der Anwendung hängt ein `LogBufferHandler` am Logger `loxmatter`, und eine über `logging.getLogger("loxmatter.test").info(...)` erzeugte Zeile landet in seinem Ring. Schau in `tests/test_cli.py`, wie dort die Anwendung ohne echten Lauf aufgebaut wird, und benutze denselben Weg.
+A test proving: after the application is built, a `LogBufferHandler` hangs off the `loxmatter` logger, and a line produced via `logging.getLogger("loxmatter.test").info(...)` lands in its ring. Look at how `tests/test_cli.py` builds the application without a real run, and use the same path.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run test, confirm failure**
 
 Run: `uv run pytest tests/test_cli.py -k log_buffer -v`
 Expected: FAIL
 
-- [ ] **Step 3: Einhängen**
+- [ ] **Step 3: Hook it up**
 
-In `cli.py`s `_run` (oder dort, wo `build_app` aufgerufen wird — nachsehen): `install_log_buffer()` aufrufen und den Handler an `build_app` durchreichen, damit die Route ihn bekommt.
+In `cli.py`'s `_run` (or wherever `build_app` is called — check): call `install_log_buffer()` and pass the handler through to `build_app`, so the route gets it.
 
-**Genau einmal anhängen.** Ein zweiter Aufruf hängte einen zweiten Handler an denselben Logger, und jede Zeile stünde doppelt im Ring. Schreib in den Docstring, wie du das sicherstellst.
+**Attach exactly once.** A second call would attach a second handler to the same logger, and every line would end up twice in the ring. Write in the docstring how you ensure that.
 
-- [ ] **Step 4: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run test, confirm success**
 
 Run: `uv run pytest -q`
 Expected: PASS
 
-- [ ] **Step 5: Prüfungen und Commit**
+- [ ] **Step 5: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -528,41 +526,41 @@ git commit -m "feat(cli): Log-Ring beim Start anhaengen"
 
 ---
 
-### Task 6: Die Ansicht „System"
+### Task 6: The "System" view
 
 **Files:**
 - Modify: `src/loxmatter/web/index.html`, `src/loxmatter/web/app.js`, `src/loxmatter/web/style.css`
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: die Route aus Task 4.
-- Produces: nichts, was ein späterer Task braucht.
+- Consumes: the route from task 4.
+- Produces: nothing that a later task needs.
 
-- [ ] **Step 1: Den bestehenden Weg lesen**
+- [ ] **Step 1: Read the existing path**
 
-`app.js` hat bereits `connectLive()` für den Wertekanal, mit Wiederverbindung und wachsender Wartezeit. Der Diagnosekanal folgt demselben Muster, **öffnet aber nur beim Wechsel auf „System" und schliesst beim Verlassen**.
+`app.js` already has `connectLive()` for the values channel, with reconnection and growing backoff. The diagnostics channel follows the same pattern, **but only opens on switching to "System" and closes on leaving it**.
 
-Lies auch den Kommentar in `index.html` bei `x-data="app()"`: dort steht, warum **kein** `x-init="init()"` danebensteht. Alpine 3 ruft `init()` selbst auf; ein zusätzliches `x-init` erzeugte pro Tab dauerhaft zwei offene Kanäle. Trag es nicht ein.
+Also read the comment in `index.html` at `x-data="app()"`: it explains why **no** `x-init="init()"` sits next to it. Alpine 3 calls `init()` itself; an additional `x-init` would permanently create two open channels per tab. Do not add it.
 
-- [ ] **Step 2: Zustand und Verbindung**
+- [ ] **Step 2: State and connection**
 
-In `app()`: Listen für die drei Ströme, ein `diagnosticsSocket`, `diagnosticsPaused`, `hideNoise` (Vorgabe `true`), `logLevel` (Vorgabe `"INFO"`), und eine Obergrenze der gehaltenen Zeilen je Strom.
+In `app()`: lists for the three streams, a `diagnosticsSocket`, `diagnosticsPaused`, `hideNoise` (default `true`), `logLevel` (default `"INFO"`), and an upper bound on the lines held per stream.
 
-`selectView` öffnet den Kanal bei `"system"` und schliesst ihn bei jedem anderen Wert.
+`selectView` opens the channel on `"system"` and closes it on every other value.
 
-**Der Filter wirkt nur auf die Anzeige, nicht auf die gehaltenen Zeilen** (Entwurf 4): wer ihn ausschaltet, sieht die vorhandenen sofort, statt auf neue zu warten.
+**The filter only affects the display, not the lines held** (design section 4): whoever turns it off sees the existing ones immediately, instead of waiting for new ones.
 
-Was als „Rauschen" gilt: `bridge_alive` und alles, was im selben Schwall wie ein Full-Resend kommt. Entscheide, woran du das erkennst, und schreib die Regel als Kommentar hin — ein Filter, dessen Kriterium niemand nachlesen kann, ist beim nächsten Zweifel wertlos.
+What counts as "noise": `bridge_alive` and everything that arrives in the same burst as a full resend. Decide how you recognize that, and write the rule down as a comment — a filter whose criterion nobody can look up is worthless the next time there's doubt.
 
-- [ ] **Step 3: Markup und Gestaltung**
+- [ ] **Step 3: Markup and styling**
 
-Drei Bereiche, darüber die vier Bedienelemente aus dem Entwurf. Im vorhandenen Stil, keine neue Farbwelt.
+Three sections, with the four controls from the design above them. In the existing style, no new color scheme.
 
 - [ ] **Step 4: Test**
 
-In `tests/api/test_web.py`, im Stil der dortigen Tests: das ausgelieferte Markup enthält die Bedienelemente, und `app.js` verbindet sich auf `/api/diagnostics/live`. **Die Testdocstring muss ehrlich sagen, was sie nicht belegt** — es läuft keine Browser-Engine, ein Markup-Test zeigt, dass etwas ausgeliefert wird, nicht dass es funktioniert.
+In `tests/api/test_web.py`, in the style of the tests there: the delivered markup contains the controls, and `app.js` connects to `/api/diagnostics/live`. **The test docstring must honestly say what it does not prove** — no browser engine runs, a markup test shows that something is delivered, not that it works.
 
-- [ ] **Step 5: Prüfungen und Commit**
+- [ ] **Step 5: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -573,24 +571,24 @@ git commit -m "feat(web): Logs, Mitschnitt und Kommandos laufend statt einmalig"
 
 ---
 
-### Task 7: Dokumentation
+### Task 7: Documentation
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`, `docs/superpowers/specs/2026-09-03-diagnostics-live-feed-design.md`, `README.md`
 
-- [ ] **Step 1: Hauptdokument**
+- [ ] **Step 1: Main document**
 
-Abschnitt 10.5 (Diagnose) nennt heute nur die abrufbaren Routen. Ergänze den Live-Kanal und den Log-Ring, mit einem Verweis auf den neuen Entwurf. Abschnitt 8.3 bekommt einen Satz, dass es jetzt **zwei** WebSockets gibt und warum sie getrennt sind.
+Section 10.5 (diagnostics) currently only names the routes you can poll. Add the live channel and the log ring, with a reference to the new design. Section 8.3 gets a sentence that there are now **two** WebSockets and why they are separate.
 
-- [ ] **Step 2: Offene Punkte im neuen Entwurf**
+- [ ] **Step 2: Open points in the new design**
 
-Abschnitt 7 hat drei offene Punkte. Streiche, was durch die Umsetzung entschieden wurde, und trag ein, wie. Was offen bleibt, bleibt stehen.
+Section 7 has three open points. Strike what the implementation decided, and note how. What stays open, stays.
 
 - [ ] **Step 3: README**
 
-Ein Absatz bei der Beschreibung der Oberfläche: was die Ansicht „System" jetzt zeigt, und dass die Logzeilen dieselben sind wie in `docker logs`.
+A paragraph in the description of the UI: what the "System" view now shows, and that the log lines are the same as in `docker logs`.
 
-- [ ] **Step 4: Prüfung und Commit**
+- [ ] **Step 4: Check and commit**
 
 ```bash
 uv run ruff format --check src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -600,16 +598,16 @@ git commit -m "docs: Live-Feed in Hauptdokument und README nachziehen"
 
 ---
 
-## Abschlusskriterien
+## Completion criteria
 
-Die Arbeit ist fertig, wenn:
+The work is done when:
 
-1. `uv run pytest` ohne Hardware und ohne Netz durchläuft,
-2. eine Logzeile **aus einem fremden Thread** im Ring landet,
-3. ein werfender Beobachter weder das Logging noch den UDP-Versand anhält, und der Log-Handler dabei **keine neue Logzeile erzeugt**,
-4. der Mitschnitt das enthält, was der Sender geschickt hat — **einschliesslich** Impulsende und Full-Resend, die die Laufzeit-Beobachter auslassen,
-5. die Route ohne Token mit 401 antwortet und in der Liste der geschützten Routen steht,
-6. ein Rauchtest mit rohem RFC-6455-Handshake die Route gegen echtes uvicorn belegt,
-7. das Nachrichtenformat von `/api/live` **unverändert** ist.
+1. `uv run pytest` passes without hardware and without network,
+2. a log line **from a foreign thread** lands in the ring,
+3. a raising observer halts neither the logging nor the UDP send, and the log handler thereby **produces no new log line**,
+4. the capture contains what the sender actually sent — **including** falling pulse edges and full resends, which the runtime observers omit,
+5. the route answers with 401 without a token and appears in the list of protected routes,
+6. a smoke test with a raw RFC-6455 handshake proves the route against real uvicorn,
+7. the message format of `/api/live` is **unchanged**.
 
-**Nicht Teil dieser Arbeit:** ein Herunterladen des Mitschnitts als Datei, ein serverseitiger Stufenfilter, und die fehlenden Systemcheck-Prüfungen (mDNS, Dongle, OTBR, Thread-Netz) aus dem Hauptdokument.
+**Not part of this work:** downloading the capture as a file, a server-side level filter, and the missing system-check checks (mDNS, dongle, OTBR, Thread network) from the main document.

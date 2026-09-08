@@ -1,167 +1,165 @@
-# Periodischer Resend: Opt-in statt Rundumschlag
+# Periodic resend: opt-in instead of a blanket sweep
 
-Entwurf, 4. September 2026. Ergänzt
-[das Hauptdokument](2026-09-01-matter-loxone-bridge-design.md) und knüpft an
-die Unterscheidung aus
-[der Signalauswahl](2026-09-03-signal-selection-design.md#3-two-concepts-that-stay-separate)
-zwischen Exportierbarkeit und Relevanz an — hier kommt eine dritte,
-unabhängige Signal-Eigenschaft dazu.
+Design, September 4, 2026. Extends
+[the main document](2026-09-01-matter-loxone-bridge-design.md) and picks up
+the distinction from
+[the signal selection](2026-09-03-signal-selection-design.md#3-two-concepts-that-stay-separate)
+between exportability and relevance — a third, independent signal property
+is added here.
 
-## 1. Das Problem
+## 1. The problem
 
 `Runtime._resend_loop` ([runtime.py:473-481](../../../src/loxmatter/loxone/runtime.py))
-ruft alle `resend_seconds` (fix 300s) `resend_all()` auf, das *jeden*
-bekannten Wert mit `force=True` erneut sendet — unabhängig davon, ob er sich
-geändert hat. `UdpSender.send` ([sender.py:149-179](../../../src/loxmatter/loxone/sender.py))
-sichert jeden Versand, echten wie erzwungenen, über **einen** gemeinsamen
-`asyncio.Lock` und **einen** gemeinsamen Rate-Limiter (50/s) ab.
+calls `resend_all()` every `resend_seconds` (fixed at 300s), which resends
+*every* known value with `force=True` — regardless of whether it has
+changed. `UdpSender.send` ([sender.py:149-179](../../../src/loxmatter/loxone/sender.py))
+guards every send, real or forced, with **one** shared `asyncio.Lock` and
+**one** shared rate limiter (50/s).
 
-Bei vielen eingelernten Geräten wird der Voll-Resend dadurch zu einem
-Burst, der mehrere Sekunden dauert (bei 300 Signalen: 6s). Ein echter
-Steuerbefehl, der in diesem Fenster eintrifft, wartet auf denselben Lock und
-kann sich damit um bis zu die volle Burst-Dauer verzögern. Das Problem
-wächst linear mit der Geräteanzahl. Ein längeres Intervall würde den Burst
-nur seltener, nicht kleiner machen.
+With many commissioned devices, the full resend therefore turns into a
+burst that takes several seconds (at 300 signals: 6s). A real control
+command that arrives in this window waits on the same lock and can
+therefore be delayed by up to the full burst duration. The problem grows
+linearly with the device count. A longer interval would only make the
+burst rarer, not smaller.
 
-Die meisten Signale brauchen den periodischen Resend vermutlich gar nicht.
-Er existiert vermutlich als Schutz gegen unbemerkten Paketverlust / einen
-Miniserver-Neustart zwischen zwei änderungsgetriebenen Sendungen — relevant
-ist das typischerweise nur für wenige, gezielt ausgewählte Signale (z. B.
-solche, auf die eine Loxone-Signalisierung mit Timeout reagiert), nicht für
-alle.
+Most signals presumably don't need the periodic resend at all. It
+presumably exists as protection against unnoticed packet loss / a
+Miniserver restart between two change-driven sends — that is typically
+only relevant for a few, specifically chosen signals (e.g. ones that a
+Loxone signaling rule reacts to with a timeout), not for all of them.
 
-## 2. Zwei Mechanismen, die getrennt bleiben
+## 2. Two mechanisms that stay separate
 
-| Mechanismus | Zweck | betroffen von diesem Entwurf? |
+| Mechanism | Purpose | affected by this design? |
 |---|---|---|
-| Heartbeat (`bridge_alive`, 30s, [runtime.py:448-471](../../../src/loxmatter/loxone/runtime.py)) | Lebenszeichen der Bridge selbst, ein globaler Schlüssel | nein, unverändert |
-| Voll-Resend (`resend_all`, 300s) | Re-Sync einzelner *Werte* gegen Paketverlust | ja, wird auf Opt-in umgestellt |
+| Heartbeat (`bridge_alive`, 30s, [runtime.py:448-471](../../../src/loxmatter/loxone/runtime.py)) | Sign of life for the bridge itself, a global key | no, unchanged |
+| Full resend (`resend_all`, 300s) | Re-sync of individual *values* against packet loss | yes, switched to opt-in |
 
-Der Heartbeat ist kein `StoredSignal` und bleibt außen vor.
+The heartbeat is not a `StoredSignal` and stays out of scope.
 
-## 3. Die Lösung
+## 3. The solution
 
-Ein neues, drittes unabhängiges Flag pro Signal — `resend` — neben
-`exported` und `functional`. Nur Signale mit `resend = true` werden noch
-periodisch (zwangsweise) erneut gesendet; alle anderen ausschließlich bei
-Änderung, wie heute schon für alle. Das Resend-Intervall selbst wird eine
-zur Laufzeit über die WebUI änderbare Einstellung statt einer festen
-Konstante.
+A new, third, independent flag per signal — `resend` — alongside
+`exported` and `functional`. Only signals with `resend = true` are still
+resent periodically (forced); all others exclusively on change, as
+everything already is today. The resend interval itself becomes a setting
+changeable at runtime through the WebUI instead of a fixed constant.
 
-Default für jedes Signal, bestehend wie neu: `resend = false`. Nach diesem
-Update wird also zunächst **nichts** mehr automatisch periodisch resent, bis
-der Nutzer bewusst welche markiert — bewusst analog zur Migrationsfrage in
-der Signalauswahl (Abschnitt 6 dort), nur hier ohne Bestandsschutz-Problem,
-weil `resend` ein komplett neues Feld ohne Vorgeschichte ist.
+Default for every signal, existing as well as new: `resend = false`. After
+this update, therefore, **nothing** is automatically resent periodically
+any more until the user deliberately marks some — deliberately analogous
+to the migration question in the signal selection (section 6 there), just
+without the backward-compatibility problem here, because `resend` is a
+completely new field with no history.
 
-## 4. Datenmodell
+## 4. Data model
 
-`signal`-Tabelle ([store.py:109-123](../../../src/loxmatter/model/store.py)):
-neue Spalte `resend INTEGER NOT NULL DEFAULT 0`, per `_add_column_if_missing`
-wie die bestehenden Migrationen. `StoredSignal` bekommt ein Feld
-`resend: bool`. Neue Methode `Store.set_resend(key, value)`, Geschwister von
-`set_exported`.
+`signal` table ([store.py:109-123](../../../src/loxmatter/model/store.py)):
+new column `resend INTEGER NOT NULL DEFAULT 0`, via
+`_add_column_if_missing` like the existing migrations. `StoredSignal` gets
+a field `resend: bool`. New method `Store.set_resend(key, value)`, a
+sibling of `set_exported`.
 
-Das Resend-Intervall ist keine Signal-Eigenschaft, sondern eine einzelne
-globale Einstellung. Dafür existiert bereits die generische
-`setting`-Tabelle ([store.py:135-138](../../../src/loxmatter/model/store.py)),
-über die z. B. `LocaleStore` die Sprache ablegt
-([locale_store.py](../../../src/loxmatter/model/locale_store.py)). Ein
-analoger schmaler Wrapper (Arbeitstitel `RuntimeSettingsStore`) bekommt
-`get_resend_interval() -> float` (Default 300.0, greift also identisch zum
-heutigen Verhalten, solange niemand etwas ändert) und
+The resend interval is not a signal property but a single global setting.
+The generic `setting` table already exists for that
+([store.py:135-138](../../../src/loxmatter/model/store.py)), through which
+e.g. `LocaleStore` stores the language
+([locale_store.py](../../../src/loxmatter/model/locale_store.py)). An
+analogous thin wrapper (working title `RuntimeSettingsStore`) gets
+`get_resend_interval() -> float` (default 300.0, so it matches today's
+behavior identically as long as nobody changes anything) and
 `set_resend_interval(seconds: float)`.
 
 ## 5. API
 
 `PATCH /api/signals/{key}` ([devices.py:239-240](../../../src/loxmatter/api/devices.py))
-bekommt ein optionales Feld `resend: bool | None`, gleiches Muster wie
+gets an optional field `resend: bool | None`, the same pattern as
 `exported`.
 
-Neuer Endpunkt für das Intervall, z. B. `GET/PATCH /api/settings/resend-interval`
-(oder eingehängt in einen bereits vorhandenen/künftigen generischeren
-Settings-Endpunkt, falls einer entsteht — Detailentscheidung der
-Umsetzung). Validierung: Zahl größer als ein sinnvolles Minimum (z. B.
-≥ 10s), um ein versehentliches Lahmlegen durch ein zu kurzes Intervall zu
-verhindern.
+New endpoint for the interval, e.g. `GET/PATCH /api/settings/resend-interval`
+(or folded into an already-existing/future, more generic settings
+endpoint, should one arise — an implementation detail decision).
+Validation: a number greater than a sensible minimum (e.g. ≥ 10s), to
+prevent accidentally crippling the system with too short an interval.
 
-## 6. Runtime-Verhalten
+## 6. Runtime behavior
 
-**Korrektur gegenüber der ursprünglichen Fassung dieses Abschnitts:**
+**Correction to the original version of this section:**
 `resend_all()` ([runtime.py:362-396](../../../src/loxmatter/loxone/runtime.py))
-wird nicht nur vom periodischen Timer aufgerufen, sondern auch beim
-Bridge-Start (`cli.py`, direkt nach `seed_from_snapshot`) und vom
-`/resync`-Endpunkt (`server.py`) — beides Fälle, die ausdrücklich *jeden*
-bekannten Wert wiederherstellen müssen (Spec 6.4, Zustands-Wiederherstellung
-nach einem Miniserver-Neustart). `resend_all()` selbst auf `resend = true`
-zu filtern würde also nicht nur den periodischen Timer einschränken, sondern
-auch `/resync` und den Bridge-Start — nach einem echten
-Miniserver-Neustart blieben dann die meisten virtuellen Eingänge auf ihrem
-Defaultwert stehen, genau das Problem, das Spec 6.4 verhindern soll.
+is not only called by the periodic timer but also on bridge start
+(`cli.py`, right after `seed_from_snapshot`) and from the `/resync`
+endpoint (`server.py`) — both cases that must explicitly restore *every*
+known value (spec 6.4, state restoration after a Miniserver restart).
+Filtering `resend_all()` itself down to `resend = true` would therefore
+not only restrict the periodic timer but also `/resync` and the bridge
+start — after a real Miniserver restart, most virtual inputs would then
+stay at their default value, exactly the problem spec 6.4 is meant to
+prevent.
 
-**Deshalb bleibt `resend_all()` unverändert** (weiterhin ein voller Restore
-aller bekannten Werte, benutzt von `/resync` und dem Bridge-Start). Eine neue
-Methode `resend_marked()` filtert auf `resend = true` und wird
-ausschließlich von `_resend_loop` aufgerufen; beide teilen sich intern die
-bestehende, bereits gegen ein Race abgesicherte Sende-Logik (Wert je
-Schlüssel erst unmittelbar vor dem Senden aus `_last_values` nachlesen,
-siehe Kommentar an `resend_all()`), nur mit unterschiedlicher Schlüsselmenge.
+**`resend_all()` therefore stays unchanged** (still a full restore of every
+known value, used by `/resync` and bridge start). A new method
+`resend_marked()` filters down to `resend = true` and is called
+exclusively from `_resend_loop`; both internally share the existing send
+logic, already race-guarded (reading the value per key from `_last_values`
+only immediately before sending, see the comment on `resend_all()`), just
+with a different key set.
 
-`_resend_loop` liest die konfigurierte Intervalldauer nicht mehr einmalig
-beim Start, sondern bei laufendem Betrieb wiederholt aus dem Store (kurzer
-Polling-Takt, z. B. alle 5s prüfen, ob die konfigurierte Zeit seit dem
-letzten `resend_marked()`-Lauf um ist). Eine Änderung über die WebUI wirkt
-damit innerhalb weniger Sekunden, ohne Prozess-Neustart — kein
-Event/Wecker-Mechanismus nötig, ein einfacher Poll reicht angesichts der
-Größenordnung (Sekunden, nicht Millisekunden).
+`_resend_loop` no longer reads the configured interval length once at
+start, but repeatedly from the store while running (a short poll cadence,
+e.g. checking every 5s whether the configured time has elapsed since the
+last `resend_marked()` run). A change made through the WebUI therefore
+takes effect within a few seconds, without a process restart — no
+event/wakeup mechanism needed, a simple poll is enough given the order of
+magnitude involved (seconds, not milliseconds).
 
-## 7. Ausdrücklich außerhalb des Zuschnitts
+## 7. Explicitly out of scope
 
-Synthetische, nicht in `StoredSignal` geführte Schlüssel — Erreichbarkeits-
-Status `d<id>_online` und Pulszähler (`_n`-Suffix) — bekommen kein
-`resend`-Flag. Sie werden weiterhin ausschließlich bei Änderung gesendet,
-nie periodisch. Entscheidung bewusst getroffen, um den Eingriff klein zu
-halten; kann bei Bedarf später nachgezogen werden.
+Synthetic keys not tracked in `StoredSignal` — the reachability status
+`d<id>_online` and pulse counters (`_n` suffix) — get no `resend` flag.
+They continue to be sent exclusively on change, never periodically.
+Decision made deliberately to keep the change small; can be followed up
+later if needed.
 
-Kein CLI-Flag für das Intervall — es lebt ausschließlich als
-WebUI/API-Einstellung, analog zu Sprache und Passwort.
+No CLI flag for the interval — it lives exclusively as a WebUI/API
+setting, analogous to language and password.
 
-## 8. Oberfläche
+## 8. UI
 
-Neue Checkbox „Resend" pro Signal-Zeile neben der bestehenden „Exported"-
-Checkbox ([web/index.html:427](../../../src/loxmatter/web/index.html)),
-gleiche PATCH-Interaktion beim Umschalten. Neues Eingabefeld für das
-Intervall in Sekunden im Einstellungsbereich der WebUI, PATCH beim Ändern,
-mit Anzeige/Validierung des Minimums aus Abschnitt 5.
+New "Resend" checkbox per signal row next to the existing "Exported"
+checkbox ([web/index.html:427](../../../src/loxmatter/web/index.html)),
+the same PATCH interaction on toggling. New input field for the interval
+in seconds in the WebUI's settings area, PATCH on change, with
+display/validation of the minimum from section 5.
 
-## 9. Prüfung
+## 9. Verification
 
-- Ein Signal mit `resend = false` (Default) wird von `resend_marked()` nicht
-  erfasst, auch wenn sein Wert seit Langem unverändert ist.
-- Ein Signal mit `resend = true` erscheint bei jedem `resend_marked()`-Lauf,
-  unabhängig vom Änderungsstatus.
-- `resend_all()` bleibt davon unberührt: es erfasst weiterhin JEDEN
-  bekannten Wert, unabhängig vom `resend`-Flag - `/resync` und der
-  Bridge-Start dürfen sich darauf verlassen (siehe Abschnitt 6).
-- `d<id>_online` und Pulszähler-Schlüssel tauchen nie in `resend_marked()`
-  auf, selbst wenn (versehentlich) versucht wird, sie zu markieren.
-- Eine Änderung des Intervalls über `PATCH /api/settings/resend-interval`
-  wirkt sich innerhalb weniger Sekunden auf den Takt von `_resend_loop` aus,
-  ohne Neustart.
-- Migration: eine Bestandsdatenbank ohne `resend`-Spalte bekommt sie beim
-  Öffnen automatisch hinzu, alle Zeilen mit `resend = false`.
-- `PATCH /api/signals/{key}` mit `resend` gesetzt ändert ausschließlich
-  dieses Feld, `exported`/`functional`/Schlüssel bleiben unberührt.
+- A signal with `resend = false` (default) is not picked up by
+  `resend_marked()`, even if its value has been unchanged for a long time.
+- A signal with `resend = true` appears on every `resend_marked()` run,
+  regardless of its change status.
+- `resend_all()` stays unaffected by this: it still captures EVERY known
+  value, regardless of the `resend` flag — `/resync` and bridge start may
+  rely on that (see section 6).
+- `d<id>_online` and pulse-counter keys never show up in
+  `resend_marked()`, even if someone (accidentally) tries to mark them.
+- A change to the interval via `PATCH /api/settings/resend-interval` takes
+  effect on `_resend_loop`'s cadence within a few seconds, without a
+  restart.
+- Migration: an existing database without a `resend` column gets it added
+  automatically on open, all rows with `resend = false`.
+- `PATCH /api/signals/{key}` with `resend` set changes exclusively that
+  field, `exported`/`functional`/key stay untouched.
 
-## 10. Offene Punkte
+## 10. Open points
 
-1. Ob Online-Status und Pulszähler später ebenfalls ein `resend`-Flag
-   bekommen sollen, bleibt offen. Bis jemand danach fragt: nein (Abschnitt 7).
-2. Der genaue Pfad/Name des neuen Settings-Endpunkts (Abschnitt 5) ist eine
-   Umsetzungsdetail-Entscheidung, keine Design-Entscheidung dieses Entwurfs.
-3. Ob ein zu niedrig gewähltes Intervall (z. B. 10s bei vielen markierten
-   Signalen) serverseitig zusätzlich gegen die aktuelle Anzahl markierter
-   Signale geprüft werden sollte (Schutz vor einem erneuten, nur kleineren
-   Burst-Problem), ist nicht entschieden. Vorschlag für die Umsetzung: fürs
-   Erste nur das feste Minimum aus Abschnitt 5, keine dynamische Prüfung —
-   YAGNI, bis sich zeigt, dass es gebraucht wird.
+1. Whether online status and pulse counters should later also get a
+   `resend` flag remains open. Until someone asks for it: no (section 7).
+2. The exact path/name of the new settings endpoint (section 5) is an
+   implementation-detail decision, not a design decision of this design.
+3. Whether a too-low chosen interval (e.g. 10s with many marked signals)
+   should additionally be checked server-side against the current count of
+   marked signals (protection against a renewed, just smaller, burst
+   problem) is not decided. Proposal for implementation: for now, only the
+   fixed minimum from section 5, no dynamic check — YAGNI, until it turns
+   out to be needed.

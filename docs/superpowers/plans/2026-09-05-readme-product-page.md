@@ -1,72 +1,72 @@
-# README als Produktseite — Implementierungsplan
+# README as a product page — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Aus der heutigen 404-zeiligen deutschen Handbuch-README eine englische Produktseite mit Screenshots machen und die Betriebsdetails nach `docs/` verschieben.
+**Goal:** Turn today's 404-line German manual README into an English product page with screenshots, and move the operational details into `docs/`.
 
-**Architecture:** Sieben Aufgaben in drei Wellen. Welle A (Aufgaben 1–2) baut die Screenshot-Infrastruktur: ein geseedetes Demo-Instanz-Skript und ein Playwright-Skript, das daraus sieben PNGs erzeugt. Welle B (Aufgaben 3–5) verschiebt und übersetzt die vier Detaildokumente — unabhängig von Welle A. Welle C (Aufgaben 6–7) schreibt die README neu und prüft am Ende Links, Warnhinweise und Vollständigkeit.
+**Architecture:** Seven tasks in three waves. Wave A (tasks 1–2) builds the screenshot infrastructure: a seeded demo-instance script and a Playwright script that produces seven PNGs from it. Wave B (tasks 3–5) moves and translates the four detail documents — independent of wave A. Wave C (tasks 6–7) rewrites the README and, at the end, checks links, warnings, and completeness.
 
-**Tech Stack:** Python 3.12, `uv`, FastAPI/uvicorn (bereits im Projekt), Playwright (nur als Ad-hoc-Abhängigkeit über `uv run --with`, **nicht** in `pyproject.toml`), Mermaid (von GitHub gerendert), Markdown.
+**Tech Stack:** Python 3.12, `uv`, FastAPI/uvicorn (already in the project), Playwright (only as an ad-hoc dependency via `uv run --with`, **not** in `pyproject.toml`), Mermaid (rendered by GitHub), Markdown.
 
-**Entwurf:** [`docs/superpowers/specs/2026-09-05-readme-product-page-design.md`](../specs/2026-09-05-readme-product-page-design.md)
+**Design:** [`docs/superpowers/specs/2026-09-05-readme-product-page-design.md`](../specs/2026-09-05-readme-product-page-design.md)
 
 ## Global Constraints
 
-- **Nutzerseitige Dokumentation ist Englisch.** `README.md` und alles unter `docs/*.md` (nicht `docs/superpowers/`). Code-Kommentare, Commit-Nachrichten und `docs/superpowers/**` bleiben deutsch.
-- **Schreibweise `Wi-Fi`**, nicht `WiFi`. Transporte werden immer als **Thread, Wi-Fi oder Ethernet** benannt — nie nur „Thread und WiFi". Begründung: die Design-Spec spricht unter „mDNS erreichbar" bereits von WLAN/Ethernet.
-- **Diese acht Warnhinweise müssen erhalten bleiben** (Entwurf Abschnitt 6). Aufgabe 7 prüft jeden einzeln:
-  1. Durchstich gegen einen echten Miniserver fehlt — Vorlagen nie in Loxone Config importiert.
-  2. Kein TLS; Passwort und Token gehen im Klartext über das Netz.
-  3. Trust on first use — Zeitfenster zwischen Start und erster Passwortvergabe.
-  4. `/cmd` ist ein GET ohne Ursprungsprüfung, per `<img src>` von jeder Webseite auslösbar.
-  5. Projektdatei-Sync: neue Geräte-Container experimentell, ID-Schema unverifiziert.
-  6. `deploy/testhost/` ist kein gehärtetes Produktions-Image.
-  7. Der Schema-Umzug setzt gesetzte Exportieren-Haken zurück.
-  8. Ein Sprachwechsel wirkt nur auf **neu** erzeugte Vorlagen.
-  Die Punkte 1, 2 und 3 stehen sichtbar in der README selbst, nicht nur verlinkt.
-- **Querverweise zeigen auf das neue Zuhause, nicht auf die alte README.** Die alte README verweist an vielen Stellen auf ihre eigenen Abschnitte („ein Passwort vergeben, siehe Zugangsschutz unten"). Beim Verschieben wird daraus ein Link auf die Datei, in die der Abschnitt wandert — nicht auf einen README-Anker, den es nach Aufgabe 6 nicht mehr gibt. Die Zielanker stehen in den **Interfaces** der jeweiligen Aufgabe: `SETUP.md#requirements`/`#try-it-without-hardware`/`#your-own-setup`/`#looking-at-a-device`, `OPERATIONS.md#running-the-bridge`/`#what-a-template-contains`/`#project-file-sync`/`#access-control`/`#language`. Innerhalb von `docs/` sind das Geschwisterpfade ohne `../`. Beim Ausführen von Aufgabe 3 aufgefallen, nachdem zwei Links auf `README.md#dauerhaft-betreiben-loxmatter-run` gezeigt hatten.
-- **Keine Änderung an Anwendungscode, Verhalten oder bestehenden Tests.** Neue Dateien nur unter `scripts/`, `docs/` und `docs/screenshots/`.
-- **Screenshots enthalten keine echten Daten** — nur Fixture-Geräte, Bridge-IP `192.168.1.50`, Miniserver `192.168.1.10`.
-- **Quelltext der alten README:** bis Aufgabe 6 steht er in `README.md`. Danach: `git show 8002484:README.md`.
+- **User-facing documentation is English.** `README.md` and everything under `docs/*.md` (not `docs/superpowers/`). Code comments, commit messages, and `docs/superpowers/**` stay German.
+- **Spelling `Wi-Fi`**, not `WiFi`. Transports are always named as **Thread, Wi-Fi, or Ethernet** — never just "Thread and WiFi". Reasoning: the design spec already talks about Wi-Fi/Ethernet under "mDNS reachable".
+- **These eight warnings must be preserved** (design section 6). Task 7 checks each one individually:
+  1. The integration test against a real Miniserver is missing — templates never imported into Loxone Config.
+  2. No TLS; password and token travel in plaintext over the network.
+  3. Trust on first use — time window between start and the first password being set.
+  4. `/cmd` is a GET without origin checking, triggerable via `<img src>` from any web page.
+  5. Project-file sync: new device containers experimental, ID scheme unverified.
+  6. `deploy/testhost/` is not a hardened production image.
+  7. The schema migration resets export checkboxes that were set.
+  8. A language switch only affects **newly** generated templates.
+  Points 1, 2, and 3 must appear visibly in the README itself, not only linked.
+- **Cross-references point to the new home, not to the old README.** The old README points, in many places, to its own sections ("set a password, see Access control below"). When moved, that becomes a link to the file the section moves into — not to a README anchor that no longer exists after task 6. The target anchors are given in each task's **Interfaces**: `SETUP.md#requirements`/`#try-it-without-hardware`/`#your-own-setup`/`#looking-at-a-device`, `OPERATIONS.md#running-the-bridge`/`#what-a-template-contains`/`#project-file-sync`/`#access-control`/`#language`. Within `docs/`, these are sibling paths without `../`. Noticed while running task 3, after two links pointed to `README.md#dauerhaft-betreiben-loxmatter-run`.
+- **No change to application code, behavior, or existing tests.** New files only under `scripts/`, `docs/`, and `docs/screenshots/`.
+- **Screenshots contain no real data** — only fixture devices, bridge IP `192.168.1.50`, Miniserver `192.168.1.10`.
+- **Source text of the old README:** up through task 6 it lives in `README.md`. After that: `git show 8002484:README.md`.
 
 ---
 
-### Task 1: `--demo`-Betriebsart für den vorhandenen Dev-Server
+### Task 1: `--demo` mode for the existing dev server
 
 **Files:**
 - Modify: `scripts/dev_web_server.py`
 
 **Interfaces:**
-- Produces: die Schalter `--demo` und die unveränderte Vorgabe ohne ihn. Aufgabe 2 startet `uv run python scripts/dev_web_server.py --demo --port 8420` und erwartet den Dienst auf `http://127.0.0.1:8420/`, bereits mit vergebenem Passwort `loxmatter-demo` und hinterlegter Bridge-IP.
+- Produces: the `--demo` switch and the unchanged default without it. Task 2 starts `uv run python scripts/dev_web_server.py --demo --port 8420` and expects the service on `http://127.0.0.1:8420/`, already with the password `loxmatter-demo` set and the bridge IP stored.
 
-**Warum kein neues Skript:** `scripts/dev_web_server.py` macht bereits das Schwierige — Fixtures laden, Geräte registrieren, `build_app` ohne Matter-Client aufrufen, servieren. Vor allem enthält es `_SeededRuntime`: rund 40 Zeilen dokumentiertes Duck-Typing, das `_RuntimeDependency` erfüllt und den Gerätekarten überhaupt erst Werte gibt. Ein zweites Skript müsste das kopieren, und die Kopie würde driften.
+**Why not a new script:** `scripts/dev_web_server.py` already does the hard part — loading fixtures, registering devices, calling `build_app` without a Matter client, serving. Above all it contains `_SeededRuntime`: about 40 lines of documented duck typing that satisfies `_RuntimeDependency` and is what gives the device cards values at all. A second script would have to copy that, and the copy would drift.
 
-**Was fehlt** für automatisierte Screenshots: ein vorab gesetztes Passwort (sonst steht die Ersteinrichtung im Bild), hinterlegte Bridge-Einstellungen (sonst blockiert der Export-Tab mit „Brücken-IP zuerst hinterlegen"), englische Gerätenamen und mehr als zwei Geräte.
+**What's missing** for automated screenshots: a pre-set password (otherwise the initial setup shows in the picture), stored bridge settings (otherwise the Export tab blocks with "set the bridge IP first"), English device names, and more than two devices.
 
-- [ ] **Step 1: Die Datei lesen**
+- [ ] **Step 1: Read the file**
 
 ```bash
 cat scripts/dev_web_server.py
 ```
 
-Wichtig sind `_load_snapshot`, `_ensure_devices`, `_seed_values`, `_SeededRuntime` und `_parse_args`. Der Code unten baut darauf auf und ersetzt nichts davon.
+What matters is `_load_snapshot`, `_ensure_devices`, `_seed_values`, `_SeededRuntime`, and `_parse_args`. The code below builds on that and replaces none of it.
 
-- [ ] **Step 2: Import und Demo-Daten ergänzen**
+- [ ] **Step 2: Add the import and demo data**
 
-Zu den vorhandenen Importen:
+To the existing imports:
 
 ```python
 from loxmatter.auth.passwords import hash_password
 ```
 
-Nach der `FIXTURES`-Zeile:
+After the `FIXTURES` line:
 
 ```python
 DEMO_PASSWORD = "loxmatter-demo"
 
-# Reihenfolge bestimmt die Reihenfolge in der Geraeteliste - die Steckdose
-# zuerst, weil ihre Signalliste den Unterschied funktional/Experte am besten
-# zeigt (ueber hundert Signale, davon eine Handvoll funktional).
+# Order determines the order in the device list - the plug first, because
+# its signal list best shows the functional/expert distinction (over a
+# hundred signals, a handful of them functional).
 DEMO_DEVICES = [
     ("ikea_grillplats_plug.json", "Coffee machine"),
     ("example_light.json", "Living room lamp"),
@@ -76,9 +76,9 @@ DEMO_DEVICES = [
 
 
 def _ensure_demo_devices(store: Store) -> list[int]:
-    """Wie `_ensure_devices`, aber vier Geraete mit englischen Namen: die
-    README-Screenshots zeigen eine englische Oberflaeche, deutsche
-    Geraetenamen darin saehen nach Versehen aus."""
+    """Like `_ensure_devices`, but four devices with English names: the
+    README screenshots show an English UI, German device names in it
+    would look like an oversight."""
     if store.devices():
         return [device.id for device in store.devices()]
 
@@ -91,15 +91,15 @@ def _ensure_demo_devices(store: Store) -> list[int]:
         store.rename_device(device_id, label)
         device_ids.append(device_id)
 
-    # Ein Geraet gilt als bereits exportiert, damit die Export-Vorschau beide
-    # Faelle nebeneinander zeigt statt vier gleich aussehender Zeilen.
+    # One device counts as already exported, so the export preview shows
+    # both cases side by side instead of four identical-looking rows.
     store.mark_exported(device_ids[0])
     return device_ids
 ```
 
-- [ ] **Step 3: Den Schalter einhängen**
+- [ ] **Step 3: Hook in the switch**
 
-In `_parse_args` den Vorgabewert von `--store-path` auf `None` umstellen und `--demo` ergänzen:
+In `_parse_args`, change the default value of `--store-path` to `None` and add `--demo`:
 
 ```python
     parser.add_argument(
@@ -119,15 +119,15 @@ In `_parse_args` den Vorgabewert von `--store-path` auf `None` umstellen und `--
     )
 ```
 
-`main()` wird zu:
+`main()` becomes:
 
 ```python
 def main() -> None:
     args = _parse_args()
 
-    # Eigene Datenbankdatei fuer den Demo-Betrieb, und die faellt bei jedem
-    # Start neu an: nur so entstehen aus demselben Aufruf zweimal dieselben
-    # Screenshots. Der normale Entwicklungsbetrieb behaelt seinen Bestand.
+    # Dedicated database file for demo mode, and it is recreated fresh on
+    # every start: only that way does the same call produce the same
+    # screenshots twice. Normal development mode keeps its data.
     default_name = "loxmatter-demo-web.sqlite" if args.demo else "loxmatter-dev-web.sqlite"
     store_path = args.store_path or Path(tempfile.gettempdir()) / default_name
     if args.demo and args.store_path is None:
@@ -149,7 +149,7 @@ def main() -> None:
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 ```
 
-- [ ] **Step 4: Beide Betriebsarten prüfen**
+- [ ] **Step 4: Check both modes**
 
 ```bash
 uv run python scripts/dev_web_server.py --demo --port 8420 &
@@ -159,9 +159,9 @@ curl -s http://127.0.0.1:8420/auth-info
 kill %1
 ```
 
-Erwartet: `start=200`, und `/auth-info` antwortet mit `{"password_set":true,"authenticated":false}` — also nicht mit der Ersteinrichtung. Der Pfad hat **kein** `/api`-Präfix: die Zugangs-Routen hängen bewusst ausserhalb des Waechters, sonst käme man vor der ersten Anmeldung nirgends hin (siehe `src/loxmatter/api/auth.py`, Moduldocstring).
+Expected: `start=200`, and `/auth-info` answers with `{"password_set":true,"authenticated":false}` — i.e. not the initial setup. The path has **no** `/api` prefix: the access routes deliberately sit outside the guard, otherwise you could get nowhere before the first login (see `src/loxmatter/api/auth.py`, module docstring).
 
-Danach die unveränderte Vorgabe:
+Then the unchanged default:
 
 ```bash
 uv run python scripts/dev_web_server.py --port 8421 &
@@ -170,7 +170,7 @@ curl -s -o /dev/null -w "start=%{http_code}\n" http://127.0.0.1:8421/
 kill %1
 ```
 
-Erwartet: `start=200` und weiterhin die Ersteinrichtung — ohne `--demo` darf sich nichts geändert haben.
+Expected: `start=200` and still the initial setup — without `--demo`, nothing should have changed.
 
 - [ ] **Step 5: Commit**
 
@@ -181,19 +181,19 @@ git commit -m "docs(screenshots): --demo-Betriebsart fuer den Dev-Server"
 
 ---
 
-### Task 2: Die sieben Screenshots erzeugen
+### Task 2: Generate the seven screenshots
 
 **Files:**
 - Create: `scripts/capture_screenshots.py`
 - Create: `docs/screenshots/dashboard.png`, `commissioning.png`, `signals.png`, `export.png`, `project-sync.png`, `system.png`, `settings.png`
 
 **Interfaces:**
-- Consumes: `scripts/dev_web_server.py --demo` aus Aufgabe 1 (als Unterprozess auf Port 8420, Passwort `loxmatter-demo`, Bridge-IP bereits hinterlegt).
-- Produces: sieben PNGs unter `docs/screenshots/`, auf die Aufgabe 6 mit `<img src="docs/screenshots/…">` verweist.
+- Consumes: `scripts/dev_web_server.py --demo` from task 1 (as a subprocess on port 8420, password `loxmatter-demo`, bridge IP already set).
+- Produces: seven PNGs under `docs/screenshots/`, which task 6 references with `<img src="docs/screenshots/…">`.
 
-- [ ] **Step 1: Selektoren aus dem Markup holen, nicht erfinden**
+- [ ] **Step 1: Get selectors from the markup, don't invent them**
 
-Die Oberfläche hat sich in einer Woche dreimal geändert. Vor dem Schreiben die echten Aufhänger suchen:
+The UI has changed three times in a week. Before writing anything, look up the real hooks:
 
 ```bash
 grep -n "password\|login\|setup" src/loxmatter/web/index.html | head -20
@@ -202,29 +202,29 @@ grep -n 'x-show="view ===' src/loxmatter/web/index.html
 grep -n "projectSync\|uploadProjectFile" src/loxmatter/web/index.html | head -5
 ```
 
-Die Ansichten heißen `devices`, `signals`, `export`, `system`, `settings` und werden über `selectView('<name>')` umgeschaltet. Der Login ist ein Passwortfeld plus Knopf; die genauen Attribute stehen im Markup.
+The views are called `devices`, `signals`, `export`, `system`, `settings` and are switched via `selectView('<name>')`. The login is a password field plus a button; the exact attributes are in the markup.
 
-- [ ] **Step 2: Playwright bereitstellen**
+- [ ] **Step 2: Provision Playwright**
 
 ```bash
 uv run --with playwright python -m playwright install chromium
 ```
 
-Erwartet: Download endet mit „Chromium … downloaded to …". Playwright kommt **nicht** in `pyproject.toml` — es wird nur zum Neuerzeugen der Bilder gebraucht.
+Expected: the download ends with "Chromium … downloaded to …". Playwright does **not** go into `pyproject.toml` — it's only needed to regenerate the images.
 
-- [ ] **Step 3: Das Aufnahmeskript schreiben**
+- [ ] **Step 3: Write the capture script**
 
-Selektoren aus Step 1 einsetzen, wo unten `# aus Step 1` steht.
+Insert the selectors from step 1 wherever `# from step 1` appears below.
 
 ```python
-"""Fotografiert die Oberflaeche fuer die README ab.
+"""Photographs the UI for the README.
 
-Aufruf:  uv run --with playwright python scripts/capture_screenshots.py
+Usage:  uv run --with playwright python scripts/capture_screenshots.py
 
-Startet `dev_web_server.py --demo` selbst, meldet sich an, klappert die
-Ansichten ab und legt die Bilder unter docs/screenshots/ ab. Zweimal
-aufgerufen entstehen dieselben Bilder - die Demo-Datenbank faellt bei jedem
-Start neu an (siehe dort).
+Starts `dev_web_server.py --demo` itself, logs in, walks through the
+views, and drops the images under docs/screenshots/. Called twice, it
+produces the same images - the demo database is recreated fresh on every
+start (see there).
 """
 
 from __future__ import annotations
@@ -244,7 +244,7 @@ PASSWORD = "loxmatter-demo"
 
 
 def shoot(page: Page, name: str) -> None:
-    page.wait_for_timeout(600)  # Alpine rendert nach dem Laden nach
+    page.wait_for_timeout(600)  # Alpine re-renders after loading
     SHOTS.mkdir(parents=True, exist_ok=True)
     page.screenshot(path=str(SHOTS / f"{name}.png"))
     print(f"  {name}.png")
@@ -252,8 +252,8 @@ def shoot(page: Page, name: str) -> None:
 
 def capture(page: Page) -> None:
     page.goto(BASE, wait_until="networkidle")
-    page.fill('input[type="password"]', PASSWORD)  # aus Step 1
-    page.click('button:has-text("Sign in")')  # aus Step 1
+    page.fill('input[type="password"]', PASSWORD)  # from step 1
+    page.click('button:has-text("Sign in")')  # from step 1
     page.wait_for_timeout(1200)
 
     shoot(page, "dashboard")
@@ -298,50 +298,50 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-Der `page.evaluate`-Umweg über Alpines Datenstapel ist absichtlich: ein Klick auf den Reiter wäre schöner, hängt aber am genauen Markup der Navigation. Klappt der Klick über `page.click('nav.tabs button:has-text("Signals")')`, ist das die bessere Fassung — dann diese verwenden.
+The `page.evaluate` detour through Alpine's data stack is deliberate: a click on the tab would be nicer, but depends on the navigation's exact markup. If the click works via `page.click('nav.tabs button:has-text("Signals")')`, that is the better version — use it then.
 
-- [ ] **Step 4: Die beiden Sonderfälle ergänzen**
+- [ ] **Step 4: Add the two special cases**
 
-`commissioning.png` und `project-sync.png` brauchen mehr als einen Reiterwechsel.
+`commissioning.png` and `project-sync.png` need more than just switching a tab.
 
-Für `commissioning.png`: die Einlern-Karte steht oben im Geräte-Tab. Einen Beispielcode eintragen, **ohne** abzuschicken (ohne Matter-Verbindung käme nur ein Fehler), dann fotografieren:
+For `commissioning.png`: the commissioning card sits at the top of the Devices tab. Enter an example code, **without** submitting (without a Matter connection it would just error), then photograph:
 
 ```python
 page.evaluate("document.querySelector('[x-data]')._x_dataStack[0].selectView('devices')")
-page.fill('input[placeholder*="MT:"]', "MT:Y.K9042C00KA0648G00")  # Selektor aus Step 1
+page.fill('input[placeholder*="MT:"]', "MT:Y.K9042C00KA0648G00")  # selector from step 1
 shoot(page, "commissioning")
 ```
 
-Für `project-sync.png`: die Beispiel-Projektdatei aus den Tests hochladen und den Diff-Plan abwarten:
+For `project-sync.png`: upload the example project file from the tests and wait for the diff plan:
 
 ```python
-from tests.projectsync.conftest import SAMPLE_PROJECT  # oben importieren
+from tests.projectsync.conftest import SAMPLE_PROJECT  # import at the top
 
 sample = ROOT / "docs" / "screenshots" / "_sample.Loxone"
 sample.write_text(SAMPLE_PROJECT, encoding="utf-8")
 page.evaluate("document.querySelector('[x-data]')._x_dataStack[0].selectView('export')")
 page.set_input_files('input[type="file"]', str(sample))
-page.wait_for_timeout(2500)  # Upload plus Diff-Berechnung
+page.wait_for_timeout(2500)  # upload plus diff computation
 shoot(page, "project-sync")
 sample.unlink()
 ```
 
-Damit `from tests…` importierbar ist, muss `ROOT` in `sys.path` liegen:
+For `from tests…` to be importable, `ROOT` has to be on `sys.path`:
 
 ```python
 sys.path.insert(0, str(ROOT))
 ```
 
-- [ ] **Step 5: Laufen lassen und die Bilder ansehen**
+- [ ] **Step 5: Run it and look at the images**
 
 ```bash
 uv run --with playwright python scripts/capture_screenshots.py
 ls -la docs/screenshots/
 ```
 
-Erwartet: sieben PNGs, jede deutlich über 40 KB. Eine Datei unter 20 KB ist fast immer eine leere oder noch nicht gerenderte Ansicht.
+Expected: seven PNGs, each clearly over 40 KB. A file under 20 KB is almost always an empty or not-yet-rendered view.
 
-**Dann jedes Bild wirklich ansehen** (Read-Tool auf die PNG-Datei). Prüfen: keine leeren Zustände, kein Anmeldebildschirm, wo Inhalt sein soll, keine sichtbaren Fehlermeldungen, `_sample.Loxone` wieder gelöscht. Ein Bild, das eine Fehlermeldung zeigt, ist ein Fehlschlag der Aufgabe, kein Schönheitsfehler.
+**Then actually look at every image** (Read tool on the PNG file). Check: no empty states, no login screen where content should be, no visible error messages, `_sample.Loxone` deleted again. An image showing an error message is a failure of the task, not a cosmetic flaw.
 
 - [ ] **Step 6: Commit**
 
@@ -356,24 +356,24 @@ git commit -m "docs(screenshots): sieben Aufnahmen der Oberflaeche samt Aufnahme
 
 **Files:**
 - Create: `docs/SETUP.md`
-- Read: `README.md` Zeilen 84–171 und 182–193
+- Read: `README.md` lines 84–171 and 182–193
 
 **Interfaces:**
-- Produces: `docs/SETUP.md` mit den Ankern `#requirements`, `#try-it-without-hardware`, `#your-own-setup`, `#looking-at-a-device`. Aufgabe 6 verlinkt darauf.
+- Produces: `docs/SETUP.md` with the anchors `#requirements`, `#try-it-without-hardware`, `#your-own-setup`, `#looking-at-a-device`. Task 6 links to it.
 
-- [ ] **Step 1: Übersetzen und zusammenstellen**
+- [ ] **Step 1: Translate and assemble**
 
-Quelle sind drei Abschnitte der alten README, in dieser Reihenfolge: „Voraussetzungen" (84–109), „Erste Schritte" mit beiden Unterabschnitten (111–171), „Ein Gerät ansehen" (182–193).
+Source is three sections of the old README, in this order: "Prerequisites" ("Voraussetzungen", 84–109), "Getting started" ("Erste Schritte") with both subsections (111–171), "Looking at a device" ("Ein Gerät ansehen", 182–193).
 
-Abschnitt für Abschnitt übersetzen, nicht frei nacherzählen. Erhalten bleiben müssen:
+Translate section by section, don't freely retell. Must be preserved:
 
-- Die vollständige Hardware-Liste inklusive Thread-Funkmodul und Bluetooth-Adapter.
-- Der Satz, dass kein Vorwissen über Matter oder Thread nötig ist.
-- **Warnhinweis 6:** der Blockquote, dass `deploy/testhost/` kein gehärtetes Produktions-Image ist (nicht-root, gepinnte Digests offen).
-- Alle Codeblöcke unverändert — Befehle werden nicht übersetzt.
-- Alle Links nach `deploy/testhost/`, angepasst auf die neue Tiefe: aus `deploy/testhost/` wird `../deploy/testhost/`.
+- The complete hardware list including the Thread radio module and Bluetooth adapter.
+- The sentence that no prior knowledge of Matter or Thread is needed.
+- **Warning 6:** the blockquote that `deploy/testhost/` is not a hardened production image (non-root, pinned digests open).
+- All code blocks unchanged — commands are not translated.
+- All links to `deploy/testhost/`, adjusted for the new depth: `deploy/testhost/` becomes `../deploy/testhost/`.
 
-Kopfzeile:
+Header:
 
 ```markdown
 # Setup
@@ -381,16 +381,16 @@ Kopfzeile:
 [Back to the README](../README.md)
 ```
 
-Transporte durchgängig als „Thread, Wi-Fi or Ethernet" benennen (Global Constraints).
+Name transports throughout as "Thread, Wi-Fi or Ethernet" (Global Constraints).
 
-**Kein Diagramm in dieser Datei.** Das vollständige Architekturdiagramm steht in der README (Aufgabe 6) — dieselbe Zeichnung ein zweites Mal hier wäre Redundanz, die beim nächsten Umbau auseinanderläuft. Stattdessen an der Stelle, an der die Docker-Container erklärt werden, ein Verweis:
+**No diagram in this file.** The complete architecture diagram lives in the README (task 6) — the same drawing a second time here would be redundancy that drifts apart at the next rework. Instead, at the point where the Docker containers are explained, a reference:
 
 ```markdown
 See [how the pieces fit together](../README.md#-how-it-works) for what each of the three
 containers does.
 ```
 
-- [ ] **Step 2: Links prüfen**
+- [ ] **Step 2: Check links**
 
 ```bash
 grep -oE '\]\([^)#][^)]*\)' docs/SETUP.md | tr -d ']()' | while read -r p; do
@@ -398,7 +398,7 @@ grep -oE '\]\([^)#][^)]*\)' docs/SETUP.md | tr -d ']()' | while read -r p; do
 done
 ```
 
-Erwartet: keine Ausgabe.
+Expected: no output.
 
 - [ ] **Step 3: Commit**
 
@@ -413,30 +413,30 @@ git commit -m "docs(setup): Voraussetzungen und Erste Schritte nach docs/SETUP.m
 
 **Files:**
 - Create: `docs/OPERATIONS.md`
-- Read: `README.md` Zeilen 195–360
+- Read: `README.md` lines 195–360
 
 **Interfaces:**
-- Produces: `docs/OPERATIONS.md` mit den Ankern `#running-the-bridge`, `#what-a-template-contains`, `#project-file-sync`, `#access-control`, `#language`. Aufgabe 6 verlinkt darauf.
+- Produces: `docs/OPERATIONS.md` with the anchors `#running-the-bridge`, `#what-a-template-contains`, `#project-file-sync`, `#access-control`, `#language`. Task 6 links to it.
 
-Das ist der größte Übersetzungsblock: 165 Zeilen dichte Prosa, davon der halbe Abschnitt „Zugangsschutz" mit sicherheitsrelevanten Aussagen. Nichts davon zusammenfassen.
+This is the largest translation block: 165 lines of dense prose, half of it the "Access control" section with security-relevant statements. Do not summarize any of it.
 
-- [ ] **Step 1: Übersetzen**
+- [ ] **Step 1: Translate**
 
-Quelle in dieser Reihenfolge: „Dauerhaft betreiben: `loxmatter run`" (195–258), „Zugangsschutz" (260–337), „Sprache: Englisch oder Deutsch" (339–360).
+Source in this order: "Running it permanently: `loxmatter run`" ("Dauerhaft betreiben", 195–258), "Access control" ("Zugangsschutz", 260–337), "Language: English or German" ("Sprache: Englisch oder Deutsch", 339–360).
 
-Diese Aussagen müssen wörtlich in der Sache erhalten bleiben — sie sind der Grund, warum dieses Dokument existiert:
+These statements must be preserved verbatim in substance — they are the reason this document exists:
 
-- **Warnhinweis 2 (kein TLS):** Passwort und Token gehen im Klartext; ein **zufällig erzeugtes** Passwort verwenden, das nirgendwo sonst benutzt wird.
-- **Warnhinweis 3 (Trust on first use):** wer zuerst kommt, vergibt das Passwort; das Zeitfenster soll Minuten dauern, nicht Tage.
-- **Warnhinweis 4 (`/cmd`):** GET ohne Ursprungsprüfung, per `<img src="http://…/cmd/…">` von jeder Webseite auslösbar, die jemand aus dem Netz öffnet — ein Fuß im LAN ist dafür nicht nötig.
-- **Warnhinweis 5 (Projektdatei-Sync):** neue Geräte-Container sind experimentell, das ID-Schema stammt aus einer einzigen echten Projektdatei, ist nicht offiziell dokumentiert und **nicht verifiziert**; vor dem ersten Vertrauen eine gepatchte Datei in Loxone Config öffnen und prüfen.
-- **Warnhinweis 7 (Schema-Umzug):** setzt den Exportieren-Haken **jedes** gespeicherten Signals auf den Vorgabewert zurück, ohne Warnung.
-- **Warnhinweis 8 (Sprachwechsel):** wirkt nur auf **neu** erzeugte Vorlagen.
-- Die `set-password`-Falle bei containerisierter Installation (Datenbank im Volume, `set-password` auf dem Host träfe eine andere, leere Datenbank — der Befehl bricht deshalb ab).
-- Die Token-Anforderungen: keine Leerzeichen, kein Komma, kein Nicht-ASCII; `openssl rand -hex 32`; ein Token aus reinem Leerraum gilt als nicht gesetzt.
-- Dass `/cmd` und `/resync` bewusst immer offen bleiben, weil der Miniserver keinen Header mitschicken kann.
+- **Warning 2 (no TLS):** password and token go in plaintext; use a **randomly generated** password used nowhere else.
+- **Warning 3 (trust on first use):** whoever gets there first sets the password; the time window should last minutes, not days.
+- **Warning 4 (`/cmd`):** GET without origin checking, triggerable via `<img src="http://…/cmd/…">` from any web page someone opens from the network — a foothold in the LAN is not required for this.
+- **Warning 5 (project-file sync):** new device containers are experimental, the ID scheme comes from a single real project file, is not officially documented, and **not verified**; before trusting it for the first time, open a patched file in Loxone Config and check it.
+- **Warning 7 (schema migration):** resets the export checkbox of **every** stored signal to its default value, without warning.
+- **Warning 8 (language switch):** only affects **newly** generated templates.
+- The `set-password` trap on a containerized installation (database in a volume, `set-password` on the host would hit a different, empty database — so the command aborts).
+- The token requirements: no spaces, no comma, no non-ASCII; `openssl rand -hex 32`; a token of pure whitespace counts as not set.
+- That `/cmd` and `/resync` deliberately stay open always, because the Miniserver cannot send a header.
 
-Kopfzeile:
+Header:
 
 ```markdown
 # Running loxmatter
@@ -444,13 +444,13 @@ Kopfzeile:
 [Back to the README](../README.md)
 ```
 
-Links auf `docs/superpowers/specs/…` werden zu `superpowers/specs/…`, Links auf `deploy/testhost/…` zu `../deploy/testhost/…`.
+Links to `docs/superpowers/specs/…` become `superpowers/specs/…`, links to `deploy/testhost/…` become `../deploy/testhost/…`.
 
-- [ ] **Step 2: Warnhinweise gegenprüfen**
+- [ ] **Step 2: Cross-check the warnings**
 
-Nach dem Schreiben jeden der sechs oben genannten Punkte im fertigen Dokument suchen und abhaken. Fehlt einer, ist die Aufgabe nicht fertig.
+After writing, search for each of the six points named above in the finished document and check them off. If one is missing, the task is not done.
 
-- [ ] **Step 3: Links prüfen**
+- [ ] **Step 3: Check links**
 
 ```bash
 grep -oE '\]\([^)#][^)]*\)' docs/OPERATIONS.md | tr -d ']()' | while read -r p; do
@@ -458,7 +458,7 @@ grep -oE '\]\([^)#][^)]*\)' docs/OPERATIONS.md | tr -d ']()' | while read -r p; 
 done
 ```
 
-Erwartet: keine Ausgabe.
+Expected: no output.
 
 - [ ] **Step 4: Commit**
 
@@ -469,18 +469,18 @@ git commit -m "docs(operations): Betrieb, Zugangsschutz und Sprache nach docs/OP
 
 ---
 
-### Task 5: `docs/DEVELOPMENT.md` und `docs/LICENSING.md`
+### Task 5: `docs/DEVELOPMENT.md` and `docs/LICENSING.md`
 
 **Files:**
 - Create: `docs/DEVELOPMENT.md`
 - Create: `docs/LICENSING.md`
-- Read: `README.md` Zeilen 173–180 und 376–404
+- Read: `README.md` lines 173–180 and 376–404
 
-Beide sind kurz und werden zusammen erledigt — sie teilen sich einen Commit, weil keiner von beiden für sich einen Review-Durchgang wert ist.
+Both are short and are done together — they share a commit, because neither is worth a review pass on its own.
 
-- [ ] **Step 1: `docs/DEVELOPMENT.md` schreiben**
+- [ ] **Step 1: Write `docs/DEVELOPMENT.md`**
 
-Quelle: „Entwickeln" (173–180). Der Abschnitt ist acht Zeilen lang; er darf um die Dinge ergänzt werden, die im Repository nachweislich gelten und ein Beitragender sofort braucht:
+Source: "Developing" ("Entwickeln", 173–180). The section is eight lines long; it may be extended with things that demonstrably hold in the repository and that a contributor needs right away:
 
 ```markdown
 # Development
@@ -503,19 +503,19 @@ uv run mypy src
 ```
 ```
 
-Vor dem Übernehmen prüfen, dass diese drei Befehle wirklich die sind, die CI ausführt:
+Before adopting these, check that these three commands really are what CI runs:
 
 ```bash
 cat .github/workflows/ci.yml
 ```
 
-Weicht CI ab, gilt CI.
+If CI differs, CI wins.
 
-- [ ] **Step 2: `docs/LICENSING.md` schreiben**
+- [ ] **Step 2: Write `docs/LICENSING.md`**
 
-Quelle: „Fremdsoftware" (376–393) und „Hinweise in den Quelldateien" (395–404). Die Tabelle der Abhängigkeiten mit ihren Lizenzen bleibt vollständig, ebenso die beiden Begründungen: dass Apache-2.0 einseitig mit GPL-3.0 vereinbar ist, und dass der GPL-Hinweis in den Quelldateien bewusst in der englischen Fassung der FSF steht.
+Source: "Third-party software" ("Fremdsoftware", 376–393) and "Notices in the source files" ("Hinweise in den Quelldateien", 395–404). The table of dependencies with their licenses stays complete, as do both justifications: that Apache-2.0 is one-directionally compatible with GPL-3.0, and that the GPL notice in the source files is deliberately in the FSF's English wording.
 
-Kopfzeile wie oben, Überschrift `# Licensing`.
+Header as above, heading `# Licensing`.
 
 - [ ] **Step 3: Commit**
 
@@ -526,16 +526,16 @@ git commit -m "docs: Entwickeln und Lizenzdetails nach docs/, englisch"
 
 ---
 
-### Task 6: Die neue README
+### Task 6: The new README
 
 **Files:**
-- Modify: `README.md` — vollständig ersetzt
-- Read: `docs/screenshots/` (aus Aufgabe 2), `docs/SETUP.md`, `docs/OPERATIONS.md`, `docs/DEVELOPMENT.md`, `docs/LICENSING.md`
+- Modify: `README.md` — fully replaced
+- Read: `docs/screenshots/` (from task 2), `docs/SETUP.md`, `docs/OPERATIONS.md`, `docs/DEVELOPMENT.md`, `docs/LICENSING.md`
 
 **Interfaces:**
-- Consumes: die sieben PNGs aus Aufgabe 2 und die vier Dokumente aus Aufgaben 3–5.
+- Consumes: the seven PNGs from task 2 and the four documents from tasks 3–5.
 
-- [ ] **Step 1: Hero, Badges, Sprungmarken**
+- [ ] **Step 1: Hero, badges, anchor links**
 
 ```markdown
 <div align="center">
@@ -560,9 +560,9 @@ command, and the Loxone objects for it are generated rather than typed by hand.
 </div>
 ```
 
-Vor dem Übernehmen den CI-Badge prüfen — Datei- und Job-Name müssen zu `.github/workflows/ci.yml` passen.
+Before adopting this, check the CI badge — the file and job name have to match `.github/workflows/ci.yml`.
 
-- [ ] **Step 2: „Why loxmatter" und die Feature-Tabelle**
+- [ ] **Step 2: "Why loxmatter" and the feature table**
 
 ```markdown
 ## Why loxmatter
@@ -629,11 +629,11 @@ German, switchable in the settings, and the setting applies to the CLI too.
 </table>
 ```
 
-- [ ] **Step 3: Screenshots und Architektur**
+- [ ] **Step 3: Screenshots and architecture**
 
-Galerie aus den sieben Bildern, zwei je Reihe, im selben `<table>`-Muster wie oben, jeweils `<img src="docs/screenshots/<name>.png" alt="…">` mit fetter Bildunterschrift und einer erklärenden Zeile. Reihenfolge: dashboard · commissioning, signals · export, project-sync · system, settings allein in der letzten Reihe.
+Gallery of the seven images, two per row, in the same `<table>` pattern as above, each with `<img src="docs/screenshots/<name>.png" alt="…">`, a bold caption, and one explanatory line. Order: dashboard · commissioning, signals · export, project-sync · system, settings alone in the last row.
 
-Danach der Architekturabschnitt. Dieser Mermaid-Block ist die abgestimmte Fassung (Variante 1) und wird **wörtlich** übernommen — kein `%%{init}%%`-Theme, sonst bricht GitHubs Dark Mode:
+Then the architecture section. This Mermaid block is the agreed version (variant 1) and is adopted **verbatim** — no `%%{init}%%` theme, or GitHub's dark mode breaks:
 
 ````markdown
 ## 🏗 How it works
@@ -675,11 +675,11 @@ flowchart TB
 ```
 ````
 
-Darunter ein Absatz zum Datenfluss: `matter-server` hält die Fabric und liefert Werte per Subscription; loxmatter übersetzt sie in Datagramme an den Miniserver und Loxone-Befehle zurück in Matter-Kommandos; der Browser hängt nur für Einrichtung und Diagnose daran.
+Below that, a paragraph on the data flow: `matter-server` holds the fabric and delivers values via subscription; loxmatter translates them into datagrams to the Miniserver and translates Loxone commands back into Matter commands; the browser is only attached for setup and diagnostics.
 
-- [ ] **Step 4: Quickstart, Status, Dokumentation, Schluss**
+- [ ] **Step 4: Quickstart, status, documentation, closing**
 
-Quickstart — drei Schritte, kompakt, mit dem Hinweis, dass der vollständige Weg in `docs/SETUP.md` steht:
+Quickstart — three steps, compact, with a note that the full path lives in `docs/SETUP.md`:
 
 ````markdown
 ## 🚀 Quickstart
@@ -697,7 +697,7 @@ For a real setup — Docker stack with `otbr`, `matter-server` and the bridge �
 [docs/SETUP.md](docs/SETUP.md).
 ````
 
-Danach der Status-Abschnitt. Er trägt die Warnhinweise 1, 2 und 3 sichtbar, nicht nur verlinkt:
+Then the status section. It carries warnings 1, 2, and 3 visibly, not only linked:
 
 ```markdown
 ## 🗺 Status
@@ -716,16 +716,16 @@ network in the clear. Use a randomly generated password that is used nowhere els
 can claim the bridge. Set it within minutes of the first start, not days.
 ```
 
-Dokumentationstabelle mit vier Zeilen (`docs/SETUP.md`, `docs/OPERATIONS.md`, `docs/DEVELOPMENT.md`, `docs/LICENSING.md`), je eine Zeile Beschreibung. Danach ein kurzer Tech-Stack-Block, ein zweizeiliger Contributing-Absatz und der Lizenzabschnitt: GPL-3.0-or-later, ein Satz was das praktisch heißt, Link auf `LICENSE` und auf `docs/LICENSING.md`.
+Documentation table with four rows (`docs/SETUP.md`, `docs/OPERATIONS.md`, `docs/DEVELOPMENT.md`, `docs/LICENSING.md`), one line of description each. After that a short tech-stack block, a two-line contributing paragraph, and the license section: GPL-3.0-or-later, one sentence on what that means in practice, link to `LICENSE` and to `docs/LICENSING.md`.
 
-- [ ] **Step 5: Ansehen, bevor committet wird**
+- [ ] **Step 5: Look at it before committing**
 
 ```bash
 wc -l README.md
 grep -c '!\[\|<img' README.md
 ```
 
-Erwartet: deutlich unter 250 Zeilen, mindestens acht Bildverweise (Icon plus sieben Screenshots).
+Expected: clearly under 250 lines, at least eight image references (icon plus seven screenshots).
 
 - [ ] **Step 6: Commit**
 
@@ -736,12 +736,12 @@ git commit -m "docs(readme): README als englische Produktseite neu aufgesetzt"
 
 ---
 
-### Task 7: Abnahme
+### Task 7: Acceptance
 
 **Files:**
-- Modify: alle Dateien aus den Aufgaben 3–6, falls die Prüfung etwas findet
+- Modify: any files from tasks 3–6, if the check finds something
 
-- [ ] **Step 1: Alle relativen Links prüfen**
+- [ ] **Step 1: Check all relative links**
 
 ```bash
 for f in README.md docs/SETUP.md docs/OPERATIONS.md docs/DEVELOPMENT.md docs/LICENSING.md; do
@@ -752,30 +752,30 @@ for f in README.md docs/SETUP.md docs/OPERATIONS.md docs/DEVELOPMENT.md docs/LIC
 done
 ```
 
-Erwartet: keine Ausgabe.
+Expected: no output.
 
-- [ ] **Step 2: Die acht Warnhinweise einzeln abhaken**
+- [ ] **Step 2: Check off the eight warnings individually**
 
-Jeden Punkt aus den Global Constraints im fertigen Text suchen und notieren, wo er steht. Punkte 1–3 **müssen** in `README.md` selbst stehen. Fehlt einer, wird er ergänzt, bevor die Aufgabe abgeschlossen wird.
+Search for each point from the Global Constraints in the finished text and note where it lives. Points 1–3 **must** be in `README.md` itself. If one is missing, add it before closing the task.
 
-- [ ] **Step 3: Vollständigkeit gegen die alte README prüfen**
+- [ ] **Step 3: Check completeness against the old README**
 
 ```bash
 git show 8002484:README.md > /tmp/readme-alt.md
 grep -n '^#' /tmp/readme-alt.md
 ```
 
-Für jede Überschrift der alten README benennen, wo ihr Inhalt jetzt lebt. Erwartete Zuordnung: Was macht loxmatter → README „Why" plus Diagramm; Stand → README „Status"; Voraussetzungen, Erste Schritte, Ein Gerät ansehen → `SETUP.md`; Entwickeln → `DEVELOPMENT.md`; Dauerhaft betreiben, Zugangsschutz, Sprache → `OPERATIONS.md`; Lizenz → README plus `LICENSING.md`; Fremdsoftware, Hinweise in den Quelldateien → `LICENSING.md`. Etwas ohne neues Zuhause ist ein Fund.
+For every heading of the old README, name where its content lives now. Expected mapping: "What loxmatter does" ("Was macht loxmatter") → README "Why" plus diagram; "Status" ("Stand") → README "Status"; "Prerequisites", "Getting started", "Looking at a device" ("Voraussetzungen", "Erste Schritte", "Ein Gerät ansehen") → `SETUP.md`; "Developing" ("Entwickeln") → `DEVELOPMENT.md`; "Running it permanently", "Access control", "Language" ("Dauerhaft betreiben", "Zugangsschutz", "Sprache") → `OPERATIONS.md`; "License" ("Lizenz") → README plus `LICENSING.md`; "Third-party software", "Notices in the source files" ("Fremdsoftware", "Hinweise in den Quelldateien") → `LICENSING.md`. Anything without a new home is a finding.
 
-- [ ] **Step 4: Testsuite als Regressionsschutz**
+- [ ] **Step 4: Test suite as a regression guard**
 
 ```bash
 uv run pytest -q
 ```
 
-Erwartet: unverändert grün. Diese Arbeit fasst keinen Anwendungscode an — schlägt etwas fehl, kommt es nicht von hier, aber es wird trotzdem gemeldet.
+Expected: unchanged, green. This work touches no application code — if something fails, it isn't from this, but it gets reported anyway.
 
-- [ ] **Step 5: Commit, falls Step 1–3 etwas gefunden haben**
+- [ ] **Step 5: Commit, if steps 1–3 found something**
 
 ```bash
 git add -A
@@ -784,16 +784,16 @@ git commit -m "docs: Funde aus der Abnahme nachgezogen"
 
 ---
 
-## Selbstprüfung des Plans
+## Plan self-check
 
-**Abdeckung gegen den Entwurf:** Abschnitt 3 (README-Aufbau) → Aufgabe 6. Abschnitt 4 (docs/-Aufteilung) → Aufgaben 3–5. Abschnitt 5 (Screenshots) → Aufgaben 1–2. Abschnitt 6 (Warnhinweise) → Global Constraints plus Aufgabe 7, Step 2. Abschnitt 7 (Abgrenzung) → Global Constraints. Abschnitt 8 (Risiken) → Aufgabe 7, Steps 1–3.
+**Coverage against the design:** section 3 (README structure) → task 6. Section 4 (docs/ split) → tasks 3–5. Section 5 (screenshots) → tasks 1–2. Section 6 (warnings) → Global Constraints plus task 7, step 2. Section 7 (out of scope) → Global Constraints. Section 8 (risks) → task 7, steps 1–3.
 
-**Bewusst offen gelassen:** Der Quickstart beschreibt die manuelle Installation. Das One-Liner-Skript entsteht in einer eigenen Session und zieht Aufgabe 6, Step 4 nach.
+**Deliberately left open:** the quickstart describes manual installation. The one-liner script is built in its own session and updates task 6, step 4 afterward.
 
-**Bekannte Schwachstelle:** Die Selektoren in Aufgabe 2 (Login-Feld, Einlern-Codefeld, Datei-Eingabe) sind aus dem heutigen Markup abgeleitet und stehen deshalb unter dem ausdrücklichen Vorbehalt aus Step 1 — erst greppen, dann schreiben. Das ist die Stelle, an der diese Arbeit am ehesten bricht.
+**Known weak spot:** the selectors in task 2 (login field, commissioning code field, file input) are derived from today's markup and therefore carry the explicit caveat from step 1 — grep first, then write. This is the point where this work is most likely to break.
 
-**Beim Schreiben des Plans korrigiert:**
+**Corrected while writing the plan:**
 
-- Aufgabe 1 hieß zuerst „neues Skript `scripts/demo_instance.py`". Beim Prüfen der Signaturen kam `scripts/dev_web_server.py` zum Vorschein, das dasselbe bereits tut — inklusive `_SeededRuntime`, ohne das die Gerätekarten in den Screenshots nur Striche zeigen würden. Aus dem neuen Skript wurde eine `--demo`-Betriebsart des vorhandenen.
-- Der erste Entwurf importierte `MatterCall` aus `loxmatter.matter.models`; es lebt in `loxmatter.commands.translate`. Erledigt sich mit der Umstellung auf `dev_web_server.py`, das den Import bereits richtig hat.
-- `docs/SETUP.md` sollte das Architekturdiagramm wiederholen. Mit Variante 1 in der README wäre das dieselbe Zeichnung zweimal — jetzt ein Verweis.
+- Task 1 was originally called "new script `scripts/demo_instance.py`". While checking the signatures, `scripts/dev_web_server.py` turned up, which already does the same thing — including `_SeededRuntime`, without which the device cards in the screenshots would show only dashes. The new script became a `--demo` mode of the existing one.
+- The first draft imported `MatterCall` from `loxmatter.matter.models`; it lives in `loxmatter.commands.translate`. Resolved by switching to `dev_web_server.py`, which already has the import right.
+- `docs/SETUP.md` was supposed to repeat the architecture diagram. With variant 1 in the README, that would be the same drawing twice — now a reference instead.

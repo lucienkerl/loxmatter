@@ -1,26 +1,26 @@
-# Periodischer Resend als Opt-in - Implementierungsplan
+# Periodic resend as opt-in - implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Der periodische Voll-Resend (aktuell alle 300s, jeder bekannte Wert) wird durch eine explizite Opt-in-Auswahl pro Signal ersetzt, um den Rate-Limiter-Burst bei vielen Geräten zu verkleinern; das Intervall wird zur Laufzeit über die WebUI konfigurierbar.
+**Goal:** The periodic full resend (currently every 300s, every known value) is replaced by an explicit opt-in selection per signal, to shrink the rate-limiter burst with many devices; the interval becomes configurable at runtime through the WebUI.
 
-**Architecture:** Ein neues `resend`-Flag pro Signal (Store, wie das bestehende `exported`-Flag) plus ein globales Intervall in der bereits vorhandenen `setting`-Tabelle (wie die Spracheinstellung). `Runtime.resend_all()` bleibt unverändert der volle Restore-Pfad für `/resync` und den Bridge-Start; eine neue `Runtime.resend_marked()` filtert auf das Flag und wird ausschließlich vom periodischen Timer aufgerufen, der das Intervall live aus dem Store liest.
+**Architecture:** A new `resend` flag per signal (store, like the existing `exported` flag) plus a global interval in the already-existing `setting` table (like the language setting). `Runtime.resend_all()` stays unchanged as the full restore path for `/resync` and bridge start; a new `Runtime.resend_marked()` filters on the flag and is called exclusively by the periodic timer, which reads the interval live from the store.
 
-**Tech Stack:** Python, SQLite (über `sqlite3`), FastAPI/Pydantic, Alpine.js (`web/app.js`/`web/index.html`), pytest (`asyncio_mode = auto`).
+**Tech Stack:** Python, SQLite (via `sqlite3`), FastAPI/Pydantic, Alpine.js (`web/app.js`/`web/index.html`), pytest (`asyncio_mode = auto`).
 
 ## Global Constraints
 
-- Der Schlüssel eines Signals bleibt in jedem Fall unangetastet (Spec 6.2) - keine der hier beschriebenen Änderungen schreibt je in `signal.key`.
-- Default für `resend`, bestehend wie neu registriert: `false` - nach diesem Update wird zunächst nichts mehr automatisch periodisch resent (Spec-Abschnitt 3).
-- `Runtime.resend_all()` bleibt in Verhalten und Signatur unverändert - `/resync` (`server.py`) und der Bridge-Start (`cli.py`, nach `seed_from_snapshot`) müssen weiterhin JEDEN bekannten Wert wiederherstellen, unabhängig vom `resend`-Flag (Spec-Abschnitt 6, Korrektur vom 2026-09-04).
-- Online-Status (`d<id>_online`), Pulszähler (`_n`-Suffix) und der Heartbeat (`bridge_alive`) bekommen kein `resend`-Flag und bleiben von dieser Änderung unberührt (Spec-Abschnitt 7).
-- Kein CLI-Flag für das Intervall - ausschließlich über `GET`/`PATCH /api/settings/resend-interval` änderbar (Spec-Abschnitt 5/7).
-- Neue Store-Klassen folgen dem Muster von `LocaleStore`/`BridgeSettingsStore`: eigenes Modul, eigene Klasse, Sicht auf dieselbe `setting`-Tabelle, kein zweiter Verbindungsaufbau.
-- Kommentare/Docstrings in diesem Projekt sind deutsche Prosa, die das WARUM erklärt, nicht das WAS - neuer Code hält sich an diesen Stil (siehe existierende Dateien).
+- A signal's key stays untouched in every case (Spec 6.2) - none of the changes described here ever writes to `signal.key`.
+- Default for `resend`, existing as well as newly registered: `false` - after this update, nothing is automatically resent periodically any more to start with (spec section 3).
+- `Runtime.resend_all()` stays unchanged in behavior and signature - `/resync` (`server.py`) and bridge start (`cli.py`, after `seed_from_snapshot`) must continue to restore EVERY known value, regardless of the `resend` flag (spec section 6, correction from 2026-09-04).
+- Online status (`d<id>_online`), pulse counters (`_n` suffix), and the heartbeat (`bridge_alive`) get no `resend` flag and stay unaffected by this change (spec section 7).
+- No CLI flag for the interval - changeable exclusively via `GET`/`PATCH /api/settings/resend-interval` (spec section 5/7).
+- New store classes follow the pattern of `LocaleStore`/`BridgeSettingsStore`: own module, own class, a view onto the same `setting` table, no second connection setup.
+- Comments/docstrings in this project are German prose that explains the WHY, not the WHAT - new code follows this style (see existing files).
 
 ---
 
-### Task 1: Store - `signal.resend`-Spalte, Flag und globale Schlüsselabfrage
+### Task 1: Store - `signal.resend` column, flag, and global key lookup
 
 **Files:**
 - Modify: `src/loxmatter/model/store.py`
@@ -28,13 +28,13 @@
 - Test: `tests/model/test_store_migration.py`
 
 **Interfaces:**
-- Produces: `StoredSignal.resend: bool` (neues Feld), `Store.set_resend(key: str, resend: bool) -> None`, `Store.resend_keys() -> list[str]` (Schlüssel aller Signale mit `resend = true`, nur aktive Geräte).
+- Produces: `StoredSignal.resend: bool` (new field), `Store.set_resend(key: str, resend: bool) -> None`, `Store.resend_keys() -> list[str]` (keys of all signals with `resend = true`, active devices only).
 
-- [ ] **Step 1: Schema, Migration und Dataclass-Feld ergänzen**
+- [ ] **Step 1: Add the schema, migration, and dataclass field**
 
 In `src/loxmatter/model/store.py`:
 
-Die `signal`-Tabelle in `_SCHEMA` bekommt die neue Spalte (nach `functional`):
+The `signal` table in `_SCHEMA` gets the new column (after `functional`):
 
 ```python
 _SCHEMA = """
@@ -88,31 +88,31 @@ CREATE TABLE IF NOT EXISTS session (
 """
 ```
 
-`_SCHEMA_VERSION` von 5 auf 6, mit einem Kommentar-Absatz analog zu den bestehenden:
+`_SCHEMA_VERSION` from 5 to 6, with a comment paragraph analogous to the existing ones:
 
 ```python
-# ... (bestehender Kommentar bleibt) ... Version 6 (Entwurf periodischer
-# Resend, 2026-09-04) fuegt `signal.resend` hinzu, siehe `_migrate_to_v6` -
-# kein Backfill, jede Bestandszeile startet beim Spalten-Default (0/aus).
+# ... (existing comment stays) ... Version 6 (periodic resend design,
+# 2026-09-04) adds `signal.resend`, see `_migrate_to_v6` - no backfill,
+# every existing row starts at the column default (0/off).
 _SCHEMA_VERSION = 6
 ```
 
-Neue Migrationsfunktion, direkt nach `_migrate_to_v5`:
+New migration function, directly after `_migrate_to_v5`:
 
 ```python
 def _migrate_to_v6(db: sqlite3.Connection) -> None:
-    """Fuegt `signal.resend` hinzu (periodischer Resend als Opt-in, Entwurf
-    2026-09-04) - kein Backfill: jede Bestandszeile startet bei `resend = 0`,
-    genau der Spalten-Default. Anders als `exported` (`_migrate_to_v1`) gibt
-    es hier keinen Bestandswert, aus dem sich ein sinnvoller Vorgabewert
-    ableiten liesse - im Gegenteil ist "aus" hier ausdruecklich die
-    gewuenschte Vorgabe (siehe Entwurf, Abschnitt 3): der periodische
-    Voll-Resend soll nach diesem Update fuer JEDES Signal erst durch eine
-    bewusste Nutzerentscheidung wieder anspringen."""
+    """Adds `signal.resend` (periodic resend as opt-in, design 2026-09-04)
+    - no backfill: every existing row starts at `resend = 0`, exactly the
+    column default. Unlike `exported` (`_migrate_to_v1`), there is no
+    existing value here from which a sensible default could be derived -
+    on the contrary, "off" is explicitly the desired default here (see
+    design, section 3): the periodic full resend should only start again
+    for EVERY signal after this update through a deliberate user
+    decision."""
     _add_column_if_missing(db, "signal", "resend", "INTEGER NOT NULL DEFAULT 0")
 ```
 
-`_MIGRATIONS` um den neuen Eintrag ergänzen:
+Add the new entry to `_MIGRATIONS`:
 
 ```python
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
@@ -125,7 +125,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 }
 ```
 
-`StoredSignal` bekommt das neue Feld (am Ende, nach `functional`):
+`StoredSignal` gets the new field (at the end, after `functional`):
 
 ```python
 @dataclass(frozen=True)
@@ -138,17 +138,17 @@ class StoredSignal:
     device_id: int
     exported: bool
     functional: bool
-    # resend (Entwurf periodischer Resend, 2026-09-04): ob dieses Signal vom
-    # periodischen Timer erneut gesendet werden soll, auch wenn es sich
-    # nicht geaendert hat - vom Nutzer umschaltbar (`PATCH
-    # /api/signals/{key}`), unabhaengig von `exported`/`functional`. Betrifft
-    # NUR `Runtime.resend_marked()` (den periodischen Timer); `resend_all()`
-    # (fuer `/resync` und den Bridge-Start) ignoriert dieses Feld bewusst und
-    # sendet weiterhin jeden bekannten Wert, siehe dortigen Docstring.
+    # resend (periodic resend design, 2026-09-04): whether this signal
+    # should be sent again by the periodic timer, even if it has not
+    # changed - togglable by the user (`PATCH /api/signals/{key}`),
+    # independent of `exported`/`functional`. Affects ONLY
+    # `Runtime.resend_marked()` (the periodic timer); `resend_all()` (for
+    # `/resync` and bridge start) deliberately ignores this field and
+    # continues to send every known value, see its docstring.
     resend: bool
 ```
 
-`_as_signal` liest die neue Spalte:
+`_as_signal` reads the new column:
 
 ```python
     @staticmethod
@@ -168,26 +168,26 @@ class StoredSignal:
         )
 ```
 
-Neue Methoden, direkt nach `set_exported`:
+New methods, directly after `set_exported`:
 
 ```python
     def set_resend(self, key: str, resend: bool) -> None:
-        """Setzt das Resend-Flag eines Signals (`PATCH /api/signals/{key}`,
-        Entwurf periodischer Resend, 2026-09-04). Wie `set_exported` ohne
-        Existenzpruefung - siehe dort."""
+        """Sets a signal's resend flag (`PATCH /api/signals/{key}`,
+        periodic resend design, 2026-09-04). Like `set_exported`, without
+        an existence check - see there."""
         self._touch_owning_device(key)
         self._db.execute("UPDATE signal SET resend = ? WHERE key = ?", (int(resend), key))
         self._db.commit()
 ```
 
-Direkt nach `signal_by_key` (beide lesen aus derselben Tabelle, gehören fachlich zusammen):
+Directly after `signal_by_key` (both read from the same table, they belong together functionally):
 
 ```python
     def resend_keys(self) -> list[str]:
-        """Alle Signal-Schluessel mit `resend = true`, ueber alle AKTIVEN
-        Geraete hinweg - fuer `Runtime.resend_marked()` (periodischer Resend
-        als Opt-in, Entwurf 2026-09-04). Ein Signal eines entfernten Geraets
-        (`forget_device`) taucht hier nicht mehr auf, genau wie bei
+        """All signal keys with `resend = true`, across all ACTIVE
+        devices - for `Runtime.resend_marked()` (periodic resend as
+        opt-in, design 2026-09-04). A signal of a removed device
+        (`forget_device`) no longer shows up here, exactly as with
         `devices()`."""
         rows = self._db.execute(
             "SELECT signal.key FROM signal"
@@ -197,9 +197,9 @@ Direkt nach `signal_by_key` (beide lesen aus derselben Tabelle, gehören fachlic
         return [str(r["key"]) for r in rows]
 ```
 
-- [ ] **Step 2: Failing Tests fuer `set_resend`/`resend_keys` schreiben**
+- [ ] **Step 2: Write failing tests for `set_resend`/`resend_keys`**
 
-An `tests/model/test_store.py` anhängen (nach `test_exported_flag_survives_reregistration`):
+Append to `tests/model/test_store.py` (after `test_exported_flag_survives_reregistration`):
 
 ```python
 def test_set_resend_toggles_the_flag_without_touching_the_key(store):
@@ -207,7 +207,7 @@ def test_set_resend_toggles_the_flag_without_touching_the_key(store):
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
     target = signals[0]
-    assert target.resend is False  # Vorgabewert (Entwurf, Abschnitt 3)
+    assert target.resend is False  # default value (design, section 3)
 
     store.set_resend(target.key, True)
     after = next(s for s in store.signals(device_id) if s.key == target.key)
@@ -216,8 +216,8 @@ def test_set_resend_toggles_the_flag_without_touching_the_key(store):
 
 
 def test_resend_flag_survives_reregistration(store):
-    """Wie `exported`: einmal vom Nutzer gesetzt, darf ein erneutes
-    `register_signals` das Resend-Flag nicht zuruecksetzen."""
+    """Like `exported`: once set by the user, a repeated
+    `register_signals` must not reset the resend flag."""
     snap = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snap)
     signals = store.register_signals(device_id, snap)
@@ -252,25 +252,25 @@ def test_resend_keys_excludes_signals_of_a_removed_device(store):
     assert store.resend_keys() == []
 ```
 
-- [ ] **Step 3: Tests laufen lassen, bevor die Implementierung existiert**
+- [ ] **Step 3: Run the tests before the implementation exists**
 
 Run: `pytest tests/model/test_store.py -k resend -v`
-Expected: FAIL (`AttributeError: 'StoredSignal' object has no attribute 'resend'` bzw. `'Store' object has no attribute 'set_resend'`)
+Expected: FAIL (`AttributeError: 'StoredSignal' object has no attribute 'resend'` resp. `'Store' object has no attribute 'set_resend'`)
 
-- [ ] **Step 4: Implementierung aus Step 1 eintragen, Tests gruen bekommen**
+- [ ] **Step 4: Enter the implementation from step 1, get the tests green**
 
 Run: `pytest tests/model/test_store.py -k resend -v`
-Expected: PASS (4 Tests)
+Expected: PASS (4 tests)
 
-- [ ] **Step 5: Migrationstest schreiben**
+- [ ] **Step 5: Write the migration test**
 
-An `tests/model/test_store_migration.py` anhängen (ans Dateiende, nach `test_migration_to_v5_adds_the_auth_tables_without_touching_devices`):
+Append to `tests/model/test_store_migration.py` (at the end of the file, after `test_migration_to_v5_adds_the_auth_tables_without_touching_devices`):
 
 ```python
 def test_migration_to_v6_adds_the_resend_column_defaulting_to_off(tmp_path):
-    """Eine Bestandsdatenbank auf Version 5 (vor `signal.resend`) bekommt die
-    Spalte per Migration, jede Zeile startet bei `resend = 0` - kein
-    Backfill, siehe `_migrate_to_v6`-Docstring."""
+    """An existing database at version 5 (before `signal.resend`) gets the
+    column via migration, every row starts at `resend = 0` - no backfill,
+    see the `_migrate_to_v6` docstring."""
     path = tmp_path / "alt.sqlite"
     store = Store(path)
     snapshot = load("ikea_grillplats_plug.json")
@@ -292,15 +292,15 @@ def test_migration_to_v6_adds_the_resend_column_defaulting_to_off(tmp_path):
         store.close()
 ```
 
-- [ ] **Step 6: Migrationstest laufen lassen (muss vor Step 1 fehlschlagen, jetzt aber grün sein)**
+- [ ] **Step 6: Run the migration test (must fail before step 1, but be green now)**
 
 Run: `pytest tests/model/test_store_migration.py -k v6 -v`
 Expected: PASS
 
-- [ ] **Step 7: Ganze Store-Testsuite laufen lassen**
+- [ ] **Step 7: Run the whole store test suite**
 
 Run: `pytest tests/model/ -v`
-Expected: PASS (keine Regression in `exported`/`functional`/anderen Migrationen)
+Expected: PASS (no regression in `exported`/`functional`/other migrations)
 
 - [ ] **Step 8: Commit**
 
@@ -320,7 +320,7 @@ EOF
 
 ---
 
-### Task 2: Store - `ResendSettingsStore` für das globale Intervall
+### Task 2: Store - `ResendSettingsStore` for the global interval
 
 **Files:**
 - Create: `src/loxmatter/model/resend_settings_store.py`
@@ -328,15 +328,15 @@ EOF
 - Test: `tests/model/test_resend_settings_store.py`
 
 **Interfaces:**
-- Consumes: die generische `setting`-Tabelle (bereits vorhanden seit `_migrate_to_v5`/`_SCHEMA`).
-- Produces: `ResendSettingsStore.get_interval_seconds() -> float`, `ResendSettingsStore.set_interval_seconds(seconds: float) -> None` (wirft `ValueError` unter `MIN_RESEND_INTERVAL_SECONDS`), Konstanten `DEFAULT_RESEND_INTERVAL_SECONDS = 300.0`, `MIN_RESEND_INTERVAL_SECONDS = 10.0`. Erreichbar als `Store.resend_settings`.
+- Consumes: the generic `setting` table (already present since `_migrate_to_v5`/`_SCHEMA`).
+- Produces: `ResendSettingsStore.get_interval_seconds() -> float`, `ResendSettingsStore.set_interval_seconds(seconds: float) -> None` (raises `ValueError` below `MIN_RESEND_INTERVAL_SECONDS`), constants `DEFAULT_RESEND_INTERVAL_SECONDS = 300.0`, `MIN_RESEND_INTERVAL_SECONDS = 10.0`. Reachable as `Store.resend_settings`.
 
-- [ ] **Step 1: Failing Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-Neue Datei `tests/model/test_resend_settings_store.py`:
+New file `tests/model/test_resend_settings_store.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -352,9 +352,9 @@ Neue Datei `tests/model/test_resend_settings_store.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer `ResendSettingsStore` - das Intervall des periodischen
-Resends, gehalten in derselben `setting`-Tabelle wie `LocaleStore.language`
-(siehe dortiges test_locale_store.py fuer das gleiche Muster)."""
+"""Tests for `ResendSettingsStore` - the periodic resend interval, held in
+the same `setting` table as `LocaleStore.language` (see its
+test_locale_store.py for the same pattern)."""
 
 from __future__ import annotations
 
@@ -389,7 +389,7 @@ def test_set_interval_rejects_a_value_below_the_minimum(tmp_path):
     try:
         with pytest.raises(ValueError):
             store.resend_settings.set_interval_seconds(MIN_RESEND_INTERVAL_SECONDS - 1)
-        # Kein Teil-Erfolg: der Vorgabewert gilt weiterhin.
+        # No partial success: the default value still applies.
         assert store.resend_settings.get_interval_seconds() == DEFAULT_RESEND_INTERVAL_SECONDS
     finally:
         store.close()
@@ -410,17 +410,17 @@ def test_interval_survives_reopening_the_same_database(tmp_path):
         reopened.close()
 ```
 
-- [ ] **Step 2: Tests laufen lassen, bevor das Modul existiert**
+- [ ] **Step 2: Run the tests before the module exists**
 
 Run: `pytest tests/model/test_resend_settings_store.py -v`
 Expected: FAIL (`ModuleNotFoundError: No module named 'loxmatter.model.resend_settings_store'`)
 
-- [ ] **Step 3: `ResendSettingsStore` implementieren**
+- [ ] **Step 3: Implement `ResendSettingsStore`**
 
-Neue Datei `src/loxmatter/model/resend_settings_store.py`:
+New file `src/loxmatter/model/resend_settings_store.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -436,15 +436,15 @@ Neue Datei `src/loxmatter/model/resend_settings_store.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Das Intervall des periodischen Resends - EINE Einstellung fuer die
-gesamte Bruecke, zur Laufzeit ueber die WebUI/API aenderbar statt einer beim
-Start fixierten Konstante. Siehe
-docs/superpowers/specs/2026-09-04-periodic-resend-design.md, Abschnitt 4.
+"""The periodic resend interval - ONE setting for the whole bridge,
+changeable at runtime through the WebUI/API instead of a constant fixed at
+start. See
+docs/superpowers/specs/2026-09-04-periodic-resend-design.md, section 4.
 
-Eigenes Modul und eigene Klasse, analog zu `locale_store.py`: die
-`setting`-Tabelle ist generisch angelegt, genau damit weitere Konfiguration
-wie diese hier denselben Weg gehen kann. Diese Klasse ist eine weitere Sicht
-auf dieselbe Tabelle und dieselbe Verbindung, kein zweiter Verbindungsaufbau."""
+Own module and own class, analogous to `locale_store.py`: the `setting`
+table is deliberately generic, exactly so that further configuration like
+this one can follow the same path. This class is another view onto the
+same table and the same connection, not a second connection setup."""
 
 from __future__ import annotations
 
@@ -453,22 +453,22 @@ import sqlite3
 _INTERVAL_KEY = "resend_interval_seconds"
 
 DEFAULT_RESEND_INTERVAL_SECONDS = 300.0
-# Untergrenze (Entwurf, Abschnitt 5): schuetzt vor einem versehentlich zu
-# kurzen Intervall, das bei vielen markierten Signalen genau den Burst
-# erzeugen wuerde, den dieser Entwurf eigentlich vermeiden soll.
+# Lower bound (design, section 5): protects against an accidentally too
+# short interval, which with many marked signals would produce exactly
+# the burst this design is meant to avoid in the first place.
 MIN_RESEND_INTERVAL_SECONDS = 10.0
 
 
 class ResendSettingsStore:
-    """Zugriff auf `setting` ueber die Verbindung des Stores - wie
-    `LocaleStore`, nur fuer den Schluessel `"resend_interval_seconds"`."""
+    """Access to `setting` via the store's connection - like `LocaleStore`,
+    just for the key `"resend_interval_seconds"`."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
 
     def get_interval_seconds(self) -> float:
-        """Der gespeicherte Wert - `DEFAULT_RESEND_INTERVAL_SECONDS`, solange
-        nichts gespeichert ist. Wirft nie."""
+        """The stored value - `DEFAULT_RESEND_INTERVAL_SECONDS`, as long as
+        nothing is stored. Never raises."""
         row = self._db.execute(
             "SELECT value FROM setting WHERE key = ?", (_INTERVAL_KEY,)
         ).fetchone()
@@ -490,7 +490,7 @@ class ResendSettingsStore:
         self._db.commit()
 ```
 
-In `src/loxmatter/model/store.py` den Import ergänzen (bei den übrigen `loxmatter.model.*`-Importen):
+In `src/loxmatter/model/store.py`, add the import (with the other `loxmatter.model.*` imports):
 
 ```python
 from loxmatter.model.locale_store import LocaleStore
@@ -498,17 +498,17 @@ from loxmatter.model.resend_settings_store import ResendSettingsStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 ```
 
-Und in `Store.__init__`, direkt nach `self.locale = LocaleStore(self._db)`:
+And in `Store.__init__`, directly after `self.locale = LocaleStore(self._db)`:
 
 ```python
-        # Sicht auf dieselbe Verbindung - siehe `resend_settings_store.py`.
+        # View onto the same connection - see `resend_settings_store.py`.
         self.resend_settings = ResendSettingsStore(self._db)
 ```
 
-- [ ] **Step 4: Tests laufen lassen**
+- [ ] **Step 4: Run the tests**
 
 Run: `pytest tests/model/test_resend_settings_store.py -v`
-Expected: PASS (4 Tests)
+Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -527,7 +527,7 @@ EOF
 
 ---
 
-### Task 3: API - `resend`-Flag pro Signal lesen und setzen
+### Task 3: API - read and set the `resend` flag per signal
 
 **Files:**
 - Modify: `src/loxmatter/api/models.py`
@@ -535,16 +535,16 @@ EOF
 - Test: `tests/api/test_devices.py`
 
 **Interfaces:**
-- Consumes: `StoredSignal.resend` (Task 1), `Store.set_resend` (Task 1).
+- Consumes: `StoredSignal.resend` (task 1), `Store.set_resend` (task 1).
 - Produces: `SignalOut.resend: bool`, `SignalPatch.resend: bool | None`.
 
-- [ ] **Step 1: Failing Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-An `tests/api/test_devices.py` anhängen (nach `test_exporting_a_signal_can_be_turned_off`):
+Append to `tests/api/test_devices.py` (after `test_exporting_a_signal_can_be_turned_off`):
 
 ```python
 async def test_the_signal_payload_says_whether_resend_is_flagged(api):
-    """Periodischer Resend als Opt-in (Entwurf 2026-09-04) - Vorgabewert aus."""
+    """Periodic resend as opt-in (design 2026-09-04) - default off."""
     client, _, device_id, _ = api
     signals = (await client.get(f"/api/devices/{device_id}/signals")).json()
     assert signals
@@ -572,33 +572,33 @@ async def test_resend_and_exported_are_independent_fields(api):
     assert body["exported"] is False
 ```
 
-- [ ] **Step 2: Tests laufen lassen, bevor das Feld existiert**
+- [ ] **Step 2: Run the tests before the field exists**
 
 Run: `pytest tests/api/test_devices.py -k resend -v`
-Expected: FAIL (`KeyError: 'resend'` beim Zugriff auf `signals[...]["resend"]`, da `SignalOut` das Feld noch nicht kennt)
+Expected: FAIL (`KeyError: 'resend'` when accessing `signals[...]["resend"]`, since `SignalOut` doesn't know the field yet)
 
-- [ ] **Step 3: `SignalOut`/`SignalPatch` erweitern**
+- [ ] **Step 3: Extend `SignalOut`/`SignalPatch`**
 
-In `src/loxmatter/api/models.py`, `SignalOut` (Feld am Ende ergänzen, Docstring-Absatz anfügen):
+In `src/loxmatter/api/models.py`, `SignalOut` (add the field at the end, append a docstring paragraph):
 
 ```python
 class SignalOut(BaseModel):
-    """`exportable`/`reason` (Spec 6.6) und `exported` (vom Nutzer umschaltbar,
-    siehe `model.store.StoredSignal.exported`) sagen, was TECHNISCH auf einen
-    Loxone-Eingang passt und was DAVON in den naechsten Export soll -
-    `functional` (Aufgabe 8) beantwortet eine dritte, unabhaengige Frage: ob
-    `profiles.relevance.is_functional` dieses Signal fuer den GERAETETYP als
-    gewollt einstuft. Die Oberflaeche nutzt allein dieses Feld, um die
-    Signalliste in "Funktional" und "Experte" zu gliedern (`api.devices.
-    _signal_out` liest es unveraendert aus `StoredSignal.functional`) - eine
-    zweite Berechnung der Regel gibt es weder in der API-Schicht noch in
-    JavaScript.
+    """`exportable`/`reason` (Spec 6.6) and `exported` (togglable by the
+    user, see `model.store.StoredSignal.exported`) say what TECHNICALLY
+    fits a Loxone input and which OF THAT should go into the next export -
+    `functional` (task 8) answers a third, independent question: whether
+    `profiles.relevance.is_functional` classifies this signal as wanted
+    for the DEVICE TYPE. The UI uses only this field to split the signal
+    list into "Functional" and "Expert" (`api.devices._signal_out` reads
+    it unchanged from `StoredSignal.functional`) - there is no second
+    computation of the rule, neither in the API layer nor in JavaScript.
 
-    `resend` (Entwurf periodischer Resend, 2026-09-04) ist eine VIERTE,
-    wieder unabhaengige Frage: ob der periodische Timer (`Runtime.
-    resend_marked`) dieses Signal auch ohne Aenderung erneut senden soll.
-    Betrifft `/resync` und den Bridge-Start (`Runtime.resend_all`) nicht -
-    die ignorieren dieses Feld bewusst, siehe dortigen Docstring."""
+    `resend` (periodic resend design, 2026-09-04) is a FOURTH, again
+    independent question: whether the periodic timer
+    (`Runtime.resend_marked`) should send this signal again even without a
+    change. Does not affect `/resync` or bridge start (`Runtime.
+    resend_all`) - they deliberately ignore this field, see their
+    docstring."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -615,22 +615,22 @@ class SignalOut(BaseModel):
     resend: bool
 ```
 
-`SignalPatch` um das optionale Feld ergänzen:
+Add the optional field to `SignalPatch`:
 
 ```python
 class SignalPatch(BaseModel):
-    """Was sich an einem Signal ueberhaupt aendern laesst.
+    """What can be changed about a signal at all.
 
-    Spec 6.2: der Schluessel ist die Verdrahtung in Loxone. Waere er hier
-    aenderbar, koennte ein Klick in der Oberflaeche einen Baustein im Haus
-    still totlegen - deshalb kennt dieses Modell gar kein `key`-Feld. Ein
-    mitgeschicktes `key` landet bei Pydantic niemals auf dem Objekt und wird
-    von `devices.rename_signal` entsprechend nie gelesen, geschweige denn
-    angewendet - das ist keine Frage der Sorgfalt im Handler, sondern eine,
-    die dieses Modell strukturell unmoeglich macht. Grund ist Pydantic v2s
-    eigener Default fuer unbekannte Felder, `extra="ignore"` (Berichtigung
-    M1, Review 2026-09-02: hier stand faelschlich `extra="allow"` als
-    Default - das Gegenteil, es wuerde unbekannte Felder gerade behalten).
+    Spec 6.2: the key is the wiring in Loxone. If it were changeable here,
+    a click in the UI could silently kill a component in the house -
+    that's why this model has no `key` field at all. A `key` sent along
+    with the request never lands on the object with Pydantic and is
+    accordingly never read by `devices.rename_signal`, let alone applied -
+    that is not a question of care in the handler, but one this model
+    makes structurally impossible. The reason is Pydantic v2's own default
+    for unknown fields, `extra="ignore"` (correction M1, review
+    2026-09-02: this incorrectly said `extra="allow"` as the default - the
+    opposite, it would keep unknown fields around).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -640,13 +640,13 @@ class SignalPatch(BaseModel):
     resend: bool | None = None
 ```
 
-- [ ] **Step 4: `_signal_out`/`rename_signal` in `devices.py` erweitern**
+- [ ] **Step 4: Extend `_signal_out`/`rename_signal` in `devices.py`**
 
 In `src/loxmatter/api/devices.py`, `_signal_out`:
 
 ```python
 def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> SignalOut:
-    """..."""  # Docstring unveraendert
+    """..."""  # docstring unchanged
     exportable = is_exportable(signal.exportability)
     reason = None if exportable else _UNEXPORTABLE_REASONS.get(signal.exportability)
     return SignalOut(
@@ -664,7 +664,7 @@ def _signal_out(signal: StoredSignal, values: dict[str, float | bool]) -> Signal
     )
 ```
 
-In `rename_signal`, nach der `exported`-Zeile:
+In `rename_signal`, after the `exported` line:
 
 ```python
         if patch.title is not None:
@@ -675,10 +675,10 @@ In `rename_signal`, nach der `exported`-Zeile:
             store.set_resend(key, patch.resend)
 ```
 
-- [ ] **Step 5: Tests laufen lassen**
+- [ ] **Step 5: Run the tests**
 
 Run: `pytest tests/api/test_devices.py -v`
-Expected: PASS (alle Tests dieser Datei, keine Regression bei `exported`/`functional`)
+Expected: PASS (all tests in this file, no regression on `exported`/`functional`)
 
 - [ ] **Step 6: Commit**
 
@@ -697,7 +697,7 @@ EOF
 
 ---
 
-### Task 4: API - Resend-Intervall lesen und setzen
+### Task 4: API - read and set the resend interval
 
 **Files:**
 - Modify: `src/loxmatter/api/models.py`
@@ -705,12 +705,12 @@ EOF
 - Test: `tests/api/test_settings_api.py`
 
 **Interfaces:**
-- Consumes: `Store.resend_settings` (Task 2).
-- Produces: `GET /api/settings/resend-interval` und `PATCH /api/settings/resend-interval`, Antwortmodell `{"interval_seconds": float}`.
+- Consumes: `Store.resend_settings` (task 2).
+- Produces: `GET /api/settings/resend-interval` and `PATCH /api/settings/resend-interval`, response model `{"interval_seconds": float}`.
 
-- [ ] **Step 1: Failing Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-An `tests/api/test_settings_api.py` anhängen (Import am Dateianfang ergänzen, Tests ans Ende):
+Append to `tests/api/test_settings_api.py` (add the import at the top of the file, tests at the end):
 
 ```python
 from loxmatter.model.resend_settings_store import (
@@ -765,19 +765,19 @@ async def test_resend_interval_route_requires_a_session(tmp_path, no_invoke, fak
     assert response.status_code == 401
 ```
 
-- [ ] **Step 2: Tests laufen lassen, bevor die Route existiert**
+- [ ] **Step 2: Run the tests before the route exists**
 
 Run: `pytest tests/api/test_settings_api.py -k resend_interval -v`
-Expected: FAIL (404, da die Route noch nicht existiert)
+Expected: FAIL (404, since the route doesn't exist yet)
 
-- [ ] **Step 3: Modelle ergänzen**
+- [ ] **Step 3: Add the models**
 
-In `src/loxmatter/api/models.py`, direkt nach `BridgeSettingsIn`:
+In `src/loxmatter/api/models.py`, directly after `BridgeSettingsIn`:
 
 ```python
 class ResendIntervalOut(BaseModel):
-    """Antwort von `GET`/`PATCH /api/settings/resend-interval` (Entwurf
-    periodischer Resend, 2026-09-04, Abschnitt 5)."""
+    """Response of `GET`/`PATCH /api/settings/resend-interval` (periodic
+    resend design, 2026-09-04, section 5)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -785,22 +785,22 @@ class ResendIntervalOut(BaseModel):
 
 
 class ResendIntervalIn(BaseModel):
-    """Rumpf von `PATCH /api/settings/resend-interval`. `gt=0` faengt einen
-    nicht-positiven Wert bereits hier ab (422 ohne eigenen Validator); die
-    tatsaechliche Untergrenze (`MIN_RESEND_INTERVAL_SECONDS`) prueft
-    `ResendSettingsStore.set_interval_seconds` selbst, siehe dort."""
+    """Body of `PATCH /api/settings/resend-interval`. `gt=0` already
+    catches a non-positive value here (422 without a custom validator);
+    the actual lower bound (`MIN_RESEND_INTERVAL_SECONDS`) is checked by
+    `ResendSettingsStore.set_interval_seconds` itself, see there."""
 
     model_config = ConfigDict(frozen=True)
 
     interval_seconds: float = Field(gt=0)
 ```
 
-- [ ] **Step 4: Route in `api/settings.py` ergänzen**
+- [ ] **Step 4: Add the route in `api/settings.py`**
 
-`src/loxmatter/api/settings.py` komplett:
+`src/loxmatter/api/settings.py` in full:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -816,14 +816,14 @@ class ResendIntervalIn(BaseModel):
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Verbindungseinstellungen der Bruecke (IP, Ports) und das Intervall des
-periodischen Resends ueber die API - Geraete-Dashboard-Entwurf
-(2026-09-03), Abschnitt 4, und Entwurf periodischer Resend (2026-09-04),
-Abschnitt 5.
+"""The bridge's connection settings (IP, ports) and the periodic resend
+interval over the API - device dashboard design (2026-09-03), section 4,
+and periodic resend design (2026-09-04), section 5.
 
-`build_settings_router` baut einen `APIRouter` mit Praefix `/api`, genau wie
-`api.devices.build_device_router` - eingebunden in `loxone.server.build_app`
-neben den uebrigen Routern dieser Phase, hinter demselben `api_guard`."""
+`build_settings_router` builds an `APIRouter` with the prefix `/api`,
+exactly like `api.devices.build_device_router` - wired into
+`loxone.server.build_app` next to the other routers of this phase, behind
+the same `api_guard`."""
 
 from __future__ import annotations
 
@@ -883,10 +883,10 @@ def build_settings_router(store: Store) -> APIRouter:
     return router
 ```
 
-- [ ] **Step 5: Tests laufen lassen**
+- [ ] **Step 5: Run the tests**
 
 Run: `pytest tests/api/test_settings_api.py -v`
-Expected: PASS (alle Tests dieser Datei, keine Regression bei `/api/settings`)
+Expected: PASS (all tests in this file, no regression on `/api/settings`)
 
 - [ ] **Step 6: Commit**
 
@@ -905,19 +905,19 @@ EOF
 
 ---
 
-### Task 5: Runtime - `resend_marked()` neben unverändertem `resend_all()`
+### Task 5: Runtime - `resend_marked()` alongside unchanged `resend_all()`
 
 **Files:**
 - Modify: `src/loxmatter/loxone/runtime.py`
 - Test: `tests/loxone/test_runtime.py`
 
 **Interfaces:**
-- Consumes: `Store.resend_keys()` (Task 1).
-- Produces: `Runtime.resend_marked() -> int` (async), gemeinsam mit `resend_all()` gestützt auf eine neue private `Runtime._force_resend(keys: Sequence[str]) -> int`.
+- Consumes: `Store.resend_keys()` (task 1).
+- Produces: `Runtime.resend_marked() -> int` (async), sharing a new private `Runtime._force_resend(keys: Sequence[str]) -> int` with `resend_all()`.
 
-- [ ] **Step 1: Failing Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-An `tests/loxone/test_runtime.py` anhängen (nach `test_resend_of_an_empty_runtime_sends_nothing`):
+Append to `tests/loxone/test_runtime.py` (after `test_resend_of_an_empty_runtime_sends_nothing`):
 
 ```python
 async def test_resend_marked_only_sends_flagged_signals(environment):
@@ -947,15 +947,14 @@ async def test_resend_marked_of_no_flagged_signals_sends_nothing(environment):
 
 
 async def test_resend_all_ignores_the_resend_flag_and_sends_everything(environment):
-    """/resync und der Bruecken-Start verlassen sich auf `resend_all()` als
-    vollstaendige Zustands-Wiederherstellung (Spec 6.4) - das `resend`-Flag
-    (Entwurf periodischer Resend, Abschnitt 6) darf das NICHT einschraenken,
-    sonst blieben nach einem Miniserver-Neustart die meisten virtuellen
-    Eingaenge auf ihrem Defaultwert stehen."""
+    """/resync and bridge start rely on `resend_all()` as a complete
+    state restoration (Spec 6.4) - the `resend` flag (periodic resend
+    design, section 6) must NOT restrict that, or most virtual inputs
+    would stay at their default value after a Miniserver restart."""
     runtime, sender, store, device_id, _ = environment
     voltage_key = f"d{device_id}_2_voltage"
     await runtime.on_attribute(device_id, "2/144/4", 230000)
-    assert store.signal_by_key(voltage_key).resend is False  # Vorgabewert
+    assert store.signal_by_key(voltage_key).resend is False  # default value
     sender.sent.clear()
 
     count = await runtime.resend_all()
@@ -964,84 +963,81 @@ async def test_resend_all_ignores_the_resend_flag_and_sends_everything(environme
     assert sender.keys() == [voltage_key]
 ```
 
-- [ ] **Step 2: Tests laufen lassen, bevor `resend_marked` existiert**
+- [ ] **Step 2: Run the tests before `resend_marked` exists**
 
 Run: `pytest tests/loxone/test_runtime.py -k resend_marked -v`
 Expected: FAIL (`AttributeError: 'Runtime' object has no attribute 'resend_marked'`)
 
-- [ ] **Step 3: `resend_all`/`resend_marked`/`_force_resend` in `runtime.py` implementieren**
+- [ ] **Step 3: Implement `resend_all`/`resend_marked`/`_force_resend` in `runtime.py`**
 
-In `src/loxmatter/loxone/runtime.py` den bestehenden `resend_all` ersetzen durch:
+In `src/loxmatter/loxone/runtime.py`, replace the existing `resend_all` with:
 
 ```python
 async def resend_all(self) -> int:
-    """Schickt JEDEN bekannten Wert erneut, an der Entprellung vorbei -
-    unabhaengig vom `resend`-Flag (Entwurf periodischer Resend,
-    2026-09-04, Abschnitt 6). Bleibt bewusst unveraendert der volle
-    Restore-Pfad fuer `/resync` (`loxone.server`) und den Bruecken-Start
-    (`cli.py`, direkt nach `seed_from_snapshot`) - beide muessen nach
-    einem Miniserver-Neustart JEDEN virtuellen Eingang wiederherstellen
-    (Spec 6.4), unabhaengig davon, ob jemand das Signal fuer den
-    periodischen Timer markiert hat. Der periodische Timer selbst ruft
-    stattdessen `resend_marked()` auf, siehe dort.
+    """Sends EVERY known value again, past the debouncing - regardless
+    of the `resend` flag (periodic resend design, 2026-09-04, section
+    6). Deliberately stays unchanged as the full restore path for
+    `/resync` (`loxone.server`) and bridge start (`cli.py`, directly
+    after `seed_from_snapshot`) - both must restore EVERY virtual input
+    after a Miniserver restart (Spec 6.4), regardless of whether anyone
+    marked the signal for the periodic timer. The periodic timer itself
+    calls `resend_marked()` instead, see there.
 
-    Iteriert nur die Schluessel als Momentaufnahme, liest den Wert aber
-    JE SCHLUESSEL erst unmittelbar vor dem Senden aus `_last_values`
-    nach (Review-Fix I4, 2026-09-02). Der alte Code erfasste `(key,
-    value)`-Paare gemeinsam als eine Momentaufnahme und wartete dann -
-    durch die Entprellung im `UdpSender` - bis zu ein paar Sekunden fuer
-    rund 110 Signale. Eine gleichzeitige Aktualisierung waehrend dieser
-    Zeit schrieb ihren neuen Wert schon in `_last_values` und schickte
-    ihn selbst sofort, aber der lang laufende Resend traf mit seiner
-    laengst veralteten Momentaufnahme danach noch einmal ein und
-    ueberschrieb den frischen Wert in Loxone wieder mit dem alten. Der
-    Fehler heilt sich erst beim naechsten echten Update selbst - aber
-    der Ausloeser hier ist `/resync`, verdrahtet an den
-    Systemstart-Baustein, und feuert also genau dann, wenn jemand
-    zusieht.
+    Only iterates the keys as a snapshot, but reads the value from
+    `_last_values` freshly PER KEY only immediately before sending
+    (review fix I4, 2026-09-02). The old code captured `(key, value)`
+    pairs together as one snapshot and then waited - due to the
+    debouncing in `UdpSender` - up to a few seconds for around 110
+    signals. A concurrent update during that time would already write
+    its new value into `_last_values` and send it itself immediately,
+    but the long-running resend, with its long-stale snapshot, would
+    then arrive a second time afterward and overwrite the fresh value
+    in Loxone with the old one again. The bug only heals itself on the
+    next real update - but the trigger here is `/resync`, wired to the
+    system-start block, and therefore fires exactly when someone is
+    watching.
     """
     return await self._force_resend(list(self._last_values))
 
 
 async def resend_marked(self) -> int:
-    """Wie `resend_all`, aber nur fuer Signale mit `resend = true`
-    (Entwurf periodischer Resend, 2026-09-04, Abschnitt 6) - der
-    Gegenpart zu `resend_all`s bewusster Ignoranz dieses Flags. Nur
-    `_resend_loop` ruft diese Methode auf."""
+    """Like `resend_all`, but only for signals with `resend = true`
+    (periodic resend design, 2026-09-04, section 6) - the counterpart
+    to `resend_all`'s deliberate disregard of this flag. Only
+    `_resend_loop` calls this method."""
     keys = self._store.resend_keys()
     return await self._force_resend(keys)
 
 
 async def _force_resend(self, keys: Sequence[str]) -> int:
-    """Gemeinsamer Kern von `resend_all`/`resend_marked` - siehe
-    `resend_all` fuer die Begruendung, warum der Wert JE SCHLUESSEL erst
-    unmittelbar vor dem Senden aus `_last_values` nachgelesen wird
-    (Review-Fix I4)."""
+    """Shared core of `resend_all`/`resend_marked` - see `resend_all`
+    for the reasoning why the value is read from `_last_values` freshly
+    PER KEY only immediately before sending (review fix I4)."""
     count = 0
     for key in keys:
         value = self._last_values.get(key)
         if value is None:
-            # Zwischen der Momentaufnahme der Schluessel oben und diesem
-            # Zugriff kann ein Schluessel theoretisch verschwunden sein -
-            # praktisch nie, aber `_last_values` kennt kein Loeschen, nur
-            # Ueberschreiben. Sicherer Ueberspringen statt eines
-            # `None`-Werts auf der Leitung.
+            # Between the snapshot of the keys above and this access, a
+            # key could theoretically have disappeared - practically
+            # never, but `_last_values` knows no deletion, only
+            # overwriting. Safer to skip than to put a `None` value on
+            # the wire.
             continue
-        # Bewusst kein `_notify_observers(...)` hier (Review-Fix Minor
-        # #3, 2026-09-02): ein Resend verschickt nur Werte, die ein
-        # Beobachter (z. B. die WebUI) laengst als aktuell gesehen hat -
-        # kein neuer Wert, also auch keine neue Benachrichtigung noetig.
+        # Deliberately no `_notify_observers(...)` here (review fix
+        # minor #3, 2026-09-02): a resend only sends values an observer
+        # (e.g. the WebUI) has long since seen as current - not a new
+        # value, so no new notification is needed either.
         await self._sender.send(key, value, force=True)
         count += 1
     return count
 ```
 
-(`Sequence` ist in dieser Datei bereits importiert: `from collections.abc import Callable, Sequence`.)
+(`Sequence` is already imported in this file: `from collections.abc import Callable, Sequence`.)
 
-- [ ] **Step 4: Tests laufen lassen**
+- [ ] **Step 4: Run the tests**
 
 Run: `pytest tests/loxone/test_runtime.py -v`
-Expected: PASS (alle Tests dieser Datei, insbesondere die bestehenden `resend_all`-Tests unverändert grün)
+Expected: PASS (all tests in this file, in particular the existing `resend_all` tests unchanged and green)
 
 - [ ] **Step 5: Commit**
 
@@ -1061,7 +1057,7 @@ EOF
 
 ---
 
-### Task 6: Runtime - `_resend_loop` mit live-konfigurierbarem Intervall
+### Task 6: Runtime - `_resend_loop` with a live-configurable interval
 
 **Files:**
 - Modify: `src/loxmatter/loxone/runtime.py`
@@ -1069,23 +1065,23 @@ EOF
 
 **Interfaces:**
 - Consumes: `Runtime.resend_marked()` (Task 5), `Store.resend_settings.get_interval_seconds()` (Task 2).
-- Produces: `Runtime.__init__(..., *, heartbeat_seconds: float = 30.0, resend_poll_seconds: float = 5.0)` - der bisherige Parameter `resend_seconds` entfällt ersatzlos (kein bestehender Aufrufer nutzt ihn, siehe Suche unten).
+- Produces: `Runtime.__init__(..., *, heartbeat_seconds: float = 30.0, resend_poll_seconds: float = 5.0)` - the previous `resend_seconds` parameter is dropped with no replacement (no existing caller uses it, see the search below).
 
-- [ ] **Step 1: Failing Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-An `tests/loxone/test_runtime.py` anhängen (nach den drei Tests aus Task 5):
+Append to `tests/loxone/test_runtime.py` (after the three tests from task 5):
 
-**Korrektur (beim Ausführen dieses Plans entdeckt, vor Implementierung von
-Task 6):** Die beiden Tests unten riefen ursprünglich
-`store.resend_settings.set_interval_seconds(0.01)` auf, um ein sehr kurzes
-Intervall zu simulieren - das verletzt aber genau die in Task 2 selbst
-eingeführte Untergrenze `MIN_RESEND_INTERVAL_SECONDS = 10.0`
-([resend_settings_store.py](../../../src/loxmatter/model/resend_settings_store.py)) und lässt den echten Setter mit `ValueError`
-scheitern, bevor der Test überhaupt zum eigentlichen Verhalten kommt. Die
-Tests unten nutzen stattdessen `monkeypatch` (in diesem Testmodul bereits an
-anderer Stelle verwendet), um `get_interval_seconds` direkt zu ersetzen -
-das prüft weiterhin, dass `_resend_loop` das Intervall bei JEDEM Poll frisch
-liest, ohne die Untergrenze des echten Setters zu umgehen oder zu senken.
+**Correction (discovered while running this plan, before implementing
+task 6):** the two tests below originally called
+`store.resend_settings.set_interval_seconds(0.01)` to simulate a very
+short interval - but that violates exactly the lower bound
+`MIN_RESEND_INTERVAL_SECONDS = 10.0` introduced in task 2 itself
+([resend_settings_store.py](../../../src/loxmatter/model/resend_settings_store.py)) and makes the real setter fail with
+`ValueError` before the test even gets to the actual behavior under test.
+The tests below instead use `monkeypatch` (already used elsewhere in this
+test module) to replace `get_interval_seconds` directly - that still
+checks that `_resend_loop` reads the interval freshly on EVERY poll,
+without bypassing or lowering the real setter's lower bound.
 
 ```python
 async def test_resend_loop_never_sends_an_unmarked_signal(environment, monkeypatch):
@@ -1110,11 +1106,11 @@ async def test_resend_loop_never_sends_an_unmarked_signal(environment, monkeypat
 
 
 async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(environment, monkeypatch):
-    """Eine Aenderung ueber die WebUI (`PATCH /api/settings/resend-interval`)
-    wirkt innerhalb weniger Sekunden, ohne Prozess-Neustart (Entwurf,
-    Abschnitt 6). `interval` ist ein veraenderliches Dict statt einer freien
-    Variable, weil die monkeypatch-Lambda unten es per Closure lesen muss,
-    nachdem der Test seinen Wert schon geaendert hat."""
+    """A change made through the WebUI (`PATCH /api/settings/resend-interval`)
+    takes effect within a few seconds, without a process restart (design,
+    section 6). `interval` is a mutable dict instead of a plain variable,
+    because the monkeypatch lambda below has to read it via closure after
+    the test has already changed its value."""
     _, sender, store, device_id, _ = environment
     key = f"d{device_id}_2_voltage"
     store.set_resend(key, True)
@@ -1128,16 +1124,16 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
     await runtime.start()
     try:
         await asyncio.sleep(0.09)
-        # `runtime.start()` startet nebenbei auch die Heartbeat-Schleife
-        # (hier mit dem Default `heartbeat_seconds=30.0`), die schon vor
-        # ihrem eigenen ersten Schlaf einmal sendet (siehe `_heartbeat_loop`)
-        # - unabhaengig vom hier getesteten Resend-Intervall. Ohne den Filter
-        # wuerde "bridge_alive" diese Pruefung faelschlich zum Scheitern
-        # bringen, obwohl der Resend selbst (worum es hier geht) noch gar
-        # nicht gelaufen ist. (Beim Ausfuehren dieses Plans entdeckt, vor
-        # Implementierung von Task 6 - derselbe Fund wie die
-        # monkeypatch-Korrektur oben, nur diesmal ein Kollateraleffekt der
-        # Heartbeat-Schleife statt der Store-Validierung.)
+        # `runtime.start()` also starts the heartbeat loop on the side
+        # (here with the default `heartbeat_seconds=30.0`), which already
+        # sends once before its own first sleep (see `_heartbeat_loop`) -
+        # independent of the resend interval under test here. Without the
+        # filter, "bridge_alive" would incorrectly make this check fail,
+        # even though the resend itself (what this test is about) hasn't
+        # run at all yet. (Discovered while running this plan, before
+        # implementing task 6 - the same finding as the monkeypatch
+        # correction above, just this time a side effect of the heartbeat
+        # loop instead of the store validation.)
         assert [k for k in sender.keys() if k != "bridge_alive"] == []
 
         interval["seconds"] = 0.01
@@ -1148,12 +1144,12 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
     assert key in sender.keys()
 ```
 
-- [ ] **Step 2: Tests laufen lassen, bevor die Schleife umgebaut ist**
+- [ ] **Step 2: Run the tests before the loop is reworked**
 
 Run: `pytest tests/loxone/test_runtime.py -k resend_loop -v`
 Expected: FAIL (`TypeError: Runtime.__init__() got an unexpected keyword argument 'resend_poll_seconds'`)
 
-- [ ] **Step 3: `__init__` und `_resend_loop` umbauen**
+- [ ] **Step 3: Rework `__init__` and `_resend_loop`**
 
 In `src/loxmatter/loxone/runtime.py`, `Runtime.__init__`:
 
@@ -1173,21 +1169,21 @@ In `src/loxmatter/loxone/runtime.py`, `Runtime.__init__`:
         self._last_values: dict[str, float | bool] = {}
 ```
 
-(restlicher Rumpf von `__init__` unverändert - nur die Zeile `self._resend_seconds = resend_seconds` entfällt, ersetzt durch `self._resend_poll_seconds = resend_poll_seconds` oben.)
+(the rest of `__init__`'s body is unchanged - only the line `self._resend_seconds = resend_seconds` is dropped, replaced by `self._resend_poll_seconds = resend_poll_seconds` above.)
 
-`_resend_loop` komplett ersetzen durch:
+Fully replace `_resend_loop` with:
 
 ```python
     async def _resend_loop(self) -> None:
-        """Schickt periodisch nur die markierten Signale erneut
-        (`resend_marked`) - anders als der einmalige Voll-Restore bei
-        `/resync` und beim Bruecken-Start (`resend_all`, siehe dort). Das
-        Intervall selbst ist eine zur Laufzeit ueber die WebUI aenderbare
-        Einstellung (`store.resend_settings`, Entwurf periodischer Resend,
-        Abschnitt 4/6) statt einer beim Start fixierten Konstante: dieser
-        Takt liest sie bei JEDEM Poll frisch, alle `resend_poll_seconds`
-        (Default 5s) - eine Aenderung ueber die WebUI wirkt sich damit binnen
-        weniger Sekunden aus, ohne Prozess-Neustart."""
+        """Periodically resends only the marked signals
+        (`resend_marked`) - unlike the one-time full restore on
+        `/resync` and bridge start (`resend_all`, see there). The
+        interval itself is a setting changeable at runtime through the
+        WebUI (`store.resend_settings`, periodic resend design,
+        section 4/6) instead of a constant fixed at start: this cadence
+        reads it freshly on EVERY poll, every `resend_poll_seconds`
+        (default 5s) - a change through the WebUI thereby takes effect
+        within a few seconds, without a process restart."""
         loop = asyncio.get_running_loop()
         last_resend = loop.time()
         while True:
@@ -1204,19 +1200,19 @@ In `src/loxmatter/loxone/runtime.py`, `Runtime.__init__`:
             last_resend = loop.time()
 ```
 
-- [ ] **Step 4: Tests laufen lassen**
+- [ ] **Step 4: Run the tests**
 
 Run: `pytest tests/loxone/test_runtime.py -v`
-Expected: PASS (alle Tests dieser Datei)
+Expected: PASS (all tests in this file)
 
-- [ ] **Step 5: Ganze Testsuite laufen lassen - Suche nach `resend_seconds` als Regressionscheck**
+- [ ] **Step 5: Run the whole test suite - search for `resend_seconds` as a regression check**
 
 ```bash
 grep -rn "resend_seconds=" src/ tests/
 pytest tests/ -v
 ```
 
-Expected: `grep` findet keinen Treffer mehr (der Parameter hiess vorher `resend_seconds`, kein bestehender Aufrufer nutzte ihn als Keyword - siehe Recherche zu Beginn dieses Plans); komplette Suite grün.
+Expected: `grep` finds no more hits (the parameter used to be called `resend_seconds`, no existing caller used it as a keyword - see the research at the start of this plan); the complete suite green.
 
 - [ ] **Step 6: Commit**
 
@@ -1237,7 +1233,7 @@ EOF
 
 ---
 
-### Task 7: WebUI - Checkbox pro Signal und Intervall-Einstellung
+### Task 7: WebUI - checkbox per signal and interval setting
 
 **Files:**
 - Modify: `src/loxmatter/web/index.html`
@@ -1245,19 +1241,19 @@ EOF
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `PATCH /api/signals/{key}` mit `resend` (Task 3), `GET`/`PATCH /api/settings/resend-interval` (Task 4).
-- Produces: keine neuen Programmierschnittstellen - reine Oberflaeche.
+- Consumes: `PATCH /api/signals/{key}` with `resend` (task 3), `GET`/`PATCH /api/settings/resend-interval` (task 4).
+- Produces: no new programming interfaces - pure UI.
 
-- [ ] **Step 1: Failing Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_web.py` anhängen (nach `test_the_signal_view_ships_a_functional_and_an_expert_block`):
+Append to `tests/api/test_web.py` (after `test_the_signal_view_ships_a_functional_and_an_expert_block`):
 
 ```python
 async def test_the_signal_row_offers_a_resend_checkbox(api):
-    """Periodischer Resend als Opt-in (Entwurf 2026-09-04) - dieselbe Art
-    Beleg wie beim Funktional/Experte-Test oben: nur, dass die Bausteine
-    ausgeliefert werden und `signal.resend` lesen/schreiben, nicht dass
-    Alpine sie zur Laufzeit korrekt rendert (siehe dortiger Docstring)."""
+    """Periodic resend as opt-in (design 2026-09-04) - the same kind of
+    proof as the functional/expert test above: only that the elements
+    are delivered and read/write `signal.resend`, not that Alpine
+    renders them correctly at runtime (see the docstring there)."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     page = (await client.get("/")).text
@@ -1273,14 +1269,14 @@ async def test_the_settings_view_offers_a_resend_interval_field(api):
     assert "saveResendInterval" in script
 ```
 
-- [ ] **Step 2: Test laufen lassen, bevor die Oberfläche angepasst ist**
+- [ ] **Step 2: Run the test before the UI is adapted**
 
 Run: `pytest tests/api/test_web.py -k resend -v`
-Expected: FAIL (`assert "toggleResend" in script` etc. schlagen fehl, Bausteine existieren noch nicht)
+Expected: FAIL (`assert "toggleResend" in script` etc. fail, the elements don't exist yet)
 
-- [ ] **Step 3: Checkbox in `index.html` ergänzen**
+- [ ] **Step 3: Add the checkbox in `index.html`**
 
-In `src/loxmatter/web/index.html`, direkt nach dem bestehenden „exportieren"-Label (im Block um `toggleExported`):
+In `src/loxmatter/web/index.html`, directly after the existing "exportieren" label (in the block around `toggleExported`):
 
 ```html
                             <label x-show="signal.exportable">
@@ -1306,11 +1302,11 @@ In `src/loxmatter/web/index.html`, direkt nach dem bestehenden „exportieren"-L
                             ></span>
 ```
 
-(Kein `x-show="signal.exportable"` auf der neuen Checkbox: ein Resend ist auch für ein Signal sinnvoll, das nicht exportierbar - aber `resend` nicht das gleiche wie `exported` ist. Anders als beim Export-Haken gibt es hier keine technische Einschränkung, die eine Checkbox ausblenden müsste.)
+(No `x-show="signal.exportable"` on the new checkbox: a resend also makes sense for a signal that is not exportable - but `resend` is not the same as `exported`. Unlike the export checkbox, there is no technical restriction here that would need to hide a checkbox.)
 
-- [ ] **Step 4: Intervall-Feld in `index.html` ergänzen**
+- [ ] **Step 4: Add the interval field in `index.html`**
 
-Die bestehende Platzhalter-Karte am Ende der Einstellungen-Ansicht ersetzen:
+Replace the existing placeholder card at the end of the settings view:
 
 ```html
         <div class="card">
@@ -1334,9 +1330,9 @@ Die bestehende Platzhalter-Karte am Ende der Einstellungen-Ansicht ersetzen:
         </div>
 ```
 
-- [ ] **Step 5: `app.js` um Zustand und Methoden ergänzen**
+- [ ] **Step 5: Extend `app.js` with state and methods**
 
-In `src/loxmatter/web/app.js`, `data()`-Objekt direkt nach `settingsError: null,`:
+In `src/loxmatter/web/app.js`, the `data()` object directly after `settingsError: null,`:
 
 ```js
     resendInterval: { interval_seconds: 300 },
@@ -1345,7 +1341,7 @@ In `src/loxmatter/web/app.js`, `data()`-Objekt direkt nach `settingsError: null,
     resendIntervalError: null,
 ```
 
-In `startApp()`, die bestehende `Promise.all([...])` um den neuen Ladeaufruf ergänzen:
+In `startApp()`, extend the existing `Promise.all([...])` with the new loading call:
 
 ```js
       await Promise.all([
@@ -1357,7 +1353,7 @@ In `startApp()`, die bestehende `Promise.all([...])` um den neuen Ladeaufruf erg
       ]);
 ```
 
-Direkt nach `toggleExported(signal) { ... }` die neue Methode:
+Directly after `toggleExported(signal) { ... }`, the new method:
 
 ```js
     async toggleResend(signal) {
@@ -1372,7 +1368,7 @@ Direkt nach `toggleExported(signal) { ... }` die neue Methode:
     },
 ```
 
-Direkt nach `saveSettings() { ... }` (Ende des „Einstellungen"-Abschnitts) die beiden neuen Methoden:
+Directly after `saveSettings() { ... }` (end of the "settings" section), the two new methods:
 
 ```js
     async loadResendInterval() {
@@ -1401,18 +1397,18 @@ Direkt nach `saveSettings() { ... }` (Ende des „Einstellungen"-Abschnitts) die
     },
 ```
 
-- [ ] **Step 6: Tests laufen lassen**
+- [ ] **Step 6: Run the tests**
 
 Run: `pytest tests/api/test_web.py -v`
-Expected: PASS (alle Tests dieser Datei, keine Regression bei den bestehenden Signal-/Einstellungen-Prüfungen)
+Expected: PASS (all tests in this file, no regression on the existing signal/settings checks)
 
-- [ ] **Step 7: Manuell im Browser verifizieren**
+- [ ] **Step 7: Verify manually in the browser**
 
 ```bash
 python -m loxmatter run --miniserver 127.0.0.1 --url ws://localhost:5580/ws
 ```
 
-Im Browser `http://localhost:8080` öffnen, ein Gerät aufklappen: die neue Checkbox „periodisch erneut senden" muss neben „exportieren" erscheinen und beim Klick per Netzwerk-Tab sichtbar `PATCH /api/signals/...` mit `{"resend": true}` senden. Im Tab „Einstellungen" muss die neue Karte „Periodischer Resend" ein Intervall-Feld zeigen, „Speichern" muss `PATCH /api/settings/resend-interval` auslösen und eine Bestätigung einblenden.
+Open `http://localhost:8080` in the browser, expand a device: the new "periodisch erneut senden" checkbox must appear next to "exportieren" and, on click, visibly send `PATCH /api/signals/...` with `{"resend": true}` in the network tab. In the "Einstellungen" tab, the new "Periodischer Resend" card must show an interval field, "Speichern" must trigger `PATCH /api/settings/resend-interval` and show a confirmation.
 
 - [ ] **Step 8: Commit**
 
@@ -1433,17 +1429,17 @@ EOF
 
 ## Self-Review
 
-**Spec-Abdeckung** (gegen `docs/superpowers/specs/2026-09-04-periodic-resend-design.md`):
+**Spec coverage** (against `docs/superpowers/specs/2026-09-04-periodic-resend-design.md`):
 
-- Abschnitt 4 (Datenmodell: `signal.resend`, `Store.set_resend`, `ResendSettingsStore`) → Task 1, Task 2.
-- Abschnitt 5 (API: `PATCH /api/signals/{key}` um `resend` erweitert, neuer Intervall-Endpunkt mit Untergrenze) → Task 3, Task 4.
-- Abschnitt 6 (Runtime: `resend_all()` unverändert, `resend_marked()` neu, `_resend_loop` live-konfigurierbar) → Task 5, Task 6.
-- Abschnitt 7 (synthetische Keys außen vor, kein CLI-Flag) → erfüllt sich von selbst: `resend_keys()` fragt ausschließlich die `signal`-Tabelle ab (Task 1), der Online-Key/Pulszähler/Heartbeat leben nie dort; kein Task fügt ein CLI-Flag hinzu.
-- Abschnitt 8 (Oberfläche: Checkbox, Intervall-Feld) → Task 7.
-- Abschnitt 9 (Prüfung) → jeder dort genannte Fall hat einen konkreten Test in Task 1, 3, 5 oder 6.
+- Section 4 (data model: `signal.resend`, `Store.set_resend`, `ResendSettingsStore`) → task 1, task 2.
+- Section 5 (API: `PATCH /api/signals/{key}` extended with `resend`, new interval endpoint with a lower bound) → task 3, task 4.
+- Section 6 (runtime: `resend_all()` unchanged, `resend_marked()` new, `_resend_loop` live-configurable) → task 5, task 6.
+- Section 7 (synthetic keys excluded, no CLI flag) → satisfied automatically: `resend_keys()` queries exclusively the `signal` table (task 1), the online key/pulse counter/heartbeat never live there; no task adds a CLI flag.
+- Section 8 (UI: checkbox, interval field) → task 7.
+- Section 9 (verification) → every case named there has a concrete test in task 1, 3, 5, or 6.
 
-**Platzhalter-Scan:** keine `TBD`/`TODO`/„siehe oben, analog" ohne ausgeschriebenen Code - jeder Schritt enthält den vollständigen Code oder das vollständige Testskript.
+**Placeholder scan:** no `TBD`/`TODO`/"see above, analogous" without spelled-out code - every step contains the complete code or the complete test script.
 
-**Typkonsistenz:** `Sequence[str]` für `_force_resend` deckt sowohl `list(self._last_values)` (Dict-Keys-View zu Liste, in `resend_all`) als auch `list[str]` (`Store.resend_keys()`-Rückgabetyp, in `resend_marked`) ab. `ResendIntervalOut`/`ResendIntervalIn.interval_seconds` sind durchgängig `float`, passend zu `ResendSettingsStore.get_interval_seconds() -> float`/`set_interval_seconds(seconds: float)`. `SignalOut.resend`/`SignalPatch.resend` und `StoredSignal.resend` sind durchgängig `bool`.
+**Type consistency:** `Sequence[str]` for `_force_resend` covers both `list(self._last_values)` (dict-keys view converted to a list, in `resend_all`) and `list[str]` (`Store.resend_keys()`'s return type, in `resend_marked`). `ResendIntervalOut`/`ResendIntervalIn.interval_seconds` are `float` throughout, matching `ResendSettingsStore.get_interval_seconds() -> float`/`set_interval_seconds(seconds: float)`. `SignalOut.resend`/`SignalPatch.resend` and `StoredSignal.resend` are `bool` throughout.
 
-Execution Handoff folgt nach diesem Dokument.
+Execution handoff follows after this document.

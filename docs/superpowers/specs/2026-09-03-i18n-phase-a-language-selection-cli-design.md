@@ -1,62 +1,62 @@
-# Internationalisierung, Phase A: Sprachwahl-Infrastruktur + CLI
+# Internationalization, phase A: language-selection infrastructure + CLI
 
-Entwurf, 3. September 2026. Erster Teil einer dreiteiligen Internationalisierung
-(Wunsch: Grundsprache Englisch, umschaltbar auf Deutsch — bisher war jeder
-Nutzertext im Projekt ausschließlich Deutsch). Diese Phase baut die
-Sprachwahl-Infrastruktur und übersetzt die CLI vollständig; Phase B (API +
-WebUI, wegen geteilter Fehlertexte zusammen) und Phase C (Texte in den
-generierten Loxone-Vorlagen) folgen als eigene Entwürfe und Umsetzungen und
-nutzen die hier gebaute Infrastruktur unverändert weiter.
+Design, September 3, 2026. First part of a three-part internationalization
+(desired outcome: base language English, switchable to German — until now
+every user-facing text in the project was exclusively German). This phase
+builds the language-selection infrastructure and translates the CLI in
+full; phase B (API + WebUI, together because of shared error text) and
+phase C (text in the generated Loxone templates) follow as their own
+designs and implementations and go on using the infrastructure built here
+unchanged.
 
-Dieser Entwurf ändert **nicht** die Sprache des Projekts selbst — Quelltext-
-Kommentare, Docstrings und die Entwurfsdokumente unter `docs/superpowers/specs/`
-bleiben Deutsch, wie in [[user-lucien-loxmatter]] festgehalten. Es geht
-ausschließlich um Text, den ein Betreiber oder Nutzer der Bridge zu Gesicht
-bekommt.
+This design does **not** change the language of the project itself — source
+comments, docstrings, and the design documents under `docs/superpowers/specs/`
+stay German, as recorded in [[user-lucien-loxmatter]]. It is exclusively
+about text that an operator or user of the bridge sees.
 
-## 1. Ziel
+## 1. Goal
 
-Eine einzige, dauerhafte Spracheinstellung pro Installation (nicht pro
-CLI-Aufruf, nicht pro Browser) mit den Werten `en` (Vorgabe) und `de`, die
-später sowohl die CLI-Ausgabe als auch die WebUI steuert. In dieser Phase:
-die Einstellung selbst, ihr Speicherort, ihre Auflösung, und ein
-wiederverwendbarer Übersetzungsmechanismus — erprobt an der kompletten CLI
-(`src/loxmatter/cli.py`, aktuell rund 60 deutsche Zeichenketten: 25
-`help=`-Texte, 15 `typer.echo`-Meldungen, 20 `_fail`-Fehlermeldungen).
+A single, persistent language setting per installation (not per CLI call,
+not per browser) with the values `en` (default) and `de`, which later
+controls both the CLI output and the WebUI. In this phase: the setting
+itself, where it is stored, how it is resolved, and a reusable translation
+mechanism — proven against the complete CLI (`src/loxmatter/cli.py`,
+currently around 60 German strings: 25 `help=` texts, 15 `typer.echo`
+messages, 20 `_fail` error messages).
 
-## 2. Nicht-Ziele dieser Phase
+## 2. Non-goals of this phase
 
-- **WebUI** (`src/loxmatter/web/`) und **API-Fehlermeldungen**
-  (`HTTPException(..., detail=...)` in `src/loxmatter/api/*.py`) — folgen in
-  Phase B. Beide hängen zusammen: `app.js` zeigt `detail`-Texte direkt als
-  Meldung an (siehe `readErrorDetail` in `app.js`), eine Trennung der beiden
-  Oberflächen ergäbe keinen sauberen Schnitt.
-- **Text in exportierten Loxone-Vorlagen** (`export/signals.py`,
-  `export/xml.py` — `title`/`comment`-Felder, die in Loxone Config selbst
-  sichtbar werden) — folgt in Phase C. Eigene Fragen dort: in welcher Sprache
-  ein Anwender seine Loxone-Config typischerweise führt, ob ein rückwirkender
-  Sprachwechsel bestehende Vorlagen berühren darf.
-- **Das von Typer/Click selbst erzeugte Gerüst** einer `--help`-Ausgabe
-  (`Usage:`, `Options:`, `Arguments:`, das Wort „Error“ vor einer
-  `_fail`-Meldung) bleibt dauerhaft Englisch — das ist eine Grenze des
-  verwendeten Frameworks (Click liefert dafür keine praktikable
-  Übersetzungsschnittstelle), keine offene Aufgabe für eine spätere Phase.
-- Kein automatisierter Übersetzungs-Workflow (keine Extraktion aus dem
-  Quelltext, kein Übersetzungsdienst) — bei rund 60 Zeichenketten in dieser
-  Phase wird von Hand übersetzt und gepflegt.
+- **WebUI** (`src/loxmatter/web/`) and **API error messages**
+  (`HTTPException(..., detail=...)` in `src/loxmatter/api/*.py`) — follow in
+  phase B. The two are linked: `app.js` shows `detail` text directly as a
+  message (see `readErrorDetail` in `app.js`); splitting the two surfaces
+  would not give a clean cut.
+- **Text in exported Loxone templates** (`export/signals.py`,
+  `export/xml.py` — `title`/`comment` fields that become visible in Loxone
+  Config itself) — follows in phase C. Separate questions there: which
+  language a user typically maintains their Loxone Config in, whether a
+  retroactive language switch may touch existing templates.
+- **The scaffolding that Typer/Click itself generates** for a `--help`
+  output (`Usage:`, `Options:`, `Arguments:`, the word "Error" before a
+  `_fail` message) stays English permanently — that is a limit of the
+  framework in use (Click offers no practical translation hook for it),
+  not an open task for a later phase.
+- No automated translation workflow (no extraction from source, no
+  translation service) — with around 60 strings in this phase, translation
+  is done and maintained by hand.
 
-## 3. Übersetzungsmechanismus
+## 3. Translation mechanism
 
-Neues Paket `src/loxmatter/i18n/`:
+New package `src/loxmatter/i18n/`:
 
 ```
 i18n/
   __init__.py    t(), resolve_language(), SUPPORTED_LANGUAGES
-  strings.yaml   Uebersetzungstabelle
+  strings.yaml   translation table
 ```
 
-`strings.yaml` ist eine flache Tabelle mit punktierten Namensräumen, ein
-Eintrag pro Zeichenkette:
+`strings.yaml` is a flat table with dotted namespaces, one entry per
+string:
 
 ```yaml
 cli.inspect.help_node:
@@ -67,114 +67,110 @@ cli.export.fail_matter_unreachable:
   de: "matter-server unter {url} nicht erreichbar — läuft der Dienst?"
 ```
 
-Der Namensraum `cli.*` deckt diese Phase ab; Phase B ergänzt `api.*` und
-`web.*` in derselben Datei, ohne dass diese Phase etwas umbauen muss —
-genau deshalb eine flache, punktierte Tabelle statt einer Datenstruktur, die
-an die CLI gebunden ist.
+The `cli.*` namespace covers this phase; phase B adds `api.*` and `web.*`
+in the same file, without this phase having to restructure anything —
+that is exactly why it is a flat, dotted table rather than a data
+structure tied to the CLI.
 
-**Begründung für YAML statt `gettext`:** `gettext` ist Industriestandard,
-verlangt aber `.po`/`.mo`-Kataloge und ein Extraktions-/Kompilierwerkzeug
-(typischerweise `babel`) — zusätzliche Maschinerie für zwei von Hand
-gepflegte Sprachen. PyYAML ist bereits eine Abhängigkeit
-(`pyproject.toml`), und `profiles/clusters.yaml` etabliert bereits das
-Muster „Fachdaten in YAML, kein Python". Kein neues Paket, kein Build-Schritt.
+**Reasoning for YAML over `gettext`:** `gettext` is the industry standard,
+but requires `.po`/`.mo` catalogs and an extraction/compile tool
+(typically `babel`) — extra machinery for two hand-maintained languages.
+PyYAML is already a dependency (`pyproject.toml`), and
+`profiles/clusters.yaml` already establishes the pattern "domain data in
+YAML, no Python". No new package, no build step.
 
 `t()`:
 
 ```python
 def t(key: str, **values: object) -> str:
-    entry = _STRINGS[key]  # KeyError = Programmierfehler, soll auffallen
+    entry = _STRINGS[key]  # KeyError = programming error, meant to surface
     template = entry.get(_current_language(), entry["en"])
     return template.format(**values)
 ```
 
-Fehlt die deutsche Übersetzung eines vorhandenen Schlüssels, liefert `t()`
-automatisch die englische — nie ein Absturz wegen einer fehlenden
-Übersetzung, nur wegen eines fehlenden *Schlüssels* (Tippfehler beim
-Aufrufer), was ein Test abfangen soll, kein Nutzer je zu Gesicht bekommt.
-`.format(**values)` deckt jede heutige Interpolation ab (Pfade, URLs,
-Node-IDs, Exception-Text) — keiner der ~60 Aufrufe braucht mehr als
-benannte Platzhalter.
+If the German translation of an existing key is missing, `t()`
+automatically returns the English one — never a crash for a missing
+*translation*, only for a missing *key* (a typo at the call site), which a
+test is meant to catch, and which no user ever sees. `.format(**values)`
+covers every interpolation used today (paths, URLs, node IDs, exception
+text) — none of the ~60 calls need more than named placeholders.
 
-## 4. Speicherort und Auflösung der Spracheinstellung
+## 4. Storage location and resolution of the language setting
 
-Kein neues Tabellenschema: die generische `setting`-Tabelle
-(`model/store.py`, bereits Grundlage von `AuthStore` und
-`BridgeSettingsStore`) bekommt einen weiteren Schlüssel, `"language"`. Neue
-Klasse `model/locale_store.py::LocaleStore`, nach demselben Muster:
+No new table schema: the generic `setting` table (`model/store.py`,
+already the basis for `AuthStore` and `BridgeSettingsStore`) gets one more
+key, `"language"`. New class `model/locale_store.py::LocaleStore`,
+following the same pattern:
 
 ```python
 class LocaleStore:
-    def get_language(self) -> str: ...  # "en", falls nichts gespeichert
+    def get_language(self) -> str: ...  # "en" if nothing is stored
     def set_language(self, language: str) -> None: ...
 ```
 
-**Auflösung** (jeder CLI-Aufruf ist ein neuer Prozess, die Sprache wird
-einmal beim Modulstart von `cli.py` bestimmt — auch für `--help`):
+**Resolution** (every CLI call is a new process, the language is
+determined once at module start of `cli.py` — including for `--help`):
 
-1. `LOXMATTER_LANG` (Umgebungsvariable, wie `LOXMATTER_STORE` und
-   `LOXMATTER_API_TOKEN`): ein gültiger Wert (`en`/`de`, Groß-/Kleinschreibung
-   ignoriert) gilt für diesen einen Prozess und schlägt alles Folgende.
-   Ändert die gespeicherte Einstellung nicht.
-2. Sonst: die in der Datenbank gespeicherte Einstellung, falls die
-   Datenbankdatei existiert und lesbar ist — Pfadauflösung identisch zu
-   `_resolve_store_path` (dieselbe Rangfolge `--store-path` >
-   `LOXMATTER_STORE` > Standardpfad).
-3. Sonst: `en`.
+1. `LOXMATTER_LANG` (environment variable, like `LOXMATTER_STORE` and
+   `LOXMATTER_API_TOKEN`): a valid value (`en`/`de`, case-insensitive)
+   applies to this one process and beats everything that follows. Does not
+   change the stored setting.
+2. Otherwise: the setting stored in the database, if the database file
+   exists and is readable — path resolution identical to
+   `_resolve_store_path` (the same precedence `--store-path` >
+   `LOXMATTER_STORE` > default path).
+3. Otherwise: `en`.
 
-Eine ungültige `LOXMATTER_LANG`-Umgebungsvariable (weder `en` noch `de`,
-Groß-/Kleinschreibung ignoriert) erzeugt eine Warnung auf stderr und fällt
-auf Schritt 2/3 zurück — kein Abbruch, denn ein sinnvoller Standard existiert
-immer.
+An invalid `LOXMATTER_LANG` environment variable (neither `en` nor `de`,
+case-insensitive) produces a warning on stderr and falls back to step 2/3
+— no abort, since a sensible default always exists.
 
-Schritt 2 öffnet dafür beim Modulimport von `cli.py` kurz die Datenbank
-(read-only genügt) und liest genau einen Schlüssel. Fehlt die Datei, ist sie
-kaputt, oder fehlt die Berechtigung — jeder dieser Fälle fällt still auf `en`
-zurück, exakt wie andere Stellen in `cli.py` bereits eine fehlende oder
-unlesbare Datenbank behandeln. `--help` funktioniert dadurch unverändert
-ohne jede Vorbereitung, auch bei einer frischen Installation ganz ohne
-Datenbank.
+For that, step 2 briefly opens the database at module import of `cli.py`
+(read-only is enough) and reads exactly one key. If the file is missing,
+corrupted, or unreadable — each of those cases silently falls back to `en`,
+exactly as other places in `cli.py` already handle a missing or unreadable
+database. `--help` therefore keeps working with no preparation at all,
+even on a fresh installation with no database whatsoever.
 
-## 5. CLI-Integration
+## 5. CLI integration
 
-Alle ~60 Zeichenketten in `cli.py` wandern hinter `t("cli.<command>.<zweck>")`.
-Ein neuer Befehl setzt die Einstellung:
+All ~60 strings in `cli.py` move behind `t("cli.<command>.<purpose>")`. A
+new command sets the setting:
 
 ```bash
 loxmatter set-language en
 loxmatter set-language de
 ```
 
-Kein Passwort-artiger „Notausgang" wie `set-password` (kein Geheimnis, keine
-Bestätigungseingabe) — bis Phase B der WebUI eine eigene Umschaltfläche
-gibt, ist dieser Befehl der einzige Weg, die gespeicherte Einstellung zu
-ändern. Er verlangt wie `set-password` eine **vorhandene** Datenbank (`_fail`,
-falls nicht) — dieselbe Begründung: eine neue, leere Fremddatenbank auf dem
-Host anzulegen wäre bei einer containerisierten Installation (`LOXMATTER_STORE`
-nur innerhalb des Containers erreichbar) ein stiller Fehlschlag mit
-gemeldetem Erfolg.
+Not a password-like "emergency exit" the way `set-password` is (no secret,
+no confirmation entry) — until phase B gives the WebUI its own toggle,
+this command is the only way to change the stored setting. Like
+`set-password`, it requires an **existing** database (`_fail` otherwise) —
+same reasoning: creating a new, empty database out of thin air on the host
+would, for a containerized installation (`LOXMATTER_STORE` only reachable
+inside the container), be a silent failure reported as a success.
 
 ## 6. Tests
 
-Rund zehn bestehende Assertions auf wörtlichen deutschen CLI-Text
-(`tests/test_cli.py`, `tests/test_export_cli.py`) werden auf den neuen
-englischen Standardtext angepasst — Englisch ist ab dieser Phase die
-Standardausgabe, diese Tests prüfen unverändert *dass* eine bestimmte
-Meldung erscheint, nur in der neuen Standardsprache.
+Around ten existing assertions on literal German CLI text
+(`tests/test_cli.py`, `tests/test_export_cli.py`) are adjusted to the new
+English default text — English is the default output from this phase on,
+these tests unchanged check *that* a particular message appears, just in
+the new default language.
 
-Neu: `tests/test_i18n.py` prüft den Mechanismus selbst, unabhängig von der
-CLI — Interpolation, Rückfall auf Englisch bei fehlender Übersetzung,
-`LOXMATTER_LANG`-Override, Verhalten bei ungültigem Wert. Ergänzend ein
-kleiner Satz CLI-Tests, die gezielt mit `LOXMATTER_LANG=de` laufen und
-mindestens je eine `help=`-, `echo`-, und `_fail`-Meldung auf deutschen Text
-prüfen — als Beleg, dass die Übersetzung tatsächlich ankommt, nicht als
-Vollabdeckung aller ~60 Zeichenketten in beiden Sprachen.
+New: `tests/test_i18n.py` checks the mechanism itself, independent of the
+CLI — interpolation, fallback to English when a translation is missing,
+`LOXMATTER_LANG` override, behavior on an invalid value. In addition, a
+small set of CLI tests that run specifically with `LOXMATTER_LANG=de` and
+check at least one `help=`, `echo`, and `_fail` message each for German
+text — as evidence that the translation actually arrives, not as full
+coverage of all ~60 strings in both languages.
 
-## 7. Ausblick
+## 7. Outlook
 
-Phase B (API + WebUI) und Phase C (Loxone-Vorlagentexte) sind eigene,
-spätere Entwürfe. Beide setzen ausschließlich auf das hier gebaute
-`i18n`-Paket und die `LocaleStore`-Auflösung auf — für die WebUI kommt hinzu,
-wie ein langlebiger Serverprozess eine zur Laufzeit geänderte Einstellung
-ausliefert (anders als die CLI, die pro Aufruf neu startet), das ist
-Gegenstand von Phase B, nicht dieser Infrastruktur.
+Phase B (API + WebUI) and phase C (Loxone template text) are their own,
+later designs. Both build exclusively on the `i18n` package and the
+`LocaleStore` resolution built here — for the WebUI there is the added
+question of how a long-lived server process delivers a setting changed at
+runtime (unlike the CLI, which starts fresh per call); that is the subject
+of phase B, not of this infrastructure.

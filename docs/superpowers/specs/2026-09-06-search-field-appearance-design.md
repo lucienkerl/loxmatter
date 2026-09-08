@@ -1,150 +1,151 @@
-# Suchfeld der Geräteansicht: eigene Gestalt statt Systemkasten
+# Search field of the device view: its own shape instead of a system box
 
-Entwurf, 6. September 2026. Betrifft die Raumleiste aus
-[dem Geräte-Tab-Entwurf](2026-09-05-devices-tab-rooms-and-tile-grid-design.md),
-Abschnitt 6.3 — dort ist das Suchfeld eingeführt worden, aber nie gestaltet.
+Design, September 6, 2026. Concerns the room bar from
+[the devices-tab design](2026-09-05-devices-tab-rooms-and-tile-grid-design.md),
+section 6.3 — the search field was introduced there, but never styled.
 
-## 1. Das Problem
+## 1. The problem
 
-Das Suchfeld fällt durch das CSS-Raster. Die Formularregel in `style.css`
-listet `input[type="text"]`, `[type="number"]`, `[type="password"]` und
-`select` — `search` steht nicht darunter. `.device-search` setzt nur
-`min-width` und `font-size`. Alles Übrige zeichnet der Browser selbst:
-eckige Ecken, sein eigener Rahmen, seine eigene Schrift.
+The search field falls through the CSS grid. The form rule in `style.css`
+lists `input[type="text"]`, `[type="number"]`, `[type="password"]` and
+`select` — `search` is not among them. `.device-search` only sets
+`min-width` and `font-size`. Everything else is drawn by the browser
+itself: square corners, its own border, its own font.
 
-Im Dunkelmodus greift damit **keine** der Projektfarben. Der Kasten holt
-sich Hintergrund und Textfarbe aus dem Systemstil, und `color-scheme: light
-dark` rettet nur den groben Kontrast, nicht die Zugehörigkeit — das Feld
-gehört sichtbar nicht zu der Oberfläche, in der es steht.
+In dark mode, therefore, **none** of the project's colors apply. The box
+takes its background and text color from the system style, and
+`color-scheme: light dark` only rescues the rough contrast, not the sense
+of belonging — the field visibly does not belong to the UI it sits in.
 
-Auf dem Dashboard-Screenshot sieht man es unmittelbar: rechts oben steht
-ein kantiger Systemkasten in einer Zeile, die sonst aus gerundeten Chips
-besteht.
+On the dashboard screenshot you can see it immediately: a boxy system
+element sits at top right in a row that otherwise consists of rounded
+chips.
 
-Dazu fehlt jedes Zeichen, *dass* es eine Suche ist. Keine Lupe. Kein eigenes
-Löschkreuz — nur das browserabhängige, das WebKit einblendet und Firefox
-nicht. Kein Fokusring aus der Palette. Und keine Rückmeldung, ob die Suche
-überhaupt greift: bei vielen Geräten muss man scrollen, um zu sehen, dass
-nichts übrig blieb.
+On top of that, there is no sign whatsoever *that* it is a search. No
+magnifying glass. No dedicated clear button — only the browser-dependent
+one that WebKit shows and Firefox does not. No focus ring from the
+palette. And no feedback on whether the search is even taking effect: with
+many devices, you have to scroll to see that nothing was left.
 
-## 2. Die Randbedingung
+## 2. The constraint
 
-Der Kopfkommentar von `style.css` hält fest, dass diese Oberfläche **bewusst
-schmucklos** ist: „Klarheit vor Wirkung — Farbe wird nur eingesetzt, wo sie
-eine Bedeutung trägt, nicht als Dekoration."
+The header comment of `style.css` records that this UI is **deliberately
+unadorned**: "Clarity over impact - colour is only used where it carries
+meaning, not as decoration."
 
-Dieser Entwurf ändert daran nichts. „Schicker" heißt hier *sauber und
-selbsterklärend*, nicht *dekoriert*. Es kommt keine Farbe hinzu, die nicht
-schon einen Zustand bezeichnet: die Akzentfarbe markiert den Fokus, alles
-andere ist Rahmen, Fläche und gedämpfter Text aus den vorhandenen Variablen.
+This design changes nothing about that. "Nicer" here means *clean and
+self-explanatory*, not *decorated*. No color is added that does not
+already denote a state: the accent color marks focus, everything else is
+border, surface, and muted text from the existing variables.
 
-## 3. Was unverändert bleibt
+## 3. What stays unchanged
 
-- **Die Suchlogik.** `matchesSearch()`, `visibleDevices()` und
-  `hitsOutsideRoom()` bekommen kein Zeichen. Der Zähler liest nur, was
-  ohnehin schon gerechnet wird.
-- **Die Raum-Chips.** Ihre Zahlen bleiben Raumgrößen und folgen der Suche
-  nicht. Ein Chip beantwortet „wie groß ist dieser Raum", der Zähler
-  beantwortet „wie viele Treffer stehen unten" — zwei Fragen, zwei Zahlen,
-  an zwei Orten.
-- **Der Hinweis „N weitere Treffer in anderen Räumen"** unter der Leiste,
-  samt seinem Link auf alle Räume.
-- **`deviceSearch`** als das eine Feld, an dem alles hängt.
+- **The search logic.** `matchesSearch()`, `visibleDevices()` and
+  `hitsOutsideRoom()` get no changes. The counter only reads what is
+  already being computed anyway.
+- **The room chips.** Their numbers stay room sizes and do not follow the
+  search. A chip answers "how big is this room", the counter answers "how
+  many matches are shown below" — two questions, two numbers, in two
+  places.
+- **The note "N more matches in other rooms"** below the bar, along with
+  its link to all rooms.
+- **`deviceSearch`** as the one field everything hangs off.
 
-## 4. Der Aufbau
+## 4. The structure
 
-Ein Flex-Container mit vier Kindern in einer Reihe:
+A flex container with four children in a row:
 
 ```
 ┌──────────────────────────────────────────────┐
-│ 🔍  Name, Kategorie, Raum suchen   3 Treffer ✕│
+│ 🔍  Search by name, category, room   3 found ✕│
 └──────────────────────────────────────────────┘
 ```
 
-**Der Rahmen sitzt am Container, nicht am Feld.** Das ist die tragende
-Entscheidung dieses Entwurfs. Das `<input>` darin ist rand- und
-hintergrundlos; Lupe, Zähler und Kreuz sind seine Geschwister im selben
-Flex-Fluss. Daraus folgt dreierlei ohne weiteres Zutun:
+**The border sits on the container, not on the field.** That is the
+load-bearing decision of this design. The `<input>` inside it is
+borderless and background-less; the magnifying glass, counter, and cross
+are its siblings in the same flex flow. Three things follow from that
+without any further effort:
 
-- Keine der drei Beigaben braucht absolute Positionierung, also auch kein
-  Polster, das zur Icongröße passen muss. Jede solche Zahl wäre eine
-  Kopplung, die beim nächsten Schriftgrößen-Dreh bricht.
-- Der Fokusring hängt per `:focus-within` am Container und umschließt damit
-  die ganze Gruppe. Läge er am `input:focus`, umschlösse er nur deren Mitte
-  — sichtbar falsch, sobald Lupe und Kreuz dabei sind.
-- Die Gruppe wächst mit der Schriftgröße mit, weil alle Maße in `em`/`rem`
-  stehen und `.icon` ohnehin `1.1em` misst.
+- None of the three additions needs absolute positioning, and therefore no
+  padding number that has to match the icon size. Any such number would be
+  a coupling that breaks on the next font-size change.
+- The focus ring hangs off the container via `:focus-within` and therefore
+  encloses the whole group. If it sat on `input:focus`, it would enclose
+  only their middle — visibly wrong as soon as the magnifying glass and
+  cross are present.
+- The group grows with the font size, because all measurements are in
+  `em`/`rem` and `.icon` already measures `1.1em`.
 
-**Ein `<div>`, kein `<label>`.** Ein `<button>` innerhalb eines Labels löst
-dessen Weiterleitung an das gelabelte Bedienelement mit aus; das Löschen
-soll ein Klick sein, nicht zwei Ereignisse. Der Preis ist ein schmaler
-Streifen Polster, der nicht ins Feld fokussiert — vier Pixel, gegen eine
-Ereignis-Doppelung eingetauscht.
+**A `<div>`, not a `<label>`.** A `<button>` inside a label also triggers
+that label's forwarding to the labeled control; clearing should be one
+click, not two events. The price is a narrow strip of padding that does
+not focus into the field — four pixels, traded for an event duplication.
 
-Die Lupe bekommt `pointer-events: none`, damit sie kein Klickloch in die
-linke Kante schlägt.
+The magnifying glass gets `pointer-events: none`, so it does not punch a
+click hole into the left edge.
 
-## 5. Die Symbole
+## 5. The icons
 
-Die Lupe kommt als neues `#i-search` in den bestehenden Inline-Sprite in
-`index.html` — gleiche Strichtechnik wie `#i-rename` und die
-Kategorie-Icons: nur Pfade, `fill: none`, `currentColor`. Weiterhin inline
-und ohne Icon-Bibliothek, aus demselben Grund wie das eingecheckte
-`vendor/alpine.min.js`: die Oberfläche läuft offline.
+The magnifying glass arrives as a new `#i-search` in the existing inline
+sprite in `index.html` — the same stroke technique as `#i-rename` and the
+category icons: paths only, `fill: none`, `currentColor`. Still inline and
+without an icon library, for the same reason as the checked-in
+`vendor/alpine.min.js`: the UI runs offline.
 
-Das Löschkreuz braucht **kein** neues Symbol. `#i-close` gibt es schon, es
-zeigt genau diese Form, und ein zweites Kreuz danebenzustellen hieße, sich
-beim nächsten Strichstärken-Dreh an zwei Stellen zu erinnern.
+The clear cross needs **no** new symbol. `#i-close` already exists, it
+shows exactly this shape, and placing a second cross next to it would mean
+remembering two places on the next stroke-weight change.
 
-## 6. Zähler und Kreuz
+## 6. Counter and cross
 
-Beide hängen an `deviceSearch.trim()` und tragen `x-cloak`: bei leerem Feld
-sind sie weg, und die Zeile bleibt beim ersten Zeichnen ruhig, bevor Alpine
-initialisiert hat.
+Both hang off `deviceSearch.trim()` and carry `x-cloak`: with an empty
+field they are gone, and the row stays quiet on the first paint, before
+Alpine has initialized.
 
-Der Zähler zeigt `visibleDevices().length` — also das, was tatsächlich unter
-der Leiste steht, einschließlich eines aktiven Raumfilters. Er beantwortet
-damit die Frage, die man beim Tippen hat („greift das?"), und nicht eine
-allgemeinere, die schon der Hinweis aus Abschnitt 3 abdeckt.
+The counter shows `visibleDevices().length` — i.e. what is actually shown
+below the bar, including an active room filter. It therefore answers the
+question you have while typing ("is this taking effect?"), not a more
+general one that the note from section 3 already covers.
 
-Er bekommt `font-variant-numeric: tabular-nums`. Ohne das wackelt die rechte
-Kante beim Wechsel von 9 auf 10, und dann zappelt das Kreuz daneben mit —
-dasselbe Zappeln, das die Altersangabe an der Signalzeile schon einmal
-gekostet hat.
+It gets `font-variant-numeric: tabular-nums`. Without that, the right edge
+wobbles going from 9 to 10, and the cross next to it jitters along —
+the same jitter that already cost the age display on the signal row once
+before.
 
-**WebKits eigenes Löschkreuz muss weg.** Ein `input[type="search"]` bekommt
-dort `::-webkit-search-cancel-button` eingeblendet; daneben stünde unseres
-ein zweites Mal. Die Regel schaltet es ab, und zwar mit `-webkit-appearance`
-*und* `appearance`, weil das Pseudoelement selbst herstellerspezifisch ist.
+**WebKit's own clear cross has to go.** An `input[type="search"]` gets
+`::-webkit-search-cancel-button` shown there; ours would sit next to it a
+second time. The rule switches it off, using both `-webkit-appearance`
+*and* `appearance`, because the pseudo-element itself is vendor-specific.
 
-## 7. Breite und Lage
+## 7. Width and position
 
-Eine Regel, drei Verhalten, ohne Sonderklassen:
+One rule, three behaviors, without special-case classes:
 
 ```css
 .search-field { flex: 1 1 12rem; max-width: 22rem; }
 ```
 
-Der heute fest im Markup stehende Abstandhalter (`<span style="flex: 1 1
-auto">`) wandert dafür in ein eigenes `<template x-if="hasAnyRoom()">`.
+The spacer that is currently fixed in the markup (`<span style="flex: 1 1
+auto">`) moves for this into its own `<template x-if="hasAnyRoom()">`.
 
-- **Mit Raum-Chips:** beide wachsen, das Feld ist bei 22rem gedeckelt, der
-  Abstandhalter schluckt den Rest. Das Feld sitzt rechts wie bisher, aber
-  deutlich großzügiger als mit den 12rem von heute.
-- **Ohne Raum-Chips:** kein Abstandhalter, also rückt das Feld an die linke
-  Kante — auf eine Sichtachse mit dem Kachelraster darunter.
-- **Schmales Fenster:** die Leiste bricht wie bisher (`flex-wrap: wrap`),
-  das Feld liegt allein auf seiner Zeile und füllt sie bei üblichen
-  Telefonbreiten praktisch aus (375 px ≈ 23,4rem gegen 22rem Deckel).
+- **With room chips:** both grow, the field is capped at 22rem, the spacer
+  swallows the rest. The field sits on the right as before, but
+  considerably more generously than with today's 12rem.
+- **Without room chips:** no spacer, so the field moves to the left edge —
+  onto a sightline with the tile grid below it.
+- **Narrow window:** the bar wraps as before (`flex-wrap: wrap`), the field
+  sits alone on its row and practically fills it at common phone widths
+  (375 px ≈ 23.4rem against the 22rem cap).
 
-Zur zweiten Zeile ausdrücklich: das Feld dehnt sich dort **nicht** über die
-volle Zeilenbreite. Ein 1600 px breites Suchfeld über vier Kacheln wäre ein
-schlechterer Anblick als der einsame Kasten, den es zu beseitigen gilt. Die
-linke Ausrichtung löst das Problem — die Streckung wäre nur ein zweites.
+On the second row, explicitly: the field does **not** stretch across the
+full row width there. A 1600 px wide search field over four tiles would be
+a worse sight than the lonesome box it is meant to eliminate. Left
+alignment solves the problem — stretching would only be a second one.
 
-## 8. Sprache
+## 8. Language
 
-Zwei neue Schlüssel in `strings.yaml`:
+Two new keys in `strings.yaml`:
 
 ```yaml
 web.devices.search_count:
@@ -155,47 +156,47 @@ web.devices.search_clear:
   de: "Suche leeren"
 ```
 
-Ohne Plural-Sonderfall — „1 found" und „1 Treffer" lesen sich beide richtig,
-und die Tabelle kennt an keiner Stelle eine Pluralform. `t()` in `app.js`
-löst `{count}` über sein `values`-Argument auf; `GET /api/i18n` liefert die
-Vorlage unaufgelöst aus, wie für jeden Platzhalter-Schlüssel.
+Without a plural special case — "1 found" and "1 Treffer" both read
+correctly, and the table has no plural form anywhere. `t()` in `app.js`
+resolves `{count}` via its `values` argument; `GET /api/i18n` delivers the
+template unresolved, as for any placeholder key.
 
-`search_clear` beschriftet `title` **und** `aria-label` des Kreuzes: es trägt
-kein Wort, also braucht es eines.
+`search_clear` labels both `title` **and** `aria-label` of the cross: it
+carries no text of its own, so it needs one.
 
-Das Eingabefeld bekommt zusätzlich ein `aria-label` aus dem vorhandenen
-`search_placeholder`. Bisher trägt es nur den Platzhalter — und der
-verschwindet genau dann, wenn jemand etwas eingegeben hat.
+The input field additionally gets an `aria-label` from the existing
+`search_placeholder`. Until now it only carried the placeholder — which
+disappears exactly when someone has typed something.
 
-## 9. Prüfung
+## 9. Verification
 
-Vier Tests in `tests/api/test_web.py`, nach dem dort etablierten Muster:
-geprüft wird das **ausgelieferte** Markup und CSS, nicht das Bild im
-Browser — in dieser Suite läuft keine Engine, die CSS anwendet oder Alpine
-ausführt.
+Four tests in `tests/api/test_web.py`, following the pattern already
+established there: what is checked is the **delivered** markup and CSS,
+not the picture in the browser — this suite runs no engine that applies
+CSS or executes Alpine.
 
-1. **Ein Rahmen, nicht zwei.** Der Container trägt `border` und
-   `border-radius`, das `input` darin trägt `border: none`. Stünden beide,
-   läge ein Rahmen im anderen.
-2. **Der Fokusring hängt an `:focus-within`.** Belegt, dass er die Gruppe
-   umschließt und nicht nur das Feld in ihrer Mitte.
-3. **WebKits Kreuz ist abgeschaltet, unseres ist da.** Die
-   `::-webkit-search-cancel-button`-Regel steht im CSS, und das Markup
-   verweist auf `#i-close`.
-4. **Zähler und Kreuz sind an die Eingabe gebunden und getarnt.** Beide
-   hängen an `deviceSearch` und tragen `x-cloak`.
+1. **One border, not two.** The container carries `border` and
+   `border-radius`, the `input` inside it carries `border: none`. If both
+   had one, a border would sit inside a border.
+2. **The focus ring hangs off `:focus-within`.** Proves that it encloses
+   the group and not just the field at its center.
+3. **WebKit's cross is switched off, ours is there.** The
+   `::-webkit-search-cancel-button` rule is present in the CSS, and the
+   markup references `#i-close`.
+4. **Counter and cross are bound to the input and cloaked.** Both hang off
+   `deviceSearch` and carry `x-cloak`.
 
-Das neue `#i-search` deckt `test_the_inline_icon_symbols_are_well_formed_xml`
-automatisch mit ab.
+The new `#i-search` is automatically covered by
+`test_the_inline_icon_symbols_are_well_formed_xml`.
 
-Nach der Umsetzung wird `docs/screenshots/dashboard.png` neu aufgenommen —
-das Bild zeigt heute den Systemkasten und wäre sonst sofort veraltet. Der
-Aufnahmeweg über `scripts/` steht fest, samt festgenageltem Demo-Zeitstempel.
+After implementation, `docs/screenshots/dashboard.png` is recaptured —
+the image currently shows the system box and would otherwise go stale
+immediately. The capture path via `scripts/` is established, including a
+pinned demo timestamp.
 
-## 10. Offene Punkte
+## 10. Open points
 
-Keine. Die Tastenkürzel zum Fokussieren, die Trefferhervorhebung in den
-Kacheln und der gestaltete Leerzustand sind beim Zuschnitt bewusst
-ausgeschieden worden: sie berühren `app.js` und die Kacheldarstellung, also
-mehr als die Suchleiste. Sollten sie später kommen, ist dieser Entwurf ihre
-Grundlage und kein Hindernis.
+None. The focus keyboard shortcuts, match highlighting in the tiles, and a
+styled empty state were deliberately cut from scope: they touch `app.js`
+and the tile rendering, i.e. more than the search bar. Should they come
+later, this design is their foundation, not an obstacle.

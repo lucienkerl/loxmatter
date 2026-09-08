@@ -56,7 +56,7 @@
 Create `tests/test_i18n.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -72,14 +72,14 @@ Create `tests/test_i18n.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer den Uebersetzungsmechanismus selbst - nicht fuer einzelne
-CLI-Zeichenketten (die kommen in tests/test_cli.py bzw.
-tests/test_cli_language.py dazu, sobald cli.py sie tatsaechlich nutzt).
+"""Tests for the translation mechanism itself - not for individual CLI
+strings (those are added in tests/test_cli.py resp.
+tests/test_cli_language.py, once cli.py actually uses it).
 
-`test.*`-Schluessel in strings.yaml sind absichtlich Teil der echten Tabelle,
-nicht einer separaten Testdatei: `t()` haengt an genau einer Datei, und
-`test.english_only` braucht einen echten, dauerhaft fehlenden `de`-Eintrag,
-um den Ruecksicherungsfall zu belegen.
+`test.*` keys in strings.yaml are deliberately part of the real table,
+not of a separate test file: `t()` hangs off exactly one file, and
+`test.english_only` needs a real, permanently missing `de` entry to
+demonstrate the fallback case.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ def test_t_raises_for_an_unknown_key():
 def test_set_language_rejects_an_unsupported_value():
     with pytest.raises(ValueError):
         i18n.set_language("fr")
-    # Ein fehlgeschlagener Aufruf darf die aktuelle Sprache nicht aendern.
+    # A failed call must not change the current language.
     assert i18n.current_language() == "en"
 
 
@@ -134,17 +134,17 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.i18n'`
 Create `src/loxmatter/i18n/strings.yaml`:
 
 ```yaml
-# loxmatter - Uebersetzungstabelle.
+# loxmatter - translation table.
 #
-# Flache, punktierte Schluessel statt verschachtelter YAML-Struktur: neue
-# Namensraeume (api.*, web.* in spaeteren Phasen) kommen dazu, ohne
-# bestehende Eintraege umzubauen. Jeder Eintrag traegt mindestens "en" -
-# t() faellt bei fehlendem "de" automatisch auf "en" zurueck (siehe
-# i18n/__init__.py), nie umgekehrt.
+# Flat, dotted keys instead of a nested YAML structure: new namespaces
+# (api.*, web.* in later phases) get added without restructuring
+# existing entries. Every entry carries at least "en" - t() automatically
+# falls back to "en" when "de" is missing (see i18n/__init__.py), never
+# the other way round.
 #
-# test.* gehoert zu tests/test_i18n.py - dort absichtlich mit einem
-# Eintrag OHNE "de", um den Ruecksicherungsfall an echten Daten zu
-# belegen, statt eine zweite, nur fuer Tests geladene Datei zu pflegen.
+# test.* belongs to tests/test_i18n.py - deliberately with one entry
+# WITHOUT "de" there, to demonstrate the fallback case with real data
+# instead of maintaining a second file loaded only for tests.
 
 test.greeting:
   en: "Hello, {name}!"
@@ -343,7 +343,7 @@ cli.fake_miniserver.report_silent_header:
 Create `src/loxmatter/i18n/__init__.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -359,17 +359,17 @@ Create `src/loxmatter/i18n/__init__.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Uebersetzungsmechanismus: eine flache YAML-Tabelle (`strings.yaml`) plus
-eine prozessweite "aktuelle Sprache" - siehe
+"""Translation mechanism: a flat YAML table (`strings.yaml`) plus a
+process-wide "current language" - see
 docs/superpowers/specs/2026-09-03-i18n-phase-a-language-selection-cli-design.md,
-Abschnitt 3.
+section 3.
 
-Eine einzige, gemeinsame Spracheinstellung fuer die ganze Installation
-(nicht pro Anfrage, nicht pro Thread) - deshalb ein Modul-globaler Zustand
-statt eines Objekts, das jeder Aufrufer selbst herumreichen muesste. Wer die
-Sprache aendert (CLI-Bootstrap in cli.py, spaeter die WebUI in Phase B) ruft
-`set_language()` genau einmal auf; jeder folgende `t()`-Aufruf im selben
-Prozess sieht die neue Sprache sofort."""
+A single, shared language setting for the whole installation (not per
+request, not per thread) - hence module-global state instead of an
+object every caller would have to pass around itself. Whoever changes
+the language (CLI bootstrap in cli.py, later the WebUI in phase B) calls
+`set_language()` exactly once; every following `t()` call in the same
+process sees the new language immediately."""
 
 from __future__ import annotations
 
@@ -390,18 +390,19 @@ def _load_strings() -> dict[str, dict[str, str]]:
     return raw
 
 
-# Einmal beim Import geladen, nicht bei jedem t()-Aufruf - strings.yaml
-# aendert sich nie zur Laufzeit, nur zwischen Releases.
+# Loaded once at import, not on every t() call - strings.yaml never
+# changes at runtime, only between releases.
 _STRINGS: dict[str, dict[str, str]] = _load_strings()
 
 _current_language: str = DEFAULT_LANGUAGE
 
 
 def set_language(language: str) -> None:
-    """Setzt die prozessweite aktuelle Sprache.
+    """Sets the process-wide current language.
 
-    Wirft `ValueError` fuer alles ausser den Werten in `SUPPORTED_LANGUAGES`
-    - und aendert die aktuelle Sprache in dem Fall NICHT (kein Teil-Erfolg)."""
+    Raises `ValueError` for anything except the values in
+    `SUPPORTED_LANGUAGES` - and in that case does NOT change the current
+    language (no partial success)."""
     if language not in SUPPORTED_LANGUAGES:
         raise ValueError(
             f"nicht unterstuetzte Sprache {language!r}, erwartet eine von "
@@ -416,15 +417,15 @@ def current_language() -> str:
 
 
 def t(key: str, **values: Any) -> str:
-    """Liefert den uebersetzten Text zu `key` in der aktuellen Sprache,
-    mit `values` in die Platzhalter eingesetzt (`str.format`).
+    """Returns the translated text for `key` in the current language,
+    with `values` substituted into the placeholders (`str.format`).
 
-    Fehlt `key` selbst in der Tabelle, ist das ein Programmierfehler -
-    `KeyError` faellt durch, statt ihn zu verschlucken. Fehlt nur die
-    Uebersetzung der aktuellen Sprache (z. B. noch kein "de" fuer einen
-    neuen Eintrag), liefert diese Funktion die englische Fassung - nie
-    einen Absturz wegen einer fehlenden Uebersetzung, siehe
-    `test.english_only` in strings.yaml."""
+    If `key` itself is missing from the table, that is a programming
+    error - `KeyError` propagates instead of being swallowed. If only
+    the current language's translation is missing (e.g. no "de" yet for
+    a new entry), this function returns the English version - never a
+    crash because of a missing translation, see `test.english_only` in
+    strings.yaml."""
     entry = _STRINGS[key]
     template = entry.get(_current_language, entry["en"])
     return template.format(**values)
@@ -445,13 +446,13 @@ from loxmatter import i18n
 ```python
 @pytest.fixture(autouse=True)
 def reset_language() -> Iterator[None]:
-    """Setzt die globale Spracheinstellung nach jedem Test zurueck.
+    """Resets the global language setting after every test.
 
-    `loxmatter.i18n.set_language` haelt die aktuelle Sprache in einer
-    prozessweiten Variable (eine gemeinsame Einstellung fuer die ganze
-    Installation, siehe i18n/__init__.py) - ein Test, der `set_language("de")`
-    aufruft und nicht zuruecksetzt, wuerde jeden nachfolgenden Test in
-    derselben Session mit deutscher statt englischer Ausgabe konfrontieren."""
+    `loxmatter.i18n.set_language` holds the current language in a
+    process-wide variable (a shared setting for the whole installation,
+    see i18n/__init__.py) - a test that calls `set_language("de")` and
+    doesn't reset it would confront every subsequent test in the same
+    session with German instead of English output."""
     yield
     i18n.set_language(i18n.DEFAULT_LANGUAGE)
 ```
@@ -503,7 +504,7 @@ EOF
 Create `tests/model/test_locale_store.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -519,9 +520,9 @@ Create `tests/model/test_locale_store.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer `LocaleStore` - die gemeinsame Spracheinstellung, gehalten in
-derselben `setting`-Tabelle wie `AuthStore.password_hash` (siehe dortiges
-test_auth_store.py fuer das gleiche Muster)."""
+"""Tests for `LocaleStore` - the shared language setting, held in the
+same `setting` table as `AuthStore.password_hash` (see its
+test_auth_store.py for the same pattern)."""
 
 from __future__ import annotations
 
@@ -562,7 +563,7 @@ def test_set_language_rejects_an_unsupported_value(tmp_path):
     try:
         with pytest.raises(ValueError):
             store.locale.set_language("fr")
-        # Kein Teil-Erfolg: der Vorgabewert gilt weiterhin.
+        # No partial success: the default value still applies.
         assert store.locale.get_language() == "en"
     finally:
         store.close()
@@ -593,7 +594,7 @@ Expected: FAIL with `AttributeError: 'Store' object has no attribute 'locale'`
 Create `src/loxmatter/model/locale_store.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -609,16 +610,16 @@ Create `src/loxmatter/model/locale_store.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Die gemeinsame Spracheinstellung dieser Installation - EINE Einstellung
-fuer CLI und (ab Phase B) WebUI, kein Feld pro Nutzer oder Browser. Siehe
+"""The shared language setting of this installation - ONE setting for
+the CLI and (from phase B) the WebUI, no field per user or browser. See
 docs/superpowers/specs/2026-09-03-i18n-phase-a-language-selection-cli-design.md,
-Abschnitt 4.
+section 4.
 
-Eigenes Modul und eigene Klasse, analog zu `auth_store.py` und
-`settings_store.py`: die `setting`-Tabelle ist generisch angelegt, genau
-damit weitere Konfiguration wie diese hier denselben Weg gehen kann. Diese
-Klasse ist eine weitere Sicht auf dieselbe Tabelle und dieselbe Verbindung,
-kein zweiter Verbindungsaufbau."""
+Own module and own class, analogous to `auth_store.py` and
+`settings_store.py`: the `setting` table is deliberately generic, exactly
+so that further configuration like this one can follow the same path.
+This class is another view onto the same table and the same connection,
+not a second connection setup."""
 
 from __future__ import annotations
 
@@ -630,17 +631,17 @@ _LANGUAGE_KEY = "language"
 
 
 class LocaleStore:
-    """Zugriff auf `setting` ueber die Verbindung des Stores - wie
-    `AuthStore`, nur fuer den Schluessel `"language"`."""
+    """Access to `setting` via the store's connection - like
+    `AuthStore`, just for the key `"language"`."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
 
     def get_language(self) -> str:
-        """Der gespeicherte Wert - `DEFAULT_LANGUAGE`, solange nichts
-        gespeichert ist oder der gespeicherte Wert (z. B. nach einer
-        kuenftigen Ruecknahme einer Sprache aus `SUPPORTED_LANGUAGES`)
-        nicht mehr unterstuetzt wird. Wirft nie."""
+        """The stored value - `DEFAULT_LANGUAGE`, as long as nothing is
+        stored, or the stored value (e.g. after a future removal of a
+        language from `SUPPORTED_LANGUAGES`) is no longer supported.
+        Never raises."""
         row = self._db.execute(
             "SELECT value FROM setting WHERE key = ?", (_LANGUAGE_KEY,)
         ).fetchone()
@@ -682,14 +683,14 @@ Then in `Store.__init__` (around line 704-716), add the wiring next to `self.aut
         self._db.executescript(_SCHEMA)
         self._db.commit()
         _migrate(self._db)
-        # Sicht auf dieselbe Verbindung, kein zweiter Verbindungsaufbau -
-        # siehe Moduldocstring von `auth_store.py`.
+        # View onto the same connection, not a second connection setup -
+        # see the module docstring of `auth_store.py`.
         self.auth = AuthStore(self._db)
-        # Sicht auf dieselbe Verbindung - siehe `settings_store.py`.
+        # View onto the same connection - see `settings_store.py`.
         self.settings = BridgeSettingsStore(
             self._db, default_udp_port=DEFAULT_UDP_PORT, default_listen_port=DEFAULT_LISTEN_PORT
         )
-        # Sicht auf dieselbe Verbindung - siehe `locale_store.py`.
+        # View onto the same connection - see `locale_store.py`.
         self.locale = LocaleStore(self._db)
 ```
 
@@ -736,7 +737,7 @@ EOF
 Create `tests/test_cli_language.py`:
 
 ```python
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -752,18 +753,18 @@ Create `tests/test_cli_language.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer die Sprachaufloesung der CLI (`cli._resolve_cli_language`) und
-das `set-language`-Kommando.
+"""Tests for the CLI's language resolution (`cli._resolve_cli_language`)
+and the `set-language` command.
 
-`_resolve_cli_language` wird als reine Funktion getestet, nicht ueber einen
-Modul-Reload von `cli.py` - das Modul wird pro Testsession genau einmal
-importiert (siehe `tests/test_cli.py`s `from loxmatter.cli import app`),
-seine Modul-Top-Level-Aufloesung laesst sich deshalb nicht pro Test mit
-unterschiedlichen Umgebungsvariablen wiederholen. Der EINE Test, der die
-tatsaechliche `--help`-Ausgabe in einer anderen Sprache als der beim
-Session-Start aufgeloesten belegt, startet dafuer bewusst einen echten
-Unterprozess (siehe `test_help_text_is_german_when_loxmatter_lang_is_set`,
-markiert `slow` wie `tests/api/test_live_smoke.py`)."""
+`_resolve_cli_language` is tested as a pure function, not through a
+module reload of `cli.py` - the module is imported exactly once per test
+session (see `tests/test_cli.py`'s `from loxmatter.cli import app`), so
+its module-top-level resolution cannot be repeated per test with
+different environment variables. The ONE test that proves the actual
+`--help` output is in a different language than the one resolved at
+session start deliberately starts a real subprocess for that (see
+`test_help_text_is_german_when_loxmatter_lang_is_set`, marked `slow` like
+`tests/api/test_live_smoke.py`)."""
 
 from __future__ import annotations
 
@@ -824,7 +825,7 @@ def test_falls_back_to_default_when_the_database_file_is_not_a_database(tmp_path
 
 def test_set_language_command_persists_the_choice(tmp_path):
     store_path = tmp_path / "t.sqlite"
-    Store(store_path).close()  # set-language legt absichtlich keine neue Datenbank an
+    Store(store_path).close()  # set-language deliberately creates no new database
     result = CliRunner().invoke(app, ["set-language", "de", "--store-path", str(store_path)])
     assert result.exit_code == 0, result.stdout
 
@@ -850,10 +851,10 @@ def test_set_language_command_rejects_an_unsupported_language(tmp_path):
 
 @pytest.mark.slow
 def test_help_text_is_german_when_loxmatter_lang_is_set(tmp_path):
-    """Der einzige Beleg dafuer, dass `--help`-Text tatsaechlich die
-    Modul-Import-Zeit-Aufloesung durchlaeuft - `_resolve_cli_language`
-    (oben) prueft nur die Aufloesungsfunktion fuer sich, nicht ihre
-    Verdrahtung in `cli.py`s Modul-Top-Level."""
+    """The only evidence that `--help` text actually goes through the
+    module-import-time resolution - `_resolve_cli_language` (above)
+    only checks the resolution function by itself, not its wiring in
+    `cli.py`'s module top level."""
     env = dict(os.environ)
     env["LOXMATTER_LANG"] = "de"
     env["LOXMATTER_STORE"] = str(tmp_path / "unused.sqlite")
@@ -895,26 +896,25 @@ from collections.abc import Mapping
 
 ```python
 def _resolve_cli_language(store_path: Path, env: Mapping[str, str]) -> str:
-    """Bestimmt die Sprache fuer GENAU diesen Prozess, aufgerufen einmal
-    beim Modulimport (siehe unten, vor `app = typer.Typer(...)`) - siehe
-    Spec-Abschnitt 4.
+    """Determines the language for EXACTLY this process, called once at
+    module import (see below, before `app = typer.Typer(...)`) - see
+    spec section 4.
 
-    Rangfolge: `LOXMATTER_LANG` (dieser Aufruf, ohne die gespeicherte
-    Einstellung zu aendern) > gespeicherte Einstellung > `DEFAULT_LANGUAGE`.
-    Ein ungueltiger `LOXMATTER_LANG`-Wert warnt auf stderr und faellt auf
-    die naechste Stufe zurueck - diese eine Warnung bleibt zwangslaeufig
-    Englisch, die Sprache steht an dieser Stelle noch nicht fest.
+    Precedence: `LOXMATTER_LANG` (this call, without changing the stored
+    setting) > stored setting > `DEFAULT_LANGUAGE`. An invalid
+    `LOXMATTER_LANG` value warns on stderr and falls back to the next
+    level - this one warning inevitably stays English, the language
+    isn't settled yet at this point.
 
-    `store_path` ist NICHT `--store-path` (das ist zu diesem Zeitpunkt noch
-    nicht geparst, siehe den Abschnitt "Deviation from the spec" im
-    Implementierungsplan dieser Aufgabe) - der Aufrufer uebergibt
-    `_resolve_store_path(None)`, also `LOXMATTER_STORE` oder den
-    Standardpfad.
+    `store_path` is NOT `--store-path` (that is not yet parsed at this
+    point, see the "Deviation from the spec" section in this task's
+    implementation plan) - the caller passes `_resolve_store_path(None)`,
+    i.e. `LOXMATTER_STORE` or the default path.
 
-    Oeffnet die Datenbank nur lesend und nur fuer diese eine Abfrage - NICHT
-    ueber `Store(...)`, das bei jedem Aufruf `CREATE TABLE IF NOT EXISTS`
-    und Migrationen ausfuehrt und damit einen Schreibzugriff braucht, den
-    ein blosses `--help` nie voraussetzen darf."""
+    Opens the database read-only and only for this one query - NOT via
+    `Store(...)`, which runs `CREATE TABLE IF NOT EXISTS` and migrations
+    on every call and therefore needs write access, which a bare
+    `--help` must never require."""
     override = env.get("LOXMATTER_LANG")
     if override:
         candidate = override.strip().lower()
@@ -941,12 +941,12 @@ def _resolve_cli_language(store_path: Path, env: Mapping[str, str]) -> str:
     return i18n.DEFAULT_LANGUAGE
 
 
-# Einmal beim Modulimport aufgeloest, vor jeder Kommandodefinition unten -
-# `help=`-Texte sind Typer-Konstruktionsargumente und damit an dieser Stelle
-# eingefroren (siehe Spec-Abschnitt 5). `typer.echo`/`_fail`-Aufrufe IN den
-# Kommandos lesen `i18n.current_language()` dagegen bei jedem Aufruf frisch
-# ueber `t()` - fuer sie ist dieser eine Bootstrap-Aufruf kein Einfrieren,
-# nur der Startwert.
+# Resolved once at module import, before any command definition below -
+# `help=` texts are Typer construction arguments and therefore frozen at
+# this point (see spec section 5). `typer.echo`/`_fail` calls IN the
+# commands, on the other hand, read `i18n.current_language()` freshly on
+# every call via `t()` - for them this one bootstrap call is not a
+# freeze, just the start value.
 i18n.set_language(_resolve_cli_language(_resolve_store_path(None), os.environ))
 ```
 
@@ -968,12 +968,13 @@ def set_language_cmd(
         None, help=i18n.t("cli.common.help_store_path_short")
     ),
 ) -> None:
-    """Setzt die gemeinsame Spracheinstellung (CLI und, ab Phase B, WebUI).
+    """Sets the shared language setting (CLI and, from phase B, WebUI).
 
-    Verlangt wie `set_password` eine VORHANDENE Datenbank und aus demselben
-    Grund: eine neue, leere Fremddatenbank auf dem Host anzulegen waere bei
-    einer containerisierten Installation (`LOXMATTER_STORE` nur innerhalb des
-    Containers erreichbar) ein stiller Fehlschlag mit gemeldetem Erfolg."""
+    Requires, like `set_password`, an EXISTING database, and for the
+    same reason: creating a new, empty database out of thin air on the
+    host would, for a containerized installation (`LOXMATTER_STORE` only
+    reachable inside the container), be a silent failure reported as a
+    success."""
     if language not in i18n.SUPPORTED_LANGUAGES:
         _fail(
             i18n.t(
@@ -1104,8 +1105,8 @@ def inspect(
 
 ```python
 def _load_fixture(path: Path) -> NodeSnapshot:
-    """Lädt eine Fixture-Datei; meldet kaputten Inhalt als CLI-Fehler statt
-    mit einem rohen KeyError/JSONDecodeError abzubrechen."""
+    """Loads a fixture file; reports broken content as a CLI error
+    instead of aborting with a raw KeyError/JSONDecodeError."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -1119,11 +1120,11 @@ def _load_fixture(path: Path) -> NodeSnapshot:
 
 ```python
 def _load_snapshot(fixture: Path | None, node: int | None, url: str) -> NodeSnapshot:
-    """Lädt ein Node-Abbild aus einer Datei oder von einem laufenden matter-server.
+    """Loads a node snapshot from a file or from a running matter-server.
 
-    Gemeinsam von `inspect` und `export` genutzt, damit die Fehlermeldungen
-    dieses Pfads nur an einer Stelle stehen, statt in zwei Kommandos
-    auseinanderzudriften.
+    Used jointly by `inspect` and `export`, so this path's error
+    messages live in only one place, instead of drifting apart across
+    two commands.
     """
     if fixture is not None:
         return _load_fixture(fixture)
@@ -1152,8 +1153,8 @@ def _load_snapshot(fixture: Path | None, node: int | None, url: str) -> NodeSnap
 
 ```python
 def _ensure_out_dir(out: Path) -> None:
-    """Legt das Zielverzeichnis an; meldet einen Fehlschlag als CLI-Fehler
-    statt eines Tracebacks."""
+    """Creates the target directory; reports a failure as a CLI error
+    instead of a traceback."""
     try:
         out.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -1498,7 +1499,7 @@ def set_password(
         store.auth.reset_password(hash_password(password))
     finally:
         store.close()
-    # Bewusst ohne das Passwort in der Ausgabe - auch nicht verkuerzt.
+    # Deliberately without the password in the output - not even truncated.
     typer.echo(i18n.t("cli.set_password.echo_success"))
 ```
 
@@ -1538,9 +1539,9 @@ def _silent_keys_report(template_name: str, announced: set[str], silent: list[st
 
 ```python
 async def _fake_miniserver(port: int, template: Path | None) -> None:
-    # datetime.now() ohne tz ist hier Absicht: das ist die Ortszeit fuer einen
-    # Menschen, der dem Terminal beim Draufschauen zusieht - keine
-    # gespeicherte oder verglichene Zeit.
+    # datetime.now() without tz is deliberate here: this is the local
+    # time for a human watching the terminal - not a stored or compared
+    # time.
     def announce(key: str, value: str) -> None:
         typer.echo(f"{datetime.now():%H:%M:%S} {key} = {value}")  # noqa: DTZ005
 
@@ -1554,7 +1555,7 @@ async def _fake_miniserver(port: int, template: Path | None) -> None:
     await fake.start()
     typer.echo(i18n.t("cli.fake_miniserver.echo_listening", port=fake.port))
     try:
-        await asyncio.Event().wait()  # blockiert, bis Strg-C den Task abbricht
+        await asyncio.Event().wait()  # blocks until Ctrl-C cancels the task
     finally:
         await fake.stop()
         if template is not None:

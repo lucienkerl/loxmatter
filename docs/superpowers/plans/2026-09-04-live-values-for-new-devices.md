@@ -1,55 +1,55 @@
-# Live-Werte ohne Neustart: Implementierungsplan
+# Live values without a restart: implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein Gerät, das nach dem Start der Brücke eingelernt wird — oder das nachträglich neue Attributpfade meldet —, bekommt seine Attribut-Abonnements und Startwerte ohne Neustart der Brücke.
+**Goal:** A device commissioned after the bridge has started — or one that later reports new attribute paths — gets its attribute subscriptions and start values without a restart of the bridge.
 
-**Architecture:** Eine neue Methode `BridgeMatterClient.follow_node(node_id)` zieht Abonnements nach: sie diffed die Pfade eines Node gegen die bereits abonnierten (Node, Pfad)-Paare, legt für die fehlenden je ein Abonnement an und reicht dem Handler das Abbild. Angestoßen wird sie von der Einlern-Route (nach `register_device`) und aus der Dispatch-Schleife bei `NODE_ADDED`/`NODE_UPDATED`. `Runtime` erfüllt den neuen Handler-Aufruf mit `register_signals` → `invalidate_index` → Werte säen.
+**Architecture:** A new method `BridgeMatterClient.follow_node(node_id)` catches subscriptions up: it diffs a node's paths against the already-subscribed (node, path) pairs, creates a subscription for each missing one, and passes the snapshot to the handler. It is triggered from the commissioning route (after `register_device`) and from the dispatch loop on `NODE_ADDED`/`NODE_UPDATED`. `Runtime` fulfills the new handler call with `register_signals` → `invalidate_index` → seeding values.
 
-**Tech Stack:** Python 3.12, asyncio, python-matter-server 8.1.2, FastAPI, pytest (`asyncio_mode = "auto"`), Alpine.js für die Oberfläche.
+**Tech Stack:** Python 3.12, asyncio, python-matter-server 8.1.2, FastAPI, pytest (`asyncio_mode = "auto"`), Alpine.js for the UI.
 
 **Spec:** [2026-09-04-live-values-for-new-devices-design.md](../specs/2026-09-04-live-values-for-new-devices-design.md)
 
 ## Global Constraints
 
-- Kommentare, Docstrings und Oberflächentexte auf Deutsch, im Stil der umgebenden Dateien: begründen, warum etwas so ist, nicht wiederholen, was der Code sagt.
-- Quelltext-Dateien enthalten keine Umlaute in Bezeichnern oder Kommentaren, wo die Umgebung sie meidet (`ue`/`ae`/`oe`); Oberflächentexte in `index.html`/`app.js` dagegen sehr wohl.
-- `uv run ruff format` auf jede berührte Datei; `uv run ruff check` darf keine **neuen** Funde bringen (4 `SIM118`-Funde in `tests/loxone/test_runtime.py` bestehen bereits und bleiben unangetastet).
-- `uv run mypy` (strict, `files = ["src", "scripts"]`) muss sauber bleiben.
-- Zeilenlänge 100 (`[tool.ruff] line-length = 100`).
-- TDD: kein Produktionscode ohne zuvor fehlschlagenden Test.
-- Jede Task endet mit einem eigenen Commit.
+- Comments, docstrings, and UI text in German, in the style of the surrounding files: justify why something is the way it is, don't repeat what the code says.
+- Source files contain no umlauts in identifiers or comments, wherever the surrounding code avoids them (`ue`/`ae`/`oe`); UI text in `index.html`/`app.js`, however, does.
+- `uv run ruff format` on every touched file; `uv run ruff check` must produce no **new** findings (4 `SIM118` findings in `tests/loxone/test_runtime.py` already exist and stay untouched).
+- `uv run mypy` (strict, `files = ["src", "scripts"]`) must stay clean.
+- Line length 100 (`[tool.ruff] line-length = 100`).
+- TDD: no production code without a previously failing test.
+- Every task ends with its own commit.
 
 ---
 
-### Task 1: `Runtime.on_node_snapshot` — Signalzeilen, Cache, Werte
+### Task 1: `Runtime.on_node_snapshot` — signal rows, cache, values
 
-Der Empfänger des Nachziehens. Unabhängig von den Abonnements testbar, deshalb zuerst.
+The recipient of the catch-up. Testable independently of the subscriptions, hence first.
 
 **Files:**
-- Modify: `src/loxmatter/matter/client.py` (Protokoll `RuntimeEventHandler`, ab Zeile 134)
-- Modify: `src/loxmatter/loxone/runtime.py` (neue Methode nach `seed_from_snapshot`)
+- Modify: `src/loxmatter/matter/client.py` (protocol `RuntimeEventHandler`, from line 134)
+- Modify: `src/loxmatter/loxone/runtime.py` (new method after `seed_from_snapshot`)
 - Test: `tests/loxone/test_runtime.py`
 
 **Interfaces:**
-- Consumes: `Store.register_signals(device_id, snapshot)`, `Runtime.invalidate_index(device_id)`, `Runtime._cache_attribute(device_id, path, raw)`, `Runtime._cache_online(device_id, online)` — alle vorhanden.
-- Produces: `RuntimeEventHandler.on_node_snapshot(device_id: int, snapshot: NodeSnapshot) -> None` (async) und `Runtime.on_node_snapshot` mit derselben Signatur. Task 2 ruft sie auf.
+- Consumes: `Store.register_signals(device_id, snapshot)`, `Runtime.invalidate_index(device_id)`, `Runtime._cache_attribute(device_id, path, raw)`, `Runtime._cache_online(device_id, online)` — all existing.
+- Produces: `RuntimeEventHandler.on_node_snapshot(device_id: int, snapshot: NodeSnapshot) -> None` (async) and `Runtime.on_node_snapshot` with the same signature. Task 2 calls it.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `tests/loxone/test_runtime.py` anhängen:
+Append to `tests/loxone/test_runtime.py`:
 
 ```python
 async def test_on_node_snapshot_registers_a_new_signal_and_lets_it_through(
     environment, monkeypatch
 ):
-    """Der Kern des Nachziehens: ein Pfad, den der Store beim Einlernen noch
-    nicht kannte, muss danach eine Signalzeile haben UND durch den
-    Signal-Cache der Laufzeit kommen. Genau hier faengt der Test den
-    vergessenen `invalidate_index`-Aufruf - ohne ihn legt `register_signals`
-    die Zeile zwar an, aber `_signal_for` bleibt bei seinem einmal geladenen
-    Stand und jedes Update auf den neuen Pfad laeuft fuer den Rest des
-    Prozesses ins Leere."""
+    """The core of the catch-up: a path the store did not yet know at
+    commissioning time must afterward have a signal row AND make it
+    through the runtime's signal cache. This is exactly where the test
+    catches the forgotten `invalidate_index` call - without it,
+    `register_signals` does create the row, but `_signal_for` stays at
+    its once-loaded state and every update to the new path runs into a
+    void for the rest of the process."""
     runtime, sender, _, device_id, _ = environment
     new_ref = SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)
     key = f"d{device_id}_9_c1234_a5"
@@ -57,8 +57,8 @@ async def test_on_node_snapshot_registers_a_new_signal_and_lets_it_through(
     def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
         return [*extract_signals(snapshot), new_ref]
 
-    # Erst indizieren lassen, wie im Betrieb: die Laufzeit hat das Geraet
-    # schon einmal gesehen, bevor der neue Pfad auftaucht.
+    # Index first, as in production: the runtime has already seen the
+    # device once before the new path shows up.
     await runtime.on_attribute(device_id, "9/1234/5", 1)
     assert sender.sent == []
 
@@ -70,10 +70,10 @@ async def test_on_node_snapshot_registers_a_new_signal_and_lets_it_through(
 
 
 async def test_on_node_snapshot_seeds_the_values_without_sending(environment):
-    """Dieselbe Begruendung wie bei `seed_from_snapshot`: der Cache fuellt
-    sich, gesendet wird nichts. Ein frisch angelegtes Signal hat in Loxone
-    ohnehin noch keinen virtuellen Eingang - der entsteht erst mit dem
-    Export der Vorlage."""
+    """Same reasoning as with `seed_from_snapshot`: the cache fills up,
+    nothing is sent. A freshly created signal has no virtual input in
+    Loxone yet anyway - that only comes into existence once the template
+    is exported."""
     runtime, sender, _, device_id, _ = environment
 
     await runtime.on_node_snapshot(device_id, _plug_snapshot())
@@ -84,10 +84,10 @@ async def test_on_node_snapshot_seeds_the_values_without_sending(environment):
 
 
 async def test_on_node_snapshot_keeps_the_key_and_the_export_flag(environment):
-    """`register_signals` ist ausdruecklich fuer erneute Aufrufe gebaut
-    (siehe dortiger Docstring). Wuerde das Nachziehen Schluessel neu vergeben
-    oder `exported` zuruecksetzen, zerstoerte jeder Wiederaufruf die
-    Verdrahtung in der Loxone-Konfiguration."""
+    """`register_signals` is explicitly built for repeated calls (see its
+    docstring). If the catch-up reassigned keys or reset `exported`,
+    every repeated call would destroy the wiring in the Loxone
+    configuration."""
     runtime, _, store, device_id, _ = environment
     before = store.signals(device_id)[0]
     store.set_exported(before.key, not before.exported)
@@ -111,69 +111,70 @@ async def test_on_node_snapshot_seeds_an_unavailable_node_as_offline(environment
     assert runtime._last_values[f"d{device_id}_online"] is False
 ```
 
-`_plug_snapshot`, `SignalRef`, `SignalKind`, `extract_signals`, `FIXTURES`, `json` und `NodeSnapshot` sind in dieser Datei bereits importiert bzw. definiert (siehe `test_invalidate_index_lets_a_newly_registered_signal_through` und `test_seed_from_snapshot_populates_cache_without_sending`). Nichts neu importieren.
+`_plug_snapshot`, `SignalRef`, `SignalKind`, `extract_signals`, `FIXTURES`, `json`, and `NodeSnapshot` are already imported/defined in this file (see `test_invalidate_index_lets_a_newly_registered_signal_through` and `test_seed_from_snapshot_populates_cache_without_sending`). Import nothing new.
 
-- [ ] **Step 2: Den Test laufen lassen und den Fehlschlag sehen**
+- [ ] **Step 2: Run the test and see it fail**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -q -k on_node_snapshot`
-Expected: 4 FAILED mit `AttributeError: 'Runtime' object has no attribute 'on_node_snapshot'`
+Expected: 4 FAILED with `AttributeError: 'Runtime' object has no attribute 'on_node_snapshot'`
 
-- [ ] **Step 3: Das Protokoll erweitern**
+- [ ] **Step 3: Extend the protocol**
 
-In `src/loxmatter/matter/client.py`, in `class RuntimeEventHandler(Protocol)`, nach `async def set_online(...)` einfügen:
+In `src/loxmatter/matter/client.py`, in `class RuntimeEventHandler(Protocol)`, insert after `async def set_online(...)`:
 
 ```python
     async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None: ...
 ```
 
-Und den Docstring der Klasse um einen Absatz ergaenzen:
+And extend the class docstring with a paragraph:
 
 ```python
 class RuntimeEventHandler(Protocol):
-    """Was `subscribe()` von seinem Aufrufer braucht — `Runtime`
-    (loxone/runtime.py) erfüllt das bereits unverändert, `_run()` kann sie
-    also direkt als `handler` übergeben, ohne einen Adapter zu schreiben.
+    """What `subscribe()` needs from its caller — `Runtime`
+    (loxone/runtime.py) already fulfills this unchanged, so `_run()` can
+    pass it directly as `handler`, without writing an adapter.
 
-    `on_node_snapshot` kam mit dem Nachziehen der Abonnements dazu
-    (`follow_node`): der Client sieht ein Gerät mit Pfaden, für die es noch
-    keine Signalzeile gibt, und kann selbst nichts damit anfangen — er kennt
-    den `Store` nicht und soll ihn nicht kennen. Der Handler dagegen hat
-    ihn."""
+    `on_node_snapshot` was added with the subscription catch-up
+    (`follow_node`): the client sees a device with paths for which there
+    is no signal row yet, and cannot do anything with that itself — it
+    doesn't know the `Store` and shouldn't. The handler, on the other
+    hand, has it."""
 ```
 
-- [ ] **Step 4: `Runtime.on_node_snapshot` schreiben**
+- [ ] **Step 4: Write `Runtime.on_node_snapshot`**
 
-In `src/loxmatter/loxone/runtime.py` direkt nach `seed_from_snapshot` einfügen:
+In `src/loxmatter/loxone/runtime.py`, insert directly after `seed_from_snapshot`:
 
 ```python
     async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None:
-        """Zieht ein Geraet nach, dessen Attributpfade sich geaendert haben -
-        gerufen aus `BridgeMatterClient.follow_node`.
+        """Catches up a device whose attribute paths have changed -
+        called from `BridgeMatterClient.follow_node`.
 
-        Drei Schritte, deren Reihenfolge nicht beliebig ist:
+        Three steps, whose order is not arbitrary:
 
-        1. `register_signals` legt die Zeilen fuer neue Pfade an. Die Methode
-           ist ausdruecklich fuer erneute Aufrufe gebaut (siehe dortiger
-           Docstring): Schluessel und Titel bleiben, `exported` bleibt bei
-           bekannten Signalen unangetastet, `unit`/`exportability`/
-           `functional` werden nachgezogen.
-        2. `invalidate_index` verwirft den Signal-Cache dieses Geraets.
-           **Ohne diesen Schritt waere der ganze Vorgang wirkungslos**:
-           `_signal_for` liest die Signale eines Geraets genau einmal und
-           merkt sich das in `_indexed`; ein eben angelegtes Signal existierte
-           dann in der Datenbank, aber jedes Update dazu liefe fuer den Rest
-           des Prozesses ins Leere - ohne Fehler, nur mit einem
-           `debug`-Eintrag. Der Docstring von `invalidate_index` verlangt
-           diesen Aufruf seit Phase 4; dies ist sein erster Aufrufer.
-        3. Werte saeen, ueber denselben `_cache_attribute`-Weg wie
-           `seed_from_snapshot` - und aus demselben Grund: ein Stecker ohne
-           Last meldet nie eine sich aendernde Spannung, sein Wert entstuende
-           also sonst nie.
+        1. `register_signals` creates the rows for new paths. The
+           method is explicitly built for repeated calls (see its
+           docstring): key and title stay, `exported` stays untouched
+           for known signals, `unit`/`exportability`/`functional` are
+           caught up.
+        2. `invalidate_index` discards this device's signal cache.
+           **Without this step, the whole operation would be
+           pointless**: `_signal_for` reads a device's signals exactly
+           once and remembers that in `_indexed`; a signal just created
+           would then exist in the database, but every update to it
+           would run into a void for the rest of the process - no
+           error, just a `debug` entry. The docstring of
+           `invalidate_index` has demanded this call since phase 4;
+           this is its first caller.
+        3. Seed values, via the same `_cache_attribute` path as
+           `seed_from_snapshot` - and for the same reason: a plug with
+           no load never reports a changing voltage, so its value would
+           otherwise never come into existence.
 
-        Sendet selbst nichts, genau wie `seed_from_snapshot` (siehe dort).
-        Zusaetzlicher Grund hier: ein frisch angelegtes Signal hat in Loxone
-        noch gar keinen virtuellen Eingang - der entsteht erst, wenn die
-        Vorlage exportiert und importiert wurde.
+        Sends nothing itself, exactly like `seed_from_snapshot` (see
+        there). Additional reason here: a freshly created signal has no
+        virtual input in Loxone at all yet - that only comes into
+        existence once the template is exported and imported.
         """
         self._store.register_signals(device_id, snapshot)
         self.invalidate_index(device_id)
@@ -182,15 +183,15 @@ In `src/loxmatter/loxone/runtime.py` direkt nach `seed_from_snapshot` einfügen:
             self._cache_attribute(device_id, path, raw)
 ```
 
-- [ ] **Step 5: Tests laufen lassen**
+- [ ] **Step 5: Run the tests**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -q`
-Expected: alle PASS
+Expected: all PASS
 
 Run: `uv run pytest -q`
-Expected: alle PASS
+Expected: all PASS
 
-- [ ] **Step 6: Formatieren, pruefen, committen**
+- [ ] **Step 6: Format, check, commit**
 
 ```bash
 uv run ruff format src/loxmatter/loxone/runtime.py src/loxmatter/matter/client.py tests/loxone/test_runtime.py
@@ -201,70 +202,71 @@ git commit -m "feat(runtime): on_node_snapshot zieht Signalzeilen, Cache und Wer
 
 ---
 
-### Task 2: `BridgeMatterClient.follow_node` — Abonnements nachziehen
+### Task 2: `BridgeMatterClient.follow_node` — catching up subscriptions
 
 **Files:**
-- Modify: `src/loxmatter/matter/client.py` (`__init__`, `disconnect`, `subscribe`, neue Methoden)
-- Test: `tests/matter/test_client.py` (dort stehen die vorhandenen `subscribe()`-Tests samt `FakeNode`, `FakeUpstream`, `FakeHandler`, `make_connected_pair` und `_settle`)
+- Modify: `src/loxmatter/matter/client.py` (`__init__`, `disconnect`, `subscribe`, new methods)
+- Test: `tests/matter/test_client.py` (the existing `subscribe()` tests live there, along with `FakeNode`, `FakeUpstream`, `FakeHandler`, `make_connected_pair`, and `_settle`)
 
 **Interfaces:**
-- Consumes: `RuntimeEventHandler.on_node_snapshot` aus Task 1.
-- Produces: `BridgeMatterClient.follow_node(node_id: int) -> None` (async). Task 3 und Task 4 rufen sie auf.
+- Consumes: `RuntimeEventHandler.on_node_snapshot` from task 1.
+- Produces: `BridgeMatterClient.follow_node(node_id: int) -> None` (async). Task 3 and task 4 call it.
 
-- [ ] **Step 1: Die Attrappen erweitern und die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Extend the fakes and write the failing tests**
 
-Alles in `tests/matter/test_client.py`.
+Everything in `tests/matter/test_client.py`.
 
-Zuerst `FakeUpstream` um eine Methode ergaenzen, direkt nach `get_nodes`:
+First, extend `FakeUpstream` with a method, directly after `get_nodes`:
 
 ```python
     def add_node(self, node: FakeNode) -> None:
-        """Ein Geraet, das erst nach start_listening() dazukommt - beim
-        echten MatterClient fuellt das NODE_ADDED-Ereignis den Node-Cache
-        entsprechend. Genau der Fall, den `follow_node` abdeckt."""
+        """A device that is added only after start_listening() - with the
+        real MatterClient, the NODE_ADDED event fills the node cache
+        accordingly. Exactly the case `follow_node` covers."""
         self._nodes.append(node)
 ```
 
-`FakeHandler` um den neuen Handler-Aufruf ergaenzen — im `__init__`:
+Extend `FakeHandler` with the new handler call — in `__init__`:
 
 ```python
         self.snapshot_calls: list[tuple[int, NodeSnapshot]] = []
 ```
 
-und als Methode:
+and as a method:
 
 ```python
     async def on_node_snapshot(self, device_id: int, snapshot: NodeSnapshot) -> None:
         self.snapshot_calls.append((device_id, snapshot))
 ```
 
-Dafuer `from loxmatter.matter.models import NodeSnapshot` ergaenzen, falls die Datei ihn noch nicht importiert.
+For this, add `from loxmatter.matter.models import NodeSnapshot`, if the file doesn't already import it.
 
-`_settle()` von drei auf sechs Durchlaeufe heben, mit ergaenztem Docstring:
+Raise `_settle()` from three to six passes, with an extended docstring:
 
 ```python
 async def _settle() -> None:
-    """Lässt den Dispatch-Task von subscribe() der Queue hinterherlaufen —
-    put_nowait() aus einem synchronen Callback und dessen Verarbeitung im
-    Hintergrund-Task liegen sonst in verschiedenen Event-Loop-Durchläufen.
+    """Lets subscribe()'s dispatch task catch up with the queue — put_nowait()
+    from a synchronous callback and its processing in the background task
+    otherwise land in different event-loop turns.
 
-    Sechs Durchläufe statt drei, seit ein NODE_ADDED/NODE_UPDATED zwei
-    Einträge erzeugt (Erreichbarkeit und Nachziehen) und das Nachziehen
-    selbst noch einmal auf den Handler wartet."""
+    Six passes instead of three, since a NODE_ADDED/NODE_UPDATED produces
+    two entries (reachability and catch-up) and the catch-up itself waits
+    on the handler once more."""
     for _ in range(6):
         await asyncio.sleep(0)
 ```
 
-Und eine Lesehilfe bei den uebrigen Modul-Funktionen:
+And a reading aid alongside the other module functions:
 
 ```python
 def _attribute_subscriptions(upstream: FakeUpstream) -> list[str]:
-    """Die Schluessel der aktiven Attribut-Abonnements, je einer pro
-    (Node, Pfad), in der Form `attribute_updated/<node>/<pfad>`.
+    """The keys of the active attribute subscriptions, one per (node,
+    path), in the form `attribute_updated/<node>/<path>`.
 
-    Liest `_subscribers` der Attrappe absichtlich direkt: sie bildet damit
-    exakt das Schluessel-Matching von `MatterClient._signal_event()` nach,
-    und genau dieses Registrierungsschema soll hier geprueft werden."""
+    Deliberately reads the fake's `_subscribers` directly: that way it
+    exactly mirrors the key matching of `MatterClient._signal_event()`,
+    and that registration scheme is exactly what is meant to be checked
+    here."""
     prefix = f"{EventType.ATTRIBUTE_UPDATED.value}/"
     return sorted(
         key
@@ -273,16 +275,16 @@ def _attribute_subscriptions(upstream: FakeUpstream) -> list[str]:
     )
 ```
 
-Dann die Tests anhaengen:
+Then append the tests:
 
 ```python
 # --- follow_node() ----------------------------------------------------
 
 
 async def test_follow_node_subscribes_a_node_that_did_not_exist_at_subscribe_time():
-    """Der gemeldete Fall: ein Geraet, das erst nach `subscribe()` eingelernt
-    wurde, hatte kein einziges Attribut-Abonnement - seine Signale standen
-    bis zum naechsten Neustart der Bruecke auf "-"."""
+    """The reported case: a device commissioned only after `subscribe()`
+    had not a single attribute subscription - its signals showed "-"
+    until the next restart of the bridge."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
@@ -297,9 +299,9 @@ async def test_follow_node_subscribes_a_node_that_did_not_exist_at_subscribe_tim
 
 
 async def test_follow_node_does_not_subscribe_the_same_path_twice():
-    """Ein zweites Abonnement fuer denselben Pfad wuerde jeden Wert doppelt
-    zustellen - `on_attribute` liefe zweimal, und bei einem Ereignissignal
-    zaehlte der Zaehler doppelt hoch."""
+    """A second subscription for the same path would deliver every value
+    twice - `on_attribute` would run twice, and for an event signal the
+    counter would count up twice."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
@@ -328,11 +330,11 @@ async def test_follow_node_only_subscribes_the_paths_that_are_new():
 
 
 async def test_follow_node_without_new_paths_leaves_the_handler_alone():
-    """Der Regelfall im Betrieb: `NODE_UPDATED` feuert auch bei einem Wechsel
-    der Erreichbarkeit und nach jeder Re-Subscription. Fuer ein Geraet ohne
-    neue Pfade ist der Diff leer, und der Vorgang endet vor dem Handler -
-    sonst schriebe jede dieser Meldungen ueber hundert UPDATE-Anweisungen in
-    die Datenbank."""
+    """The common case in production: `NODE_UPDATED` also fires on a
+    reachability change and after every re-subscription. For a device
+    with no new paths, the diff is empty, and the operation ends before
+    the handler - otherwise every one of these notifications would write
+    over a hundred UPDATE statements into the database."""
     bridge, _upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
@@ -357,10 +359,10 @@ async def test_follow_node_hands_the_snapshot_to_the_handler():
 
 
 async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node():
-    """Die Abonnements entstehen trotzdem - nur der Handler bleibt aussen
-    vor, weil es kein Geraet gibt, dem die Werte gehoerten. Sobald die
-    Einlern-Route das Geraet registriert und erneut nachzieht, greift der
-    Handler-Zweig."""
+    """The subscriptions come into existence anyway - only the handler is
+    left out, because there is no device the values would belong to. As
+    soon as the commissioning route registers the device and catches up
+    again, the handler branch takes effect."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
@@ -374,8 +376,9 @@ async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node
 
 
 async def test_follow_node_before_subscribe_does_nothing():
-    """Kein Werfen: die Einlern-Route ruft `follow_node` bedingungslos auf,
-    und ein Aufbau ohne Subscription soll daran nicht scheitern."""
+    """No raising: the commissioning route calls `follow_node`
+    unconditionally, and a setup without a subscription should not fail
+    because of it."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
 
@@ -395,28 +398,29 @@ async def test_follow_node_for_an_unknown_node_does_nothing():
     assert handler.snapshot_calls == []
 ```
 
-- [ ] **Step 2: Den Test laufen lassen und den Fehlschlag sehen**
+- [ ] **Step 2: Run the test and see it fail**
 
 Run: `uv run pytest tests/matter/ -q -k follow_node`
-Expected: FAILED mit `AttributeError: 'BridgeMatterClient' object has no attribute 'follow_node'`
+Expected: FAILED with `AttributeError: 'BridgeMatterClient' object has no attribute 'follow_node'`
 
-- [ ] **Step 3: Die Buchfuehrung anlegen**
+- [ ] **Step 3: Add the bookkeeping**
 
-In `BridgeMatterClient.__init__`, nach `self._thread_dataset_set = False`:
+In `BridgeMatterClient.__init__`, after `self._thread_dataset_set = False`:
 
 ```python
-        # subscribe()/follow_node()-Zustand. Die Menge der bereits angelegten
-        # Attribut-Abonnements ist die einzige Quelle dafuer, was "neu" heisst
-        # - ein zweites Abonnement fuer denselben (Node, Pfad) wuerde jeden
-        # Wert doppelt zustellen. Queue, Handler und die device_id-Aufloesung
-        # bleiben nach subscribe() erreichbar, weil follow_node sie braucht.
+        # subscribe()/follow_node() state. The set of already-created
+        # attribute subscriptions is the only source for what counts as
+        # "new" - a second subscription for the same (node, path) would
+        # deliver every value twice. Queue, handler, and the device_id
+        # resolution stay reachable after subscribe(), because follow_node
+        # needs them.
         self._subscribed_paths: set[tuple[int, str]] = set()
         self._queue: asyncio.Queue[_QueueItem] | None = None
         self._handler: RuntimeEventHandler | None = None
         self._resolve_device_id: Callable[[int], int | None] | None = None
 ```
 
-In `disconnect()`, bei den uebrigen Rueckstellungen (direkt nach `self._unsubscribers = []`):
+In `disconnect()`, with the other resets (directly after `self._unsubscribers = []`):
 
 ```python
         self._subscribed_paths = set()
@@ -425,9 +429,9 @@ In `disconnect()`, bei den uebrigen Rueckstellungen (direkt nach `self._unsubscr
         self._resolve_device_id = None
 ```
 
-- [ ] **Step 4: Das Anlegen der Abonnements herausziehen**
+- [ ] **Step 4: Extract the subscription creation**
 
-In `client.py` eine neue private Methode ergaenzen, oberhalb von `subscribe`:
+In `client.py`, add a new private method, above `subscribe`:
 
 ```python
     def _subscribe_attribute_paths(
@@ -437,21 +441,21 @@ In `client.py` eine neue private Methode ergaenzen, oberhalb von `subscribe`:
         node_id: int,
         paths: Iterable[str],
     ) -> int:
-        """Legt je ein Attribut-Abonnement pro noch nicht abonniertem
-        (Node, Pfad)-Paar an und liefert deren Anzahl.
+        """Creates one attribute subscription for each not-yet-subscribed
+        (node, path) pair, and returns their count.
 
-        Eine Stelle fuer beide Aufrufer (`subscribe` und `follow_node`): zwei
-        Stellen, die dasselbe Registrierungsschema nachbilden, driften ueber
-        kurz oder lang auseinander - und das faellt hier nicht auf, weil ein
-        fehlendes Abonnement kein Fehler ist, sondern Stille.
+        One place for both callers (`subscribe` and `follow_node`): two
+        places that rebuild the same registration scheme drift apart
+        sooner or later - and that would go unnoticed here, because a
+        missing subscription is not an error, it's silence.
 
-        `queue` kommt als Parameter statt aus `self._queue`, damit `subscribe`
-        sie uebergeben kann, bevor sie im Feld steht - und damit hier keine
-        Nicht-`None`-Pruefung noetig ist, deren Einengung ueber die Closure
-        unten ohnehin nicht traegt.
+        `queue` comes in as a parameter instead of from `self._queue`, so
+        that `subscribe` can pass it before it is stored in the field -
+        and so that no not-`None` check is needed here, whose narrowing
+        wouldn't carry through the closure below anyway.
         """
-        # Lazy importiert wie ueberall in dieser Datei: Tests mit einem
-        # Fake-Upstream sollen matter_server nie laden muessen.
+        # Lazily imported like everywhere else in this file: tests with a
+        # fake upstream should never have to load matter_server.
         from matter_server.common.models import EventType
 
         added = 0
@@ -459,9 +463,9 @@ In `client.py` eine neue private Methode ergaenzen, oberhalb von `subscribe`:
             if (node_id, path) in self._subscribed_paths:
                 continue
 
-            # default-Argumente binden node_id/path pro Schleifendurchlauf,
-            # statt den Namen aus dem umschliessenden Scope zu spaet
-            # auszuwerten (klassische Closure-Falle in einer Schleife).
+            # Default arguments bind node_id/path per loop iteration,
+            # instead of evaluating the name from the enclosing scope too
+            # late (the classic closure trap in a loop).
             def on_attribute_event(
                 _event: Any, data: Any, node_id: int = node_id, path: str = path
             ) -> None:
@@ -480,17 +484,17 @@ In `client.py` eine neue private Methode ergaenzen, oberhalb von `subscribe`:
         return added
 ```
 
-`Iterable` dazu importieren: `from collections.abc import Callable, Iterable`.
+Import `Iterable` for this too: `from collections.abc import Callable, Iterable`.
 
-Dann in `subscribe()` die Attribut-Schleife ersetzen. Aus:
+Then, in `subscribe()`, replace the attribute loop. From:
 
 ```python
 unsubscribers = [upstream.subscribe_events(on_node_or_availability_event)]
 
-# Attribut-Updates: siehe Modul-Docstring, warum das nur pro bekanntem
-# (Node, Pfad)-Paar geht. default-Argumente binden node_id/path pro
-# Schleifendurchlauf, statt den Namen aus dem umschließenden Scope zu
-# spät auszuwerten (klassische Closure-Falle in einer Schleife).
+# Attribute updates: see the module docstring for why that only works
+# per known (node, path) pair. Default arguments bind node_id/path per
+# loop iteration, instead of evaluating the name from the enclosing
+# scope too late (the classic closure trap in a loop).
 for node in upstream.get_nodes():
     for path in node.node_data.attributes:
 
@@ -512,7 +516,7 @@ self._unsubscribers = unsubscribers
 self._dispatch_task = asyncio.create_task(self._dispatch_loop(queue, resolve_device_id, handler))
 ```
 
-wird:
+becomes:
 
 ```python
 self._unsubscribers = [upstream.subscribe_events(on_node_or_availability_event)]
@@ -521,47 +525,47 @@ self._queue = queue
 self._handler = handler
 self._resolve_device_id = resolve_device_id
 
-# Attribut-Updates: siehe Modul-Docstring, warum das nur pro bekanntem
-# (Node, Pfad)-Paar geht. Was nach diesem Aufruf dazukommt, holt
-# `follow_node` nach.
+# Attribute updates: see the module docstring for why that only works
+# per known (node, path) pair. Whatever arrives after this call is
+# caught up by `follow_node`.
 for node in upstream.get_nodes():
     self._subscribe_attribute_paths(upstream, queue, node.node_id, node.node_data.attributes)
 
 self._dispatch_task = asyncio.create_task(self._dispatch_loop(queue, resolve_device_id, handler))
 ```
 
-- [ ] **Step 5: `follow_node` schreiben**
+- [ ] **Step 5: Write `follow_node`**
 
-Direkt nach `subscribe()` einfuegen:
+Insert directly after `subscribe()`:
 
 ```python
 async def follow_node(self, node_id: int) -> None:
-    """Zieht die Attribut-Abonnements eines Node nach.
+    """Catches up a node's attribute subscriptions.
 
-    Zwei Aufrufer, ein Vorgang: die Einlern-Route (`api/devices.py`) nach
-    dem Registrieren eines neuen Geraets, und `_dispatch_loop` bei
-    `NODE_ADDED`/`NODE_UPDATED` fuer ein Geraet, das nachtraeglich neue
-    Pfade meldet.
+    Two callers, one operation: the commissioning route
+    (`api/devices.py`) after registering a new device, and
+    `_dispatch_loop` on `NODE_ADDED`/`NODE_UPDATED` for a device that
+    later reports new paths.
 
-    **Warum die Route nicht einfach auf das Ereignis warten kann:**
-    matter-server meldet `NODE_ADDED` noch WAEHREND `commission_with_code`
-    laeuft (`device_controller._setup_node` signalisiert es vor der
-    Rueckkehr des Aufrufs). Zu diesem Zeitpunkt kennt der Store den Node
-    noch nicht, `resolve_device_id` liefert `None`, und fuer ein ruhig im
-    Netz stehendes Geraet folgt keine zweite Meldung. Am 2026-09-04 am
-    laufenden Stack aufgezeichnet: Node 8 war um 11:15:33 fertig
-    eingelernt, samt "Subscription succeeded" - alles davon vor der
-    Rueckkehr an die Route.
+    **Why the route cannot simply wait for the event:** matter-server
+    reports `NODE_ADDED` still WHILE `commission_with_code` is running
+    (`device_controller._setup_node` signals it before the call
+    returns). At that point the store does not yet know the node,
+    `resolve_device_id` returns `None`, and no second notification
+    follows for a device that then sits quietly on the network.
+    Recorded on the running stack on 2026-09-04: node 8 finished
+    commissioning at 11:15:33, including "Subscription succeeded" - all
+    of that before the return to the route.
 
-    Der leere Diff ist der Regelfall und kostet nichts: `NODE_UPDATED`
-    feuert auch bei jedem Wechsel der Erreichbarkeit und nach jeder
-    Re-Subscription, und fuer ein Geraet ohne neue Pfade endet der
-    Vorgang hier, bevor der Handler (und damit der Store) ueberhaupt
-    angefasst wird.
+    An empty diff is the common case and costs nothing: `NODE_UPDATED`
+    also fires on every reachability change and after every
+    re-subscription, and for a device with no new paths the operation
+    ends here, before the handler (and therefore the store) is touched
+    at all.
 
-    Vor `subscribe()` aufgerufen tut die Methode nichts, statt zu werfen:
-    die Einlern-Route ruft sie bedingungslos, und ein Aufbau ohne
-    Subscription soll daran nicht scheitern.
+    Called before `subscribe()`, the method does nothing, instead of
+    raising: the commissioning route calls it unconditionally, and a
+    setup without a subscription should not fail because of it.
     """
     queue = self._queue
     handler = self._handler
@@ -584,8 +588,9 @@ async def follow_node(self, node_id: int) -> None:
 
     device_id = resolve_device_id(node_id)
     if device_id is None:
-        # Die Abonnements bleiben bestehen: sobald die Einlern-Route das
-        # Geraet registriert und erneut nachzieht, greift der Zweig unten.
+        # The subscriptions remain: as soon as the commissioning route
+        # registers the device and catches up again, the branch below
+        # takes effect.
         logger.debug("Node %s ist keinem Geraet zugeordnet - nur abonniert", node_id)
         return
 
@@ -595,15 +600,15 @@ async def follow_node(self, node_id: int) -> None:
     )
 ```
 
-- [ ] **Step 6: Tests laufen lassen**
+- [ ] **Step 6: Run the tests**
 
 Run: `uv run pytest tests/matter/ -q`
-Expected: alle PASS
+Expected: all PASS
 
 Run: `uv run pytest -q`
-Expected: alle PASS
+Expected: all PASS
 
-- [ ] **Step 7: Formatieren, pruefen, committen**
+- [ ] **Step 7: Format, check, commit**
 
 ```bash
 uv run ruff format src/loxmatter/matter/client.py tests/matter/
@@ -614,26 +619,26 @@ git commit -m "feat(matter): follow_node zieht Attribut-Abonnements eines Node n
 
 ---
 
-### Task 3: Die Dispatch-Schleife zieht bei `NODE_ADDED`/`NODE_UPDATED` nach
+### Task 3: The dispatch loop catches up on `NODE_ADDED`/`NODE_UPDATED`
 
 **Files:**
-- Modify: `src/loxmatter/matter/client.py` (neuer Queue-Typ, `on_node_or_availability_event`, `_dispatch_loop`)
-- Test: dieselbe Testdatei wie Task 2
+- Modify: `src/loxmatter/matter/client.py` (new queue type, `on_node_or_availability_event`, `_dispatch_loop`)
+- Test: same test file as task 2
 
 **Interfaces:**
-- Consumes: `BridgeMatterClient.follow_node` aus Task 2.
-- Produces: nichts fuer spaetere Tasks.
+- Consumes: `BridgeMatterClient.follow_node` from task 2.
+- Produces: nothing for later tasks.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-An `tests/matter/test_client.py` anhaengen:
+Append to `tests/matter/test_client.py`:
 
 ```python
 async def test_a_node_update_with_new_paths_is_followed_automatically():
-    """Der zweite Fall der bekannten Grenze: ein laengst eingelerntes Geraet
-    meldet nach einem Firmware-Update einen Pfad, den es beim Start noch
-    nicht gab. `NODE_UPDATED` feuert bei matter-server genau dann, wenn ein
-    Geraet neu interviewt wurde - der richtige Ausloeser."""
+    """The second case of the known limitation: a device commissioned
+    long ago reports, after a firmware update, a path that did not exist
+    at start. `NODE_UPDATED` fires in matter-server exactly when a
+    device has been re-interviewed - the right trigger."""
     node = FakeNode(12, {"1/6/0": True})
     bridge, upstream = make_connected_pair([node])
     await bridge.connect()
@@ -649,9 +654,9 @@ async def test_a_node_update_with_new_paths_is_followed_automatically():
 
 
 async def test_an_availability_update_without_new_paths_touches_no_handler():
-    """Die haeufigste Ursache fuer `NODE_UPDATED` ueberhaupt. Sie darf keinen
-    Store-Zugriff ausloesen - und muss die Erreichbarkeit trotzdem wie bisher
-    zustellen."""
+    """The most common cause of `NODE_UPDATED` at all. It must not
+    trigger a store access - and must still deliver the reachability
+    change as before."""
     node = FakeNode(12, {"1/6/0": True})
     bridge, upstream = make_connected_pair([node])
     await bridge.connect()
@@ -665,75 +670,76 @@ async def test_an_availability_update_without_new_paths_touches_no_handler():
     assert handler.availability_calls == [(5, True)]
 ```
 
-- [ ] **Step 2: Den Test laufen lassen und den Fehlschlag sehen**
+- [ ] **Step 2: Run the test and see it fail**
 
 Run: `uv run pytest tests/matter/ -q -k "node_update"`
 Expected: FAILED — `(8, "1/8/0") not in upstream.attribute_filters`
 
-- [ ] **Step 3: Den Queue-Typ ergaenzen**
+- [ ] **Step 3: Add the queue type**
 
-Bei den anderen `@dataclass(frozen=True)`-Definitionen in `client.py`:
+With the other `@dataclass(frozen=True)` definitions in `client.py`:
 
 ```python
 @dataclass(frozen=True)
 class _FollowNode:
-    """Anstoss zum Nachziehen der Abonnements eines Node.
+    """Trigger to catch up a node's subscriptions.
 
-    Laeuft ueber dieselbe Queue wie die Wert-Aktualisierungen, statt direkt
-    aus dem synchronen Ereignis-Rueckruf heraus: `follow_node` ist eine
-    Coroutine, und der Rueckruf kann keine erwarten (siehe
+    Runs through the same queue as the value updates, instead of
+    directly out of the synchronous event callback: `follow_node` is a
+    coroutine, and the callback cannot await one (see
     `on_node_or_availability_event`).
     """
 
     node_id: int
 ```
 
-Und die Union erweitern:
+And extend the union:
 
 ```python
 _QueueItem = _AttributeUpdate | _EventUpdate | _AvailabilityUpdate | _FollowNode
 ```
 
-- [ ] **Step 4: Das Ereignis einreihen**
+- [ ] **Step 4: Enqueue the event**
 
-In `subscribe()`, in `on_node_or_availability_event`, den `NODE_ADDED`/`NODE_UPDATED`-Zweig erweitern:
+In `subscribe()`, in `on_node_or_availability_event`, extend the `NODE_ADDED`/`NODE_UPDATED` branch:
 
 ```python
             elif event in (EventType.NODE_ADDED, EventType.NODE_UPDATED):
                 queue.put_nowait(_AvailabilityUpdate(data.node_id, data.available))
-                # Zusaetzlich zum Erreichbarkeits-Update, nicht statt seiner:
-                # beide Meldungen tragen dieselbe Ursache, aber der eine Weg
-                # setzt `d<id>_online`, der andere zieht Abonnements nach.
+                # In addition to the reachability update, not instead of
+                # it: both notifications carry the same cause, but one
+                # path sets `d<id>_online`, the other catches up
+                # subscriptions.
                 queue.put_nowait(_FollowNode(data.node_id))
 ```
 
-- [ ] **Step 5: Die Dispatch-Schleife erweitern**
+- [ ] **Step 5: Extend the dispatch loop**
 
-In `_dispatch_loop`, den Rumpf des `try` so beginnen lassen:
+In `_dispatch_loop`, have the body of `try` start like this:
 
 ```python
             try:
                 if isinstance(item, _FollowNode):
-                    # VOR der device_id-Aufloesung: `follow_node` legt
-                    # Abonnements auch fuer einen Node an, den der Store
-                    # (noch) nicht kennt, und entscheidet selbst, ob der
-                    # Handler etwas zu sehen bekommt.
+                    # BEFORE the device_id resolution: `follow_node`
+                    # creates subscriptions even for a node the store
+                    # does not (yet) know, and decides itself whether the
+                    # handler gets anything to see.
                     await self.follow_node(item.node_id)
                     continue
                 device_id = resolve_device_id(item.node_id)
 ```
 
-Der Rest der Schleife bleibt unveraendert.
+The rest of the loop stays unchanged.
 
-- [ ] **Step 6: Tests laufen lassen**
+- [ ] **Step 6: Run the tests**
 
 Run: `uv run pytest tests/matter/ -q`
-Expected: alle PASS
+Expected: all PASS
 
 Run: `uv run pytest -q`
-Expected: alle PASS
+Expected: all PASS
 
-- [ ] **Step 7: Formatieren, pruefen, committen**
+- [ ] **Step 7: Format, check, commit**
 
 ```bash
 uv run ruff format src/loxmatter/matter/client.py tests/matter/
@@ -744,29 +750,29 @@ git commit -m "feat(matter): NODE_ADDED/NODE_UPDATED ziehen neue Attributpfade n
 
 ---
 
-### Task 4: Einlern-Route, Oberflaeche und die bekannte Grenze
+### Task 4: Commissioning route, UI, and the known limitation
 
 **Files:**
-- Modify: `src/loxmatter/api/devices.py` (`commission_device`, ab Zeile 295)
-- Modify: `src/loxmatter/matter/client.py` (Modul-Docstring, Abschnitt „Bekannte Grenze")
-- Modify: `src/loxmatter/web/app.js` (Erfolgsmeldung in `commissionDevice`)
+- Modify: `src/loxmatter/api/devices.py` (`commission_device`, from line 295)
+- Modify: `src/loxmatter/matter/client.py` (module docstring, "Known limitation" section)
+- Modify: `src/loxmatter/web/app.js` (success message in `commissionDevice`)
 - Test: `tests/api/test_devices.py`, `tests/api/conftest.py`
 
 **Interfaces:**
-- Consumes: `BridgeMatterClient.follow_node` aus Task 2.
-- Produces: nichts.
+- Consumes: `BridgeMatterClient.follow_node` from task 2.
+- Produces: nothing.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
-In `tests/api/conftest.py`, `FakeMatterClient.__init__` um eine Liste ergaenzen:
+In `tests/api/conftest.py`, extend `FakeMatterClient.__init__` with a list:
 
 ```python
-        # Die Node-IDs, fuer die die Route das Nachziehen der Abonnements
-        # angestossen hat (`BridgeMatterClient.follow_node`).
+        # The node IDs for which the route triggered catching up the
+        # subscriptions (`BridgeMatterClient.follow_node`).
         self.followed: list[int] = []
 ```
 
-und die Methode dazu, direkt nach `set_thread_dataset`:
+and the method for it, directly after `set_thread_dataset`:
 
 ```python
     async def follow_node(self, node_id: int) -> None:
@@ -774,14 +780,14 @@ und die Methode dazu, direkt nach `set_thread_dataset`:
         self.order.append("follow")
 ```
 
-In `tests/api/test_devices.py` anhaengen:
+Append to `tests/api/test_devices.py`:
 
 ```python
 async def test_commissioning_follows_the_new_node(api):
-    """Ohne diesen Aufruf haette das frisch eingelernte Geraet kein einziges
-    Attribut-Abonnement: `subscribe()` lief einmal beim Start der Bruecke,
-    und das `NODE_ADDED` zu diesem Geraet kam nachweislich schon, bevor der
-    Store ihm eine device_id geben konnte."""
+    """Without this call, the freshly commissioned device would have not
+    a single attribute subscription: `subscribe()` ran once at bridge
+    start, and this device's `NODE_ADDED` demonstrably arrived before the
+    store could give it a device_id."""
     client, store, _, fake_client = api
 
     new_device = (await client.post("/api/devices/commission", json={"code": "MT:X"})).json()
@@ -790,9 +796,9 @@ async def test_commissioning_follows_the_new_node(api):
 
 
 async def test_the_new_node_is_followed_only_after_it_is_registered(api):
-    """Die Reihenfolge ist der ganze Grund fuer diesen Aufruf: wuerde die
-    Route frueher nachziehen, liefe `resolve_device_id` erneut ins Leere -
-    genau das Wettrennen, das `NODE_ADDED` schon verloren hat."""
+    """The order is the entire reason for this call: if the route caught
+    up earlier, `resolve_device_id` would again run into a void - exactly
+    the race `NODE_ADDED` has already lost."""
     client, _, _, fake_client = api
 
     await client.post("/api/devices/commission", json={"code": "MT:X"})
@@ -800,58 +806,58 @@ async def test_the_new_node_is_followed_only_after_it_is_registered(api):
     assert fake_client.order == ["commission", "follow"]
 ```
 
-Der Entwurf (Abschnitt 8) nennt fuer diese Ebene zusaetzlich „`GET
-/api/devices/{id}/signals` liefert Werte statt `null`". Das ist hier
-bewusst NICHT nachgebaut: `FakeMatterClient` und `FakeRuntime` sind zwei
-voneinander unabhaengige Attrappen, und der echte Weg vom Client zur
-Runtime laeuft ueber `follow_node` → `handler.on_node_snapshot`. Ein Test,
-der diesen Weg in den Attrappen nachbildet, pruefte die Attrappen, nicht
-den Code. Die beiden Haelften sind stattdessen dort abgedeckt, wo sie
-wirklich laufen: das Saeen der Werte in Task 1
-(`test_on_node_snapshot_seeds_the_values_without_sending`), der Aufruf des
-Handlers in Task 2 (`test_follow_node_hands_the_snapshot_to_the_handler`).
-Die Verbindung der beiden prueft der Abschnitt „Pruefung am laufenden
-Stack" am Ende dieses Plans.
+The design (section 8) additionally names, for this level, "`GET
+/api/devices/{id}/signals` returns values instead of `null`". That is
+deliberately NOT rebuilt here: `FakeMatterClient` and `FakeRuntime` are
+two mutually independent fakes, and the real path from the client to the
+runtime runs through `follow_node` → `handler.on_node_snapshot`. A test
+that rebuilt this path in the fakes would check the fakes, not the code.
+The two halves are instead covered where they actually run: seeding the
+values in task 1 (`test_on_node_snapshot_seeds_the_values_without_sending`),
+calling the handler in task 2 (`test_follow_node_hands_the_snapshot_to_the_handler`).
+The connection between the two is checked by the "Verification on the
+running stack" section at the end of this plan.
 
-- [ ] **Step 2: Den Test laufen lassen und den Fehlschlag sehen**
+- [ ] **Step 2: Run the test and see it fail**
 
 Run: `uv run pytest tests/api/test_devices.py -q -k follow`
 Expected: 2 FAILED — `assert [] == [<node_id>]`
 
-- [ ] **Step 3: Die Route nachziehen lassen**
+- [ ] **Step 3: Make the route catch up**
 
-In `src/loxmatter/api/devices.py`, in `commission_device`, direkt nach `await runtime.set_online(device_id, snapshot.available)`:
+In `src/loxmatter/api/devices.py`, in `commission_device`, directly after `await runtime.set_online(device_id, snapshot.available)`:
 
 ```python
-        # Erst jetzt, nach `register_device`: `follow_node` loest die Node-ID
-        # ueber den Store auf, und vorher gaebe es dort nichts aufzuloesen -
-        # dasselbe Wettrennen, das `NODE_ADDED` bereits verloren hat (siehe
-        # den Kommentar oben und den Docstring von `follow_node`). Legt die
-        # Attribut-Abonnements fuer dieses Geraet an und saeet seine Werte,
-        # damit die Signale sofort Zahlen zeigen statt Striche - frueher
-        # brauchte es dafuer einen Neustart der Bruecke.
+        # Only now, after `register_device`: `follow_node` resolves the
+        # node ID via the store, and before this point there would be
+        # nothing there to resolve - the same race `NODE_ADDED` has
+        # already lost (see the comment above and the docstring of
+        # `follow_node`). Creates the attribute subscriptions for this
+        # device and seeds its values, so the signals immediately show
+        # numbers instead of dashes - previously this required a restart
+        # of the bridge.
         await active_client.follow_node(snapshot.node_id)
 ```
 
-- [ ] **Step 4: Tests laufen lassen**
+- [ ] **Step 4: Run the tests**
 
 Run: `uv run pytest tests/api/ -q`
-Expected: alle PASS
+Expected: all PASS
 
-- [ ] **Step 5: Die Erfolgsmeldung in der Oberflaeche berichtigen**
+- [ ] **Step 5: Correct the success message in the UI**
 
-In `src/loxmatter/web/app.js`, in `commissionDevice`, den Kommentarblock und die Zuweisung ersetzen. Aus:
+In `src/loxmatter/web/app.js`, in `commissionDevice`, replace the comment block and the assignment. From:
 
 ```javascript
-        // Der Satz zur Subscription ist kein Schmuck (Review-Fix Fix 3,
-        // 2026-09-03, siehe Spec 12.3): `BridgeMatterClient.subscribe()`
-        // laeuft genau einmal beim Start der Bruecke und meldet nur die
-        // damals bekannten (Node, Pfad)-Paare an. Ein gerade eingelerntes
-        // Geraet geht ueber das NODE_ADDED-Ereignis sofort auf "online"
-        // und erscheint gruen - bekommt aber bis zum naechsten Neustart
-        // keinen einzigen Attributwert. Ohne diesen Hinweis sieht der
-        // Anwender ein gruenes Geraet, dessen Signale alle auf "-" stehen,
-        // und sucht den Fehler bei sich.
+        // The sentence about the subscription is not decoration (review
+        // fix 3, 2026-09-03, see spec 12.3): `BridgeMatterClient.subscribe()`
+        // runs exactly once at bridge start and only registers the
+        // (node, path) pairs known at that time. A device just
+        // commissioned immediately goes "online" via the NODE_ADDED
+        // event and shows up green - but gets not a single attribute
+        // value until the next restart. Without this note, the user
+        // sees a green device whose signals are all "-", and looks for
+        // the fault in themselves.
         this.commissionMessage =
           `${device.label} wurde eingelernt. Live-Werte erscheinen erst nach einem ` +
           "Neustart der Brücke – bis dahin zeigt das Gerät zwar „online“, aber jedes " +
@@ -859,40 +865,42 @@ In `src/loxmatter/web/app.js`, in `commissionDevice`, den Kommentarblock und die
           "funktioniert davon unabhängig schon jetzt.";
 ```
 
-wird:
+becomes:
 
 ```javascript
-        // Der frühere Satz "Live-Werte erst nach einem Neustart der Brücke"
-        // ist entfallen, weil die Grenze entfallen ist: die Einlern-Route
-        // ruft `follow_node` auf, das die Attribut-Abonnements dieses Geräts
-        // anlegt und seine Werte säet (Entwurf vom 2026-09-04). Einen Hinweis
-        // braucht es hier trotzdem, nur einen anderen: dass die Werte im
-        // Miniserver erst nach dem Export und dem Import in Loxone Config
-        // ankommen, denn bis dahin gibt es dort keinen virtuellen Eingang.
+        // The earlier sentence "live values only after a restart of the
+        // bridge" is gone because the limitation is gone: the
+        // commissioning route calls `follow_node`, which creates this
+        // device's attribute subscriptions and seeds its values (design
+        // from 2026-09-04). A note is still needed here, just a
+        // different one: that the values arrive in the Miniserver only
+        // after the templates have been exported and imported into
+        // Loxone Config, because until then there is no virtual input
+        // there.
         this.commissionMessage =
           `${device.label} wurde eingelernt und liefert ab sofort Live-Werte – ohne ` +
           "Neustart der Brücke. Im Miniserver kommen sie an, sobald Sie die Vorlagen " +
           "exportiert und in Loxone Config importiert haben.";
 ```
 
-- [ ] **Step 6: Die bekannte Grenze im Modul-Docstring ersetzen**
+- [ ] **Step 6: Replace the known limitation in the module docstring**
 
-In `src/loxmatter/matter/client.py`, im Modul-Docstring, den Absatz „Bekannte Grenze: …" ersetzen durch:
+In `src/loxmatter/matter/client.py`, in the module docstring, replace the "Known limitation: …" paragraph with:
 
 ```
-Was nach `subscribe()` dazukommt, holt `follow_node()` nach — ein Geraet,
-das erst danach eingelernt wird, ebenso wie ein bekanntes Geraet, das
-nachtraeglich neue Attributpfade meldet. Angestossen wird es aus der
-Dispatch-Schleife bei `NODE_ADDED`/`NODE_UPDATED` und zusaetzlich von der
-Einlern-Route. Das „zusaetzlich" ist nicht Guertel-und-Hosentraeger: das
-`NODE_ADDED` eines gerade eingelernten Geraets kommt nachweislich, BEVOR
-`commission_with_code` zurueckkehrt und der Store dem Node eine device_id
-geben kann — die Meldung wird deshalb verworfen, und eine zweite folgt
-fuer ein ruhig im Netz stehendes Geraet nicht. Siehe
+Whatever arrives after `subscribe()` is caught up by `follow_node()` — a
+device commissioned only afterward, as well as a known device that later
+reports new attribute paths. It is triggered from the dispatch loop on
+`NODE_ADDED`/`NODE_UPDATED` and additionally from the commissioning
+route. The "additionally" is not belt-and-suspenders: the `NODE_ADDED`
+of a device just commissioned demonstrably arrives BEFORE
+`commission_with_code` returns and the store can give the node a
+device_id — the notification is therefore discarded, and a second one
+does not follow for a device that then sits quietly on the network. See
 docs/superpowers/specs/2026-09-04-live-values-for-new-devices-design.md.
 ```
 
-- [ ] **Step 7: Alles laufen lassen und committen**
+- [ ] **Step 7: Run everything and commit**
 
 ```bash
 uv run pytest -q
@@ -903,18 +911,18 @@ git add -A
 git commit -m "feat(api): Einlern-Route zieht die Abonnements des neuen Geraets nach"
 ```
 
-Expected: `uv run pytest -q` meldet alle PASS; `uv run ruff check` meldet weiterhin genau die 4 vorbestehenden `SIM118`-Funde in `tests/loxone/test_runtime.py` und keine neuen; `uv run mypy` meldet `Success`.
+Expected: `uv run pytest -q` reports all PASS; `uv run ruff check` continues to report exactly the 4 pre-existing `SIM118` findings in `tests/loxone/test_runtime.py` and none new; `uv run mypy` reports `Success`.
 
 ---
 
-## Abschluss: Prüfung am laufenden Stack
+## Conclusion: verification on the running stack
 
-Nach Task 4, bevor die Arbeit als fertig gilt — die Testsuite kann keinen
-echten `NODE_ADDED`-Zeitpunkt nachstellen:
+After task 4, before the work counts as done — the test suite cannot
+recreate a real `NODE_ADDED` timing:
 
-- [ ] Auf dem Testhost ausrollen und ein Gerät einlernen.
-- [ ] In der Oberfläche prüfen: das Gerät steht auf online **und** seine
-      Signale zeigen Zahlen statt Striche, ohne Neustart der Brücke.
-- [ ] `docker logs loxmatter` auf `Aktualisierung fuer unbekannte Node`
-      durchsehen — ein solcher Eintrag zum neuen Node ist erwartbar (das
-      verlorene `NODE_ADDED`), ein anhaltender Strom davon nicht.
+- [ ] Deploy to the test host and commission a device.
+- [ ] Check in the UI: the device shows online **and** its signals show
+      numbers instead of dashes, without a restart of the bridge.
+- [ ] Look through `docker logs loxmatter` for `Aktualisierung fuer unbekannte Node`
+      — one such entry for the new node is expected (the lost
+      `NODE_ADDED`), a persistent stream of them is not.

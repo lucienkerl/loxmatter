@@ -1,141 +1,140 @@
-# README als Produktseite — Entwurf
+# README as a product page — design
 
-**Datum:** 2026-09-05
-**Status:** abgestimmt, wartet auf Implementierungsplan
+**Date:** 2026-09-05
+**Status:** agreed, waiting on an implementation plan
 
-## 1. Ausgangslage
+## 1. Starting point
 
-Die heutige `README.md` (404 Zeilen) ist ein Handbuch: deutsche Prosa,
-technisch korrekt, chronologisch gewachsen. Sie beantwortet „wie betreibe ich
-das" gut und „warum sollte mich das interessieren" gar nicht. Es gibt kein
-einziges Bild der Oberfläche, obwohl die Oberfläche inzwischen das
-Hauptprodukt ist.
+Today's `README.md` (404 lines) is a manual: German prose, technically
+correct, grown chronologically. It answers "how do I run this" well and "why
+should I care" not at all. There is not a single picture of the UI, even
+though the UI has meanwhile become the main product.
 
-Zwei konkrete Auslöser:
+Two concrete triggers:
 
-- Die Anwendung ist seit i18n-Phase B/C **englisch als Standardsprache**, die
-  README ist rein deutsch — sie passt nicht mehr zu dem, was jemand nach dem
-  ersten Start sieht.
-- Als Vorbild dient die README von
-  [`lucienkerl/mdb-esp32-cashless`](https://github.com/lucienkerl/mdb-esp32-cashless):
-  zentrierter Hero, Badges, Feature-Tabelle mit Emoji, Screenshot-Galerie,
-  ASCII-Architektur, Quickstart erst weiter unten, Detail-Dokumente daneben.
+- The application has had **English as the default language** since i18n
+  phase B/C; the README is purely German — it no longer matches what someone
+  sees after the first start.
+- The README of
+  [`lucienkerl/mdb-esp32-cashless`](https://github.com/lucienkerl/mdb-esp32-cashless)
+  serves as the model: centered hero, badges, feature table with emoji,
+  screenshot gallery, ASCII architecture, quickstart further down, detail
+  documents alongside.
 
-## 2. Abgestimmte Entscheidungen
+## 2. Agreed decisions
 
-| Frage | Entscheidung |
+| Question | Decision |
 |---|---|
-| Sprache | **Nur Englisch.** Eine Datei, keine Drift. Passt zum Englisch-Default der App und zur Vorbild-README. |
-| Screenshots | **Selbst erzeugt** aus einer geseedeten Demo-Instanz (Fixture-Geräte), committet unter `docs/screenshots/`. Keine echten Daten. |
-| Struktur | **Aufteilen.** README = Schaufenster; Betriebs- und Entwicklerdetails wandern nach `docs/`. |
+| Language | **English only.** One file, no drift. Matches the app's English default and the model README. |
+| Screenshots | **Self-generated** from a seeded demo instance (fixture devices), committed under `docs/screenshots/`. No real data. |
+| Structure | **Split.** README = showcase; operations and developer details move to `docs/`. |
 
-Daraus folgt: die verschobenen Abschnitte werden beim Verschieben **übersetzt**.
-Rund 300 Zeilen dichte deutsche Technik-Prosa. Code-Kommentare und die
-`docs/superpowers/`-Spezifikationen bleiben unangetastet deutsch — nur die
-nutzerseitige Dokumentation wird englisch.
+It follows that the moved sections are **translated** as part of the move.
+Roughly 300 lines of dense German technical prose. Code comments and the
+`docs/superpowers/` specifications stay untouched in German — only the
+user-facing documentation becomes English.
 
-## 3. Aufbau der neuen README
+## 3. Structure of the new README
 
-1. **Hero** — Icon, `# loxmatter`, Tagline, Ein-Satz-Pitch, Badges (GPL-3.0,
-   Python 3.12+, CI), Sprungmarken-Zeile.
-2. **Why loxmatter** — drei bis vier Sätze: Loxone spricht kein Matter; diese
-   Brücke schließt die Lücke, selbst gehostet, ohne Cloud und ohne Handarbeit
-   an XML.
-3. **✨ What you can do** — zweispaltige HTML-Tabelle, sechs Zellen mit Emoji:
-   Geräte einlernen · Signale gezielt auswählen · Loxone-Vorlagen erzeugen ·
-   Projektdatei-Sync · Live-Diagnose · Zugangsschutz und Sprache.
-4. **🖥 The web interface** — Screenshot-Galerie, zwei Bilder je Reihe, je eine
-   fette Bildunterschrift plus eine Zeile Erklärung.
-5. **🏗 How it works** — **Abweichung vom abgestimmten Entwurf:** statt eines
-   neuen ASCII-Diagramms bleibt das **bestehende Mermaid-Diagramm** stehen, nur
-   mit englischen Beschriftungen. Begründung: GitHub rendert Mermaid nativ, und
-   das vorhandene Diagramm zeigt mit `otbr`, `matter-server`, Browser und allen
-   Protokollen mehr, als eine ASCII-Nachzeichnung lesbar unterbringt. Darunter
-   ein Absatz zum Datenfluss.
-6. **🚀 Quickstart** — drei Schritte, kompakt, mit Verweis auf `docs/SETUP.md`
-   für den vollständigen Weg.
-7. **📚 Documentation** — Tabelle mit den vier neuen `docs/`-Dateien.
-8. **🧰 Tech stack** — kleine Tabelle.
-9. **🗺 Status** — der ehrliche Stand, siehe Abschnitt 6 dieses Entwurfs.
-10. **🤝 Contributing** und **📄 License** — knapp, Lizenzdetails verlinkt.
+1. **Hero** — icon, `# loxmatter`, tagline, one-sentence pitch, badges
+   (GPL-3.0, Python 3.12+, CI), anchor-link row.
+2. **Why loxmatter** — three to four sentences: Loxone doesn't speak Matter;
+   this bridge closes the gap, self-hosted, without a cloud and without
+   hand-editing XML.
+3. **✨ What you can do** — two-column HTML table, six cells with emoji:
+   commission devices · select signals precisely · generate Loxone templates
+   · project-file sync · live diagnostics · access protection and language.
+4. **🖥 The web interface** — screenshot gallery, two images per row, each
+   with a bold caption plus one line of explanation.
+5. **🏗 How it works** — **deviation from the agreed design:** instead of a
+   new ASCII diagram, the **existing Mermaid diagram** stays, only with
+   English labels. Reasoning: GitHub renders Mermaid natively, and the
+   existing diagram shows more with `otbr`, `matter-server`, browser and all
+   the protocols than an ASCII redrawing could fit legibly. A paragraph on
+   the data flow follows below it.
+6. **🚀 Quickstart** — three steps, compact, with a reference to
+   `docs/SETUP.md` for the full path.
+7. **📚 Documentation** — table with the four new `docs/` files.
+8. **🧰 Tech stack** — small table.
+9. **🗺 Status** — the honest state, see section 6 of this design.
+10. **🤝 Contributing** and **📄 License** — brief, license details linked.
 
-## 4. Aufteilung nach `docs/`
+## 4. Split into `docs/`
 
-| Alter Abschnitt | Neues Zuhause |
+| Old section | New home |
 |---|---|
-| Voraussetzungen, Erste Schritte (beide Wege), Ein Gerät ansehen | `docs/SETUP.md` |
-| Dauerhaft betreiben (`run`), Zugangsschutz, Sprache, Export-Verhalten, Projektdatei-Sync-Details | `docs/OPERATIONS.md` |
-| Entwickeln | `docs/DEVELOPMENT.md` |
-| Fremdsoftware, Hinweise in den Quelldateien | `docs/LICENSING.md` |
+| Prerequisites, First steps (both paths), Viewing a device | `docs/SETUP.md` |
+| Running it permanently (`run`), access protection, language, export behavior, project-file sync details | `docs/OPERATIONS.md` |
+| Developing | `docs/DEVELOPMENT.md` |
+| Third-party software, notices in the source files | `docs/LICENSING.md` |
 
-Die README verlinkt alle vier. Bestehende Links auf
-`docs/superpowers/specs/…` bleiben erhalten, sie wandern mit ihrem Abschnitt
-mit.
+The README links to all four. Existing links to
+`docs/superpowers/specs/…` are preserved; they move along with their
+section.
 
 ## 5. Screenshots
 
-Sieben Bilder unter `docs/screenshots/`:
+Seven images under `docs/screenshots/`:
 
-| Datei | Zeigt |
+| File | Shows |
 |---|---|
-| `dashboard.png` | Geräteliste mit Live-Werten, Kacheln je Gerät |
-| `signals.png` | Signalansicht, funktional vs. Experte, Export-Haken |
-| `export.png` | Export-Tab mit Vorschautabelle |
-| `project-sync.png` | Projektdatei-Sync mit Diff-Plan |
-| `system.png` | Live-Diagnose: Logzeilen, UDP-Mitschnitt, Kommando-Log |
-| `settings.png` | Einstellungen samt Sprachumschalter |
-| `commissioning.png` | Einlern-Karte oben im Geräte-Tab, mit Codefeld |
+| `dashboard.png` | Device list with live values, tiles per device |
+| `signals.png` | Signal view, functional vs. expert, export checkboxes |
+| `export.png` | Export tab with preview table |
+| `project-sync.png` | Project-file sync with diff plan |
+| `system.png` | Live diagnostics: log lines, UDP capture, command log |
+| `settings.png` | Settings including language switcher |
+| `commissioning.png` | Commissioning card at the top of the Devices tab, with code field |
 
-Erzeugt aus einer Demo-Instanz: ein temporärer Store, geseedet aus
-`tests/fixtures/nodes/*.json` (vier Geräte), Passwort gesetzt, Bridge-IP und
-Ports vorbelegt, einige Signale als exportiert markiert. Für
-`project-sync.png` wird die Beispiel-Projektdatei aus
-`tests/projectsync/conftest.py` durch den echten Endpunkt geschickt, damit der
-Plan echte Einträge zeigt.
+Generated from a demo instance: a temporary store, seeded from
+`tests/fixtures/nodes/*.json` (four devices), password set, bridge IP and
+ports pre-filled, some signals marked as exported. For `project-sync.png`,
+the example project file from `tests/projectsync/conftest.py` is sent
+through the real endpoint, so the plan shows real entries.
 
-Das Seed-Skript wird als `scripts/demo_instance.py` **mitcommittet**: die
-Oberfläche hat sich in einer Woche dreimal geändert; ohne reproduzierbaren
-Weg veralten die Bilder still. Das Skript startet die App über `build_app()`
-ohne Matter-Client — es braucht keine Hardware.
+The seed script is **committed** as `scripts/demo_instance.py`: the UI has
+changed three times in a week; without a reproducible path the images go
+stale silently. The script starts the app via `build_app()` without a
+Matter client — it needs no hardware.
 
-## 6. Harte Randbedingung: die Warnhinweise bleiben
+## 6. Hard constraint: the warnings stay
 
-Eine werblichere README darf die unbequemen Stellen nicht wegputzen. Diese
-Aussagen müssen wortgleich in der Sache erhalten bleiben — im `Status`-Block
-der README oder in der jeweiligen `docs/`-Datei, verlinkt:
+A more promotional README must not paper over the uncomfortable spots.
+These statements must be preserved verbatim in substance — in the README's
+`Status` block or in the respective `docs/` file, linked:
 
-- Der **Durchstich gegen einen echten Miniserver fehlt** — die erzeugten
-  Vorlagen wurden nie in Loxone Config importiert.
-- **Kein TLS.** Passwort und Token gehen im Klartext über das Netz.
-- **Trust on first use:** zwischen Dienststart und erster Passwortvergabe kann
-  jeder im Netz die Brücke übernehmen.
-- `/cmd` ist ein **GET ohne Ursprungsprüfung** und damit von jeder Webseite
-  auslösbar, die jemand im selben Netz öffnet.
-- Beim Projektdatei-Sync sind **neue Geräte-Container experimentell** und das
-  ID-Schema unverifiziert.
-- `deploy/testhost/` ist **kein gehärtetes Produktions-Image**.
-- Der Schema-Umzug **setzt gesetzte Export-Haken zurück**.
-- Ein Sprachwechsel wirkt nur auf **neu** erzeugte Vorlagen.
+- The **integration test against a real Miniserver is missing** — the
+  generated templates have never been imported into Loxone Config.
+- **No TLS.** Password and token travel in plaintext over the network.
+- **Trust on first use:** between service start and the first password
+  being set, anyone on the network can take over the bridge.
+- `/cmd` is a **GET without origin checking** and can therefore be triggered
+  by any web page opened on the same network.
+- For project-file sync, **new device containers are experimental** and the
+  ID scheme is unverified.
+- `deploy/testhost/` is **not a hardened production image**.
+- The schema migration **resets export checkboxes that were set**.
+- A language switch only affects templates generated **from then on**.
 
-Die drei erstgenannten gehören sichtbar in die README selbst, nicht nur in ein
-verlinktes Dokument.
+The first three belong visibly in the README itself, not only in a linked
+document.
 
-## 7. Abgrenzung
+## 7. Out of scope
 
-Nicht Teil dieser Arbeit:
+Not part of this work:
 
-- Keine Änderung an Anwendungscode, Verhalten oder Tests der App.
-- Code-Kommentare und `docs/superpowers/`-Spezifikationen bleiben deutsch.
-- Kein neues Logo, keine CI-Änderung, keine GitHub-Pages-Seite.
-- **Das One-Liner-Installskript entsteht in einer eigenen Session** (so
-  gewünscht). Der Quickstart beschreibt zunächst die manuelle Installation;
-  wer das Skript baut, zieht Schritt 1 nach.
+- No change to application code, behavior, or tests of the app.
+- Code comments and the `docs/superpowers/` specifications stay German.
+- No new logo, no CI change, no GitHub Pages site.
+- **The one-liner install script is built in its own session** (as
+  requested). The quickstart initially describes manual installation;
+  whoever builds the script updates step 1 afterward.
 
-## 8. Risiken
+## 8. Risks
 
-| Risiko | Umgang |
+| Risk | Handling |
 |---|---|
-| Screenshots veralten | Seed-Skript mitcommitten, Erzeugung im Skript dokumentieren |
-| Warnhinweise gehen beim Umbau verloren | Abschnitt 6 als Prüfliste; Abnahme prüft jeden Punkt einzeln |
-| Übersetzungsfehler in dichter Technik-Prosa | Beim Verschieben Abschnitt für Abschnitt, nicht frei nacherzählt |
-| Tote Links nach dem Verschieben | Am Ende alle relativen Links maschinell prüfen |
+| Screenshots go stale | Commit the seed script, document generation in the script |
+| Warnings get lost during the rework | Section 6 as a checklist; acceptance checks each point individually |
+| Translation errors in dense technical prose | Move section by section, not freely retold |
+| Dead links after the move | Check all relative links mechanically at the end |
