@@ -100,8 +100,25 @@ async def supervise(
     naechsten Umbau als "langsam" uebersprungen und prueft dann nichts mehr.
     """
     while True:
-        await client.wait_for_link_loss()
-        logger.warning("Verbindung zu matter-server verloren - baue sie neu auf")
+        try:
+            await client.wait_for_link_loss()
+            logger.warning("Verbindung zu matter-server verloren - baue sie neu auf")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Ein Modul, das gegen stillen Ausfall gebaut ist, darf nicht selbst
+            # still ausfallen: ohne dieses `except` endete `supervise()` hier
+            # kommentarlos, niemand startete es neu, und die Bruecke waere wieder
+            # taub, ohne es zu melden - genau der Zustand vom 8. September 2026.
+            #
+            # Gewartet wird `backoff_max`, NICHT `backoff_start`: ein Fehler an
+            # dieser Stelle ist kein Verbindungsproblem (das faengt die innere
+            # Schleife unten ab), sondern hoechstwahrscheinlich ein
+            # Programmierfehler. Den in enger Schleife zu wiederholen behebt ihn
+            # nicht, es fuellt nur das Log und verdeckt alles daneben.
+            logger.exception("Verwalter: unerwarteter Fehler beim Warten auf den Abriss")
+            await sleep(backoff_max)
+            continue
         delay = backoff_start
         while True:
             try:

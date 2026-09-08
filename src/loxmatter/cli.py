@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -637,8 +636,25 @@ async def _run(
     finally:
         if supervisor_task is not None:
             supervisor_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await supervisor_task
+            except asyncio.CancelledError:
+                # Zwei verschiedene Abbrueche kommen hier als dieselbe Ausnahme an,
+                # und nur einer davon ist der erwartete. `supervisor_task.cancelled()`
+                # unterscheidet sie: ist der Verwalter selbst abgebrochen, war es
+                # unser `cancel()` eine Zeile darueber - genau das Erwartete, es gibt
+                # nichts zu melden. Ist er es NICHT, dann traf die Cancellation den
+                # umgebenden `_run`-Task, waehrend wir auf ihn warteten (ein zweites
+                # Strg-C mitten im Herunterfahren), und die MUSS weiterlaufen - der
+                # Docstring oben sagt das fuer jeden anderen Aufraeumschritt ebenso.
+                if not supervisor_task.cancelled():
+                    raise
+            except Exception:
+                # Eigenes `try` wie bei jedem Nachbarblock: endete der Verwalter
+                # vorher an einer anderen Ausnahme, liefert `await` sie hier aus -
+                # und ohne dieses `except` faelle der gesamte Rest des Aufraeumens
+                # aus, `store.close()` eingeschlossen.
+                logger.exception("Verwalter der matter-server-Verbindung endete mit einem Fehler")
         try:
             await runtime.stop()
         except asyncio.CancelledError:
