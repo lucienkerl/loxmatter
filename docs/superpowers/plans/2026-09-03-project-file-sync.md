@@ -1,39 +1,39 @@
-# Projektdatei-Sync Implementation Plan
+# Project File Sync Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eine hochgeladene Loxone-Projektdatei automatisch gegen die gespeicherten Geräte/Signale abgleichen und eine gepatchte Fassung liefern, in der bestehende virtuelle Ein-/Ausgänge aktualisiert (nicht ersetzt) und fehlende neu angelegt sind.
+**Goal:** Automatically match an uploaded Loxone project file against the stored devices/signals and deliver a patched version in which existing virtual inputs/outputs are updated (not replaced) and missing ones are newly created.
 
-**Architecture:** Neues Paket `loxmatter.projectsync` liest die Projektdatei nur lesend (eigener Byte-Span-Scanner für `<C>`-Elemente, kein XML-Reserialisierer), baut einen Diff-Plan gegen `Store`, und schreibt Änderungen als gezielte Textersetzungen auf den Original-Bytes zurück. Ein neuer API-Router (`POST /api/export/project-sync`) liefert Plan und beide Datei-Varianten (mit/ohne neue Geräte-Container) in einer Antwort; das WebUI zeigt den Plan zur Bestätigung, bevor ein Download möglich ist.
+**Architecture:** New package `loxmatter.projectsync` reads the project file read-only (its own byte-span scanner for `<C>` elements, no XML re-serializer), builds a diff plan against `Store`, and writes changes back as targeted text replacements on the original bytes. A new API router (`POST /api/export/project-sync`) delivers the plan and both file variants (with/without new device containers) in one response; the WebUI shows the plan for confirmation before a download is possible.
 
-**Tech Stack:** Python (FastAPI-Router, Pydantic-Modelle, sqlite-gestützter `Store`), Vanilla-JS/Alpine.js im bestehenden `web/app.js`.
+**Tech Stack:** Python (FastAPI router, Pydantic models, sqlite-backed `Store`), vanilla JS/Alpine.js in the existing `web/app.js`.
 
 ## Global Constraints
 
-- Kein Reverse-Engineering des Miniserver-Upload-Protokolls, keine Live-Verbindung zum Miniserver für dieses Feature (Spec Abschnitt 2/3.1).
-- Original-Datei wird nie überschrieben; jede Antwort liefert nur neue Bytes (Spec Abschnitt 4).
-- Schreiben ausschließlich als Textersetzung auf dem Original-Byte-Strom, nie über einen XML-Serialisierer (Spec Abschnitt 3.2).
-- Abgleich über den in `Check`/`CmdOn` bereits vorhandenen `loxmatter`-Schlüssel, nicht über den Titel (Spec Abschnitt 3.3).
-- Kein automatisches Löschen und kein automatisches Verdrahten auf Funktionsbausteine (Spec Abschnitt 2).
-- Neue Geräte-Container nur, wenn `include_new_devices=True` explizit gesetzt ist (Spec Abschnitt 3.4/6).
-- Jede neue Datei muss deutschsprachige Fehlermeldungen/Docstrings im Stil des restlichen Repos tragen (siehe bestehende Module).
+- No reverse-engineering of the Miniserver upload protocol, no live connection to the Miniserver for this feature (spec section 2/3.1).
+- The original file is never overwritten; every response delivers only new bytes (spec section 4).
+- Writing exclusively as text replacement on the original byte stream, never via an XML serializer (spec section 3.2).
+- Matching via the `loxmatter` key already present in `Check`/`CmdOn`, not via the title (spec section 3.3).
+- No automatic deletion and no automatic wiring to function blocks (spec section 2).
+- New device containers only when `include_new_devices=True` is explicitly set (spec section 3.4/6).
+- Every new file must carry German-language error messages/docstrings in the style of the rest of the repo (see existing modules).
 
 ---
 
-## Vorarbeiten: geteilte Bausteine
+## Groundwork: shared building blocks
 
-### Task 1: `export/xml.py` — Escaping-Helfer öffentlich machen
+### Task 1: `export/xml.py` — make the escaping helper public
 
 **Files:**
 - Modify: `src/loxmatter/export/xml.py`
 - Test: `tests/export/test_xml.py`
 
 **Interfaces:**
-- Produces: `escape_attr_value(value: str) -> str`, `render_attrs(attrs: Attrs) -> str` (öffentlich, vorher `_escape_attr_value`/`_render_attrs`) — `projectsync` braucht dieselbe Escaping-Logik wie die Vorlagendateien, damit beide Schreibpfade nicht auseinanderlaufen.
+- Produces: `escape_attr_value(value: str) -> str`, `render_attrs(attrs: Attrs) -> str` (public, previously `_escape_attr_value`/`_render_attrs`) — `projectsync` needs the same escaping logic as the template files, so the two writing paths don't drift apart.
 
 - [ ] **Step 1: Write the failing test**
 
-Füge in `tests/export/test_xml.py` an:
+Append to `tests/export/test_xml.py`:
 
 ```python
 from loxmatter.export.xml import escape_attr_value, render_attrs
@@ -50,21 +50,21 @@ def test_render_attrs_is_importable():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/export/test_xml.py -v`
-Expected: FAIL mit `ImportError: cannot import name 'escape_attr_value'`
+Expected: FAIL with `ImportError: cannot import name 'escape_attr_value'`
 
-- [ ] **Step 3: Rename in der Implementierung**
+- [ ] **Step 3: Rename in the implementation**
 
-In `src/loxmatter/export/xml.py`: benenne `_escape_attr_value` zu `escape_attr_value` und `_render_attrs` zu `render_attrs` um (beide Funktionsköpfe und alle internen Aufrufstellen in `_render_attrs`/`render_document`). Verhalten bleibt unverändert — reines Umbenennen.
+In `src/loxmatter/export/xml.py`: rename `_escape_attr_value` to `escape_attr_value` and `_render_attrs` to `render_attrs` (both function heads and every internal call site in `_render_attrs`/`render_document`). Behavior stays unchanged — a pure rename.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_xml.py -v`
-Expected: PASS, alle bisherigen Tests in dieser Datei weiterhin PASS (sie riefen zuvor nur `render_document` auf, nicht die privaten Namen direkt).
+Expected: PASS, all previous tests in this file still PASS (they previously only called `render_document`, not the private names directly).
 
-- [ ] **Step 5: Ganze Testsuite laufen lassen**
+- [ ] **Step 5: Run the whole test suite**
 
 Run: `uv run pytest -q`
-Expected: PASS — keine andere Stelle im Repo importiert `_escape_attr_value`/`_render_attrs` direkt (nur `export/xml.py` selbst).
+Expected: PASS — no other place in the repo imports `_escape_attr_value`/`_render_attrs` directly (only `export/xml.py` itself).
 
 - [ ] **Step 6: Commit**
 
@@ -75,19 +75,19 @@ git commit -m "refactor(export): XML-Escaping-Helfer oeffentlich machen fuer pro
 
 ---
 
-### Task 2: `export/documents.py` — Attribut-Bausteine pro Kommando isolieren
+### Task 2: `export/documents.py` — isolate the attribute building blocks per command
 
 **Files:**
 - Modify: `src/loxmatter/export/documents.py`
 - Test: `tests/export/test_documents.py`
 
 **Interfaces:**
-- Consumes: `LoxoneInput` (aus `export/signals.py`), `LoxoneCommand` (dieselbe Datei)
-- Produces: `virtual_in_udp_cmd_attributes(entry: LoxoneInput) -> list[tuple[str, str]]` (neu, extrahiert aus `render_virtual_in_udp`), `virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]` (vorher `_virtual_out_cmd_attributes`, umbenannt) — `projectsync.schema` baut neue Projekt-Objekte auf denselben, bereits gegen einen echten Import verifizierten Attributlisten auf, statt sie ein zweites Mal zu erfinden.
+- Consumes: `LoxoneInput` (from `export/signals.py`), `LoxoneCommand` (same file)
+- Produces: `virtual_in_udp_cmd_attributes(entry: LoxoneInput) -> list[tuple[str, str]]` (new, extracted from `render_virtual_in_udp`), `virtual_out_cmd_attributes(command: LoxoneCommand) -> list[tuple[str, str]]` (previously `_virtual_out_cmd_attributes`, renamed) — `projectsync.schema` builds new project objects on the same attribute lists already verified against a real import, instead of inventing them a second time.
 
 - [ ] **Step 1: Write the failing test**
 
-Füge in `tests/export/test_documents.py` an:
+Append to `tests/export/test_documents.py`:
 
 ```python
 from loxmatter.export.documents import virtual_in_udp_cmd_attributes, virtual_out_cmd_attributes
@@ -112,22 +112,22 @@ def test_virtual_out_cmd_attributes_is_importable():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/export/test_documents.py -v`
-Expected: FAIL mit `ImportError`
+Expected: FAIL with `ImportError`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 In `src/loxmatter/export/documents.py`:
 
-1. Benenne `_virtual_out_cmd_attributes` zu `virtual_out_cmd_attributes` um (Funktionskopf und den einen Aufruf in `render_virtual_out`).
-2. Extrahiere die Attributliste aus der List-Comprehension in `render_virtual_in_udp` in eine neue Funktion:
+1. Rename `_virtual_out_cmd_attributes` to `virtual_out_cmd_attributes` (function head and the one call in `render_virtual_out`).
+2. Extract the attribute list from the list comprehension in `render_virtual_in_udp` into a new function:
 
 ```python
 def virtual_in_udp_cmd_attributes(entry: LoxoneInput) -> list[tuple[str, str]]:
-    """Attribute eines einzelnen `VirtualInUdpCmd` — isoliert aus
-    `render_virtual_in_udp`, damit `projectsync.schema` dieselbe, bereits
-    gegen einen echten Import verifizierte Attributliste fuer neu in die
-    Projektdatei eingefuegte Objekte wiederverwenden kann, statt sie ein
-    zweites Mal zu erfinden."""
+    """Attributes of a single `VirtualInUdpCmd` - isolated out of
+    `render_virtual_in_udp`, so that `projectsync.schema` can reuse the
+    same attribute list, already verified against a real import, for
+    objects newly inserted into the project file, instead of inventing
+    it a second time."""
     return [
         ("Title", entry.title),
         ("Comment", entry.comment),
@@ -147,7 +147,7 @@ def virtual_in_udp_cmd_attributes(entry: LoxoneInput) -> list[tuple[str, str]]:
     ]
 ```
 
-3. Passe `render_virtual_in_udp` an, diese Funktion zu nutzen statt der Inline-Liste:
+3. Adjust `render_virtual_in_udp` to use this function instead of the inline list:
 
 ```python
 def render_virtual_in_udp(
@@ -173,9 +173,9 @@ def render_virtual_in_udp(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_documents.py -v`
-Expected: PASS — inklusive aller vorher bestehenden Tests in dieser Datei (das Rendering-Ergebnis ist byteidentisch zu vorher, nur der Weg dahin ist jetzt zweigeteilt).
+Expected: PASS — including all previously existing tests in this file (the rendering result is byte-identical to before, only the path there is now split in two).
 
-- [ ] **Step 5: Ganze Testsuite laufen lassen**
+- [ ] **Step 5: Run the whole test suite**
 
 Run: `uv run pytest -q`
 Expected: PASS
@@ -189,9 +189,9 @@ git commit -m "refactor(export): Kommando-Attribute isoliert wiederverwendbar ma
 
 ---
 
-## Kern: `loxmatter.projectsync`
+## Core: `loxmatter.projectsync`
 
-### Task 3: `projectsync/scan.py` — Byte-Span-Scanner für `<C>`-Elemente
+### Task 3: `projectsync/scan.py` — byte-span scanner for `<C>` elements
 
 **Files:**
 - Create: `src/loxmatter/projectsync/__init__.py`
@@ -199,11 +199,11 @@ git commit -m "refactor(export): Kommando-Attribute isoliert wiederverwendbar ma
 - Test: `tests/projectsync/test_scan.py`
 
 **Interfaces:**
-- Produces: `@dataclass Element(attrs: dict[str,str], open_start: int, open_end: int, self_closing: bool, inner_end: int | None, outer_end: int, children: list[Element])` mit Property `type -> str | None`; `parse_attrs(tag_text: str) -> dict[str, str]`; `scan_children(text: str, start: int, end: int) -> list[Element]`; `parse_root(text: str) -> tuple[dict[str, str], int, int, int]` (root_attrs, root_open_start, root_open_end, root_close_start) — spätere Tasks (`index.py`, `patch.py`) navigieren und schreiben ausschließlich über diese Spans, nie über einen XML-Reserialisierer.
+- Produces: `@dataclass Element(attrs: dict[str,str], open_start: int, open_end: int, self_closing: bool, inner_end: int | None, outer_end: int, children: list[Element])` with property `type -> str | None`; `parse_attrs(tag_text: str) -> dict[str, str]`; `scan_children(text: str, start: int, end: int) -> list[Element]`; `parse_root(text: str) -> tuple[dict[str, str], int, int, int]` (root_attrs, root_open_start, root_open_end, root_close_start) — later tasks (`index.py`, `patch.py`) navigate and write exclusively via these spans, never via an XML re-serializer.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `src/loxmatter/projectsync/__init__.py` (leer, mit Lizenzkopf wie jede andere Datei im Projekt — siehe z. B. `src/loxmatter/export/__init__.py`).
+Create `src/loxmatter/projectsync/__init__.py` (empty, with a license header like every other file in the project — see e.g. `src/loxmatter/export/__init__.py`).
 
 Create `tests/projectsync/test_scan.py`:
 
@@ -272,9 +272,9 @@ def test_parse_root_raises_on_missing_control_list():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/projectsync/test_scan.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.projectsync'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.projectsync'`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 Create `src/loxmatter/projectsync/scan.py`:
 
@@ -295,21 +295,21 @@ Create `src/loxmatter/projectsync/scan.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Liest eine Loxone-Projektdatei als Baum aus `<C>`-Elementen, mit exakten
-Byte-Spans statt eines XML-Baums.
+"""Reads a Loxone project file as a tree of `<C>` elements, with exact
+byte spans instead of an XML tree.
 
-Bewusst kein `xml.etree.ElementTree` fuer irgendetwas, das spaeter
-geschrieben wird (siehe Entwurf `docs/superpowers/specs/
-2026-09-03-project-file-sync-design.md`, Abschnitt 3.2): ein XML-Serialisierer
-duerfte Attribute umsortieren oder anders schreiben, ohne dass sich das hier
-nachpruefen liesse, und ein 3-MB-Projekt enthaelt weit mehr Bausteintypen als
-dieses Projekt kennt. `Element.open_start`/`open_end`/`inner_end`/`outer_end`
-sind deshalb der eigentliche Zweck dieses Moduls: exakte Positionen, an denen
-`projectsync.patch` spaeter chirurgisch schreibt.
+Deliberately no `xml.etree.ElementTree` for anything that is written
+back later (see design `docs/superpowers/specs/
+2026-09-03-project-file-sync-design.md`, section 3.2): an XML serializer
+could reorder attributes or write them differently, without that being
+verifiable here, and a 3 MB project contains far more block types than
+this project knows. `Element.open_start`/`open_end`/`inner_end`/`outer_end`
+are therefore the actual purpose of this module: exact positions at which
+`projectsync.patch` later writes surgically.
 
-Nur `<C ...>`-Elemente werden hier verstanden. Alles andere (`Co`, `In`,
-`IoData`, `Display`, ...) bleibt fuer dieses Modul unsichtbarer Text
-innerhalb des Inhalts eines `<C>`-Elements."""
+Only `<C ...>` elements are understood here. Everything else (`Co`, `In`,
+`IoData`, `Display`, ...) remains invisible text to this module, inside
+the content of a `<C>` element."""
 
 from __future__ import annotations
 
@@ -322,7 +322,7 @@ _CONTROL_LIST_OPEN = re.compile(r"<ControlList\b[^>]*>")
 
 
 class ProjectFormatError(ValueError):
-    """Die hochgeladene Datei ist keine (verstandene) Loxone-Projektdatei."""
+    """The uploaded file is not a (recognized) Loxone project file."""
 
 
 @dataclass
@@ -331,7 +331,7 @@ class Element:
     open_start: int
     open_end: int
     self_closing: bool
-    # inner_end/children sind None/leer bei einem selbstschliessenden Element.
+    # inner_end/children are None/empty for a self-closing element.
     inner_end: int | None
     outer_end: int
     children: list["Element"] = field(default_factory=list)
@@ -342,8 +342,8 @@ class Element:
 
 
 def parse_attrs(tag_text: str) -> dict[str, str]:
-    """Liest alle `name="wert"`-Paare aus einem einzelnen Start-Tag-Text und
-    entschaerft die fuenf XML-Standard-Escapes."""
+    """Reads all `name="value"` pairs from a single start-tag text and
+    unescapes the five standard XML escapes."""
     attrs: dict[str, str] = {}
     for match in _ATTR.finditer(tag_text):
         name, raw = match.group(1), match.group(2)
@@ -359,11 +359,11 @@ def parse_attrs(tag_text: str) -> dict[str, str]:
 
 
 def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:
-    """Ausgehend vom `<` eines `<C>`-Elements: liefert `(inner_end, outer_end,
-    self_closing)`. Laeuft token-weise vorwaerts (naechstes `<C...>` oder
-    naechstes `</C>`, je nachdem was zuerst kommt) und haelt dabei die
-    Verschachtelungstiefe nach, um das WIRKLICH passende `</C>` zu finden,
-    nicht nur das naechste im Dokument."""
+    """Starting from the `<` of a `<C>` element: returns `(inner_end, outer_end,
+    self_closing)`. Walks forward token by token (next `<C...>` or next
+    `</C>`, whichever comes first) and tracks nesting depth along the way,
+    to find the `</C>` that REALLY matches, not just the next one in the
+    document."""
     tag_close = text.index(">", open_start)
     self_closing = text[tag_close - 1] == "/"
     open_end = tag_close + 1
@@ -391,8 +391,8 @@ def _skip_element(text: str, open_start: int) -> tuple[int, int, bool]:
 
 
 def scan_children(text: str, start: int, end: int) -> list[Element]:
-    """Alle direkten `<C>`-Kinder im Bereich `[start, end)`, rekursiv mit
-    ihren eigenen `<C>`-Kindern gefuellt."""
+    """All direct `<C>` children in the range `[start, end)`, filled
+    recursively with their own `<C>` children."""
     children: list[Element] = []
     pos = start
     while True:
@@ -422,11 +422,11 @@ def scan_children(text: str, start: int, end: int) -> list[Element]:
 
 
 def parse_root(text: str) -> tuple[dict[str, str], int, int, int]:
-    """Findet das `<ControlList ...>`-Wurzelelement.
+    """Finds the `<ControlList ...>` root element.
 
-    Liefert `(attrs, open_start, open_end, close_start)` — `close_start` ist
-    die Position von `</ControlList>`, also das Ende des Inhaltsbereichs, in
-    dem `scan_children` die Top-Level-`<C>`-Elemente sucht."""
+    Returns `(attrs, open_start, open_end, close_start)` - `close_start` is
+    the position of `</ControlList>`, i.e. the end of the content area in
+    which `scan_children` looks for the top-level `<C>` elements."""
     match = _CONTROL_LIST_OPEN.search(text)
     if match is None:
         raise ProjectFormatError(
@@ -441,7 +441,7 @@ def parse_root(text: str) -> tuple[dict[str, str], int, int, int]:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/projectsync/test_scan.py -v`
-Expected: PASS (7 Tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -452,7 +452,7 @@ git commit -m "feat(projectsync): Byte-Span-Scanner fuer C-Elemente der Projektd
 
 ---
 
-### Task 4: `projectsync/keys.py` — Signal-/Kommando-Schlüssel aus `Check`/`CmdOn` lesen
+### Task 4: `projectsync/keys.py` — read the signal/command key from `Check`/`CmdOn`
 
 **Files:**
 - Create: `src/loxmatter/projectsync/keys.py`
@@ -460,6 +460,7 @@ git commit -m "feat(projectsync): Byte-Span-Scanner fuer C-Elemente der Projektd
 
 **Interfaces:**
 - Produces: `key_from_check(check: str) -> str | None`, `key_from_cmd_on(cmd_on: str) -> str | None`
+
 
 - [ ] **Step 1: Write the failing test**
 
@@ -491,9 +492,9 @@ def test_key_from_cmd_on_ignores_foreign_paths():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/projectsync/test_keys.py -v`
-Expected: FAIL mit `ModuleNotFoundError`
+Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 Create `src/loxmatter/projectsync/keys.py`:
 
@@ -514,11 +515,11 @@ Create `src/loxmatter/projectsync/keys.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Liest den von `loxmatter` selbst vergebenen Signal-/Kommando-Schluessel
-aus den Feldern, in denen er in der Projektdatei bereits steht (Entwurf
-Abschnitt 3.3) - `Check` bei Eingaengen, `CmdOn` bei Ausgaengen. Das ist
-derselbe Schluessel, den `model.store._assign_key` vergibt und den
-`export.documents`/`export.outputs` in genau diese Felder schreiben."""
+"""Reads the signal/command key that `loxmatter` itself assigns from the
+fields in which it already sits in the project file (design section 3.3)
+- `Check` for inputs, `CmdOn` for outputs. This is the same key that
+`model.store._assign_key` assigns and that `export.documents`/
+`export.outputs` write into exactly these fields."""
 
 from __future__ import annotations
 
@@ -526,21 +527,21 @@ _CMD_PREFIX = "/cmd/"
 
 
 def key_from_check(check: str) -> str | None:
-    """Der Teil vor dem ersten Doppelpunkt in einem Check-Muster, z. B.
-    ``"d3_1_onoff:\\v"`` -> ``"d3_1_onoff"``. `None` ohne Doppelpunkt - dann
-    stammt das Muster nicht von `loxmatter` (siehe `render_virtual_in_udp`,
-    das `Check` immer als ``f"{key}:{suffix}"`` schreibt)."""
+    """The part before the first colon in a check pattern, e.g.
+    ``"d3_1_onoff:\\v"`` -> ``"d3_1_onoff"``. `None` without a colon - then
+    the pattern doesn't come from `loxmatter` (see `render_virtual_in_udp`,
+    which always writes `Check` as ``f"{key}:{suffix}"``)."""
     if ":" not in check:
         return None
     return check.split(":", 1)[0]
 
 
 def key_from_cmd_on(cmd_on: str) -> str | None:
-    """Der Schluessel aus einem von `loxmatter` erzeugten Kommandopfad, z. B.
-    ``"/cmd/d3_1_onoff/1"`` -> ``"d3_1_onoff"``. `None` fuer jeden Pfad, der
-    nicht mit ``/cmd/`` beginnt - das ist der Marker, an dem sich eigene
-    Ausgangsbefehle von allen anderen (``/toggle``, ``/write?db=...``)
-    unterscheiden (siehe `export.outputs._command_path`)."""
+    """The key from a command path generated by `loxmatter`, e.g.
+    ``"/cmd/d3_1_onoff/1"`` -> ``"d3_1_onoff"``. `None` for any path that
+    doesn't start with ``/cmd/`` - that is the marker that distinguishes
+    our own output commands from all others (``/toggle``, ``/write?db=...``)
+    (see `export.outputs._command_path`)."""
     if not cmd_on.startswith(_CMD_PREFIX):
         return None
     rest = cmd_on[len(_CMD_PREFIX) :]
@@ -551,7 +552,7 @@ def key_from_cmd_on(cmd_on: str) -> str | None:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/projectsync/test_keys.py -v`
-Expected: PASS (4 Tests)
+Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -562,7 +563,7 @@ git commit -m "feat(projectsync): loxmatter-Schluessel aus Check/CmdOn lesen"
 
 ---
 
-### Task 5: `projectsync/index.py` — `ProjectIndex` aufbauen
+### Task 5: `projectsync/index.py` — build the `ProjectIndex`
 
 **Files:**
 - Create: `src/loxmatter/projectsync/index.py`
@@ -570,12 +571,12 @@ git commit -m "feat(projectsync): loxmatter-Schluessel aus Check/CmdOn lesen"
 - Test: `tests/projectsync/test_index.py`
 
 **Interfaces:**
-- Consumes: `Element`, `parse_root`, `scan_children`, `ProjectFormatError` (aus `scan.py`); `key_from_check`, `key_from_cmd_on` (aus `keys.py`)
+- Consumes: `Element`, `parse_root`, `scan_children`, `ProjectFormatError` (from `scan.py`); `key_from_check`, `key_from_cmd_on` (from `keys.py`)
 - Produces: `@dataclass ProjectIndex(text, root_attrs, root_open_end, root_close_start, virtual_in_caption: Element | None, virtual_out_caption: Element | None, input_cmds: dict[str, Element], output_cmds: dict[str, Element], input_containers: dict[str, Element], output_containers: dict[str, Element], all_u_values: set[str], all_inames: set[str])`; `build_index(text: str) -> ProjectIndex`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/projectsync/conftest.py` — die synthetische Beispieldatei, die alle folgenden `projectsync`-Tests teilen (kein echtes Nutzerprojekt, siehe Entwurf Abschnitt 9):
+Create `tests/projectsync/conftest.py` — the synthetic sample file shared by all following `projectsync` tests (not a real user project, see design section 9):
 
 ```python
 # loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
@@ -594,22 +595,22 @@ Create `tests/projectsync/conftest.py` — die synthetische Beispieldatei, die a
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Synthetische Beispiel-Projektdatei fuer `projectsync`-Tests - handgebaut
-nach dem in der Referenzdatei beobachteten Schema (Entwurf Abschnitt 3-6),
-NICHT die echte vom Anwender gelieferte Datei (bleibt aus Datenschutzgruenden
-ausserhalb des Repos, siehe Entwurf Abschnitt 9).
+"""Synthetic sample project file for `projectsync` tests - hand-built
+following the schema observed in the reference file (design section 3-6),
+NOT the real file supplied by the user (stays outside the repo for
+privacy reasons, see design section 9).
 
-Enthaelt fuer Geraet 1 (``d1_...``) ein bereits bestehendes Eingangssignal
-(``d1_1_onoff``, Titel weicht bewusst vom Soll ab - deckt den `updated`-Fall
-ab), das dazugehoerige Online-Signal (``d1_online`` - `export.signals.
-to_inputs` erzeugt dieses Signal fuer JEDES Geraet automatisch mit; ohne
-einen passenden Eintrag hier waere ein Diff-Plan fuer Geraet 1 niemals
-`unchanged`, selbst wenn alle uebrigen Signale uebereinstimmen) und ein
-bestehendes Ausgangssignal (``d1_1_on``). Geraet 1 hat KEIN ``d1_1_temp`` -
-deckt den `new_signal`-Fall ab (Container existiert, Signal fehlt). Geraet 2
-existiert in der Datei ueberhaupt nicht - deckt den `new_device`-Fall ab.
-``d9_9_verwaist`` gehoert zu keinem bekannten Geraet mehr - deckt den
-`orphaned`-Fall ab."""
+Contains, for device 1 (``d1_...``), an already existing input signal
+(``d1_1_onoff``, title deliberately deviates from the target - covers the
+`updated` case), the corresponding online signal (``d1_online`` -
+`export.signals.to_inputs` automatically generates this signal for EVERY
+device; without a matching entry here, a diff plan for device 1 would
+never be `unchanged`, even if all remaining signals match) and an
+existing output signal (``d1_1_on``). Device 1 has NO ``d1_1_temp`` -
+covers the `new_signal` case (container exists, signal missing). Device 2
+does not exist in the file at all - covers the `new_device` case.
+``d9_9_verwaist`` no longer belongs to any known device - covers the
+`orphaned` case."""
 
 import pytest
 
@@ -706,9 +707,9 @@ def test_unknown_device_has_no_entry(sample_project):
 
 def test_collects_all_u_values_including_connectors(sample_project):
     index = build_index(sample_project)
-    # "1000-0003-0000-bbbbbbbbbbbbbbbb" gehoert zu einem <Co>, keinem <C> -
-    # muss trotzdem erfasst sein, sonst waere eine neu erzeugte ID nicht
-    # sicher eindeutig.
+    # "1000-0003-0000-bbbbbbbbbbbbbbbb" belongs to a <Co>, not a <C> -
+    # must still be captured, otherwise a newly generated ID would not
+    # be safely unique.
     assert "1000-0003-0000-bbbbbbbbbbbbbbbb" in index.all_u_values
     assert "1000-0001-0000-aaaaaaaaaaaaaaaa" in index.all_u_values
 
@@ -728,9 +729,9 @@ def test_rejects_file_without_control_list():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/projectsync/test_index.py -v`
-Expected: FAIL mit `ModuleNotFoundError`
+Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 Create `src/loxmatter/projectsync/index.py`:
 
@@ -751,10 +752,9 @@ Create `src/loxmatter/projectsync/index.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Baut aus dem Byte-Span-Baum (`projectsync.scan`) einen nach `loxmatter`-
-Schluesseln durchsuchbaren Index: welche virtuellen Eingaenge/Ausgaenge gibt
-es schon, und in welchem Geraete-Container stecken sie (Entwurf Abschnitt
-3.3/5)."""
+"""Builds, from the byte-span tree (`projectsync.scan`), an index
+searchable by `loxmatter` key: which virtual inputs/outputs already
+exist, and which device container they sit in (design section 3.3/5)."""
 
 from __future__ import annotations
 
@@ -832,9 +832,9 @@ def build_index(text: str) -> ProjectIndex:
         output_cmds=output_cmds,
         input_containers=input_containers,
         output_containers=output_containers,
-        # Ueber den gesamten Rohtext, nicht nur ueber <C>-Elemente: <Co>-
-        # Verdrahtungsstummel tragen ebenfalls U-IDs, die eine neu erzeugte
-        # ID nicht kollidieren duerfen (Entwurf Abschnitt 6).
+        # Over the entire raw text, not just over <C> elements: <Co>
+        # wiring stubs also carry U IDs that a newly generated ID must
+        # not collide with (design section 6).
         all_u_values=set(_U_ATTR.findall(text)),
         all_inames=set(_INAME_ATTR.findall(text)),
     )
@@ -843,7 +843,7 @@ def build_index(text: str) -> ProjectIndex:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/projectsync/ -v`
-Expected: PASS (alle Tests aus Task 3, 4, 5)
+Expected: PASS (all tests from tasks 3, 4, 5)
 
 - [ ] **Step 5: Commit**
 
@@ -854,14 +854,14 @@ git commit -m "feat(projectsync): ProjectIndex ueber bestehende virtuelle Ein-/A
 
 ---
 
-### Task 6: `projectsync/ids.py` — neue eindeutige IDs erzeugen
+### Task 6: `projectsync/ids.py` — generate new unique IDs
 
 **Files:**
 - Create: `src/loxmatter/projectsync/ids.py`
 - Test: `tests/projectsync/test_ids.py`
 
 **Interfaces:**
-- Produces: `new_unique_id(existing: set[str]) -> str` (mutiert `existing`, fügt die neue ID hinzu), `new_iname(prefix: str, existing: set[str]) -> str` (mutiert `existing`)
+- Produces: `new_unique_id(existing: set[str]) -> str` (mutates `existing`, adds the new ID), `new_iname(prefix: str, existing: set[str]) -> str` (mutates `existing`)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -877,13 +877,13 @@ def test_new_unique_id_reuses_installation_suffix_from_an_existing_id():
     existing = {"1000-0001-0000-aaaaaaaaaaaaaaaa"}
     new_id = new_unique_id(existing)
     assert new_id.endswith("-aaaaaaaaaaaaaaaa")
-    assert new_id in existing  # als vergeben markiert
+    assert new_id in existing  # marked as taken
 
 
 def test_new_unique_id_never_collides_across_many_calls():
     existing = {"1000-0001-0000-aaaaaaaaaaaaaaaa"}
     generated = {new_unique_id(existing) for _ in range(500)}
-    assert len(generated) == 500  # keine Kollision, keine ID doppelt
+    assert len(generated) == 500  # no collision, no duplicate ID
 
 
 def test_new_unique_id_raises_without_any_reference_id():
@@ -906,9 +906,9 @@ def test_new_iname_starts_at_one_for_an_unused_prefix():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/projectsync/test_ids.py -v`
-Expected: FAIL mit `ModuleNotFoundError`
+Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 Create `src/loxmatter/projectsync/ids.py`:
 
@@ -929,10 +929,11 @@ Create `src/loxmatter/projectsync/ids.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Erzeugt neue, eindeutige Objekt-IDs im an der Referenzdatei beobachteten
-Format (Entwurf Abschnitt 6) - der unverifizierte Kern dieses Features: ob
-Loxone Config eine so erzeugte ID beim Oeffnen klaglos akzeptiert, weiss
-niemand vor einem echten Test-Import."""
+"""Generates new, unique object IDs in the format observed in the
+reference file (design section 6) - the unverified core of this
+feature: whether Loxone Config accepts an ID generated this way without
+complaint on opening is something nobody knows before a real test
+import."""
 
 from __future__ import annotations
 
@@ -951,9 +952,9 @@ def _is_hex(value: str) -> bool:
 
 
 def _installation_suffix(existing: set[str]) -> str:
-    """Der letzte Bindestrich-Abschnitt einer bestehenden U-ID - wird fuer
-    neue IDs uebernommen, damit sie zur selben Projekt-Familie gehoeren
-    (Entwurf Abschnitt 6), statt einen eigenen Suffix zu erfinden."""
+    """The last hyphen-separated segment of an existing U ID - is taken
+    over for new IDs, so that they belong to the same project family
+    (design section 6), instead of inventing a suffix of their own."""
     for value in existing:
         parts = value.split("-")
         if len(parts) == 4 and all(_is_hex(part) for part in parts):
@@ -965,9 +966,9 @@ def _installation_suffix(existing: set[str]) -> str:
 
 
 def new_unique_id(existing: set[str]) -> str:
-    """Neue U-ID, gegen `existing` eindeutig geprueft und dort sofort
-    eingetragen (folgende Aufrufe im selben Lauf kollidieren damit auch
-    untereinander nicht)."""
+    """New U ID, checked unique against `existing` and immediately
+    registered there (subsequent calls within the same run therefore
+    also don't collide with each other)."""
     suffix = _installation_suffix(existing)
     while True:
         millis = int(time.time() * 1000) & 0xFFFFFFFF
@@ -978,11 +979,11 @@ def new_unique_id(existing: set[str]) -> str:
 
 
 def new_iname(prefix: str, existing: set[str]) -> str:
-    """Naechste freie Nummer der Form ``<prefix><n>``, z. B. ``VCI2``, wenn
-    ``VCI1``/``VCI3``/``VCI4`` schon vergeben sind - zaehlt einfach hoch, bis
-    eine freie Nummer gefunden ist, ohne Luecken zu bevorzugen (reale
-    Projekte haben nicht-fortlaufende Nummern, sobald einmal etwas geloescht
-    wurde, siehe Entwurf Abschnitt 6)."""
+    """Next free number of the form ``<prefix><n>``, e.g. ``VCI2`` if
+    ``VCI1``/``VCI3``/``VCI4`` are already taken - simply counts up until
+    a free number is found, without preferring gaps (real projects have
+    non-contiguous numbers as soon as something has once been deleted,
+    see design section 6)."""
     used = {
         int(name[len(prefix) :])
         for name in existing
@@ -999,7 +1000,7 @@ def new_iname(prefix: str, existing: set[str]) -> str:
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/projectsync/test_ids.py -v`
-Expected: PASS (5 Tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1010,14 +1011,14 @@ git commit -m "feat(projectsync): eindeutige Objekt-IDs fuer neue Elemente erzeu
 
 ---
 
-### Task 7: `projectsync/schema.py` — Soll-Attribute und neue Kind-Elemente
+### Task 7: `projectsync/schema.py` — target attributes and new child elements
 
 **Files:**
 - Create: `src/loxmatter/projectsync/schema.py`
 - Test: `tests/projectsync/test_schema.py`
 
 **Interfaces:**
-- Consumes: `LoxoneInput`, `LoxoneCommand`, `virtual_in_udp_cmd_attributes`, `virtual_out_cmd_attributes` (aus `export.documents`/`export.signals`); `Element`, `parse_attrs` (aus `scan.py`); `new_unique_id` (aus `ids.py`)
+- Consumes: `LoxoneInput`, `LoxoneCommand`, `virtual_in_udp_cmd_attributes`, `virtual_out_cmd_attributes` (from `export.documents`/`export.signals`); `Element`, `parse_attrs` (from `scan.py`); `new_unique_id` (from `ids.py`)
 - Produces: `MANAGED_INPUT_CMD_ATTRS: tuple[str, ...]`, `MANAGED_OUTPUT_CMD_ATTRS: tuple[str, ...]`, `desired_input_cmd_attrs(entry: LoxoneInput) -> dict[str, str]`, `desired_output_cmd_attrs(command: LoxoneCommand) -> dict[str, str]`, `new_input_cmd_open_tag(entry: LoxoneInput, iname: str, u: str) -> str`, `new_output_cmd_open_tag(command: LoxoneCommand, iname: str, u: str) -> str`, `sibling_iodata_attrs(text: str, element: Element) -> dict[str, str] | None`, `find_any_iodata_attrs(text: str, caption: Element) -> dict[str, str] | None`, `new_cmd_children_xml(*, kind: str, existing_u: set[str], iodata_attrs: dict[str, str] | None) -> str`, `new_input_container_open_tag(device_label, bridge_ip, port, iname, u) -> str`, `new_output_container_open_tag(device_label, base_url, iname, u) -> str`
 
 - [ ] **Step 1: Write the failing test**
@@ -1141,9 +1142,9 @@ def test_new_output_container_open_tag_carries_base_url():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/projectsync/test_schema.py -v`
-Expected: FAIL mit `ModuleNotFoundError`
+Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 Create `src/loxmatter/projectsync/schema.py`:
 
@@ -1164,23 +1165,24 @@ Create `src/loxmatter/projectsync/schema.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Attribut-Schema der Projektdatei-Objekte (Entwurf Abschnitt 3.4/6).
+"""Attribute schema of the project file objects (design section 3.4/6).
 
-Zwei getrennte Ebenen mit unterschiedlicher Sicherheit:
+Two separate tiers with different levels of safety:
 
-**Update bestehender Objekte** (`desired_*_attrs`, `MANAGED_*_ATTRS`) fasst
-bewusst nur Titel, den Check/CmdOn-Schluessel selbst, den Analog-Schalter und
-die Einheit an - Skalierung, MinVal/MaxVal und jede Verdrahtung bleiben
-unberuehrt, auch wenn ein Export inzwischen einen anderen Wert vorschlaegt.
-Das ist die risikoarme Haelfte: sie aendert nur Attributwerte in einer
-bereits von Config akzeptierten Struktur.
+**Updating existing objects** (`desired_*_attrs`, `MANAGED_*_ATTRS`)
+deliberately touches only the title, the Check/CmdOn key itself, the
+analog switch, and the unit - scaling, MinVal/MaxVal, and any wiring stay
+untouched, even if an export now suggests a different value. This is the
+low-risk half: it only changes attribute values within a structure
+already accepted by Config.
 
-**Neuanlage** (`new_*_open_tag`, `new_cmd_children_xml`, `new_*_container_open_tag`)
-baut auf den bereits gegen einen echten Import verifizierten Attributlisten
-aus `export.documents` auf (siehe dortigen Moduldocstring) - fuer die
-Kind-Elemente (`Co`/`IoData`/`Display`), die im Vorlagen-Schema kein
-Gegenstueck haben, gibt es keine solche Verifikation; das ist der
-unverifizierte Rest, den Entwurf Abschnitt 6 offen benennt."""
+**Creating new objects** (`new_*_open_tag`, `new_cmd_children_xml`,
+`new_*_container_open_tag`) builds on the attribute lists from
+`export.documents`, already verified against a real import (see the
+module docstring there) - for the child elements (`Co`/`IoData`/
+`Display`), which have no counterpart in the template schema, there is
+no such verification; that is the unverified remainder that design
+section 6 names openly."""
 
 from __future__ import annotations
 
@@ -1203,8 +1205,8 @@ _IODATA = re.compile(r"<IoData\s+([^/]*)/>")
 
 
 def desired_input_cmd_attrs(entry: LoxoneInput) -> dict[str, str]:
-    """Soll-Zustand der vom Update verwalteten Attribute eines bestehenden
-    `VirtualUdpInCmd` (Entwurf Abschnitt 5)."""
+    """Target state of the attributes managed by the update on an
+    existing `VirtualUdpInCmd` (design section 5)."""
     return {
         "Title": entry.title,
         "Check": f"{entry.key}:{entry.check_suffix}",
@@ -1214,10 +1216,11 @@ def desired_input_cmd_attrs(entry: LoxoneInput) -> dict[str, str]:
 
 
 def desired_output_cmd_attrs(command: LoxoneCommand) -> dict[str, str]:
-    """Soll-Zustand der vom Update verwalteten Attribute eines bestehenden
-    `VirtualOutCmd`. `CmdOff` fehlt absichtlich, wenn es keinen Aus-Befehl
-    gibt - ein fehlendes Attribut wird von `diff.py` nie als "muss entfernt
-    werden" behandelt, nur vorhandene Attribute werden verglichen."""
+    """Target state of the attributes managed by the update on an
+    existing `VirtualOutCmd`. `CmdOff` is deliberately missing when there
+    is no off command - a missing attribute is never treated by
+    `diff.py` as "must be removed," only present attributes are
+    compared."""
     attrs = {
         "Title": command.title,
         "CmdOn": command.path,
@@ -1229,11 +1232,11 @@ def desired_output_cmd_attrs(command: LoxoneCommand) -> dict[str, str]:
 
 
 def new_input_cmd_open_tag(entry: LoxoneInput, iname: str, u: str) -> str:
-    """Start-Tag eines frisch angelegten `VirtualUdpInCmd`, auf denselben
-    Attributen wie die bereits verifizierte Vorlagendatei (`export.documents.
-    virtual_in_udp_cmd_attributes`), ergaenzt um `Type`/`IName`/`U`/`Nio`/`WF`,
-    die eine Projektdatei zusaetzlich braucht (an der Referenzdatei
-    beobachtet, Entwurf Abschnitt 6)."""
+    """Start tag of a freshly created `VirtualUdpInCmd`, on the same
+    attributes as the already verified template file (`export.documents.
+    virtual_in_udp_cmd_attributes`), extended with `Type`/`IName`/`U`/
+    `Nio`/`WF`, which a project file additionally needs (observed in the
+    reference file, design section 6)."""
     attrs = [
         ("Type", "VirtualUdpInCmd"),
         ("IName", iname),
@@ -1246,7 +1249,7 @@ def new_input_cmd_open_tag(entry: LoxoneInput, iname: str, u: str) -> str:
 
 
 def new_output_cmd_open_tag(command: LoxoneCommand, iname: str, u: str) -> str:
-    """Wie `new_input_cmd_open_tag`, fuer `VirtualOutCmd` - auf
+    """Like `new_input_cmd_open_tag`, for `VirtualOutCmd` - based on
     `export.documents.virtual_out_cmd_attributes`."""
     attrs = [
         ("Type", "VirtualOutCmd"),
@@ -1262,8 +1265,8 @@ def new_output_cmd_open_tag(command: LoxoneCommand, iname: str, u: str) -> str:
 def new_input_container_open_tag(
     device_label: str, bridge_ip: str, port: int, iname: str, u: str
 ) -> str:
-    """Start-Tag eines frisch angelegten `VirtualUdpIn`-Geraete-Containers -
-    nur fuer den Experimentell-Pfad (Entwurf Abschnitt 3.4)."""
+    """Start tag of a freshly created `VirtualUdpIn` device container -
+    only for the experimental path (design section 3.4)."""
     attrs = [
         ("Type", "VirtualUdpIn"),
         ("IName", iname),
@@ -1277,7 +1280,7 @@ def new_input_container_open_tag(
 
 
 def new_output_container_open_tag(device_label: str, base_url: str, iname: str, u: str) -> str:
-    """Wie `new_input_container_open_tag`, fuer `VirtualOut`."""
+    """Like `new_input_container_open_tag`, for `VirtualOut`."""
     attrs = [
         ("Type", "VirtualOut"),
         ("IName", iname),
@@ -1292,10 +1295,10 @@ def new_output_container_open_tag(device_label: str, base_url: str, iname: str, 
 
 
 def sibling_iodata_attrs(text: str, element: Element) -> dict[str, str] | None:
-    """Die Attribute des `<IoData .../>`-Kindes eines bestehenden Cmd-
-    Elements, falls vorhanden - Quelle fuer die Berechtigungswerte eines neu
-    angelegten Geschwister-Objekts (Entwurf Abschnitt 6: dieselben Cr/Pr-
-    Werte wie ein Nachbarobjekt, statt sie zu erfinden)."""
+    """The attributes of the `<IoData .../>` child of an existing Cmd
+    element, if present - the source for the permission values of a
+    newly created sibling object (design section 6: the same Cr/Pr
+    values as a neighboring object, instead of inventing them)."""
     if element.self_closing or element.inner_end is None:
         return None
     match = _IODATA.search(text, element.open_end, element.inner_end)
@@ -1305,9 +1308,9 @@ def sibling_iodata_attrs(text: str, element: Element) -> dict[str, str] | None:
 
 
 def find_any_iodata_attrs(text: str, caption: Element | None) -> dict[str, str] | None:
-    """Wie `sibling_iodata_attrs`, aber ueber den gesamten Inhalt eines
-    `VirtualInCaption`/`VirtualOutCaption`-Containers gesucht - Fallback fuer
-    ein komplett neues Geraet, das noch kein Geschwister-Cmd hat."""
+    """Like `sibling_iodata_attrs`, but searched across the entire content
+    of a `VirtualInCaption`/`VirtualOutCaption` container - a fallback for
+    a completely new device that doesn't have a sibling Cmd yet."""
     if caption is None or caption.self_closing or caption.inner_end is None:
         return None
     match = _IODATA.search(text, caption.open_end, caption.inner_end)
@@ -1319,11 +1322,11 @@ def find_any_iodata_attrs(text: str, caption: Element | None) -> dict[str, str] 
 def new_cmd_children_xml(
     *, kind: str, existing_u: set[str], iodata_attrs: dict[str, str] | None
 ) -> str:
-    """XML-Text der Kind-Elemente eines frisch angelegten Cmd-Objekts:
-    Verdrahtungs-Stummel (zwei fuer einen Eingang - `AQ`/`Q` -, einer fuer
-    einen Ausgang - `I`), optional ein `IoData`-Element mit uebernommenen
-    Berechtigungswerten, und ein `Display`-Element (Entwurf Abschnitt 6).
-    `kind` ist ``"input"`` oder ``"output"``."""
+    """XML text of the child elements of a freshly created Cmd object:
+    wiring stubs (two for an input - `AQ`/`Q` -, one for an output -
+    `I`), optionally an `IoData` element with taken-over permission
+    values, and a `Display` element (design section 6). `kind` is
+    ``"input"`` or ``"output"``."""
     if kind == "input":
         connectors = [
             f'<Co K="AQ" U="{new_unique_id(existing_u)}"/>',
@@ -1344,9 +1347,9 @@ def new_cmd_children_xml(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/projectsync/test_schema.py -v`
-Expected: PASS (11 Tests)
+Expected: PASS (11 tests)
 
-- [ ] **Step 5: Ganze Testsuite laufen lassen**
+- [ ] **Step 5: Run the whole test suite**
 
 Run: `uv run pytest -q`
 Expected: PASS
@@ -1360,14 +1363,14 @@ git commit -m "feat(projectsync): Attribut-Schema fuer Update und Neuanlage"
 
 ---
 
-### Task 8: `projectsync/diff.py` — `SyncPlan` berechnen
+### Task 8: `projectsync/diff.py` — compute the `SyncPlan`
 
 **Files:**
 - Create: `src/loxmatter/projectsync/diff.py`
 - Test: `tests/projectsync/test_diff.py`
 
 **Interfaces:**
-- Consumes: `ProjectIndex` (aus `index.py`); `desired_input_cmd_attrs`, `desired_output_cmd_attrs`, `MANAGED_INPUT_CMD_ATTRS`, `MANAGED_OUTPUT_CMD_ATTRS` (aus `schema.py`); `to_inputs` (aus `export.signals`); `to_outputs` (aus `export.outputs`); `StoredDevice`, `StoredSignal`, `StoredCommand` (aus `model.store`)
+- Consumes: `ProjectIndex` (from `index.py`); `desired_input_cmd_attrs`, `desired_output_cmd_attrs`, `MANAGED_INPUT_CMD_ATTRS`, `MANAGED_OUTPUT_CMD_ATTRS` (from `schema.py`); `to_inputs` (from `export.signals`); `to_outputs` (from `export.outputs`); `StoredDevice`, `StoredSignal`, `StoredCommand` (from `model.store`)
 - Produces: `PlanStatus` (StrEnum: `UNCHANGED`, `UPDATED`, `NEW_SIGNAL`, `NEW_DEVICE`, `ORPHANED`, `CONFLICT`), `@dataclass PlanEntry(kind: str, device_id: int, device_label: str, key: str, title: str, status: PlanStatus, changes: dict[str, tuple[str, str]])`, `@dataclass SyncPlan(entries: list[PlanEntry])` mit Property `has_changes: bool`, `build_plan(index, devices, signals_by_device, commands_by_device) -> SyncPlan`
 
 - [ ] **Step 1: Write the failing test**
@@ -1412,10 +1415,10 @@ def test_existing_matching_input_is_unchanged(sample_project):
     signals = [_signal("d1_1_onoff", 1)]
     plan = build_plan(index, [device], {1: signals}, {1: []})
     entry = next(e for e in plan.entries if e.key == "d1_1_onoff")
-    # Titel in der Datei ist "Alter Titel", `to_inputs` erzeugt aber den
-    # Signal-Titel "Ein/Aus" - das MUSS also `updated` sein, nicht
-    # `unchanged`. Dieser Test dokumentiert das erwartete Verhalten fuer
-    # Task-Step 3 unten (siehe dortige Anmerkung zur Titel-Divergenz).
+    # Title in the file is "Alter Titel", but `to_inputs` generates the
+    # signal title "Ein/Aus" - so this MUST be `updated`, not
+    # `unchanged`. This test documents the expected behavior for the
+    # task step 3 below (see the note there on the title divergence).
     assert entry.status == PlanStatus.UPDATED
     assert entry.changes["Title"] == ("Alter Titel", "Ein/Aus")
 
@@ -1450,8 +1453,8 @@ def test_orphaned_signal_is_reported(sample_project):
 def test_has_changes_is_false_when_everything_matches(sample_project):
     index = build_index(sample_project)
     device = _device(1, "Altes Geraet")
-    # "Ein/Aus" statt "Alter Titel", damit dieser Test wirklich den
-    # unveraenderten Fall prueft.
+    # "Ein/Aus" instead of "Alter Titel", so this test really checks
+    # the unchanged case.
     signal = _signal("d1_1_onoff", 1)
     signal_matching_title = StoredSignal(
         key=signal.key,
@@ -1466,17 +1469,17 @@ def test_has_changes_is_false_when_everything_matches(sample_project):
     plan = build_plan(index, [device], {1: [signal_matching_title]}, {1: []})
     onoff = next(e for e in plan.entries if e.key == "d1_1_onoff")
     assert onoff.status == PlanStatus.UNCHANGED
-    # "d9_9_verwaist" bleibt in der Datei, macht has_changes aber nicht wahr
-    # - ORPHANED ist eine Meldung, keine geplante Aenderung.
+    # "d9_9_verwaist" stays in the file, but doesn't make has_changes
+    # true - ORPHANED is a report, not a planned change.
     assert plan.has_changes is False
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/projectsync/test_diff.py -v`
-Expected: FAIL mit `ModuleNotFoundError`
+Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 Create `src/loxmatter/projectsync/diff.py`:
 
@@ -1497,10 +1500,10 @@ Create `src/loxmatter/projectsync/diff.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Vergleicht die gewuenschten Ein-/Ausgaenge (`export.signals.to_inputs`/
-`export.outputs.to_outputs` - dieselbe Quelle wie der bestehende Vorlagen-
-Export) gegen einen `ProjectIndex` und baut den Diff-Plan (Entwurf Abschnitt
-5)."""
+"""Compares the wanted inputs/outputs (`export.signals.to_inputs`/
+`export.outputs.to_outputs` - the same source as the existing template
+export) against a `ProjectIndex` and builds the diff plan (design
+section 5)."""
 
 from __future__ import annotations
 
@@ -1541,7 +1544,7 @@ class PlanEntry:
     key: str
     title: str
     status: PlanStatus
-    # attrname -> (alter Wert, neuer Wert) - nur bei UPDATED nicht leer.
+    # attrname -> (old value, new value) - non-empty only for UPDATED.
     changes: dict[str, tuple[str, str]] = field(default_factory=dict)
 
 
@@ -1688,7 +1691,7 @@ def build_plan(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/projectsync/test_diff.py -v`
-Expected: PASS (5 Tests). Beachte `test_existing_matching_input_is_unchanged`: der Testname beschreibt die Ausgangsannahme, die Assertion prüft bewusst `UPDATED` — die synthetische Datei trägt absichtlich einen abweichenden Titel (siehe `conftest.py`-Docstring), das ist Teil der Abdeckung des `updated`-Falls, kein Testfehler.
+Expected: PASS (5 tests). Note `test_existing_matching_input_is_unchanged`: the test name describes the starting assumption, but the assertion deliberately checks `UPDATED` — the synthetic file deliberately carries a differing title (see the `conftest.py` docstring), that is part of the coverage of the `updated` case, not a test bug.
 
 - [ ] **Step 5: Commit**
 
@@ -1699,15 +1702,15 @@ git commit -m "feat(projectsync): Diff-Plan aus ProjectIndex und Store berechnen
 
 ---
 
-### Task 9: `projectsync/patch.py` — Plan als Textersetzung anwenden
+### Task 9: `projectsync/patch.py` — apply the plan as text replacement
 
 **Files:**
 - Create: `src/loxmatter/projectsync/patch.py`
 - Test: `tests/projectsync/test_patch.py`
 
 **Interfaces:**
-- Consumes: `ProjectIndex`, `SyncPlan`, `PlanEntry`, `PlanStatus` (aus `index.py`/`diff.py`); alles aus `schema.py`; `new_unique_id`, `new_iname` (aus `ids.py`); `escape_attr_value` (aus `export.xml`); `to_inputs` (aus `export.signals`); `to_outputs` (aus `export.outputs`); `StoredCommand`, `StoredDevice`, `StoredSignal` (aus `model.store`)
-- Produces: `apply_plan(index: ProjectIndex, plan: SyncPlan, devices: Sequence[StoredDevice], signals_by_device: dict[int, Sequence[StoredSignal]], commands_by_device: dict[int, Sequence[StoredCommand]], *, include_new_devices: bool, bridge_ip: str, port: int, listen: int) -> bytes` — ruft `to_inputs`/`to_outputs` selbst auf (dieselbe Quelle wie `diff.build_plan`), weil es das volle `LoxoneInput`/`LoxoneCommand`-Objekt braucht (`unit_format`, `check_suffix`, `off_path`), das ein `PlanEntry` nicht trägt.
+- Consumes: `ProjectIndex`, `SyncPlan`, `PlanEntry`, `PlanStatus` (from `index.py`/`diff.py`); everything from `schema.py`; `new_unique_id`, `new_iname` (from `ids.py`); `escape_attr_value` (from `export.xml`); `to_inputs` (from `export.signals`); `to_outputs` (from `export.outputs`); `StoredCommand`, `StoredDevice`, `StoredSignal` (from `model.store`)
+- Produces: `apply_plan(index: ProjectIndex, plan: SyncPlan, devices: Sequence[StoredDevice], signals_by_device: dict[int, Sequence[StoredSignal]], commands_by_device: dict[int, Sequence[StoredCommand]], *, include_new_devices: bool, bridge_ip: str, port: int, listen: int) -> bytes` — calls `to_inputs`/`to_outputs` itself (the same source as `diff.build_plan`), because it needs the full `LoxoneInput`/`LoxoneCommand` object (`unit_format`, `check_suffix`, `off_path`), which a `PlanEntry` doesn't carry.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1768,8 +1771,8 @@ def test_updated_attribute_is_replaced_in_place(sample_project):
     patched = _patch(index, device, signals, include_new_devices=False)
     assert 'Title="Ein/Aus"' in patched
     assert 'Title="Alter Titel"' not in patched
-    # Die U-ID des aktualisierten Objekts bleibt exakt erhalten - Verdrahtung
-    # (Co) darf ein Update nie anfassen.
+    # The U ID of the updated object is preserved exactly - an update
+    # must never touch the wiring (Co).
     assert '"1000-0002-0000-aaaaaaaaaaaaaaaa"' in patched
     assert '<Co K="AQ" U="1000-0003-0000-bbbbbbbbbbbbbbbb"/>' in patched
 
@@ -1779,8 +1782,8 @@ def test_untouched_regions_stay_byte_identical(sample_project):
     device = _device(1, "Altes Geraet")
     signals = [_signal("d1_1_onoff", 1, title="Ein/Aus")]
     patched = _patch(index, device, signals, include_new_devices=False)
-    # Das verwaiste Signal wird nur gemeldet, nie veraendert (Entwurf
-    # Abschnitt 2).
+    # The orphaned signal is only reported, never modified (design
+    # section 2).
     assert 'Title="Verwaist"' in patched
     assert 'Check="d9_9_verwaist:\\v"' in patched
 
@@ -1794,12 +1797,12 @@ def test_new_signal_is_appended_inside_existing_container(sample_project):
     ]
     patched = _patch(index, device, signals, include_new_devices=False)
     assert 'Check="d1_1_temp:\\v"' in patched
-    # Eingefuegt in denselben Container wie das bestehende d1_1_onoff, nicht
-    # irgendwo im Dokument und nicht als neuer Geraete-Container. Ueber
-    # build_index statt Byte-Offset-Arithmetik geprueft: ein naiver
-    # patched.index("</C>", container_start) faende das schliessende Tag des
-    # ERSTEN Kindes (VCI1), nicht das des Containers selbst - derselbe
-    # Fehler, den Task 3 im Scanner schon einmal beheben musste.
+    # Inserted into the same container as the existing d1_1_onoff, not
+    # somewhere in the document and not as a new device container.
+    # Checked via build_index rather than byte-offset arithmetic: a
+    # naive patched.index("</C>", container_start) would find the
+    # closing tag of the FIRST child (VCI1), not that of the container
+    # itself - the same bug task 3 already had to fix in the scanner.
     patched_index = build_index(patched)
     assert "d1_1_temp" in patched_index.input_containers
     assert (
@@ -1832,7 +1835,7 @@ def test_next_obj_is_raised_when_new_objects_were_created(sample_project):
     signals = [_signal("d2_1_onoff", 2)]
     patched = _patch(index, device, signals, include_new_devices=True)
     next_obj = int(patched.split('NextObj="', 1)[1].split('"', 1)[0])
-    assert next_obj > 100  # Ausgangswert in der Beispieldatei
+    assert next_obj > 100  # starting value in the sample file
 
 
 def test_output_is_valid_xml(sample_project):
@@ -1842,15 +1845,15 @@ def test_output_is_valid_xml(sample_project):
     device = _device(2, "Neues Geraet")
     signals = [_signal("d2_1_onoff", 2)]
     patched = _patch(index, device, signals, include_new_devices=True)
-    ET.fromstring(patched)  # wirft bei ungueltigem XML
+    ET.fromstring(patched)  # raises on invalid XML
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/projectsync/test_patch.py -v`
-Expected: FAIL mit `ModuleNotFoundError`
+Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 Create `src/loxmatter/projectsync/patch.py`:
 
@@ -1871,20 +1874,20 @@ Create `src/loxmatter/projectsync/patch.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Wendet einen `SyncPlan` als gezielte Textersetzung auf den Original-
-Byte-Strom an (Entwurf Abschnitt 3.2) - nie ueber einen XML-Serialisierer.
+"""Applies a `SyncPlan` as targeted text replacement to the original
+byte stream (design section 3.2) - never via an XML serializer.
 
-Jede Aenderung ist ein `_Edit(start, end, replacement)`: `end == start`
-bedeutet reines Einfuegen. Alle Edits werden gesammelt, nach `start`
-ABSTEIGEND sortiert und von hinten nach vorn angewendet - so bleiben
-vorherige Positionen gueltig, ohne Versatz nachrechnen zu muessen.
+Every change is an `_Edit(start, end, replacement)`: `end == start`
+means a pure insertion. All edits are collected, sorted DESCENDING by
+`start`, and applied from back to front - this way earlier positions
+stay valid without having to recompute an offset.
 
-`apply_plan` ruft `to_inputs`/`to_outputs` selbst auf, genau wie
-`diff.build_plan` - dieselbe Quelle fuer beide, damit Plan und Patch niemals
-auseinanderlaufen koennen. Der Grund, das nicht ueber den `PlanEntry`
-hindurchzureichen: der traegt nur, was die Oberflaeche zeigen muss
-(Titel/Schluessel/Status), nicht `unit_format`/`check_suffix`/`off_path`, die
-ein neu angelegtes Objekt zusaetzlich braucht."""
+`apply_plan` calls `to_inputs`/`to_outputs` itself, exactly like
+`diff.build_plan` - the same source for both, so plan and patch can
+never drift apart. The reason for not passing this through the
+`PlanEntry`: it only carries what the UI needs to show (title/key/
+status), not `unit_format`/`check_suffix`/`off_path`, which a newly
+created object additionally needs."""
 
 from __future__ import annotations
 
@@ -1930,8 +1933,8 @@ def _update_edits(index: ProjectIndex, entry: PlanEntry) -> list[_Edit]:
         span = _attr_span(index.text, element.open_start, element.open_end, name)
         replacement = f'{name}="{escape_attr_value(new_value)}"'
         if span is None:
-            # Attribut fehlt im bestehenden Tag ganz (z. B. `Unit` bei einem
-            # digitalen Eingang) - vor dem schliessenden '>' einfuegen.
+            # Attribute is missing from the existing tag entirely (e.g.
+            # `Unit` on a digital input) - insert before the closing '>'.
             insert_at = element.open_end - (2 if element.self_closing else 1)
             edits.append(_Edit(insert_at, insert_at, f" {replacement}"))
         else:
@@ -2041,10 +2044,10 @@ def apply_plan(
     port: int,
     listen: int,
 ) -> bytes:
-    """Baut die gepatchte Datei fuer eine der beiden Download-Varianten
-    (Entwurf Abschnitt 3.4/7): `include_new_devices=False` liefert nur
-    Updates und neue Signale in bereits bestehenden Geraete-Containern,
-    `True` zusaetzlich komplett neue Geraete-Container."""
+    """Builds the patched file for one of the two download variants
+    (design section 3.4/7): `include_new_devices=False` delivers only
+    updates and new signals in already existing device containers,
+    `True` additionally complete new device containers."""
     desired_inputs: dict[str, object] = {}
     desired_outputs: dict[str, object] = {}
     for device in devices:
@@ -2065,7 +2068,7 @@ def apply_plan(
         elif entry.status is PlanStatus.NEW_DEVICE and include_new_devices:
             source = desired_inputs if entry.kind == "input" else desired_outputs
             edits.append(_new_device_edit(index, entry, source, bridge_ip, port, listen))
-            created_count += 2  # Container + erstes Cmd sind beides neue <C>-Objekte.
+            created_count += 2  # Container + first Cmd are both new <C> objects.
 
     next_obj_edit = _next_obj_edit(index, created_count)
     if next_obj_edit is not None:
@@ -2080,9 +2083,9 @@ def apply_plan(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/projectsync/test_patch.py -v`
-Expected: PASS (7 Tests)
+Expected: PASS (7 tests)
 
-- [ ] **Step 5: Ganze Testsuite laufen lassen**
+- [ ] **Step 5: Run the whole test suite**
 
 Run: `uv run pytest -q`
 Expected: PASS
@@ -2096,14 +2099,14 @@ git commit -m "feat(projectsync): Diff-Plan als Textersetzung auf die Projektdat
 
 ---
 
-### Task 10: `projectsync/sync.py` — Orchestrierung
+### Task 10: `projectsync/sync.py` — orchestration
 
 **Files:**
 - Create: `src/loxmatter/projectsync/sync.py`
 - Test: `tests/projectsync/test_sync.py`
 
 **Interfaces:**
-- Consumes: `build_index`, `ProjectFormatError` (aus `index.py`), `build_plan` (aus `diff.py`), `apply_plan` (aus `patch.py`), `Store` (aus `model.store`)
+- Consumes: `build_index`, `ProjectFormatError` (from `index.py`), `build_plan` (from `diff.py`), `apply_plan` (from `patch.py`), `Store` (from `model.store`)
 - Produces: `@dataclass(frozen=True) ProjectSyncResult(plan: SyncPlan, patched_conservative: bytes, patched_with_new_devices: bytes)`, `run_sync(raw: bytes, store: Store, *, bridge_ip: str, port: int, listen: int) -> ProjectSyncResult`
 
 - [ ] **Step 1: Write the failing test**
@@ -2121,7 +2124,7 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
 
 def _plug_store(tmp_path):
-    from conftest import load_snapshot  # tests/api/conftest.py - Pfad ist bereits auf sys.path
+    from conftest import load_snapshot  # tests/api/conftest.py - path is already on sys.path
 
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
@@ -2136,7 +2139,7 @@ def test_run_sync_returns_plan_and_both_file_variants(tmp_path, sample_project):
     result = run_sync(
         sample_project.encode("utf-8"), store, bridge_ip="10.0.0.5", port=7000, listen=8080
     )
-    assert result.plan.entries  # nicht leer - die Steckdose hat Signale
+    assert result.plan.entries  # not empty - the plug has signals
     assert result.patched_conservative != result.patched_with_new_devices
     store.close()
 
@@ -2155,9 +2158,9 @@ def test_run_sync_raises_project_format_error_for_garbage(tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/projectsync/test_sync.py -v`
-Expected: FAIL mit `ModuleNotFoundError`
+Expected: FAIL with `ModuleNotFoundError`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
 Create `src/loxmatter/projectsync/sync.py`:
 
@@ -2178,9 +2181,9 @@ Create `src/loxmatter/projectsync/sync.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Bindet Parsen, Diff und Patch zu einem einzigen Aufruf zusammen - das, was
-`api.project_sync` aufruft (Entwurf Abschnitt 4: ein Request, keine
-Zwischenzustand auf dem Server)."""
+"""Ties parsing, diff, and patch together into a single call - what
+`api.project_sync` calls (design section 4: one request, no
+intermediate state on the server)."""
 
 from __future__ import annotations
 
@@ -2235,12 +2238,12 @@ def run_sync(raw: bytes, store, *, bridge_ip: str, port: int, listen: int) -> Pr
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/projectsync/test_sync.py -v`
-Expected: PASS (2 Tests)
+Expected: PASS (2 tests)
 
-- [ ] **Step 5: Ganze Testsuite laufen lassen**
+- [ ] **Step 5: Run the whole test suite**
 
 Run: `uv run pytest -q`
-Expected: PASS, komplette Suite grün.
+Expected: PASS, whole suite green.
 
 - [ ] **Step 6: Commit**
 
@@ -2251,9 +2254,9 @@ git commit -m "feat(projectsync): Parsen, Diff und Patch zu einem Aufruf buendel
 
 ---
 
-## API und WebUI
+## API and WebUI
 
-### Task 11: `api/project_sync.py` — Router `POST /api/export/project-sync`
+### Task 11: `api/project_sync.py` — router `POST /api/export/project-sync`
 
 **Files:**
 - Modify: `src/loxmatter/api/models.py`
@@ -2262,8 +2265,8 @@ git commit -m "feat(projectsync): Parsen, Diff und Patch zu einem Aufruf buendel
 - Test: `tests/api/test_project_sync_api.py`
 
 **Interfaces:**
-- Consumes: `run_sync`, `ProjectSyncResult` (aus `projectsync.sync`), `ProjectFormatError`, `Store`, `DEFAULT_UDP_PORT`, `DEFAULT_LISTEN_PORT` (aus `model.store`)
-- Produces: `ProjectSyncEntryOut`, `ProjectSyncPlanOut` (Pydantic-Modelle in `api/models.py`); `build_project_sync_router(store: Store) -> APIRouter`
+- Consumes: `run_sync`, `ProjectSyncResult` (from `projectsync.sync`), `ProjectFormatError`, `Store`, `DEFAULT_UDP_PORT`, `DEFAULT_LISTEN_PORT` (from `model.store`)
+- Produces: `ProjectSyncEntryOut`, `ProjectSyncPlanOut` (Pydantic models in `api/models.py`); `build_project_sync_router(store: Store) -> APIRouter`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2286,7 +2289,7 @@ Create `tests/api/test_project_sync_api.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer POST /api/export/project-sync - siehe api/project_sync.py."""
+"""Tests for POST /api/export/project-sync - see api/project_sync.py."""
 
 from __future__ import annotations
 
@@ -2344,7 +2347,7 @@ async def test_project_sync_returns_plan_and_both_variants(api):
     assert body["has_changes"] is True
     conservative = base64.b64decode(body["patched_conservative_base64"])
     with_new_devices = base64.b64decode(body["patched_with_new_devices_base64"])
-    assert b"VirtualUdpIn" not in conservative  # Neuanlage nur mit dem Haken
+    assert b"VirtualUdpIn" not in conservative  # creation only with the checkbox
     assert b"VirtualUdpIn" in with_new_devices
 
 
@@ -2375,17 +2378,17 @@ async def test_project_sync_requires_authentication(tmp_path, no_invoke, fake_ru
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_project_sync_api.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.api.project_sync'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.api.project_sync'`
 
-- [ ] **Step 3: Implementierung**
+- [ ] **Step 3: Implementation**
 
-In `src/loxmatter/api/models.py`, ergänze am Ende:
+In `src/loxmatter/api/models.py`, add at the end:
 
 ```python
 class ProjectSyncEntryOut(BaseModel):
-    """Eine Zeile im Diff-Plan von `POST /api/export/project-sync` (Entwurf
-    Abschnitt 5/7). `changes` ist ausserhalb von `status == "updated"` immer
-    leer."""
+    """A row in the diff plan of `POST /api/export/project-sync` (design
+    section 5/7). `changes` is always empty outside of
+    `status == "updated"`."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -2399,10 +2402,10 @@ class ProjectSyncEntryOut(BaseModel):
 
 
 class ProjectSyncPlanOut(BaseModel):
-    """Antwort von `POST /api/export/project-sync` - Plan und beide
-    gepatchten Datei-Varianten in einer Antwort (Entwurf Abschnitt 4/7): kein
-    zweiter Server-Roundtrip, der "Bestaetigen"-Schritt ist rein
-    clientseitig."""
+    """Response of `POST /api/export/project-sync` - plan and both
+    patched file variants in one response (design section 4/7): no
+    second server round trip, the "confirm" step is purely
+    client-side."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -2431,14 +2434,14 @@ Create `src/loxmatter/api/project_sync.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""`POST /api/export/project-sync` (Entwurf `docs/superpowers/specs/
-2026-09-03-project-file-sync-design.md`, Abschnitt 7).
+"""`POST /api/export/project-sync` (design `docs/superpowers/specs/
+2026-09-03-project-file-sync-design.md`, section 7).
 
-Nimmt eine hochgeladene Loxone-Projektdatei entgegen und liefert Diff-Plan
-plus beide gepatchten Datei-Varianten in einer Antwort - derselbe `Store`,
-den auch `api.export` und `api.devices` bekommen (siehe deren
-Moduldocstrings zur Begruendung: ein zweiter, unabhaengig geoeffneter Store
-vergaebe fuer dasselbe Geraet einen zweiten Satz Signalschluessel)."""
+Accepts an uploaded Loxone project file and delivers the diff plan plus
+both patched file variants in one response - the same `Store` that
+`api.export` and `api.devices` also get (see their module docstrings for
+the reasoning: a second, independently opened store would assign a
+second set of signal keys for the same device)."""
 
 from __future__ import annotations
 
@@ -2482,11 +2485,10 @@ def build_project_sync_router(store: Store) -> APIRouter:
             " --listen von `loxmatter run` uebereinstimmen, wie bei /api/export/download.",
         ),
     ) -> ProjectSyncPlanOut:
-        """Baut Diff-Plan und beide gepatchten Datei-Varianten im Speicher -
-        schreibt nirgends auf die Platte und markiert kein Geraet als
-        exportiert (anders als `/api/export/download`: eine hochgeladene
-        Projektdatei ist keine heruntergeladene Vorlage, siehe Entwurf
-        Abschnitt 4)."""
+        """Builds the diff plan and both patched file variants in
+        memory - writes nowhere to disk and marks no device as
+        exported (unlike `/api/export/download`: an uploaded project
+        file is not a downloaded template, see design section 4)."""
         raw = await file.read()
         try:
             result = run_sync(raw, store, bridge_ip=bridge_ip, port=port, listen=listen)
@@ -2507,13 +2509,13 @@ def build_project_sync_router(store: Store) -> APIRouter:
     return router
 ```
 
-In `src/loxmatter/loxone/server.py`: ergänze den Import neben den übrigen `api.*`-Importen (Zeile ~140, direkt nach `from loxmatter.api.live import ...`):
+In `src/loxmatter/loxone/server.py`: add the import next to the other `api.*` imports (line ~140, directly after `from loxmatter.api.live import ...`):
 
 ```python
 from loxmatter.api.project_sync import build_project_sync_router
 ```
 
-Und direkt nach der bestehenden Zeile `app.include_router(build_export_router(store), dependencies=api_guard)` (Zeile ~449):
+And directly after the existing line `app.include_router(build_export_router(store), dependencies=api_guard)` (line ~449):
 
 ```python
     app.include_router(build_project_sync_router(store), dependencies=api_guard)
@@ -2522,9 +2524,9 @@ Und direkt nach der bestehenden Zeile `app.include_router(build_export_router(st
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_project_sync_api.py -v`
-Expected: PASS (3 Tests)
+Expected: PASS (3 tests)
 
-- [ ] **Step 5: Ganze Testsuite laufen lassen**
+- [ ] **Step 5: Run the whole test suite**
 
 Run: `uv run pytest -q`
 Expected: PASS
@@ -2538,26 +2540,26 @@ git commit -m "feat(api): POST /api/export/project-sync - Diff-Plan und gepatcht
 
 ---
 
-### Task 12: WebUI — Upload, Plan-Ansicht, Download
+### Task 12: WebUI — upload, plan view, download
 
 **Files:**
 - Modify: `src/loxmatter/web/app.js`
 - Modify: `src/loxmatter/web/index.html`
 
 **Interfaces:**
-- Consumes: `requestJson` (Muster für Fehlerbehandlung, aber nicht direkt wiederverwendbar — Multipart-Upload braucht `FormData`, kein `JSON.stringify`), `UnauthorizedError`, `readErrorDetail` (bestehende Helfer in `app.js`)
-- Produces: neuer Alpine-Zustand `projectSync` (Objekt mit `file`, `plan`, `includeNewDevices`, `busy`, `error`) und Methoden `uploadProjectFile(event)`, `downloadPatchedProject()` im `app()`-Rückgabewert von `app.js`
+- Consumes: `requestJson` (pattern for error handling, but not directly reusable — a multipart upload needs `FormData`, not `JSON.stringify`), `UnauthorizedError`, `readErrorDetail` (existing helpers in `app.js`)
+- Produces: new Alpine state `projectSync` (object with `file`, `plan`, `includeNewDevices`, `busy`, `error`) and methods `uploadProjectFile(event)`, `downloadPatchedProject()` in the `app()` return value of `app.js`
 
-- [ ] **Step 1: State und Upload-Funktion in `app.js`**
+- [ ] **Step 1: State and upload function in `app.js`**
 
-In `src/loxmatter/web/app.js`, ergänze nach der bestehenden `requestDownload`-Funktion (nach Zeile ~220) eine neue Helfer-Funktion für den Multipart-Upload:
+In `src/loxmatter/web/app.js`, add a new helper function for the multipart upload after the existing `requestDownload` function (after line ~220):
 
 ```javascript
 /**
- * Laedt eine Datei per multipart/form-data hoch und erwartet JSON zurueck -
- * eigene Funktion statt `requestJson`, weil ein Datei-Upload kein
- * `JSON.stringify`-Body ist und `Content-Type` dem Browser ueberlassen
- * werden muss (er setzt die Multipart-Boundary selbst).
+ * Uploads a file via multipart/form-data and expects JSON back - its own
+ * function instead of `requestJson`, because a file upload is not a
+ * `JSON.stringify` body and `Content-Type` has to be left to the
+ * browser (it sets the multipart boundary itself).
  */
 async function requestUpload(path, formData) {
   let response;
@@ -2581,8 +2583,8 @@ async function requestUpload(path, formData) {
   return response.json();
 }
 
-/** Dekodiert einen Base64-String zu einem Blob - fuer den Download der
- * gepatchten Projektdatei aus der JSON-Antwort von /api/export/project-sync. */
+/** Decodes a base64 string into a blob - for downloading the patched
+ * project file from the JSON response of /api/export/project-sync. */
 function blobFromBase64(base64, mimeType) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -2593,7 +2595,7 @@ function blobFromBase64(base64, mimeType) {
 }
 ```
 
-Im Alpine-Zustandsobjekt (finde den Rückgabewert von `app()`, erkennbar am Kommentar „Ruft Alpine von sich aus genau EINMAL auf" um Zeile 353 — die Eigenschaften stehen im selben `return { ... }`), ergänze:
+In the Alpine state object (find the return value of `app()`, recognizable by the comment "Alpine itself calls this exactly ONCE" around line 353 — the properties sit in the same `return { ... }`), add:
 
 ```javascript
     projectSync: {
@@ -2645,13 +2647,13 @@ Im Alpine-Zustandsobjekt (finde den Rückgabewert von `app()`, erkennbar am Komm
     },
 ```
 
-**Hinweis:** `this.settings.bridgeIp` verweist auf denselben Zustand, den die bestehende Export-Ansicht für `bridge_ip` benutzt (siehe die Verwendung von `GET /api/settings` im vorhandenen Code). Suche vor diesem Schritt mit `grep -n "bridgeIp\|bridge_ip" src/loxmatter/web/app.js` nach dem tatsächlichen Feldnamen im bestehenden Alpine-Zustand und verwende exakt diesen Namen statt `this.settings.bridgeIp`, falls er abweicht (z. B. `this.settingsForm.bridgeIp` o. ä.) — er MUSS mit dem Feld übereinstimmen, das die bestehende „Verbindungseinstellungen"-Ansicht bereits zeigt, sonst fragt dieses Formular nach einer IP, die an anderer Stelle schon eingegeben ist.
+**Note:** `this.settings.bridgeIp` refers to the same state that the existing export view uses for `bridge_ip` (see the use of `GET /api/settings` in the existing code). Before this step, search with `grep -n "bridgeIp\|bridge_ip" src/loxmatter/web/app.js` for the actual field name in the existing Alpine state and use exactly that name instead of `this.settings.bridgeIp` if it differs (e.g. `this.settingsForm.bridgeIp` or similar) — it MUST match the field the existing "connection settings" view already shows, otherwise this form asks for an IP that has already been entered elsewhere.
 
-Auch `noteAuthError` ist eine bestehende Methode (siehe deren Verwendung an anderen `catch`-Blöcken in derselben Datei) — falls ihr tatsächlicher Name abweicht, an den bestehenden Namen anpassen.
+`noteAuthError` is also an existing method (see its use in other `catch` blocks in the same file) — if its actual name differs, adapt to the existing name.
 
-- [ ] **Step 2: Abschnitt in `index.html`**
+- [ ] **Step 2: Section in `index.html`**
 
-Suche die bestehende „System"-Ansicht in `index.html` (`grep -n 'x-show="view ===' src/loxmatter/web/index.html`, oder wo die bestehenden Export-Buttons liegen) und ergänze dort einen neuen Abschnitt nach demselben Muster wie die bestehenden Karten (`<section>`/`<div class="card">`, prüfe die exakte bestehende Klasse mit `grep -n 'class="card"' src/loxmatter/web/index.html`):
+Search for the existing "System" view in `index.html` (`grep -n 'x-show="view ===' src/loxmatter/web/index.html`, or wherever the existing export buttons are) and add a new section there following the same pattern as the existing cards (`<section>`/`<div class="card">`, check the exact existing class with `grep -n 'class="card"' src/loxmatter/web/index.html`):
 
 ```html
 <section class="card" x-show="view === 'system'">
@@ -2696,20 +2698,20 @@ Suche die bestehende „System"-Ansicht in `index.html` (`grep -n 'x-show="view 
 </section>
 ```
 
-**Hinweis:** prüfe vor dem Einfügen, welchen `view`-Wert die bestehende „System"-Ansicht tatsächlich benutzt (`grep -n "view ===" src/loxmatter/web/index.html`) und welche CSS-Klassen (`card`, `error`, Tabellen-Stile) das bestehende Markup verwendet, und verwende exakt dieselben — dieser Schritt beschreibt die Struktur, nicht jedes Detail des bestehenden Stylings.
+**Note:** before inserting, check which `view` value the existing "System" view actually uses (`grep -n "view ===" src/loxmatter/web/index.html`) and which CSS classes (`card`, `error`, table styles) the existing markup uses, and use exactly those — this step describes the structure, not every detail of the existing styling.
 
-- [ ] **Step 3: Manuell im Browser prüfen**
+- [ ] **Step 3: Manual verification in the browser**
 
 ```bash
 uv run loxmatter run --miniserver 10.0.0.1 --listen 8080
 ```
 
-Öffne `http://localhost:8080/`, melde dich an, wechsle zur „System"-Ansicht, lade die synthetische Beispieldatei hoch (kopiere den Inhalt von `tests/projectsync/conftest.py::SAMPLE_PROJECT` in eine lokale `.Loxone`-Datei) und prüfe:
-- Der Plan erscheint mit den erwarteten Zeilen.
-- Der Download-Button liefert eine Datei, deren Name auf `.Loxone` endet.
-- Der Haken schaltet zwischen den beiden Datei-Inhalten um (Dateigröße ändert sich, wenn `include_new_devices` etwas beiträfe — mit der synthetischen Datei ohne bekannte Geräte im `Store` ggf. kein sichtbarer Unterschied; wichtig ist, dass kein Fehler im Konsolen-Log erscheint).
+Open `http://localhost:8080/`, log in, switch to the "System" view, upload the synthetic sample file (copy the content of `tests/projectsync/conftest.py::SAMPLE_PROJECT` into a local `.Loxone` file) and check:
+- The plan appears with the expected rows.
+- The download button delivers a file whose name ends in `.Loxone`.
+- The checkbox switches between the two file contents (file size changes if `include_new_devices` would contribute anything — with the synthetic file and no known devices in the `Store`, possibly no visible difference; what matters is that no error appears in the console log).
 
-Es gibt für diesen Schritt keinen automatisierten Test — er ist manuelle Verifikation der Browser-Interaktion, wie in den Projektrichtlinien für UI-Änderungen gefordert.
+There is no automated test for this step — it is manual verification of the browser interaction, as required by the project guidelines for UI changes.
 
 - [ ] **Step 4: Commit**
 
@@ -2720,16 +2722,16 @@ git commit -m "feat(web): Projektdatei-Sync - Upload, Plananzeige, Download"
 
 ---
 
-### Task 13: README ergänzen — Warnung zum unverifizierten ID-Schema
+### Task 13: extend the README — warning about the unverified ID scheme
 
 **Files:**
 - Modify: `README.md`
 
-**Interfaces:** keine (reine Dokumentation)
+**Interfaces:** none (pure documentation)
 
-- [ ] **Step 1: Abschnitt ergänzen**
+- [ ] **Step 1: Add a section**
 
-Füge in `README.md` nach dem bestehenden Absatz über die Vorlagen (endet mit „... Details: [Signalauswahl-Entwurf]...") einen neuen Absatz ein:
+Insert a new paragraph into `README.md` after the existing paragraph about the templates (ends with "... Details: [Signal selection design]..."):
 
 ```markdown
 **Projektdatei-Sync (`POST /api/export/project-sync`, WebUI unter
@@ -2755,8 +2757,8 @@ git commit -m "docs: Projektdatei-Sync und ihr unverifiziertes ID-Schema im READ
 
 ---
 
-## Self-Review-Notizen (für den Ausführenden)
+## Self-review notes (for the executor)
 
-- **Task 9**: `apply_plan` ruft `to_inputs`/`to_outputs` selbst auf (dieselbe Quelle wie `diff.build_plan`), statt die volle `LoxoneInput`/`LoxoneCommand`-Objektliste durch den `PlanEntry` zu reichen — der trägt nur, was die Oberfläche zeigen muss (Titel/Schlüssel/Status), nicht `unit_format`/`check_suffix`/`off_path`, die ein neu angelegtes Objekt zusätzlich braucht.
-- **Task 12** enthält zwei Stellen, an denen der Ausführende den bestehenden Code selbst nachschlagen muss (Feldname für die Bridge-IP im Alpine-Zustand, `view`-Wert und CSS-Klassen der „System"-Ansicht) — das ist beabsichtigt, weil `app.js`/`index.html` mit ~1700/~760 Zeilen zu groß sind, um hier vollständig zitiert zu werden, und weil ein falsch geratener Feldname eine zweite, abweichende Bridge-IP-Eingabe in der Oberfläche erzeugen würde.
-- Spec-Abdeckung geprüft: Eingabeweg (Task 11/12), Text-Chirurgie (Task 3, 9), Schlüssel-Abgleich (Task 4, 5), Risikostufen/Experimentell-Haken (Task 9 `include_new_devices`, Task 12 Checkbox), Diff-Plan-Datenmodell (Task 8), ID-Vergabe (Task 6), Fehlerbehandlung (Task 5 `ProjectFormatError`→400, Task 8 `CONFLICT`), Tests mit synthetischer Fixture statt echter Nutzerdatei (Task 5 `conftest.py`), README-Warnung (Task 13). `orphaned`-Meldung in der WebUI-Tabelle enthalten (Status-Spalte zeigt `entry.status` roh — für eine spätere Iteration ließe sich das in lesbaren Text übersetzen, das ist YAGNI für diesen Plan, keine fehlende Abdeckung).
+- **Task 9**: `apply_plan` calls `to_inputs`/`to_outputs` itself (the same source as `diff.build_plan`), instead of passing the full `LoxoneInput`/`LoxoneCommand` object list through the `PlanEntry` — it only carries what the UI needs to show (title/key/status), not `unit_format`/`check_suffix`/`off_path`, which a newly created object additionally needs.
+- **Task 12** contains two places where the executor has to look up the existing code themselves (field name for the bridge IP in the Alpine state, `view` value and CSS classes of the "System" view) — this is intentional, because `app.js`/`index.html`, at ~1700/~760 lines, are too big to be quoted here in full, and because a wrongly guessed field name would create a second, divergent bridge IP input in the UI.
+- Spec coverage checked: input path (task 11/12), text surgery (task 3, 9), key matching (task 4, 5), risk levels/experimental checkbox (task 9 `include_new_devices`, task 12 checkbox), diff plan data model (task 8), ID assignment (task 6), error handling (task 5 `ProjectFormatError`→400, task 8 `CONFLICT`), tests with a synthetic fixture instead of a real user file (task 5 `conftest.py`), README warning (task 13). The `orphaned` notice is included in the WebUI table (status column shows `entry.status` raw — for a later iteration this could be translated into readable text, that's YAGNI for this plan, not missing coverage).

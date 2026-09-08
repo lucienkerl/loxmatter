@@ -1,62 +1,62 @@
-# Signalauswahl — Implementierungsplan
+# Signal Selection — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eine Steckdose exportiert nach Loxone fünf bedeutungsvolle Werte statt 109 technisch abbildbarer, und der kWh-Zählerstand kommt erstmals überhaupt an.
+**Goal:** A plug exports five meaningful values to Loxone instead of 109 technically mappable ones, and the kWh meter reading arrives for the first time ever.
 
-**Architecture:** Ein neuer Begriff `Relevance` entscheidet ausschließlich über den *Vorgabewert* der bestehenden Spalte `exported`; die Exportmechanik bleibt unberührt. Die Auswahl folgt Matters eigenem Aufbau — der Descriptor-Cluster nennt je Endpunkt einen standardisierten Gerätetyp, Root Node und OTA Requestor sind Verwaltung. Bei Clustern, die die Profiltabelle kennt, zählen zusätzlich nur deren benannte Attribute. Ein neues Tabellenfeld `field` holt eine Zahl aus einer Matter-Struktur.
+**Architecture:** A new concept `Relevance` decides exclusively about the *default value* of the existing column `exported`; the export mechanism remains untouched. The selection follows Matter's own structure — the descriptor cluster names a standardized device type per endpoint, Root Node and OTA Requestor are administrative. For clusters the profile table knows, only their named attributes additionally count. A new table field `field` pulls a number out of a Matter structure.
 
-**Tech Stack:** Python 3.12, SQLite (`PRAGMA user_version`-Migrationen), FastAPI, Pydantic v2, Alpine.js 3.17.1 (vendort, kein Build-Schritt), pytest, ruff, mypy strict.
+**Tech Stack:** Python 3.12, SQLite (`PRAGMA user_version` migrations), FastAPI, Pydantic v2, Alpine.js 3.17.1 (vendored, no build step), pytest, ruff, mypy strict.
 
-**Entwurfsdokument:** [`docs/superpowers/specs/2026-09-03-signal-selection-design.md`](../specs/2026-09-03-signal-selection-design.md). Bei Widerspruch zwischen Plan und Entwurf gilt der Entwurf; melde den Widerspruch.
+**Design document:** [`docs/superpowers/specs/2026-09-03-signal-selection-design.md`](../specs/2026-09-03-signal-selection-design.md). In case of conflict between plan and design, the design takes precedence; report the conflict.
 
 ## Global Constraints
 
-- **Deutsch** in Prosa, Kommentaren, Docstrings, Hilfetexten und Fehlermeldungen; **Englisch** in allen Bezeichnern — auch in Testnamen, JS-Variablen, JSON-Feldnamen und YAML-Schlüsseln.
-- Alle Tests laufen **ohne Hardware und ohne Netzzugriff**.
-- `uv run pytest`, `uv run ruff check`, `uv run ruff format --check`, `uv run mypy` (strict über `src` und `scripts`) müssen am Ende jeder Aufgabe sauber sein.
-- Ausgangslage: 477 Tests grün auf `main`, HEAD `171a4b3`.
-- **Schlüssel sind unveränderlich** (Hauptdokument 6.2). Keine Aufgabe dieses Plans darf einen bestehenden Signalschlüssel ändern. Ein umbenannter Schlüssel ist ein stillschweigend toter Funktionsbaustein in einer fremden Loxone-Config.
-- **Prüfe jede fremde Signatur gegen die installierte Fassung**, statt sie aus diesem Plan zu übernehmen (`uv run python -c "import inspect; ..."`). Dieser Plan hat sich in früheren Phasen mehrfach geirrt; die Prüfung hat es jedes Mal aufgefangen.
-- `tests/fixtures/VirtualIn/` und `tests/fixtures/VirtualOut/` **nicht lesen** — unbereinigte Vorlagen aus einer echten Installation, absichtlich git-ignoriert.
-- Keine Verbindung zu einem Host im Heimnetz des Anwenders. Unter `10.0.1.56` läuft ein echter matter-server mit echten Geräten.
+- **German** in prose, comments, docstrings, help texts, and error messages; **English** in all identifiers — including test names, JS variables, JSON field names, and YAML keys.
+- All tests run **without hardware and without network access**.
+- `uv run pytest`, `uv run ruff check`, `uv run ruff format --check`, `uv run mypy` (strict over `src` and `scripts`) must be clean at the end of every task.
+- Starting point: 477 tests green on `main`, HEAD `171a4b3`.
+- **Keys are immutable** (main document 6.2). No task in this plan may change an existing signal key. A renamed key is a silently dead function block in someone else's Loxone config.
+- **Check every external signature against the installed version**, rather than taking it from this plan (`uv run python -c "import inspect; ..."`). This plan has been wrong multiple times in earlier phases; the check caught it every time.
+- Do **not read** `tests/fixtures/VirtualIn/` and `tests/fixtures/VirtualOut/` — unsanitized templates from a real installation, deliberately git-ignored.
+- No connection to a host on the user's home network. A real matter-server with real devices runs at `10.0.1.56`.
 
-## Dateien
+## Files
 
-| Datei | Zuständigkeit |
+| File | Responsibility |
 |---|---|
-| `src/loxmatter/profiles/relevance.py` | **neu** — Gerätetyp-Regel: welche Signale sind standardmäßig gewollt |
-| `src/loxmatter/profiles/catalog.py` | **neu** — Attributnamen aus dem chip-SDK, nur für die Anzeige |
-| `src/loxmatter/profiles/table.py` | ergänzt — Feinauswahl bei bekannten Clustern, Strukturfeld, Titel |
-| `src/loxmatter/profiles/clusters.yaml` | ergänzt — PowerSource, Strukturfelder für Energie |
-| `src/loxmatter/loxone/values.py` | ergänzt — Zahl aus Struktur ziehen |
-| `src/loxmatter/model/store.py` | ergänzt — Vorgabewert von `exported`, Migration auf Schema v3 |
-| `src/loxmatter/api/models.py` | ergänzt — `relevance` im Signal-Payload |
-| `src/loxmatter/api/devices.py` | ergänzt — `relevance` befüllen |
-| `src/loxmatter/api/export.py` | ergänzt — Vorschau nennt ausgeblendete Signale |
-| `src/loxmatter/web/index.html`, `app.js`, `style.css` | ergänzt — Funktional/Experte-Blöcke |
+| `src/loxmatter/profiles/relevance.py` | **new** — device type rule: which signals are wanted by default |
+| `src/loxmatter/profiles/catalog.py` | **new** — attribute names from the chip SDK, display only |
+| `src/loxmatter/profiles/table.py` | extended — fine selection for known clusters, struct field, title |
+| `src/loxmatter/profiles/clusters.yaml` | extended — PowerSource, struct fields for energy |
+| `src/loxmatter/loxone/values.py` | extended — pull a number out of a struct |
+| `src/loxmatter/model/store.py` | extended — default value of `exported`, migration to schema v3 |
+| `src/loxmatter/api/models.py` | extended — `relevance` in the signal payload |
+| `src/loxmatter/api/devices.py` | extended — populate `relevance` |
+| `src/loxmatter/api/export.py` | extended — preview names hidden signals |
+| `src/loxmatter/web/index.html`, `app.js`, `style.css` | extended — functional/expert blocks |
 
 ---
 
-### Task 1: Gerätetypen aus dem Descriptor lesen
+### Task 1: Read device types from the descriptor
 
-Die Grundlage. Ohne diesen Schritt kennt nichts die Endpunkt-Rollen.
+The foundation. Without this step, nothing knows the endpoint roles.
 
 **Files:**
 - Create: `src/loxmatter/profiles/relevance.py`
 - Test: `tests/profiles/test_relevance.py`
 
 **Interfaces:**
-- Consumes: `loxmatter.matter.models.NodeSnapshot` (Feld `attributes: Mapping[str, Any]`, Pfade der Form `"<endpoint>/<cluster>/<attribute>"`), `loxmatter.matter.paths.parse_attribute_path`.
+- Consumes: `loxmatter.matter.models.NodeSnapshot` (field `attributes: Mapping[str, Any]`, paths of the form `"<endpoint>/<cluster>/<attribute>"`), `loxmatter.matter.paths.parse_attribute_path`.
 - Produces:
   - `DESCRIPTOR_CLUSTER_ID: int` (= 29), `DEVICE_TYPE_LIST_ID: int` (= 0)
   - `ROOT_NODE_DEVICE_TYPE: int`, `OTA_REQUESTOR_DEVICE_TYPE: int`, `POWER_SOURCE_DEVICE_TYPE: int`
   - `UTILITY_DEVICE_TYPES: frozenset[int]`
   - `device_types_by_endpoint(snapshot: NodeSnapshot) -> dict[int, frozenset[int]]`
 
-- [ ] **Step 1: Die drei Gerätetyp-Nummern belegen**
+- [ ] **Step 1: Establish the three device type numbers**
 
-Das installierte SDK enthält **keine** Gerätetyp-Tabelle — nur Cluster. Prüfe zuerst selbst:
+The installed SDK contains **no** device type table — only clusters. Check for yourself first:
 
 ```bash
 uv run python -c "
@@ -65,13 +65,13 @@ print(os.path.dirname(O.__file__))
 "
 ```
 
-Die Nummern stehen in der Matter Device Library Specification der CSA. **Nicht aus diesem Plan übernehmen.** Belege sie und schreibe die Quelle als Kommentar an die Konstante. Erwartete Werte zur Gegenkontrolle — wenn deine Quelle abweicht, gilt deine Quelle, und du meldest die Abweichung:
+The numbers are in the CSA's Matter Device Library Specification. **Do not take them from this plan.** Establish them and write the source as a comment on the constant. Expected values for cross-checking — if your source differs, your source takes precedence, and you report the discrepancy:
 
 - Root Node = 0x0016
 - OTA Requestor = 0x0012
 - Power Source = 0x0011
 
-Gegenprobe an den eingecheckten Abbildern (die müssen zu deiner Quelle passen):
+Cross-check against the checked-in snapshots (they must match your source):
 
 ```bash
 uv run python -c "
@@ -83,12 +83,12 @@ for f in ('ikea_grillplats_plug.json','ikea_bilresa_button.json'):
 "
 ```
 
-Erwartete Ausgabe: die Steckdose hat auf Endpunkt 0 die Typen 18 und 22, der Taster zusätzlich 17 — und der Taster ist das batteriebetriebene Gerät.
+Expected output: the plug has types 18 and 22 on endpoint 0, the button additionally has 17 — and the button is the battery-powered device.
 
-- [ ] **Step 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
 ```python
-"""Gerätetypen je Endpunkt aus dem Descriptor-Cluster."""
+"""Device types per endpoint from the descriptor cluster."""
 
 from __future__ import annotations
 
@@ -121,17 +121,17 @@ def test_the_plug_declares_a_utility_endpoint_and_two_application_endpoints():
 
 
 def test_the_button_declares_a_power_source_on_its_utility_endpoint():
-    """Der Batteriestand liegt nicht zufaellig auf Endpunkt 0 - das Geraet
-    deklariert dort den Geraetetyp Power Source. Genau darauf stuetzt sich
-    die Ausnahme in Task 2; ohne diese Zusicherung waere sie geraten."""
+    """The battery level isn't coincidentally on endpoint 0 - the device
+    declares the Power Source device type there. Task 2's exception rests
+    exactly on that; without this guarantee it would be a guess."""
     types = device_types_by_endpoint(_snapshot("ikea_bilresa_button.json"))
     assert POWER_SOURCE_DEVICE_TYPE in types[0]
 
 
 def test_an_endpoint_without_a_descriptor_is_absent_rather_than_empty():
-    """Fehlt der Descriptor, soll der Aufrufer das unterscheiden koennen von
-    'Descriptor da, aber leer' - beides fuehrt spaeter zur selben
-    Entscheidung, aber aus verschiedenen Gruenden."""
+    """If the descriptor is missing, the caller should be able to
+    distinguish that from 'descriptor present but empty' - both lead to
+    the same decision later, but for different reasons."""
     snapshot = NodeSnapshot.from_raw({"node_id": 1, "attributes": {"7/6/0": True}})
     assert device_types_by_endpoint(snapshot) == {}
 
@@ -147,34 +147,34 @@ def test_an_endpoint_without_a_descriptor_is_absent_rather_than_empty():
     ],
 )
 def test_an_unexpected_descriptor_shape_yields_no_device_types(raw):
-    """Ein nicht konformes Geraet darf keinen Absturz ausloesen. Der
-    Endpunkt gilt dann als typlos - und damit spaeter (Task 2) als
-    Nutz-Endpunkt: im Zweifel ein Eingang zu viel, nie ein fehlender Wert."""
+    """A non-conformant device must not cause a crash. The endpoint then
+    counts as typeless - and thus later (Task 2) as an application
+    endpoint: when in doubt, one input too many, never a missing value."""
     snapshot = NodeSnapshot.from_raw({"node_id": 1, "attributes": {"0/29/0": raw}})
     assert device_types_by_endpoint(snapshot) == {0: frozenset()}
 ```
 
-- [ ] **Step 3: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 3: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/profiles/test_relevance.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.profiles.relevance'`
 
-- [ ] **Step 4: Die minimale Implementierung schreiben**
+- [ ] **Step 4: Write the minimal implementation**
 
 ```python
-"""Welche Signale ein Anwender standardmaessig will (Entwurf 2026-09-03, 4.1).
+"""Which signals a user wants by default (design 2026-09-03, 4.1).
 
-Getrennt von `Exportability` und mit Absicht in einem eigenen Modul: die
-Frage "laesst sich der Wert auf einen UDP-Eingang abbilden" (table.py) und
-die Frage "will ihn jemand" sind verschiedene Fragen mit verschiedenen
-Antworten. Ein Thread-Funkzaehler ist exportierbar, aber nicht relevant.
+Separate from `Exportability` and deliberately in its own module: the
+question "can the value be mapped onto a UDP input" (table.py) and the
+question "does anyone want it" are different questions with different
+answers. A Thread radio counter is exportable, but not relevant.
 
-Die Auswahl stuetzt sich nicht auf eine Liste von Cluster-Nummern, die
-jemand fuer langweilig haelt, sondern auf Matters eigenen Aufbau: der
-Descriptor-Cluster traegt auf jedem Endpunkt eine standardisierte
-Geraetetyp-Liste. Ein Geraet ohne diese Angabe wird nicht zertifiziert -
-die Regel traegt damit fuer jeden Hersteller und jeden Geraetetyp, auch
-fuer solche, die dieses Werkzeug nie gesehen hat.
+The selection does not rely on a list of cluster numbers that someone
+considered boring, but on Matter's own structure: the descriptor cluster
+carries a standardized device type list on every endpoint. A device
+without this information is not certified - the rule therefore carries
+for every manufacturer and every device type, even those this tool has
+never seen.
 """
 
 from __future__ import annotations
@@ -187,9 +187,9 @@ from loxmatter.matter.paths import parse_attribute_path
 DESCRIPTOR_CLUSTER_ID = 29
 DEVICE_TYPE_LIST_ID = 0
 
-# Quelle: Matter Device Library Specification (CSA). NICHT aus dem
-# installierten chip-SDK ableitbar - dessen Katalog umfasst Cluster, keine
-# Geraetetypen (in Task 1 geprueft).
+# Source: Matter Device Library Specification (CSA). NOT derivable from
+# the installed chip SDK - its catalog covers clusters, not device
+# types (checked in Task 1).
 ROOT_NODE_DEVICE_TYPE = 0x0016
 OTA_REQUESTOR_DEVICE_TYPE = 0x0012
 POWER_SOURCE_DEVICE_TYPE = 0x0011
@@ -198,16 +198,16 @@ UTILITY_DEVICE_TYPES: frozenset[int] = frozenset({ROOT_NODE_DEVICE_TYPE, OTA_REQ
 
 
 def _device_type_ids(raw: object) -> frozenset[int]:
-    """Die Geraetetyp-Nummern aus einem `DeviceTypeList`-Wert.
+    """The device type numbers from a `DeviceTypeList` value.
 
-    matter-server liefert Strukturen als Woerterbuch mit dem Feld-Tag als
-    ZEICHENKETTE, nicht mit dem Feldnamen: eine DeviceTypeStruct kommt als
-    ``{"0": <Typ>, "1": <Revision>}`` an. Beides - Zeichenkette und Zahl -
-    wird akzeptiert, weil eine andere Serialisierung dieselbe Struktur
-    genauso plausibel als ``{0: ...}`` liefern koennte.
+    matter-server returns structures as a dictionary with the field tag
+    as a STRING, not as the field name: a DeviceTypeStruct arrives as
+    ``{"0": <Typ>, "1": <Revision>}``. Both - string and number - are
+    accepted, because a different serialization of the same structure
+    could just as plausibly deliver it as ``{0: ...}``.
 
-    Alles Unerwartete ergibt eine leere Menge statt einer Ausnahme: ein
-    nicht konformes Geraet soll die Zerlegung nicht anhalten.
+    Anything unexpected yields an empty set instead of an exception: a
+    non-conformant device should not halt the decomposition.
     """
     if not isinstance(raw, (list, tuple)):
         return frozenset()
@@ -223,11 +223,11 @@ def _device_type_ids(raw: object) -> frozenset[int]:
 
 
 def device_types_by_endpoint(snapshot: NodeSnapshot) -> dict[int, frozenset[int]]:
-    """Die deklarierten Geraetetypen je Endpunkt.
+    """The declared device types per endpoint.
 
-    Ein Endpunkt ohne Descriptor taucht gar nicht auf - der Aufrufer
-    unterscheidet damit "nicht gemeldet" von "gemeldet, aber leer", auch
-    wenn beide spaeter zur selben Entscheidung fuehren.
+    An endpoint without a descriptor doesn't show up at all - the caller
+    thereby distinguishes "not reported" from "reported, but empty",
+    even though both lead to the same decision later.
     """
     result: dict[int, frozenset[int]] = {}
     for path, value in snapshot.attributes.items():
@@ -241,12 +241,12 @@ def device_types_by_endpoint(snapshot: NodeSnapshot) -> dict[int, frozenset[int]
     return result
 ```
 
-- [ ] **Step 5: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 5: Run the test, confirm success**
 
 Run: `uv run pytest tests/profiles/test_relevance.py -v`
-Expected: PASS, 8 Tests (4 Fälle der Parametrisierung plus die vier übrigen — zähle nach, die Parametrisierung hat 5 Fälle, also 8 Tests gesamt)
+Expected: PASS, 8 tests (4 cases from the parametrization plus the remaining four — recount: the parametrization has 5 cases, so 8 tests total)
 
-- [ ] **Step 6: Prüfungen und Commit**
+- [ ] **Step 6: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -256,30 +256,30 @@ git commit -m "feat(profiles): Geraetetypen je Endpunkt aus dem Descriptor lesen
 
 ---
 
-### Task 2: Die Relevanz-Regel
+### Task 2: The relevance rule
 
 **Files:**
 - Modify: `src/loxmatter/profiles/relevance.py`
-- Modify: `src/loxmatter/profiles/table.py` (neue Funktion `names_element`)
+- Modify: `src/loxmatter/profiles/table.py` (new function `names_element`)
 - Test: `tests/profiles/test_relevance.py`, `tests/profiles/test_table.py`
 
 **Interfaces:**
-- Consumes: `device_types_by_endpoint` aus Task 1; `loxmatter.matter.models.SignalRef` (Felder `endpoint`, `cluster_id`, `element_id`, `kind`), `SignalKind`.
+- Consumes: `device_types_by_endpoint` from Task 1; `loxmatter.matter.models.SignalRef` (fields `endpoint`, `cluster_id`, `element_id`, `kind`), `SignalKind`.
 - Produces:
   - `BOILERPLATE_CLUSTERS: frozenset[int]`
   - `UTILITY_ENDPOINT_KEEP_CLUSTERS: frozenset[int]`
   - `is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bool`
-  - in `table.py`: `names_element(ref: SignalRef) -> bool` — ob die Tabelle den Cluster kennt UND dieses Element dort benannt ist
+  - in `table.py`: `names_element(ref: SignalRef) -> bool` — whether the table knows the cluster AND this element is named there
 
-- [ ] **Step 1: Den fehlschlagenden Test für `names_element` schreiben**
+- [ ] **Step 1: Write the failing test for `names_element`**
 
-Ergänze `tests/profiles/test_table.py`:
+Add to `tests/profiles/test_table.py`:
 
 ```python
 def test_names_element_separates_named_from_generic_within_a_known_cluster():
-    """Die Tabelle kennt Cluster 6 und benennt dort nur Attribut 0. Genau
-    diese Unterscheidung traegt die Feinauswahl: `onoff` ist gewollt,
-    StartUpOnOff (0x4003) nicht."""
+    """The table knows cluster 6 and only names attribute 0 there. This
+    exact distinction carries the fine selection: `onoff` is wanted,
+    StartUpOnOff (0x4003) is not."""
     known = SignalRef(1, 6, 0, SignalKind.ATTRIBUTE)
     generic = SignalRef(1, 6, 0x4003, SignalKind.ATTRIBUTE)
     assert names_element(known) is True
@@ -287,42 +287,41 @@ def test_names_element_separates_named_from_generic_within_a_known_cluster():
 
 
 def test_names_element_is_false_for_a_cluster_the_table_does_not_know():
-    """Ein unbekannter Cluster benennt nichts. Der Aufrufer (relevance)
-    darf daraus NICHT 'alles aus' folgern - siehe dort."""
+    """An unknown cluster names nothing. The caller (relevance) must NOT
+    conclude 'everything off' from that - see there."""
     assert names_element(SignalRef(1, 4711, 0, SignalKind.ATTRIBUTE)) is False
 
 
 def test_names_element_covers_events_too():
-    """Cluster 59 benennt seine Ereignisse; die Feinauswahl darf einen
-    Tastendruck nicht als unbenannt verwerfen."""
+    """Cluster 59 names its events; the fine selection must not discard a
+    button press as unnamed."""
     assert names_element(SignalRef(1, 59, 1, SignalKind.EVENT)) is True
 ```
 
-Der Import oben in der Datei ist um `names_element` zu ergänzen.
+Add `names_element` to the import at the top of the file.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/profiles/test_table.py -k names_element -v`
 Expected: FAIL — `ImportError: cannot import name 'names_element'`
 
-- [ ] **Step 3: `names_element` implementieren**
+- [ ] **Step 3: Implement `names_element`**
 
-In `src/loxmatter/profiles/table.py`, direkt nach `lookup`:
+In `src/loxmatter/profiles/table.py`, directly after `lookup`:
 
 ```python
 def knows_cluster(cluster_id: int) -> bool:
-    """Ob die Profiltabelle diesen Cluster ueberhaupt fuehrt."""
+    """Whether the profile table carries this cluster at all."""
     return cluster_id in _table()
 
 
 def names_element(ref: SignalRef) -> bool:
-    """Ob die Profiltabelle genau dieses Element namentlich fuehrt.
+    """Whether the profile table names exactly this element.
 
-    Getrennt von `lookup`, weil `lookup` fuer ein unbenanntes Element einen
-    generischen Namen erfindet (`c6_a16387`) und die Unterscheidung damit
-    verliert. Die Feinauswahl in `profiles.relevance` braucht sie aber:
-    innerhalb eines bekannten Clusters ist "benannt" das Kennzeichen fuer
-    "gewollt".
+    Separate from `lookup`, because `lookup` invents a generic name
+    (`c6_a16387`) for an unnamed element and thereby loses the
+    distinction. The fine selection in `profiles.relevance` needs it,
+    though: within a known cluster, "named" is the marker for "wanted".
     """
     cluster = _table().get(ref.cluster_id)
     if cluster is None:
@@ -331,16 +330,16 @@ def names_element(ref: SignalRef) -> bool:
     return ref.element_id in (cluster.get(section) or {})
 ```
 
-Prüfe, ob `SignalKind` in `table.py` bereits importiert ist; `lookup` verwendet es, also ja.
+Check whether `SignalKind` is already imported in `table.py`; `lookup` uses it, so yes.
 
-- [ ] **Step 4: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run the test, confirm success**
 
 Run: `uv run pytest tests/profiles/test_table.py -k names_element -v`
-Expected: PASS, 3 Tests
+Expected: PASS, 3 tests
 
-- [ ] **Step 5: Den fehlschlagenden Test für `is_functional` schreiben**
+- [ ] **Step 5: Write the failing test for `is_functional`**
 
-Ergänze `tests/profiles/test_relevance.py`:
+Add to `tests/profiles/test_relevance.py`:
 
 ```python
 from loxmatter.matter.models import SignalKind, SignalRef
@@ -356,16 +355,17 @@ def test_a_thread_diagnostics_counter_on_the_root_endpoint_is_not_functional():
 
 
 def test_the_battery_level_on_a_root_endpoint_is_functional():
-    """Der Ausnahmefall, den der Descriptor selbst begruendet: der Taster
-    deklariert auf Endpunkt 0 zusaetzlich Power Source."""
+    """The exceptional case the descriptor itself justifies: the button
+    additionally declares Power Source on endpoint 0."""
     ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
     assert is_functional(ref, _BUTTON_TYPES) is True
 
 
 def test_the_battery_cluster_is_not_functional_where_no_power_source_is_declared():
-    """Dieselbe Cluster-Nummer auf einem Endpunkt ohne Power-Source-Typ
-    bleibt Verwaltung. Die Regel haengt am deklarierten Geraetetyp, nicht an
-    der Cluster-Nummer - sonst waere sie doch wieder nur eine Liste."""
+    """The same cluster number on an endpoint without a Power Source type
+    remains administrative. The rule hinges on the declared device type,
+    not on the cluster number - otherwise it would again just be a
+    list."""
     ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
     assert is_functional(ref, _PLUG_TYPES) is False
 
@@ -375,16 +375,17 @@ def test_onoff_on_an_application_endpoint_is_functional():
 
 
 def test_a_generic_attribute_of_a_known_cluster_is_not_functional():
-    """StartUpOnOff (0x4003) sitzt legitim bei OnOff, will aber niemand in
-    Loxone. Die Tabelle kennt Cluster 6 und benennt dort nur Attribut 0."""
+    """StartUpOnOff (0x4003) legitimately sits with OnOff, but nobody
+    wants it in Loxone. The table knows cluster 6 and only names
+    attribute 0 there."""
     assert is_functional(SignalRef(1, 6, 0x4003, _KIND), _PLUG_TYPES) is False
 
 
 def test_every_attribute_of_an_unknown_cluster_stays_functional():
-    """Die Grundwette des Projekts (Hauptdokument 3.5): ein Geraetetyp, den
-    dieses Werkzeug nie gesehen hat, funktioniert trotzdem. Waere das hier
-    falsch, laege ein fremdes Geraet stumm - ohne dass jemand merkte, dass
-    etwas fehlt."""
+    """The project's basic wager (main document 3.5): a device type this
+    tool has never seen still works. If this were wrong, a foreign
+    device would sit silent - without anyone noticing that something is
+    missing."""
     assert is_functional(SignalRef(1, 4711, 99, _KIND), _PLUG_TYPES) is True
 
 
@@ -394,64 +395,63 @@ def test_identify_groups_and_descriptor_are_never_functional():
 
 
 def test_an_endpoint_without_a_declared_type_counts_as_an_application_endpoint():
-    """Im Zweifel ein Eingang zu viel, nie ein fehlender Wert."""
+    """When in doubt, one input too many, never a missing value."""
     assert is_functional(SignalRef(9, 4711, 0, _KIND), _PLUG_TYPES) is True
 
 
 def test_events_of_a_known_cluster_stay_functional():
-    """Ein verworfenes Ereignis waere ein Tastendruck, der in Loxone nie
-    ankommt - die erste Anforderung dieses Projekts ueberhaupt."""
+    """A discarded event would be a button press that never arrives in
+    Loxone - the very first requirement of this project."""
     for event_id in (1, 2, 3, 4, 5, 6):
         ref = SignalRef(1, 59, event_id, SignalKind.EVENT)
         assert is_functional(ref, _BUTTON_TYPES) is True
 ```
 
-Ergänze oben in der Datei `_KIND = SignalKind.ATTRIBUTE`.
+Add `_KIND = SignalKind.ATTRIBUTE` at the top of the file.
 
-- [ ] **Step 6: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 6: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/profiles/test_relevance.py -k is_functional -v`
 Expected: FAIL — `ImportError: cannot import name 'is_functional'`
 
-- [ ] **Step 7: `is_functional` implementieren**
+- [ ] **Step 7: Implement `is_functional`**
 
-Ergänze `src/loxmatter/profiles/relevance.py`:
+Add to `src/loxmatter/profiles/relevance.py`:
 
 ```python
 from loxmatter.matter.models import SignalKind, SignalRef
 from loxmatter.profiles.table import knows_cluster, names_element
 
-# Auf jedem Endpunkt Verwaltung, unabhaengig vom Geraetetyp: Identify
-# (Blinken zur Identifikation), Groups (Matter-Gruppenverwaltung) und der
-# Descriptor selbst. Keiner davon hat eine Bedeutung fuer eine
-# Hausautomation.
+# Administrative on every endpoint, regardless of device type: Identify
+# (blinking for identification), Groups (Matter group management), and
+# the descriptor itself. None of these have any meaning for home
+# automation.
 BOILERPLATE_CLUSTERS: frozenset[int] = frozenset({3, 4, DESCRIPTOR_CLUSTER_ID})
 
-# Cluster, die auf einem Verwaltungs-Endpunkt dennoch gewollt sind - aber
-# nur, wenn das Geraet den zugehoerigen Nutz-Geraetetyp dort auch
-# deklariert. Der Batteriestand ist der Fall, der das noetig macht.
+# Clusters that are still wanted on an administrative endpoint - but
+# only if the device also declares the corresponding application device
+# type there. The battery level is the case that makes this necessary.
 UTILITY_ENDPOINT_KEEP_CLUSTERS: dict[int, int] = {
     47: POWER_SOURCE_DEVICE_TYPE,  # PowerSource
 }
 
 
 def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bool:
-    """Ob dieses Signal standardmaessig gewollt ist (Entwurf 2026-09-03, 4).
+    """Whether this signal is wanted by default (design 2026-09-03, 4).
 
-    Drei Schichten, in dieser Reihenfolge:
+    Three layers, in this order:
 
-    1. Boilerplate-Cluster sind nie gewollt, auf keinem Endpunkt.
-    2. Auf einem Verwaltungs-Endpunkt (Root Node oder OTA Requestor) ist
-       nur gewollt, was zu einem dort ebenfalls deklarierten Nutz-
-       Geraetetyp gehoert.
-    3. Auf einem Nutz-Endpunkt ist alles gewollt - ausser bei einem
-       Cluster, den die Profiltabelle kennt: dort nur die benannten
-       Elemente. Ein unbekannter Cluster bleibt vollstaendig gewollt
-       (Hauptdokument 3.5).
+    1. Boilerplate clusters are never wanted, on any endpoint.
+    2. On an administrative endpoint (Root Node or OTA Requestor), only
+       what belongs to an application device type also declared there
+       is wanted.
+    3. On an application endpoint, everything is wanted - except for a
+       cluster the profile table knows: there, only the named elements.
+       An unknown cluster remains fully wanted (main document 3.5).
 
-    Ereignisse unterliegen Schicht 3 nicht: sie sind in der Tabelle
-    ohnehin namentlich gefuehrt, und ein verworfenes Ereignis waere ein
-    Tastendruck, der in Loxone nie ankommt.
+    Events are not subject to layer 3: they are named in the table
+    anyway, and a discarded event would be a button press that never
+    arrives in Loxone.
     """
     if ref.cluster_id in BOILERPLATE_CLUSTERS:
         return False
@@ -468,12 +468,12 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
     return True
 ```
 
-- [ ] **Step 8: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 8: Run the test, confirm success**
 
 Run: `uv run pytest tests/profiles/test_relevance.py -v`
 Expected: PASS
 
-- [ ] **Step 9: Prüfungen und Commit**
+- [ ] **Step 9: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -483,17 +483,17 @@ git commit -m "feat(profiles): Relevanz aus dem Geraetetyp je Endpunkt ableiten"
 
 ---
 
-### Task 3: PowerSource in die Profiltabelle
+### Task 3: PowerSource into the profile table
 
 **Files:**
 - Modify: `src/loxmatter/profiles/clusters.yaml`
 - Test: `tests/profiles/test_table.py`
 
 **Interfaces:**
-- Consumes: `lookup` aus `table.py`, unverändert.
-- Produces: keine neue Signatur — nur Tabellendaten.
+- Consumes: `lookup` from `table.py`, unchanged.
+- Produces: no new signature — table data only.
 
-- [ ] **Step 1: Attribut-Nummer und Einheit belegen**
+- [ ] **Step 1: Establish the attribute number and unit**
 
 ```bash
 uv run python -c "
@@ -502,16 +502,16 @@ print('BatPercentRemaining ->', O.PowerSource.Attributes.BatPercentRemaining.att
 "
 ```
 
-Erwartet: `12`.
+Expected: `12`.
 
-Die **Einheit** steht nicht im SDK. Die Matter Application Cluster Specification gibt `BatPercentRemaining` in halben Prozent an (Wertebereich 0–200). Belege das und schreibe die Quelle als Kommentar an den Eintrag. Weicht deine Quelle ab, gilt deine Quelle — melde die Abweichung, ein falscher Faktor zeigt in Loxone dauerhaft den doppelten oder halben Ladestand.
+The **unit** is not in the SDK. The Matter Application Cluster Specification states `BatPercentRemaining` in half-percent (value range 0–200). Establish this and write the source as a comment on the entry. If your source differs, your source takes precedence — report the discrepancy; a wrong factor permanently shows double or half the charge level in Loxone.
 
-- [ ] **Step 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
 ```python
 def test_the_battery_level_is_named_and_scaled_to_percent():
-    """Matter zaehlt BatPercentRemaining in halben Prozent (0-200). Ohne
-    den Faktor zeigte Loxone bei voller Batterie 200 %."""
+    """Matter counts BatPercentRemaining in half-percent (0-200). Without
+    the factor, Loxone would show 200 % at a full battery."""
     ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
     profile = lookup(ref, 190)
     assert profile.slug == "battery"
@@ -519,36 +519,38 @@ def test_the_battery_level_is_named_and_scaled_to_percent():
     assert scale_factor(ref) == pytest.approx(0.5)
 ```
 
-- [ ] **Step 3: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 3: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/profiles/test_table.py -k battery -v`
 Expected: FAIL — `assert 'c47_a12' == 'battery'`
 
-- [ ] **Step 4: Den Tabelleneintrag ergänzen**
+- [ ] **Step 4: Add the table entry**
 
-In `src/loxmatter/profiles/clusters.yaml`, in aufsteigender Cluster-Reihenfolge einsortiert (also zwischen 8 und 59):
+In `src/loxmatter/profiles/clusters.yaml`, inserted in ascending cluster order (i.e. between 8 and 59):
 
 ```yaml
   47:
     name: powersource
     attributes:
-      # BatPercentRemaining. Matter zaehlt in halben Prozent (0-200) laut
-      # Matter Application Cluster Specification - daher 0.5. Attribut-ID
-      # gegen chip.clusters.Objects.PowerSource.Attributes belegt.
+      # BatPercentRemaining. Matter counts in half-percent (0-200) per
+      # the Matter Application Cluster Specification - hence 0.5.
+      # Attribute ID established against
+      # chip.clusters.Objects.PowerSource.Attributes.
       #
-      # Nur dieses eine von 37 Attributen ist benannt, und das ist die
-      # Feinauswahl aus dem Entwurf (4.3): PowerSource fuehrt daneben
-      # Ladezustaende, Batteriechemie, ANSI-Bezeichnungen und Fehlerlisten.
-      # Wer eines davon braucht, schaltet es im Experten-Block frei.
+      # Only this one of 37 attributes is named, and that is the fine
+      # selection from the design (4.3): PowerSource additionally
+      # carries charge states, battery chemistry, ANSI designations, and
+      # error lists. Anyone who needs one of those enables it in the
+      # expert block.
       12: {slug: battery, unit: "%", scale: 0.5}
 ```
 
-- [ ] **Step 5: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 5: Run the test, confirm success**
 
 Run: `uv run pytest tests/profiles/test_table.py -k battery -v`
 Expected: PASS
 
-- [ ] **Step 6: Prüfungen und Commit**
+- [ ] **Step 6: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -558,32 +560,32 @@ git commit -m "feat(profiles): Batteriestand benennen und auf Prozent skalieren"
 
 ---
 
-### Task 4: Namen aus dem SDK-Katalog
+### Task 4: Names from the SDK catalog
 
-Ohne diesen Schritt heißt der Batteriestand eines Geräts, das die Profiltabelle
-nicht kennt, für immer `c47_a12` — obwohl der Name in einer Abhängigkeit
-liegt, die dieses Projekt ohnehin installiert.
+Without this step, the battery level of a device the profile table
+doesn't know is called `c47_a12` forever — even though the name lives
+in a dependency this project installs anyway.
 
 **Files:**
 - Modify: `src/loxmatter/profiles/table.py`
 - Create: `src/loxmatter/profiles/catalog.py`
-- Modify: `src/loxmatter/model/store.py` (Titel beim Anlegen)
+- Modify: `src/loxmatter/model/store.py` (title at creation time)
 - Test: `tests/profiles/test_catalog.py`, `tests/profiles/test_table.py`
 
 **Interfaces:**
-- Consumes: `chip.clusters.Objects` (bereits Abhängigkeit über `python-matter-server`), `SignalRef`, `SignalKind`.
+- Consumes: `chip.clusters.Objects` (already a dependency via `python-matter-server`), `SignalRef`, `SignalKind`.
 - Produces:
   - `element_name(ref: SignalRef) -> str | None` in `catalog.py`
-  - `Profile` bekommt das Feld `title: str`; `slug` bleibt unverändert das Schlüsselmaterial
+  - `Profile` gains the field `title: str`; `slug` remains unchanged as the key material
 
-**Die Trennung, um die es hier geht:** `slug` bildet den Signalschlüssel und
-ist damit unveränderlich (Hauptdokument 6.2). `title` ist reine Anzeige. Der
-SDK-Katalog speist **nur den Titel**. Ein Gerät, das vor dieser Änderung
-eingelernt wurde, behält `d1_0_c47_a12` und heißt fortan „BatPercentRemaining";
-ein danach eingelerntes bekommt denselben Schlüssel. Der Katalog darf keinen
-Schlüssel bewegen.
+**The separation this is about:** `slug` forms the signal key and is
+therefore immutable (main document 6.2). `title` is pure display. The
+SDK catalog feeds **only the title**. A device commissioned before this
+change keeps `d1_0_c47_a12` and is henceforth called "BatPercentRemaining";
+one commissioned afterward gets the same key. The catalog must not move
+any key.
 
-- [ ] **Step 1: Den Katalog erkunden**
+- [ ] **Step 1: Explore the catalog**
 
 ```bash
 uv run python -c "
@@ -595,14 +597,14 @@ print(ps.__name__, [(n, a.attribute_id) for n, a in inspect.getmembers(ps.Attrib
 "
 ```
 
-Erwartet: 140 Cluster; PowerSource mit Attributen samt `attribute_id`.
-Prüfe außerdem, ob Ereignisse ebenso auffindbar sind (`ps.Events`), und
-richte dich nach dem, was du siehst — nicht nach dieser Beschreibung.
+Expected: 140 clusters; PowerSource with attributes including
+`attribute_id`. Also check whether events are equally discoverable
+(`ps.Events`), and go by what you see — not by this description.
 
-- [ ] **Step 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
 ```python
-"""Attributnamen aus dem Cluster-Katalog des chip-SDK."""
+"""Attribute names from the chip SDK's cluster catalog."""
 
 from __future__ import annotations
 
@@ -611,9 +613,9 @@ from loxmatter.profiles.catalog import element_name
 
 
 def test_a_standard_attribute_gets_its_specification_name():
-    """c47_a12 heisst im Standard BatPercentRemaining. Der Name liegt in
-    einer Abhaengigkeit, die dieses Projekt ohnehin installiert - ihn von
-    Hand zu pflegen waere Arbeit fuer nichts."""
+    """c47_a12 is called BatPercentRemaining in the standard. The name
+    lives in a dependency this project installs anyway - maintaining it
+    by hand would be work for nothing."""
     ref = SignalRef(0, 47, 12, SignalKind.ATTRIBUTE)
     assert element_name(ref) == "BatPercentRemaining"
 
@@ -627,20 +629,20 @@ def test_an_unknown_attribute_of_a_known_cluster_has_no_name():
 
 
 def test_the_catalog_is_read_once():
-    """140 Cluster mit allen Attributen bei jedem Signal zu durchsuchen
-    waere bei 159 Signalen je Geraet spuerbar. Der Aufbau gehoert hinter
-    einen Cache."""
+    """Searching 140 clusters with all attributes for every signal would
+    be noticeable at 159 signals per device. The build belongs behind a
+    cache."""
     first = element_name(SignalRef(0, 47, 12, SignalKind.ATTRIBUTE))
     second = element_name(SignalRef(0, 47, 12, SignalKind.ATTRIBUTE))
     assert first == second == "BatPercentRemaining"
 ```
 
-Und in `tests/profiles/test_table.py`:
+And in `tests/profiles/test_table.py`:
 
 ```python
 def test_a_generic_signal_keeps_its_slug_but_gains_a_readable_title():
-    """Der Schluessel bleibt generisch - er ist die Verdrahtung in Loxone
-    und darf sich nie bewegen. Nur die Anzeige wird lesbar."""
+    """The key stays generic - it is the wiring in Loxone and must never
+    move. Only the display becomes readable."""
     ref = SignalRef(0, 51, 1, SignalKind.ATTRIBUTE)
     profile = lookup(ref, 3)
     assert profile.slug == "c51_a1"
@@ -648,8 +650,9 @@ def test_a_generic_signal_keeps_its_slug_but_gains_a_readable_title():
 
 
 def test_a_table_named_signal_uses_its_own_name_for_both():
-    """Wo die eigene Tabelle etwas weiss, gewinnt sie: `onoff` ist
-    sprechender als `OnOff`, und die Einheit kennt das SDK ohnehin nicht."""
+    """Where the project's own table knows something, it wins: `onoff`
+    is more descriptive than `OnOff`, and the SDK doesn't know the unit
+    anyway."""
     profile = lookup(SignalRef(1, 6, 0, SignalKind.ATTRIBUTE), True)
     assert profile.slug == "onoff"
     assert profile.title == "onoff"
@@ -662,46 +665,46 @@ def test_a_signal_the_catalog_does_not_know_falls_back_to_the_slug():
     assert profile.title == "c4711_a3"
 ```
 
-- [ ] **Step 3: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 3: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/profiles/test_catalog.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.profiles.catalog'`
 
-- [ ] **Step 4: Den Katalog implementieren**
+- [ ] **Step 4: Implement the catalog**
 
-`src/loxmatter/profiles/catalog.py`: baut einmalig (`functools.cache`) eine
-Abbildung `(cluster_id, element_id, kind) -> Name` aus
-`chip.clusters.Objects` und liefert `element_name`. Import-Fehler und
-unerwartete Formen dürfen keine Ausnahme auslösen — der Katalog ist eine
-Verbesserung der Anzeige, kein Betriebsmittel: fällt er aus, bleiben die
-generischen Namen, und das Werkzeug läuft weiter. Schreib das in den
-Docstring.
+`src/loxmatter/profiles/catalog.py`: builds a mapping
+`(cluster_id, element_id, kind) -> name` once (`functools.cache`) from
+`chip.clusters.Objects` and provides `element_name`. Import errors and
+unexpected shapes must not raise an exception — the catalog is a
+display improvement, not an operational resource: if it fails, the
+generic names remain, and the tool keeps running. Write that into the
+docstring.
 
-`Profile` bekommt `title: str`. In `lookup`:
-- Tabelleneintrag vorhanden → `slug` und `title` beide aus der Tabelle,
-- sonst → `slug` wie bisher generisch, `title = element_name(ref) or slug`.
+`Profile` gains `title: str`. In `lookup`:
+- table entry present → `slug` and `title` both from the table,
+- otherwise → `slug` generic as before, `title = element_name(ref) or slug`.
 
-In `store.register_signals` wird die Titelspalte beim **Anlegen** aus
-`profile.title` statt aus `profile.slug` befüllt. Der UPDATE-Zweig fasst
-`title` weiterhin nicht an — sobald `set_title` es gesetzt hat, gehört es
-dem Nutzer.
+In `store.register_signals`, the title column is populated at
+**creation time** from `profile.title` instead of `profile.slug`. The
+UPDATE branch continues to leave `title` untouched — once `set_title`
+has set it, it belongs to the user.
 
-- [ ] **Step 5: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 5: Run the test, confirm success**
 
 Run: `uv run pytest tests/profiles/ -v`
 Expected: PASS
 
-- [ ] **Step 6: Belegen, dass kein Schlüssel wandert**
+- [ ] **Step 6: Prove that no key moves**
 
 ```bash
 uv run pytest tests/model/ -q
 ```
 
-Expected: PASS. Kein bestehender Schlüsseltest darf sich ändern — wenn doch
-einer bricht, ist die Trennung `slug`/`title` nicht sauber und **nicht der
-Test anzupassen**.
+Expected: PASS. No existing key test may change — if one does break,
+the `slug`/`title` separation is not clean, and **the test is not to be
+adjusted**.
 
-- [ ] **Step 7: Prüfungen und Commit**
+- [ ] **Step 7: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -711,9 +714,9 @@ git commit -m "feat(profiles): Attributnamen aus dem SDK-Katalog fuer die Anzeig
 
 ---
 
-### Task 5: Zahlen aus Strukturen
+### Task 5: Numbers from structures
 
-Damit kommt der kWh-Zählerstand erstmals überhaupt in Loxone an.
+With this, the kWh meter reading arrives in Loxone for the first time ever.
 
 **Files:**
 - Modify: `src/loxmatter/profiles/table.py`
@@ -722,13 +725,13 @@ Damit kommt der kWh-Zählerstand erstmals überhaupt in Loxone an.
 - Test: `tests/profiles/test_table.py`, `tests/loxone/test_values.py`
 
 **Interfaces:**
-- Consumes: `classify(value)` (unverändert erhalten), `scale_factor(ref)`, `SignalRef`.
+- Consumes: `classify(value)` (kept unchanged), `scale_factor(ref)`, `SignalRef`.
 - Produces:
   - `struct_field(ref: SignalRef) -> int | None`
-  - `struct_member(ref: SignalRef, raw: object) -> object` — der Wert, auf dem klassifiziert und gerechnet wird; ohne `field` unverändert `raw`
-  - `lookup` gibt für ein Signal mit `field` die Exportierbarkeit des **Elements** zurück, nicht die der Struktur
+  - `struct_member(ref: SignalRef, raw: object) -> object` — the value that is classified and computed on; without `field`, unchanged `raw`
+  - `lookup` returns the exportability of the **element** for a signal with `field`, not that of the struct
 
-- [ ] **Step 1: Die Form einer Struktur belegen**
+- [ ] **Step 1: Establish the shape of a struct**
 
 ```bash
 uv run python -c "
@@ -739,9 +742,9 @@ print('CumulativeEnergyImported ->', O.ElectricalEnergyMeasurement.Attributes.Cu
 "
 ```
 
-Erwartet: Tag 0 = `energy`, Attribut 1.
+Expected: tag 0 = `energy`, attribute 1.
 
-Und wie matter-server eine Struktur **serialisiert** — das ist der Punkt, an dem eine Implementierung mit `value["energy"]` scheitern würde:
+And how matter-server **serializes** a struct — this is the point where an implementation using `value["energy"]` would fail:
 
 ```bash
 uv run python -c "
@@ -752,11 +755,11 @@ print({k: v for k, v in a.items() if k.endswith('/29/0')})
 "
 ```
 
-Erwartet: `{'0/29/0': [{'0': 18, '1': 1}, ...]}` — **Feld-Tag als Zeichenkette**, nicht als Name.
+Expected: `{'0/29/0': [{'0': 18, '1': 1}, ...]}` — **field tag as a string**, not as a name.
 
-Die Einheit von `EnergyMeasurementStruct.energy` steht nicht im SDK. Die Matter Application Cluster Specification gibt sie in mWh an; 1 kWh = 1e6 mWh, daher `scale: 1.0e-6`. Belege das und melde eine Abweichung.
+The unit of `EnergyMeasurementStruct.energy` is not in the SDK. The Matter Application Cluster Specification states it in mWh; 1 kWh = 1e6 mWh, hence `scale: 1.0e-6`. Establish this and report any discrepancy.
 
-- [ ] **Step 2: Den fehlschlagenden Test schreiben**
+- [ ] **Step 2: Write the failing test**
 
 In `tests/profiles/test_table.py`:
 
@@ -765,18 +768,18 @@ _ENERGY = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
 
 
 def test_a_struct_member_becomes_an_analog_signal():
-    """Matter liefert den Zaehlerstand als Struktur aus Wert und
-    Zeitstempeln. Ohne das Herausziehen faellt er als 'nicht abbildbar'
-    durch - und das ist der Wert, wegen dem man eine messende Steckdose
-    kauft."""
+    """Matter delivers the meter reading as a struct of value and
+    timestamps. Without pulling it out, it falls through as 'not
+    mappable' - and that's the value someone buys a metering plug
+    for."""
     raw = {"0": 12_345_678, "1": 1_700_000_000, "2": 1_700_003_600}
     assert lookup(_ENERGY, raw).exportability is Exportability.ANALOG
     assert lookup(_ENERGY, raw).slug == "energy_imported"
 
 
 def test_a_struct_without_the_named_member_stays_unexportable():
-    """Nicht raten. Eine erfundene Zahl an einem echten Energiebaustein
-    waere schlimmer als ein fehlender Wert."""
+    """Do not guess. A made-up number on a real energy component would
+    be worse than a missing value."""
     assert lookup(_ENERGY, {"1": 1_700_000_000}).exportability is Exportability.NONE
 
 
@@ -789,14 +792,15 @@ def test_a_null_value_stays_unexportable_even_with_a_field():
 
 
 def test_an_integer_key_is_accepted_as_well_as_a_string_key():
-    """Die Zeichenkette ist, was matter-server heute liefert; eine andere
-    Serialisierung derselben Struktur waere mit Zahl genauso plausibel."""
+    """The string is what matter-server delivers today; a different
+    serialization of the same struct would be just as plausible with a
+    number."""
     assert lookup(_ENERGY, {0: 5_000_000}).exportability is Exportability.ANALOG
 
 
 def test_a_cluster_without_a_field_entry_still_sees_the_whole_value():
-    """Nur ein Cluster, den die Tabelle kennt, darf ein Element benennen.
-    Eine unbekannte Struktur bleibt unbekannt."""
+    """Only a cluster the table knows may name an element. An unknown
+    struct stays unknown."""
     ref = SignalRef(1, 4711, 0, SignalKind.ATTRIBUTE)
     assert lookup(ref, {"0": 5}).exportability is Exportability.NONE
 ```
@@ -805,34 +809,34 @@ In `tests/loxone/test_values.py`:
 
 ```python
 def test_the_energy_counter_arrives_in_kilowatt_hours():
-    """Matter zaehlt in mWh, Loxone will kWh (Hauptdokument 7.3)."""
+    """Matter counts in mWh, Loxone wants kWh (main document 7.3)."""
     ref = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
     raw = {"0": 2_500_000_000, "1": 1_700_000_000}
     assert to_loxone_value(ref, raw) == pytest.approx(2500.0)
 
 
 def test_a_struct_without_the_named_member_yields_none_at_runtime():
-    """Laufzeit und Zerlegung muessen dieselbe Entscheidung treffen - sonst
-    meldet die Oberflaeche einen Wert, den der Export nicht kennt."""
+    """Runtime and decomposition must make the same decision - otherwise
+    the UI reports a value the export doesn't know."""
     ref = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
     assert to_loxone_value(ref, {"1": 1_700_000_000}) is None
 ```
 
-- [ ] **Step 3: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 3: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/profiles/test_table.py tests/loxone/test_values.py -k "struct or energy" -v`
-Expected: FAIL — die Exportierbarkeit ist `NONE` statt `ANALOG`
+Expected: FAIL — the exportability is `NONE` instead of `ANALOG`
 
-- [ ] **Step 4: `struct_member` implementieren und `lookup` anpassen**
+- [ ] **Step 4: Implement `struct_member` and adjust `lookup`**
 
 In `src/loxmatter/profiles/table.py`:
 
 ```python
 def struct_field(ref: SignalRef) -> int | None:
-    """Die Feldnummer, die aus einer Struktur zu ziehen ist - oder None.
+    """The field number to pull out of a struct - or None.
 
-    Nur fuer Attribute eines Clusters, den die Tabelle kennt und bei dem
-    der Eintrag ein `field` traegt.
+    Only for attributes of a cluster the table knows and whose entry
+    carries a `field`.
     """
     if ref.kind is SignalKind.EVENT:
         return None
@@ -847,20 +851,20 @@ def struct_field(ref: SignalRef) -> int | None:
 
 
 def struct_member(ref: SignalRef, raw: object) -> object:
-    """Der Wert, auf dem klassifiziert und gerechnet wird.
+    """The value that is classified and computed on.
 
-    Ohne `field`-Eintrag unveraendert `raw`. Mit `field` das benannte
-    Element der Struktur - und `None`, wenn der Wert keine Struktur ist
-    oder das Element fehlt. Dann bleibt das Signal nicht exportierbar; es
-    wird NICHT geraten (Entwurf 2026-09-03, 5).
+    Without a `field` entry, unchanged `raw`. With `field`, the named
+    element of the struct - and `None` if the value is not a struct or
+    the element is missing. Then the signal stays unexportable; it is
+    NOT guessed (design 2026-09-03, 5).
 
-    matter-server liefert Strukturen als Woerterbuch mit dem Feld-Tag als
-    Zeichenkette (`{"0": ...}`); die Zahl wird ebenso akzeptiert.
+    matter-server delivers structs as a dictionary with the field tag as
+    a string (`{"0": ...}`); the number is accepted as well.
 
-    Diese eine Funktion ist die gemeinsame Quelle fuer `lookup` (Einstufung
-    beim Einlernen) und `loxone.values.to_loxone_value` (Laufzeit). Zwei
-    Kopien wuerden auseinanderlaufen und die Oberflaeche einen Wert melden
-    lassen, den der Export nicht kennt.
+    This one function is the shared source for `lookup` (classification
+    during commissioning) and `loxone.values.to_loxone_value` (runtime).
+    Two copies would drift apart and let the UI report a value the
+    export doesn't know.
     """
     field = struct_field(ref)
     if field is None:
@@ -870,7 +874,7 @@ def struct_member(ref: SignalRef, raw: object) -> object:
     return raw.get(str(field), raw.get(field))
 ```
 
-`lookup` bekommt eine Zeile: die Einstufung läuft über `struct_member`.
+`lookup` gains one line: the classification goes through `struct_member`.
 
 ```python
     if entry:
@@ -882,47 +886,47 @@ def struct_member(ref: SignalRef, raw: object) -> object:
         )
 ```
 
-Das Feld `title` stammt aus Task 4; übernimm die dort entstandene Fassung von
-`lookup` und ändere daran nur die Exportierbarkeits-Zeile.
+The field `title` comes from Task 4; take the version of `lookup` that
+resulted there and change only the exportability line.
 
-Der generische Zweig darunter bleibt `classify(value)` — ohne Tabelleneintrag gibt es kein `field`.
+The generic branch below stays `classify(value)` — without a table entry there is no `field`.
 
-In `src/loxmatter/loxone/values.py`, in `to_loxone_value`, direkt am Anfang:
+In `src/loxmatter/loxone/values.py`, in `to_loxone_value`, right at the start:
 
 ```python
     raw = struct_member(ref, raw)
 ```
 
-Der Import ist um `struct_member` zu ergänzen.
+Add `struct_member` to the import.
 
-- [ ] **Step 5: Den Tabelleneintrag ergänzen**
+- [ ] **Step 5: Add the table entry**
 
-In `src/loxmatter/profiles/clusters.yaml`, Cluster 145:
+In `src/loxmatter/profiles/clusters.yaml`, cluster 145:
 
 ```yaml
   145:
     name: energy
     attributes:
-      # CumulativeEnergyImported/-Exported. Matter liefert beide als
-      # EnergyMeasurementStruct - Wert plus Zeitstempel -, nicht als Zahl.
-      # `field: 0` ist EnergyMeasurementStruct.energy, gegen
-      # chip.clusters.Objects belegt; die ZEITSTEMPEL bleiben absichtlich
-      # weg, sie haben in Loxone keine Verwendung.
+      # CumulativeEnergyImported/-Exported. Matter delivers both as
+      # EnergyMeasurementStruct - value plus timestamps -, not as a
+      # number. `field: 0` is EnergyMeasurementStruct.energy,
+      # established against chip.clusters.Objects; the TIMESTAMPS are
+      # deliberately left out, they have no use in Loxone.
       #
-      # Matter zaehlt in mWh (Matter Application Cluster Specification),
-      # Loxone will kWh (Hauptdokument 7.3): 1 kWh = 1e6 mWh.
+      # Matter counts in mWh (Matter Application Cluster Specification),
+      # Loxone wants kWh (main document 7.3): 1 kWh = 1e6 mWh.
       1: {slug: energy_imported, field: 0, unit: "kWh", scale: 1.0e-6}
       2: {slug: energy_exported, field: 0, unit: "kWh", scale: 1.0e-6}
 ```
 
-Bestehende Einträge für 145 sind zu ersetzen, nicht zu verdoppeln — prüfe zuerst mit `grep -n "145:" -A 6 src/loxmatter/profiles/clusters.yaml`, was dort schon steht, und behalte vorhandene Slugs bei, damit kein Schlüssel wandert.
+Existing entries for 145 are to be replaced, not duplicated — first check with `grep -n "145:" -A 6 src/loxmatter/profiles/clusters.yaml` what's already there, and keep existing slugs so that no key moves.
 
-- [ ] **Step 6: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 6: Run the test, confirm success**
 
 Run: `uv run pytest tests/profiles/test_table.py tests/loxone/test_values.py -v`
 Expected: PASS
 
-- [ ] **Step 7: Prüfungen und Commit**
+- [ ] **Step 7: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -932,22 +936,23 @@ git commit -m "feat(profiles): Zaehlerstand aus der Energie-Struktur ziehen"
 
 ---
 
-### Task 6: Der Vorgabewert im Speicher
+### Task 6: The default value in storage
 
 **Files:**
 - Modify: `src/loxmatter/model/store.py`
 - Test: `tests/model/test_store.py`
 
 **Interfaces:**
-- Consumes: `is_functional`, `device_types_by_endpoint` (Tasks 1–2), `is_exportable` (unverändert).
-- Produces: `register_signals` setzt `exported` beim **Anlegen** auf `is_exportable(...) and is_functional(...)`. Signatur unverändert.
+- Consumes: `is_functional`, `device_types_by_endpoint` (Tasks 1–2), `is_exportable` (unchanged).
+- Produces: `register_signals` sets `exported` at **creation time** to `is_exportable(...) and is_functional(...)`. Signature unchanged.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```python
 def test_a_freshly_registered_plug_exports_only_its_meaningful_values(tmp_path):
-    """Das Ziel dieses ganzen Entwurfs, am echten Geraet: fuenf Werte, die
-    etwas bedeuten, statt 109 technisch abbildbarer."""
+    """The goal of this entire design, on the real device: five values
+    that mean something, instead of 109 that are technically
+    mappable."""
     store = Store(tmp_path / "s.sqlite")
     snapshot = _fixture("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -964,8 +969,8 @@ def test_a_freshly_registered_plug_exports_only_its_meaningful_values(tmp_path):
 
 
 def test_a_freshly_registered_button_keeps_both_rockers_and_the_battery(tmp_path):
-    """Der Fall, an dem sich zeigt, ob die Regel zu gierig ist: alle sechs
-    Ereignisse beider Wippen muessen durchkommen, dazu der Batteriestand."""
+    """The case that shows whether the rule is too greedy: all six
+    events of both rockers must get through, plus the battery level."""
     store = Store(tmp_path / "s.sqlite")
     snapshot = _fixture("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -987,8 +992,8 @@ def test_a_freshly_registered_button_keeps_both_rockers_and_the_battery(tmp_path
 
 
 def test_a_thread_counter_is_stored_but_not_exported(tmp_path):
-    """Nicht geloescht, nur abgewaehlt: der Experten-Block soll ihn
-    freischalten koennen, ohne dass das Geraet neu eingelernt wird."""
+    """Not deleted, only deselected: the expert block should be able to
+    enable it, without the device having to be recommissioned."""
     store = Store(tmp_path / "s.sqlite")
     snapshot = _fixture("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -1000,42 +1005,42 @@ def test_a_thread_counter_is_stored_but_not_exported(tmp_path):
     assert all(s.exportability is Exportability.ANALOG for s in counters[:1])
 ```
 
-Prüfe, wie bestehende Tests in dieser Datei ein Abbild laden (Hilfsfunktion `_fixture` oder Fixture); benutze denselben Weg statt einen zweiten einzuführen.
+Check how existing tests in this file load a snapshot (helper function `_fixture` or fixture); use the same approach instead of introducing a second one.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/model/test_store.py -k freshly_registered -v`
-Expected: FAIL — die Menge enthält 109 Schlüssel statt 5
+Expected: FAIL — the set contains 109 keys instead of 5
 
-- [ ] **Step 3: `register_signals` anpassen**
+- [ ] **Step 3: Adjust `register_signals`**
 
-Vor der Schleife über `extract_signals(snapshot)`:
+Before the loop over `extract_signals(snapshot)`:
 
 ```python
         device_types = device_types_by_endpoint(snapshot)
 ```
 
-Und die Zeile, die `exported` bestimmt:
+And the line that determines `exported`:
 
 ```python
-# Zwei Fragen, zwei Antworten (Entwurf 2026-09-03, 3):
-# `is_exportable` sagt, ob der Wert ueberhaupt auf einen
-# Loxone-Eingang passt; `is_functional`, ob ihn jemand
-# standardmaessig will. Ein Thread-Funkzaehler ist das
-# erste und nicht das zweite.
+# Two questions, two answers (design 2026-09-03, 3):
+# `is_exportable` says whether the value fits onto a
+# Loxone input at all; `is_functional`, whether anyone
+# wants it by default. A Thread radio counter is the
+# first and not the second.
 #
-# Nur beim ANLEGEN: der UPDATE-Zweig oben fasst `exported`
-# weiterhin nicht an, sobald ein Signal einmal bekannt ist -
-# ab dann gehoert der Wert dem Nutzer.
+# Only at CREATION TIME: the UPDATE branch above continues
+# to leave `exported` untouched once a signal is known -
+# from then on the value belongs to the user.
 exported = is_exportable(profile.exportability) and is_functional(ref, device_types)
 ```
 
-- [ ] **Step 4: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run the test, confirm success**
 
 Run: `uv run pytest tests/model/test_store.py -v`
-Expected: PASS. Bestehende Tests dieser Datei, die von „alles exportierbare ist exportiert" ausgingen, sind **anzupassen, nicht zu löschen** — und die Anpassung ist im Commit zu begründen.
+Expected: PASS. Existing tests in this file that assumed "everything exportable is exported" are **to be adjusted, not deleted** — and the adjustment is to be justified in the commit.
 
-- [ ] **Step 5: Prüfungen und Commit**
+- [ ] **Step 5: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -1045,36 +1050,36 @@ git commit -m "feat(store): nur relevante Signale sind ab Werk exportiert"
 
 ---
 
-### Task 7: Migration auf Schema v3
+### Task 7: Migration to schema v3
 
 **Files:**
 - Modify: `src/loxmatter/model/store.py`
 - Test: `tests/model/test_store_migration.py`
 
 **Interfaces:**
-- Consumes: `_MIGRATIONS`-Muster aus `_migrate_to_v1`/`_migrate_to_v2`; `lookup`, `is_exportable`, `is_functional`, `device_types_by_endpoint`.
+- Consumes: the `_MIGRATIONS` pattern from `_migrate_to_v1`/`_migrate_to_v2`; `lookup`, `is_exportable`, `is_functional`, `device_types_by_endpoint`.
 - Produces: `_SCHEMA_VERSION = 3`, `_migrate_to_v3(db)`.
 
-**Das Problem, das diese Aufgabe löst:** Titel, Einheit und Exportierbarkeit stehen **in der Zeile**. Die Tabellenerweiterungen aus Tasks 3 bis 5 erreichen ein bereits gespeichertes Signal deshalb nie — der Batteriestand hieße für immer `c47_a12`, der Zählerstand bliebe für immer „nicht abbildbar".
+**The problem this task solves:** title, unit, and exportability live **in the row**. The table extensions from Tasks 3 through 5 therefore never reach an already-stored signal — the battery level would be called `c47_a12` forever, the meter reading would stay "not mappable" forever.
 
-**Die Grenze:** der Schlüssel bleibt. Ein vor dem Update eingelerntes Gerät behält `d2_0_c47_a12` und heißt ab dann „battery"; ein danach eingelerntes bekommt `d2_0_battery`.
+**The boundary:** the key stays. A device commissioned before the update keeps `d2_0_c47_a12` and is called "battery" from then on; one commissioned afterward gets `d2_0_battery`.
 
-- [ ] **Step 1: Den fehlschlagenden Test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```python
 def test_the_migration_never_changes_a_key(tmp_path):
-    """Die eiserne Regel (Hauptdokument 6.2). Ein umbenannter Schluessel
-    waere ein stillschweigend toter Funktionsbaustein in einer fremden
-    Config - kein Fehler, den irgendjemand von aussen sehen wuerde."""
+    """The iron rule (main document 6.2). A renamed key would be a
+    silently dead function block in someone else's config - not an
+    error anyone would see from outside."""
     path = tmp_path / "s.sqlite"
     keys_before = _build_store_at_schema_v2(path)
-    store = Store(path)  # oeffnet und migriert
+    store = Store(path)  # opens and migrates
     assert {s.key for s in store.signals(1)} == keys_before
 
 
 def test_the_migration_refreshes_title_and_unit_from_the_table(tmp_path):
-    """Ohne diesen Schritt erreichte eine Korrektur in clusters.yaml ein
-    schon gespeichertes Signal nie."""
+    """Without this step, a correction in clusters.yaml would never
+    reach an already-stored signal."""
     path = tmp_path / "s.sqlite"
     _build_store_at_schema_v2(path)
     store = Store(path)
@@ -1093,55 +1098,55 @@ def test_the_migration_applies_the_new_default_to_existing_devices(tmp_path):
 
 
 def test_a_signal_the_table_cannot_classify_survives_the_migration(tmp_path):
-    """Scheitert die Neuableitung fuer eine Zeile, bleibt sie unveraendert -
-    kein Abbruch, keine halb migrierte Datenbank (Entwurf 8)."""
+    """If the re-derivation fails for a row, it stays unchanged - no
+    abort, no half-migrated database (design 8)."""
     path = tmp_path / "s.sqlite"
     _build_store_at_schema_v2(path, extra_row=("d1_9_kaputt", 9, 4711, 0, "attribute"))
     store = Store(path)
     assert any(s.key == "d1_9_kaputt" for s in store.signals(1))
 ```
 
-`_build_store_at_schema_v2` ist eine Hilfsfunktion **in dieser Testdatei**: sie legt eine Datenbank nach dem alten Schema an (`PRAGMA user_version = 2`), schreibt ein Gerät und die Signale des Taster-Abbilds mit `exported = 1` für alles Exportierbare, und gibt die Schlüsselmenge zurück. Orientiere dich an den vorhandenen Hilfsfunktionen dieser Datei für v1 und v2 — sie existieren bereits und zeigen das Muster.
+`_build_store_at_schema_v2` is a helper function **in this test file**: it creates a database following the old schema (`PRAGMA user_version = 2`), writes a device and the signals of the button snapshot with `exported = 1` for everything exportable, and returns the key set. Follow the existing helper functions in this file for v1 and v2 — they already exist and show the pattern.
 
-**Wichtig für den Migrationstest:** die Neuableitung braucht die Gerätetypen, die nur im Abbild stehen, nicht in der Datenbank. Entscheide, woher `_migrate_to_v3` sie nimmt, und begründe es:
-- entweder die Gerätetypen bei `register_device`/`register_signals` mitspeichern (neue Spalte, dann ist die Migration autark),
-- oder die Regel für Bestandszeilen ohne Abbild aus den gespeicherten Cluster-/Endpunkt-Nummern ableiten (dann braucht es eine Ersatzregel für „Verwaltungs-Endpunkt", und die ist zu begründen).
+**Important for the migration test:** the re-derivation needs the device types, which live only in the snapshot, not in the database. Decide where `_migrate_to_v3` gets them from, and justify it:
+- either store the device types alongside `register_device`/`register_signals` (a new column, then the migration is self-sufficient),
+- or derive the rule for existing rows without a snapshot from the stored cluster/endpoint numbers (then a substitute rule for "administrative endpoint" is needed, and it must be justified).
 
-Der erste Weg ist der ehrlichere, wenn er ohne Verrenkung geht. Was du auch wählst: schreib es in den Docstring von `_migrate_to_v3`, und schreib dazu, was die Migration **nicht** kann.
+The first path is the more honest one, if it can be done without contortion. Whichever you choose: write it into the docstring of `_migrate_to_v3`, and write down what the migration **cannot** do.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/model/test_store_migration.py -k migration -v`
-Expected: FAIL — Titel bleibt `c47_a12`
+Expected: FAIL — title stays `c47_a12`
 
-- [ ] **Step 3: Migration implementieren**
+- [ ] **Step 3: Implement the migration**
 
-`_SCHEMA_VERSION` auf `3` und ein Eintrag in `_MIGRATIONS`. Der Docstring von `_migrate_to_v3` muss benennen:
-- warum rückwirkend und nicht nur für neue Geräte (zwei Regelsätze wären niemandem zu erklären, und der Unterschied hinge am Einlerndatum),
-- dass der Schlüssel unangetastet bleibt und welche Folge das hat (zwei Schlüssel für denselben Wert bei alt/neu eingelernten Geräten),
-- dass eine einzelne unableitbare Zeile unverändert bleibt statt die Migration abzubrechen.
+`_SCHEMA_VERSION` to `3` and an entry in `_MIGRATIONS`. The docstring of `_migrate_to_v3` must state:
+- why retroactively and not just for new devices (two rule sets would be unexplainable to anyone, and the difference would hinge on the commissioning date),
+- that the key stays untouched and what consequence that has (two keys for the same value on devices commissioned before/after),
+- that a single row that cannot be re-derived stays unchanged instead of aborting the migration.
 
-Die Migration läuft wie ihre Vorgänger innerhalb der Transaktion, die `PRAGMA user_version` mitschreibt.
+The migration runs, like its predecessors, inside the transaction that also writes `PRAGMA user_version`.
 
-- [ ] **Step 4: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run the test, confirm success**
 
 Run: `uv run pytest tests/model/test_store_migration.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Gegen die echte Datenbank prüfen**
+- [ ] **Step 5: Check against the real database**
 
-Es gibt eine echte Datenbank aus dem Betrieb auf dem Raspberry Pi (Schema v2, zwei Geräte). Sie ist **nicht** anzufassen und der Pi **nicht** zu kontaktieren. Stattdessen: baue mit `_build_store_at_schema_v2` eine Datenbank aus **beiden** eingecheckten Abbildern, migriere sie und gib das Ergebnis aus:
+There is a real database from operation on the Raspberry Pi (schema v2, two devices). It is **not** to be touched, and the Pi is **not** to be contacted. Instead: use `_build_store_at_schema_v2` to build a database from **both** checked-in snapshots, migrate it, and print the result:
 
 ```bash
 uv run python -c "
-# ... Datenbank aus beiden Abbildern nach altem Schema bauen, dann:
+# ... build a database from both snapshots following the old schema, then:
 # for d in store.devices(): print(d.label, len([s for s in store.signals(d.id) if s.exported]))
 "
 ```
 
-Erwartet: 5 und 17. Klebe die tatsächliche Ausgabe in die Commit-Nachricht oder den Bericht.
+Expected: 5 and 17. Paste the actual output into the commit message or the report.
 
-- [ ] **Step 6: Prüfungen und Commit**
+- [ ] **Step 6: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -1151,7 +1156,7 @@ git commit -m "feat(store): Bestandsgeraete neu einstufen, ohne einen Schluessel
 
 ---
 
-### Task 8: Relevanz in der API und der Oberfläche
+### Task 8: Relevance in the API and the UI
 
 **Files:**
 - Modify: `src/loxmatter/api/models.py`, `src/loxmatter/api/devices.py`, `src/loxmatter/api/export.py`
@@ -1159,15 +1164,15 @@ git commit -m "feat(store): Bestandsgeraete neu einstufen, ohne einen Schluessel
 - Test: `tests/api/test_devices.py`, `tests/api/test_export_api.py`, `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `SignalOut` (Felder `key`, `path`, `kind`, `title`, `unit`, `value`, `exportable`, `reason`, `exported`), `_signal_out(signal, values)`.
-- Produces: `SignalOut` bekommt das Feld `functional: bool`.
+- Consumes: `SignalOut` (fields `key`, `path`, `kind`, `title`, `unit`, `value`, `exportable`, `reason`, `exported`), `_signal_out(signal, values)`.
+- Produces: `SignalOut` gains the field `functional: bool`.
 
-- [ ] **Step 1: Den fehlschlagenden API-Test schreiben**
+- [ ] **Step 1: Write the failing API test**
 
 ```python
 async def test_the_signal_payload_says_whether_a_signal_is_functional(api):
-    """Die Oberflaeche muss die beiden Bloecke trennen koennen, ohne die
-    Regel ein zweites Mal in JavaScript nachzubauen."""
+    """The UI must be able to separate the two blocks, without
+    rebuilding the rule a second time in JavaScript."""
     client, _, _ = api
     rows = (await client.get("/api/devices/1/signals")).json()
     onoff = next(r for r in rows if r["key"].endswith("_onoff"))
@@ -1176,25 +1181,25 @@ async def test_the_signal_payload_says_whether_a_signal_is_functional(api):
     assert counter["functional"] is False
 ```
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag bestätigen**
+- [ ] **Step 2: Run the test, confirm the failure**
 
 Run: `uv run pytest tests/api/test_devices.py -k functional -v`
 Expected: FAIL — `KeyError: 'functional'`
 
-- [ ] **Step 3: Das Feld ergänzen**
+- [ ] **Step 3: Add the field**
 
-`SignalOut` bekommt `functional: bool`. In `_signal_out` wird es befüllt.
+`SignalOut` gains `functional: bool`. It is populated in `_signal_out`.
 
-**Entscheide und begründe**, woher `_signal_out` die Gerätetypen nimmt: die Relevanz-Regel braucht sie, `_signal_out` sieht aber nur eine `StoredSignal`. Naheliegend ist, das Ergebnis in der Zeile zu speichern (dann fällt es in Task 7 ohnehin an) statt es bei jeder Anfrage neu zu berechnen. Was du auch wählst: **eine** Quelle, keine zweite Nachbildung der Regel.
+**Decide and justify** where `_signal_out` gets the device types from: the relevance rule needs them, but `_signal_out` only sees a `StoredSignal`. It's natural to store the result in the row (then it falls out of Task 7 anyway) instead of recomputing it on every request. Whichever you choose: **one** source, no second reconstruction of the rule.
 
-- [ ] **Step 4: Test laufen lassen, Erfolg bestätigen**
+- [ ] **Step 4: Run the test, confirm success**
 
 Run: `uv run pytest tests/api/test_devices.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Die Exportvorschau ergänzen**
+- [ ] **Step 5: Extend the export preview**
 
-`GET /api/export/preview` nennt zusätzlich je Gerät, wie viele Signale als Experte ausgeblendet sind. Test:
+`GET /api/export/preview` additionally states, per device, how many signals are hidden as expert. Test:
 
 ```python
 async def test_the_preview_reports_how_many_signals_are_hidden(api):
@@ -1204,19 +1209,19 @@ async def test_the_preview_reports_how_many_signals_are_hidden(api):
     assert plug["hidden_count"] > 100
 ```
 
-Prüfe zuerst die tatsächliche Form der Antwort (`grep -n "preview" -A 30 src/loxmatter/api/export.py`) und füge das Feld dort ein, wo die übrigen Zählungen stehen.
+First check the actual shape of the response (`grep -n "preview" -A 30 src/loxmatter/api/export.py`) and add the field where the other counts live.
 
-- [ ] **Step 6: Die Oberfläche umbauen**
+- [ ] **Step 6: Rebuild the UI**
 
-In `index.html` bekommt die Signalliste zwei Blöcke: **Funktional** (offen) und **Experte** (zugeklappt, mit Anzahl), plus einen Schalter „Experten-Signale anzeigen". Jedes Signal behält seinen Exportieren-Haken.
+In `index.html`, the signal list gains two blocks: **Functional** (expanded) and **Expert** (collapsed, with a count), plus a toggle "Show expert signals". Each signal keeps its export checkbox.
 
-Die Gerätekachel zeigt statt `firstSignalsFor(...)` die funktionalen Signale — damit erledigt sich der offene Punkt aus dem Abschluss-Review von Phase 5 (heute stehen dort NetworkCommissioning und BasicInformation, also weder Ein/Aus noch Leistung). Beschriftung entsprechend von „Signale (Anfang der Liste)" zurück auf etwas, das wieder stimmt.
+The device tile shows the functional signals instead of `firstSignalsFor(...)` — this resolves the open item from Phase 5's closing review (today it shows NetworkCommissioning and BasicInformation there, so neither on/off nor power). Adjust the label accordingly from "Signals (start of list)" back to something that is accurate again.
 
-`style.css`: die Blöcke im vorhandenen Stil, keine neue Farbwelt.
+`style.css`: the blocks in the existing style, no new color scheme.
 
-Ein Test in `tests/api/test_web.py`, der das Markup prüft — orientiere dich an den vorhandenen Tests dort, die `/static/app.js` und `/` abrufen und im Text suchen. Die Testdocstring muss ehrlich sagen, was sie belegt und was nicht (es läuft keine Browser-Engine).
+A test in `tests/api/test_web.py` that checks the markup — follow the existing tests there that fetch `/static/app.js` and `/` and search the text. The test's docstring must honestly say what it proves and what it doesn't (no browser engine runs).
 
-- [ ] **Step 7: Prüfungen und Commit**
+- [ ] **Step 7: Checks and commit**
 
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
@@ -1226,32 +1231,32 @@ git commit -m "feat(web): funktionale Signale vorn, Experten-Signale zugeklappt"
 
 ---
 
-### Task 9: Dokumentation und Abschluss
+### Task 9: Documentation and wrap-up
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`
 - Modify: `docs/superpowers/specs/2026-09-03-signal-selection-design.md`
 - Modify: `README.md`
 
-- [ ] **Step 1: Das Hauptdokument nachziehen**
+- [ ] **Step 1: Bring the main document up to date**
 
-Abschnitt 3.5 (generische Zerlegung) bekommt einen Verweis auf den neuen Entwurf und den Satz, dass die Zerlegung unverändert alles behält — nur der Vorgabewert des Exports folgt jetzt der Relevanz. Abschnitt 5 (Datenmodell) und 6.6 (nicht exportierbare Werte) sind auf den Stand zu bringen: 6.6 nennt heute „109 von 159 abbildbar" als Ergebnis, ohne dass davon 5 exportiert werden.
+Section 3.5 (generic decomposition) gains a reference to the new design and the sentence that decomposition unchanged keeps everything — only the export's default value now follows relevance. Section 5 (data model) and 6.6 (non-exportable values) are to be brought up to date: 6.6 currently states "109 of 159 mappable" as the result, without noting that 5 of those are exported.
 
-- [ ] **Step 2: Offene Punkte im neuen Entwurf schließen**
+- [ ] **Step 2: Close open items in the new design**
 
-Abschnitt 10 des Entwurfs hat vier offene Punkte. Punkt 1 (Gerätetyp-Nummern belegen) ist mit Task 1 erledigt — streiche ihn und trage ein, welche Quelle du benutzt hast. Punkte 2–4 bleiben, sofern nichts an ihnen entschieden wurde.
+Section 10 of the design has four open items. Item 1 (establish device type numbers) is done with Task 1 — strike it and note which source you used. Items 2–4 remain, unless something has been decided about them.
 
 - [ ] **Step 3: README**
 
-Der Abschnitt, der den Export beschreibt, muss sagen, dass standardmäßig die funktionalen Signale exportiert werden und wie man an die übrigen kommt.
+The section describing the export must say that the functional signals are exported by default, and how to get at the rest.
 
-- [ ] **Step 4: Vollständige Prüfung**
+- [ ] **Step 4: Full check**
 
 ```bash
 uv run ruff format --check src tests && uv run ruff check src tests && uv run mypy && uv run pytest -q
 ```
 
-Expected: alles sauber, keine Testverluste gegenüber der Ausgangslage (477) außer bewusst angepassten.
+Expected: everything clean, no test losses compared to the starting point (477) except deliberately adjusted ones.
 
 - [ ] **Step 5: Commit**
 
@@ -1262,16 +1267,16 @@ git commit -m "docs: Signalauswahl in Hauptdokument und README nachziehen"
 
 ---
 
-## Abschlusskriterien
+## Completion criteria
 
-Die Arbeit ist fertig, wenn:
+The work is done when:
 
-1. `uv run pytest` ohne Hardware und ohne Netz durchläuft,
-2. die Steckdose aus dem eingecheckten Abbild **namentlich** `onoff`, `voltage`, `current`, `power`, `energy_imported` exportiert — nicht nur „weniger als vorher",
-3. der Taster beide Wippen vollständig samt `multipress` und den Batteriestand exportiert,
-4. ein unbekannter Cluster auf einem Nutz-Endpunkt vollständig erhalten bleibt,
-5. die Migration belegt kein einziger Schlüssel ändert sich,
-6. ein Signal, das die Profiltabelle nicht kennt, seinen generischen **Schlüssel** behält, aber einen lesbaren Titel aus dem SDK-Katalog trägt,
-7. die Gerätetyp-Nummern gegen die Matter Device Library belegt sind, nicht aus diesem Plan übernommen.
+1. `uv run pytest` passes without hardware and without network,
+2. the plug from the checked-in snapshot exports `onoff`, `voltage`, `current`, `power`, `energy_imported` **by name** — not just "fewer than before",
+3. the button exports both rockers completely, including `multipress` and the battery level,
+4. an unknown cluster on an application endpoint remains fully intact,
+5. the migration proves not a single key changes,
+6. a signal the profile table doesn't know keeps its generic **key**, but carries a readable title from the SDK catalog,
+7. the device type numbers are established against the Matter Device Library, not taken from this plan.
 
-**Nicht Teil dieser Arbeit:** eine vom Anwender editierbare Sperrliste, die fehlenden Systemcheck-Prüfungen (mDNS, Dongle, OTBR, Thread-Netz) und der IPv6-Check, der globales IPv6 verlangt, wo Thread ULA nutzt — der ist ein eigener Fehler und gehört in eine eigene Runde.
+**Not part of this work:** a user-editable blocklist, the missing system-check checks (mDNS, dongle, OTBR, Thread network), and the IPv6 check that requires global IPv6 where Thread uses ULA — that is a separate bug and belongs in its own round.

@@ -1,398 +1,397 @@
-# Projektdatei-Sync: virtuelle Ein-/Ausgänge automatisch anlegen und aktualisieren
+# Project file sync: automatically create and update virtual inputs/outputs
 
-Entwurf, 3. September 2026. Ergänzt
-[das Hauptdokument](2026-09-01-matter-loxone-bridge-design.md), insbesondere
-dessen Abschnitt 3.2 (Loxone-Import) und Abschnitt 6.1 der dort referenzierten
-Vorlagen-Spec (Attributschema der Vorlagendateien, umgesetzt in
+Design, September 3, 2026. Supplements
+[the main document](2026-09-01-matter-loxone-bridge-design.md), specifically
+its section 3.2 (Loxone import) and section 6.1 of the template spec
+referenced there (attribute schema of the template files, implemented in
 `export/documents.py`).
 
-## 1. Das Problem
+## 1. The problem
 
-Heute exportiert `loxmatter` pro Gerät zwei Vorlagendateien
-(`VirtualInUdp`/`VirtualOut`, siehe `export/documents.py`), die ein Anwender
-in Loxone Config manuell importiert — pro Gerät, jedes Mal neu. Ändert sich
-das Signal-Set eines Geräts (neue Firmware, ein neu freigeschaltetes Signal in
-der Signalauswahl), muss der Anwender das erneut von Hand nachziehen und dabei
-selbst herausfinden, was sich geändert hat, ohne bestehende Verdrahtung auf
-Funktionsbausteine zu zerstören.
+Today `loxmatter` exports two template files per device (`VirtualInUdp`/
+`VirtualOut`, see `export/documents.py`), which a user imports manually
+into Loxone Config — per device, freshly each time. If a device's signal
+set changes (new firmware, a newly enabled signal in the signal
+selection), the user has to redo that by hand and figure out for
+themselves what changed, without destroying existing wiring to function
+blocks.
 
-Ziel dieses Entwurfs: `loxmatter` nimmt eine echte Loxone-Config-Projektdatei
-entgegen, gleicht sie gegen die gespeicherten Geräte/Signale ab und liefert
-eine gepatchte Fassung zurück, in der bestehende virtuelle Ein-/Ausgänge
-aktualisiert (nicht ersetzt) und fehlende neu angelegt sind — ohne dass der
-Anwender einzelne Vorlagen mehr von Hand zusammensuchen muss.
+Goal of this design: `loxmatter` accepts a real Loxone Config project
+file, matches it against the stored devices/signals, and returns a
+patched version in which existing virtual inputs/outputs are updated (not
+replaced) and missing ones are newly created — without the user having to
+gather individual templates by hand anymore.
 
-## 2. Nicht-Ziele
+## 2. Non-goals
 
-- **Keine Live-Verbindung zum Miniserver für dieses Feature.** Der
-  Miniserver liefert über seine Laufzeit-API (`/dev/sps/io/...`,
-  `LoxAPP3.json`) nur eine vereinfachte, rein lesende Sicht auf bestehende
-  IOs — nicht die volle Projektstruktur mit `ControlList`, `NextObj` usw. Die
-  Projektdatei kommt ausschließlich aus Loxone Config selbst (Export oder
-  „Programm vom Miniserver laden"), der Anwender lädt sie im WebUI hoch.
-- **Kein automatisches Verdrahten auf Funktionsbausteine.** Bleibt wie in
-  Abschnitt 3.2 des Hauptdokuments festgehalten Handarbeit — der Gewinn wäre
-  gering, das Risiko hoch.
-- **Kein automatisches Löschen.** Verwaiste Objekte (Signal nicht mehr im
-  Export, Gerät entfernt) werden gemeldet, nicht angefasst. Löschen ist
-  riskanter als Anlegen und war nicht verlangt.
-- **Kein Nachbau des proprietären Miniserver-Upload-Protokolls.** Der
-  Anwender öffnet die gepatchte Datei weiterhin selbst in Loxone Config und
-  speichert von dort zum Miniserver — das ist der Teil, den nur Config selbst
-  gefahrlos kann (Abschnitt 3.2 des Hauptdokuments).
+- **No live connection to the Miniserver for this feature.** The
+  Miniserver's runtime API (`/dev/sps/io/...`, `LoxAPP3.json`) only
+  delivers a simplified, purely read-only view of existing IOs — not the
+  full project structure with `ControlList`, `NextObj`, etc. The project
+  file comes exclusively from Loxone Config itself (export, or "Load
+  program from Miniserver"), the user uploads it in the WebUI.
+- **No automatic wiring to function blocks.** Stays manual work as
+  recorded in section 3.2 of the main document — the gain would be small,
+  the risk high.
+- **No automatic deletion.** Orphaned objects (signal no longer in the
+  export, device removed) are reported, not touched. Deleting is riskier
+  than creating and was not requested.
+- **No reimplementation of the proprietary Miniserver upload protocol.**
+  The user still opens the patched file themselves in Loxone Config and
+  saves it from there to the Miniserver — that is the part only Config
+  itself can do safely (section 3.2 of the main document).
 
-## 3. Entscheidungen
+## 3. Decisions
 
-### 3.1 Eingabeweg: Datei-Upload im WebUI, keine Live-Verbindung
+### 3.1 Input path: file upload in the WebUI, no live connection
 
-Ursprünglich stand „automatisch mit dem Miniserver verbinden" im Raum. Die
-Miniserver-API kann aber keine IOs anlegen und liefert auch nicht die volle
-Projektstruktur — nur Loxone Config selbst hat beides. Ein Reverse-Engineering
-von Configs proprietärem Projekt-Protokoll wurde im Hauptdokument bereits als
-„für ein Tool, das in fremden Häusern läuft, disqualifizierend" verworfen und
-bleibt es hier.
+Originally, "automatically connect to the Miniserver" was on the table.
+But the Miniserver API cannot create IOs and also does not deliver the
+full project structure — only Loxone Config itself has both.
+Reverse-engineering Config's proprietary project protocol was already
+rejected in the main document as "disqualifying for a tool that runs in
+other people's houses," and it remains so here.
 
-Gewählt: der Anwender lädt die `.Loxone`-Projektdatei im WebUI hoch, das Tool
-liefert eine gepatchte Fassung zum Download zurück. Ein manueller Schritt
-bleibt — Datei aus Config exportieren, gepatchte Fassung wieder öffnen und
-zum Miniserver speichern —, aber der Aufwand *pro Gerät und Signal* entfällt,
-und das ist der eigentliche Schmerzpunkt aus Abschnitt 1.
+Chosen: the user uploads the `.Loxone` project file in the WebUI, the
+tool returns a patched version for download. One manual step remains —
+export the file from Config, reopen the patched version, and save it to
+the Miniserver — but the effort *per device and signal* is gone, and that
+is the actual pain point from section 1.
 
-### 3.2 Schreiben: Text-Chirurgie statt XML-Neuaufbau
+### 3.2 Writing: text surgery instead of rebuilding the XML
 
-`export/xml.py` baut Vorlagendateien bewusst ohne XML-Bibliothek, weil ein
-Serialisierer Attribute umsortieren oder die Deklaration anders schreiben
-könnte, ohne dass sich das hier nachprüfen ließe. Für die Projektdatei gilt
-dasselbe Argument mit größerem Gewicht: 3 MB, überwiegend Bausteintypen, die
-dieses Projekt nicht kennt und nicht anfassen soll.
+`export/xml.py` deliberately builds template files without an XML
+library, because a serializer could reorder attributes or write the
+declaration differently, without that being verifiable here. The same
+argument applies to the project file with greater weight: 3 MB,
+predominantly block types this project doesn't know and shouldn't touch.
 
-Deshalb: **Lesen** über einen Standard-XML-Parser (die reale Referenzdatei
-parst klaglos mit `xml.etree.ElementTree` — die im Hauptdokument befürchteten
-doppelten Attribute traten an keiner Stelle auf, betreffen also, falls sie
-irgendwo existieren, andere Bausteintypen als die hier relevanten). **Schreiben**
-ausschließlich als gezielte Textersetzung an exakt den Byte-Bereichen, die
-sich ändern: ein geändertes Attribut wird innerhalb seines bestehenden
-`<C .../>`-Tags ersetzt, ein neues Objekt wird als fertig gerenderter
-XML-Text unmittelbar vor dem schließenden Tag seines Containers eingefügt.
-Alles andere im Dokument bleibt byte-identisch — das ist die Eigenschaft, die
-ein Round-Trip durch einen generischen Serialisierer nicht garantieren
-könnte.
+Therefore: **reading** via a standard XML parser (the real reference file
+parses without complaint with `xml.etree.ElementTree` — the duplicate
+attributes feared in the main document did not occur anywhere, so if they
+exist anywhere, they concern block types other than the ones relevant
+here). **Writing** exclusively as targeted text replacement at exactly the
+byte ranges that change: a changed attribute is replaced within its
+existing `<C .../>` tag, a new object is inserted as fully rendered XML
+text immediately before the closing tag of its container. Everything else
+in the document stays byte-identical — that is the property a round trip
+through a generic serializer could not guarantee.
 
-### 3.3 Abgleich über den vorhandenen Signal-Schlüssel
+### 3.3 Matching via the existing signal key
 
-Jedes Signal trägt in der Projektdatei bereits den Schlüssel, den `loxmatter`
-selbst vergibt: im `Check`-Attribut bei Eingängen (`Check="d3_1_onoff:\v"`,
-vgl. `render_virtual_in_udp`) und im `CmdOn`-Pfad bei Ausgängen
-(`CmdOn="/cmd/d3_1_onoff/1"`, vgl. `_command_path` in `export/outputs.py`).
-Diese Schlüssel sind laut `model.store` bereits global eindeutig über alle
-Geräte.
+Every signal already carries, in the project file, the key `loxmatter`
+itself assigns: in the `Check` attribute for inputs
+(`Check="d3_1_onoff:\v"`, cf. `render_virtual_in_udp`) and in the `CmdOn`
+path for outputs (`CmdOn="/cmd/d3_1_onoff/1"`, cf. `_command_path` in
+`export/outputs.py`). Per `model.store`, these keys are already globally
+unique across all devices.
 
-Der Abgleich sucht deshalb im gesamten Dokument nach `VirtualUdpInCmd`- bzw.
-`VirtualOutCmd`-Elementen, deren `Check`/`CmdOn` mit einem bekannten Schlüssel
-beginnt — unabhängig vom Titel (den der Anwender in Config umbenannt haben
-kann) und unabhängig davon, unter welchem Container das Signal tatsächlich
-hängt. Ein Abgleich über den Gerätecontainer (Titel) wäre fragiler und ist
-nicht nötig.
+The matching therefore searches the entire document for
+`VirtualUdpInCmd`/`VirtualOutCmd` elements whose `Check`/`CmdOn` begins
+with a known key — independent of the title (which the user may have
+renamed in Config) and independent of which container the signal
+actually hangs under. Matching via the device container (title) would be
+more fragile and is not necessary.
 
-**Korrektur bei Ausgängen: `CmdOn` allein genügt nicht** (Anwenderbericht
-2026-09-05, „nach Export und erneutem Import ein neues Feld onoff"). Der
-kombinierte Ein/Aus-Ausgang aus `export.outputs.to_outputs` schickt bei
-steigender Flanke denselben Pfad wie der einzelne `on`-Befehl
-(`/cmd/d1_1_on/1`) und unterscheidet sich von ihm allein durch sein `CmdOff`.
-Aus `CmdOn` allein gelesen bekamen beide denselben Schlüssel, im Index
-überschrieb einer den anderen — der kombinierte Befehl war unter seinem
-echten Schlüssel (`"d1_1_on + d1_1_off"`, so vergibt ihn `to_outputs`)
-nirgends zu finden und wurde bei **jedem** Durchlauf erneut angelegt. Der
-Schlüssel eines bestehenden Ausgangs wird deshalb aus `CmdOn` UND `CmdOff`
-zusammen gelesen (`keys.key_from_output_cmd`). Nebenwirkung derselben
-Kollision: der `possible_duplicate`-Schutz griff hier nicht, weil das
-verdrängte Element gar nicht mehr im Index stand.
+**Correction for outputs: `CmdOn` alone is not enough** (user report
+2026-09-05, "after export and re-import a new onoff field"). The combined
+on/off output from `export.outputs.to_outputs` sends the same path on a
+rising edge as the single `on` command (`/cmd/d1_1_on/1`) and differs from
+it only by its `CmdOff`. Read from `CmdOn` alone, both got the same key,
+and one overwrote the other in the index — the combined command was
+nowhere to be found under its real key (`"d1_1_on + d1_1_off"`, as
+`to_outputs` assigns it) and was recreated on **every** run. The key of an
+existing output is therefore read from `CmdOn` AND `CmdOff` together
+(`keys.key_from_output_cmd`). Side effect of the same collision: the
+`possible_duplicate` protection did not catch this, because the displaced
+element was no longer in the index at all.
 
-### 3.4 Risikostufen: Update ist der Vorgabefall, Neuanlage ist opt-in
+### 3.4 Risk levels: update is the default case, creation is opt-in
 
-Die reale Referenzdatei parst zwar sauber, aber das `U`-ID-Schema für neue
-Objekte ist proprietär und unverifiziert (Abschnitt 6). Ein Update eines
-bestehenden Objekts ändert nur bekannte Attributwerte in einer bereits von
-Config akzeptierten Struktur — risikoarm. Eine Neuanlage (neuer Container
-oder neues Cmd-Objekt mit selbst erzeugter ID) hat dagegen ein echtes,
-unbestätigtes Risiko: lehnt Config die Datei beim Öffnen ab oder verwirft sie
-still Teile davon, hat der Anwender im schlimmsten Fall ein beschädigtes
-Projekt.
+The real reference file parses cleanly, but the `U` ID scheme for new
+objects is proprietary and unverified (section 6). Updating an existing
+object only changes known attribute values within a structure Config has
+already accepted — low risk. Creating something new (a new container or
+a new Cmd object with a self-generated ID), by contrast, carries a real,
+unconfirmed risk: if Config rejects the file on opening or silently
+discards parts of it, the user has, in the worst case, a damaged project.
 
-Deshalb: der Diff-Plan zeigt **immer beides** (informativ), aber die zum
-Download angebotene Datei enthält neu angelegte **Geräte-Container** nur,
-wenn der Anwender das im WebUI explizit anhakt („Neue Geräte-Container
-ebenfalls anlegen — experimentell, noch nicht gegen Loxone Config
-validiert"). Ohne den Haken enthält die Datei Updates an bestehenden Objekten
-plus neue Signale *innerhalb* bereits vorhandener Geräte-Container — beides
-risikoärmer, weil kein neuer Container entsteht, sondern nur neue Blätter in
-einer Struktur, die Config bereits akzeptiert hat.
+Therefore: the diff plan **always shows both** (informationally), but the
+file offered for download contains newly created **device containers**
+only if the user explicitly checks that in the WebUI ("Also create new
+device containers — experimental, not yet validated against Loxone
+Config"). Without the checkbox, the file contains updates to existing
+objects plus new signals *within* already existing device containers —
+both lower risk, because no new container is created, only new leaves in
+a structure Config has already accepted.
 
-Das ist kein globaler Schalter und keine Konfigdatei — sobald der Anwender
-einmal erfolgreich eine Datei mit frisch angelegtem Container importiert hat,
-ist der Haken für ihn einfach Alltag.
+This is not a global switch and not a config file — once the user has
+successfully imported a file with a freshly created container, the
+checkbox is simply routine for them from then on.
 
-### 3.5 Datei-Struktur & Miniserver-Zuordnung (korrigiert nach echtem Praxistest)
+### 3.5 File structure & Miniserver assignment (corrected after a real-world test)
 
-**Die ursprüngliche Annahme in diesem Abschnitt (und in 3.3) war falsch.**
-Beim ersten Test an einer gewachsenen, echten Projektdatei (nicht nur an der
-kleinen Referenzdatei aus der Brainstorming-Phase) zeigte sich: `VirtualIn
-Caption`/`VirtualOutCaption` liegen **nicht** direkt unter `<ControlList>`.
-Der reale Aufbau ist:
+**The original assumption in this section (and in 3.3) was wrong.** In
+the first test against a real, grown project file (not just the small
+reference file from the brainstorming phase), it turned out:
+`VirtualInCaption`/`VirtualOutCaption` do **not** sit directly under
+`<ControlList>`. The real structure is:
 
 ```
 <ControlList>
-  <C Type="Document">                    -- genau EIN Kind von ControlList
-    <C Type="LoxLIVE" IntAddr="…">       -- ein Block PRO konfiguriertem Miniserver
+  <C Type="Document">                    -- exactly ONE child of ControlList
+    <C Type="LoxLIVE" IntAddr="…">       -- one block PER configured Miniserver
       <C Type="VirtualInCaption"> … </C>
       <C Type="VirtualOutCaption"> … </C>
     </C>
-    <C Type="LoxLIVE" IntAddr="…"> … </C>  -- optional: weitere Miniserver
+    <C Type="LoxLIVE" IntAddr="…"> … </C>  -- optional: additional Miniservers
   </C>
 </ControlList>
 ```
 
-Der ursprüngliche, flache Suchalgorithmus parste solche Dateien fehlerfrei,
-fand aber **keinen einzigen** vorhandenen virtuellen Ein-/Ausgang — jedes
-bereits bestehende Gerät erschien dadurch fälschlich als `new_device`, statt
-als `unchanged`/`updated`. Genau dieser Fehler wurde vom Anwender an seiner
-echten Datei gemeldet und war der Auslöser für diese Korrektur.
+The original, flat search algorithm parsed such files without error, but
+found **not a single** existing virtual input/output — every already
+existing device therefore falsely appeared as `new_device`, instead of
+`unchanged`/`updated`. This exact bug was reported by the user on his real
+file and was the trigger for this correction.
 
-**Konsequenz: Miniserver-Zuordnung ist ein eigener Schritt, VOR dem
-eigentlichen Abgleich.** Eine Projektdatei kann mehrere `LoxLIVE`-Blöcke
-enthalten (mehrere in Loxone Config konfigurierte Miniserver in einem
-Projekt) — der Abgleich darf nur innerhalb EINES davon suchen, sonst könnte
-ein Signal fälschlich im falschen Miniserver-Bereich landen. Auflösung
+**Consequence: Miniserver assignment is a step of its own, BEFORE the
+actual matching.** A project file can contain multiple `LoxLIVE` blocks
+(multiple Miniservers configured in Loxone Config within one project) —
+the matching must only search within ONE of them, otherwise a signal
+could wrongly land in the wrong Miniserver's area. Resolution
 (`index._resolve_target_loxlive`):
 
-- Kein `LoxLIVE`-Block gefunden → Fehler (kein Ort für virtuelle Ein-/Ausgänge).
-- Genau ein Block → wird automatisch gewählt, unabhängig davon, ob eine IP
-  mitgegeben wurde.
-- Eine IP wurde mitgegeben → muss exakt einem `LoxLIVE.IntAddr` entsprechen
-  (derselbe Wert wie bei `loxmatter run --miniserver <IP>`), sonst Fehler mit
-  Auflistung der gefundenen Miniserver — auch wenn es nur einen Block gibt:
-  eine nicht passende, aber explizit angegebene IP deutet eher auf die
-  falsche Datei hin als auf einen Grund, sie zu ignorieren.
-- Mehrere Blöcke, keine IP mitgegeben → Fehler, IP ist Pflicht.
+- No `LoxLIVE` block found → error (no place for virtual inputs/outputs).
+- Exactly one block → is chosen automatically, regardless of whether an
+  IP was supplied.
+- An IP was supplied → must correspond exactly to one `LoxLIVE.IntAddr`
+  (the same value as with `loxmatter run --miniserver <IP>`), otherwise
+  an error with a listing of the found Miniservers — even if there is
+  only one block: a non-matching, but explicitly specified IP points more
+  toward the wrong file than toward a reason to ignore it.
+- Multiple blocks, no IP supplied → error, an IP is mandatory.
 
-Der Abgleich aus Abschnitt 3.3 ("sucht im gesamten Dokument") gilt seitdem
-präzisiert als "sucht innerhalb des aufgelösten `LoxLIVE`-Blocks" — nicht
-mehr über das gesamte `<ControlList>`. Neu angelegte Captions (Abschnitt 6,
-Neuanlage-Pfad) hängen entsprechend am Ende dieses `LoxLIVE`-Blocks, nicht
-am Ende von `<ControlList>`.
+The matching from section 3.3 ("searches the entire document") is
+henceforth refined to "searches within the resolved `LoxLIVE` block" — no
+longer across the entire `<ControlList>`. Newly created captions
+(section 6, creation path) accordingly attach to the end of this
+`LoxLIVE` block, not to the end of `<ControlList>`.
 
-## 4. Architektur & Datenfluss
+## 4. Architecture & data flow
 
 ```
-Nutzer lädt .Loxone-Datei im WebUI hoch
+User uploads .Loxone file in the WebUI
         │
         ▼
-Parsen (nur lesend, ElementTree) + Abgleich gegen gespeicherte Geräte/Signale
+Parsing (read-only, ElementTree) + matching against stored devices/signals
         │
         ▼
-Diff-Plan: neu (Signal) / neu (Gerät) / aktualisiert / unverändert / verwaist
+Diff plan: new (signal) / new (device) / updated / unchanged / orphaned
         │
         ▼
-WebUI zeigt Plan zur Bestätigung — nichts wurde bisher geschrieben
+WebUI shows the plan for confirmation — nothing has been written yet
         │
         ▼
-Nutzer setzt ggf. den Experimentell-Haken, bestätigt
+User sets the experimental checkbox if desired, confirms
         │
         ▼
-Gepatchte Datei (Text-Chirurgie auf dem Original-Byte-Strom) zum Download
+Patched file (text surgery on the original byte stream) for download
 ```
 
-Ein Server-Request genügt: `POST /api/export/project-sync` liefert Diff-Plan
-und beide Datei-Varianten (mit/ohne neue Geräte-Container) in einer Antwort.
-Der „Bestätigen"-Schritt ist rein clientseitig — kein zweiter Roundtrip, kein
-Server-seitiger Zwischenzustand.
+One server request is enough: `POST /api/export/project-sync` delivers
+the diff plan and both file variants (with/without new device containers)
+in one response. The "Confirm" step is purely client-side — no second
+round trip, no server-side intermediate state.
 
-Die gepatchte Datei ist immer eine **neue** Datei; das hochgeladene Original
-wird nirgends überschrieben. Ein fehlgeschlagener Patch-Versuch ist damit
-folgenlos — der Anwender lädt einfach erneut hoch.
+The patched file is always a **new** file; the uploaded original is never
+overwritten anywhere. A failed patch attempt is thus without consequence —
+the user simply uploads again.
 
-## 5. Diff-Plan: Datenmodell und Fälle
+## 5. Diff plan: data model and cases
 
-Pro bekanntem Signal (aus `model.store`, gefiltert auf `exported`) einer von
-vier Zuständen:
+Per known signal (from `model.store`, filtered on `exported`), one of
+four states:
 
-| Zustand | Bedingung | Wirkung in der gepatchten Datei |
+| State | Condition | Effect in the patched file |
 |---|---|---|
-| `unchanged` | passendes Objekt gefunden, alle relevanten Attribute stimmen überein | keine |
-| `updated` | passendes Objekt gefunden, mindestens ein Attribut weicht ab | nur die abweichenden Attribute werden im bestehenden Tag ersetzt; `U` und alle `Co`/`In`-Kinder (Verdrahtung) bleiben unangetastet |
-| `new_signal` | kein passendes Objekt, aber der Gerätecontainer existiert bereits | neues `VirtualUdpInCmd`/`VirtualOutCmd` wird ans Ende des bestehenden Containers gehängt |
-| `new_device` | kein passendes Objekt, und für dieses Gerät existiert noch gar kein Container | neuer `VirtualUdpIn`/`VirtualOut`-Container wird unter `VirtualInCaption`/`VirtualOutCaption` angelegt, mit dem ersten Cmd-Kind |
+| `unchanged` | matching object found, all relevant attributes agree | none |
+| `updated` | matching object found, at least one attribute differs | only the differing attributes are replaced within the existing tag; `U` and all `Co`/`In` children (wiring) remain untouched |
+| `new_signal` | no matching object, but the device container already exists | new `VirtualUdpInCmd`/`VirtualOutCmd` is appended to the end of the existing container |
+| `new_device` | no matching object, and no container exists yet at all for this device | new `VirtualUdpIn`/`VirtualOut` container is created under `VirtualInCaption`/`VirtualOutCaption`, with the first Cmd child |
 
-Zusätzlich, unabhängig von obiger Tabelle: **`orphaned`** — ein
-`VirtualUdpInCmd`/`VirtualOutCmd` in der Datei trägt einen Schlüssel, der
-keinem aktuell bekannten, exportierten Signal mehr entspricht (Gerät entfernt,
-Signal abgewählt). Wird gemeldet, nicht verändert (Abschnitt 2).
+In addition, independent of the table above: **`orphaned`** — a
+`VirtualUdpInCmd`/`VirtualOutCmd` in the file carries a key that no
+longer corresponds to any currently known, exported signal (device
+removed, signal deselected). Is reported, not modified (section 2).
 
-**`possible_duplicate`** (Nachtrag nach echtem Praxistest, 2026-09-05): kein
-Objekt mit dem gewünschten Schlüssel gefunden, ABER ein bestehender Befehl im
-selben Gerätecontainer trägt bereits genau den gewünschten Titel. Deutet eher
-auf ein beschädigtes/veraltetes `Check`/`CmdOn` an einem einzelnen bestehenden
-Objekt hin als auf ein wirklich neues Signal — beobachtet an einem
-kombinierten Ausgangsbefehl "onoff", dessen `CmdOn` durch einen alten
-Export-Bug ein Zeichen fehlte (`/cmd/d1_1_o/1` statt `/cmd/d1_1_onoff/1`).
-Ohne diese Prüfung hätte der Sync einen zweiten "onoff"-Befehl im selben
-Container angelegt, statt den beschädigten zu erkennen. Wird wie `orphaned`/
-`conflict` nie automatisch angelegt — der Anwender muss den bestehenden
-Befehl selbst in Loxone Config prüfen/reparieren.
+**`possible_duplicate`** (addendum after a real-world test, 2026-09-05):
+no object found with the desired key, BUT an existing command in the same
+device container already carries exactly the desired title. Points more
+toward a damaged/stale `Check`/`CmdOn` on a single existing object than
+toward a genuinely new signal — observed on a combined output command
+"onoff" whose `CmdOn` was missing a character due to an old export bug
+(`/cmd/d1_1_o/1` instead of `/cmd/d1_1_onoff/1`). Without this check, the
+sync would have created a second "onoff" command in the same container
+instead of recognizing the damaged one. Like `orphaned`/`conflict`, it is
+never created automatically — the user has to check/repair the existing
+command themselves in Loxone Config.
 
-`updated` trägt zusätzlich die konkrete Attribut-Differenz (alter Wert → neuer
-Wert je Attribut), damit der Anwender im Plan sieht, *was* sich ändert, nicht
-nur *dass*.
+`updated` additionally carries the concrete attribute diff (old value →
+new value per attribute), so the user sees in the plan *what* is
+changing, not just *that* it is.
 
-Sind alle bekannten Signale `unchanged` und keine `orphaned` vorhanden, sagt
-der Plan das explizit („Alles aktuell, keine Änderungen nötig") statt eine
-leere Liste zu zeigen.
+If all known signals are `unchanged` and there are no `orphaned` ones,
+the plan says so explicitly ("Everything up to date, no changes needed")
+instead of showing an empty list.
 
-## 6. ID-Vergabe für neue Objekte
+## 6. ID assignment for new objects
 
-Jedes neue Objekt (Container wie Cmd) braucht eine neue, in der Datei
-eindeutige `U`-ID. Das Format ist proprietär (`<hex>-<hex>-<hex>-<hex-Suffix>`)
-und nicht dokumentiert. Erzeugung: Zeitstempel-basiertes Präfix, kombiniert
-mit dem Installations-Suffix (die letzten 16 Hex-Stellen), der von einem
-beliebigen bestehenden Objekt *aus derselben hochgeladenen Datei* übernommen
-wird, damit neue IDs zur selben Projekt-Familie gehören. Eindeutigkeit wird
-gegen alle in der Datei gefundenen `U`-Werte geprüft, nicht nur gegen die neu
-erzeugten.
+Every new object (container as well as Cmd) needs a new `U` ID that is
+unique within the file. The format is proprietary
+(`<hex>-<hex>-<hex>-<hex-suffix>`) and undocumented. Generation: a
+timestamp-based prefix, combined with the installation suffix (the last
+16 hex digits), taken from any existing object *from the same uploaded
+file*, so that new IDs belong to the same project family. Uniqueness is
+checked against all `U` values found in the file, not only against the
+newly created ones.
 
-Der Root-Knoten `ControlList` trägt Zähler (`NextObj`, `NextConst`, ...), die
-Config beim eigenen Anlegen von Objekten hochzählt. Ihre genaue Bedeutung ist
-nicht verifiziert; um auf der sicheren Seite zu sein, wird `NextObj`
-konservativ über den höchsten in der Datei vorkommenden numerischen Anteil
-angehoben, falls neue Objekte angelegt wurden.
+The root node `ControlList` carries counters (`NextObj`, `NextConst`,
+...) that Config increments when it creates objects itself. Their exact
+meaning is unverified; to be on the safe side, `NextObj` is conservatively
+raised above the highest numeric portion occurring in the file, if new
+objects were created.
 
-**Das ist der unverifizierte Teil dieses Entwurfs.** Ob Config eine so
-erzeugte Datei klaglos öffnet, weiß niemand, bevor es nicht ein einziges Mal
-an einer echten Installation getestet wurde. Daher Abschnitt 3.4: Neuanlage
-von Geräte-Containern ist bis zu einem erfolgreichen Test-Import
-opt-in, nicht Vorgabe. Neuanlage von Cmd-Objekten *innerhalb* eines
-bestehenden Containers trägt dasselbe ID-Risiko, aber ein deutlich kleineres
-strukturelles Risiko (kein neuer Container, keine neue Elternstruktur) und
-bleibt deshalb Vorgabe.
+**This is the unverified part of this design.** Whether Config opens a
+file created this way without complaint is something nobody knows until
+it has been tested against a real installation at least once. Hence
+section 3.4: creating new device containers is opt-in, not the default,
+until a successful test import. Creating new Cmd objects *within* an
+existing container carries the same ID risk, but a significantly smaller
+structural risk (no new container, no new parent structure) and therefore
+stays the default.
 
-**Fehlendes `V`-Attribut (gefunden am echten Praxistest, 2026-09-05).** Der
-erste reale Test zeigte: neu angelegte Geräte-Container erschienen zwar in
-Loxone Config, ihre Kommando-Kinder blieben aber leer. Ursache: JEDES
-`<C>`-Objekt in der echten Referenzdatei trägt ein `V`-Attribut (an allen
-3710 vorkommenden Objekten geprüft, ausnahmslos — praktisch immer `"178"`,
-nur das `Document`-Wurzelobjekt trägt die volle Config-Versionsnummer). Die
-ursprüngliche Attributliste für neu angelegte Container/Cmds/Captions hatte
-dieses Attribut schlicht nicht auf dem Schirm. Behoben: alle fünf
-`new_*_open_tag`-Funktionen (`projectsync/schema.py`) schreiben jetzt
-`V="178"`. Dieselbe Prüfung deckte auch auf, dass eine neu angelegte Caption
-(`VirtualInCaption`/`VirtualOutCaption`, Abschnitt 8: Sonderfall der
-kompletten Neuanlage) fälschlich ein `IName` trug, das echte Captions nicht
-haben, und ein festes `Title` (`"Virtuelle Eingänge"`/`"Virtuelle
-Ausgänge"`) fehlte — ebenfalls korrigiert.
+**Missing `V` attribute (found in the real-world test, 2026-09-05).** The
+first real test showed: newly created device containers did appear in
+Loxone Config, but their command children stayed empty. Cause: EVERY `<C>`
+object in the real reference file carries a `V` attribute (checked on all
+3710 occurring objects, without exception — practically always `"178"`,
+only the `Document` root object carries the full Config version number).
+The original attribute list for newly created containers/Cmds/captions
+simply didn't have this attribute on the radar. Fixed: all five
+`new_*_open_tag` functions (`projectsync/schema.py`) now write `V="178"`.
+The same check also uncovered that a newly created caption
+(`VirtualInCaption`/`VirtualOutCaption`, section 8: special case of full
+creation) wrongly carried an `IName` that real captions do not have, and
+a fixed `Title` (`"Virtuelle Eingänge"`/`"Virtuelle Ausgänge"`) was
+missing — also corrected.
 
-**Die Einheit gehört ins `<Display>`, nicht ans `<C>`** (Anwenderbericht
-2026-09-05, „die Einheit ist bei den virtuellen Eingängen nicht mehr
-dabei"). Die *Vorlagendatei* führt die Einheit als Attribut
-(`virtual_in_udp_cmd_attributes`), eine *Projektdatei* nicht: dort trägt
-kein einziges `<C>`-Objekt ein `Unit`-Attribut (wieder an allen 3710
-geprüft), die Einheit steht ausschließlich im `<Display>`-Kind — als
-kompletter Formatstring inklusive Einheitentext, begleitet von `Type="2"`
-bei einem analogen Wert (`<Display Type="2" Unit="&lt;v.3&gt; kW"
-StateOnly="true"/>`, so an allen 86 analogen Eingängen der Referenzdatei).
-Die für die Neuanlage übernommene Vorlagen-Attributliste schrieb `Unit`
-deshalb an eine Stelle, an der Loxone Config es nie liest, während das
-`<Display>` ein festes `Unit="<v.1>"` ohne Einheit bekam. Behoben:
-`new_input_cmd_open_tag` filtert `Unit` heraus, `new_cmd_children_xml`
-schreibt Formatstring und `Type` ins `<Display>`. `Unit` ist damit auch
-kein verwaltetes Update-Attribut mehr (`MANAGED_INPUT_CMD_ATTRS`) — sonst
-erschiene jeder analoge Eingang bei jedem Lauf erneut als „aktualisiert".
-Der `<Display>` eines **bestehenden** Objekts bleibt unangetastet, wie jede
-andere Struktur, die der Anwender selbst eingerichtet haben kann.
+**The unit belongs in `<Display>`, not on `<C>`** (user report 2026-09-05,
+"the unit is no longer there for the virtual inputs"). The *template
+file* carries the unit as an attribute (`virtual_in_udp_cmd_attributes`),
+a *project file* does not: there, not a single `<C>` object carries a
+`Unit` attribute (again checked on all 3710), the unit sits exclusively
+in the `<Display>` child — as a complete format string including the unit
+text, accompanied by `Type="2"` for an analog value
+(`<Display Type="2" Unit="&lt;v.3&gt; kW" StateOnly="true"/>`, as on all
+86 analog inputs of the reference file). The template attribute list
+adopted for creating new objects therefore wrote `Unit` to a place Loxone
+Config never reads, while the `<Display>` got a fixed `Unit="<v.1>"` with
+no unit. Fixed: `new_input_cmd_open_tag` filters `Unit` out,
+`new_cmd_children_xml` writes the format string and `Type` into
+`<Display>`. `Unit` is thus also no longer a managed update attribute
+(`MANAGED_INPUT_CMD_ATTRS`) — otherwise every analog input would appear
+as "updated" again on every run. The `<Display>` of an **existing** object
+stays untouched, like any other structure the user may have set up
+themselves.
 
 ## 7. API & WebUI
 
-**Endpoint:** `POST /api/export/project-sync`, multipart mit der
-hochgeladenen `.Loxone`-Datei, plus Query-Parameter `bridge_ip`/`port`/
-`listen` (wie bei `/api/export/download`) und optional `miniserver_ip`
-(Abschnitt 3.5) — nur nötig, wenn die Datei mehr als einen Miniserver
-konfiguriert. Antwort: strukturierter Diff-Plan (Abschnitt 5) plus zwei
-Datei-Varianten (`patched_conservative`, `patched_with_new_devices`) — ODER,
-bei mehreren Miniservern ohne gewählten `miniserver_ip` (Nachtrag nach dem
-Review, 2026-09-05), `needs_miniserver_selection=True` plus
-`available_miniservers` (Titel + `IntAddr` jedes gefundenen Miniservers)
-statt eines Plans. Beides eine normale 200-Antwort, kein Fehler — nur der
-"gar keiner konfiguriert"-Fall bleibt eine echte 400 (Abschnitt 8).
+**Endpoint:** `POST /api/export/project-sync`, multipart with the
+uploaded `.Loxone` file, plus query parameters `bridge_ip`/`port`/
+`listen` (as with `/api/export/download`) and optionally `miniserver_ip`
+(section 3.5) — needed only if the file configures more than one
+Miniserver. Response: structured diff plan (section 5) plus two file
+variants (`patched_conservative`, `patched_with_new_devices`) — OR, with
+multiple Miniservers and no `miniserver_ip` chosen (addendum after the
+review, 2026-09-05), `needs_miniserver_selection=True` plus
+`available_miniservers` (title + `IntAddr` of every found Miniserver)
+instead of a plan. Both are a normal 200 response, not an error — only
+the "none configured at all" case remains a genuine 400 (section 8).
 
-**WebUI:** primärer Punkt im Export-Bereich (auf Nutzerwunsch, ursprünglich
-unter „System" geplant). Datei-Upload, danach entweder direkt der Plan, oder
-— bei mehreren Miniservern in der Datei — ein Auswahlfeld mit den gefundenen
-Miniservern (Nutzerwunsch: auswählen statt die IP von Hand abzutippen,
-ersetzt das frühere Textfeld). Die Datei bleibt dafür im Speicher des
-Browsers (kein erneuter Datei-Dialog nötig); die Auswahl löst denselben
-Upload ein zweites Mal aus, diesmal mit gesetztem `miniserver_ip`. Danach
-der Plan als Liste — nach Geräten gruppiert (Eingänge/Ausgänge je Gerät,
-analog zur späteren Loxone-Struktur), je Signal eine Zeile mit Status-Badge
-(unverändert/aktualisiert/neu/verwaist/mögliches Duplikat) und bei `updated`
-die Attribut-Differenz. Der Experimentell-Haken schaltet, welche der beiden
-mitgelieferten Datei-Varianten der Download-Button anbietet. Der
-Download-Button ist erst nach dem Hochladen (= der Plan wurde gesehen) aktiv.
+**WebUI:** primary entry in the export area (per user request,
+originally planned under "System"). File upload, then either the plan
+directly, or — with multiple Miniservers in the file — a selection field
+with the found Miniservers (user request: select instead of typing the
+IP by hand, replaces the earlier text field). The file stays in the
+browser's memory for this (no repeated file dialog needed); the selection
+triggers the same upload a second time, this time with `miniserver_ip`
+set. After that, the plan as a list — grouped by device (inputs/outputs
+per device, analogous to the later Loxone structure), one row per signal
+with a status badge (unchanged/updated/new/orphaned/possible duplicate)
+and, for `updated`, the attribute diff. The experimental checkbox
+switches which of the two delivered file variants the download button
+offers. The download button is active only after the upload (= the plan
+has been seen).
 
-## 8. Fehlerbehandlung
+## 8. Error handling
 
-- Datei ist keine gültige Loxone-Projektdatei (kein `ControlList`-Root o. ä.)
-  → klare Fehlermeldung, kein Absturz, kein Datei-Angebot.
-- `VirtualInCaption`/`VirtualOutCaption` fehlt komplett (Projekt hatte noch
-  nie einen virtuellen Ein-/Ausgang) → wird als Sonderfall der Neuanlage
-  behandelt, ebenfalls hinter dem Experimentell-Haken.
-- Ein gefundenes Objekt mit passendem Schlüssel sieht strukturell unerwartet
-  aus (z. B. falscher Objekttyp für den Schlüssel) → als `conflict` markiert,
-  wird übersprungen und explizit gemeldet statt still überschrieben oder
-  übernommen.
-- Kein Objekt mit passendem Schlüssel gefunden, aber ein bestehender Befehl im
-  selben Container trägt bereits denselben Titel (Abschnitt 5, `possible_
-  duplicate`) → wird übersprungen statt eine stille Dopplung anzulegen.
-- Keine Änderungen nötig → Plan sagt das explizit (Abschnitt 5), kein leerer
-  oder verwirrender Zustand.
+- File is not a valid Loxone project file (no `ControlList` root, etc.)
+  → clear error message, no crash, no file offered.
+- `VirtualInCaption`/`VirtualOutCaption` is missing entirely (the project
+  never had a virtual input/output) → treated as a special case of
+  creation, also behind the experimental checkbox.
+- A found object with a matching key looks structurally unexpected (e.g.
+  wrong object type for the key) → marked as `conflict`, is skipped and
+  reported explicitly instead of silently overwritten or adopted.
+- No object found with a matching key, but an existing command in the
+  same container already carries the same title (section 5,
+  `possible_duplicate`) → is skipped instead of creating a silent
+  duplicate.
+- No changes needed → the plan says so explicitly (section 5), no empty
+  or confusing state.
 
 ## 9. Tests
 
-Eine synthetische, klein gehaltene Fixture-Projektdatei, handgebaut nach dem
-in Abschnitt 3–6 beobachteten Schema — analog zu den bestehenden
-`tests/fixtures/loxone/*.xml`. **Nicht** die reale, vom Anwender gelieferte
-Datei — die bleibt wegen personenbezogener Daten (Adressen, Gerätetitel)
-außerhalb des Repos.
+A synthetic, deliberately small fixture project file, hand-built
+following the schema observed in sections 3–6 — analogous to the existing
+`tests/fixtures/loxone/*.xml`. **Not** the real file supplied by the
+user — that stays outside the repo because of personal data (addresses,
+device titles).
 
-Abgedeckt werden soll mindestens:
+At minimum, the following should be covered:
 
-- Update eines bestehenden `VirtualUdpInCmd`/`VirtualOutCmd`: nur die
-  abweichenden Attribute ändern sich, `U` und `Co`/`In`-Kinder bleiben exakt
-  erhalten.
-- Neuanlage eines Cmd in einem bestehenden Container.
-- Neuanlage eines kompletten Containers (nur wenn der Experimentell-Pfad
-  getestet wird).
-- Verwaistes Signal wird gemeldet, nicht verändert.
-- Byte-Identität aller Dateiteile, die nicht zum Plan gehören (Diff der Datei
-  vor/nach Patch, abzüglich der geplanten Änderungsstellen, muss leer sein).
-- ID-Eindeutigkeit neu erzeugter `U`-Werte gegen alle vorhandenen.
-- „Keine Änderungen nötig"-Fall liefert die explizite Meldung, keine leere
-  Liste.
+- Update of an existing `VirtualUdpInCmd`/`VirtualOutCmd`: only the
+  differing attributes change, `U` and `Co`/`In` children are preserved
+  exactly.
+- Creation of a new Cmd in an existing container.
+- Creation of a complete container (only when the experimental path is
+  tested).
+- An orphaned signal is reported, not modified.
+- Byte identity of all file parts that aren't part of the plan (diff of
+  the file before/after the patch, minus the planned change locations,
+  must be empty).
+- ID uniqueness of newly generated `U` values against all existing ones.
+- The "no changes needed" case delivers the explicit message, not an
+  empty list.
 
-## 10. Offene Risiken
+## 10. Open risks
 
-- **ID-Schema unverifiziert** (Abschnitt 6) — der zentrale Rest-Risiko-Punkt
-  dieses Entwurfs. Mitigiert durch den Experimentell-Haken (Abschnitt 3.4),
-  nicht gelöst.
-- **`NextObj`/`NextConst`-Semantik unverifiziert** — konservative Anhebung
-  (Abschnitt 6) ist eine Annahme, kein belegtes Verhalten.
-- **Format-Abweichungen zwischen Config-Versionen** möglich — bislang an zwei
-  echten Dateien geprüft (der ursprünglichen Referenzdatei und der Datei, an
-  der die Struktur-Korrektur aus Abschnitt 3.5 gefunden wurde). Andere
-  Versionen könnten trotzdem abweichen.
-- **Erledigt (2026-09-04):** die in einer früheren Fassung dieses Abschnitts
-  offene Frage nach der tatsächlichen Verschachtelung war der eigentliche
-  erste reale Fehler — behoben und dokumentiert in Abschnitt 3.5.
+- **ID scheme unverified** (section 6) — the central remaining risk
+  point of this design. Mitigated by the experimental checkbox
+  (section 3.4), not resolved.
+- **`NextObj`/`NextConst` semantics unverified** — the conservative raise
+  (section 6) is an assumption, not proven behavior.
+- **Format deviations between Config versions** possible — checked so
+  far on two real files (the original reference file and the file on
+  which the structure correction from section 3.5 was found). Other
+  versions could still deviate.
+- **Done (2026-09-04):** the question left open in an earlier version of
+  this section about the actual nesting was the actual first real bug —
+  fixed and documented in section 3.5.
 
-Der erste reale Test bleibt: eine automatisch gepatchte Datei in Loxone
-Config öffnen und auf Fehler prüfen, bevor ihr vertraut wird — insbesondere
-für den Experimentell-Pfad (neue Geräte-Container). Das ID-Schema selbst
-(Abschnitt 6) ist bislang nur gegen die in der Datei vorgefundenen `U`-Werte
-geprüft, nicht durch einen erfolgreichen Import in Loxone Config bestätigt.
+The first real test remains: open an automatically patched file in
+Loxone Config and check for errors before trusting it — especially for
+the experimental path (new device containers). The ID scheme itself
+(section 6) has so far only been checked against the `U` values found in
+the file, not confirmed by a successful import into Loxone Config.

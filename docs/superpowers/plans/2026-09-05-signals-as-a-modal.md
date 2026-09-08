@@ -1,80 +1,80 @@
-# Signale als Modal im Geräte-Screen — Implementierungsplan
+# Signals as a modal in the device screen — Implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Ansicht „Signale" verschwindet als eigener Reiter; das Bearbeiten einzelner Signale passiert in einem Modal, das vom Kebab-Menü der Gerätekachel und vom `+ N weitere Signale`-Link geöffnet wird.
+**Goal:** The "Signals" view disappears as its own tab; editing individual signals happens in a modal, opened from the device tile's kebab menu and from the `+ N weitere Signale` link.
 
-**Architecture:** Ein einziges `<dialog>` am Seitenende, außerhalb jeder `x-for`-Schleife. Alpine hält nur die Geräte-**ID** (`signalsModalDevice`); `@close` ist die einzige Stelle, die sie zurücksetzt. Die Signalzeile zieht unverändert aus der alten Ansicht um. Der globale Schalter „Experte anzeigen" weicht einem `<details>` je Gruppe — der Auf-/Zu-Zustand lebt im DOM statt in Alpine.
+**Architecture:** A single `<dialog>` at the end of the page, outside every `x-for` loop. Alpine holds only the device **ID** (`signalsModalDevice`); `@close` is the only place that resets it. The signal row moves over unchanged from the old view. The global "Show expert" toggle gives way to a `<details>` per group — the open/closed state lives in the DOM instead of in Alpine.
 
-**Tech Stack:** Alpine.js 3 (vendort unter `web/vendor/alpine.min.js`), natives `<dialog>` und `<details>`, FastAPI liefert `index.html`/`app.js`/`style.css` statisch aus, Tests mit pytest gegen den ausgelieferten Text, Verhaltensprüfung im Browser gegen den Demo-Server.
+**Tech Stack:** Alpine.js 3 (vendored under `web/vendor/alpine.min.js`), native `<dialog>` and `<details>`, FastAPI serves `index.html`/`app.js`/`style.css` statically, tests with pytest against the delivered text, behavior verification in the browser against the demo server.
 
-**Entwurf:** [docs/superpowers/specs/2026-09-05-signals-as-a-modal-design.md](../specs/2026-09-05-signals-as-a-modal-design.md)
+**Design:** [docs/superpowers/specs/2026-09-05-signals-as-a-modal-design.md](../specs/2026-09-05-signals-as-a-modal-design.md)
 
 ## Global Constraints
 
-- **Die API bleibt unangetastet.** `GET /api/devices/{id}/signals`, `PATCH /api/signals/{key}`, `POST /api/signals/{key}/write` — keine neue Route, kein neues Feld, keine Änderung an `src/loxmatter/api/`.
-- **Kommentare in `app.js`, `index.html`, `style.css` und in Python schreiben Umlaute als `ae`/`oe`/`ue`.** Nur `strings.yaml` (Nutzertexte) und die Dokumente unter `docs/` tragen echte Umlaute.
-- **Kein Wert in `strings.yaml` darf als Ganzes von typografischen Anführungszeichen umschlossen sein** (`„…“`, `“…”`). YAML trennt Skalare nur an geraden ASCII-Anführungszeichen; typografische landen wörtlich im String. `tests/test_i18n.py::test_no_value_is_wrapped_in_typographic_quotes` fängt es ab — es ist schon zweimal passiert.
-- **Jeder `web.*`-Schlüssel braucht mindestens `en`.** `de` fällt sonst auf `en` zurück, nie umgekehrt.
-- **Die WebUI-Tests belegen nur, DASS etwas ausgeliefert wird**, nie dass es wirkt. Verhalten wird in Task 4 im Browser gegen das vendorte Alpine geprüft, nicht durch Lesen.
-- **Vier Gates am Ende jeder Task:** `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`.
-- **Kein `overflow: hidden` auf `.device-card`, `.device-foot` oder `.tile-menu`**, und keine neue `opacity`/`filter`/`transform`/`contain` auf diesen dreien — das kappt oder versenkt das Kachel-Menü wortlos (siehe die Kommentare in `style.css`).
+- **The API stays untouched.** `GET /api/devices/{id}/signals`, `PATCH /api/signals/{key}`, `POST /api/signals/{key}/write` — no new route, no new field, no change to `src/loxmatter/api/`.
+- **Comments in `app.js`, `index.html`, `style.css`, and in Python write umlauts as `ae`/`oe`/`ue`.** Only `strings.yaml` (user-facing text) and the documents under `docs/` carry real umlauts.
+- **No value in `strings.yaml` may be wrapped as a whole in typographic quotation marks** (`„…“`, `“…”`). YAML only splits scalars on straight ASCII quotation marks; typographic ones land literally in the string. `tests/test_i18n.py::test_no_value_is_wrapped_in_typographic_quotes` catches it — it has already happened twice.
+- **Every `web.*` key needs at least `en`.** Otherwise `de` falls back to `en`, never the other way around.
+- **The WebUI tests only prove THAT something is delivered**, never that it works. Behavior is checked in task 4 in the browser against the vendored Alpine, not by reading.
+- **Four gates at the end of every task:** `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`.
+- **No `overflow: hidden` on `.device-card`, `.device-foot`, or `.tile-menu`**, and no new `opacity`/`filter`/`transform`/`contain` on these three — that silently clips or sinks the tile menu (see the comments in `style.css`).
 
 ## File Structure
 
-| Datei | Rolle in diesem Umbau |
+| File | Role in this rework |
 | --- | --- |
-| `src/loxmatter/web/index.html` | Symbol `i-close`, Kebab-Eintrag, neues Ziel des `+ N`-Links, das `<dialog>` samt Inhalt; später weg: Nav-Knopf und die Signal-`<section>` |
-| `src/loxmatter/web/app.js` | `signalsModalDevice`, `signalsModalDeviceObject()`, `openSignalsModal()`, `closeSignalsModal()`, Schließen in `removeDevice`; später weg: `showExpertSignals` und der `selectView`-Zweig |
-| `src/loxmatter/web/style.css` | `.signals-modal*`, `.signal-group`; später weg: `.signal-group-toggle` |
-| `src/loxmatter/i18n/strings.yaml` | drei neue Schlüssel; später weg: drei alte |
-| `tests/api/test_web.py` | neue Zusicherungen; später: drei bestehende Tests nachziehen |
-| `scripts/capture_screenshots.py` | `signals.png` entsteht künftig aus dem Modal statt aus dem Reiter |
-| `README.md` | Bildunterschrift der Signals-Kachel |
+| `src/loxmatter/web/index.html` | Symbol `i-close`, kebab entry, new target of the `+ N` link, the `<dialog>` with its content; later removed: nav button and the signal `<section>` |
+| `src/loxmatter/web/app.js` | `signalsModalDevice`, `signalsModalDeviceObject()`, `openSignalsModal()`, `closeSignalsModal()`, closing in `removeDevice`; later removed: `showExpertSignals` and the `selectView` branch |
+| `src/loxmatter/web/style.css` | `.signals-modal*`, `.signal-group`; later removed: `.signal-group-toggle` |
+| `src/loxmatter/i18n/strings.yaml` | three new keys; later removed: three old ones |
+| `tests/api/test_web.py` | new assertions; later: three existing tests to update |
+| `scripts/capture_screenshots.py` | `signals.png` will going forward come from the modal instead of the tab |
+| `README.md` | caption of the Signals tile |
 
-**Reihenfolge und warum:** Task 1 und 2 bauen das Modal **neben** dem noch existierenden Reiter auf — die Anwendung ist zu keinem Zeitpunkt kaputt, und ein Reviewer kann das Modal beurteilen, bevor irgendetwas gelöscht wird. Erst Task 3 löst den Reiter auf.
+**Order and why:** Tasks 1 and 2 build the modal **next to** the still-existing tab — the application is never broken at any point, and a reviewer can judge the modal before anything is deleted. Only task 3 dissolves the tab.
 
 ---
 
-### Task 1: Modal-Hülle, Zustand und die zwei Einstiege
+### Task 1: Modal shell, state, and the two entry points
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (Symbolblock bei `i-rename`; Kebab-Menü bei `exportDevice(device)`; `+ N`-Link; neues `<dialog>` vor `<div class="toasts"`)
-- Modify: `src/loxmatter/web/app.js` (Zustandsblock „Signale"; neue Methoden vor `async loadSignals(deviceId)`; `removeDevice`)
-- Modify: `src/loxmatter/web/style.css` (ans Dateiende)
-- Modify: `src/loxmatter/i18n/strings.yaml` (Abschnitte `web.devices` und `web.signals`)
-- Test: `tests/api/test_web.py` (ans Dateiende)
+- Modify: `src/loxmatter/web/index.html` (symbol block at `i-rename`; kebab menu at `exportDevice(device)`; `+ N` link; new `<dialog>` before `<div class="toasts"`)
+- Modify: `src/loxmatter/web/app.js` (state block "Signals"; new methods before `async loadSignals(deviceId)`; `removeDevice`)
+- Modify: `src/loxmatter/web/style.css` (at the end of the file)
+- Modify: `src/loxmatter/i18n/strings.yaml` (sections `web.devices` and `web.signals`)
+- Test: `tests/api/test_web.py` (at the end of the file)
 
 **Interfaces:**
-- Consumes: `closeTileMenu(el)`, `t(key, values)`, `this.devices` (Liste von `{id, label, room, online, category, …}`) — alle vorhanden.
+- Consumes: `closeTileMenu(el)`, `t(key, values)`, `this.devices` (list of `{id, label, room, online, category, …}`) — all present.
 - Produces:
-  - `signalsModalDevice: string | null` — Geräte-ID des offenen Modals.
-  - `signalsModalDeviceObject(): object | null` — löst sie gegen `this.devices` auf.
-  - `openSignalsModal(device): void` — setzt die ID, öffnet im `$nextTick`.
-  - `closeSignalsModal(): void` — ruft `close()` auf dem `<dialog>`.
-  - i18n: `web.devices.menu_signals`, `web.signals.modal_heading` (Platzhalter `{device}`), `web.signals.modal_close`.
-  - CSS-Klassen: `.signals-modal`, `.signals-modal-body`, `.signals-modal-head`, `.signals-modal-close`.
-  - SVG-Symbol `#i-close`.
+  - `signalsModalDevice: string | null` — device ID of the open modal.
+  - `signalsModalDeviceObject(): object | null` — resolves it against `this.devices`.
+  - `openSignalsModal(device): void` — sets the ID, opens in `$nextTick`.
+  - `closeSignalsModal(): void` — calls `close()` on the `<dialog>`.
+  - i18n: `web.devices.menu_signals`, `web.signals.modal_heading` (placeholder `{device}`), `web.signals.modal_close`.
+  - CSS classes: `.signals-modal`, `.signals-modal-body`, `.signals-modal-head`, `.signals-modal-close`.
+  - SVG symbol `#i-close`.
 
-- [ ] **Step 1: Die drei fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the three failing tests**
 
-Ans Ende von `tests/api/test_web.py` anfügen:
+Append to the end of `tests/api/test_web.py`:
 
 ```python
 async def test_exactly_one_signals_dialog_is_delivered(api):
-    """Entwurf Abschnitt 4: EIN `<dialog>` fuer die ganze Seite, nicht eines
-    je Kachel.
+    """Design section 4: ONE `<dialog>` for the whole page, not one per
+    tile.
 
-    Markup innerhalb `x-for` wird einmal PRO GERAET ausgeliefert - bei
-    dreissig Geraeten laegen dreissig vollstaendige Signaltabellen im
-    Dokument, und jede `id` darin dreissigfach (derselbe Fallstrick, den
-    `aria-labelledby` im Kachel-Menue schon einmal umschiffen musste). Die
-    Zaehlung auf 1 ist die einzige Zusicherung, die diesen Rueckfall
-    ueberhaupt bemerken wuerde: ein `<dialog>` in der Kachel saehe im
-    ausgelieferten Text sonst genauso aus wie eines am Seitenende.
+    Markup inside `x-for` is delivered once PER DEVICE - with thirty
+    devices, thirty complete signal tables would sit in the document, and
+    every `id` inside them thirty times over (the same pitfall that
+    `aria-labelledby` in the tile menu already had to navigate around).
+    Counting to 1 is the only assertion that would notice this regression
+    at all: a `<dialog>` inside the tile would otherwise look exactly the
+    same in the delivered text as one at the end of the page.
 
-    Die Ortspruefung (nach `</main>`) belegt zusaetzlich, dass es ausserhalb
-    der Ansichts-Sections und damit ausserhalb jeder Geraeteschleife steht."""
+    The location check (after `</main>`) additionally proves that it sits
+    outside the view sections and thus outside every device loop."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert markup.count("<dialog") == 1
@@ -83,16 +83,16 @@ async def test_exactly_one_signals_dialog_is_delivered(api):
 
 
 async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api):
-    """Entwurf Abschnitt 4: `@close` ist die EINZIGE Ruecksetzstelle.
+    """Design section 4: `@close` is the ONLY reset point.
 
-    Das Ereignis feuert auf jedem Schliessweg - Escape, Schliessen-Knopf,
-    Backdrop, `close()` aus JavaScript. Ein zweiter Ruecksetzer an einem
-    einzelnen Schliessweg waere genau die Verteilung auf mehrere Handler,
-    die beim Raum-Auswahlfeld sechs Reviewrunden gekostet hat; deshalb
-    zaehlt dieser Test die Vorkommen, statt nur eines zu suchen.
+    The event fires on every closing path - Escape, close button,
+    backdrop, `close()` from JavaScript. A second reset on a single
+    closing path would be exactly the spread across multiple handlers
+    that cost six review rounds on the room selection field; that's why
+    this test counts the occurrences instead of just searching for one.
 
-    `@click.self` ist dazu Pflicht und kein Beiwerk: ein `<dialog>`
-    schliesst bei einem Klick auf den Backdrop NICHT von selbst."""
+    `@click.self` is mandatory for this, not decoration: a `<dialog>`
+    does NOT close on a click on the backdrop by itself."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert '@close="signalsModalDevice = null"' in markup
@@ -101,40 +101,40 @@ async def test_the_signals_modal_has_exactly_one_place_that_resets_its_state(api
 
 
 async def test_the_two_entry_points_open_the_signals_modal(api):
-    """Entwurf Abschnitt 5: das Modal hat genau zwei Einstiege.
+    """Design section 5: the modal has exactly two entry points.
 
-    Der Kebab-Eintrag ruft ERST `closeTileMenu($el)`, dann
-    `openSignalsModal(device)` - diese Reihenfolge traegt den Fokus:
-    `closeTileMenu` setzt ihn auf das `<summary>`, und das unmittelbar
-    folgende `showModal()` merkt sich genau diesen Fokus als Rueckkehrpunkt.
-    Umgedreht landete der Fokus nach dem Schliessen des Modals im Nichts.
+    The kebab entry calls `closeTileMenu($el)` FIRST, then
+    `openSignalsModal(device)` - this order carries the focus:
+    `closeTileMenu` sets it on the `<summary>`, and the `showModal()` that
+    immediately follows remembers exactly this focus as the return point.
+    Reversed, the focus would land nowhere after the modal closed.
 
-    Der `+ N weitere Signale`-Link sprang bislang per `selectView('signals')`
-    in eine Liste ALLER Geraete, in der man das eigene wieder suchen musste -
-    er zeigt jetzt auf das Geraet, dessen Signale er verspricht."""
+    The `+ N weitere Signale` link used to jump via `selectView('signals')`
+    into a list of ALL devices, in which one had to search for one's own
+    again - it now points to the device whose signals it promises."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     assert '@click="closeTileMenu($el); openSignalsModal(device)"' in markup
     assert "x-text=\"t('web.devices.menu_signals')\"" in markup
     assert '@click.prevent="openSignalsModal(device)"' in markup
 
-    # Die Reihenfolge NUR innerhalb des Menues vergleichen: der
-    # `+ N weitere Signale`-Link steht weiter oben in derselben Kachel und
-    # ruft dieselbe Methode, ein `markup.index(...)` ueber die ganze Seite
-    # traefe also ihn statt den Menueeintrag und waere immer wahr.
+    # Compare the order ONLY within the menu: the `+ N weitere Signale`
+    # link sits further up in the same tile and calls the same method, so
+    # a `markup.index(...)` over the whole page would hit it instead of
+    # the menu entry and would always be true.
     menu_start = markup.index('<div class="tile-menu-items">')
     menu = markup[menu_start : markup.index("</details>", menu_start)]
     assert menu.index("openSignalsModal(device)") < menu.index("exportDevice(device)")
 
 
 async def test_open_signals_modal_shows_the_dialog_only_after_alpine_rendered(api):
-    """Entwurf Abschnitt 4: `showModal()` erst im `$nextTick`.
+    """Design section 4: `showModal()` only in `$nextTick`.
 
-    `showModal()` setzt den Anfangsfokus auf das erste fokussierbare Element
-    IM Dialog - und das gibt es erst, nachdem Alpine den `x-if`-Inhalt
-    aufgebaut hat. Ohne `$nextTick` oeffnet der Dialog leer und der Fokus
-    landet auf dem `<dialog>` selbst; die erste Tab-Taste faengt dann am
-    Dokumentanfang an statt im Modal."""
+    `showModal()` sets the initial focus on the first focusable element
+    IN the dialog - and that only exists after Alpine has built the
+    `x-if` content. Without `$nextTick` the dialog opens empty and the
+    focus lands on the `<dialog>` itself; the first Tab key then starts
+    at the beginning of the document instead of in the modal."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     start = script.index("openSignalsModal(device) {")
@@ -145,11 +145,11 @@ async def test_open_signals_modal_shows_the_dialog_only_after_alpine_rendered(ap
 
 
 async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
-    """Entwurf Abschnitt 4, "Wenn das Geraet verschwindet".
+    """Design section 4, "When the device disappears".
 
-    Ohne diesen Ruf bliebe ein Dialog ueber einem Geraet offen stehen, das
-    es nicht mehr gibt - und der `x-if`-Waechter machte ihn zu einem leeren
-    Kasten ohne erkennbaren Grund."""
+    Without this call, a dialog would remain open over a device that no
+    longer exists - and the `x-if` guard would turn it into an empty box
+    with no discernible reason."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
     start = script.index("async removeDevice(device) {")
@@ -159,17 +159,17 @@ async def test_removing_a_device_closes_a_signals_modal_that_shows_it(api):
     assert "this.closeSignalsModal();" in body
 ```
 
-- [ ] **Step 2: Tests laufen lassen und den Fehlschlag sehen**
+- [ ] **Step 2: Run the tests and see them fail**
 
 ```bash
 uv run pytest tests/api/test_web.py -q -k "signals_dialog or resets_its_state or two_entry_points or only_after_alpine or closes_a_signals_modal"
 ```
 
-Expected: 5 failed. Der erste scheitert an `assert 0 == 1` (kein `<dialog>` im Dokument), die JavaScript-Tests an `ValueError: substring not found` aus `script.index(...)`.
+Expected: 5 failed. The first fails on `assert 0 == 1` (no `<dialog>` in the document), the JavaScript tests on `ValueError: substring not found` from `script.index(...)`.
 
-- [ ] **Step 3: Die drei Übersetzungsschlüssel eintragen**
+- [ ] **Step 3: Enter the three translation keys**
 
-In `src/loxmatter/i18n/strings.yaml`, direkt nach `web.devices.menu_room_heading` (der letzte Eintrag des `web.devices`-Blocks):
+In `src/loxmatter/i18n/strings.yaml`, directly after `web.devices.menu_room_heading` (the last entry of the `web.devices` block):
 
 ```yaml
 web.devices.menu_signals:
@@ -177,7 +177,7 @@ web.devices.menu_signals:
   de: "Signale bearbeiten…"
 ```
 
-Und im `web.signals`-Block, direkt nach `web.signals.write_success`:
+And in the `web.signals` block, directly after `web.signals.write_success`:
 
 ```yaml
 web.signals.modal_heading:
@@ -188,11 +188,11 @@ web.signals.modal_close:
   de: "Schließen"
 ```
 
-Der Platzhalter `{device}` ist unbedenklich: `_web_strings()` (`src/loxmatter/api/language.py:56`) liefert unaufgelöste Vorlagen über `raw_template()`, gerade damit `web.*`-Schlüssel Platzhalter tragen dürfen. Gefüllt wird er im Browser in `t()`.
+The placeholder `{device}` is unproblematic: `_web_strings()` (`src/loxmatter/api/language.py:56`) delivers unresolved templates via `raw_template()`, precisely so that `web.*` keys may carry placeholders. It is filled in the browser in `t()`.
 
-- [ ] **Step 4: Das Schließen-Symbol ergänzen**
+- [ ] **Step 4: Add the close symbol**
 
-In `src/loxmatter/web/index.html`, direkt nach dem `</symbol>` von `i-rename`:
+In `src/loxmatter/web/index.html`, directly after the `</symbol>` of `i-rename`:
 
 ```html
       <symbol id="i-close" viewBox="0 0 24 24">
@@ -201,23 +201,23 @@ In `src/loxmatter/web/index.html`, direkt nach dem `</symbol>` von `i-rename`:
       </symbol>
 ```
 
-Zwei Linien, kein `fill` — `.icon` setzt `fill: none; stroke: currentColor`, ein gefülltes Pfad-Icon bliebe hier unsichtbar (siehe der Kommentar am `i-kebab`-Symbol).
+Two lines, no `fill` — `.icon` sets `fill: none; stroke: currentColor`, a filled path icon would remain invisible here (see the comment on the `i-kebab` symbol).
 
-- [ ] **Step 5: Zustand und Methoden in `app.js`**
+- [ ] **Step 5: State and methods in `app.js`**
 
-In `src/loxmatter/web/app.js`, im Zustandsblock direkt nach `rawWriteMessages: {},`:
+In `src/loxmatter/web/app.js`, in the state block directly after `rawWriteMessages: {},`:
 
 ```js
-    // Das Signal-Modal haelt die Geraete-ID, NICHT das Geraeteobjekt:
-    // `loadDevices` ersetzt `devices` vollstaendig, ein festgehaltenes
-    // Objekt waere danach eine Leiche mit veraltetem Namen und Raum.
-    // `signalsModalDeviceObject()` loest die ID gegen die jeweils aktuelle
-    // Liste auf. Zurueckgesetzt wird dieses Feld an GENAU EINER Stelle, dem
-    // `@close` des `<dialog>` in index.html - siehe den Kommentar dort.
+    // The signal modal holds the device ID, NOT the device object:
+    // `loadDevices` replaces `devices` wholesale, so a held-onto object
+    // would afterward be a corpse with a stale name and room.
+    // `signalsModalDeviceObject()` resolves the ID against the current
+    // list each time. This field is reset in EXACTLY ONE place, the
+    // `@close` of the `<dialog>` in index.html - see the comment there.
     signalsModalDevice: null,
 ```
 
-Direkt vor `async loadSignals(deviceId) {` die drei Methoden:
+Directly before `async loadSignals(deviceId) {`, the three methods:
 
 ```js
     signalsModalDeviceObject() {
@@ -225,21 +225,21 @@ Direkt vor `async loadSignals(deviceId) {` die drei Methoden:
     },
 
     /**
-     * Oeffnet das Signal-Modal fuer ein Geraet.
+     * Opens the signal modal for a device.
      *
-     * Das `$nextTick` ist Pflicht, kein Stil: `showModal()` setzt den
-     * Anfangsfokus auf das erste fokussierbare Element IM Dialog, und das
-     * gibt es erst, nachdem Alpine den `x-if`-Inhalt aufgebaut hat. Ohne
-     * das Warten oeffnet der Dialog leer, der Fokus bleibt auf dem
-     * `<dialog>` selbst, und die erste Tab-Taste faengt wieder am
-     * Dokumentanfang an.
+     * The `$nextTick` is mandatory, not style: `showModal()` sets the
+     * initial focus on the first focusable element IN the dialog, and
+     * that only exists after Alpine has built the `x-if` content.
+     * Without waiting for it, the dialog opens empty, the focus stays on
+     * the `<dialog>` itself, and the first Tab key starts at the
+     * beginning of the document again.
      *
-     * `$refs` ist hier unbedenklich, obwohl der Kommentar am Kachel-Menue
-     * (index.html, Fund 3) ausdruecklich davon abraet: dessen Einwand
-     * trifft eine Registrierung, die PRO KACHEL laeuft und sich selbst
-     * ueberschreibt. Dieses `<dialog>` steht genau einmal im Dokument -
-     * dieselbe Lage wie bei `pinLogListToTop`, das aus demselben Grund
-     * schon heute `this.$refs` benutzt.
+     * `$refs` is unproblematic here, even though the comment on the tile
+     * menu (index.html, finding 3) explicitly advises against it: the
+     * objection there hits a registration that runs PER TILE and
+     * overwrites itself. This `<dialog>` sits exactly once in the
+     * document - the same situation as `pinLogListToTop`, which already
+     * uses `this.$refs` today for the same reason.
      */
     openSignalsModal(device) {
       this.signalsModalDevice = device.id;
@@ -247,35 +247,34 @@ Direkt vor `async loadSignals(deviceId) {` die drei Methoden:
     },
 
     /**
-     * Schliesst das Modal ueber die native `close()`-Methode statt den
-     * Zustand direkt zu leeren: `close()` loest das `close`-Ereignis aus,
-     * und dessen Handler in index.html ist die eine Stelle, die
-     * `signalsModalDevice` zuruecksetzt. Wer hier zusaetzlich
-     * `this.signalsModalDevice = null` schriebe, haette wieder zwei
-     * Wahrheiten ueber denselben Zustand.
+     * Closes the modal via the native `close()` method instead of
+     * clearing the state directly: `close()` triggers the `close` event,
+     * and its handler in index.html is the one place that resets
+     * `signalsModalDevice`. Writing `this.signalsModalDevice = null`
+     * here as well would again create two truths about the same state.
      */
     closeSignalsModal() {
       this.$refs.signalsModal.close();
     },
 ```
 
-In `removeDevice`, direkt nach `delete this.signalsByDevice[device.id];`:
+In `removeDevice`, directly after `delete this.signalsByDevice[device.id];`:
 
 ```js
-        // Ohne das bliebe ein Dialog ueber einem Geraet offen stehen, das
-        // es nicht mehr gibt - und der `x-if`-Waechter im Modal machte ihn
-        // zu einem leeren Kasten ohne erkennbaren Grund. `close()` ist ein
-        // Nichtstun, wenn der Dialog gar nicht offen ist; die Abfrage steht
-        // trotzdem davor, damit ein Modal ueber einem ANDEREN Geraet nicht
-        // mit zugeht.
+        // Without this, a dialog would remain open over a device that no
+        // longer exists - and the `x-if` guard in the modal would turn it
+        // into an empty box with no discernible reason. `close()` is a
+        // no-op if the dialog isn't open at all; the check still guards
+        // it so that a modal over a DIFFERENT device doesn't close along
+        // with it.
         if (this.signalsModalDevice === device.id) {
           this.closeSignalsModal();
         }
 ```
 
-- [ ] **Step 6: Die zwei Einstiege in `index.html` verdrahten**
+- [ ] **Step 6: Wire up the two entry points in `index.html`**
 
-Im Kachel-Menü, **vor** dem „Exportieren"-Knopf und direkt nach `<hr class="tile-menu-sep" />`:
+In the tile menu, **before** the "Export" button and directly after `<hr class="tile-menu-sep" />`:
 
 ```html
                         <button
@@ -285,57 +284,56 @@ Im Kachel-Menü, **vor** dem „Exportieren"-Knopf und direkt nach `<hr class="t
                         ></button>
 ```
 
-Die Reihenfolge im `@click` traegt den Fokus: `closeTileMenu` schließt das `<details>` und setzt den Fokus auf dessen `<summary>`; das unmittelbar folgende `showModal()` merkt sich genau diesen Fokus als Rückkehrpunkt. Dieselbe Reihenfolge wie bei „Exportieren" und „Entfernen" daneben.
+The order in `@click` carries the focus: `closeTileMenu` closes the `<details>` and sets focus on its `<summary>`; the `showModal()` that immediately follows remembers exactly this focus as the return point. The same order as for "Export" and "Remove" next to it.
 
-Und beim `+ N weitere Signale`-Link im Werteraster: `@click.prevent="selectView('signals')"` wird zu
+And on the `+ N weitere Signale` link in the value grid: `@click.prevent="selectView('signals')"` becomes
 
 ```html
                         @click.prevent="openSignalsModal(device)"
 ```
 
-- [ ] **Step 7: Das `<dialog>` einsetzen**
+- [ ] **Step 7: Insert the `<dialog>`**
 
-In `src/loxmatter/web/index.html`, direkt **vor** `<div class="toasts" aria-live="polite">` — also außerhalb des `</template>`, das die angemeldete Ansicht umschließt, genau wie die Kurzmeldungen daneben:
+In `src/loxmatter/web/index.html`, directly **before** `<div class="toasts" aria-live="polite">` — i.e. outside the `</template>` that wraps the logged-in view, exactly like the toast notifications next to it:
 
 ```html
     <!--
-      Signal-Modal (Entwurf "Signale als Modal", 2026-09-05). Genau EIN
-      `<dialog>` fuer die ganze Seite, bewusst ausserhalb der `x-for`-
-      Schleife der Geraetekacheln: Markup innerhalb `x-for` wird einmal PRO
-      GERAET ausgeliefert - bei dreissig Geraeten laegen dreissig
-      vollstaendige Signaltabellen im Dokument, und jede `id` darin
-      dreissigfach (derselbe Fallstrick, den `aria-labelledby` im
-      Kachel-Menue schon einmal umschiffen musste).
+      Signal modal (design "Signals as a modal", 2026-09-05). Exactly ONE
+      `<dialog>` for the whole page, deliberately outside the `x-for`
+      loop of the device tiles: markup inside `x-for` is delivered once
+      PER DEVICE - with thirty devices, thirty complete signal tables
+      would sit in the document, and every `id` inside them thirty times
+      over (the same pitfall that `aria-labelledby` in the tile menu
+      already had to navigate around).
 
-      Es steht zudem ausserhalb des Login-`<template>`, wie die
-      Kurzmeldungen darunter: so ist `$refs.signalsModal` immer aufloesbar
-      und nicht davon abhaengig, ob Alpine den angemeldeten Teilbaum gerade
-      gerendert hat.
+      It also sits outside the login `<template>`, like the toast
+      notifications below it: this way `$refs.signalsModal` is always
+      resolvable and does not depend on whether Alpine has just rendered
+      the logged-in subtree.
 
-      `x-ref` ist hier zulaessig, obwohl der Kommentar am Kachel-Menue
-      (Fund 3) ausdruecklich davon abraet. Der dortige Einwand trifft eine
-      Registrierung, die PRO KACHEL laeuft: die Seite teilt sich ein
-      einziges `x-data` am `<body>`, und der Eintrag der zuletzt
-      gerenderten Kachel ueberschreibt jeden davor. Dieses `<dialog>` steht
-      genau einmal im Dokument - niemand kann es ueberschreiben. Dieselbe
-      Lage wie bei `x-ref="diagnosticsLogsList"` und `x-ref="datagramsList"`
-      weiter oben, die aus demselben Grund unbedenklich sind.
+      `x-ref` is permitted here, even though the comment on the tile menu
+      (finding 3) explicitly advises against it. The objection there hits
+      a registration that runs PER TILE: the page shares a single
+      `x-data` on the `<body>`, and the entry of the most recently
+      rendered tile overwrites every one before it. This `<dialog>` sits
+      exactly once in the document - no one can overwrite it. The same
+      situation as `x-ref="diagnosticsLogsList"` and
+      `x-ref="datagramsList"` further up, which are unproblematic for the
+      same reason.
 
-      `@close` ist die EINZIGE Stelle, die `signalsModalDevice`
-      zuruecksetzt. Das Ereignis feuert auf jedem Schliessweg - Escape,
-      Schliessen-Knopf, Backdrop, `close()` aus JavaScript -, es gibt also
-      keinen Pfad, auf dem der Alpine-Zustand und der sichtbare Zustand
-      auseinanderlaufen koennen. Dieselbe Rolle, die `@toggle` beim
-      `<details>` des Kachel-Menues spielt. KEINE weiteren Ruecksetzer an
-      den einzelnen Schliesswegen ergaenzen - genau diese Verteilung auf
-      mehrere Handler war beim Raum-Auswahlfeld die Ursache von sechs
-      Reviewrunden.
+      `@close` is the ONLY place that resets `signalsModalDevice`. The
+      event fires on every closing path - Escape, close button, backdrop,
+      `close()` from JavaScript - so there is no path on which the
+      Alpine state and the visible state can drift apart. The same role
+      that `@toggle` plays for the tile menu's `<details>`. Do NOT add
+      further resets on individual closing paths - exactly this spread
+      across multiple handlers was the cause of six review rounds on the
+      room selection field.
 
-      Ein `<dialog>` schliesst bei einem Klick auf den Backdrop NICHT von
-      selbst (anders als es Escape tut). `@click.self` ergaenzt das: der
-      Inhalt liegt vollstaendig in `.signals-modal-body`, ein
-      Klick-Ereignis mit dem `<dialog>` SELBST als Ziel kann deshalb nur
-      der Backdrop sein.
+      A `<dialog>` does NOT close on a click on the backdrop by itself
+      (unlike what Escape does). `@click.self` adds that: the content
+      sits entirely in `.signals-modal-body`, so a click event with the
+      `<dialog>` ITSELF as the target can only be the backdrop.
     -->
     <dialog
       x-ref="signalsModal"
@@ -360,24 +358,24 @@ In `src/loxmatter/web/index.html`, direkt **vor** `<div class="toasts" aria-live
     </dialog>
 ```
 
-Der Rumpf bleibt in dieser Task absichtlich bei Kopfzeile und Schließen-Knopf — Task 2 füllt ihn. So lässt sich Öffnen, Schließen und Fokusrückgabe beurteilen, bevor Inhalt dazukommt.
+The body deliberately stays at just header and close button in this task — task 2 fills it. This way opening, closing, and focus return can be judged before content is added.
 
-- [ ] **Step 8: Aussehen**
+- [ ] **Step 8: Appearance**
 
-Ans Ende von `src/loxmatter/web/style.css`:
+At the end of `src/loxmatter/web/style.css`:
 
 ```css
-/* Signal-Modal (Entwurf "Signale als Modal", 2026-09-05).
+/* Signal modal (design "Signals as a modal", 2026-09-05).
  *
- * `max-height` plus `overflow: auto` statt einer festen Hoehe: ein Geraet
- * mit vierzig Attributen soll im Modal scrollen, nicht ueber den unteren
- * Bildschirmrand hinauswachsen, wo der Schliessen-Knopf dann unerreichbar
- * waere.
+ * `max-height` plus `overflow: auto` instead of a fixed height: a device
+ * with forty attributes should scroll inside the modal, not grow past
+ * the bottom edge of the screen, where the close button would then be
+ * unreachable.
  *
- * Der `::backdrop` bekommt KEINE Farbe aus den Themenvariablen: er liegt
- * im Top-Layer, ausserhalb des Dokumentbaums, und erbt von dort keine
- * `:root`-Variablen zuverlaessig. Ein fester halbtransparenter Schwarzton
- * wirkt in beiden Themen. */
+ * The `::backdrop` gets NO color from the theme variables: it sits in
+ * the top layer, outside the document tree, and does not reliably
+ * inherit `:root` variables from there. A fixed, semi-transparent black
+ * tone works in both themes. */
 .signals-modal {
   width: min(46rem, 92vw);
   max-height: 85vh;
@@ -423,7 +421,7 @@ Ans Ende von `src/loxmatter/web/style.css`:
 }
 ```
 
-- [ ] **Step 9: Tests laufen lassen**
+- [ ] **Step 9: Run the tests**
 
 ```bash
 uv run pytest tests/api/test_web.py -q -k "signals_dialog or resets_its_state or two_entry_points or only_after_alpine or closes_a_signals_modal"
@@ -431,13 +429,13 @@ uv run pytest tests/api/test_web.py -q -k "signals_dialog or resets_its_state or
 
 Expected: 5 passed.
 
-- [ ] **Step 10: Alle Gates**
+- [ ] **Step 10: All gates**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy src
 ```
 
-Expected: alle vier sauber. Der Reiter „Signale" existiert weiterhin und seine Tests laufen unverändert durch — das ist an dieser Stelle richtig, Task 3 räumt ihn ab.
+Expected: all four clean. The "Signals" tab still exists and its tests still pass unchanged — that is correct at this point, task 3 clears it away.
 
 - [ ] **Step 11: Commit**
 
@@ -458,38 +456,39 @@ EOF
 
 ---
 
-### Task 2: Der Inhalt des Modals
+### Task 2: The content of the modal
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (`.signals-modal-body`, aus Task 1)
-- Modify: `src/loxmatter/web/style.css` (ans Dateiende, an den Block aus Task 1 anschließend)
-- Test: `tests/api/test_web.py` (ans Dateiende)
+- Modify: `src/loxmatter/web/index.html` (`.signals-modal-body`, from task 1)
+- Modify: `src/loxmatter/web/style.css` (at the end of the file, following the block from task 1)
+- Test: `tests/api/test_web.py` (at the end of the file)
 
 **Interfaces:**
-- Consumes: `signalsModalDeviceObject()` und `signalsModalDevice` (Task 1); `signalGroupsFor(deviceId)` → `[{key, title, collapsible, signals}]`; `signalsByDevice`, `signalsError`, `titleDrafts`, `rawWriteDrafts`, `rawWriteBusyKey`, `rawWriteMessages`; `loadSignals`, `saveTitle`, `toggleExported`, `toggleResend`, `writeRaw`, `rawWriteMessageClass`, `liveValueOf`, `formatValue`, `signalIsFresh`, `signalAgeTitle` — alle unverändert vorhanden.
-- Produces: CSS-Klasse `.signal-group`; sonst nichts, was eine spätere Task konsumiert.
+- Consumes: `signalsModalDeviceObject()` and `signalsModalDevice` (task 1); `signalGroupsFor(deviceId)` → `[{key, title, collapsible, signals}]`; `signalsByDevice`, `signalsError`, `titleDrafts`, `rawWriteDrafts`, `rawWriteBusyKey`, `rawWriteMessages`; `loadSignals`, `saveTitle`, `toggleExported`, `toggleResend`, `writeRaw`, `rawWriteMessageClass`, `liveValueOf`, `formatValue`, `signalIsFresh`, `signalAgeTitle` — all present unchanged.
+- Produces: CSS class `.signal-group`; nothing else that a later task consumes.
 
-- [ ] **Step 1: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-Ans Ende von `tests/api/test_web.py`:
+At the end of `tests/api/test_web.py`:
 
 ```python
 def _signals_dialog(markup: str) -> str:
-    """Der Inhalt des Signal-Modals, ohne den Rest der Seite.
+    """The content of the signal modal, without the rest of the page.
 
-    Ein blosses `in markup` wuerde die alte Signal-Section mitzaehlen,
-    solange es sie noch gibt (Task 3 loescht sie erst danach) - und traefe
-    danach immer noch die Geraetekacheln, die dieselben Helfer benutzen."""
+    A bare `in markup` would also count the old signal section for as
+    long as it still exists (task 3 only deletes it afterward) - and
+    would afterward still hit the device tiles, which use the same
+    helpers."""
     start = markup.index("<dialog")
     return markup[start : markup.index("</dialog>", start)]
 
 
 async def test_the_signals_modal_carries_the_complete_signal_row(api):
-    """Entwurf Abschnitt 2: die Signalzeile zieht 1:1 um, ohne
-    Funktionsverlust - Titel, Export, Resend und Rohwert-Schreiben
-    inbegriffen. Genau diese vier Schreibwege sind das, was die alte
-    Ansicht als einzige konnte; faellt einer beim Umzug herunter, ist er
-    nirgends mehr erreichbar."""
+    """Design section 2: the signal row moves over 1:1, without loss of
+    functionality - title, export, resend, and raw-value writing
+    included. These exact four write paths are what only the old view
+    could do; if one falls off during the move, it is nowhere reachable
+    anymore."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     assert '@change="saveTitle(signal)"' in dialog
@@ -502,13 +501,12 @@ async def test_the_signals_modal_carries_the_complete_signal_row(api):
 
 
 async def test_the_signals_error_banner_lives_inside_the_modal(api):
-    """Entwurf Abschnitt 4, Punkt 2: `signalsError` steht IM Modal.
+    """Design section 4, point 2: `signalsError` sits INSIDE the modal.
 
-    Ein `<dialog>` im Top-Layer verdeckt alles darunter samt Backdrop - ein
-    Fehlerbanner ausserhalb waere waehrend der einzigen Aktion, die es
-    ausloesen kann (Titel speichern, Haken setzen, Rohwert schreiben),
-    unsichtbar. Ein unsichtbarer Fehler ist nach Spec 8.1 schlimmer als
-    keiner."""
+    A `<dialog>` in the top layer covers everything below it, backdrop
+    included - an error banner outside would be invisible during the one
+    action that can trigger it (save title, set checkbox, write raw
+    value). An invisible error is worse than none per spec 8.1."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     assert 'x-show="signalsError"' in dialog
@@ -516,20 +514,19 @@ async def test_the_signals_error_banner_lives_inside_the_modal(api):
 
 
 async def test_both_signal_groups_share_one_details_template(api):
-    """Entwurf Abschnitt 4, Punkt 5: EINE Vorlage fuer beide Gruppen.
+    """Design section 4, point 5: ONE template for both groups.
 
-    Zwei Formen (Block hier, `<details>` dort) hiessen zwei Zweige und in
-    jedem eine eigene Kopie der Signalzeilen-Vorlage - genau die
-    Verdopplung, die `signalGroupsFor` abgeschafft hat (51 doppelte Zeilen,
-    siehe dessen Kommentar in app.js).
+    Two forms (block here, `<details>` there) would mean two branches and
+    in each its own copy of the signal-row template - exactly the
+    duplication that `signalGroupsFor` abolished (51 duplicate lines, see
+    its comment in app.js).
 
-    Der Startzustand laeuft ueber `x-init` und NICHT ueber ein gebundenes
-    `:open`: Alpine wertet Bindungen bei jeder Aenderung ihrer
-    Abhaengigkeiten neu aus, und `signalGroupsFor` haengt an
-    `signalsByDevice` - ein gespeicherter Signaltitel schriebe ein `:open`
-    neu und klappte die gerade geoeffnete Expertengruppe wortlos wieder zu.
-    Dieser Test ist die einzige Bremse gegen ein spaeteres, gut gemeintes
-    Vereinfachen zu `:open`."""
+    The initial state runs via `x-init` and NOT via a bound `:open`:
+    Alpine re-evaluates bindings whenever their dependencies change, and
+    `signalGroupsFor` depends on `signalsByDevice` - a saved signal title
+    would rewrite a `:open` and silently close the expert group right
+    after it had been opened. This test is the only brake against a
+    later, well-meant simplification to `:open`."""
     client, _, _ = api
     dialog = _signals_dialog(_without_comments((await client.get("/")).text))
     assert 'x-for="group in signalGroupsFor(signalsModalDevice)"' in dialog
@@ -540,26 +537,26 @@ async def test_both_signal_groups_share_one_details_template(api):
     assert "x-text=\"t('web.signals.none_functional')\"" in dialog
 ```
 
-- [ ] **Step 2: Tests laufen lassen und den Fehlschlag sehen**
+- [ ] **Step 2: Run the tests and see them fail**
 
 ```bash
 uv run pytest tests/api/test_web.py -q -k "complete_signal_row or error_banner_lives_inside or share_one_details"
 ```
 
-Expected: 3 failed — `assert '@change="saveTitle(signal)"' in dialog` schlägt fehl, der Modal-Rumpf trägt bislang nur die Kopfzeile.
+Expected: 3 failed — `assert '@change="saveTitle(signal)"' in dialog` fails, the modal body so far only carries the header.
 
-- [ ] **Step 3: Den Rumpf füllen**
+- [ ] **Step 3: Fill the body**
 
-In `src/loxmatter/web/index.html` den Inhalt von `.signals-modal-body` direkt nach dem `</div>` der `.signals-modal-head` ergänzen:
+In `src/loxmatter/web/index.html`, add the content of `.signals-modal-body` directly after the `</div>` of `.signals-modal-head`:
 
 ```html
           <p x-show="signalsError" x-cloak class="banner danger" x-text="signalsError"></p>
           <p class="hint" x-text="t('web.signals.key_hint')"></p>
 
-          <!-- Bleibt als Wiederholung fuer den Fehlerfall: im Normalfall hat
-               `startApp` die Signale jedes Geraets laengst geladen, dieser
-               Knopf zeigt sich also nur, wenn genau dieser eine Abruf
-               gescheitert ist (der Grund steht im Banner darueber). -->
+          <!-- Stays as a retry for the error case: in the normal case
+               `startApp` has long since loaded the signals of every
+               device, so this button only shows up if exactly this one
+               fetch failed (the reason is in the banner above). -->
           <button
             x-show="!signalsByDevice[signalsModalDevice]"
             @click="loadSignals(signalsModalDevice)"
@@ -569,27 +566,28 @@ In `src/loxmatter/web/index.html` den Inhalt von `.signals-modal-body` direkt na
           <template x-if="signalsByDevice[signalsModalDevice]">
             <div>
               <!--
-                EINE Vorlage fuer beide Gruppen. Der naheliegende Entwurf -
-                funktional als schlichter Block, Experte als `<details>` -
-                braeuchte zwei Zweige und in jedem eine eigene Kopie der
-                Signalzeile darunter. Genau diese Verdopplung hat
-                `signalGroupsFor` (app.js) abgeschafft: 51 byte-identische
-                Zeilen, die bei jeder Aenderung an beiden Stellen
-                nachgezogen werden mussten.
+                ONE template for both groups. The obvious design -
+                functional as a plain block, expert as `<details>` -
+                would need two branches and in each its own copy of the
+                signal row underneath. Exactly this duplication is what
+                `signalGroupsFor` (app.js) abolished: 51 byte-identical
+                lines that had to be kept in sync at both places on every
+                change.
 
-                Der Auf-/Zu-Zustand lebt im DOM, nicht in Alpine - dasselbe
-                Muster wie beim Kachel-Menue, und der Grund, warum der alte
-                globale Schalter `showExpertSignals` ersatzlos entfaellt.
+                The open/closed state lives in the DOM, not in Alpine -
+                the same pattern as the tile menu, and the reason the old
+                global toggle `showExpertSignals` is dropped with no
+                replacement.
 
-                `x-init` statt `:open` ist Pflicht, kein Stil: Alpine wertet
-                eine BINDUNG bei jeder Aenderung ihrer Abhaengigkeiten neu
-                aus, und `signalGroupsFor` haengt an `signalsByDevice` - ein
-                gespeicherter Signaltitel schriebe ein `:open` neu und
-                klappte die gerade geoeffnete Expertengruppe wortlos wieder
-                zu. `x-init` laeuft einmal je Element; da `:key` mit
-                `group.key` stabil ist, baut Alpine den Knoten bei einem
-                Re-Render nicht neu auf, und der Klick des Nutzers bleibt
-                stehen. NICHT zu `:open` vereinfachen.
+                `x-init` instead of `:open` is mandatory, not style:
+                Alpine re-evaluates a BINDING whenever its dependencies
+                change, and `signalGroupsFor` depends on
+                `signalsByDevice` - a saved signal title would rewrite a
+                `:open` and silently close the expert group right after
+                it had been opened. `x-init` runs once per element; since
+                `:key` with `group.key` is stable, Alpine does not
+                rebuild the node on a re-render, and the user's click
+                stays put. Do NOT simplify to `:open`.
               -->
               <template x-for="group in signalGroupsFor(signalsModalDevice)" :key="group.key">
                 <details class="signal-group" x-init="$el.open = !group.collapsible">
@@ -623,14 +621,14 @@ In `src/loxmatter/web/index.html` den Inhalt von `.signals-modal-body` direkt na
                         />
                         <span class="hint" x-text="signal.path"></span>
                         <!--
-                          Wann der Wert zuletzt kam, steht im `title` - nicht
-                          daneben im Textfluss (2026-09-03). Eine Angabe wie
-                          "vor 7 s" aendert jede Sekunde ihre Breite und
-                          schiebt damit die ganze Zeile; der Blick folgt dann
-                          der Bewegung statt der Aenderung. Die zeigt
-                          `value-fresh`: der Wert leuchtet kurz auf und
-                          verblasst wieder, ohne dass sich am Aufbau etwas
-                          bewegt.
+                          When the value last arrived is in the `title` -
+                          not next to it in the text flow (2026-09-03). A
+                          statement like "7 s ago" changes its width every
+                          second and thereby shifts the whole row; the eye
+                          then follows the movement instead of the
+                          change. `value-fresh` shows it instead: the
+                          value lights up briefly and fades again,
+                          without anything moving in the layout.
                         -->
                         <span
                           class="value"
@@ -685,18 +683,18 @@ In `src/loxmatter/web/index.html` den Inhalt von `.signals-modal-body` direkt na
           </template>
 ```
 
-- [ ] **Step 4: Aussehen der Gruppen**
+- [ ] **Step 4: Appearance of the groups**
 
-Ans Ende von `src/loxmatter/web/style.css`, direkt nach dem `.signals-modal-close:hover`-Block:
+At the end of `src/loxmatter/web/style.css`, directly after the `.signals-modal-close:hover` block:
 
 ```css
-/* Die beiden Signalgruppen im Modal. Der Standard-Marker eines `<summary>`
- * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
- * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren
- * WebKit-Fassungen - dieselbe Doppelung wie bei `.tile-menu > summary`.
- * Hier bleibt der Marker aber ERWUENSCHT, weil beide Gruppen wirklich
- * auf- und zuklappbar sind: nur der eigene Chevron ersetzt ihn, damit er
- * in beiden Browserfamilien gleich aussieht. */
+/* The two signal groups in the modal. The default marker of a
+ * `<summary>` has to be switched off twice: `list-style` applies in
+ * Firefox and Chrome, the `::-webkit-details-marker` pseudo-element in
+ * older WebKit versions - the same duplication as with
+ * `.tile-menu > summary`. Here, though, the marker stays WANTED, because
+ * both groups really are collapsible: only its own chevron replaces it,
+ * so it looks the same in both browser families. */
 .signal-group {
   margin-top: 1rem;
 }
@@ -714,7 +712,7 @@ Ans Ende von `src/loxmatter/web/style.css`, direkt nach dem `.signals-modal-clos
 }
 ```
 
-- [ ] **Step 5: Tests laufen lassen**
+- [ ] **Step 5: Run the tests**
 
 ```bash
 uv run pytest tests/api/test_web.py -q -k "complete_signal_row or error_banner_lives_inside or share_one_details"
@@ -722,15 +720,15 @@ uv run pytest tests/api/test_web.py -q -k "complete_signal_row or error_banner_l
 
 Expected: 3 passed.
 
-- [ ] **Step 6: Alle Gates**
+- [ ] **Step 6: All gates**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy src
 ```
 
-Expected: alle vier sauber.
+Expected: all four clean.
 
-Sollte `test_the_signal_view_static_text_is_translated` (die alte Signalansicht) hier fehlschlagen, ist das ein Hinweis auf einen Tippfehler im neuen Markup, **nicht** auf einen fälligen Umbau — dieser Test prüft mit `in markup` gegen die ganze Seite und wird von zusätzlichem, korrektem Markup nicht gestört. Task 3 zieht ihn nach.
+If `test_the_signal_view_static_text_is_translated` (the old signal view) fails here, that is a sign of a typo in the new markup, **not** of an overdue rework — this test checks with `in markup` against the whole page and is not disturbed by additional, correct markup. Task 3 updates it.
 
 - [ ] **Step 7: Commit**
 
@@ -752,37 +750,36 @@ EOF
 
 ---
 
-### Task 3: Den Reiter auflösen
+### Task 3: Dissolve the tab
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (Nav-Knopf; die `<section x-show="view === 'signals'">`)
-- Modify: `src/loxmatter/web/app.js` (`showExpertSignals`; der `signals`-Zweig in `selectView`; die beiden Helfer-Kommentare, die den Schalter erwähnen)
+- Modify: `src/loxmatter/web/index.html` (nav button; the `<section x-show="view === 'signals'">`)
+- Modify: `src/loxmatter/web/app.js` (`showExpertSignals`; the `signals` branch in `selectView`; the two helper comments that mention the toggle)
 - Modify: `src/loxmatter/web/style.css` (`.signal-group-toggle`)
-- Modify: `src/loxmatter/i18n/strings.yaml` (drei Schlüssel)
-- Modify: `tests/api/test_web.py` (drei bestehende Tests)
+- Modify: `src/loxmatter/i18n/strings.yaml` (three keys)
+- Modify: `tests/api/test_web.py` (three existing tests)
 
 **Interfaces:**
-- Consumes: alles aus Task 1 und 2.
-- Produces: nichts Neues; entfernt `showExpertSignals` und den View-Wert `'signals'`.
+- Consumes: everything from tasks 1 and 2.
+- Produces: nothing new; removes `showExpertSignals` and the view value `'signals'`.
 
-- [ ] **Step 1: Die fehlschlagenden Tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-Ans Ende von `tests/api/test_web.py`:
+At the end of `tests/api/test_web.py`:
 
 ```python
 async def test_the_signals_view_is_gone_from_navigation_and_markup(api):
-    """Entwurf Abschnitt 3: der Reiter wird ersatzlos aufgeloest.
+    """Design section 3: the tab is dissolved with no replacement.
 
-    Geprueft wird nicht nur der Nav-Knopf, sondern auch, dass NIRGENDWO
-    mehr auf den Ansichtswert `'signals'` geschaltet wird - ein
-    stehengebliebener `selectView('signals')` waere ein Klick, der die
-    Anwendung in eine Ansicht schickt, die es nicht mehr gibt: alle
-    Sections blieben ausgeblendet, die Seite waere leer, ohne
-    Fehlermeldung.
+    Not only the nav button is checked, but also that NOWHERE ELSE is
+    still switching to the view value `'signals'` - a leftover
+    `selectView('signals')` would be a click that sends the application
+    into a view that no longer exists: all sections would stay hidden,
+    the page would be empty, with no error message.
 
-    `showExpertSignals` faellt mit: der Auf-/Zu-Zustand lebt jetzt im DOM
-    (`<details>` im Modal), ein globales Feld dafuer waere eine zweite
-    Wahrheit ohne Leser."""
+    `showExpertSignals` falls along with it: the open/closed state now
+    lives in the DOM (`<details>` in the modal), a global field for it
+    would be a second truth with no reader."""
     client, _, _ = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -795,13 +792,13 @@ async def test_the_signals_view_is_gone_from_navigation_and_markup(api):
 
 
 async def test_the_dropped_signal_keys_are_gone_from_the_translation_table(api):
-    """Die drei Schluessel des alten Reiters haben keinen Leser mehr.
+    """The three keys of the old tab have no reader left.
 
-    `expert_collapsed_hint` faellt dabei ersatzlos statt umzuziehen: "12
-    Expertensignale ausgeblendet" sagt dasselbe wie "Experte (12)" im
-    `<summary>`, nur nicht an der Stelle, an der man klickt. Ein
-    stehengelassener Schluessel waere nicht bloss tot - er verwiese in
-    seinem eigenen Text auf einen Schalter, den es nicht mehr gibt."""
+    `expert_collapsed_hint` is dropped with no replacement instead of
+    moving over: "12 expert signals hidden" says the same thing as
+    "Expert (12)" in the `<summary>`, just not at the place you click. A
+    leftover key would not just be dead - its own text would point to a
+    toggle that no longer exists."""
     client, _, _ = api
     strings = (await client.get("/api/i18n")).json()["strings"]
     for key in (
@@ -815,127 +812,128 @@ async def test_the_dropped_signal_keys_are_gone_from_the_translation_table(api):
     assert "web.signals.modal_close" in strings
 ```
 
-- [ ] **Step 2: Tests laufen lassen und den Fehlschlag sehen**
+- [ ] **Step 2: Run the tests and see them fail**
 
 ```bash
 uv run pytest tests/api/test_web.py -q -k "view_is_gone or dropped_signal_keys"
 ```
 
-Expected: 2 failed — `assert "t('web.nav.signals')" not in page` und `assert "web.nav.signals" not in strings`.
+Expected: 2 failed — `assert "t('web.nav.signals')" not in page` and `assert "web.nav.signals" not in strings`.
 
-- [ ] **Step 3: Nav-Knopf und Section entfernen**
+- [ ] **Step 3: Remove the nav button and section**
 
-In `src/loxmatter/web/index.html` diese Zeile aus `<nav class="tabs">` löschen:
+In `src/loxmatter/web/index.html`, delete this line from `<nav class="tabs">`:
 
 ```html
       <button :class="{ active: view === 'signals' }" @click="selectView('signals')" x-text="t('web.nav.signals')"></button>
 ```
 
-Und die vollständige Signal-Ansicht löschen: vom Kommentarblock
+And delete the complete signal view: from the comment block
 
 ```html
       <!-- ================================================================
-           Ansicht 2: Signale
+           View 2: Signals
            ================================================================ -->
 ```
 
-bis einschließlich des zugehörigen `</section>` — heute die Zeilen 799–930. Der darauf folgende Kommentarblock „Ansicht 3: Export" wird zu „Ansicht 2: Export"; die Nummerierung der weiteren Ansichtsüberschriften (System, Einstellungen) entsprechend um eins herunterziehen.
+up to and including the corresponding `</section>` — today lines 799–930. The following comment block "View 3: Export" becomes "View 2: Export"; adjust the numbering of the further view headings (System, Settings) down by one accordingly.
 
-- [ ] **Step 4: `app.js` aufräumen**
+- [ ] **Step 4: Clean up `app.js`**
 
-`showExpertSignals: false,` samt dem vierzeiligen Kommentar darüber („Experte-Block (Aufgabe 8): …") ersatzlos löschen.
+Delete `showExpertSignals: false,` along with the four-line comment above it ("Expert block (task 8): …") with no replacement.
 
-In `selectView` den ganzen `signals`-Zweig löschen — also von
+In `selectView`, delete the entire `signals` branch — i.e. from
 
 ```js
       if (view === "signals") {
 ```
 
-bis zum schließenden `} else if (view === "export") {`, das dabei zu `if (view === "export") {` wird. Der Kommentar im Zweig („Der vollstaendige Baum, nicht erst nach einem weiteren Klick pro Geraet …") geht mit.
+to the closing `} else if (view === "export") {`, which in the process becomes `if (view === "export") {`. The comment in the branch ("The complete tree, not only after a further click per device …") goes with it.
 
-Zuletzt die zwei Kommentare, die `showExpertSignals` beim Namen nennen. Ohne sie schlägt `test_the_signals_view_is_gone_from_navigation_and_markup` weiterhin fehl (`assert "showExpertSignals" not in script` liest die ganze Datei, Kommentare eingeschlossen) — und schlimmer: sie verwiesen auf ein Feld, das es nicht mehr gibt.
+Finally, the two comments that name `showExpertSignals`. Without them, `test_the_signals_view_is_gone_from_navigation_and_markup` continues to fail (`assert "showExpertSignals" not in script` reads the whole file, comments included) — and worse: they would refer to a field that no longer exists.
 
-Über `expertSignalsFor` die dritte Zeile ersetzen. Bisher:
-
-```js
-    // Signale-Ansicht (Aufgabe 8): "Funktional" zeigt sofort, was
-    // `is_functional` als gewollt einstuft; "Experte" bleibt zugeklappt,
-    // bis `showExpertSignals` das global fuer alle Geraetekarten umschaltet
-    // - dieselbe Datengrundlage wie oben, nur ungefiltert nach der
-```
-
-Neu:
+Above `expertSignalsFor`, replace the third line. Previously:
 
 ```js
-    // Signal-Modal: "Funktional" zeigt sofort, was `is_functional` als
-    // gewollt einstuft; "Experte" bleibt zugeklappt, bis der Nutzer das
-    // `<details>` im Modal aufklappt (bis 2026-09-05 tat das ein globaler
-    // Schalter fuer alle Geraete zugleich)
-    // - dieselbe Datengrundlage wie oben, nur ungefiltert nach der
+    // Signals view (task 8): "Functional" immediately shows what
+    // `is_functional` classifies as wanted; "Expert" stays collapsed
+    // until `showExpertSignals` switches that globally for all device
+    // cards - the same data basis as above, just unfiltered by the
 ```
 
-Und über `signalGroupsFor` die vorletzte Aussage. Bisher:
+New:
 
 ```js
-    // Vorlage, ob ein Block hinter `showExpertSignals` versteckt ist und
-    // seine Anzahl in der Ueberschrift zeigt - der Rest (Zeilen-Markup,
-    // leer-Hinweis) ist fuer beide Gruppen identisch.
+    // Signal modal: "Functional" immediately shows what `is_functional`
+    // classifies as wanted; "Expert" stays collapsed until the user
+    // expands the `<details>` in the modal (until 2026-09-05 a global
+    // toggle did that for all devices at once)
+    // - the same data basis as above, just unfiltered by the
 ```
 
-Neu:
+And above `signalGroupsFor`, the second-to-last statement. Previously:
 
 ```js
-    // Vorlage nur noch den Startzustand des `<details>` (funktional offen,
-    // Experte zu, siehe `x-init` in index.html) - der Rest (Zeilen-Markup,
-    // leer-Hinweis) ist fuer beide Gruppen identisch. Der erste Satz oben
-    // gilt seit dem Modal-Umbau doppelt: dort teilen sich beide Gruppen
-    // sogar dasselbe `<details>`-Markup, nicht nur dieselbe Zeilenvorlage.
+    // template whether a block is hidden behind `showExpertSignals` and
+    // shows its count in the heading - the rest (row markup, empty hint)
+    // is identical for both groups.
 ```
 
-Der Rumpf beider Funktionen bleibt unverändert.
+New:
 
-- [ ] **Step 5: `style.css` und `strings.yaml` aufräumen**
+```js
+    // template now only the initial state of the `<details>` (functional
+    // open, expert closed, see `x-init` in index.html) - the rest
+    // (row markup, empty hint) is identical for both groups. The first
+    // sentence above has applied doubly since the modal rework: there,
+    // both groups even share the same `<details>` markup, not just the
+    // same row template.
+```
 
-`.signal-group-toggle` samt seinem Kommentarblock („Signale-Ansicht (Aufgabe 8): der globale Schalter …") löschen.
+The body of both functions stays unchanged.
 
-Aus `src/loxmatter/i18n/strings.yaml` löschen: `web.nav.signals`, `web.signals.show_expert`, `web.signals.expert_collapsed_hint` — jeweils mit beiden Sprachzeilen.
+- [ ] **Step 5: Clean up `style.css` and `strings.yaml`**
 
-- [ ] **Step 6: Die drei bestehenden Tests nachziehen**
+Delete `.signal-group-toggle` along with its comment block ("Signals view (task 8): the global toggle …").
+
+Delete from `src/loxmatter/i18n/strings.yaml`: `web.nav.signals`, `web.signals.show_expert`, `web.signals.expert_collapsed_hint` — each with both language lines.
+
+- [ ] **Step 6: Update the three existing tests**
 
 In `tests/api/test_web.py`:
 
-**a)** In `test_the_tab_bar_labels_are_translated` und `test_every_tab_button_binds_both_its_handler_and_its_label` das Tupel `("devices", "signals", "export", "system", "settings")` zu `("devices", "export", "system", "settings")` machen — beide Stellen.
+**a)** In `test_the_tab_bar_labels_are_translated` and `test_every_tab_button_binds_both_its_handler_and_its_label`, change the tuple `("devices", "signals", "export", "system", "settings")` to `("devices", "export", "system", "settings")` — both places.
 
-**b)** In `test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_to_x_html` den Endanker des Ausschnitts nachziehen:
+**b)** In `test_the_bridge_ip_hint_splits_prefix_link_suffix_without_collapsing_to_x_html`, update the end anchor of the slice:
 
 ```python
     device_section_end = markup.index("x-show=\"view === 'export'\"")
 ```
 
-Und im Docstring dieses Tests einen Satz ergänzen, warum der Anker gewandert ist:
+And in this test's docstring, add a sentence about why the anchor moved:
 
 ```python
-    Der Ausschnitt endet an der NAECHSTEN Ansicht, nicht an einem
-    schliessenden Tag: `"view === 'signals'"` war dieser Anker, bis der
-    Reiter aufgeloest wurde (2026-09-05) - jetzt ist es `'export'`. Ein
-    Anker auf `</div>` oder `</section>` waere hier untauglich, davon gibt
-    es in der Geraeteansicht Dutzende.
+    The slice ends at the NEXT view, not at a closing tag:
+    `"view === 'signals'"` was this anchor until the tab was dissolved
+    (2026-09-05) - now it is `'export'`. An anchor on `</div>` or
+    `</section>` would be unsuitable here, there are dozens of those in
+    the device view.
 ```
 
-**c)** `test_the_signal_view_static_text_is_translated` richtet sich aufs Modal. Docstring und Rumpf ersetzen durch:
+**c)** `test_the_signal_view_static_text_is_translated` is redirected at the modal. Replace docstring and body with:
 
 ```python
 async def test_the_signal_modal_static_text_is_translated(api):
-    """Frueher `test_the_signal_view_static_text_is_translated`: dieselben
-    Zusicherungen, jetzt gegen das Modal statt gegen den aufgeloesten
-    Reiter (2026-09-05).
+    """Formerly `test_the_signal_view_static_text_is_translated`: the same
+    assertions, now against the modal instead of against the dissolved
+    tab (2026-09-05).
 
-    Zwei davon sind ersatzlos entfallen: `show_expert` (der globale
-    Schalter weicht einem `<details>` je Gruppe) und
-    `expert_collapsed_hint` (dessen Text auf genau diesen Schalter
-    verwies). Die uebrigen Hinweise, Beschriftungen und Platzhalter tragen
-    unveraendert `t(...)` - keiner der frueheren deutschen Literale bleibt
-    im Markup."""
+    Two of them have been dropped with no replacement: `show_expert` (the
+    global toggle gives way to a `<details>` per group) and
+    `expert_collapsed_hint` (whose text referred to exactly this toggle).
+    The remaining hints, labels, and placeholders unchanged carry
+    `t(...)` - none of the former German literals remain in the
+    markup."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
     dialog = _signals_dialog(markup)
@@ -957,17 +955,17 @@ async def test_the_signal_modal_static_text_is_translated(api):
     assert ">Schreiben<" not in markup
 ```
 
-- [ ] **Step 7: Alle Gates**
+- [ ] **Step 7: All gates**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy src
 ```
 
-Expected: alle vier sauber.
+Expected: all four clean.
 
-Bricht `test_the_signal_group_titles_and_toggle_are_translated`, liegt es an seinem Namen, nicht an seinem Inhalt: er prüft `signalGroupsFor`'s Gruppentitel in `app.js`, und die bleiben. Dann nur seinen Docstring auf den neuen Stand bringen.
+If `test_the_signal_group_titles_and_toggle_are_translated` breaks, it's because of its name, not its content: it checks `signalGroupsFor`'s group titles in `app.js`, and those stay. Then just bring its docstring up to date.
 
-- [ ] **Step 8: Auf tote Übersetzungsschlüssel prüfen**
+- [ ] **Step 8: Check for dead translation keys**
 
 ```bash
 for key in $(grep -o '^web\.\(nav\|signals\|devices\)\.[a-z_.]*' src/loxmatter/i18n/strings.yaml | tr -d ':'); do
@@ -975,7 +973,7 @@ for key in $(grep -o '^web\.\(nav\|signals\|devices\)\.[a-z_.]*' src/loxmatter/i
 done
 ```
 
-Expected: keine Ausgabe. Jeder Treffer wird geprüft und entfernt, wenn ihn wirklich nichts mehr verwendet.
+Expected: no output. Every hit is checked and removed if truly nothing uses it anymore.
 
 - [ ] **Step 9: Commit**
 
@@ -996,7 +994,7 @@ EOF
 
 ---
 
-### Task 4: Verhalten im Browser prüfen, Screenshots, Doku
+### Task 4: Verify behavior in the browser, screenshots, docs
 
 **Files:**
 - Modify: `scripts/capture_screenshots.py`
@@ -1004,77 +1002,77 @@ EOF
 - Modify: `README.md:115–117`
 
 **Interfaces:**
-- Consumes: alles.
-- Produces: nichts.
+- Consumes: everything.
+- Produces: nothing.
 
-**Warum diese Aufgabe existiert:** Die Tests aus Task 1–3 lesen ausgelieferten Text. Sie belegen, *dass* etwas ausgeliefert wird, nie dass es wirkt. Beim Vorgänger-Entwurf hat genau diese Lücke einen Fehler durchgelassen, bei dem *jede* Kachel dauerhaft den falschen Raum zeigte, obwohl drei Reviewrunden das Markup gelesen hatten.
+**Why this task exists:** The tests from tasks 1–3 read delivered text. They prove *that* something is delivered, never that it works. In the predecessor design, exactly this gap let a bug through where *every* tile permanently showed the wrong room, even though three review rounds had read the markup.
 
-- [ ] **Step 1: Den Demo-Server starten und das Modal durchspielen**
+- [ ] **Step 1: Start the demo server and run through the modal**
 
-Den vorhandenen Demo-Server nehmen, nicht selbst einen bauen:
+Use the existing demo server, don't build one yourself:
 
 ```bash
 uv run python scripts/dev_web_server.py --demo --store-path /tmp/signals-modal-demo.sqlite --port 8423
 ```
 
-Passwort `loxmatter-demo`. Im Browser öffnen und die DOM-Werte auslesen, nicht das Bild deuten.
+Password `loxmatter-demo`. Open it in the browser and read the DOM values, don't interpret the image.
 
-Diese neun Punkte prüfen und die Ergebnisse in den Bericht schreiben:
+Check these nine points and write the results into the report:
 
-1. Der Kebab-Eintrag „Edit signals…" öffnet das Modal; das Menü ist danach zu.
-2. Escape schließt das Modal, ein Klick auf den Backdrop ebenfalls, der ×-Knopf ebenfalls. Nach jedem der drei Wege ist `Alpine.$data(document.body).signalsModalDevice === null`.
-3. Nach dem Schließen steht der Fokus wieder auf dem `<summary>` der Kachel, von der aus geöffnet wurde (`document.activeElement.closest('.tile-menu')` ist nicht `null`).
-4. Beim Öffnen liegt der Fokus **im** Modal (`document.querySelector('.signals-modal').contains(document.activeElement)`) — der Beleg dafür, dass das `$nextTick` wirkt.
-5. Die funktionale Gruppe ist offen, die Experten-Gruppe zu.
-6. **Die Regression, gegen die `x-init` antritt:** Expertengruppe aufklappen, dann im Modal einen Signaltitel ändern und das Feld verlassen (`change` feuert, `saveTitle` schreibt `signalsByDevice` neu). Die Expertengruppe muss **offen bleiben**. Klappt sie zu, ist irgendwo doch eine Bindung im Spiel.
-7. Ein Export-Haken lässt sich setzen und der Wert überlebt Schließen und erneutes Öffnen.
-8. Live-Werte laufen im offenen Modal weiter (ein `value-fresh`-Aufleuchten ist zu sehen).
-9. Der `+ N weitere Signale`-Link öffnet dasselbe Modal für dasselbe Gerät.
+1. The kebab entry "Edit signals…" opens the modal; the menu is closed afterward.
+2. Escape closes the modal, a click on the backdrop does too, so does the × button. After each of the three paths, `Alpine.$data(document.body).signalsModalDevice === null`.
+3. After closing, the focus is back on the `<summary>` of the tile it was opened from (`document.activeElement.closest('.tile-menu')` is not `null`).
+4. On opening, the focus sits **inside** the modal (`document.querySelector('.signals-modal').contains(document.activeElement)`) — the proof that the `$nextTick` works.
+5. The functional group is open, the expert group is closed.
+6. **The regression `x-init` guards against:** expand the expert group, then change a signal title in the modal and leave the field (`change` fires, `saveTitle` rewrites `signalsByDevice`). The expert group must **stay open**. If it collapses, a binding is at play somewhere after all.
+7. An export checkbox can be set and the value survives closing and reopening.
+8. Live values keep updating in the open modal (a `value-fresh` flash is visible).
+9. The `+ N weitere Signale` link opens the same modal for the same device.
 
-Nur falls ein eigener Harness doch nötig wird: `/auth-info` und `/i18n` werden **ohne** `/api`-Präfix abgerufen, und `/api/devices/{id}/controls` liefert `{commands, hidden_raw_commands}`, keine Liste — beides hat schon zweimal Zeit gekostet.
+Only in case a harness of one's own turns out to be needed after all: `/auth-info` and `/i18n` are fetched **without** the `/api` prefix, and `/api/devices/{id}/controls` returns `{commands, hidden_raw_commands}`, not a list — both have already cost time twice.
 
-- [ ] **Step 2: Das Screenshot-Skript auf das Modal umstellen**
+- [ ] **Step 2: Switch the screenshot script over to the modal**
 
-In `scripts/capture_screenshots.py` den Signals-Abschnitt ersetzen. Bisher:
+In `scripts/capture_screenshots.py`, replace the signals section. Previously:
 
 ```python
     select_view(page, "Signals")
     shoot(page, "signals")
 ```
 
-Neu — beim Einsetzen um eine Ebene einrücken, der Block steht im Rumpf von `capture()`:
+New — indent by one level when inserting, the block sits in the body of `capture()`:
 
 ```python
-# Signale haben keinen eigenen Reiter mehr (Entwurf "Signale als Modal",
-# 2026-09-05) - das Bild entsteht jetzt aus dem Modal ueber dem
-# Geraeteraster. Der Weg dorthin ist derselbe wie fuer einen Nutzer:
-# Kebab der ersten Kachel, dann der Menuepunkt.
+# Signals no longer have their own tab (design "Signals as a modal",
+# 2026-09-05) - the image now comes from the modal over the device
+# grid. The path there is the same as for a user: kebab of the first
+# tile, then the menu item.
 page.click(".device-card .tile-menu > summary")
 page.click('.tile-menu-item:has-text("Edit signals")')
 page.wait_for_selector("dialog.signals-modal[open]", timeout=5000)
-# Die Expertengruppe aufklappen: zugeklappt zeigt das Bild bei den
-# Demo-Geraeten nur zwei, drei Zeilen und viel Leerraum - der Punkt
-# dieses Bildes sind aber gerade die Loxone-Adressen und die
-# Export-Haken nebeneinander.
+# Expand the expert group: collapsed, the image would show only two or
+# three rows and a lot of empty space for the demo devices - but the
+# whole point of this image is precisely the Loxone addresses and the
+# export checkboxes next to each other.
 page.click("dialog.signals-modal details:not([open]) > summary")
 shoot(page, "signals")
 page.keyboard.press("Escape")
 page.wait_for_timeout(300)
 ```
 
-Und im Kommentar über `shoot(page, "dashboard")` die Aufzählung `Devices/Signals/Export/System/Settings` auf `Devices/Export/System/Settings` korrigieren.
+And in the comment above `shoot(page, "dashboard")`, correct the list `Devices/Signals/Export/System/Settings` to `Devices/Export/System/Settings`.
 
-- [ ] **Step 3: Screenshots erneuern**
+- [ ] **Step 3: Refresh the screenshots**
 
 ```bash
 uv run --with playwright python scripts/capture_screenshots.py
 ```
 
-Expected: alle sieben Bilder werden neu geschrieben, ohne Timeout. Danach `docs/screenshots/signals.png` und `docs/screenshots/dashboard.png` ansehen: das erste zeigt das Modal mit sichtbaren Loxone-Adressen und Export-Haken, das zweite eine Reiterleiste ohne „Signals".
+Expected: all seven images are rewritten, without timeout. Afterward, look at `docs/screenshots/signals.png` and `docs/screenshots/dashboard.png`: the first shows the modal with visible Loxone addresses and export checkboxes, the second a tab bar without "Signals".
 
-- [ ] **Step 4: Die Bildunterschrift in der README nachziehen**
+- [ ] **Step 4: Update the caption in the README**
 
-`README.md:115–117` ersetzen:
+Replace `README.md:115–117`:
 
 ```markdown
 <img src="docs/screenshots/signals.png" alt="Signal editor opened over the device grid, with Loxone addresses and export checkboxes" />
@@ -1082,13 +1080,13 @@ Expected: alle sieben Bilder werden neu geschrieben, ohne Timeout. Danach `docs/
 **Signals**<br>Open a device's signals from its tile menu: each signal with the Loxone address it will get and its own export checkbox; the administrative ones sit behind a collapsed expert section.
 ```
 
-- [ ] **Step 5: Alle Gates**
+- [ ] **Step 5: All gates**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy src
 ```
 
-Expected: alle vier sauber. Jeder Fehlschlag wird behoben, nicht unterdrückt.
+Expected: all four clean. Every failure gets fixed, not suppressed.
 
 - [ ] **Step 6: Commit**
 
@@ -1108,9 +1106,9 @@ EOF
 
 ---
 
-## Was dieser Plan bewusst NICHT tut
+## What this plan deliberately does NOT do
 
-- **Keine geräteübergreifende Signalübersicht als Ersatz.** Der Entwurf (Abschnitt 3, „Der bewusste Verlust") begründet das: Der Vergleich über alle Geräte hinweg ist die seltene Aufgabe. Sollte er sich melden, gehört er in die Export-Vorschau, nicht in einen neuen Reiter.
-- **Keine Änderung an `signalGroupsFor`, `functionalSignalsFor`, `expertSignalsFor`.** Sie liefern schon genau das, was das Modal braucht.
-- **Keine neue Route und kein neues API-Feld.**
-- **Kein Merken des Auf-/Zu-Zustands der Expertengruppe über das Schließen hinaus.** Das wäre wieder ein globales Feld — genau das, was `showExpertSignals` war.
+- **No cross-device signal overview as a replacement.** The design (section 3, "The deliberate loss") explains why: comparing across all devices is the rare task. Should the need surface, it belongs in the export preview, not in a new tab.
+- **No change to `signalGroupsFor`, `functionalSignalsFor`, `expertSignalsFor`.** They already deliver exactly what the modal needs.
+- **No new route and no new API field.**
+- **No remembering the expert group's open/closed state beyond closing.** That would again be a global field — exactly what `showExpertSignals` was.

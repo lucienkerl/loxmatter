@@ -1,38 +1,38 @@
-# Geräte-Dashboard: immer offene Karten, Export pro Gerät — Implementation Plan
+# Device Dashboard: always-open cards, export per device — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Geräte-Kacheln im Dashboard zeigen Werte und Bedienelemente immer offen (kein Klick mehr nötig), tragen einen Status-Farbstreifen/Icon, und lassen sich einzeln exportieren; ein neuer Einstellungen-Tab verwaltet die Bridge-Verbindungsdaten serverseitig, der bisherige Export-Tab zeigt sie nur noch schreibgeschützt an.
+**Goal:** Device tiles in the dashboard show values and controls always open (no more click needed), carry a status color stripe/icon, and can be exported individually; a new settings tab manages the bridge connection data server-side, the previous export tab now only shows it read-only.
 
-**Architecture:** Backend (FastAPI/SQLite, `src/loxmatter/`) bekommt eine neue, kleine `BridgeSettingsStore`-Klasse (liest/schreibt die bereits vorhandene generische `setting`-Tabelle, analog zu `AuthStore`), einen neuen `/api/settings`-Router, und einen optionalen `device_id`-Parameter an `GET /api/export/download`. Frontend (Alpine.js, kein Build-Schritt, `src/loxmatter/web/`) bekommt neue CSS-Tokens/-Klassen, einen fünften Tab, und eine überarbeitete Geräte-Kachel — alles im bestehenden Stil (`.card`, `.row`, `.hint` …), keine neue Abhängigkeit.
+**Architecture:** Backend (FastAPI/SQLite, `src/loxmatter/`) gets a new, small `BridgeSettingsStore` class (reads/writes the already existing generic `setting` table, analogous to `AuthStore`), a new `/api/settings` router, and an optional `device_id` parameter on `GET /api/export/download`. Frontend (Alpine.js, no build step, `src/loxmatter/web/`) gets new CSS tokens/classes, a fifth tab, and a reworked device tile — all in the existing style (`.card`, `.row`, `.hint` …), no new dependency.
 
-**Tech Stack:** Python 3.12, FastAPI, SQLite (`sqlite3`), Pydantic v2, pytest/httpx2 (Backend); Alpine.js 3.17 (vendort), reines CSS, kein Bundler (Frontend).
+**Tech Stack:** Python 3.12, FastAPI, SQLite (`sqlite3`), Pydantic v2, pytest/httpx2 (backend); Alpine.js 3.17 (vendored), plain CSS, no bundler (frontend).
 
 ## Global Constraints
 
-- Referenz-Spec: `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md` — jede Abweichung unten ist explizit benannt.
-- Akzentfarbe (Kupfer/Amber, vom Auftraggeber freigegeben): `#a15a2c` hell / `#e2915c` dunkel, Kontrastfarbe `#ffffff` hell / `#2a1508` dunkel. Statusfarben (`--ok` grün, `--warn` amber, neu `--off` grau) bleiben davon unabhängig.
-- Deutsch in jedem Text, der auf dem Bildschirm oder in einer Fehlermeldung landet; Englisch in alle Bezeichnern (Variablen, Funktionen, Endpunkt-Felder) — bestehende Konvention, siehe `app.js`-Kopfkommentar.
-- Kein `console.log`, kein neues externes Skript/CDN in `index.html` — die Oberfläche läuft offline (siehe `index.html`-Kopfkommentar zu Alpine.js).
-- **Abweichung von Spec Abschnitt 3 (bewusst, siehe Abschnitt 9.1 der Spec, der das offen lässt):** kein Icon pro Gerätetyp (Stecker/Bewegung/Lamellen) — das bräuchte eine gegen die Matter Device Library belegte Zuordnungstabelle, die nirgends im Code oder in den Specs dieses Projekts bereits verifiziert vorliegt. Stattdessen EIN generisches Geräte-Icon für jede Karte; Status-Icons (Warndreieck, Offline) sind davon unbenommen, sie hängen nur an bereits vorhandenen Feldern (`online`, `changed_since_export`), keine Matter-Typerkennung nötig.
-- Keine Frontend-Testinfrastruktur in diesem Repo (kein `tests/web/`, kein JS-Test-Runner) — Frontend-Tasks unten werden über einen neuen Hilfsserver (Task 4) manuell im Browser verifiziert, Backend-Tasks per `pytest`.
+- Reference spec: `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md` — every deviation below is explicitly named.
+- Accent color (copper/amber, approved by the client): `#a15a2c` light / `#e2915c` dark, contrast color `#ffffff` light / `#2a1508` dark. Status colors (`--ok` green, `--warn` amber, new `--off` gray) remain independent of it.
+- German in every piece of text that ends up on the screen or in an error message; English in all identifiers (variables, functions, endpoint fields) — existing convention, see the `app.js` header comment.
+- No `console.log`, no new external script/CDN in `index.html` — the UI runs offline (see the `index.html` header comment on Alpine.js).
+- **Deviation from spec section 3 (deliberate, see section 9.1 of the spec, which leaves this open):** no icon per device type (plug/motion/blinds) — that would need a mapping table established against the Matter Device Library, which is not already verified anywhere in the code or specs of this project. Instead, ONE generic device icon for every card; status icons (warning triangle, offline) are unaffected by this, they only hang off already existing fields (`online`, `changed_since_export`), no Matter type detection needed.
+- No frontend test infrastructure in this repo (no `tests/web/`, no JS test runner) — frontend tasks below are verified manually in the browser via a new helper server (task 4), backend tasks via `pytest`.
 
 ---
 
-## Task 1: `BridgeSettingsStore` — Speicherung der Bridge-Einstellungen
+## Task 1: `BridgeSettingsStore` — storing the bridge settings
 
 **Files:**
-- Modify: `src/loxmatter/model/store.py:61` (neue Konstante), `src/loxmatter/model/store.py:696-705` (Import + Verdrahtung in `Store.__init__`)
+- Modify: `src/loxmatter/model/store.py:61` (new constant), `src/loxmatter/model/store.py:696-705` (import + wiring in `Store.__init__`)
 - Create: `src/loxmatter/model/settings_store.py`
 - Test: `tests/model/test_settings_store.py`
 
 **Interfaces:**
-- Produces: `loxmatter.model.store.DEFAULT_LISTEN_PORT: int` (= 8080). `loxmatter.model.settings_store.BridgeSettings` (frozen dataclass: `bridge_ip: str | None`, `udp_port: int`, `listen_port: int`, `saved_at: str | None`). `loxmatter.model.settings_store.BridgeSettingsStore(db: sqlite3.Connection)` mit `.get() -> BridgeSettings` und `.save(*, bridge_ip: str, udp_port: int, listen_port: int) -> BridgeSettings`. `Store.settings: BridgeSettingsStore` (Attribut, wie `Store.auth`).
-- Consumes: nichts Neues — nutzt die bereits existierende Tabelle `setting` (`store.py:128-131`, seit Schema-Version 5 auf jeder Datenbank vorhanden, keine neue Migration nötig).
+- Produces: `loxmatter.model.store.DEFAULT_LISTEN_PORT: int` (= 8080). `loxmatter.model.settings_store.BridgeSettings` (frozen dataclass: `bridge_ip: str | None`, `udp_port: int`, `listen_port: int`, `saved_at: str | None`). `loxmatter.model.settings_store.BridgeSettingsStore(db: sqlite3.Connection)` with `.get() -> BridgeSettings` and `.save(*, bridge_ip: str, udp_port: int, listen_port: int) -> BridgeSettings`. `Store.settings: BridgeSettingsStore` (attribute, like `Store.auth`).
+- Consumes: nothing new — uses the already existing table `setting` (`store.py:128-131`, present on every database since schema version 5, no new migration needed).
 
-- [ ] **Step 1: Schreibe die fehlschlagenden Tests**
+- [ ] **Step 1: Write the failing tests**
 
-Lege `tests/model/test_settings_store.py` an:
+Create `tests/model/test_settings_store.py`:
 
 ```python
 # loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
@@ -51,11 +51,11 @@ Lege `tests/model/test_settings_store.py` an:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer `BridgeSettingsStore` - den Teil des Stores, der die
-Verbindungsdaten zur Bruecke (IP, Ports) verwaltet, analog zu `AuthStore`.
+"""Tests for `BridgeSettingsStore` - the part of the store that manages
+the connection data to the bridge (IP, ports), analogous to `AuthStore`.
 
-Siehe docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
-Abschnitt 4."""
+See docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
+section 4."""
 
 from __future__ import annotations
 
@@ -106,8 +106,8 @@ def test_save_overwrites_a_previous_value(tmp_path):
 
 
 def test_settings_survive_a_reopened_connection(tmp_path):
-    """Serverseitig statt localStorage (Entwurf Abschnitt 4): der Punkt ist
-    genau, dass es einen Prozessneustart uebersteht."""
+    """Server-side instead of localStorage (design section 4): the point
+    is precisely that it survives a process restart."""
     path = tmp_path / "t.sqlite"
     store = Store(path)
     try:
@@ -122,14 +122,14 @@ def test_settings_survive_a_reopened_connection(tmp_path):
         reopened.close()
 ```
 
-- [ ] **Step 2: Lauf bestätigen, dass die Tests fehlschlagen**
+- [ ] **Step 2: Confirm the tests fail**
 
 Run: `uv run pytest tests/model/test_settings_store.py -v`
-Expected: FAIL — `AttributeError: 'Store' object has no attribute 'settings'` (und `ImportError` für `DEFAULT_LISTEN_PORT`, falls die Sammlung schon dort scheitert)
+Expected: FAIL — `AttributeError: 'Store' object has no attribute 'settings'` (and `ImportError` for `DEFAULT_LISTEN_PORT`, if collection already fails there)
 
-- [ ] **Step 3: Lege `settings_store.py` an**
+- [ ] **Step 3: Create `settings_store.py`**
 
-Erstelle `src/loxmatter/model/settings_store.py`:
+Create `src/loxmatter/model/settings_store.py`:
 
 ```python
 # loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
@@ -148,19 +148,19 @@ Erstelle `src/loxmatter/model/settings_store.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Zugriff auf die Verbindungsdaten dieser Bruecke - IP und Ports, wie sie
-heute schon im Export-Tab eingegeben werden (`api/export.py`).
+"""Access to this bridge's connection data - IP and ports, as they are
+already entered today in the export tab (`api/export.py`).
 
-Eigenes Modul und eigene Klasse, analog zu `auth_store.py`: die `setting`-
-Tabelle ist generisch (Schluessel/Wert) angelegt, genau damit weitere
-Konfiguration wie diese hier denselben Weg gehen kann (siehe dortiger
-Moduldocstring, Spec 14.2 des Login-Entwurfs). Diese Klasse ist eine weitere
-Sicht auf dieselbe Tabelle und dieselbe Verbindung, kein zweiter
-Verbindungsaufbau.
+Its own module and its own class, analogous to `auth_store.py`: the
+`setting` table is laid out generically (key/value), precisely so that
+further configuration like this one can go the same way (see the module
+docstring there, spec 14.2 of the login design). This class is another
+view onto the same table and the same connection, not a second
+connection setup.
 
-Siehe docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
-Abschnitt 4: serverseitig statt `localStorage`, weil die Bridge-Adresse eine
-Eigenschaft der Installation ist, nicht des Browsers."""
+See docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
+section 4: server-side instead of `localStorage`, because the bridge
+address is a property of the installation, not of the browser."""
 
 from __future__ import annotations
 
@@ -185,9 +185,9 @@ _ALL_KEYS = (
 
 @dataclass(frozen=True)
 class BridgeSettings:
-    """`bridge_ip`/`saved_at` sind `None`, solange niemand gespeichert hat -
-    die Ports fallen in dem Fall auf dieselben Vorgaben zurueck wie der
-    bisherige Export-Tab (`DEFAULT_UDP_PORT`/`DEFAULT_LISTEN_PORT`)."""
+    """`bridge_ip`/`saved_at` are `None` as long as nobody has saved
+    anything - in that case the ports fall back to the same defaults as
+    the previous export tab (`DEFAULT_UDP_PORT`/`DEFAULT_LISTEN_PORT`)."""
 
     bridge_ip: str | None
     udp_port: int
@@ -196,8 +196,8 @@ class BridgeSettings:
 
 
 class BridgeSettingsStore:
-    """Zugriff auf `setting` ueber die Verbindung des Stores - wie
-    `AuthStore`, nur fuer andere Schluessel."""
+    """Access to `setting` via the store's connection - like `AuthStore`,
+    just for different keys."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
@@ -220,8 +220,8 @@ class BridgeSettingsStore:
         )
 
     def save(self, *, bridge_ip: str, udp_port: int, listen_port: int) -> BridgeSettings:
-        """Schreibt alle drei Werte und den Zeitstempel in einer Transaktion
-        - kein Teil-Update: die drei Felder gehoeren fachlich zusammen."""
+        """Writes all three values and the timestamp in one transaction -
+        no partial update: the three fields belong together logically."""
         saved_at = now_iso()
         for key, value in (
             (_BRIDGE_IP_KEY, bridge_ip),
@@ -238,43 +238,43 @@ class BridgeSettingsStore:
         return self.get()
 ```
 
-- [ ] **Step 4: Verdrahte `DEFAULT_LISTEN_PORT` und `Store.settings`**
+- [ ] **Step 4: Wire up `DEFAULT_LISTEN_PORT` and `Store.settings`**
 
-In `src/loxmatter/model/store.py`, Zeile 61 (`DEFAULT_UDP_PORT = 7000`), ergänze direkt danach:
+In `src/loxmatter/model/store.py`, line 61 (`DEFAULT_UDP_PORT = 7000`), add directly after it:
 
 ```python
 DEFAULT_UDP_PORT = 7000
-# `_DEFAULT_LISTEN_PORT` von `api/export.py` hierher gehoben (Geraete-
-# Dashboard-Entwurf, Abschnitt 4): der neue `BridgeSettingsStore` unten
-# braucht denselben Vorgabewert, und ein zweiter, unabhaengig gepflegter
-# Literal `8080` waere genau die Art Drift, vor der `api/export.py`s eigener
-# Moduldocstring (Entscheidung 2) bereits warnt.
+# `_DEFAULT_LISTEN_PORT` moved here from `api/export.py` (device
+# dashboard design, section 4): the new `BridgeSettingsStore` below
+# needs the same default value, and a second, independently maintained
+# literal `8080` would be exactly the kind of drift that `api/export.py`'s
+# own module docstring (decision 2) already warns against.
 DEFAULT_LISTEN_PORT = 8080
 ```
 
-Ergänze den Import am Kopf der Datei (nach der bestehenden `AuthStore`-Zeile, ca. Zeile 51):
+Add the import at the top of the file (after the existing `AuthStore` line, around line 51):
 
 ```python
 from loxmatter.model.auth_store import AuthStore
 from loxmatter.model.settings_store import BridgeSettingsStore
 ```
 
-Und in `Store.__init__` (Zeile 696-705), direkt nach `self.auth = AuthStore(self._db)`:
+And in `Store.__init__` (line 696-705), directly after `self.auth = AuthStore(self._db)`:
 
 ```python
         self.auth = AuthStore(self._db)
-        # Sicht auf dieselbe Verbindung - siehe `settings_store.py`.
+        # View onto the same connection - see `settings_store.py`.
         self.settings = BridgeSettingsStore(self._db)
 ```
 
-- [ ] **Step 5: Lauf bestätigen, dass die Tests durchlaufen**
+- [ ] **Step 5: Confirm the tests pass**
 
 Run: `uv run pytest tests/model/test_settings_store.py -v`
-Expected: PASS (4 Tests)
+Expected: PASS (4 tests)
 
-- [ ] **Step 6: `export.py` auf die zentrale Konstante umstellen**
+- [ ] **Step 6: Switch `export.py` to the central constant**
 
-`src/loxmatter/api/export.py` definiert bislang selbst `_DEFAULT_LISTEN_PORT = 8080` (Zeile 109). Ersetze den Import (Zeile 106) und die Konstante:
+`src/loxmatter/api/export.py` so far defines `_DEFAULT_LISTEN_PORT = 8080` itself (line 109). Replace the import (line 106) and the constant:
 
 ```python
 from loxmatter.model.store import (
@@ -286,12 +286,12 @@ from loxmatter.model.store import (
 )
 ```
 
-Entferne Zeile 109 (`_DEFAULT_LISTEN_PORT = 8080`) und ersetze die einzige Verwendung in der `download`-Route (Query-Default für `listen`, aktuell `_DEFAULT_LISTEN_PORT`) durch `DEFAULT_LISTEN_PORT`.
+Remove line 109 (`_DEFAULT_LISTEN_PORT = 8080`) and replace its one use in the `download` route (query default for `listen`, currently `_DEFAULT_LISTEN_PORT`) with `DEFAULT_LISTEN_PORT`.
 
-- [ ] **Step 7: Bestehende Export-Tests laufen weiter**
+- [ ] **Step 7: Existing export tests keep passing**
 
 Run: `uv run pytest tests/api/test_export_api.py -v`
-Expected: PASS (keine Verhaltensänderung, nur derselbe Wert aus einem anderen Modul)
+Expected: PASS (no behavior change, just the same value from a different module)
 
 - [ ] **Step 8: Commit**
 
@@ -313,21 +313,21 @@ EOF
 
 ---
 
-## Task 2: `/api/settings` — REST-Endpunkte
+## Task 2: `/api/settings` — REST endpoints
 
 **Files:**
-- Modify: `src/loxmatter/api/models.py` (neue Modelle anhängen)
+- Modify: `src/loxmatter/api/models.py` (append new models)
 - Create: `src/loxmatter/api/settings.py`
-- Modify: `src/loxmatter/loxone/server.py` (Router einhängen)
+- Modify: `src/loxmatter/loxone/server.py` (hook up the router)
 - Test: `tests/api/test_settings_api.py`
 
 **Interfaces:**
-- Consumes: `Store.settings` aus Task 1 (`BridgeSettingsStore.get()`/`.save(...)`).
-- Produces: `GET /api/settings` und `PATCH /api/settings`, beide `-> BridgeSettingsOut` (JSON: `bridge_ip: str | None`, `udp_port: int`, `listen_port: int`, `saved_at: str | None`). `loxmatter.api.settings.build_settings_router(store: Store) -> APIRouter`.
+- Consumes: `Store.settings` from task 1 (`BridgeSettingsStore.get()`/`.save(...)`).
+- Produces: `GET /api/settings` and `PATCH /api/settings`, both `-> BridgeSettingsOut` (JSON: `bridge_ip: str | None`, `udp_port: int`, `listen_port: int`, `saved_at: str | None`). `loxmatter.api.settings.build_settings_router(store: Store) -> APIRouter`.
 
-- [ ] **Step 1: Schreibe die fehlschlagenden Tests**
+- [ ] **Step 1: Write the failing tests**
 
-Lege `tests/api/test_settings_api.py` an:
+Create `tests/api/test_settings_api.py`:
 
 ```python
 # loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
@@ -346,9 +346,9 @@ Lege `tests/api/test_settings_api.py` an:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Tests fuer den Einstellungen-Endpunkt (`api/settings.py`) - siehe
+"""Tests for the settings endpoint (`api/settings.py`) - see
 docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
-Abschnitt 4."""
+section 4."""
 
 from __future__ import annotations
 
@@ -415,8 +415,8 @@ async def test_an_empty_bridge_ip_yields_422(api):
 
 
 async def test_settings_are_stored_in_the_same_database_the_export_router_reads(api):
-    """Kein zweiter, unabhaengiger Speicher (dieselbe Ueberlegung wie
-    `api/export.py`s Moduldocstring fuer den Store insgesamt)."""
+    """No second, independent storage (the same reasoning as
+    `api/export.py`'s module docstring for the store overall)."""
     client, store = api
     await client.patch(
         "/api/settings", json={"bridge_ip": "10.0.0.5", "udp_port": 7000, "listen_port": 8080}
@@ -425,10 +425,10 @@ async def test_settings_are_stored_in_the_same_database_the_export_router_reads(
 
 
 async def test_settings_route_requires_a_session(tmp_path, no_invoke, fake_runtime):
-    """Wie jede andere `/api`-Route seit dem WebUI-Login (Spec 9) - kein
-    eigener Test noetig fuer den Waechter selbst (der ist bereits in
-    `tests/api/test_security.py` fuer alle fuenf Router belegt), nur dass
-    dieser sechste Router tatsaechlich dazugehoert."""
+    """Like every other `/api` route since the WebUI login (spec 9) - no
+    test of its own needed for the guard itself (that is already covered
+    in `tests/api/test_security.py` for all five routers), only that this
+    sixth router actually belongs to it."""
     store = Store(tmp_path / "t.sqlite")
     app = build_app(store, no_invoke, fake_runtime(store))
     transport = httpx.ASGITransport(app=app)
@@ -438,21 +438,21 @@ async def test_settings_route_requires_a_session(tmp_path, no_invoke, fake_runti
     assert response.status_code == 401
 ```
 
-- [ ] **Step 2: Lauf bestätigen, dass die Tests fehlschlagen**
+- [ ] **Step 2: Confirm the tests fail**
 
 Run: `uv run pytest tests/api/test_settings_api.py -v`
-Expected: FAIL — `404 Not Found` für `/api/settings` (Router existiert noch nicht)
+Expected: FAIL — `404 Not Found` for `/api/settings` (router doesn't exist yet)
 
-- [ ] **Step 3: Modelle ergänzen**
+- [ ] **Step 3: Add the models**
 
-In `src/loxmatter/api/models.py`, am Dateiende anhängen:
+In `src/loxmatter/api/models.py`, append at the end of the file:
 
 ```python
 class BridgeSettingsOut(BaseModel):
-    """Antwort von `GET`/`PATCH /api/settings` (Geraete-Dashboard-Entwurf,
-    Abschnitt 4). `bridge_ip`/`saved_at` sind `None`, solange niemand die
-    Verbindung zum Miniserver eingerichtet hat - der Fall, in dem die
-    Oberflaeche den Export-Knopf an jeder Geraetekarte deaktiviert."""
+    """Response of `GET`/`PATCH /api/settings` (device dashboard design,
+    section 4). `bridge_ip`/`saved_at` are `None` as long as nobody has
+    set up the connection to the Miniserver - the case in which the UI
+    disables the export button on every device card."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -463,11 +463,11 @@ class BridgeSettingsOut(BaseModel):
 
 
 class BridgeSettingsIn(BaseModel):
-    """Rumpf von `PATCH /api/settings` - alle drei Felder zusammen, kein
-    Teil-Update: sie gehoeren fachlich zusammen (dieselbe virtuelle
-    Verbindung), ein Teil-Update koennte sonst eine gueltige IP mit einem
-    inzwischen falschen Port stehen lassen. `min_length=1` auf `bridge_ip`
-    ergibt 422 bei leerem Feld, ohne einen eigenen Validator."""
+    """Body of `PATCH /api/settings` - all three fields together, no
+    partial update: they belong together logically (the same virtual
+    connection), a partial update could otherwise leave a valid IP with
+    a now-wrong port. `min_length=1` on `bridge_ip` yields 422 on an
+    empty field, without a validator of its own."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -476,15 +476,15 @@ class BridgeSettingsIn(BaseModel):
     listen_port: int
 ```
 
-Ergänze den Import am Kopf der Datei:
+Add the import at the top of the file:
 
 ```python
 from pydantic import BaseModel, ConfigDict, Field
 ```
 
-- [ ] **Step 4: Router anlegen**
+- [ ] **Step 4: Create the router**
 
-Erstelle `src/loxmatter/api/settings.py`:
+Create `src/loxmatter/api/settings.py`:
 
 ```python
 # loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
@@ -503,12 +503,13 @@ Erstelle `src/loxmatter/api/settings.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Verbindungseinstellungen der Bruecke (IP, Ports) ueber die API - Geraete-
-Dashboard-Entwurf (2026-09-03), Abschnitt 4.
+"""Connection settings of the bridge (IP, ports) via the API - device
+dashboard design (2026-09-03), section 4.
 
-`build_settings_router` baut einen `APIRouter` mit Praefix `/api`, genau wie
-`api.devices.build_device_router` - eingebunden in `loxone.server.build_app`
-neben den uebrigen Routern dieser Phase, hinter demselben `api_guard`."""
+`build_settings_router` builds an `APIRouter` with prefix `/api`, exactly
+like `api.devices.build_device_router` - hooked into
+`loxone.server.build_app` next to the other routers of this phase,
+behind the same `api_guard`."""
 
 from __future__ import annotations
 
@@ -547,26 +548,26 @@ def build_settings_router(store: Store) -> APIRouter:
     return router
 ```
 
-- [ ] **Step 5: In `build_app` einhängen**
+- [ ] **Step 5: Hook it into `build_app`**
 
-In `src/loxmatter/loxone/server.py`, Import ergänzen (bei den übrigen `api.*`-Importen, ca. Zeile 119):
+In `src/loxmatter/loxone/server.py`, add the import (next to the other `api.*` imports, around line 119):
 
 ```python
 from loxmatter.api.devices import build_device_router
 from loxmatter.api.settings import build_settings_router
 ```
 
-Und nach der bestehenden `app.include_router(build_export_router(store), dependencies=api_guard)`-Zeile (ca. Zeile 415):
+And after the existing `app.include_router(build_export_router(store), dependencies=api_guard)` line (around line 415):
 
 ```python
     app.include_router(build_export_router(store), dependencies=api_guard)
     app.include_router(build_settings_router(store), dependencies=api_guard)
 ```
 
-- [ ] **Step 6: Lauf bestätigen, dass die Tests durchlaufen**
+- [ ] **Step 6: Confirm the tests pass**
 
 Run: `uv run pytest tests/api/test_settings_api.py tests/api/test_security.py -v`
-Expected: PASS. (`tests/api/test_security.py` prüft den Wächter anhand einzeln benannter Routen wie `/api/devices` oder `/api/export/status`, keine generische Schleife über alle Router — der neue `/api/settings`-Router braucht dort keine Ergänzung; `test_settings_route_requires_a_session` oben deckt ihn bereits ab.)
+Expected: PASS. (`tests/api/test_security.py` checks the guard against individually named routes like `/api/devices` or `/api/export/status`, no generic loop over all routers — the new `/api/settings` router needs no addition there; `test_settings_route_requires_a_session` above already covers it.)
 
 - [ ] **Step 7: Commit**
 
@@ -586,26 +587,26 @@ EOF
 
 ---
 
-## Task 3: `device_id` an `/api/export/download`
+## Task 3: `device_id` on `/api/export/download`
 
 **Files:**
 - Modify: `src/loxmatter/api/export.py`
-- Modify (Erweiterung, nicht Ersetzung): `tests/api/test_export_api.py`
+- Modify (extension, not replacement): `tests/api/test_export_api.py`
 
 **Interfaces:**
-- Consumes: `store.device(device_id) -> StoredDevice`, wirft `UnknownDeviceError` (bereits vorhanden, `model/store.py`).
-- Produces: `GET /api/export/download` akzeptiert einen neuen optionalen Query-Parameter `device_id: int | None`. Gesetzt, überschreibt er `only_pending` (das Gerät wird immer exportiert) und beschränkt das Archiv auf genau dieses eine Gerät; ein unbekanntes `device_id` ergibt 404.
+- Consumes: `store.device(device_id) -> StoredDevice`, raises `UnknownDeviceError` (already present, `model/store.py`).
+- Produces: `GET /api/export/download` accepts a new optional query parameter `device_id: int | None`. When set, it overrides `only_pending` (the device is always exported) and restricts the archive to exactly this one device; an unknown `device_id` yields 404.
 
-- [ ] **Step 1: Schreibe die fehlschlagenden Tests**
+- [ ] **Step 1: Write the failing tests**
 
-Ergänze am Ende von `tests/api/test_export_api.py`:
+Add to the end of `tests/api/test_export_api.py`:
 
 ```python
 # ---------------------------------------------------------------------------
-# device_id: Export eines einzelnen Geraets ueber den Export-Knopf an der
-# Geraetekarte (Geraete-Dashboard-Entwurf, 2026-09-03, Abschnitt 6). Kein
-# eigener Endpunkt - derselbe `/api/export/download`, nur auf ein Geraet
-# eingeschraenkt.
+# device_id: export of a single device via the export button on the
+# device card (device dashboard design, 2026-09-03, section 6). No
+# endpoint of its own - the same `/api/export/download`, just
+# restricted to one device.
 # ---------------------------------------------------------------------------
 
 
@@ -630,12 +631,12 @@ async def test_download_with_device_id_marks_only_that_device_exported(api):
 
 
 async def test_download_with_device_id_ignores_only_pending(api):
-    """`device_id` gewinnt gegen `only_pending` (Entwurf Abschnitt 6): das
-    angeforderte Geraet wird exportiert, auch wenn es laut
-    `changed_since_export` gar nicht ausstuende."""
+    """`device_id` wins against `only_pending` (design section 6): the
+    requested device is exported, even if it wouldn't be pending at all
+    per `changed_since_export`."""
     client, store, first_id = api
     await client.get(f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}")
-    assert store.device(first_id).exported_at is not None  # bereits exportiert, "nicht aenderend"
+    assert store.device(first_id).exported_at is not None  # already exported, "not pending"
 
     response = await client.get(
         f"/api/export/download?bridge_ip=192.168.1.50&device_id={first_id}&only_pending=true"
@@ -650,22 +651,22 @@ async def test_download_with_unknown_device_id_yields_404(api):
     assert response.status_code == 404
 ```
 
-- [ ] **Step 2: Lauf bestätigen, dass die Tests fehlschlagen**
+- [ ] **Step 2: Confirm the tests fail**
 
 Run: `uv run pytest tests/api/test_export_api.py -k device_id -v`
-Expected: FAIL — `device_id` wird als unbekannter Query-Parameter ignoriert, alle vier Tests scheitern (die ersten drei, weil das ZIP beide/kein Gerät statt nur eines enthält bzw. beide markiert werden; der letzte, weil die Antwort 200 statt 404 ist).
+Expected: FAIL — `device_id` is ignored as an unknown query parameter, all four tests fail (the first three, because the ZIP contains both/neither device instead of just one, or both are marked; the last one, because the response is 200 instead of 404).
 
-- [ ] **Step 3: `download` um `device_id` erweitern**
+- [ ] **Step 3: Extend `download` with `device_id`**
 
 In `src/loxmatter/api/export.py`:
 
-Import ergänzen (Zeile 93-94, bei den bestehenden `fastapi`-Importen):
+Add the import (line 93-94, next to the existing `fastapi` imports):
 
 ```python
 from fastapi import APIRouter, HTTPException, Query
 ```
 
-Import ergänzen (Zeile 106, bei den bestehenden `model.store`-Importen):
+Add the import (line 106, next to the existing `model.store` imports):
 
 ```python
 from loxmatter.model.store import (
@@ -678,7 +679,7 @@ from loxmatter.model.store import (
 )
 ```
 
-Die `download`-Route (Zeile 238-341) wird zu:
+The `download` route (line 238-341) becomes:
 
 ```python
     @router.get("/download")
@@ -708,27 +709,26 @@ Die `download`-Route (Zeile 238-341) wird zu:
             " 404, wenn das Geraet nicht (mehr) existiert.",
         ),
     ) -> Response:
-        """Baut das ZIP im Speicher - keine temporaere Datei, kein
-        Zwischenzustand auf der Platte.
+        """Builds the ZIP in memory - no temporary file, no intermediate
+        state on disk.
 
-        Markiert jedes ausgelieferte Geraet ueber `Store.mark_exported` als
-        exportiert (Entscheidung 1 im Modul-Docstring) - aber ERST, nachdem
-        das Archiv vollstaendig aufgebaut ist, nicht Geraet fuer Geraet
-        waehrend des Aufbaus (Review-Fix Important #1, 2026-09-02).
-        Waere zwischen zwei Geraeten ein Fehler aufgetreten - ein Rendern,
-        das wirft, ein `store.commands`/`store.signals`, das scheitert, ein
-        `forget_device` aus einer parallelen Anfrage -, haette FastAPI 500
-        geantwortet und der Client kein ZIP erhalten, waehrend jedes bis
-        dahin verarbeitete Geraet trotzdem dauerhaft als exportiert
-        vermerkt gewesen waere. Dieselbe Disziplin wie in `cli.py`s
-        `export`-Kommando.
+        Marks every delivered device as exported via `Store.mark_exported`
+        (decision 1 in the module docstring) - but ONLY AFTER the archive
+        is fully built, not device by device during the build (review fix
+        important #1, 2026-09-02). If an error had occurred between two
+        devices - a render that raises, a `store.commands`/`store.signals`
+        that fails, a `forget_device` from a parallel request - FastAPI
+        would have responded 500 and the client would have received no
+        ZIP, while every device processed up to that point would
+        nonetheless have been permanently recorded as exported. The same
+        discipline as in `cli.py`'s `export` command.
 
-        **`device_id` (Geraete-Dashboard-Entwurf, 2026-09-03, Abschnitt 6).**
-        Gesetzt, beschraenkt sich die Auswahl auf genau dieses eine Geraet,
-        unabhaengig von `only_pending` - der Export-Knopf an einer
-        Geraetekarte fragt nie, ob das Geraet "ansteht", er exportiert das
-        eine Geraet, das gerade sichtbar ist. Ein unbekanntes oder
-        entferntes Geraet ergibt 404, geprueft VOR dem Aufbau des Archivs."""
+        **`device_id` (device dashboard design, 2026-09-03, section 6).**
+        When set, the selection is restricted to exactly this one device,
+        independent of `only_pending` - the export button on a device
+        card never asks whether the device is "pending," it exports the
+        one device that is currently visible. An unknown or removed
+        device yields 404, checked BEFORE the archive is built."""
         if device_id is not None:
             try:
                 store.device(device_id)
@@ -776,12 +776,12 @@ Die `download`-Route (Zeile 238-341) wird zu:
         )
 ```
 
-(Die Schleifenvariable im letzten `for` heißt jetzt `device_id_written`, nicht mehr `device_id` — der Parameter `device_id` der Route bliebe sonst ab dieser Zeile überschrieben, unschön beim Lesen, auch wenn es funktional keine Rolle spielt, weil er zu diesem Zeitpunkt nicht mehr gebraucht wird.)
+(The loop variable in the last `for` is now called `device_id_written`, no longer `device_id` — otherwise the route's `device_id` parameter would be shadowed from this line on, which reads poorly even though it makes no functional difference, since it's no longer needed at that point.)
 
-- [ ] **Step 4: Lauf bestätigen, dass die neuen und alten Tests durchlaufen**
+- [ ] **Step 4: Confirm the new and old tests pass**
 
 Run: `uv run pytest tests/api/test_export_api.py -v`
-Expected: PASS (alle bisherigen plus die vier neuen Tests — insbesondere `test_an_unfiltered_download_still_contains_every_device` und die `only_pending`-Tests bleiben unverändert grün, weil `device_id` dort nie gesetzt ist)
+Expected: PASS (all previous ones plus the four new tests — in particular `test_an_unfiltered_download_still_contains_every_device` and the `only_pending` tests stay green unchanged, because `device_id` is never set there)
 
 - [ ] **Step 5: Commit**
 
@@ -801,20 +801,20 @@ EOF
 
 ---
 
-## Task 4: Hilfsserver für die manuelle Verifikation der Frontend-Tasks
+## Task 4: helper server for manual verification of the frontend tasks
 
-Dieses Repo hat keine Frontend-Testinfrastruktur (kein JS-Test-Runner, `app.js`/`index.html`/`style.css` sind unveränderter statischer Code ohne Build-Schritt). `loxmatter run` selbst braucht eine echte `matter-server`-Verbindung. Für die Tasks 5-9 unten wird deshalb ein kleiner Entwicklungsserver gebraucht, der die WebUI mit zwei Beispielgeräten aus den vorhandenen Test-Fixtures zeigt, ohne Matter-Hardware.
+This repo has no frontend test infrastructure (no JS test runner, `app.js`/`index.html`/`style.css` are unchanged static code with no build step). `loxmatter run` itself needs a real `matter-server` connection. For tasks 5-9 below, a small development server is therefore needed that shows the WebUI with two sample devices from the existing test fixtures, without Matter hardware.
 
 **Files:**
 - Create: `scripts/dev_web_server.py`
 
 **Interfaces:**
-- Consumes: `loxmatter.loxone.server.build_app`, `loxmatter.model.store.Store`, Fixtures unter `tests/fixtures/nodes/`.
-- Produces: ein lokal erreichbarer HTTP-Server unter `http://127.0.0.1:8420`, der von Task 5 an zur manuellen Verifikation dient.
+- Consumes: `loxmatter.loxone.server.build_app`, `loxmatter.model.store.Store`, fixtures under `tests/fixtures/nodes/`.
+- Produces: a locally reachable HTTP server at `http://127.0.0.1:8420`, which serves manual verification from task 5 onward.
 
-- [ ] **Step 1: Skript anlegen**
+- [ ] **Step 1: Create the script**
 
-Erstelle `scripts/dev_web_server.py`:
+Create `scripts/dev_web_server.py`:
 
 ```python
 # loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
@@ -833,16 +833,17 @@ Erstelle `scripts/dev_web_server.py`:
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Startet die WebUI mit zwei Beispielgeraeten, ohne matter-server - fuer die
-manuelle Ansicht der Geraete-Dashboard-Aenderungen im Browser (siehe
-docs/superpowers/plans/2026-09-03-device-dashboard-and-export.md, Task 4).
+"""Starts the WebUI with two sample devices, without matter-server - for
+manually viewing the device dashboard changes in the browser (see
+docs/superpowers/plans/2026-09-03-device-dashboard-and-export.md, task 4).
 
-Aufruf: uv run python scripts/dev_web_server.py
-Danach: http://127.0.0.1:8420 oeffnen, ein beliebiges Passwort vergeben
-(Ersteinrichtung, gilt nur fuer diesen Testlauf).
+Invocation: uv run python scripts/dev_web_server.py
+Afterward: open http://127.0.0.1:8420, set any password (initial setup,
+only valid for this test run).
 
-Die Datenbank liegt in einer festen Datei im Temp-Verzeichnis - ein zweiter
-Lauf findet denselben Bestand wieder, statt jedes Mal neu einzulernen."""
+The database sits in a fixed file in the temp directory - a second run
+finds the same data again, instead of commissioning from scratch every
+time."""
 
 from __future__ import annotations
 
@@ -869,10 +870,10 @@ def _load_snapshot(name: str) -> NodeSnapshot:
 
 
 class _SeededRuntime:
-    """Erfuellt `api.devices.RuntimeValues` mit ein paar erfundenen, aber
-    plausiblen Werten - genug, damit die Geraetekarten nicht nur "-" zeigen.
-    Kein Ersatz fuer `Runtime`: es gibt keine Live-Verbindung, die Werte
-    stehen fest, bis dieser Prozess neu startet."""
+    """Fulfills `api.devices.RuntimeValues` with a few made-up but
+    plausible values - enough so the device cards don't just show "-".
+    Not a replacement for `Runtime`: there is no live connection, the
+    values stay fixed until this process restarts."""
 
     def __init__(self, values: dict[str, float | bool]) -> None:
         self._values = values
@@ -948,10 +949,10 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Lauf bestätigen, dass der Server startet und zwei Geräte zeigt**
+- [ ] **Step 2: Confirm the server starts and shows two devices**
 
 Run: `uv run python scripts/dev_web_server.py`
-Expected: Konsole zeigt `Datenbank: …` und `WebUI: http://127.0.0.1:8420`, Prozess bleibt hängen (läuft), kein Traceback. Im Browser `http://127.0.0.1:8420` öffnen, Passwort vergeben, Tab "Geräte" zeigt zwei Karten ("Steckdose Wohnzimmer", "Taster Flur"). Mit Strg+C beenden.
+Expected: console shows `Datenbank: …` and `WebUI: http://127.0.0.1:8420`, process stays hanging (running), no traceback. Open `http://127.0.0.1:8420` in the browser, set a password, the "Devices" tab shows two cards ("Steckdose Wohnzimmer", "Taster Flur"). Stop with Ctrl+C.
 
 - [ ] **Step 3: Commit**
 
@@ -971,65 +972,65 @@ EOF
 
 ---
 
-## Task 5: `style.css` — Kupfer/Amber-Akzent, Status- und Icon-Klassen
+## Task 5: `style.css` — copper/amber accent, status and icon classes
 
 **Files:**
 - Modify: `src/loxmatter/web/style.css`
 
 **Interfaces:**
-- Produces: CSS-Tokens `--off`/`--off-bg`/`--type-bg`/`--type-fg` (neu), geänderte `--accent`/`--accent-contrast`. Klassen `.icon`, `.type-badge`, `.status-pill`(`.warn`/`.off`), `.device-card`(`.is-changed`/`.is-offline`), `.value-chips`/`.value-chip` — verwendet von Task 8/9.
-- Consumes: nichts Neues.
+- Produces: CSS tokens `--off`/`--off-bg`/`--type-bg`/`--type-fg` (new), changed `--accent`/`--accent-contrast`. Classes `.icon`, `.type-badge`, `.status-pill`(`.warn`/`.off`), `.device-card`(`.is-changed`/`.is-offline`), `.value-chips`/`.value-chip` — used by task 8/9.
+- Consumes: nothing new.
 
-- [ ] **Step 1: Akzentfarbe umstellen, neue Tokens ergänzen**
+- [ ] **Step 1: Switch the accent color, add new tokens**
 
-In `src/loxmatter/web/style.css`, im `:root`-Block (Zeile 27-43), ersetze:
+In `src/loxmatter/web/style.css`, in the `:root` block (line 27-43), replace:
 
 ```css
   --accent: #2d6a4f;
   --accent-contrast: #ffffff;
 ```
 
-durch:
+with:
 
 ```css
-  /* Kupfer/Amber statt Gruen (Geraete-Dashboard-Entwurf, freigegeben nach
-     Vorlage): bewusst getrennt von --ok, das gruen bleibt - eine Kupfer-
-     Primaertaste neben einer gruenen "online"-Markierung soll nicht wie
-     derselbe Zustand aussehen. */
+  /* Copper/amber instead of green (device dashboard design, approved
+     against a mockup): deliberately separate from --ok, which stays
+     green - a copper primary button next to a green "online" marker
+     should not look like the same state. */
   --accent: #a15a2c;
   --accent-contrast: #ffffff;
 ```
 
-Ergänze im selben Block, nach `--warn-bg: #fdf3e0;`:
+Add, in the same block, after `--warn-bg: #fdf3e0;`:
 
 ```css
-  /* Offline-Status einer Geraetekarte (Abschnitt 3 des Entwurfs) - eigene
-     Farbe statt --danger, das an anderer Stelle (Verbindungsstatus oben in
-     der Kopfzeile) weiterhin Rot bleibt. */
+  /* Offline status of a device card (section 3 of the design) - its own
+     color instead of --danger, which elsewhere (connection status up
+     in the header) stays red. */
   --off: #5b6572;
   --off-bg: #e7e9ec;
-  /* Getoenter Hintergrund fuer das Typ-Icon einer Geraetekarte - aus der
-     Akzentfarbe abgeleitet, nicht aus --ok: das Icon zeigt "das ist ein
-     Geraet", keinen Status. */
+  /* Tinted background for the type icon of a device card - derived from
+     the accent color, not from --ok: the icon shows "this is a
+     device," not a status. */
   --type-bg: #f4e6da;
   --type-fg: #a15a2c;
 ```
 
-Im `@media (prefers-color-scheme: dark)`-Block (Zeile 45-61), ersetze:
+In the `@media (prefers-color-scheme: dark)` block (line 45-61), replace:
 
 ```css
     --accent: #6fbf9a;
     --accent-contrast: #0c1210;
 ```
 
-durch:
+with:
 
 ```css
     --accent: #e2915c;
     --accent-contrast: #2a1508;
 ```
 
-und ergänze, nach `--warn-bg: #362a10;`:
+and add, after `--warn-bg: #362a10;`:
 
 ```css
     --off: #98a3ad;
@@ -1038,13 +1039,13 @@ und ergänze, nach `--warn-bg: #362a10;`:
     --type-fg: #e2915c;
 ```
 
-- [ ] **Step 2: Neue Komponentenklassen anhängen**
+- [ ] **Step 2: Append the new component classes**
 
-Am Ende von `style.css`, nach `.heartbeat`, anhängen:
+At the end of `style.css`, after `.heartbeat`, append:
 
 ```css
-/* Geraete-Dashboard-Entwurf (2026-09-03): Icons, Status-Pille und
-   Wert-Chips fuer die immer offene Geraetekarte. */
+/* Device dashboard design (2026-09-03): icons, status pill, and value
+   chips for the always-open device card. */
 
 .icon {
   width: 1.1em;
@@ -1091,10 +1092,10 @@ Am Ende von `style.css`, nach `.heartbeat`, anhängen:
   color: var(--off);
 }
 
-/* Linker Farbstreifen an einer Geraetekarte - traegt dieselbe Bedeutung
-   wie die Status-Pille daneben, bewusst redundant: faellt beim schnellen
-   Scrollen ueber viele Geraete auf, ohne dass die Pille gelesen werden
-   muss. Grundzustand (kein Modifikator) ist gruen = unauffaellig. */
+/* Left-hand color stripe on a device card - carries the same meaning
+   as the status pill next to it, deliberately redundant: stands out
+   when scrolling quickly over many devices, without the pill needing
+   to be read. Base state (no modifier) is green = unremarkable. */
 .device-card {
   position: relative;
   overflow: hidden;
@@ -1140,10 +1141,10 @@ Am Ende von `style.css`, nach `.heartbeat`, anhängen:
 }
 ```
 
-- [ ] **Step 3: Manuell verifizieren**
+- [ ] **Step 3: Verify manually**
 
 Run: `uv run python scripts/dev_web_server.py`
-Expected: Im Browser die Kopfzeile prüfen — der Reiter "Geräte" trägt jetzt einen kupferfarbenen Unterstrich statt eines grünen (`nav.tabs button.active { border-bottom-color: var(--accent) }`, unverändert, nur der Token-Wert hat sich geändert). Der "Neues Gerät einlernen"-Knopf ("Einlernen", `.primary`) ist jetzt kupferfarben statt grün. Keine sichtbaren Layoutbrüche. (Die neuen Klassen `.type-badge`/`.status-pill`/`.device-card`/`.value-chip` selbst sind erst ab Task 8 im Markup verwendet — hier nur prüfen, dass nichts Bestehendes bricht.)
+Expected: check the header in the browser — the "Devices" tab now carries a copper-colored underline instead of a green one (`nav.tabs button.active { border-bottom-color: var(--accent) }`, unchanged, only the token value has changed). The "Commission new device" button ("Commission", `.primary`) is now copper-colored instead of green. No visible layout breaks. (The new classes `.type-badge`/`.status-pill`/`.device-card`/`.value-chip` themselves aren't used in the markup until task 8 — here only check that nothing existing breaks.)
 
 - [ ] **Step 4: Commit**
 
@@ -1163,25 +1164,26 @@ EOF
 
 ---
 
-## Task 6: Tab „Einstellungen"
+## Task 6: "Settings" tab
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (Icon-Symbole, Nav-Button, neue Sektion)
-- Modify: `src/loxmatter/web/app.js` (Zustand, `loadSettings`/`saveSettings`, `selectView`)
+- Modify: `src/loxmatter/web/index.html` (icon symbols, nav button, new section)
+- Modify: `src/loxmatter/web/app.js` (state, `loadSettings`/`saveSettings`, `selectView`)
 
 **Interfaces:**
-- Consumes: `GET`/`PATCH /api/settings` aus Task 2.
-- Produces: `app().bridgeSettings: {bridge_ip, udp_port, listen_port, saved_at}` (nach dem Laden befüllt), `app().settingsDraft: {bridge_ip, udp_port, listen_port}` (Eingabefelder), `app().loadSettings()`, `app().saveSettings()` — von Task 7 (Export-Tab) und Task 9 (Export-Knopf an der Karte) gelesen.
+- Consumes: `GET`/`PATCH /api/settings` from task 2.
+- Produces: `app().bridgeSettings: {bridge_ip, udp_port, listen_port, saved_at}` (populated after loading), `app().settingsDraft: {bridge_ip, udp_port, listen_port}` (input fields), `app().loadSettings()`, `app().saveSettings()` — read by task 7 (export tab) and task 9 (export button on the card).
 
-- [ ] **Step 1: Icon-Symbole und den neuen Tab in `index.html` ergänzen**
+- [ ] **Step 1: Add icon symbols and the new tab in `index.html`**
 
-Direkt nach `<body x-data="app()">` (Zeile 55) einfügen — einmalig definierte Icons, per `<use>` überall referenziert:
+Insert directly after `<body x-data="app()">` (line 55) — icons defined once, referenced everywhere via `<use>`:
 
 ```html
   <body x-data="app()">
-    <!-- Icon-Symbole (Geraete-Dashboard-Entwurf, Abschnitt 3) - inline SVG
-         statt einer Icon-Bibliothek: kein Netzwerkverweis, dieselbe
-         Begruendung wie beim vendorten Alpine.js oben im Kopfkommentar. -->
+    <!-- Icon symbols (device dashboard design, section 3) - inline SVG
+         instead of an icon library: no network reference, the same
+         reasoning as for the vendored Alpine.js above in the header
+         comment. -->
     <svg style="display: none" aria-hidden="true">
       <symbol id="i-device" viewBox="0 0 24 24">
         <rect x="4" y="4" width="16" height="16" rx="3" />
@@ -1201,7 +1203,7 @@ Direkt nach `<body x-data="app()">` (Zeile 55) einfügen — einmalig definierte
     </svg>
 ```
 
-In `nav.tabs` (Zeile 142-147), nach dem "System"-Button einen fünften Button ergänzen:
+In `nav.tabs` (line 142-147), add a fifth button after the "System" button:
 
 ```html
     <nav class="tabs">
@@ -1213,11 +1215,11 @@ In `nav.tabs` (Zeile 142-147), nach dem "System"-Button einen fünften Button er
     </nav>
 ```
 
-Nach der System-Sektion (nach `</section>` in Zeile 587, vor `</main>` in Zeile 588) die neue Sektion einfügen:
+After the System section (after `</section>` on line 587, before `</main>` on line 588), insert the new section:
 
 ```html
       <!-- ================================================================
-           Ansicht 5: Einstellungen
+           View 5: Settings
            ================================================================ -->
       <section x-show="view === 'settings'" x-cloak>
         <div class="card">
@@ -1262,15 +1264,15 @@ Nach der System-Sektion (nach `</section>` in Zeile 587, vor `</main>` in Zeile 
       </section>
 ```
 
-- [ ] **Step 2: Zustand und Methoden in `app.js` ergänzen**
+- [ ] **Step 2: Add state and methods in `app.js`**
 
-In der `--- Export ---`-Zustandsgruppe (Zeile 248-257), die drei Felder `exportBridgeIp`/`exportPort`/`exportListenPort` entfernen (sie werden in Task 7 durch `bridgeSettings` ersetzt) und eine neue Gruppe direkt davor einfügen:
+In the `--- Export ---` state group (line 248-257), remove the three fields `exportBridgeIp`/`exportPort`/`exportListenPort` (they are replaced by `bridgeSettings` in task 7) and insert a new group directly before it:
 
 ```js
-    // --- Einstellungen ---------------------------------------------------
-    // `bridgeSettings` ist der zuletzt vom Server geladene Stand (auch von
-    // Task 7 und Task 9 gelesen); `settingsDraft` sind die drei Eingabefelder
-    // auf diesem Tab, erst nach "Speichern" uebernommen.
+    // --- Settings ----------------------------------------------------------
+    // `bridgeSettings` is the state last loaded from the server (also read
+    // by task 7 and task 9); `settingsDraft` are the three input fields on
+    // this tab, only adopted after "Save."
     bridgeSettings: { bridge_ip: null, udp_port: 7000, listen_port: 8080, saved_at: null },
     settingsDraft: { bridge_ip: "", udp_port: 7000, listen_port: 8080 },
     settingsBusy: false,
@@ -1285,14 +1287,14 @@ In der `--- Export ---`-Zustandsgruppe (Zeile 248-257), die drei Felder `exportB
     exportError: null,
 ```
 
-In `startApp()` (Zeile 375-409), `this.settingsError = null;` bei den übrigen Reset-Zeilen ergänzen (nach `this.signalsError = null;`), und `this.loadSettings()` in das bestehende `Promise.all` am Ende der Methode aufnehmen — dieser Schritt wird zusammen mit Task 8 fertiggestellt (dort wird `startApp()` insgesamt neu geschrieben, siehe Task 8 Step 4); für diesen Task genügt ein eigenständiger Aufruf direkt nach `await this.loadDevices();`:
+In `startApp()` (line 375-409), add `this.settingsError = null;` next to the other reset lines (after `this.signalsError = null;`), and include `this.loadSettings()` in the existing `Promise.all` at the end of the method — this step is completed together with task 8 (where `startApp()` is rewritten as a whole, see task 8 step 4); for this task, a standalone call directly after `await this.loadDevices();` is enough:
 
 ```js
       await this.loadDevices();
       await this.loadSettings();
 ```
 
-In `selectView(view)` (Zeile 483-500), einen weiteren `else if`-Zweig ergänzen:
+In `selectView(view)` (line 483-500), add another `else if` branch:
 
 ```js
       } else if (view === "system") {
@@ -1302,11 +1304,11 @@ In `selectView(view)` (Zeile 483-500), einen weiteren `else if`-Zweig ergänzen:
       }
 ```
 
-Im Abschnitt „Export" (nach `loadExportStatus`, vor `previewExport`, ca. Zeile 908) `loadSettings`/`saveSettings` einfügen — eigener Abschnittskommentar:
+In the "Export" section (after `loadExportStatus`, before `previewExport`, around line 908), insert `loadSettings`/`saveSettings` — its own section comment:
 
 ```js
     // ---------------------------------------------------------------------
-    // Einstellungen
+    // Settings
     // ---------------------------------------------------------------------
 
     async loadSettings() {
@@ -1346,10 +1348,10 @@ Im Abschnitt „Export" (nach `loadExportStatus`, vor `previewExport`, ca. Zeile
 
 ```
 
-- [ ] **Step 3: Manuell verifizieren**
+- [ ] **Step 3: Verify manually**
 
 Run: `uv run python scripts/dev_web_server.py`
-Expected: Im Browser erscheint ein fünfter Reiter "Einstellungen". Dort IP `192.168.1.20`, UDP-Port `7000`, HTTP-Port `8080` eintragen, "Speichern" klicken → Kurzmeldung "Einstellungen gespeichert.", Hinweis "Zuletzt gespeichert: …" erscheint. Seite neu laden (F5) → derselbe Tab zeigt weiterhin `192.168.1.20` (serverseitig gespeichert, kein Verlust beim Neuladen).
+Expected: a fifth tab "Settings" appears in the browser. There, enter IP `192.168.1.20`, UDP port `7000`, HTTP port `8080`, click "Save" → toast "Einstellungen gespeichert.", hint "Zuletzt gespeichert: …" appears. Reload the page (F5) → the same tab still shows `192.168.1.20` (saved server-side, no loss on reload).
 
 - [ ] **Step 4: Commit**
 
@@ -1368,19 +1370,19 @@ EOF
 
 ---
 
-## Task 7: Export-Tab wird schreibgeschützt
+## Task 7: the export tab becomes read-only
 
 **Files:**
 - Modify: `src/loxmatter/web/index.html`
 - Modify: `src/loxmatter/web/app.js`
 
 **Interfaces:**
-- Consumes: `app().bridgeSettings` aus Task 6.
-- Produces: `previewExport()`/`downloadUrl()`/`downloadExport()` lesen `bridgeSettings` statt der entfernten `exportBridgeIp`/`exportPort`/`exportListenPort`-Felder — dasselbe Verhalten wie zuvor, nur mit der neuen Quelle.
+- Consumes: `app().bridgeSettings` from task 6.
+- Produces: `previewExport()`/`downloadUrl()`/`downloadExport()` read `bridgeSettings` instead of the removed `exportBridgeIp`/`exportPort`/`exportListenPort` fields — the same behavior as before, just with the new source.
 
-- [ ] **Step 1: Eingabefelder in `index.html` schreibgeschützt machen**
+- [ ] **Step 1: Make the input fields read-only in `index.html`**
 
-Im Export-Abschnitt (Zeile 434-481), ersetze den ersten `<div class="row">` (die drei Eingabefelder) und den folgenden Hinweistext:
+In the export section (line 434-481), replace the first `<div class="row">` (the three input fields) and the following hint text:
 
 ```html
       <section x-show="view === 'export'" x-cloak>
@@ -1424,11 +1426,11 @@ Im Export-Abschnitt (Zeile 434-481), ersetze den ersten `<div class="row">` (die
         </div>
 ```
 
-(Der Rest der Sektion — Vorschau-Tabelle ab `<div class="card" x-show="exportPreview" x-cloak>` — bleibt unverändert.)
+(The rest of the section — preview table starting at `<div class="card" x-show="exportPreview" x-cloak>` — stays unchanged.)
 
-- [ ] **Step 2: `app.js` auf `bridgeSettings` umstellen**
+- [ ] **Step 2: Switch `app.js` to `bridgeSettings`**
 
-`previewExport()` (Zeile 914-933) wird zu:
+`previewExport()` (line 914-933) becomes:
 
 ```js
     async previewExport() {
@@ -1454,7 +1456,7 @@ Im Export-Abschnitt (Zeile 434-481), ersetze den ersten `<div class="row">` (die
     },
 ```
 
-`downloadUrl()` (Zeile 956-965) wird zu:
+`downloadUrl()` (line 956-965) becomes:
 
 ```js
     downloadUrl() {
@@ -1469,7 +1471,7 @@ Im Export-Abschnitt (Zeile 434-481), ersetze den ersten `<div class="row">` (die
     },
 ```
 
-`downloadExport()` (Zeile 980-999) wird zu:
+`downloadExport()` (line 980-999) becomes:
 
 ```js
     async downloadExport() {
@@ -1489,10 +1491,10 @@ Im Export-Abschnitt (Zeile 434-481), ersetze den ersten `<div class="row">` (die
     },
 ```
 
-- [ ] **Step 3: Manuell verifizieren**
+- [ ] **Step 3: Verify manually**
 
 Run: `uv run python scripts/dev_web_server.py`
-Expected: Tab "Export" zeigt die drei Felder ausgegraut/schreibgeschützt mit dem zuletzt in "Einstellungen" gespeicherten Wert (zuerst dort `192.168.1.20`/`7000`/`8080` speichern, siehe Task 6 Step 3). Klick auf den Link "Einstellungen → Verbindung zum Miniserver" wechselt den Tab. "Vorschau ansehen" und "ZIP herunterladen" funktionieren weiterhin (Vorschau-Tabelle erscheint, ZIP lädt herunter). Ohne zuvor gespeicherte Einstellungen (frische Datenbank, `--store-path` auf eine neue Datei) zeigt ein Klick auf "Vorschau ansehen" die Fehlermeldung "Bitte zuerst in Einstellungen …" statt eines Server-422.
+Expected: the "Export" tab shows the three fields grayed out/read-only with the value last saved in "Settings" (save `192.168.1.20`/`7000`/`8080` there first, see task 6 step 3). Clicking the "Einstellungen → Verbindung zum Miniserver" link switches the tab. "Vorschau ansehen" and "ZIP herunterladen" keep working (the preview table appears, the ZIP downloads). Without previously saved settings (a fresh database, `--store-path` pointed at a new file), clicking "Vorschau ansehen" shows the error message "Bitte zuerst in Einstellungen …" instead of a server 422.
 
 - [ ] **Step 4: Commit**
 
@@ -1511,19 +1513,19 @@ EOF
 
 ---
 
-## Task 8: Geräte-Kachel — immer offen, Icon, Status-Streifen
+## Task 8: device tile — always open, icon, status stripe
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (Geräte-Sektion komplett ersetzt)
-- Modify: `src/loxmatter/web/app.js` (`startApp`, `commissionDevice`, `removeDevice`, neue Helfer, `toggleExpanded`/`expandedDeviceId` entfernt)
+- Modify: `src/loxmatter/web/index.html` (device section replaced entirely)
+- Modify: `src/loxmatter/web/app.js` (`startApp`, `commissionDevice`, `removeDevice`, new helpers, `toggleExpanded`/`expandedDeviceId` removed)
 
 **Interfaces:**
-- Consumes: `app().bridgeSettings` (Task 6/7, hier nur mitgelesen, Export-Knopf selbst kommt in Task 9), `GET /api/export/status` (bereits vorhanden).
-- Produces: `app().changedSinceExport(deviceId): bool`, `app().exportHintFor(deviceId): string`, `app().deviceCardClass(device): {is-changed, is-offline}` — von der neuen Kachel in `index.html` gelesen. Entfernt: `app().expandedDeviceId`, `app().toggleExpanded`.
+- Consumes: `app().bridgeSettings` (task 6/7, only read along here, the export button itself comes in task 9), `GET /api/export/status` (already present).
+- Produces: `app().changedSinceExport(deviceId): bool`, `app().exportHintFor(deviceId): string`, `app().deviceCardClass(device): {is-changed, is-offline}` — read by the new tile in `index.html`. Removed: `app().expandedDeviceId`, `app().toggleExpanded`.
 
-- [ ] **Step 1: `startApp()` neu schreiben — alle Karten laden sofort**
+- [ ] **Step 1: Rewrite `startApp()` — all cards load immediately**
 
-Ersetze in `src/loxmatter/web/app.js` die Methode `startApp()` (Zeile 375-409):
+Replace the `startApp()` method in `src/loxmatter/web/app.js` (line 375-409):
 
 ```js
     async startApp() {
@@ -1535,10 +1537,10 @@ Ersetze in `src/loxmatter/web/app.js` die Methode `startApp()` (Zeile 375-409):
       this.controlsByDevice = {};
       this.signalsByDevice = {};
       await this.loadDevices();
-      // Jede Karte zeigt Werte und Bedienelemente sofort, ohne Klick
-      // (Geraete-Dashboard-Entwurf Abschnitt 3) - deshalb laedt startApp()
-      // beides fuer JEDES Geraet, nicht erst fuer eines nach einem
-      // Aufklappen (das es seit diesem Entwurf nicht mehr gibt).
+      // Every card shows values and controls immediately, with no click
+      // needed (device dashboard design section 3) - that's why startApp()
+      // loads both for EVERY device, not just for one after it's
+      // expanded (which no longer exists as of this design).
       await Promise.all([
         ...this.devices.map((device) => this.loadControls(device.id)),
         ...this.devices.map((device) => this.loadSignals(device.id)),
@@ -1550,15 +1552,15 @@ Ersetze in `src/loxmatter/web/app.js` die Methode `startApp()` (Zeile 375-409):
     },
 ```
 
-(Das ersetzt zugleich den in Task 6 Step 2 eingefügten eigenständigen `await this.loadSettings();`-Aufruf — er ist jetzt Teil des `Promise.all`.)
+(This also replaces the standalone `await this.loadSettings();` call inserted in task 6 step 2 — it is now part of the `Promise.all`.)
 
-- [ ] **Step 2: `expandedDeviceId`/`toggleExpanded` entfernen**
+- [ ] **Step 2: Remove `expandedDeviceId`/`toggleExpanded`**
 
-In der `--- Geraete ---`-Zustandsgruppe (Zeile 204-224), die Zeile `expandedDeviceId: null,` entfernen.
+In the `--- Geraete ---` state group (line 204-224), remove the line `expandedDeviceId: null,`.
 
-Die Methode `toggleExpanded` (Zeile 538-546) vollständig entfernen.
+Remove the method `toggleExpanded` (line 538-546) entirely.
 
-In `removeDevice` (Zeile 693-716), die drei Zeilen
+In `removeDevice` (line 693-716), remove the three lines
 
 ```js
         if (this.expandedDeviceId === device.id) {
@@ -1566,18 +1568,18 @@ In `removeDevice` (Zeile 693-716), die drei Zeilen
         }
 ```
 
-entfernen.
+.
 
-- [ ] **Step 3: Neue Helfer ergänzen**
+- [ ] **Step 3: Add new helpers**
 
-Nach `exportedAtFor` (Zeile 591-594) einfügen:
+Insert after `exportedAtFor` (line 591-594):
 
 ```js
-    // Wie `ExportStatusOut.changed_since_export` server-seitig: ohne
-    // geladenen Status (z. B. ein gerade erst eingelerntes Geraet, bevor
-    // die naechste `loadExportStatus`-Runde durch ist) gilt "geaendert" -
-    // dieselbe vorsichtige Annahme wie beim Server (siehe api/export.py,
-    // `_changed_since_export`).
+    // Like `ExportStatusOut.changed_since_export` server-side: without
+    // a loaded status (e.g. a device just now commissioned, before the
+    // next `loadExportStatus` round has gone through) it counts as
+    // "changed" - the same cautious assumption as on the server (see
+    // api/export.py, `_changed_since_export`).
     changedSinceExport(deviceId) {
       const status = this.exportStatusFor(deviceId);
       return status ? status.changed_since_export : true;
@@ -1591,9 +1593,9 @@ Nach `exportedAtFor` (Zeile 591-594) einfügen:
       return `Zuletzt exportiert am ${this.formatTimestamp(status.exported_at)}`;
     },
 
-    // Klassen fuer den Farbstreifen der Kachel (style.css, `.device-card`) -
-    // eine Funktion statt eines Inline-Ausdrucks in index.html, weil zwei
-    // Bedingungen (online UND geaendert) hier zusammenkommen.
+    // Classes for the tile's color stripe (style.css, `.device-card`) -
+    // a function instead of an inline expression in index.html, because
+    // two conditions (online AND changed) come together here.
     deviceCardClass(device) {
       return {
         "is-offline": !this.isOnline(device),
@@ -1603,22 +1605,23 @@ Nach `exportedAtFor` (Zeile 591-594) einfügen:
 
 ```
 
-- [ ] **Step 4: `commissionDevice()` lädt Werte/Bedienelemente für das neue Gerät sofort**
+- [ ] **Step 4: `commissionDevice()` immediately loads values/controls for the new device**
 
-In `commissionDevice()` (Zeile 791-829), nach `this.devices.push(device);` ergänzen:
+In `commissionDevice()` (line 791-829), add after `this.devices.push(device);`:
 
 ```js
         const device = await this.request("POST", "/api/devices/commission", body);
         this.devices.push(device);
-        // Karte ist ab sofort sichtbar und immer offen (Abschnitt 3) - ohne
-        // dieses Nachladen zeigte sie "Signale werden geladen…" dauerhaft,
-        // bis irgendwann die Ansicht neu betreten wuerde.
+        // The card is visible and always open from this point on
+        // (section 3) - without this reload it would show "Signale
+        // werden geladen…" permanently, until the view was eventually
+        // re-entered.
         await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);
 ```
 
-- [ ] **Step 5: Geräte-Sektion in `index.html` ersetzen**
+- [ ] **Step 5: Replace the device section in `index.html`**
 
-Ersetze in `src/loxmatter/web/index.html` den kompletten Block von `<template x-for="device in devices" :key="device.id">` bis zum zugehörigen `</template>` (Zeile 191-293):
+Replace the complete block from `<template x-for="device in devices" :key="device.id">` to the corresponding `</template>` (line 191-293) in `src/loxmatter/web/index.html`:
 
 ```html
         <template x-for="device in devices" :key="device.id">
@@ -1721,12 +1724,12 @@ Ersetze in `src/loxmatter/web/index.html` den kompletten Block von `<template x-
         </template>
 ```
 
-(Der Export-Knopf in der letzten Zeile fehlt hier bewusst — er kommt in Task 9, zusammen mit der Methode, die ihn auslöst. Ohne ihn zeigt die Fußzeile für diesen Task nur den Export-Hinweistext.)
+(The export button in the last row is deliberately missing here — it comes in task 9, together with the method that triggers it. Without it, the footer only shows the export hint text for this task.)
 
-- [ ] **Step 6: Manuell verifizieren**
+- [ ] **Step 6: Verify manually**
 
 Run: `uv run python scripts/dev_web_server.py`
-Expected: Tab "Geräte" zeigt beide Karten sofort mit Werten ("Zustand: Ein", "Leistung: 12,4 W" bei der Steckdose — dank der in Task 4 geseedeten Werte) und Bedienelementen, ohne einen Klick auf "Details" (den Button gibt es nicht mehr). Steckdose zeigt eine amber "Geändert seit Export"-Pille (noch nie exportiert = `changed_since_export: true`) und einen amber Rand-Streifen. Namen umbenennen funktioniert weiterhin (Eingabefeld, Enter/Fokusverlust). "Entfernen" funktioniert weiterhin (Sicherheitsabfrage, Karte verschwindet).
+Expected: the "Devices" tab shows both cards immediately with values ("Zustand: Ein", "Leistung: 12,4 W" for the plug — thanks to the values seeded in task 4) and controls, with no click on "Details" needed (that button no longer exists). The plug shows an amber "Geändert seit Export" pill (never exported = `changed_since_export: true`) and an amber edge stripe. Renaming still works (input field, Enter/loss of focus). "Entfernen" still works (confirmation prompt, card disappears).
 
 - [ ] **Step 7: Commit**
 
@@ -1746,26 +1749,26 @@ EOF
 
 ---
 
-## Task 9: Export-Knopf an der Geräte-Kachel
+## Task 9: export button on the device tile
 
 **Files:**
 - Modify: `src/loxmatter/web/index.html`
 - Modify: `src/loxmatter/web/app.js`
 
 **Interfaces:**
-- Consumes: `GET /api/export/download?device_id=…` (Task 3), `app().bridgeSettings` (Task 6).
-- Produces: `app().exportDevice(device)` — löst den Download für genau ein Gerät aus.
+- Consumes: `GET /api/export/download?device_id=…` (task 3), `app().bridgeSettings` (task 6).
+- Produces: `app().exportDevice(device)` — triggers the download for exactly one device.
 
-- [ ] **Step 1: `exportDevice` in `app.js` ergänzen**
+- [ ] **Step 1: Add `exportDevice` in `app.js`**
 
-Im Abschnitt „Export", direkt nach `downloadExport()` (nach dem in Task 7 Step 2 gezeigten Ende der Methode), einfügen:
+In the "Export" section, directly after `downloadExport()` (after the end of the method shown in task 7 step 2), insert:
 
 ```js
 
-    // Export-Knopf an einer einzelnen Geraetekarte (Geraete-Dashboard-
-    // Entwurf, Abschnitt 6) - kein Vorschauschritt: die Werte stehen ja
-    // bereits offen auf der Karte, eine zusaetzliche Vorschau waere
-    // doppelte Information.
+    // Export button on a single device tile (device dashboard design,
+    // section 6) - no preview step: the values are already sitting
+    // openly on the card, an additional preview would be duplicate
+    // information.
     async exportDevice(device) {
       this.deviceActionError = null;
       if (!this.bridgeSettings.bridge_ip) {
@@ -1790,9 +1793,9 @@ Im Abschnitt „Export", direkt nach `downloadExport()` (nach dem in Task 7 Step
     },
 ```
 
-- [ ] **Step 2: Knopf in `index.html` ergänzen**
+- [ ] **Step 2: Add the button in `index.html`**
 
-Die Fußzeile der Geräte-Kachel (aus Task 8 Step 5, letzter `<div class="device-controls row">`) wird zu:
+The footer of the device tile (from task 8 step 5, last `<div class="device-controls row">`) becomes:
 
 ```html
             <div class="device-controls row">
@@ -1809,15 +1812,15 @@ Die Fußzeile der Geräte-Kachel (aus Task 8 Step 5, letzter `<div class="device
             </div>
 ```
 
-- [ ] **Step 3: Manuell verifizieren**
+- [ ] **Step 3: Verify manually**
 
 Run: `uv run python scripts/dev_web_server.py`
 
-Zuerst in "Einstellungen" IP `192.168.1.20`/Ports `7000`/`8080` speichern (falls noch nicht geschehen). Dann im Tab "Geräte":
+First save IP `192.168.1.20`/ports `7000`/`8080` in "Settings" (if not already done). Then in the "Devices" tab:
 
-Expected: Jede Karte zeigt einen "Exportieren"-Knopf in der Fußzeile. Klick bei "Steckdose Wohnzimmer" → Browser lädt eine Datei `loxmatter-d<id>-export.zip` herunter, Kurzmeldung "Steckdose Wohnzimmer wurde exportiert." erscheint, die amber "Geändert seit Export"-Pille verschwindet (Status neu geladen, Gerät gilt jetzt als exportiert). Die ZIP-Datei entpacken und prüfen: enthält nur `VIU_d<id>_….xml` und `VO_d<id>_….xml` dieses einen Geräts, nicht die des Tasters.
+Expected: every card shows an "Exportieren" button in the footer. Clicking it on "Steckdose Wohnzimmer" → the browser downloads a file `loxmatter-d<id>-export.zip`, a toast "Steckdose Wohnzimmer wurde exportiert." appears, the amber "Geändert seit Export" pill disappears (status reloaded, the device now counts as exported). Unzip the ZIP file and check: it contains only `VIU_d<id>_….xml` and `VO_d<id>_….xml` of this one device, not the button's.
 
-Ohne gespeicherte Einstellungen (neue Datenbank via `--store-path` auf eine neue Datei) ist der "Exportieren"-Knopf ausgegraut, mit Tooltip "Erst in Einstellungen → Verbindung zum Miniserver hinterlegen".
+Without saved settings (a new database via `--store-path` pointed at a new file), the "Exportieren" button is grayed out, with tooltip "Erst in Einstellungen → Verbindung zum Miniserver hinterlegen".
 
 - [ ] **Step 4: Commit**
 
@@ -1837,7 +1840,7 @@ EOF
 
 ---
 
-## Nach der Umsetzung
+## After implementation
 
-- `uv run pytest` (komplette Suite) sollte grün sein — insbesondere `tests/api/test_security.py` (jeder Router hinter `api_guard`) und `tests/api/test_web.py` (statische Auslieferung von `index.html`/`app.js`/`style.css` unverändert erreichbar).
-- Manuelle Gesamtprobe mit `uv run python scripts/dev_web_server.py`: Geräteliste → sofort Werte sichtbar, Export-Knopf pro Gerät → korrektes Einzel-ZIP, Einstellungen → übersteht Neuladen, Export-Tab → zeigt dieselben Werte schreibgeschützt und exportiert weiterhin alle/ausstehenden Geräte.
+- `uv run pytest` (the complete suite) should be green — in particular `tests/api/test_security.py` (every router behind `api_guard`) and `tests/api/test_web.py` (static delivery of `index.html`/`app.js`/`style.css` remains reachable unchanged).
+- A full manual run-through with `uv run python scripts/dev_web_server.py`: device list → values visible immediately, export button per device → correct single-device ZIP, settings → survives a reload, export tab → shows the same values read-only and still exports all/pending devices.
