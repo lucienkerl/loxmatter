@@ -1924,7 +1924,7 @@
                 type="range" min="0" max="100" step="1"
                 :value="controlDrafts.percent ?? 50"
                 :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
-                @change="sendControl(controlModalDeviceObject(), command, $event.target.value)"
+                @change="recordControlDraft(command, Number($event.target.value)); sendControl(controlModalDeviceObject(), command, $event.target.value)"
               />
               <p
                 class="hint"
@@ -1955,7 +1955,7 @@
                   type="range" :min="command.range?.min" :max="command.range?.max" step="10"
                   :value="controlDrafts.kelvin ?? command.range?.min"
                   :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
-                  @change="sendControl(controlModalDeviceObject(), command, $event.target.value)"
+                  @change="recordControlDraft(command, Number($event.target.value)); sendControl(controlModalDeviceObject(), command, $event.target.value)"
                 />
                 <!-- Hinweis fuer fehlenden Startwert, wenn der Regler sichtbar ist -->
                 <p
@@ -1995,7 +1995,13 @@
             </template>
           </div>
 
-          <template x-for="command in controlsByKind(controlModalDevice, 'unknown')" :key="command.key">
+          <!-- Rueckfall auf das schlichte Zahlenfeld: nicht nur fuer
+               `control: "unknown"`, sondern fuer JEDEN `control`-Wert, den
+               diese Oberflaeche nicht kennt (`unhandledControls`, Befund
+               I-2 im Abschluss-Review 2026-09-08) - sonst verschwindet ein
+               kuenftig in `clusters.yaml` eingetragener, hier noch
+               unbekannter Wert spurlos aus dem Modal. -->
+          <template x-for="command in unhandledControls(controlModalDevice)" :key="command.key">
             <span class="row">
               <span x-text="command.slug"></span>
               <input

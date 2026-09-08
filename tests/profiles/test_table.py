@@ -303,6 +303,36 @@ def test_every_table_command_carries_a_control():
         assert command_control(cluster_id, command_id) != "unknown"
 
 
+# Bedienelement-Typen, fuer die die ausgelieferte Oberflaeche ein eigenes
+# Bedienelement baut - siehe `KNOWN_CONTROL_KINDS` in `web/app.js`. Diese
+# Liste hier duplizieren statt aus der JS-Datei zu lesen: Python hat keinen
+# eingebauten Weg, ein Alpine-Skript auszuwerten, und eine Textsuche waere
+# fragiler als ein bewusst gepflegtes Duplikat mit Verweis auf das Original.
+_CONTROL_KINDS_KNOWN_TO_THE_UI = {"none", "percent", "kelvin", "hue_sat"}
+
+
+def test_every_control_value_is_known_to_the_shipped_ui():
+    """Befund I-2 (Abschluss-Review 2026-09-08): `command_control` liefert
+    einen freien `str`, und die Oberflaeche vergleicht nur auf die
+    Wortlaute, fuer die sie tatsaechlich ein Bedienelement gebaut hat.
+    Traegt jemand in `clusters.yaml` einen `control`-Wert ein, den
+    `web/app.js` (noch) nicht kennt - ein Tippfehler oder ein neu
+    erdachtes Bedienelement, das noch niemand gebaut hat -, rendert das
+    Modal fuer dieses Kommando nichts: kein Regler, kein Zahlenfeld, kein
+    Hinweis, obwohl der "Steuern"-Knopf bereits erscheint
+    (`hasAdjustableControls`). Die Oberflaeche selbst faengt das seit
+    diesem Fix zwar ueber ihren Rueckfall auf das schlichte Zahlenfeld ab
+    (`unhandledControls` in app.js) - aber dieser Test soll den Fehler
+    schon hier, in Python, sichtbar machen, bevor jemand ueberhaupt bis
+    zum Browser kommt, und sagen WELCHER Wert unbekannt ist."""
+    for cluster_id, command_id in known_command_pairs():
+        control = command_control(cluster_id, command_id)
+        assert control in _CONTROL_KINDS_KNOWN_TO_THE_UI, (
+            f"{cluster_id}/{command_id}: control={control!r} kennt die Oberflaeche nicht "
+            "(siehe KNOWN_CONTROL_KINDS in web/app.js)"
+        )
+
+
 def test_the_colour_temperature_limits_remain_exportable():
     """Nicht vorausgewaehlt heisst nicht gesperrt: im Expertenblock muss
     man sie weiterhin von Hand waehlen koennen."""

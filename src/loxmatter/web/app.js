@@ -361,6 +361,32 @@ function writeHash(view) {
   }
 }
 
+// Bedienelement-Typen ("none", "percent", "kelvin", "hue_sat"), fuer die
+// das Bedien-Modal ein eigenes Bedienelement baut - alles ausserhalb
+// dieser Liste (auch "unknown" selbst, und jeder zukuenftige Wert, den
+// `profiles/clusters.yaml` einmal traegt) faellt auf das schlichte
+// Zahlenfeld zurueck. EINE Stelle fuer diese Liste statt eines Vergleichs
+// auf den Wortlaut "unknown" allein (Befund I-2, Abschluss-Review
+// 2026-09-08): sonst verschwindet ein neuer, der Oberflaeche unbekannter
+// `control`-Wert spurlos, obwohl `hasAdjustableControls` bereits den
+// "Steuern"-Knopf zeigt. Die Gegenseite steht in `profiles/table.py`,
+// `command_control` - und `tests/profiles/test_table.py` sichert ab, dass
+// kein Eintrag der Tabelle einen Wert ausserhalb dieser Liste traegt.
+const KNOWN_CONTROL_KINDS = ["none", "percent", "kelvin", "hue_sat"];
+
+// Bedienelement-Typ (`command.control`) -> Feld(er) in `controlDrafts`,
+// die dessen zuletzt GESENDETEN Wert halten. EINE Stelle fuer diese
+// Zuordnung statt einer eigenen Fallunterscheidung an jeder Reglerbindung
+// (Befund I-1, Abschluss-Review 2026-09-08): der Bedienelement-Typ
+// entscheidet hier genau wie bei `controlsByKind`, nie `command.slug`.
+// `hue_sat` traegt zwei Felder, weil die Farbflaeche Farbton UND
+// Saettigung in einem Klick liefert - siehe `recordControlDraft` unten.
+const CONTROL_DRAFT_FIELDS = {
+  percent: ["percent"],
+  kelvin: ["kelvin"],
+  hue_sat: ["hue", "saturation"],
+};
+
 function app() {
   return {
     // --- Ansicht ---------------------------------------------------------
@@ -1034,6 +1060,21 @@ function app() {
       return this.commandsFor(deviceId).filter((command) => command.control === kind);
     },
 
+    /** Kommandos, fuer die die ausgelieferte Oberflaeche KEIN eigenes
+     * Bedienelement kennt - der Rueckfall auf das schlichte Zahlenfeld im
+     * Modal. Faengt nicht nur den Wortlaut "unknown" ab (das war der
+     * Fehler in Befund I-2), sondern jeden `control`-Wert ausserhalb
+     * `KNOWN_CONTROL_KINDS`: traegt jemand spaeter z. B. `control: xy` in
+     * `clusters.yaml` ein, liefert die API `control: "xy"` unveraendert
+     * durch, und ohne diese Sammelstelle wuerde das Kommando im Modal
+     * einfach nicht gezeichnet - kein Regler, kein Zahlenfeld, kein
+     * Hinweis. */
+    unhandledControls(deviceId) {
+      return this.commandsFor(deviceId).filter(
+        (command) => !KNOWN_CONTROL_KINDS.includes(command.control),
+      );
+    },
+
     /** Ob dieses Geraet ueberhaupt etwas Wertbehaftetes kann - nur dann
      * bekommt die Kachel den "Steuern"-Knopf zum Bedien-Modal. */
     hasAdjustableControls(deviceId) {
@@ -1604,6 +1645,38 @@ function app() {
     },
 
     /**
+     * Schreibt die zuletzt GESENDETE Reglerstellung in `controlDrafts` fort
+     * - ueber `CONTROL_DRAFT_FIELDS`, keyed auf `command.control`, nicht
+     * ueber eine Fallunterscheidung an der jeweiligen Bindung (Befund I-1,
+     * Abschluss-Review 2026-09-08).
+     *
+     * Ohne diesen Nachtrag zeigte der Regler nach dem naechsten Neuzeichnen
+     * (z. B. durch einen Klick in die Farbflaeche, der `controlDrafts`
+     * komplett neu zuweist) wieder den beim Oeffnen gelesenen Startwert -
+     * eine Reglerstellung, die dem zuletzt gesendeten Kommando
+     * widerspricht und damit genau der stille Fehlschlag ist, den der
+     * Entwurf ausschliesst.
+     *
+     * `values` traegt einen Eintrag je Feld aus
+     * `CONTROL_DRAFT_FIELDS[command.control]`, in derselben Reihenfolge
+     * (ein Wert fuer "percent"/"kelvin", zwei fuer "hue_sat"). Ein
+     * Bedienelement-Typ ausserhalb der Zuordnung (siehe
+     * `unhandledControls`) schreibt bewusst nichts fort - fuer den gibt es
+     * keinen Regler, dessen Stellung veralten koennte.
+     */
+    recordControlDraft(command, ...values) {
+      const fields = CONTROL_DRAFT_FIELDS[command.control];
+      if (!fields) {
+        return;
+      }
+      const patch = {};
+      fields.forEach((field, index) => {
+        patch[field] = values[index];
+      });
+      this.controlDrafts = { ...this.controlDrafts, ...patch };
+    },
+
+    /**
      * Farbton (Grad) und Saettigung (Prozent) in die gepackte Loxone-Zahl,
      * die `POST /api/commands/{key}` erwartet.
      *
@@ -1644,7 +1717,7 @@ function app() {
       const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
       const hue = x * 360;
       const saturation = (1 - y) * 100;
-      this.controlDrafts = { ...this.controlDrafts, hue, saturation };
+      this.recordControlDraft(command, hue, saturation);
       return this.sendControl(device, command, this.hueSatToLoxone(hue, saturation));
     },
 
