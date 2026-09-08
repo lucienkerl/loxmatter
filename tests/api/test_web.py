@@ -198,7 +198,7 @@ async def test_the_inline_icon_symbols_are_well_formed_xml(api):
     client, _, _ = api
     page = (await client.get("/")).text
     match = re.search(r'<svg style="display: none".*?</svg>', page, flags=re.DOTALL)
-    assert match, "inline SVG-Symbolblock nicht gefunden"
+    assert match, "inline SVG symbol block not found"
     ElementTree.fromstring(match.group(0))
 
 
@@ -367,9 +367,9 @@ async def test_the_page_does_not_call_init_a_second_time(api):
     markup = _without_comments((await client.get("/")).text)
     assert 'x-data="app()"' in markup
     expressions = re.findall(r"x-init=[\"']([^\"']*)[\"']", markup)
-    assert expressions, "kein x-init in der ausgelieferten Seite gefunden"
+    assert expressions, "no x-init found in the delivered page"
     for expression in expressions:
-        assert "init(" not in expression, f"x-init ruft init() auf: {expression}"
+        assert "init(" not in expression, f"x-init calls init(): {expression}"
 
 
 async def test_the_signal_view_ships_a_functional_and_an_expert_block(api):
@@ -729,9 +729,9 @@ def test_a_device_without_a_lead_signal_does_not_throw_in_any_binding():
         """
     )
 
-    assert values["lead"] is None, "ohne geladene Signale gibt es kein Leitsignal"
+    assert values["lead"] is None, "without loaded signals there is no lead signal"
     for name, call in values["calls"].items():
-        assert call["ok"], f"{name} warf: {call.get('error')}"
+        assert call["ok"], f"{name} threw: {call.get('error')}"
 
     # What the tile shows in this state: no highlight, no tooltip - and the
     # dash that `formatValue` uses for "no value".

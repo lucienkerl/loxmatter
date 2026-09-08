@@ -68,10 +68,10 @@ def test_a_log_line_lands_in_the_ring(
     logger_with_handler: tuple[logging.Logger, LogBufferHandler],
 ) -> None:
     logger, handler = logger_with_handler
-    logger.warning("Miniserver nicht erreichbar")
+    logger.warning("Miniserver unreachable")
 
     entries = list(handler.entries)
-    assert [e.message for e in entries] == ["Miniserver nicht erreichbar"]
+    assert [e.message for e in entries] == ["Miniserver unreachable"]
     assert entries[0].level == "WARNING"
 
 
@@ -87,11 +87,11 @@ def test_a_line_from_another_thread_arrives(
     the module docstring, section "Why thread-local...", where an earlier
     version of this docstring wrongly claimed exactly that)."""
     logger, handler = logger_with_handler
-    thread = threading.Thread(target=lambda: logger.info("aus einem Thread"))
+    thread = threading.Thread(target=lambda: logger.info("from a thread"))
     thread.start()
     thread.join()
 
-    assert [e.message for e in handler.entries] == ["aus einem Thread"]
+    assert [e.message for e in handler.entries] == ["from a thread"]
 
 
 def _throwing_observer(entry: LogEntry) -> None:
@@ -125,9 +125,9 @@ def test_the_observer_sees_each_entry_once(
     seen: list[LogEntry] = []
     handler.add_observer(seen.append)
 
-    logger.info("eine Zeile")
+    logger.info("a line")
 
-    assert [e.message for e in seen] == ["eine Zeile"]
+    assert [e.message for e in seen] == ["a line"]
 
 
 def test_an_exception_is_kept_as_text(
@@ -139,7 +139,7 @@ def test_an_exception_is_kept_as_text(
     try:
         raise ValueError("etwas ging schief")
     except ValueError:
-        logger.exception("beim Senden")
+        logger.exception("while sending")
 
     entry = next(iter(handler.entries))
     assert "ValueError" in entry.message
@@ -277,12 +277,12 @@ def test_install_log_buffer_attaches_to_the_loxmatter_logger_only() -> None:
         assert handler in logging.getLogger("loxmatter").handlers
         assert handler not in logging.getLogger().handlers
 
-        logging.getLogger("loxmatter").warning("aus der Bruecke")
-        logging.getLogger("root-fremd").warning("sollte NICHT im Ring landen")
+        logging.getLogger("loxmatter").warning("from the bridge")
+        logging.getLogger("root-fremd").warning("should NOT land in the ring")
 
         messages = [e.message for e in handler.entries]
-        assert "aus der Bruecke" in messages
-        assert "sollte NICHT im Ring landen" not in messages
+        assert "from the bridge" in messages
+        assert "should NOT land in the ring" not in messages
     finally:
         # Cleanup: "loxmatter" is a global logger shared across the test
         # suite - without this, the handler would stay attached to it and
@@ -327,10 +327,10 @@ def test_install_log_buffer_only_captures_from_the_given_level() -> None:
     try:
         assert handler.level == logging.WARNING
 
-        logging.getLogger("loxmatter").info("sollte NICHT im Ring landen")
-        logging.getLogger("loxmatter").warning("sollte im Ring landen")
+        logging.getLogger("loxmatter").info("should NOT land in the ring")
+        logging.getLogger("loxmatter").warning("should land in the ring")
 
-        assert [e.message for e in handler.entries] == ["sollte im Ring landen"]
+        assert [e.message for e in handler.entries] == ["should land in the ring"]
     finally:
         logging.getLogger("loxmatter").removeHandler(handler)
         logging.getLogger("loxmatter").setLevel(logging.NOTSET)
