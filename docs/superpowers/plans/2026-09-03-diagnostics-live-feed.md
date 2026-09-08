@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, FastAPI/Starlette WebSockets, `logging`, Alpine.js 3.17.1 (vendort, kein Build-Schritt), pytest, ruff, mypy strict.
 
-**Entwurfsdokument:** [`docs/superpowers/specs/2026-09-03-diagnose-livefeed-design.md`](../specs/2026-09-03-diagnose-livefeed-design.md). Bei Widerspruch zwischen Plan und Entwurf gilt der Entwurf; melde den Widerspruch.
+**Entwurfsdokument:** [`docs/superpowers/specs/2026-09-03-diagnostics-live-feed-design.md`](../specs/2026-09-03-diagnostics-live-feed-design.md). Bei Widerspruch zwischen Plan und Entwurf gilt der Entwurf; melde den Widerspruch.
 
 ## Global Constraints
 
@@ -576,7 +576,7 @@ git commit -m "feat(web): Logs, Mitschnitt und Kommandos laufend statt einmalig"
 ### Task 7: Dokumentation
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`, `docs/superpowers/specs/2026-09-03-diagnose-livefeed-design.md`, `README.md`
+- Modify: `docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`, `docs/superpowers/specs/2026-09-03-diagnostics-live-feed-design.md`, `README.md`
 
 - [ ] **Step 1: Hauptdokument**
 

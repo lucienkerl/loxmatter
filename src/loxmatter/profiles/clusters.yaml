@@ -100,7 +100,7 @@ clusters:
       # multiply. The value therefore stays in mired, with a slug that
       # makes that clear, instead of inventing a wrong Kelvin number. Open
       # point (missing reciprocal conversion):
-      # docs/superpowers/specs/2026-09-03-signalauswahl-design.md section 10.
+      # docs/superpowers/specs/2026-09-03-signal-selection-design.md section 10.
       7: {slug: colortemp_mireds, unit: mired}
       # Color mode (ColorMode, 8): an enumeration, not a physical
       # quantity - no unit.

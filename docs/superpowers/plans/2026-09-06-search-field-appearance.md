@@ -8,7 +8,7 @@
 
 **Tech Stack:** Statisches HTML mit Alpine.js (vendort unter `web/vendor/`), handgeschriebenes CSS mit Custom Properties, Inline-SVG-Sprite. Tests: pytest + httpx gegen die ASGI-App, geprüft wird das **ausgelieferte** Markup und CSS.
 
-**Entwurf:** [2026-09-06-suchfeld-optik-design.md](../specs/2026-09-06-suchfeld-optik-design.md)
+**Entwurf:** [2026-09-06-search-field-appearance-design.md](../specs/2026-09-06-search-field-appearance-design.md)
 
 ## Global Constraints
 

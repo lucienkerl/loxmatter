@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, SQLite (`PRAGMA user_version`-Migrationen), FastAPI, Pydantic v2, Alpine.js 3.17.1 (vendort, kein Build-Schritt), pytest, ruff, mypy strict.
 
-**Entwurfsdokument:** [`docs/superpowers/specs/2026-09-03-signalauswahl-design.md`](../specs/2026-09-03-signalauswahl-design.md). Bei Widerspruch zwischen Plan und Entwurf gilt der Entwurf; melde den Widerspruch.
+**Entwurfsdokument:** [`docs/superpowers/specs/2026-09-03-signal-selection-design.md`](../specs/2026-09-03-signal-selection-design.md). Bei Widerspruch zwischen Plan und Entwurf gilt der Entwurf; melde den Widerspruch.
 
 ## Global Constraints
 
@@ -1230,7 +1230,7 @@ git commit -m "feat(web): funktionale Signale vorn, Experten-Signale zugeklappt"
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md`
-- Modify: `docs/superpowers/specs/2026-09-03-signalauswahl-design.md`
+- Modify: `docs/superpowers/specs/2026-09-03-signal-selection-design.md`
 - Modify: `README.md`
 
 - [ ] **Step 1: Das Hauptdokument nachziehen**

@@ -16,7 +16,7 @@
 
 """Starts the WebUI with two example devices, without matter-server - for
 manually viewing the device dashboard changes in the browser (see
-docs/superpowers/plans/2026-09-03-geraete-dashboard-und-export.md, Task 4).
+docs/superpowers/plans/2026-09-03-device-dashboard-and-export.md, Task 4).
 
 Usage: uv run python scripts/dev_web_server.py
 Then: open http://127.0.0.1:8420, set any password

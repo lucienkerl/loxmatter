@@ -24,7 +24,7 @@ log lines are the same ones
 upwards. A click on "Pause" pauses the display without stopping the running
 capture; "Hide heartbeat and full-resend" filters only the display, not what
 arrives. Details:
-[live feed design](superpowers/specs/2026-09-03-diagnose-livefeed-design.md).
+[live feed design](superpowers/specs/2026-09-03-diagnostics-live-feed-design.md).
 
 ## What a template contains
 
@@ -39,7 +39,7 @@ signals sit in the collapsed "Expert" section (with a count in its heading) —
 each of them carries its own export checkbox and can be enabled there
 individually, a Thread counter for troubleshooting, say. Rationale and
 selection rule:
-[signal selection design](superpowers/specs/2026-09-03-signalauswahl-design.md).
+[signal selection design](superpowers/specs/2026-09-03-signal-selection-design.md).
 
 ## Project file sync
 
@@ -60,7 +60,7 @@ instead of locking the checkbox — no more manual preparation in Loxone
 Config, but one more unverified object in the chain. Before trusting this
 path for the first time: open a file patched this way in Loxone Config once
 and check it for errors. Details:
-[project file sync design](superpowers/specs/2026-09-03-projektdatei-sync-design.md).
+[project file sync design](superpowers/specs/2026-09-03-project-file-sync-design.md).
 
 ## Updating when devices are already commissioned
 

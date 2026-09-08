@@ -439,7 +439,7 @@ Neue Datei `src/loxmatter/model/resend_settings_store.py`:
 """Das Intervall des periodischen Resends - EINE Einstellung fuer die
 gesamte Bruecke, zur Laufzeit ueber die WebUI/API aenderbar statt einer beim
 Start fixierten Konstante. Siehe
-docs/superpowers/specs/2026-09-04-periodischer-resend-design.md, Abschnitt 4.
+docs/superpowers/specs/2026-09-04-periodic-resend-design.md, Abschnitt 4.
 
 Eigenes Modul und eigene Klasse, analog zu `locale_store.py`: die
 `setting`-Tabelle ist generisch angelegt, genau damit weitere Konfiguration
@@ -1433,7 +1433,7 @@ EOF
 
 ## Self-Review
 
-**Spec-Abdeckung** (gegen `docs/superpowers/specs/2026-09-04-periodischer-resend-design.md`):
+**Spec-Abdeckung** (gegen `docs/superpowers/specs/2026-09-04-periodic-resend-design.md`):
 
 - Abschnitt 4 (Datenmodell: `signal.resend`, `Store.set_resend`, `ResendSettingsStore`) → Task 1, Task 2.
 - Abschnitt 5 (API: `PATCH /api/signals/{key}` um `resend` erweitert, neuer Intervall-Endpunkt mit Untergrenze) → Task 3, Task 4.

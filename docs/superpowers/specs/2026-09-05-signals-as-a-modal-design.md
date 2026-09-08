@@ -3,7 +3,7 @@
 Entwurf, 5. September 2026. Löst die Ansicht „Signale" auf und bringt das
 Bearbeiten einzelner Signale dorthin, wo das Gerät steht — erreichbar über
 das Kebab-Menü aus
-[dem Kebab-Entwurf](2026-09-05-kachel-kebab-menue-design.md).
+[dem Kebab-Entwurf](2026-09-05-tile-kebab-menu-design.md).
 
 ## 1. Das Problem
 

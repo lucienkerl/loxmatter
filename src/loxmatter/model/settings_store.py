@@ -23,7 +23,7 @@ configuration like this one can go the same way (see that module's
 docstring, Spec 14.2 of the login design). This class is another view onto
 the same table and the same connection, not a second connection.
 
-See docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
+See docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
 section 4: server-side instead of `localStorage`, because the bridge address
 is a property of the installation, not of the browser."""
 

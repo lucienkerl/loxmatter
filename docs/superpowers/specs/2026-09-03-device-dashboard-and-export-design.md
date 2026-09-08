@@ -79,7 +79,7 @@ keine externe Bibliothek — die Oberfläche läuft offline, `vendor/alpine.min.
 ist aus genau diesem Grund eingecheckt statt von einem CDN geladen). Die
 Zuordnung Gerätetyp → Icon kommt aus derselben Quelle, die heute schon
 `device_types` für die Relevanz-Regel auswertet
-([Signalauswahl-Entwurf](2026-09-03-signalauswahl-design.md) Abschnitt 4.1):
+([Signalauswahl-Entwurf](2026-09-03-signal-selection-design.md) Abschnitt 4.1):
 Steckdose/Relais → Stecker-Symbol, Sensor mit Bewegungs-Cluster →
 Bewegungs-Symbol, Fenster/Beschattung → Lamellen-Symbol, alles nicht
 zugeordnete → ein neutrales Platzhalter-Symbol. Eine vollständige Zuordnungs-
@@ -200,7 +200,7 @@ mitgibt.
    weitere Matter-Gerätetypen brauchen ein Platzhalter-Symbol, bis sie
    einzeln ergänzt werden.
 
-   **Erledigt** durch den [Geräte-Tab-Entwurf vom 5. September 2026](2026-09-05-geraete-tab-raeume-und-kachelraster-design.md):
+   **Erledigt** durch den [Geräte-Tab-Entwurf vom 5. September 2026](2026-09-05-devices-tab-rooms-and-tile-grid-design.md):
    die Zuordnung ist `profiles/categories.py`, und sie liefert nicht nur das
    Icon, sondern auch die Sortierung innerhalb eines Raums und den
    Suchbegriff.

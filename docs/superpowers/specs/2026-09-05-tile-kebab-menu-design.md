@@ -1,7 +1,7 @@
 # Gerätekachel: Aktionen hinter ein Kebab-Menü
 
 Entwurf, 5. September 2026. Ändert die Fußzeile der Kachel aus
-[dem Geräte-Tab-Entwurf](2026-09-05-geraete-tab-raeume-und-kachelraster-design.md),
+[dem Geräte-Tab-Entwurf](2026-09-05-devices-tab-rooms-and-tile-grid-design.md),
 Abschnitt 6.2 — und macht dabei den Teil davon rückgängig, der die meiste
 Nacharbeit gekostet hat.
 

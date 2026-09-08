@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Referenz-Spec: `docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md` — jede Abweichung unten ist explizit benannt.
+- Referenz-Spec: `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md` — jede Abweichung unten ist explizit benannt.
 - Akzentfarbe (Kupfer/Amber, vom Auftraggeber freigegeben): `#a15a2c` hell / `#e2915c` dunkel, Kontrastfarbe `#ffffff` hell / `#2a1508` dunkel. Statusfarben (`--ok` grün, `--warn` amber, neu `--off` grau) bleiben davon unabhängig.
 - Deutsch in jedem Text, der auf dem Bildschirm oder in einer Fehlermeldung landet; Englisch in alle Bezeichnern (Variablen, Funktionen, Endpunkt-Felder) — bestehende Konvention, siehe `app.js`-Kopfkommentar.
 - Kein `console.log`, kein neues externes Skript/CDN in `index.html` — die Oberfläche läuft offline (siehe `index.html`-Kopfkommentar zu Alpine.js).
@@ -54,7 +54,7 @@ Lege `tests/model/test_settings_store.py` an:
 """Tests fuer `BridgeSettingsStore` - den Teil des Stores, der die
 Verbindungsdaten zur Bruecke (IP, Ports) verwaltet, analog zu `AuthStore`.
 
-Siehe docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
+Siehe docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
 Abschnitt 4."""
 
 from __future__ import annotations
@@ -158,7 +158,7 @@ Moduldocstring, Spec 14.2 des Login-Entwurfs). Diese Klasse ist eine weitere
 Sicht auf dieselbe Tabelle und dieselbe Verbindung, kein zweiter
 Verbindungsaufbau.
 
-Siehe docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
+Siehe docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
 Abschnitt 4: serverseitig statt `localStorage`, weil die Bridge-Adresse eine
 Eigenschaft der Installation ist, nicht des Browsers."""
 
@@ -347,7 +347,7 @@ Lege `tests/api/test_settings_api.py` an:
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """Tests fuer den Einstellungen-Endpunkt (`api/settings.py`) - siehe
-docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
+docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
 Abschnitt 4."""
 
 from __future__ import annotations
@@ -835,7 +835,7 @@ Erstelle `scripts/dev_web_server.py`:
 
 """Startet die WebUI mit zwei Beispielgeraeten, ohne matter-server - fuer die
 manuelle Ansicht der Geraete-Dashboard-Aenderungen im Browser (siehe
-docs/superpowers/plans/2026-09-03-geraete-dashboard-und-export.md, Task 4).
+docs/superpowers/plans/2026-09-03-device-dashboard-and-export.md, Task 4).
 
 Aufruf: uv run python scripts/dev_web_server.py
 Danach: http://127.0.0.1:8420 oeffnen, ein beliebiges Passwort vergeben

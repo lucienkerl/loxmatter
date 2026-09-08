@@ -3,7 +3,7 @@
 Entwurf, 4. September 2026. Ergänzt
 [das Hauptdokument](2026-09-01-matter-loxone-bridge-design.md) und knüpft an
 die Unterscheidung aus
-[der Signalauswahl](2026-09-03-signalauswahl-design.md#3-zwei-begriffe-die-getrennt-bleiben)
+[der Signalauswahl](2026-09-03-signal-selection-design.md#3-zwei-begriffe-die-getrennt-bleiben)
 zwischen Exportierbarkeit und Relevanz an — hier kommt eine dritte,
 unabhängige Signal-Eigenschaft dazu.
 

@@ -11,7 +11,7 @@ Knüpft an [`deploy/testhost/README.md`](../../../deploy/testhost/README.md) an 
 dort steht der manuelle Weg, den dieses Skript zusammenfasst — und an
 [`scripts/update.sh`](../../../scripts/update.sh), dessen Stil und Aufgabenteilung
 es übernimmt. Der Quickstart-Abschnitt aus
-[dem README-Produktseiten-Entwurf](2026-09-05-readme-produktseite-design.md)
+[dem README-Produktseiten-Entwurf](2026-09-05-readme-product-page-design.md)
 wird von diesem Entwurf beliefert, siehe Abschnitt 10.
 
 ## 1. Das Problem
@@ -342,7 +342,7 @@ trotzdem „Fertig" meldete.
 
 Die README wird in einer eigenen Session zu einer englischen Produktseite
 umgebaut (siehe
-[2026-09-05-readme-produktseite-design.md](2026-09-05-readme-produktseite-design.md),
+[2026-09-05-readme-product-page-design.md](2026-09-05-readme-product-page-design.md),
 Abschnitt 7: „Das One-Liner-Installskript entsteht in einer eigenen Session […]
 wer das Skript baut, zieht Schritt 1 nach"). Zum Zeitpunkt dieses Entwurfs liegt
 jene Spec auf einem eigenen Branch, die README selbst ist unverändert.

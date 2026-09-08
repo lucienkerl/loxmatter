@@ -17,7 +17,7 @@
 - An invalid `LOXMATTER_LANG` value warns on stderr and falls back to the stored/default value — never a fatal error (spec section 4).
 - The Click/Typer-generated chrome (`Usage:`, `Options:`, `Arguments:`, the word "Error") stays English always — only strings this project supplies are bilingual (spec section 2).
 - Source comments, docstrings, and spec documents stay German throughout this change — only CLI-user-facing text (`help=`, `typer.echo`, `_fail` messages) becomes bilingual.
-- `docs/superpowers/specs/2026-09-03-i18n-phase-a-sprachwahl-cli-design.md` is the approved spec this plan implements; read it for the full rationale behind any decision referenced here as "per spec".
+- `docs/superpowers/specs/2026-09-03-i18n-phase-a-language-selection-cli-design.md` is the approved spec this plan implements; read it for the full rationale behind any decision referenced here as "per spec".
 
 **Deviation from the spec, noted here because it wasn't resolved during brainstorming:** spec section 4 says the module-import-time DB read for the language setting uses "dieselbe Rangfolge `--store-path` > `LOXMATTER_STORE` > Standardpfad" as `_resolve_store_path`. That's not achievable literally — `--store-path` is a per-command CLI option, not parsed yet when the module top-level code runs. Task 3 below resolves the DB path via `_resolve_store_path(None)`, i.e. `LOXMATTER_STORE` env var → default path only. A command invoked with an explicit `--store-path` pointing at a *different* database will still show `--help` text and any warning in the language stored in the *default* database, not the one `--store-path` names — this is a narrow, inherent limitation of resolving language before argument parsing, not a bug to fix later.
 
@@ -361,7 +361,7 @@ Create `src/loxmatter/i18n/__init__.py`:
 
 """Uebersetzungsmechanismus: eine flache YAML-Tabelle (`strings.yaml`) plus
 eine prozessweite "aktuelle Sprache" - siehe
-docs/superpowers/specs/2026-09-03-i18n-phase-a-sprachwahl-cli-design.md,
+docs/superpowers/specs/2026-09-03-i18n-phase-a-language-selection-cli-design.md,
 Abschnitt 3.
 
 Eine einzige, gemeinsame Spracheinstellung fuer die ganze Installation
@@ -478,7 +478,7 @@ feat(i18n): Uebersetzungsmechanismus und Sprachtabelle
 t()/set_language() plus die vollstaendige CLI-Uebersetzungstabelle
 (cli.*) als YAML-Woerterbuch - noch nicht von cli.py verdrahtet, das
 folgt in den naechsten Aufgaben. Teil von Phase A, siehe
-docs/superpowers/specs/2026-09-03-i18n-phase-a-sprachwahl-cli-design.md.
+docs/superpowers/specs/2026-09-03-i18n-phase-a-language-selection-cli-design.md.
 
 Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
 EOF
@@ -611,7 +611,7 @@ Create `src/loxmatter/model/locale_store.py`:
 
 """Die gemeinsame Spracheinstellung dieser Installation - EINE Einstellung
 fuer CLI und (ab Phase B) WebUI, kein Feld pro Nutzer oder Browser. Siehe
-docs/superpowers/specs/2026-09-03-i18n-phase-a-sprachwahl-cli-design.md,
+docs/superpowers/specs/2026-09-03-i18n-phase-a-language-selection-cli-design.md,
 Abschnitt 4.
 
 Eigenes Modul und eigene Klasse, analog zu `auth_store.py` und

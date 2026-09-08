@@ -17,7 +17,7 @@
 """The interval of the periodic resend - ONE setting for the entire bridge,
 changeable at runtime via the WebUI/API instead of a constant fixed at
 startup. See
-docs/superpowers/specs/2026-09-04-periodischer-resend-design.md, section 4.
+docs/superpowers/specs/2026-09-04-periodic-resend-design.md, section 4.
 
 Its own module and its own class, analogous to `locale_store.py`: the
 `setting` table is generic by design, precisely so that further

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, FastAPI, Pydantic v2, SQLite (`sqlite3`, Schema-Versionierung über `PRAGMA user_version`), Alpine.js (vendored), pytest / pytest-asyncio, httpx2.
 
-**Spec:** `docs/superpowers/specs/2026-09-05-geraete-tab-raeume-und-kachelraster-design.md` — bei jedem Zweifel gilt die Spec, nicht dieser Plan.
+**Spec:** `docs/superpowers/specs/2026-09-05-devices-tab-rooms-and-tile-grid-design.md` — bei jedem Zweifel gilt die Spec, nicht dieser Plan.
 
 ## Global Constraints
 
@@ -2613,7 +2613,7 @@ EOF
 
 **Files:**
 - Modify: `README.md` (Abschnitt zur Oberfläche, falls er die Geräteansicht beschreibt)
-- Modify: `docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md` (offener Punkt 1)
+- Modify: `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md` (offener Punkt 1)
 
 **Interfaces:**
 - Consumes: alles.
@@ -2646,10 +2646,10 @@ Bleibt nur noch die Definition selbst übrig (`<symbol id="i-device">`), wird si
 
 - [ ] **Step 3: Offenen Punkt der Vorgänger-Spec schließen**
 
-In `docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md`, Abschnitt „Offene Punkte", Punkt 1 um einen Satz ergänzen:
+In `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md`, Abschnitt „Offene Punkte", Punkt 1 um einen Satz ergänzen:
 
 ```markdown
-   **Erledigt** durch den [Geräte-Tab-Entwurf vom 5. September 2026](2026-09-05-geraete-tab-raeume-und-kachelraster-design.md):
+   **Erledigt** durch den [Geräte-Tab-Entwurf vom 5. September 2026](2026-09-05-devices-tab-rooms-and-tile-grid-design.md):
    die Zuordnung ist `profiles/categories.py`, und sie liefert nicht nur das
    Icon, sondern auch die Sortierung innerhalb eines Raums und den
    Suchbegriff.

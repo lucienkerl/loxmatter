@@ -16,7 +16,7 @@
 
 """The shared language setting of this installation - ONE setting for the
 CLI and (from Phase B on) the WebUI, not a field per user or browser. See
-docs/superpowers/specs/2026-09-03-i18n-phase-a-sprachwahl-cli-design.md,
+docs/superpowers/specs/2026-09-03-i18n-phase-a-language-selection-cli-design.md,
 section 4.
 
 Its own module and its own class, analogous to `auth_store.py` and

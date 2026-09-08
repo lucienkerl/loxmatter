@@ -17,7 +17,7 @@
 """Tests for `BridgeSettingsStore` - the part of the store that manages the
 connection data to the bridge (IP, ports), analogous to `AuthStore`.
 
-See docs/superpowers/specs/2026-09-03-geraete-dashboard-und-export-design.md,
+See docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md,
 section 4."""
 
 from __future__ import annotations

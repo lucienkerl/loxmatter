@@ -2364,7 +2364,7 @@ git commit -m "feat(cli): set-password als Notausgang fuer ein vergessenes Passw
 
 **Files:**
 - Modify: `README.md`, `deploy/testhost/.env.example`, `deploy/testhost/docker-compose.yml`, `src/loxmatter/loxone/server.py` (Moduldocstring), `src/loxmatter/web/index.html` (HTML-Kommentar am Kopf), `src/loxmatter/web/app.js` (Moduldocstring)
-- Create: `docs/superpowers/plans/2026-09-03-webui-login-release-hinweis.md`
+- Create: `docs/superpowers/plans/2026-09-03-webui-login-release-note.md`
 
 **Interfaces:** keine — reine Prosa.
 
@@ -2372,7 +2372,7 @@ Spec 13 zählt auf, was nachzuziehen ist. Der Kern: **für Installationen ohne T
 
 - [ ] **Step 1: Write the release note**
 
-`docs/superpowers/plans/2026-09-03-webui-login-release-hinweis.md`:
+`docs/superpowers/plans/2026-09-03-webui-login-release-note.md`:
 
 ```markdown
 # Release-Hinweis: Login statt Token-Eingabe

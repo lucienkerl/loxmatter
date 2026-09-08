@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """`POST /api/export/project-sync` (design `docs/superpowers/specs/
-2026-09-03-projektdatei-sync-design.md`, section 7).
+2026-09-03-project-file-sync-design.md`, section 7).
 
 Accepts an uploaded Loxone project file and returns a diff plan plus both
 patched file variants in a single response - the same `Store` that

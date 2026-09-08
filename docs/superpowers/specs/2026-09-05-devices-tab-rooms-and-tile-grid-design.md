@@ -1,7 +1,7 @@
 # Geräte-Tab: Räume, Kategorien und ein mehrspaltiges Kachelraster
 
 Entwurf, 5. September 2026. Führt
-[den Geräte-Dashboard-Entwurf](2026-09-03-geraete-dashboard-und-export-design.md)
+[den Geräte-Dashboard-Entwurf](2026-09-03-device-dashboard-and-export-design.md)
 fort — dessen Kachel („kein Aufklappen mehr", Abschnitt 3) bleibt inhaltlich
 unangetastet und wird hier nur neu angeordnet. Löst nebenbei dessen offenen
 Punkt 1 (Zuordnung Gerätetyp → Icon) ein, weil die Kategorie, die dieser

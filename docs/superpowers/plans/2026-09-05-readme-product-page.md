@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, `uv`, FastAPI/uvicorn (bereits im Projekt), Playwright (nur als Ad-hoc-Abhängigkeit über `uv run --with`, **nicht** in `pyproject.toml`), Mermaid (von GitHub gerendert), Markdown.
 
-**Entwurf:** [`docs/superpowers/specs/2026-09-05-readme-produktseite-design.md`](../specs/2026-09-05-readme-produktseite-design.md)
+**Entwurf:** [`docs/superpowers/specs/2026-09-05-readme-product-page-design.md`](../specs/2026-09-05-readme-product-page-design.md)
 
 ## Global Constraints
 

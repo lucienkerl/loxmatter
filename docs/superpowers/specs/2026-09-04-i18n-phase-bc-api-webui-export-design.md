@@ -1,6 +1,6 @@
 # Internationalisierung, Phase B+C: API, WebUI und Export-Vorlagen
 
-Entwurf, 4. September 2026. Setzt [Phase A](2026-09-03-i18n-phase-a-sprachwahl-cli-design.md)
+Entwurf, 4. September 2026. Setzt [Phase A](2026-09-03-i18n-phase-a-language-selection-cli-design.md)
 fort (Grundsprache Englisch, umschaltbar auf Deutsch; dort bereits gebaut:
 `loxmatter.i18n.t()`/`strings.yaml`, die gemeinsame Spracheinstellung in
 `LocaleStore`, die vollständig übersetzte CLI). Phase A hatte API+WebUI

@@ -300,7 +300,7 @@ Byte-Spans statt eines XML-Baums.
 
 Bewusst kein `xml.etree.ElementTree` fuer irgendetwas, das spaeter
 geschrieben wird (siehe Entwurf `docs/superpowers/specs/
-2026-09-03-projektdatei-sync-design.md`, Abschnitt 3.2): ein XML-Serialisierer
+2026-09-03-project-file-sync-design.md`, Abschnitt 3.2): ein XML-Serialisierer
 duerfte Attribute umsortieren oder anders schreiben, ohne dass sich das hier
 nachpruefen liesse, und ein 3-MB-Projekt enthaelt weit mehr Bausteintypen als
 dieses Projekt kennt. `Element.open_start`/`open_end`/`inner_end`/`outer_end`
@@ -2432,7 +2432,7 @@ Create `src/loxmatter/api/project_sync.py`:
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """`POST /api/export/project-sync` (Entwurf `docs/superpowers/specs/
-2026-09-03-projektdatei-sync-design.md`, Abschnitt 7).
+2026-09-03-project-file-sync-design.md`, Abschnitt 7).
 
 Nimmt eine hochgeladene Loxone-Projektdatei entgegen und liefert Diff-Plan
 plus beide gepatchten Datei-Varianten in einer Antwort - derselbe `Store`,
@@ -2743,7 +2743,7 @@ im WebUI enthalten: das dafür nötige ID-Schema für neue Objekte ist aus
 einer einzigen echten Projektdatei abgeleitet, nicht offiziell dokumentiert
 und **nicht verifiziert**. Vor dem ersten Vertrauen in diesen Pfad: eine
 damit gepatchte Datei einmal in Loxone Config öffnen und auf Fehler prüfen.
-Details: [Projektdatei-Sync-Entwurf](docs/superpowers/specs/2026-09-03-projektdatei-sync-design.md).
+Details: [Projektdatei-Sync-Entwurf](docs/superpowers/specs/2026-09-03-project-file-sync-design.md).
 ```
 
 - [ ] **Step 2: Commit**

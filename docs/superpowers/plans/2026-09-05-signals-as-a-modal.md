@@ -8,7 +8,7 @@
 
 **Tech Stack:** Alpine.js 3 (vendort unter `web/vendor/alpine.min.js`), natives `<dialog>` und `<details>`, FastAPI liefert `index.html`/`app.js`/`style.css` statisch aus, Tests mit pytest gegen den ausgelieferten Text, Verhaltensprüfung im Browser gegen den Demo-Server.
 
-**Entwurf:** [docs/superpowers/specs/2026-09-05-signale-als-modal-design.md](../specs/2026-09-05-signale-als-modal-design.md)
+**Entwurf:** [docs/superpowers/specs/2026-09-05-signals-as-a-modal-design.md](../specs/2026-09-05-signals-as-a-modal-design.md)
 
 ## Global Constraints
 

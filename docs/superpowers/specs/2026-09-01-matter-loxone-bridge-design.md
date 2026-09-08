@@ -132,7 +132,7 @@ und Structs nichts). Konsequenz für den Exporter (6.6) und die WebUI (8).
 **Ergänzung (Phase 6, 2026-09-03).** Von den technisch abbildbaren Signalen
 (6.6) will ein Anwender nur einen kleinen Teil standardmäßig exportiert sehen
 — bei der Steckdose fünf davon (Ein/Aus, Spannung, Strom, Leistung,
-Verbrauch). [Der Signalauswahl-Entwurf](2026-09-03-signalauswahl-design.md)
+Verbrauch). [Der Signalauswahl-Entwurf](2026-09-03-signal-selection-design.md)
 führt dafür den Begriff `Relevance` ein, getrennt von der hier beschriebenen
 `Exportability`. Die generische Zerlegung selbst bleibt dabei **unverändert**
 — sie liefert weiterhin jedes lesbare Attribut und jedes Event als Signal,
@@ -450,7 +450,7 @@ bis das nächste Update eintrifft — bei einem Temperatursensor potenziell Stun
   (2026-09-04) gilt das nur noch für `/resync` und den Brücken-Start** — der
   periodische Timer selbst resent nur noch einzeln markierte Signale, mit
   einem eigenen, über die WebUI konfigurierbaren Intervall. Details:
-  [Entwurf periodischer Resend](2026-09-04-periodischer-resend-design.md).
+  [Entwurf periodischer Resend](2026-09-04-periodic-resend-design.md).
 - **`/resync`-Endpoint**, als fertiger `VirtualOutCmd` mitexportiert. Im Config-Projekt
   an den Systemstart-Baustein gehängt, sind nach jedem Neustart sofort alle Werte da.
 
@@ -517,7 +517,7 @@ Nullwerte.
 
 **Ergänzung (Phase 6, 2026-09-03).** Die Tabelle oben ist eine Momentaufnahme
 vom 2026-09-01 und bleibt als solche stehen. Zwei Dinge haben sich seither
-geändert, beide durch den [Signalauswahl-Entwurf](2026-09-03-signalauswahl-design.md):
+geändert, beide durch den [Signalauswahl-Entwurf](2026-09-03-signal-selection-design.md):
 
 Erstens die **109 selbst sind nicht mehr aktuell — es sind jetzt 110.**
 Cluster 145 (kumulativer Verbrauch) liefert seinen Wert als Struktur
@@ -532,7 +532,7 @@ Zählerstand selbst ist damit numerisch geworden und zählt seither zu
 `tests/loxone/test_values_real_device.py::test_exactly_110_signals_yield_a_value`,
 `tests/profiles/test_real_device_fixtures.py` und
 `tests/api/test_devices.py` — alle drei erwarten heute **110**, nicht 109.
-Der [Signalauswahl-Entwurf](2026-09-03-signalauswahl-design.md) selbst nannte
+Der [Signalauswahl-Entwurf](2026-09-03-signal-selection-design.md) selbst nannte
 an mehreren Stellen ebenfalls noch die alte Zahl 109 (dort korrigiert, mit
 derselben Begründung); ein Testdocstring
 (`tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`)
@@ -716,7 +716,7 @@ und die einmaligen Systemvorlagen.
 
 **4. System** — Systemcheck, Live-Feed (Logzeilen, UDP-Mitschnitt und Kommando-Log,
 laufend statt einmalig — seit 2026-09-03, siehe 10.5 und den
-[Live-Feed-Entwurf](2026-09-03-diagnose-livefeed-design.md)), Backup der
+[Live-Feed-Entwurf](2026-09-03-diagnostics-live-feed-design.md)), Backup der
 Fabric-Credentials. Der Systemcheck prüft vier Dinge: matter-server, die
 Signalschlüssel-Datenbank, den lokalen IPv6-Pfad und den Routing-Pfad zum Miniserver
 (10.5). **OTBR und Thread-Netz prüft er nicht** — festgehalten als offener Punkt 9 in
@@ -748,7 +748,7 @@ Pfad, kein Polling.
 
 **Seit 2026-09-03 gibt es davon zwei, nicht einen** (Live-Feed für Logs,
 UDP-Mitschnitt und Kommando-Log, siehe 10.5 und
-[Entwurf](2026-09-03-diagnose-livefeed-design.md)): `/api/live` bleibt der
+[Entwurf](2026-09-03-diagnostics-live-feed-design.md)): `/api/live` bleibt der
 Wertekanal oben, `/api/diagnostics/live` ist ein zweiter, eigener WebSocket
 für die Ansicht „System". Getrennt, nicht angehängt, weil beide verschiedene
 Lebensdauern haben (der Wertekanal läuft, solange irgendeine Ansicht offen
@@ -1059,7 +1059,7 @@ sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar
   einmalig zur Ansicht „System" — mit einer Momentaufnahme beim Verbinden,
   danach live. Ersetzt das manuelle Neuladen; Details, Nachrichtenformat
   und Abgrenzung zu `/api/live` (8.3):
-  [Live-Feed-Entwurf](2026-09-03-diagnose-livefeed-design.md).
+  [Live-Feed-Entwurf](2026-09-03-diagnostics-live-feed-design.md).
 - **Vorlagen-Vorschau**: vor dem Download zeigt die WebUI, welche Objekte und Befehle
   entstehen und wie viele.
 - **Systemcheck** (`GET /api/diagnostics/system`): vier Zeilen, jede grün oder rot mit

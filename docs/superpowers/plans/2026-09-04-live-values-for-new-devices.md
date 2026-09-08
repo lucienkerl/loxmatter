@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, asyncio, python-matter-server 8.1.2, FastAPI, pytest (`asyncio_mode = "auto"`), Alpine.js für die Oberfläche.
 
-**Spec:** [2026-09-04-live-werte-neuer-geraete-design.md](../specs/2026-09-04-live-werte-neuer-geraete-design.md)
+**Spec:** [2026-09-04-live-values-for-new-devices-design.md](../specs/2026-09-04-live-values-for-new-devices-design.md)
 
 ## Global Constraints
 
@@ -889,7 +889,7 @@ Einlern-Route. Das „zusaetzlich" ist nicht Guertel-und-Hosentraeger: das
 `commission_with_code` zurueckkehrt und der Store dem Node eine device_id
 geben kann — die Meldung wird deshalb verworfen, und eine zweite folgt
 fuer ein ruhig im Netz stehendes Geraet nicht. Siehe
-docs/superpowers/specs/2026-09-04-live-werte-neuer-geraete-design.md.
+docs/superpowers/specs/2026-09-04-live-values-for-new-devices-design.md.
 ```
 
 - [ ] **Step 7: Alles laufen lassen und committen**

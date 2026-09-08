@@ -1,7 +1,7 @@
 # Suchfeld der Geräteansicht: eigene Gestalt statt Systemkasten
 
 Entwurf, 6. September 2026. Betrifft die Raumleiste aus
-[dem Geräte-Tab-Entwurf](2026-09-05-geraete-tab-raeume-und-kachelraster-design.md),
+[dem Geräte-Tab-Entwurf](2026-09-05-devices-tab-rooms-and-tile-grid-design.md),
 Abschnitt 6.3 — dort ist das Suchfeld eingeführt worden, aber nie gestaltet.
 
 ## 1. Das Problem

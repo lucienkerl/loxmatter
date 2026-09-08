@@ -8,7 +8,7 @@
 
 **Tech Stack:** Alpine.js 3.17.1 (vendored unter `src/loxmatter/web/vendor/`, kein Build-Schritt), natives `<details>`/`<summary>`, pytest über die ausgelieferten Dateien.
 
-**Spec:** `docs/superpowers/specs/2026-09-05-kachel-kebab-menue-design.md` — bei jedem Zweifel gilt die Spec, nicht dieser Plan.
+**Spec:** `docs/superpowers/specs/2026-09-05-tile-kebab-menu-design.md` — bei jedem Zweifel gilt die Spec, nicht dieser Plan.
 
 ## Global Constraints
 
