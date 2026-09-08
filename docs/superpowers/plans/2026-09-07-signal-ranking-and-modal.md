@@ -575,14 +575,14 @@ def test_every_mapped_type_exists_in_the_matter_table():
         assert device_type in known, hex(device_type)
 ```
 
-**Hinweis:** Wie `ALL_TYPES` in der installierten `matter_server`-Fassung genau heißt, steht in `tests/profiles/test_categories.py::test_every_mapped_type_exists_in_the_matter_table`. Von dort abschreiben statt raten.
+**Note:** How `ALL_TYPES` in the installed `matter_server` version is called exactly is documented in `tests/profiles/test_categories.py::test_every_mapped_type_exists_in_the_matter_table`. Copy from there rather than guessing.
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run test, verify failure**
 
 Run: `uv run pytest tests/profiles/test_endpoints.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.profiles.endpoints'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.profiles.endpoints'`
 
-- [ ] **Step 3: Die Texte in `strings.yaml` anlegen**
+- [ ] **Step 3: Create the text in `strings.yaml`**
 
 ```yaml
 web.signals.endpoint_button:
@@ -608,27 +608,26 @@ web.signals.endpoint_plain:
   de: "Endpunkt {endpoint}"
 ```
 
-- [ ] **Step 4: `endpoints.py` schreiben**
+- [ ] **Step 4: Write `endpoints.py`**
 
 ```python
-# <GPL-Kopf wie in profiles/categories.py, unveraendert uebernehmen>
+# <GPL header as in profiles/categories.py, copied unchanged>
 
-"""Der sprechende Name EINES Endpunkts (Entwurf 2026-09-07, Abschnitt 7.4).
+"""The human-readable name of ONE endpoint (design 2026-09-07, section 7.4).
 
-Steht neben `categories.py`, nicht darin, und das ist die ganze
-Begruendung dieses Moduls: `category_for` beantwortet "was fuer ein Ding
-ist das GERAET" - Leuchte, Steckdose, Schalter -, diese Datei "wie heisst
-dieser eine Endpunkt DARIN". Eine Fernbedienung ist EIN Schalter mit ZWEI
-Tasten; `CATEGORY_BY_DEVICE_TYPE` auf ihre Endpunkte angewandt ergaebe
-"Schalter 1" und "Schalter 2", also zweimal denselben falschen Begriff.
+Sits beside `categories.py`, not inside it, and that is the entire reason
+for this module: `category_for` answers "what kind of thing is this DEVICE"
+(light, socket, switch), this file answers "what is this single ENDPOINT
+called in it". A remote control is ONE switch with TWO buttons;
+`CATEGORY_BY_DEVICE_TYPE` applied to its endpoints would yield "switch 1"
+and "switch 2", the same wrong term twice.
 
-Die Tabelle unten ist bewusst KLEIN. Sie fuehrt die Geraetetypen, die an
-den eingecheckten Abbildern in tests/fixtures/nodes/ tatsaechlich
-vorkommen, und sonst nichts - derselbe Anspruch wie bei
-`UTILITY_ENDPOINT_KEEP_CLUSTERS` in `relevance.py`: ein neuer Eintrag
-braucht eine konkrete Belegung, nicht die Annahme, die Tabelle sei von
-sich aus vollstaendig. Alles Uebrige faellt auf "Endpunkt N" zurueck, und
-das ist ein Name, der immer stimmt.
+The table below is deliberately SMALL. It lists the device types that
+actually appear in the checked-in fixtures in tests/fixtures/nodes/, and
+nothing else — same standard as `UTILITY_ENDPOINT_KEEP_CLUSTERS` in
+`relevance.py`: a new entry needs a concrete device that uses it, not the
+assumption that the table is complete by itself. Everything else falls back
+to "Endpoint N", and that is a name that always works.
 """
 
 from __future__ import annotations
@@ -638,9 +637,9 @@ from collections.abc import Mapping
 from loxmatter import i18n
 from loxmatter.profiles.relevance import POWER_SOURCE_DEVICE_TYPE, UTILITY_DEVICE_TYPES
 
-# Geraetetyp -> Uebersetzungsschluessel. Die Nummern stammen aus
-# `matter_server.client.models.device_types` wie in `categories.py`; die
-# Kommentare nennen den dortigen Klassennamen.
+# Device type → translation key. The numbers come from
+# `matter_server.client.models.device_types` as in `categories.py`; the
+# comments name the class there.
 ENDPOINT_NAME_KEY_BY_DEVICE_TYPE: dict[int, str] = {
     0x000F: "web.signals.endpoint_button",  # GenericSwitch (IKEA BILRESA, Ep 1+2)
     0x010A: "web.signals.endpoint_socket",  # OnOffPlugInUnit (IKEA GRILLPLATS, Ep 1)
@@ -648,21 +647,21 @@ ENDPOINT_NAME_KEY_BY_DEVICE_TYPE: dict[int, str] = {
     0x0510: "web.signals.endpoint_metering",  # ElectricalSensor (GRILLPLATS, Ep 2)
 }
 
-# Ein Endpunkt, der nur Verwaltung traegt, heisst schlicht "Geraet" - dort
-# sitzt der Batteriestand, und "Endpunkt 0" waere fuer den Bedienenden eine
-# Zahl ohne Bedeutung. PowerSource zaehlt hier mit, weil er allein noch
-# keinen Nutz-Endpunkt macht (dieselbe Ueberlegung wie
-# `_IGNORED_DEVICE_TYPES` in categories.py).
+# An endpoint that carries only housekeeping is simply called "device" — the
+# battery level sits there, and "endpoint 0" would be a number without meaning
+# for the user. PowerSource counts here because alone it does not yet make a
+# functional endpoint (same reasoning as `_IGNORED_DEVICE_TYPES` in
+# categories.py).
 _DEVICE_ENDPOINT_TYPES: frozenset[int] = UTILITY_DEVICE_TYPES | {POWER_SOURCE_DEVICE_TYPE}
 
 
 def _name_key(declared: frozenset[int]) -> str | None:
-    """Der Schluessel fuer diesen Endpunkt, oder `None` fuer den Ruecktritt.
+    """The key for this endpoint, or `None` for the fallback.
 
-    Ein Nutz-Typ schlaegt den Verwaltungs-Typ: Endpunkt 0 der Fernbedienung
-    deklariert Root Node UND Power Source UND OTA Requestor - er heisst
-    "Geraet". Traegt ein Endpunkt dagegen beides, Verwaltung und einen
-    benannten Nutz-Typ, gewinnt der Nutz-Typ, weil er mehr aussagt.
+    A functional type beats the housekeeping type: endpoint 0 of the remote
+    control declares Root Node AND Power Source AND OTA Requestor — it is
+    called "device". If an endpoint carries both housekeeping and a named
+    functional type, the functional type wins because it says more.
     """
     for device_type in sorted(declared):
         key = ENDPOINT_NAME_KEY_BY_DEVICE_TYPE.get(device_type)
@@ -674,18 +673,16 @@ def _name_key(declared: frozenset[int]) -> str | None:
 
 
 def endpoint_labels(device_types: Mapping[int, frozenset[int]] | None) -> dict[int, str]:
-    """Endpunktnummer -> fertiger, uebersetzter Name.
+    """Endpoint number → finished, translated name.
 
-    Nummeriert wird nur, wo es etwas zu unterscheiden gibt: zwei
-    Taster-Endpunkte ergeben "Taste 1" und "Taste 2", ein einzelner
-    Steckdosen-Endpunkt bleibt "Steckdose" - eine "1" ohne "2" ist eine
-    Nummer ohne Gegenstueck.
+    Numbering happens only where there is something to distinguish: two
+    button endpoints yield "button 1" and "button 2", a single socket endpoint
+    stays "socket" — a "1" without a "2" is a number without a counterpart.
 
-    `None` (Geraetetypen noch nicht nachgetragen, siehe
-    `Store.backfill_device_types`) ergibt eine leere Zuordnung; der
-    Aufrufer faellt dann fuer jeden Endpunkt auf `endpoint_plain` zurueck -
-    dieselbe wortlose Behandlung, die `category_for(None)` mit `OTHER`
-    bekommt.
+    `None` (device types not yet backfilled, see `Store.backfill_device_types`)
+    yields an empty mapping; the caller then falls back to `endpoint_plain` for
+    each endpoint — the same silent handling that `category_for(None)` gets with
+    `OTHER`.
     """
     if not device_types:
         return {}
@@ -724,10 +721,9 @@ Append to `tests/api/test_devices.py` (follow the `api` fixture pattern there; i
 
 ```python
 async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_api):
-    """Die Oberflaeche gruppiert nach Endpunkt und erkennt den Batteriestand
-    an seinem Cluster. Beides aus `path` ("1/59/2") in JavaScript
-    herauszuparsen hiesse, die Zerlegung ein zweites Mal zu pflegen -
-    deshalb liefert die API die Zahlen fertig."""
+    """The UI groups by endpoint and recognizes the battery level by its
+    cluster. Parsing both from `path` ("1/59/2") in JavaScript would mean
+    maintaining the decomposition twice — so the API delivers the numbers ready."""
     client, store, device_id = button_api
 
     response = await client.get(f"/api/devices/{device_id}/signals")
@@ -753,13 +749,12 @@ Expected: FAIL mit `KeyError: 'endpoint'`
 Insert in `api/models.py` after `kind: str`:
 
 ```python
-    # endpoint/cluster_id (Entwurf 2026-09-07, Abschnitt 7.4): `path` traegt
-    # dieselben Zahlen als "1/59/2", aber als Text. Die Oberflaeche
-    # gruppiert nach Endpunkt und erkennt den Batteriestand an Cluster 47 -
-    # beides aus `path` zu parsen hiesse, `matter.paths` ein zweites Mal in
-    # JavaScript zu pflegen. `endpoint_label` ist der sprechende Name
-    # desselben Endpunkts ("Taste 1"), uebersetzt aus `profiles.endpoints`;
-    # ohne nachgetragene Geraetetypen steht dort "Endpunkt 1".
+    # endpoint/cluster_id (design 2026-09-07, section 7.4): `path` carries
+    # the same numbers as "1/59/2", but as text. The UI groups by endpoint and
+    # recognizes the battery level at cluster 47 — parsing both from `path`
+    # would mean maintaining `matter.paths` twice in JavaScript. `endpoint_label`
+    # is the human-readable name of that endpoint ("button 1"), translated from
+    # `profiles.endpoints`; without backfilled device types it reads "endpoint 1".
     endpoint: int
     cluster_id: int
     endpoint_label: str
@@ -813,22 +808,21 @@ Expected: PASS.
 ```bash
 git add src/loxmatter/profiles/endpoints.py src/loxmatter/api/models.py src/loxmatter/api/devices.py src/loxmatter/i18n/strings.yaml tests/profiles/test_endpoints.py tests/api/test_devices.py
 git commit -m "$(cat <<'MSG'
-feat(api): Endpunkt, Cluster und sprechender Endpunktname je Signal
+feat(api): Endpoint, cluster, and human-readable endpoint name per signal
 
-`profiles/endpoints.py` beantwortet "wie heisst dieser eine Endpunkt",
-was `categories.py` NICHT beantwortet: dort geht es um das ganze Geraet.
-Eine Fernbedienung ist EIN Schalter mit ZWEI Tasten - die Kategorie auf
-ihre Endpunkte angewandt ergaebe zweimal "Schalter".
+`profiles/endpoints.py` answers "what is this one endpoint called", which
+`categories.py` does NOT answer: there it is about the whole device.
+A remote control is ONE switch with TWO buttons — applying the category to
+its endpoints would yield "switch" twice.
 
-Nummeriert wird nur, wo es etwas zu unterscheiden gibt: zwei
-Taster-Endpunkte werden "Taste 1"/"Taste 2", ein einzelner
-Steckdosen-Endpunkt bleibt "Steckdose". Nicht eingetragene Typen und ein
-noch nicht nachgetragenes `device.device_types` fallen auf "Endpunkt N"
-zurueck - ein Name, der immer stimmt.
+Numbering happens only where there is something to distinguish: two
+button endpoints become "button 1"/"button 2", a single socket endpoint
+stays "socket". Unregistered types and an not-yet-backfilled `device.device_types`
+fall back to "endpoint N" — a name that always works.
 
-`endpoint`/`cluster_id` in SignalOut, weil `path` dieselben Zahlen nur
-als Text traegt: sie in JavaScript herauszuparsen hiesse, `matter.paths`
-ein zweites Mal zu pflegen.
+`endpoint`/`cluster_id` in SignalOut because `path` carries the same
+numbers only as text: parsing them in JavaScript would mean maintaining
+`matter.paths` twice.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -855,22 +849,21 @@ MSG
 Append to `tests/api/test_web.py`:
 
 ```python
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is needed for this test")
 def test_the_battery_is_never_the_lead_and_never_counted_twice():
-    """Die drei Zusicherungen der Batteriezeile an EINEM Aufbau, weil sie
-    zusammengehoeren: der Batteriestand fuehrt nicht, er steht nicht in der
-    Vorschau, und er zaehlt nicht als "weiteres".
+    """The three guarantees of the battery row in ONE setup, because they
+    belong together: the battery level does not lead, it does not appear in the
+    preview, and it is not counted as "remaining".
 
-    Der Aufbau ist der Taster: 17 funktionale Signale in der Reihenfolge,
-    in der die Cluster-Rangliste sie liefert - sechzehn Switch-Signale,
-    zuletzt die Batterie. Sechs Vorschauzeilen plus eine Fusszeile lassen
-    zehn uebrig. Nennt die Kachel elf, ist die Batterie doppelt gezaehlt -
-    genau der Fehler, den der Canvas-Entwurf hatte.
+    The setup is the button: 17 functional signals in the order that the
+    cluster ranking delivers them — sixteen switch signals, battery last. Six
+    preview rows plus one footer row leaves ten over. If the tile names eleven,
+    the battery is counted twice — exactly the bug that the canvas design had.
 
-    Als node-Lauf statt als Zeichenketten-Suche in `app.js`: eine Suche
-    belegt nur, DASS eine Zeile ausgeliefert wird. Am 2026-09-05 haben drei
-    solche Tests einen Critical durchgelassen, weil sie exakt die
-    Zeichenketten prueften, die den Fehler erzeugten."""
+    As a node run rather than a string search in `app.js`: a search only
+    proves that a row is delivered. On 2026-09-05, three such tests let a
+    Critical through because they checked exactly the strings that caused
+    the bug."""
     values = _app_state(
         """
         const signals = [];
@@ -901,10 +894,10 @@ def test_the_battery_is_never_the_lead_and_never_counted_twice():
     assert values["remaining"] == 10
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is needed for this test")
 def test_a_mains_powered_device_has_no_battery_row():
-    """Ohne PowerSource-Signal darf die Kachel keine Fusszeile zeigen - und
-    der Zaehler muss sich genauso verhalten wie vor dieser Aenderung."""
+    """Without a PowerSource signal, the tile must not show a footer row — and
+    the counter must behave the same as before this change."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -924,10 +917,10 @@ def test_a_mains_powered_device_has_no_battery_row():
     assert values["remaining"] == 0
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is needed for this test")
 def test_a_device_whose_only_functional_signal_is_the_battery_has_no_lead():
-    """Der Randfall, an dem der Hinweis "keine funktionalen Signale" falsch
-    waere: es GIBT eines, es steht nur in der Fusszeile."""
+    """The edge case where the message "no functional signals" would be wrong:
+    there IS one, it is just in the footer row."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -986,17 +979,17 @@ web.devices.battery_label:
 `functionalSignalsFor` stays unchanged. Insert directly below it and replace `firstSignalsFor`/`remainingSignalCount`:
 
 ```js
-    // Der Cluster, an dem die Kachel den Batteriestand erkennt. Die Zahl
-    // steht hier statt einer Titel-Pruefung: der Titel ist vom Nutzer frei
-    // umbenennbar ("Akku", "Saft"), der Cluster nicht.
+    // The cluster by which the tile recognizes the battery level. The number
+    // is here instead of a title check: the title is freely renameable by the
+    // user ("battery", "power"), the cluster is not.
     POWER_SOURCE_CLUSTER: 47,
 
-    // Der Batteriestand des Geraets, oder null. Er bekommt seit der
-    // Cluster-Rangliste (Entwurf 2026-09-07, Abschnitt 6) eine eigene
-    // Fusszeile: mit Rang 90 steht er hinter allen sechzehn anderen
-    // funktionalen Signalen des Tasters und fiele damit aus den sechs
-    // Vorschauzeilen heraus - er waere auf der Kachel gar nicht mehr zu
-    // sehen. Das ist der Preis der Rangliste, und dies ist die Gegenbuchung.
+    // The battery level of the device, or null. It gets its own footer row
+    // from the cluster ranking (design 2026-09-07, section 6): with rank 90
+    // it stands behind all sixteen other functional signals of the button and
+    // would fall out of the six preview rows — it would no longer be visible
+    // on the tile at all. That is the price of the ranking, and this is the
+    // offsetting entry.
     batterySignalFor(deviceId) {
       const signals = this.signalsByDevice[deviceId];
       if (!signals) {
@@ -1009,15 +1002,14 @@ web.devices.battery_label:
       );
     },
 
-    // Die funktionalen Signale OHNE den Batteriestand - die Menge, aus der
-    // sich Leitwert, Vorschauzeilen und der "+ N weitere"-Zaehler bilden.
+    // The functional signals WITHOUT the battery level — the set from which
+    // the lead signal, preview rows, and the "+ N more" counter are formed.
     //
-    // Dass alle drei aus DERSELBEN Menge kommen, ist der ganze Trick: der
-    // Leitwert kann damit nie die Batterie sein (sie ist gar nicht drin),
-    // und der Zaehler kann sie nie doppelt zaehlen (sie fehlt in beiden
-    // Summanden). Eine Sonderregel an drei Stellen waere dieselbe Aussage
-    // dreimal - und beim ersten Entwurf ist genau eine davon vergessen
-    // worden.
+    // That all three come from the SAME set is the whole trick: the lead
+    // signal can never be the battery (it is not in there at all), and the
+    // counter can never count it twice (it is missing from both summands).
+    // A special rule in three places would be the same statement three times —
+    // and in the first design, exactly one of them was forgotten.
     previewSignalsFor(deviceId) {
       const battery = this.batterySignalFor(deviceId);
       const functional = this.functionalSignalsFor(deviceId);
@@ -1053,19 +1045,18 @@ To the symbol block (next to `i-kebab`, around line 170):
 Directly **after** the closing `</div>` of `.value-rows` and **before** `<p class="hint" x-show="!signalsByDevice[device.id]" …>`:
 
 ```html
-                  <!-- Der Batteriestand steht UNTER den Vorschauzeilen und
-                       unter dem "+ N weitere"-Link, nicht zwischen ihnen
-                       (Entwurf 2026-09-07, Abschnitt 6). Er ist kein
-                       Nutzsignal wie ein Tastendruck, sondern eine Angabe
-                       ueber das Geraet selbst - und mit Rang 90 waere er
-                       aus den sechs Vorschauzeilen gefallen. Eigene Zeile,
-                       eigenes Symbol, gestrichelte Trennung: immer
-                       sichtbar, nie Leitwert.
+                  <!-- The battery level stands BELOW the preview rows and
+                       below the "+ N more" link, not between them (design
+                       2026-09-07, section 6). It is not a functional signal
+                       like a button press, but a statement about the device
+                       itself — and with rank 90 it would have fallen out of
+                       the six preview rows. Own row, own symbol, dashed
+                       separator: always visible, never a lead signal.
 
-                       `x-show` statt `x-if`: ein netzbetriebenes Geraet
-                       hat kein PowerSource-Signal und darf nicht um eine
-                       leere Zeile hoeher werden - `.device-battery` traegt
-                       deshalb kein eigenes Aussenmass, das stehen bliebe. -->
+                       `x-show` instead of `x-if`: a mains-powered device has no
+                       PowerSource signal and must not grow by one empty row —
+                       `.device-battery` therefore carries no own spacing that
+                       would remain. -->
                   <div class="device-battery" x-show="batterySignalFor(device.id)" x-cloak>
                     <svg class="icon" aria-hidden="true"><use href="#i-battery"></use></svg>
                     <span class="value-key" x-text="t('web.devices.battery_label')"></span>
@@ -1080,7 +1071,7 @@ Directly **after** the closing `</div>` of `.value-rows` and **before** `<p clas
 
 - [ ] **Step 7: Update the hint condition**
 
-Am `<p class="hint" … x-text="t('web.devices.no_functional_signals')">` die Bedingung ergänzen:
+Add the condition to `<p class="hint" … x-text="t('web.devices.no_functional_signals')">`:
 
 ```html
                   <p
@@ -1093,12 +1084,11 @@ Am `<p class="hint" … x-text="t('web.devices.no_functional_signals')">` die Be
 And add one sentence to the existing comment above it:
 
 ```
-                       Seit der Batteriezeile (Entwurf 2026-09-07) reicht
-                       "kein Leitwert" als Bedingung nicht mehr: ein Geraet,
-                       dessen einziges funktionales Signal die Batterie ist,
-                       hat keinen Leitwert - aber "keine funktionalen
-                       Signale" waere dort falsch, die Fusszeile darunter
-                       zeigt ja eines.
+                       Since the battery row (design 2026-09-07), "no lead
+                       signal" is no longer sufficient as a condition: a device
+                       whose only functional signal is the battery has no lead
+                       signal — but "no functional signals" would be wrong there,
+                       because the footer row below shows one.
 ```
 
 - [ ] **Step 8: Add to `style.css`**
@@ -1106,14 +1096,14 @@ And add one sentence to the existing comment above it:
 Insert after `.value-rows .value`:
 
 ```css
-/* Der Batteriestand als eigene Zeile am Fuss der Vorschau (Entwurf
-   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt wie `.device-controls`
-   im Modal - dieselbe Geste fuer dasselbe: "gehoert dazu, ist aber eine
-   andere Art von Angabe".
+/* The battery level as its own row at the foot of the preview (design
+   2026-09-07, section 6). Set apart with dashing like `.device-controls`
+   in the modal — same gesture for the same thing: "belongs here, but is
+   a different kind of statement".
 
-   `margin-top` steht auf dem Element, nicht als `margin-bottom` der
-   Vorschau: ein netzbetriebenes Geraet blendet diese Zeile per `x-show`
-   aus, und ein Aussenmass am Nachbarn bliebe dann als Luecke stehen. */
+   `margin-top` sits on the element, not as `margin-bottom` of the preview:
+   a mains-powered device hides this row via `x-show`, and spacing on the
+   neighbor would remain as a gap. */
 .device-battery {
   display: flex;
   align-items: baseline;
@@ -1135,9 +1125,8 @@ Insert after `.value-rows .value`:
   flex: 1 1 auto;
 }
 
-/* Rechtsbuendig wie in `.value-rows`, damit die Zahl mit den Werten
-   darueber fluchtet - die Zeile ist ein Flex-Container und erbt deren
-   Rasterausrichtung nicht. */
+/* Right-aligned like in `.value-rows`, so the number aligns with the values
+   above — the row is a flex container and does not inherit its grid alignment. */
 .device-battery .value {
   flex: 0 0 auto;
   font-size: 0.75rem;
@@ -1151,64 +1140,62 @@ Insert after `.value-rows .value`:
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-- [ ] **Step 10: Die Bindung im Harness belegen, nicht nur die Funktion**
+- [ ] **Step 10: Test the binding in the harness, not just the function**
 
-Der node-Test aus Step 1 belegt, dass `batterySignalFor` das richtige Signal
-liefert. Er sagt **nichts** darüber, ob die Zeile im Browser erscheint: `x-show`
-auf einem Element, dessen Ausdruck nie greift, verpufft stillschweigend. Genau
-diese Lücke hat am 2026-09-05 einen Critical durchgelassen.
+The node test from Step 1 proves that `batterySignalFor` delivers the right signal.
+It says **nothing** about whether the row appears in the browser: `x-show` on
+an element whose expression never matches disappears silently. That is exactly the
+gap that let a Critical through on 2026-09-05.
 
-**Wie der Harness gebaut wird** (bewährt am 2026-09-06, spart Anmeldung und
-Runden): eine `harness.html` im Scratchpad, die den fraglichen Markup-Block
-per Python **aus `index.html` herausschneidet** — nicht abtippen, sonst prüft
-man eine Kopie. Daneben `style.css` und `vendor/alpine.min.js` kopieren und
-ein Mini-`app()` stellen, das nur die Felder trägt, die der Block anfasst.
-Davor `python3 -m http.server`. Zwei Fallen: `file://` lädt der eingebettete
-Browser als statischen Schnappschuss, Alpine läuft dort **gar nicht** — es
-muss über http gehen; und ein Tab, der einmal eine lokale Datei gezeigt hat,
-bleibt darauf festgenagelt, also einen neuen Tab für die http-URL öffnen.
+**How the harness is built** (proven 2026-09-06, saves login and iterations):
+a `harness.html` in the scratchpad that **extracts the markup block from
+`index.html` via Python** — do not type it in, or you test a copy. Alongside
+it copy `style.css` and `vendor/alpine.min.js`, and put a mini-`app()` that
+carries only the fields the block touches. Before that `python3 -m http.server`.
+Two traps: `file://` loads the embedded browser as a static snapshot, Alpine
+does **not run there at all** — it must go over http; and a tab that once showed
+a local file stays locked to it, so open a new tab for the http URL.
 
-Im Harness dann **gemessene** Werte lesen, nicht Augenschein:
+In the harness then read **measured** values, not eyeballs:
 
 ```js
 const row = document.querySelector(".device-battery");
 JSON.stringify({
-  vorhanden: !!row,
-  sichtbar: row && getComputedStyle(row).display !== "none",
+  exists: !!row,
+  visible: row && getComputedStyle(row).display !== "none",
   text: row && row.textContent.replace(/\s+/g, " ").trim(),
-  leitwert: document.querySelector(".lead-label").textContent,
+  leadSignal: document.querySelector(".lead-label").textContent,
   rest: document.querySelector(".value-rows a.value-key").textContent,
 })
 ```
 
-Erwartet: `sichtbar` true, `text` enthält „Batterie" und „12.4", `leitwert`
-ist `press`, `rest` nennt **10** weitere.
+Expected: `visible` true, `text` contains "Battery" and "12.4", `leadSignal`
+is `press`, `rest` names **10** more.
 
-Danach denselben Harness mit einem Gerät **ohne** PowerSource-Signal laden:
-`vorhanden` true (das Element steht im DOM), `sichtbar` false — und die
-Kachelhöhe darf sich gegenüber dem Stand vor dieser Aufgabe nicht ändern
-(`document.querySelector(".device-card").getBoundingClientRect().height`
-vorher/nachher vergleichen).
+Then load the same harness with a device **without** a PowerSource signal:
+`exists` true (the element is in the DOM), `visible` false — and the
+tile height must not change compared to the state before this task
+(compare `document.querySelector(".device-card").getBoundingClientRect().height`
+before/after).
 
 - [ ] **Step 11: Commit**
 
 ```bash
 git add src/loxmatter/web/app.js src/loxmatter/web/index.html src/loxmatter/web/style.css src/loxmatter/i18n/strings.yaml tests/api/test_web.py
 git commit -m "$(cat <<'MSG'
-feat(web): Batteriestand als eigene Kachelzeile statt als Leitwert
+feat(web): Battery level as its own tile row instead of a lead signal
 
-Die Gegenbuchung zur Cluster-Rangliste: mit Rang 90 steht der
-Batteriestand hinter allen sechzehn anderen funktionalen Signalen des
-Tasters und fiele damit aus den sechs Vorschauzeilen - er waere auf der
-Kachel gar nicht mehr zu sehen. Er bekommt deshalb eine eigene, immer
-sichtbare Fusszeile mit eigenem Symbol.
+The offsetting entry to the cluster ranking: with rank 90, the battery level
+stands behind all sixteen other functional signals of the button and would fall
+out of the six preview rows — it would no longer be visible on the tile at all.
+So it gets its own, always-visible footer row with its own symbol.
 
-Leitwert, Vorschauzeilen und der "+ N weitere"-Zaehler bilden sich alle
-drei aus `previewSignalsFor`, das die Batterie herausnimmt. Dadurch kann
-der Leitwert sie nie sein und der Zaehler sie nie doppelt zaehlen - eine
-Sonderregel an drei Stellen waere dieselbe Aussage dreimal, und beim
-Entwurf ist genau eine davon schon einmal vergessen worden ("+ 11
-weitere" auf einer Kachel, die sieben von 17 Signalen zeigt).
+Lead signal, preview rows, and the "+ N more" counter all form from
+`previewSignalsFor`, which removes the battery. This means the lead signal can
+never be the battery and the counter can never count it twice — a special rule
+in three places would be the same statement three times, and in the design,
+exactly one of them was already forgotten once ("+ 11 more" on a tile showing
+seven of 17 signals).
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -1217,39 +1204,37 @@ MSG
 
 ---
 
-### Task 6: Das Modal — Endpunkt-Gruppen
+### Task 6: The modal — endpoint groups
 
 **Files:**
 - Modify: `src/loxmatter/web/app.js:1446-1451`
-- Modify: `src/loxmatter/web/index.html` (die `<summary>` der Signalgruppe)
+- Modify: `src/loxmatter/web/index.html` (the `<summary>` of the signal group)
 - Modify: `src/loxmatter/i18n/strings.yaml`
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `signal.endpoint`, `signal.endpoint_label` aus Task 4.
-- Produces: `signalGroupsFor(deviceId)` liefert Gruppen der Form `{key, title, subtitle, collapsible, signals}` — `subtitle` ist neu, die vier übrigen Felder behalten Bedeutung und Typ.
+- Consumes: `signal.endpoint`, `signal.endpoint_label` from Task 4.
+- Produces: `signalGroupsFor(deviceId)` yields groups of the form `{key, title, subtitle, collapsible, signals}` — `subtitle` is new, the four other fields keep their meaning and type.
 
-**Abweichung vom Entwurf, bewusst:** Abschnitt 7.4 zeichnet die Untertitel als „Endpunkt 1 · Switch (59)". Das trägt nicht — Endpunkt 2 der Steckdose führt die Cluster 144 **und** 145, ein einzelner Clustername wäre dort falsch. Der Untertitel ist deshalb nur „Endpunkt N". Der Cluster steht ab Task 8 je Zeile im Aufklapper, wo er hingehört.
+**Deviation from design, intentional:** Section 7.4 draws the subtitles as "Endpoint 1 · Switch (59)". That does not work — endpoint 2 of the socket carries clusters 144 **and** 145, a single cluster name would be wrong there. The subtitle is therefore only "Endpoint N". The cluster appears per row in the expander from Task 8 on, where it belongs.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is needed for this test")
 def test_the_groups_follow_the_ranking_not_the_endpoint_number():
-    """Der Grund fuer die Gruppen: `press` steht zweimal in der Liste -
-    1/59/1 und 2/59/1, also zwei verschiedene Tasten derselben
-    Fernbedienung. Ohne Gruppe ist das zweimal dasselbe Wort ohne Auskunft,
-    welche gemeint ist.
+    """The reason for groups: `press` appears twice in the list — 1/59/1 and
+    2/59/1, two different buttons of the same remote control. Without grouping,
+    that is the same word twice with no indication which is meant.
 
-    Und die Reihenfolge: "Geraet" (Endpunkt 0, nur die Batterie) steht
-    ZULETZT, obwohl es die kleinste Endpunktnummer traegt - die Gruppen
-    uebernehmen die Reihenfolge des ersten Auftretens in der bereits
-    gerangten Liste, sie sortieren nicht selbst. Genau das kann eine
-    Zeichenketten-Suche in `app.js` nicht belegen.
+    And the order: "device" (endpoint 0, battery only) stands LAST, even
+    though it carries the smallest endpoint number — the groups take the order
+    of first appearance in the already-ranked list, they do not sort themselves.
+    Exactly what a string search in `app.js` cannot prove.
 
-    `t()` liefert ohne geladene Uebersetzungstabelle den Schluessel selbst
-    zurueck (siehe `t` in app.js) - der Titel der Experte-Gruppe ist hier
-    deshalb der Schluessel, und das genuegt fuer die Zusicherung."""
+    `t()` returns the key itself when the translation table is not loaded (see
+    `t` in app.js) — so the title of the expert group is the key here, and
+    that is sufficient for the guarantee."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -1282,11 +1267,10 @@ def test_the_groups_follow_the_ranking_not_the_endpoint_number():
     assert [g["collapsible"] for g in values[:3]] == [False, False, False]
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is needed for this test")
 def test_a_device_without_functional_signals_yields_only_the_expert_group():
-    """Der Zustand, fuer den der Hinweis `none_functional` jetzt AUSSERHALB
-    der Gruppenschleife steht: eine Endpunktgruppe ist nie leer, es gibt
-    dann schlicht keine."""
+    """The state for which the message `none_functional` now stands OUTSIDE
+    the group loop: an endpoint group is never empty, there simply are none then."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -1323,19 +1307,18 @@ web.signals.group_endpoint_subtitle:
 - [ ] **Step 4: `signalGroupsFor` ersetzen**
 
 ```js
-    // Die Gruppen des Signal-Modals: je Endpunkt eine, danach der
-    // Experte-Block (Entwurf 2026-09-07, Abschnitt 7.4).
+    // The groups of the signals modal: one per endpoint, then the expert
+    // block (design 2026-09-07, section 7.4).
     //
-    // Die Reihenfolge der Endpunktgruppen folgt der Cluster-Rangliste, ohne
-    // dass hier sortiert wuerde: `functionalSignalsFor` kommt bereits
-    // sortiert an, und diese Schleife uebernimmt die Reihenfolge des ERSTEN
-    // Auftretens jedes Endpunkts. Am Taster steht "Geraet" (nur Batterie)
-    // deshalb zuletzt, obwohl es Endpunkt 0 ist.
+    // The order of endpoint groups follows the cluster ranking, without
+    // sorting here: `functionalSignalsFor` arrives already sorted, and this
+    // loop takes the order of FIRST appearance of each endpoint. On the button,
+    // "device" (battery only) stands last, even though it is endpoint 0.
     //
-    // `group.key` bleibt stabil ueber Neuzeichnungen ("ep1", "expert") -
-    // das ist Voraussetzung fuer das `x-init="$el.open = !group.collapsible"`
-    // im Markup: waere der Schluessel unstabil, baute Alpine den Knoten neu
-    // auf und klappte eine geoeffnete Gruppe wortlos wieder zu.
+    // `group.key` stays stable across redraws ("ep1", "expert") — this is
+    // required for `x-init="$el.open = !group.collapsible"` in the markup:
+    // if the key were unstable, Alpine would rebuild the node and silently
+    // close an open group.
     signalGroupsFor(deviceId) {
       const groups = [];
       const byEndpoint = new Map();
@@ -1354,8 +1337,8 @@ web.signals.group_endpoint_subtitle:
         }
         group.signals.push(signal);
       }
-      // Bleibt EINE Gruppe: 156 Signale ueber alle Endpunkte zu gliedern
-      // erzeugte nur mehr Ueberschriften, keine Uebersicht.
+      // Remains ONE group: breaking down 156 signals over all endpoints
+      // would create only headers, no overview.
       groups.push({
         key: "expert",
         title: t("web.signals.group_expert"),
@@ -1367,32 +1350,33 @@ web.signals.group_endpoint_subtitle:
     },
 ```
 
-**Achtung: zwei bestehende Tests brechen dadurch** — sie schreiben fest,
-dass `signalGroupsFor` die Gruppe „Funktional" führt, und genau die
-verschwindet:
+**Caution: two existing tests break because of this** — they assert that
+`signalGroupsFor` yields the "functional" group, and that is exactly what
+disappears:
 
 - `tests/api/test_web.py:402` (`assert 't("web.signals.group_functional")' in script`)
 - `tests/api/test_web.py:1852` (`assert 'title: t("web.signals.group_functional")' in body`)
 
-Beide sind aus Aufgabe 12 der i18n-Umstellung und belegen dort etwas
-Richtiges: dass die Gruppentitel übersetzt sind statt fest verdrahtet. Diese
-Zusicherung bleibt gültig und muss erhalten bleiben — sie zielt nur auf einen
-Titel, den es nicht mehr gibt. Also **umschreiben, nicht löschen**: beide
-Tests prüfen künftig `t("web.signals.group_expert")` und den
-Endpunkt-Untertitel `t("web.signals.group_endpoint_subtitle", ...)`, und
-behalten ihre Sperre gegen feste Literale (`'"Funktional"' not in body`
-entfällt, `'"Experte"' not in body` bleibt).
+Both are from task 12 of the i18n switchover and prove something correct there:
+that group titles are translated instead of hardcoded. This guarantee remains
+valid and must be kept — it just aims at a title that no longer exists. So
+**rewrite, do not delete**: both tests hereafter check `t("web.signals.group_expert")`
+and the endpoint subtitle `t("web.signals.group_endpoint_subtitle", ...)`, and
+keep their guards against hardcoded strings (`'"Functional"' not in body` goes
+away, `'"Expert"' not in body` stays).
 
-Der Schlüssel `web.signals.group_functional` in `strings.yaml` wird danach von
-niemandem mehr gelesen und **wird mitentfernt** — ein toter
-Übersetzungsschlüssel ist Ballast, den beim nächsten Mal jemand für eine
-Fundstelle hält.
+The key `web.signals.group_functional` in `strings.yaml` is thereafter read by
+nobody and **is removed along with it** — a dead translation key is ballast
+that someone will take for a hit next time.
 
-**Achtung:** die bisherige Gruppe „Funktional" verschwindet damit. Der Hinweis `web.signals.none_functional` hing an `!group.collapsible && group.signals.length === 0` — eine Endpunktgruppe ist nie leer, sie entsteht ja aus ihren Signalen. Der Hinweis muss deshalb **außerhalb** der Gruppenschleife stehen, siehe Step 5.
+**Caution:** the previous "functional" group disappears. The message
+`web.signals.none_functional` was tied to `!group.collapsible && group.signals.length === 0`
+— an endpoint group is never empty, it is formed from its signals. The message
+therefore must stand **outside** the group loop, see Step 5.
 
-- [ ] **Step 5: Das Markup nachziehen**
+- [ ] **Step 5: Update the markup**
 
-In der `<summary>` den Untertitel ergänzen:
+Add the subtitle in the `<summary>`:
 
 ```html
                   <summary>
@@ -1403,14 +1387,14 @@ In der `<summary>` den Untertitel ergänzen:
                   </summary>
 ```
 
-Den `none_functional`-Hinweis aus der Gruppe herausnehmen und **vor** die `<template x-for="group …">` setzen:
+Take the `none_functional` hint out of the group and set it **before** the
+`<template x-for="group …">`:
 
 ```html
-              <!-- Ausserhalb der Gruppenschleife, seit die Gruppen nach
-                   Endpunkt entstehen (Entwurf 2026-09-07, Abschnitt 7.4):
-                   eine Endpunktgruppe ist nie leer, sie entsteht ja aus
-                   ihren Signalen. "Keine funktionalen Signale" heisst
-                   jetzt "es gibt gar keine Endpunktgruppe". -->
+              <!-- Outside the group loop, since groups are formed by endpoint
+                   (design 2026-09-07, section 7.4): an endpoint group is never
+                   empty, it is formed from its signals. "No functional signals"
+                   now means "there is no endpoint group at all". -->
               <p
                 class="hint"
                 x-show="functionalSignalsFor(signalsModalDevice).length === 0"
@@ -1418,35 +1402,35 @@ Den `none_functional`-Hinweis aus der Gruppe herausnehmen und **vor** die `<temp
               ></p>
 ```
 
-- [ ] **Step 6: Tests laufen lassen**
+- [ ] **Step 6: Run tests**
 
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-- [ ] **Step 7: Im Browser prüfen**
+- [ ] **Step 7: Check in browser**
 
-Modal von „Hallway button" öffnen: drei Gruppen — „Taste 1 (8)", „Taste 2 (8)", „Gerät (1)" in dieser Reihenfolge, darunter „Experte (156)" zugeklappt. `press` steht einmal unter Taste 1 und einmal unter Taste 2.
+Open modal of "Hallway button": three groups — "button 1 (8)", "button 2 (8)",
+"device (1)" in that order, below it "expert (156)" collapsed. `press` appears
+once under button 1 and once under button 2.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add src/loxmatter/web/app.js src/loxmatter/web/index.html src/loxmatter/i18n/strings.yaml tests/api/test_web.py
 git commit -m "$(cat <<'MSG'
-feat(web): Signal-Modal nach Endpunkt gruppieren
+feat(web): Group signals modal by endpoint
 
-`press` stand zweimal in der Liste - 1/59/1 und 2/59/1, also zwei
-verschiedene Tasten derselben Fernbedienung, gleich beschriftet und ohne
-Auskunft, welche gemeint ist. Jetzt steht es einmal unter "Taste 1" und
-einmal unter "Taste 2".
+`press` appeared twice in the list — 1/59/1 and 2/59/1, two different buttons
+of the same remote control, labeled the same with no indication which is meant.
+Now it appears once under "button 1" and once under "button 2".
 
-Die Reihenfolge der Gruppen folgt der Cluster-Rangliste, ohne dass hier
-sortiert wuerde: `functionalSignalsFor` kommt sortiert an, und die
-Schleife uebernimmt die Reihenfolge des ersten Auftretens. Am Taster
-steht "Geraet" deshalb zuletzt, obwohl es Endpunkt 0 ist.
+The order of groups follows the cluster ranking, without sorting here:
+`functionalSignalsFor` arrives sorted, and the loop takes the order of first
+appearance. On the button, "device" stands last, even though it is endpoint 0.
 
-Der Untertitel nennt nur den Endpunkt, nicht den Cluster (abweichend vom
-Entwurf 7.4): Endpunkt 2 der Steckdose fuehrt die Cluster 144 UND 145,
-ein einzelner Clustername waere dort falsch.
+The subtitle names only the endpoint, not the cluster (deviation from design 7.4):
+endpoint 2 of the socket carries clusters 144 AND 145, a single cluster name
+would be wrong there.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -1455,25 +1439,25 @@ MSG
 
 ---
 
-### Task 7: Das Modal — Tabellenraster mit Spaltenköpfen, beide Ja/Nein-Spalten als Häkchen
+### Task 7: The modal — table grid with column headers, both yes/no columns as checkboxes
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (Signalzeile im Modal)
+- Modify: `src/loxmatter/web/index.html` (signal row in modal)
 - Modify: `src/loxmatter/web/style.css`
 - Modify: `src/loxmatter/i18n/strings.yaml`
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: die Gruppen aus Task 6.
-- Produces: CSS-Klasse `.signal-grid` mit `grid-template-columns: 58px minmax(0, 1fr) 150px 70px 76px 28px`, verwendet von Kopfzeile und jeder Datenzeile.
+- Consumes: the groups from Task 6.
+- Produces: CSS class `.signal-grid` with `grid-template-columns: 58px minmax(0, 1fr) 150px 70px 76px 28px`, used by header and each data row.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 async def test_the_signal_rows_and_the_header_share_one_grid(api):
-    """Was heute fehlt und weshalb nichts fluchtet: die Zeile ist ein
-    `flex-wrap`-Container ohne Spaltenmasse. Bei `multipress_ongoing`
-    rutschte "periodisch erneut senden" allein in die naechste Zeile."""
+    """What is missing today and why nothing aligns: the row is a
+    `flex-wrap` container without column widths. At `multipress_ongoing`,
+    "periodic resend" alone wrapped to the next row."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     css = (await client.get("/static/style.css")).text
@@ -1483,28 +1467,27 @@ async def test_the_signal_rows_and_the_header_share_one_grid(api):
 
 
 async def test_both_boolean_columns_are_checkboxes(api):
-    """Das Bedienelement folgt dem BEHAELTER, nicht der Bedeutung: in einer
-    Tabelle Haekchen, weil sie in einer Spalte fluchten und leise bleiben -
-    eine Spalte aus 17 Schiebeschaltern waere eine deutlich lautere Textur,
-    und Lautstaerke ist genau das Problem dieses Modals."""
+    """The control follows the CONTAINER, not the meaning: in a table,
+    checkboxes, because they align in a column and stay quiet — a column
+    of 17 toggles would be a much louder texture, and loudness is exactly
+    the problem of this modal."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
     modal = page[page.index('class="signals-modal"') :]
     for handler in ("toggleExported(signal)", "toggleResend(signal)"):
-        # Das Bedienelement, das den Handler traegt: vom Handler
-        # rueckwaerts bis zum oeffnenden Tag. So prueft der Test das
-        # tatsaechliche Element und nicht irgendein `type="checkbox"`
-        # anderswo im Modal.
+        # The control that carries the handler: backwards from the handler
+        # to the opening tag. So the test checks the actual element and not
+        # some `type="checkbox"` elsewhere in the modal.
         end = modal.index(handler)
         element = modal[modal.rindex("<", 0, end) : end]
         assert 'type="checkbox"' in element, handler
 
 
 async def test_the_boolean_columns_keep_a_label_for_assistive_technology(api):
-    """Die Beschriftung steht als Spaltenkopf einmal statt siebzehnmal neben
-    einem Kaestchen - ein Screenreader liest aber die Zeile, nicht die
-    Tabelle. Beide Kaestchen brauchen deshalb weiterhin ihren eigenen Namen."""
+    """The label stands as a column header once instead of seventeen times
+    next to a box — a screen reader reads the row, not the table. Both boxes
+    therefore still need their own name."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
@@ -1525,7 +1508,7 @@ async def test_the_resend_column_is_explained_once_above_the_table(api):
 Run: `uv run pytest tests/api/test_web.py -k "grid or boolean or resend_column" -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Die Texte anlegen**
+- [ ] **Step 3: Create the text**
 
 ```yaml
 web.signals.col_export:
@@ -1548,18 +1531,17 @@ web.signals.resend_explanation:
   de: "Periodisch heißt: der Wert wird regelmäßig erneut gesendet, auch wenn er sich nicht ändert."
 ```
 
-- [ ] **Step 4: Die Kopfzeile ins Markup setzen**
+- [ ] **Step 4: Put the header in the markup**
 
-Direkt **vor** die `<template x-for="group …">`, nach dem `none_functional`-Hinweis:
+Directly **before** the `<template x-for="group …">`, after the `none_functional` hint:
 
 ```html
-              <!-- Der Spaltenkopf klebt beim Scrollen oben: ohne ihn
-                   verlieren die beiden Haekchenspalten ihre Bedeutung,
-                   sobald er bei 173 Signalen aus dem Bild ist. Er traegt
-                   DIESELBE `grid-template-columns` wie jede Datenzeile -
-                   das ist der ganze Grund, warum die Tabelle fluchtet, und
-                   der Test `test_the_signal_rows_and_the_header_share_one_
-                   grid` sperrt genau diese Gleichheit. -->
+              <!-- The column header sticks at the top when scrolling: without
+                   it, the two checkbox columns lose their meaning once it
+                   disappears with 173 signals. It carries the SAME
+                   `grid-template-columns` as each data row — this is the whole
+                   reason the table aligns, and the test `test_the_signal_rows_
+                   and_the_header_share_one_grid` guards exactly this equality. -->
               <div class="signal-grid signal-grid-head">
                 <span x-text="t('web.signals.col_export')"></span>
                 <span x-text="t('web.signals.col_signal')"></span>
@@ -1570,7 +1552,7 @@ Direkt **vor** die `<template x-for="group …">`, nach dem `none_functional`-Hi
               </div>
 ```
 
-Und die Erklärung darüber, neben den bestehenden `key_hint`:
+And the explanation above it, beside the existing `key_hint`:
 
 ```html
           <p class="hint">
@@ -1579,9 +1561,9 @@ Und die Erklärung darüber, neben den bestehenden `key_hint`:
           </p>
 ```
 
-- [ ] **Step 5: Die Signalzeile umbauen**
+- [ ] **Step 5: Rebuild the signal row**
 
-Die bisherige `<div class="device-controls"><div class="row">…</div>…</div>` ersetzen durch:
+Replace the current `<div class="device-controls"><div class="row">…</div>…</div>` with:
 
 ```html
                   <template x-for="signal in group.signals" :key="signal.key">
@@ -1610,14 +1592,13 @@ Die bisherige `<div class="device-controls"><div class="row">…</div>…</div>`
                         :title="signalAgeTitle(signal)"
                         x-text="formatValue(liveValueOf(signal)) + (signal.unit ? ' ' + signal.unit : '')"
                       ></span>
-                      <!-- Dasselbe Bedienelement wie in der Export-Spalte,
-                           und das ist Absicht: beides ist ein Ja/Nein je
-                           Signal in derselben Zeile. Der erste Entwurf hatte
-                           hier einen Schiebeschalter - zwei Bedienelemente
-                           fuer denselben Fall, genau die Inkonsistenz, die
-                           dieses Modal schwer lesbar macht. Ein Schalter
-                           gehoert in einen Detailbereich mit erklaerendem
-                           Satz daneben, nicht in eine Tabellenspalte. -->
+                      <!-- Same control as in the export column, and that is
+                           intentional: both are a yes/no per signal in the same
+                           row. The first design had a toggle here — two controls
+                           for the same thing, exactly the inconsistency that makes
+                           this modal hard to read. A toggle belongs in a detail
+                           area with an explanatory sentence beside it, not in a
+                           table column. -->
                       <label class="col-center">
                         <input
                           type="checkbox"
@@ -1633,19 +1614,19 @@ Die bisherige `<div class="device-controls"><div class="row">…</div>…</div>`
                   </template>
 ```
 
-Die letzte Zelle trägt vorläufig die `reason`-Pille; Task 8 setzt dort den Aufklapper hin und verlegt `reason` in dessen Inhalt.
+The last cell temporarily carries the `reason` badge; Task 8 puts the expander
+there and moves `reason` into its content.
 
-- [ ] **Step 6: `style.css` ergänzen**
+- [ ] **Step 6: Add to `style.css`**
 
 ```css
-/* Ein Raster fuer Kopfzeile UND Datenzeile (Entwurf 2026-09-07,
-   Abschnitt 7.2). Die beiden MUESSEN dieselbe Vorlage tragen - genau das
-   fehlte bisher, und deshalb fluchtete nichts: die alte `.row` war ein
-   `flex-wrap`-Container ohne Spaltenmasse, bei `multipress_ongoing` rutschte
-   die zweite Beschriftung allein in die naechste Zeile.
+/* A grid for header AND data row (design 2026-09-07, section 7.2). Both MUST
+   carry the same template — that is exactly what was missing, and why nothing
+   aligned: the old `.row` was a `flex-wrap` container without column widths,
+   at `multipress_ongoing` the second label alone wrapped to the next row.
 
-   Die 150 px der Schluessel-Spalte sind an `d4_1_multipress_ongoing`
-   gemessen, dem laengsten Schluessel der Testvorlage. */
+   The 150 px of the key column is measured from `d4_1_multipress_ongoing`,
+   the longest key in the test fixture. */
 .signal-grid {
   display: grid;
   grid-template-columns: 58px minmax(0, 1fr) 150px 70px 76px 28px;
@@ -1691,55 +1672,54 @@ Die letzte Zelle trägt vorläufig die `reason`-Pille; Task 8 setzt dort den Auf
   margin: 0;
 }
 
-/* Die generische Regel `input[type="text"] { min-width: 12rem }` weiter oben
-   gewinnt sonst gegen die Rasterspalte und sprengt sie - dieselbe Falle wie
-   bei `.device-head .device-name`, Begruendung dort. */
+/* The generic rule `input[type="text"] { min-width: 12rem }` above otherwise
+   beats the grid column and breaks it — same trap as with `.device-head .device-name`,
+   reason there. */
 .signal-grid .signal-title {
   width: 100%;
   min-width: 0;
 }
 ```
 
-- [ ] **Step 7: Tests laufen lassen**
+- [ ] **Step 7: Run tests**
 
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-- [ ] **Step 8: Das Fluchten messen, nicht ansehen**
+- [ ] **Step 8: Measure alignment, do not look**
 
-„Fluchtet" ist die Zusicherung dieser Aufgabe, und mit dem Auge ist sie an
-zwei Zeilen nicht zu belegen — bei `multipress_ongoing` ist der alte Umbruch
-ja auch erst in der langen Liste aufgefallen.
+"Alignment" is the guarantee of this task, and with the eye it cannot be proven
+with two rows — the old wrapping at `multipress_ongoing` only became noticeable
+in the long list.
 
-**Wie der Harness gebaut wird** (bewährt am 2026-09-06, spart Anmeldung und
-Runden): eine `harness.html` im Scratchpad, die den fraglichen Markup-Block
-per Python **aus `index.html` herausschneidet** — nicht abtippen, sonst prüft
-man eine Kopie. Daneben `style.css` und `vendor/alpine.min.js` kopieren und
-ein Mini-`app()` stellen, das nur die Felder trägt, die der Block anfasst.
-Davor `python3 -m http.server`. Zwei Fallen: `file://` lädt der eingebettete
-Browser als statischen Schnappschuss, Alpine läuft dort **gar nicht** — es
-muss über http gehen; und ein Tab, der einmal eine lokale Datei gezeigt hat,
-bleibt darauf festgenagelt, also einen neuen Tab für die http-URL öffnen.
+**How the harness is built** (proven 2026-09-06, saves login and iterations):
+a `harness.html` in the scratchpad that **extracts the markup block from
+`index.html` via Python** — do not type it in, or you test a copy. Alongside
+it copy `style.css` and `vendor/alpine.min.js`, and put a mini-`app()` that
+carries only the fields the block touches. Before that `python3 -m http.server`.
+Two traps: `file://` loads the embedded browser as a static snapshot, Alpine
+does **not run there at all** — it must go over http; and a tab that once showed
+a local file stays locked to it, so open a new tab for the http URL.
 
-Im Harness das Modal mit **allen 17** funktionalen Signalen füllen und messen:
+In the harness fill the modal with **all 17** functional signals and measure:
 
 ```js
 const rows = [...document.querySelectorAll(".signal-row-cells")];
 const head = document.querySelector(".signal-grid-head");
-const linkeKanten = (el) => [...el.children].map((c) => Math.round(c.getBoundingClientRect().left));
-const erwartet = linkeKanten(head);
+const leftEdges = (el) => [...el.children].map((c) => Math.round(c.getBoundingClientRect().left));
+const expected = leftEdges(head);
 JSON.stringify({
-  zeilen: rows.length,
-  abweichende: rows.filter((r) => String(linkeKanten(r)) !== String(erwartet)).length,
-  hoehen: [...new Set(rows.map((r) => Math.round(r.getBoundingClientRect().height)))],
+  rows: rows.length,
+  misaligned: rows.filter((r) => String(leftEdges(r)) !== String(expected)).length,
+  heights: [...new Set(rows.map((r) => Math.round(r.getBoundingClientRect().height)))],
 })
 ```
 
-Erwartet: `abweichende` **0** — jede Datenzeile teilt die Spaltenkanten des
-Kopfes. `hoehen` muss **einen** Wert enthalten: mehrere Höhen heißen, dass
-mindestens eine Zeile umbricht, also genau der alte Zustand.
+Expected: `misaligned` **0** — each data row shares the column edges of the
+header. `heights` must contain **one** value: multiple heights mean at least
+one row wraps, exactly the old state.
 
-Dazu die Sperre gegen den waagerechten Überlauf:
+Plus the guard against horizontal overflow:
 `document.querySelector(".signals-modal").scrollWidth <= clientWidth`.
 
 - [ ] **Step 9: Commit**
@@ -1747,26 +1727,23 @@ Dazu die Sperre gegen den waagerechten Überlauf:
 ```bash
 git add src/loxmatter/web/index.html src/loxmatter/web/style.css src/loxmatter/i18n/strings.yaml tests/api/test_web.py
 git commit -m "$(cat <<'MSG'
-feat(web): Signal-Modal als fluchtende Tabelle mit Spaltenkoepfen
+feat(web): Signals modal as aligned table with column headers
 
-Die alte Zeile war ein `flex-wrap`-Container ohne Spaltenmasse: bei
-`multipress_ongoing` rutschte "periodisch erneut senden" allein in die
-naechste Zeile, und `1/59/2` stand unkommentiert da. Kopfzeile und
-Datenzeile tragen jetzt DIESELBE `grid-template-columns` - das ist der
-ganze Grund, warum die Tabelle fluchtet, und ein Test sperrt die
-Gleichheit.
+The old row was a `flex-wrap` container without column widths: at
+`multipress_ongoing`, "periodic resend" alone wrapped to the next row, and
+`1/59/2` stood without comment. Header and data row now carry the SAME
+`grid-template-columns` — this is the whole reason the table aligns, and a
+test guards the equality.
 
-Beide Ja/Nein-Spalten sind Haekchen. Die Regel dahinter: das
-Bedienelement folgt dem BEHAELTER, nicht der Bedeutung. In einer Tabelle
-Haekchen - sie fluchten in einer Spalte und bleiben leise; eine Spalte
-aus 17 Schiebeschaltern waere eine deutlich lautere Textur, und
-Lautstaerke ist genau das Problem dieses Modals. Ein Schalter gehoert in
-einen Detailbereich mit erklaerendem Satz daneben.
+Both yes/no columns are checkboxes. The rule behind it: the control follows
+the CONTAINER, not the meaning. In a table, checkboxes — they align in a
+column and stay quiet; a column of 17 toggles would be a much louder texture,
+and loudness is exactly the problem of this modal. A toggle belongs in a detail
+area with an explanatory sentence beside it.
 
-Was "periodisch" bedeutet, steht einmal ueber der Tabelle statt
-siebzehnmal neben einem Kaestchen. Die beiden Uebersetzungsschluessel
-bleiben als `aria-label`/`title` erhalten - ein Screenreader liest die
-Zeile, nicht die Tabelle.
+What "periodic" means stands once above the table instead of seventeen times
+next to a box. The two translation keys remain as `aria-label`/`title` — a
+screen reader reads the row, not the table.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -1775,7 +1752,7 @@ MSG
 
 ---
 
-### Task 8: Das Modal — Herkunft und Rohwert im Zeilen-Aufklapper
+### Task 8: The modal — origin and raw write in row expander
 
 **Files:**
 - Modify: `src/loxmatter/web/app.js`
@@ -1786,15 +1763,15 @@ MSG
 
 **Interfaces:**
 - Consumes: `signal.endpoint`, `signal.cluster_id`, `signal.path`, `signal.reason`.
-- Produces: `expandedSignalKey` (Alpine-Feld, `null` oder ein Schlüssel), `toggleSignalDetails(signal)`.
+- Produces: `expandedSignalKey` (Alpine field, `null` or a key), `toggleSignalDetails(signal)`.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 async def test_only_one_signal_detail_is_open_at_a_time(api):
-    """Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
-    Zustand in Alpine, nicht im DOM: es gibt genau EINEN Wert fuer das ganze
-    Modal, kein Auf/Zu je Element."""
+    """Unlike the tile menu and signal groups, this state lives in Alpine,
+    not in the DOM: there is exactly ONE value for the whole modal, no open/close
+    per element."""
     client, _, _ = api
     script = (await client.get("/static/app.js")).text
 
@@ -1804,9 +1781,8 @@ async def test_only_one_signal_detail_is_open_at_a_time(api):
 
 
 async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
-    """Frueher beanspruchte das Rohwert-Feld bei JEDEM Attribut eine volle
-    Zeile - ein Werkzeug zum Ausprobieren mit demselben Gewicht wie alles
-    andere."""
+    """Before, the raw write field took up a full row for every attribute —
+    a tool for experimenting with the same weight as everything else."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
@@ -1815,8 +1791,8 @@ async def test_the_raw_write_field_is_no_longer_a_row_of_its_own(api):
 
 
 async def test_the_detail_spells_out_the_path(api):
-    """Der Pfad `1/59/1` bekommt endlich einen Ort, an dem genug Platz ist,
-    ihn auszuschreiben, statt ihn als Raetsel neben den Namen zu stellen."""
+    """The path `1/59/1` finally gets a place where there is enough room to
+    spell it out, instead of putting it as a riddle next to the name."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
@@ -1839,31 +1815,31 @@ web.signals.row_details:
   de: "Herkunft und Rohwert"
 ```
 
-- [ ] **Step 4: `app.js` ergänzen**
+- [ ] **Step 4: Add to `app.js`**
 
-Zu den Alpine-Feldern (neben `titleDrafts`, `rawWriteDrafts`):
+To the Alpine fields (beside `titleDrafts`, `rawWriteDrafts`):
 
 ```js
-    // Welche Signalzeile ihren Aufklapper offen hat, oder null.
+    // Which signal row has its expander open, or null.
     //
-    // Anders als beim Kachel-Menue und den Signalgruppen lebt dieser
-    // Zustand in Alpine statt im DOM, und der Unterschied hat einen Grund:
-    // dort gibt es ein Auf/Zu JE ELEMENT, hier genau EINEN Wert fuer das
-    // ganze Modal. Hoechstens ein Bereich ist offen - bei 173 Zeilen waeren
-    // mehrere offene Aufklapper wieder die Wand, die dieser Umbau abschafft.
+    // Unlike the tile menu and signal groups, this state lives in Alpine, not
+    // in the DOM, and the difference has a reason: there is an open/close PER
+    // ELEMENT, here exactly ONE value for the whole modal. At most one area is
+    // open — with 173 rows, multiple open expanders would be the wall again,
+    // which this redesign removes.
     expandedSignalKey: null,
 ```
 
-Bei den Signal-Helfern:
+Among the signal helpers:
 
 ```js
     toggleSignalDetails(signal) {
       this.expandedSignalKey = this.expandedSignalKey === signal.key ? null : signal.key;
     },
 
-    // Die Herkunft im Klartext. `signal.path` traegt dieselbe Auskunft als
-    // "1/59/1", aber das ist ein Raetsel, solange niemand sagt, welche Zahl
-    // was bedeutet - im Aufklapper ist endlich Platz, es auszuschreiben.
+    // The origin in plain text. `signal.path` carries the same information as
+    // "1/59/1", but that is a riddle, as long as nobody says what each number
+    // means — in the expander there is finally room to spell it out.
     signalOriginText(signal) {
       return t("web.signals.origin", {
         endpoint: signal.endpoint,
@@ -1873,9 +1849,9 @@ Bei den Signal-Helfern:
     },
 ```
 
-- [ ] **Step 5: Das Markup umbauen**
+- [ ] **Step 5: Rebuild the markup**
 
-Die letzte Rasterzelle der Signalzeile (Task 7, Step 5) ersetzen:
+Replace the last grid cell of the signal row (Task 7, Step 5):
 
 ```html
                       <button
@@ -1887,17 +1863,18 @@ Die letzte Rasterzelle der Signalzeile (Task 7, Step 5) ersetzen:
                       ><svg class="icon" aria-hidden="true"><use href="#i-kebab"></use></svg></button>
 ```
 
-Und **hinter** die `.signal-grid`-Zeile, noch innerhalb desselben `x-for`-Wurzelelements — dafür Zeile und Aufklapper in eine Hülle nehmen:
+And **behind** the `.signal-grid` row, still within the same `x-for` root element
+— for this, wrap row and expander in a container:
 
 ```html
                   <template x-for="signal in group.signals" :key="signal.key">
                     <div class="signal-row-wrap" :class="{ 'is-expanded': expandedSignalKey === signal.key }">
                       <div class="signal-grid signal-row-cells">
-                        <!-- … die sechs Zellen aus Task 7 … -->
+                        <!-- … the six cells from Task 7 … -->
                       </div>
-                      <!-- Der Aufklapper haengt UNTER genau seiner Zeile,
-                           nicht als zweite `.row` daneben: er gehoert zu
-                           diesem einen Signal, und das soll man sehen. -->
+                      <!-- The expander hangs directly BELOW its row, not as a
+                           second `.row` beside it: it belongs to this one signal,
+                           and that should be visible. -->
                       <div class="signal-detail" x-show="expandedSignalKey === signal.key" x-cloak>
                         <p class="hint" x-text="signalOriginText(signal)"></p>
                         <p class="badge warn" x-show="!signal.exportable" x-text="signal.reason"></p>
@@ -1923,17 +1900,19 @@ Und **hinter** die `.signal-grid`-Zeile, noch innerhalb desselben `x-for`-Wurzel
                   </template>
 ```
 
-Das Rohwert-Feld ist nur für Attribute sinnvoll — die `.row` bekommt deshalb `x-show="signal.kind === 'attribute'"` **innerhalb** des Aufklappers (die Herkunft steht auch bei einem Ereignis).
+The raw write field makes sense only for attributes — so the `.row` gets
+`x-show="signal.kind === 'attribute'"` **inside** the expander (the origin
+appears also for an event).
 
-- [ ] **Step 6: `style.css` ergänzen**
+- [ ] **Step 6: Add to `style.css`**
 
 ```css
 .signal-row-wrap.is-expanded {
   background: var(--bg);
 }
 
-/* Eingerueckt bis zur Namensspalte (58 px Haekchen + 0.5 rem Abstand), damit
-   der Aufklapper sichtbar zu SEINER Zeile gehoert und nicht zur Tabelle. */
+/* Indented to the name column (58 px checkboxes + 0.5 rem gap), so the
+   expander is visibly part of ITS row, not the table. */
 .signal-detail {
   padding: 0.2rem 0 0.7rem calc(58px + 0.5rem);
   display: flex;
@@ -1964,29 +1943,32 @@ Das Rohwert-Feld ist nur für Attribute sinnvoll — die `.row` bekommt deshalb 
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-- [ ] **Step 8: Im Browser prüfen**
+- [ ] **Step 8: Check in browser**
 
-Auf das Kebab einer Attributzeile klicken: der Bereich öffnet sich unter genau dieser Zeile, nennt „Endpunkt 1 · Cluster 59 · Element 1" und trägt das Rohwert-Feld. Ein Klick auf ein zweites Kebab schließt das erste. Bei einer Ereigniszeile fehlt das Rohwert-Feld, die Herkunft steht trotzdem da.
+Click the kebab of an attribute row: the area opens directly below that row,
+names "Endpoint 1 · Cluster 59 · Element 1", and carries the raw write field.
+Clicking a second kebab closes the first. For an event row, the raw write field
+is absent, but the origin is still there.
 
 - [ ] **Step 9: Commit**
 
 ```bash
 git add src/loxmatter/web/app.js src/loxmatter/web/index.html src/loxmatter/web/style.css src/loxmatter/i18n/strings.yaml tests/api/test_web.py
 git commit -m "$(cat <<'MSG'
-feat(web): Herkunft und Rohwert in einen Aufklapper je Signalzeile
+feat(web): Origin and raw write in row expander per signal
 
-Das Rohwert-Feld beanspruchte bei JEDEM Attribut eine volle Zeile - ein
-Werkzeug zum Ausprobieren mit demselben Gewicht wie alles andere. Es
-haengt jetzt unter genau seiner Zeile, hinter dem Kebab.
+The raw write field took a full row for every attribute — a tool for
+experimenting with the same weight as everything else. It now hangs directly
+below its row, behind the kebab.
 
-Das erledigt zugleich das zweite Problem: `1/59/1` stand unkommentiert
-neben dem Namen, und im Aufklapper ist endlich Platz, es als "Endpunkt 1
-- Cluster 59 - Element 1" auszuschreiben.
+This also solves the second problem: `1/59/1` stood without comment next to
+the name, and in the expander there is finally room to spell it out as
+"Endpoint 1 · Cluster 59 · Element 1".
 
-Hoechstens ein Bereich ist offen, und der Zustand lebt in Alpine statt
-im DOM - anders als beim Kachel-Menue und den Signalgruppen gibt es hier
-genau EINEN Wert fuer das ganze Modal. Bei 173 Zeilen waeren mehrere
-offene Aufklapper wieder die Wand, die dieser Umbau abschafft.
+At most one area is open, and the state lives in Alpine, not the DOM — unlike
+the tile menu and signal groups, there is exactly ONE value for the whole
+modal. With 173 rows, multiple open expanders would be the wall again, which
+this redesign removes.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -1995,7 +1977,7 @@ MSG
 
 ---
 
-### Task 9: Das Modal — die Zahl im Kopf
+### Task 9: The modal — the number in the head
 
 **Files:**
 - Modify: `src/loxmatter/web/app.js`
@@ -2012,8 +1994,8 @@ MSG
 
 ```python
 async def test_the_modal_leads_with_the_number_the_user_came_for(api):
-    """Man oeffnet dieses Modal, um zu sehen und zu aendern, was nach Loxone
-    geht. Diese Zahl stand bisher nirgends."""
+    """You open this modal to see and change what goes to Loxone. That number
+    stood nowhere before."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
@@ -2021,14 +2003,14 @@ async def test_the_modal_leads_with_the_number_the_user_came_for(api):
     assert "exportedSignalCount(signalsModalDevice)" in page
 
 
-@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+@pytest.mark.skipif(NODE is None, reason="node is needed for this test")
 def test_deselect_all_empties_the_selection_instead_of_inverting_it():
-    """Ein `toggleExported` ueber ALLE Signale haette die Auswahl invertiert -
-    der Knopf heisst aber "alle abwaehlen", nicht "umkehren". Ein zweiter
-    Klick muss deshalb nichts mehr tun.
+    """A `toggleExported` over ALL signals would have inverted the selection —
+    but the button says "deselect all", not "invert". So a second click must do
+    nothing.
 
-    `toggleExported` wird hier ersetzt, weil es die Route ruft: geprueft
-    wird die Auswahl-Regel dieser Schleife, nicht der Schreibweg."""
+    `toggleExported` is replaced here because it calls the route: the test checks
+    the selection rule of this loop, not the write path."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
@@ -2042,9 +2024,8 @@ def test_deselect_all_empties_the_selection_instead_of_inverting_it():
           signal.exported = !signal.exported;
         };
         const before = state.exportedSignalCount(1);
-        // Async-IIFE, weil `node -e` als CommonJS laeuft und dort kein
-        // `await` auf oberster Ebene erlaubt ist - `deselectAllSignals`
-        // ist async.
+        // Async IIFE, because `node -e` runs as CommonJS and does not allow
+        // `await` at the top level — `deselectAllSignals` is async.
         (async () => {
           await state.deselectAllSignals(1);
           const firstRun = touched.slice();
@@ -2060,12 +2041,12 @@ def test_deselect_all_empties_the_selection_instead_of_inverting_it():
         """
     )
 
-    # "c" ist zwar `exported`, passt aber auf keinen Loxone-Eingang - es
-    # zaehlt nicht mit, genauso wie `to_inputs` es server-seitig auslaesst.
+    # "c" is `exported`, but does not fit any Loxone input — it does not count,
+    # just as `to_inputs` skips it server-side.
     assert values["before"] == 1
     assert values["total"] == 3
     assert values["after"] == 0
-    # "b" war bereits aus und darf nicht angefasst worden sein.
+    # "b" was already off and must not have been touched.
     assert "b" not in values["firstRun"]
     assert values["secondRunTouched"] == 0
 ```
@@ -2086,13 +2067,13 @@ web.signals.deselect_all:
   de: "Alle abwählen"
 ```
 
-- [ ] **Step 4: `app.js` ergänzen**
+- [ ] **Step 4: Add to `app.js`**
 
 ```js
-    // Wie viele Signale dieses Geraets tatsaechlich als Eingang nach Loxone
-    // gehen. `exported` allein reicht nicht: ein Signal, dessen Wert auf
-    // keinen Loxone-Eingang passt (`exportable === false`), erzeugt keinen -
-    // dieselbe Unterscheidung, die `to_inputs` server-seitig macht.
+    // How many signals of this device actually go to Loxone as an input.
+    // `exported` alone is not enough: a signal whose value does not fit any
+    // Loxone input (`exportable === false`) does not produce one — the same
+    // distinction that `to_inputs` makes server-side.
     exportedSignalCount(deviceId) {
       const signals = this.signalsByDevice[deviceId];
       return signals ? signals.filter((s) => s.exported && s.exportable).length : 0;
@@ -2103,9 +2084,9 @@ web.signals.deselect_all:
       return signals ? signals.length : 0;
     },
 
-    // Nur was AN ist, wird ausgeschaltet. Ein `toggleExported` ueber alle
-    // Signale wuerde die Auswahl invertieren statt sie zu leeren - der
-    // Knopf heisst aber "alle abwaehlen", nicht "umkehren".
+    // Only what is ON is turned OFF. A `toggleExported` over all signals would
+    // invert the selection instead of emptying it — but the button says
+    // "deselect all", not "invert".
     async deselectAllSignals(deviceId) {
       const signals = this.signalsByDevice[deviceId] || [];
       for (const signal of signals) {
@@ -2116,15 +2097,19 @@ web.signals.deselect_all:
     },
 ```
 
-**Vor dem Schreiben `toggleExported` lesen:** liegt dort ein optimistisches Umschalten des lokalen Objekts vor dem `PATCH`, ist die Schleife oben richtig. Verlässt sich `toggleExported` dagegen auf `$event.target.checked`, muss `deselectAllSignals` stattdessen die Route direkt aufrufen — dann `toggleExported` so umbauen, dass es den Zielzustand als Parameter nimmt, statt eine zweite Kopie des Schreibwegs anzulegen.
+**Read `toggleExported` before writing:** if there is optimistic toggling of the
+local object before the `PATCH`, the loop above is correct. If `toggleExported`
+relies on `$event.target.checked`, `deselectAllSignals` must call the route
+directly instead — then rebuild `toggleExported` so it takes the target state
+as a parameter, instead of making a second copy of the write path.
 
-- [ ] **Step 5: Das Markup ergänzen**
+- [ ] **Step 5: Add the markup**
 
-Nach der `<div class="signals-modal-head">`, vor dem `key_hint`-Absatz:
+After the `<div class="signals-modal-head">`, before the `key_hint` paragraph:
 
 ```html
-          <!-- Die eine Zahl, wegen der man dieses Modal oeffnet. Sie stand
-               bisher nirgends - man musste 17 Haekchen zaehlen. -->
+          <!-- The one number for which you open this modal. It stood nowhere
+               before — you had to count 17 checkboxes. -->
           <div class="signals-summary">
             <span
               x-text="t('web.signals.export_summary', { exported: exportedSignalCount(signalsModalDevice), total: signalCount(signalsModalDevice) })"
@@ -2137,7 +2122,7 @@ Nach der `<div class="signals-modal-head">`, vor dem `key_hint`-Absatz:
           </div>
 ```
 
-- [ ] **Step 6: `style.css` ergänzen**
+- [ ] **Step 6: Add to `style.css`**
 
 ```css
 .signals-summary {
@@ -2153,31 +2138,31 @@ Nach der `<div class="signals-modal-head">`, vor dem `key_hint`-Absatz:
 }
 ```
 
-- [ ] **Step 7: Tests laufen lassen und im Browser prüfen**
+- [ ] **Step 7: Run tests and check in browser**
 
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-Im Browser: „12 von 17 Signalen gehen als Eingang nach Loxone". Ein Häkchen abwählen → die Zahl fällt auf 11. „Alle abwählen" → 0, und ein zweiter Klick darauf lässt sie bei 0 (kein Umkehren).
+In browser: "12 of 17 signals go to Loxone as an input". Deselect one checkbox
+→ the number falls to 11. "Deselect all" → 0, and a second click leaves it at 0
+(no inversion).
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add src/loxmatter/web/app.js src/loxmatter/web/index.html src/loxmatter/web/style.css src/loxmatter/i18n/strings.yaml tests/api/test_web.py
 git commit -m "$(cat <<'MSG'
-feat(web): die Exportzahl in den Kopf des Signal-Modals
+feat(web): Export count in the head of the signals modal
 
-Man oeffnet dieses Modal, um zu sehen und zu aendern, was nach Loxone
-geht - und genau diese Zahl stand bisher nirgends. Man musste 17
-Haekchen zaehlen.
+You open this modal to see and change what goes to Loxone — and that exact
+number stood nowhere before. You had to count 17 checkboxes.
 
-Gezaehlt wird `exported && exportable`, nicht `exported` allein: ein
-Signal, dessen Wert auf keinen Loxone-Eingang passt, erzeugt keinen -
-dieselbe Unterscheidung, die `to_inputs` server-seitig macht.
+Counted is `exported && exportable`, not `exported` alone: a signal whose value
+does not fit any Loxone input does not produce one — the same distinction that
+`to_inputs` makes server-side.
 
-"Alle abwaehlen" schaltet nur aus, was an ist. Ein `toggleExported` ueber
-alle Signale wuerde die Auswahl invertieren, und der Knopf heisst nicht
-"umkehren".
+"Deselect all" only turns OFF what is ON. A `toggleExported` over all signals
+would invert the selection, but the button does not say "invert".
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -2186,23 +2171,23 @@ MSG
 
 ---
 
-### Task 10: Der Umbruch unter 640 px
+### Task 10: Wrap under 640 px
 
 **Files:**
 - Modify: `src/loxmatter/web/style.css`
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `.signal-grid` aus Task 7.
-- Produces: nichts.
+- Consumes: `.signal-grid` from Task 7.
+- Produces: nothing.
 
-- [ ] **Step 1: Den failing test schreiben**
+- [ ] **Step 1: Write the failing test**
 
 ```python
 async def test_the_signal_table_stacks_on_a_narrow_screen(api):
-    """Sechs Spalten passen unter etwa 640 px nicht. Ohne diesen Umbruch
-    franst die Tabelle dort wieder aus - also genau der Zustand, den der
-    ganze Umbau beseitigt hat, nur auf einem Telefon."""
+    """Six columns do not fit under about 640 px. Without this wrap, the table
+    frays there again — exactly the state that the whole redesign eliminated,
+    just on a phone."""
     client, _, _ = api
     css = (await client.get("/static/style.css")).text
 
@@ -2212,24 +2197,23 @@ async def test_the_signal_table_stacks_on_a_narrow_screen(api):
     assert "display: none" in narrow
 ```
 
-- [ ] **Step 2: Test laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run test, verify failure**
 
 Run: `uv run pytest tests/api/test_web.py -k narrow -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Die Regeln schreiben**
+- [ ] **Step 3: Write the rules**
 
 ```css
-/* Sechs Spalten passen hier nicht (Entwurf 2026-09-07, Abschnitt 10). Die
-   Zeile wird zur gestapelten Karte, und der Spaltenkopf verschwindet -
-   ueber einer gestapelten Karte beschriftet er nichts mehr, er stuende nur
-   als Reihe von fuenf Woertern ohne Bezug da.
+/* Six columns do not fit here (design 2026-09-07, section 10). The row becomes
+   a stacked card, and the column header disappears — it labels nothing over a
+   stacked card, it would just stand as a row of five words with no connection.
 
-   Damit die Haekchen ohne Spaltenkopf ihre Bedeutung behalten, bekommen
-   sie hier ihre Beschriftung zurueck: `.col-center` wird linksbuendig und
-   das `title`-Attribut des Kaestchens erscheint als Text daneben. Das ist
-   dieselbe Auskunft wie im Spaltenkopf, nur am anderen Ort - kein zweiter
-   Uebersetzungsschluessel. */
+   So the checkboxes keep their meaning without the column header, they get
+   their label back here: `.col-center` becomes left-aligned and the `title`
+   attribute of the checkbox appears as text beside it. That is the same
+   information as in the column header, just at a different place — no second
+   translation key. */
 @media (max-width: 640px) {
   .signal-grid-head {
     display: none;
@@ -2241,8 +2225,8 @@ Expected: FAIL.
     padding: 0.5rem 0;
   }
 
-  /* Name und Schluessel bekommen die volle Breite, die drei kurzen Zellen
-     teilen sich die Zeile darunter. */
+  /* Name and key get the full width, the three short cells share the row
+     below. */
   .signal-grid .signal-title,
   .signal-grid .key {
     grid-column: 1 / -1;
@@ -2267,48 +2251,46 @@ Expected: FAIL.
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Bei 380 px messen**
+- [ ] **Step 5: Measure at 380 px**
 
-Denselben Harness wie in Aufgabe 7, aber das Fenster auf **380 px** stellen
-(`resize_window` mit `preset: "mobile"`), Seite neu laden — die Medienabfrage
-greift erst nach dem Neuladen zuverlässig — und lesen:
+Same harness as Task 7, but set the window to **380 px** (`resize_window` with
+`preset: "mobile"`), reload the page — the media query only reliably takes
+effect after reload — and read:
 
 ```js
 const modal = document.querySelector(".signals-modal");
 const rows = [...document.querySelectorAll(".signal-row-cells")];
 JSON.stringify({
-  ueberlauf: modal.scrollWidth - modal.clientWidth,
-  kopfSichtbar: getComputedStyle(document.querySelector(".signal-grid-head")).display,
-  kaestchen: document.querySelectorAll('.signal-row-cells input[type="checkbox"]').length,
-  kleinsteTrefferflaeche: Math.min(
+  overflow: modal.scrollWidth - modal.clientWidth,
+  headerVisible: getComputedStyle(document.querySelector(".signal-grid-head")).display,
+  checkboxes: document.querySelectorAll('.signal-row-cells input[type="checkbox"]').length,
+  smallestHitArea: Math.min(
     ...[...document.querySelectorAll('.signal-row-cells input[type="checkbox"]')]
       .map((c) => Math.round(c.getBoundingClientRect().width)),
   ),
 })
 ```
 
-Erwartet: `ueberlauf` **0**, `kopfSichtbar` `"none"`, `kaestchen` gleich
-`2 × Zeilenzahl` (beide Ja/Nein-Spalten bleiben bedienbar, sie verschwinden
-nicht mit dem Kopf), `kleinsteTrefferflaeche` > 0.
+Expected: `overflow` **0**, `headerVisible` `"none"`, `checkboxes` equal
+`2 × row count` (both yes/no columns remain usable, they do not disappear with
+the header), `smallestHitArea` > 0.
 
-Zum Schluss `resize_window` auf `preset: "desktop"` zurücksetzen — eine
-gesetzte Größe bleibt sonst am Tab kleben.
+At the end, reset `resize_window` to `preset: "desktop"` — a set size sticks
+to the tab otherwise.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/loxmatter/web/style.css tests/api/test_web.py
 git commit -m "$(cat <<'MSG'
-feat(web): Signaltabelle unter 640 px als gestapelte Karten
+feat(web): Signals table as stacked cards under 640 px
 
-Sechs Spalten passen dort nicht - ohne diesen Umbruch franst die Tabelle
-auf einem Telefon wieder aus, also genau der Zustand, den der Umbau
-beseitigt hat.
+Six columns do not fit there — without this wrap, the table frays on a phone
+again, exactly the state that the redesign eliminated.
 
-Der Spaltenkopf verschwindet mit: ueber einer gestapelten Karte
-beschriftet er nichts mehr. Die Haekchen behalten ihre Bedeutung ueber
-das `title`, das sie ohnehin fuer Hilfstechnik tragen - kein zweiter
-Uebersetzungsschluessel fuer dieselbe Auskunft.
+The column header disappears with it: it labels nothing over a stacked card.
+The checkboxes keep their meaning via the `title` that they carry anyway for
+assistive technology — no second translation key for the same information.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -2317,46 +2299,46 @@ MSG
 
 ---
 
-### Task 12: Rang je Element — der Taster muss mit `press` fuehren
+### Task 12: Rank per element — the button must lead with `press`
 
-**Nachgetragen am 8. September 2026**, nachdem Aufgabe 11 den Befund am fertigen
-Bild aufgedeckt hat. Der Entwurf (Abschnitt 4, „Warum kein Rang je Element")
-hat diese Ebene ausdruecklich offengelassen: sie „kann nachgetragen werden,
-wenn ein konkretes Geraet sie verlangt". Genau das ist eingetreten.
+**Added on September 8, 2026**, after Task 11 revealed the finding in the
+finished image. The design (section 4, "Why no rank per element") explicitly
+left this level open: it "can be added when a concrete device requires it".
+That is exactly what happened.
 
-**Der Befund.** Die Kachel des Tasters fuehrt nicht mit `press`, sondern mit
+**The finding.** The tile of the button does not lead with `press`, but with
 `positions`:
 
 ```
- 0. ep1 cl59 el0 attribute  positions   <== Leitwert
+ 0. ep1 cl59 el0 attribute  positions   <== lead signal
  1. ep1 cl59 el1 attribute  position
  2. ep1 cl59 el1 event      press
 ```
 
-`positions` ist Matters `NumberOfPositions` — die statische Angabe, dass diese
-Taste zwei Stellungen hat. Ein Konfigurationswert, der sich nie aendert. Als
-Leitwert ist das **schlechter als der Batteriestand**, den dieser ganze Plan
-beseitigen wollte: der sank wenigstens.
+`positions` is Matter's `NumberOfPositions` — the static statement that this
+button has two positions. A configuration value that never changes. As a lead
+signal that is **worse than the battery level**, which this entire plan aimed
+to eliminate: at least the battery fell.
 
-**Warum es niemand bemerkt hat.** Der Test aus Aufgabe 2 lautet
+**Why nobody noticed.** The test from Task 2 reads
 
 ```python
 assert functional[0].ref.cluster_id == 59
 ```
 
-Das ist fuer `positions` genauso wahr wie fuer `press`. Er prueft den Cluster,
-waehrend Entwurf und Canvas durchweg `press` zeigen — eine Luecke zwischen
-Absicht und Zusicherung. Sie wird in dieser Aufgabe mitgeschlossen.
+That is equally true for `positions` as for `press`. It checks the cluster,
+while the design and canvas consistently show `press` — a gap between intent
+and guarantee. This task closes it.
 
 **Files:**
-- Modify: `src/loxmatter/profiles/clusters.yaml` (nur Cluster 59)
+- Modify: `src/loxmatter/profiles/clusters.yaml` (only cluster 59)
 - Modify: `src/loxmatter/profiles/table.py`
 - Modify: `src/loxmatter/model/store.py` (`_signal_order`)
 - Test: `tests/profiles/test_table.py`, `tests/model/test_store.py`
 
 **Interfaces:**
-- Consumes: `table.rank_for`, `table.DEFAULT_RANK` (Aufgabe 1); `_signal_order` (Aufgabe 2).
-- Produces: `table.element_rank_for(ref: SignalRef) -> int`; `_signal_order` liefert ein SECHSSTELLIGES Tupel `(cluster_rank, endpoint, cluster_id, element_rank, element_id, kind)`.
+- Consumes: `table.rank_for`, `table.DEFAULT_RANK` (Task 1); `_signal_order` (Task 2).
+- Produces: `table.element_rank_for(ref: SignalRef) -> int`; `_signal_order` yields a SIX-PART tuple `(cluster_rank, endpoint, cluster_id, element_rank, element_id, kind)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2364,10 +2346,9 @@ An `tests/profiles/test_table.py`:
 
 ```python
 def test_an_element_can_carry_its_own_rank():
-    """Der Taster war der konkrete Fall, der diese Ebene noetig gemacht hat:
-    innerhalb von Cluster 59 muss der Tastendruck vor die statische Angabe
-    `NumberOfPositions`, sonst fuehrt die Kachel mit einer Zahl, die sich nie
-    aendert."""
+    """The button was the concrete case that made this level necessary: within
+    cluster 59, the button press must come before the static statement
+    `NumberOfPositions`, or the tile leads with a number that never changes."""
     press = SignalRef(1, 59, 1, SignalKind.EVENT)
     positions = SignalRef(1, 59, 0, SignalKind.ATTRIBUTE)
 
@@ -2375,32 +2356,31 @@ def test_an_element_can_carry_its_own_rank():
 
 
 def test_an_element_without_a_rank_gets_the_default():
-    """Dieselbe Vorgabe wie auf Clusterebene, und aus demselben Grund: die
-    Mitte, damit ein nicht eingetragenes Element weder nach vorn noch ganz
-    nach hinten faellt."""
+    """The same rule as at the cluster level, for the same reason: the middle,
+    so an unregistered element neither shoots to the front nor falls to the back."""
     longpress = SignalRef(1, 59, 2, SignalKind.EVENT)
     assert table.element_rank_for(longpress) == table.DEFAULT_RANK
 
 
 def test_an_element_of_an_unknown_cluster_gets_the_default():
-    """Cluster 3 (Identify) steht nicht in der Tabelle - es gibt dort weder
-    einen Abschnitt noch ein Element, in dem ein Rang stehen koennte."""
+    """Cluster 3 (Identify) is not in the table — there is neither a section
+    nor an element where a rank could stand."""
     assert table.element_rank_for(SignalRef(1, 3, 0, SignalKind.ATTRIBUTE)) == table.DEFAULT_RANK
 ```
 
-An `tests/model/test_store.py` — **und der bestehende, zu schwache Test wird dabei ersetzt**, nicht ergaenzt:
+To `tests/model/test_store.py` — **and the existing, too-weak test is replaced
+by it**, not augmented:
 
 ```python
 def test_the_button_leads_with_the_button_press(tmp_path):
-    """Ersetzt `test_the_button_leads_with_a_switch_signal_not_the_battery`,
-    der nur `cluster_id == 59` prueft. Das war zu schwach: `positions`
-    (NumberOfPositions, Element 0) traegt denselben Cluster und sortierte
-    davor - die Kachel fuehrte damit mit der statischen Angabe, dass diese
-    Taste zwei Stellungen hat. Der Test sagte trotzdem ja.
+    """Replaces `test_the_button_leads_with_a_switch_signal_not_the_battery`,
+    which only checks `cluster_id == 59`. That was too weak: `positions`
+    (NumberOfPositions, element 0) carries the same cluster and sorted before —
+    the tile led with the static statement that this button has two positions.
+    The test said yes anyway.
 
-    Diese Fassung nennt das Signal beim Namen. Ein Test, der nur den Cluster
-    prueft, laesst genau den Fehler durch, den zu verhindern der Zweck des
-    ganzen Umbaus war."""
+    This version names the signal. A test that only checks the cluster lets
+    exactly the bug through that the whole redesign aims to prevent."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -2414,8 +2394,8 @@ def test_the_button_leads_with_the_button_press(tmp_path):
 
 
 def test_the_static_position_count_sorts_behind_every_button_event(tmp_path):
-    """`positions` aendert sich nie - es gehoert ans Ende der Tastengruppe,
-    nicht an ihren Anfang."""
+    """`positions` never changes — it belongs at the end of the button group,
+    not at its beginning."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_bilresa_button.json")
     device_id = store.register_device(snapshot)
@@ -2433,27 +2413,29 @@ def test_the_static_position_count_sorts_behind_every_button_event(tmp_path):
 - [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/profiles/test_table.py -k element_rank tests/model/test_store.py -k "leads_with_the_button or static_position" -v`
-Expected: FAIL — `element_rank_for` gibt es nicht, und der Leitwert ist `positions`.
+Expected: FAIL — `element_rank_for` does not exist, and the lead signal is `positions`.
 
-- [ ] **Step 3: Die Ränge in `clusters.yaml` eintragen**
+- [ ] **Step 3: Add ranks to `clusters.yaml`**
 
-**Nur Cluster 59.** Kein anderer Cluster bekommt Elementränge, solange kein Gerät sie verlangt — dieselbe Zurückhaltung wie bei `UTILITY_ENDPOINT_KEEP_CLUSTERS` in `relevance.py`.
+**Only cluster 59.** No other cluster gets element ranks, as long as no device
+requires them — same restraint as with `UTILITY_ENDPOINT_KEEP_CLUSTERS` in
+`relevance.py`.
 
 ```yaml
   59:
     name: switch
     rank: 10
     attributes:
-      # `rank` je Element ordnet INNERHALB dieses Clusters (Nachtrag
-      # 2026-09-08). Cluster 59 ist der bislang einzige, der ihn braucht,
-      # und der Grund ist NumberOfPositions: die Angabe, wie viele
-      # Stellungen diese Taste hat, aendert sich nie. Sie stand mit
-      # Element-ID 0 vor jedem Tastendruck und wurde damit zum Leitwert
-      # der Kachel - eine Konstante als wichtigstes Merkmal eines Tasters.
+      # `rank` per element orders WITHIN this cluster (addition 2026-09-08).
+      # Cluster 59 is the only one that needs it so far, and the reason is
+      # NumberOfPositions: the statement of how many positions this button has
+      # never changes. It stood at element ID 0 ahead of every button press and
+      # became the lead signal of the tile — a constant as the most important
+      # feature of a button.
       0: {slug: positions, unit: "", rank: 90}
       1: {slug: position, unit: ""}
     events:
-      # Der Tastendruck ist, wofuer man einen Taster einlernt.
+      # The button press is what you commission a button for.
       1: {slug: press, rank: 10}
       2: {slug: longpress}
       3: {slug: shortrelease}
@@ -2462,7 +2444,8 @@ Expected: FAIL — `element_rank_for` gibt es nicht, und der Leitwert ist `posit
       6: {slug: multipress}
 ```
 
-Die vorhandenen Schlüssel jedes Elements (`slug`, `unit`, …) bleiben unverändert — es kommt nur `rank` dazu, und nur bei zweien.
+The existing keys of each element (`slug`, `unit`, …) stay unchanged — only
+`rank` is added, and only to two of them.
 
 - [ ] **Step 4: `element_rank_for` in `table.py` schreiben**
 
@@ -2470,20 +2453,19 @@ Neben `rank_for`:
 
 ```python
 def element_rank_for(ref: SignalRef) -> int:
-    """Wie wichtig dieses Element INNERHALB seines Clusters ist.
+    """How important this element is WITHIN its cluster.
 
-    Zweite Ebene neben `rank_for`, und sie ist nachgetragen worden statt von
-    Anfang an dazusein (Entwurf 2026-09-07, Abschnitt 4: "kann nachgetragen
-    werden, wenn ein konkretes Geraet sie verlangt"). Das Geraet, das sie
-    verlangt hat, ist der IKEA-Taster: `NumberOfPositions` (Element 0) traegt
-    denselben Cluster wie der Tastendruck und sortierte mit der kleineren
-    Element-ID davor - die Kachel fuehrte damit mit einer Konstanten.
+    Second level beside `rank_for`, and it was added later rather than from
+    the start (design 2026-09-07, section 4: "can be added when a concrete
+    device requires it"). The device that required it is the IKEA button:
+    `NumberOfPositions` (element 0) carries the same cluster as the button press
+    and sorted ahead with the smaller element ID — the tile led with a constant.
 
-    Die Vorgabe ist dieselbe wie auf Clusterebene und aus demselben Grund die
-    Mitte: ein nicht eingetragenes Element soll weder nach vorn noch ganz
-    nach hinten fallen. Die grosse Mehrheit der Elemente traegt deshalb gar
-    keinen Rang, und die Element-ID ordnet sie weiterhin - so, wie es bis
-    hierher fuer jeden Cluster ausser 59 richtig war.
+    The rule is the same as at the cluster level and for the same reason, the
+    middle: an unregistered element should neither shoot to the front nor fall
+    to the back. The vast majority of elements therefore carry no rank at all,
+    and the element ID continues to order them — as it correctly did for every
+    cluster except 59 up to here.
     """
     cluster = _table().get(ref.cluster_id)
     if cluster is None:
@@ -2496,31 +2478,32 @@ def element_rank_for(ref: SignalRef) -> int:
     return DEFAULT_RANK if rank is None else int(rank)
 ```
 
-- [ ] **Step 5: `_signal_order` erweitern**
+- [ ] **Step 5: Extend `_signal_order`**
 
-In `store.py` den Import um `element_rank_for` ergänzen und den Schlüssel sechsstellig machen — **der Elementrang steht hinter `cluster_id` und vor `element_id`**, denn er ordnet innerhalb eines Clusters:
+In `store.py`, add `element_rank_for` to the import and make the key six parts
+— **the element rank stands behind `cluster_id` and before `element_id`**,
+because it orders within a cluster:
 
 ```python
 def _signal_order(signal: StoredSignal) -> tuple[int, int, int, int, int, str]:
-    """Der Sortierschluessel der Signalliste (Entwurf 2026-09-07, Abschnitt 4,
-    mit dem Elementrang als Nachtrag vom 2026-09-08).
+    """The sort key of the signal list (design 2026-09-07, section 4, with
+    element rank as an addition from 2026-09-08).
 
-    Zwei Rangebenen, und ihre Stellung im Tupel ist die ganze Aussage: der
-    CLUSTER-Rang steht ganz vorn und ordnet die Cluster zueinander (deshalb
-    faellt PowerSource hinter alles Funktionale); der ELEMENT-Rang steht
-    hinter `cluster_id` und ordnet nur innerhalb desselben Clusters (deshalb
-    faellt `positions` hinter jeden Tastendruck, ohne dass die Tastengruppe
-    als Ganzes ihren Platz aendert).
+    Two rank levels, and their position in the tuple is the whole statement:
+    the CLUSTER rank stands up front and orders clusters relative to each other
+    (that is why PowerSource falls behind all functional signals); the ELEMENT
+    rank stands behind `cluster_id` and orders only within the same cluster
+    (that is why `positions` falls behind every button press, without the button
+    group as a whole changing its place).
 
-    Sortiert wird in Python und nicht in SQL, weil beide Raenge aus
-    `clusters.yaml` kommen: SQLite kennt sie nicht, und sie als Spalten in
-    `signal` zu spiegeln hiesse, sie bei jeder Aenderung der YAML-Datei
-    nachtragen zu muessen - eine zweite Wahrheit fuer denselben Wert.
+    Sorting happens in Python, not SQL, because both ranks come from
+    `clusters.yaml`: SQLite does not know them, and mirroring them as columns
+    in `signal` would mean backfilling them every time the YAML file changes —
+    a second source of truth for the same value.
 
-    Die hinteren Glieder sind der bisherige Schluessel. Er ist wegen der
-    UNIQUE-Bedingung auf `signal` bereits eindeutig, damit ist auch dieser
-    Schluessel total - die Reihenfolge flattert nie, was fuer den Export
-    wichtig ist (er schreibt sie in eine Datei).
+    The later parts are the previous key. Because of the UNIQUE constraint on
+    `signal`, it is already unique, so this key is also total — the order never
+    flutters, which matters for export (it writes it to a file).
     """
     return (
         rank_for(signal.ref.cluster_id),
@@ -2537,43 +2520,46 @@ def _signal_order(signal: StoredSignal) -> tuple[int, int, int, int, int, str]:
 Run: `uv run pytest tests/profiles tests/model -v`
 Expected: PASS.
 
-- [ ] **Step 7: Die ganze Testreihe**
+- [ ] **Step 7: The whole test suite**
 
 Run: `uv run pytest -q`
-Expected: PASS. Schlägt ein Test fehl, der die alte Reihenfolge festhält, gilt dieselbe Regel wie in Aufgabe 2: **einordnen, nicht wegschreiben** — hält er sie zufällig fest, darf er nachgezogen werden; hält er sie absichtlich fest, ist es ein Konflikt und wird gemeldet.
+Expected: PASS. If a test fails that asserts the old order, the same rule from
+Task 2 applies: **integrate, do not delete** — if it holds the order by chance,
+it can be updated; if it holds it intentionally, it is a conflict and will be
+reported.
 
-Besonders zu prüfen: `tests/export/test_signals.py::test_the_template_lists_the_button_press_before_the_battery` und der Projektdatei-Sync-Test aus Aufgabe 3 — beide hängen an dieser Reihenfolge und sollen weiterhin grün sein.
+Especially check: `tests/export/test_signals.py::test_the_template_lists_the_button_press_before_the_battery`
+and the project file sync test from Task 3 — both depend on this order and
+should stay green.
 
-- [ ] **Step 8: Belegen, dass der neue Test den alten Fehler fängt**
+- [ ] **Step 8: Prove that the new test catches the old bug**
 
-Nimm `rank: 90` bei `positions` probeweise heraus, lass `uv run pytest tests/model/test_store.py -k leads_with_the_button -v` laufen, zeig den Fehlschlag, und trag den Rang danach wieder ein. Ohne diesen Nachweis ist der Test nur eine Behauptung.
+Temporarily remove `rank: 90` from `positions`, run `uv run pytest tests/model/test_store.py -k leads_with_the_button -v`, show the failure, then restore the rank. Without this proof, the test is just a claim.
 
 - [ ] **Step 9: Commit**
 
 ```bash
 git add src/loxmatter/profiles/clusters.yaml src/loxmatter/profiles/table.py src/loxmatter/model/store.py tests/profiles/test_table.py tests/model/test_store.py
 git commit -m "$(cat <<'MSG'
-fix(profiles): Rang je Element - der Taster fuehrt mit `press`, nicht mit `positions`
+fix(profiles): Rank per element — button leads with `press`, not `positions`
 
-Die Cluster-Rangliste hat den Batteriestand von der Kachel verdraengt, aber
-nicht das Richtige an seine Stelle gesetzt: der Taster fuehrte danach mit
-`positions` - Matters NumberOfPositions, die statische Angabe, dass diese
-Taste zwei Stellungen hat. Ein Wert, der sich nie aendert, als wichtigstes
-Merkmal eines Tasters; damit war es schlechter als der Batteriestand, den
-dieser Umbau beseitigen wollte, denn der sank wenigstens.
+The cluster ranking displaced the battery level from the tile, but did not put
+the right thing in its place: the button afterward led with `positions` — Matter's
+NumberOfPositions, the static statement that this button has two positions.
+A value that never changes, as the most important feature of a button; that was
+worse than the battery level, which this redesign aimed to eliminate, because
+at least the battery fell.
 
-Aufgefallen ist es erst am fertigen Screenshot. Der Test aus Aufgabe 2 hatte
-es durchgelassen, weil er `functional[0].ref.cluster_id == 59` prueft - fuer
-`positions` genauso wahr wie fuer `press`. Er nennt das Signal jetzt beim
-Namen; ein Test, der nur den Cluster prueft, laesst genau den Fehler durch,
-den zu verhindern der Zweck des Umbaus war.
+It was only noticed in the finished screenshot. The test from Task 2 let it
+through because it checks `functional[0].ref.cluster_id == 59` — equally true
+for `positions` as for `press`. It now names the signal; a test that only checks
+the cluster lets exactly the bug through that the redesign aims to prevent.
 
-Der Entwurf hatte diese Ebene ausdruecklich offengelassen ("kann nachgetragen
-werden, wenn ein konkretes Geraet sie verlangt"). Der IKEA-Taster verlangt
-sie. Eingetragen ist sie nur fuer Cluster 59 und dort nur an zwei Elementen -
-dieselbe Zurueckhaltung wie bei UTILITY_ENDPOINT_KEEP_CLUSTERS: ein neuer
-Eintrag braucht ein Geraet, das ihn belegt, nicht die Annahme, die Tabelle
-sei von sich aus vollstaendig.
+The design explicitly left this level open ("can be added when a concrete device
+requires it"). The IKEA button requires it. It is registered only for cluster 59
+and only at two elements — the same restraint as UTILITY_ENDPOINT_KEEP_CLUSTERS:
+a new entry needs a device that uses it, not the assumption that the table is
+complete by itself.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -2582,43 +2568,48 @@ MSG
 
 ---
 
-### Task 11: Screenshots nachziehen
+### Task 11: Update screenshots
 
 **Files:**
 - Modify: `docs/screenshots/dashboard.png`, `docs/screenshots/signals.png`
 
 **Interfaces:**
-- Consumes: alles Vorherige.
-- Produces: nichts.
+- Consumes: everything before.
+- Produces: nothing.
 
-- [ ] **Step 1: Die ganze Testreihe laufen lassen**
+- [ ] **Step 1: Run the whole test suite**
 
 Run: `uv run pytest -q && uv run ruff check src tests && uv run ruff format --check src tests && uv run mypy src`
-Expected: alles grün.
+Expected: all green.
 
-- [ ] **Step 2: Screenshots neu aufnehmen**
+- [ ] **Step 2: Capture screenshots again**
 
 Run: `uv run python scripts/capture_screenshots.py`
 
-Die Datei nennt in ihrem Kopfkommentar, was sie braucht (Browser, Port). Falls sie fehlschlägt, ihren Kommentar lesen statt raten.
+The file states in its header comment what it needs (browser, port). If it fails,
+read its comment rather than guessing.
 
-- [ ] **Step 3: Die neuen Bilder ansehen**
+- [ ] **Step 3: Look at the new images**
 
-`docs/screenshots/dashboard.png` muss zeigen: „Hallway button" führt mit `press`, darunter die Batteriezeile, „+ 10 weitere".
-`docs/screenshots/signals.png` muss zeigen: Spaltenköpfe, drei Endpunktgruppen, fluchtende Spalten, beide Ja/Nein-Spalten als Häkchen.
+`docs/screenshots/dashboard.png` must show: "Hallway button" leads with `press`,
+below it the battery row, "+ 10 more".
+`docs/screenshots/signals.png` must show: column headers, three endpoint groups,
+aligned columns, both yes/no columns as checkboxes.
 
-Zeigt ein Bild noch den alten Stand, hat das Skript einen zwischengespeicherten Zustand aufgenommen — Prozess beenden, `~/.loxmatter`-Kopie des Entwicklungsdienstes löschen (das Skript legt sie in einem temporären Verzeichnis an, siehe seinen Kopf) und erneut laufen lassen.
+If an image still shows the old state, the script captured a cached state — kill
+the process, delete the `~/.loxmatter` copy of the dev service (the script puts
+it in a temp directory, see its head) and run again.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add docs/screenshots
 git commit -m "$(cat <<'MSG'
-docs(screenshots): Bilder auf die Signal-Rangliste nachziehen
+docs(screenshots): Update to signal ranking
 
-Die Geraeteansicht zeigt jetzt `press` als Leitwert des Tasters statt des
-Batteriestands, und das Signal-Modal seine Endpunktgruppen mit
-fluchtenden Spalten.
+The device view now shows `press` as the button's lead signal instead of the
+battery level, and the signals modal shows its endpoint groups with aligned
+columns.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 MSG
@@ -2627,30 +2618,30 @@ MSG
 
 ---
 
-## Selbstprüfung des Plans
+## Plan self-check
 
-**Abdeckung des Entwurfs:**
+**Design coverage:**
 
-| Entwurfsabschnitt | Aufgabe |
+| Design section | Task |
 | --- | --- |
-| 1 Der Befund | 2 (Test), 5 (Kachel) |
-| 2 Das Modal | 6–10 |
-| 3 Entscheidungen | alle |
-| 4 Die Rangliste | 1 |
-| 5 Sortiert an der Quelle | 2, 3 |
-| 6 Die Kachel | 5 |
-| 7.1–7.2 Aufbau, Spalten | 7 |
-| 7.3 Beide Häkchen | 7 |
-| 7.4 Endpunkt-Gruppen | 4, 6 |
-| 7.5 Rohwert-Feld | 8 |
-| 7.6 Der Kopf | 9 |
-| 8 Was unverändert bleibt | keine Aufgabe fasst `relevance.py`, `categories.py`, `exported`, `exportability` oder `FUNCTIONAL_PREVIEW_LIMIT` an |
-| 9 Tests | über die Aufgaben verteilt, jeder Punkt des Entwurfs hat einen |
-| 10.1 Umbruch unter 640 px | 10 |
-| 10.2 Ränge als erste Belegung | im Kommentar von `clusters.yaml`, Aufgabe 1 Step 3 |
+| 1 The finding | 2 (test), 5 (tile) |
+| 2 The modal | 6–10 |
+| 3 Decisions | all |
+| 4 The ranking | 1 |
+| 5 Sorted at the source | 2, 3 |
+| 6 The tile | 5 |
+| 7.1–7.2 Layout, columns | 7 |
+| 7.3 Both checkboxes | 7 |
+| 7.4 Endpoint groups | 4, 6 |
+| 7.5 Raw write field | 8 |
+| 7.6 The head | 9 |
+| 8 What stays unchanged | no task touches `relevance.py`, `categories.py`, `exported`, `exportability`, or `FUNCTIONAL_PREVIEW_LIMIT` |
+| 9 Tests | spread across tasks, each design point has one |
+| 10.1 Wrap under 640 px | 10 |
+| 10.2 Ranks as first implementation | in the comment of `clusters.yaml`, Task 1 Step 3 |
 
-**Bekannte Abweichung vom Entwurf:** der Gruppen-Untertitel nennt nur den Endpunkt, nicht zusätzlich den Cluster (Task 6, mit Begründung). Der Cluster steht ab Task 8 je Zeile im Aufklapper.
+**Known design deviation:** the group subtitle names only the endpoint, not additionally the cluster (Task 6, with reasoning). The cluster appears per row in the expander from Task 8 on.
 
-**Namenskonsistenz:** `previewSignalsFor` (Task 5) wird von `firstSignalsFor` und `remainingSignalCount` derselben Aufgabe benutzt. `batterySignalFor` (Task 5) wird in Task 5 im Markup verwendet. `endpoint_labels` (Task 4) wird nur in `api/devices.py` derselben Aufgabe aufgerufen. `signal.cluster_id`/`signal.endpoint`/`signal.endpoint_label` (Task 4) werden in den Tasks 5, 6 und 8 gelesen — Task 4 steht davor.
+**Name consistency:** `previewSignalsFor` (Task 5) is used by `firstSignalsFor` and `remainingSignalCount` of the same task. `batterySignalFor` (Task 5) is used in Task 5 markup. `endpoint_labels` (Task 4) is called only in `api/devices.py` of the same task. `signal.cluster_id`/`signal.endpoint`/`signal.endpoint_label` (Task 4) are read in Tasks 5, 6, and 8 — Task 4 comes before.
 
-**Zwei Stellen, an denen der ausführende Entwickler vor dem Schreiben lesen muss** (im Plan jeweils vermerkt): die Signatur von `_signal_out` und seiner Aufrufstelle (Task 4, Step 9) und das Verhalten von `toggleExported` (Task 9, Step 4). Beide sind im Bestand und können von den Skizzen abweichen.
+**Two places where the implementing developer must read before writing** (noted in the plan): the signature of `_signal_out` and its call site (Task 4, Step 9) and the behavior of `toggleExported` (Task 9, Step 4). Both are in the codebase and may differ from the sketches.
