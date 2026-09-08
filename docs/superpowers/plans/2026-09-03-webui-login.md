@@ -1,51 +1,51 @@
-# WebUI-Login Implementierungsplan
+# WebUI Login Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die WebUI bekommt eine Anmeldung mit Passwort samt Ersteinrichtung über die Oberfläche; die Token-Eingabe im Browser entfällt, und ohne gesetztes Passwort liefert keine `/api`-Route mehr Daten aus.
+**Goal:** The WebUI gets a password login with first-time setup through the interface; token entry in the browser goes away, and without a password set, no `/api` route delivers data anymore.
 
-**Architecture:** Der Passwort-Hash und die Sitzungen liegen in zwei neuen Tabellen desselben SQLite-Stores (Schema v4). Ein neues Paket `loxmatter.auth` kapselt Hashing, Sitzungen und Login-Drosselung als reine Logik ohne FastAPI-Bezug; `api/auth.py` ist der Router darüber; `build_api_guard` akzeptiert künftig Sitzungs-Cookie ODER Bearer-Token und lässt ohne beides nichts mehr durch. Die Oberfläche schaltet anhand von `GET /auth-info` zwischen Einrichtung, Login und App um.
+**Architecture:** The password hash and the sessions live in two new tables of the same SQLite store (schema v4). A new package `loxmatter.auth` encapsulates hashing, sessions, and login throttling as pure logic with no FastAPI reference; `api/auth.py` is the router on top of it; `build_api_guard` will accept a session cookie OR a bearer token and let nothing through without either. The interface switches between setup, login, and the app based on `GET /auth-info`.
 
-**Tech Stack:** Python 3.12, FastAPI, SQLite über `sqlite3`, `hashlib.scrypt` und `secrets` aus der Standardbibliothek (keine neue Abhängigkeit), Alpine.js im Browser, pytest mit `asyncio_mode = "auto"`, `httpx2` als Testclient.
+**Tech Stack:** Python 3.12, FastAPI, SQLite via `sqlite3`, `hashlib.scrypt` and `secrets` from the standard library (no new dependency), Alpine.js in the browser, pytest with `asyncio_mode = "auto"`, `httpx2` as the test client.
 
-**Spec:** `docs/superpowers/specs/2026-09-03-webui-login-design.md` — bei jedem Zweifel gilt die Spec, nicht dieser Plan.
+**Spec:** `docs/superpowers/specs/2026-09-03-webui-login-design.md` — whenever in doubt, the spec governs, not this plan.
 
 ## Global Constraints
 
-- **Sprache:** Prosa, Docstrings, Kommentare und Fehlermeldungen auf Deutsch. Bezeichner im Code und Schlüssel in JSON-Antworten auf Englisch (Review-Fix M9, 2026-09-02).
-- **Keine neue Laufzeitabhängigkeit.** `pyproject.toml` bleibt im Abschnitt `[project].dependencies` unverändert.
-- **Zeilenlänge 100** (`[tool.ruff]`), **mypy strict** über `src` und `scripts`.
-- **Kommentardichte:** Dieses Repository begründet im Code, *warum* etwas so ist, nicht *was* es tut. Neue Module und jede nicht offensichtliche Entscheidung bekommen einen Docstring in diesem Stil. Ein Kommentar, der nur den Code wiederholt, ist keiner.
-- **Geheimnisse gehören nie ins Log und nie in eine Antwort:** kein Passwort, kein Hash, keine Sitzungskennung, kein Token — in keinem Zweig, auch keinem Fehlerzweig.
-- **Testlauf:** `uv run pytest`. Linting: `uv run ruff check src tests`. Typen: `uv run mypy`.
-- **Commit-Format:** `<typ>(<bereich>): <beschreibung>` auf Deutsch, wie in der bisherigen Historie (`feat(store):`, `fix(profiles):`, `test(profiles):`).
-- **Cookie-Name:** `loxmatter_session`. **Sitzungsdauer:** 30 Tage. **Mindestlänge Passwort:** 8 Zeichen. **Drosselung:** ab 5 Fehlversuchen je Peer-Adresse, dann 30 Sekunden Sperre.
+- **Language:** Prose, docstrings, comments, and error messages in German. Identifiers in code and keys in JSON responses in English (review fix M9, 2026-09-02).
+- **No new runtime dependency.** `pyproject.toml` stays unchanged in the `[project].dependencies` section.
+- **Line length 100** (`[tool.ruff]`), **mypy strict** across `src` and `scripts`.
+- **Comment density:** This repository justifies in code *why* something is the way it is, not *what* it does. New modules and every non-obvious decision get a docstring in this style. A comment that only repeats the code is not one.
+- **Secrets never belong in the log and never in a response:** no password, no hash, no session id, no token — in no branch, not even an error branch.
+- **Test run:** `uv run pytest`. Linting: `uv run ruff check src tests`. Types: `uv run mypy`.
+- **Commit format:** `<type>(<scope>): <description>` in German, as in the existing history (`feat(store):`, `fix(profiles):`, `test(profiles):`).
+- **Cookie name:** `loxmatter_session`. **Session duration:** 30 days. **Minimum password length:** 8 characters. **Throttling:** from 5 failed attempts per peer address, then a 30-second lock.
 
 ---
 
 ## File Structure
 
-**Neu:**
+**New:**
 
-| Datei | Verantwortung |
+| File | Responsibility |
 | --- | --- |
-| `src/loxmatter/model/auth_store.py` | Datenzugriff auf `setting` und `session`. Kennt SQL, kennt keine Kryptografie und kein HTTP. |
-| `src/loxmatter/auth/__init__.py` | Leeres Paketmodul mit Docstring, der die drei Module darunter einordnet. |
-| `src/loxmatter/auth/passwords.py` | `hash_password` / `verify_password` über `hashlib.scrypt`. Kennt weder Store noch HTTP. |
-| `src/loxmatter/auth/sessions.py` | Sitzungen anlegen und prüfen, Cookie-Name und Laufzeit. Kennt den `AuthStore`, kein HTTP. |
-| `src/loxmatter/auth/throttle.py` | `LoginThrottle` — Fehlversuche je Aufrufer, rein im Speicher. |
+| `src/loxmatter/model/auth_store.py` | Data access for `setting` and `session`. Knows SQL, knows no cryptography and no HTTP. |
+| `src/loxmatter/auth/__init__.py` | Empty package module with a docstring that places the three modules underneath. |
+| `src/loxmatter/auth/passwords.py` | `hash_password` / `verify_password` via `hashlib.scrypt`. Knows neither store nor HTTP. |
+| `src/loxmatter/auth/sessions.py` | Creates and checks sessions, cookie name, and duration. Knows the `AuthStore`, no HTTP. |
+| `src/loxmatter/auth/throttle.py` | `LoginThrottle` — failed attempts per caller, purely in memory. |
 | `src/loxmatter/api/auth.py` | Router `/auth-info`, `/auth/setup`, `/auth/login`, `/auth/logout`. |
-| `tests/model/test_auth_store.py`, `tests/auth/test_passwords.py`, `tests/auth/test_sessions.py`, `tests/auth/test_throttle.py`, `tests/api/test_auth.py` | Tests dazu. |
+| `tests/model/test_auth_store.py`, `tests/auth/test_passwords.py`, `tests/auth/test_sessions.py`, `tests/auth/test_throttle.py`, `tests/api/test_auth.py` | Tests for these. |
 
-Die Spec nennt in Abschnitt 12 eine einzige Datei `tests/api/test_auth.py`. Der Plan teilt die Einheitentests der drei `auth`-Module in `tests/auth/` ab und lässt in `tests/api/test_auth.py` nur die Routen — die Testdateien folgen damit den Modulen, wie im übrigen Repository auch (`tests/model/`, `tests/loxone/`).
+The spec names a single file `tests/api/test_auth.py` in section 12. The plan splits the unit tests of the three `auth` modules into `tests/auth/` and leaves only the routes in `tests/api/test_auth.py` — the test files thereby follow the modules, as elsewhere in the repository too (`tests/model/`, `tests/loxone/`).
 
-**Geändert:** `src/loxmatter/model/store.py` (Schema v4, `Store.auth`), `src/loxmatter/loxone/server.py` (Wächter, Router), `src/loxmatter/api/diagnostics.py` (403-Zweig entfällt), `src/loxmatter/cli.py` (Warnung, neuer Befehl), `src/loxmatter/web/{index.html,app.js,style.css}`, `tests/api/conftest.py` und die Testdateien mit `build_app(...)`-Aufrufen, `README.md`, `deploy/testhost/.env.example`, `deploy/testhost/docker-compose.yml`.
+**Changed:** `src/loxmatter/model/store.py` (schema v4, `Store.auth`), `src/loxmatter/loxone/server.py` (guard, router), `src/loxmatter/api/diagnostics.py` (403 branch goes away), `src/loxmatter/cli.py` (warning, new command), `src/loxmatter/web/{index.html,app.js,style.css}`, `tests/api/conftest.py` and the test files with `build_app(...)` calls, `README.md`, `deploy/testhost/.env.example`, `deploy/testhost/docker-compose.yml`.
 
-**Reihenfolge-Logik:** Die Tasks 1–7 sind rein additiv — nach jedem einzelnen läuft die Suite grün und die Oberfläche unverändert weiter. Erst Task 8 schaltet den bisher offenen Zustand ab und zieht deshalb alle Testfixtures nach. Die Oberfläche (Task 7) steht bewusst **vor** Task 8, damit es keinen Zwischenstand gibt, in dem der Browser ausgesperrt ist.
+**Ordering logic:** Tasks 1–7 are purely additive — after each one, the suite runs green and the interface keeps working unchanged. Only task 8 switches off the previously open state and therefore pulls all test fixtures along with it. The interface (task 7) deliberately comes **before** task 8, so that there is no intermediate state in which the browser is locked out.
 
 ---
 
-### Task 1: Schema v4 und `AuthStore`
+### Task 1: Schema v4 and `AuthStore`
 
 **Files:**
 - Create: `src/loxmatter/model/auth_store.py`
@@ -53,19 +53,19 @@ Die Spec nennt in Abschnitt 12 eine einzige Datei `tests/api/test_auth.py`. Der 
 - Test: `tests/model/test_auth_store.py`, `tests/model/test_store_migration.py`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: `AuthStore` mit `password_hash() -> str | None`, `set_password_hash_if_unset(value: str) -> bool`, `set_password_hash(value: str) -> None`, `create_session(session_id: str, *, created_at: int, expires_at: int) -> None`, `session_expires_at(session_id: str) -> int | None`, `extend_session(session_id: str, *, expires_at: int) -> None`, `delete_session(session_id: str) -> None`, `delete_all_sessions() -> None`, `purge_expired_sessions(now: int) -> None`. Erreichbar als `Store.auth`.
+- Consumes: nothing.
+- Produces: `AuthStore` with `password_hash() -> str | None`, `set_password_hash_if_unset(value: str) -> bool`, `set_password_hash(value: str) -> None`, `create_session(session_id: str, *, created_at: int, expires_at: int) -> None`, `session_expires_at(session_id: str) -> int | None`, `extend_session(session_id: str, *, expires_at: int) -> None`, `delete_session(session_id: str) -> None`, `delete_all_sessions() -> None`, `purge_expired_sessions(now: int) -> None`. Reachable as `Store.auth`.
 
 - [ ] **Step 1: Write the failing test**
 
 `tests/model/test_auth_store.py`:
 
 ```python
-"""Tests fuer `AuthStore` - den Teil des Stores, der den Zugang verwaltet.
+"""Tests for `AuthStore` - the part of the store that manages access.
 
-Die Kernfrage: haelt `setting` genau einen Passwort-Hash, und laesst sich
-`session` so fuehren, dass eine abgelaufene Sitzung nicht mehr gilt und eine
-geloeschte sofort weg ist?
+The core question: does `setting` hold exactly one password hash, and can
+`session` be managed so that an expired session no longer counts and a
+deleted one is gone immediately?
 """
 
 from __future__ import annotations
@@ -158,64 +158,65 @@ Expected: FAIL — `AttributeError: 'Store' object has no attribute 'auth'`
 `src/loxmatter/model/auth_store.py`:
 
 ```python
-"""Der Teil des Stores, der den Zugang verwaltet - Passwort-Hash und
-Sitzungen - statt Geraete, Signale und Kommandos.
+"""The part of the store that manages access - password hash and
+sessions - instead of devices, signals, and commands.
 
-Eigenes Modul und eigene Klasse, nicht weitere Methoden an `Store`: dort
-liegen inzwischen ueber neunhundert Zeilen zum Geraetemodell, und der Zugang
-hat damit fachlich nichts zu tun. Die Verbindung gehoert trotzdem weiterhin
-`Store` - diese Klasse ist eine Sicht darauf, kein zweiter Verbindungsaufbau
-auf dieselbe Datei (das waere eine zweite Sperrdomaene fuer dieselben Daten).
+Its own module and its own class, not further methods on `Store`: that
+already holds over nine hundred lines for the device model, and access has
+nothing to do with that domain. The connection still belongs to `Store`
+regardless - this class is a view onto it, not a second connection setup
+onto the same file (that would be a second locking domain for the same
+data).
 
-Was hier NICHT stattfindet: Kryptografie und HTTP. Diese Klasse legt einen
-Hash ab und liest ihn wieder, ohne zu wissen, wie er entsteht (siehe
-`loxmatter.auth.passwords`), und sie kennt weder Cookies noch Statuscodes
-(siehe `loxmatter.auth.sessions` und `loxmatter.api.auth`). Wer das hier
-vermischt, hat am Ende drei Stellen, an denen ein Geheimnis auftauchen kann,
-statt einer.
+What does NOT happen here: cryptography and HTTP. This class stores a
+hash and reads it back without knowing how it comes about (see
+`loxmatter.auth.passwords`), and it knows neither cookies nor status codes
+(see `loxmatter.auth.sessions` and `loxmatter.api.auth`). Whoever mixes
+this together ends up with three places where a secret can surface,
+instead of one.
 
-Das Schema der beiden Tabellen steht in `store.py` bei `_SCHEMA` und
-`_migrate_to_v4` - Schema-Definitionen bleiben an einem Ort, auch wenn der
-Zugriff darauf hier liegt.
+The schema of the two tables lives in `store.py` under `_SCHEMA` and
+`_migrate_to_v4` - schema definitions stay in one place, even though
+access to them lives here.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-# Der einzige Schluessel, den `setting` bislang traegt. Die Tabelle ist
-# trotzdem generisch (Schluessel/Wert) angelegt, weil die uebrige
-# Konfiguration denselben Weg gehen soll (Spec 14.2) - eine Tabelle
-# `password` mit einer Spalte waere in dem Moment wieder umzubauen.
+# The only key that `setting` carries so far. The table is nonetheless laid
+# out generically (key/value) because the rest of the configuration is
+# meant to go the same way (spec 14.2) - a table `password` with one
+# column would need rebuilding again at that point.
 _PASSWORD_KEY = "password_hash"
 
 
 class AuthStore:
-    """Zugriff auf `setting` und `session` ueber die Verbindung des Stores."""
+    """Access to `setting` and `session` via the store's connection."""
 
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
 
     def password_hash(self) -> str | None:
-        """Der abgelegte Hash - `None`, solange kein Passwort vergeben ist.
+        """The stored hash - `None` as long as no password has been set.
 
-        `None` ist der Zustand, an dem der gesamte Zugang haengt: er
-        bedeutet "Ersteinrichtung noch offen" und laesst nach
-        `loxone.server.build_api_guard` keine einzige `/api`-Route zu."""
+        `None` is the state the whole access system hinges on: it
+        means "first-time setup still open" and, per
+        `loxone.server.build_api_guard`, admits not a single `/api` route."""
         row = self._db.execute(
             "SELECT value FROM setting WHERE key = ?", (_PASSWORD_KEY,)
         ).fetchone()
         return None if row is None else str(row["value"])
 
     def set_password_hash_if_unset(self, value: str) -> bool:
-        """Legt den Hash an, aber nur, wenn noch keiner da ist - `True`, wenn
-        dieser Aufruf ihn gesetzt hat.
+        """Sets the hash, but only if none exists yet - `True` if
+        this call is the one that set it.
 
-        `INSERT OR IGNORE` und nicht "erst pruefen, dann schreiben": SQLite
-        entscheidet das in einer einzigen Anweisung, zwei gleichzeitige
-        Einrichtungsversuche koennen sich also nicht gegenseitig
-        ueberschreiben. Genau darauf verlaesst sich `POST /auth/setup`, um
-        nach dem ersten Erfolg dauerhaft mit 409 zu antworten."""
+        `INSERT OR IGNORE` and not "check first, then write": SQLite
+        decides this in a single statement, so two simultaneous
+        setup attempts cannot overwrite each other. This is exactly what
+        `POST /auth/setup` relies on to keep answering with 409
+        permanently after the first success."""
         cursor = self._db.execute(
             "INSERT OR IGNORE INTO setting (key, value) VALUES (?, ?)",
             (_PASSWORD_KEY, value),
@@ -224,10 +225,10 @@ class AuthStore:
         return cursor.rowcount == 1
 
     def set_password_hash(self, value: str) -> None:
-        """Setzt den Hash und ueberschreibt einen vorhandenen.
+        """Sets the hash and overwrites an existing one.
 
-        Der Weg fuer `loxmatter set-password` auf dem Host (Spec 9), NICHT
-        fuer die Oberflaeche - die benutzt ausschliesslich
+        The path for `loxmatter set-password` on the host (spec 9), NOT
+        for the interface - that exclusively uses
         `set_password_hash_if_unset`."""
         self._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "
@@ -244,9 +245,9 @@ class AuthStore:
         self._db.commit()
 
     def session_expires_at(self, session_id: str) -> int | None:
-        """Ablaufzeitpunkt als Unix-Sekunden - `None`, wenn es die Sitzung
-        nicht (mehr) gibt. Ob sie damit noch gilt, entscheidet
-        `loxmatter.auth.sessions`, nicht diese Klasse."""
+        """Expiry time as Unix seconds - `None` if the session no longer
+        exists (or never did). Whether it is still valid is decided by
+        `loxmatter.auth.sessions`, not this class."""
         row = self._db.execute(
             "SELECT expires_at FROM session WHERE id = ?", (session_id,)
         ).fetchone()
@@ -261,36 +262,36 @@ class AuthStore:
         self._db.commit()
 
     def delete_all_sessions(self) -> None:
-        """Meldet jeden ab. Aufgerufen von `loxmatter set-password`: wer das
-        Passwort zuruecksetzt, will nicht, dass eine alte Sitzung
-        weiterlaeuft."""
+        """Logs everyone out. Called by `loxmatter set-password`: whoever
+        resets the password does not want an old session to keep
+        running."""
         self._db.execute("DELETE FROM session")
         self._db.commit()
 
     def purge_expired_sessions(self, now: int) -> None:
-        """Raeumt abgelaufene Zeilen weg. Aufgerufen beim Anlegen einer neuen
-        Sitzung - kein Hintergrundjob fuer eine Tabelle, die im Normalfall
-        eine Handvoll Zeilen haelt."""
+        """Clears away expired rows. Called when creating a new
+        session - no background job for a table that normally
+        holds a handful of rows."""
         self._db.execute("DELETE FROM session WHERE expires_at <= ?", (now,))
         self._db.commit()
 ```
 
 - [ ] **Step 4: Add the tables to the schema and the migration**
 
-In `src/loxmatter/model/store.py`, `_SCHEMA_VERSION` von `3` auf `4` heben und den Kommentarblock darüber um einen Satz ergänzen:
+In `src/loxmatter/model/store.py`, raise `_SCHEMA_VERSION` from `3` to `4` and extend the comment block above it by one sentence:
 
 ```python
-# ... Version 3 (Aufgabe 7, Phase 6) fuegt keine Spalte hinzu -
-# sie leitet `signal.title`, `signal.unit` und den Vorgabewert von
-# `signal.exported` fuer BESTEHENDE Zeilen aus der Profiltabelle neu ab, siehe
-# `_migrate_to_v3`. Version 4 (WebUI-Login) fuegt die Tabellen `setting` und
-# `session` hinzu, siehe `_migrate_to_v4` - beide sind bei einer frischen
-# Datenbank bereits durch `_SCHEMA` da, die Migration ist deshalb nur fuer
-# Bestandsdatenbanken noetig.
+# ... Version 3 (task 7, phase 6) does not add a column -
+# it re-derives `signal.title`, `signal.unit`, and the default value of
+# `signal.exported` for EXISTING rows from the profile table, see
+# `_migrate_to_v3`. Version 4 (WebUI login) adds the tables `setting` and
+# `session`, see `_migrate_to_v4` - both already exist for a fresh
+# database via `_SCHEMA`, so the migration is only needed for
+# existing databases.
 _SCHEMA_VERSION = 4
 ```
 
-An `_SCHEMA` anhängen (nach dem `command`-Block, innerhalb desselben Strings):
+Append to `_SCHEMA` (after the `command` block, within the same string):
 
 ```sql
 CREATE TABLE IF NOT EXISTS setting (
@@ -304,21 +305,21 @@ CREATE TABLE IF NOT EXISTS session (
 );
 ```
 
-Direkt vor `_MIGRATIONS` einfügen:
+Insert directly before `_MIGRATIONS`:
 
 ```python
 def _migrate_to_v4(db: sqlite3.Connection) -> None:
-    """Legt `setting` und `session` an (WebUI-Login).
+    """Creates `setting` and `session` (WebUI login).
 
-    `CREATE TABLE IF NOT EXISTS` und nicht `CREATE TABLE`: eine frisch
-    angelegte Datenbank hat beide Tabellen bereits durch `_SCHEMA`, steht
-    dabei aber ebenfalls auf `PRAGMA user_version = 0` und laeuft deshalb
-    durch dieselbe Migrationskette (siehe `_migrate` und
-    `_add_column_if_missing` zur gleichen Falle bei Spalten).
+    `CREATE TABLE IF NOT EXISTS` and not `CREATE TABLE`: a freshly
+    created database already has both tables via `_SCHEMA`, but it is
+    likewise at `PRAGMA user_version = 0` and therefore runs through
+    the same migration chain (see `_migrate` and
+    `_add_column_if_missing` for the same trap with columns).
 
-    Kein Backfill: eine Bestandsdatenbank hat kein Passwort und keine
-    Sitzung, und genau das ist der richtige Zustand - sie geht nach dem
-    Update durch die Ersteinrichtung (Spec 5)."""
+    No backfill: an existing database has no password and no
+    session, and that is exactly the right state - after the
+    update it goes through first-time setup (spec 5)."""
     db.executescript(
         """
         CREATE TABLE IF NOT EXISTS setting (
@@ -334,7 +335,7 @@ def _migrate_to_v4(db: sqlite3.Connection) -> None:
     )
 ```
 
-`_MIGRATIONS` um den Eintrag erweitern:
+Extend `_MIGRATIONS` with the entry:
 
 ```python
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
@@ -347,7 +348,7 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 
 - [ ] **Step 5: Hang `AuthStore` on `Store`**
 
-In `src/loxmatter/model/store.py` den Import ergänzen und `Store.__init__` erweitern:
+In `src/loxmatter/model/store.py`, add the import and extend `Store.__init__`:
 
 ```python
 from loxmatter.model.auth_store import AuthStore
@@ -361,24 +362,24 @@ class Store:
         self._db.executescript(_SCHEMA)
         self._db.commit()
         _migrate(self._db)
-        # Sicht auf dieselbe Verbindung, kein zweiter Verbindungsaufbau -
-        # siehe Moduldocstring von `auth_store.py`.
+        # A view onto the same connection, no second connection setup -
+        # see the module docstring of `auth_store.py`.
         self.auth = AuthStore(self._db)
 ```
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/model/test_auth_store.py -v`
-Expected: PASS (7 Tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 7: Add the migration test**
 
-An `tests/model/test_store_migration.py` anhängen — den vorhandenen Testaufbau dieser Datei übernehmen (dort steht bereits, wie eine Datenbank mit älterer `user_version` erzeugt wird; diesem Muster folgen):
+Append to `tests/model/test_store_migration.py` — reuse the existing test setup of this file (it already shows how to create a database with an older `user_version`; follow that pattern):
 
 ```python
 def test_migration_to_v4_adds_the_auth_tables_without_touching_devices(tmp_path):
-    """Eine Bestandsdatenbank auf Version 3 bekommt `setting` und `session`,
-    und ihre Geraetezeilen bleiben unangetastet."""
+    """An existing database at version 3 gets `setting` and `session`,
+    and its device rows stay untouched."""
     path = tmp_path / "alt.sqlite"
     store = Store(path)
     snapshot = load_snapshot("ikea_grillplats_plug.json")
@@ -387,8 +388,8 @@ def test_migration_to_v4_adds_the_auth_tables_without_touching_devices(tmp_path)
     signals_before = len(store.signals(device_id))
     store.close()
 
-    # Auf Version 3 zuruecksetzen und beide Tabellen entfernen - so sieht
-    # eine Datenbank aus, die vor dieser Aenderung angelegt wurde.
+    # Reset to version 3 and remove both tables - this is what a
+    # database created before this change looks like.
     db = sqlite3.connect(str(path))
     db.executescript("DROP TABLE session; DROP TABLE setting; PRAGMA user_version = 3;")
     db.commit()
@@ -408,12 +409,12 @@ def test_migration_to_v4_adds_the_auth_tables_without_touching_devices(tmp_path)
 - [ ] **Step 8: Run the full suite**
 
 Run: `uv run pytest`
-Expected: PASS — alles grün, diese Änderung ist rein additiv.
+Expected: PASS — everything green, this change is purely additive.
 
 - [ ] **Step 9: Lint and typecheck**
 
 Run: `uv run ruff check src tests && uv run mypy`
-Expected: keine Meldungen.
+Expected: no messages.
 
 - [ ] **Step 10: Commit**
 
@@ -424,14 +425,14 @@ git commit -m "feat(store): Tabellen fuer Passwort und Sitzungen (Schema v4)"
 
 ---
 
-### Task 2: Passwort-Hash mit scrypt
+### Task 2: Password hash with scrypt
 
 **Files:**
 - Create: `src/loxmatter/auth/__init__.py`, `src/loxmatter/auth/passwords.py`
 - Test: `tests/auth/test_passwords.py`
 
 **Interfaces:**
-- Consumes: nichts.
+- Consumes: nothing.
 - Produces: `hash_password(password: str) -> str`, `verify_password(password: str, stored: str) -> bool`, `MIN_PASSWORD_LENGTH: int = 8`.
 
 - [ ] **Step 1: Write the failing test**
@@ -439,12 +440,12 @@ git commit -m "feat(store): Tabellen fuer Passwort und Sitzungen (Schema v4)"
 `tests/auth/test_passwords.py`:
 
 ```python
-"""Tests fuer das Passwort-Hashing (Spec 6).
+"""Tests for password hashing (Spec 6).
 
-Die Kernfrage: passt das richtige Passwort, faellt jedes andere durch, und
-verkraftet `verify_password` einen kaputten oder fremden Hash, ohne zu
-werfen? Der letzte Punkt ist kein Randfall: der Wert kommt aus einer Datei,
-die ein Betreiber von Hand bearbeitet haben kann.
+The core question: does the right password match, does every other one
+fail, and does `verify_password` survive a broken or foreign hash without
+raising? The last point is not an edge case: the value comes from a file
+that an operator may have edited by hand.
 """
 
 from __future__ import annotations
@@ -465,8 +466,8 @@ def test_a_wrong_password_does_not_verify():
 
 
 def test_the_same_password_hashes_differently_every_time():
-    """Sonst waere das Salz keins - zwei Installationen mit demselben
-    Passwort haetten denselben Hash."""
+    """Otherwise the salt wouldn't be one - two installations with the same
+    password would have the same hash."""
     assert hash_password("gleiches-passwort") != hash_password("gleiches-passwort")
 
 
@@ -480,12 +481,12 @@ def test_the_stored_form_names_its_scheme_and_parameters():
 
 
 def test_a_hash_with_other_parameters_still_verifies():
-    """Der Grund, warum die Parameter im Wert stehen: ein spaeterer Wechsel
-    der Kostenfaktoren darf alte Hashes nicht entwerten.
+    """The reason the parameters live in the value: a later change to the
+    cost factors must not invalidate old hashes.
 
-    Der Vergleichswert wird hier mit ANDEREN Kostenfaktoren (n = 1024) selbst
-    gerechnet, nicht mit denen des Moduls - sonst pruefte der Test nur, dass
-    eine Konstante mit sich selbst uebereinstimmt."""
+    The comparison value here is computed with DIFFERENT cost factors
+    (n = 1024), not the module's own - otherwise the test would only check
+    that a constant matches itself."""
     salt = bytes.fromhex("00112233445566778899aabbccddeeff")
     key = hashlib.scrypt(b"geheim-und-lang", salt=salt, n=1024, r=8, p=1, dklen=32)
     stored = f"scrypt$1024$8$1${salt.hex()}${key.hex()}"
@@ -507,18 +508,19 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.auth'`
 `src/loxmatter/auth/__init__.py`:
 
 ```python
-"""Zugang zur Oberflaeche: Passwort, Sitzung, Drosselung.
+"""Access to the interface: password, session, throttling.
 
-Drei Module, absichtlich getrennt und absichtlich ohne FastAPI-Bezug:
+Three modules, deliberately separated and deliberately without FastAPI
+reference:
 
-- `passwords` rechnet Hashes und prueft sie. Kennt weder Datenbank noch HTTP.
-- `sessions` legt Sitzungen an und prueft sie. Kennt den `AuthStore`, kein HTTP.
-- `throttle` zaehlt Fehlversuche. Kennt gar nichts ausser der Uhr.
+- `passwords` computes hashes and checks them. Knows neither database nor HTTP.
+- `sessions` creates sessions and checks them. Knows the `AuthStore`, no HTTP.
+- `throttle` counts failed attempts. Knows nothing at all except the clock.
 
-Der HTTP-Teil liegt in `loxmatter.api.auth`, der Waechter in
-`loxmatter.loxone.server`. Diese Trennung ist der Grund, warum die Logik
-hier ohne ASGI-Testclient pruefbar ist - und warum ein Geheimnis nur an den
-Stellen auftauchen kann, die es wirklich brauchen.
+The HTTP part lives in `loxmatter.api.auth`, the guard in
+`loxmatter.loxone.server`. This separation is why the logic here is
+checkable without an ASGI test client - and why a secret can surface only
+at the places that genuinely need it.
 """
 ```
 
@@ -527,23 +529,23 @@ Stellen auftauchen kann, die es wirklich brauchen.
 `src/loxmatter/auth/passwords.py`:
 
 ```python
-"""Passwort-Hashing mit `hashlib.scrypt` (Spec 6).
+"""Password hashing with `hashlib.scrypt` (spec 6).
 
-**Warum scrypt und nicht Argon2 oder bcrypt:** beide brauchten eine neue
-Laufzeitabhaengigkeit (`argon2-cffi` bzw. `passlib`) fuer genau einen Hash in
-diesem Projekt. scrypt ist speicherhart, in der Standardbibliothek und fuer
-diesen Zweck ausreichend. Die Abhaengigkeitsliste in `pyproject.toml` bleibt
-dadurch unveraendert.
+**Why scrypt and not Argon2 or bcrypt:** both would need a new
+runtime dependency (`argon2-cffi` or `passlib` respectively) for exactly one
+hash in this project. scrypt is memory-hard, is in the standard library, and
+is sufficient for this purpose. The dependency list in `pyproject.toml`
+therefore stays unchanged.
 
-**Warum die Parameter im gespeicherten Wert stehen** (`scrypt$n$r$p$salt$hash`):
-werden die Kostenfaktoren spaeter angehoben, muessen bereits abgelegte Hashes
-weiter pruefbar bleiben - sonst sperrt ein Update den Betreiber aus seiner
-eigenen Bruecke aus. `verify_password` liest deshalb die Parameter aus dem
-Wert und nicht aus den Konstanten dieses Moduls.
+**Why the parameters live in the stored value** (`scrypt$n$r$p$salt$hash`):
+if the cost factors are raised later, already-stored hashes must remain
+checkable - otherwise an update would lock the operator out of their
+own bridge. `verify_password` therefore reads the parameters from the
+value and not from this module's constants.
 
-Der Speicherbedarf von scrypt ist 128 * n * r, hier also 16 MiB. Das liegt
-unter der Vorgabe, die `hashlib.scrypt` ohne gesetztes `maxmem` durchlaesst
-(32 MiB) - deshalb steht dort kein `maxmem`-Argument.
+The memory requirement of scrypt is 128 * n * r, here 16 MiB. That is
+below the limit that `hashlib.scrypt` allows without a set `maxmem`
+(32 MiB) - which is why no `maxmem` argument appears there.
 """
 
 from __future__ import annotations
@@ -551,10 +553,10 @@ from __future__ import annotations
 import hashlib
 import secrets
 
-# Kein Wert aus einem Sicherheitsvakuum, sondern der uebliche interaktive
-# Arbeitspunkt fuer scrypt: rund 16 MiB Speicher und ein Bruchteil einer
-# Sekunde je Pruefung. Hoeher gesetzt wuerde jeder Login auf einem
-# Raspberry Pi spuerbar traege.
+# Not a value from a security vacuum, but the usual interactive
+# working point for scrypt: around 16 MiB of memory and a fraction of a
+# second per check. Set higher, every login on a
+# Raspberry Pi would become noticeably sluggish.
 _N = 2**14
 _R = 8
 _P = 1
@@ -563,26 +565,26 @@ _KEY_BYTES = 32
 
 _SCHEME = "scrypt"
 
-# Kuerzer waere ein Passwort, das eine Drosselung von 30 Sekunden je fuenf
-# Versuchen nicht mehr rettet (siehe `throttle`). Laenger vorzuschreiben
-# fuehrt erfahrungsgemaess zu einem Zettel am Bildschirm.
+# A shorter password would no longer be saved by a throttle of 30 seconds
+# per five attempts (see `throttle`). Requiring it to be longer tends,
+# in practice, to end up on a sticky note on the screen.
 MIN_PASSWORD_LENGTH = 8
 
 
 def hash_password(password: str) -> str:
-    """Rechnet den abzulegenden Wert - mit frischem Salz bei jedem Aufruf."""
+    """Computes the value to store - with a fresh salt on every call."""
     salt = secrets.token_bytes(_SALT_BYTES)
     key = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=_N, r=_R, p=_P, dklen=_KEY_BYTES)
     return f"{_SCHEME}${_N}${_R}${_P}${salt.hex()}${key.hex()}"
 
 
 def verify_password(password: str, stored: str) -> bool:
-    """Prueft `password` gegen einen abgelegten Wert.
+    """Checks `password` against a stored value.
 
-    Gibt bei jedem unlesbaren, fremden oder verstuemmelten `stored` schlicht
-    `False` zurueck, statt zu werfen: der Wert kommt aus einer Datei auf der
-    Platte des Betreibers, und ein Tippfehler darin soll einen 401 ergeben,
-    keinen 500 mit Traceback im Log."""
+    Simply returns `False` for any unreadable, foreign, or malformed
+    `stored`, rather than raising: the value comes from a file on the
+    operator's disk, and a typo in it should produce a 401,
+    not a 500 with a traceback in the log."""
     parts = stored.split("$")
     if len(parts) != 6 or parts[0] != _SCHEME:
         return False
@@ -599,8 +601,8 @@ def verify_password(password: str, stored: str) -> bool:
             dklen=len(expected),
         )
     except ValueError:
-        # Unleserliche Hex-Zeichen, unsinnige Parameter (n keine Zweierpotenz,
-        # dklen 0) - alles derselbe Fall: dieser Wert ist kein Hash.
+        # Unreadable hex characters, nonsensical parameters (n not a power
+        # of two, dklen 0) - all the same case: this value is not a hash.
         return False
     return secrets.compare_digest(key, expected)
 ```
@@ -608,7 +610,7 @@ def verify_password(password: str, stored: str) -> bool:
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/auth/test_passwords.py -v`
-Expected: PASS (6 Tests)
+Expected: PASS (6 tests)
 
 - [ ] **Step 6: Lint, typecheck, commit**
 
@@ -620,14 +622,14 @@ git commit -m "feat(auth): Passwort-Hashing mit scrypt aus der Standardbibliothe
 
 ---
 
-### Task 3: Sitzungen
+### Task 3: Sessions
 
 **Files:**
 - Create: `src/loxmatter/auth/sessions.py`
 - Test: `tests/auth/test_sessions.py`
 
 **Interfaces:**
-- Consumes: `AuthStore` aus Task 1.
+- Consumes: `AuthStore` from task 1.
 - Produces: `SESSION_COOKIE: str = "loxmatter_session"`, `SESSION_LIFETIME_SECONDS: int`, `open_session(auth: AuthStore, *, now: int | None = None) -> str`, `session_is_valid(auth: AuthStore, session_id: str, *, now: int | None = None) -> bool`.
 
 - [ ] **Step 1: Write the failing test**
@@ -635,11 +637,11 @@ git commit -m "feat(auth): Passwort-Hashing mit scrypt aus der Standardbibliothe
 `tests/auth/test_sessions.py`:
 
 ```python
-"""Tests fuer die Sitzungsverwaltung (Spec 7).
+"""Tests for session management (spec 7).
 
-`now` ist in beiden Funktionen ein Parameter, damit diese Tests Zeit
-vergehen lassen koennen, ohne zu schlafen - eine Sitzung mit 30 Tagen
-Laufzeit liesse sich sonst gar nicht pruefen.
+`now` is a parameter in both functions so that these tests can let time
+pass without sleeping - a session with a 30-day lifetime could otherwise
+not be tested at all.
 """
 
 from __future__ import annotations
@@ -692,8 +694,8 @@ def test_a_session_expires(tmp_path):
 
 
 def test_an_expired_session_is_removed_when_it_is_checked(tmp_path):
-    """Sonst blieben abgelaufene Zeilen liegen, bis zufaellig jemand eine
-    neue Sitzung anlegt."""
+    """Otherwise expired rows would just sit there until someone happens to
+    create a new session."""
     store = _store(tmp_path)
     try:
         session_id = open_session(store.auth, now=1000)
@@ -705,9 +707,9 @@ def test_an_expired_session_is_removed_when_it_is_checked(tmp_path):
 
 
 def test_a_session_is_extended_only_after_a_day(tmp_path):
-    """Gleitende Verlaengerung ohne Schreibzugriff bei JEDEM Aufruf: eine
-    Oberflaeche mit Live-Ansicht stellt viele Anfragen je Minute, und jede
-    davon eine SQLite-Schreiboperation waere reine Verschwendung."""
+    """Sliding extension without a write access on EVERY call: an
+    interface with a live view sends many requests per minute, and every
+    one of them being a SQLite write would be pure waste."""
     store = _store(tmp_path)
     try:
         session_id = open_session(store.auth, now=1000)
@@ -742,22 +744,21 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.auth.session
 `src/loxmatter/auth/sessions.py`:
 
 ```python
-"""Sitzungen: anlegen, pruefen, gleitend verlaengern (Spec 7).
+"""Sessions: create, check, extend on a sliding basis (spec 7).
 
-**Warum in der Datenbank und nicht im Speicher:** der Dienst laeuft mit
-`restart: unless-stopped` (siehe `deploy/testhost/docker-compose.yml`). Ein
-Neustart - nach einem Update, nach einem Stromausfall, nach einem Absturz -
-duerfte sonst jeden angemeldeten Browser abmelden, und der Betreiber saehe
-statt seiner Bruecke einen Login-Bildschirm, ohne zu wissen warum.
+**Why in the database and not in memory:** the service runs with
+`restart: unless-stopped` (see `deploy/testhost/docker-compose.yml`). A
+restart - after an update, after a power outage, after a crash - would
+otherwise log out every logged-in browser, and the operator would see a
+login screen instead of their bridge, with no idea why.
 
-**Warum ein serverseitiger Eintrag und kein signiertes Cookie:** ein
-signiertes Cookie liesse sich nicht zurueckziehen. `POST /auth/logout` und
-`loxmatter set-password` sollen eine Sitzung wirklich beenden koennen, nicht
-nur den Browser bitten, sie zu vergessen.
+**Why a server-side entry and not a signed cookie:** a signed cookie could
+not be revoked. `POST /auth/logout` and `loxmatter set-password` are meant
+to actually end a session, not just ask the browser to forget it.
 
-`now` ist in beiden Funktionen ein optionaler Parameter (Unix-Sekunden).
-Produktivcode uebergibt ihn nie; die Tests brauchen ihn, um dreissig Tage
-vergehen zu lassen, ohne zu schlafen.
+`now` is an optional parameter (Unix seconds) in both functions.
+Production code never passes it; the tests need it to let thirty days
+pass without sleeping.
 """
 
 from __future__ import annotations
@@ -767,26 +768,25 @@ import time
 
 from loxmatter.model.auth_store import AuthStore
 
-# Der Cookie-Name. Steht hier und nicht in `api/auth.py`, weil ihn zwei
-# Stellen brauchen: der Router setzt ihn, der Waechter in
-# `loxone/server.py` liest ihn. Zwei Schreibweisen desselben Namens waeren
-# ein Fehler, den niemand im Test bemerkt, weil beide Seiten fuer sich
-# funktionieren.
+# The cookie name. Lives here and not in `api/auth.py` because two places
+# need it: the router sets it, the guard in `loxone/server.py` reads it.
+# Two different spellings of the same name would be a bug that no test
+# would notice, because both sides work fine on their own.
 SESSION_COOKIE = "loxmatter_session"
 
 SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
 
-# Verlaengert wird erst, wenn mehr als ein Tag der Laufzeit verbraucht ist -
-# siehe `session_is_valid`.
+# Only extended once more than one day of the lifetime has been used up -
+# see `session_is_valid`.
 _EXTEND_AFTER_SECONDS = 24 * 60 * 60
 
 
 def open_session(auth: AuthStore, *, now: int | None = None) -> str:
-    """Legt eine Sitzung an und gibt ihre Kennung zurueck.
+    """Creates a session and returns its identifier.
 
-    32 Byte aus `secrets.token_hex` - dieselbe Groessenordnung wie das
-    empfohlene API-Token (`openssl rand -hex 32`), weil diese Kennung
-    genau dasselbe wert ist: wer sie hat, ist angemeldet."""
+    32 bytes from `secrets.token_hex` - the same order of magnitude as the
+    recommended API token (`openssl rand -hex 32`), because this
+    identifier is worth exactly the same: whoever holds it is logged in."""
     moment = int(time.time()) if now is None else now
     auth.purge_expired_sessions(moment)
     session_id = secrets.token_hex(32)
@@ -795,15 +795,15 @@ def open_session(auth: AuthStore, *, now: int | None = None) -> str:
 
 
 def session_is_valid(auth: AuthStore, session_id: str, *, now: int | None = None) -> bool:
-    """Gilt diese Sitzung noch? Verlaengert sie dabei gleitend.
+    """Is this session still valid? Extends it on a sliding basis while at it.
 
-    Die Verlaengerung passiert hoechstens einmal je `_EXTEND_AFTER_SECONDS`
-    und nicht bei jedem Aufruf: diese Funktion laeuft in JEDER Anfrage an
-    `/api`, und die Oberflaeche stellt beim Bedienen mehrere je Sekunde. Ein
-    `UPDATE` pro Anfrage waere eine SQLite-Schreiboperation fuer nichts.
+    The extension happens at most once per `_EXTEND_AFTER_SECONDS`, not on
+    every call: this function runs on EVERY request to `/api`, and the
+    interface issues several per second while in use. An `UPDATE` per
+    request would be a SQLite write operation for nothing.
 
-    Eine abgelaufene Sitzung wird hier gleich geloescht - der Aufraeumpfad,
-    der ohne einen neuen Login nie liefe."""
+    An expired session is deleted right here - the cleanup path that would
+    otherwise never run without a fresh login."""
     moment = int(time.time()) if now is None else now
     expires_at = auth.session_expires_at(session_id)
     if expires_at is None:
@@ -819,7 +819,7 @@ def session_is_valid(auth: AuthStore, session_id: str, *, now: int | None = None
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/auth/test_sessions.py -v`
-Expected: PASS (7 Tests)
+Expected: PASS (7 tests)
 
 - [ ] **Step 5: Lint, typecheck, commit**
 
@@ -831,26 +831,26 @@ git commit -m "feat(auth): Sitzungen in der Datenbank, gleitend verlaengert"
 
 ---
 
-### Task 4: Drosselung gegen Durchprobieren
+### Task 4: Throttling against brute-forcing
 
 **Files:**
 - Create: `src/loxmatter/auth/throttle.py`
 - Test: `tests/auth/test_throttle.py`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: `LoginThrottle` mit `retry_after(client: str, *, now: float | None = None) -> int`, `record_failure(client: str, *, now: float | None = None) -> None`, `record_success(client: str) -> None`; Konstanten `FAILURES_BEFORE_THROTTLING = 5`, `THROTTLE_SECONDS = 30`.
+- Consumes: nothing.
+- Produces: `LoginThrottle` with `retry_after(client: str, *, now: float | None = None) -> int`, `record_failure(client: str, *, now: float | None = None) -> None`, `record_success(client: str) -> None`; constants `FAILURES_BEFORE_THROTTLING = 5`, `THROTTLE_SECONDS = 30`.
 
 - [ ] **Step 1: Write the failing test**
 
 `tests/auth/test_throttle.py`:
 
 ```python
-"""Tests fuer die Login-Drosselung (Spec 8).
+"""Tests for login throttling (Spec 8).
 
-Die Kernfrage: bremst sie nach genug Fehlversuchen, laesst sie den
-rechtmaessigen Betreiber danach wieder durch, und trifft sie wirklich nur
-die Adresse, die daneben lag?
+The core question: does it slow things down after enough failed
+attempts, does it let the legitimate operator back through afterward,
+and does it really only hit the address that got it wrong?
 """
 
 from __future__ import annotations
@@ -885,8 +885,8 @@ def test_the_block_expires():
 
 
 def test_a_success_clears_the_counter():
-    """Sonst sperrte sich der Betreiber nach fuenf Vertippern selbst aus,
-    obwohl er das Passwort inzwischen richtig eingegeben hat."""
+    """Otherwise the operator would lock themselves out after five typos,
+    even though they have since entered the password correctly."""
     throttle = LoginThrottle()
     for _ in range(FAILURES_BEFORE_THROTTLING):
         throttle.record_failure("10.0.0.1", now=0.0)
@@ -920,21 +920,20 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.auth.throttl
 `src/loxmatter/auth/throttle.py`:
 
 ```python
-"""Bremse gegen das Durchprobieren von Passwoertern (Spec 8).
+"""Brake against brute-forcing passwords (spec 8).
 
-Der Grund, warum es dieses Modul ueberhaupt gibt: ein Passwort ist ratbar,
-ein Token aus `openssl rand -hex 32` nicht. Ohne Bremse waere der Login also
-der schwaechere Weg in denselben Dienst - und dieser Entwurf haette die
-Absicherung verschlechtert, waehrend er sie bequemer macht.
+The reason this module exists at all: a password is guessable, a token
+from `openssl rand -hex 32` is not. Without a brake, login would therefore
+be the weaker way into the same service - and this design would have made
+the security worse while making it more convenient.
 
-**Im Speicher und nicht in der Datenbank:** das ist fluechtiger Zustand, der
-keinen Schreibzugriff je Fehlversuch rechtfertigt. Ein Neustart loescht ihn -
-nur kann ein Angreifer keinen ausloesen, und ein Betreiber, der neu startet,
-um sich schneller wieder anmelden zu koennen, betrachtet sein eigenes
-Passwort ohnehin nicht als Angriff.
+**In memory and not in the database:** this is transient state that does
+not justify a write on every failed attempt. A restart clears it - but an
+attacker cannot trigger one, and an operator who restarts to be able to
+log back in faster does not consider their own password an attack anyway.
 
-**`time.monotonic` und nicht `time.time`:** eine Zeitumstellung oder ein
-NTP-Sprung darf eine Sperre weder verlaengern noch aufheben.
+**`time.monotonic` and not `time.time`:** a clock change or an NTP jump
+must neither extend nor lift a lockout.
 """
 
 from __future__ import annotations
@@ -948,18 +947,18 @@ THROTTLE_SECONDS = 30
 
 @dataclass
 class LoginThrottle:
-    """Zaehlt Fehlversuche je Aufrufer. Eine Instanz je Router, siehe
+    """Counts failed attempts per caller. One instance per router, see
     `api.auth.build_auth_router`."""
 
     _failures: dict[str, int] = field(default_factory=dict)
     _blocked_until: dict[str, float] = field(default_factory=dict)
 
     def retry_after(self, client: str, *, now: float | None = None) -> int:
-        """Wie viele Sekunden dieser Aufrufer noch warten muss - `0`, wenn er
-        es sofort versuchen darf.
+        """How many seconds this caller still has to wait - `0` if they may
+        try again immediately.
 
-        Aufgerundet, damit die Meldung in der Oberflaeche ("in X Sekunden
-        wieder moeglich") nie zu frueh zum Wiederholen einlaedt."""
+        Rounded up so the message in the interface ("possible again in X
+        seconds") never invites a retry too early."""
         moment = time.monotonic() if now is None else now
         blocked_until = self._blocked_until.get(client)
         if blocked_until is None or blocked_until <= moment:
@@ -974,8 +973,8 @@ class LoginThrottle:
             self._blocked_until[client] = moment + THROTTLE_SECONDS
 
     def record_success(self, client: str) -> None:
-        """Setzt Zaehler und Sperre zurueck - wer das Passwort kennt, ist
-        kein Angreifer, auch wenn er sich vorher fuenfmal vertippt hat."""
+        """Resets counter and lockout - whoever knows the password is not
+        an attacker, even if they mistyped it five times before."""
         self._failures.pop(client, None)
         self._blocked_until.pop(client, None)
 ```
@@ -983,7 +982,7 @@ class LoginThrottle:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/auth/test_throttle.py -v`
-Expected: PASS (6 Tests)
+Expected: PASS (6 tests)
 
 - [ ] **Step 5: Lint, typecheck, commit**
 
@@ -995,30 +994,30 @@ git commit -m "feat(auth): Drosselung nach fuenf Fehlversuchen je Adresse"
 
 ---
 
-### Task 5: Der Auth-Router
+### Task 5: The auth router
 
 **Files:**
 - Create: `src/loxmatter/api/auth.py`
-- Modify: `src/loxmatter/loxone/server.py` (Import und `app.include_router`)
+- Modify: `src/loxmatter/loxone/server.py` (import and `app.include_router`)
 - Test: `tests/api/test_auth.py`
 
 **Interfaces:**
-- Consumes: `hash_password`, `verify_password`, `MIN_PASSWORD_LENGTH` (Task 2); `SESSION_COOKIE`, `SESSION_LIFETIME_SECONDS`, `open_session`, `session_is_valid` (Task 3); `LoginThrottle` (Task 4); `Store.auth` (Task 1).
-- Produces: `build_auth_router(store: Store) -> APIRouter` mit den vier Routen; die Antwortmodelle `AuthInfoOut` (`password_set: bool`, `authenticated: bool`) und `StatusOut` (`status: str`).
+- Consumes: `hash_password`, `verify_password`, `MIN_PASSWORD_LENGTH` (task 2); `SESSION_COOKIE`, `SESSION_LIFETIME_SECONDS`, `open_session`, `session_is_valid` (task 3); `LoginThrottle` (task 4); `Store.auth` (task 1).
+- Produces: `build_auth_router(store: Store) -> APIRouter` with the four routes; the response models `AuthInfoOut` (`password_set: bool`, `authenticated: bool`) and `StatusOut` (`status: str`).
 
 - [ ] **Step 1: Write the failing test**
 
 `tests/api/test_auth.py`:
 
 ```python
-"""Tests fuer die vier Zugangs-Routen (Spec 8).
+"""Tests for the four access routes (Spec 8).
 
-Sie haengen als einzige unter `/auth` ausserhalb des Waechters - sie muessen
-unangemeldet erreichbar sein, sonst koennte sich niemand anmelden.
+They are the only ones hanging under `/auth` outside the guard - they must
+be reachable while signed out, or nobody could ever sign in.
 
-`httpx.AsyncClient` fuehrt einen eigenen Cookie-Speicher: was `POST
-/auth/login` setzt, schickt jede weitere Anfrage desselben Clients von
-selbst mit. Genau so verhaelt sich auch der Browser.
+`httpx.AsyncClient` carries its own cookie store: whatever `POST
+/auth/login` sets, every further request from the same client sends along
+on its own. That's exactly how the browser behaves too.
 """
 
 from __future__ import annotations
@@ -1049,7 +1048,7 @@ class _NullSender:
 async def auth_client(
     tmp_path: Path, no_invoke: Any
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Store]]:
-    """Eine App ohne gesetztes Passwort - der Zustand der Ersteinrichtung."""
+    """An app with no password set - the state of initial setup."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -1111,8 +1110,8 @@ async def test_login_with_a_wrong_password_is_rejected(auth_client):
 
 
 async def test_login_before_setup_says_so(auth_client):
-    """409 und nicht 401: es gibt kein Passwort, mit dem dieser Aufruf
-    gelingen koennte - eine Wiederholung mit Zugangsdaten hilft nicht."""
+    """409, not 401: there is no password this call could ever succeed
+    with - retrying with credentials doesn't help."""
     client, _ = auth_client
     response = await client.post("/auth/login", json={"password": PASSWORT})
     assert response.status_code == 409
@@ -1128,8 +1127,8 @@ async def test_repeated_wrong_passwords_are_throttled(auth_client):
 
 
 async def test_logout_ends_the_session_on_the_server(auth_client):
-    """Nicht nur das Cookie loeschen: derselbe Wert darf danach nicht mehr
-    gelten, sonst lebt eine gestohlene Kennung weiter."""
+    """Not just clearing the cookie: the same value must no longer be valid
+    afterward, or a stolen identifier keeps living on."""
     client, store = auth_client
     await client.post("/auth/setup", json={"password": PASSWORT})
     session_id = client.cookies.get("loxmatter_session")
@@ -1158,30 +1157,30 @@ async def test_no_response_ever_contains_the_password_or_its_hash(auth_client):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/api/test_auth.py -v`
-Expected: FAIL — 404 auf allen vier Routen (der Router existiert noch nicht)
+Expected: FAIL — 404 on all four routes (the router does not yet exist)
 
 - [ ] **Step 3: Write the router**
 
 `src/loxmatter/api/auth.py`:
 
 ```python
-"""Die vier Zugangs-Routen: `/auth-info`, `/auth/setup`, `/auth/login`,
+"""The four access routes: `/auth-info`, `/auth/setup`, `/auth/login`,
 `/auth/logout` (Spec 8).
 
-**Diese Routen haengen als einzige NICHT hinter `build_api_guard`** - sie
-muessen unangemeldet erreichbar sein, sonst koennte sich niemand anmelden.
-Sie werden in `loxone.server.build_app` deshalb bewusst ohne
-`dependencies=api_guard` eingebunden, neben `/health`.
+**These are the only routes that do NOT hang behind `build_api_guard`** -
+they must be reachable while logged out, otherwise no one could log in.
+`loxone.server.build_app` therefore deliberately wires them in without
+`dependencies=api_guard`, alongside `/health`.
 
-Was sie deshalb NICHT ausliefern: irgendetwas ueber den Zustand der Bruecke.
-`/auth-info` sagt genau zwei Wahrheitswerte - ob ein Passwort gesetzt ist und
-ob DIESER Aufrufer angemeldet ist. Beides erfaehrt ein Aufrufer ohnehin
-daran, wie `/api/devices` ihm antwortet; hier steht es nur so, dass die
-Oberflaeche nicht raten muss, welchen Bildschirm sie zeigt.
+What they therefore do NOT deliver: anything about the state of the
+bridge. `/auth-info` states exactly two booleans - whether a password is
+set and whether THIS caller is logged in. A caller learns both anyway from
+how `/api/devices` responds to it; it is stated here only so the UI does
+not have to guess which screen to show.
 
-**Kein Geheimnis verlaesst dieses Modul.** Weder Passwort noch Hash noch
-Sitzungskennung erscheinen in einer Antwort (die Kennung reist
-ausschliesslich im `Set-Cookie`) oder in einem Log - in keinem Zweig.
+**No secret leaves this module.** Neither password nor hash nor session id
+appears in a response (the id travels exclusively in the `Set-Cookie`) or
+in a log - in any branch.
 """
 
 from __future__ import annotations
@@ -1215,13 +1214,13 @@ class StatusOut(BaseModel):
 
 def build_auth_router(store: Store) -> APIRouter:
     router = APIRouter()
-    # Eine Instanz je App, nicht je Anfrage - sonst zaehlte sie nichts.
+    # One instance per app, not per request - otherwise it would count nothing.
     throttle = LoginThrottle()
 
     def _require_length(password: str) -> None:
-        """Eigene Pruefung statt `Field(min_length=...)` am Modell: die
-        Meldung landet in der Oberflaeche und soll dort auf Deutsch stehen
-        und sagen, was zu tun ist - nicht als pydantic-Fehlerliste."""
+        """Its own check instead of `Field(min_length=...)` on the model: the
+        message ends up in the UI and should be in German there
+        and say what to do - not as a pydantic error list."""
         if len(password) < MIN_PASSWORD_LENGTH:
             raise HTTPException(
                 status_code=422,
@@ -1229,15 +1228,15 @@ def build_auth_router(store: Store) -> APIRouter:
             )
 
     def _start_session(response: Response) -> None:
-        """Legt eine Sitzung an und haengt das Cookie an die Antwort.
+        """Creates a session and attaches the cookie to the response.
 
-        `secure` fehlt hier ABSICHTLICH und darf nicht "der Sicherheit
-        halber" ergaenzt werden: dieser Dienst spricht HTTP (Spec 14.1), ein
-        `Secure`-Cookie wuerde vom Browser verworfen und niemand kaeme mehr
-        hinein. `samesite="strict"` ist zugleich der CSRF-Schutz - eine
-        fremde Seite kann damit keine zustandsaendernde Anfrage in einer
-        angemeldeten Sitzung ausloesen, weshalb es kein eigenes CSRF-Token
-        gibt."""
+        `secure` is DELIBERATELY missing here and must not be added "for
+        security's sake": this service speaks HTTP (spec 14.1), a
+        `Secure` cookie would be discarded by the browser and no one could
+        get in anymore. `samesite="strict"` is at the same time the CSRF
+        protection - a foreign site cannot use it to trigger a
+        state-changing request within a logged-in session, which is why
+        there is no separate CSRF token."""
         response.set_cookie(
             SESSION_COOKIE,
             open_session(store.auth),
@@ -1257,21 +1256,21 @@ def build_auth_router(store: Store) -> APIRouter:
 
     @router.post("/auth/setup")
     async def setup(body: PasswordIn, response: Response) -> StatusOut:
-        """Ersteinrichtung - ohne weiteren Nachweis, solange kein Passwort
-        gesetzt ist (Spec 5, Trust on first use).
+        """Initial setup - with no further proof, as long as no password
+        is set (spec 5, trust on first use).
 
-        Das ist eine bewusst getroffene Abwaegung und keine vergessene
-        Pruefung: zwischen dem Start ohne Passwort und dieser Vergabe kann
-        jeder, der den Dienst erreicht, ihn uebernehmen. Entschieden am
-        3. September 2026 gegen Einrichtungscode im Log, Zeitfenster und
-        Erstpasswort per CLI, damit die Einrichtung headless ueber die
-        Oberflaeche moeglich bleibt - und ausdruecklich auch fuer ein
-        Bestandssystem mit bereits konfiguriertem Token, das hier NICHT
-        zusaetzlich abgefragt wird.
+        This is a deliberately made trade-off, not a forgotten
+        check: between the start with no password and this assignment,
+        anyone who reaches the service can take it over. Decided on
+        September 3, 2026 against a setup code in the log, a time window, and
+        an initial password via CLI, so that setup can remain headless via
+        the interface - and expressly also for an
+        existing system with an already-configured token, which is NOT
+        additionally asked for here.
 
-        `set_password_hash_if_unset` entscheidet in einer einzigen
-        SQL-Anweisung, ob dieser Aufruf der erste war - deshalb koennen zwei
-        gleichzeitige Einrichtungen sich nicht ueberschreiben."""
+        `set_password_hash_if_unset` decides in a single
+        SQL statement whether this call was the first - so two
+        simultaneous setups cannot overwrite each other."""
         _require_length(body.password)
         if not store.auth.set_password_hash_if_unset(hash_password(body.password)):
             raise HTTPException(
@@ -1287,10 +1286,10 @@ def build_auth_router(store: Store) -> APIRouter:
 
     @router.post("/auth/login")
     async def login(body: PasswordIn, request: Request, response: Response) -> StatusOut:
-        # Die Peer-Adresse der Verbindung, NICHT `X-Forwarded-For`: den
-        # Header setzt jeder Aufrufer selbst, und die Drosselung liesse sich
-        # damit umgehen, indem man je Versuch eine andere Adresse behauptet.
-        client = request.client.host if request.client is not None else "unbekannt"
+        # The peer address of the connection, NOT `X-Forwarded-For`: every
+        # caller sets that header itself, and the throttle could
+        # be bypassed by claiming a different address per attempt.
+        client = request.client.host if request.client is not None else "unknown"
         wait = throttle.retry_after(client)
         if wait:
             raise HTTPException(
@@ -1299,9 +1298,9 @@ def build_auth_router(store: Store) -> APIRouter:
             )
         stored = store.auth.password_hash()
         if stored is None:
-            # 409 und nicht 401: es gibt kein Passwort, mit dem dieser Aufruf
-            # gelingen koennte - eine Wiederholung mit Zugangsdaten hilft
-            # nicht (dieselbe Unterscheidung wie in RFC 9110).
+            # 409 and not 401: there is no password this call could
+            # ever succeed with - retrying with credentials does not
+            # help (the same distinction as in RFC 9110).
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -1318,11 +1317,11 @@ def build_auth_router(store: Store) -> APIRouter:
 
     @router.post("/auth/logout")
     async def logout(request: Request, response: Response) -> StatusOut:
-        """Beendet die Sitzung SERVERSEITIG und raeumt danach das Cookie ab.
+        """Ends the session SERVER-SIDE and only then clears the cookie.
 
-        Die Reihenfolge ist der Punkt: ein Logout, der nur das Cookie
-        loescht, laesst eine bereits abgeflossene Kennung dreissig Tage
-        weiterleben."""
+        The order is the point: a logout that only clears the cookie
+        would leave an already-leaked identifier alive for thirty
+        days."""
         session_id = request.cookies.get(SESSION_COOKIE)
         if session_id is not None:
             store.auth.delete_session(session_id)
@@ -1334,31 +1333,31 @@ def build_auth_router(store: Store) -> APIRouter:
 
 - [ ] **Step 4: Wire the router into the app**
 
-In `src/loxmatter/loxone/server.py` den Import ergänzen:
+In `src/loxmatter/loxone/server.py`, add the import:
 
 ```python
 from loxmatter.api.auth import build_auth_router
 ```
 
-und in `build_app` direkt vor `app.mount("/static", ...)` einhängen:
+and hang it into `build_app` directly before `app.mount("/static", ...)`:
 
 ```python
-    # OHNE `dependencies=api_guard` - genau wie `/health`, `/cmd` und
-    # `/resync` weiter unten. Wer sich noch nicht angemeldet hat, muss diese
-    # vier Routen erreichen koennen, sonst gibt es keinen Weg hinein
-    # (siehe api/auth.py, Moduldocstring).
+    # WITHOUT `dependencies=api_guard` - just like `/health`, `/cmd`, and
+    # `/resync` further below. Anyone not yet logged in must be able to
+    # reach these four routes, otherwise there is no way in
+    # (see api/auth.py, module docstring).
     app.include_router(build_auth_router(store))
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/api/test_auth.py -v`
-Expected: PASS (10 Tests)
+Expected: PASS (10 tests)
 
 - [ ] **Step 6: Run the full suite**
 
 Run: `uv run pytest`
-Expected: PASS — die neuen Routen ändern an den bestehenden nichts.
+Expected: PASS — the new routes change nothing about the existing ones.
 
 - [ ] **Step 7: Lint, typecheck, commit**
 
@@ -1370,32 +1369,32 @@ git commit -m "feat(api): Routen fuer Ersteinrichtung, Login und Logout"
 
 ---
 
-### Task 6: Der Wächter akzeptiert das Sitzungs-Cookie
+### Task 6: The guard accepts the session cookie
 
 **Files:**
 - Modify: `src/loxmatter/loxone/server.py` (`build_api_guard`, `build_app`)
 - Test: `tests/api/test_security.py`
 
 **Interfaces:**
-- Consumes: `SESSION_COOKIE`, `session_is_valid` (Task 3); `Store` (Task 1).
-- Produces: `build_api_guard(token: str | None, store: Store)` — **die Signatur bekommt einen zweiten, verpflichtenden Parameter.** Jeder Aufrufer muss den Store mitgeben.
+- Consumes: `SESSION_COOKIE`, `session_is_valid` (task 3); `Store` (task 1).
+- Produces: `build_api_guard(token: str | None, store: Store)` — **the signature gets a second, mandatory parameter.** Every caller must pass the store along.
 
-Dieser Task ist additiv: der Wächter lässt zusätzlich Cookies durch, verweigert aber noch nichts, was er heute durchlässt. Die Sperre kommt in Task 8.
+This task is additive: the guard additionally lets cookies through, but does not yet refuse anything it lets through today. The lockdown comes in task 8.
 
 - [ ] **Step 1: Write the failing test**
 
-Die Tests brauchen Zugriff auf den Store der App, um ein Passwort zu setzen. Deshalb **zuerst** in `tests/api/test_security.py` `_build_client` und die beiden Fixtures so ändern, dass sie ihn mitgeben:
+The tests need access to the app's store to set a password. So **first**, change `_build_client` and both fixtures in `tests/api/test_security.py` so they pass it along:
 
 ```python
 async def _build_client(
     tmp_path: Path, no_invoke: Any, *, api_token: str | None
 ) -> AsyncIterator[tuple[httpx.AsyncClient, Any, int, Store]]:
-    """Baut Store, eine ECHTE `Runtime` (fuer `/resync`) und die App mit dem
-    gegebenen `api_token` - gemeinsamer Aufbau fuer `secured_client` und
-    `open_client` unten, die sich nur in `api_token` unterscheiden.
+    """Builds a store, a REAL `Runtime` (for `/resync`) and the app with the
+    given `api_token` - the shared setup for `secured_client` and
+    `open_client` below, which differ only in `api_token`.
 
-    Gibt seit dem WebUI-Login auch den `Store` mit heraus: die Tests
-    brauchen ihn, um ein Passwort zu setzen und sich anzumelden."""
+    Since the WebUI login, also hands out the `Store`: the tests need it to
+    set a password and log in."""
     store = Store(tmp_path / "t.sqlite")
     snapshot = load_snapshot("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -1416,14 +1415,15 @@ async def _build_client(
     store.close()
 ```
 
-Beide Fixtures (`secured_client`, `open_client`) geben das Vier-Tupel unverändert weiter; jeder bestehende Test in dieser Datei, der `client, app, device_id = ...` auspackt, wird auf `client, app, device_id, store = ...` erweitert (der Testlauf zeigt, welche das sind).
+Both fixtures (`secured_client`, `open_client`) pass the four-tuple through unchanged; every existing test in this file that unpacks `client, app, device_id = ...` gets extended to `client, app, device_id, store = ...` (the test run shows which ones those are).
 
-Danach der eigentliche neue Test:
+Then the actual new test:
 
 ```python
 async def test_a_session_cookie_opens_every_api_router(secured_client):
-    """Der zweite Nachweis neben dem Token: wer angemeldet ist, kommt ohne
-    `Authorization`-Header durch jede der fuenf Router-Gruppen."""
+    """The second proof alongside the token: whoever is signed in gets
+    through each of the five router groups without an `Authorization`
+    header."""
     client, _app, device_id, store = secured_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     assert (
@@ -1437,7 +1437,7 @@ async def test_a_session_cookie_opens_every_api_router(secured_client):
         "/api/diagnostics/system",
     ]:
         response = await client.get(path)
-        assert response.status_code == 200, f"{path} verlangte trotz Sitzung eine Anmeldung"
+        assert response.status_code == 200, f"{path} required a login despite the session"
 
 
 async def test_an_invalid_session_cookie_does_not_open_anything(secured_client):
@@ -1447,18 +1447,19 @@ async def test_an_invalid_session_cookie_does_not_open_anything(secured_client):
 
 
 async def test_the_token_still_works_next_to_the_cookie(secured_client):
-    """Der Weg fuer Skripte bleibt unveraendert - er ist der Grund, warum
-    das Token ueberhaupt bestehen bleibt."""
+    """The path for scripts stays unchanged - it's the reason the
+    token exists at all."""
     client, _app, _device_id, _store = secured_client
     response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
     assert response.status_code == 200
 
 
 async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secured_client):
-    """Der Punkt, an dem der Umweg ueber das Subprotokoll ueberfluessig wird:
-    das Cookie reist beim Handshake von selbst mit, weil dieser WebSocket
-    denselben Ursprung hat wie die Seite. Genau darauf verlaesst sich
-    `app.js`, seit dort `new WebSocket(url)` ohne zweites Argument steht."""
+    """The point where the detour via the subprotocol becomes unnecessary:
+    the cookie travels along with the handshake on its own, because this
+    WebSocket has the same origin as the page. `app.js` relies exactly on
+    that, ever since it started using `new WebSocket(url)` with no second
+    argument."""
     client, app, _device_id, store = secured_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     login = await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
@@ -1469,12 +1470,12 @@ async def test_the_live_websocket_connects_with_a_cookie_and_no_subprotocol(secu
     status = await _websocket_handshake_status(
         app, headers=[(b"cookie", f"loxmatter_session={session_id}".encode())]
     )
-    assert status is None, "Der Handshake wurde trotz gueltiger Sitzung abgelehnt"
+    assert status is None, "The handshake was rejected despite a valid session"
 ```
 
-`_websocket_handshake_status` gibt es in dieser Datei bereits (sie prüft damit heute die Ablehnung vor `websocket.accept()`); der Aufruf ist um einen `headers`-Parameter zu erweitern, falls er ihn noch nicht kennt — der bestehende Aufbau der Funktion zeigt, wie die Handshake-Kopfzeilen dort gesetzt werden. `None` steht für „nicht abgelehnt", also einen zustande gekommenen Handshake.
+`_websocket_handshake_status` already exists in this file (it currently uses it to check the rejection before `websocket.accept()`); the call needs to be extended with a `headers` parameter if it doesn't already have one — the existing structure of the function shows how the handshake header lines are set there. `None` stands for "not rejected", i.e. a handshake that went through.
 
-Import am Kopf der Datei ergänzen:
+Add an import at the top of the file:
 
 ```python
 from loxmatter.auth.passwords import hash_password
@@ -1483,11 +1484,11 @@ from loxmatter.auth.passwords import hash_password
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/api/test_security.py -v`
-Expected: FAIL — `test_a_session_cookie_opens_every_api_router` bekommt 401, weil der Wächter das Cookie noch nicht kennt.
+Expected: FAIL — `test_a_session_cookie_opens_every_api_router` gets 401, because the guard doesn't know the cookie yet.
 
 - [ ] **Step 3: Teach the guard about cookies**
 
-In `src/loxmatter/loxone/server.py` die Imports ergänzen:
+In `src/loxmatter/loxone/server.py`, add the imports:
 
 ```python
 from starlette.requests import HTTPConnection
@@ -1495,27 +1496,27 @@ from starlette.requests import HTTPConnection
 from loxmatter.auth.sessions import SESSION_COOKIE, session_is_valid
 ```
 
-`build_api_guard` umschreiben (Signatur und Rumpf; der vorhandene Docstring bleibt und bekommt den neuen Abschnitt):
+Rewrite `build_api_guard` (signature and body; the existing docstring stays and gets the new section):
 
 ```python
 def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[None]]:
-    """Schuetzt die `/api`-Routen, nicht die des Miniservers (Task 8, Phase 5).
+    """Protects the `/api` routes, not the Miniserver's (task 8, phase 5).
 
-    ... (bestehender Docstring unveraendert) ...
+    ... (existing docstring unchanged) ...
 
-    **Seit dem WebUI-Login gibt es zwei Nachweise statt einem.** Zuerst das
-    Sitzungs-Cookie (`loxmatter_session`, siehe `auth.sessions`), dann das
-    Bearer-Token. Das Cookie ist der Weg des Browsers, das Token der von
-    Skripten und `curl` - deshalb wird das Cookie zuerst geprueft: es ist
-    der haeufigere Fall, und es kostet einen SELECT statt eines
-    Hash-Vergleichs.
+    **Since the WebUI login there are two proofs instead of one.** First
+    the session cookie (`loxmatter_session`, see `auth.sessions`), then
+    the bearer token. The cookie is the browser's path, the token that of
+    scripts and `curl` - which is why the cookie is checked first: it is
+    the more common case, and it costs one SELECT instead of a hash
+    comparison.
 
-    `HTTPConnection` statt `Request`: es ist der gemeinsame Basistyp von
-    `Request` und `WebSocket`, und dieselbe Abhaengigkeit haengt an beiden
-    Sorten von Routen - `/api/live` ist eine WebSocket-Route, in der ein
-    `Request`-Parameter gar nicht aufloesbar waere. Das Cookie reist beim
-    WebSocket-Handshake von selbst mit (gleicher Ursprung), weshalb der
-    Browser dort seit dem Login kein Subprotokoll mehr braucht.
+    `HTTPConnection` instead of `Request`: it is the shared base type of
+    `Request` and `WebSocket`, and the same dependency hangs off both
+    kinds of routes - `/api/live` is a WebSocket route, in which a
+    `Request` parameter could not be resolved at all. The cookie travels
+    along with the WebSocket handshake by itself (same origin), which is
+    why the browser no longer needs a subprotocol there since the login.
     """
     expected = normalize_api_token(token)
 
@@ -1538,7 +1539,7 @@ def build_api_guard(token: str | None, store: Store) -> Callable[..., Awaitable[
     return guard
 ```
 
-In `build_app` den Aufruf anpassen:
+Adjust the call in `build_app`:
 
 ```python
     api_guard = [Depends(build_api_guard(api_token, store))]
@@ -1546,14 +1547,14 @@ In `build_app` den Aufruf anpassen:
 
 - [ ] **Step 4: Fix the direct guard tests**
 
-`tests/api/test_security.py` enthält `test_guard_*`-Tests, die `build_api_guard` ohne App aufrufen. Sie brauchen jetzt einen Store — in dieser Datei einen Helfer ergänzen und alle `build_api_guard(...)`-Aufrufe darauf umstellen:
+`tests/api/test_security.py` contains `test_guard_*` tests that call `build_api_guard` without an app. They now need a store — add a helper in this file and switch all `build_api_guard(...)` calls to use it:
 
 ```python
 @pytest.fixture
 def guard_store(tmp_path):
-    """Ein leerer Store fuer die Tests, die `build_api_guard` direkt aufrufen -
-    ohne Passwort und ohne Sitzung, damit dort weiterhin allein das Token
-    ueber Durchlassen oder Ablehnen entscheidet."""
+    """An empty store for the tests that call `build_api_guard` directly -
+    with no password and no session, so that the token alone continues to
+    decide there between letting through or refusing."""
     store = Store(tmp_path / "guard.sqlite")
     yield store
     store.close()
@@ -1567,7 +1568,7 @@ Expected: PASS
 - [ ] **Step 6: Run the full suite**
 
 Run: `uv run pytest`
-Expected: PASS — `build_api_guard` hat nur einen Parameter dazubekommen, `build_app` reicht ihn selbst durch; kein anderer Aufrufer existiert.
+Expected: PASS — `build_api_guard` only gained one parameter, `build_app` passes it through itself; no other caller exists.
 
 - [ ] **Step 7: Lint, typecheck, commit**
 
@@ -1579,52 +1580,52 @@ git commit -m "feat(server): Waechter akzeptiert das Sitzungs-Cookie neben dem T
 
 ---
 
-### Task 7: Die Oberfläche — Einrichtung, Login, keine Token-Box
+### Task 7: The interface — setup, login, no token box
 
 **Files:**
 - Modify: `src/loxmatter/web/app.js`, `src/loxmatter/web/index.html`, `src/loxmatter/web/style.css`
-- Test: `tests/api/test_web.py` (nur die Auslieferungstests, siehe Schritt 6)
+- Test: `tests/api/test_web.py` (only the delivery tests, see step 6)
 
 **Interfaces:**
-- Consumes: `GET /auth-info`, `POST /auth/setup`, `POST /auth/login`, `POST /auth/logout` (Task 5); das Cookie wird vom Browser gesetzt und mitgeschickt.
-- Produces: nichts für spätere Tasks.
+- Consumes: `GET /auth-info`, `POST /auth/setup`, `POST /auth/login`, `POST /auth/logout` (task 5); the cookie is set by the browser and sent along automatically.
+- Produces: nothing for later tasks.
 
 - [ ] **Step 1: Strip the token plumbing out of `app.js`**
 
-Ersatzlos löschen: die Konstanten `TOKEN_STORAGE_KEY` und `WEBSOCKET_BEARER_MARKER` samt ihrer Kommentarblöcke (Zeilen um 33–62), die Funktionen `readStoredToken` und `authHeaders` (um 65–90), und in `app()` die Methoden `tokenStatusText`, `startTokenEdit`, `cancelTokenEdit`, `saveToken`, `clearToken`, `reloadAfterTokenChange` sowie die Zustandsfelder `tokenIsSet`, `tokenEditing`, `tokenDraft`.
+Delete outright, with nothing replacing them: the constants `TOKEN_STORAGE_KEY` and `WEBSOCKET_BEARER_MARKER` along with their comment blocks (lines around 33–62), the functions `readStoredToken` and `authHeaders` (around 65–90), and in `app()` the methods `tokenStatusText`, `startTokenEdit`, `cancelTokenEdit`, `saveToken`, `clearToken`, `reloadAfterTokenChange` as well as the state fields `tokenIsSet`, `tokenEditing`, `tokenDraft`.
 
 - [ ] **Step 2: Point the two `fetch` calls at the cookie**
 
-In `requestJson` den Kopfzeilen-Block ersetzen:
+In `requestJson`, replace the headers block:
 
 ```javascript
     response = await fetch(path, {
       method,
-      // Das Sitzungs-Cookie statt eines Tokens im Header: `same-origin`
-      // schickt es an genau den Ursprung mit, von dem diese Seite geladen
-      // wurde, und an keinen anderen. Ein `Authorization`-Header wird hier
-      // nicht mehr gesetzt - der Weg ueber das Token gibt es weiterhin,
-      // aber fuer Skripte, nicht fuer diesen Browser (siehe api/auth.py).
+      // The session cookie instead of a token in the header: `same-origin`
+      // sends it along to exactly the origin this page was loaded from,
+      // and to no other. An `Authorization` header is no longer set
+      // here - the path via the token still exists, but for scripts, not
+      // for this browser (see api/auth.py).
       credentials: "same-origin",
       headers: body !== undefined ? { "Content-Type": "application/json" } : {},
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
 ```
 
-In `requestDownload` entsprechend:
+In `requestDownload` accordingly:
 
 ```javascript
     response = await fetch(path, { credentials: "same-origin" });
 ```
 
-Den Docstring über `requestDownload` anpassen — er verweist heute auf `authHeaders()`:
+Adjust the docstring above `requestDownload` — it currently references `authHeaders()`:
 
 ```javascript
 /**
- * Laedt eine Datei von `/api` herunter. Ueber `fetch` und nicht ueber ein
- * `<a href>`, weil eine 401 sonst als roher Fehlertext im Browserfenster
- * landete statt in der Oberflaeche - und weil der Blob-Download so den
- * Dateinamen setzen kann.
+ * Downloads a file from `/api`. Via `fetch` and not via an
+ * `<a href>`, because a 401 would otherwise land as raw error text in the
+ * browser window instead of in the UI - and because the blob download can
+ * set the file name this way.
  */
 ```
 
@@ -1632,9 +1633,9 @@ Den Docstring über `requestDownload` anpassen — er verweist heute auf `authHe
 
 ```javascript
 /**
- * Fehler eines Aufrufs ohne gueltige Sitzung - eigene Klasse, damit die
- * Oberflaeche diesen Fall von jedem anderen Fehlschlag unterscheiden kann,
- * ohne auf einen Meldungstext zu pruefen.
+ * The error of a call with no valid session - its own class, so that the
+ * UI can distinguish this case from every other failure without
+ * checking a message text.
  */
 class UnauthorizedError extends Error {
   constructor() {
@@ -1644,14 +1645,14 @@ class UnauthorizedError extends Error {
 }
 ```
 
-und in `app()`:
+and in `app()`:
 
 ```javascript
     /**
-     * Eine 401 mitten im Betrieb heisst: die Sitzung ist abgelaufen oder
-     * wurde anderswo beendet. Dann zurueck auf den Login-Bildschirm - eine
-     * Fehlermeldung, die auf ein Eingabefeld verweist, das es nicht mehr
-     * gibt, waere schlimmer als gar keine.
+     * A 401 in the middle of operation means: the session has expired or
+     * was ended elsewhere. Then back to the login screen - an error
+     * message pointing at an input field that no longer exists would be
+     * worse than none at all.
      */
     noteAuthError(error) {
       if (error instanceof UnauthorizedError) {
@@ -1663,13 +1664,13 @@ und in `app()`:
 
 - [ ] **Step 4: Add the auth state and screens to `app()`**
 
-Die Zustandsfelder (an die Stelle des gelöschten Zugangs-Blocks):
+The state fields (in place of the deleted access block):
 
 ```javascript
-    // --- Zugang -----------------------------------------------------------
-    // `authReady` verhindert das Aufblitzen des falschen Bildschirms: bis
-    // `/auth-info` geantwortet hat, weiss die Seite nicht, ob sie Einrichtung,
-    // Login oder die App zeigen muss, und zeigt deshalb keines davon.
+    // --- Access -------------------------------------------------------
+    // `authReady` prevents the wrong screen from flashing up: until
+    // `/auth-info` has answered, the page doesn't know whether to show
+    // setup, login, or the app, and so shows none of them.
     authReady: false,
     passwordSet: false,
     authenticated: false,
@@ -1679,7 +1680,7 @@ Die Zustandsfelder (an die Stelle des gelöschten Zugangs-Blocks):
     authError: null,
 ```
 
-`init()` und die Zugangs-Methoden:
+`init()` and the access methods:
 
 ```javascript
     async init() {
@@ -1689,7 +1690,7 @@ Die Zustandsfelder (an die Stelle des gelöschten Zugangs-Blocks):
       }
     },
 
-    /** Fragt den Zustand des Zugangs ab - der erste Aufruf jeder Seite. */
+    /** Queries the access state - the first call on every page load. */
     async loadAuthInfo() {
       try {
         const info = await requestJson("GET", "/auth-info");
@@ -1703,9 +1704,9 @@ Die Zustandsfelder (an die Stelle des gelöschten Zugangs-Blocks):
     },
 
     /**
-     * Alles, was eine angemeldete Sitzung voraussetzt. Getrennt von `init`,
-     * weil es nach dem Login ein zweites Mal laufen muss - dann ohne
-     * Neuladen der Seite.
+     * Everything that requires a logged-in session. Kept separate from
+     * `init`, because it has to run a second time after login - then
+     * without reloading the page.
      */
     async startApp() {
       await this.loadDevices();
@@ -1725,9 +1726,9 @@ Die Zustandsfelder (an die Stelle des gelöschten Zugangs-Blocks):
     },
 
     /**
-     * Der gemeinsame Teil von Einrichtung und Login: absenden, Fehler
-     * anzeigen, bei Erfolg die App starten. Das Cookie setzt der Server,
-     * diese Seite fasst es nie an (es ist `HttpOnly`).
+     * The shared part of setup and login: submit, show errors, start the
+     * app on success. The server sets the cookie, this page never
+     * touches it (it is `HttpOnly`).
      */
     async submitPassword(path) {
       this.authBusy = true;
@@ -1739,8 +1740,8 @@ Die Zustandsfelder (an die Stelle des gelöschten Zugangs-Blocks):
         return;
       } finally {
         this.authBusy = false;
-        // In jedem Fall: ein Passwort bleibt nicht im Speicher der Seite
-        // stehen, auch nicht nach einem Fehlversuch.
+        // In every case: a password does not stay behind in the page's
+        // memory, not even after a failed attempt.
         this.passwordDraft = "";
         this.passwordRepeatDraft = "";
       }
@@ -1753,15 +1754,15 @@ Die Zustandsfelder (an die Stelle des gelöschten Zugangs-Blocks):
       try {
         await requestJson("POST", "/auth/logout");
       } catch {
-        // Auch ein fehlgeschlagener Logout soll abmelden: das Neuladen
-        // unten verwirft jeden geladenen Stand, und ohne gueltige Sitzung
-        // kommt die Seite ohnehin nur bis zum Login-Bildschirm.
+        // Even a failed logout is meant to log out: the reload below
+        // discards any loaded state, and without a valid session the
+        // page only gets as far as the login screen anyway.
       }
       window.location.reload();
     },
 ```
 
-`requestJson` wirft bei 401 einen `UnauthorizedError`, dessen Text für den Login-Bildschirm falsch wäre („Sitzung abgelaufen" bei einem Tippfehler im Passwort). Deshalb in `submitPassword` **nicht** `this.request` verwenden, sondern `requestJson` direkt — der 401-Text des Servers („Falsches Passwort.") kommt dann nicht durch. Damit die Meldung stimmt, in `requestJson` den 401-Zweig auf den Pfad einschränken:
+On a 401, `requestJson` throws an `UnauthorizedError`, whose text would be wrong for the login screen ("session expired" for a typo in the password). So in `submitPassword`, do **not** use `this.request`, but `requestJson` directly — the server's 401 text ("Falsches Passwort.") then does not come through. To keep the message correct, restrict the 401 branch in `requestJson` to the path:
 
 ```javascript
   if (response.status === 401 && !path.startsWith("/auth/")) {
@@ -1772,48 +1773,49 @@ Die Zustandsfelder (an die Stelle des gelöschten Zugangs-Blocks):
   }
 ```
 
-So trägt ein fehlgeschlagener Login den Servertext („Falsches Passwort.", „Zu viele Fehlversuche – in X Sekunden wieder möglich."), während eine 401 an `/api` weiterhin auf den Login-Bildschirm führt.
+This way a failed login carries the server's text ("Falsches Passwort.", "Zu viele Fehlversuche – in X Sekunden wieder möglich."), while a 401 on `/api` still leads to the login screen.
 
 - [ ] **Step 5: Simplify `connectLive`**
 
-Den gesamten Token-Block (Kommentar, `readStoredToken`, `try`/`catch` um den Konstruktor) ersetzen durch:
+Replace the entire token block (comment, `readStoredToken`, the `try`/`catch` around the constructor) with:
 
 ```javascript
     connectLive() {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const url = `${protocol}//${window.location.host}/api/live`;
-      // Kein Subprotokoll mehr: das Sitzungs-Cookie reist beim Handshake von
-      // selbst mit, weil dieser WebSocket denselben Ursprung hat wie die
-      // Seite. Der frueher noetige Umweg `new WebSocket(url, ["bearer",
-      // token])` - und mit ihm der Sonderfall, dass ein Token mit Leerzeichen
-      // den Konstruktor synchron werfen liess - entfaellt ersatzlos. Der
-      // Server liest das Subprotokoll weiterhin, aber fuer Skripte (siehe
-      // `loxone.server.build_api_guard`).
+      // No subprotocol anymore: the session cookie travels along with the
+      // handshake by itself, because this WebSocket has the same origin as
+      // the page. The detour previously needed, `new WebSocket(url,
+      // ["bearer", token])` - and with it the special case where a token
+      // with a space made the constructor throw synchronously - goes away
+      // with nothing replacing it. The server still reads the subprotocol,
+      // but for scripts (see `loxone.server.build_api_guard`).
       const socket = new WebSocket(url);
 ```
 
-Der Rest der Methode (die drei `addEventListener`) bleibt unverändert.
+The rest of the method (the three `addEventListener`) stays unchanged.
 
 - [ ] **Step 6: Replace the token box in `index.html`**
 
-Den kompletten `<div class="token-box">`-Block samt HTML-Kommentar darüber ersetzen durch einen Abmelde-Knopf:
+Replace the entire `<div class="token-box">` block along with the HTML comment above it with a logout button:
 
 ```html
         <!--
-          Zugang: seit dem WebUI-Login gibt es hier kein Token-Feld mehr,
-          sondern nur den Weg hinaus. Der Weg hinein sind die beiden
-          Bildschirme unter dieser Kopfzeile.
+          Access: since the WebUI login, there is no token field here
+          anymore, only the way out. The way in are the two screens below
+          this header.
         -->
         <button class="logout" x-show="authenticated" x-cloak @click="logout()">
           Abmelden
         </button>
 ```
 
-Direkt nach `<body x-data="app()">` und **vor** `<header>` die beiden Bildschirme einfügen; der bisherige Inhalt (`<header>` bis `</main>`) wird in ein `<template x-if="authenticated">` gehängt, damit ohne Sitzung nichts davon steht:
+Insert the two screens directly after `<body x-data="app()">` and **before** `<header>`; the previous content (`<header>` through `</main>`) is hung into a `<template x-if="authenticated">`, so that without a session none of it appears:
 
 ```html
-    <!-- Bis `/auth-info` geantwortet hat, zeigt die Seite bewusst nichts -
-         sonst blitzte je nach Antwort der falsche Bildschirm auf. -->
+    <!-- Until `/auth-info` has answered, the page deliberately shows
+         nothing - otherwise the wrong screen would flash up depending on
+         the answer. -->
     <template x-if="authReady && !authenticated && !passwordSet">
       <main class="auth-screen">
         <h1>loxmatter einrichten</h1>
@@ -1857,11 +1859,11 @@ Direkt nach `<body x-data="app()">` und **vor** `<header>` die beiden Bildschirm
     </template>
 ```
 
-In `style.css` die Regeln für `.token-box` und `.token-input` löschen und ersetzen:
+In `style.css`, delete the rules for `.token-box` and `.token-input` and replace them:
 
 ```css
-/* Der Einrichtungs- und der Login-Bildschirm: eine schmale Spalte in der
-   Seitenmitte, damit klar ist, dass hier nichts anderes zu tun ist. */
+/* The setup and login screens: a narrow column in the middle of the
+   page, so it is clear there is nothing else to do here. */
 .auth-screen {
   max-width: 26rem;
   margin: 4rem auto;
@@ -1895,16 +1897,16 @@ Run:
 rm -f /tmp/loxmatter-ui.sqlite && uv run loxmatter run --miniserver 192.0.2.1 --store-path /tmp/loxmatter-ui.sqlite --listen 8099
 ```
 
-Im Browser `http://localhost:8099/` öffnen. Erwartet, der Reihe nach:
-1. Einrichtungsbildschirm mit der Warnung, kein Token-Feld irgendwo.
-2. Zwei ungleiche Eingaben → „Die beiden Eingaben stimmen nicht überein."
-3. Ein Passwort unter 8 Zeichen → „Das Passwort muss mindestens 8 Zeichen haben."
-4. Gültiges Passwort zweimal → die App erscheint ohne Neuladen, der Verbindungspunkt geht auf „verbunden" (der WebSocket trägt jetzt das Cookie).
-5. Seite neu laden → weiterhin angemeldet.
-6. „Abmelden" → Login-Bildschirm. Falsches Passwort → „Falsches Passwort.". Fünf Fehlversuche → „Zu viele Fehlversuche – in X Sekunden wieder möglich.".
-7. Richtiges Passwort → App wieder da.
+Open `http://localhost:8099/` in the browser. Expected, in order:
+1. Setup screen with the warning, no token field anywhere.
+2. Two unequal entries → "Die beiden Eingaben stimmen nicht überein."
+3. A password under 8 characters → "Das Passwort muss mindestens 8 Zeichen haben."
+4. A valid password twice → the app appears without a reload, the connection indicator goes to "connected" (the WebSocket now carries the cookie).
+5. Reload the page → still logged in.
+6. "Abmelden" → login screen. Wrong password → "Falsches Passwort.". Five failed attempts → "Zu viele Fehlversuche – in X Sekunden wieder möglich.".
+7. Right password → app back again.
 
-Danach `rm -f /tmp/loxmatter-ui.sqlite`.
+Then `rm -f /tmp/loxmatter-ui.sqlite`.
 
 - [ ] **Step 8: Run the full suite, lint, commit**
 
@@ -1916,28 +1918,28 @@ git commit -m "feat(web): Einrichtungs- und Login-Bildschirm statt Token-Eingabe
 
 ---
 
-### Task 8: Ohne Passwort liefert `/api` nichts mehr aus
+### Task 8: Without a password `/api` no longer delivers anything
 
 **Files:**
 - Modify: `src/loxmatter/loxone/server.py` (`build_api_guard`), `src/loxmatter/cli.py` (`_warn_if_missing_api_token` → `_warn_if_no_password`)
-- Modify: `tests/api/conftest.py` (neuer Helfer) und jede Testdatei mit `build_app(...)`
+- Modify: `tests/api/conftest.py` (new helper) and every test file with `build_app(...)` calls
 - Test: `tests/api/test_security.py`
 
 **Interfaces:**
-- Consumes: alles aus Task 1–6.
-- Produces: `tests/api/conftest.py` exportiert `TEST_PASSWORD: str` und `async def authenticate(store: Store, client: httpx.AsyncClient) -> None`.
+- Consumes: everything from tasks 1–6.
+- Produces: `tests/api/conftest.py` exports `TEST_PASSWORD: str` and `async def authenticate(store: Store, client: httpx.AsyncClient) -> None`.
 
-**Das ist der brechende Task.** Nach Schritt 3 schlagen alle API-Tests fehl, bis Schritt 5 die Fixtures nachgezogen hat. Das ist erwartet und der Grund, warum beides in einem Task liegt.
+**This is the breaking task.** After step 3, all API tests fail until step 5 catches the fixtures up. That is expected and the reason both live in one task.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_security.py` anhängen:
+Append to `tests/api/test_security.py`:
 
 ```python
 async def test_without_a_password_every_api_route_is_closed(open_client):
-    """Die Verschaerfung aus Spec 4: bis hierher war genau dieser Zustand -
-    kein Passwort, kein Token - vollstaendig offen, mit nichts als einer
-    Warnung im Log."""
+    """The tightening from Spec 4: until now, exactly this state - no
+    password, no token - was completely open, with nothing but a warning in
+    the log."""
     client, _app, device_id, _store = open_client
     for path in [
         "/api/devices",
@@ -1951,41 +1953,41 @@ async def test_without_a_password_every_api_route_is_closed(open_client):
 
 
 async def test_without_a_password_the_miniserver_routes_stay_open(open_client):
-    """`/cmd` und `/resync` bleiben in JEDEM Zustand offen - der Miniserver
-    kann weder Header noch Cookie mitschicken."""
+    """`/cmd` and `/resync` stay open in EVERY state - the Miniserver can
+    send neither a header nor a cookie."""
     client, _app, _device_id, _store = open_client
     assert (await client.get("/resync")).status_code == 200
     assert (await client.get("/health")).status_code == 200
 
 
 async def test_without_a_password_a_configured_token_still_works(secured_client):
-    """Der Bestandsfall unmittelbar nach dem Update: das Passwort fehlt
-    noch, das Token steht in der `.env` - Skripte duerfen dadurch nicht
-    abreissen."""
+    """The existing-installation case right after the update: the password
+    is still missing, the token is in the `.env` - scripts must not break
+    because of this."""
     client, _app, _device_id, _store = secured_client
     response = await client.get("/api/devices", headers={"Authorization": "Bearer secret"})
     assert response.status_code == 200
 
 
 async def test_a_password_alone_is_enough(open_client):
-    """Kein Token konfiguriert, aber angemeldet - der Normalfall nach der
-    Ersteinrichtung."""
+    """No token configured, but signed in - the normal case after initial
+    setup."""
     client, _app, _device_id, store = open_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
     assert (await client.get("/api/devices")).status_code == 200
 ```
 
-Die bestehenden Tests dieser Datei, die auf `open_client` einen offenen Zugriff erwarten, kehren ihre Erwartung um: was dort `200` erwartete, erwartet jetzt `401`. Der Testlauf in Schritt 4 zeigt, welche das sind; ihre Docstrings sind entsprechend nachzuziehen (sie beschreiben heute „der Zustand vor Task 8 bzw. eine Installation, die (noch) keins gesetzt hat").
+The existing tests in this file that expect open access via `open_client` reverse their expectation: what expected `200` there now expects `401`. The test run in step 4 shows which ones those are; their docstrings need to be updated accordingly (they currently describe "the state before task 8, or an installation that has not (yet) set one").
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/api/test_security.py -v`
-Expected: FAIL — `test_without_a_password_every_api_route_is_closed` bekommt 200 statt 401.
+Expected: FAIL — `test_without_a_password_every_api_route_is_closed` gets 200 instead of 401.
 
 - [ ] **Step 3: Close the guard**
 
-In `build_api_guard` den Zweig `if expected is None: return` entfernen und den Rumpf so umschreiben:
+In `build_api_guard`, remove the branch `if expected is None: return` and rewrite the body like this:
 
 ```python
     async def guard(
@@ -2012,51 +2014,50 @@ In `build_api_guard` den Zweig `if expected is None: return` entfernen und den R
         )
 ```
 
-Den Docstring-Abschnitt „Kein Token gesetzt …" ersetzen:
+Replace the docstring section "No token set …":
 
 ```
-    **Es gibt keinen offenen Zustand mehr.** Bis hierher liess ein Dienst
-    ohne konfiguriertes Token jede `/api`-Route durch und begnuegte sich mit
-    einer Warnung im Log - wer die Warnung ueberlas, betrieb eine offene
-    Bruecke, ohne es zu merken. Seit dem WebUI-Login gilt: ohne gueltiges
-    Cookie und ohne gueltiges Token endet jede Anfrage hier mit 401, auch
-    wenn weder Passwort noch Token eingerichtet sind. Der Weg hinein ist
-    dann ausschliesslich die Ersteinrichtung unter `/auth/setup`, die
-    ausserhalb dieses Waechters haengt (siehe `api/auth.py`).
+    **There is no more open state.** Up to this point, a service without
+    a configured token let every `/api` route through and made do with a
+    warning in the log - whoever overlooked the warning was running an open
+    bridge without noticing. Since the WebUI login, the rule is: without
+    a valid cookie and without a valid token, every request here ends with
+    401, even if neither a password nor a token has been set up. The only
+    way in is then the initial setup under `/auth/setup`, which hangs
+    outside this guard (see `api/auth.py`).
 ```
 
 - [ ] **Step 4: Run the suite and see what breaks**
 
 Run: `uv run pytest`
-Expected: FAIL — jeder Test in `tests/api/`, der `/api` ohne Passwort aufruft. Die Liste dieses Laufs ist die Arbeitsliste für Schritt 5.
+Expected: FAIL — every test in `tests/api/` that calls `/api` without a password. The list from this run is the work list for step 5.
 
 - [ ] **Step 5: Add the helper and authenticate every fixture**
 
-An `tests/api/conftest.py` anhängen:
+Append to `tests/api/conftest.py`:
 
 ```python
-# Das Passwort, mit dem sich jede Testfixture anmeldet. Ein fester Wert und
-# kein zufaelliger: er taucht in Fehlermeldungen fehlschlagender Tests auf,
-# und dort ist "test-passwort" hilfreicher als eine Zufallsfolge.
+# The password every test fixture logs in with. A fixed value rather than
+# a random one: it shows up in failure messages of failing tests, and
+# there "test-passwort" is more helpful than a random string.
 TEST_PASSWORD = "test-passwort"
 
 
 async def authenticate(store: Store, client: httpx.AsyncClient) -> None:
-    """Setzt ein Passwort und meldet `client` an.
+    """Sets a password and logs `client` in.
 
-    Gebraucht seit der Waechter ohne Nachweis nichts mehr durchlaesst (Spec 4):
-    eine Testfixture, die `/api` aufruft, muss angemeldet sein wie ein
-    Browser. `httpx.AsyncClient` fuehrt einen eigenen Cookie-Speicher, ein
-    einziger Aufruf hier genuegt also fuer alle folgenden Anfragen desselben
-    Clients."""
+    Needed ever since the guard stopped letting anything through without
+    proof (Spec 4): a test fixture that calls `/api` must be logged in like
+    a browser. `httpx.AsyncClient` carries its own cookie store, so a single
+    call here is enough for every following request from the same client."""
     store.auth.set_password_hash(hash_password(TEST_PASSWORD))
     response = await client.post("/auth/login", json={"password": TEST_PASSWORD})
-    assert response.status_code == 200, "Anmeldung in der Testfixture fehlgeschlagen"
+    assert response.status_code == 200, "Login in the test fixture failed"
 ```
 
-mit den Importen `import httpx2 as httpx`, `from loxmatter.auth.passwords import hash_password`, `from loxmatter.model.store import Store` am Kopf, falls dort noch nicht vorhanden.
+with the imports `import httpx2 as httpx`, `from loxmatter.auth.passwords import hash_password`, `from loxmatter.model.store import Store` at the top, if not already present there.
 
-Dann in **jeder** Fixture, die einen `httpx.AsyncClient` über `build_app` baut, direkt nach dem `async with` und vor dem `yield` eine Zeile ergänzen. Beispiel `tests/api/conftest.py::api_with_runtime`:
+Then, in **every** fixture that builds an `httpx.AsyncClient` via `build_app`, add a line directly after the `async with` and before the `yield`. Example `tests/api/conftest.py::api_with_runtime`:
 
 ```python
     transport = httpx.ASGITransport(app=app)
@@ -2065,33 +2066,34 @@ Dann in **jeder** Fixture, die einen `httpx.AsyncClient` über `build_app` baut,
         yield WebSocketClient(client, app), runtime, device_id
 ```
 
-Dieselbe Zeile in: `tests/api/test_devices.py:19`, `tests/api/test_web.py:57`, `tests/api/test_export_api.py:35,205,251`, `tests/api/test_diagnostics.py:82,105,129,151,227,247,272`, `tests/api/test_live_smoke.py:170`. In `tests/api/test_security.py` **nicht** — diese Datei prüft gerade den unangemeldeten Zustand und meldet sich nur dort an, wo ein Test das ausdrücklich tut.
+The same line in: `tests/api/test_devices.py:19`, `tests/api/test_web.py:57`, `tests/api/test_export_api.py:35,205,251`, `tests/api/test_diagnostics.py:82,105,129,151,227,247,272`, `tests/api/test_live_smoke.py:170`. **Not** in `tests/api/test_security.py` — this file is specifically testing the unauthenticated state and logs in only where a test explicitly does so.
 
-`tests/api/test_live_smoke.py:193` baut die App bereits mit `api_token="secret"` und schickt das Token mit — dieser Test bleibt unverändert.
+`tests/api/test_live_smoke.py:193` already builds the app with `api_token="secret"` and sends the token along — this test stays unchanged.
 
-`tests/loxone/test_server.py` ruft nur `/cmd`, `/resync` und `/` auf; die vier `build_app`-Aufrufe dort brauchen keine Anmeldung. Sollte der Lauf dort trotzdem etwas melden, gilt dieselbe Zeile.
+`tests/loxone/test_server.py` only calls `/cmd`, `/resync`, and `/`; the four `build_app` calls there need no login. Should the run there report something anyway, the same line applies.
 
 - [ ] **Step 6: Update the startup warning**
 
-In `src/loxmatter/cli.py` `_warn_if_missing_api_token` durch `_warn_if_no_password` ersetzen:
+In `src/loxmatter/cli.py`, replace `_warn_if_missing_api_token` with `_warn_if_no_password`:
 
 ```python
 def _warn_if_no_password(store_path: Path) -> None:
-    """Warnt beim Start deutlich, solange kein Passwort vergeben ist.
+    """Warns clearly at startup for as long as no password has been set.
 
-    Die Warnung gilt seit dem WebUI-Login dem Passwort und NICHT mehr dem
-    Token: ein konfiguriertes Token bringt sie nicht zum Schweigen, denn es
-    ist der Weg fuer Skripte und kein Ersatz fuer die Ersteinrichtung.
+    Since the WebUI login, the warning is about the password and NO
+    LONGER about the token: a configured token does not silence it,
+    because it is the route for scripts, not a substitute for the initial
+    setup.
 
-    Der Zustand, vor dem sie warnt, ist ein anderer als frueher. Bis hierher
-    lief ein Dienst ohne Token vollstaendig offen. Jetzt liefert er ohne
-    Passwort gar nichts mehr aus - dafuer kann bis zur Passwortvergabe jeder,
-    der ihn erreicht, ihn uebernehmen, indem er die Ersteinrichtung
-    abschliesst (Spec 5, bewusst so entschieden). Genau darauf zielt dieser
-    Text.
+    The state it warns about is different from before. Up to this point,
+    a service without a token ran completely open. Now it delivers
+    nothing at all without a password - but in exchange, until a
+    password is set, anyone who can reach it can take it over by
+    completing the initial setup (spec 5, a deliberate decision). That is
+    exactly what this text targets.
 
-    Eigene Funktion statt einer Zeile inline in `run`/`_run`, damit ein Test
-    sie ohne laufenden Server aufrufen kann - siehe
+    A dedicated function instead of one line inline in `run`/`_run`, so a
+    test can call it without a running server - see
     `tests/api/test_security.py`."""
     store = Store(store_path)
     try:
@@ -2107,16 +2109,16 @@ def _warn_if_no_password(store_path: Path) -> None:
     )
 ```
 
-In `run` den Aufruf ersetzen — er steht dort heute vor `asyncio.run(_run(...))` und bekommt jetzt den aufgelösten Pfad statt des Tokens:
+In `run`, replace the call — it currently sits before `asyncio.run(_run(...))` and now receives the resolved path instead of the token:
 
 ```python
     resolved_store_path = _resolve_store_path(store_path)
     _warn_if_no_password(resolved_store_path)
 ```
 
-(Die Zeile `resolved_store_path = _resolve_store_path(store_path)` steht bereits in `run` — die Warnung wird dahinter geschoben, statt eine zweite Auflösung einzufügen.)
+(The line `resolved_store_path = _resolve_store_path(store_path)` already exists in `run` — the warning is moved to right after it, instead of inserting a second resolution.)
 
-Die Tests `test_warn_if_missing_api_token_*` in `tests/api/test_security.py` entsprechend umschreiben: warnt ohne Passwort, schweigt mit gesetztem, warnt auch bei konfiguriertem Token.
+Rewrite the tests `test_warn_if_missing_api_token_*` in `tests/api/test_security.py` accordingly: warns without a password, stays silent with one set, warns even with a configured token.
 
 - [ ] **Step 7: Run the full suite**
 
@@ -2133,25 +2135,25 @@ git commit -m "feat(server): ohne gesetztes Passwort liefert keine /api-Route me
 
 ---
 
-### Task 9: Der 403-Zweig der Fabric-Sicherung entfällt
+### Task 9: The 403 branch of the fabric backup goes away
 
 **Files:**
-- Modify: `src/loxmatter/api/diagnostics.py` (`build_diagnostics_router`, `fabric_backup`), `src/loxmatter/loxone/server.py` (Aufruf)
+- Modify: `src/loxmatter/api/diagnostics.py` (`build_diagnostics_router`, `fabric_backup`), `src/loxmatter/loxone/server.py` (call)
 - Test: `tests/api/test_security.py`, `tests/api/test_diagnostics.py`
 
 **Interfaces:**
-- Consumes: der geschlossene Wächter aus Task 8.
-- Produces: `build_diagnostics_router(store, command_log, client, sender, matter_data_dir)` — **der Parameter `api_token_configured` entfällt ersatzlos.**
+- Consumes: the closed guard from task 8.
+- Produces: `build_diagnostics_router(store, command_log, client, sender, matter_data_dir)` — **the parameter `api_token_configured` goes away, with nothing replacing it.**
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_security.py` anhängen:
+Append to `tests/api/test_security.py`:
 
 ```python
 async def test_fabric_backup_is_served_after_a_login_without_any_token(open_client):
-    """Nach dem Login ist auch die Fabric-Sicherung frei (Spec 11): ein Login
-    ist der staerkere Ausweis, und ein zweites Geheimnis danach schuetzte
-    nichts, das nicht schon geschuetzt waere."""
+    """After login the fabric backup is also free (Spec 11): a login
+    is the stronger credential, and a second secret afterward would protect
+    nothing that isn't already protected."""
     client, _app, _device_id, store = open_client
     store.auth.set_password_hash(hash_password("ein-gutes-passwort"))
     await client.post("/auth/login", json={"password": "ein-gutes-passwort"})
@@ -2163,52 +2165,53 @@ async def test_fabric_backup_is_served_after_a_login_without_any_token(open_clie
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `uv run pytest tests/api/test_security.py::test_fabric_backup_is_served_after_a_login_without_any_token -v`
-Expected: FAIL — 403, weil `api_token_configured` bei dieser Fixture `False` ist.
+Expected: FAIL — 403, because `api_token_configured` is `False` for this fixture.
 
 - [ ] **Step 3: Remove the parameter and the branch**
 
 In `src/loxmatter/api/diagnostics.py`:
-1. Den Parameter `api_token_configured: bool = False` aus `build_diagnostics_router` streichen.
-2. In `fabric_backup` den gesamten `if not api_token_configured:`-Block samt der 403-`HTTPException` streichen; der Kommentarblock darüber („Diese Pruefung steht VOR jeder anderen …") gehört mit ihm weg.
-3. Den Docstring von `fabric_backup` neu fassen — er beschreibt heute zwei Bedingungen, von denen eine wegfällt:
+1. Remove the parameter `api_token_configured: bool = False` from `build_diagnostics_router`.
+2. In `fabric_backup`, remove the entire `if not api_token_configured:` block along with the 403 `HTTPException`; the comment block above it ("This check comes BEFORE every other …") goes away with it.
+3. Rewrite the docstring of `fabric_backup` — it currently describes two conditions, one of which goes away:
 
 ```python
     @router.get("/fabric-backup")
     async def fabric_backup() -> Response:
-        """**WER DIESE ROUTE ABRUFEN KANN, KANN DIE FABRIC UEBERNEHMEN.** Das
-        ist der erste Satz dieses Docstrings mit Absicht.
+        """**WHOEVER CAN CALL THIS ROUTE CAN TAKE OVER THE FABRIC.** That
+        is the first sentence of this docstring on purpose.
 
-        Der Schutz sitzt nicht an dieser Funktion, sondern einheitlich am
-        gesamten Router (`loxone.server.build_api_guard`): ohne gueltiges
-        Sitzungs-Cookie und ohne gueltiges Bearer-Token endet der Aufruf mit
-        401, bevor diese Funktion ueberhaupt laeuft.
+        The protection does not sit on this function but uniformly on the
+        entire router (`loxone.server.build_api_guard`): without a valid
+        session cookie and without a valid bearer token, the call ends
+        with 401 before this function even runs.
 
-        **Der frueher hier stehende 403-Zweig ist entfallen** (WebUI-Login,
-        Spec 11). Er verteidigte den Fall "der Dienst laeuft ohne jedes
-        Zugangsmittel, also sind alle `/api`-Routen offen" - genau diesen
-        Fall gibt es nicht mehr: ohne gesetztes Passwort laesst der Waechter
-        keine `/api`-Route zu, und wer hier ankommt, hat einen Nachweis
-        vorgezeigt. Ein unerreichbarer Zweig, dessen Docstring eine Lage
-        beschreibt, die es nicht mehr gibt, waere schlimmer als kein Zweig:
-        der naechste Leser verliesse sich auf eine Bedingung, die nichts
-        mehr prueft. Dass der Waechter tatsaechlich an JEDEM der fuenf Router
-        haengt, prueft `tests/api/test_security.py` Router fuer Router
-        einzeln, statt sich auf den gemeinsamen Praefix zu verlassen.
+        **The 403 branch that used to be here has been removed** (WebUI
+        login, Spec 11). It defended against the case "the service runs
+        with no access control at all, so every `/api` route is open" -
+        that exact case no longer exists: without a password set, the
+        guard allows no `/api` route through, and whoever arrives here has
+        presented proof. An unreachable branch whose docstring describes a
+        situation that no longer exists would be worse than no branch:
+        the next reader would rely on a condition that checks nothing any
+        more. That the guard actually hangs off EVERY one of the five
+        routers is checked router by router by
+        `tests/api/test_security.py`, instead of relying on the shared
+        prefix.
 
-        503 bleibt fuer "das Datenverzeichnis ist nicht eingehaengt bzw.
-        existiert nicht" (unten) - eine Konfigurationsluecke, die diese
-        Faehigkeit ueberhaupt erst herstellen wuerde.
+        503 remains for "the data directory is not mounted or does not
+        exist" (below) - a configuration gap that would only just create
+        this capability in the first place.
 
-        Sicherung des matter-server-Datenverzeichnisses (Spec 4.1, 8) als
-        Download.
+        Backup of the matter-server data directory (Spec 4.1, 8) as a
+        download.
 
-        Loggt bewusst NICHTS - weder den aufgeloesten Pfad noch die
-        enthaltenen Dateinamen (siehe Moduldocstring)."""
+        Deliberately logs NOTHING - neither the resolved path nor the
+        file names it contains (see module docstring)."""
 ```
 
-4. Den Abschnitt des Moduldocstrings von `diagnostics.py`, der die 403-Regel erklärt (um Zeile 58–68), auf denselben Stand bringen.
+4. Bring the section of `diagnostics.py`'s module docstring that explains the 403 rule (around line 58–68) up to the same state.
 
-In `src/loxmatter/loxone/server.py` das Argument aus dem Aufruf entfernen, samt seines Kommentarblocks:
+In `src/loxmatter/loxone/server.py`, remove the argument from the call, along with its comment block:
 
 ```python
     app.include_router(
@@ -2225,7 +2228,7 @@ In `src/loxmatter/loxone/server.py` das Argument aus dem Aufruf entfernen, samt 
 
 - [ ] **Step 4: Update the tests that asserted the 403**
 
-In `tests/api/test_security.py` die `test_fabric_backup_without_a_token_*`-Tests entfernen — sie prüfen einen Zustand, den es nicht mehr gibt; der neue Test aus Schritt 1 und `test_without_a_password_every_api_route_is_closed` aus Task 8 decken die Route ab. In `tests/api/test_diagnostics.py` alle `build_diagnostics_router(..., api_token_configured=...)`- bzw. `build_app(..., api_token=...)`-Aufrufe, die auf den 403 zielen, auf den neuen Stand bringen (der Lauf in Schritt 5 zeigt sie).
+In `tests/api/test_security.py`, remove the `test_fabric_backup_without_a_token_*` tests — they check a state that no longer exists; the new test from step 1 and `test_without_a_password_every_api_route_is_closed` from task 8 cover the route. In `tests/api/test_diagnostics.py`, bring all `build_diagnostics_router(..., api_token_configured=...)` and `build_app(..., api_token=...)` calls that target the 403 up to the new state (the run in step 5 shows them).
 
 - [ ] **Step 5: Run the full suite**
 
@@ -2242,24 +2245,24 @@ git commit -m "refactor(diagnostics): 403-Zweig der Fabric-Sicherung entfaellt m
 
 ---
 
-### Task 10: `loxmatter set-password` als Notausgang
+### Task 10: `loxmatter set-password` as an emergency exit
 
 **Files:**
 - Modify: `src/loxmatter/cli.py`
 - Test: `tests/test_cli.py`
 
 **Interfaces:**
-- Consumes: `hash_password` (Task 2), `Store.auth` (Task 1), `_resolve_store_path` (bestehend).
-- Produces: CLI-Befehl `loxmatter set-password [--store-path PATH]`.
+- Consumes: `hash_password` (task 2), `Store.auth` (task 1), `_resolve_store_path` (existing).
+- Produces: CLI command `loxmatter set-password [--store-path PATH]`.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/test_cli.py` anhängen (dem dort vorhandenen `CliRunner`-Muster folgen). Am Kopf der Datei ergänzen, falls noch nicht vorhanden: `from loxmatter.auth.passwords import hash_password, verify_password` und `from loxmatter.model.store import Store`.
+Append to `tests/test_cli.py` (following the `CliRunner` pattern already present there). Add at the top of the file, if not already present: `from loxmatter.auth.passwords import hash_password, verify_password` and `from loxmatter.model.store import Store`.
 
 ```python
 def test_set_password_writes_a_hash_and_clears_sessions(tmp_path):
-    """Der Notausgang aus Spec 9: ein headless aufgesetzter Dienst mit
-    vergessenem Passwort waere sonst endgueltig verloren."""
+    """The emergency exit from Spec 9: a headlessly set up service with
+    a forgotten password would otherwise be permanently lost."""
     path = tmp_path / "t.sqlite"
     store = Store(path)
     store.auth.set_password_hash(hash_password("altes-passwort"))
@@ -2276,12 +2279,12 @@ def test_set_password_writes_a_hash_and_clears_sessions(tmp_path):
         stored = store.auth.password_hash()
         assert stored is not None
         assert verify_password("neues-passwort", stored) is True
-        # Wer das Passwort zuruecksetzt, will nicht, dass eine alte Sitzung
-        # weiterlaeuft.
+        # Whoever resets the password does not want an old session to
+        # keep running.
         assert store.auth.session_expires_at("alte-sitzung") is None
     finally:
         store.close()
-    # Das Passwort selbst darf in keiner Ausgabe stehen.
+    # The password itself must not appear in any output.
     assert "neues-passwort" not in result.output
 
 
@@ -2304,7 +2307,7 @@ Expected: FAIL — `No such command 'set-password'`
 
 - [ ] **Step 3: Add the command**
 
-In `src/loxmatter/cli.py`, nach dem `run`-Befehl:
+In `src/loxmatter/cli.py`, after the `run` command:
 
 ```python
 @app.command()
@@ -2313,18 +2316,18 @@ def set_password(
         None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
     ),
 ) -> None:
-    """Setzt das Passwort der Oberfläche neu — der Notausgang für den Fall,
-    dass es vergessen wurde.
+    """Resets the interface's password — the emergency exit for the case
+    where it has been forgotten.
 
-    Ohne diesen Befehl wäre eine headless aufgesetzte Installation mit
-    vergessenem Passwort endgültig verloren: die Ersteinrichtung ist nach
-    der ersten Passwortvergabe dauerhaft geschlossen (409), und einen
-    zweiten Weg hinein gibt es nicht. Wer diesen Befehl ausführen kann, hat
-    Zugriff auf die Datenbankdatei selbst — der Befehl macht daraus nur
-    einen benutzbaren Weg statt eines Bastelns am SQLite.
+    Without this command, a headlessly set up installation with a
+    forgotten password would be permanently lost: initial setup is
+    permanently closed (409) after the first password is set, and there
+    is no second way in. Whoever can run this command already has
+    access to the database file itself — the command merely turns that
+    into a usable path instead of tinkering with the SQLite directly.
 
-    Meldet dabei alle offenen Sitzungen ab: wer das Passwort zurücksetzt,
-    will nicht, dass eine alte Sitzung weiterläuft.
+    Logs out all open sessions in the process: whoever resets the
+    password does not want an old session to keep running.
     """
     password = typer.prompt("Neues Passwort", hide_input=True, confirmation_prompt=True)
     if len(password) < MIN_PASSWORD_LENGTH:
@@ -2335,11 +2338,11 @@ def set_password(
         store.auth.delete_all_sessions()
     finally:
         store.close()
-    # Bewusst ohne das Passwort in der Ausgabe - auch nicht verkuerzt.
+    # Deliberately without the password in the output - not even truncated.
     typer.echo("Passwort gesetzt. Alle offenen Sitzungen wurden abgemeldet.")
 ```
 
-Die Importe am Kopf ergänzen:
+Add the imports at the top:
 
 ```python
 from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
@@ -2348,7 +2351,7 @@ from loxmatter.auth.passwords import MIN_PASSWORD_LENGTH, hash_password
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_cli.py -k set_password -v`
-Expected: PASS (2 Tests)
+Expected: PASS (2 tests)
 
 - [ ] **Step 5: Run the full suite, lint, commit**
 
@@ -2360,69 +2363,69 @@ git commit -m "feat(cli): set-password als Notausgang fuer ein vergessenes Passw
 
 ---
 
-### Task 11: Dokumentation
+### Task 11: Documentation
 
 **Files:**
-- Modify: `README.md`, `deploy/testhost/.env.example`, `deploy/testhost/docker-compose.yml`, `src/loxmatter/loxone/server.py` (Moduldocstring), `src/loxmatter/web/index.html` (HTML-Kommentar am Kopf), `src/loxmatter/web/app.js` (Moduldocstring)
+- Modify: `README.md`, `deploy/testhost/.env.example`, `deploy/testhost/docker-compose.yml`, `src/loxmatter/loxone/server.py` (module docstring), `src/loxmatter/web/index.html` (HTML comment at the top), `src/loxmatter/web/app.js` (module docstring)
 - Create: `docs/superpowers/plans/2026-09-03-webui-login-release-note.md`
 
-**Interfaces:** keine — reine Prosa.
+**Interfaces:** none — pure prose.
 
-Spec 13 zählt auf, was nachzuziehen ist. Der Kern: **für Installationen ohne Token ist dieses Update ein Bruch** — der Dienst liefert nichts mehr aus, bis ein Passwort steht. Das darf niemand erst am schweigenden Dienst bemerken.
+Spec 13 lists what needs to be updated. The core point: **for installations without a token, this update is a break** — the service delivers nothing anymore until a password is set. Nobody should first notice that from a silent service.
 
 - [ ] **Step 1: Write the release note**
 
 `docs/superpowers/plans/2026-09-03-webui-login-release-note.md`:
 
 ```markdown
-# Release-Hinweis: Login statt Token-Eingabe
+# Release note: login instead of token entry
 
-**Was sich ändert.** Die Oberfläche hat jetzt eine Anmeldung mit Passwort.
-Das Feld für das API-Token ist verschwunden.
+**What changes.** The interface now has a password login.
+The field for the API token is gone.
 
-**Was zu tun ist — sofort nach dem Ausrollen.** Öffne die Oberfläche
-(`http://<Host>:8080/`) und vergib ein Passwort. Bis das geschehen ist,
-liefert keine `/api`-Route Daten aus, und die Oberfläche zeigt nichts als
-den Einrichtungsbildschirm.
+**What to do — immediately after rollout.** Open the interface
+(`http://<host>:8080/`) and set a password. Until that has happened,
+no `/api` route delivers data, and the interface shows nothing but
+the setup screen.
 
-**Warum sofort.** Die Ersteinrichtung verlangt keinen weiteren Nachweis —
-wer zuerst kommt, vergibt das Passwort. Zwischen dem Update und deiner
-Anmeldung kann also jeder, der die Brücke im Netz erreicht, sie übernehmen.
-Bewusst so entschieden, damit die Einrichtung ohne Shell auf dem Host
-möglich ist; der Preis ist dieses Fenster, und es sollte Minuten dauern und
-nicht Tage.
+**Why immediately.** Initial setup requires no further proof —
+whoever gets there first sets the password. So between the update and your
+own login, anyone who can reach the bridge on the network can take it
+over. Deliberately decided this way so that setup is possible without a
+shell on the host; the price is this window, and it should take minutes,
+not days.
 
-**Was gleich bleibt.** `LOXMATTER_API_TOKEN` gilt weiter — als Weg für
-Skripte und `curl`, nicht mehr für den Browser. Bestehende
-Automatisierungen brechen durch dieses Update nicht ab, auch nicht vor der
-Passwortvergabe. `/cmd` und `/resync` für den Miniserver bleiben wie immer
-ohne jede Absicherung erreichbar.
+**What stays the same.** `LOXMATTER_API_TOKEN` still applies — as a path
+for scripts and `curl`, no longer for the browser. Existing
+automations do not break because of this update, not even before the
+password is set. `/cmd` and `/resync` for the Miniserver remain reachable
+without any protection whatsoever, as always.
 
-**Passwort vergessen.** `uv run loxmatter set-password` auf dem Host setzt
-es neu und meldet alle offenen Sitzungen ab.
+**Forgotten password.** `uv run loxmatter set-password` on the host
+resets it and logs out all open sessions.
 
-**Ein Hinweis zum Passwort.** Der Dienst spricht HTTP ohne Verschlüsselung;
-das Passwort geht beim Anmelden im Klartext über das Netz. Nimm eines, das
-du nirgendwo sonst benutzt.
+**A note on the password.** The service speaks HTTP without encryption;
+the password travels over the network in plain text when logging in. Pick
+one you don't use anywhere else.
 ```
 
 - [ ] **Step 2: Update `README.md`**
 
-Den Abschnitt zur Absicherung ersetzen: Login statt Token-Eingabe, Passwortvergabe beim ersten Aufruf, `loxmatter set-password` als Notausgang, der Klartext-Hinweis aus Spec 14.1, und dass das Token nur noch für Skripte da ist.
+Replace the section on securing the service: login instead of token entry, setting a password on first access, `loxmatter set-password` as the emergency exit, the plain-text note from Spec 14.1, and that the token is now only there for scripts.
 
 - [ ] **Step 3: Update `deploy/testhost/.env.example`**
 
-Der Kommentarblock an `LOXMATTER_API_TOKEN` leitet heute zur Eingabe in der Oberfläche an („Danach in der Browser-Oberfläche oben rechts unter ‚Token' eintragen") — dieser Satz ist falsch geworden. Neu: Das Token ist optional und dient Skripten; der Zugang zur Oberfläche läuft über das beim ersten Aufruf vergebene Passwort. Der Hinweis zum Zeichensatz (`openssl rand -hex 32`, keine Leerzeichen) bleibt, er gilt weiterhin für den Header.
+The comment block on `LOXMATTER_API_TOKEN` currently points to entering it in the interface ("Then enter it in the browser interface top right under 'Token'") — that sentence has become wrong. New: the token is optional and serves scripts; access to the interface runs via the password set on first access. The note on the character set (`openssl rand -hex 32`, no spaces) stays, it still applies to the header.
 
 - [ ] **Step 4: Update `deploy/testhost/docker-compose.yml`**
 
-Zwei Kommentarblöcke: der an `LOXMATTER_API_TOKEN` (dieselbe Korrektur wie in Schritt 3) und der an der Volume-Zeile `./data:/matter-data:ro`. Letzterer sagt heute, Einhängung und Token gehörten zusammen und ohne Token sei die Einhängung wirkungslos. Das trägt jetzt das Passwort: die Einhängung ist vertretbar, weil ohne Nachweis keine `/api`-Route mehr antwortet.
+Two comment blocks: the one on `LOXMATTER_API_TOKEN` (the same correction as in step 3) and the one on the volume line `./data:/matter-data:ro`. The latter currently says the mount and the token belong together and that without a token the mount is ineffective. The password now carries that: the mount is justifiable because without proof no `/api` route answers anymore.
 
 - [ ] **Step 5: Update the module docstrings**
 
-- `src/loxmatter/loxone/server.py`, Kopf: der Abschnitt über `api_token` als einzigen Ausweis beschreibt jetzt zwei Nachweise und den Wegfall des offenen Zustands.
-- `src/loxmatter/api/diagnostics.py`, Kopf: bereits in Task 9 Schritt 3 erledigt — hier nur gegenlesen.
-- `src/loxmatter/web/app.js`, Kopf, und `src/loxmatter/web/index.html`, HTML-Kommentar am Kopf: beide beschreiben eine Oberfläche mit Token-Feld und ohne Login.
+- `src/loxmatter/loxone/server.py`, top: the section about `api_token` as the sole credential now describes two proofs and the disappearance of the open state.
+- `src/loxmatter/api/diagnostics.py`, top: already done in task 9 step 3 — just proofread here.
+- `src/loxmatter/web/app.js`, top, and `src/loxmatter/web/index.html`, HTML comment at the top: both describe an interface with a token field and no login.
 
 - [ ] **Step 6: Check that no stale reference survives**
 
@@ -2432,7 +2435,7 @@ Run:
 grep -rn "Token eingeben\|token-box\|localStorage\|api_token_configured\|_warn_if_missing_api_token" src README.md deploy
 ```
 
-Expected: keine Treffer. Jeder Treffer ist eine Stelle, die dieser Task übersehen hat.
+Expected: no hits. Every hit is a spot this task overlooked.
 
 - [ ] **Step 7: Run the full suite and commit**
 
@@ -2444,12 +2447,12 @@ git commit -m "docs: Login statt Token-Eingabe in README, Deployment und Docstri
 
 ---
 
-## Abschluss
+## Completion
 
-Nach Task 11 ist die Spec vollständig umgesetzt. Zur Abnahme:
+After task 11, the spec is fully implemented. For acceptance:
 
 ```bash
 uv run pytest && uv run ruff check src tests && uv run mypy
 ```
 
-Danach der Durchlauf von Hand aus Task 7 Schritt 7 auf einer frischen Datenbank — er ist der einzige Teil, den keine Testdatei abdeckt, weil er den echten Browser braucht: Einrichtung, Neuladen, Abmelden, Fehlversuche, Anmelden.
+Then the manual run-through from task 7 step 7 on a fresh database — it is the only part no test file covers, because it needs the real browser: setup, reload, logout, failed attempts, login.

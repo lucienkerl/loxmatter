@@ -2,86 +2,86 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ein Gerät lässt sich über den Browser einlernen, ansehen, bedienen und exportieren — und wenn etwas nicht funktioniert, zeigt die Oberfläche, an welcher Seite es liegt.
+**Goal:** A device can be commissioned, viewed, controlled, and exported through the browser — and when something doesn't work, the UI shows on which side the problem lies.
 
-**Architecture:** Der FastAPI-Dienst aus Phase 4 bekommt ein zweites Gesicht. Unter `/cmd` und `/resync` spricht er weiter mit dem Miniserver; unter `/api` mit der Oberfläche. Die Fachlogik wird nicht verdoppelt: Bedienung geht über dasselbe `commands/`, das der Loxone-Endpunkt benutzt, und die Live-Werte kommen aus derselben Matter-Subscription, die den UDP-Sender speist. Die Oberfläche selbst ist statisches HTML mit mitgeliefertem Alpine.js, das FastAPI direkt ausliefert.
+**Architecture:** The FastAPI service from Phase 4 gets a second face. Under `/cmd` and `/resync` it keeps talking to the Miniserver; under `/api` it talks to the UI. The domain logic is not duplicated: control goes through the same `commands/` that the Loxone endpoint uses, and the live values come from the same Matter subscription that feeds the UDP sender. The UI itself is static HTML with bundled Alpine.js, served directly by FastAPI.
 
-**Tech Stack:** Python 3.12, `uv`, `pytest`, `ruff`, `mypy` (strict), FastAPI, `httpx2` für Tests, Alpine.js (mitgeliefert, kein Build-Schritt).
+**Tech Stack:** Python 3.12, `uv`, `pytest`, `ruff`, `mypy` (strict), FastAPI, `httpx2` for tests, Alpine.js (bundled, no build step).
 
 ## Global Constraints
 
-- **Tests laufen ohne Hardware und ohne Netzwerkzugriff.** Ein UDP-Socket auf `127.0.0.1` und FastAPIs In-Process-Testclient gelten nicht als Netzwerkzugriff (Spec 10.1).
-- **Deutsch in Prosa, Kommentaren, Docstrings, Hilfetexten, Fehlermeldungen und in der Oberfläche**, Englisch in Bezeichnern — **auch in Tests, auch in JavaScript, auch in JSON-Feldnamen**. Diese Regel wurde in Phase 4 sechsmal verletzt und sechsmal korrigiert; sie gilt für alles, was ins Repository kommt.
-- **Alle Datenklassen unveränderlich** (`frozen=True`), solange kein Grund dagegen spricht.
-- **Schlüssel sind unveränderlich** (Spec 6.2). Diese Phase zeigt sie an und ändert sie nie. Der Titel ist frei änderbar, der Schlüssel nicht — die Oberfläche muss das sichtbar machen.
-- **Keine zweite Umrechnung.** Bedienung geht durch `commands.translate`, Werte durch `loxone.values`. Eine Kopie in der API driftet (Spec 4.2).
-- **Kein Build-Schritt im Frontend.** Alpine.js wird als Datei mitgeliefert, nicht vom CDN geladen: die Bridge läuft in Installationen ohne Internet.
-- `uv run ruff check .`, `uv run ruff format --check .` und `uv run mypy` müssen sauber bleiben. ruff formatiert auch Python-Blöcke in Markdown.
-- Die unsanierten Vorlagen unter `tests/fixtures/VirtualIn/` und `tests/fixtures/VirtualOut/` enthalten Zugangsdaten einer echten Installation und sind git-ignoriert. **Nicht lesen.**
+- **Tests run without hardware and without network access.** A UDP socket on `127.0.0.1` and FastAPI's in-process test client do not count as network access (Spec 10.1).
+- **German in prose, comments, docstrings, help text, error messages, and in the UI**, English in identifiers — **also in tests, also in JavaScript, also in JSON field names**. This rule was violated six times in Phase 4 and corrected six times; it applies to everything that goes into the repository.
+- **All data classes immutable** (`frozen=True`), unless there is a reason against it.
+- **Keys are immutable** (Spec 6.2). This phase displays them and never changes them. The title is freely editable, the key is not — the UI must make that visible.
+- **No second conversion.** Control goes through `commands.translate`, values through `loxone.values`. A copy in the API drifts (Spec 4.2).
+- **No build step in the frontend.** Alpine.js is bundled as a file, not loaded from a CDN: the bridge runs in installations without internet.
+- `uv run ruff check .`, `uv run ruff format --check .`, and `uv run mypy` must stay clean. ruff also formats Python blocks in Markdown.
+- The unsanitized templates under `tests/fixtures/VirtualIn/` and `tests/fixtures/VirtualOut/` contain credentials of a real installation and are git-ignored. **Do not read.**
 
 ---
 
-## Was diese Phase ausdrücklich nicht baut
+## What this phase explicitly does not build
 
-Spec 8.2 zieht die Grenze, und sie ist wichtig genug, sie hier zu wiederholen: **Inbetriebnahme- und Diagnosewerkzeug, keine Smart-Home-Oberfläche.** Keine Szenen, keine Zeitpläne, keine Automatisierung, keine Favoritenseiten, keine Räume, keine Nutzerverwaltung, keine App. Das alles ist Loxones Aufgabe, und eine halbgare zweite Bedienoberfläche daneben wäre schlechter als keine.
+Spec 8.2 draws the line, and it's important enough to repeat here: **a commissioning and diagnostics tool, not a smart-home UI.** No scenes, no schedules, no automation, no favorites pages, no rooms, no user management, no app. All of that is Loxone's job, and a half-baked second control UI next to it would be worse than none.
 
-Wenn beim Bauen der Wunsch aufkommt, „nur noch schnell" eine Gruppierung oder eine Szene einzubauen: nicht tun. Es steht als Nicht-Ziel in der Spec.
+If, while building, the urge comes up to "just quickly" add a grouping or a scene: don't. It stands as a non-goal in the spec.
 
-## Warum die Bedienung kein Komfortmerkmal ist
+## Why control is not a convenience feature
 
-Spec 8.1: Ansicht 1 ist das Diagnosewerkzeug des Projekts. Schaltet eine Lampe über Loxone nicht, trennt ein Klick in der Oberfläche die beiden möglichen Ursachen — reagiert das Gerät hier, liegt der Fehler in der Loxone-Verdrahtung oder im Export; reagiert es nicht, in Matter, Thread oder am Gerät.
+Spec 8.1: View 1 is the project's diagnostics tool. If a lamp doesn't switch via Loxone, a click in the UI separates the two possible causes — if the device reacts here, the fault is in the Loxone wiring or the export; if it doesn't react, the fault is in Matter, Thread, or at the device.
 
-Für ein Werkzeug, das in fremden Installationen läuft, ist das der Unterschied zwischen einem beantwortbaren und einem unbeantwortbaren Fehlerbericht. Jede Entscheidung in dieser Phase, die zwischen „hübscher" und „sagt genauer, wo der Fehler sitzt" wählen muss, wählt das Zweite.
+For a tool that runs in other people's installations, that is the difference between an answerable and an unanswerable bug report. Every decision in this phase that has to choose between "prettier" and "states more precisely where the fault sits" chooses the latter.
 
-## Sicherheit: was diese Phase erreichbar macht
+## Security: what this phase makes reachable
 
-Bisher war der HTTP-Dienst ein Endpunkt für den Miniserver. Ab dieser Phase ist er eine Bedienoberfläche, die Geräte einlernt, entfernt und schaltet — **ohne jede Authentifizierung, gebunden an alle Schnittstellen.** Das war in Phase 4 als bewusst hingenommener Punkt vermerkt, weil nur `/cmd` und `/resync` erreichbar waren.
+So far the HTTP service was an endpoint for the Miniserver. From this phase on, it is a control UI that commissions, removes, and switches devices — **without any authentication, bound to all interfaces.** This was noted in Phase 4 as a deliberately accepted point, because only `/cmd` and `/resync` were reachable.
 
-Mit dem Einlernen ändert sich das Gewicht: wer den Port erreicht, kann Geräte aus der Fabric werfen. Task 8 dieser Phase behandelt das ausdrücklich; bis dahin gilt der Dienst als nicht exponierbar, und das gehört in die Bedienungsanleitung, nicht in eine stille Annahme.
+With commissioning, the weight changes: whoever reaches the port can throw devices out of the fabric. Task 8 of this phase addresses this explicitly; until then, the service is considered not exposable, and that belongs in the operating instructions, not in a silent assumption.
 
 ---
 
 ## File Structure
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `src/loxmatter/matter/client.py` | zusätzlich `commission_with_code`, `remove_node`, `set_thread_dataset` |
+| `src/loxmatter/matter/client.py` | additionally `commission_with_code`, `remove_node`, `set_thread_dataset` |
 | `src/loxmatter/api/__init__.py` | — |
-| `src/loxmatter/api/models.py` | Antwortmodelle der REST-API, getrennt von den Speichermodellen |
-| `src/loxmatter/api/devices.py` | Geräte und Signale: lesen, umbenennen, exportieren-Flag, entfernen |
-| `src/loxmatter/api/control.py` | Bedienung und rohes Attributschreiben |
-| `src/loxmatter/api/export.py` | Vorschau und Download der Vorlagen |
-| `src/loxmatter/api/diagnostics.py` | UDP-Mitschnitt, Kommando-Log, Systemcheck |
-| `src/loxmatter/api/live.py` | WebSocket für Live-Werte |
-| `src/loxmatter/loxone/server.py` | bindet die API-Router ein, liefert die Oberfläche aus |
-| `src/loxmatter/web/index.html` | die vier Ansichten |
-| `src/loxmatter/web/app.js` | Zustand und Aufrufe |
-| `src/loxmatter/web/vendor/alpine.min.js` | mitgeliefert, kein CDN |
+| `src/loxmatter/api/models.py` | response models of the REST API, separate from the storage models |
+| `src/loxmatter/api/devices.py` | devices and signals: read, rename, export flag, remove |
+| `src/loxmatter/api/control.py` | control and raw attribute writing |
+| `src/loxmatter/api/export.py` | preview and download of the templates |
+| `src/loxmatter/api/diagnostics.py` | UDP capture, command log, system check |
+| `src/loxmatter/api/live.py` | WebSocket for live values |
+| `src/loxmatter/loxone/server.py` | wires in the API routers, serves the UI |
+| `src/loxmatter/web/index.html` | the four views |
+| `src/loxmatter/web/app.js` | state and calls |
+| `src/loxmatter/web/vendor/alpine.min.js` | bundled, no CDN |
 
 ---
 
-### Task 1: Einlernen und Entfernen
+### Task 1: Commissioning and Removal
 
-Bisher konnte das Projekt Geräte nur lesen. Eingelernt wurden sie in Phase 1 mit einem
-Wegwerf-Skript — das ist die letzte Lücke zwischen „liest ein Gerät" und „betreibt eine
-Bridge".
+So far the project could only read devices. They were commissioned in Phase 1 with a
+throwaway script — that is the last gap between "reads a device" and "operates a
+bridge".
 
 **Files:**
 - Modify: `src/loxmatter/matter/client.py`
 - Create: `tests/matter/test_client_commissioning.py`
 
 **Interfaces:**
-- Consumes: der vorhandene `session_factory`/`http_session_factory`-Seam
+- Consumes: the existing `session_factory`/`http_session_factory` seam
 - Produces:
   - `async def commission_with_code(self, code: str) -> NodeSnapshot`
   - `async def remove_node(self, node_id: int) -> None`
   - `async def set_thread_dataset(self, dataset: str) -> None`
-  - `CommissioningError(RuntimeError)` — deutscher Text
+  - `CommissioningError(RuntimeError)` — German text
 
-- [ ] **Step 1: Die Upstream-Signaturen nachsehen, nicht annehmen**
+- [ ] **Step 1: Check the upstream signatures, don't assume them**
 
-In Phase 4 waren zwei Annahmen dieses Plans über `python-matter-server` falsch, und beide
-hätten stillen Ausfall erzeugt. Sieh nach, bevor du schreibst:
+In Phase 4, two assumptions of this plan about `python-matter-server` were wrong, and
+both would have caused silent failure. Check before you write:
 
 ```bash
 uv run python -c "
@@ -92,8 +92,8 @@ for name in ('commission_with_code', 'remove_node', 'set_thread_operational_data
 "
 ```
 
-Trage die tatsächlichen Signaturen und Rückgabetypen in den Docstring von `client.py`
-ein. Weicht etwas ab, ist die Bibliothek maßgeblich — melde es, statt es passend zu machen.
+Enter the actual signatures and return types into the docstring of `client.py`.
+If something deviates, the library is authoritative — report it, instead of making it fit.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -188,7 +188,7 @@ async def test_remove_node_reaches_upstream(client):
 
 
 async def test_thread_dataset_reaches_upstream(client):
-    """Ohne Datensatz kann matter-server einem Thread-Geraet kein Netz nennen."""
+    """Without a dataset, matter-server cannot tell a Thread device about a network."""
     bridge, upstream = client
     await bridge.connect()
     await bridge.set_thread_dataset("0e08...")
@@ -199,48 +199,48 @@ async def test_thread_dataset_reaches_upstream(client):
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/matter/test_client_commissioning.py -v`
-Expected: FAIL mit `ImportError: cannot import name 'CommissioningError'`
+Expected: FAIL with `ImportError: cannot import name 'CommissioningError'`
 
 - [ ] **Step 4: Write minimal implementation**
 
-In `src/loxmatter/matter/client.py` ergänzen:
+Add to `src/loxmatter/matter/client.py`:
 
 ```python
 class CommissioningError(RuntimeError):
-    """Das Einlernen eines Geraets ist am Geraet selbst gescheitert (z. B.
-    falscher Code, Geraet haengt schon in einem anderen Oekosystem, Timeout
-    beim Interview).
+    """Commissioning a device failed at the device itself (e.g.
+    wrong code, device already sits in another ecosystem, timeout
+    during the interview).
 
-    Ein Verbindungsverlust zu matter-server WAEHREND des Einlernens ist
-    davon ausdruecklich abgegrenzt: commission_with_code() faengt
-    `NotConnected`/`ConnectionClosed`/`CannotConnect` gesondert ab und wirft
-    dafuer `MatterUnavailableError`, denn nur so laesst sich unterscheiden,
-    ob das Geraet abgelehnt hat oder matter-server nicht erreichbar war
-    (Spec 8.1/9). Die urspruengliche Ausnahme bleibt ueber `__cause__`
-    erhalten."""
+    A connection loss to matter-server WHILE commissioning is
+    explicitly separated from this: commission_with_code() catches
+    `NotConnected`/`ConnectionClosed`/`CannotConnect` separately and raises
+    `MatterUnavailableError` for that instead, because only that way can it be
+    distinguished whether the device refused or matter-server was
+    unreachable (Spec 8.1/9). The original exception is preserved via
+    `__cause__`."""
 
 
 async def commission_with_code(self, code: str) -> NodeSnapshot:
-    """Lernt ein Geraet ueber seinen Pairing-Code ein.
+    """Commissions a device via its pairing code.
 
-    Der Code ist die 11-stellige Zahl oder der 21-stellige MT:-Code vom
-    Geraet oder seiner Verpackung. Haengt das Geraet schon in einem anderen
-    Oekosystem, funktioniert der aufgedruckte Code nicht mehr - dann braucht
-    es von dort einen Multi-Admin-Code (Spec 7.1).
+    The code is the 11-digit number or the 21-character MT: code from the
+    device or its packaging. If the device already sits in another
+    ecosystem, the printed code no longer works - then a multi-admin code is
+    needed from there (Spec 7.1).
     """
     upstream = self._require_upstream()
 
-    # Lazy importiert wie _default_session_factory: Tests mit einem
-    # Fake-Upstream sollen matter_server nie laden müssen.
+    # Lazily imported like _default_session_factory: tests with a
+    # fake upstream should never have to load matter_server.
     from matter_server.client.exceptions import CannotConnect, ConnectionClosed, NotConnected
 
     try:
         node = await upstream.commission_with_code(code)
     except (NotConnected, ConnectionClosed, CannotConnect) as exc:
-        # Verbindungsverlust zu matter-server ist keine Ablehnung durch das
-        # Geraet — muss VOR dem generischen except Exception unten stehen,
-        # sonst würde er dort mitgefangen und als CommissioningError
-        # gemeldet (Spec 8.1/9 verlangt die Unterscheidung).
+        # A connection loss to matter-server is not a refusal by the
+        # device — must come BEFORE the generic except Exception below,
+        # otherwise it would be caught there too and reported as
+        # CommissioningError (Spec 8.1/9 requires the distinction).
         msg = f"matter-server nicht erreichbar: {exc}"
         raise MatterUnavailableError(msg) from exc
     except Exception as exc:
@@ -249,16 +249,16 @@ async def commission_with_code(self, code: str) -> NodeSnapshot:
 
 
 async def remove_node(self, node_id: int) -> None:
-    """Entfernt ein Geraet aus der Fabric."""
+    """Removes a device from the fabric."""
     await self._require_upstream().remove_node(node_id)
 
 
 async def set_thread_dataset(self, dataset: str) -> None:
-    """Uebergibt matter-server die Thread-Zugangsdaten.
+    """Passes the Thread credentials to matter-server.
 
-    Ohne diesen Schritt scheitert das Einlernen eines Thread-Geraets mit
-    "Required network information not provided" - der Controller findet das
-    Geraet per BLE, kann ihm aber kein Netz nennen.
+    Without this step, commissioning a Thread device fails with
+    "Required network information not provided" - the controller finds the
+    device via BLE but cannot tell it about a network.
     """
     await self._require_upstream().set_thread_operational_dataset(dataset)
 ```
@@ -266,7 +266,7 @@ async def set_thread_dataset(self, dataset: str) -> None:
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/matter/test_client_commissioning.py -v`
-Expected: PASS, 8 Tests
+Expected: PASS, 8 tests
 
 - [ ] **Step 6: Commit**
 
@@ -277,65 +277,64 @@ git commit -m "feat(matter): Geraete einlernen und entfernen"
 
 ---
 
-### Task 2: Geräte- und Signal-API
+### Task 2: Device and Signal API
 
 **Files:**
 - Create: `src/loxmatter/api/__init__.py`
 - Create: `src/loxmatter/api/models.py`
 - Create: `src/loxmatter/api/devices.py`
 - Create: `tests/api/test_devices.py`
-- Modify: `src/loxmatter/model/store.py` (Abfragen, die die API braucht; **neue Spalte
-  `signal.exported` — siehe "Schema-Migration" unten, NICHT einfach an `_SCHEMA`
-  anhängen)
+- Modify: `src/loxmatter/model/store.py` (queries the API needs; **new column
+  `signal.exported` — see "Schema migration" below, do NOT simply append to `_SCHEMA`)
 - Create: `tests/model/test_store_migration.py`
 
 **Interfaces:**
 - Consumes: `Store`, `StoredSignal`, `BridgeMatterClient`, `Runtime`
 - Produces:
-  - `DeviceOut`, `SignalOut` — frozen Pydantic-Modelle
-  - `build_device_router(store, client, runtime) -> APIRouter` mit Präfix `/api`
+  - `DeviceOut`, `SignalOut` — frozen Pydantic models
+  - `build_device_router(store, client, runtime) -> APIRouter` with prefix `/api`
 
-**Schema-Migration (Review-Fix Important #1, 2026-09-02 — hier ergänzt, weil eine
-frühere Fassung dieses Plans eine neue Spalte lehrte, ohne eine Migration dafür
-vorzusehen):**
+**Schema migration (review fix Important #1, 2026-09-02 — added here because an
+earlier version of this plan taught a new column without providing a migration
+for it):**
 
-`_SCHEMA` verwendet `CREATE TABLE IF NOT EXISTS` — das erreicht eine bereits
-bestehende Tabelle nie mit einer neuen Spalte. Die Spalte `signal.exported` diesem
-String einfach hinzuzufügen reicht deshalb NICHT: gegen eine Datenbank, die vor
-diesem Task angelegt wurde (`loxmatter export`/`loxmatter run` aus Phase 4 oder
-früheren Läufen dieser Phase), bleibt sie unsichtbar, und `Store.signals()`
-scheitert mit `IndexError: No item with that key`. Weil die Datenbank die
-Signalschlüssel trägt — die Verdrahtung in Loxone, siehe Modul-Docstring von
-`store.py` — ist die einzige Abhilfe ohne Migration das Löschen der gesamten
-Datenbank, was jeden Schlüssel und jede bestehende Verdrahtung im Haus zerstört.
+`_SCHEMA` uses `CREATE TABLE IF NOT EXISTS` — that never reaches an already
+existing table with a new column. Simply appending the `signal.exported` column to
+this string is therefore NOT enough: against a database that was created before
+this task (`loxmatter export`/`loxmatter run` from Phase 4 or earlier runs of this
+phase), it stays invisible, and `Store.signals()` fails with `IndexError: No item
+with that key`. Because the database carries the signal keys — the wiring in
+Loxone, see the module docstring of `store.py` — the only remedy without a
+migration is deleting the entire database, which destroys every key and every
+existing wiring in the house.
 
-Die Migration verwaltet `PRAGMA user_version` als Schema-Version:
+The migration manages `PRAGMA user_version` as the schema version:
 
-- Version 0 ist "vor dieser Migrationslogik" — jede Datenbank, bei der
-  `user_version` noch nie gesetzt wurde, sowohl eine echte Alt-Datenbank als auch
-  (bevor der erste `Store(...)`-Aufruf sie stempelt) eine frisch angelegte.
-- Version 1 fügt `signal.exported` hinzu (`ALTER TABLE ... ADD COLUMN`) und
-  befüllt bestehende Zeilen zurückwirkend — **nicht** pauschal mit dem
-  Spalten-Default, sondern nach derselben Regel wie ein frisch registriertes
-  Signal: exportierbar (ANALOG/DIGITAL) → `True`, sonst (TEXT, NONE) → `False`
-  (siehe `is_exportable` unten).
-- Läuft in einer Transaktion: `ALTER TABLE ADD COLUMN` ist in SQLite vollständig
-  transaktional, ein `db.rollback()` im Fehlerfall macht auch schon ausgeführte
-  Schritte dieses Laufs wieder rückgängig, `PRAGMA user_version` wird nur bei
-  vollständigem Erfolg erhöht.
-- Auf dem neuesten Stand: kein Schreibzugriff, echtes No-op — jeder Start außer
-  dem allerersten nach einer Schema-Änderung.
+- Version 0 is "before this migration logic" — any database whose
+  `user_version` has never been set, both a genuine old database and (before the
+  first `Store(...)` call stamps it) a freshly created one.
+- Version 1 adds `signal.exported` (`ALTER TABLE ... ADD COLUMN`) and
+  backfills existing rows retroactively — **not** uniformly with the
+  column default, but following the same rule as a freshly registered
+  signal: exportable (ANALOG/DIGITAL) → `True`, otherwise (TEXT, NONE) → `False`
+  (see `is_exportable` below).
+- Runs in a transaction: `ALTER TABLE ADD COLUMN` is fully transactional in
+  SQLite, a `db.rollback()` on failure also reverts steps of this run that
+  already executed, `PRAGMA user_version` is only incremented on complete
+  success.
+- Already up to date: no write access, a genuine no-op — every start except
+  the very first one after a schema change.
 
-Tests dafür (`tests/model/test_store_migration.py`) bauen die Alt-Datenbank direkt
-per `sqlite3` mit dem Schema-Stand VOR `exported` auf (nicht über `Store`, die legt
-die Spalte ja längst an), fügen ein Gerät und mehrere Signale mit unterschiedlicher
-`exportability` ein und öffnen sie dann mit dem aktuellen `Store`: gelesen wird
-korrekt, der Backfill stimmt, die Version steht danach auf 1, und ein erneutes
-Öffnen ist ein No-op (ein zwischenzeitlich vom Nutzer gesetztes `exported` bleibt
-erhalten statt vom Backfill überschrieben zu werden).
+Tests for this (`tests/model/test_store_migration.py`) build the old database
+directly via `sqlite3` with the schema state BEFORE `exported` (not through
+`Store`, which already creates the column), insert a device and several signals
+with different `exportability`, and then open them with the current `Store`:
+reading works correctly, the backfill is right, the version is then at 1, and
+reopening is a no-op (an `exported` set by the user in the meantime is preserved
+instead of being overwritten by the backfill).
 
-**Achtung, Signaturänderung:** `build_app` aus Phase 4 nimmt heute
-`(store, invoke, runtime)`. Für das Einlernen braucht es zusätzlich den Matter-Client:
+**Watch out, signature change:** `build_app` from Phase 4 currently takes
+`(store, invoke, runtime)`. For commissioning it additionally needs the Matter client:
 
 ```python
 def build_app(
@@ -346,21 +345,21 @@ def build_app(
 ) -> FastAPI:
 ```
 
-`client=None` bedeutet: die Einlern-Routen antworten mit 503 und einer Meldung, die
-sagt warum. So bleiben die bestehenden Tests aus Phase 4 gültig, die `build_app` mit
-drei Argumenten aufrufen — prüfe das, statt es anzunehmen.
+`client=None` means: the commissioning routes respond with 503 and a message that
+says why. That way the existing tests from Phase 4 that call `build_app` with
+three arguments stay valid — check that instead of assuming it.
 
-Routen:
+Routes:
 
-| Methode | Pfad | Zweck |
+| Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/devices` | Liste mit Online-Status und Signalzahl |
-| GET | `/api/devices/{device_id}` | ein Gerät mit den wichtigsten Live-Werten |
-| GET | `/api/devices/{device_id}/signals` | vollständiger Baum |
-| PATCH | `/api/devices/{device_id}` | Gerät umbenennen |
-| PATCH | `/api/signals/{key}` | Titel ändern, Export-Flag setzen |
-| POST | `/api/devices/commission` | Pairing-Code einlernen |
-| DELETE | `/api/devices/{device_id}` | Gerät entfernen |
+| GET | `/api/devices` | list with online status and signal count |
+| GET | `/api/devices/{device_id}` | one device with the most important live values |
+| GET | `/api/devices/{device_id}/signals` | complete tree |
+| PATCH | `/api/devices/{device_id}` | rename device |
+| PATCH | `/api/signals/{key}` | change title, set export flag |
+| POST | `/api/devices/commission` | commission pairing code |
+| DELETE | `/api/devices/{device_id}` | remove device |
 
 - [ ] **Step 1: Write the failing test**
 
@@ -414,7 +413,7 @@ async def test_device_list_carries_name_and_signal_count(api):
 
 
 async def test_signal_tree_marks_what_cannot_be_exported(api):
-    """Spec 6.6: nicht abbildbare Werte werden angezeigt, aber nicht exportierbar."""
+    """Spec 6.6: values that cannot be mapped are displayed, but not exportable."""
     client, _, device_id = api
     signals = (await client.get(f"/api/devices/{device_id}/signals")).json()
     assert len(signals) == 159
@@ -432,7 +431,7 @@ async def test_signal_carries_its_immutable_key_and_editable_title(api):
 
 
 async def test_renaming_a_signal_leaves_its_key_alone(api):
-    """Spec 6.2: der Schluessel ist die Verdrahtung in Loxone."""
+    """Spec 6.2: the key is the wiring in Loxone."""
     client, store, device_id = api
     before = {s.ref: s.key for s in store.signals(device_id)}
     key = next(iter(before.values()))
@@ -462,24 +461,24 @@ async def test_unknown_device_yields_404(api):
     assert (await client.get("/api/devices/999/signals")).status_code == 404
 ```
 
-Die Hilfsfunktionen `_no_invoke`, `_fake_runtime` und `_FakeClient` gehören in eine
-`tests/api/conftest.py` — sie werden von jeder Task dieser Phase gebraucht.
+The helper functions `_no_invoke`, `_fake_runtime`, and `_FakeClient` belong in a
+`tests/api/conftest.py` — every task of this phase needs them.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_devices.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.api'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.api'`
 
-- [ ] **Step 3: Antwortmodelle**
+- [ ] **Step 3: Response models**
 
 `src/loxmatter/api/models.py`:
 
 ```python
-"""Antwortmodelle der REST-API.
+"""Response models of the REST API.
 
-Bewusst getrennt von den Speichermodellen in `model.store`: was die
-Oberflaeche sieht, ist eine Sicht auf den Zustand, keine Abbildung der
-Tabellen. Aendert sich das Schema, aendert sich nicht zwangslaeufig die API.
+Deliberately separate from the storage models in `model.store`: what the
+UI sees is a view onto the state, not a mapping of the tables. If the
+schema changes, the API does not necessarily change.
 """
 
 from __future__ import annotations
@@ -512,50 +511,49 @@ class DeviceOut(BaseModel):
     exportable_count: int
 ```
 
-- [ ] **Step 4: Router schreiben**
+- [ ] **Step 4: Write the router**
 
-`src/loxmatter/api/devices.py` baut den Router. Die Kernpunkte:
+`src/loxmatter/api/devices.py` builds the router. The key points:
 
 ```python
 @router.patch("/signals/{key}")
 async def rename_signal(key: str, patch: SignalPatch) -> SignalOut:
-    """Aendert Titel und Export-Flag. Der Schluessel bleibt unberuehrt.
+    """Changes title and export flag. The key stays untouched.
 
-    Spec 6.2: der Schluessel ist die Verdrahtung in Loxone. Waere er hier
-    aenderbar, koennte ein Klick in der Oberflaeche einen Baustein im Haus
-    still totlegen. Das Modell `SignalPatch` kennt deshalb gar kein Feld
-    dafuer - ein mitgeschicktes `key` wird verworfen, nicht angewendet.
+    Spec 6.2: the key is the wiring in Loxone. If it were changeable here,
+    a click in the UI could silently kill a block in the house. The model
+    `SignalPatch` therefore has no field for it at all - a `key` sent along
+    is discarded, not applied.
     """
 ```
 
-`SignalPatch` trägt ausschließlich `title: str | None` und `exported: bool | None`.
+`SignalPatch` carries exclusively `title: str | None` and `exported: bool | None`.
 
-`rename_signal` muss — wie jede geräte-gebundene Route dieses Routers — erst
-prüfen, ob das Gerät hinter `signal_by_key(key).device_id` noch aktiv ist, bevor
-es etwas ändert (Review-Fix Important #4, 2026-09-02): sonst bleibt die Zeile
-eines per `DELETE /api/devices/{id}` entfernten Geräts über ihren Schlüssel
-weiterhin lesbar und mutierbar, obwohl `GET /api/devices/{id}` für dasselbe Gerät
-längst 404 meldet. 404 mit einer deutschen Meldung, die sagt, dass das Gerät
-entfernt wurde — nicht die generische "unbekanntes Geräte-ID"-Meldung von
-`_require_device`, die zwischen "nie existiert" und "entfernt" nicht
-unterscheidet.
+`rename_signal` must — like every device-bound route of this router — first
+check whether the device behind `signal_by_key(key).device_id` is still active
+before changing anything (review fix Important #4, 2026-09-02): otherwise the
+row of a device removed via `DELETE /api/devices/{id}` stays readable and
+mutable through its key, even though `GET /api/devices/{id}` for the same device
+already reports 404. 404 with a German message that says the device was
+removed — not the generic "unknown device ID" message from `_require_device`,
+which does not distinguish between "never existed" and "removed".
 
-`register_signals` in `store.py` setzt das Default von `exported` beim ersten
-Registrieren eines Signals auf `is_exportable(profile.exportability)` — dieselbe
-Funktion, die `_signal_out`/`_device_out` unten für `exportable`/
-`exportable_count` aufrufen (`profiles.table.is_exportable`, exportierbar genau
-für ANALOG/DIGITAL). Eine zweite, unabhängig hingeschriebene Fassung derselben
-Regel (etwa `exportability is not Exportability.NONE`, was TEXT fälschlich
-mit einschlösse) ist genau das, was Review-Fix Important #2 (2026-09-02) beheben
-musste — beide Stellen dieses Tasks müssen dieselbe Funktion aufrufen, nicht
-eigenständig dieselbe Idee nachbilden.
+`register_signals` in `store.py` sets the default of `exported` when a signal
+is first registered to `is_exportable(profile.exportability)` — the same
+function that `_signal_out`/`_device_out` below call for `exportable`/
+`exportable_count` (`profiles.table.is_exportable`, exportable exactly
+for ANALOG/DIGITAL). A second, independently written version of the same
+rule (say, `exportability is not Exportability.NONE`, which would wrongly
+include TEXT) is exactly what review fix Important #2 (2026-09-02) had to
+fix — both places in this task must call the same function, not
+independently reproduce the same idea.
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/ -v`
-Expected: PASS, 22 Tests (7 aus diesem Plan-Entwurf plus 15, die im Zuge dieses
-Tasks tatsächlich dazukamen: Einlernen, Entfernen, das Export-Flag, und der
-Review-Fix zu einem Signal-Zugriff auf ein bereits entferntes Gerät)
+Expected: PASS, 22 tests (7 from this plan draft plus 15 that were actually added
+in the course of this task: commissioning, removal, the export flag, and the
+review fix for signal access to an already-removed device)
 
 - [ ] **Step 6: Commit**
 
@@ -566,20 +564,20 @@ git commit -m "feat(api): Geraete und Signale lesen und benennen"
 
 ---
 
-### Task 3: WebSocket für Live-Werte
+### Task 3: WebSocket for Live Values
 
-Spec 8.3: dieselbe Subscription, die den UDP-Sender speist — kein zweiter Pfad, kein
-Polling.
+Spec 8.3: the same subscription that feeds the UDP sender — no second path, no
+polling.
 
 **Files:**
 - Create: `src/loxmatter/api/live.py`
-- Modify: `src/loxmatter/loxone/runtime.py` (Beobachter)
+- Modify: `src/loxmatter/loxone/runtime.py` (observer)
 - Create: `tests/api/test_live.py`
 
 **Interfaces:**
 - Produces:
   - `Runtime.add_observer(callback)` / `remove_observer(callback)`
-  - `build_live_router(runtime) -> APIRouter` mit `/api/live`
+  - `build_live_router(runtime) -> APIRouter` with `/api/live`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -601,7 +599,7 @@ class RecordingSender:
 
 
 async def test_observer_sees_every_value_the_sender_sees(tmp_path, plug_store):
-    """Spec 8.3: ein Pfad, nicht zwei."""
+    """Spec 8.3: one path, not two."""
     store, device_id = plug_store
     seen: list[tuple[str, object]] = []
     runtime = Runtime(store, RecordingSender())
@@ -611,7 +609,7 @@ async def test_observer_sees_every_value_the_sender_sees(tmp_path, plug_store):
 
 
 async def test_a_failing_observer_does_not_stop_the_udp_sender(tmp_path, plug_store):
-    """Die Oberflaeche darf die Bruecke nicht mitreissen."""
+    """The UI must not be allowed to take the bridge down with it."""
     store, device_id = plug_store
     sent: list[str] = []
 
@@ -653,7 +651,7 @@ async def test_websocket_delivers_a_value(api_with_runtime):
 
 
 async def test_a_disconnecting_client_is_dropped_without_noise(api_with_runtime):
-    """Ein geschlossener Browser-Tab darf keinen Fehler ins Log schreiben."""
+    """A closed browser tab must not write an error to the log."""
     client, runtime, device_id = api_with_runtime
     async with client.websocket_connect("/api/live"):
         pass
@@ -664,54 +662,57 @@ async def test_a_disconnecting_client_is_dropped_without_noise(api_with_runtime)
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_live.py -v`
-Expected: FAIL mit `AttributeError: 'Runtime' object has no attribute 'add_observer'`
+Expected: FAIL with `AttributeError: 'Runtime' object has no attribute 'add_observer'`
 
-- [ ] **Step 3: Beobachter in der Laufzeit**
+- [ ] **Step 3: Observer in the runtime**
 
-In `Runtime` ergänzen. Zwei Regeln, die im Docstring stehen müssen:
+Add to `Runtime`. Two rules that must be in the docstring:
 
-- Der Beobachter wird **nach** dem Senden aufgerufen. Die Brücke zu Loxone ist der
-  Zweck; die Oberfläche schaut zu.
-- Ein Beobachter, der wirft, wird geloggt und übersprungen. Er darf den UDP-Pfad nicht
-  mitreißen — dieselbe Regel, aus der in Phase 4 die Heartbeat-Schleife gehärtet wurde.
+- The observer is called **after** sending. The bridge to Loxone is the
+  purpose; the UI watches.
+- An observer that throws is logged and skipped. It must not be allowed to take
+  down the UDP path with it — the same rule that hardened the heartbeat loop in
+  Phase 4.
 
-- [ ] **Step 4: WebSocket-Router**
+- [ ] **Step 4: WebSocket router**
 
-Jede Verbindung meldet sich als Beobachter an und beim Trennen wieder ab. Ein
-`WebSocketDisconnect` ist der Normalfall, kein Fehler — er darf nichts ins Log schreiben.
+Every connection registers itself as an observer and unregisters again on
+disconnect. A `WebSocketDisconnect` is the normal case, not an error — it must not
+write anything to the log.
 
-Die Warteschlange je Verbindung ist **begrenzt** (`QUEUE_MAXSIZE = 512`, Review-Fix
-Important #1, 2026-09-02) — nicht unbegrenzt, wie eine frühere Fassung annahm. Diese
-Brücke läuft wochenlang unbeaufsichtigt in jemandes Zuhause; ein Browser-Tab im
-Hintergrund oder ein eingeschlafenes Laptop, das nicht mehr liest, ist dort Alltag, kein
-Randfall. Die Grenze ist so gewählt, dass sie einen vollen Resend-Burst (`/resync`,
-Spec 6.4 — schon ein einzelnes Gerät wie der Testsuite-Stecker kommt auf ~110
-Datagramme) klaglos aufnimmt, mit deutlicher Luft nach oben. Bei Überlauf fällt der
-**älteste** Eintrag, nicht der neueste — eine Live-Ansicht will den aktuellsten Stand.
-Ein Debug-Log meldet sich beim Übergang ins Verwerfen (nicht bei jedem weiteren
-Verwurf), damit eine hängende Verbindung im Betrieb auffindbar bleibt. Bewusst NICHT
-umgesetzt: die Verbindung aktiv zu trennen, wenn sie dauerhaft voll bleibt — die
-Begrenzung deckelt bereits die einzige Gefahr (unbegrenztes Wachstum) auf eine feste,
-kleine Größe; eine zusätzliche Zeitschwelle bräuchte eine eigene, schwer zu
-begründende Kalibrierung und würde riskieren, eine nur kurz gedrosselte Sitzung
-rauszuwerfen, für einen Gewinn, der bei bereits gedeckeltem Speicher gering ist.
+The queue per connection is **bounded** (`QUEUE_MAXSIZE = 512`, review fix
+Important #1, 2026-09-02) — not unbounded, as an earlier version assumed. This
+bridge runs unattended for weeks in someone's home; a browser tab in the
+background or a laptop that has gone to sleep and no longer reads is everyday life
+there, not an edge case. The limit is chosen so that it absorbs a full resend
+burst (`/resync`, Spec 6.4 — even a single device like the test-suite plug comes
+to ~110 datagrams) without complaint, with clear headroom above that. On
+overflow, the **oldest** entry is dropped, not the newest — a live view wants the
+most current state. A debug log fires on the transition into dropping (not on
+every further drop), so a stuck connection stays discoverable during operation.
+Deliberately NOT implemented: actively closing the connection if it stays full
+for good — the bound already caps the one real danger (unbounded growth) to a
+fixed, small size; an additional time threshold would need its own
+hard-to-justify calibration and would risk throwing out a session that was only
+briefly throttled, for a gain that is small given the already-capped memory.
 
-Um einen Client, der während des Trennens mitten im Versand steckt, robust zu behandeln
-(Review-Fix Important #2, 2026-09-02): `_send_loop` fängt nicht nur `WebSocketDisconnect`
-ab, sondern auch `RuntimeError` direkt an der Sendestelle — manche ASGI-Server werfen bei
-einem Sendeversuch auf eine bereits verlorene Verbindung genau das statt
-`WebSocketDisconnect`. Beides ist derselbe Fall (ein Browser-Tab, der weg ist, kein
-Programmfehler) und landet deshalb auf `logger.debug`, nie auf `logger.error` — und die
-Route meldet den Beobachter trotzdem im `finally` ab.
+To robustly handle a client that is stuck mid-send while disconnecting
+(review fix Important #2, 2026-09-02): `_send_loop` catches not only
+`WebSocketDisconnect`, but also `RuntimeError` directly at the send point —
+some ASGI servers raise exactly that instead of `WebSocketDisconnect` on a send
+attempt to an already-lost connection. Both are the same case (a browser tab that
+is gone, not a program error) and therefore land on `logger.debug`, never on
+`logger.error` — and the route unregisters the observer in the `finally` block
+regardless.
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_live.py -v`
-Expected: PASS, 9 Tests (5 aus der ursprünglichen Task 3, dazu 4 aus dem Review-Fix vom
-2026-09-02: Warteschlangen-Überlauf verwirft den ältesten Eintrag und lässt UDP-Pfad wie
-Beobachter-Registrierung unberührt, ein `RuntimeError` beim Versand wird wie eine
-Trennung behandelt ohne Fehler-Log, und zwei gleichzeitige Verbindungen bleiben
-voneinander isoliert)
+Expected: PASS, 9 tests (5 from the original Task 3, plus 4 from the review fix of
+2026-09-02: queue overflow drops the oldest entry and leaves the UDP path and
+observer registration untouched, a `RuntimeError` on send is treated like a
+disconnect without an error log, and two simultaneous connections stay
+isolated from each other)
 
 - [ ] **Step 6: Commit**
 
@@ -722,23 +723,23 @@ git commit -m "feat(api): WebSocket fuer Live-Werte aus derselben Subscription"
 
 ---
 
-### Task 4: Bedienung und rohes Attributschreiben
+### Task 4: Control and Raw Attribute Writing
 
-Das Herz der Diagnosefähigkeit aus Spec 8.1.
+The heart of the diagnostic capability from Spec 8.1.
 
 **Files:**
 - Create: `src/loxmatter/api/control.py`
 - Create: `tests/api/test_control.py`
 
 **Interfaces:**
-- Consumes: `Store.resolve_command`, `commands.translate.to_matter_call`, der `invoke`-Callback aus Phase 4
+- Consumes: `Store.resolve_command`, `commands.translate.to_matter_call`, the `invoke` callback from Phase 4
 - Produces: `build_control_router(store, invoke) -> APIRouter`
 
-| Methode | Pfad | Zweck |
+| Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/devices/{device_id}/controls` | welche Bedienelemente dieses Gerät hat |
-| POST | `/api/commands/{key}` | ein Kommando ausführen, Wert im Rumpf |
-| POST | `/api/signals/{key}/write` | ein Attribut roh setzen |
+| GET | `/api/devices/{device_id}/controls` | which controls this device has |
+| POST | `/api/commands/{key}` | execute a command, value in the body |
+| POST | `/api/signals/{key}/write` | set an attribute raw |
 
 - [ ] **Step 1: Write the failing test**
 
@@ -749,14 +750,14 @@ import pytest
 
 
 async def test_plug_offers_exactly_its_three_commands(api):
-    """Spec 6.7: Ausgangsbefehle stammen aus AcceptedCommandList, nicht aus Attributen."""
+    """Spec 6.7: output commands come from AcceptedCommandList, not from attributes."""
     client, _, device_id = api
     controls = (await client.get(f"/api/devices/{device_id}/controls")).json()
     assert sorted(c["slug"] for c in controls) == ["off", "on", "toggle"]
 
 
 async def test_button_offers_no_controls(api_button):
-    """Ein Taster ist ein Eingabegeraet."""
+    """A button is an input device."""
     client, _, device_id = api_button
     assert (await client.get(f"/api/devices/{device_id}/controls")).json() == []
 
@@ -769,7 +770,7 @@ async def test_executing_a_command_reaches_matter(api):
 
 
 async def test_the_same_translation_as_the_loxone_endpoint(api, invocations):
-    """Spec 4.2: eine Umrechnung, zwei Aufrufer - sonst driften sie."""
+    """Spec 4.2: one conversion, two callers - otherwise they drift."""
     client, _, device_id = api
     key = f"d{device_id}_1_on"
     await client.post(f"/api/commands/{key}", json={"value": "1"})
@@ -792,7 +793,7 @@ async def test_a_device_that_does_not_answer_yields_502(api_failing_invoke):
 
 
 async def test_raw_write_of_a_non_writable_attribute_is_refused(api):
-    """Lieber eine klare Absage als ein Schreibversuch, der still nichts tut."""
+    """A clear refusal is better than a write attempt that silently does nothing."""
     client, store, device_id = api
     key = next(s.key for s in store.signals(device_id) if s.ref.cluster_id == 40)
     response = await client.post(f"/api/signals/{key}/write", json={"value": "42"})
@@ -802,38 +803,38 @@ async def test_raw_write_of_a_non_writable_attribute_is_refused(api):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_control.py -v`
-Expected: FAIL mit `404` auf `/api/devices/{id}/controls` — die Route existiert nicht
+Expected: FAIL with `404` on `/api/devices/{id}/controls` — the route does not exist
 
 - [ ] **Step 3: Write minimal implementation**
 
-`src/loxmatter/api/control.py`. Der Docstring hält fest, warum es dieses Modul gibt:
+`src/loxmatter/api/control.py`. The docstring records why this module exists:
 
 ```python
-"""Bedienung eines Geraets aus der Oberflaeche.
+"""Control of a device from the UI.
 
-Das ist kein Komfortmerkmal (Spec 8.1). Schaltet eine Lampe ueber Loxone
-nicht, trennt ein Klick hier die beiden moeglichen Ursachen: reagiert das
-Geraet, liegt der Fehler in der Loxone-Verdrahtung oder im Export; reagiert
-es nicht, in Matter, Thread oder am Geraet.
+This is not a convenience feature (Spec 8.1). If a lamp doesn't switch via
+Loxone, a click here separates the two possible causes: if the device
+reacts, the fault is in the Loxone wiring or the export; if it doesn't
+react, the fault is in Matter, Thread, or at the device.
 
-Die Uebersetzung kommt aus `commands.translate` - derselben, die der
-Loxone-Endpunkt benutzt. Eine eigene Kopie hier wuerde driften, und dann
-haette die Diagnose genau den Fehler, den sie finden soll (Spec 4.2).
+The translation comes from `commands.translate` - the same one the
+Loxone endpoint uses. A separate copy here would drift, and then the
+diagnostics would have exactly the fault it is supposed to find (Spec 4.2).
 """
 ```
 
-Die Statuscodes folgen dem Loxone-Endpunkt aus Phase 4: 404 unbekannter Schlüssel,
-400 unpassender Wert, 502 Gerät antwortet nicht.
+The status codes follow the Loxone endpoint from Phase 4: 404 unknown key,
+400 mismatched value, 502 device does not respond.
 
-Für das rohe Schreiben: die Schreibbarkeit eines Attributs steht nicht im Snapshot.
-**Prüfe, ob `python-matter-server` sie zugänglich macht**, und wenn nicht, lehne
-Schreibversuche auf Attribute ab, die nicht in einer Erlaubnisliste stehen — dieselbe
-Asymmetrie wie bei den Kommandos in Spec 6.7. Trage den Befund in die Spec ein.
+For raw writing: the writability of an attribute is not in the snapshot.
+**Check whether `python-matter-server` makes it accessible**, and if not, refuse
+write attempts on attributes that are not on an allow list — the same
+asymmetry as with the commands in Spec 6.7. Enter the finding into the spec.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_control.py -v`
-Expected: PASS, 7 Tests
+Expected: PASS, 7 tests
 
 - [ ] **Step 5: Commit**
 
@@ -842,50 +843,51 @@ git add src/loxmatter/api/control.py tests/api/test_control.py
 git commit -m "feat(api): Geraete aus der Oberflaeche bedienen"
 ```
 
-**Review-Fix (2026-09-02), zwei Important- und zwei Minor-Befunde:**
+**Review fix (2026-09-02), two Important and two Minor findings:**
 
-1. **Important — `POST /api/commands/{key}` prüfte nie, ob das Gerät des Kommandos
-   noch aktiv ist.** `Store.resolve_command` löst den Schlüssel allein über die
-   `command`-Tabelle auf, und `forget_device` löscht dort keine Zeile — es setzt nur
-   `device.active = 0`. Ein Kommando gegen ein bereits entferntes Gerät ließ sich
-   dadurch weiterhin auslösen, während `GET /api/devices/{id}/controls` für dasselbe
-   Gerät korrekt 404 meldete. Behoben nach demselben Muster wie `write_signal` (dort
-   schon vorhanden) und `PATCH /api/signals/{key}` (`api/devices.py`, Review-Fix
-   Important #4 aus Task 2): `StoredCommand` trägt jetzt `device_id`, und
-   `execute_command` prüft `store.device(stored.device_id)`, bevor es übersetzt und
-   auslöst — ein entferntes Gerät liefert 404 mit deutscher Meldung. Neuer Test:
+1. **Important — `POST /api/commands/{key}` never checked whether the command's
+   device is still active.** `Store.resolve_command` resolves the key solely via
+   the `command` table, and `forget_device` does not delete a row there — it only
+   sets `device.active = 0`. A command against an already-removed device could
+   therefore still be triggered, while `GET /api/devices/{id}/controls` for the
+   same device correctly reported 404. Fixed following the same pattern as
+   `write_signal` (already present there) and `PATCH /api/signals/{key}`
+   (`api/devices.py`, review fix Important #4 from Task 2): `StoredCommand` now
+   carries `device_id`, and `execute_command` checks `store.device(stored.device_id)`
+   before translating and triggering — a removed device returns 404 with a
+   German message. New test:
    `test_command_at_a_removed_device_is_refused`. `GET /api/devices/{id}/controls`
-   und `POST /api/signals/{key}/write` wurden dabei erneut geprüft — beide waren
-   bereits abgesichert (`_require_device` bzw. die vorhandene Prüfung in
-   `write_signal`), keine Änderung nötig.
-2. **Important — Spec 8.4 und der Moduldocstring behaupteten fälschlich, eine
-   Volltextsuche nach „writable“ habe keinen Treffer ergeben.** Tatsächlich trägt
-   `chip/clusters/CHIPClusters.py` (Teil des installierten `chip`-Pakets) 250
-   Vorkommen von `"writable": True`, darunter für `BasicInformation` exakt die drei
-   Attribute, auf die die Erlaubnisliste unabhängig davon schon kam. Die Information
-   existiert also — sie steht nur in einem Modul, das in dieser Distribution nicht
-   importierbar ist (`ImportError: cannot import name 'exceptions' from 'chip'`, weil
-   `home_assistant_chip_clusters` `CHIPClusters.py` ohne das dazugehörige
-   `chip/exceptions.py` ausliefert) und das python-matter-server nirgends benutzt. Die
-   praktische Konsequenz (Erlaubnisliste bleibt richtig) ändert sich dadurch nicht,
-   aber die Begründung wurde in Spec 8.4 und im Moduldocstring korrigiert. Spec 12
-   bekommt dazu einen neuen Punkt 7: die von Hand gepflegte Erlaubnisliste skaliert
-   nicht über eine Handvoll Geräte hinaus und könnte ersetzt werden, sobald dieses
-   Modul importierbar wird oder sich das Parsen als Daten als vertretbar erweist.
-3. **Minor — die 400/501-Antworten von `POST /api/signals/{key}/write` verwiesen auf
-   „den Moduldocstring von api/control.py“**, brauchbar in einem Log, aber nichtssagend
-   für die Oberfläche. Beide Meldungen sagen jetzt selbst auf Deutsch, was los ist und
-   was sich tun lässt, ohne auf eine Datei zu verweisen.
-4. **Minor — `GET /api/devices/{id}/controls` zeigte gefilterte rohe Kommandos gar
-   nicht an**, was korrekt ist (Spec 6.7), aber eine Person, die ein unbekanntes Gerät
-   diagnostiziert, verlor dabei die Information, dass es sie überhaupt gibt. Die Route
-   liefert jetzt `{"commands": [...], "hidden_raw_commands": N}` statt einer nackten
-   Liste (neues Modell `ControlsOut`). Neuer Test:
+   and `POST /api/signals/{key}/write` were re-checked in the process — both were
+   already secured (`_require_device` and the existing check in
+   `write_signal` respectively), no change needed.
+2. **Important — Spec 8.4 and the module docstring wrongly claimed that a
+   full-text search for “writable” had turned up no hit.** In fact,
+   `chip/clusters/CHIPClusters.py` (part of the installed `chip` package) carries
+   250 occurrences of `”writable”: True`, including for `BasicInformation` exactly
+   the three attributes the allow list had already arrived at independently. The
+   information does exist, then — it just sits in a module that is not
+   importable in this distribution (`ImportError: cannot import name 'exceptions'
+   from 'chip'`, because `home_assistant_chip_clusters` ships `CHIPClusters.py`
+   without the accompanying `chip/exceptions.py`) and that python-matter-server
+   uses nowhere. The practical consequence (the allow list stays correct) does not
+   change as a result, but the justification was corrected in Spec 8.4 and in
+   the module docstring. Spec 12 gets a new point 7 for this: the hand-maintained
+   allow list does not scale beyond a handful of devices and could be replaced
+   once this module becomes importable or parsing it as data proves justified.
+3. **Minor — the 400/501 responses of `POST /api/signals/{key}/write` referred to
+   “the module docstring of api/control.py”**, useful in a log, but meaningless
+   for the UI. Both messages now say themselves, in German, what's going on and
+   what can be done, without pointing to a file.
+4. **Minor — `GET /api/devices/{id}/controls` did not show filtered raw commands
+   at all**, which is correct (Spec 6.7), but a person diagnosing an unfamiliar
+   device lost the information that they even exist in the process. The route
+   now returns `{“commands”: [...], “hidden_raw_commands”: N}` instead of a bare
+   list (new model `ControlsOut`). New test:
    `test_hidden_raw_commands_are_counted`.
 
-Zwei neue Tests (`test_command_at_a_removed_device_is_refused`,
-`test_hidden_raw_commands_are_counted`) zu den ursprünglichen sieben — **Expected:
-PASS, 9 Tests** in `tests/api/test_control.py`.
+Two new tests (`test_command_at_a_removed_device_is_refused`,
+`test_hidden_raw_commands_are_counted`) added to the original seven — **Expected:
+PASS, 9 tests** in `tests/api/test_control.py`.
 
 ```bash
 git add src tests docs
@@ -894,7 +896,7 @@ git commit -m "fix(api): Kommandos an entfernte Geraete abweisen"
 
 ---
 
-### Task 5: Export über die API
+### Task 5: Export via the API
 
 **Files:**
 - Create: `src/loxmatter/api/export.py`
@@ -904,11 +906,11 @@ git commit -m "fix(api): Kommandos an entfernte Geraete abweisen"
 - Consumes: `export.documents`, `export.signals`, `Store`
 - Produces: `build_export_router(store) -> APIRouter`
 
-| Methode | Pfad | Zweck |
+| Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/export/preview` | was entstünde: Dateien, Objekte, Befehle, Übersprungenes |
-| GET | `/api/export/download` | ZIP mit allen Vorlagen und der Kurzanleitung |
-| GET | `/api/export/status` | pro Gerät: wann zuletzt exportiert, seither geändert |
+| GET | `/api/export/preview` | what would result: files, objects, commands, skipped items |
+| GET | `/api/export/download` | ZIP with all templates and the quick-start guide |
+| GET | `/api/export/status` | per device: when last exported, changed since then |
 
 - [ ] **Step 1: Write the failing test**
 
@@ -929,7 +931,7 @@ async def test_preview_reports_what_would_be_written(api):
 
 
 async def test_preview_does_not_write_anything(api, tmp_path):
-    """Vorschau heisst Vorschau."""
+    """Preview means preview."""
     client, _, _ = api
     before = set(tmp_path.iterdir())
     await client.get("/api/export/preview?bridge_ip=192.168.1.50")
@@ -956,7 +958,7 @@ async def test_zip_contains_the_system_templates_and_a_readme(api):
 
 
 async def test_files_in_the_zip_keep_bom_and_crlf(api):
-    """Spec 6.1: das Format ist gemessen, nicht verhandelbar - auch im Archiv."""
+    """Spec 6.1: the format is measured, not negotiable - even in the archive."""
     client, _, _ = api
     response = await client.get("/api/export/download?bridge_ip=192.168.1.50")
     archive = zipfile.ZipFile(io.BytesIO(response.content))
@@ -981,36 +983,36 @@ async def test_missing_bridge_ip_yields_422(api):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_export_api.py -v`
-Expected: FAIL — die Routen existieren nicht
+Expected: FAIL — the routes do not exist
 
 - [ ] **Step 3: Write minimal implementation**
 
-Der Download baut das ZIP im Speicher. Die Kurzanleitung darin nennt die Zielordner
-(`Templates\VirtualIn\` und `Templates\VirtualOut\`), den Importweg in Loxone Config,
-und den Hinweis, dass die Systemvorlagen nur einmal gebraucht werden.
+The download builds the ZIP in memory. The quick-start guide inside it names the
+target folders (`Templates\VirtualIn\` and `Templates\VirtualOut\`), the import path
+in Loxone Config, and the note that the system templates are only needed once.
 
-**Der Export über die API muss dieselbe Datenbank schreiben wie `loxmatter export`.**
-Andernfalls vergibt die Oberfläche andere Schlüssel als die CLI, und ein Nutzer, der
-beides benutzt, bekommt zwei Sätze Vorlagen für dasselbe Gerät. Ein Test dagegen gehört
-dazu.
+**Export via the API must write to the same database as `loxmatter export`.**
+Otherwise the UI assigns different keys than the CLI, and a user who uses both
+gets two sets of templates for the same device. A test for this belongs here
+too.
 
-**`download` markiert erst NACH dem vollständigen Archiv, nie währenddessen**
-(Review-Fix Important #1, 2026-09-02 — siehe unten): `Store.mark_exported` wird pro
-Gerät gesammelt, aber erst aufgerufen, nachdem die `with zipfile.ZipFile(...)`-Schleife
-abgeschlossen und das ZIP vollständig im Speicher aufgebaut ist. Dieselbe Disziplin wie
-in `cli.py`s `export`-Kommando, das seinen `mark_exported`-Aufruf ebenfalls erst nach
-beiden erfolgreichen `write_bytes`-Aufrufen ausführt: schlägt der Aufbau eines Geräts
-mitten in der Schleife fehl (ein Rendern, das wirft, ein `store.commands`/
-`store.signals`, das scheitert, ein `forget_device` aus einer parallelen Anfrage), gibt
-es kein ZIP für den Client — dann darf auch kein zuvor verarbeitetes Gerät fälschlich
-als exportiert dastehen.
+**`download` marks only AFTER the complete archive, never during it**
+(review fix Important #1, 2026-09-02 — see below): `Store.mark_exported` is
+collected per device, but only called after the `with zipfile.ZipFile(...)` loop
+has completed and the ZIP has been fully built in memory. The same discipline as
+in `cli.py`'s `export` command, which likewise only executes its
+`mark_exported` call after both successful `write_bytes` calls: if building one
+device fails partway through the loop (a render that throws, a `store.commands`/
+`store.signals` that fails, a `forget_device` from a parallel request), there is
+no ZIP for the client — and then no previously processed device may be wrongly
+shown as exported.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_export_api.py -v`
-Expected: PASS, 14 Tests (mehr als die 7 im ursprünglichen Testentwurf oben — im
-Zuge des Tasks kamen zusätzliche Fälle dazu, u. a. das leere-Installation- und das
-entferntes-Gerät-Szenario)
+Expected: PASS, 14 tests (more than the 7 in the original test draft above — in
+the course of the task, additional cases were added, among them the
+empty-installation and the removed-device scenario)
 
 - [ ] **Step 5: Commit**
 
@@ -1019,66 +1021,65 @@ git add src/loxmatter/api/export.py tests/api/test_export_api.py
 git commit -m "feat(api): Vorlagen als Vorschau und als ZIP"
 ```
 
-**Review-Fix (2026-09-02), ein Important- und drei Minor-Befunde:**
+**Review fix (2026-09-02), one Important and three Minor findings:**
 
-1. **Important — `download` markierte ein Gerät als exportiert, bevor das ZIP
-   fertig war.** `store.mark_exported(device.id)` stand bislang IN der
-   Schleife, direkt nach den beiden `archive.writestr`-Aufrufen für dieses
-   Gerät, und committete sofort. Schlug der Aufbau eines späteren Geräts fehl
-   (ein Rendern, das wirft, ein `store.commands`/`store.signals`, das
-   scheitert, ein `forget_device` aus einer parallelen Anfrage), antwortete
-   FastAPI mit 500 — der Client bekam gar kein ZIP —, während jedes bis
-   dahin verarbeitete Gerät trotzdem dauerhaft als exportiert vermerkt blieb.
-   `GET /api/export/status` meldete ein solches Gerät danach fälschlich als
-   "seither unverändert", obwohl niemand die zugehörige Vorlage je erhalten
-   hat. Der CLI-Pfad (`cli.py`s `export`-Kommando) war genau gegen diesen
-   Fall schon gehärtet — die API übernahm die Disziplin nicht. Behoben:
-   `download` sammelt die Geräte-IDs während des Aufbaus in einer Liste und
-   ruft `store.mark_exported` erst NACH dem vollständig aufgebauten Archiv
-   auf, unmittelbar vor der Antwort. Neuer Test:
-   `test_a_failure_partway_through_the_archive_marks_no_device` — zwei
-   Geräte im Store, das zweite lässt `to_inputs` absichtlich scheitern; das
-   erste Gerät ist zu diesem Zeitpunkt schon vollständig ins Archiv
-   geschrieben. Nach dem Fix bleibt trotzdem keins der beiden markiert.
-2. **Minor — kein Test für den Migrationspfad v1 → v2.** Die bestehende
-   Testsuite (`tests/model/test_store_migration.py`) deckte nur eine
-   Alt-Datenbank auf Version 0 und eine frische auf der jeweils neuesten
-   Version ab; keine Datenbank auf genau Version 1 (`signal.exported`
-   vorhanden, `device.exported_at`/`updated_at` noch nicht) wurde je
-   geöffnet. Diese Phase hatte schon einmal eine Schema-Änderung ohne
-   Migration ausgeliefert (siehe die Schema-Migration-Notiz in Task 2) —
-   der Zwischenschritt verdient deshalb einen direkten Test statt nur einer
-   aus der schleifenbasierten `_migrate`-Logik abgeleiteten Vermutung. Neue
-   Tests in `tests/model/test_store_migration.py`:
-   `test_opening_a_v1_database_only_runs_the_v2_migration` und
-   `test_reopening_an_already_v2_database_is_a_noop`, mit einer neuen
-   `build_v1_database`-Hilfsfunktion nach demselben Muster wie
+1. **Important — `download` marked a device as exported before the ZIP was
+   finished.** `store.mark_exported(device.id)` used to sit IN the loop,
+   directly after the two `archive.writestr` calls for this device, and
+   committed immediately. If building a later device failed (a render that
+   throws, a `store.commands`/`store.signals` that fails, a `forget_device`
+   from a parallel request), FastAPI responded with 500 — the client got no
+   ZIP at all — while every device processed up to that point still stayed
+   permanently marked as exported. `GET /api/export/status` afterward wrongly
+   reported such a device as "unchanged since", even though nobody ever
+   received the associated template. The CLI path (`cli.py`'s `export`
+   command) was already hardened against exactly this case — the API did not
+   adopt the discipline. Fixed: `download` collects the device IDs during
+   building in a list and calls `store.mark_exported` only AFTER the fully
+   built archive, immediately before the response. New test:
+   `test_a_failure_partway_through_the_archive_marks_no_device` — two devices
+   in the store, the second deliberately makes `to_inputs` fail; the first
+   device is already fully written into the archive by that point. After the
+   fix, neither of the two stays marked regardless.
+2. **Minor — no test for the migration path v1 → v2.** The existing
+   test suite (`tests/model/test_store_migration.py`) only covered an old
+   database at version 0 and a fresh one at the respective latest
+   version; no database at exactly version 1 (`signal.exported`
+   present, `device.exported_at`/`updated_at` not yet) was ever
+   opened. This phase had already once shipped a schema change without
+   a migration (see the schema migration note in Task 2) — the
+   intermediate step therefore deserves a direct test instead of just an
+   assumption derived from the loop-based `_migrate` logic. New
+   tests in `tests/model/test_store_migration.py`:
+   `test_opening_a_v1_database_only_runs_the_v2_migration` and
+   `test_reopening_an_already_v2_database_is_a_noop`, with a new
+   `build_v1_database` helper function following the same pattern as
    `build_old_database`.
-3. **Minor — doppelte Migrations-Absicherung.** `_migrate_to_v1` und
-   `_migrate_to_v2` lasen beide `PRAGMA table_info`, prüften auf eine
-   fehlende Spalte und führten bedingt ein `ALTER TABLE` aus — zweimal von
-   Hand hingeschrieben statt einmal geteilt, und bei einer zweiten
-   Schema-Änderung in einer Phase ist eine dritte wahrscheinlich. Extrahiert
-   nach `_add_column_if_missing(db, table, column, ddl) -> bool` in
-   `model/store.py`; der Rückgabewert (wurde die Spalte neu angelegt?)
-   erlaubt `_migrate_to_v1` weiterhin, seinen Backfill nur bei einer echten
-   Alt-Datenbank auszuführen.
-4. **Minor — `preview` verlangt einen Parameter, den es nie benutzt.**
-   `bridge_ip` ist auf `/api/export/preview` Pflicht, taucht aber in keinem
-   Feld der Antwort auf — vertretbar (derselbe 422-Test wie bei `download`,
-   dieselbe Signatur wie bei `download`), aber ein künftiger Aufrufer würde
-   sich fragen, warum. Der Docstring von `preview` (wird zur
-   OpenAPI-Beschreibung) sagt das jetzt in einem zusätzlichen Satz
-   ausdrücklich: `bridge_ip` taucht bewusst in keinem Feld von
-   `ExportPreviewOut` auf, obwohl es Pflichtparameter ist.
+3. **Minor — duplicated migration safeguard.** `_migrate_to_v1` and
+   `_migrate_to_v2` both read `PRAGMA table_info`, checked for a
+   missing column, and conditionally ran an `ALTER TABLE` — written out
+   by hand twice instead of shared once, and given a second schema
+   change in one phase, a third is likely. Extracted
+   into `_add_column_if_missing(db, table, column, ddl) -> bool` in
+   `model/store.py`; the return value (was the column newly created?)
+   still lets `_migrate_to_v1` run its backfill only against a genuine
+   old database.
+4. **Minor — `preview` requires a parameter it never uses.**
+   `bridge_ip` is mandatory on `/api/export/preview`, but appears in no
+   field of the response — justifiable (the same 422 test as with
+   `download`, the same signature as with `download`), but a future caller
+   would wonder why. The docstring of `preview` (becomes the
+   OpenAPI description) now says so explicitly in an additional sentence:
+   `bridge_ip` deliberately appears in no field of
+   `ExportPreviewOut`, even though it is a required parameter.
 
-Drei neue Tests insgesamt: einer in `tests/api/test_export_api.py`
-(`test_a_failure_partway_through_the_archive_marks_no_device`) und zwei in
+Three new tests in total: one in `tests/api/test_export_api.py`
+(`test_a_failure_partway_through_the_archive_marks_no_device`) and two in
 `tests/model/test_store_migration.py`
 (`test_opening_a_v1_database_only_runs_the_v2_migration`,
 `test_reopening_an_already_v2_database_is_a_noop`) — **Expected: PASS, 398
-Tests** in der gesamten Suite (395 vor diesem Review-Fix plus die drei
-neuen).
+tests** in the entire suite (395 before this review fix plus the three
+new ones).
 
 ```bash
 git add src tests docs
@@ -1087,57 +1088,57 @@ git commit -m "fix(api): Export erst nach fertigem Archiv vermerken"
 
 ---
 
-### Task 6: Diagnose
+### Task 6: Diagnostics
 
-Spec 10.5. Diese vier Dinge sind der Grund, warum ein Fehlerbericht aus einer fremden
-Installation beantwortbar wird.
+Spec 10.5. These four things are the reason a bug report from someone else's
+installation becomes answerable.
 
 **Files:**
 - Create: `src/loxmatter/api/diagnostics.py`
-- Modify: `src/loxmatter/loxone/sender.py` (Mitschnitt)
-- Modify: `src/loxmatter/loxone/server.py` (Kommando-Log)
-- Modify: `src/loxmatter/cli.py` (`--matter-data-dir`-Option, Grundlage für die Sicherung)
+- Modify: `src/loxmatter/loxone/sender.py` (capture)
+- Modify: `src/loxmatter/loxone/server.py` (command log)
+- Modify: `src/loxmatter/cli.py` (`--matter-data-dir` option, basis for the backup)
 - Create: `tests/api/test_diagnostics.py`
 
 **Interfaces:**
 - Produces:
-  - `class RingBuffer` — feste Größe, älteste fallen heraus
+  - `class RingBuffer` — fixed size, oldest fall out
   - `build_diagnostics_router(...) -> APIRouter`
 
-| Methode | Pfad | Zweck |
+| Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/diagnostics/datagrams` | die letzten N gesendeten, filterbar pro Gerät |
-| GET | `/api/diagnostics/commands` | eingehende HTTP-Aufrufe mit Ergebnis |
-| GET | `/api/diagnostics/system` | Systemcheck, jede Zeile grün oder rot |
-| GET | `/api/diagnostics/fabric-backup` | Sicherung der Fabric-Credentials als Download |
+| GET | `/api/diagnostics/datagrams` | the last N sent, filterable per device |
+| GET | `/api/diagnostics/commands` | incoming HTTP calls with result |
+| GET | `/api/diagnostics/system` | system check, every line green or red |
+| GET | `/api/diagnostics/fabric-backup` | backup of the fabric credentials as a download |
 
-**Die Sicherung ist kein Nebenpunkt.** Spec 4.1 nennt das Volume mit den
-Fabric-Credentials den einzigen unersetzlichen Zustand des ganzen Systems: geht es
-verloren, muss jedes Gerät neu eingelernt werden — und bei Thread-Geräten heißt das
-zurücksetzen, aus dem alten Netz werfen, neu koppeln. Spec 8 führt die Sicherung
-deshalb ausdrücklich in der Systemansicht auf.
+**The backup is not a side point.** Spec 4.1 names the volume holding the
+fabric credentials the only irreplaceable state of the entire system: if it is
+lost, every device must be commissioned anew — and for Thread devices that means
+resetting, throwing out of the old network, re-pairing. Spec 8 therefore
+explicitly lists the backup in the system view.
 
-Der Endpunkt liefert den Inhalt des matter-server-Datenverzeichnisses als Archiv.
-**Diese Datei ist ein Schlüsselmaterial**, kein Protokoll: sie erlaubt es, die Fabric
-zu übernehmen. Der Download gehört deshalb hinter das Token aus Task 8, und die
-Oberfläche muss danebenschreiben, was da heruntergeladen wird — nicht nur einen
-Knopf mit „Backup" zeigen.
+The endpoint delivers the contents of the matter-server data directory as an
+archive. **This file is key material**, not a log: it allows taking over the
+fabric. The download therefore belongs behind the token from Task 8, and the
+UI must write next to it what is being downloaded there — not just show a
+button labeled "Backup".
 
-**Die Compose-Verdrahtung bleibt bis Task 8 auskommentiert (Review-Fix Critical,
-2026-09-02).** `--matter-data-dir` in `cli.py` ist harmlos — eine Option, die per
-Default aus ist und die Route erst mit echten Daten füttert, wenn jemand sie
-ausdrücklich setzt. Der Volume-Mount `./data:/matter-data:ro` in
-`deploy/testhost/docker-compose.yml`, der genau das täte, wäre das Gegenteil: dieser
-Dienst läuft dort mit `network_mode: host`, absichtlich, damit der Miniserver ihn
-erreicht — und das bedeutet, jeder im selben Netz erreicht ihn ebenfalls. Ohne den
-Token-Schutz aus Task 8 macht diese eine Zeile im Compose-File aus einer
-theoretischen Schwäche eine tatsächlich ausnutzbare: `GET
-/api/diagnostics/fabric-backup` ist bis dahin vollkommen ungeschützt (siehe deren
-Docstring). Diese Task liefert deshalb nur den Code-Pfad und die CLI-Option; die
-Volume-Zeile und `--matter-data-dir` im `command:` bleiben in
-`deploy/testhost/docker-compose.yml` auskommentiert, mit Verweis auf Task 8, bis
-dessen Token-Schutz steht. Task 8 aktiviert beide Zeilen wieder — siehe dessen
-Schritt 3.
+**The compose wiring stays commented out until Task 8 (review fix Critical,
+2026-09-02).** `--matter-data-dir` in `cli.py` is harmless — an option that is
+off by default and only feeds the route with real data once someone explicitly
+sets it. The volume mount `./data:/matter-data:ro` in
+`deploy/testhost/docker-compose.yml`, which would do exactly that, would be the
+opposite: this service runs there with `network_mode: host`, deliberately, so
+that the Miniserver can reach it — and that means anyone on the same network
+reaches it too. Without the token protection from Task 8, this one line in the
+compose file turns a theoretical weakness into an actually exploitable one: `GET
+/api/diagnostics/fabric-backup` is completely unprotected until then (see its
+docstring). This task therefore delivers only the code path and the CLI option; the
+volume line and `--matter-data-dir` in `command:` stay commented out in
+`deploy/testhost/docker-compose.yml`, with a reference to Task 8, until
+its token protection is in place. Task 8 re-enables both lines — see its
+step 3.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1157,7 +1158,7 @@ def test_ring_buffer_drops_the_oldest():
 
 
 def test_ring_buffer_of_a_long_running_bridge_stays_bounded():
-    """Eine Bruecke laeuft monatelang - der Mitschnitt darf nicht mitwachsen."""
+    """A bridge runs for months - the capture must not grow along with it."""
     buffer = RingBuffer(maxlen=100)
     for i in range(1_000_000):
         buffer.append(i)
@@ -1201,7 +1202,7 @@ async def test_system_check_reports_each_line_with_a_verdict(api):
 
 
 async def test_fabric_backup_is_a_real_archive(api):
-    """Spec 4.1: das einzige unersetzliche Datum des Systems."""
+    """Spec 4.1: the one irreplaceable piece of data in the system."""
     client, _, _ = api
     response = await client.get("/api/diagnostics/fabric-backup")
     assert response.status_code == 200
@@ -1210,7 +1211,7 @@ async def test_fabric_backup_is_a_real_archive(api):
 
 
 async def test_a_failing_check_says_what_to_do(api_without_matter):
-    """Ein roter Punkt ohne Hinweis hilft niemandem."""
+    """A red dot without a note helps nobody."""
     client, _, _ = api_without_matter
     checks = (await client.get("/api/diagnostics/system")).json()
     failing = next(c for c in checks if not c["ok"])
@@ -1220,17 +1221,17 @@ async def test_a_failing_check_says_what_to_do(api_without_matter):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_diagnostics.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.api.diagnostics'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.api.diagnostics'`
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
 class RingBuffer[T]:
-    """Haelt die letzten N Eintraege, aeltere fallen heraus.
+    """Holds the last N entries, older ones fall out.
 
-    Eine Bruecke laeuft monatelang. Ein Mitschnitt, der mitwaechst, ist irgendwann
-    das groesste Objekt im Prozess - und der interessante Teil sind ohnehin die
-    letzten Minuten.
+    A bridge runs for months. A capture that keeps growing eventually becomes
+    the largest object in the process - and the interesting part is the last
+    few minutes anyway.
     """
 
     def __init__(self, maxlen: int = 500) -> None:
@@ -1246,36 +1247,38 @@ class RingBuffer[T]:
         return len(self._items)
 ```
 
-Der Mitschnitt hängt sich in `UdpSender` ein, nicht daneben — sonst zeigt er, was
-gesendet werden *sollte*, statt was gesendet *wurde*. Das ist der Unterschied, auf den
-es bei einer Diagnose ankommt.
+The capture hooks into `UdpSender`, not alongside it — otherwise it shows what
+*should* be sent instead of what *was* sent. That is the distinction that
+matters for diagnostics.
 
-Der Systemcheck prüft mindestens: matter-server verbunden, Datenbank beschreibbar, IPv6
-vorhanden, Miniserver erreichbar. **Jede rote Zeile trägt einen konkreten Hinweis**, was
-zu tun ist — ein roter Punkt ohne Erklärung verschiebt das Rätsel nur.
+The system check checks at least: matter-server connected, database writable,
+IPv6 present, Miniserver reachable. **Every red line carries a concrete note**
+about what to do — a red dot without an explanation just relocates the puzzle.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_diagnostics.py -v`
-Expected: PASS, 8 Tests
+Expected: PASS, 8 tests
 
-**Review-Fix (2026-09-02), ein Critical- und ein Important-Befund:** die
-`fabric-backup`-Route hing anfangs ungeschützt an einem Compose-Mount, der sie mit
-echten Daten fütterte, ohne dass der Token-Schutz aus Task 8 schon stand — siehe oben,
-"Die Compose-Verdrahtung bleibt bis Task 8 auskommentiert". Dazu waren beide
-503-Zweige der Route (`matter_data_dir is None`, `not matter_data_dir.is_dir()`)
-ungetestet. Sechs neue Tests in `tests/api/test_diagnostics.py`:
+**Review fix (2026-09-02), one Critical and one Important finding:** the
+`fabric-backup` route initially hung unprotected off a compose mount that fed it
+with real data, without the token protection from Task 8 already being in place —
+see above, "The compose wiring stays commented out until Task 8". In addition,
+both 503 branches of the route (`matter_data_dir is None`,
+`not matter_data_dir.is_dir()`) were untested. Six new tests in
+`tests/api/test_diagnostics.py`:
 `test_command_log_does_not_record_diagnostics_polling`,
 `test_command_log_never_carries_a_query_string`,
-`test_a_check_that_raises_unexpectedly_fails_gracefully` (Systemcheck-Robustheit,
-bereits vor diesem Review-Fix ergänzt) sowie
+`test_a_check_that_raises_unexpectedly_fails_gracefully` (system-check
+robustness, already added before this review fix), as well as
 `test_fabric_backup_is_503_without_a_configured_directory`,
-`test_fabric_backup_is_503_when_the_configured_directory_is_missing` und
-`test_fabric_backup_is_503_when_the_configured_path_is_a_file` (die beiden 503-Zweige
-plus der bislang unbetrachtete Fall "Pfad existiert, ist aber keine Datei").
+`test_fabric_backup_is_503_when_the_configured_directory_is_missing`, and
+`test_fabric_backup_is_503_when_the_configured_path_is_a_file` (the two 503
+branches plus the previously unconsidered case "path exists but is not a
+file").
 
 Run: `uv run pytest tests/api/test_diagnostics.py -v`
-Expected: PASS, 14 Tests (8 aus diesem Plan-Entwurf plus die sechs oben)
+Expected: PASS, 14 tests (8 from this plan draft plus the six above)
 
 - [ ] **Step 5: Commit**
 
@@ -1286,7 +1289,7 @@ git commit -m "feat(api): Mitschnitt, Kommando-Log und Systemcheck"
 
 ---
 
-### Task 7: Die Oberfläche
+### Task 7: The UI
 
 **Files:**
 - Create: `src/loxmatter/web/index.html`
@@ -1297,15 +1300,15 @@ git commit -m "feat(api): Mitschnitt, Kommando-Log und Systemcheck"
 - Create: `tests/api/test_web.py`
 
 **Interfaces:**
-- Produces: die vier Ansichten aus Spec 8, ausgeliefert unter `/`
+- Produces: the four views from Spec 8, served under `/`
 
-- [ ] **Step 1: Alpine.js mitliefern**
+- [ ] **Step 1: Bundle Alpine.js**
 
-Lade `alpine.min.js` in der aktuellen 3.x-Fassung herunter und lege sie unter
-`src/loxmatter/web/vendor/` ab. **Kein CDN-Verweis im HTML** — die Brücke läuft in
-Installationen ohne Internet, und eine Oberfläche, die dort weiß bleibt, ist wertlos.
+Download `alpine.min.js` in the current 3.x version and place it under
+`src/loxmatter/web/vendor/`. **No CDN reference in the HTML** — the bridge runs in
+installations without internet, and a UI that stays blank there is worthless.
 
-Notiere Version und Herkunft in einem Kommentar am Kopf von `index.html`.
+Note version and provenance in a comment at the top of `index.html`.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1320,7 +1323,7 @@ async def test_root_serves_the_interface(api):
 
 
 async def test_alpine_is_served_locally_not_from_a_cdn(api):
-    """Die Bruecke laeuft in Installationen ohne Internet."""
+    """The bridge runs in installations without internet."""
     client, _, _ = api
     page = (await client.get("/")).text
     assert "cdn." not in page
@@ -1336,7 +1339,7 @@ async def test_the_page_names_all_four_views(api):
 
 
 async def test_the_page_does_not_promise_what_the_spec_excludes(api):
-    """Spec 8.2: Inbetriebnahme- und Diagnosewerkzeug, keine Smart-Home-Oberflaeche."""
+    """Spec 8.2: a commissioning and diagnostics tool, not a smart-home UI."""
     client, _, _ = api
     page = (await client.get("/")).text.lower()
     for absent in ("szene", "zeitplan", "automatisierung", "favorit"):
@@ -1352,11 +1355,11 @@ async def test_static_files_do_not_escape_their_directory(api):
 - [ ] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_web.py -v`
-Expected: FAIL mit `404` auf `/`
+Expected: FAIL with `404` on `/`
 
-- [ ] **Step 4: Die vier Ansichten bauen**
+- [ ] **Step 4: Build the four views**
 
-Die Auslieferung in `server.py`:
+Serving it in `server.py`:
 
 ```python
 _WEB_DIR = Path(__file__).parents[1] / "web"
@@ -1366,109 +1369,112 @@ app.mount("/static", StaticFiles(directory=_WEB_DIR), name="static")
 
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
-    """Liefert die Oberflaeche aus. Kein Build-Schritt, keine CDN-Abhaengigkeit."""
+    """Serves the UI. No build step, no CDN dependency."""
     return FileResponse(_WEB_DIR / "index.html")
 ```
 
-`index.html` trägt alle vier Ansichten, umgeschaltet über Alpine ohne Seitenwechsel.
+`index.html` carries all four views, switched via Alpine without a page change.
 
-**Ansicht Geräte.** Liste mit Online-Punkt, Name, Signalzahl. Pro Gerät die Bedienelemente
-aus `/api/devices/{id}/controls` und die wichtigsten Live-Werte. Ein Eingabefeld für den
-Pairing-Code mit einem Hinweis daneben: hängt das Gerät schon in Apple, Google oder einer
-DIRIGERA, funktioniert der aufgedruckte Code nicht — dort einen Multi-Admin-Code erzeugen
-(Spec 7.1). Das ist der häufigste Stolperstein und gehört in die Oberfläche, nicht in eine
-Anleitung, die niemand liest.
+**Devices view.** List with online dot, name, signal count. Per device, the controls
+from `/api/devices/{id}/controls` and the most important live values. An input
+field for the pairing code with a note next to it: if the device already sits in
+Apple, Google, or a DIRIGERA, the printed code doesn't work — generate a
+multi-admin code there (Spec 7.1). That is the most common stumbling block and
+belongs in the UI, not in a manual nobody reads.
 
-**Ansicht Signale.** Der vollständige Baum pro Gerät mit Live-Wert. Der **Schlüssel wird
-angezeigt, aber nicht editierbar** — mit einem kurzen Hinweis, warum: er ist die
-Verdrahtung in Loxone. Nicht exportierbare Werte bekommen statt der Checkbox den Grund
-angezeigt (Spec 6.6).
+**Signals view.** The complete tree per device with live value. The **key is
+displayed but not editable** — with a short note why: it is the wiring in
+Loxone. Values that cannot be exported get the reason displayed instead of the
+checkbox (Spec 6.6).
 
-**Ansicht Export.** Die IP **dieser Brücke** (aus Sicht des Miniservers, also der Wert,
-der zur `Address` des virtuellen UDP-Eingangs wird) und die Ports eintragen, Vorschau
-ansehen, ZIP herunterladen. Pro Gerät sichtbar, wann zuletzt exportiert wurde.
+**Export view.** Enter the IP **of this bridge** (from the Miniserver's point of
+view, i.e. the value that becomes the `Address` of the virtual UDP input) and the
+ports, view the preview, download the ZIP. Per device, visible when it was last
+exported.
 
-> Diese Zeile sagte bis zum 2026-09-03 „Miniserver-IP", und die Oberfläche übernahm die
-> Beschriftung; korrigiert in Fix 1 der Nachbesserung (siehe Spec 8, Ansicht 3).
+> Until 2026-09-03 this line said "Miniserver IP", and the UI adopted the
+> label; corrected in fix 1 of the follow-up (see Spec 8, view 3).
 
-**Ansicht System.** Der Systemcheck als Liste grüner und roter Zeilen, darunter der
-UDP-Mitschnitt und das Kommando-Log.
+**System view.** The system check as a list of green and red lines, below it the
+UDP capture and the command log.
 
-Die Live-Werte kommen über den WebSocket aus Task 3. Bricht er ab, zeigt die Oberfläche
-das an und verbindet sich neu — eine Oberfläche, die eingefrorene Werte als aktuell
-darstellt, ist schlimmer als eine, die sagt, dass sie die Verbindung verloren hat.
+The live values come over the WebSocket from Task 3. If it drops, the UI shows
+that and reconnects — a UI that displays frozen values as current is worse than
+one that says it has lost the connection.
 
-**Review-Fix, 2026-09-02 — vier Befunde, zwei davon mit Testfolgen:**
+**Review fix, 2026-09-02 — four findings, two of them with test consequences:**
 
-**Important #1 — die WebSocket-Absicherung hatte keinen Regressionstest.** Beim Bau
-dieser Task stellte sich heraus, dass `uvicorn` allein (ohne das `"standard"`-Extra)
-keine WebSocket-Implementierung mitbringt — ein echter `uvicorn`-Prozess beantwortete
-`GET /api/live` mit `404 Unsupported upgrade request`, während die komplette Testsuite
-grün blieb, weil `tests/api/test_live.py` ausschließlich über den In-Prozess-ASGI-Pfad
-(`_InProcessWebSocket` in `tests/api/conftest.py`) läuft und uvicorns eigene
-HTTP/WebSocket-Weiche damit nie durchquert. `websockets>=12` wurde deshalb als eigene
-Zeile zu `pyproject.toml` hinzugefügt (mit Begründungskommentar dort) — seither die
-einzige Absicherung dagegen, und eine, die eine spätere Abhängigkeits-Aktualisierung,
-ein Aufräumen ("importiert ja niemand `websockets` direkt") oder ein Wechsel auf
-blosses `uvicorn` lautlos wieder einreißen könnte, ohne dass `uv run pytest` es
-bemerkt. Neu: `tests/api/test_live_smoke.py` startet dafür einen ECHTEN
-`uvicorn.Server` auf `127.0.0.1`, Port `0` (kollidiert nie, verlässt nie die Maschine),
-und führt darüber einen echten WebSocket-Handshake nach RFC 6455 gegen `/api/live` aus
-— über ein rohes TCP-Socket, bewusst ohne eine WebSocket-Client-Bibliothek zu benutzen
-(sonst würde ein aus dem Environment entferntes `websockets` schon den Testclient an
-einem `ImportError` scheitern lassen, nicht den eigentlich untersuchten Server). Als
-`@pytest.mark.slow` markiert (registriert in `pyproject.toml`), aber ohne
-Default-Ausschluss — läuft mit, kostet aber unter einer Sekunde.
+**Important #1 — the WebSocket safeguard had no regression test.** While
+building this task, it turned out that `uvicorn` alone (without the
+`"standard"` extra) does not bring a WebSocket implementation — a real
+`uvicorn` process answered `GET /api/live` with `404 Unsupported upgrade
+request`, while the entire test suite stayed green, because
+`tests/api/test_live.py` runs exclusively over the in-process ASGI path
+(`_InProcessWebSocket` in `tests/api/conftest.py`) and therefore never
+traverses uvicorn's own HTTP/WebSocket switch. `websockets>=12` was therefore
+added as its own line to `pyproject.toml` (with a justification comment
+there) — since then the only safeguard against this, and one that a later
+dependency update, a cleanup ("nobody imports `websockets` directly anyway"),
+or a switch to bare `uvicorn` could silently tear down again without `uv run
+pytest` noticing. New: `tests/api/test_live_smoke.py` starts a REAL
+`uvicorn.Server` on `127.0.0.1`, port `0` (never collides, never leaves the
+machine), for this, and performs a real WebSocket handshake per RFC 6455
+against `/api/live` over it — over a raw TCP socket, deliberately without
+using a WebSocket client library (otherwise a `websockets` removed from the
+environment would already make the test client fail with an `ImportError`,
+not the server actually under test). Marked as `@pytest.mark.slow`
+(registered in `pyproject.toml`), but without a default exclusion — it runs
+along, but costs under a second.
 
-**Important #2 — eine abgebrochene Verbindung sprach Englisch.** `requestJson` in
-`app.js` erzeugte einen deutschen Ausweichtext nur, wenn der Server überhaupt
-geantwortet hat. Wirft `fetch()` selbst (Verbindung abgelehnt, Brücken-Prozess unten,
-Netz nicht erreichbar), lief der rohe Browsertext ("Failed to fetch") unverändert bis
-in die Oberfläche durch — Englisch und Browser-Jargon, ausgerechnet in dem Werkzeug,
-dessen Zweck es ist, einen Fehlschlag ehrlich zu zeigen (Spec 8.1). `requestJson`
-fängt diesen Fall jetzt in einem eigenen `try`/`catch` um den `fetch()`-Aufruf ab und
-wirft stattdessen einen deutschen Text, der sagt, dass die Brücke nicht erreichbar ist
-und möglicherweise nicht läuft.
+**Important #2 — a dropped connection spoke English.** `requestJson` in
+`app.js` only generated a German fallback text if the server responded at
+all. If `fetch()` itself throws (connection refused, bridge process down,
+network unreachable), the raw browser text ("Failed to fetch") passed
+through unchanged into the UI — English and browser jargon, in the one tool
+whose purpose is to honestly show a failure (Spec 8.1). `requestJson` now
+catches this case in its own `try`/`catch` around the `fetch()` call and
+instead throws a German text that says the bridge is unreachable and may not
+be running.
 
-**Minor #3 — die Sperrliste sah nur die Auslieferung, nicht das JavaScript.**
-`test_the_page_does_not_promise_what_the_spec_excludes` (Spec 8.2) durchsuchte nur die
-ausgelieferte `index.html` nach "szene", "zeitplan", "automatisierung", "favorit". Die
-vier Wörter fehlen heute auch in `app.js`, war also kein falsches Grün — aber ein
-künftiges Feature, dessen deutsche Texte nur in JavaScript entstehen, wäre daran
-vorbeigekommen. Der Test lädt jetzt zusätzlich `/static/app.js` und prüft dieselbe
-Sperrliste dagegen.
+**Minor #3 — the block list only looked at the delivery, not the JavaScript.**
+`test_the_page_does_not_promise_what_the_spec_excludes` (Spec 8.2) only
+searched the delivered `index.html` for "szene", "zeitplan", "automatisierung",
+"favorit". The four words are absent from `app.js` today too, so it wasn't a
+false green — but a future feature whose German text originates only in
+JavaScript would have slipped past it. The test now also loads
+`/static/app.js` and checks the same block list against it.
 
-**Minor #4 — eine nie erfolgreiche erste Verbindung sah wie "verbindet noch" aus.**
-Scheiterte der allererste WebSocket-Handshake dauerhaft, blieb `socketEverConnected`
-auf `false` — weder der rote Banner noch der schärfere Kopfzeilentext (beide an
-`socketEverConnected` geknüpft) erschienen je, die Kopfzeile blieb unbegrenzt bei der
-neutralen "Verbinde…"-Formulierung stehen, während im Hintergrund still weiterversucht
-wurde. Kein Datenrisiko (es gibt ja noch keine Live-Werte, die veraltet wirken
-könnten), aber ein schwächeres Diagnosesignal als der Fall der verlorenen Verbindung.
-`app.js` zählt jetzt erfolglose Versuche der allerersten Verbindung
-(`initialConnectFailures`, gedeckelt bei
-`INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3`) und
-`connectionStatusText()` (die Kopfzeilenlogik, jetzt eine eigene Funktion statt einer
-verschachtelten Bedingung in `index.html`) schaltet danach auf einen klaren Text um,
-der sagt, dass keine Verbindung zustande kam.
+**Minor #4 — a first connection that never succeeded looked like "still
+connecting".** If the very first WebSocket handshake failed permanently,
+`socketEverConnected` stayed at `false` — neither the red banner nor the
+sharper header text (both tied to `socketEverConnected`) ever appeared, the
+header stayed indefinitely at the neutral "Connecting…" wording, while
+retries kept happening silently in the background. No data risk (there are
+no live values yet that could look stale), but a weaker diagnostic signal
+than the lost-connection case. `app.js` now counts failed attempts of the
+very first connection (`initialConnectFailures`, capped at
+`INITIAL_CONNECT_FAILURES_BEFORE_GIVING_UP_ON_SILENCE = 3`), and
+`connectionStatusText()` (the header logic, now its own function instead of
+a nested condition in `index.html`) then switches to a clear text that says
+no connection came about.
 
 - [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/api/test_web.py tests/api/test_live_smoke.py -v`
-Expected: PASS, 6 Tests (5 aus `test_web.py`, unverändert in der Zahl seit der
-ursprünglichen Task 7 — Review-Fix Minor #3 hat eine bestehende Assertion erweitert,
-keinen neuen Test hinzugefügt — dazu 1 neuer Test in `test_live_smoke.py` aus dem
-Review-Fix vom 2026-09-02, Important #1)
+Expected: PASS, 6 tests (5 from `test_web.py`, unchanged in count since the
+original Task 7 — review fix Minor #3 extended an existing assertion, did not
+add a new test — plus 1 new test in `test_live_smoke.py` from the review fix
+of 2026-09-02, Important #1)
 
-- [ ] **Step 6: Von Hand ansehen**
+- [ ] **Step 6: Look at it by hand**
 
 ```bash
 uv run loxmatter run --url ws://<matter-server>:5580/ws --miniserver 127.0.0.1 --port 7000
 ```
 
-Dann `http://localhost:8080` öffnen und alle vier Ansichten durchgehen. Was hier
-auffällt, gehört in den Bericht — eine Oberfläche lässt sich nicht allein über Tests
-beurteilen.
+Then open `http://localhost:8080` and go through all four views. Whatever
+stands out here belongs in the report — a UI cannot be judged by tests
+alone.
 
 - [ ] **Step 7: Commit**
 
@@ -1479,7 +1485,7 @@ git commit -m "feat(web): vier Ansichten ohne Build-Schritt"
 
 ---
 
-### Task 8: Zusammenbau, Absicherung, Durchstich
+### Task 8: Assembly, Hardening, End-to-End Test
 
 **Files:**
 - Modify: `src/loxmatter/loxone/server.py`, `src/loxmatter/cli.py`
@@ -1487,31 +1493,34 @@ git commit -m "feat(web): vier Ansichten ohne Build-Schritt"
 - Modify: `README.md`
 - Create: `tests/api/test_security.py`
 
-- [ ] **Step 1: Die Absicherung, die diese Phase nötig macht**
+- [ ] **Step 1: The hardening this phase makes necessary**
 
-Bis Phase 4 bot der Dienst `/cmd` und `/resync`. Ab jetzt lernt er Geräte ein und
-entfernt sie — **wer den Port erreicht, kann ein Gerät aus der Fabric werfen.**
+Up to Phase 4, the service offered `/cmd` and `/resync`. From now on it
+commissions devices and removes them — **whoever reaches the port can throw a
+device out of the fabric.**
 
-Das ist kein theoretischer Punkt: `run` bindet auf `0.0.0.0` ohne Option, das Vorbild.
+That is not a theoretical point: `run` binds on `0.0.0.0` with no option, the
+prior default.
 
-Baue mindestens:
+Build at least:
 
-- eine `--host`-Option mit Standard `0.0.0.0` (der Miniserver muss den Dienst erreichen),
-- ein optionales Token über `--api-token` oder `LOXMATTER_API_TOKEN`, das **nur** die
-  `/api`-Routen schützt, nicht `/cmd` und `/resync` — der Miniserver kann keinen Header
-  mitschicken,
-- und beim Start eine deutliche Warnung im Log, wenn kein Token gesetzt ist.
+- a `--host` option with default `0.0.0.0` (the Miniserver must be able to reach
+  the service),
+- an optional token via `--api-token` or `LOXMATTER_API_TOKEN` that protects
+  **only** the `/api` routes, not `/cmd` and `/resync` — the Miniserver cannot
+  send a header along,
+- and a clear warning in the log at startup if no token is set.
 
 ```python
 def build_api_guard(token: str | None) -> Callable[..., None]:
-    """Schuetzt die /api-Routen, nicht die des Miniservers.
+    """Protects the /api routes, not the Miniserver's.
 
-    Der Miniserver ruft virtuelle Ausgaenge ohne Header auf - er kann kein
-    Token mitschicken. /cmd und /resync muessen deshalb offen bleiben, und
-    das ist eine bewusste Grenze, keine Nachlaessigkeit: wer den Port
-    erreicht, kann weiterhin Geraete schalten. Was das Token verhindert,
-    ist das Einlernen, das Entfernen und der Download der
-    Fabric-Sicherung - also alles, was den Bestand veraendert.
+    The Miniserver calls virtual outputs without a header - it cannot send a
+    token along. /cmd and /resync must therefore stay open, and that is a
+    deliberate boundary, not carelessness: whoever reaches the port can still
+    switch devices. What the token prevents is commissioning, removal, and
+    the download of the fabric backup - i.e. everything that changes the
+    inventory.
     """
 
     async def guard(authorization: str | None = Header(default=None)) -> None:
@@ -1523,7 +1532,7 @@ def build_api_guard(token: str | None) -> Callable[..., None]:
     return guard
 ```
 
-Beim Start ohne Token:
+At startup without a token:
 
 ```python
     if api_token is None:
@@ -1534,66 +1543,71 @@ Beim Start ohne Token:
         )
 ```
 
-Tests: ohne Token sind die `/api`-Routen offen und die Warnung erscheint; mit Token
-antworten sie ohne Header mit 401, `/cmd` und `/resync` aber unverändert; und die
-Fabric-Sicherung ist auch mit gesetztem Token nur mit Header erreichbar.
+Tests: without a token, the `/api` routes are open and the warning appears; with
+a token they respond with 401 without a header, but `/cmd` and `/resync` stay
+unchanged; and the fabric backup is reachable only with a header even with a
+token set.
 
-Trage die Entscheidung in Spec 9 ein — mitsamt der Begründung, warum der Loxone-Pfad
-ungeschützt bleiben muss.
+Enter the decision into Spec 9 — together with the justification for why the
+Loxone path must stay unprotected.
 
-- [ ] **Step 2: Alles verbinden**
+- [ ] **Step 2: Connect everything**
 
-`build_app` bindet die fünf Router ein und liefert die Oberfläche aus. `run` reicht den
-Matter-Client durch, damit Einlernen funktioniert.
+`build_app` wires in the five routers and serves the UI. `run` passes the
+Matter client through so commissioning works.
 
-- [ ] **Step 3: Compose und README**
+- [ ] **Step 3: Compose and README**
 
-Der `loxmatter`-Dienst in `deploy/testhost/docker-compose.yml` veröffentlicht jetzt einen
-Port, der eine Bedienoberfläche trägt. Vermerke das dort und im README, zusammen mit dem
-Hinweis zum Token.
+The `loxmatter` service in `deploy/testhost/docker-compose.yml` now publishes a
+port carrying a control UI. Note that there and in the README, together with the
+note about the token.
 
-**Die Fabric-Sicherung wieder einhängen (Review-Fix Critical, 2026-09-02).** Task 6
-kommentierte die Volume-Zeile `./data:/matter-data:ro` und `--matter-data-dir
-/matter-data` im `command:` des `loxmatter`-Dienstes bewusst aus, mit Verweis genau
-hierher — ohne Token wäre `GET /api/diagnostics/fabric-backup` sonst für jeden im
-selben Netz erreichbar gewesen (siehe Task 6, "Die Compose-Verdrahtung bleibt bis
-Task 8 auskommentiert"). Jetzt, wo `build_api_guard` steht: beide Zeilen wieder
-einkommentieren, den Erklärkommentar dort auf "aktiv seit Task 8" umschreiben statt
-ihn ersatzlos zu streichen (die Begründung, warum das vorher gefährlich war, bleibt
-für den nächsten Leser wertvoll), und danach von Hand bestätigen, dass
-`/api/diagnostics/fabric-backup` ohne `Authorization`-Header mit 401 antwortet.
+**Re-enable the fabric backup mount (review fix Critical, 2026-09-02).** Task 6
+deliberately commented out the volume line `./data:/matter-data:ro` and
+`--matter-data-dir /matter-data` in the `command:` of the `loxmatter` service,
+with a reference pointing exactly here — without a token, `GET
+/api/diagnostics/fabric-backup` would otherwise have been reachable by anyone on
+the same network (see Task 6, "The compose wiring stays commented out until
+Task 8"). Now that `build_api_guard` is in place: re-enable both lines, rewrite
+the explanatory comment there to "active since Task 8" instead of deleting it
+outright (the justification for why it was dangerous before stays valuable for
+the next reader), and afterward confirm by hand that
+`/api/diagnostics/fabric-backup` responds with 401 without an `Authorization`
+header.
 
-- [ ] **Step 4: Vollständige Prüfung**
+- [ ] **Step 4: Full check**
 
 ```bash
 uv run pytest -v && uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
-- [ ] **Step 5: Durchstich an echter Hardware**
+- [ ] **Step 5: End-to-end test on real hardware**
 
-**Dieser Schritt braucht einen Menschen.** Er ist der Zweck der Phase.
+**This step needs a human.** It is the purpose of the phase.
 
-Mit laufendem matter-server:
+With matter-server running:
 
-1. Ein Gerät über die Oberfläche **einlernen** — Pairing-Code eingeben, Gerät erscheint.
+1. **Commission** a device through the UI — enter the pairing code, the device
+   appears.
 
-   **Erwartet, kein Fehler: das frisch eingelernte Gerät zeigt „online" und grün, aber
-   bei jedem Signal einen Strich** (Spec 12.3, ergänzt 2026-09-03).
-   `BridgeMatterClient.subscribe()` läuft genau einmal beim Start der Brücke und meldet
-   nur die damals bekannten (Node, Pfad)-Paare an; der Online-Status dagegen kommt aus
-   dem NODE_ADDED-Ereignis und ist sofort da. Für Schritt 2 deshalb **die Brücke einmal
-   neu starten** — danach kennt `subscribe()` den neuen Node und die Werte laufen ein.
-   Die Erfolgsmeldung in der Oberfläche sagt dasselbe. Das ist ein bekannter offener
-   Punkt, keine Abweichung, die in die Spec nachgetragen werden müsste.
-2. In der Signalansicht die Live-Werte sehen und einen Titel ändern; prüfen, dass der
-   Schlüssel unverändert bleibt.
-3. Das Gerät über die Oberfläche **schalten** und die Reaktion am Gerät beobachten.
-4. Vorlagen als ZIP herunterladen und den Inhalt prüfen.
-5. Im Systemcheck einen Fehler provozieren (matter-server stoppen) und sehen, ob die
-   rote Zeile den richtigen Hinweis gibt.
-6. Ein Gerät wieder **entfernen**.
+   **Expected, not a bug: the freshly commissioned device shows "online" and
+   green, but a dash for every signal** (Spec 12.3, added 2026-09-03).
+   `BridgeMatterClient.subscribe()` runs exactly once when the bridge starts and
+   registers only the (node, path) pairs known at that time; the online status,
+   by contrast, comes from the NODE_ADDED event and is there immediately. For
+   step 2, therefore, **restart the bridge once** — after that, `subscribe()`
+   knows the new node and the values start coming in. The success message in the
+   UI says the same thing. This is a known open point, not a deviation that
+   would need to be entered into the spec.
+2. See the live values in the signals view and change a title; check that the
+   key stays unchanged.
+3. **Switch** the device through the UI and observe the reaction at the device.
+4. Download templates as a ZIP and check the contents.
+5. Provoke an error in the system check (stop matter-server) and see whether the
+   red line gives the right note.
+6. **Remove** a device again.
 
-Was abweicht, geht in die Spec — **nicht** in eine Anpassung der Tests.
+Whatever deviates goes into the spec — **not** into an adjustment of the tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1604,16 +1618,16 @@ git commit -m "feat(web): Oberflaeche verbunden und abgesichert"
 
 ---
 
-## Abschluss der Phase
+## Completion of the phase
 
-Die Phase ist fertig, wenn:
+The phase is done when:
 
-1. `uv run pytest` ohne Hardware und ohne Netz durchläuft,
-2. die sechs Punkte aus Task 8 Schritt 5 an echter Hardware bestätigt sind,
-3. die Absicherungsentscheidung in Spec 9 steht,
-4. Abweichungen in der Spec stehen.
+1. `uv run pytest` passes without hardware and without network,
+2. the six points from Task 8 Step 5 are confirmed on real hardware,
+3. the hardening decision is in Spec 9,
+4. deviations are in the spec.
 
-**Nicht Teil dieser Phase:** alles aus Spec 8.2 — Szenen, Zeitpläne, Automatisierung,
-Räume, Nutzerverwaltung. Und die Farbbedienung bleibt so unvalidiert wie in Phase 4,
-solange keine Matter-Leuchte zur Verfügung steht; die Oberfläche zeigt die Regler, aber
-niemand hat gesehen, ob die Farbe stimmt.
+**Not part of this phase:** everything from Spec 8.2 — scenes, schedules, automation,
+rooms, user management. And color control stays as unvalidated as in Phase 4,
+as long as no Matter light is available; the UI shows the sliders, but
+nobody has seen whether the color is right.

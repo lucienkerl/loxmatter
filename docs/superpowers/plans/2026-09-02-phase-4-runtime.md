@@ -1,59 +1,59 @@
-# Phase 4: Laufzeit-Strecke — Implementation Plan
+# Phase 4: Runtime Path — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Werte fließen. Ein Messwert der Steckdose erscheint im Miniserver, und ein Loxone-Baustein schaltet sie.
+**Goal:** Values flow. A measured value from the plug appears in the Miniserver, and a Loxone block switches it.
 
-**Architecture:** Zwei Richtungen, die sich nur den Store und den Dienstprozess teilen. Sensorrichtung: `profiles` liefert Skalierungsfaktoren, `loxone/values` rechnet und formatiert, `loxone/sender` verschickt UDP, `loxone/runtime` verbindet Matter-Subscriptions damit und erzeugt Impulse, Zähler, Online-Signale und Heartbeat. Kommandorichtung: `commands/` übersetzt einen Wunschzustand in ein Matter-Kommando, `loxone/server` nimmt die HTTP-Aufrufe der virtuellen Ausgänge entgegen. Dazu ein `fake-miniserver`, der beide Richtungen ohne echten Miniserver prüfbar macht.
+**Architecture:** Two directions that share only the store and the service process. Sensor direction: `profiles` supplies scaling factors, `loxone/values` calculates and formats, `loxone/sender` sends UDP, `loxone/runtime` connects Matter subscriptions to it and generates pulses, counters, online signals and heartbeat. Command direction: `commands/` translates a desired state into a Matter command, `loxone/server` receives the HTTP calls of the virtual outputs. In addition a `fake-miniserver`, which makes both directions testable without a real Miniserver.
 
-**Tech Stack:** Python 3.12, `uv`, `pytest`, `ruff`, `mypy` (strict), `PyYAML`, `fastapi` + `uvicorn`, `sqlite3` und `asyncio` aus der Standardbibliothek.
+**Tech Stack:** Python 3.12, `uv`, `pytest`, `ruff`, `mypy` (strict), `PyYAML`, `fastapi` + `uvicorn`, `sqlite3` and `asyncio` from the standard library.
 
 ## Global Constraints
 
-- **Tests laufen ohne Hardware und ohne Netzwerkzugriff.** Ein UDP-Socket auf `127.0.0.1` gilt nicht als Netzwerkzugriff — er verlässt die Maschine nicht und ist die einzige ehrliche Art, einen UDP-Sender zu prüfen. Ein Test, der ein echtes Gerät oder einen echten Miniserver braucht, wird übersprungen und verrottet (Spec 10.1).
-- **Deutsch in Prosa, Kommentaren, Docstrings und Fehlermeldungen**, Englisch in Bezeichnern und Commit-Präfixen.
-- **Alle Datenklassen unveränderlich** (`frozen=True`), solange kein Grund dagegen spricht.
-- **Schlüssel sind unveränderlich** (Spec 6.2). Diese Phase liest sie und schreibt sie nie um. Jede Änderung an einem Schlüssel wäre ein Fehler dieser Phase, nicht eine Anpassung.
-- **Zieleinheit ist die des Loxone-Bausteins, nicht die SI-Einheit** (Spec 7.3). Leistung in kW.
-- **Zahlenformat: bis zu 6 Nachkommastellen, nachlaufende Nullen abgeschnitten.** 300 mW muss als `0.0003` ankommen, nicht als `0`. Das ist kein Detail: der Grund, eine messende Steckdose einzubauen, sind oft gerade die kleinen Dauerverbraucher (Spec 7.3).
-- **Datagrammform:** `<key>:<wert>`, passend zur Befehlserkennung `<key>:\v` der exportierten Vorlage (Spec 6.1).
-- `uv run ruff check .`, `uv run ruff format --check .` und `uv run mypy` müssen sauber bleiben. ruff formatiert auch Python-Blöcke in Markdown.
-- Die unsanierten Vorlagen unter `tests/fixtures/VirtualIn/` und `tests/fixtures/VirtualOut/` enthalten Zugangsdaten einer echten Installation und sind bewusst git-ignoriert. **Nicht lesen.**
+- **Tests run without hardware and without network access.** A UDP socket on `127.0.0.1` does not count as network access — it never leaves the machine and is the only honest way to check a UDP sender. A test that needs a real device or a real Miniserver is skipped and rots (Spec 10.1).
+- **German in prose, comments, docstrings and error messages**, English in identifiers and commit prefixes.
+- **All data classes immutable** (`frozen=True`), unless there is a reason against it.
+- **Keys are immutable** (Spec 6.2). This phase reads them and never rewrites them. Any change to a key would be a bug in this phase, not an adjustment.
+- **The target unit is that of the Loxone block, not the SI unit** (Spec 7.3). Power in kW.
+- **Number format: up to 6 decimal places, trailing zeros trimmed.** 300 mW must arrive as `0.0003`, not as `0`. This is not a detail: the reason for installing a metering plug is often precisely the small standby loads (Spec 7.3).
+- **Datagram form:** `<key>:<value>`, matching the command detection `<key>:\v` of the exported template (Spec 6.1).
+- `uv run ruff check .`, `uv run ruff format --check .` and `uv run mypy` must stay clean. ruff also formats Python blocks in Markdown.
+- The unsanitized templates under `tests/fixtures/VirtualIn/` and `tests/fixtures/VirtualOut/` contain credentials of a real installation and are deliberately git-ignored. **Do not read.**
 
 ---
 
-## Zwei Lücken aus Phase 3, die diese Phase schließt
+## Two gaps from Phase 3 that this phase closes
 
-Beim Entwurf dieser Phase gefunden, nicht vorher bekannt:
+Found while designing this phase, not known beforehand:
 
-**Kommandos werden nicht persistiert.** `extract_commands` läuft beim Export, der Schlüssel `d1_1_on` landet in der `VO_`-Vorlage — aber der Store kennt nur `device` und `signal`. Ruft der Miniserver später `/cmd/d1_1_on/1`, hat die Bridge keine Zuordnung zurück auf Node, Endpoint, Cluster und Kommando-ID. Phase 3 gibt Schlüssel aus, die sie selbst nicht auflösen kann. Task 2 schließt das.
+**Commands are not persisted.** `extract_commands` runs at export time, the key `d1_1_on` ends up in the `VO_` template — but the store only knows `device` and `signal`. When the Miniserver later calls `/cmd/d1_1_on/1`, the bridge has no mapping back to node, endpoint, cluster and command ID. Phase 3 emits keys that it cannot resolve itself. Task 2 closes that.
 
-**Es gibt keine Skalierungsfaktoren.** `clusters.yaml` trägt `unit`, aber kein `scale`. In der Vorlage steht `<v.6> kW`, und nichts rechnet Milliwatt in Kilowatt. Task 1 schließt das.
+**There are no scaling factors.** `clusters.yaml` carries `unit`, but no `scale`. The template contains `<v.6> kW`, and nothing converts milliwatts to kilowatts. Task 1 closes that.
 
-## Was diese Phase nicht abschließen kann
+## What this phase cannot complete
 
-**Die Farbraum-Umrechnung bleibt unvalidiert.** Task 5 baut sie und prüft sie gegen veröffentlichte Referenzwerte, aber es steht keine Matter-Leuchte zur Verfügung. Von allen Abbildungen im Projekt ist diese die fehleranfälligste — Loxone-Lumitech gegen Matter Hue/Saturation beziehungsweise CIE xy. Der Plan markiert das an Ort und Stelle; es ist ein offener Punkt der Phase, keine erledigte Aufgabe.
+**The color-space conversion remains unvalidated.** Task 5 builds it and checks it against published reference values, but no Matter light is available. Of all the mappings in the project, this is the most error-prone — Loxone Lumitech against Matter Hue/Saturation or CIE xy respectively. The plan flags that in place; it is an open point of the phase, not a completed task.
 
 ---
 
 ## File Structure
 
-| Datei | Verantwortung |
+| File | Responsibility |
 |---|---|
-| `src/loxmatter/profiles/clusters.yaml` | zusätzlich `scale` je Attribut |
-| `src/loxmatter/loxone/values.py` | roher Matter-Wert → Loxone-Wert, und dessen Textform |
-| `src/loxmatter/loxone/sender.py` | UDP-Versand: Entprellung, Rate-Limit. Kennt kein Matter |
-| `src/loxmatter/loxone/runtime.py` | verbindet Subscriptions mit dem Sender: Impulse, Zähler, Online, Heartbeat, Full-Resend |
-| `src/loxmatter/model/store.py` | zusätzlich `command`-Tabelle und Auflösung |
-| `src/loxmatter/commands/translate.py` | Wunschzustand → Matter-Kommando |
-| `src/loxmatter/commands/color.py` | Farbraum-Umrechnung |
-| `src/loxmatter/loxone/server.py` | HTTP-Endpoint für virtuelle Ausgänge und `/resync` |
-| `src/loxmatter/cli.py` | zusätzlich `loxmatter run` |
-| `src/loxmatter/devtools/` | Testdoppel für beide Richtungen (`FakeMiniserver`) |
+| `src/loxmatter/profiles/clusters.yaml` | additionally `scale` per attribute |
+| `src/loxmatter/loxone/values.py` | raw Matter value → Loxone value, and its text form |
+| `src/loxmatter/loxone/sender.py` | UDP transmission: debouncing, rate limiting. Knows no Matter |
+| `src/loxmatter/loxone/runtime.py` | connects subscriptions to the sender: pulses, counters, online, heartbeat, full resend |
+| `src/loxmatter/model/store.py` | additionally `command` table and resolution |
+| `src/loxmatter/commands/translate.py` | desired state → Matter command |
+| `src/loxmatter/commands/color.py` | color-space conversion |
+| `src/loxmatter/loxone/server.py` | HTTP endpoint for virtual outputs and `/resync` |
+| `src/loxmatter/cli.py` | additionally `loxmatter run` |
+| `src/loxmatter/devtools/` | test double for both directions (`FakeMiniserver`) |
 
 ---
 
-### Task 1: Skalierung und Zahlenformat
+### Task 1: Scaling and Number Format
 
 **Files:**
 - Modify: `src/loxmatter/profiles/clusters.yaml`
@@ -65,8 +65,8 @@ Beim Entwurf dieser Phase gefunden, nicht vorher bekannt:
 **Interfaces:**
 - Consumes: `SignalRef`, `SignalKind`, `lookup`, `Exportability`
 - Produces:
-  - `scale_factor(ref: SignalRef) -> float` in `profiles.table` — 1.0, wenn die Tabelle nichts sagt
-  - `to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None` in `loxone.values` — `None`, wenn nicht abbildbar
+  - `scale_factor(ref: SignalRef) -> float` in `profiles.table` — 1.0 if the table says nothing
+  - `to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None` in `loxone.values` — `None` if not mappable
   - `format_value(value: float | bool) -> str` in `loxone.values`
   - `datagram(key: str, value: float | bool) -> bytes` in `loxone.values`
 
@@ -86,17 +86,17 @@ def attr(cluster: int, element: int, endpoint: int = 1) -> SignalRef:
 
 
 def test_temperature_is_hundredths_of_a_degree():
-    """Spec 7.3: TemperatureMeasurement liefert 0,01 °C."""
+    """Spec 7.3: TemperatureMeasurement delivers 0.01 °C."""
     assert to_loxone_value(attr(1026, 0), 2150) == pytest.approx(21.5)
 
 
 def test_power_goes_from_milliwatt_to_kilowatt():
-    """Spec 7.3: Loxone rechnet Leistung in kW, nicht in W."""
+    """Spec 7.3: Loxone computes power in kW, not in W."""
     assert to_loxone_value(attr(144, 8, endpoint=2), 5_000_000) == pytest.approx(5.0)
 
 
 def test_small_power_survives_the_conversion():
-    """300 mW sind 0,0003 kW - genau der Standby-Verbraucher, den man sehen will."""
+    """300 mW is 0.0003 kW - exactly the standby load you want to see."""
     assert to_loxone_value(attr(144, 8, endpoint=2), 300) == pytest.approx(0.0003)
 
 
@@ -110,12 +110,12 @@ def test_boolean_passes_through_unscaled():
 
 
 def test_unknown_cluster_passes_through_unscaled():
-    """Spec 3.5: die Tabelle reichert an, sie filtert nicht."""
+    """Spec 3.5: the table enriches, it does not filter."""
     assert to_loxone_value(attr(64999, 7), 42) == pytest.approx(42.0)
 
 
 def test_unmappable_values_yield_none():
-    """Spec 6.6: Listen, Structs, Text und null werden nie zu einem Datagramm."""
+    """Spec 6.6: lists, structs, text and null never become a datagram."""
     assert to_loxone_value(attr(29, 1), [1, 2, 3]) is None
     assert to_loxone_value(attr(40, 1), "IKEA of Sweden") is None
     assert to_loxone_value(attr(49, 7), None) is None
@@ -128,7 +128,7 @@ def test_format_trims_trailing_zeros():
 
 
 def test_format_keeps_six_decimals_for_small_values():
-    """Ohne das verschwindet jeder Verbraucher unter 10 W in der Null."""
+    """Without this, every load under 10 W disappears into zero."""
     assert format_value(0.0003) == "0.0003"
     assert format_value(0.000001) == "0.000001"
 
@@ -139,25 +139,25 @@ def test_format_renders_booleans_as_one_and_zero():
 
 
 def test_datagram_matches_the_exported_check_pattern():
-    """Die Vorlage erkennt "<key>:\\v" - das Datagramm muss dazu passen (Spec 6.1)."""
+    """The template recognizes "<key>:\\v" - the datagram must match it (Spec 6.1)."""
     assert datagram("d1_2_power", 0.0003) == b"d1_2_power:0.0003"
 
 
 def test_format_keeps_negative_values_intact():
-    """Ein negatives Vorzeichen ist kein Rundungsfehler und darf nicht verschwinden."""
+    """A negative sign is not a rounding error and must not disappear."""
     assert format_value(-21.5) == "-21.5"
     assert format_value(-0.5) == "-0.5"
     assert format_value(-1234567.89) == "-1234567.89"
 
 
 def test_format_rounds_negative_near_zero_to_plain_zero():
-    """ "-0" ist in einer Loxone-Visualisierung schlicht falsch - egal wie es entsteht."""
+    """ "-0" is simply wrong in a Loxone visualization - no matter how it arises."""
     assert format_value(-1e-07) == "0"
     assert format_value(-0.0) == "0"
 
 
 def test_negative_temperature_end_to_end():
-    """TemperatureMeasurement in Hundertstelgrad unter Null - der Alltagsfall im Winter."""
+    """TemperatureMeasurement in hundredths of a degree below zero - the everyday winter case."""
     ref = attr(1026, 0)
     value = to_loxone_value(ref, -1270)
     assert value == pytest.approx(-12.7)
@@ -165,7 +165,7 @@ def test_negative_temperature_end_to_end():
 
 
 def test_format_never_renders_scientific_notation_for_negative_values():
-    """Gegenstueck zu test_no_value_formats_to_scientific_notation, mit negativem Vorzeichen."""
+    """Counterpart to test_no_value_formats_to_scientific_notation, with a negative sign."""
     assert "e" not in format_value(-0.000001).lower()
     assert "e" not in format_value(-1234567.89).lower()
 ```
@@ -173,17 +173,17 @@ def test_format_never_renders_scientific_notation_for_negative_values():
 - [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_values.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.loxone'`
 
-- [x] **Step 3: Skalierungsfaktoren in die Tabelle**
+- [x] **Step 3: Scaling factors into the table**
 
-In `src/loxmatter/profiles/clusters.yaml` bei den Attributen jeweils `scale` ergänzen.
-Die Faktoren stammen aus Spec 7.3:
+Add `scale` to each of the relevant attributes in `src/loxmatter/profiles/clusters.yaml`.
+The factors come from Spec 7.3:
 
 ```yaml
   8:
     attributes:
-      # 0-254 auf 0-100 %: 100/254
+      # 0-254 to 0-100 %: 100/254
       0: {slug: level, unit: "%", scale: 0.39370078740157477}
   1026:
     attributes:
@@ -202,16 +202,16 @@ Die Faktoren stammen aus Spec 7.3:
       2: {slug: energy_exported, unit: "kWh", scale: 0.000001}
 ```
 
-Achte auf die YAML-Falle aus Phase 3: Slugs wie `on` und `off` müssen quotiert bleiben.
+Watch out for the YAML trap from Phase 3: slugs like `on` and `off` must stay quoted.
 
 - [x] **Step 4: `scale_factor` in `profiles/table.py`**
 
 ```python
 def scale_factor(ref: SignalRef) -> float:
-    """Faktor, mit dem ein roher Matter-Wert in die Loxone-Einheit uebergeht.
+    """Factor by which a raw Matter value converts into the Loxone unit.
 
-    1.0, wenn die Tabelle nichts sagt - unbekannte Cluster werden roh
-    durchgereicht, nicht verworfen (Spec 3.5).
+    1.0 if the table says nothing - unknown clusters are passed through
+    raw, not discarded (Spec 3.5).
     """
     cluster = _table().get(ref.cluster_id, {})
     entry = (cluster.get("attributes") or {}).get(ref.element_id)
@@ -223,18 +223,18 @@ def scale_factor(ref: SignalRef) -> float:
 - [x] **Step 5: `loxone/values.py`**
 
 ```python
-"""Rechnet rohe Matter-Werte in das um, was der Miniserver erwartet.
+"""Converts raw Matter values into what the Miniserver expects.
 
-Zwei Regeln aus Spec 7.3 pragen dieses Modul:
+Two rules from Spec 7.3 shape this module:
 
-Zieleinheit ist die des Loxone-Bausteins, nicht die SI-Einheit. Der
-Energiemanager erwartet kW, also liefern wir kW - auch wenn Matter in
-Milliwatt misst.
+The target unit is that of the Loxone block, not the SI unit. The energy
+manager expects kW, so we deliver kW - even though Matter measures in
+milliwatts.
 
-Und daraus folgt das Zahlenformat: von mW nach kW sind sechs
-Groessenordnungen. Wer hier auf zwei Nachkommastellen rundet, laesst jeden
-Verbraucher unter 10 W als 0 erscheinen - und gerade die kleinen
-Dauerverbraucher sind oft der Grund, eine messende Steckdose einzubauen.
+And from that follows the number format: from mW to kW is six orders of
+magnitude. Rounding to two decimal places here would make every load under
+10 W appear as 0 - and it is precisely the small standby loads that are
+often the reason for installing a metering plug in the first place.
 """
 
 from __future__ import annotations
@@ -246,7 +246,7 @@ MAX_DECIMALS = 6
 
 
 def to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None:
-    """Skalierter Wert, oder None wenn Loxone ihn nicht aufnehmen kann."""
+    """Scaled value, or None if Loxone cannot accept it."""
     kind = classify(raw)
     if kind is Exportability.DIGITAL:
         return bool(raw)
@@ -257,11 +257,11 @@ def to_loxone_value(ref: SignalRef, raw: object) -> float | bool | None:
 
 
 def format_value(value: float | bool) -> str:
-    """Textform fuer das Datagramm: bis zu sechs Nachkommastellen, ohne Nullen am Ende.
+    """Text form for the datagram: up to six decimal places, no trailing zeros.
 
-    Ein Wert, der auf null rundet, wird immer als "0" ausgegeben - unabhaengig vom
-    Vorzeichen. Sonst liesse ein negativer Rundungsrest wie -1e-07 ein "-0" durch,
-    das in der Loxone-Visualisierung schlicht falsch waere.
+    A value that rounds to zero is always emitted as "0" - regardless of
+    sign. Otherwise a negative rounding remainder like -1e-07 would let a
+    "-0" through, which would simply be wrong in the Loxone visualization.
     """
     if isinstance(value, bool):
         return "1" if value else "0"
@@ -272,21 +272,21 @@ def format_value(value: float | bool) -> str:
 
 
 def datagram(key: str, value: float | bool) -> bytes:
-    """Ein UDP-Datagramm in der Form, die die exportierte Vorlage erkennt."""
+    """A UDP datagram in the form the exported template recognizes."""
     return f"{key}:{format_value(value)}".encode()
 ```
 
 - [x] **Step 6: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_values.py -v`
-Expected: PASS, 15 Tests
+Expected: PASS, 15 tests
 
-- [x] **Step 7: Gegen das echte Gerät halten**
+- [x] **Step 7: Check against the real device**
 
 `tests/loxone/test_values_real_device.py`:
 
 ```python
-"""Prueft die Skalierung an der aufgezeichneten Steckdose."""
+"""Checks the scaling against the recorded plug."""
 
 import json
 from pathlib import Path
@@ -306,21 +306,21 @@ def plug() -> NodeSnapshot:
 
 
 def test_mains_voltage_lands_near_230_volt():
-    """2/144/4 ist RMSVoltage in mV - die Steckdose hing an 230 V."""
+    """2/144/4 is RMSVoltage in mV - the plug was connected to 230 V."""
     snap = plug()
     ref = next(s for s in extract_signals(snap) if s.cluster_id == 144 and s.element_id == 4)
     assert to_loxone_value(ref, snap.attributes[ref.path]) == pytest.approx(230.0)
 
 
 def test_exactly_109_signals_yield_a_value():
-    """Spec 6.6: von 159 Attributsignalen erreichen 109 einen UDP-Eingang."""
+    """Spec 6.6: of 159 attribute signals, 109 reach a UDP input."""
     snap = plug()
     werte = [to_loxone_value(s, snap.attributes.get(s.path)) for s in extract_signals(snap)]
     assert sum(1 for w in werte if w is not None) == 109
 
 
 def test_no_value_formats_to_scientific_notation():
-    """Loxone kann "1e-05" nicht lesen - das waere ein stiller Ausfall."""
+    """Loxone cannot read "1e-05" - that would be a silent failure."""
     snap = plug()
     for ref in extract_signals(snap):
         wert = to_loxone_value(ref, snap.attributes.get(ref.path))
@@ -337,27 +337,27 @@ git commit -m "feat(loxone): Skalierung und Zahlenformat nach Spec 7.3"
 
 ---
 
-### Task 2: Kommandos im Store auflösbar machen
+### Task 2: Make commands resolvable in the store
 
-Schließt die Lücke aus Phase 3: der Exporter schreibt `/cmd/d1_1_on/<v>` in die Vorlage,
-aber nichts kann diesen Schlüssel später zurück auf ein Matter-Kommando abbilden.
+Closes the gap from Phase 3: the exporter writes `/cmd/d1_1_on/<v>` into the template,
+but nothing can later map this key back onto a Matter command.
 
 **Files:**
 - Modify: `src/loxmatter/model/store.py`
-- Modify: `src/loxmatter/cli.py` (Export persistiert die Kommandos)
+- Modify: `src/loxmatter/cli.py` (export persists the commands)
 - Create: `tests/model/test_store_commands.py`
 
 **Interfaces:**
-- Consumes: `DeviceCommand` aus `export.commands`, `NodeSnapshot`
+- Consumes: `DeviceCommand` from `export.commands`, `NodeSnapshot`
 - Produces:
   - `class StoredCommand` — frozen: `key`, `slug`, `node_id`, `endpoint`, `cluster_id`, `command_id`, `takes_value`
-  - `class UnknownCommandError(KeyError)` — eigenes `__str__`, damit `str(exc)` keine
-    `repr()`-Anfuehrungszeichen um die Meldung legt (Task 6 macht daraus einen HTTP-Body)
+  - `class UnknownCommandError(KeyError)` — its own `__str__`, so that `str(exc)` does not
+    wrap `repr()` quotes around the message (Task 6 turns this into an HTTP body)
   - `Store.register_commands(device_id: int, commands: Sequence[DeviceCommand], node_id: int) -> list[StoredCommand]`
-    — meldet eine echte Schluessel-Kollision statt sie stillschweigend zu verwerfen, und
-    aktualisiert `takes_value`/`slug` eines schon bekannten Kommandos bei jedem Aufruf
-  - `Store.resolve_command(key: str) -> StoredCommand` — wirft `UnknownCommandError` mit
-    deutscher Meldung
+    — reports a genuine key collision instead of silently discarding it, and
+    updates `takes_value`/`slug` of an already known command on every call
+  - `Store.resolve_command(key: str) -> StoredCommand` — raises `UnknownCommandError` with
+    a German message
   - `Store.commands(device_id: int) -> list[StoredCommand]`
 
 - [x] **Step 1: Write the failing test**
@@ -411,8 +411,8 @@ def test_unknown_key_raises_with_a_german_message(store):
     registered(store, "ikea_grillplats_plug.json")
     with pytest.raises(KeyError, match="unbekannter Kommando-Schluessel") as excinfo:
         store.resolve_command("d1_1_gibtsnicht")
-    # str(KeyError(...)) haengt sonst repr()-Anfuehrungszeichen um die ganze
-    # Nachricht — UnknownCommandError gibt sie unveraendert zurueck.
+    # str(KeyError(...)) would otherwise wrap repr() quotes around the whole
+    # message — UnknownCommandError returns it unchanged.
     assert str(excinfo.value) == "unbekannter Kommando-Schluessel 'd1_1_gibtsnicht'"
 
 
@@ -442,14 +442,14 @@ def test_node_id_is_stored_so_the_runtime_can_address_the_device(store):
 
 
 def test_command_key_collision_raises_instead_of_dropping_silently(store, monkeypatch):
-    """Zwei Kommandos verschiedener Cluster auf demselben Endpoint koennen
-    denselben Slug bekommen — ein zukuenftiger Eintrag in `clusters.yaml` fuer
-    einen zweiten Cluster auf einem Endpoint, der sich schon einen Slug mit
-    `onoff`/`level` teilt, ist eine ganz gewoehnliche Matter-Anordnung.
-    `command_slug` wird hier gezielt auf einen festen Wert gezwungen, um genau
-    das nachzustellen. Das darf `register_commands` nicht mit `INSERT OR
-    IGNORE` stillschweigend loesen — es muss laut scheitern, und das Geraet
-    darf danach keine Kommandos aus diesem gescheiterten Aufruf enthalten."""
+    """Two commands from different clusters on the same endpoint can end up
+    with the same slug — a future entry in `clusters.yaml` for a second
+    cluster on an endpoint that already shares a slug with `onoff`/`level`
+    is a perfectly ordinary Matter arrangement. `command_slug` is
+    deliberately forced to a fixed value here to reproduce exactly that.
+    `register_commands` must not resolve that silently with `INSERT OR
+    IGNORE` — it must fail loudly, and the device must not contain any
+    commands from this failed call afterward."""
     real_command_slug = table.command_slug
 
     def fake_command_slug(cluster_id: int, command_id: int) -> str | None:
@@ -470,10 +470,9 @@ def test_command_key_collision_raises_instead_of_dropping_silently(store, monkey
 
 
 def test_takes_value_change_is_picked_up_on_reregistration(store):
-    """Anders als bei Signalen fror `register_commands` `takes_value` beim
-    ersten Einlernen fuer immer ein. Eine Korrektur in `clusters.yaml` muss
-    ein schon gespeichertes Kommando erreichen, ohne seinen Schluessel zu
-    aendern (Spec 6.2)."""
+    """Unlike with signals, `register_commands` used to freeze `takes_value`
+    forever at first commissioning. A correction in `clusters.yaml` must
+    reach an already stored command without changing its key (Spec 6.2)."""
     device_id, snap, first = registered(store, "ikea_grillplats_plug.json")
     on_before = next(c for c in first if c.slug == "on")
     assert on_before.takes_value is False
@@ -497,11 +496,11 @@ def test_takes_value_change_is_picked_up_on_reregistration(store):
 - [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/model/test_store_commands.py -v`
-Expected: FAIL mit `AttributeError: 'Store' object has no attribute 'register_commands'`
+Expected: FAIL with `AttributeError: 'Store' object has no attribute 'register_commands'`
 
-- [x] **Step 3: Schema und Methoden ergänzen**
+- [x] **Step 3: Add schema and methods**
 
-In `_SCHEMA` von `src/loxmatter/model/store.py` ergänzen:
+Add to `_SCHEMA` in `src/loxmatter/model/store.py`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS command (
@@ -518,7 +517,7 @@ CREATE TABLE IF NOT EXISTS command (
 );
 ```
 
-Dazu die Datenklasse, `UnknownCommandError` und die Methoden:
+Plus the data class, `UnknownCommandError` and the methods:
 
 ```python
 @dataclass(frozen=True)
@@ -533,11 +532,10 @@ class StoredCommand:
 
 
 class UnknownCommandError(KeyError):
-    """`KeyError.__str__` haengt die Nachricht in `repr()` ein, wodurch
-    `str(exc)` zusaetzliche Anfuehrungszeichen um den deutschen Text legt —
-    Task 6 macht daraus einen HTTP-Fehlerkoerper. Die Unterklasse gibt die
-    Nachricht unveraendert zurueck; `pytest.raises(KeyError, ...)` faengt sie
-    weiterhin, da sie von `KeyError` erbt."""
+    """`KeyError.__str__` wraps the message in `repr()`, which puts extra
+    quotes around the German text — Task 6 turns this into an HTTP error
+    body. The subclass returns the message unchanged; `pytest.raises(KeyError,
+    ...)` still catches it, since it inherits from `KeyError`."""
 
     def __str__(self) -> str:
         return str(self.args[0])
@@ -551,23 +549,23 @@ def _existing_command_keys(self, device_id: int) -> set[str]:
 def register_commands(
     self, device_id: int, commands: Sequence[DeviceCommand], node_id: int
 ) -> list[StoredCommand]:
-    """Macht die exportierten Kommando-Schluessel zur Laufzeit aufloesbar.
+    """Makes the exported command keys resolvable at runtime.
 
-    Ohne das schreibt der Exporter Schluessel in die Vorlage, die spaeter
-    niemand zurueck auf ein Matter-Kommando abbilden kann.
+    Without this, the exporter writes keys into the template that nobody
+    can later map back onto a Matter command.
 
-    Ein schon bekanntes Kommando (gleiches device_id/endpoint/cluster_id/
-    command_id) behaelt seinen Schluessel, aber `takes_value` und `slug`
-    werden bei jedem Aufruf neu uebernommen — genau wie `register_signals`
-    `unit` und `exportability` neu bestimmt, statt sie beim ersten Einlernen
-    fuer immer einzufrieren.
+    An already known command (same device_id/endpoint/cluster_id/
+    command_id) keeps its key, but `takes_value` and `slug` are picked up
+    freshly on every call — exactly as `register_signals` redetermines
+    `unit` and `exportability` instead of freezing them forever at first
+    commissioning.
 
-    Laeuft als eine Transaktion mit Rollback bei Fehlschlag. Absichtlich kein
-    `INSERT OR IGNORE` — das wuerde eine echte Schluessel-Kollision nicht
-    melden, sondern das zweite Kommando stillschweigend verwerfen (siehe
-    `register_signals`). Anders als bei Signalen gibt es hier keine
-    Ausweichstrategie: zwei Kommandos verschiedener Cluster auf demselben
-    Endpoint mit gleichem Slug sind ein Fehler in `clusters.yaml`.
+    Runs as a single transaction with rollback on failure. Deliberately no
+    `INSERT OR IGNORE` — that would not report a genuine key collision, but
+    would silently discard the second command (see `register_signals`).
+    Unlike with signals, there is no fallback strategy here: two commands
+    from different clusters on the same endpoint with the same slug are a
+    bug in `clusters.yaml`.
     """
     taken = self._existing_command_keys(device_id)
     try:
@@ -648,10 +646,10 @@ def _as_command(row: sqlite3.Row) -> StoredCommand:
     )
 ```
 
-- [x] **Step 4: Der Export persistiert die Kommandos**
+- [x] **Step 4: Export persists the commands**
 
-In `src/loxmatter/cli.py` im `export`-Kommando, direkt nach `store.register_signals(...)`
-und innerhalb desselben `try`, ergänzen:
+In `src/loxmatter/cli.py`, in the `export` command, directly after `store.register_signals(...)`
+and inside the same `try`, add:
 
 ```python
         stored_commands = store.register_commands(
@@ -659,20 +657,20 @@ und innerhalb desselben `try`, ergänzen:
         )
 ```
 
-Und die `LoxoneCommand`-Liste aus `stored_commands` statt aus `device_commands` bauen,
-damit der Schlüssel in der Vorlage und der Schlüssel in der Datenbank aus **einer**
-Quelle stammen. Zwei Stellen, die denselben Schlüssel unabhängig zusammensetzen, driften
-auseinander — und das fiele erst auf, wenn ein Loxone-Baustein nichts mehr tut. Der Titel
-kommt aus `c.slug` — `StoredCommand` traegt den Slug jetzt in einer eigenen Spalte, statt
-ihn aus dem Schlüssel zurueckzuparsen (`c.key.split("_", 2)[-1]`). Zwei Stellen, die
-dieselbe Zusammensetzung getrennt kennen muessen, sind derselbe Auseinanderdrift-Fehler
-wie oben, nur eine Ebene tiefer.
+And build the `LoxoneCommand` list from `stored_commands` instead of from `device_commands`,
+so that the key in the template and the key in the database come from **one**
+source. Two places that assemble the same key independently drift apart —
+and that would only be noticed once a Loxone block stops doing anything. The title
+comes from `c.slug` — `StoredCommand` now carries the slug in its own column, instead
+of parsing it back out of the key (`c.key.split("_", 2)[-1]`). Two places that
+have to know the same composition separately are the same drift bug
+as above, just one level deeper.
 
 - [x] **Step 5: Run tests**
 
 Run: `uv run pytest tests/model tests/test_export_cli.py -v`
-Expected: PASS, 8 Tests in `test_store_commands.py`; die bestehenden Export-Tests müssen
-unverändert durchlaufen.
+Expected: PASS, 8 tests in `test_store_commands.py`; the existing export tests must
+run through unchanged.
 
 - [x] **Step 6: Commit**
 
@@ -683,17 +681,17 @@ git commit -m "feat(model): exportierte Kommandos sind zur Laufzeit aufloesbar"
 
 ---
 
-### Task 3: UDP-Sender
+### Task 3: UDP sender
 
 **Files:**
 - Create: `src/loxmatter/loxone/sender.py`
 - Create: `tests/loxone/test_sender.py`
 
 **Interfaces:**
-- Consumes: `datagram` aus `loxone.values`
+- Consumes: `datagram` from `loxone.values`
 - Produces:
-  - `class UdpSender` mit `__init__(self, host: str, port: int, *, rate_limit: float = 50.0)`
-  - `async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool` — `True`, wenn tatsächlich gesendet wurde
+  - `class UdpSender` with `__init__(self, host: str, port: int, *, rate_limit: float = 50.0)`
+  - `async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool` — `True` if it was actually sent
   - `async def close(self) -> None`
   - `RATE_LIMIT_PER_SECOND: float`
 
@@ -712,7 +710,7 @@ from loxmatter.loxone.sender import UdpSender
 
 @pytest.fixture
 def receiver():
-    """Ein UDP-Socket auf 127.0.0.1 - verlaesst die Maschine nicht."""
+    """A UDP socket on 127.0.0.1 - never leaves the machine."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(("127.0.0.1", 0))
     sock.setblocking(False)
@@ -739,7 +737,7 @@ async def test_sends_the_expected_datagram(receiver):
 
 
 async def test_unchanged_value_is_not_resent(receiver):
-    """Entprellung: ein Sensor, der jede Sekunde denselben Wert meldet, flutet nicht."""
+    """Debouncing: a sensor that reports the same value every second does not flood."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     assert await sender.send("d1_1_temp", 21.5) is True
@@ -760,7 +758,7 @@ async def test_changed_value_is_sent(receiver):
 
 
 async def test_force_resends_an_unchanged_value(receiver):
-    """Der Full-Resend nach einem Miniserver-Neustart muss die Entprellung umgehen."""
+    """The full resend after a Miniserver restart must bypass debouncing."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port)
     await sender.send("d1_1_temp", 21.5)
@@ -769,7 +767,7 @@ async def test_force_resends_an_unchanged_value(receiver):
 
 
 async def test_rate_limit_staggers_a_burst(receiver):
-    """Spec 6.4: gestaffelt auf etwa 50 Datagramme pro Sekunde."""
+    """Spec 6.4: staggered to about 50 datagrams per second."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port, rate_limit=100.0)
     start = asyncio.get_running_loop().time()
@@ -788,10 +786,9 @@ async def test_send_after_close_raises():
 
 
 async def test_close_during_in_flight_send_does_not_crash(receiver):
-    """Ein close() waehrend eines im Rate-Limit-Schlaf parkierten Sendevorgangs
-    darf niemals einen AttributeError durch einen bereits geschlossenen Socket
-    ausloesen - entweder schliesst der Sendevorgang sauber ab, oder er sieht das
-    dokumentierte RuntimeError."""
+    """A close() while a send is parked in the rate-limit sleep must never
+    trigger an AttributeError from an already-closed socket - either the
+    send completes cleanly, or it sees the documented RuntimeError."""
     host, port = receiver.getsockname()
     sender = UdpSender(host, port, rate_limit=10.0)
     await sender.send("d1_1_a", 1)
@@ -821,26 +818,26 @@ async def test_close_is_idempotent():
 - [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_sender.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.sender'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.loxone.sender'`
 
 - [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/loxone/sender.py`:
 
 ```python
-"""Verschickt Werte als UDP-Datagramme an den Miniserver.
+"""Sends values as UDP datagrams to the Miniserver.
 
-Kennt kein Matter. Er bekommt fertige Schluessel und fertige Werte.
+Knows no Matter. It receives finished keys and finished values.
 
-Zwei Eigenschaften sind nicht optional:
+Two properties are not optional:
 
-Entprellung - ein Matter-Geraet meldet einen Messwert gerne im Sekundentakt,
-auch wenn er sich nicht aendert. Unveraenderte Werte erneut zu schicken kostet
-nur Last, und der Miniserver mag keinen UDP-Sturm.
+Debouncing - a Matter device likes to report a measured value once a
+second, even when it does not change. Resending unchanged values only
+costs load, and the Miniserver does not like a UDP storm.
 
-Rate-Limit - beim Full-Resend nach einem Miniserver-Neustart stehen hunderte
-Datagramme gleichzeitig an. Gestaffelt kommen sie an, im Schwall nicht
-(Spec 6.4).
+Rate limit - during the full resend after a Miniserver restart, hundreds
+of datagrams are pending at once. They should arrive staggered, not in a
+burst (Spec 6.4).
 """
 
 from __future__ import annotations
@@ -855,7 +852,7 @@ RATE_LIMIT_PER_SECOND = 50.0
 
 class UdpSender:
     def __init__(self, host: str, port: int, *, rate_limit: float = RATE_LIMIT_PER_SECOND) -> None:
-        """Baut den UDP-Socket auf. Ein rate_limit von 0 oder darunter bedeutet: kein Rate-Limit."""
+        """Sets up the UDP socket. A rate_limit of 0 or below means: no rate limit."""
         self._target = (host, port)
         self._interval = 1.0 / rate_limit if rate_limit > 0 else 0.0
         self._socket: socket.socket | None = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -865,7 +862,7 @@ class UdpSender:
         self._lock = asyncio.Lock()
 
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool:
-        """Sendet, wenn sich der Wert geaendert hat oder force gesetzt ist."""
+        """Sends if the value has changed or force is set."""
         if self._socket is None:
             raise RuntimeError("UdpSender ist geschlossen")
 
@@ -888,9 +885,9 @@ class UdpSender:
         return True
 
     async def close(self) -> None:
-        """Schliesst den Socket. Nimmt dieselbe Sperre wie send(), damit ein
-        Sendevorgang, der gerade im Rate-Limit-Schlaf steckt, nicht auf einen
-        bereits geschlossenen Socket trifft. Mehrfacher Aufruf bleibt unschaedlich.
+        """Closes the socket. Takes the same lock as send(), so that a send
+        currently parked in the rate-limit sleep does not hit an already
+        closed socket. Calling it more than once stays harmless.
         """
         async with self._lock:
             if self._socket is not None:
@@ -901,7 +898,7 @@ class UdpSender:
 - [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_sender.py -v`
-Expected: PASS, 8 Tests
+Expected: PASS, 8 tests
 
 - [x] **Step 5: Commit**
 
@@ -912,11 +909,11 @@ git commit -m "feat(loxone): UDP-Sender mit Entprellung und Rate-Limit"
 
 ---
 
-### Task 4: Laufzeit der Sensorrichtung
+### Task 4: Runtime of the sensor direction
 
-Das Herzstück: Matter-Subscriptions werden zu Datagrammen. Dazu die drei Dinge, die
-ein virtueller UDP-Eingang von sich aus nicht kann — Events, Erreichbarkeit und
-Zustands-Wiederherstellung.
+The centerpiece: Matter subscriptions become datagrams. Plus the three things
+a virtual UDP input cannot do on its own — events, reachability and
+state recovery.
 
 **Files:**
 - Create: `src/loxmatter/loxone/runtime.py`
@@ -925,17 +922,17 @@ Zustands-Wiederherstellung.
 **Interfaces:**
 - Consumes: `Store`, `StoredSignal`, `UdpSender`, `to_loxone_value`
 - Produces:
-  - `class Runtime` mit `__init__(self, store: Store, sender: UdpSender, *, heartbeat_seconds: float = 30.0, resend_seconds: float = 300.0)`
+  - `class Runtime` with `__init__(self, store: Store, sender: UdpSender, *, heartbeat_seconds: float = 30.0, resend_seconds: float = 300.0)`
   - `async def on_attribute(self, device_id: int, path: str, raw: object) -> None`
   - `async def on_event(self, device_id: int, path: str) -> None`
   - `async def set_online(self, device_id: int, online: bool) -> None`
-  - `async def resend_all(self) -> int` — Anzahl gesendeter Datagramme
-  - `async def seed_from_snapshot(self, snapshots: Sequence[NodeSnapshot]) -> int` — **Nachtrag,
-    Live-Lauf 2026-09-02:** füllt `_last_values` aus dem aktuellen Gerätezustand
-    (`BridgeMatterClient.snapshots()`), ohne selbst zu senden — ein Resend direkt nach dem
-    Start (siehe Task 8) hätte sonst nichts zu verschicken, weil `_last_values` beim Start
-    leer ist und ein Wert dort sonst nur über eine sich ändernde Subscription landet. Siehe
-    Spec 6.4 und den entsprechenden Report.
+  - `async def resend_all(self) -> int` — number of datagrams sent
+  - `async def seed_from_snapshot(self, snapshots: Sequence[NodeSnapshot]) -> int` — **Addendum,
+    live run 2026-09-02:** fills `_last_values` from the current device state
+    (`BridgeMatterClient.snapshots()`), without sending itself — a resend right after
+    startup (see Task 8) would otherwise have nothing to send, because `_last_values` is
+    empty at startup and a value otherwise only lands there via a changing subscription. See
+    Spec 6.4 and the corresponding report.
   - `async def start(self) -> None`, `async def stop(self) -> None`
   - `PULSE_MILLISECONDS: int`
 
@@ -960,7 +957,7 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
 
 class FakeSender:
-    """Merkt sich, was gesendet wurde, statt es zu verschicken."""
+    """Remembers what was sent instead of actually sending it."""
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, object, bool]] = []
@@ -977,8 +974,8 @@ class FakeSender:
 
 
 class FlakySender(FakeSender):
-    """Wie FakeSender, wirft aber beim n-ten Aufruf einen RuntimeError - fuer
-    Tests, die einen fehlgeschlagenen Sendeversuch nachstellen wollen."""
+    """Like FakeSender, but raises a RuntimeError on the nth call - for
+    tests that want to reproduce a failed send attempt."""
 
     def __init__(self, fail_on_call: int) -> None:
         super().__init__()
@@ -994,10 +991,10 @@ class FlakySender(FakeSender):
 
 @pytest.fixture
 def environment(tmp_path):
-    """Zwei Geraete in einem Store: die Steckdose liefert das Attribut fuer
-    die Skalierungs-Tests (2/144/4), der Taster liefert das Event fuer die
-    Impuls-Tests (1/59/1) — die Steckdose hat keinen Switch-Cluster und kann
-    kein Event liefern."""
+    """Two devices in one store: the plug supplies the attribute for
+    the scaling tests (2/144/4), the button supplies the event for the
+    pulse tests (1/59/1) — the plug has no switch cluster and cannot
+    supply an event."""
     store = Store(tmp_path / "t.sqlite")
 
     plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
@@ -1024,21 +1021,21 @@ async def test_attribute_change_becomes_a_scaled_datagram(environment):
 
 
 async def test_unmappable_attribute_is_not_sent(environment):
-    """Spec 6.6: Listen werden nie zu einem Datagramm."""
+    """Spec 6.6: lists never become a datagram."""
     runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "0/29/1", [29, 31, 40])
     assert sender.sent == []
 
 
 async def test_unknown_path_is_ignored_not_raised(environment):
-    """Ein Gerät kann Attribute melden, die beim Export nicht dabei waren."""
+    """A device can report attributes that were not there at export time."""
     runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "9/9999/9", 1)
     assert sender.sent == []
 
 
 async def test_event_sends_a_pulse_and_a_counter(environment):
-    """Spec 6.3: der Impuls erzeugt die Flanke, der Zaehler ueberlebt ein verlorenes Paket."""
+    """Spec 6.3: the pulse produces the edge, the counter survives a lost packet."""
     runtime, sender, _, _, button_device_id = environment
     await runtime.on_event(button_device_id, "1/59/1")
     keys = sender.keys()
@@ -1072,7 +1069,7 @@ async def test_online_signal_is_sent(environment):
 
 
 async def test_resend_forces_every_known_value(environment):
-    """Spec 6.4: nach einem Miniserver-Neustart muss die Entprellung umgangen werden."""
+    """Spec 6.4: after a Miniserver restart, debouncing must be bypassed."""
     runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
     sender.sent.clear()
@@ -1087,7 +1084,7 @@ async def test_resend_of_an_empty_runtime_sends_nothing(environment):
 
 
 async def test_heartbeat_toggles(environment):
-    """Spec 6.5: bridge_alive deckt "Container tot" und "Netz weg" gleichermassen ab."""
+    """Spec 6.5: bridge_alive covers "container dead" and "network gone" alike."""
     _, sender, store, _, _ = environment
     runtime = Runtime(store, sender, heartbeat_seconds=0.05)
     await runtime.start()
@@ -1099,11 +1096,11 @@ async def test_heartbeat_toggles(environment):
 
 
 async def test_heartbeat_survives_a_failed_send(environment):
-    """Review-Fix Important #1: der Heartbeat deckt laut Modul-Docstring
-    "Container tot" und "Netz weg" gleichermassen ab - ein einzelner
-    fehlgeschlagener Sendeversuch darf die Watchdog-Schleife deshalb nicht
-    beenden, sonst friert der Loxone-Watchdog auf dem letzten Wert ein,
-    waehrend die Bruecke laengst schweigt."""
+    """Review-Fix Important #1: per the module docstring, the heartbeat
+    covers "container dead" and "network gone" alike - a single failed
+    send attempt must therefore not end the watchdog loop, otherwise the
+    Loxone watchdog freezes on the last value while the bridge has long
+    gone silent."""
     _, _, store, _, _ = environment
     sender = FlakySender(fail_on_call=2)
     runtime = Runtime(store, sender, heartbeat_seconds=0.05)
@@ -1111,38 +1108,38 @@ async def test_heartbeat_survives_a_failed_send(environment):
     await asyncio.sleep(0.22)
     await runtime.stop()
     values = [v for k, v, _ in sender.sent if k == "bridge_alive"]
-    # Der zweite Aufruf schlaegt fehl (siehe FlakySender) - ohne den Fix
-    # stuerbe die Schleife dort und es kaemen nie weitere Werte an.
+    # The second call fails (see FlakySender) - without the fix the loop
+    # would die there and no further values would ever arrive.
     assert len(values) >= 3
 
 
 async def test_stop_completes_even_if_a_task_already_died(environment):
-    """Review-Fix Important #1, Begleitfehler: contextlib.suppress(CancelledError)
-    unterdrueckt nur eine Cancellation, keine andere Exception, an der ein
-    Task schon vor `stop()` gestorben ist. Die alte Implementierung liess
-    `stop()` mit genau dieser Exception abbrechen und ueberspringt dabei das
-    Leeren der Task-Liste."""
+    """Review-Fix Important #1, companion bug: contextlib.suppress(CancelledError)
+    only suppresses a cancellation, not some other exception that a
+    task already died from before `stop()`. The old implementation let
+    `stop()` abort on exactly that exception, skipping the clearing of
+    the task list in the process."""
     runtime, _, _, _, _ = environment
 
     async def boom() -> None:
         raise RuntimeError("Task ist schon vor stop() gestorben")
 
     dead_task = asyncio.create_task(boom())
-    await asyncio.sleep(0)  # den Task tatsaechlich sterben lassen
+    await asyncio.sleep(0)  # actually let the task die
     assert dead_task.done()
     runtime._tasks.append(dead_task)
 
     await runtime.start()
-    await runtime.stop()  # darf nicht an der bereits toten Task scheitern
+    await runtime.stop()  # must not fail on the already-dead task
 
     assert runtime._tasks == []
     assert runtime._pulse_tasks == set()
 
 
 async def test_stop_lowers_an_in_flight_pulse(environment):
-    """Review-Fix Important #2: eine Cancellation waehrend des Impuls-Schlafs
-    ueberspringt sonst den `send(key, False)` - das digitale Signal bliebe
-    bis zum naechsten Ereignis auf diesem Schluessel auf 1 haengen."""
+    """Review-Fix Important #2: a cancellation during the pulse sleep
+    otherwise skips the `send(key, False)` - the digital signal would stay
+    stuck at 1 until the next event on this key."""
     runtime, sender, _, _, button_device_id = environment
     await runtime.on_event(button_device_id, "1/59/1")
     await runtime.stop()
@@ -1152,11 +1149,11 @@ async def test_stop_lowers_an_in_flight_pulse(environment):
 
 
 async def test_invalidate_index_lets_a_newly_registered_signal_through(environment, monkeypatch):
-    """Review-Fix Important #3: `Store.register_signals` kann jederzeit ein
-    neues Signal zu einem schon indizierten Geraet hinzufuegen (z. B. nach
-    einem Firmware-Update). Ohne `invalidate_index` bleibt dieses Signal fuer
-    die Laufzeit unsichtbar, weil `_signal_for` nur einmal pro Geraet aus der
-    Datenbank liest."""
+    """Review-Fix Important #3: `Store.register_signals` can add a new
+    signal to an already indexed device at any time (e.g. after a firmware
+    update). Without `invalidate_index` this signal stays invisible to the
+    runtime, because `_signal_for` reads from the database only once per
+    device."""
     runtime, sender, store, device_id, _ = environment
     plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
@@ -1167,14 +1164,14 @@ async def test_invalidate_index_lets_a_newly_registered_signal_through(environme
     def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
         return [*extract_signals(snapshot), new_ref]
 
-    # Erstmaliges Indizieren durch die Laufzeit - der Pfad existiert noch nicht.
+    # Initial indexing by the runtime - the path does not exist yet.
     await runtime.on_attribute(device_id, "9/1234/5", 1)
     assert sender.sent == []
 
     monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
     store.register_signals(device_id, plug_snap)
 
-    # Der Cache der Laufzeit weiss noch nichts vom neuen Signal.
+    # The runtime's cache does not know about the new signal yet.
     await runtime.on_attribute(device_id, "9/1234/5", 1)
     assert sender.sent == []
 
@@ -1186,30 +1183,29 @@ async def test_invalidate_index_lets_a_newly_registered_signal_through(environme
 - [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.runtime'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.loxone.runtime'`
 
 - [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/loxone/runtime.py`:
 
 ```python
-"""Verbindet Matter-Subscriptions mit dem UDP-Sender.
+"""Connects Matter subscriptions to the UDP sender.
 
-Hier stehen die drei Dinge, die ein virtueller UDP-Eingang von sich aus nicht
-kann:
+Here are the three things a virtual UDP input cannot do on its own:
 
-Events (Spec 6.3) - ein Eingang traegt Werte, kein "etwas ist passiert". Jedes
-Event wird zu einem Impuls, der eine Flanke erzeugt, und einem monotonen
-Zaehler, der ein verlorenes UDP-Paket ueberlebt.
+Events (Spec 6.3) - an input carries values, not a "something happened".
+Every event becomes a pulse, which produces an edge, and a monotonic
+counter, which survives a lost UDP packet.
 
-Erreichbarkeit (Spec 6.5) - je Geraet ein digitales Signal, dazu ein globaler
-Heartbeat, der in Loxone als Watchdog dient und "Container tot" wie "Netz weg"
-gleichermassen abdeckt. Ein Heartbeat, der beim ersten Sendefehler stirbt,
-waere fuer genau diesen Zweck nutzlos - siehe `_heartbeat_loop`.
+Reachability (Spec 6.5) - one digital signal per device, plus a global
+heartbeat that serves as a watchdog in Loxone and covers "container dead"
+and "network gone" alike. A heartbeat that dies on the first send failure
+would be useless for exactly this purpose - see `_heartbeat_loop`.
 
-Zustands-Wiederherstellung (Spec 6.4) - UDP ist zustandslos. Nach einem
-Neustart des Miniservers stehen alle Eingaenge auf ihrem Defaultwert, bis das
-naechste Update kommt; bei einem Temperatursensor koennen das Stunden sein.
+State recovery (Spec 6.4) - UDP is stateless. After a Miniserver restart,
+all inputs sit at their default value until the next update arrives; for a
+temperature sensor that can be hours.
 """
 
 from __future__ import annotations
@@ -1229,7 +1225,7 @@ logger = logging.getLogger(__name__)
 
 
 class Sender(Protocol):
-    """Was die Laufzeit vom Sender braucht - damit Tests ihn ersetzen koennen."""
+    """What the runtime needs from the sender - so tests can replace it."""
 
     async def send(self, key: str, value: float | bool, *, force: bool = False) -> bool: ...
 
@@ -1254,36 +1250,36 @@ class Runtime:
         self._last_values: dict[str, float | bool] = {}
         self._counters: dict[str, int] = {}
         self._heartbeat_on = False
-        # Dauerhafte Hintergrund-Tasks (Heartbeat- und Resend-Schleife).
+        # Long-lived background tasks (heartbeat and resend loop).
         self._tasks: list[asyncio.Task[None]] = []
-        # Kurzlebige Impuls-Tasks, je einer pro `on_event`-Aufruf. Ein
-        # done_callback wirft jeden fertigen Task sofort wieder raus, sonst
-        # waechst die Menge mit jedem Event unbegrenzt weiter (Review-Fix
-        # Minor #1) - nur `stop()` haette sie sonst je geleert.
+        # Short-lived pulse tasks, one per `on_event` call. A done_callback
+        # immediately discards each finished task, otherwise the set would
+        # grow without bound with every event (Review-Fix Minor #1) - only
+        # `stop()` would ever have cleared it otherwise.
         self._pulse_tasks: set[asyncio.Task[None]] = set()
-        # Schluessel, deren Impuls gerade auf True steht. `stop()` senkt sie
-        # explizit, denn eine Cancellation waehrend des Impuls-Schlafs
-        # ueberspringt sonst den `send(key, False)` in `_release_pulse` und
-        # das digitale Signal bleibt bis zum naechsten Ereignis auf diesem
-        # Schluessel haengen (Review-Fix Important #2).
+        # Keys whose pulse currently sits at True. `stop()` lowers them
+        # explicitly, because a cancellation during the pulse sleep
+        # otherwise skips the `send(key, False)` in `_release_pulse` and
+        # the digital signal stays stuck at 1 until the next event on this
+        # key (Review-Fix Important #2).
         self._pulses_high: set[str] = set()
-        # Index (device_id, path, kind) -> StoredSignal, pro Geraet einmalig
-        # aus der Datenbank geladen. `on_attribute` und `on_event` laufen bei
-        # jedem gemeldeten Wert eines Geraets - ohne diesen Cache waere das
-        # eine frische Abfrage ueber ~160 Zeilen pro Aufruf, und der
-        # Ur-Entwurf fragte sogar zweimal: einmal fuer den Schluessel, ein
-        # zweites Mal fuer den SignalRef. Hier wird pro Geraet genau einmal
-        # gelesen; jeder weitere Pfad desselben Geraets ist ein Dict-Zugriff.
-        # Wer nach dem ersten Indizieren erneut `Store.register_signals` fuer
-        # dasselbe Geraet aufruft, muss danach `invalidate_index` aufrufen -
-        # sonst bleibt ein neu hinzugekommenes Signal fuer diese Laufzeit
-        # unsichtbar (Review-Fix Important #3).
+        # Index (device_id, path, kind) -> StoredSignal, loaded from the
+        # database once per device. `on_attribute` and `on_event` run on
+        # every value reported by a device - without this cache that would
+        # be a fresh query over ~160 rows per call, and the original
+        # design even queried twice: once for the key, a second time for
+        # the SignalRef. Here it is read exactly once per device; every
+        # further path of the same device is a dict lookup. Whoever calls
+        # `Store.register_signals` again for the same device after the
+        # first indexing must call `invalidate_index` afterward -
+        # otherwise a newly added signal stays invisible to this runtime
+        # (Review-Fix Important #3).
         self._signals: dict[tuple[int, str, str], StoredSignal] = {}
         self._indexed: set[int] = set()
 
     def _signal_for(self, device_id: int, path: str, kind: SignalKind) -> StoredSignal | None:
-        """Findet das gespeicherte Signal zu einem Matter-Pfad, ohne bei
-        jedem Aufruf erneut die Datenbank zu befragen."""
+        """Finds the stored signal for a Matter path, without querying the
+        database again on every call."""
         if device_id not in self._indexed:
             for stored in self._store.signals(device_id):
                 self._signals[(device_id, stored.ref.path, stored.ref.kind.value)] = stored
@@ -1299,15 +1295,15 @@ class Runtime:
         return signal
 
     def invalidate_index(self, device_id: int | None = None) -> None:
-        """Verwirft den Signal-Cache eines Geraets, oder - ohne Angabe - aller Geraete.
+        """Discards the signal cache of one device, or - if not specified - of all devices.
 
-        Wer zur Laufzeit erneut `Store.register_signals` fuer ein bereits
-        laufendes Geraet aufruft (z. B. nach einem Firmware-Update, das einen
-        neuen Cluster freischaltet), MUSS diese Methode danach fuer das
-        betroffene Geraet aufrufen. Ohne das bleibt `_signal_for` bei seinem
-        einmal geladenen Stand: das neue Signal existiert in der Datenbank,
-        aber Updates dazu laufen fuer den Rest des Prozesses ins Leere - ohne
-        Fehler, ohne Log-Eintrag ausser dem `debug`-Eintrag in `_signal_for`.
+        Whoever calls `Store.register_signals` again at runtime for an
+        already running device (e.g. after a firmware update that unlocks
+        a new cluster) MUST call this method for the affected device
+        afterward. Without that, `_signal_for` stays at its once-loaded
+        state: the new signal exists in the database, but updates to it
+        run into the void for the rest of the process - with no error, no
+        log entry other than the `debug` entry in `_signal_for`.
         """
         if device_id is None:
             self._signals.clear()
@@ -1332,10 +1328,10 @@ class Runtime:
         if signal is None:
             return
         key = signal.key
-        # Der Zaehler dient dem Erkennen von Paketverlust, nicht einem
-        # exakten Protokoll - er zaehlt deshalb bewusst hoch, bevor gesendet
-        # wird. Ein Zaehler, der bei einem fehlgeschlagenen send() haengen
-        # bliebe, waere fuer diesen Zweck kein Gewinn (Review-Fix Minor #2).
+        # The counter serves to detect packet loss, not an exact protocol -
+        # it therefore deliberately counts up before sending. A counter
+        # that got stuck on a failed send() would be no gain for this
+        # purpose (Review-Fix Minor #2).
         self._counters[key] = self._counters.get(key, 0) + 1
         await self._sender.send(key, True)
         self._pulses_high.add(key)
@@ -1356,7 +1352,7 @@ class Runtime:
         await self._sender.send(key, online)
 
     async def resend_all(self) -> int:
-        """Schickt jeden bekannten Wert erneut, an der Entprellung vorbei."""
+        """Resends every known value, bypassing debouncing."""
         count = 0
         for key, value in list(self._last_values.items()):
             await self._sender.send(key, value, force=True)
@@ -1368,10 +1364,10 @@ class Runtime:
         self._tasks.append(asyncio.create_task(self._resend_loop()))
 
     async def stop(self) -> None:
-        # Jeden gerade high stehenden Impuls senken, BEVOR die dazugehoerigen
-        # Tasks abgebrochen werden - sonst ueberspringt die Cancellation den
-        # `send(key, False)` in `_release_pulse` und das Signal bleibt bis
-        # zum naechsten Ereignis auf 1 haengen (Review-Fix Important #2).
+        # Lower every pulse currently high BEFORE the associated tasks are
+        # cancelled - otherwise the cancellation skips the
+        # `send(key, False)` in `_release_pulse` and the signal stays
+        # stuck at 1 until the next event (Review-Fix Important #2).
         for key in list(self._pulses_high):
             await self._sender.send(key, False)
         self._pulses_high.clear()
@@ -1379,12 +1375,12 @@ class Runtime:
         tasks: list[asyncio.Task[None]] = [*self._tasks, *self._pulse_tasks]
         for task in tasks:
             task.cancel()
-        # gather(..., return_exceptions=True) statt eines
-        # contextlib.suppress(CancelledError) je Task: Letzteres unterdrueckt
-        # nur eine Cancellation, keine Exception, an der ein Task schon vor
-        # `stop()` gestorben ist - die wuerde erneut ausgeloest, die Schleife
-        # ueber die Tasks abbrechen und `clear()` ueberspringen (Review-Fix
-        # Important #1, Begleitfehler).
+        # gather(..., return_exceptions=True) instead of a
+        # contextlib.suppress(CancelledError) per task: the latter only
+        # suppresses a cancellation, not an exception that a task already
+        # died from before `stop()` - that would be raised again, abort
+        # the loop over the tasks, and skip `clear()` (Review-Fix
+        # Important #1, companion bug).
         await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
         self._pulse_tasks.clear()
@@ -1397,10 +1393,10 @@ class Runtime:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # Genau der Fehlerfall, den der Heartbeat melden soll, darf
-                # ihn nicht zum Schweigen bringen - sonst friert der
-                # Loxone-Watchdog auf dem letzten Wert ein, waehrend nichts
-                # mehr laeuft (Review-Fix Important #1).
+                # Exactly the failure case the heartbeat is meant to report
+                # must not silence it - otherwise the Loxone watchdog
+                # freezes on the last value while nothing is running
+                # anymore (Review-Fix Important #1).
                 logger.exception("Heartbeat konnte nicht gesendet werden - Schleife laeuft weiter")
             await asyncio.sleep(self._heartbeat_seconds)
 
@@ -1418,13 +1414,13 @@ class Runtime:
 - [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_runtime.py -v`
-Expected: PASS, 14 Tests
+Expected: PASS, 14 tests
 
-**Nachtrag, Live-Lauf 2026-09-02:** 5 weitere Tests für `seed_from_snapshot` kamen
-hinzu (Cache füllen ohne zu senden, Resend danach schickt sie, ein Attribut ohne
-gespeichertes Signal wird übersprungen, zweimaliges Säen verdoppelt nichts, ein Node
-ohne bekanntes Gerät bricht das Säen nicht ab) — macht 19 Tests in
-`tests/loxone/test_runtime.py`. Siehe Task 8 für die zugehörige Änderung in `_run()`.
+**Addendum, live run 2026-09-02:** 5 more tests for `seed_from_snapshot` were
+added (fill the cache without sending, a resend after that sends them, an attribute
+without a stored signal is skipped, seeding twice does not double anything, a node
+without a known device does not abort the seeding) — making 19 tests in
+`tests/loxone/test_runtime.py`. See Task 8 for the corresponding change in `_run()`.
 
 - [x] **Step 5: Commit**
 
@@ -1435,7 +1431,7 @@ git commit -m "feat(loxone): Laufzeit mit Impulsen, Zaehlern, Online und Full-Re
 
 ---
 
-### Task 5: Wunschzustand → Matter-Kommando
+### Task 5: Desired state → Matter command
 
 **Files:**
 - Create: `src/loxmatter/commands/__init__.py`
@@ -1445,43 +1441,43 @@ git commit -m "feat(loxone): Laufzeit mit Impulsen, Zaehlern, Online und Full-Re
 - Create: `tests/commands/test_color.py`
 
 **Interfaces:**
-- Consumes: `StoredCommand` aus `model.store`
+- Consumes: `StoredCommand` from `model.store`
 - Produces:
   - `class MatterCall` — frozen: `node_id`, `endpoint`, `cluster_id`, `command_id`, `payload: dict[str, object]`
   - `to_matter_call(command: StoredCommand, value: str) -> MatterCall`
-  - `UnsupportedValueError(ValueError)` — deutscher Text
+  - `UnsupportedValueError(ValueError)` — German text
   - in `color.py`: `kelvin_to_mireds(kelvin: float) -> int`, `rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]`
 
-- [x] **Step 1: Die Loxone-Farbcodierung klären, bevor Code entsteht**
+- [x] **Step 1: Clarify the Loxone color encoding before writing code**
 
-**Dieser Schritt braucht Recherche, keine Vermutung.** Für OnOff und LevelControl ist die
-Abbildung eindeutig. Für Farbe ist sie es nicht: Loxone überträgt Farbe als **eine Zahl**,
-die je nach Betriebsart RGB oder Lumitech (Helligkeit plus Farbtemperatur) codiert. Welche
-Zahl welche Bedeutung trägt, ist in der Loxone-Dokumentation zum Beleuchtungsbaustein
-beschrieben.
+**This step needs research, not guesswork.** For OnOff and LevelControl the mapping is
+unambiguous. For color it is not: Loxone transmits color as **a single number**,
+which, depending on operating mode, encodes RGB or Lumitech (brightness plus color
+temperature). Which number carries which meaning is described in the Loxone
+documentation for the lighting block.
 
-Ermittle das Format aus der Loxone-Dokumentation und **schreibe es mit Quelle in
-`color.py` als Modul-Docstring**. Rate es nicht aus Beispielwerten — eine falsch geratene
-Codierung erzeugt Leuchten, die die falsche Farbe annehmen, und das sieht nach einem
-Gerätefehler aus, nicht nach einem Umrechnungsfehler.
+Determine the format from the Loxone documentation and **write it down with a source in
+`color.py` as a module docstring**. Do not guess it from example values — a wrongly
+guessed encoding produces lights that take on the wrong color, and that looks like a
+device bug, not a conversion bug.
 
-Findest du keine belastbare Quelle, ist das ein Befund: implementiere Farbtemperatur und
-Helligkeit, lass RGB weg, und trag den offenen Punkt in Spec 7.3 ein.
+If you find no reliable source, that is a finding: implement color temperature and
+brightness, leave out RGB, and enter the open point in Spec 7.3.
 
-**Unabhängig davon gilt:** es steht **keine Matter-Leuchte** zur Verfügung. Was hier
-entsteht, ist gegen Referenzwerte geprüft, nicht gegen Hardware. Das ist der einzige
-Teil dieser Phase, der so abschließt — vermerke es im Modul-Docstring.
+**Regardless of the above:** no Matter light is available. What is built here
+is checked against reference values, not against hardware. This is the only
+part of this phase that closes that way — note it in the module docstring.
 
-Die Matter-Seite ist dagegen belegt und nicht zu recherchieren:
+The Matter side, on the other hand, is documented and needs no research:
 
-| Zweck | Cluster | Kommando | Nutzlast |
+| Purpose | Cluster | Command | Payload |
 |---|---|---|---|
-| Ein / Aus / Umschalten | 6 | 0 / 1 / 2 | keine |
-| Helligkeit | 8 | 4 (`MoveToLevelWithOnOff`) | `level` 0–254, `transitionTime` |
-| Farbton und Sättigung | 768 | 6 (`MoveToHueAndSaturation`) | `hue` 0–254, `saturation` 0–254 |
-| Farbtemperatur | 768 | 10 (`MoveToColorTemperature`) | `colorTemperatureMireds` |
+| On / off / toggle | 6 | 0 / 1 / 2 | none |
+| Brightness | 8 | 4 (`MoveToLevelWithOnOff`) | `level` 0–254, `transitionTime` |
+| Hue and saturation | 768 | 6 (`MoveToHueAndSaturation`) | `hue` 0–254, `saturation` 0–254 |
+| Color temperature | 768 | 10 (`MoveToColorTemperature`) | `colorTemperatureMireds` |
 
-Mireds sind `1_000_000 / Kelvin`.
+Mireds are `1_000_000 / Kelvin`.
 
 - [x] **Step 2: Write the failing test**
 
@@ -1520,7 +1516,7 @@ def test_level_hundred_percent_is_full():
 
 
 def test_level_is_clamped_not_wrapped():
-    """Loxone kann durch Rundung 100.4 schicken - das darf nicht zu 255 werden."""
+    """Loxone can send 100.4 due to rounding - that must not become 255."""
     assert to_matter_call(cmd(8, 4, takes_value=True), "100.4").payload["level"] == 254
     assert to_matter_call(cmd(8, 4, takes_value=True), "-3").payload["level"] == 0
 
@@ -1536,27 +1532,27 @@ def test_color_temperature_converts_kelvin_to_mireds():
 
 
 def test_unknown_cluster_command_raises_rather_than_guessing():
-    """Lieber ein klarer Fehler als ein Kommando mit erfundener Nutzlast."""
+    """Better a clear error than a command with a made-up payload."""
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(64999, 3, takes_value=True), "1")
 
 
 def test_onoff_cluster_with_unknown_command_raises():
-    """Cluster 6 (OnOff) ist bekannt, aber nur Kommando 0/1/2 sind es. Der
-    Dispatch darf nicht schon beim Cluster stehen bleiben - sonst bekaeme ein
-    unbekanntes OnOff-Kommando eine erfundene leere Nutzlast statt eines
-    Fehlers."""
+    """Cluster 6 (OnOff) is known, but only commands 0/1/2 are. The
+    dispatch must not stop already at the cluster - otherwise an unknown
+    OnOff command would get a made-up empty payload instead of an
+    error."""
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(6, 99, takes_value=True), "1")
 
 
 def test_level_cluster_with_unknown_command_raises():
-    """Cluster 8 (LevelControl) ist bekannt, aber nur Kommando 0/4 sind es hier
-    bedient. Move/Step/Stop (Kommando-IDs u. a. 1, 2, 3, 5, 6, 7) sind reale
-    LevelControl-Kommandos, die z. B. bei Rohexport (`raw`) ohne Eintrag in
-    `clusters.yaml` auftauchen koennen - ihnen faelschlich eine
-    MoveToLevelWithOnOff-Nutzlast unterzuschieben waere genau der Fehler, den
-    dieses Modul verhindern soll."""
+    """Cluster 8 (LevelControl) is known, but only commands 0/4 are
+    handled here. Move/Step/Stop (command IDs among others 1, 2, 3, 5, 6, 7)
+    are real LevelControl commands that can appear e.g. in a raw export
+    (`raw`) without an entry in `clusters.yaml` - wrongly slipping them a
+    MoveToLevelWithOnOff payload would be exactly the bug this module is
+    meant to prevent."""
     with pytest.raises(UnsupportedValueError, match="nicht unterstuetzt"):
         to_matter_call(cmd(8, 1, takes_value=True), "50")
 ```
@@ -1590,7 +1586,7 @@ def test_mireds_reject_zero_kelvin():
     ],
 )
 def test_primary_colours_map_to_known_hues(rgb, hue, saturation):
-    """Referenzwerte aus der HSV-Definition, nicht aus einem Geraet."""
+    """Reference values from the HSV definition, not from a device."""
     h, s = rgb_to_hue_saturation(*rgb)
     assert h == pytest.approx(hue, abs=1)
     assert s == pytest.approx(saturation, abs=1)
@@ -1599,24 +1595,23 @@ def test_primary_colours_map_to_known_hues(rgb, hue, saturation):
 - [x] **Step 3: Run tests to verify they fail**
 
 Run: `uv run pytest tests/commands -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.commands'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.commands'`
 
 - [x] **Step 4: Write minimal implementation**
 
 `src/loxmatter/commands/color.py`:
 
 ```python
-"""Farbraum-Umrechnung zwischen Loxone und Matter.
+"""Color-space conversion between Loxone and Matter.
 
-ACHTUNG - dieser Teil ist NICHT an Hardware validiert. Beim Bau stand keine
-Matter-Leuchte zur Verfuegung; geprueft ist er ausschliesslich gegen
-Referenzwerte der HSV-Definition. Von allen Abbildungen im Projekt ist diese
-die fehleranfaelligste, und ein Fehler sieht hier nach einem Geraetefehler aus,
-nicht nach einem Umrechnungsfehler. Vor dem ersten Einsatz an einer echten
-Leuchte gegenpruefen.
+WARNING - this part is NOT validated against hardware. No Matter light was
+available during construction; it is checked exclusively against reference
+values from the HSV definition. Of all the mappings in the project this is
+the most error-prone, and a bug here looks like a device bug, not a
+conversion bug. Cross-check against a real light before first use.
 
-Die Loxone-Seite der Codierung ist in Schritt 1 dieser Task zu recherchieren
-und hier mit Quelle zu dokumentieren.
+The Loxone side of the encoding is to be researched in step 1 of this task
+and documented here with a source.
 """
 
 from __future__ import annotations
@@ -1625,14 +1620,14 @@ import colorsys
 
 
 def kelvin_to_mireds(kelvin: float) -> int:
-    """Matter misst Farbtemperatur in Mired, dem Kehrwert von Kelvin."""
+    """Matter measures color temperature in mired, the reciprocal of Kelvin."""
     if kelvin <= 0:
         raise ValueError(f"Kelvin muss groesser als 0 sein, war {kelvin}")
     return round(1_000_000 / kelvin)
 
 
 def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
-    """RGB (0-255) nach Matter-Hue und -Saturation (beide 0-254)."""
+    """RGB (0-255) to Matter hue and saturation (both 0-254)."""
     h, _, s = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
     return round(h * 254), round(s * 254)
 ```
@@ -1640,15 +1635,15 @@ def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
 `src/loxmatter/commands/translate.py`:
 
 ```python
-"""Uebersetzt einen Wunschzustand in ein Matter-Kommando.
+"""Translates a desired state into a Matter command.
 
-Dieses Modul hat spaeter zwei Aufrufer: den HTTP-Endpoint fuer die virtuellen
-Ausgaenge (Task 6) und die WebUI (Phase 5). Laege die Logik in einem von
-beiden, gaebe es die Umrechnung zweimal - mit garantiert auseinanderdriftendem
-Verhalten (Spec 4.2).
+This module later has two callers: the HTTP endpoint for the virtual
+outputs (Task 6) and the WebUI (Phase 5). If the logic lived in either
+one, the conversion would exist twice - with guaranteed drifting
+behavior (Spec 4.2).
 
-Was nicht in der Tabelle steht, wirft. Ein Kommando mit erfundener Nutzlast an
-ein echtes Geraet zu schicken ist schlechter als ein klarer Fehler.
+Whatever is not in the table raises. Sending a command with a made-up
+payload to a real device is worse than a clear error.
 """
 
 from __future__ import annotations
@@ -1674,7 +1669,7 @@ _COMMAND_COLOR_TEMPERATURE = 10
 
 
 class UnsupportedValueError(ValueError):
-    """Der Wert passt nicht zu diesem Kommando."""
+    """The value does not fit this command."""
 
 
 @dataclass(frozen=True)
@@ -1710,9 +1705,9 @@ def _farbtemperatur_nutzlast(value: str) -> dict[str, object]:
     return {"colorTemperatureMireds": kelvin_to_mireds(_als_zahl(value))}
 
 
-# Dispatch auf das Paar (Cluster-ID, Kommando-ID), nicht nur auf die
-# Cluster-ID - sonst bekaeme z. B. LevelControl-Stop (Kommando 3) faelschlich
-# eine MoveToLevelWithOnOff-Nutzlast, nur weil Cluster 8 bekannt ist.
+# Dispatch on the pair (cluster ID, command ID), not just on the
+# cluster ID - otherwise e.g. LevelControl-Stop (command 3) would wrongly
+# get a MoveToLevelWithOnOff payload just because cluster 8 is known.
 _NUTZLAST_BAUER: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
     (_CLUSTER_ONOFF, _COMMAND_OFF): _keine_nutzlast,
     (_CLUSTER_ONOFF, _COMMAND_ON): _keine_nutzlast,
@@ -1724,7 +1719,7 @@ _NUTZLAST_BAUER: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
 
 
 def to_matter_call(command: StoredCommand, value: str) -> MatterCall:
-    """Baut den Matter-Aufruf zu einem exportierten Kommando-Schluessel."""
+    """Builds the Matter call for an exported command key."""
 
     nutzlast_bauen = _NUTZLAST_BAUER.get((command.cluster_id, command.command_id))
     if nutzlast_bauen is None:
@@ -1744,13 +1739,13 @@ def to_matter_call(command: StoredCommand, value: str) -> MatterCall:
 - [x] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/commands -v`
-Expected: PASS, 15 Tests
+Expected: PASS, 15 tests
 
-- [x] **Step 6: Befund zur Farbcodierung eintragen**
+- [x] **Step 6: Record the finding on color encoding**
 
-Trage das Ergebnis aus Schritt 1 in Spec 7.3 ein: welche Loxone-Codierung du gefunden
-hast und aus welcher Quelle, oder dass keine belastbare Quelle auffindbar war. Vermerke
-dort ebenfalls, dass die Umrechnung mangels Leuchte nicht an Hardware geprüft ist.
+Enter the result from step 1 into Spec 7.3: which Loxone encoding you found
+and from which source, or that no reliable source could be located. Also note
+there that the conversion is not checked against hardware for lack of a light.
 
 - [x] **Step 7: Commit**
 
@@ -1761,7 +1756,7 @@ git commit -m "feat(commands): Wunschzustand in Matter-Kommando uebersetzen"
 
 ---
 
-### Task 6: HTTP-Endpoint für die virtuellen Ausgänge
+### Task 6: HTTP endpoint for the virtual outputs
 
 **Files:**
 - Create: `src/loxmatter/loxone/server.py`
@@ -1772,14 +1767,14 @@ git commit -m "feat(commands): Wunschzustand in Matter-Kommando uebersetzen"
 - Consumes: `Store`, `to_matter_call`, `Runtime`
 - Produces:
   - `build_app(store: Store, invoke: Callable[[MatterCall], Awaitable[None]], runtime: Runtime) -> FastAPI`
-  - Routen: `GET /cmd/{key}/{value}`, `GET /resync`, `GET /health`
+  - Routes: `GET /cmd/{key}/{value}`, `GET /resync`, `GET /health`
 
-- [x] **Step 1: Abhängigkeiten ergänzen**
+- [x] **Step 1: Add dependencies**
 
-In `pyproject.toml` unter `dependencies`: `"fastapi>=0.115"`, `"uvicorn>=0.30"`. Dann
-`uv sync`. FastAPI kommt jetzt schon dazu, weil Spec 3.3 es für die WebUI in Phase 5
-vorsieht — ein Zwischenschritt über einen anderen Server wäre Arbeit, die wieder
-wegfällt.
+In `pyproject.toml` under `dependencies`: `"fastapi>=0.115"`, `"uvicorn>=0.30"`. Then
+`uv sync`. FastAPI is added already at this point because Spec 3.3 plans to use it for
+the WebUI in Phase 5 — an intermediate step through a different server would be work
+that would just be discarded again.
 
 - [x] **Step 2: Write the failing test**
 
@@ -1814,9 +1809,9 @@ class FakeSender:
 
 
 class BrokenResendSender(FakeSender):
-    """Sendet normale Updates anstandslos, verweigert aber jeden Aufruf -
-    simuliert einen `UdpSender`, dessen Socket bereits geschlossen ist
-    (siehe `UdpSender.send`, das dann unbedingt `RuntimeError` wirft)."""
+    """Sends normal updates without complaint, but refuses every call -
+    simulates a `UdpSender` whose socket is already closed (see
+    `UdpSender.send`, which then unconditionally raises `RuntimeError`)."""
 
     async def send(self, key, value, *, force: bool = False) -> bool:
         raise RuntimeError("UdpSender ist geschlossen")
@@ -1838,12 +1833,12 @@ async def client(tmp_path):
 
     runtime = Runtime(store, FakeSender())
     app = build_app(store, invoke, runtime)
-    # httpx2.AsyncClient statt Starlettes TestClient: TestClient fuehrt die
-    # Anfrage in einem anyio-Portal-Thread aus, der nicht der Thread ist, in
-    # dem dieses Fixture die Store erzeugt hat - sqlite3-Verbindungen sind
-    # aber an ihren Erzeuger-Thread gebunden (siehe store.py). AsyncClient
-    # mit ASGITransport ruft die App direkt in der Event-Loop dieses Tests
-    # auf, ohne einen zweiten Thread zu eroeffnen.
+    # httpx2.AsyncClient instead of Starlette's TestClient: TestClient runs
+    # the request in an anyio portal thread that is not the thread in
+    # which this fixture created the Store - but sqlite3 connections are
+    # bound to their creating thread (see store.py). AsyncClient with
+    # ASGITransport calls the app directly in this test's event loop,
+    # without opening a second thread.
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c, calls, device_id
@@ -1886,7 +1881,7 @@ async def test_health_answers_without_touching_matter(client):
 
 
 async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
-    """Ein Geraet, das gerade nicht antwortet, darf keinen Traceback erzeugen."""
+    """A device that is currently not responding must not produce a traceback."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -1907,9 +1902,9 @@ async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
 
 
 async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
-    """Review-Fix Minor #3: /resync darf einen kaputten Sender (z. B. einen
-    schon geschlossenen UdpSender) nicht als nackten 500 durchreichen -
-    dieselbe Absicherung wie bei einem fehlschlagenden /cmd."""
+    """Review-Fix Minor #3: /resync must not pass a broken sender (e.g. an
+    already closed UdpSender) through as a bare 500 - the same safeguard
+    as with a failing /cmd."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -1918,10 +1913,10 @@ async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
     store.register_commands(device_id, extract_commands(snap), snap.node_id)
 
     runtime = Runtime(store, BrokenResendSender())
-    # `on_attribute` traegt den Wert in `_last_values` ein, BEVOR es den
-    # Sender aufruft (siehe runtime.py) - der erste Aufruf scheitert also
-    # am Senden, hinterlaesst `_last_values` aber wie gewuenscht befuellt,
-    # damit `resend_all` unten ueberhaupt etwas zu senden versucht.
+    # `on_attribute` enters the value into `_last_values` BEFORE it calls
+    # the sender (see runtime.py) - so the first call fails to send, but
+    # leaves `_last_values` populated as desired, so that `resend_all`
+    # below has anything to try to send at all.
     with pytest.raises(RuntimeError):
         await runtime.on_attribute(device_id, "2/144/4", 230000)
 
@@ -1940,21 +1935,20 @@ async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
 - [x] **Step 3: Run test to verify it fails**
 
 Run: `uv run pytest tests/loxone/test_server.py -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.loxone.server'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.loxone.server'`
 
 - [x] **Step 4: Write minimal implementation**
 
 `src/loxmatter/loxone/server.py`:
 
 ```python
-"""Nimmt die HTTP-Aufrufe der virtuellen Ausgaenge entgegen.
+"""Receives the HTTP calls of the virtual outputs.
 
-Der Miniserver wertet die Antwort eines virtuellen Ausgangs nicht aus - er
-schickt und vergisst. Die Statuscodes hier sind also nicht fuer Loxone da,
-sondern fuer den Menschen, der im Log nachsieht, warum ein Baustein nichts
-bewirkt. Entsprechend muessen sie unterscheidbar sein: 404 fuer einen
-unbekannten Schluessel, 400 fuer einen unpassenden Wert, 502 fuer ein Geraet,
-das nicht antwortet.
+The Miniserver does not evaluate the response of a virtual output - it
+sends and forgets. So the status codes here are not for Loxone, but for
+the human who checks the log to see why a block is not doing anything.
+Accordingly they must be distinguishable: 404 for an unknown key, 400 for
+a value that does not fit, 502 for a device that is not responding.
 """
 
 from __future__ import annotations
@@ -1982,10 +1976,10 @@ def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
 
     @app.get("/resync")
     async def resync() -> dict[str, int]:
-        """Spec 6.4: haengt im Config-Projekt am Systemstart-Baustein."""
+        """Spec 6.4: hangs off the system-start block in the config project."""
         try:
             count = await runtime.resend_all()
-        except Exception as exc:  # z. B. UdpSender, dessen Socket schon zu ist
+        except Exception as exc:  # e.g. a UdpSender whose socket is already closed
             logger.exception("Full-Resend ueber /resync fehlgeschlagen")
             raise HTTPException(
                 status_code=502, detail=f"Full-Resend fehlgeschlagen: {exc}"
@@ -2006,7 +2000,7 @@ def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
 
         try:
             await invoke(call)
-        except Exception as exc:  # noqa: BLE001 - jedes Geraeteproblem wird zu 502
+        except Exception as exc:  # noqa: BLE001 - every device problem becomes a 502
             raise HTTPException(status_code=502, detail=f"Geraet nicht erreichbar: {exc}") from exc
 
         return {"status": "ok", "key": key}
@@ -2017,7 +2011,7 @@ def build_app(store: Store, invoke: Invoker, runtime: Runtime) -> FastAPI:
 - [x] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/loxone/test_server.py -v`
-Expected: PASS, 7 Tests
+Expected: PASS, 7 tests
 
 - [x] **Step 6: Commit**
 
@@ -2028,10 +2022,10 @@ git commit -m "feat(loxone): HTTP-Endpoint fuer virtuelle Ausgaenge und resync"
 
 ---
 
-### Task 7: Systemvorlage
+### Task 7: System template
 
-`bridge_alive` und `/resync` gehören zu keinem Gerät und brauchen deshalb ein eigenes
-Vorlagenpaar (Spec 6.2, 6.4, 6.5).
+`bridge_alive` and `/resync` belong to no device and therefore need their own
+template pair (Spec 6.2, 6.4, 6.5).
 
 **Files:**
 - Modify: `src/loxmatter/export/documents.py`
@@ -2039,7 +2033,7 @@ Vorlagenpaar (Spec 6.2, 6.4, 6.5).
 - Create: `tests/export/test_system_template.py`
 
 **Interfaces:**
-- Produces: `render_system_templates(bridge_ip: str, port: int) -> tuple[bytes, bytes]`, plus CLI-Flag `--system`
+- Produces: `render_system_templates(bridge_ip: str, port: int) -> tuple[bytes, bytes]`, plus CLI flag `--system`
 
 - [x] **Step 1: Write the failing test**
 
@@ -2076,7 +2070,7 @@ def test_both_are_utf8_with_bom_and_crlf():
 
 
 def test_system_templates_carry_no_device_prefix():
-    """Sie gehoeren zu keinem Geraet - ein d<id>_ waere falsch."""
+    """They belong to no device - a d<id>_ would be wrong."""
     viu, vo = render_system_templates("192.168.1.50", 7000)
     assert "d1_" not in text(viu)
     assert "d1_" not in text(vo)
@@ -2085,23 +2079,23 @@ def test_system_templates_carry_no_device_prefix():
 - [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/export/test_system_template.py -v`
-Expected: FAIL mit `ImportError: cannot import name 'render_system_templates'`
+Expected: FAIL with `ImportError: cannot import name 'render_system_templates'`
 
 - [x] **Step 3: Write minimal implementation**
 
-In `src/loxmatter/export/documents.py` ergänzen:
+Add to `src/loxmatter/export/documents.py`:
 
 ```python
 def render_system_templates(bridge_ip: str, port: int) -> tuple[bytes, bytes]:
-    """Die beiden Vorlagen, die zu keinem Geraet gehoeren.
+    """The two templates that belong to no device.
 
-    bridge_alive ist der Watchdog (Spec 6.5): er toggelt, solange die Bridge
-    laeuft, und deckt "Container tot" wie "Netz weg" gleichermassen ab.
+    bridge_alive is the watchdog (Spec 6.5): it toggles as long as the
+    bridge is running, and covers "container dead" and "network gone" alike.
 
-    /resync gehoert im Config-Projekt an den Systemstart-Baustein (Spec 6.4).
-    UDP ist zustandslos - ohne diesen Aufruf stehen nach einem Neustart des
-    Miniservers alle Eingaenge auf ihrem Defaultwert, bei einem Temperatursensor
-    womoeglich stundenlang.
+    /resync belongs, in the config project, on the system-start block
+    (Spec 6.4). UDP is stateless - without this call, all inputs sit at
+    their default value after a Miniserver restart, possibly for hours in
+    the case of a temperature sensor.
     """
     viu = render_virtual_in_udp(
         "System",
@@ -2132,9 +2126,9 @@ def render_system_templates(bridge_ip: str, port: int) -> tuple[bytes, bytes]:
     return viu, vo
 ```
 
-Dazu im `export`-Kommando das Flag. Die Systemvorlagen brauchen kein Gerät, also
-darf `--system` ohne `--node` und ohne `--fixture` laufen — der Aufbau des Kommandos
-prüft die Quelle sonst zuerst:
+Plus the flag in the `export` command. The system templates need no device, so
+`--system` is allowed to run without `--node` and without `--fixture` — the way the
+command is structured otherwise checks the source first:
 
 ```python
 system: bool = (
@@ -2147,14 +2141,14 @@ system: bool = (
 )
 ```
 
-Und im Rumpf, **vor** dem Laden des Snapshots. Beide `write_bytes`-Aufrufe stehen in
-try/except wie die drei Gerätevorlagen-Schreibvorgänge weiter unten — ein OSError hier
-(volle Platte, schreibgeschütztes Volume in der künftigen Container-Bereitstellung) darf
-ebenso wenig einen Traceback zeigen wie dort (Review-Fix Important #1, 2026-09-02).
-`out.mkdir` läuft dabei nicht mehr unbedingt ganz am Anfang, sondern erst hier und noch
-einmal vor den Gerätevorlagen (`_ensure_out_dir`, `mkdir(exist_ok=True)` verträgt den
-zweiten Aufruf) — ein Aufruf ganz ohne `--system`, `--node` oder `--fixture` scheitert an
-der Parametervalidierung in `_load_snapshot`, bevor irgendein Verzeichnis entsteht
+And in the body, **before** loading the snapshot. Both `write_bytes` calls sit in
+try/except like the three device-template write operations further below — an OSError
+here (full disk, read-only volume in the future container deployment) must show no
+traceback, same as there (Review-Fix Important #1, 2026-09-02).
+`out.mkdir` no longer necessarily runs right at the start, but only here and once more
+before the device templates (`_ensure_out_dir`, `mkdir(exist_ok=True)` tolerates the
+second call) — a call with none of `--system`, `--node` or `--fixture` fails at
+parameter validation in `_load_snapshot`, before any directory is created
 (Review-Fix Minor #3, 2026-09-02):
 
 ```python
@@ -2182,19 +2176,20 @@ der Parametervalidierung in `_load_snapshot`, bevor irgendein Verzeichnis entste
             return
 ```
 
-Damit sind drei Aufrufe möglich: nur ein Gerät, nur die Systemvorlagen, oder beides.
+This makes three kinds of invocation possible: only a device, only the system templates, or both.
 
 - [x] **Step 4: Run test to verify it passes**
 
 Run: `uv run pytest tests/export/test_system_template.py -v`
-Expected: PASS, 5 Tests
+Expected: PASS, 5 tests
 
-Dazu die Regressionstests aus dem Review-Fix (2026-09-02): die Systemvorlagen-Pinnung
-gegen die Referenzdateien in `test_reference.py` (2 Tests) und der Schutz der beiden
-`write_bytes`-Aufrufe sowie die mkdir-Reihenfolge in `test_export_cli.py` (2 Tests).
+Plus the regression tests from the review fix (2026-09-02): pinning the system
+templates against the reference files in `test_reference.py` (2 tests) and the
+safeguarding of both `write_bytes` calls plus the mkdir order in `test_export_cli.py`
+(2 tests).
 
 Run: `uv run pytest tests/export/test_reference.py tests/test_export_cli.py -v`
-Expected: PASS, 15 Tests in `test_reference.py`, 13 Tests in `test_export_cli.py`
+Expected: PASS, 15 tests in `test_reference.py`, 13 tests in `test_export_cli.py`
 
 - [x] **Step 5: Commit**
 
@@ -2205,7 +2200,7 @@ git commit -m "feat(export): Systemvorlage mit Heartbeat und resync"
 
 ---
 
-### Task 8: `loxmatter run`, `fake-miniserver` und der Durchstich
+### Task 8: `loxmatter run`, `fake-miniserver` and the through-connection
 
 **Files:**
 - Create: `src/loxmatter/devtools/__init__.py`
@@ -2215,19 +2210,19 @@ git commit -m "feat(export): Systemvorlage mit Heartbeat und resync"
 - Modify: `deploy/testhost/docker-compose.yml`
 
 **Interfaces:**
-- Produces: CLI-Kommandos `loxmatter run` und `loxmatter fake-miniserver`
-- `class FakeMiniserver` mit `async def start()`, `async def stop()`,
+- Produces: CLI commands `loxmatter run` and `loxmatter fake-miniserver`
+- `class FakeMiniserver` with `async def start()`, `async def stop()`,
   `received: list[tuple[str, str]]`, `malformed: list[bytes]`,
-  `port: int` (Property — bei `port=0` der tatsächlich gebundene Port),
+  `port: int` (property — with `port=0`, the port actually bound),
   `on_received: Callable[[str, str], None] | None`,
-  `on_malformed: Callable[[bytes], None] | None` (beide Konstruktor-Kwargs, für
-  `loxmatter fake-miniserver`s Echtzeit-Ausgabe mit Zeitstempel — siehe
+  `on_malformed: Callable[[bytes], None] | None` (both constructor kwargs, for
+  `loxmatter fake-miniserver`'s real-time output with timestamp — see
   `_fake_miniserver` in `cli.py`), `announced_keys(template: Path) -> set[str]`,
   `silent_keys(template: Path) -> list[str]`
-  **(Korrektur, Review-Fix I6, 2026-09-02: gegenüber dem ursprünglichen
-  Entwurf unten um `malformed`, `on_received`, `on_malformed` und
-  `announced_keys` erweitert — `port` ist eine Property, kein Attribut,
-  siehe Step 3/6.)**
+  **(Correction, Review-Fix I6, 2026-09-02: extended relative to the original
+  design below by `malformed`, `on_received`, `on_malformed` and
+  `announced_keys` — `port` is a property, not an attribute,
+  see Step 3/6.)**
 
 - [x] **Step 1: Write the failing test**
 
@@ -2257,7 +2252,7 @@ async def test_records_incoming_datagrams():
 
 
 async def test_malformed_datagram_is_recorded_not_dropped():
-    """Ein Datagramm ohne Doppelpunkt ist ein Fehler, den man sehen will."""
+    """A datagram without a colon is a bug you want to see."""
     fake = FakeMiniserver(port=0)
     await fake.start()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -2269,7 +2264,7 @@ async def test_malformed_datagram_is_recorded_not_dropped():
 
 
 async def test_silent_keys_names_signals_that_never_arrived():
-    """Der eigentliche Nutzen: exportierte Signale finden, die nie feuern."""
+    """The actual benefit: finding exported signals that never fire."""
     fake = FakeMiniserver(port=0)
     await fake.start()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -2279,7 +2274,7 @@ async def test_silent_keys_names_signals_that_never_arrived():
     await fake.stop()
     sock.close()
     assert "d1_1_beispiel" not in stumm
-    assert stumm  # die Referenz traegt mehr als einen Befehl
+    assert stumm  # the reference carries more than one command
 
 
 def test_silent_keys_reads_the_check_attribute():
@@ -2290,20 +2285,19 @@ def test_silent_keys_reads_the_check_attribute():
 - [x] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/devtools -v`
-Expected: FAIL mit `ModuleNotFoundError: No module named 'loxmatter.devtools'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'loxmatter.devtools'`
 
 - [x] **Step 3: Write minimal implementation**
 
 `src/loxmatter/devtools/fake_miniserver.py`:
 
 ```python
-"""Ersetzt den Loxone Miniserver beim Entwickeln.
+"""Replaces the Loxone Miniserver during development.
 
-Der dritte Punkt unten ist der eigentliche Gewinn: er vergleicht, welche
-Signale eine erzeugte Vorlage ankuendigt, mit denen, die tatsaechlich ein
-Datagramm geschickt haben. Ein exportiertes Signal, das nie feuert, ist ein
-Mapping-Fehler - und ohne diesen Abgleich faellt er erst in Loxone auf, wo er
-wie ein Geraetefehler aussieht.
+The third point below is the actual benefit: it compares which signals a
+generated template announces with those that actually sent a datagram. An
+exported signal that never fires is a mapping bug - and without this
+comparison it only surfaces in Loxone, where it looks like a device bug.
 """
 
 from __future__ import annotations
@@ -2354,22 +2348,21 @@ class FakeMiniserver:
             self._transport = None
 
     def silent_keys(self, template: Path) -> list[str]:
-        """Signale, die die Vorlage ankuendigt, die aber nie ein Datagramm schickten."""
+        """Signals the template announces, but that never sent a datagram."""
         angekuendigt = set(_CHECK.findall(template.read_text(encoding="utf-8-sig")))
         gesehen = {key for key, _ in self.received}
         return sorted(angekuendigt - gesehen)
 ```
 
-**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben ist der urspruengliche Stand vor der Umsetzung, hier zur Nachvollziehbarkeit des Plans stehengelassen, aber nicht mehr verbindlich. Tatsaechlich ausgeliefert wurde eine erweiterte Fassung — `on_received`/`on_malformed` als optionale Konstruktor-Callbacks (fuer `loxmatter fake-miniserver`s Echtzeit-Ausgabe, siehe `_fake_miniserver` unten), `announced_keys()` getrennt von `silent_keys()` ausgelagert (fuer `_silent_keys_report`s Unterscheidung "nichts zu pruefen" vs. "alles gesehen", siehe Step 4/6) und `_DatagramProtocol` statt `_Protokoll` benannt. Der tatsaechliche Quelltext steht in `src/loxmatter/devtools/fake_miniserver.py`:
+**Correction, Review-Fix I6 (2026-09-02):** the design above is the original state before implementation, left here for traceability of the plan, but no longer binding. What was actually shipped is an extended version — `on_received`/`on_malformed` as optional constructor callbacks (for `loxmatter fake-miniserver`'s real-time output, see `_fake_miniserver` below), `announced_keys()` split out separately from `silent_keys()` (for `_silent_keys_report`'s distinction between "nothing to check" and "everything seen", see Step 4/6), and named `_DatagramProtocol` instead of `_Protokoll`. The actual source code is in `src/loxmatter/devtools/fake_miniserver.py`:
 
 ```python
-"""Ersetzt den Loxone Miniserver beim Entwickeln.
+"""Replaces the Loxone Miniserver during development.
 
-Der dritte Punkt unten ist der eigentliche Gewinn: er vergleicht, welche
-Signale eine erzeugte Vorlage ankuendigt, mit denen, die tatsaechlich ein
-Datagramm geschickt haben. Ein exportiertes Signal, das nie feuert, ist ein
-Mapping-Fehler - und ohne diesen Abgleich faellt er erst in Loxone auf, wo er
-wie ein Geraetefehler aussieht.
+The third point below is the actual benefit: it compares which signals a
+generated template announces with those that actually sent a datagram. An
+exported signal that never fires is a mapping bug - and without this
+comparison it only surfaces in Loxone, where it looks like a device bug.
 """
 
 from __future__ import annotations
@@ -2379,8 +2372,8 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
-# Liest genau das Attribut, das render_virtual_in_udp schreibt (siehe
-# export/documents.py): Check="<schluessel>:\v".
+# Reads exactly the attribute that render_virtual_in_udp writes (see
+# export/documents.py): Check="<key>:\v".
 _CHECK = re.compile(r'Check="([^:"]+):\\v"')
 
 
@@ -2402,12 +2395,12 @@ class _DatagramProtocol(asyncio.DatagramProtocol):
 
 
 class FakeMiniserver:
-    """Nimmt UDP-Datagramme entgegen wie der echte Miniserver - ohne ihn.
+    """Receives UDP datagrams like the real Miniserver - without it.
 
-    `on_received`/`on_malformed` sind fuer `loxmatter fake-miniserver`
-    gedacht (Echtzeit-Ausgabe mit Zeitstempel) - `received`/`malformed`
-    bleiben die primaere, im Test abgefragte Quelle und wachsen immer,
-    unabhaengig davon, ob ein Callback gesetzt ist.
+    `on_received`/`on_malformed` are meant for `loxmatter fake-miniserver`
+    (real-time output with timestamp) - `received`/`malformed` remain the
+    primary source queried in the test and always grow, regardless of
+    whether a callback is set.
     """
 
     def __init__(
@@ -2444,23 +2437,23 @@ class FakeMiniserver:
             self._transport = None
 
     def announced_keys(self, template: Path) -> set[str]:
-        """Signale, die die Vorlage per `Check`-Attribut ankuendigt.
+        """Signals the template announces via the `Check` attribute.
 
-        Getrennt von `silent_keys` gehalten, damit ein Aufrufer (siehe
-        `loxmatter fake-miniserver`) unterscheiden kann, ob eine Vorlage
-        schlicht KEIN Check-Attribut traegt (z. B. eine VO_-Datei oder eine
-        leere Vorlage) - dann gibt es nichts zu pruefen - statt das mit dem
-        Fall zu verwechseln, dass alle angekuendigten Signale gesehen wurden.
+        Kept separate from `silent_keys` so that a caller (see
+        `loxmatter fake-miniserver`) can distinguish whether a template
+        simply carries NO Check attribute (e.g. a VO_ file or an empty
+        template) - then there is nothing to check - instead of confusing
+        that with the case where all announced signals were seen.
         """
         return set(_CHECK.findall(template.read_text(encoding="utf-8-sig")))
 
     def silent_keys(self, template: Path) -> list[str]:
-        """Signale, die die Vorlage ankuendigt, die aber nie ein Datagramm schickten."""
+        """Signals the template announces, but that never sent a datagram."""
         seen = {key for key, _ in self.received}
         return sorted(self.announced_keys(template) - seen)
 ```
 
-- [x] **Step 4: `loxmatter run` schreiben**
+- [x] **Step 4: Write `loxmatter run`**
 
 In `src/loxmatter/cli.py`:
 
@@ -2473,7 +2466,7 @@ def run(
     listen: int = typer.Option(8080, help="Port für die HTTP-Kommandos aus Loxone"),
     store_path: Path | None = typer.Option(None, help="Datenbank mit den Schlüsseln"),  # noqa: B008
 ) -> None:
-    """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein."""
+    """Connects Matter and Loxone permanently: values out, commands in."""
     asyncio.run(_run(url, miniserver, port, listen, _resolve_store_path(store_path)))
 
 
@@ -2488,18 +2481,18 @@ async def _run(url: str, miniserver: str, port: int, listen: int, store_path: Pa
 
     try:
         await client.connect()
-        # Ohne diesen Aufruf verbindet sich die Bridge, hört aber nie auf
-        # etwas: subscribe() ist es, was Attribut-/Event-Änderungen und
-        # Erreichbarkeit überhaupt erst an `runtime` weiterreicht (siehe
-        # unten). resolve_device_id bildet die Node-ID auf die stabile
-        # device_id ab, an der die Schlüssel hängen.
+        # Without this call the bridge connects but never listens to
+        # anything: subscribe() is what forwards attribute/event changes
+        # and reachability to `runtime` in the first place (see below).
+        # resolve_device_id maps the node ID onto the stable device_id
+        # that the keys hang off of.
         await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
-        # Nachtrag, Live-Lauf 2026-09-02 (Spec 6.4): erst aus dem aktuellen
-        # Geraetezustand saeen, DANN erst der Full-Resend - sonst faende der
-        # einen leeren Cache vor und schickte nichts. Siehe Runtime.seed_from_snapshot.
+        # Addendum, live run 2026-09-02 (Spec 6.4): seed from the current
+        # device state FIRST, only THEN the full resend - otherwise it
+        # would find an empty cache and send nothing. See Runtime.seed_from_snapshot.
         await runtime.seed_from_snapshot(await client.snapshots())
-        # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
+        # A restart of the bridge is meant to act like /resync (Spec 6.4).
         await runtime.resend_all()
 
         config = uvicorn.Config(
@@ -2513,7 +2506,7 @@ async def _run(url: str, miniserver: str, port: int, listen: int, store_path: Pa
         store.close()
 ```
 
-**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben ist der urspruengliche Stand vor der Umsetzung, hier zur Nachvollziehbarkeit des Plans stehengelassen, aber nicht mehr verbindlich. Tatsaechlich ausgeliefert wurde eine deutlich erweiterte Fassung — `run` loest den Store-Pfad selbst auf, gibt ihn aus (Review-Fix M10, 2026-09-02) und oeffnet die Datenbank SYNCHRON vor `asyncio.run(...)`, damit ein unbeschreibbarer Pfad als klarer CLI-Fehler endet statt als Traceback aus dem Inneren von `asyncio.run`; `_run` nimmt den bereits geoeffneten `store` deshalb als ersten Parameter entgegen (nicht `store_path`) und raeumt jede der vier Ressourcen (Laufzeit, Sender, matter-Client, Datenbank) im `finally` in einem EIGENEN try/except auf, damit ein Fehler beim Aufraeumen einer Ressource die uebrigen nicht mitreisst. Der tatsaechliche Quelltext steht in `src/loxmatter/cli.py`:
+**Correction, Review-Fix I6 (2026-09-02):** the design above is the original state before implementation, left here for traceability of the plan, but no longer binding. What was actually shipped is a significantly extended version — `run` resolves the store path itself, prints it out (Review-Fix M10, 2026-09-02), and opens the database SYNCHRONOUSLY before `asyncio.run(...)`, so that an unwritable path ends as a clear CLI error instead of as a traceback from inside `asyncio.run`; `_run` therefore takes the already-opened `store` as its first parameter (not `store_path`) and cleans up each of the four resources (runtime, sender, matter client, database) in `finally` inside its OWN try/except, so that an error cleaning up one resource does not drag down the others. The actual source code is in `src/loxmatter/cli.py`:
 
 ```python
 @app.command()
@@ -2526,19 +2519,19 @@ def run(
         None, help="Datenbank mit den Signalschlüsseln. Siehe --store-path bei `export`."
     ),
 ) -> None:
-    """Verbindet Matter und Loxone dauerhaft: Werte raus, Kommandos rein.
+    """Connects Matter and Loxone permanently: values out, commands in.
 
-    Öffnet die Datenbank schon hier, synchron — ein unbeschreibbarer Pfad
-    soll als klarer CLI-Fehler enden (wie bei `export`), nicht als
-    Traceback aus dem Inneren von `asyncio.run`.
+    Opens the database here already, synchronously — an unwritable path
+    is meant to end as a clear CLI error (as with `export`), not as a
+    traceback from inside `asyncio.run`.
     """
     resolved_store_path = _resolve_store_path(store_path)
-    # Wie bei `export` ausgegeben (Review-Fix M10, 2026-09-02): die
-    # wahrscheinlichste Fehlkonfiguration ist eine `export`- und eine
-    # `run`-Datenbank, die auseinanderlaufen — exportiert mit
-    # `--store-path`, gestartet ohne (oder umgekehrt). Ohne diese Zeile
-    # zeigt sich das erst als 404 in einem Log, das niemand liest, weil
-    # `run` den verwendeten Pfad bislang nie nannte.
+    # Printed out as with `export` (Review-Fix M10, 2026-09-02): the most
+    # likely misconfiguration is an `export` database and a `run`
+    # database that drift apart — exported with `--store-path`, started
+    # without (or the other way around). Without this line that only
+    # surfaces as a 404 in a log nobody reads, because `run` never used
+    # to name the path it was using.
     typer.echo(f"Datenbank: {resolved_store_path.resolve()}")
     try:
         resolved_store_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2557,31 +2550,31 @@ def run(
 
 ```python
 async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) -> None:
-    """Baut Sender, Laufzeit und Client auf `store` auf und hält sie am Laufen.
+    """Builds sender, runtime and client on top of `store` and keeps them running.
 
-    `store` kommt bereits geöffnet herein (siehe `run` oben). `UdpSender`,
-    `Runtime` und `_build_client` führen in ihren Konstruktoren keine E/A
-    aus, die scheitern könnte — anders als `Store(...)` selbst. Ab hier sind
-    also garantiert alle vier Ressourcen vorhanden, wenn `finally` sie
-    schließt: kein Leck durch einen fehlgeschlagenen Konstruktor irgendwo
-    zwischen `try` und dem ersten `await`.
+    `store` comes in already opened (see `run` above). `UdpSender`,
+    `Runtime` and `_build_client` perform no I/O in their constructors
+    that could fail — unlike `Store(...)` itself. So from here on, all
+    four resources are guaranteed to exist by the time `finally` closes
+    them: no leak from a failed constructor anywhere between `try` and
+    the first `await`.
 
-    Jeder Aufräumschritt in `finally` steht in seinem eigenen `try`/`except`:
-    scheitert einer (z. B. `runtime.stop()`, weil der letzte Full-Resend
-    mitten in einem Sendefehler steckte), dürfen die folgenden trotzdem
-    laufen — sonst bliebe je nach Fehlerort der UDP-Socket offen oder die
-    matter-server-Verbindung hängen. `asyncio.CancelledError` fließt an all
-    dem vorbei ungefangen durch: ein Strg-C soll den Abbruch weiterreichen,
-    nicht als Aufräumfehler verschluckt werden.
+    Every cleanup step in `finally` sits in its own `try`/`except`: if one
+    fails (e.g. `runtime.stop()`, because the last full resend was stuck
+    mid-send-failure), the following ones must still run — otherwise,
+    depending on where the failure happened, the UDP socket would stay
+    open or the matter-server connection would hang. `asyncio.CancelledError`
+    flows past all of this uncaught: a Ctrl-C is meant to propagate the
+    cancellation, not be swallowed as a cleanup error.
 
-    Zum eigentlichen Abbruchverhalten: `uvicorn.Server.serve()` fängt
-    SIGINT/SIGTERM selbst ab (`Server.capture_signals`) und kehrt bei einem
-    ersten Strg-C geordnet zurück, statt eine Ausnahme zu werfen — der
-    `finally`-Block unten läuft in diesem Fall wie bei jedem anderen reguären
-    Ende auch. `asyncio.run()` selbst installiert seit Python 3.11 zusätzlich
-    einen eigenen SIGINT-Handler, der bei einem Strg-C außerhalb von
-    `serve()` (z. B. während `client.connect()`) den gesamten `_run`-Task
-    abbricht — auch das erreicht `finally` als normale Abbruch-Ausnahme.
+    On the actual cancellation behavior: `uvicorn.Server.serve()` catches
+    SIGINT/SIGTERM itself (`Server.capture_signals`) and returns cleanly on
+    a first Ctrl-C instead of raising an exception — the `finally` block
+    below runs in that case just as with any other regular end. `asyncio.run()`
+    itself, since Python 3.11, additionally installs its own SIGINT handler
+    that cancels the entire `_run` task on a Ctrl-C outside of `serve()`
+    (e.g. during `client.connect()`) — that too reaches `finally` as a
+    normal cancellation exception.
     """
     sender = UdpSender(miniserver, port)
     runtime = Runtime(store, sender)
@@ -2602,13 +2595,13 @@ async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) 
             )
         await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
-        # Startwerte aus dem aktuellen Geraetezustand laden, BEVOR der Resend
-        # unten sie verschickt (Spec 6.4, Live-Lauf vom 2026-09-02): ohne das
-        # faende `resend_all()` einen leeren Cache vor, weil ein Wert dort nur
-        # ueber eine sich aendernde Subscription landet - siehe
+        # Load initial values from the current device state BEFORE the
+        # resend below sends them out (Spec 6.4, live run of 2026-09-02):
+        # without this `resend_all()` would find an empty cache, because a
+        # value only lands there via a changing subscription - see
         # `Runtime.seed_from_snapshot`.
         await runtime.seed_from_snapshot(await client.snapshots())
-        # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
+        # A restart of the bridge is meant to act like /resync (Spec 6.4).
         await runtime.resend_all()
 
         config = uvicorn.Config(
@@ -2639,35 +2632,36 @@ async def _run(store: Store, url: str, miniserver: str, port: int, listen: int) 
         store.close()
 ```
 
-Die Anbindung an matter-server fehlt in `BridgeMatterClient` noch in zwei Punkten und
-gehört zu dieser Task:
+The connection to matter-server is still missing two things in `BridgeMatterClient`,
+which belong to this task:
 
-- **`subscribe(handler)`** — meldet Attribut- und Event-Änderungen. `python-matter-server`
-  liefert sie über `client.subscribe_events`; die Node-ID musst du auf die `device_id`
-  des Stores abbilden, denn die Schlüssel hängen an der `device_id`, nicht an der Node-ID.
-  Eine Node-ID kann sich ändern, die `device_id` nie — genau dafür existiert sie.
-- **`send_command(call)`** — führt einen `MatterCall` aus, über
+- **`subscribe(handler)`** — reports attribute and event changes. `python-matter-server`
+  delivers them via `client.subscribe_events`; you have to map the node ID onto the
+  store's `device_id`, because the keys hang off the `device_id`, not the node ID.
+  A node ID can change, the `device_id` never — that is exactly why it exists.
+- **`send_command(call)`** — executes a `MatterCall`, via
   `client.send_device_command(node_id, endpoint, cluster, command, payload)`.
-- Erreichbarkeit: `node.available` auf `Runtime.set_online(device_id, verfügbar)`.
+- Reachability: `node.available` onto `Runtime.set_online(device_id, available)`.
 
-Schreibe für beide Tests gegen die vorhandene Fake-Upstream-Attrappe in
-`tests/matter/test_client.py`, nicht gegen einen echten Server.
+Write tests for both against the existing fake upstream double in
+`tests/matter/test_client.py`, not against a real server.
 
-`_run()`s eigenes Aufbau/Abbau-Verhalten (Verbindung, Subscription, Start, Full-Resend,
-HTTP-Server, und der Abbau in jedem Fehlerfall — inklusive eines Abbruchs mitten im
-Start, VOR `serve()`, denn genau der Aufruf von `subscribe()` oben steht dort mit an)
-gehört in eigene Tests gegen eine `_FakeUpstream`-Attrappe in `tests/test_cli.py`, nicht
-gegen einen echten matter-server.
+`_run()`'s own setup/teardown behavior (connection, subscription, start, full resend,
+HTTP server, and teardown in every failure case — including an abort in the middle of
+startup, BEFORE `serve()`, since exactly the call to `subscribe()` above sits there too)
+belongs in its own tests against a `_FakeUpstream` double in `tests/test_cli.py`, not
+against a real matter-server.
 
 Run: `uv run pytest tests/test_cli.py -v`
-Expected: PASS, 6 Tests für `_run()`s Aufbau/Abbau (davon 1 für den Abbruch während des
-Starts, vor `serve()`).
+Expected: PASS, 6 tests for `_run()`'s setup/teardown (1 of them for the abort during
+startup, before `serve()`).
 
-**Nachtrag, Live-Lauf 2026-09-02:** ein siebter Test kam hinzu, der prüft, dass `_run()`
-`runtime.seed_from_snapshot(...)` mit den aktuellen Snapshots aufruft, und zwar VOR dem
-ersten `resend_all()` — macht 7 Tests für `_run()`s Aufbau/Abbau in `tests/test_cli.py`.
+**Addendum, live run 2026-09-02:** a seventh test was added, which checks that `_run()`
+calls `runtime.seed_from_snapshot(...)` with the current snapshots, and specifically
+BEFORE the first `resend_all()` — making 7 tests for `_run()`'s setup/teardown in
+`tests/test_cli.py`.
 
-Dazu das Kommando für das Testdoppel:
+Plus the command for the test double:
 
 ```python
 @app.command(name="fake-miniserver")
@@ -2677,14 +2671,14 @@ def fake_miniserver_cmd(
         None, help="Erzeugte VIU_-Vorlage: nennt am Ende die Signale, die nie feuerten"
     ),
 ) -> None:
-    """Ersetzt den Miniserver: schreibt jedes Datagramm mit."""
+    """Replaces the Miniserver: logs every datagram."""
     asyncio.run(_fake_miniserver(port, template))
 ```
 
-Es druckt jedes Datagramm mit Zeitstempel und bei Strg-C, sofern `--template` gesetzt
-ist, die stummen Signale.
+It prints every datagram with a timestamp and, on Ctrl-C, provided `--template` is set,
+the silent signals.
 
-**Korrektur, Review-Fix I6 (2026-09-02):** der Entwurf oben fehlten zwei Dinge, die tatsaechlich ausgeliefert wurden. Erstens prueft `fake_miniserver_cmd` `--template` schon VOR `asyncio.run(_fake_miniserver(...))`, nicht erst danach — der Pfad wird sonst erst im `finally` von `_fake_miniserver` gelesen, also erst NACH dem Warten auf Strg-C, und ein falscher Pfad wuerde den Nutzer erst nach dem Abbruch ueberraschen (Review-Fix Minor #5). Zweitens gibt es `_silent_keys_report` — eine eigene Funktion fuer die Abschlussmeldung, die DREI Faelle unterscheidet, nicht zwei: `announced` leer (die Vorlage traegt gar kein `Check`-Attribut, z. B. eine VO_-Datei — nichts zu pruefen), `announced` nicht leer und `silent` leer (tatsaechlich alles gesehen) und `announced`/`silent` beide nicht leer (Review-Fix Minor #4). Der tatsaechliche Quelltext steht in `src/loxmatter/cli.py`:
+**Correction, Review-Fix I6 (2026-09-02):** the design above was missing two things that were actually shipped. First, `fake_miniserver_cmd` checks `--template` already BEFORE `asyncio.run(_fake_miniserver(...))`, not only afterward — otherwise the path is only read in `_fake_miniserver`'s `finally`, i.e. only AFTER waiting for Ctrl-C, and a wrong path would only surprise the user after the abort (Review-Fix Minor #5). Second, there is `_silent_keys_report` — a dedicated function for the closing message, which distinguishes THREE cases, not two: `announced` empty (the template carries no `Check` attribute at all, e.g. a VO_ file — nothing to check), `announced` not empty and `silent` empty (everything actually seen), and `announced`/`silent` both not empty (Review-Fix Minor #4). The actual source code is in `src/loxmatter/cli.py`:
 
 ```python
 @app.command(name="fake-miniserver")
@@ -2694,13 +2688,13 @@ def fake_miniserver_cmd(
         None, help="Erzeugte VIU_-Vorlage: nennt am Ende die Signale, die nie feuerten"
     ),
 ) -> None:
-    """Ersetzt den Miniserver: schreibt jedes Datagramm mit.
+    """Replaces the Miniserver: logs every datagram.
 
-    `--template` wird bereits hier geprueft, statt den Nutzer erst nach dem
-    Warten auf Strg-C (der Pfad wird erst im `finally` von `_fake_miniserver`
-    gelesen) mit einem Fehler zu ueberraschen — wie bei den uebrigen Kommandos
-    dieses Moduls soll ein falscher Pfad sofort als CLI-Fehler enden (Review-Fix
-    Minor #5).
+    `--template` is already checked here, instead of surprising the user
+    with an error only after waiting for Ctrl-C (the path is only read in
+    `_fake_miniserver`'s `finally`) — as with the other commands of this
+    module, a wrong path is meant to end immediately as a CLI error
+    (Review-Fix Minor #5).
     """
     if template is not None and not template.is_file():
         _fail(f"Vorlage {template} wurde nicht gefunden.")
@@ -2708,13 +2702,13 @@ def fake_miniserver_cmd(
 
 
 def _silent_keys_report(template_name: str, announced: set[str], silent: list[str]) -> str:
-    """Formuliert die Abschlussmeldung von `fake-miniserver --template`.
+    """Formulates the closing message of `fake-miniserver --template`.
 
-    Drei zu unterscheidende Faelle: `announced` leer heisst, die Vorlage traegt
-    gar kein `Check`-Attribut (z. B. eine VO_-Datei oder eine leere Vorlage) —
-    dann gibt es nichts zu pruefen, und das ist etwas anderes als "alles wurde
-    gesehen". Nur wenn `announced` nicht leer und `silent` leer ist, war die
-    Pruefung tatsaechlich erfolgreich (Review-Fix Minor #4).
+    Three cases to distinguish: `announced` empty means the template
+    carries no `Check` attribute at all (e.g. a VO_ file or an empty
+    template) — then there is nothing to check, and that is different
+    from "everything was seen". Only if `announced` is not empty and
+    `silent` is empty was the check actually successful (Review-Fix Minor #4).
     """
     if not announced:
         return f"{template_name} enthält keine Check-Signale — nichts zu prüfen."
@@ -2728,9 +2722,8 @@ def _silent_keys_report(template_name: str, announced: set[str], silent: list[st
 
 
 async def _fake_miniserver(port: int, template: Path | None) -> None:
-    # datetime.now() ohne tz ist hier Absicht: das ist die Ortszeit fuer einen
-    # Menschen, der dem Terminal beim Draufschauen zusieht - keine
-    # gespeicherte oder verglichene Zeit.
+    # datetime.now() without tz is deliberate here: this is local time for a
+    # human watching the terminal - not a stored or compared time.
     def announce(key: str, value: str) -> None:
         typer.echo(f"{datetime.now():%H:%M:%S} {key} = {value}")  # noqa: DTZ005
 
@@ -2744,7 +2737,7 @@ async def _fake_miniserver(port: int, template: Path | None) -> None:
     await fake.start()
     typer.echo(f"fake-miniserver lauscht auf UDP-Port {fake.port} — Strg-C zum Beenden")
     try:
-        await asyncio.Event().wait()  # blockiert, bis Strg-C den Task abbricht
+        await asyncio.Event().wait()  # blocks until Ctrl-C cancels the task
     finally:
         await fake.stop()
         if template is not None:
@@ -2755,61 +2748,60 @@ async def _fake_miniserver(port: int, template: Path | None) -> None:
 
 
 
-- [x] **Step 5: Vollständige Prüfung**
+- [x] **Step 5: Full check**
 
 ```bash
 uv run pytest -v && uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
-- [x] **Step 6: Durchstich ohne Miniserver**
+- [x] **Step 6: Through-connection without a Miniserver**
 
 ```bash
 uv run loxmatter fake-miniserver --port 7000 --template ./export/VIU_d1_*.xml
 ```
 
-In einer zweiten Sitzung:
+In a second session:
 
 ```bash
 uv run loxmatter run --url ws://10.0.1.56:5580/ws --miniserver 127.0.0.1 --port 7000
 ```
 
-Erwartet: Datagramme der Steckdose erscheinen; ein Druck auf den Taster erzeugt Impuls
-und Zähler; `bridge_alive` toggelt. Am Ende nennt der `fake-miniserver` die stummen
-Signale — bei einer Steckdose ohne Last sind das viele, das ist kein Fehler.
+Expected: datagrams from the plug appear; a press on the button produces a pulse
+and a counter; `bridge_alive` toggles. At the end, `fake-miniserver` names the silent
+signals — for a plug without a load that is many, and that is not a bug.
 
-**Korrektur, Live-Lauf 2026-09-02:** der Satz oben galt für Signale, die sich während
-des Laufs nie ändern — nicht dafür, dass sie beim Start überhaupt nie ankommen. Der
-erste Lauf zeigte genau diese Verwechslung: über 40 s kamen nur drei Datagramme an
-(Heartbeat, ein HTTP-ausgelöster Schaltbefehl), keines der 109 exportierbaren
-Attributsignale, weil `resend_all()` beim Start einen leeren Cache vorfand (siehe Spec
-6.4 und Task 4). Nach dem Fix hier erscheinen alle 109 Signale der Steckdose direkt nach
-dem Verbindungsaufbau, unabhängig davon, ob sich danach je etwas ändert — „stumm" darf
-sich ab jetzt nur noch auf Signale beziehen, die nach dem Start nie ein zweites Mal
-gesendet werden, nicht auf ein komplett fehlendes erstes Mal.
+**Correction, live run 2026-09-02:** the sentence above applied to signals that never
+change during the run — not to them never arriving at startup at all. The first run
+showed exactly this mix-up: over 40 s only three datagrams arrived (heartbeat, one
+HTTP-triggered switch command), none of the 109 exportable attribute signals, because
+`resend_all()` found an empty cache at startup (see Spec 6.4 and Task 4). After the fix
+here, all 109 signals of the plug appear right after the connection is established,
+regardless of whether anything ever changes afterward — "silent" from now on may only
+refer to signals that never get sent a second time after startup, not to a completely
+missing first time.
 
-- [ ] **Step 7: Durchstich mit echtem Miniserver — 🔴 EINZIGER NOCH OFFENER SCHRITT DER GESAMTEN PHASE (Review-Fix I6, 2026-09-02)**
+- [ ] **Step 7: Through-connection with a real Miniserver — 🔴 THE ONLY STEP OF THE ENTIRE PHASE STILL OPEN (Review-Fix I6, 2026-09-02)**
 
-> **Alles andere in diesem Plan ist erledigt und abgehakt.** Dies ist die letzte
-> unangekreuzte Checkbox unter allen ~50 in diesem Dokument. Sie kann nicht von einem
-> Agenten erledigt werden — sie braucht einen Menschen mit Zugriff auf Loxone Config und
-> den echten Miniserver (siehe "Dieser Schritt braucht einen Menschen..." unten). Bevor
-> diese Phase als abgeschlossen gilt, muss genau dieser Schritt nachgeholt werden — siehe
-> auch "Abschluss der Phase" ganz unten in diesem Dokument.
+> **Everything else in this plan is done and checked off.** This is the last
+> unchecked checkbox among all ~50 in this document. It cannot be done by an
+> agent — it needs a human with access to Loxone Config and the real
+> Miniserver (see "This step needs a human..." below). Before this phase
+> counts as complete, exactly this step must be made up — see also
+> "Completion of the phase" at the very bottom of this document.
 
-**Dieser Schritt braucht einen Menschen mit Loxone Config.** Er ist der Zweck der Phase.
+**This step needs a human with Loxone Config.** It is the purpose of the phase.
 
-Vorlagen erzeugen und importieren (Gerät und System), `loxmatter run` gegen die echte
-Miniserver-IP starten, und in der Loxone-Visualisierung prüfen:
+Generate and import templates (device and system), start `loxmatter run` against the
+real Miniserver IP, and check in the Loxone visualization:
 
-1. Die Leistung der Steckdose erscheint und ändert sich, wenn du einen Verbraucher
-   ansteckst.
-2. Ein Druck auf den Taster löst den Impuls-Eingang aus.
-3. Ein virtueller Ausgang auf `d<id>_1_toggle` schaltet die Steckdose.
-4. `bridge_alive` toggelt.
-5. Nach einem Neustart des Miniservers füllt der Systemstart-Baustein über `/resync`
-   alle Werte sofort wieder.
+1. The plug's power appears and changes when you plug in a load.
+2. A press on the button triggers the pulse input.
+3. A virtual output on `d<id>_1_toggle` switches the plug.
+4. `bridge_alive` toggles.
+5. After a Miniserver restart, the system-start block refills all values immediately
+   via `/resync`.
 
-Was abweicht, geht in die Spec — **nicht** in eine Anpassung der Tests.
+Whatever deviates goes into the spec — **not** into an adjustment of the tests.
 
 - [x] **Step 8: Commit**
 
@@ -2820,16 +2812,16 @@ git commit -m "feat(cli): loxmatter run und fake-miniserver"
 
 ---
 
-## Abschluss der Phase
+## Completion of the phase
 
-Die Phase ist fertig, wenn:
+The phase is done when:
 
-1. [x] `uv run pytest` ohne Hardware und ohne Netz durchläuft,
-2. [x] der Durchstich ohne Miniserver (Task 8 Schritt 6) läuft,
-3. [ ] **die fünf Punkte aus Task 8 Schritt 7 an echter Hardware bestätigt sind —
-   EINZIGER OFFENER PUNKT (Review-Fix I6, 2026-09-02), siehe dort**,
-4. [x] Abweichungen in der Spec stehen.
+1. [x] `uv run pytest` runs through without hardware and without network,
+2. [x] the through-connection without a Miniserver (Task 8 Step 6) runs,
+3. [ ] **the five points from Task 8 Step 7 are confirmed on real hardware —
+   THE ONLY OPEN POINT (Review-Fix I6, 2026-09-02), see there**,
+4. [x] deviations are recorded in the spec.
 
-**Bleibt offen:** die Farbraum-Umrechnung ist gegen Referenzwerte geprüft, aber nicht
-gegen eine Leuchte. Das ist der einzige Teil, den diese Phase nicht abschließen kann,
-und er gehört als offener Punkt in die Roadmap, nicht in ein stilles Vergessen.
+**Remains open:** the color-space conversion is checked against reference values, but
+not against a light. This is the only part this phase cannot complete, and it belongs
+as an open point in the roadmap, not in a silent forgetting.
