@@ -1,137 +1,133 @@
-# Bedienelemente für Lampen: Farbwähler, Regler und der Loxone-Farbweg
+# Lamp Controls: Colour Picker, Sliders and the Loxone Colour Path
 
-Entwurf, 7. September 2026. Gibt der Gerätekachel Bedienelemente, die zum
-Werttyp eines Kommandos passen, statt jedem Wert dasselbe nackte Zahlenfeld
-vorzusetzen — und schaltet dabei den seit Phase 4 offenen Farbweg
-(`MoveToHueAndSaturation`) für WebUI **und** Loxone frei.
+Design, 7 September 2026. Gives the device tile controls that match the value type of a command, instead of presenting every value with the same bare number field — and thereby opens the colour path (`MoveToHueAndSaturation`) available since Phase 4 for WebUI **and** Loxone.
 
-Anlass: zwei IKEA-Leuchten im Testaufbau, eine CCT- und eine RGBW-Lampe. Für
-die Farbe der zweiten gibt es heute keinerlei Bedienmöglichkeit.
+Rationale: two IKEA lamps in the test setup, one CCT and one RGBW lamp. There is currently no way to control the colour of the second one.
 
-## 1. Das Problem
+## 1. The Problem
 
-Die Bedienleiste der Kachel (`index.html`, Block `device-commands`) rendert
-jedes benannte Kommando nach genau einem Muster: ohne Wert ein Knopf, mit
-Wert ein `<input type="number">` plus „Senden“. Für `on`/`off`/`toggle` ist
-das richtig. Für alles andere ist es die Abwesenheit einer Entscheidung:
+The control bar of the tile (`index.html`, block `device-commands`) renders
+every named command according to exactly one pattern: without a value, a button; with
+a value, an `<input type=”number”>` plus “Send”. For `on`/`off`/`toggle` this
+is correct. For everything else it is the absence of a decision:
 
-- **Helligkeit** verlangt eine Prozentzahl, die man tippt, statt sie zu
-  ziehen.
-- **Farbtemperatur** verlangt eine Kelvinzahl ohne jeden Hinweis darauf,
-  welchen Bereich die Lampe überhaupt beherrscht. Wer 6500 K eingibt, obwohl
-  die Leuchte bei 4000 K endet, bekommt keine Fehlermeldung — das Gerät
-  beschneidet still.
-- **Farbe** gibt es gar nicht. `MoveToHueAndSaturation` (Cluster 768,
-  Kommando 6) steht nicht in `profiles/clusters.yaml`, wird deshalb von
-  `command_slug` nicht benannt, von der Controls-Route herausgefiltert und
-  erscheint nur als anonymes „+1 weitere Befehle“.
+- **Brightness** requires a percentage number that one types instead of
+  dragging.
+- **Colour temperature** requires a Kelvin number without any indication of
+  what range the lamp actually supports. If someone enters 6500 K even though
+  the lamp ends at 4000 K, they get no error message — the device
+  silently clamps.
+- **Colour** does not exist at all. `MoveToHueAndSaturation` (Cluster 768,
+  Command 6) is not in `profiles/clusters.yaml`, so it is not named by
+  `command_slug`, filtered out from the Controls route, and
+  appears only as anonymous “+1 further commands”.
 
-Das letzte Loch ist das eigentliche. Eine RGBW-Lampe hängt am Bridge, meldet
-ihren Farbzustand brav als Signal zurück — und lässt sich weder aus der
-Oberfläche noch aus Loxone auf eine Farbe setzen.
+The last gap is the real one. An RGBW lamp hangs on the bridge, duly reports
+its colour state as a signal — and cannot be set to a colour from either the
+UI or Loxone.
 
-### Der Widerspruch in der Begründung
+### The Contradiction in the Justification
 
-`commands/translate.py` begründet im Moduldocstring, warum das Paar (768, 6)
-fehlt: „weil die Loxone-seitige RGB-Zahl nicht verlässlich dokumentiert ist
-(siehe `color.py`)“.
+`commands/translate.py` justifies in the module docstring why the pair (768, 6)
+is missing: “because the Loxone-side RGB number is not reliably documented
+(see `color.py`)”.
 
-`commands/color.py` sagt an der genannten Stelle das Gegenteil. Dort steht
-unter **„RGB — belegt“** die Formel
+`commands/color.py` says the opposite at that location. There it states
+under **”RGB — documented”** the formula
 
 ```
-AQa = rot% + grün% * 1000 + blau% * 1_000_000
+AQa = red% + green% * 1000 + blue% * 1_000_000
 ```
 
-mit offizieller Quelle (Loxone Knowledge Base, „RGB Lighting Controller“,
-Abschnitt Outputs) und einer zweiten, bestätigenden Community-Quelle. Nicht
-belegt ist ausschließlich **Lumitech** — der kombinierte Helligkeits- und
-Kelvin-Ausgang, um den es bei Hue/Saturation gar nicht geht.
+with official source (Loxone Knowledge Base, “RGB Lighting Controller”,
+Outputs section) and a second, confirming community source. Not
+documented is exclusively **Lumitech** — the combined brightness and
+Kelvin output, which is not what Hue/Saturation is about at all.
 
-Die Sperre beruht also auf einer Verwechslung zweier Loxone-Ausgabeformate.
-Dieser Entwurf hebt sie auf und korrigiert den Docstring.
+The block is therefore based on confusion between two Loxone output formats.
+This design removes it and corrects the docstring.
 
-## 2. Zweck und Abgrenzung
+## 2. Purpose and Scope
 
-Der Zweck bleibt **Diagnose** (Hauptspec 8.1): ein Klick trennt „Gerät
-reagiert nicht“ von „Loxone-Verdrahtung oder Export ist falsch“. Dieser
-Entwurf macht daraus kein Komfort-Bedienfeld. Konkret heißt das:
+The purpose remains **diagnosis** (Main Spec 8.1): a click separates “device
+does not respond” from “Loxone wiring or export is wrong”. This
+design does not make a comfort control panel out of it. Specifically that means:
 
-- **Keine laufende Zustandsspiegelung.** Die Oberfläche führt die Regler
-  nicht nach, wenn sich das Gerät von außen ändert.
-- **Aber ein Startwert.** Beim Öffnen werden die vorhandenen Werte einmalig
-  gelesen (Abschnitt 6). Ohne das stünde jeder Regler auf einer erfundenen
-  Position, und der erste Schubs risse die Lampe irgendwohin — der Klick
-  bewiese dann nichts über den Zustand, den er verändert hat.
-- **Keine Szenen, keine Favoriten, kein Zeitplan.**
+- **No live state mirroring.** The UI does not move the sliders
+  when the device changes from outside.
+- **But an initial value.** On opening, existing values are read once
+  (Section 6). Without that, every slider would sit at a fictional
+  position, and the first push would move the lamp somewhere — the click
+  would then prove nothing about the state it changed.
+- **No scenes, no favourites, no schedule.**
 
-## 3. Was unverändert bleibt
+## 3. What Remains Unchanged
 
-- **`POST /api/commands/{key}`** — Route, Statuscodes (404/400/502) und
-  Semantik bleiben. Es entsteht kein zweiter Bedienweg.
-- **`to_matter_call`** bleibt der einzige Übersetzer für WebUI *und*
-  Loxone-Endpunkt (Hauptspec 4.2).
-- **`takes_value`** behält seine Bedeutung für den Export. Das neue
-  `control:` ist ausschließlich ein Hinweis für die Oberfläche.
-- **Die Erlaubnislisten-Haltung** aus `api/control.py`: freigeschaltet wird
-  nur, was gegen ein echtes Gerät oder ausdrücklich gekennzeichnet gegen die
-  Spezifikation belegt ist.
-- **Der `+N weitere Befehle`-Hinweis** und `hidden_raw_commands`.
-- **Die Knöpfe für wertlose Kommandos** bleiben direkt auf der Kachel.
-- **`POST /api/signals/{key}/write`** bleibt bei seiner ehrlichen 501.
+- **`POST /api/commands/{key}`** — route, status codes (404/400/502) and
+  semantics remain unchanged. No second control path is created.
+- **`to_matter_call`** remains the only translator for WebUI *and*
+  Loxone endpoint (Main Spec 4.2).
+- **`takes_value`** keeps its meaning for export. The new
+  `control:` is exclusively a hint for the UI.
+- **The allowlist stance** from `api/control.py`: only released
+  is what is documented against real hardware or explicitly marked against the
+  specification.
+- **The "+N further commands" note** and `hidden_raw_commands`.
+- **The buttons for valueless commands** remain directly on the tile.
+- **`POST /api/signals/{key}/write`** stays with its honest 501.
 
-## 4. Belege statt Vermutungen
+## 4. Documentation Instead of Assumptions
 
-Die folgenden IDs sind gegen das installierte `chip`-SDK geprüft
-(`chip.clusters.Objects.ColorControl`), nicht aus dem Gedächtnis notiert:
+The following IDs are checked against the installed `chip` SDK
+(`chip.clusters.Objects.ColorControl`), not noted from memory:
 
-| Element | ID | Bemerkung |
+| Element | ID | Note |
 | --- | --- | --- |
-| `MoveToHueAndSaturation` | Kommando 6 | wird freigeschaltet |
-| `MoveToColorTemperature` | Kommando 10 | bereits vorhanden |
-| `MoveToHue` / `MoveToSaturation` | 0 / 3 | **nicht** freigeschaltet |
-| `MoveToColor` (xy) | 7 | **nicht** freigeschaltet |
-| `EnhancedMoveToHueAndSaturation` | 67 | **nicht** freigeschaltet |
-| `ColorTempPhysicalMinMireds` | Attribut 16395 | neue Grenze |
-| `ColorTempPhysicalMaxMireds` | Attribut 16396 | neue Grenze |
-| `ColorMode` | Attribut 8 | 0 = Hue/Sat, 1 = xy, 2 = Mired |
+| `MoveToHueAndSaturation` | Command 6 | to be released |
+| `MoveToColorTemperature` | Command 10 | already present |
+| `MoveToHue` / `MoveToSaturation` | 0 / 3 | **not** released |
+| `MoveToColor` (xy) | 7 | **not** released |
+| `EnhancedMoveToHueAndSaturation` | 67 | **not** released |
+| `ColorTempPhysicalMinMireds` | Attribute 16395 | new boundary |
+| `ColorTempPhysicalMaxMireds` | Attribute 16396 | new boundary |
+| `ColorMode` | Attribute 8 | 0 = Hue/Sat, 1 = xy, 2 = Mired |
 
-`ColorModeEnum` ebenfalls gegen das SDK geprüft.
+`ColorModeEnum` also checked against the SDK.
 
-### 4.1 Gerätefixtures als Voraussetzung
+### 4.1 Device Fixtures as a Prerequisite
 
-`tests/fixtures/nodes/synthetic_color_light.json` ist ausdrücklich als
-**synthetisch, kein echtes Gerät** gekennzeichnet. Es war der Platzhalter für
-genau die Hardware, die jetzt vorliegt.
+`tests/fixtures/nodes/synthetic_color_light.json` is explicitly marked as
+**synthetic, not a real device**. It was the placeholder for
+exactly the hardware that now exists.
 
-**Vor der Umsetzung** werden beide Leuchten als Fixture eingecheckt
-(`tests/fixtures/nodes/`, Format `{"node_id", "available", "attributes"}`)
-und ersetzen das synthetische Abbild in den Farb-Tests. Erst damit steht
-jeder Whitelist-Eintrag auf demselben Beleg, den `api/control.py` und
-`commands/color.py` für sich selbst einfordern.
+**Before implementation** both lamps are checked in as a fixture
+(`tests/fixtures/nodes/`, format `{"node_id", "available", "attributes"}`)
+and replace the synthetic image in the colour tests. Only then does
+every whitelist entry stand on the same documentation that `api/control.py` and
+`commands/color.py` demand of themselves.
 
-Die Fixtures werden vor dem Einchecken auf Inhalte geprüft, die nicht ins
-Repository gehören — dieselbe Sorgfalt, mit der `.gitignore` die
-Loxone-Originalvorlagen fernhält.
+The fixtures are checked before check-in for content that does not belong in the
+repository — the same care with which `.gitignore` keeps the
+Loxone original templates away.
 
-**Diese Fixtures können den Entwurf noch ändern.** Advertisiert die
-RGBW-Lampe Kommando 6 nicht, sondern nur 7 (xy), wird eine
-xy-Farbraumumrechnung nötig, die es heute nirgends gibt; dieser Entwurf
-deckt sie nicht ab und müsste dann fortgeschrieben werden.
+**These fixtures can still change the design.** If the
+RGBW lamp advertises command 6 not, but only 7 (xy), an
+xy colour space conversion will be necessary, which does not exist anywhere today; this design
+does not cover it and would need to be updated then.
 
 ## 5. Server
 
 ### 5.1 `profiles/clusters.yaml`
 
-Neu unter Cluster 768, `commands`:
+New under Cluster 768, `commands`:
 
 ```yaml
 6: {slug: color, takes_value: true, control: hue_sat}
 ```
 
-Alle bestehenden Kommandoeinträge bekommen `control:`:
+All existing command entries get `control:`:
 
-| Cluster/Kommando | Slug | `control` |
+| Cluster/Command | Slug | `control` |
 | --- | --- | --- |
 | 6/0, 6/1, 6/2 | `off`, `on`, `toggle` | `none` |
 | 8/0 | `level` | `percent` |
@@ -139,267 +135,265 @@ Alle bestehenden Kommandoeinträge bekommen `control:`:
 | 768/10 | `colortemp` | `kelvin` |
 | 768/6 | `color` | `hue_sat` |
 
-Neu unter Cluster 768, `attributes`:
+New under Cluster 768, `attributes`:
 
 ```yaml
 16395: {slug: colortemp_phys_min_mireds, unit: mired, functional: false}
 16396: {slug: colortemp_phys_max_mireds, unit: mired, functional: false}
 ```
 
-### 5.2 Neues Tabellenfeld `functional: false`
+### 5.2 New Table Field `functional: false`
 
-`profiles/relevance.py`, `is_functional` Schicht 3, erklärt heute: hat ein
-Cluster einen `attributes:`-Abschnitt, ist genau das dort Benannte gewollt.
-Die beiden CT-Grenzen einfach zu benennen hieße also, aus zwei
-unveränderlichen Gerätekonstanten zwei standardmäßig exportierte virtuelle
-Loxone-Eingänge zu machen.
+`profiles/relevance.py`, `is_functional` layer 3, explains today: if a
+cluster has an `attributes:` section, exactly what is named there is intended.
+Simply naming the two CT boundaries would mean turning two
+immutable device constants into two by-default-exported virtual
+Loxone inputs.
 
-Das neue optionale Feld `functional: false` trennt beides: **bekannt genug
-zum Auslesen, nicht interessant genug zum Vorauswählen.** `is_functional`
-liefert für solche Attribute `false`; im Expertenblock der Signalliste
-bleiben sie sichtbar und von Hand wählbar, `exportable` ändert sich nicht.
+The new optional field `functional: false` separates both: **known enough
+to read, not interesting enough to pre-select.** `is_functional`
+returns `false` for such attributes; in the expert block of the signal list
+they remain visible and manually selectable, `exportable` does not change.
 
-Bewusst ein allgemeines Feld und kein Sonderfall für Cluster 768: jeder
-weitere Cluster mit Kapazitätskonstanten (Min/Max-Bereiche, Auflösungen)
-trifft dasselbe Problem, und die Alternative — die Werte an der Tabelle
-vorbei direkt aus dem Snapshot zu greifen — schüfe eine zweite Stelle, an der
-Attributwissen lebt. Genau das soll die Tabelle verhindern.
+Deliberately a general field and not a special case for Cluster 768: any
+further cluster with capacity constants (min/max ranges, resolutions)
+hits the same problem, and the alternative — fetching the
+values directly from the snapshot past the table — would create a second place where
+attribute knowledge lives. That is exactly what the table is meant to prevent.
 
 ### 5.3 `commands/color.py`
 
-Neu: der Gegenspieler zu `rgb_to_hue_saturation` — ein Entpacker für die
-gepackte Loxone-Zahl.
+New: the counterpart to `rgb_to_hue_saturation` — an unpacker for the
+packed Loxone number.
 
 ```
-loxone_rgb_to_rgb(value) -> (r, g, b)   # je 0–255
+loxone_rgb_to_rgb(value) -> (r, g, b)   # each 0–255
 ```
 
-Zerlegt `r% + g%*1000 + b%*1000000` in drei Prozentwerte und skaliert sie auf
-0–255. Die Formel ist im Moduldocstring bereits mit offizieller Quelle
-belegt; sie wurde nur nie implementiert. Werte außerhalb des Gültigen (jeder
-Kanal > 100 %, negative Zahlen, Nicht-Zahlen) führen zu `ValueError` — der
-Aufrufer macht daraus 400, nicht eine erfundene Farbe.
+Decomposes `r% + g%*1000 + b%*1000000` into three percentage values and scales them to
+0–255. The formula is already documented in the module docstring with official source;
+it was just never implemented. Values outside the valid range (any
+channel > 100 %, negative numbers, non-numbers) result in `ValueError` — the
+caller makes 400 of that, not a fictional colour.
 
-Der Moduldocstring bekommt außerdem den Hinweis, dass die
-RGB→Hue/Sat-Kette ab jetzt tatsächlich benutzt wird und an welcher Hardware
-sie gegengeprüft wurde — die heutige Warnung „NICHT an Hardware validiert“
-wird damit gegenstandslos und darf nicht stehenbleiben.
+The module docstring also receives the note that the
+RGB→Hue/Sat chain is from now on actually used and against which hardware
+it was verified — the current warning “NOT validated against hardware”
+thus becomes moot and must not remain.
 
 ### 5.4 `commands/translate.py`
 
-Neu: `_payload_hue_saturation`, eingetragen unter `(768, 6)`:
+New: `_payload_hue_saturation`, entered under `(768, 6)`:
 
 ```
-Zahl entpacken → RGB → rgb_to_hue_saturation → {"hue", "saturation", "transitionTime": 0}
+Unpack number → RGB → rgb_to_hue_saturation → {"hue", "saturation", "transitionTime": 0}
 ```
 
-Der bestehende Konsistenztest über `known_command_pairs()` erzwingt, dass
-Tabelleneintrag und Payload-Builder gemeinsam wandern — genau die Falle aus
-Review-Fix C2 (2026-09-02), bei der ein Builder ohne Tabelleneintrag ein
-digitales Kommando mit analoger Nutzlast erzeugte.
+The existing consistency test via `known_command_pairs()` forces
+table entry and payload builder to move together — exactly the pitfall from
+Review-Fix C2 (2026-09-02), where a builder without a table entry created a
+digital command with an analogue payload.
 
-**Der Moduldocstring wird korrigiert.** Die heutige Begründung für das
-Fehlen von Kommando 6 ist sachlich falsch (Abschnitt 1). An ihre Stelle
-tritt der Verweis auf die belegte RGB-Formel und der klare Hinweis, dass
-**Lumitech** weiterhin offen ist.
+**The module docstring is corrected.** The current justification for the
+absence of command 6 is factually wrong (Section 1). In its place
+comes the reference to the documented RGB formula and the clear note that
+**Lumitech** remains open.
 
 ### 5.5 API
 
-`CommandOut` (`api/models.py`) bekommt zwei Felder:
+`CommandOut` (`api/models.py`) gets two fields:
 
-| Feld | Typ | Bedeutung |
+| Field | Type | Meaning |
 | --- | --- | --- |
 | `control` | `str` | `none` \| `percent` \| `kelvin` \| `hue_sat` |
-| `range` | `{min, max} \| None` | nur bei `kelvin`, aus 16395/16396 des Geräts |
+| `range` | `{min, max} \| None` | only for `kelvin`, from 16395/16396 of the device |
 
-`range` wird aus den zuletzt bekannten Attributwerten des Geräts gefüllt und
-in **Kelvin** ausgeliefert, nicht in Mired — die Oberfläche soll nicht
-rechnen müssen, und die Umrechnung ist ein Kehrwert, bei dem Min und Max
-tauschen. Fehlt eines der beiden Attribute, ist `range` `None`.
+`range` is filled from the last known attribute values of the device and
+delivered in **Kelvin**, not Mired — the UI should not
+have to calculate, and the conversion is a reciprocal where min and max
+swap. If one of the two attributes is missing, `range` is `None`.
 
-Fehlt in der Tabelle ein `control`, liefert die API den ausdrücklichen Wert
-`unknown` — **nicht** eine aus `takes_value` geratene Voreinstellung. Ein
-Regler, dessen Skala niemand belegt hat, wäre schlimmer als ein Zahlenfeld:
-er behauptet einen Wertebereich. `unknown` fällt in der Oberfläche auf das
-heutige Zahlenfeld zurück (Abschnitt 6.2).
+If a `control` is missing from the table, the API returns the explicit value
+`unknown` — **not** a guess from `takes_value`. A
+slider whose scale no one has documented would be worse than a number field:
+it claims a value range. `unknown` falls back to the current number field in the UI (Section 6.2).
 
-Heute ist dieser Fall unerreichbar — Abschnitt 5.1 versieht jeden
-bestehenden Eintrag mit einem `control`, und die Controls-Route filtert
-alles heraus, was gar nicht in der Tabelle steht (`command_slug is None`).
-`unknown` existiert für den nächsten Tabelleneintrag, den jemand ohne
-`control` hinzufügt, damit dieser nicht stillschweigend als Regler
-erscheint.
+Today this case is unreachable — Section 5.1 provides every
+existing entry with a `control`, and the Controls route filters
+everything out that is not in the table at all (`command_slug is None`).
+`unknown` exists for the next table entry that someone adds without
+`control`, so it does not silently appear as a slider.
 
-## 6. Oberfläche
+## 6. UI
 
-### 6.1 Kachel
+### 6.1 Tile
 
-Unverändert bis auf einen Zusatz: die wertlosen Kommandos bleiben als Knöpfe
-direkt auf der Kachel, dazu kommt ein Knopf **„Steuern“**, sobald das Gerät
-mindestens ein Kommando mit `control` ungleich `none` hat. Die heutigen
-Zahlenfelder verschwinden von der Kachel.
+Unchanged except for one addition: the valueless commands remain as buttons
+directly on the tile, plus a **”Control”** button as soon as the device
+has at least one command with `control` not equal to `none`. The current
+number fields disappear from the tile.
 
-Die drei bestehenden Zustandshinweise (`controls_loading`,
-`no_known_commands`, `+N weitere Befehle`) bleiben Wort für Wort erhalten.
+The three existing state notes (`controls_loading`,
+`no_known_commands`, `+N further commands`) remain word for word unchanged.
 
-### 6.2 Das Modal
+### 6.2 The Modal
 
-Nach dem Muster des Signal-Modals (Entwurf vom 5. September 2026):
-gleicher Öffnungs- und Schließweg, gleiche Kopfzeile mit Gerätename.
+Following the pattern of the Signal modal (design from 5 September 2026):
+same open and close path, same header with device name.
 
-Der Inhalt entsteht **ausschließlich** aus `control`. Kein Slug-Vergleich im
+The content is created **exclusively** from `control`. No slug comparison in
 JavaScript:
 
 | `control` | Widget |
 | --- | --- |
-| `none` | Knopf |
-| `percent` | Regler 0–100 % |
-| `kelvin` | Regler, begrenzt durch `range` |
-| `hue_sat` | 2-D-Fläche: waagerecht Farbton, senkrecht Sättigung |
-| `unknown` | heutiges Zahlenfeld mit „Senden“ |
+| `none` | Button |
+| `percent` | Slider 0–100 % |
+| `kelvin` | Slider, limited by `range` |
+| `hue_sat` | 2-D field: horizontal hue, vertical saturation |
+| `unknown` | current number field with “Send” |
 
-Die letzte Zeile ist die Rückfallebene: ein Kommando ohne `control`-Eintrag
-verliert nichts, es sieht aus wie heute. Kein Rückschritt für Geräte, die
-dieser Entwurf nicht im Blick hat.
+The last row is the fallback: a command without a `control` entry
+loses nothing, it looks like today. No regression for devices that
+this design does not have in view.
 
-### 6.3 Die Modus-Tabs entstehen von selbst
+### 6.3 The Mode Tabs Emerge Automatically
 
-Matter kennt keinen Zustand „Farbe und Farbtemperatur zugleich“: `ColorMode`
-ist entweder Hue/Sat oder Mired. Das Modal bildet das ab, statt es zu
-überdecken.
+Matter knows no state “colour and colour temperature at once”: `ColorMode`
+is either Hue/Sat or Mired. The modal represents this rather than
+obscuring it.
 
-- Gerät hat `kelvin` **und** `hue_sat` → Tableiste **Weiß | Farbe**.
-- Gerät hat nur eines von beiden → keine Tableiste, nur dieses Widget.
+- Device has `kelvin` **and** `hue_sat` → Tab bar **White | Colour**.
+- Device has only one of the two → no tab bar, just this widget.
 
-Die CCT-Lampe bekommt dadurch einen Kelvin-Regler ohne Tabs, die RGBW-Lampe
-beide Tabs — **ohne eine einzige Abfrage auf Gerätetyp, Hersteller oder
-Modell.** Das hält das README-Versprechen „keine kuratierte Liste
-unterstützter Modelle“ auch für die Bedienelemente.
+The CCT lamp thereby gets a Kelvin slider without tabs, the RGBW lamp
+both tabs — **without a single query for device type, manufacturer or
+model.** This keeps the README promise “no curated list
+of supported models” for controls as well.
 
-### 6.4 Startwert
+### 6.4 Initial Value
 
-Einmalig beim Öffnen, kein Nachführen. Quelle ist der bereits geladene
-`signalsByDevice`-Eintrag — `GET /api/devices/{id}/signals` liefert **alle**
-Signale des Geräts samt letztem Wert, nicht nur die exportierten. Es
-entsteht also keine neue Route.
+Once on opening, no tracking. Source is the already-loaded
+`signalsByDevice` entry — `GET /api/devices/{id}/signals` returns **all**
+signals of the device with last value, not just the exported ones. So
+no new route is created.
 
-**Die API liefert bereits skaliert.** `SignalOut.value` kommt aus
-`Runtime.last_values_for`, und dort landen die Werte über `to_loxone_value`,
-das den `scale`-Faktor der Tabelle anwendet. Die Oberfläche rechnet deshalb
-nur dort, wo die Tabelle es nicht kann:
+**The API already delivers scaled.** `SignalOut.value` comes from
+`Runtime.last_values_for`, and the values arrive there via `to_loxone_value`,
+which applies the `scale` factor from the table. The UI therefore
+only calculates where the table cannot:
 
-| Widget | Slug | Umrechnung |
+| Widget | Slug | Conversion |
 | --- | --- | --- |
-| Helligkeit | `level` | keine — Tabelle skaliert bereits auf % |
-| Farbton | `hue` | keine — Tabelle skaliert bereits auf Grad |
-| Sättigung | `saturation` | keine — Tabelle skaliert bereits auf % |
-| Farbtemperatur | `colortemp_mireds` | Mired → Kelvin, Kehrwert (`scale` kann nur multiplizieren) |
-| aktiver Tab | `colormode` | 2 → Weiß, 0 → Farbe |
+| Brightness | `level` | none — table already scales to % |
+| Hue | `hue` | none — table already scales to degrees |
+| Saturation | `saturation` | none — table already scales to % |
+| Colour temperature | `colortemp_mireds` | Mired → Kelvin, reciprocal (`scale` can only multiply) |
+| active tab | `colormode` | 2 → White, 0 → Colour |
 
-Dass auch die beiden `functional: false`-Grenzen einen Wert tragen, ist
-geprüft und kein Zufall: `Runtime._cache_attribute` cacht jedes Signal, das
-der Store kennt, ohne auf `exported` zu filtern. Ohne diese Eigenschaft wäre
-`range` immer leer und der Kelvin-Regler nie begrenzt.
+That both `functional: false` boundaries carry a value is
+verified and no accident: `Runtime._cache_attribute` caches every signal that
+the store knows, without filtering on `exported`. Without this property,
+`range` would always be empty and the Kelvin slider never limited.
 
-Fehlt ein Wert, startet das Widget mittig **und sagt es**: ein sichtbarer
-Hinweis „Startwert unbekannt“ statt einer Position, die eine Kenntnis
-vortäuscht, die nicht besteht.
+If a value is missing, the widget starts in the centre **and says so**: a visible
+note “Initial value unknown” instead of a position that claims knowledge
+that does not exist.
 
-### 6.5 Senden
+### 6.5 Send
 
-Beim **Loslassen** (`change`), nicht während des Ziehens. Ein Zug = ein
-Funkpaket. Thread ist langsam, und wenn ein Klick etwas beweisen soll, muss
-die Zuordnung zwischen Eingabe und Reaktion eindeutig bleiben.
+On **release** (`change`), not during dragging. One drag = one
+radio packet. Thread is slow, and if a click is to prove something, the
+mapping between input and reaction must remain clear.
 
-Sperre pro Kommando über den bestehenden `commandBusyKey`; ist das Gerät
-offline, bleibt alles deaktiviert — beides wie heute.
+Lock per command via the existing `commandBusyKey`; if the device
+is offline, everything stays disabled — both as today.
 
-Die 2-D-Fläche rechnet den gepickten Punkt in RGB um, packt ihn zur
-Loxone-Zahl und schickt **diese**. Damit durchläuft der Klick in der
-Oberfläche exakt den Weg, den Loxone später nimmt — für ein Diagnosewerkzeug
-der eigentliche Gewinn: klappt es hier, ist der Loxone-Pfad bewiesen.
+The 2-D field converts the picked point to RGB, packs it as a
+Loxone number and sends **that**. This means the click in the
+UI follows exactly the path Loxone later takes — for a diagnostic tool
+the real gain: if it works here, the Loxone path is proven.
 
-## 7. Übersetzung
+## 7. Localization
 
-Alle neuen Zeichenketten kommen mit deutscher **und** englischer Fassung nach
-`i18n/strings.yaml`, wie seit Phase B/C üblich: Modaltitel, Tabbeschriftungen
-(Weiß/Farbe), Reglerbeschriftungen, Einheiten, der Hinweis „Startwert
-unbekannt“ und die Fehlermeldung für eine ungültige Farbzahl.
+All new strings come in German **and** English versions to
+`i18n/strings.yaml`, as has been customary since Phase B/C: modal titles, tab labels
+(White/Colour), slider labels, units, the note “Initial value
+unknown” and the error message for an invalid colour number.
 
 ## 8. Tests
 
-| Ort | Was |
+| Location | What |
 | --- | --- |
-| `tests/commands/test_color.py` | Entpacken, Rundlauf RGB→gepackt→RGB, Randwerte (Schwarz, Weiß, reine Kanäle), Ablehnung von >100 %, negativ, NaN/inf |
-| `tests/commands/test_translate.py` | Paar (768, 6) baut die erwartete Nutzlast; ungültige Zahl → `UnsupportedValueError`; bestehender Konsistenztest deckt Tabelle ↔ Builder |
-| `tests/profiles/` | `functional: false` wirkt; die CT-Grenzen bleiben `exportable` und im Expertenblock wählbar; `control` wird korrekt gelesen |
-| `tests/api/` | `CommandOut.control` und `range`; `range` ist `None`, wenn 16395/16396 fehlen; `unknown` für Kommandos ohne Tabelleneintrag |
-| Fixtures | beide echten Leuchten ersetzen `synthetic_color_light.json` in den Farb-Tests |
-| WebUI | Auslieferungstest belegt nur die Auslieferung — die Alpine-Ausdrücke des Modals laufen zusätzlich in einem Wegwerf-Harness im Browser (Tabs, Startwert, Rückfall auf das Zahlenfeld) |
+| `tests/commands/test_color.py` | Unpacking, round-trip RGB→packed→RGB, edge cases (black, white, pure channels), rejection of >100 %, negative, NaN/inf |
+| `tests/commands/test_translate.py` | Pair (768, 6) builds expected payload; invalid number → `UnsupportedValueError`; existing consistency test covers table ↔ builder |
+| `tests/profiles/` | `functional: false` takes effect; CT boundaries remain `exportable` and selectable in expert block; `control` is read correctly |
+| `tests/api/` | `CommandOut.control` and `range`; `range` is `None` when 16395/16396 are missing; `unknown` for commands without table entry |
+| Fixtures | both real lamps replace `synthetic_color_light.json` in colour tests |
+| WebUI | Delivery test only documents delivery — the Alpine expressions of the modal additionally run in a throwaway harness in the browser (tabs, initial value, fallback to number field) |
 
-## 9. Bewusst in Kauf genommen
+## 9. Deliberately Accepted Trade-offs
 
-1. **Genauigkeitsverlust.** Die gepackte Loxone-Zahl trägt pro Kanal nur
-   0–100 %. Die gepickte Farbe wird also quantisiert, bevor sie zu Hue/Sat
-   wird. Das ist der Preis dafür, dass Oberfläche und Loxone denselben
-   Übersetzer benutzen — und für ein Diagnosewerkzeug der richtige Preis:
-   eine verlustfreie, aber eigene Umrechnung würde genau die Aussage
-   zerstören, die der Klick treffen soll.
-2. **Kein CT-Bereich → kein Regler.** Liefert eine Lampe 16395/16396 nicht,
-   fällt der Kelvin-Regler auf das Zahlenfeld zurück, statt erfundene
-   Grenzen anzuzeigen. Ein Regler, der bei 6500 K endet, obwohl die Leuchte
-   bei 4000 K aufhört, wäre der stille Fehlschlag, den Hauptspec 8.1
-   verbietet.
-3. **Nur ein Farbkommando.** MoveToHue (0), MoveToSaturation (3),
-   MoveToColor (7) und Enhanced (67) bleiben gesperrt. Die 2-D-Fläche setzt
-   Farbton und Sättigung in einem Kommando; alles Weitere wäre unbelegte
-   Fläche.
+1. **Accuracy loss.** The packed Loxone number carries only
+   0–100 % per channel. The picked colour is thus quantized before it becomes Hue/Sat.
+   That is the price for the UI and Loxone using the same
+   translator — and for a diagnostic tool the right price:
+   a lossless but separate conversion would destroy exactly the claim
+   that the click is meant to make.
+2. **No CT range → no slider.** If a lamp does not deliver 16395/16396,
+   the Kelvin slider falls back to the number field rather than showing
+   fictional boundaries. A slider that ends at 6500 K even though the lamp
+   stops at 4000 K would be the silent failure that Main Spec 8.1
+   forbids.
+3. **Only one colour command.** MoveToHue (0), MoveToSaturation (3),
+   MoveToColor (7) and Enhanced (67) remain blocked. The 2-D field sets
+   hue and saturation in one command; anything else would be unused
+   space.
 
-## 10. Offene Punkte
+## 10. Open Items
 
-1. **Lumitech bleibt ungelöst.** Der kombinierte Helligkeits- und
-   Kelvin-Ausgang der Loxone-Lichtsteuerung hat weiterhin keine belegte
-   Formel; `colortemp` nimmt deshalb nach wie vor eine bereits entpackte
-   Kelvinzahl entgegen. Dieser Entwurf ändert daran nichts, er hört nur auf,
-   RGB fälschlich mitzuverurteilen.
-2. **xy-Farbraum.** Sollte sich an den Fixtures zeigen, dass Geräte
-   `MoveToColor` (7) statt Kommando 6 erwarten, fehlt die
-   xy-Umrechnung vollständig.
-3. **Die Erlaubnisliste in `api/control.py`** bleibt handgepflegt; der in
-   ihrem Docstring beschriebene Weg über die `writable`-Tabelle des
-   chip-Pakets ist weiterhin versperrt.
-4. **Keine Zustandsspiegelung.** Ändert jemand die Lampe von außen, während
-   das Modal offen ist, veralten die Regler still. Bewusst so — der Ausbau
-   zum echten Bedienfeld wäre ein eigener Entwurf mit eigener Begründung
-   gegenüber Hauptspec 8.1.
-5. **Der Loxone-Farbweg verwirft Helligkeit.** Der AQa-Ausgang des
-   Loxone-RGB-Bausteins trägt Farbe UND Helligkeit in einer Zahl;
-   `MoveToHueAndSaturation` transportiert nur die Farbe (siehe
-   `commands/translate.py`, `_payload_hue_saturation`). Nachgerechnet: AQa
-   100, 50 und 25 (Rot bei 100 %, 50 %, 25 % Helligkeit) ergeben alle drei
-   `hue 0, sat 254` — identische Kommandos, Dimmen im Loxone-Baustein
-   bewirkt an der Leuchte also nichts. AQa 0 ergibt `hue 0, sat 0`, also
-   Weiß statt Aus. Kein Programmierfehler, sondern Folge der bewussten
-   Beschränkung auf ein Farbkommando (Abschnitt 9.3).
+1. **Lumitech remains unsolved.** The combined brightness and
+   Kelvin output of the Loxone light control still has no documented
+   formula; `colortemp` therefore still expects an already-unpacked
+   Kelvin number. This design changes nothing about that, it just stops
+   wrongly condemning RGB as well.
+2. **xy colour space.** If the fixtures show that devices
+   expect `MoveToColor` (7) instead of command 6, the
+   xy conversion is completely missing.
+3. **The allowlist in `api/control.py`** remains manually maintained; the
+   path described in its docstring via the `writable` table of the
+   chip package is still blocked.
+4. **No state mirroring.** If someone changes the lamp from outside while
+   the modal is open, the sliders silently become stale. Deliberately so — expanding to
+   a real control panel would be a separate design with its own
+   justification against Main Spec 8.1.
+5. **The Loxone colour path discards brightness.** The AQa output of the
+   Loxone RGB module carries both colour AND brightness in one number;
+   `MoveToHueAndSaturation` transports only the colour (see
+   `commands/translate.py`, `_payload_hue_saturation`). Calculated: AQa
+   100, 50 and 25 (red at 100 %, 50 %, 25 % brightness) all yield
+   `hue 0, sat 254` — identical commands, dimming in the Loxone module
+   thus has no effect on the lamp. AQa 0 yields `hue 0, sat 0`, i.e.
+   white instead of off. Not a programming error, but a consequence of the deliberate
+   restriction to one colour command (Section 9.3).
 
-   **Nachtrag 8. September 2026:** Die Kette gepackte Zahl → Farbe an der
-   Leuchte ist seither an echter Hardware gemessen (siehe
-   `commands/color.py`), das Verhalten oben ist also nicht mehr nur
-   gerechnet, sondern bestätigt — was das Dimm-Problem von einer Vermutung
-   zu einer Tatsache macht. Ungetestet bleibt allein die Loxone-Seite: ein
-   Miniserver mit angeschlossenem RGB-Baustein stand nicht zur Verfügung,
-   geprüft wurde über `POST /api/commands/{key}` mit von Hand gebildeten
-   AQa-Zahlen. Da beide Aufrufer denselben Übersetzer benutzen (Abschnitt
-   3), ist das dieselbe Codestrecke — aber nicht dieselbe Quelle der Zahl.
-6. **Endpunkt-Asymmetrie zwischen Server und Oberfläche.**
-   `api/control.py::_kelvin_range` filtert Startwerte korrekt auf
-   `signal.ref.endpoint == command.endpoint`; die Oberfläche sucht ihre
-   Startwerte in `app.js` dagegen über
-   `entry.path.endsWith('/<cluster>/<element>')` — ohne Endpunkt — und
-   nimmt den ersten Treffer. Bei einem Node mit LevelControl oder
-   ColorControl auf zwei Nutz-Endpunkten (zweikanaliger Dimmer, gebrückte
-   Leuchten) bekämen beide Regler den Startwert von Endpunkt 1, und
-   `hasColourTabs` mischte Kommandos verschiedener Endpunkte zu einer
-   Reiterleiste. Kein eingechecktes Gerät löst das heute aus; die Änderung
-   wäre größer als der Nutzen und gehört in eine eigene Aufgabe
-   (Abschluss-Review 2026-09-08, Befund I-4).
+   **Note 8 September 2026:** The chain packed number → colour on the
+   lamp has since been measured against real hardware (see
+   `commands/color.py`), so the behaviour above is no longer just
+   calculated, but confirmed — which turns the dimming problem from a
+   suspicion into a fact. The only thing untested remains the Loxone side: a
+   Miniserver with connected RGB module was not available,
+   verification was done via `POST /api/commands/{key}` with hand-formed
+   AQa numbers. Since both callers use the same translator (Section
+   3), that is the same code path — but not the same source of the number.
+6. **Endpoint asymmetry between server and UI.**
+   `api/control.py::_kelvin_range` correctly filters initial values to
+   `signal.ref.endpoint == command.endpoint`; the UI searches for its
+   initial values in `app.js` however via
+   `entry.path.endsWith('/<cluster>/<element>')` — without endpoint — and
+   takes the first match. On a node with LevelControl or
+   ColorControl on two functional endpoints (two-channel dimmer, bridged
+   lamps) both sliders would get the initial value from endpoint 1, and
+   `hasColourTabs` would mix commands from different endpoints into one
+   tab bar. No checked-in device triggers this today; the change
+   would be larger than the benefit and belongs in a separate task
+   (closing review 2026-09-08, finding I-4).
