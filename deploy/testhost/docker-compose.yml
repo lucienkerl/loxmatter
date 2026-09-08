@@ -10,7 +10,9 @@
 #     --backbone-interface als Kommandozeilenargument, genau wie unten
 #     konfiguriert.
 #   - ghcr.io/matter-js/matterjs-server:stable (8. September 2026, UNGEPRUEFT -
-#     siehe README, Abschnitt "Umzug auf matterjs-server") -> --bluetooth-adapter
+#     siehe README, Abschnitt "Umzug auf matterjs-server (UNGEPRUEFT)"; der
+#     README schreibt den Zusatz mit Umlaut, hier steht er umlautfrei wie jeder
+#     Kommentar in dieser Datei) -> --bluetooth-adapter
 #     ${BLUETOOTH_ADAPTER} gilt weiterhin fuer BLE-Commissioning ueber hci0,
 #     zusaetzlich NOBLE_BINDINGS=dbus, weil der Container unprivilegiert laeuft
 #     (siehe README).
@@ -113,7 +115,8 @@ services:
 
   matter-server:
     # matterjs-server statt python-matter-server (8. September 2026,
-    # UNGEPRUEFT - siehe README, Abschnitt "Umzug auf matterjs-server").
+    # UNGEPRUEFT - siehe README, Abschnitt "Umzug auf matterjs-server
+    # (UNGEPRUEFT)").
     # python-matter-server ist mit 8.1.2 archiviert; der Nachfolger spricht
     # dieselbe WebSocket-API und benutzt dasselbe Datenverzeichnis, migriert
     # es aber beim ERSTEN Start in sein eigenes Format. Diese Migration ist
@@ -125,6 +128,26 @@ services:
     container_name: matter-server
     network_mode: host
     restart: unless-stopped
+    # UNVERAENDERT UEBERNOMMEN vom alten Image, und das ist eine offene Frage,
+    # keine Entscheidung (8. September 2026). Dieser Eintrag stand hier fuer den
+    # rohen HCI-Zugriff von python-matter-server: das AppArmor-Profil `docker-
+    # default` verbietet die dafuer noetigen Bluetooth-Rohsockets. Der neue
+    # Container geht BLE ueber den D-Bus-Weg an (NOBLE_BINDINGS=dbus, siehe
+    # unten) und braucht ihn moeglicherweise nicht mehr.
+    #
+    # Er bleibt trotzdem stehen, weil das an dieser Maschine nicht zu klaeren
+    # ist: ihn versuchsweise zu entfernen hiesse, das BLE-Commissioning zu
+    # riskieren, das ohnehin schon als UNGEPRUEFT gilt - und ein Fehlschlag dort
+    # sieht in den Logs aus wie kein Fehlschlag (siehe README, "BLE aktivieren").
+    # Zu pruefen ist deshalb am Pi, und zwar erst, nachdem BLE ueber D-Bus
+    # nachweislich einmal funktioniert hat: Zeile entfernen, Container neu
+    # anlegen, ein Geraet einlernen. Geht das, kann sie weg.
+    #
+    # Der Widerspruch zum Block weiter unten, der `user: 0:0` ausdruecklich aus
+    # Isolationsgruenden ablehnt, ist gesehen: eine aufgehobene AppArmor-
+    # Beschraenkung ist ebenfalls weniger Isolierung. Der Unterschied ist nur,
+    # dass fuer `user: 0:0` eine belegte Alternative vorliegt (der D-Bus-Weg)
+    # und hier bislang keine Messung.
     security_opt:
       - apparmor=unconfined
     volumes:
@@ -149,6 +172,20 @@ services:
       # Container-Isolierung auf, und dieser Dienst laeuft mit
       # `network_mode: host` ohnehin schon offen im Netz.
       NOBLE_BINDINGS: dbus
+    # ACHTUNG: `command` ueberschreibt das Image-Default-CMD VOLLSTAENDIG -
+    # Compose ergaenzt es nicht, es ersetzt es. Fuer das alte Image war dessen
+    # CMD bekannt (`--storage-path /data --paa-root-cert-dir /data/credentials`,
+    # per `docker inspect --format '{{.Config.Cmd}}'` geprueft, siehe README,
+    # "BLE aktivieren"), und die Liste hier war bewusst dessen Nachbau plus
+    # `--bluetooth-adapter`.
+    #
+    # Fuer dieses Image ist das Default-CMD UNGEPRUEFT. Traegt es etwas, worauf
+    # loxmatter baut - etwa einen abweichenden `--port`, waehrend loxmatter fest
+    # `ws://127.0.0.1:5580/ws` anspricht -, faellt es hier still weg. Deshalb vor
+    # dem ersten `up` nachsehen und mit dieser Liste vergleichen (README, "Was
+    # danach zu pruefen ist", Punkt 3):
+    #     docker inspect --format '{{.Config.Cmd}}' \
+    #         ghcr.io/matter-js/matterjs-server:stable
     command:
       - --storage-path
       - /data
