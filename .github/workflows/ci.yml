@@ -58,13 +58,22 @@ jobs:
             echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } >> "$GITHUB_OUTPUT"
       - id: tags
+        # version stammt aus einem Git-Tag (refs/tags/v...), und
+        # `git check-ref-format` erlaubt darin Backticks, $(...) und
+        # Anfuehrungszeichen. Stuende der Wert per ${{ }} direkt im
+        # run-Skript, wuerde ein Tag wie "v1.0.0$(...)" als Shell-Code
+        # ausgefuehrt - in einem Job mit packages: write. Ueber env:
+        # kommt er nur als Variableninhalt an, nie als Quelltext.
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          COMMIT: ${{ steps.meta.outputs.commit }}
         run: |
           set -eu
           image="ghcr.io/lucienkerl/loxmatter"
-          if [ "${{ steps.meta.outputs.version }}" = "dev" ]; then
-            echo "list=$image:dev,$image:sha-${{ steps.meta.outputs.commit }}" >> "$GITHUB_OUTPUT"
+          if [ "$VERSION" = "dev" ]; then
+            echo "list=$image:dev,$image:sha-$COMMIT" >> "$GITHUB_OUTPUT"
           else
-            echo "list=$image:${{ steps.meta.outputs.version }},$image:stable" >> "$GITHUB_OUTPUT"
+            echo "list=$image:$VERSION,$image:stable" >> "$GITHUB_OUTPUT"
           fi
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
