@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Prueft die Skalierung an der aufgezeichneten Steckdose."""
+"""Checks the scaling against the recorded plug."""
 
 import json
 from pathlib import Path
@@ -34,22 +34,22 @@ def plug() -> NodeSnapshot:
 
 
 def test_mains_voltage_lands_near_230_volt():
-    """2/144/4 ist RMSVoltage in mV - die Steckdose hing an 230 V."""
+    """2/144/4 is RMSVoltage in mV - the plug was plugged into 230 V."""
     snap = plug()
     ref = next(s for s in extract_signals(snap) if s.cluster_id == 144 and s.element_id == 4)
     assert to_loxone_value(ref, snap.attributes[ref.path]) == pytest.approx(230.0)
 
 
 def test_exactly_110_signals_yield_a_value():
-    """Spec 6.6: von 159 Attributsignalen erreichen 110 einen UDP-Eingang -
-    seit Aufgabe 5 zaehlt der aus der Struktur gezogene Zaehlerstand mit."""
+    """Spec 6.6: of 159 attribute signals, 110 reach a UDP input -
+    since task 5 the counter reading extracted from the struct also counts."""
     snap = plug()
     values = [to_loxone_value(s, snap.attributes.get(s.path)) for s in extract_signals(snap)]
     assert sum(1 for v in values if v is not None) == 110
 
 
 def test_no_value_formats_to_scientific_notation():
-    """Loxone kann "1e-05" nicht lesen - das waere ein stiller Ausfall."""
+    """Loxone cannot read "1e-05" - that would be a silent failure."""
     snap = plug()
     for ref in extract_signals(snap):
         value = to_loxone_value(ref, snap.attributes.get(ref.path))

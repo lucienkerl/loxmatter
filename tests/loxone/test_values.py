@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -25,17 +25,17 @@ def attr(cluster: int, element: int, endpoint: int = 1) -> SignalRef:
 
 
 def test_temperature_is_hundredths_of_a_degree():
-    """Spec 7.3: TemperatureMeasurement liefert 0,01 °C."""
+    """Spec 7.3: TemperatureMeasurement delivers 0.01 °C."""
     assert to_loxone_value(attr(1026, 0), 2150) == pytest.approx(21.5)
 
 
 def test_power_goes_from_milliwatt_to_kilowatt():
-    """Spec 7.3: Loxone rechnet Leistung in kW, nicht in W."""
+    """Spec 7.3: Loxone counts power in kW, not W."""
     assert to_loxone_value(attr(144, 8, endpoint=2), 5_000_000) == pytest.approx(5.0)
 
 
 def test_small_power_survives_the_conversion():
-    """300 mW sind 0,0003 kW - genau der Standby-Verbraucher, den man sehen will."""
+    """300 mW is 0.0003 kW - exactly the standby load you want to see."""
     assert to_loxone_value(attr(144, 8, endpoint=2), 300) == pytest.approx(0.0003)
 
 
@@ -49,12 +49,12 @@ def test_boolean_passes_through_unscaled():
 
 
 def test_unknown_cluster_passes_through_unscaled():
-    """Spec 3.5: die Tabelle reichert an, sie filtert nicht."""
+    """Spec 3.5: the table enriches, it does not filter."""
     assert to_loxone_value(attr(64999, 7), 42) == pytest.approx(42.0)
 
 
 def test_unmappable_values_yield_none():
-    """Spec 6.6: Listen, Structs, Text und null werden nie zu einem Datagramm."""
+    """Spec 6.6: lists, structs, text and null never become a datagram."""
     assert to_loxone_value(attr(29, 1), [1, 2, 3]) is None
     assert to_loxone_value(attr(40, 1), "IKEA of Sweden") is None
     assert to_loxone_value(attr(49, 7), None) is None
@@ -67,7 +67,7 @@ def test_format_trims_trailing_zeros():
 
 
 def test_format_keeps_six_decimals_for_small_values():
-    """Ohne das verschwindet jeder Verbraucher unter 10 W in der Null."""
+    """Without this, every load under 10 W disappears into zero."""
     assert format_value(0.0003) == "0.0003"
     assert format_value(0.000001) == "0.000001"
 
@@ -78,25 +78,25 @@ def test_format_renders_booleans_as_one_and_zero():
 
 
 def test_datagram_matches_the_exported_check_pattern():
-    """Die Vorlage erkennt "<key>:\\v" - das Datagramm muss dazu passen (Spec 6.1)."""
+    """The template recognizes "<key>:\\v" - the datagram must match it (spec 6.1)."""
     assert datagram("d1_2_power", 0.0003) == b"d1_2_power:0.0003"
 
 
 def test_format_keeps_negative_values_intact():
-    """Ein negatives Vorzeichen ist kein Rundungsfehler und darf nicht verschwinden."""
+    """A negative sign is not a rounding error and must not disappear."""
     assert format_value(-21.5) == "-21.5"
     assert format_value(-0.5) == "-0.5"
     assert format_value(-1234567.89) == "-1234567.89"
 
 
 def test_format_rounds_negative_near_zero_to_plain_zero():
-    """ "-0" ist in einer Loxone-Visualisierung schlicht falsch - egal wie es entsteht."""
+    """ "-0" is simply wrong in a Loxone visualization - no matter how it arises."""
     assert format_value(-1e-07) == "0"
     assert format_value(-0.0) == "0"
 
 
 def test_negative_temperature_end_to_end():
-    """TemperatureMeasurement in Hundertstelgrad unter Null - der Alltagsfall im Winter."""
+    """TemperatureMeasurement in hundredths of a degree below zero - the everyday winter case."""
     ref = attr(1026, 0)
     value = to_loxone_value(ref, -1270)
     assert value == pytest.approx(-12.7)
@@ -104,20 +104,20 @@ def test_negative_temperature_end_to_end():
 
 
 def test_format_never_renders_scientific_notation_for_negative_values():
-    """Gegenstueck zu test_no_value_formats_to_scientific_notation, mit negativem Vorzeichen."""
+    """Counterpart to test_no_value_formats_to_scientific_notation, with a negative sign."""
     assert "e" not in format_value(-0.000001).lower()
     assert "e" not in format_value(-1234567.89).lower()
 
 
 def test_the_energy_counter_arrives_in_kilowatt_hours():
-    """Matter zaehlt in mWh, Loxone will kWh (Hauptdokument 7.3)."""
+    """Matter counts in mWh, Loxone wants kWh (main document 7.3)."""
     ref = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
     raw = {"0": 2_500_000_000, "1": 1_700_000_000}
     assert to_loxone_value(ref, raw) == pytest.approx(2500.0)
 
 
 def test_a_struct_without_the_named_member_yields_none_at_runtime():
-    """Laufzeit und Zerlegung muessen dieselbe Entscheidung treffen - sonst
-    meldet die Oberflaeche einen Wert, den der Export nicht kennt."""
+    """Runtime and decomposition must make the same decision - otherwise
+    the UI reports a value that the export does not know."""
     ref = SignalRef(2, 145, 1, SignalKind.ATTRIBUTE)
     assert to_loxone_value(ref, {"1": 1_700_000_000}) is None

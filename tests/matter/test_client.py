@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -29,13 +29,14 @@ from loxmatter.matter.models import NodeSnapshot
 
 
 class FakeNode:
-    """Steht für matter_server.client.models.node.MatterNode.
+    """Stands in for matter_server.client.models.node.MatterNode.
 
-    Die echte MatterNode trägt ihre Rohattribute nicht direkt, sondern unter
-    node_data.attributes — node_id bleibt aber ein Attribut direkt am Node
-    (dort eine Property auf node_data.node_id). Diese Attrappe bildet genau
-    diese Form nach, statt sie der Einfachheit halber abzuflachen. `available`
-    steht in Wirklichkeit ebenfalls auf node_data (Property `MatterNode.available`).
+    The real MatterNode does not carry its raw attributes directly, but
+    under node_data.attributes — node_id, however, stays an attribute
+    directly on the node (there a property over node_data.node_id). This
+    stand-in reproduces exactly this shape, instead of flattening it for
+    simplicity. `available` in reality also sits on node_data (property
+    `MatterNode.available`).
     """
 
     def __init__(self, node_id: int, attributes: dict[str, object], *, available: bool = True):
@@ -45,14 +46,14 @@ class FakeNode:
 
 
 class FakeUpstream:
-    """Steht für matter_server.client.MatterClient.
+    """Stands in for matter_server.client.MatterClient.
 
-    start_listening() bildet den echten Vertrag nach: Sie füllt den
-    Node-Cache, setzt (sofern gewünscht) init_ready und blockiert danach,
-    bis sie abgebrochen wird — genau wie MatterClient.start_listening().
-    get_nodes() liefert bewusst erst etwas zurück, nachdem start_listening()
-    gelaufen ist: Ein Test, der den Listener nie startet, muss den
-    ursprünglichen Fehler (leerer Node-Cache) reproduzieren können.
+    start_listening() reproduces the real contract: it fills the node
+    cache, sets init_ready (if requested) and then blocks until it is
+    cancelled — exactly like MatterClient.start_listening(). get_nodes()
+    deliberately returns something only after start_listening() has run: a
+    test that never starts the listener must be able to reproduce the
+    original failure (empty node cache).
     """
 
     def __init__(
@@ -81,7 +82,7 @@ class FakeUpstream:
         if self._signal_ready and init_ready is not None:
             init_ready.set()
         try:
-            await asyncio.Event().wait()  # blockiert, bis abgebrochen
+            await asyncio.Event().wait()  # blocks until cancelled
         except asyncio.CancelledError:
             self.cancelled = True
             raise
@@ -95,16 +96,17 @@ class FakeUpstream:
         return self._nodes
 
     def add_node(self, node: FakeNode) -> None:
-        """Ein Geraet, das erst nach start_listening() dazukommt - beim
-        echten MatterClient fuellt das NODE_ADDED-Ereignis den Node-Cache
-        entsprechend. Genau der Fall, den `follow_node` abdeckt."""
+        """A device that only joins after start_listening() - on the real
+        MatterClient the NODE_ADDED event fills the node cache accordingly.
+        Exactly the case that `follow_node` covers."""
         self._nodes.append(node)
 
-    # --- ab hier: Nachbildung von MatterClient.subscribe_events()/
-    # send_device_command() fuer Task 8. subscribe_events() bildet das reale
-    # Schluessel-Matching aus MatterClient._signal_event() nach — inklusive
-    # der Eigenschaft, die BridgeMatterClient.subscribe() erst noetig macht:
-    # der Callback bekommt nur (event, data), NIE node_id/attribute_path.
+    # --- from here on: reproduction of MatterClient.subscribe_events()/
+    # send_device_command() for task 8. subscribe_events() reproduces the
+    # real key matching from MatterClient._signal_event() — including the
+    # property that is precisely what makes BridgeMatterClient.subscribe()
+    # necessary: the callback only gets (event, data), NEVER
+    # node_id/attribute_path.
 
     def subscribe_events(
         self,
@@ -132,8 +134,8 @@ class FakeUpstream:
         node_id: int | None = None,
         attribute_path: str | None = None,
     ) -> None:
-        """Simuliert eine eingehende Server-Nachricht wie
-        MatterClient._signal_event() — inklusive Wildcard-Matching."""
+        """Simulates an incoming server message like
+        MatterClient._signal_event() — including wildcard matching."""
         for evt_key in (event.value, "*"):
             for node_key in [node_id, "*"] if node_id is not None else ["*"]:
                 for attr_key in [attribute_path, "*"] if attribute_path is not None else ["*"]:
@@ -155,7 +157,7 @@ class FakeUpstream:
 
 
 class FakeSession:
-    """Steht für aiohttp.ClientSession — zählt, wie oft close() lief."""
+    """Stands in for aiohttp.ClientSession — counts how often close() ran."""
 
     def __init__(self) -> None:
         self.close_calls = 0
@@ -171,7 +173,7 @@ def make_client(
     fail_disconnect: bool = False,
     signal_ready: bool = True,
 ) -> tuple[BridgeMatterClient, FakeSession]:
-    """Baut einen BridgeMatterClient mit Attrappen für HTTP-Session und Upstream."""
+    """Builds a BridgeMatterClient with stand-ins for the HTTP session and upstream."""
     session = FakeSession()
     upstream = FakeUpstream(
         nodes or [],
@@ -204,7 +206,7 @@ async def test_snapshots_requires_a_connection(client):
 
 
 async def test_snapshots_requires_a_connection_in_german(client):
-    """Deutsches Gegenstueck zu `test_snapshots_requires_a_connection` oben."""
+    """German counterpart to `test_snapshots_requires_a_connection` above."""
     i18n.set_language("de")
     with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
         await client.snapshots()
@@ -220,10 +222,10 @@ async def test_snapshots_maps_every_node(client):
 
 
 async def test_snapshots_reflect_node_availability():
-    """Review-Fix C1, 2026-09-02: `Runtime.seed_from_snapshot` braucht
-    `node.available` in jedem Snapshot, um ein Geraet beim Bruecken-Start
-    korrekt als on-/offline zu saeen - siehe Modul-Docstring, warum
-    NODE_ADDED/NODE_UPDATED dafuer nicht verlaesslich feuern."""
+    """Review fix C1, 2026-09-02: `Runtime.seed_from_snapshot` needs
+    `node.available` in every snapshot to correctly seed a device as
+    on-/offline at bridge startup - see the module docstring for why
+    NODE_ADDED/NODE_UPDATED do not reliably fire for this."""
     bridge, _ = make_client([FakeNode(1, {"0/40/1": "Aqara"}, available=False)])
     await bridge.connect()
     snapshots = await bridge.snapshots()
@@ -242,7 +244,7 @@ async def test_snapshot_raises_for_unknown_node(client):
 
 
 async def test_snapshot_raises_for_unknown_node_in_german(client):
-    """Deutsches Gegenstueck zu `test_snapshot_raises_for_unknown_node` oben."""
+    """German counterpart to `test_snapshot_raises_for_unknown_node` above."""
     i18n.set_language("de")
     await client.connect()
     with pytest.raises(MatterUnavailableError, match="unbekannter Node 99"):
@@ -258,7 +260,7 @@ async def test_disconnect_is_idempotent(client):
 
 
 async def test_connect_disconnect_closes_session_exactly_once():
-    """BridgeMatterClient erzeugt die Session selbst und muss sie wieder schließen."""
+    """BridgeMatterClient creates the session itself and must close it again."""
     bridge, session = make_client([FakeNode(1, {})])
     await bridge.connect()
     assert session.close_calls == 0
@@ -275,8 +277,8 @@ async def test_disconnect_twice_closes_session_once_and_does_not_raise():
 
 
 async def test_failed_connect_closes_session_and_allows_retry():
-    """Ein scheiternder connect() darf die Session nicht leaken und muss einen
-    späteren, erfolgreichen connect() zulassen."""
+    """A failing connect() must not leak the session and must allow a later,
+    successful connect()."""
     sessions: list[FakeSession] = []
 
     def http_session_factory() -> FakeSession:
@@ -311,10 +313,10 @@ async def test_failed_connect_closes_session_and_allows_retry():
 
 
 async def test_failed_connect_closes_session_and_allows_retry_in_german():
-    """Deutsches Gegenstueck zu `test_failed_connect_closes_session_and_allows_retry`
-    oben. `FakeUpstream.start_listening` wirft "Verbindung fehlgeschlagen" immer
-    als plain RuntimeError - das ist ein Fixture-Text, kein uebersetzter, und
-    bleibt deshalb in beiden Sprachen gleich."""
+    """German counterpart to `test_failed_connect_closes_session_and_allows_retry`
+    above. `FakeUpstream.start_listening` always raises "Verbindung fehlgeschlagen"
+    as a plain RuntimeError - that is a fixture text, not a translated one,
+    and therefore stays the same in both languages."""
     i18n.set_language("de")
     sessions: list[FakeSession] = []
 
@@ -350,9 +352,9 @@ async def test_failed_connect_closes_session_and_allows_retry_in_german():
 
 
 async def test_connect_twice_closes_previous_session_and_does_not_leak():
-    """Ein zweiter connect() ohne dazwischenliegendes disconnect() darf die
-    erste Session nicht unerreichbar hinterlassen — sie muss geschlossen
-    werden, bevor die zweite Session entsteht."""
+    """A second connect() without an intervening disconnect() must not leave
+    the first session unreachable — it must be closed before the second
+    session is created."""
     sessions: list[FakeSession] = []
 
     def http_session_factory() -> FakeSession:
@@ -380,8 +382,8 @@ async def test_connect_twice_closes_previous_session_and_does_not_leak():
 
 
 async def test_disconnect_closes_session_even_if_upstream_disconnect_raises():
-    """Wirft der Upstream in disconnect(), muss die Session trotzdem
-    geschlossen und der Client danach als nicht verbunden erkennbar sein."""
+    """If the upstream raises in disconnect(), the session must still be
+    closed and the client afterward recognizable as not connected."""
     bridge, session = make_client([FakeNode(1, {})], fail_disconnect=True)
     await bridge.connect()
 
@@ -394,9 +396,9 @@ async def test_disconnect_closes_session_even_if_upstream_disconnect_raises():
 
 
 async def test_disconnect_closes_session_even_if_upstream_disconnect_raises_in_german():
-    """Deutsches Gegenstueck zu
-    `test_disconnect_closes_session_even_if_upstream_disconnect_raises` oben.
-    "Trennung fehlgeschlagen" ist ein Fixture-Text (immer Deutsch, siehe dort)."""
+    """German counterpart to
+    `test_disconnect_closes_session_even_if_upstream_disconnect_raises` above.
+    "Trennung fehlgeschlagen" is a fixture text (always German, see there)."""
     i18n.set_language("de")
     bridge, session = make_client([FakeNode(1, {})], fail_disconnect=True)
     await bridge.connect()
@@ -410,9 +412,9 @@ async def test_disconnect_closes_session_even_if_upstream_disconnect_raises_in_g
 
 
 async def test_connect_cancelled_closes_session_and_propagates_cancellation():
-    """asyncio.CancelledError erbt von BaseException, nicht Exception — ein
-    während des Verbindungsaufbaus abgebrochener connect() darf die Session
-    trotzdem nicht leaken und muss den Abbruch weiterreichen."""
+    """asyncio.CancelledError inherits from BaseException, not Exception — a
+    connect() cancelled while the connection is being established must
+    still not leak the session, and must propagate the cancellation."""
     session = FakeSession()
 
     class CancellingUpstream:
@@ -432,11 +434,11 @@ async def test_connect_cancelled_closes_session_and_propagates_cancellation():
 
 
 async def test_connect_times_out_when_listener_never_signals_readiness(monkeypatch):
-    """Der Defekt, den dieser Test verhindert: Ohne Zeitlimit würde connect()
-    entweder ewig auf ein Event warten, das nie kommt, oder — schlimmer — sich
-    fälschlich als verbunden melden, ohne dass der Node-Cache je gefüllt
-    wurde. Ein Listener, der init_ready nie setzt, muss connect() innerhalb
-    des Zeitlimits scheitern lassen."""
+    """The defect this test prevents: without a time limit, connect() would
+    either wait forever for an event that never comes, or — worse —
+    incorrectly report itself as connected without the node cache ever
+    having been filled. A listener that never sets init_ready must make
+    connect() fail within the time limit."""
     monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     bridge, _session = make_client([FakeNode(1, {})], signal_ready=False)
 
@@ -445,8 +447,8 @@ async def test_connect_times_out_when_listener_never_signals_readiness(monkeypat
 
 
 async def test_connect_times_out_when_listener_never_signals_readiness_in_german(monkeypatch):
-    """Deutsches Gegenstueck zu
-    `test_connect_times_out_when_listener_never_signals_readiness` oben."""
+    """German counterpart to
+    `test_connect_times_out_when_listener_never_signals_readiness` above."""
     i18n.set_language("de")
     monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     bridge, _session = make_client([FakeNode(1, {})], signal_ready=False)
@@ -458,10 +460,9 @@ async def test_connect_times_out_when_listener_never_signals_readiness_in_german
 async def test_connect_timeout_closes_session_and_allows_a_later_successful_connect(
     monkeypatch,
 ):
-    """Nach einer Bereitschafts-Zeitüberschreitung muss die eigene Session
-    geschlossen sein, der Client als nicht verbunden gelten, und ein
-    späterer connect() mit einem funktionierenden Upstream muss trotzdem
-    gelingen."""
+    """After a readiness timeout, the own session must be closed, the client
+    must count as not connected, and a later connect() with a working
+    upstream must still succeed."""
     monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     sessions: list[FakeSession] = []
 
@@ -499,9 +500,9 @@ async def test_connect_timeout_closes_session_and_allows_a_later_successful_conn
 async def test_connect_timeout_closes_session_and_allows_a_later_successful_connect_in_german(
     monkeypatch,
 ):
-    """Deutsches Gegenstueck zu
+    """German counterpart to
     `test_connect_timeout_closes_session_and_allows_a_later_successful_connect`
-    oben."""
+    above."""
     i18n.set_language("de")
     monkeypatch.setattr(client_module, "LISTENER_READY_TIMEOUT_SECONDS", 0.05)
     sessions: list[FakeSession] = []
@@ -538,9 +539,9 @@ async def test_connect_timeout_closes_session_and_allows_a_later_successful_conn
 
 
 async def test_disconnect_cancels_the_listener_task():
-    """disconnect() muss den Listener-Task abbrechen, statt ihn einfach
-    herumlaufen zu lassen — sonst bleibt eine Coroutine aktiv, die auf eine
-    inzwischen geschlossene Verbindung wartet."""
+    """disconnect() must cancel the listener task instead of simply letting
+    it keep running — otherwise a coroutine stays active, waiting on a
+    connection that has meanwhile been closed."""
     session = FakeSession()
     upstream = FakeUpstream([FakeNode(1, {})])
     bridge = BridgeMatterClient(
@@ -557,13 +558,12 @@ async def test_disconnect_cancels_the_listener_task():
 
 
 async def test_snapshots_reflect_nodes_populated_by_the_listener():
-    """Regressionstest für den eigentlichen Defekt: Der alte connect() rief
-    upstream.start_listening() nie auf, wodurch der Node-Cache des Upstreams
-    für immer leer blieb — jedes reale Gerät erschien als unbekannt, egal wie
-    viele kommissioniert waren. get_nodes() liefert hier — wie beim echten
-    MatterClient — bewusst erst etwas zurück, nachdem start_listening()
-    gelaufen ist; gegen den alten Code (kein Aufruf von start_listening())
-    schlägt dieser Test fehl."""
+    """Regression test for the actual defect: the old connect() never called
+    upstream.start_listening(), leaving the upstream's node cache forever
+    empty — every real device appeared as unknown, no matter how many had
+    been commissioned. Here, get_nodes() — like the real MatterClient —
+    deliberately returns something only after start_listening() has run;
+    against the old code (no call to start_listening()) this test fails."""
     bridge, _session = make_client([FakeNode(3, {"0/40/1": "Aqara", "1/6/0": True})])
 
     await bridge.connect()
@@ -574,8 +574,8 @@ async def test_snapshots_reflect_nodes_populated_by_the_listener():
 
 
 class FakeHandler:
-    """Steht für Runtime (on_attribute/on_event/set_online) — Runtime erfüllt
-    dasselbe Protokoll unverändert, siehe RuntimeEventHandler."""
+    """Stands in for Runtime (on_attribute/on_event/set_online) — Runtime
+    fulfills the same protocol unchanged, see RuntimeEventHandler."""
 
     def __init__(self) -> None:
         self.attribute_calls: list[tuple[int, str, object]] = []
@@ -599,9 +599,9 @@ class FakeHandler:
 def make_connected_pair(
     nodes: list[FakeNode] | None = None,
 ) -> tuple[BridgeMatterClient, FakeUpstream]:
-    """Wie make_client(), gibt aber zusätzlich die Upstream-Attrappe zurück —
-    send_command()/subscribe() werten deren sent_commands/subscribe_events()
-    aus, was über den Rückgabewert von make_client() nicht erreichbar ist."""
+    """Like make_client(), but additionally returns the upstream stand-in —
+    send_command()/subscribe() evaluate its sent_commands/subscribe_events(),
+    which is not reachable through make_client()'s return value."""
     upstream = FakeUpstream(nodes or [])
     bridge = BridgeMatterClient(
         url="ws://test/ws",
@@ -612,24 +612,25 @@ def make_connected_pair(
 
 
 async def _settle() -> None:
-    """Lässt den Dispatch-Task von subscribe() der Queue hinterherlaufen —
-    put_nowait() aus einem synchronen Callback und dessen Verarbeitung im
-    Hintergrund-Task liegen sonst in verschiedenen Event-Loop-Durchläufen.
+    """Lets subscribe()'s dispatch task catch up with the queue —
+    put_nowait() from a synchronous callback and its processing in the
+    background task otherwise land in different event-loop iterations.
 
-    Sechs Durchläufe statt drei, seit ein NODE_ADDED/NODE_UPDATED zwei
-    Einträge erzeugt (Erreichbarkeit und Nachziehen) und das Nachziehen
-    selbst noch einmal auf den Handler wartet."""
+    Six iterations instead of three, since a NODE_ADDED/NODE_UPDATED
+    produces two entries (availability and catch-up) and the catch-up
+    itself waits on the handler once more."""
     for _ in range(6):
         await asyncio.sleep(0)
 
 
 def _attribute_subscriptions(upstream: FakeUpstream) -> list[str]:
-    """Die Schluessel der aktiven Attribut-Abonnements, je einer pro
-    (Node, Pfad), in der Form `attribute_updated/<node>/<pfad>`.
+    """The keys of the active attribute subscriptions, one per (node, path),
+    in the form `attribute_updated/<node>/<path>`.
 
-    Liest `_subscribers` der Attrappe absichtlich direkt: sie bildet damit
-    exakt das Schluessel-Matching von `MatterClient._signal_event()` nach,
-    und genau dieses Registrierungsschema soll hier geprueft werden."""
+    Deliberately reads the stand-in's `_subscribers` directly: it thereby
+    reproduces exactly the key matching of `MatterClient._signal_event()`,
+    and it is exactly this registration scheme that is meant to be checked
+    here."""
     prefix = f"{EventType.ATTRIBUTE_UPDATED.value}/"
     return sorted(
         key
@@ -649,7 +650,7 @@ async def test_send_command_requires_a_connection():
 
 
 async def test_send_command_requires_a_connection_in_german():
-    """Deutsches Gegenstueck zu `test_send_command_requires_a_connection` oben."""
+    """German counterpart to `test_send_command_requires_a_connection` above."""
     i18n.set_language("de")
     bridge, _upstream = make_connected_pair()
     call = MatterCall(node_id=12, endpoint=1, cluster_id=6, command_id=1, payload={})
@@ -667,7 +668,7 @@ async def test_send_command_builds_the_real_cluster_command_from_cluster_and_com
     assert len(upstream.sent_commands) == 1
     node_id, endpoint_id, command = upstream.sent_commands[0]
     assert (node_id, endpoint_id) == (12, 1)
-    # chip.clusters.Objects.OnOff.Commands.On — command_id 1 im OnOff-Cluster (6).
+    # chip.clusters.Objects.OnOff.Commands.On — command_id 1 in the OnOff cluster (6).
     assert command.__class__.__name__ == "On"
     assert command.cluster_id == 6
 
@@ -676,8 +677,8 @@ async def test_send_command_passes_the_payload_as_command_fields():
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
 
-    # LevelControl (8) MoveToLevelWithOnOff (4) — dieselben Feldnamen, die
-    # commands/translate.py._payload_level baut.
+    # LevelControl (8) MoveToLevelWithOnOff (4) — the same field names that
+    # commands/translate.py._payload_level builds.
     call = MatterCall(
         node_id=12,
         endpoint=1,
@@ -712,7 +713,7 @@ async def test_subscribe_requires_a_connection():
 
 
 async def test_subscribe_requires_a_connection_in_german():
-    """Deutsches Gegenstueck zu `test_subscribe_requires_a_connection` oben."""
+    """German counterpart to `test_subscribe_requires_a_connection` above."""
     i18n.set_language("de")
     bridge, _upstream = make_connected_pair()
     with pytest.raises(MatterUnavailableError, match="nicht verbunden"):
@@ -728,7 +729,7 @@ async def test_subscribe_twice_raises():
 
 
 async def test_subscribe_twice_raises_in_german():
-    """Deutsches Gegenstueck zu `test_subscribe_twice_raises` oben."""
+    """German counterpart to `test_subscribe_twice_raises` above."""
     i18n.set_language("de")
     bridge, _upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
@@ -750,8 +751,8 @@ async def test_subscribe_maps_an_attribute_update_to_the_resolved_device_id():
 
 
 async def test_subscribe_drops_an_update_for_a_node_the_resolver_does_not_know():
-    """Ein noch nicht exportiertes oder entferntes Gerät liefert `None` —
-    das Update wird verworfen, nicht mit einer falschen device_id zugestellt."""
+    """A device that is not yet exported or has been removed returns `None`
+    — the update is dropped, not delivered with a wrong device_id."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
@@ -764,9 +765,9 @@ async def test_subscribe_drops_an_update_for_a_node_the_resolver_does_not_know()
 
 
 async def test_subscribe_only_delivers_updates_for_the_exact_path_subscribed():
-    """Ein Attribut-Update auf einem anderen Pfad desselben Geräts darf nicht
-    zugestellt werden — subscribe() registriert je (Node, Pfad) eine eigene
-    Subscription, siehe Modul-Docstring von client.py."""
+    """An attribute update on a different path of the same device must not
+    be delivered — subscribe() registers its own subscription per (node,
+    path), see the module docstring of client.py."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
@@ -819,8 +820,8 @@ async def test_subscribe_treats_node_removed_as_offline():
     handler = FakeHandler()
 
     await bridge.subscribe(lambda node_id: {12: 5}.get(node_id), handler)
-    # MatterClient._handle_event_message liefert bei NODE_REMOVED die blanke
-    # Node-ID als data, kein Node-Objekt.
+    # MatterClient._handle_event_message delivers the bare node ID as data
+    # on NODE_REMOVED, not a node object.
     upstream.emit(EventType.NODE_REMOVED, 12)
     await _settle()
 
@@ -844,9 +845,9 @@ async def test_disconnect_stops_delivering_updates():
 
 
 async def test_follow_node_subscribes_a_node_that_did_not_exist_at_subscribe_time():
-    """Der gemeldete Fall: ein Geraet, das erst nach `subscribe()` eingelernt
-    wurde, hatte kein einziges Attribut-Abonnement - seine Signale standen
-    bis zum naechsten Neustart der Bruecke auf "-"."""
+    """The reported case: a device that was only commissioned after
+    `subscribe()` had not a single attribute subscription - its signals
+    stayed at "-" until the bridge's next restart."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
@@ -861,9 +862,9 @@ async def test_follow_node_subscribes_a_node_that_did_not_exist_at_subscribe_tim
 
 
 async def test_follow_node_does_not_subscribe_the_same_path_twice():
-    """Ein zweites Abonnement fuer denselben Pfad wuerde jeden Wert doppelt
-    zustellen - `on_attribute` liefe zweimal, und bei einem Ereignissignal
-    zaehlte der Zaehler doppelt hoch."""
+    """A second subscription for the same path would deliver every value
+    twice - `on_attribute` would run twice, and for an event signal the
+    counter would count up twice as fast."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
@@ -892,11 +893,11 @@ async def test_follow_node_only_subscribes_the_paths_that_are_new():
 
 
 async def test_follow_node_without_new_paths_leaves_the_handler_alone():
-    """Der Regelfall im Betrieb: `NODE_UPDATED` feuert auch bei einem Wechsel
-    der Erreichbarkeit und nach jeder Re-Subscription. Fuer ein Geraet ohne
-    neue Pfade ist der Diff leer, und der Vorgang endet vor dem Handler -
-    sonst schriebe jede dieser Meldungen ueber hundert UPDATE-Anweisungen in
-    die Datenbank."""
+    """The normal case in operation: `NODE_UPDATED` also fires on a change
+    of availability and after every re-subscription. For a device with no
+    new paths, the diff is empty, and the process ends before reaching the
+    handler - otherwise each of these messages would write over a hundred
+    UPDATE statements to the database."""
     bridge, _upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
     handler = FakeHandler()
@@ -921,14 +922,14 @@ async def test_follow_node_hands_the_snapshot_to_the_handler():
 
 
 async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node():
-    """Die Abonnements entstehen trotzdem - nur der Handler bleibt aussen
-    vor, weil es kein Geraet gibt, dem die Werte gehoerten.
+    """The subscriptions still come into being - only the handler stays out
+    of it, because there is no device that the values would belong to.
 
-    Dass das Saeen danach noch nachgeholt wird, belegt NICHT dieser Test,
-    sondern `test_the_commissioning_route_still_seeds_after_the_dispatch_
-    loop_was_first` weiter unten: ein blosses zweites `follow_node` faende
-    keinen einzigen neuen Pfad mehr und kaeme gar nicht bis zum Handler -
-    genau dafuer gibt es `seed_even_without_new_paths`."""
+    That the seeding is caught up on afterward is NOT what this test
+    proves, but `test_the_commissioning_route_still_seeds_after_the_dispatch_
+    loop_was_first` further below: a plain second `follow_node` would find
+    not a single new path anymore and would not even reach the handler -
+    that is exactly why `seed_even_without_new_paths` exists."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
@@ -942,29 +943,29 @@ async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node
 
 
 async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_first():
-    """Der Ablauf eines echten Einlernens, in seiner tatsaechlichen
-    Reihenfolge (belegt gegen die installierte python-matter-server):
+    """The sequence of a real commissioning, in its actual order (verified
+    against the installed python-matter-server):
 
-    1. Die Einlern-Route wartet noch auf `commission_with_code`.
-    2. matter-server schickt `NODE_ADDED` ueber denselben Websocket, bevor
-       das Kommando-Ergebnis kommt - der Node samt aller Attribute steht
-       damit bereits im Cache des Upstream.
-    3. Die Dispatch-Schleife zieht nach und abonniert JEDEN Pfad des Node.
-       Der Store kennt ihn noch nicht, `resolve_device_id` liefert `None`,
-       der Handler bleibt aussen vor.
-    4. Die Route kehrt zurueck, registriert das Geraet - und findet beim
-       Nachziehen einen leeren Diff vor.
+    1. The commissioning route is still waiting on `commission_with_code`.
+    2. matter-server sends `NODE_ADDED` over the same websocket before the
+       command result arrives - the node, with all its attributes, is
+       therefore already in the upstream's cache.
+    3. The dispatch loop catches up and subscribes EVERY path of the node.
+       The store does not know it yet, `resolve_device_id` returns `None`,
+       the handler stays out of it.
+    4. The route returns, registers the device - and finds an empty diff
+       when it catches up.
 
-    Ohne `seed_even_without_new_paths` endet Schritt 4 vor dem Handler, und
-    das Saeen findet nie statt: matter-server unterdrueckt unveraenderte
-    Werte, also bliebe jeder statische Pfad (Spannung ohne Last,
-    Batteriestand, der Aus-Zustand einer Steckdose) bis zu seiner ersten
-    Aenderung ein Strich - bei manchen fuer immer."""
+    Without `seed_even_without_new_paths`, step 4 ends before the handler,
+    and the seeding never happens: matter-server suppresses unchanged
+    values, so every static path (voltage with no load, battery level, the
+    off state of a plug) would stay a dash until its first change - for
+    some, forever."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
-    # Steht fuer `Store.device_id_for_node`: kennt den neuen Node erst,
-    # nachdem `register_device` gelaufen ist - also erst in Schritt 4.
+    # Stands in for `Store.device_id_for_node`: only knows the new node
+    # after `register_device` has run - so only from step 4 onward.
     known: dict[int, int] = {}
     await bridge.subscribe(known.get, handler)
 
@@ -984,10 +985,10 @@ async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_f
 
 
 async def test_forced_seeding_still_invents_no_device_id():
-    """Geforct wird das Saeen, nicht das Erfinden einer device_id: kennt der
-    Store den Node nicht, bleibt der Handler auch mit dem Schalter aussen
-    vor - eine Signalzeile unter einer ausgedachten device_id waere in
-    Loxone eine falsch verdrahtete Zeile, kein fehlender Wert."""
+    """What is forced is the seeding, not the invention of a device_id: if
+    the store does not know the node, the handler stays out of it even with
+    the switch set - a signal row under a made-up device_id would be a
+    wrongly wired row in Loxone, not a missing value."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
@@ -1000,12 +1001,12 @@ async def test_forced_seeding_still_invents_no_device_id():
 
 
 class FailingOnceHandler(FakeHandler):
-    """Steht für ein `Runtime.on_node_snapshot`, das beim ersten Mal scheitert.
+    """Stands in for a `Runtime.on_node_snapshot` that fails the first time.
 
-    In Wirklichkeit schreibt der Handler über den Store nach SQLite — unter
-    gleichzeitiger Schreiblast der Resend-Schleife kann das mit
-    `sqlite3.OperationalError` ("database is locked") auffliegen. Für den
-    Client ist nur wichtig, DASS es wirft.
+    In reality the handler writes through the store to SQLite — under
+    concurrent write load from the resend loop, that can blow up with
+    `sqlite3.OperationalError` ("database is locked"). For the client, only
+    THAT it raises matters.
     """
 
     def __init__(self) -> None:
@@ -1020,13 +1021,14 @@ class FailingOnceHandler(FakeHandler):
 
 
 async def test_a_snapshot_the_handler_refused_is_owed_and_caught_up_later():
-    """Der Ablauf, den die Einlern-Route für sich behauptet hatte: scheitert
-    das Säen NACH dem Abonnieren, half kein späteres `NODE_UPDATED` mehr - der
-    Diff war leer, `follow_node` kehrte vor dem Handler um, und das Gerät blieb
-    bis zum nächsten Neustart der Brücke ohne Startwerte.
+    """The sequence the commissioning route had claimed for itself: if the
+    seeding failed AFTER the subscribing, no later `NODE_UPDATED` helped
+    anymore - the diff was empty, `follow_node` returned before reaching the
+    handler, and the device stayed without initial values until the
+    bridge's next restart.
 
-    Der spätere Aufruf hier hat weder einen neuen Pfad noch den Schalter -
-    genau der Aufruf aus der Dispatch-Schleife."""
+    The later call here has neither a new path nor the switch - exactly the
+    call from the dispatch loop."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FailingOnceHandler()
@@ -1034,8 +1036,8 @@ async def test_a_snapshot_the_handler_refused_is_owed_and_caught_up_later():
 
     upstream.add_node(FakeNode(8, {"0/40/1": "IKEA of Sweden", "1/6/0": True}))
     with pytest.raises(RuntimeError):
-        # Die Ausnahme läuft unverändert weiter - der Aufrufer (die Route)
-        # entscheidet, was damit geschieht.
+        # The exception propagates unchanged - the caller (the route)
+        # decides what happens with it.
         await bridge.follow_node(8, seed_even_without_new_paths=True)
     assert handler.snapshot_calls == []
 
@@ -1045,9 +1047,9 @@ async def test_a_snapshot_the_handler_refused_is_owed_and_caught_up_later():
 
 
 async def test_a_node_the_store_did_not_know_yet_is_owed_its_snapshot():
-    """Der Node wurde abonniert, aber nicht gesät, weil der Store ihn noch
-    nicht kannte. Die Brücke schuldet ihm das Abbild, sobald er auflösbar ist -
-    auch ohne neuen Pfad und ohne Schalter."""
+    """The node was subscribed, but not seeded, because the store did not
+    know it yet. The bridge owes it the snapshot as soon as it is
+    resolvable - even without a new path and without the switch."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
@@ -1065,11 +1067,11 @@ async def test_a_node_the_store_did_not_know_yet_is_owed_its_snapshot():
 
 
 async def test_a_snapshot_that_arrived_is_not_owed_a_second_time():
-    """Die Kostenbremse bleibt: `NODE_UPDATED` feuert bei jedem Wechsel der
-    Erreichbarkeit und nach jeder Re-Subscription. Ist die Schuld einmal
-    beglichen, muss der leere Diff wieder vor dem Handler enden - sonst
-    schriebe jede dieser Meldungen über hundert UPDATE-Anweisungen in die
-    Datenbank."""
+    """The cost brake stays in place: `NODE_UPDATED` fires on every change
+    of availability and after every re-subscription. Once the debt is
+    settled, the empty diff must again end before reaching the handler -
+    otherwise each of these messages would write over a hundred UPDATE
+    statements to the database."""
     bridge, upstream = make_connected_pair([FakeNode(12, {})])
     await bridge.connect()
     handler = FakeHandler()
@@ -1085,8 +1087,9 @@ async def test_a_snapshot_that_arrived_is_not_owed_a_second_time():
 
 
 async def test_follow_node_before_subscribe_does_nothing():
-    """Kein Werfen: die Einlern-Route ruft `follow_node` bedingungslos auf,
-    und ein Aufbau ohne Subscription soll daran nicht scheitern."""
+    """No raising: the commissioning route calls `follow_node`
+    unconditionally, and a startup without a subscription must not fail
+    because of it."""
     bridge, upstream = make_connected_pair([FakeNode(12, {"1/6/0": True})])
     await bridge.connect()
 
@@ -1107,10 +1110,10 @@ async def test_follow_node_for_an_unknown_node_does_nothing():
 
 
 async def test_a_node_update_with_new_paths_is_followed_automatically():
-    """Der zweite Fall der bekannten Grenze: ein laengst eingelerntes Geraet
-    meldet nach einem Firmware-Update einen Pfad, den es beim Start noch
-    nicht gab. `NODE_UPDATED` feuert bei matter-server genau dann, wenn ein
-    Geraet neu interviewt wurde - der richtige Ausloeser."""
+    """The second case of the known boundary: a device commissioned long
+    ago reports a path after a firmware update that did not exist at
+    startup. `NODE_UPDATED` fires at matter-server exactly when a device
+    has been re-interviewed - the correct trigger."""
     node = FakeNode(12, {"1/6/0": True})
     bridge, upstream = make_connected_pair([node])
     await bridge.connect()
@@ -1126,9 +1129,8 @@ async def test_a_node_update_with_new_paths_is_followed_automatically():
 
 
 async def test_an_availability_update_without_new_paths_touches_no_handler():
-    """Die haeufigste Ursache fuer `NODE_UPDATED` ueberhaupt. Sie darf keinen
-    Store-Zugriff ausloesen - und muss die Erreichbarkeit trotzdem wie bisher
-    zustellen."""
+    """The single most common cause of `NODE_UPDATED`. It must not trigger
+    any store access - and must still deliver availability as before."""
     node = FakeNode(12, {"1/6/0": True})
     bridge, upstream = make_connected_pair([node])
     await bridge.connect()

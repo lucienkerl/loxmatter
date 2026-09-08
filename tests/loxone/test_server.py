@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -44,9 +44,9 @@ class FakeSender:
 
 
 class BrokenResendSender(FakeSender):
-    """Sendet normale Updates anstandslos, verweigert aber jeden Aufruf -
-    simuliert einen `UdpSender`, dessen Socket bereits geschlossen ist
-    (siehe `UdpSender.send`, das dann unbedingt `RuntimeError` wirft)."""
+    """Sends normal updates without complaint, but refuses every call -
+    simulates a `UdpSender` whose socket is already closed (see
+    `UdpSender.send`, which then unconditionally raises `RuntimeError`)."""
 
     async def send(self, key, value, *, force: bool = False) -> bool:
         raise RuntimeError("UdpSender ist geschlossen")
@@ -68,12 +68,12 @@ async def client(tmp_path):
 
     runtime = Runtime(store, FakeSender())
     app = build_app(store, invoke, runtime)
-    # httpx2.AsyncClient statt Starlettes TestClient: TestClient fuehrt die
-    # Anfrage in einem anyio-Portal-Thread aus, der nicht der Thread ist, in
-    # dem dieses Fixture die Store erzeugt hat - sqlite3-Verbindungen sind
-    # aber an ihren Erzeuger-Thread gebunden (siehe store.py). AsyncClient
-    # mit ASGITransport ruft die App direkt in der Event-Loop dieses Tests
-    # auf, ohne einen zweiten Thread zu eroeffnen.
+    # httpx2.AsyncClient instead of Starlette's TestClient: TestClient runs
+    # the request in an anyio portal thread that is not the thread in which
+    # this fixture created the store - but sqlite3 connections are bound to
+    # their creating thread (see store.py). AsyncClient with ASGITransport
+    # calls the app directly in this test's event loop, without opening a
+    # second thread.
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c, calls, device_id
@@ -106,8 +106,8 @@ async def test_resync_forces_a_full_resend(client):
     c, _, _ = client
     response = await c.get("/resync")
     assert response.status_code == 200
-    # Review-Fix M9, 2026-09-02: "gesendet" war ein deutscher Schluessel in
-    # einem Wire-Format - umbenannt zu "sent" (siehe server.py).
+    # Review fix M9, 2026-09-02: "gesendet" was a German key in a wire
+    # format - renamed to "sent" (see server.py).
     assert "sent" in response.text.lower() or response.json()["sent"] >= 0
 
 
@@ -118,7 +118,7 @@ async def test_health_answers_without_touching_matter(client):
 
 
 async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
-    """Ein Geraet, das gerade nicht antwortet, darf keinen Traceback erzeugen."""
+    """A device that currently does not answer must not produce a traceback."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -127,7 +127,7 @@ async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
     store.register_commands(device_id, extract_commands(snap), snap.node_id)
 
     async def invoke(call):
-        raise TimeoutError("Geraet antwortet nicht")
+        raise TimeoutError("device does not respond")
 
     app = build_app(store, invoke, Runtime(store, FakeSender()))
     transport = httpx2.ASGITransport(app=app)
@@ -135,18 +135,18 @@ async def test_a_failing_matter_call_yields_502_not_a_traceback(tmp_path):
         response = await c.get(f"/cmd/d{device_id}_1_on/1")
     assert response.status_code == 502
     assert "Traceback" not in response.text
-    # Task 6: teilt sich api.errors.device_unreachable mit control.py's
-    # execute_command (siehe test_control.py::
+    # Task 6: shares api.errors.device_unreachable with control.py's
+    # execute_command (see test_control.py::
     # test_a_device_that_does_not_answer_yields_502).
-    assert response.json()["detail"] == "device unreachable: Geraet antwortet nicht"
+    assert response.json()["detail"] == "device unreachable: device does not respond"
     store.close()
 
 
 async def test_a_failing_matter_call_yields_502_with_the_german_detail_text(tmp_path):
-    """Deutscher Begleittest zu
-    test_a_failing_matter_call_yields_502_not_a_traceback (Task 6) -
-    `store.locale.set_language`, nicht `i18n.set_language` direkt: die
-    sync_language-Middleware liest bei jeder Anfrage aus dem Store neu."""
+    """German companion test to
+    test_a_failing_matter_call_yields_502_not_a_traceback (task 6) -
+    `store.locale.set_language`, not `i18n.set_language` directly: the
+    sync_language middleware reads from the store anew on every request."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -156,21 +156,21 @@ async def test_a_failing_matter_call_yields_502_with_the_german_detail_text(tmp_
     store.locale.set_language("de")
 
     async def invoke(call):
-        raise TimeoutError("Geraet antwortet nicht")
+        raise TimeoutError("device does not respond")
 
     app = build_app(store, invoke, Runtime(store, FakeSender()))
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
         response = await c.get(f"/cmd/d{device_id}_1_on/1")
     assert response.status_code == 502
-    assert response.json()["detail"] == "Geraet nicht erreichbar: Geraet antwortet nicht"
+    assert response.json()["detail"] == "Geraet nicht erreichbar: device does not respond"
     store.close()
 
 
 async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
-    """Review-Fix Minor #3: /resync darf einen kaputten Sender (z. B. einen
-    schon geschlossenen UdpSender) nicht als nackten 500 durchreichen -
-    dieselbe Absicherung wie bei einem fehlschlagenden /cmd."""
+    """Review fix minor #3: /resync must not pass a broken sender (e.g. an
+    already-closed UdpSender) through as a bare 500 - the same safeguard
+    as for a failing /cmd."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -179,10 +179,10 @@ async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
     store.register_commands(device_id, extract_commands(snap), snap.node_id)
 
     runtime = Runtime(store, BrokenResendSender())
-    # `on_attribute` traegt den Wert in `_last_values` ein, BEVOR es den
-    # Sender aufruft (siehe runtime.py) - der erste Aufruf scheitert also
-    # am Senden, hinterlaesst `_last_values` aber wie gewuenscht befuellt,
-    # damit `resend_all` unten ueberhaupt etwas zu senden versucht.
+    # `on_attribute` enters the value into `_last_values` BEFORE it calls
+    # the sender (see runtime.py) - so the first call fails on the send,
+    # but leaves `_last_values` populated as desired, so that `resend_all`
+    # below has anything to try sending at all.
     with pytest.raises(RuntimeError):
         await runtime.on_attribute(device_id, "2/144/4", 230000)
 
@@ -200,8 +200,8 @@ async def test_a_failing_resend_yields_502_not_a_traceback(tmp_path):
 
 
 async def test_a_failing_resend_yields_502_with_the_german_detail_text(tmp_path):
-    """Deutscher Begleittest zu test_a_failing_resend_yields_502_not_a_traceback
-    (Task 6) - `store.locale.set_language`, nicht `i18n.set_language` direkt."""
+    """German companion test to test_a_failing_resend_yields_502_not_a_traceback
+    (task 6) - `store.locale.set_language`, not `i18n.set_language` directly."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -227,16 +227,16 @@ async def test_a_failing_resend_yields_502_with_the_german_detail_text(tmp_path)
 
 
 def test_sync_language_is_the_outermost_middleware(tmp_path):
-    """Review-Fix Important (Whole-Branch-Review, 2026-09-04): Starlette
-    fuegt jede per `@app.middleware("http")` registrierte Schicht VORNE in
-    `app.user_middleware` ein und baut den Stack aus `reversed(...)` auf -
-    die ZULETZT registrierte Funktion landet auf Index 0 und wird zur
-    AEUSSEREN Schicht (durch eine `TestClient`-Probe verifiziert, siehe
-    Docstring von `_sync_language` in server.py). `_sync_language` muss
-    deshalb ALS LETZTE registriert werden, damit sie vor `_record_command`
-    und vor jeder Route laeuft - dieser Test haelt das fest, damit eine
-    kuenftige Umsortierung der beiden `@app.middleware("http")`-Bloecke in
-    `build_app` sofort auffaellt."""
+    """Review fix important (whole-branch review, 2026-09-04): Starlette
+    inserts every layer registered via `@app.middleware("http")` at the
+    FRONT of `app.user_middleware` and builds the stack from
+    `reversed(...)` - the LAST-registered function lands at index 0 and
+    becomes the OUTERMOST layer (verified by a `TestClient` probe, see the
+    docstring of `_sync_language` in server.py). `_sync_language` must
+    therefore be registered LAST, so it runs before `_record_command` and
+    before every route - this test records that, so a future reordering of
+    the two `@app.middleware("http")` blocks in `build_app` is caught
+    immediately."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -251,31 +251,30 @@ def test_sync_language_is_the_outermost_middleware(tmp_path):
 
 
 async def test_loxmatter_lang_override_survives_multiple_requests(tmp_path, monkeypatch):
-    """Review-Fix Important (Whole-Branch-Review, 2026-09-04): `cli.py`
-    dokumentiert `LOXMATTER_LANG` als Override mit striktem Vorrang vor
-    `store.locale` - bislang ueberschrieb `_sync_language` die
-    Prozess-Sprache aber bei JEDER eingehenden Anfrage wieder aus dem Store,
-    sodass schon die allererste HTTP-Anfrage den vom CLI-Bootstrap
-    gesetzten Override verwarf. Dieser Test setzt `LOXMATTER_LANG=de` UND
-    laesst den Store auf Englisch (dem Default) stehen - simuliert damit
-    genau die widerspruechliche Situation aus dem Review-Befund - und
-    prueft, dass zwei aufeinanderfolgende Anfragen die per Bootstrap
-    gesetzte Sprache NICHT verwerfen."""
+    """Review fix important (whole-branch review, 2026-09-04): `cli.py`
+    documents `LOXMATTER_LANG` as an override with strict precedence over
+    `store.locale` - but until now `_sync_language` overwrote the process
+    language again from the store on EVERY incoming request, so even the
+    very first HTTP request discarded the override set by the CLI
+    bootstrap. This test sets `LOXMATTER_LANG=de` AND leaves the store at
+    English (the default) - thereby simulating exactly the contradictory
+    situation from the review finding - and checks that two consecutive
+    requests do NOT discard the language set via bootstrap."""
     monkeypatch.setenv("LOXMATTER_LANG", "de")
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
     store.register_device(snap)
-    # Store bleibt beim Default (Englisch) - genau das widerspruechliche
-    # Szenario, das den Bug ausloest: ohne den Fix flippt die erste Anfrage
-    # `i18n.current_language()` zurueck auf "en".
+    # Store stays at the default (English) - exactly the contradictory
+    # scenario that triggers the bug: without the fix, the first request
+    # flips `i18n.current_language()` back to "en".
     assert store.locale.get_language() == "en"
 
     async def invoke(call):
         return None
 
-    # Simuliert cli.py's Modul-Import-Bootstrap (`i18n.set_language(
-    # _resolve_cli_language(...))`), das VOR `build_app()` laeuft.
+    # Simulates cli.py's module-import bootstrap (`i18n.set_language(
+    # _resolve_cli_language(...))`), which runs BEFORE `build_app()`.
     i18n.set_language("de")
     app = build_app(store, invoke, Runtime(store, FakeSender()))
     transport = httpx2.ASGITransport(app=app)
@@ -288,16 +287,16 @@ async def test_loxmatter_lang_override_survives_multiple_requests(tmp_path, monk
 
 
 async def test_a_crashing_route_still_appears_in_the_command_log_and_still_raises(tmp_path):
-    """Review-Fix Important #2 (2026-09-02): `_record_command` rief
-    `call_next` bislang UNGESCHUETZT auf - eine unbehandelte Ausnahme aus
-    einer Route (kein `HTTPException`, ein echter Programmfehler) verliess
-    `call_next`, bevor das try/except um das Anhaengen an den Ringpuffer je
-    erreicht wurde. Der Aufruf, der den Dienst zu Fall bringt, fehlte
-    deshalb ausgerechnet dort, wo ein Diagnostiker ihn am dringendsten
-    braucht (`GET /api/diagnostics/commands`). Diese Route hier (`/__boom__`)
-    steht fuer genau so einen Programmfehler - keine der bestehenden Routen
-    wirft unbehandelt, `/cmd` und `/resync` fangen jede `Exception` bereits
-    zu einem sauberen 502 ab (siehe die beiden Tests oben)."""
+    """Review fix important #2 (2026-09-02): `_record_command` used to call
+    `call_next` UNGUARDED - an unhandled exception from a route (no
+    `HTTPException`, a genuine programming error) left `call_next` before
+    the try/except around appending to the ring buffer was ever reached.
+    The call that brings the service down was therefore missing exactly
+    where a diagnostician needs it most (`GET /api/diagnostics/commands`).
+    This route here (`/__boom__`) stands for exactly such a programming
+    error - none of the existing routes raise unhandled, `/cmd` and
+    `/resync` already catch every `Exception` down to a clean 502 (see the
+    two tests above)."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     snap = NodeSnapshot.from_raw(raw["node_id"], raw)
     store = Store(tmp_path / "t.sqlite")
@@ -312,24 +311,24 @@ async def test_a_crashing_route_still_appears_in_the_command_log_and_still_raise
 
     @app.get("/__boom__")
     async def boom() -> None:
-        raise RuntimeError("Simulierter Programmfehler in einer Route")
+        raise RuntimeError("simulated programming error in a route")
 
     transport = httpx2.ASGITransport(app=app)
     async with httpx2.AsyncClient(transport=transport, base_url="http://test") as c:
-        # Seit Task 8 verlangt auch `/api/diagnostics/commands` eine
-        # Anmeldung - ohne sie waere die folgende Antwort ein 401 statt der
-        # erwarteten Kommando-Liste, ganz unabhaengig vom hier eigentlich
-        # untersuchten Absturz-Pfad.
+        # Since task 8, `/api/diagnostics/commands` also requires a
+        # login - without it, the following response would be a 401
+        # instead of the expected command list, entirely independent of
+        # the crash path actually under investigation here.
         store.auth.set_password_hash(hash_password("test-passwort"))
         login = await c.post("/auth/login", json={"password": "test-passwort"})
         assert login.status_code == 200
-        with pytest.raises(RuntimeError, match="Simulierter Programmfehler"):
+        with pytest.raises(RuntimeError, match="simulated programming error"):
             await c.get("/__boom__")
         entries = (await c.get("/api/diagnostics/commands")).json()
     store.close()
 
     boom_entries = [e for e in entries if e["path"] == "/__boom__"]
     assert len(boom_entries) == 1
-    # Kein echter HTTP-Statuscode (siehe `_CRASHED_STATUS` in server.py) -
-    # unterscheidbar von jeder Antwort, die die Route tatsaechlich sendet.
+    # Not a real HTTP status code (see `_CRASHED_STATUS` in server.py) -
+    # distinguishable from any response the route actually sends.
     assert boom_entries[0]["status"] == 0

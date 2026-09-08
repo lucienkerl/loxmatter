@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -25,12 +25,12 @@ from loxmatter.matter.client import BridgeMatterClient, CommissioningError, Matt
 
 
 class FakeNodeData:
-    """Steht fuer matter_server.common.models.MatterNodeData.
+    """Stands in for matter_server.common.models.MatterNodeData.
 
-    commission_with_code() liefert dieses Dataclass direkt zurueck - anders
-    als get_nodes() (siehe FakeNode in test_client.py), das MatterNode-
-    Wrapper mit node_data.attributes liefert. node_id und attributes liegen
-    hier beide unmittelbar auf dem Objekt, keine Verschachtelung.
+    commission_with_code() returns this dataclass directly - unlike
+    get_nodes() (see FakeNode in test_client.py), which returns MatterNode
+    wrappers with node_data.attributes. node_id and attributes both sit
+    directly on the object here, with no nesting.
     """
 
     def __init__(self, node_id: int, attributes: dict[str, object]):
@@ -45,10 +45,10 @@ class FakeUpstream:
         self.removed: list[int] = []
         self.datasets: list[str] = []
         self.fail_with: Exception | None = None
-        # Steht fuer `MatterClient.server_info` - beim echten Client das
-        # Abbild der `ServerInfoMessage`, die matter-server beim
-        # Verbindungsaufbau schickt. `None`, solange kein Test etwas
-        # anderes sagt, genau wie vor dem ersten `connect()`.
+        # Stands in for `MatterClient.server_info` - in the real client the
+        # image of the `ServerInfoMessage` that matter-server sends when the
+        # connection is established. `None` as long as no test says
+        # otherwise, exactly as before the first `connect()`.
         self.server_info: object | None = None
 
     async def connect(self) -> None: ...
@@ -76,9 +76,9 @@ class FakeUpstream:
 
 
 class FakeSession:
-    """Steht fuer aiohttp.ClientSession — close() muss awaitbar sein, denn
-    BridgeMatterClient.disconnect() ruft `await http_session.close()`
-    (aiohttp.ClientSession.close() ist eine Coroutine)."""
+    """Stands in for aiohttp.ClientSession — close() must be awaitable, since
+    BridgeMatterClient.disconnect() calls `await http_session.close()`
+    (aiohttp.ClientSession.close() is a coroutine)."""
 
     async def close(self) -> None: ...
 
@@ -112,8 +112,8 @@ async def test_commissioning_without_connection_raises(client):
 
 
 async def test_commissioning_without_connection_raises_in_german(client):
-    """Deutsches Gegenstueck zu `test_commissioning_without_connection_raises`
-    oben."""
+    """German counterpart to `test_commissioning_without_connection_raises`
+    above."""
     i18n.set_language("de")
     bridge, _ = client
     with pytest.raises(Exception, match="nicht verbunden"):
@@ -130,8 +130,8 @@ async def test_a_failed_commissioning_says_so_clearly(client):
 
 
 async def test_a_failed_commissioning_says_so_in_german(client):
-    """Deutsches Gegenstueck zu `test_a_failed_commissioning_says_so_clearly`
-    oben."""
+    """German counterpart to `test_a_failed_commissioning_says_so_clearly`
+    above."""
     i18n.set_language("de")
     bridge, upstream = client
     upstream.fail_with = RuntimeError("device not found")
@@ -142,10 +142,10 @@ async def test_a_failed_commissioning_says_so_in_german(client):
 
 
 async def test_a_connection_loss_during_commissioning_says_so_in_german(client):
-    """NotConnected & Co. betreffen die Verbindung zu matter-server, nicht das
-    Geraet - sie muessen als MatterUnavailableError ankommen, nicht als
-    CommissioningError, sonst sucht der Bedienende den Fehler faelschlich am
-    Geraet statt an matter-server (siehe Spec 8.1/9)."""
+    """NotConnected & co. concern the connection to matter-server, not the
+    device - they must arrive as MatterUnavailableError, not as
+    CommissioningError, or the operator would mistakenly look for the fault
+    on the device instead of at matter-server (see spec 8.1/9)."""
     bridge, upstream = client
     upstream.fail_with = NotConnected("nicht mehr verbunden")
     await bridge.connect()
@@ -155,9 +155,9 @@ async def test_a_connection_loss_during_commissioning_says_so_in_german(client):
 
 
 async def test_a_device_side_commissioning_failure_stays_a_commissioning_error(client):
-    """Eine Ablehnung durch das Geraet selbst (z. B. falscher Code) bleibt
-    ein CommissioningError - nur der Verbindungsverlust zu matter-server
-    wird umgeleitet."""
+    """A rejection by the device itself (e.g. a wrong code) stays a
+    CommissioningError - only the connection loss to matter-server gets
+    redirected."""
     bridge, upstream = client
     upstream.fail_with = NodeCommissionFailed("Timeout during commissioning")
     await bridge.connect()
@@ -167,8 +167,8 @@ async def test_a_device_side_commissioning_failure_stays_a_commissioning_error(c
 
 
 async def test_a_device_side_commissioning_failure_stays_a_commissioning_error_in_german(client):
-    """Deutsches Gegenstueck zu
-    `test_a_device_side_commissioning_failure_stays_a_commissioning_error` oben."""
+    """German counterpart to
+    `test_a_device_side_commissioning_failure_stays_a_commissioning_error` above."""
     i18n.set_language("de")
     bridge, upstream = client
     upstream.fail_with = NodeCommissionFailed("Timeout during commissioning")
@@ -179,8 +179,8 @@ async def test_a_device_side_commissioning_failure_stays_a_commissioning_error_i
 
 
 async def test_cancellation_during_commissioning_propagates_unwrapped(client):
-    """asyncio.CancelledError ist eine BaseException, keine Exception - weder
-    der Geraete- noch der Verbindungsverlust-Zweig duerfen sie abfangen."""
+    """asyncio.CancelledError is a BaseException, not an Exception - neither
+    the device branch nor the connection-loss branch may catch it."""
     bridge, upstream = client
     upstream.fail_with = asyncio.CancelledError()
     await bridge.connect()
@@ -198,7 +198,7 @@ async def test_remove_node_reaches_upstream(client):
 
 
 async def test_thread_dataset_reaches_upstream(client):
-    """Ohne Datensatz kann matter-server einem Thread-Geraet kein Netz nennen."""
+    """Without a dataset, matter-server cannot tell a Thread device about any network."""
     bridge, upstream = client
     await bridge.connect()
     await bridge.set_thread_dataset("0e08...")
@@ -207,24 +207,24 @@ async def test_thread_dataset_reaches_upstream(client):
 
 
 # ---------------------------------------------------------------------------
-# Ob matter-server die Thread-Zugangsdaten ueberhaupt hat
+# Whether matter-server has the Thread credentials at all
 #
-# Der Dienst haelt sie NUR im Arbeitsspeicher (`_thread_credentials_set: bool
-# = False` im Konstruktor von `matter_server/server/device_controller.py`) und
-# nennt ihren Zustand beim Verbindungsaufbau in
-# `ServerInfoMessage.thread_credentials_set`. Sein Client aktualisiert dieses
-# Abbild NIE wieder: der Server sendet zwar `SERVER_INFO_UPDATED`, aber
-# `MatterClient._handle_event_message` kennt dafuer keinen Zweig (geprueft
-# gegen die installierte Fassung, nicht vermutet). Das Abbild allein bliebe
-# deshalb bis zum Verbindungsende `False` - auch unmittelbar nachdem diese
-# Bruecke den Datensatz selbst gesetzt hat. `thread_dataset_set` fuehrt darum
-# zusaetzlich Buch ueber die eigenen Aufrufe.
+# The service keeps them ONLY in memory (`_thread_credentials_set: bool =
+# False` in the constructor of `matter_server/server/device_controller.py`)
+# and states their status when the connection is established, in
+# `ServerInfoMessage.thread_credentials_set`. Its client NEVER updates this
+# image again: the server does send `SERVER_INFO_UPDATED`, but
+# `MatterClient._handle_event_message` has no branch for it (checked against
+# the installed version, not assumed). The image alone would therefore stay
+# `False` until the connection ends - even right after this bridge has set
+# the dataset itself. `thread_dataset_set` therefore additionally keeps its
+# own record of the calls it made.
 # ---------------------------------------------------------------------------
 
 
 class FakeServerInfo:
-    """Steht fuer `matter_server.common.models.ServerInfoMessage` - nur das
-    eine Feld, das hier zaehlt."""
+    """Stands in for `matter_server.common.models.ServerInfoMessage` - only
+    the one field that matters here."""
 
     def __init__(self, thread_credentials_set: bool) -> None:
         self.thread_credentials_set = thread_credentials_set
@@ -251,9 +251,9 @@ async def test_a_server_without_thread_credentials_is_reported_as_such(client):
 
 
 async def test_setting_the_thread_dataset_is_remembered_for_this_connection(client):
-    """Ohne eigenes Buchfuehren wuerde die Bruecke den Datensatz vor JEDEM
-    Einlernen erneut holen und setzen, obwohl sie ihn selbst gerade gesetzt
-    hat - `server_info` bleibt `False` (siehe oben)."""
+    """Without its own record-keeping, the bridge would fetch and set the
+    dataset again before EVERY commissioning, even though it just set it
+    itself - `server_info` stays `False` (see above)."""
     bridge, upstream = client
     upstream.server_info = FakeServerInfo(thread_credentials_set=False)
     await bridge.connect()
@@ -267,11 +267,11 @@ async def test_setting_the_thread_dataset_is_remembered_for_this_connection(clie
 
 
 async def test_a_new_connection_forgets_what_the_previous_one_had_set(client):
-    """Der entscheidende Fall: genau das Vergessen, das matter-server bei
-    einem Neustart selbst vollzieht. Bliebe die Merkung ueber die Verbindung
-    hinaus bestehen, hielte die Bruecke einen Datensatz fuer gesetzt, den es
-    auf der anderen Seite nicht mehr gibt - und das Einlernen scheiterte
-    wieder mit "Required network information not provided"."""
+    """The decisive case: exactly the forgetting that matter-server itself
+    performs on a restart. If the memory persisted beyond the connection,
+    the bridge would consider a dataset set that no longer exists on the
+    other side - and commissioning would fail again with "Required network
+    information not provided"."""
     bridge, upstream = client
     upstream.server_info = FakeServerInfo(thread_credentials_set=False)
     await bridge.connect()
@@ -286,8 +286,8 @@ async def test_a_new_connection_forgets_what_the_previous_one_had_set(client):
 
 
 async def test_a_client_without_a_connection_reports_no_thread_credentials(client):
-    """Ohne Verbindung gibt es keine Zusicherung - und die Diagnose soll das
-    sagen duerfen, ohne eine Ausnahme fangen zu muessen."""
+    """Without a connection there is no guarantee - and the diagnostic
+    should be able to say so without having to catch an exception."""
     bridge, _ = client
 
     assert bridge.thread_dataset_set is False

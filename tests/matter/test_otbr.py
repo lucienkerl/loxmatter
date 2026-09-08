@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,18 +14,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Der Thread-Datensatz aus dem Border Router (`matter/otbr.py`).
+"""The Thread dataset from the border router (`matter/otbr.py`).
 
-Der aufgezeichnete Ernstfall: matter-server haelt die Thread-Zugangsdaten
-NUR im Arbeitsspeicher (`_thread_credentials_set: bool = False` in
-`matter_server/server/device_controller.py`, gesetzt allein durch
-`set_thread_operational_dataset`). Nach jedem Neustart des Dienstes sind sie
-weg, und jedes Thread-Geraet scheitert beim Einlernen mit "Required network
-information not provided in commissioning parameters" - sichtbar in der
-Oberflaeche nur als "Commission with code failed for node N".
+The recorded real-world case: matter-server keeps the Thread credentials
+ONLY in memory (`_thread_credentials_set: bool = False` in
+`matter_server/server/device_controller.py`, set solely by
+`set_thread_operational_dataset`). After every restart of the service they
+are gone, and every Thread device fails commissioning with "Required network
+information not provided in commissioning parameters" - visible in the UI
+only as "Commission with code failed for node N".
 
-Dieser Test deckt die Quelle ab, aus der die Bruecke sich den Datensatz
-seither selbst holt, statt auf ein Einfuegen von Hand zu warten.
+This test covers the source from which the bridge has since fetched the
+dataset itself, instead of waiting for it to be entered by hand.
 """
 
 from __future__ import annotations
@@ -41,10 +41,10 @@ from loxmatter.matter.otbr import (
     fetch_active_dataset,
 )
 
-# Ein aufgezeichneter, aber unbrauchbarer Datensatz: dieselbe Gestalt wie ein
-# echter (Hex-TLV), aber kein Netzwerkschluessel, der irgendwo existiert. Ein
-# echter Datensatz ist ein Credential und gehoert weder ins Repository noch in
-# ein Log (siehe deploy/testhost/README.md).
+# A recorded but unusable dataset: the same shape as a real one (hex TLV),
+# but no network key that exists anywhere. A real dataset is a credential
+# and belongs neither in the repository nor in a log (see
+# deploy/testhost/README.md).
 FAKE_DATASET = "0e080000000000010000" + "00" * 30
 
 
@@ -64,8 +64,8 @@ class FakeResponse:
 
 
 class FakeSession:
-    """Steht fuer `aiohttp.ClientSession` - nur `get()` und `close()`, mehr
-    braucht `fetch_active_dataset` nicht (dasselbe Muster wie `FakeSession`
+    """Stands in for `aiohttp.ClientSession` - only `get()` and `close()`,
+    which is all `fetch_active_dataset` needs (same pattern as `FakeSession`
     in `test_client_commissioning.py`)."""
 
     def __init__(self, status: int = 200, body: str = FAKE_DATASET) -> None:
@@ -95,9 +95,9 @@ async def test_reads_the_active_dataset_from_the_border_router() -> None:
     assert dataset == FAKE_DATASET
     url, headers = session.requests[0]
     assert url == "http://otbr.example:8081/node/dataset/active"
-    # Ohne diesen Header liefert OTBRs REST-Schnittstelle den Datensatz als
-    # JSON-Struktur statt als Hex-TLV - und nur Letzteres nimmt
-    # `set_thread_operational_dataset` entgegen.
+    # Without this header, OTBR's REST interface returns the dataset as a
+    # JSON structure instead of hex TLV - and only the latter is accepted by
+    # `set_thread_operational_dataset`.
     assert headers["Accept"] == "text/plain"
 
 
@@ -112,8 +112,8 @@ async def test_closes_the_session_even_when_the_request_fails() -> None:
 
 
 async def test_a_border_router_without_a_thread_network_is_reported_as_such() -> None:
-    """OTBR antwortet mit 409, solange kein aktiver Datensatz existiert -
-    der Border Router laeuft dann zwar, hat aber kein Netz gebildet."""
+    """OTBR responds with 409 as long as no active dataset exists - the
+    border router is running, but has not formed a network."""
     session = FakeSession(status=409, body="")
 
     with pytest.raises(ThreadDatasetUnavailableError) as excinfo:
@@ -123,9 +123,9 @@ async def test_a_border_router_without_a_thread_network_is_reported_as_such() ->
 
 
 async def test_a_response_that_is_not_hex_is_refused() -> None:
-    """Sonst landete eine HTML-Fehlerseite als "Datensatz" bei
-    matter-server, das sie mangels `bytes.fromhex` erst viel spaeter und
-    ohne Bezug zur Ursache abweist."""
+    """Otherwise an HTML error page would land at matter-server as the
+    "dataset", which it rejects only much later, via `bytes.fromhex`, with
+    no relation to the actual cause."""
     session = FakeSession(body="<html>Not Found</html>")
 
     with pytest.raises(ThreadDatasetUnavailableError):
@@ -133,30 +133,29 @@ async def test_a_response_that_is_not_hex_is_refused() -> None:
 
 
 async def test_an_odd_number_of_hex_characters_is_refused() -> None:
-    """Ein Hex-TLV besteht aus Bytes - eine ungerade Zahl von Hex-Zeichen kann
-    keines sein. Jedes Zeichen fuer sich ist Hex, die Zeichenklassen-Pruefung
-    liess das also durch; bei matter-server scheiterte dann `bytes.fromhex`
-    mit "odd-length string", und das kommt als `UnknownError` zurueck - kein
-    `MatterUnavailableError`, also 500 statt einer brauchbaren Meldung."""
+    """A hex TLV consists of bytes - an odd number of hex characters cannot
+    be one. Each character on its own is hex, so the character-class check
+    let it through; at matter-server, `bytes.fromhex` then failed with
+    "odd-length string", which comes back as an `UnknownError` - not a
+    `MatterUnavailableError`, so 500 instead of a usable message."""
     session = FakeSession(body=FAKE_DATASET[:-1])
 
     with pytest.raises(ThreadDatasetUnavailableError) as excinfo:
         await fetch_active_dataset(session_factory=lambda: session)
 
     message = str(excinfo.value)
-    # Die Laenge nennt die Meldung, den Datensatz nie: er enthaelt den
-    # Netzwerkschluessel des Thread-Netzes, und auch ein Teil davon ist zu viel.
+    # The message names the length, never the dataset: it contains the
+    # network key of the Thread network, and even part of it would be too much.
     assert str(len(FAKE_DATASET) - 1) in message
     assert FAKE_DATASET[:12] not in message
 
 
 async def test_the_dataset_stays_out_of_the_message_in_german_too() -> None:
-    """Die Meldungen dieses Moduls laufen seit der i18n-Phase durch
-    `i18n.t()`. Der Grund, aus dem sie nur Laenge, Adresse und Status
-    nennen, gilt sprachunabhaengig: der Datensatz traegt den
-    Netzwerkschluessel des Thread-Netzes. Eine Uebersetzung, die ihn
-    einsetzte, waere ein Leck - deshalb prueft das die zweite Sprache
-    ausdruecklich mit."""
+    """This module's messages have run through `i18n.t()` since the i18n
+    phase. The reason they name only length, address and status holds
+    regardless of language: the dataset carries the network key of the
+    Thread network. A translation that inserted it would be a leak - so
+    this explicitly checks the second language too."""
     i18n.set_language("de")
     session = FakeSession(body=FAKE_DATASET[:-1])
 
@@ -176,9 +175,9 @@ async def test_an_empty_response_is_refused() -> None:
 
 
 async def test_falls_back_to_the_border_router_on_this_host() -> None:
-    """Der Regelfall des Stacks aus `deploy/testhost/docker-compose.yml`:
-    OTBR und diese Bruecke teilen sich mit `network_mode: host` denselben
-    Netzwerk-Namensraum, OTBRs REST-Schnittstelle lauscht dort auf
+    """The normal case for the stack from `deploy/testhost/docker-compose.yml`:
+    OTBR and this bridge share the same network namespace via
+    `network_mode: host`, where OTBR's REST interface listens on
     127.0.0.1:8081."""
     session = FakeSession()
 
@@ -188,7 +187,7 @@ async def test_falls_back_to_the_border_router_on_this_host() -> None:
 
 
 async def test_an_explicit_address_overrides_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fuer Aufbauten mit einem Border Router auf einem anderen Host."""
+    """For setups with a border router on a different host."""
     monkeypatch.setenv("LOXMATTER_OTBR_URL", "http://10.0.1.99:8081")
     session = FakeSession()
 

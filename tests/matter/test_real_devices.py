@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -14,10 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Prüft Spec 3.5 gegen Abbilder echter Geräte.
+"""Checks spec 3.5 against snapshots of real devices.
 
-Schlägt einer dieser Tests fehl, ist nicht der Test falsch — dann trägt die
-generische Zerlegung nicht, und die Spec muss geändert werden.
+If one of these tests fails, the test is not wrong — the generic
+decomposition does not hold, and the spec must change.
 """
 
 import json
@@ -42,7 +42,7 @@ def load(path: Path) -> NodeSnapshot:
 
 
 def test_real_device_fixtures_exist():
-    assert REAL_DEVICES, "Task 7 Schritt 2 wurde nicht ausgeführt — keine echten Abbilder da"
+    assert REAL_DEVICES, "task 7 step 2 was not run — no real snapshots present"
 
 
 @pytest.mark.parametrize("path", REAL_DEVICES, ids=lambda p: p.stem)
@@ -61,20 +61,20 @@ def test_device_yields_at_least_one_signal(path):
 
 
 def test_at_least_one_fixture_carries_events():
-    """Taster sind der Sonderfall aus Spec 6.3 — ohne sie ist die Annahme halb geprüft.
+    """Switches are the special case from spec 6.3 — without one the assumption is half-checked.
 
-    Der IKEA BILRESA-Taster (node 4) führt keine EventList; die Events kommen
-    ausschließlich über die FeatureMap-Ableitung in discovery.py.
+    The IKEA BILRESA switch (node 4) reports no EventList; its events come
+    exclusively from the FeatureMap derivation in discovery.py.
     """
     with_events = [
         p for p in REAL_DEVICES if any(s.kind is SignalKind.EVENT for s in extract_signals(load(p)))
     ]
-    assert with_events, "kein aufgenommenes Gerät liefert Events — Taster fehlt"
+    assert with_events, "no captured device delivers events — switch missing"
 
 
 def test_at_least_one_fixture_carries_energy_measurement():
-    """Spec 7.3: messende Steckdose, Cluster 144 ElectricalPowerMeasurement."""
+    """Spec 7.3: metering plug, cluster 144 ElectricalPowerMeasurement."""
     with_energy = [
         p for p in REAL_DEVICES if any(s.cluster_id == 144 for s in extract_signals(load(p)))
     ]
-    assert with_energy, "kein aufgenommenes Gerät misst Leistung"
+    assert with_energy, "no captured device measures power"

@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -31,7 +31,7 @@ FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
 
 class FakeSender:
-    """Merkt sich, was gesendet wurde, statt es zu verschicken."""
+    """Remembers what was sent, instead of actually sending it."""
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, object, bool]] = []
@@ -47,10 +47,10 @@ class FakeSender:
         return [k for k, _, _ in self.sent]
 
     def __iter__(self) -> Iterator[str]:
-        # Ruffs SIM118 ("key in dict statt key in dict.keys()") setzt
-        # __contains__/__iter__ voraus, sonst wirft `key in sender` einen
-        # TypeError statt der gewuenschten Kuerzung - beide hier ergaenzt,
-        # damit `in`/`for` auf `FakeSender` genau wie auf `.keys()` wirken.
+        # Ruff's SIM118 ("key in dict instead of key in dict.keys()")
+        # assumes __contains__/__iter__ exist, otherwise `key in sender`
+        # raises a TypeError instead of the desired shortcut - both added
+        # here, so `in`/`for` behave on `FakeSender` exactly as on `.keys()`.
         return iter(self.keys())
 
     def __contains__(self, key: str) -> bool:
@@ -58,13 +58,13 @@ class FakeSender:
 
 
 class MutatingSender(FakeSender):
-    """Wie FakeSender, ruft aber beim ersten Aufruf MIT `force=True` einmalig
-    `mutate` auf - steht fuer eine gleichzeitige Aktualisierung, die waehrend
-    eines laufenden `resend_all()` eintrifft (Review-Fix I4). Reagiert
-    bewusst nur auf `force=True`: nur `resend_all()` setzt das, ein
-    regulaerer `on_attribute()`-Aufruf beim Testaufbau (der ebenfalls
-    `send()` ruft) soll die Mutation nicht vorzeitig - und damit an der
-    falschen Stelle - ausloesen."""
+    """Like FakeSender, but calls `mutate` once on the first call WITH
+    `force=True` - stands in for a concurrent update that arrives while a
+    `resend_all()` is running (review fix I4). Deliberately reacts only to
+    `force=True`: only `resend_all()` sets that, and a regular
+    `on_attribute()` call during test setup (which also calls `send()`)
+    should not trigger the mutation prematurely - and thus at the wrong
+    point."""
 
     def __init__(self, mutate: Callable[[], None]) -> None:
         super().__init__()
@@ -79,8 +79,8 @@ class MutatingSender(FakeSender):
 
 
 class FlakySender(FakeSender):
-    """Wie FakeSender, wirft aber beim n-ten Aufruf einen RuntimeError - fuer
-    Tests, die einen fehlgeschlagenen Sendeversuch nachstellen wollen."""
+    """Like FakeSender, but raises a RuntimeError on the nth call - for
+    tests that want to reproduce a failed send attempt."""
 
     def __init__(self, fail_on_call: int) -> None:
         super().__init__()
@@ -96,10 +96,10 @@ class FlakySender(FakeSender):
 
 @pytest.fixture
 def environment(tmp_path):
-    """Zwei Geraete in einem Store: die Steckdose liefert das Attribut fuer
-    die Skalierungs-Tests (2/144/4), der Taster liefert das Event fuer die
-    Impuls-Tests (1/59/1) — die Steckdose hat keinen Switch-Cluster und kann
-    kein Event liefern."""
+    """Two devices in a store: the plug delivers the attribute for the
+    scaling tests (2/144/4), the switch delivers the event for the pulse
+    tests (1/59/1) — the plug has no switch cluster and cannot deliver an
+    event."""
     store = Store(tmp_path / "t.sqlite")
 
     plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
@@ -126,21 +126,21 @@ async def test_attribute_change_becomes_a_scaled_datagram(environment):
 
 
 async def test_unmappable_attribute_is_not_sent(environment):
-    """Spec 6.6: Listen werden nie zu einem Datagramm."""
+    """Spec 6.6: lists never become a datagram."""
     runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "0/29/1", [29, 31, 40])
     assert sender.sent == []
 
 
 async def test_unknown_path_is_ignored_not_raised(environment):
-    """Ein Gerät kann Attribute melden, die beim Export nicht dabei waren."""
+    """A device can report attributes that were not included at export time."""
     runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "9/9999/9", 1)
     assert sender.sent == []
 
 
 async def test_event_sends_a_pulse_and_a_counter(environment):
-    """Spec 6.3: der Impuls erzeugt die Flanke, der Zaehler ueberlebt ein verlorenes Paket."""
+    """Spec 6.3: the pulse produces the edge, the counter survives a lost packet."""
     runtime, sender, _, _, button_device_id = environment
     await runtime.on_event(button_device_id, "1/59/1")
     keys = sender.keys()
@@ -174,7 +174,7 @@ async def test_online_signal_is_sent(environment):
 
 
 async def test_resend_forces_every_known_value(environment):
-    """Spec 6.4: nach einem Miniserver-Neustart muss die Entprellung umgangen werden."""
+    """Spec 6.4: debouncing must be bypassed after a Miniserver restart."""
     runtime, sender, _, device_id, _ = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
     sender.sent.clear()
@@ -184,15 +184,14 @@ async def test_resend_forces_every_known_value(environment):
 
 
 async def test_resend_sends_the_freshest_value_not_a_stale_snapshot(environment):
-    """Review-Fix I4, 2026-09-02: `resend_all()` erfasste Schluessel UND Wert
-    gemeinsam als Momentaufnahme und wartete danach - durch die Entprellung
-    im echten `UdpSender` ausgebremst - je Schluessel. Eine Aktualisierung,
-    die waehrend dieser Wartezeit fuer einen ANDEREN, noch nicht abgearbeiteten
-    Schluessel eintraf, wurde vom verspaeteten Resend anschliessend mit ihrem
-    laengst veralteten Wert wieder ueberschrieben. Dieser Test simuliert das:
-    `MutatingSender` schreibt beim ersten `send()` (fuer `voltage_key`) einen
-    neuen Wert fuer `current_key` - einen Schluessel, den `resend_all()` noch
-    vor sich hat."""
+    """Review fix I4, 2026-09-02: `resend_all()` captured key AND value
+    together as a snapshot and then waited - slowed down by debouncing in
+    the real `UdpSender` - per key. An update that arrived for an OTHER,
+    not-yet-processed key during that wait was then overwritten by the
+    delayed resend with its long-stale value. This test simulates that:
+    `MutatingSender` writes a new value for `current_key` on the first
+    `send()` (for `voltage_key`) - a key that `resend_all()` still has
+    ahead of it."""
     _, _, store, device_id, _ = environment
     current_key = f"d{device_id}_2_current"
 
@@ -201,8 +200,8 @@ async def test_resend_sends_the_freshest_value_not_a_stale_snapshot(environment)
 
     sender = MutatingSender(mutate)
     runtime = Runtime(store, sender)
-    await runtime.on_attribute(device_id, "2/144/4", 230000)  # fuellt voltage_key
-    await runtime.on_attribute(device_id, "2/144/5", 100)  # fuellt current_key, danach im Dict
+    await runtime.on_attribute(device_id, "2/144/4", 230000)  # fills voltage_key
+    await runtime.on_attribute(device_id, "2/144/5", 100)  # fills current_key, in the dict after
     sender.sent.clear()
 
     await runtime.resend_all()
@@ -243,15 +242,14 @@ async def test_resend_marked_of_no_flagged_signals_sends_nothing(environment):
 
 
 async def test_resend_all_ignores_the_resend_flag_and_sends_everything(environment):
-    """/resync und der Bruecken-Start verlassen sich auf `resend_all()` als
-    vollstaendige Zustands-Wiederherstellung (Spec 6.4) - das `resend`-Flag
-    (Entwurf periodischer Resend, Abschnitt 6) darf das NICHT einschraenken,
-    sonst blieben nach einem Miniserver-Neustart die meisten virtuellen
-    Eingaenge auf ihrem Defaultwert stehen."""
+    """/resync and bridge startup rely on `resend_all()` as complete state
+    restoration (spec 6.4) - the `resend` flag (periodic resend design,
+    section 6) must NOT restrict that, or most virtual inputs would stay
+    at their default value after a Miniserver restart."""
     runtime, sender, store, device_id, _ = environment
     voltage_key = f"d{device_id}_2_voltage"
     await runtime.on_attribute(device_id, "2/144/4", 230000)
-    assert store.signal_by_key(voltage_key).resend is False  # Vorgabewert
+    assert store.signal_by_key(voltage_key).resend is False  # default value
     sender.sent.clear()
 
     count = await runtime.resend_all()
@@ -282,11 +280,11 @@ async def test_resend_loop_never_sends_an_unmarked_signal(environment, monkeypat
 
 
 async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(environment, monkeypatch):
-    """Eine Aenderung ueber die WebUI (`PATCH /api/settings/resend-interval`)
-    wirkt innerhalb weniger Sekunden, ohne Prozess-Neustart (Entwurf,
-    Abschnitt 6). `interval` ist ein veraenderliches Dict statt einer freien
-    Variable, weil die monkeypatch-Lambda unten es per Closure lesen muss,
-    nachdem der Test seinen Wert schon geaendert hat."""
+    """A change via the WebUI (`PATCH /api/settings/resend-interval`) takes
+    effect within a few seconds, without a process restart (design, section
+    6). `interval` is a mutable dict instead of a plain variable, because
+    the monkeypatch lambda below must read it via closure after the test
+    has already changed its value."""
     _, sender, store, device_id, _ = environment
     key = f"d{device_id}_2_voltage"
     store.set_resend(key, True)
@@ -300,16 +298,16 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
     await runtime.start()
     try:
         await asyncio.sleep(0.09)
-        # `runtime.start()` startet nebenbei auch die Heartbeat-Schleife
-        # (hier mit dem Default `heartbeat_seconds=30.0`), die schon vor
-        # ihrem eigenen ersten Schlaf einmal sendet (siehe `_heartbeat_loop`)
-        # - unabhaengig vom hier getesteten Resend-Intervall. Ohne den Filter
-        # wuerde "bridge_alive" diese Pruefung faelschlich zum Scheitern
-        # bringen, obwohl der Resend selbst (worum es hier geht) noch gar
-        # nicht gelaufen ist.
+        # `runtime.start()` also starts the heartbeat loop on the side
+        # (here with the default `heartbeat_seconds=30.0`), which sends
+        # once even before its own first sleep (see `_heartbeat_loop`) -
+        # independent of the resend interval tested here. Without the
+        # filter, "bridge_alive" would incorrectly make this check fail,
+        # even though the resend itself (what this test is about) has not
+        # run at all yet.
         assert [
             k for k in sender if k != "bridge_alive"
-        ] == []  # 10s-Intervall (simuliert) ist noch lange nicht um
+        ] == []  # 10s interval (simulated) is nowhere near up yet
 
         interval["seconds"] = 0.01
         await asyncio.sleep(0.09)
@@ -320,9 +318,8 @@ async def test_resend_loop_reacts_to_a_lowered_interval_without_a_restart(enviro
 
 
 async def test_resend_loop_survives_a_failing_interval_read(environment, monkeypatch):
-    """Ein Fehler beim Lesen des Intervalls (z. B. eine kurzzeitig gesperrte
-    Datenbank) darf die Schleife nicht unbeobachtet sterben lassen (finaler
-    Review, Important #1)."""
+    """An error while reading the interval (e.g. a briefly locked database)
+    must not let the loop die unnoticed (final review, important #1)."""
     _, sender, store, device_id, _ = environment
     key = f"d{device_id}_2_voltage"
     store.set_resend(key, True)
@@ -345,12 +342,12 @@ async def test_resend_loop_survives_a_failing_interval_read(environment, monkeyp
     await asyncio.sleep(0.09)
     await runtime.stop()
 
-    assert calls["n"] >= 2  # die Schleife hat den ersten Fehler ueberlebt und weiter gepollt
-    assert key in sender  # und danach tatsaechlich resent, sobald das Lesen wieder klappt
+    assert calls["n"] >= 2  # the loop survived the first error and kept polling
+    assert key in sender  # and actually resent afterward, once reading works again
 
 
 async def test_heartbeat_toggles(environment):
-    """Spec 6.5: bridge_alive deckt "Container tot" und "Netz weg" gleichermassen ab."""
+    """Spec 6.5: bridge_alive covers "container dead" and "network gone" alike."""
     _, sender, store, _, _ = environment
     runtime = Runtime(store, sender, heartbeat_seconds=0.05)
     await runtime.start()
@@ -362,11 +359,11 @@ async def test_heartbeat_toggles(environment):
 
 
 async def test_heartbeat_survives_a_failed_send(environment):
-    """Review-Fix Important #1: der Heartbeat deckt laut Modul-Docstring
-    "Container tot" und "Netz weg" gleichermassen ab - ein einzelner
-    fehlgeschlagener Sendeversuch darf die Watchdog-Schleife deshalb nicht
-    beenden, sonst friert der Loxone-Watchdog auf dem letzten Wert ein,
-    waehrend die Bruecke laengst schweigt."""
+    """Review fix important #1: per the module docstring, the heartbeat
+    covers "container dead" and "network gone" alike - a single failed
+    send attempt must therefore not end the watchdog loop, or the Loxone
+    watchdog freezes on the last value while the bridge has long since
+    gone silent."""
     _, _, store, _, _ = environment
     sender = FlakySender(fail_on_call=2)
     runtime = Runtime(store, sender, heartbeat_seconds=0.05)
@@ -374,38 +371,38 @@ async def test_heartbeat_survives_a_failed_send(environment):
     await asyncio.sleep(0.22)
     await runtime.stop()
     values = [v for k, v, _ in sender.sent if k == "bridge_alive"]
-    # Der zweite Aufruf schlaegt fehl (siehe FlakySender) - ohne den Fix
-    # stuerbe die Schleife dort und es kaemen nie weitere Werte an.
+    # The second call fails (see FlakySender) - without the fix, the loop
+    # would die there and no further values would ever arrive.
     assert len(values) >= 3
 
 
 async def test_stop_completes_even_if_a_task_already_died(environment):
-    """Review-Fix Important #1, Begleitfehler: contextlib.suppress(CancelledError)
-    unterdrueckt nur eine Cancellation, keine andere Exception, an der ein
-    Task schon vor `stop()` gestorben ist. Die alte Implementierung liess
-    `stop()` mit genau dieser Exception abbrechen und ueberspringt dabei das
-    Leeren der Task-Liste."""
+    """Review fix important #1, companion bug: contextlib.suppress(CancelledError)
+    only suppresses a cancellation, not any other exception that a task
+    already died from before `stop()`. The old implementation let `stop()`
+    abort with exactly that exception, skipping the clearing of the task
+    list in the process."""
     runtime, _, _, _, _ = environment
 
     async def boom() -> None:
-        raise RuntimeError("Task ist schon vor stop() gestorben")
+        raise RuntimeError("task already died before stop()")
 
     dead_task = asyncio.create_task(boom())
-    await asyncio.sleep(0)  # den Task tatsaechlich sterben lassen
+    await asyncio.sleep(0)  # let the task actually die
     assert dead_task.done()
     runtime._tasks.append(dead_task)
 
     await runtime.start()
-    await runtime.stop()  # darf nicht an der bereits toten Task scheitern
+    await runtime.stop()  # must not fail on the already-dead task
 
     assert runtime._tasks == []
     assert runtime._pulse_tasks == set()
 
 
 async def test_stop_lowers_an_in_flight_pulse(environment):
-    """Review-Fix Important #2: eine Cancellation waehrend des Impuls-Schlafs
-    ueberspringt sonst den `send(key, False)` - das digitale Signal bliebe
-    bis zum naechsten Ereignis auf diesem Schluessel auf 1 haengen."""
+    """Review fix important #2: a cancellation during the pulse sleep
+    otherwise skips the `send(key, False)` - the digital signal would stay
+    stuck at 1 until the next event on this key."""
     runtime, sender, _, _, button_device_id = environment
     await runtime.on_event(button_device_id, "1/59/1")
     await runtime.stop()
@@ -415,21 +412,21 @@ async def test_stop_lowers_an_in_flight_pulse(environment):
 
 
 async def test_stop_completes_even_if_lowering_a_pulse_fails(environment):
-    """Review-Fix M11, 2026-09-02: die Schleife, die jeden gerade high
-    stehenden Impuls senkt, lief vor dem Fix ungeschuetzt vor dem
-    Task-Abbruch. Scheiterte ein Sendeversuch dort (z. B. ein bereits
-    geschlossener `UdpSender`), brach die ganze Methode dort ab - JEDES
-    `task.cancel()` und beide `.clear()`-Aufrufe wurden uebersprungen.
-    `stop()` ist selbst der Aufraeum-Pfad; ein fehlgeschlagener Sendeversuch
-    darf ihn nicht mitreissen."""
+    """Review fix M11, 2026-09-02: before the fix, the loop that lowers
+    every currently-high pulse ran unguarded, ahead of the task
+    cancellation. If a send attempt failed there (e.g. an already-closed
+    `UdpSender`), the whole method aborted right there - EVERY
+    `task.cancel()` and both `.clear()` calls were skipped. `stop()` is
+    itself the cleanup path; a failed send attempt must not take it down
+    too."""
     runtime, _, _, _, button_device_id = environment
     await runtime.on_event(button_device_id, "1/59/1")
-    assert runtime._pulses_high  # der Impuls steht noch auf True
+    assert runtime._pulses_high  # the pulse is still True
 
-    runtime._sender = FlakySender(fail_on_call=1)  # der naechste send() scheitert
+    runtime._sender = FlakySender(fail_on_call=1)  # the next send() fails
     await runtime.start()
 
-    await runtime.stop()  # darf nicht am fehlschlagenden Sender scheitern
+    await runtime.stop()  # must not fail on the failing sender
 
     assert runtime._pulses_high == set()
     assert runtime._tasks == []
@@ -437,11 +434,11 @@ async def test_stop_completes_even_if_lowering_a_pulse_fails(environment):
 
 
 async def test_invalidate_index_lets_a_newly_registered_signal_through(environment, monkeypatch):
-    """Review-Fix Important #3: `Store.register_signals` kann jederzeit ein
-    neues Signal zu einem schon indizierten Geraet hinzufuegen (z. B. nach
-    einem Firmware-Update). Ohne `invalidate_index` bleibt dieses Signal fuer
-    die Laufzeit unsichtbar, weil `_signal_for` nur einmal pro Geraet aus der
-    Datenbank liest."""
+    """Review fix important #3: `Store.register_signals` can add a new
+    signal to an already-indexed device at any time (e.g. after a firmware
+    update). Without `invalidate_index`, this signal stays invisible to
+    the runtime, because `_signal_for` reads from the database only once
+    per device."""
     runtime, sender, store, device_id, _ = environment
     plug_raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     plug_snap = NodeSnapshot.from_raw(plug_raw["node_id"], plug_raw)
@@ -452,14 +449,14 @@ async def test_invalidate_index_lets_a_newly_registered_signal_through(environme
     def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
         return [*extract_signals(snapshot), new_ref]
 
-    # Erstmaliges Indizieren durch die Laufzeit - der Pfad existiert noch nicht.
+    # First-time indexing by the runtime - the path does not exist yet.
     await runtime.on_attribute(device_id, "9/1234/5", 1)
     assert sender.sent == []
 
     monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
     store.register_signals(device_id, plug_snap)
 
-    # Der Cache der Laufzeit weiss noch nichts vom neuen Signal.
+    # The runtime's cache does not yet know about the new signal.
     await runtime.on_attribute(device_id, "9/1234/5", 1)
     assert sender.sent == []
 
@@ -474,13 +471,13 @@ def _plug_snapshot() -> NodeSnapshot:
 
 
 async def test_seed_from_snapshot_populates_cache_without_sending(environment):
-    """Live-Lauf vom 2026-09-02 (Spec 6.4): `resend_all()` schickt beim Start
-    nichts, weil `_last_values` leer ist - ein Wert landet dort sonst nur
-    ueber eine Subscription, die *sich aendernde* Werte meldet. Ein Stecker
-    ohne Last meldet z. B. nie eine sich aendernde Spannung. Das Saeen fuellt
-    den Cache direkt aus dem aktuellen Geraetezustand, sendet dabei aber
-    selbst nichts - siehe Docstring von `seed_from_snapshot`. 110 Attribut-
-    signale plus 1 Online-Signal (Review-Fix C1, 2026-09-02)."""
+    """Live run from 2026-09-02 (spec 6.4): `resend_all()` sends nothing at
+    startup, because `_last_values` is empty - otherwise a value only lands
+    there via a subscription, which reports *changing* values. A plug with
+    no load, for instance, never reports a changing voltage. Seeding fills
+    the cache directly from the current device state, but itself sends
+    nothing - see the docstring of `seed_from_snapshot`. 110 attribute
+    signals plus 1 online signal (review fix C1, 2026-09-02)."""
     runtime, sender, _, device_id, _ = environment
 
     seeded = await runtime.seed_from_snapshot([_plug_snapshot()])
@@ -492,13 +489,13 @@ async def test_seed_from_snapshot_populates_cache_without_sending(environment):
 
 
 async def test_seed_from_snapshot_seeds_an_unavailable_node_as_offline(environment):
-    """Review-Fix C1, 2026-09-02: der Kern des Fehlers. `start_listening()`
-    fuellt den initialen Node-Cache OHNE NODE_ADDED zu feuern, und
-    NODE_UPDATED kommt nur bei einer Node-Daten-Nachricht - der einzige
-    Schreiber von `d<id>_online` (`set_online`) liefe also nach einem
-    Bruecken-Start nie, und der Schluessel bliebe auf seinem `DefVal="0"`
-    haengen (liest sich in Loxone als "nicht erreichbar"). Das Saeen muss die
-    Erreichbarkeit deshalb selbst aus dem Snapshot uebernehmen."""
+    """Review fix C1, 2026-09-02: the core of the bug. `start_listening()`
+    fills the initial node cache WITHOUT firing NODE_ADDED, and
+    NODE_UPDATED only comes with a node data message - the only writer of
+    `d<id>_online` (`set_online`) would therefore never run after a bridge
+    startup, and the key would stay stuck at its `DefVal="0"` (reads in
+    Loxone as "unreachable"). Seeding must therefore take availability
+    from the snapshot itself."""
     runtime, sender, _, device_id, _ = environment
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     raw = dict(raw)
@@ -524,10 +521,10 @@ async def test_resend_after_seeding_sends_every_seeded_value(environment):
 
 
 async def test_seed_from_snapshot_skips_attribute_without_a_stored_signal(environment):
-    """Ein Snapshot kann Attribute enthalten, die beim Export nicht dabei
-    waren (z. B. ein neuer Cluster nach einem Firmware-Update, der noch nicht
-    exportiert wurde) - das darf das Saeen nicht mit einem Fehler abbrechen,
-    sondern wird genau wie bei `on_attribute` uebersprungen."""
+    """A snapshot can contain attributes that were not included at export
+    time (e.g. a new cluster after a firmware update that has not been
+    exported yet) - this must not abort the seeding with an error, but is
+    skipped exactly as with `on_attribute`."""
     raw = json.loads((FIXTURES / "ikea_grillplats_plug.json").read_text(encoding="utf-8"))
     raw = dict(raw)
     attributes = dict(raw["attributes"])
@@ -556,10 +553,9 @@ async def test_seeding_twice_does_not_double_anything(environment):
 
 
 async def test_seed_from_snapshot_skips_an_unknown_node_without_aborting(environment):
-    """Ein Snapshot kann einen Node melden, den `Store` (noch) nicht kennt -
-    etwa ein Geraet, das noch nie exportiert wurde. Das darf den Start nicht
-    abbrechen; nur dieser Node wird uebersprungen, alle anderen werden trotzdem
-    gesaet."""
+    """A snapshot can report a node that `Store` does not (yet) know - such
+    as a device that has never been exported. This must not abort startup;
+    only this node is skipped, all others are still seeded."""
     runtime, sender, _, _, _ = environment
     unknown = NodeSnapshot(
         node_id=999_999,
@@ -576,9 +572,10 @@ async def test_seed_from_snapshot_skips_an_unknown_node_without_aborting(environ
 
 
 async def test_last_values_for_returns_only_that_devices_keys(environment):
-    """Fuer die Geraete-API (Task 2, Phase 5): `last_values_for` darf Werte
-    eines anderen Geraets nicht mit einsammeln - auch nicht, wenn dessen
-    device_id als Ziffernfolge die eigene device_id als Praefix enthaelt."""
+    """For the devices API (task 2, phase 5): `last_values_for` must not
+    also collect values of another device - not even when that device's
+    device_id, as a digit sequence, contains this one's device_id as a
+    prefix."""
     runtime, _, _, device_id, button_device_id = environment
     await runtime.on_attribute(device_id, "2/144/4", 230000)
     await runtime.set_online(button_device_id, True)
@@ -597,13 +594,13 @@ async def test_last_values_for_is_empty_before_anything_is_known(environment):
 async def test_on_node_snapshot_registers_a_new_signal_and_lets_it_through(
     environment, monkeypatch
 ):
-    """Der Kern des Nachziehens: ein Pfad, den der Store beim Einlernen noch
-    nicht kannte, muss danach eine Signalzeile haben UND durch den
-    Signal-Cache der Laufzeit kommen. Genau hier faengt der Test den
-    vergessenen `invalidate_index`-Aufruf - ohne ihn legt `register_signals`
-    die Zeile zwar an, aber `_signal_for` bleibt bei seinem einmal geladenen
-    Stand und jedes Update auf den neuen Pfad laeuft fuer den Rest des
-    Prozesses ins Leere."""
+    """The core of the catch-up: a path the store did not yet know at
+    commissioning time must afterward have a signal row AND pass through
+    the runtime's signal cache. This is exactly where the test catches a
+    forgotten `invalidate_index` call - without it, `register_signals`
+    does create the row, but `_signal_for` stays at its once-loaded state,
+    and every update to the new path goes nowhere for the rest of the
+    process."""
     runtime, sender, _, device_id, _ = environment
     new_ref = SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)
     key = f"d{device_id}_9_c1234_a5"
@@ -611,8 +608,8 @@ async def test_on_node_snapshot_registers_a_new_signal_and_lets_it_through(
     def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
         return [*extract_signals(snapshot), new_ref]
 
-    # Erst indizieren lassen, wie im Betrieb: die Laufzeit hat das Geraet
-    # schon einmal gesehen, bevor der neue Pfad auftaucht.
+    # First let it be indexed, as in operation: the runtime has already
+    # seen the device once before the new path shows up.
     await runtime.on_attribute(device_id, "9/1234/5", 1)
     assert sender.sent == []
 
@@ -624,10 +621,10 @@ async def test_on_node_snapshot_registers_a_new_signal_and_lets_it_through(
 
 
 async def test_on_node_snapshot_seeds_the_values_without_sending(environment):
-    """Dieselbe Begruendung wie bei `seed_from_snapshot`: der Cache fuellt
-    sich, gesendet wird nichts. Ein frisch angelegtes Signal hat in Loxone
-    ohnehin noch keinen virtuellen Eingang - der entsteht erst mit dem
-    Export der Vorlage."""
+    """Same reasoning as for `seed_from_snapshot`: the cache fills up,
+    nothing is sent. A freshly created signal has no virtual input in
+    Loxone yet anyway - that only comes into being with the export of the
+    template."""
     runtime, sender, _, device_id, _ = environment
 
     await runtime.on_node_snapshot(device_id, _plug_snapshot())
@@ -638,10 +635,10 @@ async def test_on_node_snapshot_seeds_the_values_without_sending(environment):
 
 
 async def test_on_node_snapshot_keeps_the_key_and_the_export_flag(environment):
-    """`register_signals` ist ausdruecklich fuer erneute Aufrufe gebaut
-    (siehe dortiger Docstring). Wuerde das Nachziehen Schluessel neu vergeben
-    oder `exported` zuruecksetzen, zerstoerte jeder Wiederaufruf die
-    Verdrahtung in der Loxone-Konfiguration."""
+    """`register_signals` is explicitly built for repeated calls (see its
+    docstring there). If the catch-up reassigned keys or reset `exported`,
+    every repeat call would destroy the wiring in the Loxone
+    configuration."""
     runtime, _, store, device_id, _ = environment
     before = store.signals(device_id)[0]
     store.set_exported(before.key, not before.exported)
@@ -666,20 +663,21 @@ async def test_on_node_snapshot_seeds_an_unavailable_node_as_offline(environment
 
 
 async def test_on_node_snapshot_invalidates_before_seeding_a_stale_cache(environment, monkeypatch):
-    """Die vier `test_on_node_snapshot_*`-Tests oben belegen nur, dass
-    `invalidate_index` ueberhaupt aufgerufen wird - nicht, dass es VOR dem
-    Saeen laeuft. Vertauscht man `self.invalidate_index(device_id)` mit der
-    Saeen-Passage darunter, bleiben alle vier gruen: keiner von ihnen indiziert
-    das Geraet VOR dem `on_node_snapshot`-Aufruf mit dem neuen Pfad noch nicht
-    im Cache.
+    """The four `test_on_node_snapshot_*` tests above only prove that
+    `invalidate_index` gets called at all - not that it runs BEFORE the
+    seeding. If you swap `self.invalidate_index(device_id)` with the
+    seeding passage below it, all four stay green: none of them indexes
+    the device with the new path in the cache BEFORE the
+    `on_node_snapshot` call.
 
-    Dieser Test tut genau das: `on_attribute` indiziert das Geraet vorab (der
-    Pfad existiert zu diesem Zeitpunkt noch nicht, der Wert wird verworfen,
-    der Cache aber gefuellt) - damit ist er beim folgenden
-    `on_node_snapshot`-Aufruf bereits veraltet. Laeuft die Invalidierung nach
-    dem Saeen, liest `_cache_attribute` ueber `_signal_for` den alten Stand,
-    findet dort kein Signal fuer den neuen Pfad und verwirft den mitgelieferten
-    Wert - genau der Strich-Zustand, den `on_node_snapshot` beseitigen soll."""
+    This test does exactly that: `on_attribute` indexes the device
+    beforehand (the path does not exist yet at this point, the value is
+    dropped, but the cache is populated) - which makes it already stale by
+    the time of the following `on_node_snapshot` call. If invalidation
+    runs after the seeding, `_cache_attribute` reads the old state via
+    `_signal_for`, finds no signal for the new path there, and drops the
+    supplied value - exactly the dash state that `on_node_snapshot` is
+    supposed to eliminate."""
     runtime, _, _, device_id, _ = environment
     new_ref = SignalRef(9, 1234, 5, SignalKind.ATTRIBUTE)
     key = f"d{device_id}_9_c1234_a5"
@@ -687,9 +685,9 @@ async def test_on_node_snapshot_invalidates_before_seeding_a_stale_cache(environ
     def extended_extract_signals(snapshot: NodeSnapshot) -> list[SignalRef]:
         return [*extract_signals(snapshot), new_ref]
 
-    # Erstmaliges Indizieren durch die Laufzeit - der Pfad existiert noch
-    # nicht, der Wert wird verworfen, aber das Geraet ist danach indiziert
-    # (und der Cache damit veraltet fuer alles, was gleich hinzukommt).
+    # First-time indexing by the runtime - the path does not exist yet, the
+    # value is dropped, but the device is indexed afterward (and the cache
+    # thereby stale for anything that gets added next).
     await runtime.on_attribute(device_id, "9/1234/5", 1)
 
     monkeypatch.setattr("loxmatter.model.store.extract_signals", extended_extract_signals)
