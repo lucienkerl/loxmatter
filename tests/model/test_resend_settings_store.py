@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pytest
 
+from loxmatter import i18n
 from loxmatter.model.resend_settings_store import (
     DEFAULT_RESEND_INTERVAL_SECONDS,
     MIN_RESEND_INTERVAL_SECONDS,
@@ -85,3 +86,24 @@ def test_interval_survives_reopening_the_same_database(tmp_path):
         assert reopened.resend_settings.get_interval_seconds() == 120.0
     finally:
         reopened.close()
+
+
+def test_the_interval_error_follows_the_selected_language(tmp_path):
+    """The message reaches the client as an HTTPException detail
+    (`api/settings.py` catches the ValueError), so it is user-facing and has
+    to switch with the language rather than being one hard-coded sentence."""
+    store = Store(tmp_path / "t.sqlite")
+    try:
+        i18n.set_language("en")
+        with pytest.raises(ValueError) as english:
+            store.resend_settings.set_interval_seconds(1.0)
+        i18n.set_language("de")
+        with pytest.raises(ValueError) as german:
+            store.resend_settings.set_interval_seconds(1.0)
+    finally:
+        store.close()
+
+    assert str(english.value) and str(german.value)
+    assert str(english.value) != str(german.value)
+    assert "at least" in str(english.value)
+    assert "mindestens" in str(german.value)

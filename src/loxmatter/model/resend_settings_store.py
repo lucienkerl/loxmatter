@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from loxmatter import i18n
+
 _INTERVAL_KEY = "resend_interval_seconds"
 
 DEFAULT_RESEND_INTERVAL_SECONDS = 300.0
@@ -66,8 +68,15 @@ class ResendSettingsStore:
 
     def set_interval_seconds(self, seconds: float) -> None:
         if seconds < MIN_RESEND_INTERVAL_SECONDS:
+            # Resolved at call time, not built here: `api/settings.py` hands
+            # this message to the client as an HTTPException detail, so it is
+            # user-facing and has to follow the selected language.
             raise ValueError(
-                f"resend interval must be at least {MIN_RESEND_INTERVAL_SECONDS}s, got: {seconds}"
+                i18n.t(
+                    "api.settings.resend_interval_too_small",
+                    minimum=MIN_RESEND_INTERVAL_SECONDS,
+                    value=seconds,
+                )
             )
         self._db.execute(
             "INSERT INTO setting (key, value) VALUES (?, ?) "

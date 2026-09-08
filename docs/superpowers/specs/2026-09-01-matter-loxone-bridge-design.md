@@ -441,7 +441,7 @@ The Matter `Switch` cluster delivers `InitialPress`, `ShortRelease`, `LongPress`
 For `MultiPressComplete`, additionally `_press2`, `_press3` as their own pulses, plus
 `_presscount`.
 
-### 6.4 Zustands-Wiederherstellung
+### 6.4 State restoration
 
 UDP is stateless. After a Miniserver restart, all inputs sit at `DefVal`,
 until the next update arrives — for a temperature sensor, potentially hours.

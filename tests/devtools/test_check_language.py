@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -141,7 +141,7 @@ def test_the_umlaut_transliteration_table_is_exempt_as_german_data():
     assert check_language.scan_text(text, "src/loxmatter/export/documents.py") == []
 
 
-def test_virtuelle_eingaenge_caption_title_is_exempt_as_german_data():
+def test_the_loxone_caption_titles_are_exempt_as_german_data():
     text = 'title = "Virtuelle Eingänge" if kind == "input" else "Virtuelle Ausgänge"\n'
     assert check_language.scan_text(text, "src/loxmatter/projectsync/schema.py") == []
 
@@ -228,3 +228,10 @@ def test_the_quoting_rule_does_not_apply_outside_tests():
 def test_captured_fixtures_are_exempt():
     text = '<VirtualOut Comment="erzeugt von loxmatter" />\n'
     assert check_language.scan_text(text, "tests/fixtures/loxone/VO_working.xml") == []
+
+
+def test_a_one_line_docstring_in_a_test_file_is_still_checked():
+    # The quoting rule must not eat a docstring: the empty pair around
+    # """...""" would otherwise swallow the prose between them.
+    text = '    """Prueft, dass das Geraet nicht erreichbar ist."""\n'
+    assert check_language.scan_text(text, "tests/api/test_web.py")

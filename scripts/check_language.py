@@ -1,4 +1,4 @@
-# loxmatter - bindet Matter-Geraete an einen Loxone Miniserver an.
+# loxmatter - connects Matter devices to a Loxone Miniserver.
 # Copyright (C) 2026 Lucien Kerl
 #
 # This program is free software: you can redistribute it and/or modify
@@ -212,7 +212,10 @@ def scan_text(text: str, path: str) -> list[Finding]:
         # German outside the backticks on the same line is still prose and
         # must still be checked, so only the span text is removed here.
         scan_line = INLINE_CODE.sub("", line) if is_markdown else line
-        if is_test_python:
+        if is_test_python and '"""' not in line and "'''" not in line:
+            # Not on a line carrying triple quotes: there the pair of empty
+            # quotes around a one-line docstring would make the regex eat the
+            # docstring itself, and a docstring is prose that must be checked.
             scan_line = QUOTED.sub("", scan_line)
         for match in WORD.finditer(scan_line):
             word = match.group(0)

@@ -1245,7 +1245,7 @@ class Store:
     def set_resend(self, key: str, resend: bool) -> None:
         """Sets a signal's resend flag (`PATCH /api/signals/{key}`,
         periodic resend design, 2026-09-04). Like `set_exported`, with no
-        Existenzpruefung - siehe dort."""
+        existence check - see there."""
         self._touch_owning_device(key)
         self._db.execute("UPDATE signal SET resend = ? WHERE key = ?", (int(resend), key))
         self._db.commit()

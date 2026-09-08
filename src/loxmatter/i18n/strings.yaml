@@ -575,6 +575,10 @@ projectsync.missing_control_list_open:
 projectsync.missing_control_list_close:
   en: "Not a valid Loxone project file: </ControlList> is missing."
   de: "Keine gueltige Loxone-Projektdatei: </ControlList> fehlt."
+api.settings.resend_interval_too_small:
+  en: "resend interval must be at least {minimum}s, got: {value}"
+  de: "Resend-Intervall muss mindestens {minimum}s betragen, angegeben: {value}"
+
 projectsync.not_utf8:
   en: "The uploaded file is not a valid UTF-8 text file - a Loxone project file is saved as UTF-8."
   de: "Die hochgeladene Datei ist keine gueltige UTF-8-Textdatei - eine Loxone-Projektdatei wird als UTF-8 gespeichert."
