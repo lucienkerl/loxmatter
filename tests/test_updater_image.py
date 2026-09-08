@@ -19,7 +19,24 @@ The failure this guards against is unpleasantly quiet: if `jq` is missing
 from the image, the sidecar starts up, never writes a usable state, and
 the web UI shows a button that does nothing. A comparison between the
 `apk add` lines and the commands invoked in the script catches this here,
-before someone discovers it on a Pi."""
+before someone discovers it on a Pi.
+
+Review fix (Important #1, updater Stufe 2): the previous version of the
+first test below searched the *whole Dockerfile text* for each package
+name with `re.search(rf"\b{re.escape(package)}\b", source)`. That passes
+for "docker-cli" as long as "docker-cli-compose" is anywhere in the file,
+because `\b` matches at the hyphen - a word/non-word boundary - not just
+at whitespace:
+
+    >>> import re
+    >>> bool(re.search(r"\bdocker-cli\b", "apk add docker-cli-compose git"))
+    True
+
+So deleting the standalone `docker-cli` line while keeping
+`docker-cli-compose` left the old test green: exactly the quiet omission
+this file's own module docstring says it exists to catch. The fix parses
+the `apk add` argument list itself and compares it as a set against
+REQUIRED_PACKAGES, rather than substring-searching the file text."""
 
 from __future__ import annotations
 
@@ -35,10 +52,37 @@ DOCKERFILE = ROOT / "deploy" / "updater" / "Dockerfile"
 REQUIRED_PACKAGES = ("docker-cli", "docker-cli-compose", "git", "curl", "jq", "coreutils", "tar")
 
 
+def _apk_add_packages(source: str) -> set[str]:
+    """The package names actually passed to `apk add`, not just words that
+    happen to appear somewhere in the Dockerfile.
+
+    Walks the `RUN apk add ...` line and its backslash-continued
+    successors, stripping line-continuation backslashes and flag-looking
+    tokens (`--no-cache` etc.), and collects the remaining whitespace-
+    separated words as the installed package set."""
+    lines = source.splitlines()
+    packages: list[str] = []
+    in_block = False
+    for line in lines:
+        stripped = line.strip()
+        if not in_block:
+            if not re.match(r"RUN\s+apk\s+add\b", stripped):
+                continue
+            in_block = True
+            stripped = re.sub(r"^RUN\s+apk\s+add\b", "", stripped).strip()
+        continues = stripped.endswith("\\")
+        content = stripped[:-1].strip() if continues else stripped
+        packages.extend(word for word in content.split() if not word.startswith("-"))
+        if not continues:
+            break
+    return set(packages)
+
+
 def test_the_image_brings_every_tool_it_uses() -> None:
     source = DOCKERFILE.read_text(encoding="utf-8")
-    for package in REQUIRED_PACKAGES:
-        assert re.search(rf"\b{re.escape(package)}\b", source), package
+    installed = _apk_add_packages(source)
+    missing = set(REQUIRED_PACKAGES) - installed
+    assert not missing, f"apk add is missing: {sorted(missing)}"
 
 
 def test_the_base_image_is_pinned() -> None:
