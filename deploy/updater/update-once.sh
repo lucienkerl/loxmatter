@@ -31,14 +31,10 @@ set -eu
 UPDATE_DIR="${LOXMATTER_UPDATE_DIR:-/data/update}"
 BACKUP_DIR="${LOXMATTER_BACKUP_DIR:-/data/backups}"
 STACK="${LOXMATTER_STACK:-/repo/deploy/testhost}"
-# shellcheck disable=SC2034  # consumed by Task 3's clone/checkout step
 REPO="${LOXMATTER_REPO:-/repo}"
 SERVICE="${LOXMATTER_SERVICE:-loxmatter}"
-# shellcheck disable=SC2034  # consumed by Task 3, assembling the image ref
 IMAGE="${LOXMATTER_IMAGE:-ghcr.io/lucienkerl/loxmatter}"
-# shellcheck disable=SC2034  # consumed by Task 3's health check
 HEALTH_URL="${LOXMATTER_HEALTH_URL:-http://host.docker.internal:8080/health}"
-# shellcheck disable=SC2034  # consumed by Task 3's health check
 HEALTH_TIMEOUT="${LOXMATTER_HEALTH_TIMEOUT:-120}"
 
 REQUEST="$UPDATE_DIR/request.json"
@@ -435,3 +431,161 @@ fi
 
 set_state queued ""
 log "Request $JOB_ID accepted: $FROM -> $TO ($CHANNEL)"
+
+# ------------------------------------------------------------------- flow --
+# Runs the accepted request through to completion in this same pass - there
+# is no separate hand-off. entrypoint.sh's 600s worker timeout already
+# accounts for two runs through the waiting parts of this (backup, pull,
+# recreate, up to two 120s health waits) in case Task 4's rollback has to
+# redo the pull/recreate once, backward.
+
+run() {
+  log "\$ $*"
+  "$@" >> "$LOG" 2>&1
+}
+
+# Compose reads docker-compose.yml AND .env from the current directory (or
+# an explicit --project-directory) - both live in $STACK. `cd` there in a
+# subshell instead of passing --project-directory, the same way
+# scripts/update.sh already does: the logged command then reads exactly as
+# an operator typing it by hand from that directory would, which matters
+# when comparing this log against scripts/update.sh's own output during an
+# incident. The subshell keeps the `cd` from leaking into the rest of this
+# script.
+compose() {
+  log "\$ (cd $STACK && docker compose $*)"
+  (cd "$STACK" && docker compose "$@") >> "$LOG" 2>&1
+}
+
+# Replaces EXACTLY that one line and leaves the rest of the .env untouched.
+# It also carries MINISERVER_IP, RADIO_DEVICE and the API token - an update
+# that rewrites the whole file takes half the installation down with it.
+#
+# Goes through a temp file and `mv`, the same atomic-write idiom
+# write_state() already uses above, rather than `sed -i`: GNU sed's `-i`
+# takes an optional attached suffix, but BSD/macOS sed's `-i` requires one
+# as a SEPARATE argument - `sed -i -E '...'` on BSD sed reads "-E" as that
+# argument (a literal backup-file suffix) and runs the script that follows
+# as a basic, not extended, regular expression. Verified end to end on this
+# machine: it happened to still produce the right substitution (the
+# pattern below uses no ERE-only syntax, so BRE and ERE agree on it) but
+# silently left a stray ".env-E" backup file behind on every call - exactly
+# the kind of accidental success this project has been bitten by more than
+# once. Sidestepped entirely rather than patched per-platform: neither sed
+# needs `-E` here, and neither needs `-i` once the substitution is piped
+# through a temp file instead.
+set_tag() {
+  if grep -q '^LOXMATTER_IMAGE_TAG=' "$ENV_FILE" 2>/dev/null; then
+    sed "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$1|" "$ENV_FILE" \
+      > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
+  else
+    printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" >> "$ENV_FILE"
+  fi
+}
+
+# Waits for the first healthy beat. The 120 seconds are not a new value but
+# the one from scripts/update.sh - and the reasoning there still holds
+# unchanged: 20 seconds went fine for exactly that long, until a run on
+# September 8th tipped just past it and the script reported a service as
+# unhealthy that was working flawlessly ten seconds later. A window that is
+# too short is the more expensive kind of false alarm here - it looks like
+# a broken update and tempts one into rolling back a state that is fine.
+wait_healthy() {
+  i=0
+  while [ "$i" -lt "$HEALTH_TIMEOUT" ]; do
+    if curl -fsS -m 3 "$HEALTH_URL" >/dev/null 2>&1; then
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  return 1
+}
+
+# 1. Back up. Before anything else: the signal database is the one thing a
+# failed update could not restore - it holds the signal keys, and those
+# are the wiring into the Loxone configuration.
+set_state backup ""
+STAMP="$(date -u +%Y-%m-%d-%H%M%S)"
+if ! run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
+  set_state failed "backup failed - nothing was changed"
+  exit 0
+fi
+# Never sweep away the last ten, as in scripts/update.sh.
+#
+# shellcheck disable=SC2012  # filenames are self-generated (store-<UTC
+# timestamp>.tgz, written two lines above by this same script) rather than
+# attacker- or user-supplied, so sorting them by mtime through `ls -t` is
+# safe here in a way it would not be in general. scripts/update.sh already
+# carries this exact pattern, unchecked; `find` has no equally simple,
+# equally portable stand-in for "sorted by modification time" across the
+# GNU/BSD/busybox sort/find/stat variance this project already has to mind.
+ls -1t "$BACKUP_DIR"/store-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
+
+# 2. Fetch the target. The Compose file must match the version: a new
+# release can need a new service or a new variable.
+set_state pull ""
+if ! run git -C "$REPO" fetch --tags --force origin; then
+  set_state failed "git fetch failed"
+  exit 0
+fi
+
+if [ "$CHANNEL" = "dev" ]; then
+  # The dev channel's equivalent of "forward only" (spec section 10,
+  # rule 3): there is no ordering over SHAs, but there is ancestry. A
+  # `git` that cannot answer at all - the binary missing, or the ref not
+  # actually fetched - exits non-zero here exactly like a genuine "not an
+  # ancestor" does. This fails CLOSED, the same direction every other
+  # check in this file takes: an inconclusive answer is a "no", never
+  # waved through as a "sure, why not".
+  if ! git -C "$REPO" merge-base --is-ancestor HEAD "$TARGET" 2>/dev/null; then
+    reject "not a descendant of the running state"
+  fi
+  REF="$TARGET"
+else
+  REF="v${TARGET#v}"
+fi
+
+if ! run git -C "$REPO" checkout --detach "$REF"; then
+  set_state failed "target $REF not found in the repository"
+  exit 0
+fi
+
+# The image name is assembled HERE, from a fixed constant and a validated
+# target - it never comes from the request (spec section 10, rule 2). That
+# is also why $IMAGE below appears only in the log, not as an argument to
+# any command: Compose forms the name from the .env line that set_tag
+# writes next.
+log "target image: $IMAGE:${TARGET#v}"
+set_tag "${TARGET#v}"
+
+if ! compose pull "$SERVICE"; then
+  set_tag "$FROM"
+  set_state failed "image could not be pulled - the running service is unchanged"
+  exit 0
+fi
+
+# 3. Replace it. --no-deps: matter-server and OTBR stay untouched, and the
+# sidecar does not replace itself - that would terminate it in the middle
+# of its own request.
+set_state recreate ""
+if ! compose up -d --no-deps --force-recreate "$SERVICE"; then
+  set_state failed "restart failed"
+  exit 0
+fi
+
+# 4. Wait for the first healthy beat.
+set_state health ""
+if wait_healthy; then
+  # Quoted "done": shellcheck (SC1010) reads a bare `done` here as the
+  # loop-closing reserved word rather than a plain argument, even though
+  # this position (a command's second argument) is not one where POSIX
+  # actually gives it that meaning. Quoting settles the ambiguity for the
+  # reader and the linter alike, same as any other phase name would need
+  # if it happened to collide with a keyword.
+  set_state "done" ""
+  log "Update to $TO complete"
+  exit 0
+fi
+
+set_state rollback ""

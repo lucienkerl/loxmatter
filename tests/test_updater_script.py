@@ -174,6 +174,7 @@ def updater(tmp_path):
 
     run.update_dir = update_dir
     run.stack = stack
+    run.bindir = bindir
     return run
 
 
@@ -279,14 +280,18 @@ def test_a_dev_target_with_an_embedded_newline_is_rejected(updater):
 # dev-channel request meets in this half of the script - nothing else
 # would notice if it were wrong, or missing, without these three.
 def test_a_valid_dev_target_is_accepted(updater):
-    # No forward-only check exists yet for `dev` (see the comment above
-    # "Rule 3" in update-once.sh - Task 3 adds ancestry checking once refs
-    # are fetched), so a well-formed commit target is accepted without
-    # ever needing a `docker inspect` call.
+    # Validating a dev target still never needs a `docker inspect` call:
+    # that read only answers "what is running", needed for the stable
+    # channel's semver comparison (Rule 3) - the dev channel's own
+    # forward-only equivalent (Task 3's ancestry check) reads via `git`
+    # instead. Since Task 3, though, an accepted request no longer stops
+    # at "queued": the flow runs it straight through, so this well-formed
+    # commit target does end up making `docker compose pull`/`up` calls -
+    # what this test still pins down is that no INSPECT call happens.
     _auftrag(updater, channel="dev", target="abcdef1")
     _, calls, state = updater()
-    assert state["phase"] != "rejected"
-    assert "docker" not in calls
+    assert state["phase"] == "done"
+    assert "docker inspect" not in calls
 
 
 def test_a_malformed_dev_target_is_rejected(updater):
@@ -353,23 +358,33 @@ def test_a_valid_target_is_accepted(updater):
 
 
 def test_the_same_job_is_not_run_twice(updater):
-    # There is no `compose pull` yet to check against (Task 3) - but the
-    # dedup guard's own effect is observable without it. Re-decide the
-    # SAME job id with a DIFFERENT (still well-formed, still forward)
-    # target between the two passes. If the guard fires, id "auftrag-1"
-    # is already recorded as decided and the second request must never be
-    # looked at - `to` in state.json stays whatever the first pass wrote.
-    # If the guard were missing (e.g. replaced with a no-op), the second
-    # pass would re-validate the new request and overwrite `to` with it.
+    # Originally written against state alone, because the `compose pull`
+    # it looked for did not exist yet (Task 3). Now it does, so the
+    # property strengthens to what "not run twice" actually means: not
+    # just that `to` in state.json is left alone, but that the mutating
+    # half of the flow does not fire a second time for a request whose id
+    # was already decided.
+    #
+    # Re-decide the SAME job id with a DIFFERENT (still well-formed,
+    # still forward) target between the two passes. If the guard fires,
+    # id "auftrag-1" is already recorded as decided and the second
+    # request must never be looked at - `to` stays whatever the first
+    # pass wrote, AND no second `compose pull` runs. The stub log is
+    # cumulative across both `updater()` calls in this fixture (same
+    # stub.log for the whole test), so a guard that quietly stopped
+    # working would show up as a second "compose pull" occurrence, not
+    # just a wrong `to`.
     _auftrag(updater, target="0.3.0")
-    _, _, erste = updater()
-    assert erste["phase"] == "queued"
+    _, erste_calls, erste = updater()
+    assert erste["phase"] == "done"
     assert erste["to"] == "0.3.0"
+    assert erste_calls.count("compose pull") == 1
 
     _auftrag(updater, target="0.4.0")  # same id "auftrag-1", new target
-    _, _, zweite = updater()
+    _, zweite_calls, zweite = updater()
     assert zweite["id"] == "auftrag-1"
     assert zweite["to"] == "0.3.0"
+    assert zweite_calls.count("compose pull") == 1
 
 
 # ---------------------------------------------------------- Stufe 2 round --
@@ -537,8 +552,111 @@ def test_a_leading_v_is_stripped_from_the_target(updater):
     # the `v`-prefix acceptance path at all before this. Without the
     # normalisation, Task 3 would write LOXMATTER_IMAGE_TAG=v0.3.0 into
     # .env instead of the bare version the rest of the system expects.
+    # Since Task 3's flow now runs an accepted request through to
+    # completion in the same pass, this ends at "done", not "queued" -
+    # what still pins down the normalisation is `to` and the .env write.
     _auftrag(updater, target="v0.3.0")
     _, calls, state = updater()
-    assert state["phase"] == "queued"
+    assert state["phase"] == "done"
     assert state["to"] == "0.3.0"
     assert "docker" in calls
+    assert "LOXMATTER_IMAGE_TAG=0.3.0" in (updater.stack / ".env").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------- Task 3 --
+# The flow itself: back up, fetch/check out the target, pull, recreate,
+# wait for health. See task-3-brief.md / the Stufe 2 plan for the full
+# design; the comments below only record where these tests had to depart
+# from that brief's own literal text.
+
+
+def test_the_flow_keeps_its_order(updater):
+    _auftrag(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert calls.index("tar") < calls.index("compose pull")
+    assert calls.index("compose pull") < calls.index("compose up")
+    assert state["phase"] == "done"
+
+
+def test_the_restart_leaves_the_neighboring_services_alone(updater):
+    _auftrag(updater, target="0.3.0")
+    _, calls, _ = updater()
+    up = next(line for line in calls.splitlines() if "compose up" in line)
+    assert "--no-deps" in up
+    assert "loxmatter-updater" not in up
+
+
+def test_the_image_name_does_not_come_from_the_job(updater):
+    # `calls` is the FAKE BINARIES' call log (docker/git/curl/tar) - the
+    # image name is deliberately never an argument to any of them (see
+    # the comment above `log "target image: ..."` in update-once.sh), so
+    # it cannot show up there. It shows up in the script's OWN log
+    # (log.txt) instead, precisely because that is the one place meant to
+    # record it for an operator without ever handing it to a command.
+    _auftrag(updater, target="0.3.0")
+    updater()
+    log_text = (updater.update_dir / "log.txt").read_text(encoding="utf-8")
+    assert "ghcr.io/lucienkerl/loxmatter" in log_text
+
+
+def test_the_tag_lands_in_the_env_file(updater):
+    _auftrag(updater, target="0.3.0")
+    updater()
+    assert "LOXMATTER_IMAGE_TAG=0.3.0" in (updater.stack / ".env").read_text(encoding="utf-8")
+
+
+def test_the_env_file_keeps_its_other_lines(updater):
+    # The .env carries MINISERVER_IP, RADIO_DEVICE, LOXMATTER_API_TOKEN. An
+    # update that overwrites it takes half the installation down with it.
+    env = updater.stack / ".env"
+    env.write_text(
+        "MINISERVER_IP=10.0.1.9\nLOXMATTER_IMAGE_TAG=0.2.0\nRADIO_DEVICE=/dev/ttyUSB0\n",
+        encoding="utf-8",
+    )
+    _auftrag(updater, target="0.3.0")
+    updater()
+    text = env.read_text(encoding="utf-8")
+    assert "MINISERVER_IP=10.0.1.9" in text
+    assert "RADIO_DEVICE=/dev/ttyUSB0" in text
+    assert "LOXMATTER_IMAGE_TAG=0.3.0" in text
+    assert "0.2.0" not in text
+
+
+def test_a_backup_is_made_before_the_pull(updater):
+    _auftrag(updater, target="0.3.0")
+    _, calls, _ = updater()
+    tar_line = next(line for line in calls.splitlines() if line.startswith("tar"))
+    assert "store-" in tar_line
+
+
+def test_a_dev_target_that_is_not_a_descendant_is_rejected(updater):
+    # Task 3's ancestry check is the dev channel's equivalent of "forward
+    # only" - there is no ordering over SHAs, but there is ancestry (see
+    # the comment above `git merge-base --is-ancestor` in
+    # update-once.sh). The fixture's default `git` stub always exits 0
+    # regardless of subcommand (see its own comment above, in the
+    # `updater` fixture) - which is exactly why every dev-channel test
+    # above never needed to distinguish "is an ancestor" from "is not".
+    # Override it here so `merge-base --is-ancestor` specifically fails,
+    # the same way it does both for a real commit unreachable from HEAD
+    # and for a `git` that cannot answer the question at all - the check
+    # has to fail CLOSED in both cases, not only the first, and nothing
+    # short of actually failing this call exercises that.
+    # Every call is `git -C "$REPO" <subcommand> ...` - the subcommand is
+    # $3, not $1 - so matching on "$*" rather than a positional parameter
+    # is what actually distinguishes merge-base from fetch/checkout here.
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        "  *merge-base*) exit 1 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _auftrag(updater, channel="dev", target="abcdef1")
+    _, calls, state = updater()
+    assert state["phase"] == "rejected"
+    assert state["error"] == "not a descendant of the running state"
+    assert "docker compose" not in calls
