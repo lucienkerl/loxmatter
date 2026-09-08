@@ -1,40 +1,40 @@
-# Release-Hinweis: Login statt Token-Eingabe
+# Release note: login instead of token entry
 
-**Was sich ändert.** Die Oberfläche hat jetzt eine Anmeldung mit Passwort.
-Das Feld für das API-Token ist verschwunden.
+**What changes.** The UI now has a password login.
+The field for the API token is gone.
 
-**Was zu tun ist — sofort nach dem Ausrollen.** Öffne die Oberfläche
-(`http://<Host>:8080/`) und vergib ein Passwort. Bis das geschehen ist,
-liefert keine `/api`-Route Daten aus, und die Oberfläche zeigt nichts als
-den Einrichtungsbildschirm.
+**What to do — immediately after rollout.** Open the UI
+(`http://<host>:8080/`) and set a password. Until that has happened,
+no `/api` route serves any data, and the UI shows nothing but
+the setup screen.
 
-**Warum sofort.** Die Ersteinrichtung verlangt keinen weiteren Nachweis —
-wer zuerst kommt, vergibt das Passwort. Zwischen dem Update und deiner
-Anmeldung kann also jeder, der die Brücke im Netz erreicht, sie übernehmen.
-Bewusst so entschieden, damit die Einrichtung ohne Shell auf dem Host
-möglich ist; der Preis ist dieses Fenster, und es sollte Minuten dauern und
-nicht Tage.
+**Why immediately.** Initial setup requires no further proof — whoever
+gets there first sets the password. So between the update and your own
+login, anyone who can reach the bridge on the network can take it over.
+This was deliberately decided this way so that setup is possible without a
+shell on the host; the price is this window, and it should take minutes,
+not days.
 
-**Was gleich bleibt.** `LOXMATTER_API_TOKEN` gilt weiter — als Weg für
-Skripte und `curl`, nicht mehr für den Browser. Bestehende
-Automatisierungen brechen durch dieses Update nicht ab, auch nicht vor der
-Passwortvergabe. `/cmd` und `/resync` für den Miniserver bleiben wie immer
-ohne jede Absicherung erreichbar.
+**What stays the same.** `LOXMATTER_API_TOKEN` still applies — as a path
+for scripts and `curl`, no longer for the browser. Existing
+automations do not break because of this update, not even before the
+password is set. `/cmd` and `/resync` for the Miniserver remain reachable
+without any protection whatsoever, as always.
 
-**Passwort vergessen.** Im Referenz-Deployment (Docker) setzt `docker
-compose exec loxmatter loxmatter set-password` **im laufenden Container**
-es neu; bei einer Installation aus dem Quellcode entsprechend `uv run
-loxmatter set-password` auf dem Host. Beides meldet dabei alle offenen
-Sitzungen ab. **Wichtig bei einer containerisierten Installation:** die
-Datenbank liegt dort typischerweise in einem benannten Docker-Volume und
-ist über `LOXMATTER_STORE` nur *innerhalb* des Containers erreichbar —
-`set-password` auf dem Host träfe dort eine andere, leere Datenbank und
-meldete fälschlich Erfolg, ohne die eigentliche Brücke zu entsperren; der
-Befehl bricht seit dem entsprechenden Fund deshalb mit einem klaren Fehler
-ab, statt eine neue Datenbank anzulegen.
+**Forgotten password.** In the reference deployment (Docker), `docker
+compose exec loxmatter loxmatter set-password` **inside the running
+container** resets it; for an installation from source, the equivalent is
+`uv run loxmatter set-password` on the host. Both log out all open
+sessions in the process. **Important for a containerized installation:**
+the database there typically lives in a named Docker volume and
+is reachable via `LOXMATTER_STORE` only *inside* the container —
+`set-password` on the host would hit a different, empty database there
+and falsely report success without unlocking the actual bridge; since
+that finding, the command therefore aborts with a clear error instead
+of creating a new database.
 
-**Ein Hinweis zum Passwort.** Der Dienst spricht HTTP ohne Verschlüsselung;
-das Passwort geht beim Anmelden im Klartext über das Netz. Nimm eines, das
-du nirgendwo sonst benutzt — und lass es dir erzeugen, statt dir eines
-auszudenken. Hinter der Anmeldung liegt auch die Fabric-Sicherung; acht
-Zeichen tragen die nur, solange sie nicht zu raten sind.
+**A note on the password.** The service speaks HTTP without encryption;
+the password travels over the network in plain text when logging in. Pick
+one you don't use anywhere else — and have it generated for you rather than
+making one up. Behind the login also sits the fabric protection; eight
+characters only carry that as long as they aren't guessable.

@@ -1,71 +1,71 @@
-# Geräte-Tab: Räume, Kategorien und Kachelraster — Implementierungsplan
+# Devices tab: rooms, categories, and tile grid — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Der Geräte-Tab bekommt Räume, aus Matter abgeleitete Gerätekategorien und ein mehrspaltiges Kachelraster, damit er auch bei 20+ Geräten bedienbar bleibt.
+**Goal:** The devices tab gets rooms, device categories derived from Matter, and a multi-column tile grid, so it stays usable even with 20+ devices.
 
-**Architecture:** Zwei neue Spalten an `device` (Migration v7) tragen den frei gewählten Raum und die rohen Matter-Gerätetypen. Die Kategorie wird daraus bei jedem Lesen abgeleitet (neues Modul `profiles/categories.py`) statt gespeichert. Die API erweitert bestehende Routen und bekommt genau eine neue (`POST /api/rooms/rename`). Das gesamte Filtern, Gruppieren, Sortieren und Suchen passiert clientseitig in `app.js` über die Liste, die `GET /api/devices` ohnehin liefert.
+**Architecture:** Two new columns on `device` (migration v7) carry the freely chosen room and the raw Matter device types. The category is derived from that on every read (new module `profiles/categories.py`) instead of stored. The API extends existing routes and gets exactly one new one (`POST /api/rooms/rename`). All filtering, grouping, sorting, and searching happens client-side in `app.js` over the list that `GET /api/devices` already delivers.
 
-**Tech Stack:** Python 3.12, FastAPI, Pydantic v2, SQLite (`sqlite3`, Schema-Versionierung über `PRAGMA user_version`), Alpine.js (vendored), pytest / pytest-asyncio, httpx2.
+**Tech Stack:** Python 3.12, FastAPI, Pydantic v2, SQLite (`sqlite3`, schema versioning via `PRAGMA user_version`), Alpine.js (vendored), pytest / pytest-asyncio, httpx2.
 
-**Spec:** `docs/superpowers/specs/2026-09-05-devices-tab-rooms-and-tile-grid-design.md` — bei jedem Zweifel gilt die Spec, nicht dieser Plan.
+**Spec:** `docs/superpowers/specs/2026-09-05-devices-tab-rooms-and-tile-grid-design.md` — whenever in doubt, the spec governs, not this plan.
 
 ## Global Constraints
 
-- **Entwickler-Prosa auf Deutsch.** Docstrings, Kommentare und Commit-Nachrichten in dichtem, begründendem Deutsch, das das *Warum* nennt. Ausnahme: der GPL-Kopf jeder Quelldatei bleibt im englischen FSF-Wortlaut.
-- **Jeder nutzersichtbare Text läuft über `i18n.t()`** mit `en`- **und** `de`-Eintrag in `src/loxmatter/i18n/strings.yaml`. Kein hartkodierter deutscher Text in `index.html`, `app.js` oder API-Fehlermeldungen.
-- **Schlüssel in `strings.yaml` sind flach und punktiert** (`web.devices.room_all`), keine verschachtelte YAML-Struktur.
-- **`web.*`-Schlüssel dürfen `{platzhalter}` tragen**, und die Fehlermeldungen unter `web.devices.*` tun das auch. `api/language.py:_web_strings()` liefert sie über `i18n.raw_template()` **unaufgelöst** an den Browser aus (`language.py:56-63`), genau damit `t(key, {…})` in `app.js` sie clientseitig füllen kann. Neue Meldungen folgen deshalb der Form des Nachbarn `web.devices.label_save_error` (`"… : {message}"`) und werden nicht per Zeichenkettenverkettung zusammengesetzt. Prüfen: nach jeder Schlüsseländerung `uv run pytest tests/api/test_language.py -q`.
-- **Kommandos laufen mit `uv`**: `uv run pytest …`, `uv run ruff check .`, `uv run mypy src`.
-- **Keine externen Frontend-Abhängigkeiten.** Icons sind inline-SVG-`<symbol>`s in `index.html`, keine Icon-Bibliothek, kein CDN — die Oberfläche läuft offline.
-- **Migration:** `_SCHEMA_VERSION` wird auf `7` gesetzt, `_migrate_to_v7` in `_MIGRATIONS` eingetragen. Neue Spalten immer über `_add_column_if_missing`, nie über nacktes `ALTER TABLE`.
-- **`set_room` und `backfill_device_types` fassen `updated_at` NICHT an.** Der Raum landet in keiner Exportvorlage; ein Aufräumen der Raumzuordnung darf kein Gerät als „geändert seit Export" markieren. `rename_device` behält sein `updated_at` unverändert.
+- **Developer prose in German.** Docstrings, comments, and commit messages in dense, reasoning German that states the *why*. Exception: the GPL header of every source file stays in the English FSF wording.
+- **Every user-visible text goes through `i18n.t()`** with an `en` **and** `de` entry in `src/loxmatter/i18n/strings.yaml`. No hardcoded German text in `index.html`, `app.js`, or API error messages.
+- **Keys in `strings.yaml` are flat and dotted** (`web.devices.room_all`), no nested YAML structure.
+- **`web.*` keys may carry `{placeholders}`**, and the error messages under `web.devices.*` do too. `api/language.py:_web_strings()` delivers them to the browser via `i18n.raw_template()` **unresolved** (`language.py:56-63`), specifically so that `t(key, {…})` in `app.js` can fill them client-side. New messages therefore follow the form of their neighbor `web.devices.label_save_error` (`"… : {message}"`) and are not assembled by string concatenation. Check: after every key change, `uv run pytest tests/api/test_language.py -q`.
+- **Commands run with `uv`**: `uv run pytest …`, `uv run ruff check .`, `uv run mypy src`.
+- **No external frontend dependencies.** Icons are inline SVG `<symbol>`s in `index.html`, no icon library, no CDN — the UI runs offline.
+- **Migration:** `_SCHEMA_VERSION` is set to `7`, `_migrate_to_v7` is entered in `_MIGRATIONS`. New columns always via `_add_column_if_missing`, never via a bare `ALTER TABLE`.
+- **`set_room` and `backfill_device_types` do NOT touch `updated_at`.** The room ends up in no export template; tidying up the room assignment must not mark a device as "changed since export". `rename_device` keeps its `updated_at` unchanged.
 
 ---
 
 ## File Structure
 
-**Neu:**
-- `src/loxmatter/profiles/categories.py` — Kategorien, Rang, Matter-Typ-Zuordnung, `category_for()`. Liegt neben `relevance.py`, weil es dieselbe Quelle (`device_types_by_endpoint`) auswertet.
-- `tests/profiles/test_categories.py` — Tabelle und Primärtyp-Regel.
-- `tests/api/test_rooms.py` — die neue Raum-Route.
+**New:**
+- `src/loxmatter/profiles/categories.py` — categories, rank, Matter type mapping, `category_for()`. Sits next to `relevance.py`, because it evaluates the same source (`device_types_by_endpoint`).
+- `tests/profiles/test_categories.py` — table and primary-type rule.
+- `tests/api/test_rooms.py` — the new room route.
 
-**Geändert:**
-- `src/loxmatter/model/store.py` — Schema v7, `StoredDevice`, `_as_device`, `register_device`, `set_room`, `rename_room`, `backfill_device_types`, JSON-Kodierung der Gerätetypen.
-- `src/loxmatter/api/models.py` — `DeviceOut` (+3 Felder), `DeviceRename` → `DevicePatch`, `CommissionRequest` (+`room`), neu `RoomRename`.
-- `src/loxmatter/api/devices.py` — `_device_out`, PATCH-Route, Commission-Route, neue Rooms-Route.
-- `src/loxmatter/cli.py` — `backfill_device_types` beim Brückenstart.
-- `src/loxmatter/i18n/strings.yaml` — neue `web.devices.*`, `web.devices.category.*`, `api.devices.*`-Schlüssel.
-- `src/loxmatter/web/app.js` — Raum-/Such-/Sortierlogik, Leitwert, Raum speichern, Raum umbenennen, Einlernen mit Raum.
-- `src/loxmatter/web/index.html` — Raumleiste, Kachel-Umbau (Mix 2), Einlern-Feld, acht Kategorie-Icons.
-- `src/loxmatter/web/style.css` — Kachelraster, Kopfzeile mit Leitwert, Raumleiste, Fußzeile.
-- `tests/model/test_store.py`, `tests/model/test_store_migration.py`, `tests/api/test_devices.py`, `tests/api/test_web.py` — neue Tests.
+**Changed:**
+- `src/loxmatter/model/store.py` — schema v7, `StoredDevice`, `_as_device`, `register_device`, `set_room`, `rename_room`, `backfill_device_types`, JSON encoding of device types.
+- `src/loxmatter/api/models.py` — `DeviceOut` (+3 fields), `DeviceRename` → `DevicePatch`, `CommissionRequest` (+`room`), new `RoomRename`.
+- `src/loxmatter/api/devices.py` — `_device_out`, PATCH route, commission route, new rooms route.
+- `src/loxmatter/cli.py` — `backfill_device_types` at bridge startup.
+- `src/loxmatter/i18n/strings.yaml` — new `web.devices.*`, `web.devices.category.*`, `api.devices.*` keys.
+- `src/loxmatter/web/app.js` — room/search/sort logic, primary signal, save room, rename room, commissioning with a room.
+- `src/loxmatter/web/index.html` — room bar, tile rework (mix 2), commissioning field, eight category icons.
+- `src/loxmatter/web/style.css` — tile grid, header with primary signal, room bar, footer.
+- `tests/model/test_store.py`, `tests/model/test_store_migration.py`, `tests/api/test_devices.py`, `tests/api/test_web.py` — new tests.
 
 ---
 
-### Task 1: Migration v7 — die zwei Spalten
+### Task 1: Migration v7 — the two columns
 
 **Files:**
-- Modify: `src/loxmatter/model/store.py` (Kopfkommentar zu `_SCHEMA_VERSION` ab Zeile 73, `_SCHEMA_VERSION` Zeile 100, `_SCHEMA` Zeile 103-112, `_MIGRATIONS` Zeile 576-583, `StoredDevice` Zeile 681-707, `_as_device` Zeile 838-847)
+- Modify: `src/loxmatter/model/store.py` (header comment on `_SCHEMA_VERSION` starting at line 73, `_SCHEMA_VERSION` line 100, `_SCHEMA` line 103-112, `_MIGRATIONS` line 576-583, `StoredDevice` line 681-707, `_as_device` line 838-847)
 - Test: `tests/model/test_store_migration.py`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: `StoredDevice.room: str | None`, `StoredDevice.device_types: dict[int, frozenset[int]] | None`, Modulfunktionen `_encode_device_types(Mapping[int, frozenset[int]]) -> str` und `_decode_device_types(str | None) -> dict[int, frozenset[int]] | None`, Migrationsfunktion `_migrate_to_v7(sqlite3.Connection) -> None`.
+- Consumes: nothing.
+- Produces: `StoredDevice.room: str | None`, `StoredDevice.device_types: dict[int, frozenset[int]] | None`, module functions `_encode_device_types(Mapping[int, frozenset[int]]) -> str` and `_decode_device_types(str | None) -> dict[int, frozenset[int]] | None`, migration function `_migrate_to_v7(sqlite3.Connection) -> None`.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/model/test_store_migration.py` anhängen (die Datei importiert `sqlite3`, `load` und `user_version` bereits — am Kopf der Datei nachsehen und nichts doppelt importieren):
+Append to `tests/model/test_store_migration.py` (the file already imports `sqlite3`, `load`, and `user_version` — check the top of the file and don't import anything twice):
 
 ```python
 def test_migration_to_v7_adds_room_and_device_types_as_null(tmp_path):
-    """Eine Bestandsdatenbank auf Version 6 bekommt beide Spalten per
-    Migration. Kein Backfill: `room = NULL` bedeutet "Ohne Raum", genau wie
-    bei einem frisch eingelernten Geraet ohne Raumwahl, und
-    `device_types = NULL` bedeutet "noch nicht nachgetragen" - dafuer ist
-    `backfill_device_types` beim Bruueckenstart zustaendig, nicht die
-    Migration (siehe Entwurf 3.4)."""
-    path = tmp_path / "alt.sqlite"
+    """An existing database at version 6 gets both columns via
+    migration. No backfill: `room = NULL` means "no room", exactly like
+    a freshly commissioned device with no room chosen, and
+    `device_types = NULL` means "not backfilled yet" - `backfill_device_types`
+    is responsible for that at bridge startup, not the
+    migration (see design 3.4)."""
+    path = tmp_path / "old.sqlite"
     store = Store(path)
     snapshot = load("ikea_grillplats_plug.json")
     device_id = store.register_device(snapshot)
@@ -91,11 +91,11 @@ def test_migration_to_v7_adds_room_and_device_types_as_null(tmp_path):
 
 
 def test_a_fresh_database_survives_the_v7_migration_without_duplicate_column(tmp_path):
-    """Eine frisch angelegte Datenbank hat beide Spalten bereits durch
-    `_SCHEMA`. `_add_column_if_missing` muss das erkennen - sonst scheiterte
-    der allererste Start mit "duplicate column name", dieselbe Falle, gegen
-    die schon `_migrate_to_v1` abgesichert ist."""
-    path = tmp_path / "neu.sqlite"
+    """A freshly created database already has both columns via
+    `_SCHEMA`. `_add_column_if_missing` has to recognize that - otherwise
+    the very first startup would fail with "duplicate column name", the same trap
+    `_migrate_to_v1` is already guarded against."""
+    path = tmp_path / "new.sqlite"
     store = Store(path)
     store.close()
 
@@ -114,11 +114,11 @@ def test_a_fresh_database_survives_the_v7_migration_without_duplicate_column(tmp
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/model/test_store_migration.py -k v7 -v`
-Expected: FAIL — `sqlite3.OperationalError: no such column: room` beim `DROP COLUMN`, bzw. `AttributeError: 'StoredDevice' object has no attribute 'room'`.
+Expected: FAIL — `sqlite3.OperationalError: no such column: room` on `DROP COLUMN`, or `AttributeError: 'StoredDevice' object has no attribute 'room'`.
 
-- [ ] **Step 3: Schema und Version anheben**
+- [ ] **Step 3: Raise the schema and version**
 
-In `src/loxmatter/model/store.py`: die `device`-Tabelle in `_SCHEMA` um zwei Spalten erweitern:
+In `src/loxmatter/model/store.py`: extend the `device` table in `_SCHEMA` by two columns:
 
 ```python
 CREATE TABLE IF NOT EXISTS device (
@@ -135,43 +135,43 @@ CREATE TABLE IF NOT EXISTS device (
 );
 ```
 
-`_SCHEMA_VERSION = 6` wird zu `_SCHEMA_VERSION = 7`, und an den Kopfkommentar darüber (er zählt jede Version einzeln auf) kommt ein Absatz:
+`_SCHEMA_VERSION = 6` becomes `_SCHEMA_VERSION = 7`, and the header comment above it (which lists every version individually) gets a paragraph added:
 
 ```python
-# Version 7 (Entwurf Geraete-Tab, 2026-09-05) fuegt `device.room` und
-# `device.device_types` hinzu, siehe `_migrate_to_v7` - kein Backfill fuer
-# beide, aber aus zwei verschiedenen Gruenden: `room = NULL` IST die
-# richtige Bedeutung ("Ohne Raum"), waehrend `device_types = NULL` nur
-# "noch nicht nachgetragen" heisst und beim naechsten Bruueckenstart aus
-# den ohnehin geholten Abbildern gefuellt wird (`backfill_device_types`).
-# Eine Migration kann das nicht: sie sieht nur die Datenbank, nie ein
+# Version 7 (devices tab design, 2026-09-05) adds `device.room` and
+# `device.device_types`, see `_migrate_to_v7` - no backfill for
+# either, but for two different reasons: `room = NULL` IS the
+# correct meaning ("no room"), while `device_types = NULL` only
+# means "not backfilled yet" and gets filled at the next bridge startup
+# from the snapshots fetched anyway (`backfill_device_types`).
+# A migration cannot do that: it only sees the database, never a
 # `NodeSnapshot`.
 ```
 
-- [ ] **Step 4: Migration schreiben und eintragen**
+- [ ] **Step 4: Write and register the migration**
 
-Direkt nach `_migrate_to_v6` einfügen:
+Insert directly after `_migrate_to_v6`:
 
 ```python
 def _migrate_to_v7(db: sqlite3.Connection) -> None:
-    """Fuegt `device.room` und `device.device_types` hinzu (Entwurf
-    Geraete-Tab, 2026-09-05, Abschnitt 3.1).
+    """Adds `device.room` and `device.device_types` (devices tab
+    design, 2026-09-05, section 3.1).
 
-    Zwei Spalten in einem Schritt, wie `_migrate_to_v2` - beide gehoeren zu
-    demselben Vorhaben und kaemen nie einzeln vor.
+    Two columns in one step, like `_migrate_to_v2` - both belong to
+    the same effort and would never occur separately.
 
-    Kein Backfill. Fuer `room` gibt es keinen Bestandswert, aus dem sich ein
-    Raum ableiten liesse, und `NULL` ist ohnehin die gewollte Bedeutung
-    ("Ohne Raum"). Fuer `device_types` gaebe es einen - die Matter-
-    Geraetetypen stehen im `NodeSnapshot` -, aber genau der liegt einer
-    Migration nicht vor: sie bekommt eine `sqlite3.Connection` und sonst
-    nichts. Das Nachtragen uebernimmt `Store.backfill_device_types` beim
-    Start der Bruecke, wo die Abbilder ohnehin geholt werden."""
+    No backfill. For `room` there is no existing value from which a
+    room could be derived, and `NULL` is the intended meaning anyway
+    ("no room"). For `device_types` there would be one - the Matter
+    device types are in the `NodeSnapshot` -, but a migration does not
+    have access to exactly that: it gets an `sqlite3.Connection` and
+    nothing else. `Store.backfill_device_types` takes over the backfill
+    at bridge startup, where the snapshots are fetched anyway."""
     _add_column_if_missing(db, "device", "room", "TEXT")
     _add_column_if_missing(db, "device", "device_types", "TEXT")
 ```
 
-Und in `_MIGRATIONS`:
+And in `_MIGRATIONS`:
 
 ```python
 _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
@@ -185,34 +185,34 @@ _MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
 }
 ```
 
-- [ ] **Step 5: `StoredDevice` und `_as_device` erweitern**
+- [ ] **Step 5: Extend `StoredDevice` and `_as_device`**
 
-Ganz oben in `store.py` `import json` zu den Imports hinzufügen (alphabetisch vor `sqlite3`).
+At the very top of `store.py`, add `import json` to the imports (alphabetically before `sqlite3`).
 
-Zwei Modulfunktionen, direkt vor `class StoredDevice`:
+Two module functions, directly before `class StoredDevice`:
 
 ```python
 def _encode_device_types(types: Mapping[int, frozenset[int]]) -> str:
-    """Die Ausgabe von `relevance.device_types_by_endpoint` als JSON fuer die
-    Spalte `device.device_types`.
+    """The output of `relevance.device_types_by_endpoint` as JSON for the
+    `device.device_types` column.
 
-    Endpunkte werden zu Zeichenketten, weil JSON keine ganzzahligen
-    Schluessel kennt; die IDs werden sortiert abgelegt, damit zwei gleiche
-    Abbilder auch denselben Text ergeben - das macht einen Vergleich in
-    einem Test lesbar und verhindert, dass ein bedeutungsloser
-    Reihenfolgewechsel wie eine Aenderung aussieht."""
+    Endpoints become strings, because JSON has no integer
+    keys; the IDs are stored sorted, so that two identical
+    snapshots also produce the same text - that makes a comparison in
+    a test readable and prevents a meaningless
+    order change from looking like an actual change."""
     return json.dumps({str(endpoint): sorted(ids) for endpoint, ids in sorted(types.items())})
 
 
 def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
-    """Gegenstueck zu `_encode_device_types`. `None` heisst "noch nicht
-    nachgetragen" (siehe `_migrate_to_v7`).
+    """Counterpart to `_encode_device_types`. `None` means "not
+    backfilled yet" (see `_migrate_to_v7`).
 
-    Unlesbares JSON wird ebenfalls zu `None` statt zu einer Ausnahme: eine
-    von Hand verstellte Zeile darf die gesamte Geraeteliste nicht
-    unbenutzbar machen: das Geraet landet dann in der Kategorie "Sonstige"
-    und wird beim naechsten Bruueckenstart neu befuellt - dieselbe
-    Behandlung wie eine nie gefuellte Zeile."""
+    Unreadable JSON also becomes `None` instead of an exception: a
+    row someone tampered with by hand must not make the entire device
+    list unusable: the device then ends up in the "other" category
+    and gets refilled at the next bridge startup - the same
+    treatment as a row that was never filled."""
     if raw is None:
         return None
     try:
@@ -224,29 +224,29 @@ def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
     return {int(endpoint): frozenset(int(i) for i in ids) for endpoint, ids in parsed.items()}
 ```
 
-`Mapping` zu den `collections.abc`-Importen hinzufügen: `from collections.abc import Callable, Mapping, Sequence`.
+Add `Mapping` to the `collections.abc` imports: `from collections.abc import Callable, Mapping, Sequence`.
 
-An `StoredDevice` zwei Felder anhängen (nach `updated_at`):
+Append two fields to `StoredDevice` (after `updated_at`):
 
 ```python
-    # Raum und Geraetetypen (Entwurf Geraete-Tab, 2026-09-05). `room` ist ein
-    # frei gewaehlter Name, `None` heisst "Ohne Raum" - es gibt bewusst keine
-    # Raum-Tabelle, ein Raum existiert genau so lange, wie ein aktives Geraet
-    # seinen Namen traegt.
+    # Room and device types (devices tab design, 2026-09-05). `room` is a
+    # freely chosen name, `None` means "no room" - there is deliberately no
+    # room table, a room exists for exactly as long as an active device
+    # carries its name.
     #
-    # `device_types` traegt die ROHE Auskunft des Geraets (Endpunkt ->
-    # Matter-Typ-IDs), nicht die daraus abgeleitete Kategorie. Der Grund
-    # steht in der Geschichte dieses Moduls: `signal.functional` und
-    # `signal.title` waren gespeicherte Ableitungen, und `_migrate_to_v3`
-    # musste sie fuer Bestandszeilen nachtraeglich neu berechnen, als sich
-    # die Regel verbesserte. Eine Zuordnungstabelle Matter-Typ -> Kategorie
-    # wird wachsen; wird nur die Quelle gespeichert, ist das ein
-    # Codewechsel ohne Migration.
+    # `device_types` carries the device's RAW information (endpoint ->
+    # Matter type IDs), not the category derived from it. The reason
+    # is in this module's history: `signal.functional` and
+    # `signal.title` were stored derivations, and `_migrate_to_v3`
+    # had to recompute them retroactively for existing rows when
+    # the rule improved. A mapping table Matter type -> category
+    # will grow; if only the source is stored, that is a
+    # code change without a migration.
     room: str | None
     device_types: dict[int, frozenset[int]] | None
 ```
 
-Und `_as_device`:
+And `_as_device`:
 
 ```python
     @staticmethod
@@ -266,24 +266,25 @@ Und `_as_device`:
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/model -q`
-Expected: PASS, alle Tests der Datei — insbesondere die bestehenden v1–v6-Migrationstests, die durch die neue Version mitlaufen.
+Expected: PASS, all tests in the file — in particular the existing v1–v6 migration tests, which run along with the new version.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add src/loxmatter/model/store.py tests/model/test_store_migration.py
 git commit -m "$(cat <<'EOF'
-feat(store): Schema v7 mit Raum und rohen Geraetetypen am Geraet
+feat(store): schema v7 with room and raw device types on the device
 
-`device.room` (NULL = "Ohne Raum") und `device.device_types` (JSON,
-Endpunkt -> Matter-Typ-IDs). Gespeichert wird bewusst die rohe Auskunft
-des Geraets, nicht die daraus abgeleitete Kategorie: `_migrate_to_v3`
-musste `signal.functional` genau deshalb schon einmal rueckwirkend neu
-berechnen, als sich die Ableitungsregel verbesserte.
+`device.room` (NULL = "no room") and `device.device_types` (JSON,
+endpoint -> Matter type IDs). What is stored is deliberately the raw
+information from the device, not the category derived from it:
+`_migrate_to_v3` already had to recompute `signal.functional`
+retroactively once for exactly this reason, when the derivation rule
+improved.
 
-Kein Backfill in der Migration - fuer `room` waere keiner moeglich, fuer
-`device_types` braeuchte er ein NodeSnapshot, das einer Migration nicht
-vorliegt.
+No backfill in the migration - for `room` none would be possible, for
+`device_types` it would need a NodeSnapshot, which a migration does not
+have access to.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -292,19 +293,19 @@ EOF
 
 ---
 
-### Task 2: Raum schreiben, umbenennen, beim Registrieren mitgeben
+### Task 2: Write and rename the room, pass it along when registering
 
 **Files:**
-- Modify: `src/loxmatter/model/store.py` (`register_device` Zeile 808-826, neue Methoden nach `rename_device` Zeile 867-882)
+- Modify: `src/loxmatter/model/store.py` (`register_device` line 808-826, new methods after `rename_device` line 867-882)
 - Test: `tests/model/test_store.py`
 
 **Interfaces:**
-- Consumes: `StoredDevice.room` aus Task 1.
-- Produces: `Store.set_room(device_id: int, room: str | None) -> None`, `Store.rename_room(old: str, new: str) -> int` (Anzahl geänderter Geräte, `ValueError` bei leerem Zielnamen), `Store.register_device(snapshot: NodeSnapshot, room: str | None = None) -> int`, Modulfunktion `_normalized_room(str | None) -> str | None`.
+- Consumes: `StoredDevice.room` from task 1.
+- Produces: `Store.set_room(device_id: int, room: str | None) -> None`, `Store.rename_room(old: str, new: str) -> int` (count of changed devices, `ValueError` on an empty target name), `Store.register_device(snapshot: NodeSnapshot, room: str | None = None) -> int`, module function `_normalized_room(str | None) -> str | None`.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/model/test_store.py` anhängen (die Datei hat bereits `Store` und einen `load`-Helfer für Fixtures; den vorhandenen Namen übernehmen, nicht neu erfinden):
+Append to `tests/model/test_store.py` (the file already has `Store` and a `load` helper for fixtures; reuse the existing name, don't reinvent it):
 
 ```python
 def test_set_room_stores_the_name_and_trims_it(tmp_path):
@@ -318,9 +319,9 @@ def test_set_room_stores_the_name_and_trims_it(tmp_path):
 
 
 def test_set_room_with_blank_input_clears_the_room(tmp_path):
-    """Ein Name aus reinem Leerraum hat eine eindeutige Bedeutung - "kein
-    Raum" - und ist deshalb kein Fehlerfall, sondern derselbe Weg wie ein
-    ausdrueckliches `None`."""
+    """A name made of pure whitespace has an unambiguous meaning - "no
+    room" - and is therefore not an error case but the same path as an
+    explicit `None`."""
     store = Store(tmp_path / "t.sqlite")
     try:
         device_id = store.register_device(load("ikea_grillplats_plug.json"))
@@ -332,12 +333,12 @@ def test_set_room_with_blank_input_clears_the_room(tmp_path):
 
 
 def test_set_room_does_not_touch_updated_at(tmp_path):
-    """Der Kern der Entscheidung aus Abschnitt 3.3 des Entwurfs: der Raum
-    landet in KEINER Exportvorlage. Wuerde `set_room` `updated_at` mitsetzen,
-    bekaeme beim ersten Aufraeumen der Raumzuordnung jedes Geraet eine amber
-    "geaendert seit Export"-Pille und die Aufforderung zu einem Export, der
-    Byte fuer Byte dieselben Dateien erzeugt. `rename_device` setzt es
-    dagegen zu Recht - das Label wird als `Title` exportiert."""
+    """The core of the decision from section 3.3 of the design: the room
+    ends up in NO export template. If `set_room` also set `updated_at`,
+    the first cleanup of room assignments would give every device an amber
+    "changed since export" pill and prompt an export that produces
+    byte-for-byte the same files. `rename_device`, by contrast, rightly
+    does set it - the label gets exported as `Title`."""
     store = Store(tmp_path / "t.sqlite")
     try:
         device_id = store.register_device(load("ikea_grillplats_plug.json"))
@@ -370,10 +371,10 @@ def test_rename_room_moves_every_device_and_reports_the_count(tmp_path):
 
 
 def test_rename_room_merges_into_an_existing_room(tmp_path):
-    """Ein Zielname, den es schon gibt, fuehrt beide Raeume zusammen - die
-    naheliegende Bedeutung von "nenne Kueche jetzt Essbereich", wenn es
-    einen Essbereich schon gibt. Die Oberflaeche fragt vorher nach; der
-    Store fuehrt nur aus."""
+    """A target name that already exists merges the two rooms - the
+    obvious meaning of "rename kitchen to dining area now" when a
+    dining area already exists. The UI asks for confirmation beforehand; the
+    store only carries it out."""
     store = Store(tmp_path / "t.sqlite")
     try:
         plug = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
@@ -386,9 +387,9 @@ def test_rename_room_merges_into_an_existing_room(tmp_path):
 
 
 def test_rename_room_leaves_removed_devices_alone(tmp_path):
-    """`active = 1` in der Bedingung, aus demselben Grund, aus dem
-    `Store.devices()` danach filtert: ein entferntes Geraet ist aus Sicht
-    der Oberflaeche nicht mehr da und soll nicht stillschweigend mitwandern."""
+    """`active = 1` in the condition, for the same reason
+    `Store.devices()` filters on it afterward: a removed device is no
+    longer there from the UI's perspective and should not silently move along."""
     store = Store(tmp_path / "t.sqlite")
     try:
         gone = store.register_device(load("ikea_grillplats_plug.json"), room="Küche")
@@ -415,23 +416,24 @@ def test_rename_room_rejects_an_empty_target(tmp_path):
 Run: `uv run pytest tests/model/test_store.py -k "room" -v`
 Expected: FAIL — `AttributeError: 'Store' object has no attribute 'set_room'`.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
-Modulfunktion, direkt neben `_decode_device_types`:
+Module function, right next to `_decode_device_types`:
 
 ```python
 def _normalized_room(room: str | None) -> str | None:
-    """Ein Raumname ohne aeusseren Leerraum; was danach leer ist, wird `None`.
+    """A room name with no surrounding whitespace; whatever is empty after
+    that becomes `None`.
 
-    Eine Stelle statt drei: `set_room`, `register_device` und `rename_room`
-    stellen dieselbe Frage, und ein Raum " Bad" neben "Bad" waeren zwei
-    Raeume in der Oberflaeche, ohne dass jemand den Unterschied saehe."""
+    One spot instead of three: `set_room`, `register_device`, and
+    `rename_room` ask the same question, and a room " Bad" next to "Bad"
+    would be two rooms in the UI, without anyone seeing the difference."""
     if room is None:
         return None
     return room.strip() or None
 ```
 
-`register_device` bekommt den Parameter (der Frueh-Ausstieg für ein bereits registriertes Gerät bleibt **unverändert** — ein schon bekanntes Gerät behält seinen Raum, ein erneutes Einlernen soll ihn nicht überschreiben):
+`register_device` gets the parameter (the early exit for an already-registered device stays **unchanged** — a device already known keeps its room, recommissioning must not overwrite it):
 
 ```python
     def register_device(self, snapshot: NodeSnapshot, room: str | None = None) -> int:
@@ -461,46 +463,47 @@ def _normalized_room(room: str | None) -> str | None:
         return int(device_id)
 ```
 
-Zwei neue Methoden, direkt nach `rename_device`:
+Two new methods, directly after `rename_device`:
 
 ```python
 def set_room(self, device_id: int, room: str | None) -> None:
-    """Setzt den Raum eines Geraets (`PATCH /api/devices/{device_id}`).
+    """Sets a device's room (`PATCH /api/devices/{device_id}`).
 
-    **Fasst `updated_at` bewusst NICHT an** - der eine Punkt, an dem
-    diese Methode von `rename_device` direkt darueber abweicht. Dessen
-    Docstring nennt den Grund fuer das Gegenteil: das Label landet im
-    naechsten Export als `Title` in der Vorlage, also fuehrt
-    `GET /api/export/status` das Geraet danach zu Recht als "seither
-    geaendert". Der Raum landet in keiner Vorlage. Wuerde er `updated_at`
-    mitsetzen, bekaeme beim ersten Aufraeumen der Raumzuordnung jedes
-    Geraet eine amber Pille und die Aufforderung zu einem Export, der
-    genau dieselben Dateien erzeugt wie der letzte.
+    **Deliberately does NOT touch `updated_at`** - the one point where
+    this method diverges from `rename_device` directly above it. Its
+    docstring names the reason for the opposite: the label ends up in
+    the next export as `Title` in the template, so `GET
+    /api/export/status` rightly lists the device afterward as "changed
+    since". The room ends up in no template. If it also set `updated_at`,
+    the first cleanup of room assignments would give every
+    device an amber pill and prompt an export that produces
+    exactly the same files as the last one.
 
-    Wie `rename_device` ohne Existenzpruefung: die aufrufende Route
-    prueft ueber `device()` und meldet 404, bevor es hierher kommt."""
+    Like `rename_device`, without an existence check: the calling
+    route checks via `device()` and reports 404 before it gets here."""
     self._db.execute("UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id))
     self._db.commit()
 
 
 def rename_room(self, old: str, new: str) -> int:
-    """Benennt einen Raum an allen aktiven Geraeten um und gibt zurueck,
-    wie viele es waren (`POST /api/rooms/rename`).
+    """Renames a room on every active device and returns how many
+    there were (`POST /api/rooms/rename`).
 
-    Es gibt keine Raum-Tabelle (Entwurf 3.2), also ist "Raum umbenennen"
-    kein Schreibvorgang auf einem Objekt, sondern dieser eine
-    Massenschreibvorgang. Die Alternative waere, an jedem Geraet einzeln
-    einen neuen Raumnamen einzutippen - bei fuenf Geraeten fuenf
-    Gelegenheiten fuer einen Tippfehler, der einen sechsten Raum erzeugt.
+    There is no room table (design 3.2), so "rename room" is not
+    a write to one object, but this one bulk write.
+    The alternative would be typing a new room name individually into each
+    device - with five devices, five
+    chances for a typo that creates a sixth room.
 
-    `active = 1` aus demselben Grund, aus dem `devices()` danach filtert:
-    ein entferntes Geraet ist aus Sicht der Oberflaeche nicht mehr da.
+    `active = 1` for the same reason `devices()` filters on it
+    afterward: a removed device is no longer there from the UI's
+    perspective.
 
-    Ein bereits belegter Zielname fuehrt beide Raeume zusammen; die
-    Rueckfrage davor ist Sache der Oberflaeche, nicht dieser Methode.
-    Ein leerer Zielname dagegen wird hier abgewiesen: "umbenennen" ist
-    nicht der Weg, einen Raum aufzuloesen - dafuer gibt es `set_room`
-    mit `None` an jedem einzelnen Geraet."""
+    A target name that is already taken merges the two rooms; the
+    confirmation prompt beforehand is the UI's job, not this method's.
+    An empty target name, by contrast, is rejected here: "rename" is
+    not the way to dissolve a room - `set_room`
+    with `None` on each individual device exists for that."""
     target = _normalized_room(new)
     if target is None:
         raise ValueError(i18n.t("api.devices.room_name_required"))
@@ -511,9 +514,9 @@ def rename_room(self, old: str, new: str) -> int:
     return int(cur.rowcount)
 ```
 
-- [ ] **Step 4: Übersetzungsschlüssel für die `ValueError`-Nachricht anlegen**
+- [ ] **Step 4: Create the translation key for the `ValueError` message**
 
-In `src/loxmatter/i18n/strings.yaml`, im `api.devices.*`-Block:
+In `src/loxmatter/i18n/strings.yaml`, in the `api.devices.*` block:
 
 ```yaml
 api.devices.room_name_required:
@@ -524,24 +527,24 @@ api.devices.room_name_required:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/model/test_store.py -k "room" -v && uv run pytest tests/model tests/api -q`
-Expected: PASS. Prüfen, dass in `tests/model/test_store.py` `import pytest` bereits am Kopf steht — sonst ergänzen.
+Expected: PASS. Check that `import pytest` is already at the top of `tests/model/test_store.py` — add it if not.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/loxmatter/model/store.py src/loxmatter/i18n/strings.yaml tests/model/test_store.py
 git commit -m "$(cat <<'EOF'
-feat(store): Raum setzen, umbenennen und beim Registrieren mitgeben
+feat(store): set and rename the room, pass it along when registering
 
-`set_room` fasst `updated_at` bewusst nicht an, anders als das direkt
-darueberstehende `rename_device`: das Label wird als `Title` exportiert,
-der Raum in keiner Vorlage. Ohne diese Trennung markierte das erste
-Aufraeumen der Raumzuordnung jedes Geraet als "geaendert seit Export"
-und forderte einen Export an, der dieselben Dateien erzeugt.
+`set_room` deliberately does not touch `updated_at`, unlike
+`rename_device` directly above it: the label gets exported as `Title`,
+the room in no template. Without this separation, the first cleanup
+of room assignments would mark every device as "changed since export"
+and prompt an export that produces the same files.
 
-`rename_room` fasst nur aktive Geraete an - dieselbe Grenze wie
-`devices()`. Ein belegter Zielname fuehrt zusammen; die Rueckfrage davor
-gehoert in die Oberflaeche.
+`rename_room` only touches active devices - the same boundary as
+`devices()`. A target name already in use merges; the confirmation
+prompt beforehand belongs in the UI.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -550,26 +553,26 @@ EOF
 
 ---
 
-### Task 3: Gerätetypen schreiben und beim Brückenstart nachtragen
+### Task 3: Write device types, backfill them at bridge startup
 
 **Files:**
-- Modify: `src/loxmatter/model/store.py` (`register_device`, neue Methode `backfill_device_types`, Import aus `relevance`)
+- Modify: `src/loxmatter/model/store.py` (`register_device`, new method `backfill_device_types`, import from `relevance`)
 - Modify: `src/loxmatter/cli.py:606`
 - Test: `tests/model/test_store.py`
 
 **Interfaces:**
-- Consumes: `_encode_device_types` (Task 1), `register_device(snapshot, room)` (Task 2).
-- Produces: `Store.backfill_device_types(snapshots: Sequence[NodeSnapshot]) -> int` (Anzahl gefüllter Zeilen); `register_device` schreibt `device_types` bei der Registrierung mit.
+- Consumes: `_encode_device_types` (task 1), `register_device(snapshot, room)` (task 2).
+- Produces: `Store.backfill_device_types(snapshots: Sequence[NodeSnapshot]) -> int` (count of filled rows); `register_device` writes `device_types` along with the registration.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/model/test_store.py` anhängen:
+Append to `tests/model/test_store.py`:
 
 ```python
 def test_register_device_stores_the_matter_device_types(tmp_path):
-    """Endpunkt 1 der Steckdose meldet 266 (0x010A, On/Off Plug-in Unit),
-    Endpunkt 0 die Verwaltungstypen - beide werden roh abgelegt, gefiltert
-    wird erst beim Ableiten der Kategorie."""
+    """Endpoint 1 of the plug reports 266 (0x010A, On/Off Plug-in Unit),
+    endpoint 0 the management types - both are stored raw, filtering
+    only happens when the category is derived."""
     store = Store(tmp_path / "t.sqlite")
     try:
         device_id = store.register_device(load("ikea_grillplats_plug.json"))
@@ -581,8 +584,8 @@ def test_register_device_stores_the_matter_device_types(tmp_path):
 
 
 def test_backfill_fills_only_rows_that_have_none(tmp_path):
-    """Eine Bestandszeile bekommt ihre Typen beim naechsten Bruueckenstart -
-    eine bereits gefuellte wird nicht bei jedem Start neu geschrieben."""
+    """An existing row gets its types at the next bridge startup -
+    one already filled does not get rewritten on every startup."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_grillplats_plug.json")
@@ -598,9 +601,9 @@ def test_backfill_fills_only_rows_that_have_none(tmp_path):
 
 
 def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path):
-    """Ein Geraet, das beim Start gerade offline ist, fehlt in
-    `client.snapshots()`. Es darf dadurch nichts verlieren - deshalb wird
-    nur geschrieben, wo ein Abbild vorliegt, und nie geleert."""
+    """A device that happens to be offline at startup is missing from
+    `client.snapshots()`. It must not lose anything as a result - that's why
+    only what has a snapshot gets written, and nothing is ever cleared."""
     store = Store(tmp_path / "t.sqlite")
     try:
         plug = load("ikea_grillplats_plug.json")
@@ -618,9 +621,9 @@ def test_backfill_leaves_a_device_missing_from_the_snapshots_untouched(tmp_path)
 
 
 def test_backfill_does_not_touch_updated_at(tmp_path):
-    """Dieselbe Begruendung wie bei `set_room`: die Geraetetypen landen in
-    keiner Exportvorlage. Ein Bruueckenstart darf nicht die halbe
-    Geraeteliste als "geaendert seit Export" markieren."""
+    """The same reasoning as with `set_room`: device types end up in
+    no export template. A bridge startup must not mark half the
+    device list as "changed since export"."""
     store = Store(tmp_path / "t.sqlite")
     try:
         snapshot = load("ikea_grillplats_plug.json")
@@ -638,13 +641,13 @@ def test_backfill_does_not_touch_updated_at(tmp_path):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/model/test_store.py -k "device_types or backfill" -v`
-Expected: FAIL — `assert types is not None` schlägt fehl (Spalte wird noch nicht beschrieben) bzw. `AttributeError: 'Store' object has no attribute 'backfill_device_types'`.
+Expected: FAIL — `assert types is not None` fails (the column is not written yet), or `AttributeError: 'Store' object has no attribute 'backfill_device_types'`.
 
-- [ ] **Step 3: Implementieren**
+- [ ] **Step 3: Implement**
 
-In `store.py` den bestehenden Import aus `loxmatter.profiles.relevance` um `device_types_by_endpoint` erweitern (er importiert dort bereits `is_functional`).
+In `store.py`, extend the existing import from `loxmatter.profiles.relevance` with `device_types_by_endpoint` (it already imports `is_functional` there).
 
-`register_device` schreibt die Typen mit:
+`register_device` writes the types along with it:
 
 ```python
         label = f"{snapshot.vendor_name} {snapshot.product_name}".strip() or identity
@@ -664,31 +667,31 @@ In `store.py` den bestehenden Import aus `loxmatter.profiles.relevance` um `devi
         )
 ```
 
-Neue Methode, direkt nach `set_room`:
+New method, directly after `set_room`:
 
 ```python
     def backfill_device_types(self, snapshots: Sequence[NodeSnapshot]) -> int:
-        """Traegt `device.device_types` fuer Geraete nach, die noch keine
-        haben, und gibt zurueck, wie viele das waren.
+        """Backfills `device.device_types` for devices that don't yet have
+        any, and returns how many that was.
 
-        Aufgerufen beim Start der Bruecke, direkt neben
+        Called at bridge startup, directly next to
         `runtime.seed_from_snapshot(await client.snapshots())` (`cli.py`) -
-        die Abbilder aller erreichbaren Knoten sind dort bereits geholt, ein
-        zweiter Abruf waere reine Verschwendung.
+        the snapshots of all reachable nodes are already fetched there, a
+        second fetch would be pure waste.
 
-        **Nur `device_types IS NULL`.** Ein bereits nachgetragenes Geraet
-        wird nicht bei jedem Start neu geschrieben, und ein Geraet, das
-        gerade offline ist und deshalb in `snapshots()` fehlt, verliert
-        seine Typen nicht - hier wird ausschliesslich gefuellt, nie geleert.
+        **Only `device_types IS NULL`.** A device already backfilled
+        does not get rewritten on every startup, and a device
+        that is currently offline and therefore missing from `snapshots()`
+        does not lose its types - this only ever fills, never clears.
 
-        Ob ein Geraet, dessen Typen sich beim erneuten Interview aendern
-        (etwa nach einem Firmware-Update), eine Aktualisierung bekommen
-        soll, ist bewusst offen gelassen (Entwurf, offener Punkt 2): der
-        Fall ist nie beobachtet worden und bekommt keine Mechanik auf
-        Verdacht.
+        Whether a device whose types change on a repeat interview
+        (say, after a firmware update) should get an update
+        is deliberately left open (design, open point 2): the
+        case has never been observed and gets no mechanism on
+        spec.
 
-        Fasst `updated_at` nicht an - dieselbe Begruendung wie bei
-        `set_room`: die Geraetetypen landen in keiner Exportvorlage."""
+        Does not touch `updated_at` - the same reasoning as with
+        `set_room`: device types end up in no export template."""
         by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
         rows = self._db.execute(
             "SELECT id, node_id FROM device WHERE device_types IS NULL AND active = 1"
@@ -707,24 +710,24 @@ Neue Methode, direkt nach `set_room`:
         return filled
 ```
 
-- [ ] **Step 4: Beim Brückenstart aufrufen**
+- [ ] **Step 4: Call it at bridge startup**
 
-In `src/loxmatter/cli.py`, unmittelbar nach der bestehenden Zeile 606:
+In `src/loxmatter/cli.py`, right after the existing line 606:
 
 ```python
         await runtime.seed_from_snapshot(await client.snapshots())
 ```
 
-wird daraus:
+becomes:
 
 ```python
         snapshots = await client.snapshots()
         await runtime.seed_from_snapshot(snapshots)
-        # Geraetetypen von Bestandsgeraeten nachtragen (Entwurf Geraete-Tab,
-        # 2026-09-05, Abschnitt 3.4): die Abbilder sind gerade geholt, ein
-        # zweiter Abruf nur fuer diesen Zweck waere Verschwendung. Fuellt nur
-        # Zeilen ohne Typen; ein Geraet, das gerade offline ist und deshalb
-        # hier fehlt, behaelt seine und wird beim naechsten Start erreicht.
+        # Backfill device types for existing devices (devices tab design,
+        # 2026-09-05, section 3.4): the snapshots were just fetched, a
+        # second fetch just for this purpose would be waste. Only fills
+        # rows without types; a device that is currently offline and
+        # therefore missing here keeps its own and is reached at the next startup.
         store.backfill_device_types(snapshots)
 ```
 
@@ -738,16 +741,16 @@ Expected: PASS.
 ```bash
 git add src/loxmatter/model/store.py src/loxmatter/cli.py tests/model/test_store.py
 git commit -m "$(cat <<'EOF'
-feat(store): Matter-Geraetetypen speichern und beim Start nachtragen
+feat(store): store Matter device types and backfill them at startup
 
-`register_device` legt die Ausgabe von `device_types_by_endpoint` roh ab.
-Bestandsgeraete holt `backfill_device_types` beim Bruueckenstart aus den
-Abbildern, die `seed_from_snapshot` ohnehin gerade geladen hat - ein
-zweiter Abruf nur dafuer waere Verschwendung.
+`register_device` stores the output of `device_types_by_endpoint` raw.
+`backfill_device_types` fetches existing devices' types at bridge
+startup from the snapshots that `seed_from_snapshot` has already
+loaded anyway - a second fetch just for this would be waste.
 
-Gefuellt wird nur, wo nichts steht, und nie geleert: ein beim Start
-offline stehendes Geraet fehlt in `snapshots()` und soll dadurch nichts
-verlieren.
+Only fills where nothing is set, and never clears: a device that is
+offline at startup is missing from `snapshots()` and must not lose
+anything as a result.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -756,22 +759,22 @@ EOF
 
 ---
 
-### Task 4: `profiles/categories.py` — Kategorie aus den Gerätetypen
+### Task 4: `profiles/categories.py` — category from the device types
 
 **Files:**
 - Create: `src/loxmatter/profiles/categories.py`
 - Create: `tests/profiles/test_categories.py`
 
 **Interfaces:**
-- Consumes: `UTILITY_DEVICE_TYPES`, `POWER_SOURCE_DEVICE_TYPE` aus `profiles/relevance.py`; `StoredDevice.device_types` aus Task 1.
-- Produces: `Category` (`str, Enum` mit Werten `light|socket|switch|covering|climate|sensor|lock|other`), `CATEGORY_RANK: dict[Category, int]`, `CATEGORY_BY_DEVICE_TYPE: dict[int, Category]`, `category_for(device_types: Mapping[int, frozenset[int]] | None) -> Category`.
+- Consumes: `UTILITY_DEVICE_TYPES`, `POWER_SOURCE_DEVICE_TYPE` from `profiles/relevance.py`; `StoredDevice.device_types` from task 1.
+- Produces: `Category` (`str, Enum` with values `light|socket|switch|covering|climate|sensor|lock|other`), `CATEGORY_RANK: dict[Category, int]`, `CATEGORY_BY_DEVICE_TYPE: dict[int, Category]`, `category_for(device_types: Mapping[int, frozenset[int]] | None) -> Category`.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/profiles/test_categories.py` neu anlegen — mit dem GPL-Kopf, den jede Quelldatei dieses Projekts trägt (aus einer bestehenden Testdatei kopieren, unverändert im englischen FSF-Wortlaut):
+Create `tests/profiles/test_categories.py` new — with the GPL header every source file in this project carries (copy from an existing test file, unchanged, in the English FSF wording):
 
 ```python
-"""Grobe Geraetekategorie aus den Matter-Geraetetypen."""
+"""Coarse device category from the Matter device types."""
 
 from __future__ import annotations
 
@@ -789,10 +792,10 @@ from loxmatter.profiles.categories import (
 )
 from loxmatter.profiles.relevance import device_types_by_endpoint
 
-# Derselbe Weg zu den Abbildern wie in `test_relevance.py` nebenan:
-# `tests/profiles/` hat keine `conftest.py`, und `load_snapshot` aus
-# `tests/api/conftest.py` ist von hier aus nicht importierbar - die beiden
-# Verzeichnisse teilen keinen `sys.path`-Eintrag.
+# The same path to the snapshots as in `test_relevance.py` next door:
+# `tests/profiles/` has no `conftest.py`, and `load_snapshot` from
+# `tests/api/conftest.py` is not importable from here - the two
+# directories don't share a `sys.path` entry.
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "nodes"
 
 
@@ -802,10 +805,10 @@ def load_snapshot(name: str) -> NodeSnapshot:
 
 
 def test_the_rank_follows_the_declaration_order():
-    """Der Rang ist fest verdrahtet und NICHT die alphabetische Reihenfolge
-    der uebersetzten Namen: ein Sprachwechsel wuerde die Gruppen sonst
-    umsortieren, und eine Ansicht, die je nach Sprache anders aufgebaut ist,
-    ist zweimal zu erklaeren."""
+    """The rank is hardwired and NOT the alphabetical order
+    of the translated names: a language switch would otherwise
+    reorder the groups, and a view that is laid out differently depending on
+    the language has to be explained twice."""
     assert [c.value for c in Category] == [
         "light",
         "socket",
@@ -821,9 +824,9 @@ def test_the_rank_follows_the_declaration_order():
 
 
 def test_the_plug_fixture_is_a_socket():
-    """Endpunkt 0 traegt Root Node und OTA Requestor, Endpunkt 1 die
-    On/Off Plug-in Unit (0x010A) - der Verwaltungs-Endpunkt wird
-    uebersprungen."""
+    """Endpoint 0 carries Root Node and OTA Requestor, endpoint 1 the
+    On/Off Plug-in Unit (0x010A) - the management endpoint is
+    skipped."""
     types = device_types_by_endpoint(load_snapshot("ikea_grillplats_plug.json"))
     assert category_for(types) is Category.SOCKET
 
@@ -839,9 +842,8 @@ def test_the_color_light_fixture_is_a_light():
 
 
 def test_a_snapshot_without_descriptors_is_other():
-    """`example_light.json` meldet kein einziges Descriptor-Attribut - genau
-    der Zustand, in dem auch ein noch nicht nachgetragenes Bestandsgeraet
-    steht."""
+    """`example_light.json` reports not a single descriptor attribute - exactly
+    the state a not-yet-backfilled existing device is also in."""
     types = device_types_by_endpoint(load_snapshot("example_light.json"))
     assert category_for(types) is Category.OTHER
 
@@ -852,15 +854,15 @@ def test_none_and_empty_are_other():
 
 
 def test_only_utility_types_are_other():
-    """Root Node, OTA Requestor und PowerSource sagen nichts darueber, was
-    das Geraet im Haus tut - bleibt nichts uebrig, ist die Kategorie
-    "Sonstige", nicht etwa die des Verwaltungs-Endpunkts."""
+    """Root Node, OTA Requestor, and PowerSource say nothing about what
+    the device does in the house - if nothing is left, the category is
+    "other", not, say, that of the management endpoint."""
     assert category_for({0: frozenset({0x0016, 0x0012, 0x0011})}) is Category.OTHER
 
 
 def test_the_lowest_non_utility_endpoint_decides():
-    """Bei Matter ist Endpunkt 1 ueblicherweise der Anwendungs-Endpunkt. Ein
-    zweiter Endpunkt mit einem anderen Typ darf ihn nicht ueberstimmen."""
+    """In Matter, endpoint 1 is usually the application endpoint. A
+    second endpoint with a different type must not override it."""
     types = {
         0: frozenset({0x0016}),
         1: frozenset({0x010A}),
@@ -870,8 +872,8 @@ def test_the_lowest_non_utility_endpoint_decides():
 
 
 def test_several_types_on_one_endpoint_resolve_by_rank():
-    """Damit das Ergebnis unabhaengig davon ist, in welcher Reihenfolge das
-    Geraet seine Typen aufzaehlt - ein `frozenset` hat gar keine."""
+    """So the result is independent of the order in which the
+    device enumerates its types - a `frozenset` has none at all."""
     assert category_for({1: frozenset({0x010A, 0x0100})}) is Category.LIGHT
 
 
@@ -901,10 +903,10 @@ def test_the_table_maps_the_types_it_claims_to(device_type, expected):
 
 
 def test_every_mapped_type_exists_in_the_matter_table():
-    """Die Zuordnung muss pro ID gegen die maschinell erzeugte Tabelle von
-    matter-server belegt sein, nicht geraten - genau die Quelle, auf die
-    sich auch `relevance.py` beruft. Ein Tippfehler in einer ID faellt hier
-    auf und nicht erst an einem echten Geraet."""
+    """The mapping has to be confirmed per ID against matter-server's
+    machine-generated table, not guessed - exactly the source
+    `relevance.py` also relies on. A typo in an ID shows up here
+    and not only on a real device."""
     from matter_server.client.models.device_types import ALL_TYPES
 
     unknown = sorted(hex(t) for t in CATEGORY_BY_DEVICE_TYPE if t not in ALL_TYPES)
@@ -916,30 +918,30 @@ def test_every_mapped_type_exists_in_the_matter_table():
 Run: `uv run pytest tests/profiles/test_categories.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'loxmatter.profiles.categories'`.
 
-- [ ] **Step 3: Modul schreiben**
+- [ ] **Step 3: Write the module**
 
-`src/loxmatter/profiles/categories.py` (GPL-Kopf wie in jeder anderen Quelldatei voranstellen):
+`src/loxmatter/profiles/categories.py` (prepend the GPL header as in every other source file):
 
 ```python
-"""Grobe Geraetekategorie aus den Matter-Geraetetypen.
+"""Coarse device category from the Matter device types.
 
-Beantwortet genau eine Frage, die `relevance.py` nicht beantwortet: nicht
-"welche Signale will jemand sehen", sondern "was fuer ein Ding ist das
-ueberhaupt". Die Antwort traegt in der Oberflaeche drei Dinge auf einmal -
-die Sortierung innerhalb eines Raums, das Icon der Kachel und den
-Suchbegriff, unter dem man alle Steckdosen des Hauses findet.
+Answers exactly one question that `relevance.py` doesn't answer: not
+"which signals does someone want to see", but "what kind of thing is this
+in the first place". The answer carries three things at once in the UI -
+sorting within a room, the tile's icon, and the
+search term under which one finds all the plugs in the house.
 
-Warum daneben und nicht darin: `relevance.is_functional` entscheidet ueber
-ein einzelnes Signal, `category_for` ueber ein ganzes Geraet. Beide lesen
-dieselbe Quelle (`device_types_by_endpoint`), aber mit verschiedenem
-Ausgang und ohne gemeinsamen Zustand.
+Why next to it and not inside it: `relevance.is_functional` decides about
+a single signal, `category_for` about a whole device. Both read
+the same source (`device_types_by_endpoint`), but with a different
+outcome and no shared state.
 
-**Die Quelle der Typ-Nummern** ist dieselbe wie in `relevance.py`:
-`matter_server.client.models.device_types`, laut eigenem Modul-Docstring
-maschinell erzeugt aus `zcl/data-model/chip/matter-devices.xml` der
-CSA-Spezifikation. Ein neuer Eintrag in der Tabelle unten braucht die
-Nummer aus dieser Datei, nicht aus dem Gedaechtnis;
-`test_every_mapped_type_exists_in_the_matter_table` prueft das ab.
+**The source of the type numbers** is the same as in `relevance.py`:
+`matter_server.client.models.device_types`, per its own module docstring
+machine-generated from `zcl/data-model/chip/matter-devices.xml` of the
+CSA specification. A new entry in the table below needs the
+number from this file, not from memory;
+`test_every_mapped_type_exists_in_the_matter_table` checks that.
 """
 
 from __future__ import annotations
@@ -951,19 +953,19 @@ from loxmatter.profiles.relevance import POWER_SOURCE_DEVICE_TYPE, UTILITY_DEVIC
 
 
 class Category(str, Enum):
-    """Die Reihenfolge dieser Deklaration IST der Sortierrang (siehe
-    `CATEGORY_RANK`) - bewusst nicht die alphabetische Reihenfolge der
-    uebersetzten Namen, die sich mit der Sprache aendern wuerde.
+    """The order of this declaration IS the sort rank (see
+    `CATEGORY_RANK`) - deliberately not the alphabetical order of the
+    translated names, which would change with the language.
 
-    Die Reihenfolge selbst folgt der Haeufigkeit, mit der man ein Geraet
-    dieser Art in einem Raum anfasst: Licht und Steckdose zuerst, danach die
-    Bedienelemente, ganz hinten das, was man einmal einrichtet und dann in
-    Ruhe laesst. `OTHER` steht immer am Ende - dort landet auch jedes
-    Geraet, dessen Typen noch nicht nachgetragen sind.
+    The order itself follows how often you touch a device
+    of this kind in a room: light and socket first, then the
+    controls, and at the very back what you set up once and then leave
+    alone. `OTHER` always sits at the end - that's also where every
+    device whose types haven't been backfilled yet ends up.
 
-    `str, Enum` statt `StrEnum`, weil `Exportability` in `profiles/table.py`
-    es genauso macht - eine zweite Schreibweise fuer dieselbe Sache waere
-    ohne Gewinn."""
+    `str, Enum` instead of `StrEnum`, because `Exportability` in `profiles/table.py`
+    does it the same way - a second spelling for the same thing would be
+    no gain."""
 
     LIGHT = "light"
     SOCKET = "socket"
@@ -977,30 +979,30 @@ class Category(str, Enum):
 
 CATEGORY_RANK: dict[Category, int] = {category: rank for rank, category in enumerate(Category)}
 
-# Geraetetypen, die nichts darueber sagen, was das Geraet im Haus TUT -
-# dieselbe Menge, die `relevance.is_functional` schon als Verwaltung
-# behandelt, plus PowerSource: ein Batteriestand macht aus einem Taster
-# keine eigene Kategorie.
+# Device types that say nothing about what the device DOES in the house -
+# the same set `relevance.is_functional` already treats as management,
+# plus PowerSource: a battery level does not turn a button into a
+# category of its own.
 _IGNORED_DEVICE_TYPES: frozenset[int] = UTILITY_DEVICE_TYPES | {POWER_SOURCE_DEVICE_TYPE}
 
-# Zuordnung Matter-Geraetetyp -> Kategorie. Jede Nummer stammt aus
-# `matter_server.client.models.device_types` (siehe Modul-Docstring); die
-# Kommentare nennen den dortigen Klassennamen, damit ein Nachschlagen ohne
-# Umrechnung moeglich ist.
+# Mapping Matter device type -> category. Every number comes from
+# `matter_server.client.models.device_types` (see module docstring); the
+# comments name the class name there, so a lookup is possible without
+# conversion.
 #
-# Nicht aufgefuehrt und damit `OTHER`: Haushaltsgeraete (0x0070-0x007C),
-# Medien (0x0022-0x002A), Energie (0x050C-0x050F), Netzwerk-Infrastruktur
-# (0x0090, 0x0091), Bruecken-Verwaltung (0x000E Aggregator, 0x0013 Bridged
-# Node). Sie kommen an einer Loxone-Anbindung entweder gar nicht vor oder
-# haetten in einer Raumliste keinen eigenen Rang verdient.
+# Not listed and therefore `OTHER`: household appliances (0x0070-0x007C),
+# media (0x0022-0x002A), energy (0x050C-0x050F), network infrastructure
+# (0x0090, 0x0091), bridge management (0x000E Aggregator, 0x0013 Bridged
+# Node). They either never occur in a Loxone integration at all, or
+# wouldn't deserve their own rank in a room list.
 CATEGORY_BY_DEVICE_TYPE: dict[int, Category] = {
     0x0100: Category.LIGHT,  # OnOffLight
     0x0101: Category.LIGHT,  # DimmableLight
     0x010C: Category.LIGHT,  # ColorTemperatureLight
     0x010D: Category.LIGHT,  # ExtendedColorLight
-    # MountedOnOffControl / MountedDimmableLoadControl sind fest verbaute
-    # Lastschalter - in der Praxis sitzt dahinter eine Leuchte, nicht eine
-    # Steckdose (die traegt einen eigenen Typ, siehe unten).
+    # MountedOnOffControl / MountedDimmableLoadControl are permanently wired
+    # load switches - in practice there's a light behind this, not a
+    # plug (which carries its own type, see below).
     0x010F: Category.LIGHT,  # MountedOnOffControl
     0x0110: Category.LIGHT,  # MountedDimmableLoadControl
     0x010A: Category.SOCKET,  # OnOffPlugInUnit
@@ -1038,26 +1040,26 @@ CATEGORY_BY_DEVICE_TYPE: dict[int, Category] = {
 
 
 def category_for(device_types: Mapping[int, frozenset[int]] | None) -> Category:
-    """Die Kategorie eines Geraets aus seinen Geraetetypen je Endpunkt.
+    """The category of a device from its device types per endpoint.
 
-    `None` (Geraetetypen noch nicht nachgetragen, siehe
-    `Store.backfill_device_types`) ergibt `OTHER` - dieselbe Antwort wie fuer
-    ein Geraet, dessen Typen niemand zuordnen kann. Die Oberflaeche
-    unterscheidet beide Faelle nicht: in beiden steht das Geraet vollstaendig
-    bedienbar unter "Sonstige", der erste Fall behebt sich beim naechsten
-    Bruueckenstart von selbst.
+    `None` (device types not backfilled yet, see
+    `Store.backfill_device_types`) yields `OTHER` - the same answer as for
+    a device whose types nobody can map. The UI does not
+    distinguish the two cases: in both, the device sits fully
+    controllable under "other", the first case resolves itself at the next
+    bridge startup.
 
-    Die Regel in vier Schritten (Entwurf 5.2):
+    The rule in four steps (design 5.2):
 
-    1. Verwaltungstypen fallen weg (`_IGNORED_DEVICE_TYPES`).
-    2. Vom Rest zaehlt der NIEDRIGSTE Endpunkt - bei Matter ueblicherweise
-       Endpunkt 1, der Anwendungs-Endpunkt. Eine Steckdose mit einem
-       Temperaturfuehler auf Endpunkt 2 bleibt eine Steckdose.
-    3. Traegt dieser Endpunkt mehrere zuordenbare Typen, gewinnt der mit dem
-       niedrigsten Rang. Damit haengt das Ergebnis nicht daran, in welcher
-       Reihenfolge das Geraet seine Typen aufzaehlt - ein `frozenset` hat
-       ohnehin keine.
-    4. Nichts Zuordenbares -> `OTHER`.
+    1. Management types are dropped (`_IGNORED_DEVICE_TYPES`).
+    2. Of the rest, the LOWEST endpoint counts - with Matter, usually
+       endpoint 1, the application endpoint. A plug with a
+       temperature sensor on endpoint 2 stays a plug.
+    3. If that endpoint carries several mappable types, the one with the
+       lowest rank wins. This makes the result independent of the
+       order in which the device enumerates its types - a `frozenset`
+       has none anyway.
+    4. Nothing mappable -> `OTHER`.
     """
     if not device_types:
         return Category.OTHER
@@ -1080,24 +1082,24 @@ def category_for(device_types: Mapping[int, frozenset[int]] | None) -> Category:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `uv run pytest tests/profiles/test_categories.py -v`
-Expected: PASS, alle 20 Testfälle (die parametrisierte Tabellenprüfung zählt zwölf davon).
+Expected: PASS, all 20 test cases (the parametrized table check counts twelve of them).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/loxmatter/profiles/categories.py tests/profiles/
 git commit -m "$(cat <<'EOF'
-feat(profiles): Geraetekategorie aus den Matter-Geraetetypen ableiten
+feat(profiles): derive the device category from the Matter device types
 
-Beantwortet die eine Frage, die `relevance.py` nicht beantwortet: nicht
-"welche Signale will jemand sehen", sondern "was fuer ein Ding ist das".
-Die Antwort traegt in der Oberflaeche Sortierung, Icon und Suchbegriff.
+Answers the one question `relevance.py` doesn't answer: not
+"which signals does someone want to see", but "what kind of thing is this".
+The answer carries sorting, icon, and search term in the UI.
 
-Der Rang der Kategorien ist die Deklarationsreihenfolge, ausdruecklich
-nicht die alphabetische der uebersetzten Namen - sonst sortierte ein
-Sprachwechsel die Gruppen um. Jede Typ-Nummer stammt aus der maschinell
-erzeugten Tabelle von matter-server, abgeprueft durch einen Test gegen
-deren ALL_TYPES.
+The category rank is the declaration order, expressly
+not the alphabetical order of the translated names - otherwise a
+language switch would reorder the groups. Every type number comes from
+matter-server's machine-generated table, checked against
+its ALL_TYPES by a test.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -1106,21 +1108,21 @@ EOF
 
 ---
 
-### Task 5: API — Modelle und Routen
+### Task 5: API — models and routes
 
 **Files:**
-- Modify: `src/loxmatter/api/models.py` (`DeviceOut` Zeile 62-99, `DeviceRename` Zeile ~106, `CommissionRequest` Zeile 162-176)
-- Modify: `src/loxmatter/api/devices.py` (Imports Zeile 77-90, `_device_out` Zeile 171-199, PATCH-Route Zeile 261-265, Commission-Route Zeile 395-397)
+- Modify: `src/loxmatter/api/models.py` (`DeviceOut` line 62-99, `DeviceRename` line ~106, `CommissionRequest` line 162-176)
+- Modify: `src/loxmatter/api/devices.py` (imports line 77-90, `_device_out` line 171-199, PATCH route line 261-265, commission route line 395-397)
 - Modify: `src/loxmatter/i18n/strings.yaml`
-- Test: `tests/api/test_devices.py`, `tests/api/test_rooms.py` (neu)
+- Test: `tests/api/test_devices.py`, `tests/api/test_rooms.py` (new)
 
 **Interfaces:**
-- Consumes: `Store.set_room`, `Store.rename_room`, `Store.register_device(snapshot, room)` (Tasks 2–3); `category_for`, `Category`, `CATEGORY_RANK` (Task 4).
-- Produces: `DeviceOut` mit `room: str | None`, `category: str`, `category_rank: int`; `DevicePatch(label: str | None, room: str | None)`; `RoomRename(from_room, to_room)` mit Aliassen `from`/`to`; Routen `PATCH /api/devices/{id}` (erweitert), `POST /api/rooms/rename` (neu), `POST /api/devices/commission` (erweitert).
+- Consumes: `Store.set_room`, `Store.rename_room`, `Store.register_device(snapshot, room)` (tasks 2–3); `category_for`, `Category`, `CATEGORY_RANK` (task 4).
+- Produces: `DeviceOut` with `room: str | None`, `category: str`, `category_rank: int`; `DevicePatch(label: str | None, room: str | None)`; `RoomRename(from_room, to_room)` with aliases `from`/`to`; routes `PATCH /api/devices/{id}` (extended), `POST /api/rooms/rename` (new), `POST /api/devices/commission` (extended).
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_devices.py` anhängen:
+Append to `tests/api/test_devices.py`:
 
 ```python
 async def test_the_device_list_carries_room_and_category(api):
@@ -1151,8 +1153,8 @@ async def test_patching_only_the_label_leaves_the_room_alone(api):
 
 
 async def test_an_empty_room_string_clears_the_room(api):
-    """`""` heisst "Raum entfernen", `null`/weggelassen heisst
-    "unveraendert" - dasselbe Prinzip wie bei `SignalPatch`."""
+    """`""` means "remove room", `null`/omitted means
+    "unchanged" - the same principle as with `SignalPatch`."""
     client, store, device_id, _fake = api
     store.set_room(device_id, "Bad")
     response = await client.patch(f"/api/devices/{device_id}", json={"room": ""})
@@ -1161,23 +1163,23 @@ async def test_an_empty_room_string_clears_the_room(api):
 
 
 async def test_patching_the_room_does_not_make_the_device_pending(api):
-    """Der Raum landet in keiner Exportvorlage - ein frisch exportiertes
-    Geraet darf durch eine Raumzuweisung nicht wieder ausstehend werden
-    (Entwurf 3.3).
+    """The room ends up in no export template - a freshly exported
+    device must not become pending again through a room assignment
+    (design 3.3).
 
-    Der Export vorweg ist noetig, damit der Ausgangszustand eindeutig ist:
-    ein nie exportiertes Geraet gilt immer als ausstehend, dort waere die
-    Aussage dieses Tests nicht zu erkennen.
+    The export beforehand is necessary so the starting state is unambiguous:
+    a device never exported always counts as pending, and there
+    this test's claim would not be observable.
 
-    Die Gegenprobe - eine Umbenennung MUSS das Geraet als ausstehend
-    fuehren - steht bereits in `tests/api/test_export_api.py` (der Test um
-    Zeile 280, "Umbenennung … muss `GET /api/export/status` melden") und
-    wird hier nicht ein zweites Mal geschrieben. Sie ist der Grund, warum
-    dieser Test nicht dadurch gruen werden kann, dass `updated_at`
-    versehentlich gar nicht mehr gesetzt wird.
+    The counter-check - a rename MUST leave the device pending -
+    already exists in `tests/api/test_export_api.py` (the test around
+    line 280, "renaming … must be reported by `GET /api/export/status`")
+    and is not written a second time here. It is the reason
+    this test cannot pass simply because `updated_at`
+    accidentally stops being set at all.
 
-    `GET /api/export/status` antwortet mit einer LISTE, nicht mit einem
-    Objekt (`-> list[ExportStatusOut]`, `api/export.py:362`)."""
+    `GET /api/export/status` responds with a LIST, not an
+    object (`-> list[ExportStatusOut]`, `api/export.py:362`)."""
     client, store, device_id, _fake = api
     store.mark_exported(device_id)
 
@@ -1203,9 +1205,9 @@ async def test_commissioning_accepts_a_room(api):
     assert response.json()["category"] == "switch"
 ```
 
-Zum letzten Test: den Namen prüfen, unter dem `FakeMatterClient` in `tests/api/conftest.py` das zurückzugebende Abbild entgegennimmt, und ihn hier einsetzen — die bestehenden Commissioning-Tests in derselben Datei machen es bereits vor.
+On the last test: check under which name `FakeMatterClient` in `tests/api/conftest.py` accepts the snapshot to return, and use it here — the existing commissioning tests in the same file already show the way.
 
-`tests/api/test_rooms.py` neu anlegen (GPL-Kopf voranstellen, `api`-Fixture aus `test_devices.py` nachbauen oder — falls sie inzwischen in `tests/api/conftest.py` steht — von dort beziehen):
+Create `tests/api/test_rooms.py` new (prepend the GPL header, rebuild the `api` fixture from `test_devices.py`, or — if it has meanwhile moved into `tests/api/conftest.py` — take it from there):
 
 ```python
 async def test_renaming_a_room_moves_every_device(api):
@@ -1218,9 +1220,9 @@ async def test_renaming_a_room_moves_every_device(api):
 
 
 async def test_renaming_an_unknown_room_is_a_404(api):
-    """Analog zu `GET /devices/{id}` fuer ein entferntes Geraet: was nicht da
-    ist, wird nicht stillschweigend zu einem Erfolg mit null Aenderungen -
-    sonst saehe ein Tippfehler im Quellnamen wie ein geglueckter Vorgang aus."""
+    """Analogous to `GET /devices/{id}` for a removed device: what isn't
+    there doesn't silently turn into a success with zero changes -
+    otherwise a typo in the source name would look like a successful operation."""
     client, _store, _device_id, _fake = api
     response = await client.post("/api/rooms/rename", json={"from": "Keller", "to": "Bad"})
     assert response.status_code == 404
@@ -1237,11 +1239,11 @@ async def test_renaming_to_an_empty_name_is_a_422(api):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_devices.py tests/api/test_rooms.py -k "room or category" -v`
-Expected: FAIL — `KeyError: 'room'` in der Antwort bzw. 404 auf `/api/rooms/rename` (Route existiert nicht).
+Expected: FAIL — `KeyError: 'room'` in the response, or 404 on `/api/rooms/rename` (route doesn't exist).
 
-- [ ] **Step 3: Modelle erweitern**
+- [ ] **Step 3: Extend the models**
 
-In `src/loxmatter/api/models.py`, an `DeviceOut` drei Felder anhängen und den Docstring um einen Absatz ergänzen:
+In `src/loxmatter/api/models.py`, append three fields to `DeviceOut` and add a paragraph to the docstring:
 
 ```python
     id: int
@@ -1251,37 +1253,38 @@ In `src/loxmatter/api/models.py`, an `DeviceOut` drei Felder anhängen und den D
     signal_count: int
     exportable_count: int
     next_export_count: int
-    # Raum und Kategorie (Entwurf Geraete-Tab, 2026-09-05). `room` ist der
-    # frei gewaehlte Name, `None` heisst "Ohne Raum". `category` ist die
-    # Kennung aus `profiles.categories.Category` (`socket`, `light`, …),
-    # NICHT der uebersetzte Name - den setzt die Oberflaeche selbst ueber
-    # `t("web.devices.category." + category)`, damit die Suche nach
-    # "Steckdose" bzw. "socket" in der jeweils angezeigten Sprache trifft.
-    # `category_rank` kommt aus derselben Quelle wie die Kategorie, statt
-    # die Reihenfolge ein zweites Mal in JavaScript zu fuehren.
+    # Room and category (devices tab design, 2026-09-05). `room` is the
+    # freely chosen name, `None` means "no room". `category` is the
+    # identifier from `profiles.categories.Category` (`socket`, `light`, …),
+    # NOT the translated name - the UI sets that itself via
+    # `t("web.devices.category." + category)`, so a search for
+    # "Steckdose" or "socket" matches in whichever language is displayed.
+    # `category_rank` comes from the same source as the category, instead
+    # of carrying the order a second time in JavaScript.
     room: str | None
     category: str
     category_rank: int
 ```
 
-`DeviceRename` wird zu `DevicePatch`:
+`DeviceRename` becomes `DevicePatch`:
 
 ```python
 class DevicePatch(BaseModel):
-    """`PATCH /api/devices/{device_id}` - Label und Raum, sonst nichts.
+    """`PATCH /api/devices/{device_id}` - label and room, nothing else.
 
-    Hiess bis zum Geraete-Tab-Entwurf `DeviceRename` und konnte nur das
-    Label; der Name zieht mit der Faehigkeit mit. Weder `node_id` noch `id`
-    gehoeren hier her, aus demselben Grund wie bei `SignalPatch`: was das
-    Modell nicht kennt, kann eine Route nicht versehentlich uebernehmen
-    (Pydantic v2 verwirft unbekannte Felder per `extra="ignore"`).
+    Was called `DeviceRename` until the devices tab design and could only
+    handle the label; the name moves along with the capability. Neither
+    `node_id` nor `id` belong here, for the same reason as with
+    `SignalPatch`: what the model doesn't know, a route cannot
+    accidentally accept (Pydantic v2 drops unknown fields via
+    `extra="ignore"`).
 
-    `None` heisst "unveraendert" - fuer BEIDE Felder, wie bei `SignalPatch`.
-    Fuer den Raum braucht es deshalb einen zweiten Weg, ihn zu ENTFERNEN:
-    das ist der Leerstring `""`, den `Store.set_room` ueber
-    `_normalized_room` zu `NULL` macht. Ein Name aus reinem Leerraum geht
-    denselben Weg - er hat dieselbe eindeutige Bedeutung und ist deshalb
-    kein 422 wert."""
+    `None` means "unchanged" - for BOTH fields, as with `SignalPatch`.
+    For the room this therefore needs a second way to REMOVE it:
+    that is the empty string `""`, which `Store.set_room` turns into
+    `NULL` via `_normalized_room`. A name made of pure whitespace goes
+    the same way - it has the same unambiguous meaning and is therefore
+    not worth a 422."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -1292,10 +1295,10 @@ class DevicePatch(BaseModel):
 class RoomRename(BaseModel):
     """`POST /api/rooms/rename`.
 
-    Die Felder heissen innen `from_room`/`to_room`, weil `from` ein
-    Python-Schluesselwort ist; nach aussen tragen sie ueber `alias` die
-    kurzen Namen, die im JSON stehen. `populate_by_name` erlaubt beides,
-    damit ein Test das Modell auch direkt mit den Python-Namen bauen kann."""
+    The fields are named `from_room`/`to_room` internally, because `from`
+    is a Python keyword; on the outside they carry the short names that
+    appear in the JSON, via `alias`. `populate_by_name` allows both,
+    so a test can also build the model directly with the Python names."""
 
     model_config = ConfigDict(frozen=True, populate_by_name=True)
 
@@ -1303,25 +1306,25 @@ class RoomRename(BaseModel):
     to_room: str = Field(alias="to")
 ```
 
-`Field` aus `pydantic` importieren, falls noch nicht vorhanden.
+Import `Field` from `pydantic`, if not already present.
 
-`CommissionRequest` bekommt ein Feld und einen Docstring-Absatz:
+`CommissionRequest` gets a field and a docstring paragraph:
 
 ```python
     code: str
     thread_dataset: str | None = None
-    # Raum (Entwurf Geraete-Tab, 2026-09-05, Abschnitt 6.7): optional, weil
-    # ein Geraet ohne Raumwahl unter "Ohne Raum" landet und sich jederzeit
-    # nachtraeglich zuordnen laesst. Scheitert das Einlernen, entsteht kein
-    # Geraet und damit auch kein Raum.
+    # Room (devices tab design, 2026-09-05, section 6.7): optional, because
+    # a device with no room chosen ends up under "no room" and can be
+    # assigned afterward at any time. If commissioning fails, no
+    # device is created and thus no room either.
     room: str | None = None
 ```
 
-- [ ] **Step 4: Routen anpassen**
+- [ ] **Step 4: Adjust the routes**
 
-In `src/loxmatter/api/devices.py`: den Import `DeviceRename` durch `DevicePatch` ersetzen und `RoomRename` ergänzen; dazu `from loxmatter.profiles.categories import CATEGORY_RANK, category_for`.
+In `src/loxmatter/api/devices.py`: replace the `DeviceRename` import with `DevicePatch` and add `RoomRename`; plus `from loxmatter.profiles.categories import CATEGORY_RANK, category_for`.
 
-`_device_out` erweitern:
+Extend `_device_out`:
 
 ```python
     next_export_count = len(to_inputs(signals, device.id, device.label))
@@ -1340,18 +1343,18 @@ In `src/loxmatter/api/devices.py`: den Import `DeviceRename` durch `DevicePatch`
     )
 ```
 
-Die PATCH-Route:
+The PATCH route:
 
 ```python
     @router.patch("/devices/{device_id}")
     async def patch_device(device_id: int, patch: DevicePatch) -> DeviceOut:
-        """Aendert Label und/oder Raum. `None` heisst bei beiden Feldern
-        "unveraendert"; der Leerstring im Raum heisst "entfernen".
+        """Changes label and/or room. For both fields, `None` means
+        "unchanged"; the empty string in the room means "remove".
 
-        Die beiden Schreibwege sind bewusst verschieden: `rename_device`
-        setzt `updated_at` mit (das Label wird als `Title` exportiert),
-        `set_room` nicht (der Raum wird nirgends exportiert). Siehe die
-        Docstrings beider Store-Methoden."""
+        The two write paths are deliberately different: `rename_device`
+        also sets `updated_at` (the label gets exported as `Title`),
+        `set_room` does not (the room is exported nowhere). See the
+        docstrings of both store methods."""
         device = _require_device(device_id)
         if patch.label is not None:
             store.rename_device(device.id, patch.label)
@@ -1360,21 +1363,21 @@ Die PATCH-Route:
         return _device_out(store.device(device.id), store, runtime)
 ```
 
-Die neue Route, direkt darunter:
+The new route, directly below it:
 
 ```python
 @router.post("/rooms/rename")
 async def rename_room(patch: RoomRename) -> dict[str, int]:
-    """Benennt einen Raum an allen aktiven Geraeten um.
+    """Renames a room on all active devices.
 
-    Die einzige Route, die es fuer Raeume ueberhaupt gibt - es gibt keine
-    Raum-Objekte (Entwurf 3.2), also auch kein `GET /api/rooms`: die
-    Raumliste steckt bereits in `GET /api/devices`, und ein zweiter
-    Endpunkt fuer dieselbe Auskunft koennte nur auseinanderlaufen.
+    The only route that exists for rooms at all - there are no
+    room objects (design 3.2), so also no `GET /api/rooms`: the
+    room list already lives in `GET /api/devices`, and a second
+    endpoint for the same information could only end up diverging.
 
-    404 statt "0 umbenannt", wenn kein aktives Geraet den Quellnamen
-    traegt: ein Tippfehler im Quellnamen saehe sonst wie ein geglueckter
-    Vorgang aus."""
+    404 instead of "0 renamed" when no active device carries the source
+    name: otherwise a typo in the source name would look like a
+    successful operation."""
     if not patch.to_room.strip():
         raise HTTPException(status_code=422, detail=i18n.t("api.devices.room_name_required"))
     renamed = store.rename_room(patch.from_room, patch.to_room)
@@ -1386,15 +1389,15 @@ async def rename_room(patch: RoomRename) -> dict[str, int]:
     return {"renamed": renamed}
 ```
 
-In der Commission-Route den Raum durchreichen:
+Pass the room through in the commission route:
 
 ```python
         device_id = store.register_device(snapshot, room=request.room)
 ```
 
-- [ ] **Step 5: Übersetzungsschlüssel ergänzen**
+- [ ] **Step 5: Add the translation key**
 
-In `strings.yaml`, im `api.devices.*`-Block (`api.devices.room_name_required` steht seit Task 2 schon dort):
+In `strings.yaml`, in the `api.devices.*` block (`api.devices.room_name_required` has already been there since task 2):
 
 ```yaml
 api.devices.unknown_room:
@@ -1405,26 +1408,26 @@ api.devices.unknown_room:
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/api -q && uv run mypy src && uv run ruff check .`
-Expected: PASS. Schlägt ein bestehender Test auf `DeviceRename` fehl, ist es genau der beabsichtigte Umbenennungs-Treffer — den Test auf `DevicePatch` umstellen, nicht die Klasse zurückbenennen.
+Expected: PASS. If an existing test on `DeviceRename` fails, that's exactly the intended rename hit — switch the test to `DevicePatch`, don't rename the class back.
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add src/loxmatter/api tests/api/test_devices.py tests/api/test_rooms.py src/loxmatter/i18n/strings.yaml
 git commit -m "$(cat <<'EOF'
-feat(api): Raum und Kategorie am Geraet, eine Route zum Raum-Umbenennen
+feat(api): room and category on the device, a route to rename a room
 
-`DeviceRename` heisst jetzt `DevicePatch` - der Name zog mit der
-Faehigkeit mit. `None` heisst bei beiden Feldern "unveraendert", der
-Leerstring im Raum heisst "entfernen".
+`DeviceRename` is now called `DevicePatch` - the name moved along with
+the capability. `None` means "unchanged" for both fields, the empty
+string in the room means "remove".
 
-`DeviceOut` traegt die Kategorie als Kennung, nicht als uebersetzten
-Namen: den setzt die Oberflaeche selbst, damit die Suche in der
-angezeigten Sprache trifft. `category_rank` kommt aus derselben Quelle,
-statt die Reihenfolge ein zweites Mal in JavaScript zu fuehren.
+`DeviceOut` carries the category as an identifier, not as a translated
+name: the UI sets that itself, so search matches in the displayed
+language. `category_rank` comes from the same source, instead of
+carrying the order a second time in JavaScript.
 
-Kein `GET /api/rooms`: die Raumliste steckt bereits in `GET /api/devices`,
-ein zweiter Endpunkt fuer dieselbe Auskunft koennte nur auseinanderlaufen.
+No `GET /api/rooms`: the room list already lives in `GET /api/devices`,
+a second endpoint for the same information could only end up diverging.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -1433,26 +1436,26 @@ EOF
 
 ---
 
-### Task 6: Übersetzungsschlüssel für die Oberfläche
+### Task 6: Translation keys for the UI
 
 **Files:**
-- Modify: `src/loxmatter/i18n/strings.yaml` (`web.devices.*`-Block ab Zeile 611)
-- Test: `tests/test_i18n.py` (bestehende Vollständigkeitsprüfung, keine neue Testdatei)
+- Modify: `src/loxmatter/i18n/strings.yaml` (`web.devices.*` block starting at line 611)
+- Test: `tests/test_i18n.py` (existing completeness check, no new test file)
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: die Schlüssel, die Tasks 7 und 8 in `app.js` und `index.html` verwenden. **Kein Schlüssel darf einen `{platzhalter}` tragen, der serverseitig nicht auflöst** — siehe Global Constraints.
+- Consumes: nothing.
+- Produces: the keys tasks 7 and 8 use in `app.js` and `index.html`. **No key may carry a `{placeholder}` that doesn't resolve server-side** — see Global Constraints.
 
-- [ ] **Step 1: Schlüssel anlegen**
+- [ ] **Step 1: Create the keys**
 
-An den `web.devices.*`-Block in `strings.yaml` anhängen:
+Append to the `web.devices.*` block in `strings.yaml`:
 
 ```yaml
-# --- Raeume und Suche (Entwurf Geraete-Tab, 2026-09-05) ---
-# Die Kategorienamen unten sind die einzige Stelle, an der eine Kategorie
-# ihren lesbaren Namen bekommt - `profiles/categories.py` kennt nur die
-# Kennung. Die Suche vergleicht gegen genau diese Texte, deshalb findet
-# "Steckdose" auf Deutsch und "socket" auf Englisch dieselben Geraete.
+# --- Rooms and search (devices tab design, 2026-09-05) ---
+# The category names below are the only place a category
+# gets its readable name - `profiles/categories.py` only knows the
+# identifier. Search compares against exactly these texts, which is why
+# "Steckdose" in German and "socket" in English find the same devices.
 web.devices.category.light:
   en: "Light"
   de: "Licht"
@@ -1527,28 +1530,28 @@ web.devices.commission_room_hint:
   de: "Der Raum ist optional — ohne Auswahl erscheint das Gerät unter „Ohne Raum“ und lässt sich später zuordnen."
 ```
 
-**Warum die Fehler-Schlüssel ein `{message}` tragen:** `api/language.py:_web_strings()` liefert `web.*`-Schlüssel über `i18n.raw_template()` unaufgelöst aus (`language.py:56-63`) — genau dafür gedacht, dass `t(key, {…})` in `app.js` sie füllt. Die Nachbarschlüssel `web.devices.label_save_error` und `web.devices.remove_error` sind bereits so gebaut. Eine zweite Bauform (Text mit Doppelpunkt, Meldung per Verkettung angehängt) wäre genau das Auseinanderdriften, das dieselbe Datei an anderer Stelle schon einmal beseitigt hat.
+**Why the error keys carry a `{message}`:** `api/language.py:_web_strings()` delivers `web.*` keys via `i18n.raw_template()` unresolved (`language.py:56-63`) — meant exactly for `t(key, {…})` in `app.js` to fill them. The neighboring keys `web.devices.label_save_error` and `web.devices.remove_error` are already built this way. A second construction (text with a colon, message appended by concatenation) would be exactly the kind of drift this same file has already eliminated elsewhere once.
 
-- [ ] **Step 2: Vollständigkeit und Ladbarkeit prüfen**
+- [ ] **Step 2: Check completeness and loadability**
 
 Run: `uv run pytest tests/test_i18n.py tests/api/test_language.py -q`
-Expected: PASS — insbesondere der Test, der `GET /api/i18n` ohne Sitzung abruft: er bricht, sobald ein `web.*`-Schlüssel einen serverseitig unbefüllbaren Platzhalter trägt.
+Expected: PASS — in particular the test that fetches `GET /api/i18n` without a session: it breaks as soon as a `web.*` key carries a placeholder that cannot be filled server-side.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add src/loxmatter/i18n/strings.yaml
 git commit -m "$(cat <<'EOF'
-feat(i18n): Schluessel fuer Raeume, Kategorien und Geraetesuche
+feat(i18n): keys for rooms, categories, and device search
 
-Die acht Kategorienamen sind die einzige Stelle, an der eine Kategorie
-ihren lesbaren Namen bekommt - `profiles/categories.py` kennt nur die
-Kennung. Die Suche vergleicht gegen genau diese Texte, deshalb findet
-"Steckdose" auf Deutsch und "socket" auf Englisch dieselben Geraete.
+The eight category names are the only place a category gets its
+readable name - `profiles/categories.py` only knows the
+identifier. Search compares against exactly these texts, which is why
+"Steckdose" in German and "socket" in English find the same devices.
 
-Die neuen Fehlermeldungen tragen bewusst keinen Platzhalter: `GET
-/api/i18n` loest jeden web.*-Schluessel ohne Werte auf, ein Platzhalter
-wirft dort KeyError und reisst die gesamte Antwort mit.
+The new error messages deliberately carry no placeholder: `GET
+/api/i18n` resolves every web.* key without values, a placeholder
+there throws KeyError and takes down the whole response.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -1557,27 +1560,27 @@ EOF
 
 ---
 
-### Task 7: `app.js` — Räume, Filter, Suche, Sortierung, Leitwert
+### Task 7: `app.js` — rooms, filter, search, sorting, primary signal
 
 **Files:**
-- Modify: `src/loxmatter/web/app.js` (Zustand ab Zeile 340, Helfer ab Zeile 874, `saveLabel` Zeile 927, `commissionDevice` Zeile 1063)
+- Modify: `src/loxmatter/web/app.js` (state starting at line 340, helpers starting at line 874, `saveLabel` line 927, `commissionDevice` line 1063)
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `DeviceOut.room/category/category_rank` und die Routen aus Task 5; die Schlüssel aus Task 6.
-- Produces: die Alpine-Methoden, die Task 8 im Markup aufruft — `roomKeyOf(device)`, `roomChips()`, `hasAnyRoom()`, `matchesSearch(device)`, `visibleDevices()`, `hitsOutsideRoom()`, `clearRoomFilter()`, `deviceGroups()`, `categoryLabel(device)`, `leadSignalFor(deviceId)`, `restSignalsFor(deviceId)`, `saveRoom(device, value)`, `beginNewRoom(device)`, `commitNewRoom(device)`, `beginRenameRoom(room)`, `commitRenameRoom()`, `cancelRenameRoom()` — und die Zustandsfelder `roomFilter` (`null` = Alle, `""` = Ohne Raum, sonst der Raumname), `deviceSearch`, `newRoomFor`, `newRoomDraft`, `commissionRoom`, `commissionNewRoom`.
+- Consumes: `DeviceOut.room/category/category_rank` and the routes from task 5; the keys from task 6.
+- Produces: the Alpine methods task 8 calls in the markup — `roomKeyOf(device)`, `roomChips()`, `hasAnyRoom()`, `matchesSearch(device)`, `visibleDevices()`, `hitsOutsideRoom()`, `clearRoomFilter()`, `deviceGroups()`, `categoryLabel(device)`, `leadSignalFor(deviceId)`, `restSignalsFor(deviceId)`, `saveRoom(device, value)`, `beginNewRoom(device)`, `commitNewRoom(device)`, `beginRenameRoom(room)`, `commitRenameRoom()`, `cancelRenameRoom()` — and the state fields `roomFilter` (`null` = all, `""` = no room, otherwise the room name), `deviceSearch`, `newRoomFor`, `newRoomDraft`, `commissionRoom`, `commissionNewRoom`.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_web.py` anhängen:
+Append to `tests/api/test_web.py`:
 
 ```python
 async def test_the_script_offers_room_filtering_grouping_and_search(api):
-    """Die Oberflaeche wird nicht von einem JS-Testlaeufer geprueft (es gibt
-    keinen - Alpine laeuft vendored im Browser). Diese Pruefung haelt
-    deshalb nur fest, DASS die Bausteine ausgeliefert werden, auf die das
-    Markup in index.html sich stuetzt - ein Umbenennen auf einer Seite ohne
-    die andere faellt hier auf."""
+    """The UI is not checked by a JS test runner (there isn't
+    one - Alpine runs vendored in the browser). This check
+    therefore only records THAT the building blocks are shipped that the
+    markup in index.html relies on - a rename on one side without
+    the other shows up here."""
     script = (await api.get("/app.js")).text
     for name in (
         "roomKeyOf(",
@@ -1600,94 +1603,94 @@ async def test_the_script_offers_room_filtering_grouping_and_search(api):
 
 
 async def test_the_search_never_reaches_the_server(api):
-    """Die Suche laeuft ueber die ohnehin geladene Geraeteliste - es gibt
-    keinen Endpunkt dafuer, und es soll auch keiner entstehen."""
+    """Search runs over the device list already loaded anyway - there is
+    no endpoint for it, and none should be created either."""
     script = (await api.get("/app.js")).text
     assert "/api/devices/search" not in script
     assert "/api/rooms/rename" in script
 ```
 
-`api` ist hier die Fixture aus `tests/api/test_web.py`; deren Rückgabewert prüfen (in dieser Datei ist es ein einzelner Client, nicht das Vierer-Tupel aus `test_devices.py`) und die Aufrufe entsprechend schreiben.
+`api` here is the fixture from `tests/api/test_web.py`; check its return value (in this file it's a single client, not the four-tuple from `test_devices.py`) and write the calls accordingly.
 
-**Was diese Tests bewusst NICHT prüfen:** dass `saveRoom` beim Speichern eines Raums kein `label` mitschickt. Ein Textvergleich im ausgelieferten Skript könnte das nur raten, und die Frage ist ohnehin auf der Serverseite belegt — `test_patching_only_the_room_leaves_the_label_alone` und `test_patching_the_room_does_not_make_the_device_pending` aus Task 5 prüfen genau das Verhalten, statt seine Schreibweise.
+**What these tests deliberately do NOT check:** that `saveRoom` sends no `label` along when saving a room. A text comparison in the shipped script could only guess at that, and the question is confirmed on the server side anyway — `test_patching_only_the_room_leaves_the_label_alone` and `test_patching_the_room_does_not_make_the_device_pending` from task 5 check exactly this behavior, rather than how it's written.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_web.py -k "room or search" -v`
 Expected: FAIL — `assert "roomChips(" in script`.
 
-- [ ] **Step 3: Zustand ergänzen**
+- [ ] **Step 3: Add state**
 
-In `app.js`, im Zustandsobjekt neben `labelDrafts` (Zeile ~346):
+In `app.js`, in the state object next to `labelDrafts` (line ~346):
 
 ```javascript
     labelDrafts: {},
     deviceActionError: null,
 
-    // --- Raeume, Filter, Suche (Entwurf Geraete-Tab, 2026-09-05) ----------
+    // --- Rooms, filter, search (devices tab design, 2026-09-05) -----------
     //
-    // DREI Zustaende, nicht zwei, und der Unterschied zwischen den letzten
-    // beiden ist der Grund fuer die Kodierung:
-    //   null  = "Alle"
-    //   ""    = "Ohne Raum" (die Geraete, deren `device.room` NULL ist)
-    //   "Bad" = dieser eine Raum
-    // "Ohne Raum" ist eine echte Auswahl und muss von "Alle" unterscheidbar
-    // bleiben - `null` fuer beide zu verwenden waere der naheliegende und
-    // falsche Weg gewesen, weil `device.room` selbst `null` ist. Der
-    // Leerstring kann mit keinem echten Raum kollidieren: `set_room` trimmt
-    // und macht aus einem leeren Namen NULL, ein Raum namens "" kann also
-    // gar nicht entstehen. Er ist ausserdem genau der Wert, den die API
-    // fuer "Raum entfernen" erwartet - dieselbe Kodierung auf beiden
-    // Seiten, nicht zwei.
+    // THREE states, not two, and the difference between the last two
+    // is the reason for the encoding:
+    //   null  = "all"
+    //   ""    = "no room" (devices whose `device.room` is NULL)
+    //   "Bad" = this one room
+    // "No room" is a real selection and has to stay distinguishable from
+    // "all" - using `null` for both would have been the obvious and
+    // wrong path, because `device.room` itself is `null`. The
+    // empty string cannot collide with any real room: `set_room` trims
+    // and turns an empty name into NULL, so a room named "" can
+    // never come into existence. It is also exactly the value the API
+    // expects for "remove room" - the same encoding on both
+    // sides, not two.
     //
-    // Bewusst NICHT in localStorage: ein gemerkter Filter erzeugt sonst den
-    // Moment, in dem nach zwei Wochen drei von zwoelf Geraeten dastehen und
-    // niemand mehr weiss, warum. Nach einem Neuladen steht die Ansicht
-    // wieder auf "Alle".
+    // Deliberately NOT in localStorage: a remembered filter would otherwise create
+    // the moment where, after two weeks, three of twelve devices show up and
+    // nobody remembers why anymore. After a reload the view is
+    // back to "all".
     roomFilter: null,
     deviceSearch: "",
-    // Welche Kachel gerade ein Textfeld fuer einen neuen Raumnamen zeigt
-    // (Geraete-ID oder null) - der Zustand haengt an der Kachel, nicht
-    // global, damit zwei offene Kacheln sich nicht gegenseitig schliessen.
+    // Which tile is currently showing a text field for a new room name
+    // (device ID or null) - the state hangs off the tile, not
+    // global, so two open tiles don't close each other."
     newRoomFor: null,
     newRoomDraft: "",
-    // Welcher Raum gerade inline umbenannt wird (Raumname oder null).
+    // Which room is currently being renamed inline (room name or null).
     renamingRoom: null,
     renameDraft: "",
 ```
 
-Und im Einlern-Block neben `commissionThreadDataset`:
+And in the commissioning block next to `commissionThreadDataset`:
 
 ```javascript
     commissionRoom: "",
     commissionNewRoom: "",
 ```
 
-- [ ] **Step 4: Helfer ergänzen**
+- [ ] **Step 4: Add helpers**
 
-Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
+Insert directly after `remainingSignalCount` (line ~890):
 
 ```javascript
-    // --- Kategorie, Raeume, Sortierung -----------------------------------
+    // --- Category, rooms, sorting ------------------------------------------
 
-    // Der uebersetzte Name der Kategorie. Die API liefert nur die Kennung
-    // ("socket"), damit die Suche unten gegen den Text vergleichen kann,
-    // den der Bedienende tatsaechlich sieht - auf Deutsch "Steckdose", auf
-    // Englisch "socket".
+    // The category's translated name. The API only delivers the
+    // identifier ("socket"), so the search below can compare against the
+    // text the user actually sees - "Steckdose" in German, "socket" in
+    // English.
     categoryLabel(device) {
       return t("web.devices.category." + (device.category || "other"));
     },
 
-    // Der Raum eines Geraets in der Kodierung von `roomFilter`: "" statt
-    // null/undefined. Eine Stelle, damit die Umrechnung nicht in vier
-    // Helfern einzeln steht und einer davon sie irgendwann anders macht.
+    // A device's room in `roomFilter`'s encoding: "" instead of
+    // null/undefined. One spot, so the conversion doesn't sit
+    // separately in four helpers with one of them eventually doing it differently.
     roomKeyOf(device) {
       return device.room || "";
     },
 
-    // Alle Raeume mit ihrer Geraetezahl, "Ohne Raum" ganz am Ende.
-    // `key` ist der Wert, den `roomFilter` annimmt ("" fuer Ohne Raum),
-    // `label` der angezeigte Text.
+    // All rooms with their device count, "no room" right at the end.
+    // `key` is the value `roomFilter` takes on ("" for no room),
+    // `label` the displayed text.
     roomChips() {
       const counts = new Map();
       for (const device of this.devices) {
@@ -1704,15 +1707,15 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
       return chips;
     },
 
-    // Die Leiste zeigt sich gar nicht, solange kein einziges Geraet einen
-    // Raum traegt: bei drei Geraeten und keinem Raum waere sie eine Zeile
-    // Laerm ueber einer Liste, die ohnehin auf einen Blick passt.
+    // The bar doesn't show at all as long as not a single device carries a
+    // room: with three devices and no room, it would be a line of
+    // noise above a list that fits in one glance anyway.
     hasAnyRoom() {
       return this.devices.some((device) => Boolean(device.room));
     },
 
-    // Trifft der Suchbegriff dieses Geraet? Verglichen wird gegen Name,
-    // uebersetzten Kategorienamen und Raumnamen.
+    // Does the search term match this device? Compared against name,
+    // translated category name, and room name.
     matchesSearch(device) {
       const needle = this.deviceSearch.trim().toLocaleLowerCase();
       if (!needle) {
@@ -1724,9 +1727,9 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
       return haystack.includes(needle);
     },
 
-    // Die sichtbaren Geraete: Raum-Chip und Suchfeld wirken ZUSAMMEN (UND).
-    // Eine Suche greift also nur im gewaehlten Raum - den Fall "kein
-    // Treffer hier, aber nebenan" faengt `hitsOutsideRoom()` unten ab.
+    // The visible devices: room chip and search field act TOGETHER (AND).
+    // A search only applies within the selected room then - the case "no
+    // hit here, but next door" is caught by `hitsOutsideRoom()` below.
     visibleDevices() {
       return this.devices.filter(
         (device) =>
@@ -1735,9 +1738,9 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
       );
     },
 
-    // Wie viele Geraete der Suchbegriff AUSSERHALB des gewaehlten Raums
-    // trifft. Nur dann von Belang, wenn im Raum selbst nichts uebrig
-    // bleibt - sonst waere der Hinweis eine Ablenkung.
+    // How many devices the search term matches OUTSIDE the selected room.
+    // Only relevant when nothing is left within the room itself -
+    // otherwise the note would be a distraction.
     hitsOutsideRoom() {
       if (this.roomFilter === null || !this.deviceSearch.trim()) {
         return 0;
@@ -1751,16 +1754,16 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
       this.roomFilter = null;
     },
 
-    // Die Geraete, nach Raum gruppiert und innerhalb eines Raums sortiert:
-    // erst nach Kategorierang (alle Steckdosen beisammen, dann alle
-    // Taster), darin alphabetisch nach Name.
+    // The devices, grouped by room and sorted within a room:
+    // first by category rank (all plugs together, then all
+    // buttons), within that alphabetically by name.
     //
-    // `localeCompare` statt `<`: sonst landete "Ärmelkanal" hinter "Zaun",
-    // weil der Code-Punkt von "Ä" hinter dem von "Z" liegt.
+    // `localeCompare` instead of `<`: otherwise "Ärmelkanal" would land after
+    // "Zaun", because the code point of "Ä" sits after that of "Z".
     //
-    // Bei einem gewaehlten Raum entsteht genau eine Gruppe, und ihr
-    // `title` bleibt leer - es gibt nichts zu unterscheiden, und eine
-    // Ueberschrift ueber der einzigen Gruppe waere Dopplung der Chip-Leiste.
+    // With a room selected, exactly one group results, and its
+    // `title` stays empty - there is nothing to distinguish, and a
+    // heading above the single group would duplicate the chip bar.
     deviceGroups() {
       const byRoom = new Map();
       for (const device of this.visibleDevices()) {
@@ -1787,43 +1790,43 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
           devices: sortDevices(byRoom.get("")),
         });
       }
-      // Bei einem gewaehlten Raum gibt es nur eine Gruppe - ihre
-      // Ueberschrift waere die Dopplung des aktiven Chips direkt darueber.
+      // With a room selected there is only one group - its
+      // heading would duplicate the active chip directly above it.
       if (this.roomFilter !== null) {
         return groups.map((group) => ({ ...group, title: "" }));
       }
       return groups;
     },
 
-    // --- Leitwert (Kachel-Kopfzeile) --------------------------------------
+    // --- Primary signal (tile header) --------------------------------------
 
-    // Das erste funktionale Signal in der Reihenfolge, die
-    // `firstSignalsFor` ohnehin liefert - also die der Profiltabelle.
-    // Steckdose -> Zustand, Klimasensor -> Temperatur, Rollo -> Position.
-    // Keine eigene Datenhaltung, keine Konfiguration: ein Geraet ohne
-    // funktionale Signale hat schlicht keinen Leitwert, und die Kopfzeile
-    // bleibt einzeilig.
+    // The first functional signal in the order `firstSignalsFor`
+    // delivers anyway - that is, the profile table's order.
+    // Plug -> state, climate sensor -> temperature, cover -> position.
+    // No data storage of its own, no configuration: a device with no
+    // functional signals simply has no primary signal, and the header
+    // stays one line.
     leadSignalFor(deviceId) {
       return this.firstSignalsFor(deviceId)[0] || null;
     },
 
-    // Der Rest der Kurzliste. `FUNCTIONAL_PREVIEW_LIMIT` zaehlt den
-    // Leitwert MIT (Entwurf 6.2), deshalb hier kein zweites Abschneiden -
-    // `firstSignalsFor` hat es bereits getan.
+    // The rest of the short list. `FUNCTIONAL_PREVIEW_LIMIT` counts the
+    // primary signal IN (design 6.2), so no second cutoff here -
+    // `firstSignalsFor` has already done it.
     restSignalsFor(deviceId) {
       return this.firstSignalsFor(deviceId).slice(1);
     },
 
-    // --- Raum eines Geraets aendern ---------------------------------------
+    // --- Change a device's room ---------------------------------------
 
-    // Sendet AUSSCHLIESSLICH den Raum. Ein mitgeschicktes `label` liesse
-    // `rename_device` laufen und setzte `updated_at` - das Geraet stuende
-    // danach als "geaendert seit Export", obwohl der Raum in keiner
-    // Vorlage landet (Entwurf 3.3).
+    // Sends EXCLUSIVELY the room. A `label` sent along would make
+    // `rename_device` run and set `updated_at` - the device would
+    // afterward show as "changed since export", even though the room lands in no
+    // template (design 3.3).
     //
-    // `value` ist bereits in derselben Kodierung wie `roomFilter`: "" heisst
-    // "Ohne Raum", und genau das erwartet auch die API fuer "Raum
-    // entfernen". Keine Umrechnung an dieser Stelle.
+    // `value` is already in the same encoding as `roomFilter`: "" means
+    // "no room", and that's exactly what the API expects for "remove
+    // room" too. No conversion at this spot.
     async saveRoom(device, value) {
       this.deviceActionError = null;
       try {
@@ -1850,11 +1853,11 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
       }
     },
 
-    // Umbenennen passiert INLINE, wie jede andere Bearbeitung dieser
-    // Oberflaeche (Geraetename, Signaltitel): der Stift macht aus der
-    // Ueberschrift ein Eingabefeld. Ein `window.prompt` waere weniger
-    // Markup gewesen, saehe aber in jedem Browser anders aus und waere der
-    // einzige Dialog in einer Ansicht, die sonst ohne auskommt.
+    // Renaming happens INLINE, like every other edit in this
+    // UI (device name, signal title): the pencil turns the
+    // heading into an input field. A `window.prompt` would have been less
+    // markup, but would look different in every browser and would be the
+    // only dialog in a view that otherwise gets by without one.
     beginRenameRoom(room) {
       this.renamingRoom = room;
       this.renameDraft = room;
@@ -1865,22 +1868,22 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
       this.renameDraft = "";
     },
 
-    // Die Rueckfrage vor dem Zusammenfuehren bleibt dagegen ein nativer
-    // Dialog - der eine bewusste Unterschied zum Umbenennen selbst.
-    // Zusammenfuehren ist selten und unumkehrbar: danach weiss niemand
-    // mehr, welches Geraet vorher in welchem der beiden Raeume stand. Ein
-    // modaler Dialog ist bei genau dieser Art Aktion die ehrliche Bremse;
-    // ein Banner, das man wegklicken kann, ohne es gelesen zu haben,
-    // waere es nicht.
+    // The confirmation prompt before merging, by contrast, stays a native
+    // dialog - the one deliberate difference from renaming itself.
+    // Merging is rare and irreversible: afterward nobody
+    // knows anymore which device used to be in which of the two rooms. A
+    // modal dialog is the honest brake for exactly this kind of action;
+    // a banner that can be dismissed without reading it
+    // would not be.
     //
-    // Ob der Zielname schon belegt ist, entscheidet die Oberflaeche und
-    // nicht der Server: die Geraeteliste liegt ihr vor, eine zweite
-    // Abfrage nur fuer diese Auskunft waere ueberfluessig.
+    // Whether the target name is already taken is decided by the UI and
+    // not the server: it already has the device list, a second
+    // query just for this information would be superfluous.
     async commitRenameRoom() {
       const room = this.renamingRoom;
       if (room === null) {
-        // Enter hat bereits gespeichert und das Feld geschlossen; das
-        // anschliessende `blur` landet hier und hat nichts mehr zu tun.
+        // Enter has already saved and closed the field; the
+        // subsequent `blur` lands here and has nothing left to do.
         return;
       }
       const name = this.renameDraft.trim();
@@ -1890,8 +1893,8 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
       }
       const exists = this.devices.some((device) => device.room === name);
       if (exists && !window.confirm(t("web.devices.room_rename_merge_confirm"))) {
-        // Feld bleibt offen: die Rueckfrage abzulehnen heisst "so nicht",
-        // nicht "vergiss, was ich getippt habe".
+        // The field stays open: declining the confirmation prompt means "not like this",
+        // not "forget what I typed".
         return;
       }
       this.cancelRenameRoom();
@@ -1908,18 +1911,18 @@ Direkt nach `remainingSignalCount` (Zeile ~890) einfügen:
     },
 ```
 
-- [ ] **Step 5: Einlernen um den Raum erweitern**
+- [ ] **Step 5: Extend commissioning with the room**
 
-In `commissionDevice()` den Rumpf des `body` ergänzen und das Zurücksetzen anpassen:
+In `commissionDevice()`, extend the body of `body` and adjust the reset:
 
 ```javascript
         const body = { code: this.commissionCode.trim() };
         if (this.commissionThreadDataset.trim()) {
           body.thread_dataset = this.commissionThreadDataset.trim();
         }
-        // Raum (Entwurf 6.7): "" heisst "Ohne Raum" und wird gar nicht erst
-        // mitgeschickt; "__new__" ist der Sonderwert des Auswahlfelds, hinter
-        // dem das Textfeld `commissionNewRoom` steht.
+        // Room (design 6.7): "" means "no room" and isn't sent along
+        // at all; "__new__" is the select field's special value, behind
+        // which the text field `commissionNewRoom` sits.
         const room =
           this.commissionRoom === "__new__"
             ? this.commissionNewRoom.trim()
@@ -1929,15 +1932,15 @@ In `commissionDevice()` den Rumpf des `body` ergänzen und das Zurücksetzen anp
         }
 ```
 
-und weiter unten, beim Leeren der Felder:
+and further below, when clearing the fields:
 
 ```javascript
         this.commissionCode = "";
         this.commissionThreadDataset = "";
-        // Der Raum bleibt BEWUSST stehen (Entwurf 6.7): wer vier Geraete in
-        // der Kueche einlernt, waehlt ihn einmal. Ein Pairing-Code dagegen
-        // ist nach Gebrauch wertlos und ein stehengebliebener waere eine
-        // Fehlerquelle.
+        // The room DELIBERATELY stays as is (design 6.7): someone commissioning four
+        // devices in the kitchen chooses it once. A pairing code, by contrast,
+        // is worthless after use, and a leftover one would be a
+        // source of errors.
 ```
 
 - [ ] **Step 6: Run tests to verify they pass**
@@ -1950,20 +1953,20 @@ Expected: PASS.
 ```bash
 git add src/loxmatter/web/app.js tests/api/test_web.py
 git commit -m "$(cat <<'EOF'
-feat(web): Raumfilter, Gruppierung, Kategoriesortierung und Suche
+feat(web): room filter, grouping, category sorting, and search
 
-Raum-Chip und Suchfeld wirken zusammen (UND) - die Suche greift also nur
-im gewaehlten Raum. Den Fall, den das erzeugt ("kein Treffer", obwohl das
-Geraet nebenan steht), faengt `hitsOutsideRoom()` ab und bietet den
-Sprung auf "Alle" an, ohne den Suchbegriff zu verlieren.
+Room chip and search field act together (AND) - so search only applies
+within the selected room. The case this creates ("no hit", even though the
+device is right next door) is caught by `hitsOutsideRoom()`, which offers
+a jump to "all" without losing the search term.
 
-`saveRoom` sendet ausschliesslich den Raum. Ein mitgeschicktes Label
-liesse `rename_device` laufen und markierte das Geraet als "geaendert
-seit Export", obwohl der Raum in keiner Vorlage landet.
+`saveRoom` sends exclusively the room. A label sent along would
+make `rename_device` run and mark the device as "changed
+since export", even though the room lands in no template.
 
-Der Filterzustand wird nicht gespeichert: ein gemerkter Filter erzeugt
-sonst den Moment, in dem nach zwei Wochen drei von zwoelf Geraeten
-dastehen und niemand mehr weiss, warum.
+The filter state is not saved: a remembered filter would otherwise
+create the moment where, after two weeks, three of twelve devices show
+up and nobody remembers why anymore.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -1972,20 +1975,20 @@ EOF
 
 ---
 
-### Task 8: `index.html` und `style.css` — Raster, Kachel, Raumleiste, Icons
+### Task 8: `index.html` and `style.css` — grid, tile, room bar, icons
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (Icon-Block Zeile 64-86, Geräte-Ansicht Zeile 176-340)
-- Modify: `src/loxmatter/web/style.css` (`.device-card` Zeile 632-658, `.value-chips` Zeile 660-672, neue Regeln)
+- Modify: `src/loxmatter/web/index.html` (icon block line 64-86, devices view line 176-340)
+- Modify: `src/loxmatter/web/style.css` (`.device-card` line 632-658, `.value-chips` line 660-672, new rules)
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: alle Methoden aus Task 7, alle Schlüssel aus Task 6.
-- Produces: keine für spätere Tasks.
+- Consumes: all methods from task 7, all keys from task 6.
+- Produces: none for later tasks.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_web.py` anhängen:
+Append to `tests/api/test_web.py`:
 
 ```python
 async def test_the_page_offers_the_room_bar_and_the_room_picker(api):
@@ -1998,10 +2001,10 @@ async def test_the_page_offers_the_room_bar_and_the_room_picker(api):
 
 
 async def test_every_category_has_an_icon_symbol(api):
-    """Acht Kategorien, acht Symbole - "other" eingeschlossen. Ein fehlendes
-    Symbol faellt im Browser NICHT auf: ein `<use>` auf eine unbekannte ID
-    zeichnet stillschweigend nichts, keine Fehlermeldung. Deshalb faellt es
-    hier auf."""
+    """Eight categories, eight symbols - "other" included. A missing
+    symbol does NOT show up in the browser: a `<use>` on an unknown ID
+    silently draws nothing, no error. That's why it shows up
+    here."""
     page = (await api.get("/")).text
     for category in (
         "light",
@@ -2022,24 +2025,24 @@ async def test_the_device_grid_is_multi_column(api):
     assert "minmax(260px" in css
 ```
 
-Zusätzlich: der bestehende Test `test_the_icons_are_well_formed_xml` (Zeile 141) muss die neuen Symbole mit abdecken — prüfen, ob er den gesamten Inline-Block parst; wenn ja, ist nichts zu tun außer wohlgeformtes SVG zu schreiben.
+Also: the existing test `test_the_icons_are_well_formed_xml` (line 141) has to cover the new symbols too — check whether it parses the entire inline block; if it does, nothing to do beyond writing well-formed SVG.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_web.py -k "room_bar or icon or grid" -v`
 Expected: FAIL — `assert "roomChips()" in page`.
 
-- [ ] **Step 3: Icons ergänzen**
+- [ ] **Step 3: Add the icons**
 
-In `index.html`, in den bestehenden `<svg style="display: none">`-Block, sieben Symbole (Strich-Icons im Stil der vorhandenen, `viewBox="0 0 24 24"`, keine Füllung — `.icon` in `style.css` setzt `stroke: currentColor; fill: none`):
+In `index.html`, into the existing `<svg style="display: none">` block, seven symbols (line icons in the style of the existing ones, `viewBox="0 0 24 24"`, no fill — `.icon` in `style.css` sets `stroke: currentColor; fill: none`):
 
 ```html
-      <!-- Kategorie-Icons (Entwurf Geraete-Tab, 2026-09-05, Abschnitt 6.5).
-           Ein Symbol je Kategorie, "Sonstige" eingeschlossen - dort landet
-           auch jedes Geraet, dessen Typen noch nicht nachgetragen sind.
-           Weiterhin inline und ohne Icon-Bibliothek, aus demselben
-           Grund wie das eingecheckte vendor/alpine.min.js: die Oberflaeche
-           laeuft offline. -->
+      <!-- Category icons (devices tab design, 2026-09-05, section 6.5).
+           One symbol per category, "other" included - that's also where
+           every device whose types haven't been backfilled yet ends up.
+           Still inline and without an icon library, for the same
+           reason as the checked-in vendor/alpine.min.js: the UI
+           runs offline. -->
       <symbol id="i-cat-light" viewBox="0 0 24 24">
         <path d="M9 17.5a5.5 5.5 0 1 1 6 0V19H9v-1.5z" />
         <path d="M10 21.5h4" />
@@ -2069,25 +2072,25 @@ In `index.html`, in den bestehenden `<svg style="display: none">`-Block, sieben 
         <rect x="5" y="10.5" width="14" height="10" rx="2.5" />
         <path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7" />
       </symbol>
-      <!-- ACHT Symbole, nicht sieben: die Kachel bildet die Kennung stur auf
-           `#i-cat-<kennung>` ab, und `other` ist eine Kennung wie jede
-           andere. Ein `<use>` auf eine nicht vorhandene ID zeichnet
-           STILLSCHWEIGEND nichts - kein Fehler in der Konsole, nur eine
-           Kachel ohne Icon. Deshalb bekommt "Sonstige" ein eigenes Symbol,
-           statt sich auf eine Sonderbehandlung in JavaScript zu verlassen,
-           die jemand beim naechsten Umbau uebersieht. Die Form ist dieselbe
-           wie bei `#i-device`. -->
+      <!-- EIGHT symbols, not seven: the tile stubbornly maps the
+           identifier onto `#i-cat-<identifier>`, and `other` is an
+           identifier like any other. A `<use>` on a nonexistent ID draws
+           SILENTLY nothing - no console error, just a
+           tile with no icon. That's why "other" gets its own symbol,
+           instead of relying on special handling in JavaScript
+           that someone overlooks at the next rework. The shape is the same
+           as `#i-device`'s. -->
       <symbol id="i-cat-other" viewBox="0 0 24 24">
         <rect x="4" y="4" width="16" height="16" rx="3" />
         <circle cx="12" cy="12" r="2.2" />
       </symbol>
 ```
 
-`#i-device` verliert damit seinen einzigen Nutzer (die alte Kachel-Kopfzeile, `index.html:220`). Es bleibt vorerst stehen; Task 9 prüft, ob es noch irgendwo referenziert wird, und entfernt es andernfalls.
+`#i-device` thus loses its only user (the old tile header, `index.html:220`). It stays in place for now; task 9 checks whether it is still referenced anywhere and removes it otherwise.
 
-- [ ] **Step 4: Die Geräte-Ansicht umbauen**
+- [ ] **Step 4: Rework the devices view**
 
-In `index.html` die Einlern-Karte um das Raumfeld ergänzen (in die bestehende `.row`, nach dem Thread-Feld):
+In `index.html`, extend the commissioning card with the room field (into the existing `.row`, after the Thread field):
 
 ```html
             <select x-model="commissionRoom">
@@ -2106,21 +2109,21 @@ In `index.html` die Einlern-Karte um das Raumfeld ergänzen (in die bestehende `
             />
 ```
 
-und darunter, zu den vorhandenen `<p class="hint">`:
+and below it, next to the existing `<p class="hint">`:
 
 ```html
           <p class="hint" x-text="t('web.devices.commission_room_hint')"></p>
 ```
 
-Die Raumleiste, unmittelbar vor der Geräteliste (nach den Fehler-Bannern):
+The room bar, right before the device list (after the error banners):
 
 ```html
-        <!-- Raumleiste (Entwurf 6.3): zeigt sich gar nicht, solange kein
-             einziges Geraet einen Raum traegt - bei drei Geraeten und keinem
-             Raum waere sie eine Zeile Laerm ueber einer Liste, die ohnehin
-             auf einen Blick passt. Das Suchfeld bleibt in dem Fall trotzdem
-             erreichbar, weil es auch ohne Raeume ueber Name und Kategorie
-             sucht. -->
+        <!-- Room bar (design 6.3): doesn't show at all as long as not
+             a single device carries a room - with three devices and no
+             room it would be a line of noise above a list that fits in
+             one glance anyway. The search field stays reachable in that case
+             regardless, because it also searches by name and category
+             without any rooms. -->
         <div class="room-bar" x-show="devices.length > 0" x-cloak>
           <template x-if="hasAnyRoom()">
             <span class="room-chips">
@@ -2138,12 +2141,12 @@ Die Raumleiste, unmittelbar vor der Geräteliste (nach den Fehler-Bannern):
                   x-text="chip.label + ' ' + chip.count"
                 ></button>
               </template>
-              <!-- `x-show="roomFilter"` ist hier genau richtig und kein
-                   Schludern: falsy sind beide Faelle, in denen es nichts
-                   umzubenennen gibt - `null` ("Alle") und `""` ("Ohne
-                   Raum"). "Ohne Raum" ist kein Raum, sondern die Menge der
-                   Geraete ohne Zuordnung; ein Name, den man aendern
-                   koennte, ist gerade das, was ihnen fehlt. -->
+              <!-- `x-show="roomFilter"` is exactly right here and not
+                   sloppiness: both cases where there's nothing to
+                   rename are falsy - `null` ("all") and `""` ("no
+                   room"). "No room" is not a room but the set of
+                   unassigned devices; a name you could change
+                   is precisely what they're missing. -->
               <button
                 class="room-rename"
                 x-show="roomFilter && renamingRoom !== roomFilter"
@@ -2184,15 +2187,15 @@ Die Raumleiste, unmittelbar vor der Geräteliste (nach den Fehler-Bannern):
         </p>
 ```
 
-Die Geräteliste: das bestehende `<template x-for="device in devices">` wird zu zwei geschachtelten Schleifen — außen die Raumgruppen, innen das Raster:
+The device list: the existing `<template x-for="device in devices">` becomes two nested loops — the room groups on the outside, the grid on the inside:
 
 ```html
         <template x-for="group in deviceGroups()" :key="group.key">
           <div>
-            <!-- Umbenennen inline, wie der Geraetename in der Kachel: der
-                 Stift tauscht die Ueberschrift gegen ein Eingabefeld.
-                 `group.key` ist "" fuer "Ohne Raum" - falsy, also kein
-                 Stift: dort gibt es keinen Namen zu aendern. -->
+            <!-- Renaming inline, like the device name in the tile: the
+                 pencil swaps the heading for an input field.
+                 `group.key` is "" for "no room" - falsy, so no
+                 pencil: there's no name to change there. -->
             <h3 class="room-heading" x-show="group.title">
               <span x-show="renamingRoom !== group.key" x-text="group.title"></span>
               <button
@@ -2215,14 +2218,14 @@ Die Geräteliste: das bestehende `<template x-for="device in devices">` wird zu 
             </h3>
             <div class="device-grid">
               <template x-for="device in group.devices" :key="device.id">
-                <!-- die Kachel, siehe unten -->
+                <!-- the tile, see below -->
               </template>
             </div>
           </div>
         </template>
 ```
 
-Die Kachel selbst (ersetzt den bisherigen Inhalt von `.device-card`) — Kopfzeile mit Leitwert, Werteraster, Bedienleiste, Fußzeile mit Raumwahl:
+The tile itself (replaces the previous content of `.device-card`) — header with primary signal, value grid, control bar, footer with room selection:
 
 ```html
                 <div class="card device-card" :class="deviceCardClass(device)">
@@ -2238,10 +2241,10 @@ Die Kachel selbst (ersetzt den bisherigen Inhalt von `.device-card`) — Kopfzei
                         @input="labelDrafts[device.id] = $event.target.value"
                         @change="saveLabel(device)"
                       />
-                      <!-- Ist eine Status-Pille faellig, verdraengt sie das
-                           Leitwert-Label (Entwurf 6.2): der Zustand der
-                           Kachel wiegt schwerer als die Beschriftung einer
-                           Zahl, die zwei Zentimeter daneben steht. -->
+                      <!-- If a status pill is due, it displaces the
+                           primary-signal label (design 6.2): the tile's
+                           state weighs more than the label of a
+                           number sitting two centimeters away. -->
                       <span class="status-pill warn" x-show="isOnline(device) && changedSinceExport(device.id)">
                         <svg class="icon"><use href="#i-warn"></use></svg>
                         <span x-text="t('web.devices.changed_since_export')"></span>
@@ -2278,10 +2281,10 @@ Die Kachel selbst (ersetzt den bisherigen Inhalt von `.device-card`) — Kopfzei
                         ></span>
                       </span>
                     </template>
-                    <!-- Der Hinweis auf die restlichen Signale ist die letzte
-                         Rasterzeile statt eines eigenen Absatzes (Entwurf
-                         6.2) - auf einer 260 px breiten Kachel zaehlt jede
-                         Zeile. -->
+                    <!-- The note about the remaining signals is the last
+                         grid row instead of its own paragraph (design
+                         6.2) - on a 260 px wide tile, every row
+                         counts. -->
                     <span class="value-row" x-show="remainingSignalCount(device.id) > 0">
                       <a
                         class="value-key"
@@ -2372,20 +2375,20 @@ Die Kachel selbst (ersetzt den bisherigen Inhalt von `.device-card`) — Kopfzei
                 </div>
 ```
 
-- [ ] **Step 5: `style.css` ergänzen**
+- [ ] **Step 5: Add to `style.css`**
 
-Ans Ende von `style.css` anhängen (die vorhandenen `.device-card`-Regeln bleiben, `.value-chips` wird von `.value-rows` abgelöst — die alte Regel erst löschen, wenn kein Markup sie mehr nutzt: `.projectsync-unchanged-chips .value-chip` in Zeile 905 tut es noch, also bleibt `.value-chip` bestehen):
+Append to the end of `style.css` (the existing `.device-card` rules stay, `.value-chips` is superseded by `.value-rows` — delete the old rule only once no markup uses it anymore: `.projectsync-unchanged-chips .value-chip` on line 905 still does, so `.value-chip` stays):
 
 ```css
-/* Geraete-Tab: Raumleiste, Raster, Kachel (Entwurf 2026-09-05).
+/* Devices tab: room bar, grid, tile (design 2026-09-05).
  *
- * Das Raster ist der eigentliche Punkt: eine Kachel war bisher so breit
- * wie das Fenster und so hoch wie ihr Inhalt - zwoelf Geraete waren zwoelf
- * Bildschirmhoehen. `auto-fill` mit einer Untergrenze statt eigener
- * Breakpoints: 260 px ist die Breite, ab der Kopfzeile samt Leitwert und
- * die Wertespalte nicht mehr umbrechen. Daraus ergeben sich vier Spalten
- * auf dem Desktop, zwei auf dem Tablet, eine auf dem Telefon, ohne dass
- * eine Media Query die Zahlen ein zweites Mal festlegt. */
+ * The grid is the actual point: until now a tile was as wide
+ * as the window and as tall as its content - twelve devices were twelve
+ * screen heights. `auto-fill` with a lower bound instead of its own
+ * breakpoints: 260 px is the width above which the header along with the primary
+ * signal and the value column no longer wrap. This yields four columns
+ * on desktop, two on tablet, one on phone, without a
+ * media query defining the numbers a second time. */
 .device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -2433,8 +2436,8 @@ Ans Ende von `style.css` anhängen (die vorhandenen `.device-card`-Regeln bleibe
   font-size: 0.75rem;
 }
 
-/* Das Eingabefeld beim Umbenennen uebernimmt die Groesse der Ueberschrift,
- * die es ersetzt - sonst springt die Zeile beim Klick auf den Stift. */
+/* The input field for renaming takes on the size of the heading it
+ * replaces - otherwise the line jumps when the pencil is clicked. */
 .room-rename-input {
   font-size: 0.75rem;
   letter-spacing: 0.08em;
@@ -2455,10 +2458,11 @@ Ans Ende von `style.css` anhängen (die vorhandenen `.device-card`-Regeln bleibe
   margin: 1rem 0 0.4rem;
 }
 
-/* Kopfzeile: Name links, Leitwert rechts, beide auf einer Sichtachse.
- * `min-width: 0` an der Mitte, damit ein langer Geraetename kuerzt statt
- * den Leitwert aus der Kachel zu schieben - ohne diese Zeile gewinnt in
- * einem Flex-Element der Inhalt gegen jede Breitenangabe. */
+/* Header: name on the left, primary signal on the right, both on one
+ * visual axis. `min-width: 0` on the middle, so a long device name
+ * truncates instead of pushing the primary signal out of the tile - without
+ * this line, in a flex element the content wins against any width
+ * setting. */
 .device-head {
   display: flex;
   align-items: flex-start;
@@ -2511,9 +2515,9 @@ Ans Ende von `style.css` anhängen (die vorhandenen `.device-card`-Regeln bleibe
   margin-left: 0.1rem;
 }
 
-/* Werteraster statt Chips: die Werte fluchten ueber alle Kacheln hinweg in
- * einer Spalte, statt als unterschiedlich breite Chips zu maeandern - man
- * scannt eine Spalte statt zwoelf Bausteine. */
+/* Value grid instead of chips: values align in one column across all
+ * tiles, instead of meandering as chips of varying width - you
+ * scan one column instead of twelve pieces. */
 .value-rows {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -2560,47 +2564,47 @@ Ans Ende von `style.css` anhängen (die vorhandenen `.device-card`-Regeln bleibe
 - [ ] **Step 6: Run tests to verify they pass**
 
 Run: `uv run pytest tests/api -q`
-Expected: PASS. Bestehende Tests, die auf entfallenes Markup prüfen (etwa auf `web.devices.values_heading` oder `web.devices.controls_heading`, deren Überschriften in der kompakten Kachel wegfallen), schlagen hier an — sie gehören mit dem Markup angepasst, und die dadurch unbenutzten Schlüssel aus `strings.yaml` entfernt.
+Expected: PASS. Existing tests that check for markup that's gone (such as `web.devices.values_heading` or `web.devices.controls_heading`, whose headings drop out of the compact tile) fail here — they need to be adjusted along with the markup, and the resulting unused keys removed from `strings.yaml`.
 
-- [ ] **Step 7: In der laufenden Oberfläche ansehen**
+- [ ] **Step 7: Look at it in the running UI**
 
 ```bash
 uv run loxmatter run --miniserver 192.168.1.10
 ```
 
-(Die Adresse ist die des eigenen Miniservers — dieselbe Zeile steht in `README.md:198`. `loxmatter run` gibt beim Start die Adresse der Oberfläche aus; diese im Browser öffnen und zur Ansicht „Geräte" wechseln.)
+(The address is that of your own Miniserver — the same line is in `README.md:198`. `loxmatter run` prints the UI's address at startup; open that in the browser and switch to the "Devices" view.)
 
-Fünf Dinge prüfen, die kein Test abdeckt:
+Check five things no test covers:
 
-1. Breites Fenster → vier Spalten, schmales → eine, ohne dass eine Kachel horizontal scrollt.
-2. Die Raumleiste erscheint erst, sobald mindestens ein Gerät einen Raum hat.
-3. „+ Neuer Raum …" in der Fußzeile blendet das Textfeld ein, Enter speichert.
-4. Ein gewählter Raum-Chip zeigt den Stift, „Alle" und „Ohne Raum" zeigen ihn nicht.
-5. Eine Suche im gewählten Raum ohne Treffer bietet „*n* weitere Treffer in anderen Räumen" an, und der Verweis behält den Suchbegriff.
+1. Wide window → four columns, narrow → one, with no tile scrolling horizontally.
+2. The room bar only appears once at least one device has a room.
+3. "+ New room …" in the footer reveals the text field, Enter saves.
+4. A selected room chip shows the pencil, "all" and "no room" don't show it.
+5. A search within the selected room with no hits offers "*n* further matches in other rooms", and the link keeps the search term.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add src/loxmatter/web/index.html src/loxmatter/web/style.css tests/api/test_web.py
 git commit -m "$(cat <<'EOF'
-feat(web): mehrspaltiges Kachelraster, Raumleiste und Kategorie-Icons
+feat(web): multi-column tile grid, room bar, and category icons
 
-Das Raster ist der eigentliche Punkt: eine Kachel war so breit wie das
-Fenster und so hoch wie ihr Inhalt - zwoelf Geraete waren zwoelf
-Bildschirmhoehen. `auto-fill` mit 260 px Untergrenze statt eigener
-Breakpoints; 260 px ist die Breite, ab der Kopfzeile samt Leitwert und
-Wertespalte nicht mehr umbrechen.
+The grid is the actual point: a tile used to be as wide as the
+window and as tall as its content - twelve devices were twelve
+screen heights. `auto-fill` with a 260 px lower bound instead of its own
+breakpoints; 260 px is the width above which the header along with the
+primary signal and value column no longer wrap.
 
-Die Kachel behaelt ihren gesamten Inhalt (kein Aufklappen, wie im
-Dashboard-Entwurf zugesagt) und ordnet ihn nur neu: Leitwert in der
-Kopfzeile, Werte als fluchtendes Raster, Raumwahl in der Fussleiste. Ist
-eine Status-Pille faellig, verdraengt sie das Leitwert-Label - der Zustand
-wiegt schwerer als die Beschriftung einer Zahl, die daneben steht.
+The tile keeps its entire content (no collapsing, as promised in the
+dashboard design) and only reorders it: primary signal in the
+header, values as an aligned grid, room selection in the footer. If
+a status pill is due, it displaces the primary-signal label - the state
+weighs more than the label of a number sitting next to it.
 
-Acht Kategorie-Symbole, "Sonstige" eingeschlossen: die Kachel bildet
-die Kennung stur auf `#i-cat-<kennung>` ab, und ein `<use>` auf eine
-unbekannte ID zeichnet stillschweigend nichts. Damit ist offener Punkt 1
-des Dashboard-Entwurfs erledigt.
+Eight category symbols, "other" included: the tile stubbornly maps
+the identifier onto `#i-cat-<identifier>`, and a `<use>` on an
+unknown ID silently draws nothing. This closes open point 1
+of the dashboard design.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -2609,66 +2613,66 @@ EOF
 
 ---
 
-### Task 9: Abschluss — volle Suite, Linting, Dokumentation
+### Task 9: Wrap-up — full suite, linting, documentation
 
 **Files:**
-- Modify: `README.md` (Abschnitt zur Oberfläche, falls er die Geräteansicht beschreibt)
-- Modify: `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md` (offener Punkt 1)
+- Modify: `README.md` (the section on the UI, if it describes the devices view)
+- Modify: `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md` (open point 1)
 
 **Interfaces:**
-- Consumes: alles.
-- Produces: nichts.
+- Consumes: everything.
+- Produces: nothing.
 
-- [ ] **Step 1: Volle Suite und Linting**
+- [ ] **Step 1: Full suite and linting**
 
 Run: `uv run pytest -q && uv run ruff check . && uv run mypy src`
-Expected: PASS, keine Meldungen. Jeder Fehlschlag wird behoben, nicht unterdrückt.
+Expected: PASS, no messages. Every failure gets fixed, not suppressed.
 
-- [ ] **Step 2: Ungenutzte Übersetzungsschlüssel entfernen**
+- [ ] **Step 2: Remove unused translation keys**
 
-Prüfen, welche `web.devices.*`-Schlüssel durch den Kachel-Umbau in Task 8 unbenutzt geworden sind:
+Check which `web.devices.*` keys have become unused through the tile rework in task 8:
 
 ```bash
 for key in $(grep -o '^web\.devices\.[a-z_.]*' src/loxmatter/i18n/strings.yaml | tr -d ':'); do
-  grep -q "$key" src/loxmatter/web/index.html src/loxmatter/web/app.js || echo "UNBENUTZT: $key"
+  grep -q "$key" src/loxmatter/web/index.html src/loxmatter/web/app.js || echo "UNUSED: $key"
 done
 ```
 
-Jeden gemeldeten Schlüssel prüfen und entfernen, wenn ihn wirklich nichts mehr verwendet — ein Schlüssel ohne Fundstelle ist Text, den niemand mehr übersetzt sieht und der bei der nächsten Sprachdurchsicht Zeit kostet.
+Check every reported key and remove it if truly nothing uses it anymore — a key with no hit is text nobody sees translated anymore and that costs time at the next language review.
 
-Dieselbe Frage für das alte Symbol `#i-device`, dessen einziger Nutzer die alte Kachel-Kopfzeile war:
+The same question for the old symbol `#i-device`, whose only user was the old tile header:
 
 ```bash
 grep -n "i-device" src/loxmatter/web/index.html src/loxmatter/web/app.js
 ```
 
-Bleibt nur noch die Definition selbst übrig (`<symbol id="i-device">`), wird sie entfernt — `#i-cat-other` hat ihre Aufgabe übernommen.
+If only the definition itself is left (`<symbol id="i-device">`), remove it — `#i-cat-other` has taken over its job.
 
-- [ ] **Step 3: Offenen Punkt der Vorgänger-Spec schließen**
+- [ ] **Step 3: Close the predecessor spec's open point**
 
-In `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md`, Abschnitt „Offene Punkte", Punkt 1 um einen Satz ergänzen:
+In `docs/superpowers/specs/2026-09-03-device-dashboard-and-export-design.md`, section "Open points", add a sentence to point 1:
 
 ```markdown
-   **Erledigt** durch den [Geräte-Tab-Entwurf vom 5. September 2026](2026-09-05-devices-tab-rooms-and-tile-grid-design.md):
-   die Zuordnung ist `profiles/categories.py`, und sie liefert nicht nur das
-   Icon, sondern auch die Sortierung innerhalb eines Raums und den
-   Suchbegriff.
+   **Done** via the [devices tab design from September 5, 2026](2026-09-05-devices-tab-rooms-and-tile-grid-design.md):
+   the mapping is `profiles/categories.py`, and it delivers not just the
+   icon, but also the sorting within a room and the
+   search term.
 ```
 
-- [ ] **Step 4: README prüfen**
+- [ ] **Step 4: Check the README**
 
-`README.md` nach Beschreibungen der Geräteansicht durchsehen (`grep -n -i "geräte\|devices" README.md`). Beschreibt er die Liste als einspaltig oder erwähnt er keine Räume, den Absatz anpassen — knapp, im Ton des umgebenden Textes, in der Sprache, in der der README aktuell vorliegt.
+Look through `README.md` for descriptions of the devices view (`grep -n -i "geräte\|devices" README.md`). If it describes the list as single-column or mentions no rooms, adjust the paragraph — brief, in the tone of the surrounding text, in whatever language the README currently is in.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add -A
 git commit -m "$(cat <<'EOF'
-docs: Geraete-Tab dokumentieren und offenen Icon-Punkt schliessen
+docs: document the devices tab and close the open icon point
 
-Der Dashboard-Entwurf liess die Zuordnung Geraetetyp -> Icon offen. Sie
-ist jetzt `profiles/categories.py` und traegt dort gleich drei Dinge:
-Icon, Sortierung innerhalb eines Raums und Suchbegriff.
+The dashboard design left the mapping device type -> icon open. It
+is now `profiles/categories.py`, and it carries three things at once
+there: icon, sorting within a room, and search term.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF

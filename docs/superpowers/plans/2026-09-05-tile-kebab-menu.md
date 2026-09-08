@@ -1,62 +1,62 @@
-# Kachel-Kebab-Menü — Implementierungsplan
+# Tile kebab menu — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Die Fußzeile der Gerätekachel wird zu einer Zeile — Export-Hinweis links, ein ⋮ rechts —, hinter dem Raumzuweisung, Exportieren und Entfernen liegen.
+**Goal:** The device tile's footer becomes one line — export note on the left, a ⋮ on the right —, behind which room assignment, export, and remove live.
 
-**Architecture:** Das Menü ist ein natives `<details>` mit dem ⋮ als `<summary>`; der Auf-/Zu-Zustand lebt damit im DOM statt in Alpine. Genau dadurch entfällt die Kopplung „JavaScript-Modus-Zustand steuert ein natives Bedienelement", die dem Raum-Auswahlfeld sechs Review-Runden gekostet hat — `roomSelectDrafts`, `syncRoomSelectDraft`, `onRoomSelectChange` und der `focusout`-Wächter verschwinden ersatzlos.
+**Architecture:** The menu is a native `<details>` with the ⋮ as `<summary>`; the open/closed state thus lives in the DOM instead of in Alpine. This is precisely what removes the coupling "JavaScript mode state controls a native control" that cost the room select field six review rounds — `roomSelectDrafts`, `syncRoomSelectDraft`, `onRoomSelectChange`, and the `focusout` guard disappear without replacement.
 
-**Tech Stack:** Alpine.js 3.17.1 (vendored unter `src/loxmatter/web/vendor/`, kein Build-Schritt), natives `<details>`/`<summary>`, pytest über die ausgelieferten Dateien.
+**Tech Stack:** Alpine.js 3.17.1 (vendored under `src/loxmatter/web/vendor/`, no build step), native `<details>`/`<summary>`, pytest against the shipped files.
 
-**Spec:** `docs/superpowers/specs/2026-09-05-tile-kebab-menu-design.md` — bei jedem Zweifel gilt die Spec, nicht dieser Plan.
+**Spec:** `docs/superpowers/specs/2026-09-05-tile-kebab-menu-design.md` — whenever in doubt, the spec governs, not this plan.
 
 ## Global Constraints
 
-- **Entwickler-Prosa auf Deutsch.** Kommentare, Docstrings und Commit-Nachrichten in dichtem, begründendem Deutsch, das das *Warum* nennt. Ausnahme: der GPL-Kopf jeder Quelldatei bleibt im englischen FSF-Wortlaut.
-- **Jeder nutzersichtbare Text läuft über `t()`** mit `en`- **und** `de`-Eintrag in `src/loxmatter/i18n/strings.yaml`. Schlüssel flach und punktiert. Ein Knopf, der nur ein Icon trägt, braucht einen `:title` aus `t()`.
-- **Keine externe Frontend-Abhängigkeit.** Icons sind inline-SVG-`<symbol>`s im bestehenden Block in `index.html`. Keine Icon-Bibliothek, kein CDN, kein Alpine-Plugin.
-- **Der Literal `localStorage` darf in keiner ausgelieferten Datei vorkommen** — ein bestehender Sicherheitstest verbietet ihn.
-- **Kommandos laufen mit `uv`**: `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`. Alle vier müssen grün sein.
-- **Die WebUI-Tests belegen nur, DASS etwas ausgeliefert wird**, nie dass es tut, was es soll. Verhalten wird im Browser gegen das **vendorte** Alpine geprüft (Task 4), nicht durch Lesen.
-- Commit-Nachrichten enden mit dem Trailer `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
+- **Developer prose in German.** Comments, docstrings, and commit messages in dense, reasoning German that states the *why*. Exception: the GPL header of every source file stays in the English FSF wording.
+- **Every user-visible text goes through `t()`** with an `en` **and** `de` entry in `src/loxmatter/i18n/strings.yaml`. Keys flat and dotted. A button that carries only an icon needs a `:title` from `t()`.
+- **No external frontend dependency.** Icons are inline SVG `<symbol>`s in the existing block in `index.html`. No icon library, no CDN, no Alpine plugin.
+- **The literal `localStorage` must not appear in any shipped file** — an existing security test forbids it.
+- **Commands run with `uv`**: `uv run pytest -q`, `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy src`. All four must be green.
+- **The WebUI tests only prove THAT something is shipped**, never that it does what it should. Behavior is checked in the browser against the **vendored** Alpine (task 4), not by reading.
+- Commit messages end with the trailer `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 
 ---
 
 ## File Structure
 
-**Geändert:**
-- `src/loxmatter/web/index.html` — ein neues `<symbol id="i-kebab">`; die Fußzeile der Gerätekachel (`.device-foot`, aktuell Zeilen 527-618) wird ersetzt.
-- `src/loxmatter/web/style.css` — neue Regeln für `.tile-menu`; die Regeln `.room-select`, `.room-new`, `.room-picker` entfallen.
-- `src/loxmatter/web/app.js` — `roomSelectDrafts`, `syncRoomSelectDraft`, `onRoomSelectChange` und ihre Aufrufer entfallen; `newRoomFor` bleibt, in seiner ursprünglichen Rolle.
-- `src/loxmatter/i18n/strings.yaml` — zwei neue Schlüssel.
-- `tests/api/test_web.py` — vier Tests entfallen, einer wird angepasst, drei kommen dazu.
-- `scripts/capture_screenshots.py` — nur, falls ein Selektor bricht (Task 4).
+**Changed:**
+- `src/loxmatter/web/index.html` — a new `<symbol id="i-kebab">`; the device tile's footer (`.device-foot`, currently lines 527-618) is replaced.
+- `src/loxmatter/web/style.css` — new rules for `.tile-menu`; the rules `.room-select`, `.room-new`, `.room-picker` go away.
+- `src/loxmatter/web/app.js` — `roomSelectDrafts`, `syncRoomSelectDraft`, `onRoomSelectChange` and their callers go away; `newRoomFor` stays, in its original role.
+- `src/loxmatter/i18n/strings.yaml` — two new keys.
+- `tests/api/test_web.py` — four tests go away, one is adjusted, three are added.
+- `scripts/capture_screenshots.py` — only if a selector breaks (task 4).
 
-**Nicht angefasst:** API, Store, `profiles/categories.py`. Dieser Plan ändert ausschließlich die Oberfläche.
+**Not touched:** API, store, `profiles/categories.py`. This plan changes only the UI.
 
 ---
 
-### Task 1: Kebab-Icon und Übersetzungsschlüssel
+### Task 1: Kebab icon and translation keys
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (Symbolblock, nach `<symbol id="i-remove">` bei Zeile 151)
-- Modify: `src/loxmatter/i18n/strings.yaml` (`web.devices.*`-Block)
+- Modify: `src/loxmatter/web/index.html` (symbol block, after `<symbol id="i-remove">` at line 151)
+- Modify: `src/loxmatter/i18n/strings.yaml` (`web.devices.*` block)
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: das Symbol `#i-kebab` und die Schlüssel `web.devices.menu`, `web.devices.menu_room_heading`, die Task 2 und 3 verwenden.
+- Consumes: nothing.
+- Produces: the symbol `#i-kebab` and the keys `web.devices.menu`, `web.devices.menu_room_heading`, which tasks 2 and 3 use.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_web.py` anhängen. Die `api`-Fixture dieser Datei ist ein 3-Tupel `(client, store, device_id)`; die Seite wird über `/` geholt, `app.js`/`style.css` über `/static/…` — an den Nachbartests in derselben Datei ablesen und genauso schreiben.
+Append to `tests/api/test_web.py`. This file's `api` fixture is a 3-tuple `(client, store, device_id)`; the page is fetched via `/`, `app.js`/`style.css` via `/static/…` — read off the neighboring tests in the same file and write it the same way.
 
 ```python
 async def test_the_tile_menu_has_its_own_icon_symbol(api):
-    """Das Kebab-Symbol wird wie alle anderen inline ausgeliefert - keine
-    Icon-Bibliothek, kein CDN, weil die Oberflaeche offline laeuft. Ein
-    `<use>` auf eine fehlende ID zeichnet stillschweigend nichts, deshalb
-    faellt ein vergessenes Symbol hier auf und nicht erst im Browser."""
+    """The kebab symbol ships inline like all the others - no
+    icon library, no CDN, because the UI runs offline. A
+    `<use>` on a missing ID silently draws nothing, so a forgotten
+    symbol shows up here rather than only in the browser."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     assert 'id="i-kebab"' in page
@@ -67,15 +67,15 @@ async def test_the_tile_menu_has_its_own_icon_symbol(api):
 Run: `uv run pytest tests/api/test_web.py -k tile_menu_has_its_own_icon -v`
 Expected: FAIL — `assert 'id="i-kebab"' in page`.
 
-- [ ] **Step 3: Symbol ergänzen**
+- [ ] **Step 3: Add the symbol**
 
-In `src/loxmatter/web/index.html`, im bestehenden Inline-SVG-Block direkt nach `<symbol id="i-remove">`:
+In `src/loxmatter/web/index.html`, in the existing inline SVG block right after `<symbol id="i-remove">`:
 
 ```html
-      <!-- Drei gefuellte Punkte statt Striche: `.icon` setzt
-           `fill: none; stroke: currentColor`, was fuer Linien-Icons stimmt,
-           einen Punkt aber unsichtbar machen wuerde. Dieselbe Ausnahme
-           macht schon `#i-offline` fuer seinen Punkt. -->
+      <!-- Three filled dots instead of strokes: `.icon` sets
+           `fill: none; stroke: currentColor`, which is right for
+           line icons, but would make a dot invisible. `#i-offline`
+           already makes the same exception for its dot. -->
       <symbol id="i-kebab" viewBox="0 0 24 24">
         <circle cx="12" cy="5" r="1.7" fill="currentColor" stroke="none" />
         <circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none" />
@@ -83,16 +83,16 @@ In `src/loxmatter/web/index.html`, im bestehenden Inline-SVG-Block direkt nach `
       </symbol>
 ```
 
-- [ ] **Step 4: Übersetzungsschlüssel ergänzen**
+- [ ] **Step 4: Add translation keys**
 
-In `src/loxmatter/i18n/strings.yaml`, ans Ende des `web.devices.*`-Blocks:
+In `src/loxmatter/i18n/strings.yaml`, at the end of the `web.devices.*` block:
 
 ```yaml
-# --- Kachel-Menue (Entwurf Kebab-Menue, 2026-09-05) ---
-# `menu` ist der zugaengliche Name des Kebab-Knopfs: er traegt kein Wort,
-# also braucht er einen. `menu_room_heading` beschriftet den Raum-Abschnitt
-# im Menue, damit die Liste der Raumnamen nicht ohne Zusammenhang ueber
-# "Exportieren" und "Entfernen" steht.
+# --- Tile menu (kebab menu design, 2026-09-05) ---
+# `menu` is the accessible name of the kebab button: it carries no
+# text, so it needs one. `menu_room_heading` labels the room section
+# in the menu, so the list of room names doesn't sit without
+# context above "Export" and "Remove".
 web.devices.menu:
   en: "Actions"
   de: "Aktionen"
@@ -104,18 +104,18 @@ web.devices.menu_room_heading:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/api/test_web.py tests/test_i18n.py tests/api/test_language.py -q`
-Expected: PASS. `test_language.py` prüft, dass jeder `web.*`-Schlüssel über `GET /api/i18n` auflöst; `test_i18n.py` prüft die `en`/`de`-Vollständigkeit.
+Expected: PASS. `test_language.py` checks that every `web.*` key resolves via `GET /api/i18n`; `test_i18n.py` checks `en`/`de` completeness.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/loxmatter/web/index.html src/loxmatter/i18n/strings.yaml tests/api/test_web.py
 git commit -m "$(cat <<'EOF'
-feat(web): Kebab-Symbol und Schluessel fuer das Kachel-Menue
+feat(web): kebab symbol and keys for the tile menu
 
-Drei gefuellte Punkte statt Striche - `.icon` setzt `fill: none`, was
-fuer Linien-Icons richtig ist, einen Punkt aber unsichtbar machte;
-dieselbe Ausnahme macht `#i-offline` fuer seinen Punkt bereits.
+Three filled dots instead of strokes - `.icon` sets `fill: none`,
+which is right for line icons but made a dot invisible;
+`#i-offline` already makes the same exception for its dot.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -124,30 +124,30 @@ EOF
 
 ---
 
-### Task 2: Das Menü mit Exportieren und Entfernen
+### Task 2: The menu with export and remove
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (`.device-foot`, Zeilen 527-618)
-- Modify: `src/loxmatter/web/style.css` (neue Regeln nach `.device-foot`, Zeile 1106)
+- Modify: `src/loxmatter/web/index.html` (`.device-foot`, lines 527-618)
+- Modify: `src/loxmatter/web/style.css` (new rules after `.device-foot`, line 1106)
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `#i-kebab`, `web.devices.menu` (Task 1); die bestehenden Methoden `exportDevice(device)`, `removeDevice(device)`, `exportHintFor(deviceId)` und das Zustandsfeld `bridgeSettings`.
-- Produces: das Markup-Gerüst `<details class="tile-menu">` mit `.tile-menu-items`, in das Task 3 den Raum-Abschnitt einhängt.
+- Consumes: `#i-kebab`, `web.devices.menu` (task 1); the existing methods `exportDevice(device)`, `removeDevice(device)`, `exportHintFor(deviceId)` and the state field `bridgeSettings`.
+- Produces: the markup scaffold `<details class="tile-menu">` with `.tile-menu-items`, into which task 3 hooks the room section.
 
-**Am Ende dieser Aufgabe ist die Oberfläche vollständig benutzbar:** das Raum-Auswahlfeld steht noch an seinem Platz, Exportieren und Entfernen sind ins Menü gewandert. Das Auswahlfeld verschwindet erst in Task 3.
+**At the end of this task the UI is fully usable:** the room select field still sits in its place, export and remove have moved into the menu. The select field only disappears in task 3.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_web.py` anhängen:
+Append to `tests/api/test_web.py`:
 
 ```python
 async def test_the_tile_menu_is_a_native_details_that_closes_three_ways(api):
-    """`<details>` haelt den Auf-/Zu-Zustand im DOM - der Grund, warum das
-    Menue ueberhaupt so gebaut ist (siehe Entwurf, Abschnitt 4). Zwei der
-    drei Schliesswege muessen dennoch von Hand kommen: `<details>` schliesst
-    weder bei einem Klick daneben noch bei Escape von selbst. Der dritte,
-    der Klick auf einen Eintrag, steht an den Eintraegen."""
+    """`<details>` keeps the open/closed state in the DOM - the reason the
+    menu is built this way at all (see design, section 4). Two of the
+    three closing paths still have to come by hand: `<details>` closes
+    neither on a click elsewhere nor on Escape on its own. The third,
+    the click on an entry, is the entries' job."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     assert 'class="tile-menu"' in page
@@ -156,9 +156,9 @@ async def test_the_tile_menu_is_a_native_details_that_closes_three_ways(api):
 
 
 async def test_export_and_remove_moved_into_the_tile_menu(api):
-    """Beide Aktionen liegen jetzt im Menue und schliessen es beim Klick.
-    Der Export-Knopf bleibt an `bridgeSettings.bridge_ip` gebunden - ohne
-    hinterlegte Bruecken-IP gibt es nichts zu exportieren."""
+    """Both actions now live in the menu and close it on click.
+    The export button stays bound to `bridgeSettings.bridge_ip` - with
+    no bridge IP set there is nothing to export."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     menu = page.split('class="tile-menu"', 1)[1].split("</details>", 1)[0]
@@ -172,25 +172,25 @@ async def test_export_and_remove_moved_into_the_tile_menu(api):
 Run: `uv run pytest tests/api/test_web.py -k "tile_menu_is_a_native_details or export_and_remove_moved" -v`
 Expected: FAIL — `assert 'class="tile-menu"' in page`.
 
-- [ ] **Step 3: Fußzeile umbauen**
+- [ ] **Step 3: Rebuild the footer**
 
-In `src/loxmatter/web/index.html` den Inhalt von `<div class="device-foot">` ersetzen. Der `.room-picker`-Block (Auswahlfeld und Neu-Raum-Textfeld) samt seinem großen Kommentar **bleibt vorerst unverändert stehen** — er entfällt in Task 3. Ersetzt werden nur die beiden Icon-Tasten am Ende, und der Abstandhalter davor:
+In `src/loxmatter/web/index.html` replace the content of `<div class="device-foot">`. The `.room-picker` block (select field and new-room text field) along with its large comment **stays unchanged for now** — it goes away in task 3. Only the two icon buttons at the end are replaced, and the spacer before them:
 
 ```html
                     <span class="hint" x-text="exportHintFor(device.id)"></span>
                     <span style="flex: 1 1 auto"></span>
-                    <!-- Der Auf-/Zu-Zustand liegt im DOM, nicht in Alpine:
-                         ein `<details>` braucht kein `open`-Feld je Kachel,
-                         das mit dem sichtbaren Zustand in Deckung gehalten
-                         werden muesste. Genau diese Deckungspflicht hat das
-                         Raum-Auswahlfeld sechs Reviewrunden gekostet.
-                         `<details>` schliesst allerdings NICHT von selbst
-                         bei Escape (anders als ein `<dialog>`) und auch
-                         nicht bei einem Klick daneben - beides steht
-                         deshalb hier. Dass immer nur ein Menue offen ist,
-                         faellt dabei ab: der Klick auf den Kebab einer
-                         anderen Kachel liegt ausserhalb dieses `<details>`
-                         und schliesst es ueber denselben Wachposten. -->
+                    <!-- The open/closed state lives in the DOM, not in
+                         Alpine: a `<details>` needs no `open` field per
+                         tile that would have to be kept in sync with
+                         the visible state. This exact sync obligation
+                         cost the room select field six review rounds.
+                         `<details>` does NOT, however, close on its own
+                         on Escape (unlike a `<dialog>`) or on a click
+                         elsewhere - both therefore sit here. That only
+                         ever one menu is open falls out of this for
+                         free: a click on the kebab of another tile
+                         falls outside this `<details>` and closes it
+                         via the same guard. -->
                     <details
                       class="tile-menu"
                       @click.outside="$el.open = false"
@@ -215,29 +215,29 @@ In `src/loxmatter/web/index.html` den Inhalt von `<div class="device-foot">` ers
                     </details>
 ```
 
-Der Hinweisabsatz unter der Fußzeile (`x-show="!bridgeSettings.bridge_ip"`, mit dem Verweis auf die Einstellungen) bleibt unverändert stehen — er gilt für alle Kacheln, nicht für diese eine, und gehört deshalb nicht ins Menü.
+The note paragraph below the footer (`x-show="!bridgeSettings.bridge_ip"`, with the link to settings) stays unchanged — it applies to all tiles, not to this one, and therefore does not belong in the menu.
 
-- [ ] **Step 4: CSS ergänzen**
+- [ ] **Step 4: Add CSS**
 
-Ans Ende von `src/loxmatter/web/style.css`:
+At the end of `src/loxmatter/web/style.css`:
 
 ```css
-/* Kachel-Menue (Entwurf Kebab-Menue, 2026-09-05).
+/* Tile menu (kebab menu design, 2026-09-05).
  *
- * `position: relative` am `<details>`, `absolute` an der Liste: das Menue
- * darf die Kachel ueberragen, ohne die Fusszeile hoeher zu machen. Es
- * oeffnet nach OBEN (`bottom: 100%`), weil die Fusszeile am unteren Rand
- * der Kachel sitzt - nach unten wuerde es die naechste Kachelreihe
- * verdecken statt freien Platz zu nutzen. */
+ * `position: relative` on the `<details>`, `absolute` on the list: the
+ * menu is allowed to overhang the tile without making the footer
+ * taller. It opens UPWARD (`bottom: 100%`) because the footer sits at
+ * the tile's bottom edge - opening downward would cover the next tile
+ * row instead of using free space. */
 .tile-menu {
   position: relative;
   flex: none;
 }
 
-/* Der Standard-Marker eines `<summary>` (Dreieck bzw. Disclosure-Pfeil)
- * muss zweifach abgeschaltet werden: `list-style` greift in Firefox und
- * Chrome, das `::-webkit-details-marker`-Pseudoelement in aelteren
- * WebKit-Fassungen. */
+/* A `<summary>`'s default marker (triangle or disclosure arrow) has to
+ * be switched off twice: `list-style` covers Firefox and Chrome, the
+ * `::-webkit-details-marker` pseudo-element covers older WebKit
+ * builds. */
 .tile-menu > summary {
   list-style: none;
   cursor: pointer;
@@ -302,25 +302,25 @@ Ans Ende von `src/loxmatter/web/style.css`:
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run pytest tests/api/test_web.py -q && uv run ruff format --check .`
-Expected: PASS. Bestehende Tests, die die alten Icon-Tasten in der Fußzeile prüfen, schlagen hier an — sie gehören auf das neue Markup angepasst, nicht das Markup auf sie zurückgedreht.
+Expected: PASS. Existing tests that check the old icon buttons in the footer fail here — they need to be adjusted to the new markup, not the markup rolled back to fit them.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add src/loxmatter/web/index.html src/loxmatter/web/style.css tests/api/test_web.py
 git commit -m "$(cat <<'EOF'
-feat(web): Exportieren und Entfernen in ein Kebab-Menue verlegen
+feat(web): move export and remove into a kebab menu
 
-Ein natives `<details>`: der Auf-/Zu-Zustand liegt im DOM, nicht in
-Alpine, es gibt also kein `open`-Feld je Kachel, das mit dem sichtbaren
-Zustand in Deckung gehalten werden muesste.
+A native `<details>`: the open/closed state lives in the DOM, not in
+Alpine, so there is no `open` field per tile that would have to be
+kept in sync with the visible state.
 
-Zwei Schliesswege muessen dennoch von Hand kommen - `<details>`
-schliesst weder bei Escape noch bei einem Klick daneben von selbst.
-Dass immer nur ein Menue offen ist, faellt dabei ab.
+Two closing paths still have to come by hand - `<details>` closes
+neither on Escape nor on a click elsewhere on its own. That only
+ever one menu is open falls out of this for free.
 
-Das Raum-Auswahlfeld steht noch an seinem Platz; es entfaellt im
-naechsten Schritt.
+The room select field still sits in its place; it goes away in the
+next step.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -329,28 +329,28 @@ EOF
 
 ---
 
-### Task 3: Räume ins Menü, Auswahlfeld ersatzlos entfernen
+### Task 3: Rooms into the menu, remove the select field without replacement
 
 **Files:**
-- Modify: `src/loxmatter/web/index.html` (`.room-picker`-Block in `.device-foot` entfällt; Raum-Abschnitt kommt in `.tile-menu-items`)
-- Modify: `src/loxmatter/web/style.css` (`.room-select`, `.room-new`, `.room-picker` entfallen; zwei Regeln kommen dazu)
+- Modify: `src/loxmatter/web/index.html` (`.room-picker` block in `.device-foot` goes away; room section goes into `.tile-menu-items`)
+- Modify: `src/loxmatter/web/style.css` (`.room-select`, `.room-new`, `.room-picker` go away; two rules are added)
 - Modify: `src/loxmatter/web/app.js`
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `.tile-menu-items` (Task 2), `web.devices.menu_room_heading` (Task 1); die bleibenden Methoden `roomKeyOf(device)`, `roomChips()`, `saveRoom(device, value)`, `beginNewRoom(device)`, `commitNewRoom(device)`, `reconcileRoomFilter()`.
-- Produces: keine für spätere Aufgaben.
+- Consumes: `.tile-menu-items` (task 2), `web.devices.menu_room_heading` (task 1); the remaining methods `roomKeyOf(device)`, `roomChips()`, `saveRoom(device, value)`, `beginNewRoom(device)`, `commitNewRoom(device)`, `reconcileRoomFilter()`.
+- Produces: nothing for later tasks.
 
 - [ ] **Step 1: Write the failing test**
 
-An `tests/api/test_web.py` anhängen:
+Append to `tests/api/test_web.py`:
 
 ```python
 async def test_the_rooms_are_menu_entries_and_the_select_is_gone(api):
-    """Die Raumzuweisung ist jetzt eine Liste von Eintraegen im Menue. Das
-    `<select>` und die gesamte Mechanik, die noetig war, um seinen
-    angezeigten Wert mit `device.room` in Deckung zu halten, entfaellt
-    ersatzlos - genau darum geht es bei diesem Umbau."""
+    """Room assignment is now a list of entries in the menu. The
+    `<select>` and the whole mechanism that was needed to keep its
+    displayed value in sync with `device.room` go away without
+    replacement - that is exactly the point of this rework."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     script = (await client.get("/static/app.js")).text
@@ -366,10 +366,10 @@ async def test_the_rooms_are_menu_entries_and_the_select_is_gone(api):
 
 
 async def test_the_current_room_is_marked_for_assistive_tech_too(api):
-    """Das Haekchen am aktuellen Raum ist rein grafisch. `aria-current`
-    traegt dieselbe Auskunft fuer alles, was die Seite nicht sieht - ohne
-    das waere der aktuelle Raum im Menue nur eine von mehreren gleich
-    aussehenden Zeilen."""
+    """The checkmark on the current room is purely graphical. `aria-current`
+    carries the same information for anything that doesn't see the
+    page - without it the current room in the menu would be just one
+    of several identical-looking rows."""
     client, _store, _device_id = api
     page = (await client.get("/")).text
     assert "aria-current" in page
@@ -378,25 +378,25 @@ async def test_the_current_room_is_marked_for_assistive_tech_too(api):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/api/test_web.py -k "rooms_are_menu_entries or current_room_is_marked" -v`
-Expected: FAIL — `assert "menu_room_heading" in page` bzw. `assert "room-select" not in page`.
+Expected: FAIL — `assert "menu_room_heading" in page` and `assert "room-select" not in page` respectively.
 
-- [ ] **Step 3: Den `.room-picker`-Block aus der Fußzeile entfernen**
+- [ ] **Step 3: Remove the `.room-picker` block from the footer**
 
-In `src/loxmatter/web/index.html` das gesamte `<span class="room-picker">…</span>` samt dem davorstehenden mehrzeiligen Kommentar ersatzlos löschen — der Kommentar beginnt mit „Fund 1 (Review vom 2026-09-05" und endet unmittelbar vor dem `<span>`. **Nicht nach Zeilennummern suchen:** Task 2 hat die Fußzeile bereits umgebaut und alles darunter verschoben. Die Fußzeile besteht danach aus dem Hinweis, dem Abstandhalter und dem `<details>` aus Task 2.
+In `src/loxmatter/web/index.html` delete the entire `<span class="room-picker">…</span>` along with the multi-line comment before it without replacement — the comment starts with "Finding 1 (review of 2026-09-05" and ends right before the `<span>`. **Do not search by line numbers:** task 2 has already rebuilt the footer and shifted everything below it. The footer afterward consists of the note, the spacer, and the `<details>` from task 2.
 
-- [ ] **Step 4: Raum-Abschnitt ins Menü einhängen**
+- [ ] **Step 4: Hook the room section into the menu**
 
-In `src/loxmatter/web/index.html`, als erste Kinder von `<div class="tile-menu-items">`, **vor** den beiden Knöpfen aus Task 2:
+In `src/loxmatter/web/index.html`, as the first children of `<div class="tile-menu-items">`, **before** the two buttons from task 2:
 
 ```html
                         <p class="tile-menu-heading" x-text="t('web.devices.menu_room_heading')"></p>
-                        <!-- "Ohne Raum" ist hier kein Sonderfall, sondern
-                             der Normalzustand eines noch nicht zugeordneten
-                             Geraets - es traegt das Haekchen wie jeder
-                             andere Eintrag auch. Der Leerstring ist derselbe
-                             Wert, den die API fuer "Raum entfernen"
-                             erwartet, also dieselbe Kodierung auf beiden
-                             Seiten und keine Umrechnung. -->
+                        <!-- "No room" is not a special case here but
+                             the normal state of a not-yet-assigned
+                             device - it carries the checkmark like any
+                             other entry. The empty string is the same
+                             value the API expects for "remove room",
+                             so the same encoding on both sides and no
+                             conversion. -->
                         <button
                           class="tile-menu-item"
                           :class="{ 'is-current': roomKeyOf(device) === '' }"
@@ -419,12 +419,12 @@ In `src/loxmatter/web/index.html`, als erste Kinder von `<div class="tile-menu-i
                           @click="beginNewRoom(device)"
                           x-text="t('web.devices.room_new')"
                         ></button>
-                        <!-- Das Textfeld ist ein Kind des `<details>`, das
-                             Menue bleibt beim Tippen also offen. Escape
-                             bricht NUR den Neu-Raum-Modus ab und darf nicht
-                             bis zum `@keydown.escape` des `<details>`
-                             hochblubbern, sonst verschwaende ein Abbruch
-                             gleich das ganze Menue - daher `.stop`. -->
+                        <!-- The text field is a child of the `<details>`,
+                             so the menu stays open while typing. Escape
+                             must ONLY cancel new-room mode and must not
+                             bubble up to the `<details>`'s
+                             `@keydown.escape`, or a cancel would make
+                             the whole menu vanish too - hence `.stop`. -->
                         <input
                           x-show="newRoomFor === device.id"
                           x-cloak
@@ -438,9 +438,9 @@ In `src/loxmatter/web/index.html`, als erste Kinder von `<div class="tile-menu-i
                         <hr class="tile-menu-sep" />
 ```
 
-- [ ] **Step 5: CSS für den Raum-Abschnitt, alte Regeln entfernen**
+- [ ] **Step 5: CSS for the room section, remove old rules**
 
-In `src/loxmatter/web/style.css` ergänzen (bei den `.tile-menu-*`-Regeln aus Task 2):
+Add to `src/loxmatter/web/style.css` (next to the `.tile-menu-*` rules from task 2):
 
 ```css
 .tile-menu-heading {
@@ -451,10 +451,10 @@ In `src/loxmatter/web/style.css` ergänzen (bei den `.tile-menu-*`-Regeln aus Ta
   color: var(--text-muted);
 }
 
-/* Das Haekchen steht in `::after`, nicht im Text: der Eintrag traegt
- * seine Bedeutung im Raumnamen, das Haekchen bestaetigt sie nur.
- * `aria-current` im Markup sagt dasselbe fuer alles, was die Seite nicht
- * sieht. */
+/* The checkmark sits in `::after`, not in the text: the entry carries
+ * its meaning in the room name, the checkmark only confirms it.
+ * `aria-current` in the markup says the same for anything that
+ * doesn't see the page. */
 .tile-menu-item.is-current {
   font-weight: 600;
   color: var(--accent);
@@ -476,27 +476,27 @@ In `src/loxmatter/web/style.css` ergänzen (bei den `.tile-menu-*`-Regeln aus Ta
 }
 ```
 
-Und entfernen: die Regel `.room-rename, .room-select, .room-new { font-size: 0.75rem; }` wird zu `.room-rename { font-size: 0.75rem; }` (der Umbenennen-Stift bleibt), sowie der gesamte `.room-picker`-Block samt seinem Kommentar (er beginnt mit „Umschliesst `<select>` und das Neu-Raum-Textfeld nur als Fokus-Wache").
+And remove: the rule `.room-rename, .room-select, .room-new { font-size: 0.75rem; }` becomes `.room-rename { font-size: 0.75rem; }` (the rename pencil stays), plus the entire `.room-picker` block along with its comment (it starts with "Wraps `<select>` and the new-room text field only as a focus guard").
 
-- [ ] **Step 6: `app.js` aufräumen**
+- [ ] **Step 6: Clean up `app.js`**
 
-Fünf Stellen, alle in `src/loxmatter/web/app.js`:
+Five spots, all in `src/loxmatter/web/app.js`:
 
-1. **Zustand:** `roomSelectDrafts: {},` samt dem mehrzeiligen Kommentar davor ersatzlos löschen — der Kommentar beginnt mit „Kachel zeigte dauerhaft \"Ohne Raum\"" und endet mit der Zeile `roomSelectDrafts: {},`.
+1. **State:** delete `roomSelectDrafts: {},` along with the multi-line comment before it without replacement — the comment starts with "Tile permanently showed \"No room\"" and ends with the line `roomSelectDrafts: {},`.
 
-2. **`newRoomFor`s Kommentar** anpassen — er beschreibt heute die Kopplung an die Auswahlliste. Neu:
+2. **Adjust `newRoomFor`'s comment** — today it describes the coupling to the select list. New:
 
 ```javascript
-    // Welche Kachel gerade das Textfeld fuer einen neuen Raumnamen zeigt
-    // (Geraete-ID oder null). Ein einzelner globaler Skalar, keine Menge je
-    // Kachel: es kann darum immer nur EIN Textfeld offen sein. Waehlt man
-    // "+ Neuer Raum ..." im Menue einer zweiten Kachel, schliesst das die
-    // erste mit - gewollt, zwei gleichzeitig offene Textfelder waeren
-    // ohnehin verwirrend.
+    // Which tile is currently showing the text field for a new room name
+    // (device ID or null). A single global scalar, not a set per
+    // tile: therefore only ONE text field can ever be open. Picking
+    // "+ New room ..." in a second tile's menu closes the first one
+    // along with it - intentional, two text fields open at once would
+    // be confusing anyway.
     newRoomFor: null,
 ```
 
-3. **`loadDevices`:** die Schleife samt Kommentar entfernen, sodass nur bleibt:
+3. **`loadDevices`:** remove the loop along with its comment, so that only this remains:
 
 ```javascript
     async loadDevices() {
@@ -509,31 +509,31 @@ Fünf Stellen, alle in `src/loxmatter/web/app.js`:
     },
 ```
 
-4. **`saveRoom`:** der `finally`-Block verliert `syncRoomSelectDraft`, behält `reconcileRoomFilter`:
+4. **`saveRoom`:** the `finally` block loses `syncRoomSelectDraft`, keeps `reconcileRoomFilter`:
 
 ```javascript
       } finally {
-        // Auch im Fehlerfall: faellt durch den fehlgeschlagenen Schreibweg
-        // ein Raum leer, darf der Filter nicht auf einem Raum stehen
-        // bleiben, den es nicht mehr gibt.
+        // Even on failure: if the failed write path leaves a room
+        // empty, the filter must not stay on a room that no longer
+        // exists.
         this.reconcileRoomFilter();
       }
 ```
 
-5. **`syncRoomSelectDraft` und `onRoomSelectChange`** samt ihrer Kommentare ersatzlos löschen. **`removeDevice`** verliert seine Zeile `delete this.roomSelectDrafts[device.id];`, **`commissionDevice`** seinen Aufruf `this.syncRoomSelectDraft(device);` — in dessen Kommentar oberhalb ist der Satz über den `roomSelectDrafts`-Eintrag zu streichen, der Rest der Begründung (Objekt befüllen statt ersetzen, wegen der über `await` gehaltenen Referenz in `saveRoom`/`saveLabel`) bleibt richtig und wichtig.
+5. **Delete `syncRoomSelectDraft` and `onRoomSelectChange`** along with their comments without replacement. **`removeDevice`** loses its line `delete this.roomSelectDrafts[device.id];`, **`commissionDevice`** loses its call `this.syncRoomSelectDraft(device);` — in the comment above it, the sentence about the `roomSelectDrafts` entry must be struck; the rest of the reasoning (populate the object instead of replacing it, because of the reference held across `await` in `saveRoom`/`saveLabel`) remains correct and important.
 
-- [ ] **Step 7: Obsolete Tests löschen**
+- [ ] **Step 7: Delete obsolete tests**
 
-In `tests/api/test_web.py` ersatzlos entfernen:
+Remove without replacement from `tests/api/test_web.py`:
 
 - `test_the_room_select_uses_a_synced_draft_instead_of_reading_device_room_directly`
 - `test_the_new_room_option_resets_the_draft_before_the_mode_starts`
 - `test_the_room_select_leaves_new_room_mode_when_a_normal_room_is_picked`
 - `test_the_room_picker_closes_new_room_mode_when_focus_leaves_it_entirely`
 
-Sie prüfen eine Mechanik, die es nicht mehr gibt. Nicht umschreiben: ihre gemeinsame Aussage — „die Auswahlliste zeigt nie einen Raum, den das Gerät nicht hat" — ist danach keine prüfbare Behauptung mehr, weil es keine Auswahlliste gibt.
+They check a mechanism that no longer exists. Do not rewrite: their shared claim — "the select list never shows a room the device doesn't have" — is no longer a checkable claim afterward, because there is no select list.
 
-`test_the_page_offers_the_room_bar_and_the_room_picker` prüft mehrere Dinge auf einmal; nur die Zusicherungen zur Raum-Auswahl entfernen, die zur Raumleiste behalten, und den Namen auf `test_the_page_offers_the_room_bar` ändern.
+`test_the_page_offers_the_room_bar_and_the_room_picker` checks several things at once; remove only the assertions about the room select, keep the ones about the room bar, and rename it to `test_the_page_offers_the_room_bar`.
 
 - [ ] **Step 8: Run tests to verify they pass**
 
@@ -545,20 +545,20 @@ Expected: PASS.
 ```bash
 git add src/loxmatter/web src/loxmatter/i18n tests/api/test_web.py
 git commit -m "$(cat <<'EOF'
-feat(web): Raeume sind Menueeintraege, Auswahlfeld entfaellt ersatzlos
+feat(web): rooms are menu entries, select field removed without replacement
 
-Ein Klick auf einen Raum weist zu und schliesst das Menue. Damit
-verschwinden `roomSelectDrafts`, `syncRoomSelectDraft`,
-`onRoomSelectChange` und der focusout-Waechter - alles Gegengewichte zu
-einer Kopplung, die es ohne natives `<select>` nicht mehr gibt.
+A click on a room assigns it and closes the menu. This removes
+`roomSelectDrafts`, `syncRoomSelectDraft`, `onRoomSelectChange`, and
+the focusout guard - all counterweights to a coupling that no longer
+exists without a native `<select>`.
 
-Vier Tests entfallen mit ihnen. Sie werden geloescht, nicht
-umgeschrieben: ihre gemeinsame Aussage ("die Auswahlliste zeigt nie
-einen Raum, den das Geraet nicht hat") ist keine pruefbare Behauptung
-mehr, wenn es keine Auswahlliste gibt.
+Four tests go away with them. They are deleted, not rewritten:
+their shared claim ("the select list never shows a room the device
+doesn't have") is not a checkable claim anymore once there is no
+select list.
 
-`newRoomFor` bleibt - jetzt in der Rolle, fuer die es urspruenglich
-gedacht war: Sichtbarkeit des Textfelds, sonst nichts.
+`newRoomFor` stays - now in the role it was originally meant for:
+visibility of the text field, nothing else.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF
@@ -567,76 +567,76 @@ EOF
 
 ---
 
-### Task 4: Verhalten im Browser prüfen, Screenshots, Abschluss
+### Task 4: Check behavior in the browser, screenshots, wrap-up
 
 **Files:**
-- Modify: `scripts/capture_screenshots.py` (nur falls ein Selektor bricht)
+- Modify: `scripts/capture_screenshots.py` (only if a selector breaks)
 - Modify: `docs/screenshots/*.png`
 
 **Interfaces:**
-- Consumes: alles.
-- Produces: nichts.
+- Consumes: everything.
+- Produces: nothing.
 
-**Warum diese Aufgabe existiert:** Die WebUI-Tests belegen nur, dass ein Konstrukt ausgeliefert wird. Beim Vorgänger-Entwurf hat genau diese Lücke einen Fehler durchgelassen, bei dem *jede* Kachel dauerhaft den falschen Raum zeigte, obwohl drei Reviewrunden das Markup gelesen hatten. Der Harness unten ist die Gegenmaßnahme und kostet Minuten.
+**Why this task exists:** The WebUI tests only prove that a construct is shipped. In the predecessor design, exactly this gap let through a bug where *every* tile permanently showed the wrong room, even though three review rounds had read the markup. The harness below is the countermeasure and costs minutes.
 
-- [ ] **Step 1: Harness bauen und das Menü durchspielen**
+- [ ] **Step 1: Build the harness and run through the menu**
 
-Den vorhandenen Demo-Server nehmen, nicht selbst einen bauen:
+Use the existing demo server, don't build one yourself:
 
 ```bash
 uv run python scripts/dev_web_server.py --demo --store-path /tmp/kebab-demo.sqlite --port 8422
 ```
 
-Passwort `loxmatter-demo`, vier Geräte mit Räumen (Küche zwei, damit die Sortierung innerhalb einer Gruppe ablesbar bleibt). Im Browser öffnen und die DOM-Werte auslesen, nicht das Bild deuten.
+Password `loxmatter-demo`, four devices with rooms (kitchen has two, so sorting within a group stays legible). Open it in the browser and read the DOM values, don't interpret the picture.
 
-Nur falls ein eigener Harness doch nötig wird: `/auth-info` und `/i18n` werden **ohne** `/api`-Präfix abgerufen, und `/api/devices/{id}/controls` liefert `{commands, hidden_raw_commands}`, keine Liste — beides hat beim letzten Mal Zeit gekostet.
+Only if a dedicated harness turns out to be needed after all: `/auth-info` and `/i18n` are fetched **without** the `/api` prefix, and `/api/devices/{id}/controls` returns `{commands, hidden_raw_commands}`, not a list — both cost time last time.
 
-Diese sechs Punkte prüfen und die Ergebnisse in den Bericht schreiben:
+Check these six points and write the results into the report:
 
-1. Der ⋮ öffnet das Menü; ein Klick daneben schließt es; Escape schließt es.
-2. Ein Klick auf den ⋮ einer zweiten Kachel schließt das Menü der ersten.
-3. Der aktuelle Raum trägt das Häkchen — bei einem Gerät ohne Raum steht es bei „Ohne Raum".
-4. Ein Klick auf einen anderen Raum weist zu, die Kachel wandert in die richtige Gruppe, das Menü ist zu.
-5. „+ Neuer Raum …": Textfeld erscheint **im** Menü, das Menü bleibt beim Tippen offen, Enter speichert und schließt, Escape bricht nur den Neu-Raum-Modus ab und lässt das Menü offen.
-6. Dem letzten Gerät eines gefilterten Raums einen anderen Raum geben: `reconcileRoomFilter` greift weiterhin, der Filter fällt auf „Alle" zurück.
+1. The ⋮ opens the menu; a click elsewhere closes it; Escape closes it.
+2. A click on the ⋮ of a second tile closes the first one's menu.
+3. The current room carries the checkmark — for a device with no room it sits at "No room".
+4. A click on another room assigns it, the tile moves into the right group, the menu is closed.
+5. "+ New room …": text field appears **in** the menu, the menu stays open while typing, Enter saves and closes, Escape only cancels new-room mode and leaves the menu open.
+6. Give the last device of a filtered room a different room: `reconcileRoomFilter` still kicks in, the filter falls back to "All".
 
-- [ ] **Step 2: Screenshots erneuern**
+- [ ] **Step 2: Refresh screenshots**
 
 ```bash
 uv run --with playwright python scripts/capture_screenshots.py
 ```
 
-Das Skript klickt über `nav.tabs button:has-text(…)`, Passwortfeld und Knopftexte — keiner dieser Selektoren hängt am Inneren der Kachel, es sollte also unverändert durchlaufen. Bricht doch einer, den Selektor im Skript nachziehen, nicht das Markup.
+The script clicks via `nav.tabs button:has-text(…)`, the password field, and button texts — none of these selectors depend on the tile's interior, so it should run through unchanged. If one does break anyway, update the selector in the script, not the markup.
 
-Danach `docs/screenshots/dashboard.png` ansehen und prüfen, dass die Fußzeile wirklich nur noch Hinweis und ⋮ trägt.
+Afterward look at `docs/screenshots/dashboard.png` and check that the footer really only carries the note and the ⋮ now.
 
-- [ ] **Step 3: Alle vier Gates**
+- [ ] **Step 3: All four gates**
 
 ```bash
 uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy src
 ```
 
-Expected: alle vier sauber. Jeder Fehlschlag wird behoben, nicht unterdrückt.
+Expected: all four clean. Every failure gets fixed, not suppressed.
 
-- [ ] **Step 4: Ungenutzte Übersetzungsschlüssel entfernen**
+- [ ] **Step 4: Remove unused translation keys**
 
 ```bash
 for key in $(grep -o '^web\.devices\.[a-z_.]*' src/loxmatter/i18n/strings.yaml | tr -d ':'); do
-  grep -q "$key" src/loxmatter/web/index.html src/loxmatter/web/app.js || echo "UNBENUTZT: $key"
+  grep -q "$key" src/loxmatter/web/index.html src/loxmatter/web/app.js || echo "UNUSED: $key"
 done
 ```
 
-Jeden Treffer prüfen und entfernen, wenn ihn wirklich nichts mehr verwendet. Erwartet wird hier nichts — der Umbau verwendet dieselben Schlüssel weiter —, aber die Prüfung kostet eine Zeile.
+Check every hit and remove it if truly nothing uses it anymore. Nothing is expected here — the rework keeps using the same keys — but the check costs one line.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add -A docs/screenshots scripts
 git commit -m "$(cat <<'EOF'
-docs: Screenshots auf das Kachel-Menue nachziehen
+docs: bring screenshots up to date with the tile menu
 
-Die Fusszeile traegt jetzt nur noch Export-Hinweis und Kebab; die alten
-Bilder zeigten das Raum-Auswahlfeld.
+The footer now carries only the export note and the kebab; the old
+images showed the room select field.
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 EOF

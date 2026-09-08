@@ -1,257 +1,258 @@
 # Matter → Loxone Bridge — Design
 
-**Datum:** 2026-09-01
-**Status:** Design abgestimmt, bereit für Implementierungsplanung
+**Date:** 2026-09-01
+**Status:** Design agreed, ready for implementation planning
 
 ---
 
-## 1. Ziel
+## 1. Goal
 
-Ein selbst gehosteter Container-Dienst, der Matter-Geräte (over Thread und WiFi) an einen
-Loxone Miniserver anbindet. Geräte werden über eine WebUI eingelernt; sämtliche Werte,
-die ein Gerät liefert — inklusive Events wie Tastendrücke —, werden an Loxone
-weitergereicht. Die Loxone-seitigen Objekte entstehen per generierter Vorlagendatei,
-nicht per Handarbeit.
+A self-hosted container service that connects Matter devices (over Thread and WiFi) to a
+Loxone Miniserver. Devices are commissioned via a WebUI; every value a
+device supplies — including events such as button presses — is passed on to
+Loxone. The Loxone-side objects are created via a generated template file,
+not by hand.
 
-Zielgruppe: Open Source, fremde Installationen. Es darf keine Annahme über Miniserver-
-Generation, Loxone-Config-Version oder Gerätebestand getroffen werden.
+Target audience: open source, third-party installations. No assumption may be
+made about Miniserver generation, Loxone Config version, or device inventory.
 
-## 2. Nicht-Ziele in v1
+## 2. Non-goals in v1
 
-- Patchen der Loxone-Config-Projektdatei (siehe 3.2 — als optionales Modul später)
-- Matter-OTA-Updates der Geräte
-- Mehrere Miniserver an einer Bridge
-- Richtung Loxone → Matter für Szenen/Gruppen (nur Einzelgeräte-Kommandos)
-- Loxone als Matter-Gerät exponieren
-- Szenen, Zeitpläne oder Automatisierung in der WebUI (siehe 8.2)
+- Patching the Loxone Config project file (see 3.2 — an optional module later)
+- Matter OTA updates for devices
+- Multiple Miniservers on one bridge
+- Direction Loxone → Matter for scenes/groups (single-device commands only)
+- Exposing Loxone as a Matter device
+- Scenes, schedules, or automation in the WebUI (see 8.2)
 
 ---
 
-## 3. Entscheidungen
+## 3. Decisions
 
-### 3.1 Loxone-Transport: virtuelle UDP-Eingänge + virtuelle HTTP-Ausgänge
+### 3.1 Loxone transport: virtual UDP inputs + virtual HTTP outputs
 
-Gewählt gegenüber zwei Alternativen:
+Chosen over two alternatives:
 
-**MQTT (nativer Loxone-Client) — verworfen.** Miniserver Gen 1 wird nicht unterstützt,
-und die Grenzen sind zu eng: max. 16 Subscriptions und 16 Publish-Ein-/Ausgänge,
-Auswertung von Wertänderungen höchstens alle 2 Sekunden. Für einige Dutzend Geräte mit
-je mehreren Attributen unbrauchbar.
-Quelle: <https://www.loxone.com/enen/kb/mqtt/>
+**MQTT (native Loxone client) — dropped.** Miniserver Gen 1 is not supported,
+and the limits are too tight: max. 16 subscriptions and 16 publish inputs/outputs,
+evaluation of value changes at most every 2 seconds. Unusable for a few dozen
+devices with several attributes each.
+Source: <https://www.loxone.com/enen/kb/mqtt/>
 
-**Modbus TCP — verworfen.** Loxone Config hat zwar einen nativen Modbus-TCP-Treiber,
-aber Loxone ist Master und pollt (Latenz), und Matter-Semantik (Farbe, Events, Strings)
-lässt sich nicht sinnvoll auf ein 16-Bit-Registermodell abbilden. Für Zähler und
-Wechselrichter richtig, für Leuchten und Taster ein Rückschritt.
+**Modbus TCP — dropped.** Loxone Config does have a native Modbus TCP driver,
+but Loxone is the master and polls (latency), and Matter semantics (color, events, strings)
+cannot be sensibly mapped onto a 16-bit register model. Right for meters and
+inverters, a step backward for lights and buttons.
 
-**Gewählt: UDP-Eingang (push, niedrige Latenz) + HTTP-Ausgang (Kommandos).**
-Funktioniert auf allen Miniserver-Generationen, ist dokumentiert und stabil.
+**Chosen: UDP input (push, low latency) + HTTP output (commands).**
+Works on all Miniserver generations, is documented and stable.
 
-### 3.2 Loxone-Import: Vorlagendateien, kein direktes Schreiben
+### 3.2 Loxone import: template files, no direct writing
 
-Der ursprünglich gewünschte Weg — Tool verbindet sich mit dem Miniserver und legt die
-IOs selbst an — ist **nicht möglich**. Die Miniserver-API (`/dev/sps/io/<name>/<wert>`,
-`LoxAPP3.json`) kann Werte auf *existierenden* IOs setzen und die Struktur lesen, aber
-keine IO-Objekte anlegen. Das Programm wird von Loxone Config kompiliert und als Binär
-hochgeladen; das Anlegen von IOs ist eine Compiler-Funktion von Config.
+The originally desired path — the tool connects to the Miniserver and creates
+the IOs itself — is **not possible**. The Miniserver API (`/dev/sps/io/<name>/<value>`,
+`LoxAPP3.json`) can set values on *existing* IOs and read the structure, but
+cannot create IO objects. The program is compiled by Loxone Config and uploaded
+as a binary; creating IOs is a compiler function of Config.
 
-Den Upload-Weg nachzubauen hieße, Compiler und proprietäres Upload-Protokoll zu
-reverse-engineeren — für ein Tool, das in fremden Häusern läuft, disqualifizierend.
+Rebuilding the upload path would mean reverse-engineering the compiler and the
+proprietary upload protocol — disqualifying for a tool that runs in other people's homes.
 
-**Projektdatei-Patching** (die Config-Projektdatei ist XML-basiert, „LoxPLAN") bleibt als
-späteres, optionales Modul offen. Es ist nicht XML-valide (doppelte Attribute), braucht
-einen toleranten Parser und ist versionsabhängig. Der Gewinn gegenüber dem Vorlagen-Weg
-ist zudem gering: beide erfordern null Aufwand *pro Gerät*, und das Verdrahten der IOs
-auf Funktionsbausteine bleibt in beiden Fällen Handarbeit.
-Quelle: <https://loxwiki.atlassian.net/wiki/spaces/LOX/pages/1852243969>
+**Project file patching** (the Config project file is XML-based, "LoxPLAN") remains open
+as a later, optional module. It is not XML-valid (duplicate attributes), needs
+a tolerant parser, and is version-dependent. The gain over the template path
+is also small: both require zero effort *per device*, and wiring the IOs
+to function blocks stays manual work in both cases.
+Source: <https://loxwiki.atlassian.net/wiki/spaces/LOX/pages/1852243969>
 
-### 3.3 Stack: Python durchgehend
+### 3.3 Stack: Python throughout
 
-`python-matter-server` (basiert auf dem offiziellen CHIP-SDK) als Matter-Engine,
-FastAPI-Backend, schlanke SPA. Begründung: ausgereifteste Controller-Implementierung
-außerhalb von Home Assistant, liefert per WebSocket genau das benötigte Modell —
-vollständiger Attributbaum plus Events über Subscriptions. Eine Sprache im Projekt.
+`python-matter-server` (based on the official CHIP SDK) as the Matter engine,
+FastAPI backend, lean SPA. Rationale: the most mature controller implementation
+outside Home Assistant, delivers exactly the needed model over WebSocket —
+full attribute tree plus events via subscriptions. One language across the project.
 
-`matter.js` (TypeScript) wurde erwogen: ein Prozess statt zwei, geteilte Typen zwischen
-Backend und Frontend. Verworfen, weil die Controller-Seite weniger erprobt ist und
-Commissioning und Thread deutlich mehr Low-Level-Arbeit erfordern.
+`matter.js` (TypeScript) was considered: one process instead of two, shared types
+between backend and frontend. Dropped because the controller side is less
+proven and commissioning and Thread require considerably more low-level work.
 
-### 3.4 Thread: eigener OTBR im Stack
+### 3.4 Thread: dedicated OTBR in the stack
 
-Der Container-Stack liefert einen eigenen OpenThread Border Router mit (USB-Funkmodul,
-z. B. ZBT-1 / nRF52840). Vollständig eigenständig, kein Fremd-Border-Router nötig,
-keine manuelle Beschaffung von Thread-Credentials. Preis: USB-Passthrough, Host-
-Networking und IPv6/radvd im Deployment.
+The container stack ships its own OpenThread Border Router (USB radio module,
+e.g. ZBT-1 / nRF52840). Fully self-contained, no third-party border router needed,
+no manual acquisition of Thread credentials. Price: USB passthrough, host
+networking, and IPv6/radvd in the deployment.
 
-### 3.5 Abbildung: generisch statt kuratiert
+### 3.5 Mapping: generic, not curated
 
-Kein Profil pro Gerätetyp. Stattdessen wird der Endpoint-/Cluster-/Attribut-Baum des
-Geräts ausgelesen und **jedes lesbare Attribut und jedes Event** zu einem Loxone-Signal.
-Eine YAML-Tabelle reichert bekannte Cluster an (Kurzname, Skalierung, Einheit);
-unbekannte Cluster werden trotzdem roh exportiert.
+No profile per device type. Instead, the device's endpoint/cluster/attribute
+tree is read out and **every readable attribute and every event** becomes a
+Loxone signal. A YAML table enriches known clusters (short name, scaling,
+unit); unknown clusters are still exported raw.
 
-Konsequenz: neue Geräte funktionieren am Tag null, nur mit hässlicheren Namen. Die
-Tabelle ist eine Anreicherungsschicht, kein Gatekeeper.
+Consequence: new devices work on day zero, just with uglier names. The
+table is an enrichment layer, not a gatekeeper.
 
-**Validierung (Phase 1, 2026-09-01).** Geprüft an 2 realen IKEA-Geräten am
-laufenden matter-server (`ws://10.0.1.56:5580/ws`): Node 3 „IKEA of Sweden
-GRILLPLATS Plug" (messende Steckdose, Cluster 144 ElectricalPowerMeasurement,
-145 ElectricalEnergyMeasurement) und Node 4 „IKEA of Sweden BILRESA dual
-button" (zweikanaliger Taster, Switch-Cluster 59 auf Endpoint 1 und 2).
-Aufgenommene Abbilder liegen unter `tests/fixtures/nodes/`.
+**Validation (phase 1, 2026-09-01).** Checked against 2 real IKEA devices on a
+running matter-server (`ws://10.0.1.56:5580/ws`): node 3 "IKEA of Sweden
+GRILLPLATS Plug" (metering plug, clusters 144 ElectricalPowerMeasurement,
+145 ElectricalEnergyMeasurement) and node 4 "IKEA of Sweden BILRESA dual
+button" (two-channel button, switch cluster 59 on endpoint 1 and 2).
+Captured snapshots are under `tests/fixtures/nodes/`.
 
-Was trägt: Bei beiden Geräten war jeder Attributpfad parsebar
-(`find_unparsable_paths` leer), und kein vom Gerät in seiner `AttributeList`
-gelistetes Attribut fehlte im gelieferten Snapshot (`find_unreported_attributes`
-leer). Unbekannte Cluster wurden unverändert mitextrahiert. Für Attribute trägt
-die generische Zerlegung damit uneingeschränkt.
+What holds up: for both devices, every attribute path was parseable
+(`find_unparsable_paths` empty), and no attribute listed by the device in its
+`AttributeList` was missing from the delivered snapshot (`find_unreported_attributes`
+empty). Unknown clusters were extracted unchanged along with the rest. For attributes,
+the generic decomposition thus holds without restriction.
 
-Was nicht trägt, und warum das ein echter Befund ist statt einer Randnotiz:
-**keins der beiden Geräte führt die `EventList` (0xFFFA)**. Beim Taster fehlt
-sie schlicht in der `AttributeList` des Switch-Clusters (`1/59/65531` =
-`[0, 1, 2, 65528, 65529, 65531, 65532, 65533]` — 65530 ist nicht dabei); das
-globale Attribut ist im Matter-Standard optional, und IKEA implementiert es
-nicht. Ein Gerät, das nachweislich Tastendrücke sendet, lieferte über die
-reine EventList-Ableitung **null** Events. Attribut-Zerlegung bleibt
-generisch — sie braucht kein Cluster-Wissen und übersieht nichts.
-**Event-Zerlegung kann das nicht mehr uneingeschränkt sein**: welche Events
-ein Cluster erzeugt, muss aus der FeatureMap abgeleitet werden, und diese
-Ableitung ist zwangsläufig Cluster-spezifisches Wissen (Korrektur in 6.3,
-umgesetzt in `discovery.FEATURE_MAP_EVENTS`). Das ist eine Grenze der
-Aussage „generisch statt kuratiert" oben, kein Detail am Rand.
+What does not hold up, and why that is a real finding rather than a footnote:
+**neither device populates the `EventList` (0xFFFA)**. For the button it is
+simply missing from the switch cluster's `AttributeList` (`1/59/65531` =
+`[0, 1, 2, 65528, 65529, 65531, 65532, 65533]` — 65530 is not in it); the
+global attribute is optional in the Matter standard, and IKEA does not
+implement it. A device that demonstrably sends button presses delivered
+**zero** events via the pure EventList derivation. Attribute decomposition
+remains generic — it needs no cluster knowledge and misses nothing.
+**Event decomposition can no longer be that unrestricted**: which events
+a cluster produces has to be derived from the FeatureMap, and that
+derivation is necessarily cluster-specific knowledge (correction in 6.3,
+implemented in `discovery.FEATURE_MAP_EVENTS`). That is a limit on the
+claim "generic, not curated" above, not a side detail.
 
-Zweiter Befund derselben Aufnahme: **45 der 159 extrahierten Attributsignale
-der Steckdose sind nicht skalar** — Listen, Structs oder Strings, z. B.
+Second finding from the same capture: **45 of the 159 extracted attribute signals
+of the plug are not scalar** — lists, structs, or strings, e.g.
 `0/29/1 = [29, 31, 40, ...]`, `0/31/0 = [{...}]`, `0/40/1 = 'IKEA of Sweden'`.
-Die generische Zerlegung übersieht davon nichts — sie liefert alle 159 als
-Signal —, aber gut ein Viertel des Gefundenen (28,3 %) lässt sich nicht 1:1
-auf einen virtuellen UDP-Eingang abbilden, der nur Zahlen und digitale Werte
-kennt (für Strings gibt es immerhin einen virtuellen Text-Eingang; für Listen
-und Structs nichts). Konsequenz für den Exporter (6.6) und die WebUI (8).
+The generic decomposition misses none of this — it delivers all 159 as a
+signal —, but a good quarter of what was found (28.3%) cannot be mapped 1:1
+onto a virtual UDP input, which only knows numbers and digital values
+(for strings there is at least a virtual text input; for lists
+and structs, nothing). Consequence for the exporter (6.6) and the WebUI (8).
 
-**Ergänzung (Phase 6, 2026-09-03).** Von den technisch abbildbaren Signalen
-(6.6) will ein Anwender nur einen kleinen Teil standardmäßig exportiert sehen
-— bei der Steckdose fünf davon (Ein/Aus, Spannung, Strom, Leistung,
-Verbrauch). [Der Signalauswahl-Entwurf](2026-09-03-signal-selection-design.md)
-führt dafür den Begriff `Relevance` ein, getrennt von der hier beschriebenen
-`Exportability`. Die generische Zerlegung selbst bleibt dabei **unverändert**
-— sie liefert weiterhin jedes lesbare Attribut und jedes Event als Signal,
-genau wie oben validiert; `Relevance` ändert nur, welcher **Vorgabewert** die
-Spalte `exported` (Abschnitt 5) beim Einlernen bekommt. Eine Positivliste
-("nur was ich kenne, kommt durch") wurde dafür ausdrücklich verworfen — sie
-widerspräche der hier getroffenen Grundwette, siehe dortiger Abschnitt 2.
+**Addendum (phase 6, 2026-09-03).** Of the technically mappable signals
+(6.6), a user wants to see only a small part exported by default
+— for the plug, five of them (on/off, voltage, current, power,
+consumption). [The signal selection design](2026-09-03-signal-selection-design.md)
+introduces the term `Relevance` for this, separate from the `Exportability`
+described here. The generic decomposition itself remains **unchanged**
+in the process — it continues to deliver every readable attribute and every event as a
+signal, exactly as validated above; `Relevance` only changes which **default value**
+the `exported` column (section 5) gets on commissioning. An allowlist
+("only what I recognize gets through") was explicitly rejected for this — it
+would contradict the core bet made here, see section 2 there.
 
 ---
 
-## 4. Systemarchitektur
+## 4. System architecture
 
-### 4.1 Container-Stack
+### 4.1 Container stack
 
 ```
 docker compose
 ├── otbr            OpenThread Border Router
-│                   network_mode: host, USB-Dongle, IPv6 + radvd
-├── matter-server   python-matter-server (CHIP-SDK)
-│                   network_mode: host (mDNS + IPv6 zwingend)
-│                   Volume: Fabric-Credentials
+│                   network_mode: host, USB dongle, IPv6 + radvd
+├── matter-server   python-matter-server (CHIP SDK)
+│                   network_mode: host (mDNS + IPv6 mandatory)
+│                   Volume: fabric credentials
 └── loxmatter       FastAPI + WebUI + SQLite
-                    network_mode: host, Port 8080/tcp
+                    network_mode: host, port 8080/tcp
 
-Profil "dev" ergänzt (siehe 10.2)
-├── virtual-devices  CHIP-Beispielgeräte, echt einlernbar
-└── fake-miniserver  UDP-Mitschnitt + Kommando-Sender statt Loxone
+"dev" profile adds (see 10.2)
+├── virtual-devices  CHIP example devices, actually commissionable
+└── fake-miniserver  UDP capture + command sender instead of Loxone
 ```
 
-`otbr` und `matter-server` benötigen Host-Networking zwingend (mDNS, IPv6).
-`loxmatter` spricht WebSocket nach innen sowie UDP und HTTP nach Loxone und käme
-technisch auch mit Bridge-Networking aus, läuft in der Referenz-Installation
-(`deploy/testhost/docker-compose.yml`) aber ebenfalls mit `network_mode: host` — aus
-zwei dort ausführlich begründeten Gründen: `--url` (Default
-`ws://localhost:5580/ws`) erreicht den ebenfalls host-vernetzten `matter-server` nur
-über `127.0.0.1` (im Compose-Bridge-Netz ist er kein auflösbarer Servicename), und der
-HTTP-Port für die Loxone-Ausgangsbefehle (`--listen`) ist damit ohne eigene Portfreigabe
-vom Miniserver aus erreichbar. Diagramm und Fließtext sagten dazu bis zum 2026-09-03
-Gegenteiliges („Bridge-Networking" oben, `network_mode: host` unten, mit einem „siehe
-oben" auf das Diagramm); maßgeblich ist und war die Compose-Datei.
+`otbr` and `matter-server` require host networking without exception (mDNS, IPv6).
+`loxmatter` speaks WebSocket inward as well as UDP and HTTP toward Loxone and would
+technically get by with bridge networking too, but in the reference installation
+(`deploy/testhost/docker-compose.yml`) it also runs with `network_mode: host` — for
+two reasons argued at length there: `--url` (default
+`ws://localhost:5580/ws`) reaches the also host-networked `matter-server` only
+via `127.0.0.1` (in the compose bridge network it is not a resolvable service name), and the
+HTTP port for the Loxone outgoing commands (`--listen`) is thereby reachable from the
+Miniserver without a dedicated port mapping. The diagram and the running text said the
+opposite of this until 2026-09-03 ("bridge networking" above, `network_mode: host`
+below, with a "see above" pointing at the diagram); the compose file is and was
+authoritative.
 
-**Kritisch:** Das Volume mit den Fabric-Credentials von `matter-server` ist der einzige
-unersetzliche Zustand. Verlust bedeutet, alle Geräte neu einlernen zu müssen. Muss im
-Deployment-Guide und in der WebUI prominent stehen; die WebUI bietet einen Backup-Export.
+**Critical:** the volume holding `matter-server`'s fabric credentials is the only
+irreplaceable state. Losing it means having to recommission every device. Must be
+stated prominently in the deployment guide and in the WebUI; the WebUI offers a backup export.
 
-**Sicherheitsstatus dieses Backup-Exports (geschützt seit Task 8, 2026-09-02 — siehe
-9.1 für die vollständige Entscheidung):** `GET /api/diagnostics/fabric-backup` (10.5)
-verlangt seit Task 8 `Authorization: Bearer <Token>`, sobald `--api-token`/
-`LOXMATTER_API_TOKEN` gesetzt ist (`loxone.server.build_api_guard`). `loxmatter` läuft
-mit `network_mode: host` (siehe oben), damit der Miniserver ihn erreicht — dieselbe
-Erreichbarkeit gilt fürs gesamte LAN, deshalb ist ein gesetztes Token hier keine
-Option, sondern die Voraussetzung für einen sicheren Betrieb: **ohne konfiguriertes
-Token liefert diese Route gar nichts aus** (HTTP 403 mit Begründung im `detail`) — sie
-ist die einzige Ausnahme von der Regel, dass `/api` ohne Token offen bleibt (9.1;
-Fassung vom 2026-09-03, dieser Absatz sagte bis dahin noch das Gegenteil). Der
-Read-only-Mount des matter-server-Datenverzeichnisses (`./data:/matter-data:ro`)
-und die zugehörige
-`--matter-data-dir`-Option in `deploy/testhost/docker-compose.yml` sind seit Task 8
-wieder aktiv, zusammen mit einem in `.env` gesetzten `LOXMATTER_API_TOKEN` — ohne
-diese Einhängung lieferte die Route ohnehin nur einen 503, statt echte Schlüssel
-auszuliefern.
+**Security status of this backup export (protected since task 8, 2026-09-02 — see
+9.1 for the full decision):** `GET /api/diagnostics/fabric-backup` (10.5)
+has required `Authorization: Bearer <token>` since task 8, as soon as `--api-token`/
+`LOXMATTER_API_TOKEN` is set (`loxone.server.build_api_guard`). `loxmatter` runs
+with `network_mode: host` (see above) so the Miniserver can reach it — the same
+reachability applies to the whole LAN, so a set token here is not an
+option but the precondition for secure operation: **without a configured
+token this route serves nothing at all** (HTTP 403 with a reason in `detail`) — it
+is the sole exception to the rule that `/api` stays open without a token (9.1;
+2026-09-03 revision, this paragraph said the opposite until then). The
+read-only mount of the matter-server data directory (`./data:/matter-data:ro`)
+and the corresponding
+`--matter-data-dir` option in `deploy/testhost/docker-compose.yml` have been
+active again since task 8, together with a `LOXMATTER_API_TOKEN` set in `.env` — without
+this mount the route would only have returned a 503 anyway, instead of serving
+real keys.
 
-**Nachbesserung vom 2026-09-03 (WebUI-Login, siehe
-[2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md)):** der
-gesamte vorstehende Absatz beschreibt einen Zwischenstand, keinen aktuellen. Es
-gibt seither keine Regel „`/api` bleibt ohne Token offen" mehr, von der diese
-Route die eine Ausnahme wäre — jede `/api`-Route, diese eingeschlossen, verlangt
-eine gültige Sitzung (Passwort-Login) oder ein gültiges Bearer-Token, sonst 401.
-Der eigens für diese Route gebaute 403-Zweig ist damit ersatzlos entfallen, weil
-der Zustand, gegen den er gerichtet war — eine erreichbare Bruecke ganz ohne
-Nachweis — nicht mehr eintreten kann (Einzelheiten: `api/diagnostics.py`s
-Moduldocstring). Die Einhängung selbst bleibt vertretbar, aus demselben Grund
-wie jede andere `/api`-Route: nicht weil ein Token daneben steht, sondern weil
-ohne Nachweis niemand mehr hinkommt.
+**Follow-up fix from 2026-09-03 (WebUI login, see
+[2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md)):** the
+entire preceding paragraph describes an intermediate state, not the current one. There
+is no longer a rule "`/api` stays open without a token" of which this
+route is the one exception — every `/api` route, this one included, requires
+a valid session (password login) or a valid bearer token, otherwise 401.
+The 403 branch built specifically for this route has thus gone away without
+replacement, because the state it was directed against — a reachable bridge with
+no proof of identity whatsoever — can no longer occur (details:
+`api/diagnostics.py`'s module docstring). The mount itself remains justified,
+for the same reason as any other `/api` route: not because a token sits next to
+it, but because nobody can get there anymore without proof of identity.
 
-### 4.2 Module in `loxmatter`
+### 4.2 Modules in `loxmatter`
 
-| Modul | Aufgabe | Abhängigkeiten |
+| Module | Task | Dependencies |
 |---|---|---|
-| `matter/` | WS-Client zu matter-server: Commissioning, Subscriptions, Kommandos. Normalisiert auf `Node → Endpoint → Cluster → Attribut/Event` | matter-server |
-| `model/` | SQLite: Geräte, Signale, Mappings, Export-Zustand | — |
-| `profiles/` | YAML-Tabellen: Cluster/Attribut → Kurzname, Skalierung, Einheit, Loxone-Typ | — |
-| `loxone/out` | UDP-Sender: Entprellung, Impulse, Full-Resend, Rate-Limit | model, profiles |
-| `commands/` | Übersetzt „gewünschter Zustand → Matter-Kommando": Level-Skalierung, Farbraum, Cover-Position, Setpoints. **Von `loxone/in` und `web/` gemeinsam genutzt** | matter, model, profiles |
-| `loxone/in` | HTTP-Endpoints für virtuelle Ausgänge; delegiert an `commands/` | commands |
-| `export/` | Generiert `VIU_*.xml` und `VO_*.xml` | model, profiles |
-| `web/` | SPA. REST gegen das Backend für alles, was sie tut; dazu **eine** WebSocket-Verbindung `/api/live`, die nur Live-Werte empfängt und nie sendet (8.3 verlangt sie) | — |
+| `matter/` | WS client to matter-server: commissioning, subscriptions, commands. Normalizes to `node → endpoint → cluster → attribute/event` | matter-server |
+| `model/` | SQLite: devices, signals, mappings, export state | — |
+| `profiles/` | YAML tables: cluster/attribute → short name, scaling, unit, Loxone type | — |
+| `loxone/out` | UDP sender: debouncing, pulses, full resend, rate limiting | model, profiles |
+| `commands/` | Translates "desired state → Matter command": level scaling, color space, cover position, setpoints. **Shared by `loxone/in` and `web/`** | matter, model, profiles |
+| `loxone/in` | HTTP endpoints for virtual outputs; delegates to `commands/` | commands |
+| `export/` | Generates `VIU_*.xml` and `VO_*.xml` | model, profiles |
+| `web/` | SPA. REST against the backend for everything it does; plus **one** WebSocket connection `/api/live` that only receives live values and never sends (8.3 requires it) | — |
 
-`commands/` existiert genau deshalb als eigenes Modul: Loxone-HTTP-Ausgang und WebUI-Bedienung
-sind zwei Aufrufer derselben Logik. Läge sie in `loxone/in`, gäbe es die Farbraum- und
-Level-Umrechnung zweimal — mit garantiert divergierendem Verhalten.
+`commands/` exists as its own module for exactly this reason: the Loxone HTTP output and WebUI
+operation are two callers of the same logic. If it lived in `loxone/in`, the color space and
+level conversion would exist twice — with guaranteed divergent behavior.
 
-Jedes Modul ist ohne die anderen testbar. `matter/` und `loxone/*` sind die einzigen
-Module mit I/O nach außen.
+Every module is testable without the others. `matter/` and `loxone/*` are the only
+modules with I/O to the outside.
 
-### 4.3 Datenfluss
+### 4.3 Data flow
 
 ```
-Sensor:   Matter-Gerät ──Subscription──► matter-server ──WS──► loxmatter
-                                          Mapping + Skalierung  │
+Sensor:   Matter device ──subscription──► matter-server ──WS──► loxmatter
+                                          mapping + scaling   │
                                                                 ▼
-                                UDP "d12_1_temp:21.5" ──► Miniserver (virt. UDP-Eingang)
+                                UDP "d12_1_temp:21.5" ──► Miniserver (virt. UDP input)
 
-Aktor:    Loxone-Baustein ──► virt. Ausgang ──HTTP GET──► loxmatter
+Actuator: Loxone block ──► virt. output ──HTTP GET──► loxmatter
                                 /cmd/d12_1_level/85              │
-                                                        Matter-Kommando
+                                                        Matter command
                                                                  ▼
-                                              matter-server ──► Matter-Gerät
+                                              matter-server ──► Matter device
 ```
 
 ---
 
-## 5. Datenmodell
+## 5. Data model
 
 ```
 Device
-  id            int, fortlaufend, stabil
-  node_id       Matter Node ID
-  unique_id     Matter Unique ID (überlebt Neuvergabe der Node ID)
+  id            int, sequential, stable
+  node_id       Matter node ID
+  unique_id     Matter unique ID (survives node ID reassignment)
   vendor, product, label
   online        bool
 
@@ -261,45 +262,45 @@ Signal
   endpoint      int
   cluster_id    int
   kind          'attribute' | 'event'
-  element_id    int (Attribute ID oder Event ID)
-  key           str, UNIQUE, unveränderlich  ← die Loxone-Verdrahtung
-  title         str, frei änderbar
+  element_id    int (attribute ID or event ID)
+  key           str, UNIQUE, immutable  ← the Loxone wiring
+  title         str, freely changeable
   unit          str
-  exportability 'analog' | 'digital' | 'text' | 'none' (Abschnitt 6.6)
-  exported      bool, Vorgabewert seit Phase 6 = `exportability` abbildbar
-                UND `functional` (unten) - nicht `functional` allein
-  functional    bool, seit Phase 6 (Schema v4) — ob `profiles.relevance.
-                is_functional` dieses Signal für den erkannten Gerätetyp
-                standardmäßig will (Signalauswahl-Entwurf, Abschnitt 3/4).
-                Nicht vom Nutzer umschaltbar, anders als `exported`.
+  exportability 'analog' | 'digital' | 'text' | 'none' (section 6.6)
+  exported      bool, default value since phase 6 = `exportability` mappable
+                AND `functional` (below) - not `functional` alone
+  functional    bool, since phase 6 (schema v4) — whether `profiles.relevance.
+                is_functional` wants this signal by default for the
+                recognized device type (signal selection design, section 3/4).
+                Not user-toggleable, unlike `exported`.
 ```
 
-`analog`/`scale` aus einer früheren Fassung dieses Abschnitts existieren als
-Spalten nicht — die Skalierung ist Sache der Profiltabelle
-(`profiles/clusters.yaml`) zur Laufzeit, nicht eine pro Signal gespeicherte
-Zahl; `exportability` ist die tatsächlich gespeicherte, feinere Ersetzung für
-das hier zuvor genannte `analog: bool`.
+`analog`/`scale` from an earlier version of this section do not exist as
+columns — scaling is the profile table's business
+(`profiles/clusters.yaml`) at runtime, not a number stored per signal;
+`exportability` is the actually stored, finer replacement for
+the `analog: bool` named here previously.
 
-Das Gerät trägt zusätzlich die Loxone-Export-Metadaten:
+The device additionally carries the Loxone export metadata:
 
 ```
-Device (Fortsetzung)
-  udp_port      int, Default aus globaler Einstellung (7000)
-  exported_at   nullable — wann zuletzt eine Vorlage erzeugt wurde
+Device (continued)
+  udp_port      int, default from global setting (7000)
+  exported_at   nullable — when a template was last generated
 ```
 
-`key` ist der einzige Wert, der niemals geändert wird. `title` darf jederzeit geändert
-werden und wirkt sich nur auf den nächsten Export aus.
+`key` is the only value that is never changed. `title` may be changed at any
+time and only affects the next export.
 
 ---
 
-## 6. Loxone-Integration
+## 6. Loxone integration
 
-### 6.1 Verifiziertes Vorlagen-Schema
+### 6.1 Verified template schema
 
-Gemessen an 26 Vorlagen aus einer echten Loxone-Config-Installation — bereinigte Auszüge
-liegen unter `tests/fixtures/loxone/VIU_reference.xml` und `VO_reference.xml`,
-`loxmatter.export.documents` baut dieses Schema nach:
+Measured against 26 templates from a real Loxone Config installation — cleaned excerpts
+are under `tests/fixtures/loxone/VIU_reference.xml` and `VO_reference.xml`,
+`loxmatter.export.documents` rebuilds this schema:
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -317,994 +318,993 @@ liegen unter `tests/fixtures/loxone/VIU_reference.xml` und `VO_reference.xml`,
 </VirtualOut>
 ```
 
-**Achtung Escaping:** Der Loxone-Wertplatzhalter `<v>` in `CmdOn` steht in einem
-XML-Attribut und muss als `&lt;v&gt;` geschrieben werden. Ein unescaptes `<v>` macht die
-Datei unlesbar für Loxone Config. Der Platzhalter `\v` in `Check` ist davon nicht betroffen.
+**Escaping warning:** the Loxone value placeholder `<v>` in `CmdOn` sits inside an
+XML attribute and must be written as `&lt;v&gt;`. An unescaped `<v>` makes the
+file unreadable for Loxone Config. The placeholder `\v` in `Check` is not affected by this.
 
-**Bedeutung von `Address`:** Im `VirtualInUdp` ist `Address` der *Absender-Filter* —
-die IP der Bridge, von der Datagramme akzeptiert werden. `Port` ist der Port, auf dem
-der Miniserver lauscht. Im `VirtualOut` ist `Address` dagegen die Ziel-Basis-URL der
-Bridge.
+**Meaning of `Address`:** in `VirtualInUdp`, `Address` is the *sender filter* —
+the bridge IP from which datagrams are accepted. `Port` is the port the
+Miniserver listens on. In `VirtualOut`, by contrast, `Address` is the target base URL of
+the bridge.
 
-**Herkunft und Korrekturhistorie.** Der erste Entwurf dieses Abschnitts übernahm das
-Schema aus der Referenzimplementierung des LoxBerry-Template-Builders
+**Origin and correction history.** The first draft of this section adopted the
+schema from the reference implementation of the LoxBerry template builder
 (<https://github.com/mschlenstedt/Loxberry/blob/master/libs/phplib/loxberry_loxonetemplatebuilder.php>).
-Am 2026-09-02, belegt an den 26 Vorlagen aus einer echten Installation
-(91 `VirtualInUdpCmd`, 19 `VirtualOutCmd`), stellte sich heraus, dass dieses Schema in
-vier Punkten von dem abwich, was Loxone Config tatsächlich schreibt. Die Blöcke oben
-zeigen bereits die korrigierte, gemessene Form; die vier Korrekturen zur
-Nachvollziehbarkeit:
+On 2026-09-02, checked against the 26 templates from a real installation
+(91 `VirtualInUdpCmd`, 19 `VirtualOutCmd`), it turned out that this schema differed in
+four points from what Loxone Config actually writes. The blocks above already
+show the corrected, measured form; the four corrections for
+traceability:
 
-1. **Jede Vorlage trägt ein `<Info>`-Element als erstes Kind** — in allen 26 Dateien,
-   ohne Ausnahme:
+1. **Every template carries an `<Info>` element as its first child** — in all 26 files,
+   without exception:
    `<Info templateType="1" minVersion="14040925"/>`
-   `templateType` ist **1** für `VirtualInUdp`, **2** für `VirtualInHttp`, **3** für
-   `VirtualOut`. `minVersion` ist eine Loxone-Config-Version im Format `JJMMTTHH`.
-2. **`VirtualInUdpCmd` hat 15 Attribute**, nicht 13 — es fehlten `Unit` und `HintText`:
+   `templateType` is **1** for `VirtualInUdp`, **2** for `VirtualInHttp`, **3** for
+   `VirtualOut`. `minVersion` is a Loxone Config version in the format `YYMMDDHH`.
+2. **`VirtualInUdpCmd` has 15 attributes**, not 13 — `Unit` and `HintText` were missing:
    `Title, Comment, Address, Check, Signed, Analog, SourceValLow, DestValLow,
    SourceValHigh, DestValHigh, DefVal, MinVal, MaxVal, Unit, HintText`
-3. **`VirtualOut` hat `HintText`** zwischen `CmdInit` und `CloseAfterSend`.
-4. **`VirtualOutCmd` hat 15 Attribute und kein `ID`**, und die beiden Methodenfelder
-   stehen zusammen statt verteilt:
+3. **`VirtualOut` has `HintText`** between `CmdInit` and `CloseAfterSend`.
+4. **`VirtualOutCmd` has 15 attributes and no `ID`**, and the two method fields
+   sit together instead of apart:
    `Title, Comment, CmdOnMethod, CmdOffMethod, CmdOn, CmdOnHTTP, CmdOnPost, CmdOff,
    CmdOffHTTP, CmdOffPost, CmdAnswer, HintText, Analog, Repeat, RepeatRate`
 
-Bestätigt haben sich dagegen von Anfang an: UTF-8 mit BOM (26 von 26), reines CRLF
-(26 von 26) und die XML-Deklaration wörtlich (26 von 26).
+Confirmed from the start, on the other hand: UTF-8 with BOM (26 of 26), plain CRLF
+(26 of 26), and the XML declaration verbatim (26 of 26).
 
-Dateiformat: **UTF-8 mit BOM, CRLF-Zeilenenden.**
-Dateinamen: `VIU_d<device_id>_<label>.xml` und `VO_d<device_id>_<label>.xml`, mit auf ASCII
-normalisiertem Gerätelabel. Die `device_id` ist nicht Dekoration: die Normalisierung ist
-verlustbehaftet und bildet unterschiedliche Labels auf denselben oder einen leeren String
-ab — `"Lampe 1"`, `"Lampe-1"` und `"Lampe_1"` etwa alle auf `Lampe_1`, ein Label ohne
-ASCII-Zeichen auf `""`. Trüge der Dateiname nur das Label, würden zwei Geräte mit
-kollidierendem Label sich beim Export gegenseitig überschreiben, und ein Nutzer importierte
-eine Vorlage im Glauben, es seien zwei. `device_id` vergibt `Store` unveränderlich und nie
-doppelt (6.2), das macht den Namen tatsächlich eindeutig.
-Ablage: `Dokumente\Loxone\Loxone Config\Templates\VirtualIn\` bzw. `...\VirtualOut\`.
-Import in Config: Peripherie → Virtuelle Eingänge → Virtueller UDP-Eingang → Vorlage
-importieren.
+File format: **UTF-8 with BOM, CRLF line endings.**
+File names: `VIU_d<device_id>_<label>.xml` and `VO_d<device_id>_<label>.xml`, with the
+device label normalized to ASCII. The `device_id` is not decoration: the normalization is
+lossy and maps different labels onto the same or an empty string —
+`"Lampe 1"`, `"Lampe-1"`, and `"Lampe_1"`, for instance, all onto `Lampe_1`, a label with
+no ASCII characters onto `""`. If the file name carried only the label, two devices with a
+colliding label would overwrite each other on export, and a user would import
+one template believing there were two. `Store` assigns `device_id` immutably and never
+twice (6.2), which is what actually makes the name unique.
+Location: `Documents\Loxone\Loxone Config\Templates\VirtualIn\` and
+`...\VirtualOut\` respectively.
+Import into Config: Peripherals → Virtual Inputs → Virtual UDP Input → Import
+Template.
 
-Ein `VirtualInUdp` trägt beliebig viele `VirtualInUdpCmd` — ein Import bringt damit
-alle Signale *eines Geräts* auf einmal ins Projekt.
+A `VirtualInUdp` carries any number of `VirtualInUdpCmd`s — one import thus brings
+all the signals *of one device* into the project at once.
 
-### 6.2 Schlüsselvergabe und Export-Granularität
+### 6.2 Key assignment and export granularity
 
-**Eine Vorlagendatei pro Gerät.** Jedes Matter-Gerät wird zu genau einem
-`VirtualInUdp`-Objekt (alle Sensorwerte und Events) und einem `VirtualOut`-Objekt
-(alle Kommandos). In Loxone Config erscheint damit pro Gerät ein benannter Knoten mit
-seinen Befehlen darunter — navigierbar und einem Gerät eindeutig zuordenbar. Ein
-Sammel-Export von 200 Eingängen in einem Objekt wäre in der Config nicht mehr
-handhabbar.
+**One template file per device.** Every Matter device becomes exactly one
+`VirtualInUdp` object (all sensor values and events) and one `VirtualOut` object
+(all commands). In Loxone Config this makes a named node with
+its commands underneath appear per device — navigable and clearly assignable to a
+device. A collective export of 200 inputs into one object would no longer be
+manageable in Config.
 
-Damit löst sich das Re-Import-Problem von selbst: ein neu eingelerntes Gerät bedeutet
-genau einen zusätzlichen Import; bestehende Objekte werden nie angefasst, die
-Verdrahtung bleibt intakt.
+This resolves the re-import problem by itself: a newly commissioned device means
+exactly one additional import; existing objects are never touched, the
+wiring stays intact.
 
-**Alle Geräte teilen sich einen UDP-Port.** Die Miniserver-Grenze liegt bei
-**max. 50 verschiedenen Eingangs-UDP-Ports** — sie zählt Ports, nicht Objekte. Da alle
-Keys global eindeutig sind, greift jedes `VirtualInUdp`-Objekt ausschließlich seine
-eigenen `Check`-Muster ab; ein gemeinsamer Port erzeugt kein Übersprechen. Default 7000,
-Verbrauch: genau ein Port, unabhängig von der Gerätezahl.
-Quelle: <https://www.loxone.com/enen/kb/communication-with-udp/>
+**All devices share one UDP port.** The Miniserver limit is
+**max. 50 distinct input UDP ports** — it counts ports, not objects. Since all
+keys are globally unique, each `VirtualInUdp` object picks up only its
+own `Check` patterns; a shared port produces no crosstalk. Default 7000,
+consumption: exactly one port, regardless of device count.
+Source: <https://www.loxone.com/enen/kb/communication-with-udp/>
 
-Dass mehrere `VirtualInUdp`-Objekte denselben Port teilen können, ist **am realen
-Miniserver bestätigt** (2026-09-01). Die Grenze von 50 Ports gilt zudem auf allen
-Miniserver-Generationen gleichermaßen. Der Port bleibt dennoch pro Gerät
-konfigurierbar — für getrennte Netzsegmente oder mehrere Bridges an einem
+That multiple `VirtualInUdp` objects can share the same port is **confirmed on a
+real Miniserver** (2026-09-01). The 50-port limit also applies equally on all
+Miniserver generations. The port nevertheless remains
+configurable per device — for separate network segments or multiple bridges on one
 Miniserver.
 
-**Keys sind opak und unveränderlich.** Format `d<device_id>_<endpoint>_<slug>`, z. B.
-`d12_1_temp`. Vergeben beim Einlernen, danach eingefroren. Lesbare Namen leben
-ausschließlich in `Title` und `Comment`. Umbenennen in der WebUI ändert nur die
-Beschriftung im nächsten Export, nie die Verdrahtung. Der Key muss auch dann eindeutig
-bleiben, wenn ein Gerät entfernt und neu eingelernt wird — `device_id` wird deshalb nie
-wiederverwendet.
+**Keys are opaque and immutable.** Format `d<device_id>_<endpoint>_<slug>`, e.g.
+`d12_1_temp`. Assigned during commissioning, frozen afterward. Readable names live
+exclusively in `Title` and `Comment`. Renaming in the WebUI only changes the
+label in the next export, never the wiring. The key must stay unique
+even when a device is removed and recommissioned — `device_id` is therefore never
+reused.
 
-**Systemsignale** (`bridge_alive`, `/resync`, siehe 6.4 und 6.5) liegen in einem eigenen
-Paar `VIU_Matter_System.xml` / `VO_Matter_System.xml`, das einmalig importiert wird — ein
-fester Name, weil es kein Gerät und damit keine `device_id` gibt, die ihn eindeutig machen
-müsste.
+**System signals** (`bridge_alive`, `/resync`, see 6.4 and 6.5) live in their own
+pair `VIU_Matter_System.xml` / `VO_Matter_System.xml`, imported once — a
+fixed name, because there is no device and thus no `device_id` that would need to
+make it unique.
 
-Dateinamen der Gerätevorlagen: siehe 6.1.
+File names of the device templates: see 6.1.
 
 ### 6.3 Events
 
-**Event-Erkennung (korrigiert, Phase 1, 2026-09-01).** Ursprünglich war hier
-angenommen, dass sich Events wie Attribute generisch aus der `EventList`
-(0xFFFA) jedes Clusters lesen lassen. Die Validierung in 3.5 hat das
-widerlegt: keins der geprüften Geräte führt dieses global optionale Attribut.
-Event-Erkennung ist deshalb **FeatureMap-basiert** und cluster-spezifisch:
-für den Switch-Cluster (59) steht in `discovery.FEATURE_MAP_EVENTS`, welches
-Event welche FeatureMap-Bits voraussetzt — `SwitchLatched` ← LS, `InitialPress`
+**Event detection (corrected, phase 1, 2026-09-01).** This section originally
+assumed that events, like attributes, could be read generically from the `EventList`
+(0xFFFA) of each cluster. The validation in 3.5 disproved that: none of the
+checked devices populates this globally optional attribute.
+Event detection is therefore **FeatureMap-based** and cluster-specific:
+for the switch cluster (59), `discovery.FEATURE_MAP_EVENTS` records which
+event requires which FeatureMap bits — `SwitchLatched` ← LS, `InitialPress`
 ← MS, `LongPress`/`LongRelease` ← MSL, `ShortRelease` ← MSR,
-`MultiPressOngoing` ← MSM ∧ ¬AS, `MultiPressComplete` ← MSM. Geprüft gegen
-`data_model/1.4/clusters/Switch.xml` aus `project-chip/connectedhomeip`, der
-maschinenlesbaren Transkription der Matter Application Cluster Specification
-(`mandatoryConform`-Bedingung je Event). Die `EventList` bleibt als
-**zusätzliche** Quelle bestehen — sie kostet nichts, und einzelne Geräte
-implementieren sie durchaus —, ihre Treffer werden mit denen aus der
-FeatureMap vereinigt und dedupliziert. Weitere Cluster mit Events kommen als
-weitere Tabelleneinträge dazu, ohne den Algorithmus in `extract_signals`
-anzufassen.
+`MultiPressOngoing` ← MSM ∧ ¬AS, `MultiPressComplete` ← MSM. Checked against
+`data_model/1.4/clusters/Switch.xml` from `project-chip/connectedhomeip`, the
+machine-readable transcription of the Matter Application Cluster Specification
+(`mandatoryConform` condition per event). The `EventList` remains an
+**additional** source — it costs nothing, and some devices
+do implement it —, its hits are unioned with those from the
+FeatureMap and deduplicated. Further clusters with events are added as
+further table entries, without touching the algorithm in `extract_signals`.
 
-Der Matter-`Switch`-Cluster liefert `InitialPress`, `ShortRelease`, `LongPress`,
-`MultiPressComplete`. Ein virtueller UDP-Eingang kennt nur Werte, kein Event-Konzept.
+The Matter `Switch` cluster delivers `InitialPress`, `ShortRelease`, `LongPress`,
+`MultiPressComplete`. A virtual UDP input knows only values, no event concept.
 
-Pro Event-Typ werden **zwei** Signale exportiert:
+**Two** signals are exported per event type:
 
-- `<key>` — digitaler Impuls: `1`, nach 200 ms `0`. Erzeugt eine saubere Flanke.
-- `<key>_n` — monotoner Zähler. Robuster, weil ein verlorenes UDP-Paket den Zähler nur
-  springen lässt statt den Druck zu verschlucken.
+- `<key>` — digital pulse: `1`, then `0` after 200 ms. Produces a clean edge.
+- `<key>_n` — monotonic counter. More robust, because a lost UDP packet only makes the
+  counter skip instead of swallowing the press.
 
-Bei `MultiPressComplete` zusätzlich `_press2`, `_press3` als eigene Impulse sowie
+For `MultiPressComplete`, additionally `_press2`, `_press3` as their own pulses, plus
 `_presscount`.
 
 ### 6.4 Zustands-Wiederherstellung
 
-UDP ist zustandslos. Nach einem Miniserver-Neustart stehen alle Eingänge auf `DefVal`,
-bis das nächste Update eintrifft — bei einem Temperatursensor potenziell Stunden.
+UDP is stateless. After a Miniserver restart, all inputs sit at `DefVal`,
+until the next update arrives — for a temperature sensor, potentially hours.
 
-- **Periodischer Full-Resend** aller aktuellen Werte, Default alle 5 min, gestaffelt auf
-  ca. 50 Datagramme/s. **Seit dem Entwurf periodischer Resend
-  (2026-09-04) gilt das nur noch für `/resync` und den Brücken-Start** — der
-  periodische Timer selbst resent nur noch einzeln markierte Signale, mit
-  einem eigenen, über die WebUI konfigurierbaren Intervall. Details:
-  [Entwurf periodischer Resend](2026-09-04-periodic-resend-design.md).
-- **`/resync`-Endpoint**, als fertiger `VirtualOutCmd` mitexportiert. Im Config-Projekt
-  an den Systemstart-Baustein gehängt, sind nach jedem Neustart sofort alle Werte da.
+- **Periodic full resend** of all current values, default every 5 min, staggered to
+  about 50 datagrams/s. **Since the periodic resend design
+  (2026-09-04) this applies only to `/resync` and bridge startup** — the
+  periodic timer itself now only resends individually marked signals, with
+  its own interval configurable via the WebUI. Details:
+  [periodic resend design](2026-09-04-periodic-resend-design.md).
+- **`/resync` endpoint**, shipped as a ready-made `VirtualOutCmd` in the export. Hooked
+  in the Config project to the system-start block, all values are present immediately after every restart.
 
-**Befund (Phase 4, Live-Lauf 2026-09-02).** Ein Resend kann nur Werte verschicken, die
-die Bridge schon selbst hält — er iteriert den zuletzt gesendeten Wert je Signal, nicht
-den Gerätezustand. Dieser Cache entsteht ausschließlich über Subscriptions, die sich
-*ändernde* Werte melden, und ist beim Start leer. Ein Live-Lauf mit einer
-Matter-Steckdose ohne Last bestätigte das: über 40 s kamen genau drei Datagramme an
-(Heartbeat, ein per HTTP ausgelöster Schaltbefehl), aber keines der damals 109
-exportierbaren Attributsignale (heute 110, siehe 6.6 — der Zählerstand aus der
-Energie-Struktur kam in Phase 6 dazu) — der Full-Resend beim Start lief leer, weil noch nichts im Cache stand,
-und ohne eine sich ändernde Last hätte sich das auf unabsehbare Zeit nicht geändert.
-Genau in diesem Moment — direkt nach einem Neustart der Bridge — ist der Mechanismus
-also leer, obwohl er hier am nötigsten wäre. Die Bridge muss sich deshalb beim Start
-selbst aus dem aktuellen Gerätezustand säen (`Runtime.seed_from_snapshot`, gefüttert aus
-`BridgeMatterClient.snapshots()` — demselben Bild, aus dem auch `loxmatter export`
-liest), bevor der erste Full-Resend läuft.
+**Finding (phase 4, live run 2026-09-02).** A resend can only send values that
+the bridge already holds itself — it iterates the last-sent value per signal, not
+the device state. This cache is populated exclusively via subscriptions, which report
+*changing* values, and is empty at startup. A live run with a
+Matter plug under no load confirmed this: over 40 s exactly three datagrams arrived
+(heartbeat, one HTTP-triggered switch command), but none of the 109
+exportable attribute signals at the time (110 today, see 6.6 — the counter reading from the
+energy struct was added in phase 6) — the full resend at startup ran empty, because nothing was in the cache yet,
+and without a changing load this would not have changed for an indefinite time.
+Exactly at this moment — right after a bridge restart — the mechanism is
+thus empty, even though it would be most needed here. The bridge must therefore
+seed itself from the current device state at startup (`Runtime.seed_from_snapshot`, fed from
+`BridgeMatterClient.snapshots()` — the same picture that `loxmatter export`
+also reads from), before the first full resend runs.
 
-### 6.5 Zusätzliche Signale
+### 6.5 Additional signals
 
-- `d<id>_online` — digital, pro Gerät: erreichbar ja/nein.
-- `bridge_alive` — global, toggelt alle 30 s. Als Watchdog in Loxone; deckt „Container
-  tot" und „Netz weg" gleichermaßen ab.
+- `d<id>_online` — digital, per device: reachable yes/no.
+- `bridge_alive` — global, toggles every 30 s. As a watchdog in Loxone; covers "container
+  dead" and "network gone" alike.
 
-### 6.6 Nicht exportierbare Werte
+### 6.6 Non-exportable values
 
-**Befund (Phase 1, 2026-09-01).** Gut ein Viertel der generisch extrahierten
-Attributsignale ist nicht exportierbar, weil ein virtueller UDP-Eingang nur
-Zahlen und digitale Werte annimmt (siehe 3.5): bei der geprüften Steckdose 45
-von 159 (28,3 %). Strings lassen sich noch über einen virtuellen Text-Eingang
-ausgeben; für Listen und Structs (`0/29/1 = [29, 31, 40, ...]`,
-`0/31/0 = [{...}]`) gibt es in Loxone **keine** Entsprechung.
+**Finding (phase 1, 2026-09-01).** A good quarter of the generically extracted
+attribute signals is not exportable, because a virtual UDP input only
+accepts numbers and digital values (see 3.5): for the checked plug, 45
+of 159 (28.3%). Strings can still be output via a virtual text input;
+for lists and structs (`0/29/1 = [29, 31, 40, ...]`,
+`0/31/0 = [{...}]`) there is **no** equivalent in Loxone.
 
-Der Exporter (Phase 3) braucht dafür eine explizite Regel statt eines
-impliziten Verhaltens: Signale mit Listen- oder Struct-Werten werden beim
-Export ausgelassen, Strings gehen an einen virtuellen Text-Eingang statt an
-den numerischen `VirtualInUdpCmd`. Die generische Zerlegung selbst ändert
-sich dadurch nicht — sie liefert weiterhin alles, was das Gerät anbietet; die
-Auswahl „exportierbar oder nicht" entsteht erst beim Export, nicht bei der
-Extraktion. Siehe 8 für die Konsequenz in der WebUI.
+The exporter (phase 3) needs an explicit rule for this instead of
+implicit behavior: signals with list or struct values are omitted on
+export, strings go to a virtual text input instead of the
+numeric `VirtualInUdpCmd`. The generic decomposition itself does not
+change as a result — it continues to deliver everything the device offers; the
+choice of "exportable or not" only arises at export time, not at
+extraction time. See 8 for the consequence in the WebUI.
 
-Eine vierte, stille Kategorie kommt dazu: bei der Steckdose tragen 5 der 159
-Attributsignale den Wert `null` (z. B. `0/49/7`) — weder unreportiert (der
-Pfad ist da), noch unparsebar, noch nicht-skalar im Sinne von oben, aber
-genauso wenig ein Zahlen- oder Digitalwert; der Exporter muss auch für `null`
-eine explizite Entscheidung treffen.
+A fourth, quiet category is added: for the plug, 5 of the 159
+attribute signals carry the value `null` (e.g. `0/49/7`) — neither unreported (the
+path is there), nor unparseable, nor non-scalar in the sense above, but
+just as little a number or digital value; the exporter must also make an
+explicit decision for `null`.
 
-**Die Zahl, mit der der Exporter rechnet, ist deshalb nicht 45, sondern 50.**
-Die 45 sind die nicht-skalaren Signale; nicht auf einen `VirtualInUdpCmd`
-abbildbar sind darüber hinaus auch die Nullwerte. Aufschlüsselung der 159
-Attributsignale der Steckdose, gemessen am 2026-09-01:
+**The number the exporter works with is therefore not 45, but 50.**
+The 45 are the non-scalar signals; also not mappable onto a `VirtualInUdpCmd`
+are the null values on top of that. Breakdown of the 159
+attribute signals of the plug, measured on 2026-09-01:
 
-| Kategorie | Anzahl | exportierbar |
+| Category | Count | exportable |
 |---|---|---|
-| Zahlen (analog) | 102 | ja |
-| Wahrheitswerte (digital) | 7 | ja |
-| Texte | 13 | nur über einen virtuellen Text-Eingang |
-| Listen und Structs | 32 | nein |
-| `null` | 5 | nein |
-| **auf `VirtualInUdpCmd` abbildbar** | **109** | |
+| Numbers (analog) | 102 | yes |
+| Booleans (digital) | 7 | yes |
+| Text | 13 | only via a virtual text input |
+| Lists and structs | 32 | no |
+| `null` | 5 | no |
+| **mappable onto `VirtualInUdpCmd`** | **109** | |
 
-Wer die 45 als „nicht exportierbar" liest, verzählt sich um die fünf
-Nullwerte.
+Anyone reading the 45 as "not exportable" is off by the five
+null values.
 
-**Ergänzung (Phase 6, 2026-09-03).** Die Tabelle oben ist eine Momentaufnahme
-vom 2026-09-01 und bleibt als solche stehen. Zwei Dinge haben sich seither
-geändert, beide durch den [Signalauswahl-Entwurf](2026-09-03-signal-selection-design.md):
+**Addendum (phase 6, 2026-09-03).** The table above is a snapshot
+from 2026-09-01 and stays as such. Two things have changed since then,
+both via the [signal selection design](2026-09-03-signal-selection-design.md):
 
-Erstens die **109 selbst sind nicht mehr aktuell — es sind jetzt 110.**
-Cluster 145 (kumulativer Verbrauch) liefert seinen Wert als Struktur
-(Energiewert plus zwei Zeitstempel) und fiel deshalb am 2026-09-01 vollständig
-in die Zeile „Listen und Structs" oben. Der Signalauswahl-Entwurf (Abschnitt
-5) zieht seither das benannte Zahlenfeld aus genau dieser Struktur
-(`profiles.table.struct_member`, `field: 0` in `clusters.yaml`) — der
-Zählerstand selbst ist damit numerisch geworden und zählt seither zu
-„abbildbar" mit, die Zeitstempel bleiben weiterhin weg. Betroffen ist nur
-`energy_imported` (die Prüfvorlage meldet nie einen Wert für
-`energy_exported`, das Attribut fehlt im Abbild ganz). Belegt durch
+First, **the 109 itself is no longer current — it is now 110.**
+Cluster 145 (cumulative consumption) delivers its value as a structure
+(energy value plus two timestamps) and therefore fell entirely into the row
+"Lists and structs" above on 2026-09-01. Since then, the signal selection design (section
+5) pulls the named number field out of exactly this structure
+(`profiles.table.struct_member`, `field: 0` in `clusters.yaml`) — the
+"mappable"; the timestamps continue to be dropped. Only
+`energy_imported` is affected (the reference template never reports a value for
+`energy_exported`, the attribute is entirely absent from the snapshot). Backed by
 `tests/loxone/test_values_real_device.py::test_exactly_110_signals_yield_a_value`,
-`tests/profiles/test_real_device_fixtures.py` und
-`tests/api/test_devices.py` — alle drei erwarten heute **110**, nicht 109.
-Der [Signalauswahl-Entwurf](2026-09-03-signal-selection-design.md) selbst nannte
-an mehreren Stellen ebenfalls noch die alte Zahl 109 (dort korrigiert, mit
-derselben Begründung); ein Testdocstring
+`tests/profiles/test_real_device_fixtures.py`, and
+`tests/api/test_devices.py` — all three now expect **110**, not 109.
+The [signal selection design](2026-09-03-signal-selection-design.md) itself also
+still named the old number 109 in several places (corrected there, with
+the same reasoning); one test docstring
 (`tests/model/test_store.py::test_a_freshly_registered_plug_exports_only_its_meaningful_values`)
-nennt sie in seiner Prosa weiterhin — reiner Kommentartext ohne Assertion
-darauf, hier belassen, weil diese Aufgabe ausdrücklich keinen Code anfasst.
+still names it in its prose — plain comment text with no assertion
+on it, left as is here because this task explicitly does not touch code.
 
-Zweitens ändert sich der **Vorgabewert von `exported`**: von diesen 110 sind
-bei der Steckdose nur **5** das, wofür ein Anwender das Gerät eingelernt hat
-(Ein/Aus, Spannung, Strom, Leistung, Verbrauch — Letzterer ist genau der oben
-neu hinzugekommene Zählerstand). Die übrigen 105 bleiben technisch
-exportierbar, stehen ab sofort aber standardmäßig **nicht** angehakt — der
-Anwender kann sie im „Experte"-Block der WebUI (Abschnitt 7 des
-Signalauswahl-Entwurfs) einzeln wieder aktivieren, genau wie zuvor auch. Der
-Signalauswahl-Entwurf begründet die Auswahlregel
+Second, the **default value of `exported`** changes: of these 110, for
+the plug only **5** are what a user commissioned the device for
+(on/off, voltage, current, power, consumption — the latter being exactly the
+counter reading newly added above). The remaining 105 stay technically
+exportable, but from now on are **not** checked by default — the
+user can re-enable them individually in the "expert" block of the WebUI
+(section 7 of the signal selection design), exactly as before. The
+signal selection design justifies the selection rule
 (`profiles.relevance.is_functional`).
 
-### 6.7 Ausgangsbefehle: Erlaubnisliste
+### 6.7 Output commands: allowlist
 
-**Quelle ist `AcceptedCommandList` (0xFFF9), nicht die Attributliste.** Matter-Attribute
-sind ganz überwiegend nur lesbar; ein Ausgangsbefehl je lesbarem Attribut wäre zu
-über neunzig Prozent wirkungslos. An den Geräten aus Phase 1 gemessen (2026-09-01):
-die Steckdose ist über `1/6` OnOff steuerbar, der Taster über gar nichts — er ist ein
-Eingabegerät.
+**The source is `AcceptedCommandList` (0xFFF9), not the attribute list.** Matter attributes
+are overwhelmingly read-only; an output command per readable attribute would be
+ineffective more than ninety percent of the time. Measured against the devices from phase 1 (2026-09-01):
+the plug is controllable via `1/6` OnOff, the button via nothing at all — it is an
+input device.
 
-**Bei Kommandos gilt eine Erlaubnisliste, nicht die großzügige Durchreiche aus 3.5.**
-Zu den akzeptierten Kommandos gehören Verwaltungscluster: `0/62` OperationalCredentials
-enthält `RemoveFabric`, `0/48` GeneralCommissioning und `0/49` NetworkCommissioning die
-Kommissionierung, `0/51` GeneralDiagnostics den `TestEventTrigger`. Ein Exporter, der
-alles ausgibt, legt einem Loxone-Nutzer Befehle auf den Baustein, mit denen sich das
-Gerät aus der Fabric werfen oder unbrauchbar machen lässt.
+**For commands an allowlist applies, not the generous pass-through from 3.5.**
+Among the accepted commands are management clusters: `0/62` OperationalCredentials
+contains `RemoveFabric`, `0/48` GeneralCommissioning and `0/49` NetworkCommissioning
+commissioning, `0/51` GeneralDiagnostics the `TestEventTrigger`. An exporter that
+emits everything puts commands on a Loxone user's function block that can
+throw the device out of the fabric or render it unusable.
 
-Nur Cluster mit einem `commands`-Eintrag in der Profiltabelle erzeugen Ausgangsbefehle.
-Ein ausdrücklich einzuschaltender **Rohmodus** erweitert das auf unbekannte Cluster —
-für Geräte, deren Cluster die Tabelle noch nicht kennt.
+Only clusters with a `commands` entry in the profile table produce output commands.
+An explicitly opt-in **raw mode** extends this to unknown clusters —
+for devices whose clusters the table does not yet know.
 
-**Verwaltungscluster bleiben auch im Rohmodus gesperrt.** Das ist keine Vorsichtsmaßnahme,
-die sich abschalten lässt:
+**Management clusters stay blocked even in raw mode.** This is not a precaution
+that can be switched off:
 
 ```
 31, 41, 42, 48, 49, 50, 51, 52, 53, 54, 55, 56, 60, 62, 63, 70
 ```
 
-Die Asymmetrie ist beabsichtigt. Ein unbekanntes Attribut zu viel zu exportieren kostet
-einen ungenutzten Eingang. Ein unbekanntes Kommando zu viel zu exportieren kann ein
-Gerät aus dem Netz werfen.
+The asymmetry is deliberate. Exporting one unknown attribute too many costs
+one unused input. Exporting one unknown command too many can throw a
+device off the network.
 
 ---
 
-## 7. Matter-Integration
+## 7. Matter integration
 
-### 7.1 Einlernen
+### 7.1 Commissioning
 
-WebUI nimmt Pairing-Code (11-/21-stellig) oder QR-Inhalt entgegen und reicht ihn an
-`matter-server` durch. Bei Thread-Geräten liefert der eigene OTBR das
-Operational Dataset.
+The WebUI accepts a pairing code (11/21 digits) or QR content and passes it to
+`matter-server`. For Thread devices, the bridge's own OTBR supplies the
+operational dataset.
 
-Geräte, die bereits in einem anderen Ökosystem (Apple/Google/Amazon) sind, müssen dort
-per **Multi-Admin** einen zusätzlichen Pairing-Code erzeugen. Die WebUI erklärt das
-inline — es ist der häufigste Stolperstein.
+Devices already in another ecosystem (Apple/Google/Amazon) have to be removed there
+via **multi-admin** generate an additional pairing code there. The WebUI explains this
+inline — it is the most common stumbling block.
 
 ### 7.2 Bridges
 
-Eine IKEA DIRIGERA oder vergleichbare Matter-Bridge erscheint als *ein* Node mit vielen
-Endpoints. Die WebUI muss Endpoints darum als eigenständige, benennbare Einheiten
-darstellen, nicht als Unterpunkte eines Geräts. Das Datenmodell trägt das bereits
+An IKEA DIRIGERA or comparable Matter bridge appears as *one* node with many
+endpoints. The WebUI must therefore present endpoints as standalone, nameable units,
+not as sub-items of a device. The data model already supports this
 (`Signal.endpoint`).
 
-**Fehlende UniqueID (Phase 1, 2026-09-01).** Der IKEA BILRESA-Taster (node 4)
-liefert kein `UniqueID` (BasicInformation, `0/40/18`) — das Attribut fehlt
-komplett, nicht nur der Wert ist leer. `NodeSnapshot.from_raw` liest es
-bereits tolerant (leerer String statt Fehler), `loxmatter inspect` zeigt
-entsprechend `Unique ID: —`. Das Datenmodell stützt sich in 5 auf `unique_id`,
-weil sie eine Neuvergabe der Node-ID überlebt — für Geräte ohne UniqueID gilt
-das nicht, dort bleibt `device_id` die einzig stabile Kennung. Kein
-Randfall: Hersteller lassen dieses optionale Attribut real aus.
+**Missing UniqueID (phase 1, 2026-09-01).** The IKEA BILRESA button (node 4)
+does not supply a `UniqueID` (BasicInformation, `0/40/18`) — the attribute is
+missing entirely, not just its value empty. `NodeSnapshot.from_raw` already reads it
+tolerantly (empty string instead of an error), `loxmatter inspect` shows
+`Unique ID: —` accordingly. The data model relies on `unique_id` in section 5,
+because it survives a node ID reassignment — for devices without a UniqueID that
+does not apply, there `device_id` remains the only stable identifier. Not an
+edge case: manufacturers genuinely leave out this optional attribute.
 
-### 7.3 Werte und Skalierung
+### 7.3 Values and scaling
 
-Beispiele aus der `profiles/`-Tabelle:
+Examples from the `profiles/` table:
 
-| Cluster | Attribut | Roh | Loxone |
+| Cluster | Attribute | Raw | Loxone |
 |---|---|---|---|
-| TemperatureMeasurement | MeasuredValue | 0,01 °C | ÷100, `°C` |
-| RelativeHumidityMeasurement | MeasuredValue | 0,01 % | ÷100, `%` |
-| ElectricalPowerMeasurement | ActivePower | mW | ÷1 000 000, `kW` |
+| TemperatureMeasurement | MeasuredValue | 0.01 °C | ÷100, `°C` |
+| RelativeHumidityMeasurement | MeasuredValue | 0.01 % | ÷100, `%` |
+| ElectricalPowerMeasurement | ActivePower | mW | ÷1,000,000, `kW` |
 | ElectricalPowerMeasurement | RMSVoltage | mV | ÷1000, `V` |
 | ElectricalPowerMeasurement | RMSCurrent | mA | ÷1000, `A` |
-| ElectricalEnergyMeasurement | CumulativeEnergyImported | mWh | ÷1 000 000, `kWh` |
+| ElectricalEnergyMeasurement | CumulativeEnergyImported | mWh | ÷1,000,000, `kWh` |
 | LevelControl | CurrentLevel | 0–254 | ×100/254, `%` |
 | OnOff | OnOff | bool | digital |
 
-**Zieleinheiten richten sich nach Loxone, nicht nach SI.** Loxone rechnet Leistung
-durchgängig in **kW** — der Energiemanager, die Zähler- und Verbrauchsbausteine erwarten
-kW am Eingang. Wir liefern deshalb kW, nicht W. Dieselbe Regel gilt für jeden künftigen
-Eintrag in der Profiltabelle: maßgeblich ist die Einheit, die der Loxone-Baustein
-erwartet, nicht die naheliegende SI-Einheit.
+**Target units follow Loxone, not SI.** Loxone consistently computes power
+in **kW** — the energy manager, the meter and consumption blocks expect
+kW at the input. We therefore deliver kW, not W. The same rule applies to every future
+entry in the profile table: what governs is the unit the Loxone block
+expects, not the obvious SI unit.
 
-**`Unit` ist ein Formatstring, kein Einheitentext.** Loxone schreibt dort Muster wie
-`<v.3> kW`, `<v.1> °C` oder `<v>%`: die Ziffer hinter dem Punkt ist die Zahl der
-angezeigten Nachkommastellen. Gemessen an 26 realen Vorlagen ist `<v.3> kW` mit
-Abstand die häufigste Form für Leistung.
+**`Unit` is a format string, not unit text.** Loxone writes patterns there like
+`<v.3> kW`, `<v.1> °C`, or `<v>%`: the digit after the dot is the number of
+decimal places shown. Measured against 26 real templates, `<v.3> kW` is by
+far the most common form for power.
 
-**Das hebelt die Regel unten auf der Anzeigeebene aus.** Ein Wert von 0,0003 kW kommt
-mit `<v.3> kW` als `0.000` auf der Oberfläche an — der Wert im Miniserver stimmt, aber
-niemand sieht ihn. Der Exporter muss für Leistung deshalb **`<v.6> kW`** schreiben, nicht
-das übliche `<v.3>`. Dasselbe gilt für jede Größe, deren interessanter Bereich mehrere
-Größenordnungen umfasst.
+**This undermines the rule below at the display level.** A value of 0.0003 kW arrives
+in the UI as `0.000` with `<v.3> kW` — the value in the Miniserver is correct, but
+nobody sees it. The exporter must therefore write **`<v.6> kW`** for power, not
+the usual `<v.3>`. The same applies to any quantity whose range of interest spans
+multiple orders of magnitude.
 
-**Folge für die Zahlenformatierung.** Von mW nach kW sind sechs Größenordnungen. Ein
-Standby-Verbraucher mit 300 mW wird zu `0.0003` kW. Der UDP-Sender darf Werte deshalb
-**nicht auf zwei Nachkommastellen runden** — sonst verschwindet alles unter 10 W in der
-Null, und genau diese kleinen Dauerverbraucher will man in Loxone ja sehen. Festlegung:
-Ausgabe mit bis zu **6 Nachkommastellen**, nachlaufende Nullen abgeschnitten. Das ist
-ein eigener Testfall in der Skalierungs-Testsuite.
+**Consequence for number formatting.** From mW to kW is six orders of magnitude. A
+standby load of 300 mW becomes `0.0003` kW. The UDP sender must therefore
+**not round values to two decimal places** — otherwise everything under 10 W disappears
+into zero, and those small continuous loads are exactly what you want to see in Loxone. Decision:
+output with up to **6 decimal places**, trailing zeros trimmed. That is
+a dedicated test case in the scaling test suite.
 
-Farbe: Loxone liefert in Lumitech- bzw. RGB-Notation, Matter erwartet Hue/Saturation
-oder CIE xy. Die Umrechnung liegt in `commands/` und ist beidseitig zu testen.
+Color: Loxone delivers in Lumitech or RGB notation, Matter expects hue/saturation
+or CIE xy. The conversion lives in `commands/` and must be tested both ways.
 
-**Rechercheergebnis (Task 5, 2026-09-02).** Die RGB-Codierung ist offiziell belegt: der
-Loxone-Baustein "RGB Lighting Controller" gibt Farbe auf einem einzelnen Analogausgang
-als eine Dezimalzahl aus, die drei Prozentwerte (je 0-100) dezimal aneinanderreiht -
-`AQa = rot% + gruen% * 1000 + blau% * 1_000_000` (z. B. 20040060 = 60 % Rot, 40 % Gruen,
-20 % Blau). Quelle: Loxone Knowledge Base, "RGB Lighting Controller", Abschnitt
-"Outputs" (https://www.loxone.com/enen/kb/rgb-scene-controller/, abgerufen 2026-09-02).
+**Research result (task 5, 2026-09-02).** The RGB encoding is officially documented: the
+Loxone "RGB Lighting Controller" block outputs color on a single analog output
+as one decimal number that concatenates three percentage values (each 0-100) decimally -
+`AQa = red% + green% * 1000 + blue% * 1_000_000` (e.g. 20040060 = 60% red, 40% green,
+20% blue). Source: Loxone Knowledge Base, "RGB Lighting Controller", section
+"Outputs" (https://www.loxone.com/enen/kb/rgb-scene-controller/, retrieved 2026-09-02).
 
-Fuer die Lumitech-Codierung (Helligkeit plus Farbtemperatur in einer Zahl) hat sich
-**keine belastbare Quelle** finden lassen - weder auf der offiziellen
-Beleuchtungsbaustein-Seite noch im Structure-File-PDF. Der einzige Treffer ist ein
-Forumsbeitrag mit selbst mitgeloggten DMX-Werten (vermutetes Format "AABBBCCCC"), den
-der Autor selbst als Vermutung kennzeichnet
+For the Lumitech encoding (brightness plus color temperature in one number),
+**no reliable source** could be found - neither on the official
+lighting block page nor in the structure file PDF. The only hit is a
+forum post with self-logged DMX values (presumed format "AABBBCCCC"), which
+the author himself flags as a guess
 (https://www.loxforum.com/forum/hardware-zubehoer-sensorik/143867-lumitech-ausgang-dmx-dimmer,
-Beitrag #2). Task 5 implementiert deshalb nur die (unstrittige) Matter-seitige
-Umrechnung Kelvin→Mired und RGB→Hue/Saturation in `commands/color.py`;
-`to_matter_call` nimmt fuer Farbtemperatur einen bereits entpackten Kelvin-Wert
-entgegen und dekodiert keine rohe Loxone-Zahl. Das Entpacken der rohen Loxone-Zahl
-(RGB wie Lumitech) bleibt Aufgabe von Task 6 (HTTP-Endpoint) bzw. der WebUI, sobald fuer
-Lumitech eine verlaessliche Quelle vorliegt - siehe Offene Punkte.
+post #2). Task 5 therefore implements only the (uncontested) Matter-side
+conversion Kelvin→mired and RGB→hue/saturation in `commands/color.py`;
+`to_matter_call` accepts an already-unpacked Kelvin value for color temperature
+and does not decode a raw Loxone number. Unpacking the raw Loxone number
+(RGB as well as Lumitech) remains the job of task 6 (HTTP endpoint) or the WebUI, once
+a reliable source exists for Lumitech - see open points.
 
-**Nicht an Hardware geprueft.** Fuer diese Aufgabe stand keine Matter-Leuchte zur
-Verfuegung. `kelvin_to_mireds` und `rgb_to_hue_saturation` sind ausschliesslich gegen
-Referenzwerte (Zigbee/Matter-Mired-Konvention bzw. HSV-Definition) getestet, nicht gegen
-ein reales Geraet.
+**Not tested against hardware.** No Matter light was available for
+this task. `kelvin_to_mireds` and `rgb_to_hue_saturation` are tested exclusively
+against reference values (the Zigbee/Matter mired convention and the HSV definition
+respectively), not against a real device.
 
 ---
 
 ## 8. WebUI
 
-Vier Ansichten, bewusst knapp gehalten.
+Four views, deliberately kept lean.
 
-**1. Geräte** — Liste mit Online-Status, Einlernen per Code/QR, Umbenennen, Entfernen.
-Pro Gerät die wichtigsten Live-Werte und **direkte Bedienelemente** für die
-naheliegenden Aktionen:
+**1. Devices** — list with online status, commissioning by code/QR, renaming, removal.
+Per device, the most important live values and **direct controls** for the
+obvious actions:
 
-| Gerätetyp | Bedienung in der WebUI |
+| Device type | Control in the WebUI |
 |---|---|
-| Licht | Toggle, Helligkeitsregler, Farbtemperatur/Farbe |
-| Steckdose | Toggle, daneben aktuelle Leistung |
-| Rollo | Auf / Ab / Stopp, Positionsregler |
-| Thermostat | Sollwert, Betriebsart |
-| Sensor, Taster | nur Anzeige — nichts zu bedienen |
+| Light | toggle, brightness slider, color temperature/color |
+| Plug | toggle, current power alongside |
+| Cover | up / down / stop, position slider |
+| Thermostat | setpoint, operating mode |
+| Sensor, button | display only — nothing to control |
 
-**2. Signale** — pro Gerät der vollständige Attribut- und Event-Baum mit Live-Wert.
-Checkbox „nach Loxone exportieren", editierbarer Titel, Key sichtbar aber nicht
-editierbar. Schreibbare Attribute lassen sich hier **roh setzen** — für alles, wofür
-Ansicht 1 keinen Regler hat, und für unbekannte Cluster. Nicht-exportierbare Werte
-(Listen und Structs, siehe 6.6) werden trotzdem angezeigt, mit einem Hinweis statt
-der Export-Checkbox — gerade zur Diagnose sind sie nützlich, auch wenn sie nie ein
-UDP-Datagramm werden.
+**2. Signals** — for each device, the complete attribute and event tree with live value.
+Checkbox "export to Loxone", editable title, key visible but not
+editable. Writable attributes can be **set raw** here — for anything view 1 has no
+control for, and for unknown clusters. Non-exportable values
+(lists and structs, see 6.6) are shown anyway, with a note instead of
+the export checkbox — they are useful precisely for diagnostics, even though they never
+become a UDP datagram.
 
-**3. Export** — die IP **dieser Brücke** (aus Sicht des Miniservers) und den UDP-Port
-eintragen. Nicht die Adresse des Miniservers: der Wert wird zur `Address` des virtuellen
-UDP-Eingangs — die Absenderadresse, von der der Miniserver Datagramme überhaupt annimmt
-— und zum Rumpf der Kommando-URLs `http://<ip>:<listen>` im virtuellen Ausgang (6.1).
-Diese Zeile sagte bis zum 2026-09-03 „Miniserver-IP", und die Oberfläche beschriftete
-das Feld entsprechend; eine damit erzeugte Vorlage sieht korrekt aus und bleibt stumm.
-Vorlagen pro Gerät herunterladen, einzeln oder als ZIP; Filter „nur noch nicht
-exportierte Geräte", der für die Vorschau **und** für das ZIP gilt (er entscheidet auch,
-welche Geräte danach als exportiert vermerkt sind). Pro Gerät ist sichtbar, wann zuletzt
-exportiert wurde und ob sich seither Signale geändert haben. Enthält die Kurzanleitung
-und die einmaligen Systemvorlagen.
+**3. Export** — enter the IP **of this bridge** (as seen from the Miniserver) and the UDP port.
+Not the Miniserver's address: the value becomes the `Address` of the virtual
+UDP input — the sender address from which the Miniserver accepts datagrams at all
+— and the base of the command URLs `http://<ip>:<listen>` in the virtual output (6.1).
+This line said "Miniserver IP" until 2026-09-03, and the UI labeled
+the field accordingly; a template generated with that looks correct and stays silent.
+Download templates per device, individually or as a ZIP; a filter "only devices not yet
+exported", which applies to the preview **and** to the ZIP (it also decides
+which devices are marked as exported afterward). For each device it is visible when it was last
+exported and whether signals have changed since. Contains the quick-start guide
+and the one-time system templates.
 
-**4. System** — Systemcheck, Live-Feed (Logzeilen, UDP-Mitschnitt und Kommando-Log,
-laufend statt einmalig — seit 2026-09-03, siehe 10.5 und den
-[Live-Feed-Entwurf](2026-09-03-diagnostics-live-feed-design.md)), Backup der
-Fabric-Credentials. Der Systemcheck prüft vier Dinge: matter-server, die
-Signalschlüssel-Datenbank, den lokalen IPv6-Pfad und den Routing-Pfad zum Miniserver
-(10.5). **OTBR und Thread-Netz prüft er nicht** — festgehalten als offener Punkt 9 in
-Abschnitt 12, nicht als stille Auslassung.
+**4. System** — system check, live feed (log lines, UDP capture, and command log,
+continuous instead of one-shot — since 2026-09-03, see 10.5 and the
+[live feed design](2026-09-03-diagnostics-live-feed-design.md)), backup of the
+fabric credentials. The system check verifies four things: matter-server, the
+signal key database, the local IPv6 path, and the routing path to the Miniserver
+(10.5). **It does not check OTBR and the Thread network** — recorded as open
+point 9 in section 12, not as a silent omission.
 
-### 8.1 Warum die Bedienung mehr ist als Komfort
+### 8.1 Why the controls are more than convenience
 
-Ansicht 1 ist das **Diagnosewerkzeug** des Projekts. Schaltet eine Lampe über Loxone
-nicht, trennt ein Klick in der WebUI die beiden möglichen Ursachen sauber: reagiert das
-Gerät hier, liegt der Fehler in der Loxone-Verdrahtung oder im Vorlagen-Export;
-reagiert es nicht, in Matter, Thread oder am Gerät. Ohne das ist jede Fehlersuche
-Raten — und bei einem Tool für fremde Installationen ist das der Unterschied zwischen
-einem beantwortbaren und einem unbeantwortbaren Bug-Report.
+View 1 is the project's **diagnostic tool**. If a lamp doesn't switch via Loxone,
+one click in the WebUI cleanly separates the two possible causes: if the
+device responds here, the fault is in the Loxone wiring or the template export;
+if it doesn't respond, the fault is in Matter, Thread, or the device. Without this, any troubleshooting is
+guesswork — and for a tool used in other people's installations, that's the difference between
+an answerable and an unanswerable bug report.
 
-Deshalb gehört die Bedienung in v1 und nicht in eine spätere Ausbaustufe.
+That's why the controls belong in v1 and not in a later expansion stage.
 
-### 8.2 Abgrenzung
+### 8.2 Scope boundary
 
-Die WebUI ist ein **Inbetriebnahme- und Diagnosewerkzeug, keine Smart-Home-Oberfläche.**
-Nicht enthalten und auch nicht geplant: Szenen, Zeitpläne, Automatisierungen,
-Favoritenseiten, Räume, Nutzerverwaltung, App. Das ist alles Aufgabe von Loxone — die
-Bridge dupliziert es nicht.
+The WebUI is a **commissioning and diagnostic tool, not a smart-home interface.**
+Not included and not planned: scenes, schedules, automations,
+favorites pages, rooms, user management, app. All of that is Loxone's job — the
+bridge does not duplicate it.
 
-### 8.3 Live-Aktualisierung
+### 8.3 Live updates
 
-Ein WebSocket vom Backend zur SPA schiebt Attribut- und Event-Änderungen sowie
-Online-Status durch. Dieselbe Subscription, die den UDP-Sender speist — kein zweiter
-Pfad, kein Polling.
+A WebSocket from the backend to the SPA pushes through attribute and event changes as well as
+online status. The same subscription that feeds the UDP sender — no second
+path, no polling.
 
-**Seit 2026-09-03 gibt es davon zwei, nicht einen** (Live-Feed für Logs,
-UDP-Mitschnitt und Kommando-Log, siehe 10.5 und
-[Entwurf](2026-09-03-diagnostics-live-feed-design.md)): `/api/live` bleibt der
-Wertekanal oben, `/api/diagnostics/live` ist ein zweiter, eigener WebSocket
-für die Ansicht „System". Getrennt, nicht angehängt, weil beide verschiedene
-Lebensdauern haben (der Wertekanal läuft, solange irgendeine Ansicht offen
-ist; der Diagnosekanal nur, solange die Ansicht „System" offen ist) und
-verschiedene Mengen — ein vergessener Browsertab auf „Geräte" bekäme sonst
-dauerhaft jede Logzeile mitgeliefert. Beide teilen sich dieselbe
-WebSocket-Mechanik (`api/streaming.py`: begrenzte Warteschlange,
-Trennungserkennung, Subprotokoll-Aushandlung fürs Token) und denselben
-Zugangsschutz (9.1).
+**Since 2026-09-03 there are two of these, not one** (live feed for logs,
+UDP capture, and command log, see 10.5 and the
+[design](2026-09-03-diagnostics-live-feed-design.md)): `/api/live` remains the
+value channel above, `/api/diagnostics/live` is a second, separate WebSocket
+for the "System" view. Separate, not attached, because the two have
+different lifetimes (the value channel runs as long as any view is
+open; the diagnostics channel only as long as the "System" view is open) and
+different volumes — a forgotten browser tab on "Devices" would otherwise
+permanently receive every log line as well. Both share the same
+WebSocket mechanism (`api/streaming.py`: bounded queue,
+disconnect detection, subprotocol negotiation for the token) and the same
+access protection (9.1).
 
-### 8.4 Rohes Attributschreiben: Erlaubnisliste (Task 4, 2026-09-02; Befund berichtigt,
-Review-Fix Important #2, 2026-09-02)
+### 8.4 Raw attribute writing: allowlist (task 4, 2026-09-02; finding corrected,
+review fix Important #2, 2026-09-02)
 
-**Befund: die Schreibbarkeit eines Attributs steht in einer Tabelle, die diese
-Installation nicht laden kann und die python-matter-server nirgends benutzt — nicht,
-wie hier zuerst behauptet, in gar keiner Tabelle.** Geprüft gegen die installierten
-Pakete (python-matter-server==8.1.2), nicht vermutet:
+**Finding: an attribute's writability sits in a table that this
+installation cannot load and that python-matter-server does not use anywhere — not,
+as first claimed here, in no table at all.** Checked against the installed
+packages (python-matter-server==8.1.2), not assumed:
 
-- `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` — die Basisklasse jeder
-  generierten Attribut-Klasse (z. B. `BasicInformation.Attributes.NodeLabel`) — trägt
-  `cluster_id`, `attribute_id`, `attribute_type`, `must_use_timed_write`. Keine
-  dieser Eigenschaften unterscheidet Lese- von Schreibzugriff;
-  `must_use_timed_write` regelt nur, ob ein *erlaubter* Schreibzugriff einen
-  Timed-Write-Envelope braucht.
+- `chip.clusters.ClusterObjects.ClusterAttributeDescriptor` — the base class of every
+  generated attribute class (e.g. `BasicInformation.Attributes.NodeLabel`) — carries
+  `cluster_id`, `attribute_id`, `attribute_type`, `must_use_timed_write`. None
+  of these properties distinguishes read from write access;
+  `must_use_timed_write` only governs whether an *allowed* write access needs
+  a timed-write envelope.
 - `matter_server.client.client.MatterClient.write_attribute(node_id, attribute_path,
-  value)` prüft vorher nichts — der Aufruf geht ungeprüft an den Controller; eine
-  Ablehnung käme, wenn überhaupt, als Fehler vom Gerät selbst zurück.
-- **Eine Volltextsuche nach „writable“ ergab sehr wohl Treffer — hier stand vorher
-  fälschlich das Gegenteil.** `chip/clusters/CHIPClusters.py`, Teil des installierten
-  `chip`-Pakets, trägt eine eigene, von `ClusterObjects` unabhängige Tabelle mit genau
-  dieser Information: `grep -c '"writable": True'
-  .venv/lib/python3.12/site-packages/chip/clusters/CHIPClusters.py` liefert **250**
-  Treffer, und für `BasicInformation` (Cluster 0x28 = 40) sind darin exakt die drei
-  Attribut-IDs 5 (`NodeLabel`), 6 (`Location`) und 16 (`LocalConfigDisabled`) mit
-  `"writable": True` markiert — genau die drei, auf die die Erlaubnisliste unten
-  unabhängig davon schon gegen ein echtes Gerät kam.
-- **Dieses Modul ist trotzdem nicht importierbar, und python-matter-server benutzt es
-  nirgends.** `from chip.clusters.CHIPClusters import ChipClusters` scheitert in
-  dieser Distribution mit `ImportError: cannot import name 'exceptions' from 'chip'`
-  — das Paket `home_assistant_chip_clusters`, das hier `chip.clusters.CHIPClusters`
-  bereitstellt, liefert die Datei ohne das dazugehörige `chip/exceptions.py`, das sie
-  beim Laden voraussetzt. Eine Suche nach `CHIPClusters` im installierten
-  `matter_server`-Paket ergibt außerdem keinen einzigen Treffer.
+  value)` checks nothing beforehand — the call goes to the controller unchecked; a
+  rejection would come back, if at all, as an error from the device itself.
+- **A full-text search for "writable" did in fact turn up hits — this section previously
+  wrongly said the opposite.** `chip/clusters/CHIPClusters.py`, part of the installed
+  `chip` package, carries its own table, independent of `ClusterObjects`, with exactly
+  this information: `grep -c '"writable": True'
+  .venv/lib/python3.12/site-packages/chip/clusters/CHIPClusters.py` returns **250**
+  hits, and for `BasicInformation` (cluster 0x28 = 40) exactly the three
+  attribute IDs 5 (`NodeLabel`), 6 (`Location`), and 16 (`LocalConfigDisabled`) are
+  marked `"writable": True` in it — exactly the three the allowlist below
+  independently already arrived at against a real device.
+- **This module is nevertheless not importable, and python-matter-server does not use
+  it anywhere.** `from chip.clusters.CHIPClusters import ChipClusters` fails in
+  this distribution with `ImportError: cannot import name 'exceptions' from 'chip'`
+  — the `home_assistant_chip_clusters` package, which provides `chip.clusters.CHIPClusters`
+  here, ships the file without the accompanying `chip/exceptions.py` that it
+  requires on load. A search for `CHIPClusters` in the installed
+  `matter_server` package also yields not a single hit.
 
-Die praktische Konsequenz ist dieselbe wie vorher — die Erlaubnisliste bleibt für
-heute richtig —, nur ihre Begründung ist jetzt eine andere: nicht „die Information
-existiert nicht“, sondern „die Information existiert in einer Tabelle, die diese
-Installation nicht laden kann und die python-matter-server selbst nicht liest“. Das
-ist ein Unterschied mit Konsequenz: die zweite Situation hat einen offensichtlichen
-Weg in die Zukunft, den die erste nicht hätte — siehe Offene Punkte, Punkt 7.
+The practical consequence is the same as before — the allowlist stays
+correct for today —, only its justification is now different: not "the information
+doesn't exist", but "the information exists in a table that this
+installation cannot load and that python-matter-server itself does not read." That
+is a difference with a consequence: the second situation has an obvious
+path forward that the first would not have — see open points, point 7.
 
-**Konsequenz: dieselbe Asymmetrie wie bei Kommandos (6.7), diesmal für Attribute.**
-`POST /api/signals/{key}/write` (`api/control.py`) lehnt jeden Schreibversuch auf ein
-Attribut ab, das nicht auf einer expliziten Erlaubnisliste steht — eine großzügige
-Durchreiche wie beim *Export* (3.5) wäre hier falsch: ein zu Unrecht exportiertes
-Attribut kostet einen ungenutzten Eingang, ein zu Unrecht freigegebener Schreibzugriff
-kann ein Gerät fehlkonfigurieren. Die Liste ist bewusst klein und enthält nur
-`BasicInformation.NodeLabel` (0/40/5), `.Location` (0/40/6) und
-`.LocalConfigDisabled` (0/40/16) — alle drei belegt gegen die eingecheckte
-IKEA-GRILLPLATS-Vorlage (`tests/fixtures/nodes/ikea_grillplats_plug.json`), nicht nur
-laut Spezifikation vermutet.
+**Consequence: the same asymmetry as with commands (6.7), this time for attributes.**
+`POST /api/signals/{key}/write` (`api/control.py`) rejects every write attempt on an
+attribute that is not on an explicit allowlist — a generous
+pass-through as with *export* (3.5) would be wrong here: a wrongly exported
+attribute costs one unused input, a wrongly permitted write access
+can misconfigure a device. The list is deliberately small and contains only
+`BasicInformation.NodeLabel` (0/40/5), `.Location` (0/40/6), and
+`.LocalConfigDisabled` (0/40/16) — all three confirmed against the checked-in
+IKEA GRILLPLATS template (`tests/fixtures/nodes/ikea_grillplats_plug.json`), not merely
+assumed from the specification.
 
-**Offener Punkt: selbst ein erlaubtes Attribut lässt sich heute noch nicht tatsächlich
-schreiben.** `BridgeMatterClient` (`matter/client.py`) hat kein `write_attribute`, und
-`build_control_router(store, invoke)` nimmt dafür auch keinen zweiten Aufrufer entgegen
-— `invoke` ist ausschließlich für Kommandos typisiert
-(`Callable[[MatterCall], Awaitable[None]]`), ein Attribut-Schreibzugriff ist keins.
-`POST /api/signals/{key}/write` antwortet für ein erlaubtes Attribut deshalb mit 501
-statt mit einem Erfolg, der nichts bewirkt — siehe Offene Punkte, Punkt 6.
+**Open point: even an allowed attribute cannot actually be written yet today.**
+`BridgeMatterClient` (`matter/client.py`) has no `write_attribute`, and
+`build_control_router(store, invoke)` also does not accept a second caller for
+this — `invoke` is typed exclusively for commands
+(`Callable[[MatterCall], Awaitable[None]]`), an attribute write access is not one.
+`POST /api/signals/{key}/write` therefore responds to an allowed attribute with 501
+instead of a success that does nothing — see open points, point 6.
 
 ---
 
-## 9. Fehlerbehandlung
+## 9. Error handling
 
-| Fall | Verhalten |
+| Case | Behavior |
 |---|---|
-| matter-server nicht erreichbar | Reconnect mit exponentiellem Backoff; `bridge_alive` stoppt → Loxone-Watchdog schlägt an |
-| Gerät offline | `d<id>_online` = 0, letzte Werte bleiben stehen (kein Zurücksetzen) |
-| HTTP-Kommando an offline Gerät | HTTP 503, im Log sichtbar. Loxone wertet die Antwort eines virtuellen Ausgangs ohnehin nicht aus |
-| UDP-Sendefehler | Log, kein Retry (fire and forget) |
-| Unbekanntes Cluster | Roh-Export ohne Skalierung, Warnung in der WebUI |
-| Gerät entfernt und neu eingelernt | Neue `device_id`, neue Keys. Die alten Loxone-Objekte werden verwaist — die WebUI weist darauf hin und benennt die zu löschenden Objekte |
+| matter-server unreachable | reconnect with exponential backoff; `bridge_alive` stops → Loxone watchdog triggers |
+| Device offline | `d<id>_online` = 0, last values stay as they are (no reset) |
+| HTTP command to an offline device | HTTP 503, visible in the log. Loxone doesn't evaluate a virtual output's response anyway |
+| UDP send failure | log, no retry (fire and forget) |
+| Unknown cluster | raw export without scaling, warning in the WebUI |
+| Device removed and recommissioned | new `device_id`, new keys. The old Loxone objects become orphaned — the WebUI points this out and names the objects to delete |
 
-### 9.1 Absicherung der `/api`-Routen (Task 8, 2026-09-02)
+### 9.1 Securing the `/api` routes (task 8, 2026-09-02)
 
-**Hinweis vorab:** dieser Abschnitt beschreibt die Absicherung, wie sie zwischen
-Task 8 und dem 2026-09-03 bestand — ein optionales Token, ohne das `/api` offen
-blieb (mit einer Ausnahme für die Fabric-Sicherung). Seit dem WebUI-Login gilt
-das nicht mehr; was sich geändert hat, steht gebündelt am Ende dieses
-Abschnitts, nicht in jedem einzelnen Satz unten nachgetragen.
+**Note up front:** this section describes the protection as it existed between
+task 8 and 2026-09-03 — an optional token, without which `/api` stayed
+open (with one exception for the fabric backup). Since the WebUI login,
+that no longer applies; what changed is gathered at the end of this
+section, not retrofitted into every single sentence below.
 
-Bis Phase 4 bot dieser Dienst zwei Endpunkte für den Miniserver: `/cmd` und
-`/resync`. Wer den Port erreichte, konnte damit höchstens ein Gerät schalten. Seit
-Phase 5 (Task 1: Einlernen, Task 2: Entfernen, Task 6: Fabric-Sicherung als Download)
-ist das Gewicht ein anderes: wer den Port erreicht, kann Geräte aus der Fabric werfen
-oder die kompletten, unersetzlichen Fabric-Credentials herunterladen (siehe 4.1). Das
-ist eine Änderung der Art des Risikos, nicht nur seines Grads.
+Up to phase 4, this service offered two endpoints for the Miniserver: `/cmd` and
+`/resync`. Whoever reached the port could at most switch one device with that. Since
+phase 5 (task 1: commissioning, task 2: removal, task 6: fabric backup as a download)
+the weight is different: whoever reaches the port can throw devices out of the fabric
+or download the complete, irreplaceable fabric credentials (see 4.1). This
+is a change in the kind of risk, not just its degree.
 
-**Die Entscheidung:** ein optionales Bearer-Token (`--api-token`/
-`LOXMATTER_API_TOKEN`, siehe `loxone.server.build_api_guard`) schützt ab hier
-ausnahmslos jede Route unter `/api` — lesend und schreibend, alle fünf Router
-(Geräte, Steuerung, Export, Live-Werte inklusive der WebSocket-Route `/api/live`,
-Diagnose inklusive der Fabric-Sicherung). Ist kein Token konfiguriert, bleiben diese
-Routen unverändert offen — mit einer deutlichen Warnung im Log beim Start
-(`cli._warn_if_missing_api_token`). Ein Dienst, der ohne Token gar nicht erst startet,
-wäre für eine Testumgebung oder eine Erstinbetriebnahme ohne vorbereitetes Geheimnis
-unbenutzbar; die Warnung ist der bewusst gewählte Ausgleich dafür.
+**The decision:** an optional bearer token (`--api-token`/
+`LOXMATTER_API_TOKEN`, see `loxone.server.build_api_guard`) protects, from here on,
+without exception every route under `/api` — read and write, all five routers
+(devices, control, export, live values including the WebSocket route `/api/live`,
+diagnostics including the fabric backup). If no token is configured, these
+routes stay open unchanged — with a clear warning in the log at startup
+(`cli._warn_if_missing_api_token`). A service that refuses to start at all without a token
+would be unusable for a test environment or an initial setup without a prepared secret;
+the warning is the deliberately chosen trade-off for that.
 
-**Warum `/cmd` und `/resync` bewusst ausgenommen bleiben:** der Miniserver ruft
-virtuelle Ausgänge als einfachen HTTP-GET auf, ohne die Möglichkeit, einen Header
-mitzuschicken — das ist eine Eigenschaft des Loxone-Vorlagenformats (6.1), keine
-Wahl dieses Projekts. Ein Token auf diesem Pfad würde die Loxone-Integration schlicht
-abschalten, nicht absichern. Das ist eine reale, dauerhafte Grenze und wird hier als
-solche festgehalten, nicht als Unzulänglichkeit: **auch mit gesetztem Token kann jeder
-im selben Netz weiterhin Geräte über `/cmd` schalten.** Was das Token verhindert, ist
-ausschließlich die Veränderung des Bestands — Einlernen, Entfernen und der Download
-der Fabric-Sicherung.
+**Why `/cmd` and `/resync` are deliberately excluded:** the Miniserver calls
+virtual outputs as a plain HTTP GET, with no way to
+attach a header — that is a property of the Loxone template format (6.1), not a
+choice of this project. A token on this path would simply disable the Loxone
+integration, not secure it. This is a real, permanent limitation and is recorded here as
+such, not as a shortcoming: **even with a token set, anyone
+on the same network can still switch devices via `/cmd`.** What the token prevents is
+exclusively changes to the inventory — commissioning, removal, and the download
+of the fabric backup.
 
-**Wie weit „wer den Port erreicht" bei `/cmd` wirklich reicht** (ergänzt 2026-09-03).
-`/cmd/{key}/{value}` ist ein unauthentifizierter **GET** ohne jede Prüfung des
-Ursprungs. Ein GET braucht kein Skript und keinen Fuß im LAN: jede beliebige Webseite,
-die jemand aus diesem Netz im Browser öffnet, kann mit einem einzigen
-`<img src="http://<bruecke>:8080/cmd/d12_1_onoff/1">` ein Gerät schalten — der Browser
-schickt die Anfrage aus dem LAN heraus, ohne dass der Angreifer je selbst im Netz war,
-und braucht die Antwort nicht zu sehen. Weder eine `Origin`-Prüfung noch ein
-CSRF-Token noch eine Beschränkung auf POST hülfe hier, ohne genau das kaputtzumachen,
-wofür die Route existiert: der Miniserver schickt einen schlichten GET ohne Header und
-ohne Zustand. Das Risiko ist damit nicht anders geartet als oben beschrieben, aber
-deutlich größer als „wer den Port erreicht" nahelegt, und wird hier in seiner
-tatsächlichen Reichweite festgehalten, statt in einer Formulierung zu verschwinden, die
-einen Angreifer im selben Netz voraussetzt. Was es begrenzt, ist ausschließlich der
-Schaden: über `/cmd` lässt sich schalten, nichts einlernen, nichts entfernen und nichts
-herunterladen.
+**How far "whoever reaches the port" really goes for `/cmd`** (added 2026-09-03).
+`/cmd/{key}/{value}` is an unauthenticated **GET** with no check of
+origin whatsoever. A GET needs no script and no foothold in the LAN: any website
+someone opens in a browser from this network can switch a device with a single
+`<img src="http://<bridge>:8080/cmd/d12_1_onoff/1">` — the browser
+sends the request from inside the LAN, without the attacker ever having been on the network
+themselves, and does not need to see the response. Neither an `Origin` check nor a
+CSRF token nor a restriction to POST would help here without breaking exactly
+what the route exists for: the Miniserver sends a plain GET with no header and
+no state. The risk is thus not different in kind from what's described above, but
+considerably bigger than "whoever reaches the port" suggests, and is recorded here in its
+actual reach, instead of disappearing into a phrasing that
+presupposes an attacker on the same network. What limits it is exclusively the
+damage: `/cmd` allows switching, nothing more — no commissioning, no removal, and no
+downloading.
 
-`--host` (Standard `0.0.0.0`) bindet weiterhin an alle Schnittstellen, weil der
-Miniserver den Dienst erreichen muss — das Token ändert daran nichts, es schützt nur,
-was hinter `/api` erreichbar ist, nicht die Erreichbarkeit selbst.
+`--host` (default `0.0.0.0`) continues to bind to all interfaces, because the
+Miniserver has to be able to reach the service — the token does not change that, it only protects
+what is reachable behind `/api`, not reachability itself.
 
-**Zwei Übertragungswege für das Token, und warum es zwei sein müssen** (Nachbesserung
-nach Review, 2026-09-03). `Authorization: Bearer <Token>` ist der Hauptweg und gilt für
-jede REST-Route. Für die WebSocket-Route `/api/live` ist er strukturell unmöglich: die
-Browser-`WebSocket`-API (`new WebSocket(url, protocols)`) kennt überhaupt keinen
-Parameter für eigene Kopfzeilen. Der einzige vom Browser beeinflussbare Kanal im
-Handshake ist das Subprotokoll-Argument, das als `Sec-WebSocket-Protocol` auf die
-Leitung geht. Die Oberfläche verbindet sich deshalb mit `new WebSocket(url, ["bearer",
-token])`, und `build_api_guard` akzeptiert das Token zusätzlich aus diesem einen Header,
-ausschließlich in der Form `bearer, <Token>`. Ein Query-Parameter wäre die naheliegende
-Alternative und ist bewusst NICHT gewählt: er landet in Server-Logs, Proxy-Logs und der
-Browser-History, ein Header nicht — dieselbe Überlegung, aus der `api/diagnostics.py`
-das Kommando-Log ohne Query-Zeichenkette führt (10.5). `api/live.py` gibt im Accept den
-Marker `bearer` zurück (nie das Token), weil der Browser den Handshake nach RFC 6455
-sonst abbricht.
+**Two transport paths for the token, and why there have to be two** (follow-up fix
+after review, 2026-09-03). `Authorization: Bearer <token>` is the main path and applies to
+every REST route. For the WebSocket route `/api/live` it is structurally impossible: the
+browser `WebSocket` API (`new WebSocket(url, protocols)`) has no
+parameter at all for custom headers. The only channel the browser can influence in the
+handshake is the subprotocol argument, which goes onto the wire as
+`Sec-WebSocket-Protocol`. The UI therefore connects with `new WebSocket(url, ["bearer",
+token])`, and `build_api_guard` additionally accepts the token from this one header,
+exclusively in the form `bearer, <token>`. A query parameter would be the obvious
+alternative and is deliberately NOT chosen: it ends up in server logs, proxy logs, and the
+browser history, a header does not — the same reasoning by which `api/diagnostics.py`
+keeps the command log free of query strings (10.5). `api/live.py` returns the
+marker `bearer` in the accept (never the token), because otherwise the browser aborts
+the handshake per RFC 6455.
 
-**Daraus folgt eine Anforderung an das Token selbst:** es muss als HTTP-Token
-übertragbar sein — keine Leerzeichen, kein Komma, kein Nicht-ASCII. `openssl rand -hex
-32`, der in `.env.example` und README empfohlene Weg, liefert nur `[0-9a-f]` und
-erfüllt das von sich aus; die Anforderung steht dort ausdrücklich, statt eine
-stillschweigende Annahme zu bleiben. Ein Token, das nur aus Leerraum besteht (ein
-abgeschnittener Zeilenumbruch aus einer kopierten `.env`), gilt als „nicht gesetzt" —
-`normalize_api_token` entscheidet das für Wächter UND Startwarnung gemeinsam, sonst
-wäre der Dienst gesperrt, ohne dass die Warnung darauf hinwiese. Der Vergleich selbst
-läuft über `secrets.compare_digest` auf UTF-8-Bytes, nicht über `!=` und nicht über
-`str` (bei `str` wirft `compare_digest` `TypeError`, sobald Nicht-ASCII im Spiel ist —
-ein Nicht-ASCII-Token im Header darf keinen 500er auslösen).
+**A requirement for the token itself follows from this:** it must be transportable
+as an HTTP token — no spaces, no comma, no non-ASCII. `openssl rand -hex
+32`, the path recommended in `.env.example` and the README, yields only `[0-9a-f]` and
+satisfies that on its own; the requirement is stated there explicitly, instead of remaining a
+silent assumption. A token consisting only of whitespace (a
+truncated line break from a copied `.env`) counts as "not set" —
+`normalize_api_token` decides this for the guard AND the startup warning together, otherwise
+the service would be locked without the warning pointing that out. The comparison itself
+runs via `secrets.compare_digest` on UTF-8 bytes, not via `!=` and not via
+`str` (with `str`, `compare_digest` raises `TypeError` as soon as non-ASCII is involved —
+a non-ASCII token in the header must not trigger a 500).
 
-**Die eine Ausnahme von „ohne Token bleibt `/api` offen": die Fabric-Sicherung.** `GET
-/api/diagnostics/fabric-backup` wird ohne konfiguriertes Token gar nicht erst
-ausgeliefert (HTTP 403, mit einer Erklärung im `detail`). Alle übrigen Routen bleiben
-unverändert offen. Der Grund ist der Unterschied im Schaden, nicht im Prinzip: eine
-ungeschützte Geräteliste ist peinlich, eine ungeschützte Fabric-Sicherung ist die
-irreversible Übernahme der Fabric (4.1). Die Referenz-Installation
-(`deploy/testhost/`) hängt das matter-server-Datenverzeichnis ein und läuft mit
-`network_mode: host` — ein Standard, der von Disziplin beim Lesen der README abhinge,
-wäre für genau diese eine Route nicht vertretbar. 403 und nicht 401, weil es ohne
-konfiguriertes Token gar nichts gibt, womit sich jemand authentifizieren KÖNNTE: eine
-Wiederholung mit Zugangsdaten kann nicht helfen, und genau das unterscheidet 403 von
-401 (RFC 9110). 503 bleibt dem bereits vorhandenen Fall „kein Datenverzeichnis
-eingehängt" vorbehalten — drei Ursachen, drei unterscheidbare Codes.
+**The one exception to "without a token, `/api` stays open": the fabric backup.** `GET
+/api/diagnostics/fabric-backup` is not served at all without a configured token
+(HTTP 403, with an explanation in `detail`). All other routes remain
+open unchanged. The reason is the difference in damage, not in principle: an
+unprotected device list is embarrassing, an unprotected fabric backup is the
+irreversible takeover of the fabric (4.1). The reference installation
+(`deploy/testhost/`) mounts the matter-server data directory and runs with
+`network_mode: host` — a default that depended on discipline reading the README
+would not be defensible for this one route specifically. 403 and not 401, because without
+a configured token there is nothing at all with which someone COULD authenticate: a
+retry with credentials cannot help, and that is exactly what distinguishes 403 from
+401 (RFC 9110). 503 remains reserved for the already-existing case of "no data directory
+mounted" — three causes, three distinguishable codes.
 
-**Dieser gesamte Abschnitt beschreibt den Stand von Task 8 (2026-09-02) und
-dessen Nachbesserungen bis zum 2026-09-03 — nicht mehr den heutigen.** Die
-Ergänzung [2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md)
-löst das Token als alleinigen Ausweis für den Browser ab, und Task 9/10 haben
-das umgesetzt: eine Ersteinrichtung vergibt beim ersten Aufruf ein Passwort,
-danach meldet sich der Browser mit Sitzungs-Cookie an (`loxone.server.
-build_api_guard`, `auth.sessions`). Zwei Sätze oben sind dadurch überholt,
-nicht nur ergänzt:
+**This entire section describes the state as of task 8 (2026-09-02) and
+its follow-up fixes up to 2026-09-03 — no longer today's state.** The
+addendum [2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md)
+replaces the token as the sole proof of identity for the browser, and tasks 9/10 have
+implemented that: initial setup assigns a password on first access,
+after which the browser logs in with a session cookie (`loxone.server.
+build_api_guard`, `auth.sessions`). Two sentences above are thereby superseded,
+not merely supplemented:
 
-- „Ist kein Token konfiguriert, bleiben diese Routen unverändert offen" gilt
-  nicht mehr. Ohne gültige Sitzung UND ohne gültiges Token endet jede
-  `/api`-Anfrage mit 401 — auch wenn gar kein Passwort und gar kein Token
-  eingerichtet sind. Die Startwarnung (`cli._warn_if_missing_api_token`) gibt
-  es entsprechend nicht mehr; ihre Nachfolgerin `cli._warn_if_no_password`
-  warnt vor dem fehlenden Passwort, nicht vor dem fehlenden Token.
-- Die eben beschriebene **Ausnahme für die Fabric-Sicherung entfällt
-  ersatzlos**, weil es keine Regel „`/api` bleibt offen" mehr gibt, von der sie
-  eine Ausnahme sein könnte — der eigens dafür gebaute 403-Zweig ist aus
-  `api/diagnostics.py` entfernt (siehe dessen Moduldocstring).
+- "If no token is configured, these routes stay open unchanged" no longer
+  applies. Without a valid session AND without a valid token, every
+  `/api` request ends with 401 — even when no password and no token
+  are set up at all. The startup warning (`cli._warn_if_missing_api_token`)
+  no longer exists accordingly; its successor `cli._warn_if_no_password`
+  warns about the missing password, not the missing token.
+- The **exception for the fabric backup** just described **goes away without
+  replacement**, because there is no longer a rule "`/api` stays open" for it
+  to be an exception to — the 403 branch built specifically for it has been removed
+  from `api/diagnostics.py` (see its module docstring).
 
-Was aus diesem Abschnitt unverändert gilt: `/cmd` und `/resync` bleiben ohne
-jede Absicherung, aus demselben Grund; das Bearer-Token bleibt als Weg für
-Skripte und `curl` bestehen, mit denselben zwei Übertragungswegen und
-derselben Zeichensatz-Anforderung; und `openssl rand -hex 32` bleibt der
-empfohlene Weg zu einem Token. Details der Ersteinrichtung, der
-Passwort-Anforderungen und der Sitzungsverwaltung stehen in der Ergänzung, nicht
-hier verdoppelt.
+What remains unchanged from this section: `/cmd` and `/resync` remain without
+any protection, for the same reason; the bearer token remains a path for
+scripts and `curl`, with the same two transport paths and
+the same character-set requirement; and `openssl rand -hex 32` remains the
+recommended way to a token. Details of initial setup, the
+password requirements, and session management are in the addendum, not
+duplicated here.
 
 ---
 
-## 10. Testen
+## 10. Testing
 
-### 10.1 Automatisierte Tests
+### 10.1 Automated tests
 
-- **Exporter — Golden-File-Tests.** Roundtrip: XML erzeugen → in Loxone Config
-  importieren → dort wieder als Vorlage speichern → diffen. Die einzige Methode, die das
-  echte Format verifiziert. Die Referenzdateien werden im Repo eingecheckt.
-- **Matter-Adapter** — gegen aufgezeichnete WebSocket-Fixtures von `matter-server`.
-- **Integration ohne Hardware** — `chip-all-clusters-app` als virtuelles Matter-Gerät im
-  CI-Container. Deckt Einlernen, Subscription und Kommandos ab.
-- **UDP** — Fake-Miniserver (Socket-Listener), der Datagramme mitschreibt; prüft
-  Entprellung, Impulslänge, Rate-Limit und Full-Resend.
-- **Skalierung** — Tabellentests pro Cluster-Eintrag, inklusive Farbraum-Umrechnung
-  in beide Richtungen. Eigener Fall für kleine Leistungswerte: 300 mW muss als
-  `0.0003` ankommen, nicht als `0`.
-- **`commands/`** — dieselbe Testsuite deckt beide Aufrufer ab. Zusätzlich ein Test,
-  der prüft, dass WebUI-Route und Loxone-HTTP-Route für dieselbe Eingabe dasselbe
-  Matter-Kommando erzeugen. Das ist die Regression, die das Modul überhaupt
-  rechtfertigt.
+- **Exporter — golden-file tests.** Round trip: generate XML → import into Loxone Config
+  → save it there again as a template → diff. The only method that verifies the
+  real format. The reference files are checked into the repo.
+- **Matter adapter** — against recorded WebSocket fixtures from `matter-server`.
+- **Integration without hardware** — `chip-all-clusters-app` as a virtual Matter device in the
+  CI container. Covers commissioning, subscription, and commands.
+- **UDP** — fake Miniserver (socket listener) that records datagrams; checks
+  debouncing, pulse length, rate limiting, and full resend.
+- **Scaling** — table tests per cluster entry, including color space conversion
+  in both directions. A dedicated case for small power values: 300 mW must arrive
+  as `0.0003`, not as `0`.
+- **`commands/`** — the same test suite covers both callers. Plus a test
+  that checks that the WebUI route and the Loxone HTTP route produce the same
+  Matter command for the same input. That is the regression this module exists to
+  guard against in the first place.
 
-Die gesamte Suite läuft **ohne Hardware und ohne Netzwerkzugriff**. Das ist eine
-Anforderung, keine Beobachtung: sobald ein Test ein echtes Gerät braucht, wird er
-übersprungen und verrottet.
+The entire suite runs **without hardware and without network access**. That is a
+requirement, not an observation: as soon as a test needs a real device, it gets
+skipped and rots.
 
-### 10.2 Von Hand testen ohne Hardware
+### 10.2 Manual testing without hardware
 
-`docker compose --profile dev up` startet zusätzlich zum normalen Stack zwei
-Hilfscontainer. Damit ist die komplette Strecke ohne Miniserver, ohne Thread-Dongle
-und ohne ein einziges echtes Matter-Gerät durchspielbar:
+`docker compose --profile dev up` starts two helper containers in addition to the
+normal stack. This makes it possible to run through the complete path without a Miniserver, without a Thread dongle,
+and without a single real Matter device:
 
-**`virtual-devices`** — mehrere Instanzen der CHIP-Beispielanwendungen
-(`chip-all-clusters-app`, `chip-lighting-app`) als echte Matter-Geräte über WiFi. Sie
-werden mit den Standard-Pairing-Codes ganz normal über die WebUI eingelernt — es ist
-derselbe Codepfad wie bei echter Hardware, nicht ein Mock daneben. `all-clusters-app`
-ist dabei besonders wertvoll, weil sie absichtlich exotische Cluster mitbringt und damit
-den generischen Export unter Last setzt.
+**`virtual-devices`** — several instances of the CHIP example applications
+(`chip-all-clusters-app`, `chip-lighting-app`) as real Matter devices over WiFi. They
+are commissioned completely normally via the WebUI with the standard pairing codes — it is
+the same code path as for real hardware, not a mock on the side. `all-clusters-app`
+is especially valuable here, because it deliberately brings exotic clusters along and thereby
+puts the generic export under load.
 
-**`fake-miniserver`** — ersetzt den Loxone Miniserver in beide Richtungen:
-- lauscht auf UDP 7000 und zeigt jedes Datagramm mit Zeitstempel in einer kleinen
-  Weboberfläche. Damit sieht man unmittelbar, was der Miniserver bekommen *würde*.
-- kann HTTP-GETs an die Bridge abfeuern wie ein virtueller Ausgang, inklusive
-  `<v>`-Ersetzung. Damit ist die Kommandorichtung ohne Loxone testbar.
-- kann eine erzeugte `VIU_*.xml` einlesen und daraus die erwarteten Keys ableiten, um
-  zu melden, welche exportierten Signale **nie** ein Datagramm gesehen haben. Das findet
-  Mapping-Fehler, die sonst erst in Loxone auffallen.
+**`fake-miniserver`** — replaces the Loxone Miniserver in both directions:
+- listens on UDP 7000 and shows every datagram with a timestamp in a small
+  web interface. This immediately shows what the Miniserver *would* receive.
+- can fire HTTP GETs at the bridge like a virtual output, including
+  `<v>` substitution. This makes the command direction testable without Loxone.
+- can read in a generated `VIU_*.xml` and derive the expected keys from it, in order
+  to report which exported signals have **never** seen a datagram. This finds
+  mapping errors that would otherwise only show up in Loxone.
 
-Thread ist der einzige Teil, der echte Hardware braucht. Der OTBR liegt deshalb in
-einem eigenen Compose-Profil — ohne Dongle startet der Stack trotzdem, nur eben ohne
-Thread.
+Thread is the only part that needs real hardware. The OTBR therefore lives in
+its own compose profile — without a dongle the stack still starts, just
+without Thread.
 
-### 10.3 Der Durchstich von null
+### 10.3 The end-to-end path from zero
 
-Der Weg, der nach jeder Änderung in wenigen Minuten läuft und dokumentiert wird:
+The path that runs in a few minutes after every change and is documented:
 
 1. `docker compose --profile dev up`
-2. WebUI öffnen, virtuelles Gerät mit dem angezeigten Pairing-Code einlernen
-3. Signale sehen, Gerät in der WebUI schalten — bestätigt Matter-Richtung
-4. Vorlagen erzeugen, `fake-miniserver` zeigt die Datagramme — bestätigt Loxone-Richtung
-5. Im `fake-miniserver` einen Befehl abfeuern — bestätigt Kommando-Richtung
+2. open the WebUI, commission the virtual device with the displayed pairing code
+3. see signals, switch the device in the WebUI — confirms the Matter direction
+4. generate templates, `fake-miniserver` shows the datagrams — confirms the Loxone direction
+5. fire a command in `fake-miniserver` — confirms the command direction
 
-Erst wenn das durchläuft, lohnt sich der Test an echter Hardware.
+Only once this runs through is testing on real hardware worthwhile.
 
-### 10.4 Entwicklungsumgebung
+### 10.4 Development environment
 
-Miniserver, Thread-Dongle und echte Matter-Geräte (IKEA) stehen zur Verfügung. Zwei
-Konsequenzen für die Planung:
+A Miniserver, a Thread dongle, and real Matter devices (IKEA) are available. Two
+consequences for planning:
 
-- Die **Golden-File-Referenzen für den Exporter können von Anfang an aus echtem Loxone
-  Config kommen** statt aus Vermutungen. Das nimmt dem riskantesten Modul das Risiko.
-- Der **generische Export wird früh an echten Cluster-Bäumen validiert**. Reale Geräte
-  weichen erfahrungsgemäß von den CHIP-Beispielapps ab — genau dort entstehen die
-  Lücken, die eine rein virtuelle Entwicklung übersieht.
+- The **golden-file references for the exporter can come from real Loxone
+  Config from the start** instead of from guesswork. This takes the risk out of the riskiest module.
+- The **generic export gets validated early against real cluster trees**. Real devices
+  deviate from the CHIP example apps in practice — exactly where the
+  gaps arise that a purely virtual development process would miss.
 
-Das dev-Profil aus 10.2 bleibt trotzdem Pflicht: es ist die Grundlage für CI und für
-Beiträge von außen, wo diese Hardware nicht vorhanden ist.
+The dev profile from 10.2 nevertheless stays mandatory: it is the foundation for CI and for
+outside contributions, where this hardware is not available.
 
-### 10.5 Eingebaute Diagnose
+### 10.5 Built-in diagnostics
 
-Diese vier Dinge sind zum Entwickeln gebaut, aber im Betrieb genauso nützlich — sie
-sind der Grund, warum ein Bug-Report aus einer fremden Installation beantwortbar wird:
+These four things were built for development, but are just as useful in operation — they
+are the reason a bug report from a third-party installation becomes answerable:
 
-- **UDP-Mitschnitt** in der WebUI: die letzten N gesendeten Datagramme mit Zeitstempel,
-  filterbar pro Gerät. Beantwortet „sendet die Bridge überhaupt etwas?" ohne Wireshark.
-- **Kommando-Log**: eingehende HTTP-Aufrufe vom Miniserver mit Ergebnis. Beantwortet
-  die Gegenrichtung.
-- **Logzeilen** (seit 2026-09-03): ein `logging.Handler`
-  (`LogBufferHandler`, `diagnostics/logbuffer.py`) hält die letzten 500
-  Zeilen des Loggers `loxmatter` — nicht des Root-Loggers, die Zeilen
-  fremder Bibliotheken gehören nicht in eine Bedienoberfläche — ab Stufe
-  INFO in einem Ring. Dieselben Zeilen, die auch `docker logs` zeigt, nur
-  ohne Shell-Zugriff auf den Host. `install_log_buffer()` setzt dafür beim
-  Start sowohl die Stufe des Handlers als auch die des Loggers selbst —
-  ohne Letzteres bliebe `loxmatter` auf der von Python vorgegebenen
-  effektiven Stufe WARNING, und keine `logger.info(...)`-Zeile im ganzen
-  Projekt erreichte den Ring, egal welche Stufe der Handler trägt (siehe
-  Docstring dort für die Begründung).
-- **Live-Kanal** (`GET /api/diagnostics/live`, WebSocket, seit 2026-09-03):
-  schiebt UDP-Mitschnitt, Kommando-Log und Logzeilen laufend statt
-  einmalig zur Ansicht „System" — mit einer Momentaufnahme beim Verbinden,
-  danach live. Ersetzt das manuelle Neuladen; Details, Nachrichtenformat
-  und Abgrenzung zu `/api/live` (8.3):
-  [Live-Feed-Entwurf](2026-09-03-diagnostics-live-feed-design.md).
-- **Vorlagen-Vorschau**: vor dem Download zeigt die WebUI, welche Objekte und Befehle
-  entstehen und wie viele.
-- **Systemcheck** (`GET /api/diagnostics/system`): vier Zeilen, jede grün oder rot mit
-  konkretem Hinweis — `matter-server` (besteht eine Verbindung?), `store` (ist die
-  Signalschlüssel-Datenbank beschreibbar? ohne das kein Einlernen und kein
-  Export-Vermerk), `ipv6` (gibt es lokal eine geroutete IPv6-Adresse? Matter und Thread
-  brauchen sie) und `miniserver` (existiert ein Routing-Pfad zum konfigurierten Ziel?
-  mehr ist bei Fire-and-Forget-UDP ohne ICMP-Auswertung nicht feststellbar). Diese Liste
-  hieß bis zum 2026-09-03 „IPv6 vorhanden, mDNS erreichbar, Dongle da, matter-server
-  verbunden, Miniserver erreichbar" — mDNS und Dongle sind nicht umgesetzt, `store`
-  stand in keiner Spec. Siehe offener Punkt 9 in Abschnitt 12.
-- **Fabric-Sicherung** (`GET /api/diagnostics/fabric-backup`, siehe 4.1): Download des
-  matter-server-Datenverzeichnisses als Archiv. Geschützt wie jede andere
-  `/api`-Route auch: ohne gültige Sitzung (WebUI-Login) oder gültiges Token
-  antwortet die Route mit 401. Bis zum 2026-09-03 hatte diese eine Route einen
-  eigenen 403-Zweig für den Fall „kein Token konfiguriert" (siehe 4.1, 9.1) —
-  der ist mit dem WebUI-Login ersatzlos entfallen, weil der Zustand, gegen den
-  er gerichtet war (die Route erreichbar, aber gar kein Nachweis im System),
-  seither gar nicht mehr eintreten kann.
+- **UDP capture** in the WebUI: the last N sent datagrams with timestamps,
+  filterable per device. Answers "is the bridge sending anything at all?" without Wireshark.
+- **Command log**: incoming HTTP calls from the Miniserver with their result. Answers
+  the opposite direction.
+- **Log lines** (since 2026-09-03): a `logging.Handler`
+  (`LogBufferHandler`, `diagnostics/logbuffer.py`) holds the last 500
+  lines of the `loxmatter` logger — not the root logger, lines
+  from third-party libraries do not belong in a control interface — from
+  level INFO up, in a ring. The same lines that `docker logs` also shows, just
+  without shell access to the host. `install_log_buffer()` sets, at
+  startup, both the handler's level and the logger's own level —
+  without the latter, `loxmatter` would stay at Python's default
+  effective level WARNING, and no `logger.info(...)` line in the whole
+  project would reach the ring, whatever level the handler carries (see
+  the docstring there for the reasoning).
+- **Live channel** (`GET /api/diagnostics/live`, WebSocket, since 2026-09-03):
+  pushes UDP capture, command log, and log lines continuously instead of
+  once to the "System" view — with a snapshot on connect,
+  then live. Replaces manual reloading; details, message format,
+  and the distinction from `/api/live` (8.3):
+  [live feed design](2026-09-03-diagnostics-live-feed-design.md).
+- **Template preview**: before the download, the WebUI shows which objects and commands
+  will be created and how many.
+- **System check** (`GET /api/diagnostics/system`): four lines, each green or red with
+  a concrete note — `matter-server` (is there a connection?), `store` (is the
+  signal key database writable? without that, no commissioning and no
+  export marking), `ipv6` (is there a locally routed IPv6 address? Matter and Thread
+  need it), and `miniserver` (does a routing path to the configured target exist?
+  more cannot be determined with fire-and-forget UDP without ICMP evaluation). Until 2026-09-03
+  this list was called "IPv6 present, mDNS reachable, dongle present, matter-server
+  connected, Miniserver reachable" — mDNS and dongle are not implemented, `store`
+  was in no spec. See open point 9 in section 12.
+- **Fabric backup** (`GET /api/diagnostics/fabric-backup`, see 4.1): download of the
+  matter-server data directory as an archive. Protected like every other
+  `/api` route: without a valid session (WebUI login) or a valid token,
+  the route responds with 401. Until 2026-09-03 this one route had its
+  own 403 branch for the case "no token configured" (see 4.1, 9.1) —
+  that has gone away without replacement with the WebUI login, because the state it
+  was directed against (the route reachable, but no proof of identity at all in the
+  system) can no longer occur since then.
 
 ---
 
-## 11. Risiken
+## 11. Risks
 
-| Risiko | Bewertung | Gegenmaßnahme |
+| Risk | Assessment | Countermeasure |
 |---|---|---|
-| Deployment-Komplexität durch OTBR (USB, IPv6, Host-Networking) | hoch, sicher eintretend | Ausführlicher Guide, Compose-Profile, Diagnoseseite in der WebUI, die IPv6/mDNS/Dongle prüft |
-| Verlust der Fabric-Credentials | mittel, katastrophal | Backup-Export in der WebUI, Warnung im Guide |
-| Vorlagen-Schema ändert sich mit Config-Version | niedrig | Golden-File-Tests, Schema versioniert |
-| Multi-Admin-Einlernen verwirrt Nutzer | hoch | Inline-Anleitung je Ökosystem in der WebUI |
-| UDP-Last bei Full-Resend vieler Signale | mittel | Rate-Limit, konfigurierbares Intervall |
+| Deployment complexity from OTBR (USB, IPv6, host networking) | high, will definitely occur | Detailed guide, compose profiles, diagnostics page in the WebUI that checks IPv6/mDNS/dongle |
+| Loss of the fabric credentials | medium, catastrophic | backup export in the WebUI, warning in the guide |
+| Template schema changes with the Config version | low | golden-file tests, versioned schema |
+| Multi-admin commissioning confuses users | high | inline instructions per ecosystem in the WebUI |
+| UDP load from full resend of many signals | medium | rate limit, configurable interval |
 
 ---
 
-## 12. Offene Punkte
+## 12. Open points
 
-1. Konkretes Funkmodul für die Referenz-Compose-Datei.
-2. **Loxone-Lumitech-Codierung ungeklärt** (Task 5, 2026-09-02). Wie Loxone Helligkeit
-   und Farbtemperatur im Lumitech-Ausgabemodus als eine Zahl codiert, ist in der
-   offiziellen Loxone-Dokumentation nicht auffindbar — nur ein als Vermutung
-   gekennzeichneter Forumsbeitrag existiert (siehe 7.3). `commands/translate.py`
-   erwartet deshalb für Farbtemperatur bereits einen entpackten Kelvin-Wert statt der
-   rohen Loxone-Zahl. Vor Task 6 (HTTP-Endpoint) klären, sonst kann dieser die rohe
-   Zahl nicht zuverlässig entpacken. Die RGB-Codierung ist dagegen belegt (7.3).
-3. **`subscribe()` abonniert Attribute nur statisch — und das kompoundiert mit
-   `Runtime.invalidate_index()` zu einer stillen Sackgasse** (Task 8, 2026-09-02).
-   `BridgeMatterClient.subscribe()` (`matter/client.py`) registriert beim Aufruf genau
-   eine Upstream-Subscription je (Node, Attributpfad)-Paar, das zu diesem Zeitpunkt
-   bekannt ist — begründet im Moduldocstring dort: `attr_path_filter` steuert nur, OB
-   ein registrierter Callback feuert, nicht WAS ihm übergeben wird, und für
-   `EventType.ATTRIBUTE_UPDATED` ist die gelieferte `data` einzig der neue Wert, ohne
-   Node-ID oder Pfad — eine einzelne Wildcard-Subscription könnte ein solches Update
-   deshalb keinem Gerät zuordnen. Ein Attributpfad, den ein Gerät ERST NACH diesem
-   Aufruf neu meldet — nach einem Firmware-Update, das einen Cluster freischaltet, oder
-   weil ein Gerät nachträglich kommissioniert wird — bekommt dadurch nie eine
-   Subscription und liefert folglich nie ein Update.
+1. Concrete radio module for the reference compose file.
+2. **Loxone Lumitech encoding unresolved** (task 5, 2026-09-02). How Loxone encodes
+   brightness and color temperature as one number in Lumitech output mode is not
+   findable in the official Loxone documentation — only a forum post flagged
+   as a guess exists (see 7.3). `commands/translate.py` therefore already
+   expects an unpacked Kelvin value for color temperature instead of the
+   raw Loxone number. Clarify before task 6 (HTTP endpoint), otherwise it
+   cannot reliably unpack the raw number. The RGB encoding, by contrast, is documented (7.3).
+3. **`subscribe()` only subscribes attributes statically — and this compounds with
+   `Runtime.invalidate_index()` into a silent dead end** (task 8, 2026-09-02).
+   `BridgeMatterClient.subscribe()` (`matter/client.py`) registers, on call, exactly
+   one upstream subscription per (node, attribute path) pair known at that
+   point in time — justified in the module docstring there: `attr_path_filter` only controls WHETHER
+   a registered callback fires, not WHAT gets passed to it, and for
+   `EventType.ATTRIBUTE_UPDATED` the delivered `data` is solely the new value, without
+   node ID or path — a single wildcard subscription therefore could not attribute
+   such an update to any device. An attribute path that a device reports for the FIRST
+   TIME AFTER this call — after a firmware update that unlocks a cluster, or
+   because a device is commissioned afterward — never gets a
+   subscription for it and consequently never delivers an update.
 
-   Das verzahnt sich mit einer zweiten, für sich genommen unabhängig wirkenden Grenze:
-   `Runtime.invalidate_index()` (`loxone/runtime.py`) existiert genau für den Fall, dass
-   jemand `Store.register_signals()` erneut für ein bereits laufendes Gerät aufruft, um
-   ein neu hinzugekommenes Signal bekannt zu machen. Sie verwirft dabei aber nur
-   `Runtime`s eigenen Cache bereits ABONNIERTER Pfade (`_signal_for`s
-   `_signals`/`_indexed`) — sie registriert keine neue Upstream-Subscription und kann es
-   auch nicht, sie kennt `BridgeMatterClient` gar nicht. Hat `subscribe()` den Pfad nie
-   kennengelernt, erzeugt matter-server dafür überhaupt kein Event; es gibt für
-   `invalidate_index()` folglich nichts zu verpassen. Auch `_signal_for`s eigenes
-   Debug-Log (das bei einem unbekannten Signal feuert) sieht diesen Fall nie, weil
-   `on_attribute`/`on_event` für einen nie abonnierten Pfad schlicht nie aufgerufen
-   werden — nicht einmal auf Debug-Ebene steht dazu etwas im Log.
+   This interlocks with a second limitation that looks independent on its own:
+   `Runtime.invalidate_index()` (`loxone/runtime.py`) exists exactly for the case where
+   someone calls `Store.register_signals()` again for an already-running device, to
+   make a newly added signal known. But it only discards
+   `Runtime`'s own cache of already SUBSCRIBED paths (`_signal_for`'s
+   `_signals`/`_indexed`) — it does not register a new upstream subscription and
+   cannot, either, it does not know `BridgeMatterClient` at all. If `subscribe()` never
+   learned about the path, matter-server produces no event for it at all; there is consequently
+   nothing for `invalidate_index()` to miss. Even `_signal_for`'s own
+   debug log (which fires on an unknown signal) never sees this case, because
+   `on_attribute`/`on_event` are simply never called for a path that was never
+   subscribed — not even at debug level does anything about it appear in the log.
 
-   Wer also "ein Signal zur Laufzeit an ein laufendes Gerät anhängen" allein mit
-   `Store.register_signals()` gefolgt von `Runtime.invalidate_index(device_id)` bauen
-   will, landet in genau dieser stillen Sackgasse: der Aufruf läuft fehlerfrei durch,
-   der Cache wird sauber neu aufgebaut — aber es kommt nie ein Wert an, weil die
-   eigentliche Lücke eine Ebene tiefer liegt, bei `subscribe()`, nicht bei
-   `invalidate_index()`. Ein korrekter Fix braucht deshalb beides: nach
-   `Store.register_signals()` muss NEBEN `Runtime.invalidate_index(device_id)` auch
-   `BridgeMatterClient.subscribe()` für den betroffenen Node erneut laufen (oder gezielt
-   um den neuen Pfad erweitert werden) — sich auf die Cache-Invalidierung allein zu
-   verlassen reicht nicht. Für die anvisierte Nutzung dieser Phase (`connect()` liest
-   den vollen Node-Cache, danach einmalig `subscribe()`, keine Laufzeit-
-   Rekommissionierung) ist die Lücke hinnehmbar; sie ist aber ein offener Punkt, keine
-   erledigte Aufgabe.
+   So anyone who wants to build "attach a signal to a running device at runtime"
+   using only `Store.register_signals()` followed by
+   `Runtime.invalidate_index(device_id)` lands in exactly this silent dead end: the
+   call runs through without error, the cache is rebuilt cleanly — but no value ever
+   arrives, because the actual gap sits one layer deeper, at `subscribe()`, not at
+   `invalidate_index()`. A correct fix therefore needs both: after
+   `Store.register_signals()`, ALONGSIDE `Runtime.invalidate_index(device_id)`,
+   `BridgeMatterClient.subscribe()` must also run again for the affected node (or be
+   extended specifically for the new path) — relying on the cache invalidation alone
+   is not enough. For this phase's intended use (`connect()` reads
+   the full node cache, then `subscribe()` once, no runtime
+   recommissioning) the gap is acceptable; but it is an open point, not a
+   completed task.
 
-   **Was ein Anwender davon sieht** (ergänzt 2026-09-03, nachdem Phase 5 das Einlernen
-   in die WebUI geholt hat). Bis dahin beschrieb dieser Punkt nur die Ursache; die
-   Auswirkung ist unangenehmer, als sie klingt. Ein über Ansicht 1 frisch eingelerntes
-   Gerät bekommt vom NODE_ADDED-Ereignis sofort `d<id>_online = 1` und erscheint in der
-   Liste **online und grün** — `subscribe()` lief aber beim Start der Brücke und kennt
-   diesen Node nicht, also bleibt `Runtime.last_values_for()` für ihn leer und jedes
-   Signal steht in Ansicht 1 und 2 dauerhaft auf „-". Grün und ohne einen einzigen Wert
-   ist von außen nicht von einem kaputten Gerät zu unterscheiden, und es ist genau die
-   Reihenfolge, in der ein Erstbetrieb abläuft: einlernen, dann Werte ansehen.
-   Abhilfe bis zu einem echten Fix ist ein Neustart der Brücke — danach kennt
-   `subscribe()` den Node. Die Erfolgsmeldung nach dem Einlernen sagt das in einem Satz
-   (`web/app.js`, `commissionDevice`), damit niemand diesen bekannten Grenzfall für
-   einen Fehler seiner Installation hält. Der Export der Vorlagen ist davon nicht
-   betroffen: er liest den `Store`, nicht die Live-Werte.
-4. **Event-Zähler (`<key>_n`) sind prozesslokal und überleben einen Bruecken-Neustart
-   nicht** (`Runtime`, `loxone/runtime.py`; Review-Fix I7, 2026-09-02). Spec 6.3 verkauft
-   diesen Zähler als monotonen Wert, dessen Vorzug ist, dass ein verlorenes UDP-Datagramm
-   ihn nur *springen* lässt, statt den Tastendruck zu verschlucken — Loxone-Logik soll auf
-   ihn achten können, ohne je einen Druck zu verpassen. `Runtime.__init__` setzt
-   `self._counters: dict[str, int] = {}` aber ohne jede Seedung, und der Zähler existiert
-   nirgends außerhalb dieses Prozessspeichers — kein Store-Feld, kein `seed_from_snapshot`,
-   kein `/resync`-Pfad. Ein Neustart der Bridge (Deployment, Absturz, Container-Neustart)
-   setzt ihn deshalb auf 0 zurück, und der nächste Tastendruck sendet wieder `1`. Das ist
-   nicht dieselbe Fehlerklasse, die 6.3 adressiert: ein VERLORENES Paket lässt den Zähler
-   *steigen* (springt von z. B. 4 auf 6, immer noch erkennbar als "es gab einen Druck"), ein
-   NEUSTART lässt ihn *fallen* (von 47 zurück auf 1) — eine Loxone-Logik, die auf "Zähler hat
-   sich erhöht" wartet, verpasst diesen einen Druck nach jedem Neustart der Bridge
-   vollständig, das genaue Gegenteil dessen, wofür der Zähler eingeführt wurde. Ein Fix
-   bräuchte eines von zwei Dingen: entweder der Zähler wird persistiert (z. B. im `Store`,
-   analog zu den Signalschlüsseln selbst, mit derselben Sorgfalt bei nebenläufigem Zugriff)
-   und beim Start aus der Datenbank statt bei 0 wieder aufgenommen, oder die Loxone-seitige
-   Logik überwacht den Zähler auf *Änderung* statt auf *Erhöhung* — Letzteres ist die
-   einfachere Änderung, verlangt aber, dass jedes Config-Projekt, das diesen Zähler nutzt,
-   das auch tatsächlich so verdrahtet. Weder das eine noch das andere ist in dieser Phase
-   umgesetzt; unangetastet gelassen, weil das Verhalten nicht ungefragt geändert werden
-   sollte, aber hier festgehalten, weil 6.3 sonst mehr verspricht, als die Implementierung
-   hält.
-5. **`MultiPressComplete` liefert nur die zwei Basissignale, nicht die in 6.3 versprochenen
-   `_press2`/`_press3`/`_presscount`** (`export/signals.py`, `discovery.py`; Review-Fix
-   I6/M13, 2026-09-02). Spec 6.3 verspricht wörtlich: „Bei `MultiPressComplete` zusätzlich
-   `_press2`, `_press3` als eigene Impulse sowie `_presscount`." Tatsächlich exportiert
-   `export/signals.py`s `to_inputs` für JEDES Event — `MultiPressComplete` eingeschlossen —
-   ausschließlich die beiden generischen Signale, die auch jedes andere Event bekommt:
-   `<key>` (digitaler Impuls) und `<key>_n` (monotoner Zähler, siehe Punkt 4 oben zu dessen
-   eigener Lücke). Es gibt weder eine Sonderbehandlung für den Switch-Cluster-Event Nr. 6
-   (`MultiPressComplete`, siehe `discovery.FEATURE_MAP_EVENTS`) noch einen Weg, aus dem
-   rohen `MultiPressComplete`-Ereignis (das laut Matter-Spezifikation die Anzahl der
-   erkannten Presses als Nutzdaten trägt) eine Presszahl herauszulesen und in eigene
-   Impulse/einen `_presscount`-Wert zu übersetzen — `matter/paths.py`s Event-Erkennung
-   liefert ohnehin nur den Pfad (`endpoint/cluster/event`), keine Nutzdaten, und
-   `Runtime.on_event` kennt entsprechend keinen Parameter dafür. Ein Gerät mit
-   Mehrfachdruck-Erkennung (z. B. IKEA-Taster mit Doppel-/Dreifachklick) liefert also
-   `MultiPressComplete` als denselben einzelnen Impuls wie `InitialPress` — ein Doppelklick
-   sieht in Loxone genauso aus wie ein einzelner Druck, nur der `_n`-Zähler zählt weiter.
-   Ein Fix bräuchte: (a) das rohe `MultiPressComplete`-Ereignis mit seinen Nutzdaten statt
-   nur seinem Pfad an `Runtime.on_event` durchzureichen, (b) eine Interpretation dieser
-   Nutzdaten als Presszahl, und (c) eine Erweiterung von `export/signals.py`, die für dieses
-   eine Event drei zusätzliche `LoxoneInput`s erzeugt statt der generischen zwei. Nicht in
-   dieser Phase umgesetzt — hier festgehalten, damit 6.3 nicht mehr verspricht, als
-   `export/signals.py` tatsächlich liefert.
-6. **Rohes Attributschreiben ist bis zur Erlaubnisliste abgesichert, aber nicht an
-   matter-server angebunden** (Task 4, 2026-09-02; siehe 8.4). `POST
-   /api/signals/{key}/write` (`api/control.py`) lehnt jedes Attribut ab, das nicht auf
-   der (bewusst kleinen, gegen ein echtes Gerät belegten) Erlaubnisliste
-   `_WRITABLE_ATTRIBUTES` steht — das ist getestet
-   (`test_raw_write_of_a_non_writable_attribute_is_refused`). Für ein *erlaubtes*
-   Attribut gibt es aber noch keinen Weg zum Gerät: `BridgeMatterClient` hat kein
-   `write_attribute` (anders als `send_command`, das über `matter_server.client.client.
-   MatterClient.send_device_command` läuft), und `build_control_router(store, invoke)`
-   nimmt dafür auch keinen zweiten Aufrufer entgegen — `invoke` ist per Typ
-   (`Callable[[MatterCall], Awaitable[None]]`) auf Kommandos beschränkt, ein
-   Attribut-Schreibzugriff ist keins. Die Route antwortet für ein erlaubtes Attribut
-   deshalb ehrlich mit 501, statt einen Erfolg vorzutäuschen, der nichts bewirkt. Ein
-   Fix bräuchte: (a) `BridgeMatterClient.write_attribute(node_id, attribute_path,
-   value)` als dünnen Wrapper um `MatterClient.write_attribute` — nach demselben Muster
-   wie `remove_node`/`set_thread_dataset` (Task 1) —, und (b) eine zweite,
-   attributförmige Aufrufer-Schnittstelle für `build_control_router`, analog zu
-   `invoke` für Kommandos. Nicht in dieser Phase umgesetzt — hier festgehalten, damit
-   Ansicht 2 (8, „Schreibbare Attribute lassen sich hier roh setzen") nicht mehr
-   verspricht, als die WebUI heute tatsächlich kann.
-7. **Die von Hand gepflegte Erlaubnisliste (8.4) skaliert nicht über eine Handvoll
-   Geräte hinaus — und es gibt inzwischen einen belegten Weg, sie durch eine Tabelle
-   zu ersetzen** (Review-Fix Important #2, 2026-09-02). `_WRITABLE_ATTRIBUTES`
-   (`api/control.py`) braucht heute für jedes Attribut, das irgendjemand jemals
-   beschreiben möchte, einen eigenen, gegen ein echtes Gerät oder die
-   Matter-Spezifikation belegten Eintrag — bei einer Installation mit mehr als einer
-   Handvoll unterschiedlicher Gerätetypen wird das schnell zur Wartungslast, die
-   keiner mehr pflegt, und eine ungepflegte Erlaubnisliste ist entweder zu eng
-   (fehlende Bedienmöglichkeiten) oder, schlimmer, wird aus Bequemlichkeit durch eine
-   Sperrliste ersetzt (siehe 8.4, wieso das die falsche Asymmetrie wäre). Wie 8.4 jetzt
-   festhält, existiert die Schreibbarkeits-Information tatsächlich, in
-   `chip/clusters/CHIPClusters.py`, nur ist das Modul in dieser Distribution nicht
-   importierbar (`ImportError: cannot import name 'exceptions' from 'chip'`) und
-   python-matter-server liest es nicht. Zwei Wege könnten das ändern: (a) eine
-   spätere Version von `home_assistant_chip_clusters`/`chip` liefert das fehlende
-   `chip/exceptions.py` mit, wodurch `ChipClusters.py` importierbar würde und seine
-   `"writable"`-Flags zur Laufzeit abfragbar wären, oder (b) die Datei wird nicht
-   importiert, sondern als reine Textdaten geparst (sie ist ein großes, aber
-   syntaktisch reguläres Python-Literal) — ein Weg mit eigenem Risiko, weil er ein
-   internes, nicht als Schnittstelle gedachtes Format einer Fremdbibliothek
-   nachbildet und bei einer künftigen Version brechen kann, ohne dass ein Fehlschlag
-   beim Import das anzeigt. Keiner der beiden Wege ist in dieser Phase umgesetzt;
-   festgehalten, weil die heutige Erlaubnisliste eine bewusste, aber nicht die
-   einzig mögliche Antwort auf 8.4s Befund ist.
-8. **Die Oberfläche meldet sich seit dem WebUI-Login mit Passwort an — nicht mehr
-   mit einem im Browser eingetragenen Token** (Task 8, 2026-09-02; abgelöst durch
-   [2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md), umgesetzt
-   Task 9/10). Was hier bis zum 2026-09-03 stand — ein Passwortfeld für das Token
-   oben rechts, das Token im `localStorage` des Browsers gehalten, bei jedem
-   Aufruf als `Authorization`-Header mitgeschickt — gibt es nicht mehr: `app.js`
-   setzt für den Browser keinen `Authorization`-Header und legt kein Geheimnis in
-   `localStorage` ab. Stattdessen vergibt die Ersteinrichtung (`/auth/setup`) beim
-   ersten Aufruf ein Passwort, `POST /auth/login` setzt danach das
-   Sitzungs-Cookie `loxmatter_session`, und der Browser meldet sich damit an jeder
-   `/api`-Route und am WebSocket-Handshake von `/api/live` an, ganz ohne
-   Subprotokoll-Umweg (`build_api_guard` prüft das Cookie zuerst). Der Download
-   der Fabric-Sicherung reist über dasselbe Cookie statt über ein Token im Header
-   — an `requestDownload()` statt einem einfachen `<a href>` ändert das nichts:
-   der fehlende Header war nur einer von zwei Gründen dafür, und der zweite gilt
-   unverändert weiter — eine 401 oder 503 soll als lesbare Meldung in der
-   Oberfläche erscheinen statt als roher Fehlertext im Browserfenster (`app.js`,
-   `requestDownload`). Das Bearer-Token bleibt als serverseitiger Weg für Skripte
-   und `curl` vollständig erhalten, ist aber seither kein Weg mehr, den die
-   Oberfläche selbst benutzt.
+   **What a user sees of this** (added 2026-09-03, after phase 5 brought commissioning
+   into the WebUI). Until then, this point only described the cause; the
+   impact is more unpleasant than it sounds. A device freshly commissioned via view 1
+   immediately gets `d<id>_online = 1` from the NODE_ADDED event and appears in the
+   list **online and green** — but `subscribe()` ran at bridge startup and does not know
+   this node, so `Runtime.last_values_for()` stays empty for it and every
+   signal permanently shows "-" in view 1 and 2. Green with not a single value
+   is indistinguishable from the outside from a broken device, and it is exactly the
+   order in which a first use goes: commission, then look at values.
+   The workaround until a real fix is a bridge restart — after that,
+   `subscribe()` knows the node. The success message after commissioning says this in one sentence
+   (`web/app.js`, `commissionDevice`), so nobody mistakes this known edge case for
+   an error in their own installation. Template export is not
+   affected by this: it reads the `Store`, not the live values.
+4. **Event counters (`<key>_n`) are process-local and do not survive a bridge restart**
+   (`Runtime`, `loxone/runtime.py`; review fix I7, 2026-09-02). Spec 6.3 sells
+   this counter as a monotonic value whose benefit is that a lost UDP datagram
+   only makes it *skip*, instead of swallowing the button press — Loxone logic should be able to
+   watch it without ever missing a press. `Runtime.__init__` sets
+   `self._counters: dict[str, int] = {}` but with no seeding at all, and the counter exists
+   nowhere outside this process memory — no store field, no `seed_from_snapshot`,
+   no `/resync` path. A bridge restart (deployment, crash, container restart)
+   therefore resets it to 0, and the next button press sends `1` again. This is
+   not the same class of bug that 6.3 addresses: a LOST packet makes the counter
+   *rise* (jumps from, say, 4 to 6, still recognizable as "there was a press"), a
+   RESTART makes it *fall* (from 47 back to 1) — Loxone logic that waits for "counter has
+   increased" misses this one press completely after every bridge restart,
+   the exact opposite of what the counter was introduced for. A fix would need one
+   of two things: either the counter gets persisted (e.g. in the `Store`,
+   analogous to the signal keys themselves, with the same care for concurrent access)
+   and resumed from the database at startup instead of at 0, or the Loxone-side
+   logic monitors the counter for *change* instead of *increase* — the latter is the
+   simpler change, but requires every Config project that uses this counter to
+   actually wire it that way. Neither one nor the other is implemented in this phase;
+   left untouched because the behavior should not be changed without being asked, but
+   recorded here, because 6.3 otherwise promises more than the implementation
+   delivers.
+5. **`MultiPressComplete` delivers only the two base signals, not the `_press2`/
+   `_press3`/`_presscount` promised in 6.3** (`export/signals.py`, `discovery.py`; review fix
+   I6/M13, 2026-09-02). Spec 6.3 promises, verbatim: "For `MultiPressComplete`, additionally
+   `_press2`, `_press3` as their own pulses, plus `_presscount`." In fact, `export/signals.py`'s
+   `to_inputs` exports, for EVERY event — `MultiPressComplete` included —
+   exclusively the two generic signals that every other event also gets:
+   `<key>` (digital pulse) and `<key>_n` (monotonic counter, see point 4 above for its
+   own gap). There is neither special handling for switch cluster event no. 6
+   (`MultiPressComplete`, see `discovery.FEATURE_MAP_EVENTS`) nor a way to read a
+   press count out of the raw `MultiPressComplete` event (which, per the Matter
+   specification, carries the number of detected presses as its payload) and
+   translate it into separate pulses/a `_presscount` value — `matter/paths.py`'s event
+   detection delivers only the path (`endpoint/cluster/event`) anyway, no payload, and
+   `Runtime.on_event` accordingly has no parameter for it. A device with
+   multi-press detection (e.g. an IKEA button with double/triple click) thus delivers
+   `MultiPressComplete` as the same single pulse as `InitialPress` — a double click
+   looks exactly like a single press in Loxone, only the `_n` counter keeps counting.
+   A fix would need: (a) passing the raw `MultiPressComplete` event with its payload instead
+   of just its path through to `Runtime.on_event`, (b) an interpretation of this
+   payload as a press count, and (c) an extension of `export/signals.py` that produces three
+   additional `LoxoneInput`s for this one event instead of the generic two. Not
+   implemented in this phase — recorded here so 6.3 no longer promises more than
+   `export/signals.py` actually delivers.
+6. **Raw attribute writing is secured up to the allowlist, but not connected to
+   matter-server** (task 4, 2026-09-02; see 8.4). `POST
+   /api/signals/{key}/write` (`api/control.py`) rejects every attribute that is not on
+   the (deliberately small, confirmed against a real device) allowlist
+   `_WRITABLE_ATTRIBUTES` — that is tested
+   (`test_raw_write_of_a_non_writable_attribute_is_refused`). But for an *allowed*
+   attribute there is still no path to the device: `BridgeMatterClient` has no
+   `write_attribute` (unlike `send_command`, which runs via `matter_server.client.client.
+   MatterClient.send_device_command`), and `build_control_router(store, invoke)`
+   also does not accept a second caller for this — `invoke` is restricted by type
+   (`Callable[[MatterCall], Awaitable[None]]`) to commands, an
+   attribute write access is not one. For an allowed attribute the route therefore
+   honestly responds with 501, instead of faking a success that does nothing. A
+   fix would need: (a) `BridgeMatterClient.write_attribute(node_id, attribute_path,
+   value)` as a thin wrapper around `MatterClient.write_attribute` — following the same pattern
+   as `remove_node`/`set_thread_dataset` (task 1) —, and (b) a second,
+   attribute-shaped caller interface for `build_control_router`, analogous to
+   `invoke` for commands. Not implemented in this phase — recorded here so
+   view 2 (8, "Writable attributes can be set raw here") no longer
+   promises more than the WebUI can actually do today.
+7. **The hand-maintained allowlist (8.4) does not scale beyond a handful of
+   devices — and there is now a documented path to replace it with a table**
+   (review fix Important #2, 2026-09-02). `_WRITABLE_ATTRIBUTES`
+   (`api/control.py`) today needs, for every attribute anyone ever wants to
+   write, its own entry confirmed against a real device or the
+   Matter specification — for an installation with more than a
+   handful of different device types this quickly turns into a maintenance burden that
+   nobody keeps up, and an unmaintained allowlist is either too tight
+   (missing control options) or, worse, gets replaced out of convenience by a
+   blocklist (see 8.4 for why that would be the wrong asymmetry). As 8.4 now
+   records, the writability information does actually exist, in
+   `chip/clusters/CHIPClusters.py`, only the module is not
+   importable in this distribution (`ImportError: cannot import name 'exceptions' from 'chip'`)
+   and python-matter-server does not read it. Two paths could change this: (a) a
+   later version of `home_assistant_chip_clusters`/`chip` ships the missing
+   `chip/exceptions.py`, which would make `ChipClusters.py` importable and its
+   `"writable"` flags queryable at runtime, or (b) the file is not
+   imported but parsed as plain text data (it is a large but
+   syntactically regular Python literal) — a path with its own risk, because it
+   reproduces an internal format of a third-party library that is not meant as an
+   interface and can break with a future version without an import
+   failure indicating it. Neither of the two paths is implemented in this phase;
+   recorded because today's allowlist is a deliberate but not the
+   only possible answer to 8.4's finding.
+8. **Since the WebUI login, the UI logs in with a password — no longer
+   with a token entered in the browser** (task 8, 2026-09-02; superseded by
+   [2026-09-03-webui-login-design.md](2026-09-03-webui-login-design.md), implemented in
+   task 9/10). What stood here until 2026-09-03 — a password field for the token
+   at the top right, the token held in the browser's `localStorage`, sent along on every
+   call as an `Authorization` header — no longer exists: `app.js`
+   sets no `Authorization` header for the browser and puts no secret into
+   `localStorage`. Instead, initial setup (`/auth/setup`) assigns a password on the
+   first call, `POST /auth/login` then sets the
+   session cookie `loxmatter_session`, and the browser authenticates with it on every
+   `/api` route and on the WebSocket handshake of `/api/live`, entirely without the
+   subprotocol detour (`build_api_guard` checks the cookie first). The download
+   of the fabric backup travels over the same cookie instead of a token in the header
+   — this changes nothing about `requestDownload()` versus a plain `<a href>`:
+   the missing header was only one of two reasons for it, and the second still applies
+   unchanged — a 401 or 503 should appear as a readable message in the
+   UI instead of as raw error text in the browser window (`app.js`,
+   `requestDownload`). The bearer token remains fully in place as a server-side path for
+   scripts and `curl`, but since then is no longer a path the
+   UI itself uses.
 
-   Was tatsächlich offen bleibt, jetzt fürs Passwort statt fürs Token: **es kennt
-   nur „alles oder nichts".** Wer es hat, kann ansehen, schalten, einlernen,
-   entfernen und die Fabric-Sicherung herunterladen; wer es nicht hat, sieht von
-   `/api` nichts. Es gibt keine Nur-Lese-Rolle für jemanden, der bloß den Zustand
-   betrachten soll, und kein zweites, eingeschränktes Passwort oder Token. Für die
-   anvisierte Nutzung (ein Haushalt, eine Person, die die Brücke betreibt) ist das
-   angemessen — für eine Installation, in der mehrere Personen unterschiedlich
-   weit dürfen sollen, wäre es zu grob. Anders als beim alten Token gilt die
-   Sitzung selbst nicht mehr unbegrenzt: sie läuft nach 30 Tagen Inaktivität ab
-   (`auth.sessions.SESSION_LIFETIME_SECONDS`), lässt sich per `POST /auth/logout`
-   einzeln beenden, und `loxmatter set-password` beendet auf einen Schlag alle
-   Sitzungen. Das Bearer-Token selbst bleibt dagegen das alte statische Geheimnis
-   ohne Ablauf, ohne Rotation und ohne Widerruf einzelner Aufrufer — für den
-   Skript-Weg unverändert offen.
-9. **Der Systemcheck prüft mDNS, den Funk-Dongle, OTBR und das Thread-Netz nicht**
-   (Review-Fix Fix 6, 2026-09-03). 10.5 und Abschnitt 8, Ansicht 4, versprachen bis
-   dahin „mDNS erreichbar, Dongle da" sowie „Status von matter-server und OTBR,
-   Thread-Netz". Umgesetzt sind vier Prüfungen: `matter-server`, `store`, `ipv6`,
-   `miniserver` (`api/diagnostics.py`, `build_diagnostics_router`s `/system`). Beide
-   Spec-Stellen sind auf das gebracht, was läuft; die Lücke steht hier, statt sie
-   stillschweigend aus der Spec zu streichen. Was fehlt und was es kostet:
+   What actually remains open, now for the password instead of the token: **it only knows
+   "all or nothing".** Whoever has it can view, switch, commission,
+   remove, and download the fabric backup; whoever doesn't have it sees nothing of
+   `/api`. There is no read-only role for someone who is only supposed to
+   view state, and no second, restricted password or token. For the
+   intended use (one household, one person operating the bridge) this is
+   appropriate — for an installation where several people are meant to have different
+   levels of access, it would be too coarse. Unlike the old token, the
+   session itself is no longer unlimited: it expires after 30 days of inactivity
+   (`auth.sessions.SESSION_LIFETIME_SECONDS`), can be ended
+   individually via `POST /auth/logout`, and `loxmatter set-password` ends all
+   sessions at once. The bearer token itself, by contrast, remains the old static secret
+   with no expiry, no rotation, and no revocation of individual callers — unchanged and
+   open for the script path.
+9. **The system check does not check mDNS, the radio dongle, OTBR, or the Thread network**
+   (review fix Fix 6, 2026-09-03). 10.5 and section 8, view 4, promised until
+   then "mDNS reachable, dongle present" as well as "status of matter-server and OTBR,
+   Thread network". Four checks are implemented: `matter-server`, `store`, `ipv6`,
+   `miniserver` (`api/diagnostics.py`, `build_diagnostics_router`'s `/system`). Both
+   spec spots have been brought in line with what actually runs; the gap is recorded here, instead of
+   silently deleting it from the spec. What is missing and what it costs:
 
-   - **mDNS erreichbar** — Matter-Geräte im WLAN/Ethernet werden über mDNS gefunden.
-     Scheitert das, schlägt das Einlernen fehl, ohne dass eine Diagnosezeile darauf
-     zeigt; heute meldet nur `matter-server` „verbunden", was die Frage nicht berührt.
-   - **Dongle da** — der USB-Funkstick des Border Routers. Fehlt er, ist kein
-     Thread-Gerät erreichbar. Prüfbar wäre er nur im OTBR-Container, nicht in diesem
-     Prozess: `loxmatter` sieht das USB-Gerät nicht.
-   - **OTBR und Thread-Netz** — Status des Border Routers und ob überhaupt ein
-     Thread-Netz gebildet ist. Beides steht hinter der REST-Schnittstelle von OTBR, zu
-     der dieser Dienst heute keine Verbindung hat.
+   - **mDNS reachable** — Matter devices on WiFi/Ethernet are found via mDNS.
+     If that fails, commissioning fails without any diagnostics line pointing to it;
+     today only `matter-server` reports "connected", which does not touch this question.
+   - **Dongle present** — the border router's USB radio stick. If it's missing, no
+     Thread device is reachable. It would only be checkable inside the OTBR container, not in this
+     process: `loxmatter` cannot see the USB device.
+   - **OTBR and Thread network** — status of the border router and whether a
+     Thread network has formed at all. Both sit behind OTBR's REST interface, to
+     which this service today has no connection.
 
-   Bewusst NICHT in dieser Nachbesserung nachgebaut: die drei Prüfungen brauchen
-   Zugriff auf Dinge außerhalb dieses Prozesses (mDNS-Auflösung im Hostnetz, USB, eine
-   zweite HTTP-Schnittstelle) und damit je eine eigene Entscheidung darüber, was ein
-   Fehlschlag bedeuten soll — eine rote Zeile, die in einer korrekt laufenden
-   Installation aus einem Umgebungsgrund rot ist, macht die Diagnoseseite wertlos.
-   `store` wiederum ist eine sinnvolle, in keiner Spec-Fassung vorgesehene Ergänzung
-   und steht deshalb ab jetzt in 10.5.
+   Deliberately NOT rebuilt in this follow-up fix: the three checks need
+   access to things outside this process (mDNS resolution on the host network, USB, a
+   second HTTP interface) and therefore each need their own decision about what a
+   failure should mean — a red line that is red for an environmental reason in an
+   otherwise correctly running installation makes the diagnostics page worthless.
+   `store`, in turn, is a sensible addition foreseen in no spec revision
+   and is therefore recorded in 10.5 from now on.

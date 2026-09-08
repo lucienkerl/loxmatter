@@ -30,7 +30,7 @@ understands. That held without exception for attributes in testing; event detect
 FeatureMap-based and cluster-specific instead, since neither test device advertised an
 `EventList`. Details, numbers and the consequences are in the design spec's validation
 section,
-[section 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-abbildung-generisch-statt-kuratiert).
+[section 3.5](docs/superpowers/specs/2026-09-01-matter-loxone-bridge-design.md#35-mapping-generic-not-curated).
 
 ## ✨ What you can do
 
