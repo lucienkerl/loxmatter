@@ -463,9 +463,28 @@ log() {
   tail -n 2000 "$LOG" > "$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
 }
 
-# Der laufende Tag steht in genau einer Zeile der .env (siehe
-# Compose-Datei, ausfuehrliche Begruendung dort). Fehlt sie, laeuft die
-# Vorgabe aus der Compose-Datei: "stable".
+# Was LAEUFT, nicht was beim naechsten Start gezogen wuerde. Das sind zwei
+# verschiedene Fragen, und Stufe 1 hat gezeigt, dass die Verwechslung teuer
+# ist: seit 0.2.0 traegt jede frische Installation LOXMATTER_IMAGE_TAG=stable
+# in der .env (deploy/testhost/.env.example). Der Tag ist ein WANDERNDER
+# ALIAS - "stable" ist keine Version, und ein Vergleich "ist 0.3.0 neuer als
+# stable" hat keine Antwort. Genau daran waere die Vorwaerts-Pruefung aus
+# Spec-Abschnitt 10, Regel 3, auf jeder Standardinstallation stillschweigend
+# vorbeigelaufen.
+#
+# Die belastbare Auskunft gibt der laufende Container selbst: sein
+# LOXMATTER_VERSION ist beim Bau hineingelegt worden (Stufe 1, Abschnitt 4)
+# und benennt genau die Fassung, die gerade arbeitet - unabhaengig davon,
+# unter welchem Alias sie einmal gezogen wurde.
+running_version() {
+  version="$(docker inspect "$SERVICE" \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n -E 's/^LOXMATTER_VERSION=(.+)$/\1/p' | head -1)"
+  printf '%s' "${version:-unbekannt}"
+}
+
+# Der Tag aus der .env - gebraucht wird er nur noch fuer den Rueckfall, also
+# um zu wissen, was zurueckzuschreiben ist, wenn das Update scheitert.
 current_tag() {
   tag="$(sed -n -E 's/^LOXMATTER_IMAGE_TAG=(.*)$/\1/p' "$ENV_FILE" 2>/dev/null | tail -1)"
   printf '%s' "${tag:-stable}"
@@ -511,6 +530,12 @@ LAST="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
 [ -n "$JOB_ID" ] || exit 0
 [ "$JOB_ID" != "$LAST" ] || exit 0
 
+# Zwei verschiedene Dinge, bewusst getrennt gehalten:
+#   RUNNING - welche Fassung arbeitet gerade (fuer die Vorwaerts-Pruefung
+#             und fuer die Anzeige)
+#   FROM    - was in der .env steht und beim Rueckfall zurueckzuschreiben
+#             waere (kann ein Alias wie "stable" sein)
+RUNNING="$(running_version)"
 FROM="$(current_tag)"
 TO="$TARGET"
 ROLLED=false
@@ -543,12 +568,22 @@ esac
 # dev-Kanal hat keine Ordnung ueber SHAs - dort prueft Task 3 stattdessen
 # die Abstammung, sobald die Refs geholt sind.
 if [ "$CHANNEL" = "stable" ]; then
-  CUR="${FROM#v}"
+  # Verglichen wird gegen die LAUFENDE Version, nicht gegen den Tag in der
+  # .env - siehe running_version() oben. Ein Tag kann "stable" heissen und
+  # damit gar keine Version sein.
+  CUR="${RUNNING#v}"
   NEW="${TARGET#v}"
+  # Eine Fassung, die sich nicht zu erkennen gibt (von Hand gebautes Image,
+  # LOXMATTER_VERSION leer), kann nicht Ausgangspunkt eines Vergleichs sein.
+  # Ablehnen statt raten: der Nutzer sieht dann, dass er ein Image faehrt,
+  # das seine Herkunft nicht nennt - eine brauchbare Auskunft.
+  case "$CUR" in
+    ''|unbekannt|dev) reject "die laufende Fassung nennt keine Version - Update nur ueber die Konsole" ;;
+  esac
   if [ "$CUR" = "$NEW" ]; then
     reject "diese Version laeuft bereits"
   fi
-  if [ "$CUR" != "stable" ] && [ "$(printf '%s\n%s\n' "$CUR" "$NEW" | sort -V | head -1)" != "$CUR" ]; then
+  if [ "$(printf '%s\n%s\n' "$CUR" "$NEW" | sort -V | head -1)" != "$CUR" ]; then
     reject "aeltere Version - zurueck geht nur der Rueckfall"
   fi
 fi
@@ -869,8 +904,14 @@ def test_der_rueckfall_ruehrt_die_datenbank_nicht_an(kranker_dienst):
     # bleibt eine ausdrueckliche Handlung in der Oberflaeche.
     _auftrag(kranker_dienst, target="0.3.0")
     _, calls, _ = kranker_dienst()
-    assert "tar xzf" not in calls
-    assert "-x" not in calls
+    # Genau auf das Entpacken pruefen, nicht auf ein beliebiges "-x": das
+    # traefe sonst jeden kuenftigen Aufruf, der zufaellig ein -x-Flag traegt,
+    # und der Test wuerde aus einem Grund rot, der mit seiner Aussage nichts
+    # zu tun hat.
+    tar_aufrufe = [line for line in calls.splitlines() if line.startswith("tar ")]
+    assert tar_aufrufe, "die Sicherung selbst muss stattgefunden haben"
+    for line in tar_aufrufe:
+        assert " -x" not in line and "xzf" not in line, line
 
 
 def test_ein_fehlschlag_hinterlaesst_eine_lesbare_datei(kranker_dienst):
@@ -913,10 +954,25 @@ Ans Ende von `deploy/updater/update-once.sh` (die Zeile `set_state rollback ""` 
 # verwirft alles seit dem Sicherungszeitpunkt. Das tut man nicht
 # selbsttaetig um zwei Uhr nachts, wenn niemand hinsieht - es steht in der
 # Oberflaeche als eigener, ausdruecklich zu bestaetigender Knopf.
-log "Update auf $TO nicht gesund nach ${HEALTH_TIMEOUT}s - Rueckfall auf $FROM"
+# WOHIN zurueckgefallen wird, ist nicht dasselbe wie WOHER das Update kam.
+# Stand in der .env ein wandernder Alias ("stable", der Normalfall auf jeder
+# frischen Installation seit 0.2.0), dann zeigt dieser Alias in der Registry
+# INZWISCHEN AUF DIE GESCHEITERTE VERSION. Ihn zurueckzuschreiben hiesse,
+# beim naechsten `compose pull` genau den Stand wiederzuholen, der gerade
+# nicht gesund wurde - und niemand haette eine Erinnerung daran, dass je ein
+# Rueckfall stattfand.
+#
+# Zurueckgeschrieben wird deshalb die konkrete Fassung, die vorher LIEF.
+# Nur wenn die sich nicht ermitteln liess, bleibt der alte Eintrag die
+# einzige verfuegbare Auskunft.
+case "$RUNNING" in
+  ''|unbekannt|dev) BACK="$FROM" ;;
+  *)                BACK="${RUNNING#v}" ;;
+esac
+log "Update auf $TO nicht gesund nach ${HEALTH_TIMEOUT}s - Rueckfall auf $BACK"
 ROLLED=true
 set_state rollback ""
-set_tag "$FROM"
+set_tag "$BACK"
 run git -C "$REPO" checkout --detach "$GIT_BEFORE" || true
 run docker compose --project-directory "$STACK" up -d --no-deps --force-recreate "$SERVICE" || true
 
@@ -2626,4 +2682,12 @@ Damit ist der Weg über SSH für ein gewöhnliches Update abgeschafft — das Zi
 
 **Namensabgleich:** `update_dir` heißt in allen Signaturen gleich; `UpdateState.from_version`/`to_version` (Python, weil `from` ein Schlüsselwort ist) entsprechen `from`/`to` im JSON — die Umsetzung steht in `read_state` und in `_status()`; die Phasennamen sind in Task 2 abschließend aufgezählt und werden in Task 6 (`_LAUFENDE_PHASEN`) und Task 9 (`updateRunning()`) identisch benutzt.
 
-**Eine offene Entscheidung, bewusst so gelassen:** `test_der_rueckfall_ruehrt_die_datenbank_nicht_an` prüft mit `"-x" not in calls` auch auf ein entpackendes `tar`. Das ist grob und schlägt an, sobald irgendein Aufruf ein `-x` trägt. Beim Umsetzen präziser fassen, sobald die tatsächlichen Aufrufe feststehen — die Absicht (keine Wiederherstellung im Rückfall) ist das Verbindliche.
+**Erledigt:** `test_der_rueckfall_ruehrt_die_datenbank_nicht_an` prüfte ursprünglich mit `"-x" not in calls` auch auf ein entpackendes `tar` — grob genug, um an einem beliebigen anderen `-x`-Flag anzuschlagen. Der Test sieht sich jetzt nur die `tar`-Aufrufe an.
+
+## Nachträge aus Stufe 1 (8. September 2026, nach dem Release 0.2.0)
+
+Drei Dinge wurden erst sichtbar, als Stufe 1 tatsächlich lief:
+
+1. **Die laufende Version kommt aus dem laufenden Container, nicht aus der `.env`.** Seit 0.2.0 trägt jede frische Installation `LOXMATTER_IMAGE_TAG=stable`, und „stable" ist keine Version. Der Vergleich „ist 0.3.0 neuer als stable" hat keine Antwort, und die Vorwärts-Prüfung aus Spec-Abschnitt 10, Regel 3, wäre auf jeder Standardinstallation stillschweigend wirkungslos geblieben. `running_version()` liest stattdessen `LOXMATTER_VERSION` aus dem laufenden Container — die Angabe, die Stufe 1 genau dafür ins Image gelegt hat.
+2. **Der Rückfall pinnt eine konkrete Version.** Stand in der `.env` ein Alias, zeigt dieser in der Registry inzwischen auf die gescheiterte Fassung; ihn zurückzuschreiben hieße, sie beim nächsten `compose pull` wiederzuholen — ohne dass irgendetwas sich erinnert, dass je ein Rückfall stattfand.
+3. **Eine Fassung ohne Versionsangabe wird abgelehnt**, statt geraten. Wer ein von Hand gebautes Image fährt, bekommt eine ehrliche Auskunft und den Konsolenweg.
