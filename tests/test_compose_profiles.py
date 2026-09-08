@@ -39,3 +39,28 @@ def test_nur_otbr_braucht_das_funkmodul() -> None:
         if service.get("profiles") == ["thread"]:
             continue
         assert "devices" not in service, name
+
+
+def test_die_bruecke_laeuft_aus_einem_veroeffentlichten_image() -> None:
+    # Vor 0.2.0 baute Compose das Image auf dem Pi - fuenf bis zehn
+    # Minuten, mit PyPI und Speicher als Fehlerquellen mitten im Update.
+    image = _stack()["services"]["loxmatter"]["image"]
+    assert image.startswith("ghcr.io/lucienkerl/loxmatter:")
+    assert "${LOXMATTER_IMAGE_TAG:-stable}" in image
+
+
+def test_der_bauweg_bleibt_daneben_bestehen() -> None:
+    # `image:` und `build:` am selben Dienst: `compose pull` zieht,
+    # `compose build` baut, und `up` baut nur, wenn lokal kein Image liegt.
+    # Auf einem Host ohne GHCR-Zugang ist das die Rueckfallebene. Ein
+    # Profil waere hier nicht moeglich - Profile gelten fuer Dienste, nicht
+    # fuer einzelne Schluessel eines Dienstes.
+    assert _stack()["services"]["loxmatter"]["build"]["context"] == "../.."
+
+
+def test_die_laufende_version_steht_an_genau_einer_stelle() -> None:
+    # Stufe 2 setzt darauf auf: der Rueckfall schreibt EINE Zeile in .env
+    # zurueck. Taucht der Tag an einer zweiten Stelle auf, faellt nur die
+    # eine zurueck und die andere nicht.
+    source = COMPOSE.read_text(encoding="utf-8")
+    assert source.count("LOXMATTER_IMAGE_TAG") == 1
