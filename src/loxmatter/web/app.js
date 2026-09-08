@@ -1903,6 +1903,28 @@ function app() {
     /** Wandelt einen Klick auf die Farbflaeche in Farbton und Saettigung
      * und schickt ihn. Die Flaeche ist waagerecht der Farbton (0-360°),
      * senkrecht die Saettigung (oben 100 %, unten 0 %). */
+    /**
+     * Wo der Marker auf der Farbflaeche sitzt und welche Farbe er traegt.
+     *
+     * Die Umkehrung von `pickColour`: dort wird aus einer Klickposition ein
+     * Farbton-Saettigungs-Paar, hier aus dem Paar wieder eine Position.
+     * Beide muessen dieselbe Achsenzuordnung benutzen - waagerecht Farbton
+     * 0-360 Grad, senkrecht oben volle Saettigung -, sonst zeigt der Marker
+     * woanders hin als der Klick, der ihn gesetzt hat.
+     *
+     * Die Fuellfarbe entsteht ueber `hsl()` mit fester Helligkeit 50 %: das
+     * ist dieselbe Annahme wie in `hueSatToLoxone` (Wert fest 1, die
+     * Helligkeit laeuft ueber LevelControl), damit der Punkt zur Flaeche
+     * unter ihm passt und nicht zur Lampenhelligkeit.
+     */
+    colourMarkerStyle() {
+      const hue = this.controlDrafts.hue ?? 0;
+      const saturation = this.controlDrafts.saturation ?? 0;
+      const left = (((hue % 360) + 360) % 360) / 3.6;
+      const top = 100 - Math.max(0, Math.min(100, saturation));
+      return `left: ${left}%; top: ${top}%; background: hsl(${hue} ${saturation}% 50%)`;
+    },
+
     pickColour(event, device, command) {
       const rect = event.currentTarget.getBoundingClientRect();
       const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));

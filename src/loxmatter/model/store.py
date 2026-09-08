@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from loxmatter import i18n
-from loxmatter.export.commands import DeviceCommand
+from loxmatter.export.commands import DeviceCommand, extract_commands
 from loxmatter.matter.discovery import extract_signals
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.model.auth_store import AuthStore
@@ -1056,6 +1056,60 @@ class Store:
             "UPDATE device SET room = ? WHERE id = ?", (_normalized_room(room), device_id)
         )
         self._db.commit()
+
+    def backfill_commands(self, snapshots: Sequence[NodeSnapshot]) -> int:
+        """Traegt Kommandos nach, die es beim Einlernen noch nicht gab, und
+        gibt zurueck, bei wie vielen Geraeten etwas dazukam.
+
+        Aufgerufen beim Start der Bruecke, neben `backfill_device_types` -
+        die Abbilder aller erreichbaren Knoten sind dort bereits geholt.
+
+        **Der Fall, um den es geht** (Betrieb, 8. September 2026): Die
+        Kommandoliste eines Geraets entsteht beim Einlernen, aus
+        `extract_commands` gegen den damaligen Stand von `clusters.yaml`.
+        Ein Kommando, das damals nicht in der Tabelle stand, wurde verworfen
+        - und ein spaeteres Update, das es freischaltet, erreichte das
+        Geraet nie: `register_commands` lief nur beim Einlernen und beim
+        CLI-Export. Eine RGB-Leuchte behielt so ihr fehlendes
+        Farb-Bedienelement, obwohl die Bruecke den Befehl laengst kannte.
+        Der einzige Ausweg war ein Export von Hand - auf den niemand kommt,
+        weil nichts darauf hinweist.
+
+        Signale hatten dieses Loch nie: `Runtime.on_node_snapshot` ruft
+        `register_signals` bei jedem nachgezogenen Abbild. Diese Methode
+        schliesst dieselbe Luecke fuer Kommandos.
+
+        **Schreibt bei jedem Start, nicht nur wenn etwas fehlt.**
+        `register_commands` uebernimmt `slug` und `takes_value` fuer
+        bekannte Kommandos neu (siehe dort) - genau dafuer ist es gebaut,
+        und eine Korrektur in `clusters.yaml` soll ein Bestandsgeraet auch
+        dann erreichen, wenn kein Kommando fehlt, sondern nur eines anders
+        heisst. Der Preis ist eine Handvoll UPDATEs je Geraet und Start.
+        Der Rueckgabewert zaehlt trotzdem nur die Geraete, bei denen
+        tatsaechlich ein Kommando DAZUKAM - das ist die meldenswerte
+        Aenderung, nicht das Auffrischen.
+
+        Schluessel bleiben unangetastet: `register_commands` vergibt sie nur
+        fuer neue Kommandos und laesst bestehende Zeilen bei ihrem
+        Schluessel. Anders waere diese Methode gefaehrlich statt nuetzlich -
+        der Schluessel ist die Verdrahtung in Loxone, und dies hier laeuft
+        bei jedem Start.
+
+        Ein Geraet, das gerade offline ist und deshalb in `snapshots()`
+        fehlt, wird uebersprungen - dieselbe Regel wie bei
+        `backfill_device_types`: hier wird gefuellt, nie geleert.
+        """
+        by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
+        gained = 0
+        for device in self.devices():
+            snapshot = by_node.get(device.node_id)
+            if snapshot is None:
+                continue
+            before = len(self.commands(device.id))
+            self.register_commands(device.id, extract_commands(snapshot), device.node_id)
+            if len(self.commands(device.id)) > before:
+                gained += 1
+        return gained
 
     def backfill_device_types(self, snapshots: Sequence[NodeSnapshot]) -> int:
         """Traegt `device.device_types` fuer Geraete nach, die noch keine

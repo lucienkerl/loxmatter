@@ -2133,9 +2133,15 @@
       ihren Kelvin-Regler ohne Reiter, ohne dass hier eine einzige Abfrage
       auf Geraetetyp oder Modell stuende.
     -->
+    <!-- Zwei Klassen mit Absicht: `signals-modal` traegt allein die Rahmung
+         (style.css), die sich beide Modale teilen; `control-modal`
+         unterscheidet dieses hier ueberhaupt erst vom Signal-Modal. Ohne die
+         zweite Klasse trifft `document.querySelector('dialog.signals-modal')`
+         beide, und WELCHEN es liefert, entscheidet allein die Reihenfolge im
+         Dokument - `scripts/capture_screenshots.py` haengt daran. -->
     <dialog
       x-ref="controlModal"
-      class="signals-modal"
+      class="signals-modal control-modal"
       aria-labelledby="control-modal-heading"
       @close="controlModalDevice = null"
       @mousedown="controlModalBackdropMousedown = isBackdropEvent($event, $el)"
@@ -2234,11 +2240,24 @@
           <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'colour'">
             <template x-for="command in controlsByKind(controlModalDevice, 'hue_sat')" :key="command.key">
               <div class="control-row">
+                <!-- Der Marker sitzt IM Feld, nicht daneben: `hue` und
+                     `saturation` wurden bisher gelesen (`readStartValues`)
+                     und nirgends gezeigt - ein Farbwaehler, der die
+                     eingestellte Farbe verschweigt, ist keiner (Befund M-4,
+                     Abschluss-Review 2026-09-08). `x-show` statt eines
+                     Randfalls in der Position: fehlt der Wert, gibt es
+                     keinen Punkt, und der Hinweis darunter sagt warum. -->
                 <div
                   class="colour-field"
                   :class="{ 'is-busy': commandBusyKey === command.key || !isOnline(controlModalDeviceObject()) }"
                   @pointerup="pickColour($event, controlModalDeviceObject(), command)"
-                ></div>
+                >
+                  <span
+                    class="colour-marker"
+                    x-show="controlDrafts.hue !== undefined && controlDrafts.saturation !== undefined"
+                    :style="colourMarkerStyle()"
+                  ></span>
+                </div>
                 <p class="hint" x-text="t('web.devices.control_colour_hint')"></p>
                 <p class="hint" x-show="controlDrafts.hue === undefined"
                    x-text="t('web.devices.control_start_value_unknown')"></p>

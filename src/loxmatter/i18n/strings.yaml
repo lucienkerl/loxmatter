@@ -169,6 +169,9 @@ cli.run.help_miniserver:
 cli.run.help_listen:
   en: "Port for the HTTP commands coming from Loxone"
   de: "Port für die HTTP-Kommandos aus Loxone"
+cli.run.echo_commands_backfilled:
+  en: "{count} device(s) gained commands the bridge did not know when they were commissioned — their tiles now offer the matching controls."
+  de: "{count} Gerät(e) haben Befehle bekommen, die die Brücke beim Einlernen noch nicht kannte — ihre Kacheln bieten jetzt die passenden Bedienelemente."
 cli.run.help_host:
   en: "Address the HTTP service binds to. Default 0.0.0.0, because the Miniserver must be able to reach the service — see --api-token for the corresponding protection of the `/api` routes (Spec 9, Task 8)."
   de: "Adresse, an die der HTTP-Dienst bindet. Standard 0.0.0.0, weil der Miniserver den Dienst erreichen muss — siehe --api-token für die dazugehörige Absicherung der `/api`-Routen (Spec 9, Task 8)."
