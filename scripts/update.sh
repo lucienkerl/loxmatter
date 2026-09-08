@@ -16,15 +16,21 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-# Bringt die laufende Bruecke auf den Stand des Repositories.
+# Bringt die laufende Bruecke auf den Stand der veroeffentlichten Version.
 #
-#   ./scripts/update.sh              # holen, bauen, neu starten
-#   ./scripts/update.sh --no-pull    # nur bauen und neu starten
-#   ./scripts/update.sh --no-cache   # ohne Layer-Cache bauen
+#   ./scripts/update.sh              # holen, Image ziehen, neu starten
+#   ./scripts/update.sh --no-pull    # nur ziehen und neu starten
+#   ./scripts/update.sh --build      # aus der Quelle bauen statt ziehen
+#   ./scripts/update.sh --build --no-cache   # ohne Layer-Cache bauen
 #
 # Auf dem Rechner auszufuehren, auf dem die Bruecke laeuft. Der Stack liegt
 # im Repository selbst (deploy/testhost/), das Skript findet ihn ueber
 # seinen eigenen Pfad - kein Konfigurationsschritt.
+#
+# Seit 0.2.0 wird gezogen statt gebaut: der Bau brauchte auf dem Test-Pi
+# fuenf bis zehn Minuten und konnte an einem PyPI-Ausfall oder am
+# Speicher scheitern. --build stellt den alten Weg wieder her, fuer
+# Entwicklung und fuer Hosts ohne Zugang zur Registry.
 #
 # Der Dienst wird mit `--no-deps` gestartet: matter-server und OTBR bleiben
 # unangetastet. Ohne das erzeugt Compose sie mit neu, sobald sich die
@@ -34,15 +40,24 @@
 set -euo pipefail
 
 PULL=1
+BUILD=0
 NO_CACHE=""
 for arg in "$@"; do
   case "$arg" in
     --no-pull)  PULL=0 ;;
+    --build)    BUILD=1 ;;
     --no-cache) NO_CACHE=1 ;;
-    -h|--help)  sed -n '18,31p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *)          printf 'Unbekanntes Argument: %s (erlaubt: --no-pull, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
+    -h|--help)  sed -n '18,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *)          printf 'Unbekanntes Argument: %s (erlaubt: --no-pull, --build, --no-cache, --help)\n' "$arg" >&2; exit 2 ;;
   esac
 done
+# --no-cache steuert einen Bau. Ohne --build steuert es gar nichts, und
+# ein Schalter, der stillschweigend wirkungslos bleibt, ist schlimmer als
+# einer, der fehlt: er laesst jemanden glauben, er habe frisch gebaut.
+if [ -n "$NO_CACHE" ] && [ "$BUILD" -eq 0 ]; then
+  printf 'Abbruch: --no-cache wirkt nur zusammen mit --build.\n' >&2
+  exit 2
+fi
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STACK="$REPO/deploy/testhost"
@@ -90,16 +105,21 @@ else
   printf '\nKein Datenbank-Volume gefunden (%s) - erster Lauf?\n' "$VOLUME"
 fi
 
-# Ueber `docker compose build`, NICHT ueber ein eigenes `docker build`
-# (2026-09-03): der Dienst traegt in der Compose-Datei einen `build:`-Block,
-# baut also sein eigenes Image. Ein daneben gebautes `loxmatter:local`
-# benutzt niemand - das Skript baute monatelang ein Image, das nirgends
-# ankam, waehrend Compose bei `up` ein vorhandenes Image einfach
-# weiterverwendet, statt neu zu bauen. Der Dienst lief danach unveraendert
-# weiter und meldete trotzdem "Fertig".
-say "Baue das Image"
-(cd "$STACK" && docker compose build ${NO_CACHE:+--no-cache} "$SERVICE") \
-  || die "Build fehlgeschlagen - der laufende Dienst bleibt unveraendert."
+# Ziehen statt bauen (0.2.0). Der lange Kommentar von 2026-09-03 darueber,
+# dass `docker compose build` und nicht ein eigenes `docker build` zu
+# benutzen ist, gilt unveraendert weiter - er betrifft jetzt nur noch den
+# --build-Zweig unten. Die Ursache von damals bleibt dieselbe: der Dienst
+# traegt in der Compose-Datei einen `build:`-Block und baut sein eigenes
+# Image; ein daneben gebautes `loxmatter:local` benutzt niemand.
+if [ "$BUILD" -eq 1 ]; then
+  say "Baue das Image"
+  (cd "$STACK" && docker compose build ${NO_CACHE:+--no-cache} "$SERVICE") \
+    || die "Build fehlgeschlagen - der laufende Dienst bleibt unveraendert."
+else
+  say "Hole das Image"
+  (cd "$STACK" && docker compose pull "$SERVICE") \
+    || die "Kein Image geladen - der laufende Dienst bleibt unveraendert. Ohne Zugang zur Registry hilft --build."
+fi
 
 say "Starte den Dienst neu"
 (cd "$STACK" && docker compose up -d --no-deps --force-recreate "$SERVICE") \

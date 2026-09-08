@@ -217,6 +217,22 @@ uv sync
 uv run loxmatter inspect --fixture tests/fixtures/nodes/example_light.json
 ```
 
+## Updating
+
+```bash
+cd ~/loxmatter && git pull && ./scripts/update.sh
+```
+
+The script backs up the signal database first, pulls the published image,
+restarts only the bridge — matter-server and the Thread border router are
+left alone — and waits until the bridge reports healthy again. On a
+Raspberry Pi this takes about a minute.
+
+`--build` builds from source instead of pulling, for development or for a
+host that cannot reach `ghcr.io`.
+
+The System tab shows which version is running.
+
 ## 🗺 Status
 
 **Built:** commissioning, signal extraction, the template export, the runtime path in
