@@ -363,3 +363,38 @@ def test_the_same_job_is_not_run_twice(updater):
     _, _, zweite = updater()
     assert zweite["id"] == "auftrag-1"
     assert zweite["to"] == "0.3.0"
+
+
+def test_an_oversized_target_is_rejected_without_corrupting_state(updater):
+    # Critical. A target long enough blows jq's own execve inside
+    # set_state - E2BIG - because `write_state "$(jq -n ... --arg to
+    # "$TO" ...)"` (pre-fix) discarded the substitution's exit status: it
+    # is an argument to write_state, not the command `set -e` watches.
+    # Reproduced against the unfixed script: rc=0, a 1-byte state.json, on
+    # three consecutive passes, at a measured threshold of 522996
+    # characters on macOS (the Alpine sidecar's Linux MAX_ARG_STRLEN,
+    # ~131072 bytes, is smaller still). This target is a well-formed-
+    # looking "semver" ("0.3." followed by a run of zeros - the pattern
+    # check alone would accept it) and sized well past the macOS
+    # threshold, so it is the length cap specifically - not the pattern
+    # check - that has to stop it here.
+    huge_target = "0.3." + "0" * 600000
+    _auftrag(updater, target=huge_target)
+    result, calls, state = updater()
+    assert result.returncode == 0
+    assert state is not None
+    assert state["phase"] == "rejected"
+    assert state["error"] == "target is too long"
+    assert "docker" not in calls
+
+
+def test_an_oversized_id_is_rejected(updater):
+    # Critical, the id half: unbounded, an id reaches the exact same
+    # set_state E2BIG failure the target-length test above exercises.
+    _auftrag(updater, id="x" * 200)
+    result, calls, state = updater()
+    assert result.returncode == 0
+    assert state["phase"] == "rejected"
+    assert state["error"] == "id is too long"
+    assert state["id"] is None
+    assert "docker" not in calls

@@ -114,18 +114,42 @@ current_tag() {
 
 set_state() {
   # $1 phase, $2 error message (may be empty)
-  write_state "$(jq -n \
-    --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
-    --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
-    --argjson rolled "${ROLLED:-false}" --argjson healthy "${HEALTHY:-true}" \
-    '{id: (if $id == "" then null else $id end),
-      phase: $phase,
-      from: (if $from == "" then null else $from end),
-      to:   (if $to == "" then null else $to end),
-      error: (if $error == "" then null else $error end),
-      rolled_back: $rolled,
-      healthy: $healthy,
-      updater_seen_at: $seen}')"
+  #
+  # `write_state "$(jq -n ...)"` used to discard the substitution's own
+  # exit status - it is an ARGUMENT to write_state, not the command
+  # `set -e` is watching. write_state has no way to tell "I got jq's real
+  # output" from "I got jq's empty, stderr-swallowed failure" - so a
+  # failing jq here used to make write_state persist an empty string as
+  # the new state.json: updater_seen_at gone, the bridge concludes the
+  # sidecar is absent and hides the update button for good.
+  #
+  # A target or id long enough to blow jq's own execve (E2BIG - roughly
+  # 128 KiB on the Alpine sidecar's Linux MAX_ARG_STRLEN, ~523 KiB
+  # measured on macOS) used to reach exactly this failure; the length and
+  # character-set bounds on TARGET and JOB_ID (further down) close that
+  # specific path. This check is the general remedy underneath those
+  # bounds, not a replacement for them: it is what keeps a future
+  # `--argjson rolled` or `--argjson healthy` (Task 3/4 will give both
+  # attacker-reachable inputs) from reopening the same hole if either
+  # ever produces a non-boolean value jq rejects.
+  if STATE_JSON="$(jq -n \
+       --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
+       --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
+       --argjson rolled "${ROLLED:-false}" --argjson healthy "${HEALTHY:-true}" \
+       '{id: (if $id == "" then null else $id end),
+         phase: $phase,
+         from: (if $from == "" then null else $from end),
+         to:   (if $to == "" then null else $to end),
+         error: (if $error == "" then null else $error end),
+         rolled_back: $rolled,
+         healthy: $healthy,
+         updater_seen_at: $seen}')" \
+    && [ -n "$STATE_JSON" ]; then
+    write_state "$STATE_JSON"
+  else
+    printf 'set_state: jq failed to build state.json for phase "%s" - refusing to write\n' "$1" >&2
+    return 1
+  fi
 }
 
 # Defined here, ahead of the heartbeat and request-reading sections below,
@@ -216,6 +240,54 @@ LAST="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
 
 if [ "$UNREADABLE" = 1 ]; then
   FROM="" TO="" reject "request is not readable (invalid JSON, a top-level array, or a missing/empty id)"
+fi
+
+# Rule 0: id is bounded in length here - before JOB_ID is ever used in a
+# jq --arg position (set_state, above), and before FROM/TO are assigned
+# from a possibly-oversized TARGET (Rule 2, just below, applies the
+# identical reasoning there). By this point UNREADABLE is guaranteed 0 -
+# the branch above already exited otherwise - so JOB_ID here is exactly
+# the raw `.id` from the request.
+#
+# An id long enough blows jq's own execve inside set_state (E2BIG),
+# exactly as an oversized TARGET does (see Rule 2's write-up) - set_state's
+# substitution comes back empty, and without set_state's own guard (above)
+# that used to get persisted as the new state.json, heartbeat gone for
+# good. 128 chars is generous for any id this bridge actually generates
+# (timestamp/uuid-shaped, comfortably under 40) and, like TARGET's bound
+# below, several orders of magnitude under the ~131072-byte Linux
+# MAX_ARG_STRLEN this defends against.
+#
+# JOB_ID is forced back to "" before rejecting, the same as the
+# UNREADABLE branch above - which reopens that branch's own dedup gap for
+# a request whose id specifically fails this check (a resubmission of the
+# same oversized id is re-rejected every pass rather than deduped). Left
+# as-is: unlike an unreadable file, this needs an attacker to keep
+# resubmitting a deliberately oversized id on purpose, a narrower and
+# self-inflicted version of the problem the synthetic id above actually
+# fixes.
+if [ "${#JOB_ID}" -gt 128 ]; then
+  JOB_ID="" FROM="" TO="" reject "id is too long"
+fi
+
+# Rule 2: target is bounded in length before it can reach ANYTHING further
+# down - including FROM/TO, assigned right after this check, and every
+# reject() from here on that reports on a bad TARGET (unknown channel,
+# embedded newline, failed pattern). All of those call set_state, which
+# puts TO into a jq --arg position; TO is set from TARGET unconditionally,
+# whether the request is ultimately accepted OR rejected. A target long
+# enough blows jq's own execve inside set_state exactly like an oversized
+# id does (see Rule 0 above) - reproduced end to end: a 523196-character
+# numeric-looking target ("0.3." followed by a run of zeros, which still
+# matches the pattern check further down) left three consecutive passes
+# each at rc=0 with a 1-byte state.json, at a measured threshold of 522996
+# characters on this machine. The Linux MAX_ARG_STRLEN bounding the Alpine
+# sidecar is smaller still (32 pages, ~131072 bytes), so roughly 128 KiB
+# suffices there. 128 characters - a real Docker tag can never legitimately
+# be longer - rejects it three orders of magnitude before either threshold,
+# regardless of what channel or pattern check would otherwise apply to it.
+if [ "${#TARGET}" -gt 128 ]; then
+  reject "target is too long"
 fi
 
 FROM="$(current_tag)"
