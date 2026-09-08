@@ -1,44 +1,44 @@
-# Signal-Rangliste und Signal-Modal — Umsetzungsplan
+# Signal ranking and signal modal — implementation plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Signale werden nach Bedeutung sortiert statt nach Endpunktnummer, und das Signal-Modal wird eine fluchtende Tabelle mit Endpunkt-Gruppen.
+**Goal:** Signals are sorted by importance instead of by endpoint number, and the signal modal becomes an aligned table with endpoint groups.
 
-**Architecture:** Eine Cluster-Rangliste als `rank:` in `profiles/clusters.yaml` liefert den ersten Teil des Sortierschlüssels; `Store.signals` sortiert damit in Python nach, weil SQLite den Rang nicht kennt. Dadurch ändern sich Kachel, Modal *und* die Loxone-Vorlage aus einer Quelle. Die Oberfläche bekommt dazu drei neue Felder in `SignalOut` (`endpoint`, `cluster_id`, `endpoint_label`), eine Batterie-Fußzeile auf der Kachel und ein Rasterlayout im Modal.
+**Architecture:** A cluster ranking as `rank:` in `profiles/clusters.yaml` provides the first part of the sort key; `Store.signals` re-sorts it in Python because SQLite does not know the rank. This way the tile, modal *and* Loxone template all change from one source. The UI gets three new fields in `SignalOut` (`endpoint`, `cluster_id`, `endpoint_label`), a battery footer on the tile, and a grid layout in the modal.
 
-**Tech Stack:** Python 3.12, SQLite, FastAPI/Pydantic, PyYAML, Alpine.js (kein Build-Schritt), pytest.
+**Tech Stack:** Python 3.12, SQLite, FastAPI/Pydantic, PyYAML, Alpine.js (no build step), pytest.
 
 ## Global Constraints
 
-- **Entwurf:** `docs/superpowers/specs/2026-09-07-signal-ranking-and-modal-design.md`. Abschnittsnummern in diesem Plan verweisen darauf.
-- **Sprache:** Docstrings, Kommentare und Commit-Botschaften auf **Deutsch**, dicht und begründend (warum, nicht nur was). Der GPL-Kopf jeder Quelldatei bleibt in der englischen FSF-Fassung.
-- **Umlaute in Python-Kommentaren:** die bestehenden Dateien schreiben `ue`/`ae`/`oe` statt Umlauten (`ueberhaupt`, `Geraet`). Diese Schreibweise beibehalten. In Markdown und in `strings.yaml`-Werten stehen echte Umlaute.
-- **Laufzeittexte gehen durch `i18n`:** jeder neue sichtbare Text bekommt ein `en`/`de`-Paar in `src/loxmatter/i18n/strings.yaml`. Kein fest verdrahteter deutscher Text in `app.js` oder `index.html`.
-- **`strings.yaml`-Werte dürfen nicht in typografische Anführungszeichen gefasst sein** — `tests/test_i18n.py::test_no_value_is_wrapped_in_typographic_quotes` sperrt das.
-- **Schlüssel sind unantastbar.** `d4_1_press` bleibt `d4_1_press`. Keine Aufgabe in diesem Plan ändert `signal.key`.
-- **Tests laufen mit** `uv run pytest`. Einzelne Datei: `uv run pytest tests/profiles/test_table.py -v`.
-- **Vor jedem Commit:** `uv run ruff check src tests && uv run ruff format --check src tests && uv run mypy src`.
+- **Design:** `docs/superpowers/specs/2026-09-07-signal-ranking-and-modal-design.md`. Section numbers in this plan refer to it.
+- **Language:** Docstrings, comments, and commit messages in **German**, concise and reasoned (why, not just what). The GPL header of each source file stays in English FSF form.
+- **Umlauts in Python comments:** existing files write `ue`/`ae`/`oe` instead of umlauts (`ueberhaupt`, `Geraet`). Keep this convention. In Markdown and `strings.yaml` values, use real umlauts.
+- **Runtime text goes through `i18n`:** every new visible text gets an `en`/`de` pair in `src/loxmatter/i18n/strings.yaml`. No hard-coded German text in `app.js` or `index.html`.
+- **`strings.yaml` values must not be wrapped in typographic quotes** — `tests/test_i18n.py::test_no_value_is_wrapped_in_typographic_quotes` blocks this.
+- **Keys are untouchable.** `d4_1_press` stays `d4_1_press`. No task in this plan changes `signal.key`.
+- **Tests run with** `uv run pytest`. Single file: `uv run pytest tests/profiles/test_table.py -v`.
+- **Before each commit:** `uv run ruff check src tests && uv run ruff format --check src tests && uv run mypy src`.
 
-## Dateistruktur
+## File structure
 
-| Datei | Zuständigkeit | Aufgabe |
+| File | Responsibility | Task |
 | --- | --- | --- |
-| `src/loxmatter/profiles/clusters.yaml` | trägt zusätzlich `rank:` je Cluster | 1 |
-| `src/loxmatter/profiles/table.py` | `rank_for()` und `DEFAULT_RANK` | 1 |
-| `src/loxmatter/model/store.py` | `signals()` sortiert nach Rang | 2 |
-| `src/loxmatter/profiles/endpoints.py` | **neu** — Gerätetyp → sprechender Endpunktname | 4 |
-| `src/loxmatter/api/models.py` | `SignalOut` bekommt `endpoint`, `cluster_id`, `endpoint_label` | 4 |
-| `src/loxmatter/api/devices.py` | füllt die drei Felder | 4 |
-| `src/loxmatter/web/app.js` | Batteriezeile, Endpunktgruppen, Zeilen-Aufklapper, Kopfzahl | 5–9 |
-| `src/loxmatter/web/index.html` | Kachel-Fußzeile, Modal-Raster, Batteriesymbol | 5–10 |
-| `src/loxmatter/web/style.css` | `.device-battery`, `.signal-grid`, Umbruch unter 640 px | 5, 7, 10 |
-| `src/loxmatter/i18n/strings.yaml` | alle neuen Texte | 4–9 |
+| `src/loxmatter/profiles/clusters.yaml` | adds `rank:` per cluster | 1 |
+| `src/loxmatter/profiles/table.py` | `rank_for()` and `DEFAULT_RANK` | 1 |
+| `src/loxmatter/model/store.py` | `signals()` sorts by rank | 2 |
+| `src/loxmatter/profiles/endpoints.py` | **new** — device type → descriptive endpoint name | 4 |
+| `src/loxmatter/api/models.py` | `SignalOut` gets `endpoint`, `cluster_id`, `endpoint_label` | 4 |
+| `src/loxmatter/api/devices.py` | fills the three fields | 4 |
+| `src/loxmatter/web/app.js` | battery row, endpoint groups, row expander, header count | 5–9 |
+| `src/loxmatter/web/index.html` | tile footer, modal grid, battery icon | 5–10 |
+| `src/loxmatter/web/style.css` | `.device-battery`, `.signal-grid`, wrap below 640 px | 5, 7, 10 |
+| `src/loxmatter/i18n/strings.yaml` | all new text | 4–9 |
 
-`profiles/endpoints.py` steht bewusst **neben** `categories.py` statt darin: `categories.py` beantwortet „was für ein Ding ist das ganze Gerät", `endpoints.py` „wie heißt dieser eine Endpunkt darin". Eine Fernbedienung ist *ein* Schalter mit *zwei* Tasten — dieselbe Tabelle für beide Fragen wäre falsch (Entwurf 7.4).
+`profiles/endpoints.py` stands deliberately **beside** `categories.py` rather than in it: `categories.py` answers "what kind of thing is the whole device", `endpoints.py` "what is this one endpoint in it called". A remote is *one* switch with *two* buttons — the same table for both questions would be wrong (design 7.4).
 
 ---
 
-### Task 1: Die Cluster-Rangliste
+### Task 1: The cluster ranking
 
 **Files:**
 - Modify: `src/loxmatter/profiles/clusters.yaml`
@@ -46,75 +46,74 @@
 - Test: `tests/profiles/test_table.py`
 
 **Interfaces:**
-- Consumes: nichts.
-- Produces: `loxmatter.profiles.table.rank_for(cluster_id: int) -> int` und `loxmatter.profiles.table.DEFAULT_RANK: int` (Wert 50).
+- Consumes: nothing.
+- Produces: `loxmatter.profiles.table.rank_for(cluster_id: int) -> int` and `loxmatter.profiles.table.DEFAULT_RANK: int` (value 50).
 
-- [ ] **Step 1: Die failing tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-An `tests/profiles/test_table.py` anhängen:
+Append to `tests/profiles/test_table.py`:
 
 ```python
 def test_a_cluster_with_a_rank_reports_it():
-    """Der Rang entscheidet, was auf der Kachel als Leitwert erscheint -
-    er muss deshalb aus der Tabelle kommen und nicht aus einer Annahme."""
+    """The rank determines what appears as the primary value on the tile -
+    it must therefore come from the table and not from an assumption."""
     assert table.rank_for(6) == 10  # OnOff
     assert table.rank_for(59) == 10  # Switch
     assert table.rank_for(47) == 90  # PowerSource
 
 
 def test_a_cluster_without_a_rank_gets_the_default():
-    """Cluster 3 (Identify) steht nicht in der Tabelle. Er darf weder vorn
-    landen noch hinter der Batterie: die Vorgabe ist die Mitte, damit ein
-    neuer Geraetetyp nie versehentlich mit seinem Batteriestand fuehrt und
-    sein Hauptmerkmal trotzdem vor Verwaltungsangaben steht (Entwurf 4)."""
+    """Cluster 3 (Identify) is not in the table. It must neither
+    land at the front nor behind battery: the default is the middle, so a
+    new device type never accidentally leads with battery and
+    its main feature still stands ahead of utility info (design 4)."""
     assert table.rank_for(3) == table.DEFAULT_RANK
     assert table.DEFAULT_RANK == 50
 
 
 def test_the_utility_clusters_rank_behind_everything_functional():
-    """Die eine Regel, wegen der dieser Entwurf ueberhaupt entstand."""
+    """The one rule why this design exists at all."""
     functional = [table.rank_for(c) for c in (6, 8, 59, 144, 145, 768, 1026, 1029)]
     assert max(functional) < table.rank_for(47)
     assert table.rank_for(47) < table.rank_for(40)
 
 
 def test_every_rank_in_the_table_is_an_integer():
-    """Ein `rank: "10"` aus einem Tippfehler waere in YAML eine Zeichenkette
-    und wuerde beim Sortieren gegen eine Zahl werfen - erst zur Laufzeit,
-    beim Oeffnen einer Geraeteansicht."""
+    """A typo `rank: "10"` would be a string in YAML
+    and would throw against a number during sorting - only at runtime,
+    when opening a device view."""
     for cluster_id, cluster in table._table().items():
         if "rank" in cluster:
             assert isinstance(cluster["rank"], int), cluster_id
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/profiles/test_table.py -k rank -v`
-Expected: FAIL mit `AttributeError: module 'loxmatter.profiles.table' has no attribute 'rank_for'`
+Expected: FAIL with `AttributeError: module 'loxmatter.profiles.table' has no attribute 'rank_for'`
 
-- [ ] **Step 3: `rank:` in `clusters.yaml` eintragen**
+- [ ] **Step 3: Enter `rank:` in `clusters.yaml`**
 
-In jeden der zehn Cluster-Blöcke eine `rank:`-Zeile direkt unter `name:` einfügen. Über dem `clusters:`-Schlüssel diesen Kommentar ergänzen:
+Insert a `rank:` line directly under `name:` in each of the ten cluster blocks. Add this comment above the `clusters:` key:
 
 ```yaml
-# `rank` ordnet die Cluster ZUEINANDER, wenn die Oberflaeche und der Export
-# die Signale eines Geraets sortieren (Entwurf 2026-09-07, Abschnitt 4).
-# Kleiner Rang zuerst: was ein Geraet im Haus TUT, steht bei 10-40; was es
-# ueber sich selbst aussagt, bei 90+. Ein Cluster ohne `rank` bekommt 50 und
-# landet damit in der Mitte - hinter dem, was nachweislich zaehlt, aber vor
-# Batterie und Geraeteangaben. Diese Vorgabe ist Absicht: ein Geraetetyp,
-# den noch niemand eingetragen hat, soll nie mit seinem Batteriestand
-# fuehren, sein Hauptmerkmal aber auch nicht hinter Bekanntes verbannt
-# bekommen.
+# `rank` orders clusters RELATIVE TO EACH OTHER when the UI and export
+# sort a device's signals (design 2026-09-07, section 4).
+# Smaller rank first: what a device DOES in the house ranks at 10-40; what it
+# says about itself ranks at 90+. A cluster without `rank` gets 50 and
+# lands in the middle - behind what demonstrably matters, but ahead of
+# battery and device info. This default is intentional: a device type
+# no one has entered yet should never lead with battery, its main feature
+# also should not be banished behind the known.
 #
-# INNERHALB eines Rangs bleibt die bisherige Ordnung (Endpunkt, Cluster,
-# Element, Art) - sie ordnet zwei Signale desselben Clusters, und das tut
-# sie gut. Es gibt bewusst KEINEN Rang je Element: die Element-IDs sind in
-# der Matter-Spezifikation bereits grob nach Wichtigkeit vergeben, eine
-# zweite Rangebene waere Aufwand ohne belegten Gewinn.
+# WITHIN a rank, the previous order stays (endpoint, cluster,
+# element, kind) - it orders two signals of the same cluster, and it does
+# that well. There is deliberately NO rank per element: element IDs are
+# already roughly assigned by importance in the Matter spec itself, a
+# second rank level would be effort without proven gain.
 ```
 
-Die Werte:
+The values:
 
 | Cluster | `rank` |
 | --- | --- |
@@ -129,7 +128,7 @@ Die Werte:
 | 47 (PowerSource) | 90 |
 | 40 (BasicInformation) | 95 |
 
-Beispiel für den ersten Block:
+Example for the first block:
 
 ```yaml
 clusters:
@@ -140,41 +139,41 @@ clusters:
       0: {slug: onoff, unit: ""}
 ```
 
-Falls Cluster 40 (BasicInformation) heute keinen eigenen Block hat, einen anlegen — er braucht weder `attributes:` noch `commands:`, nur Name und Rang:
+If cluster 40 (BasicInformation) has no block of its own today, create one — it needs neither `attributes:` nor `commands:`, just name and rank:
 
 ```yaml
   40:
     name: basicinformation
-    # Kein `attributes:`-Abschnitt: dieser Cluster steht hier ALLEIN wegen
-    # seines Rangs. Ein leerer `attributes:`-Abschnitt haette eine zweite,
-    # ungewollte Wirkung - `relevance.is_functional` liest ihn ueber
-    # `known_attribute_section` und wuerde dann JEDES Attribut dieses
-    # Clusters als nicht gewollt verwerfen (siehe dessen Docstring,
-    # Schicht 3). Der Rang allein aendert nur die Reihenfolge.
+    # No `attributes:` section: this cluster is here ONLY because of
+    # its rank. An empty `attributes:` section would have a second,
+    # unwanted effect - `relevance.is_functional` reads it via
+    # `known_attribute_section` and would then reject EVERY attribute of this
+    # cluster as unwanted (see its docstring,
+    # layer 3). Rank alone only changes the order.
     rank: 95
 ```
 
-- [ ] **Step 4: `rank_for` in `table.py` schreiben**
+- [ ] **Step 4: Write `rank_for` in `table.py`**
 
-Nach `_table()` (Zeile 99) einfügen:
+Insert after `_table()` (line 99):
 
 ```python
-# Der Rang eines Clusters, den die Tabelle nicht fuehrt (Entwurf
-# 2026-09-07, Abschnitt 4). Die Mitte, nicht das Ende: ein unbekannter
-# Cluster soll nie hinter dem Batteriestand landen, aber auch nicht vor
-# einem Cluster, dessen Bedeutung belegt ist.
+# The rank of a cluster the table does not carry (design
+# 2026-09-07, section 4). The middle, not the end: an unknown
+# cluster must never land behind battery, but also not ahead of
+# a cluster whose importance is proven.
 DEFAULT_RANK = 50
 
 
 def rank_for(cluster_id: int) -> int:
-    """Wie wichtig dieser Cluster fuer die Anzeige ist - kleiner ist wichtiger.
+    """How important this cluster is for display - smaller is more important.
 
-    Getrennt von `lookup` und `knows_cluster`, weil diese Frage eine andere
-    ist als "wie heisst das Element" oder "kennt die Tabelle den Cluster":
-    ein Cluster kann in der Tabelle stehen (wegen seiner Kommandos) und
-    trotzdem keinen Rang tragen. Beide Faelle - gar nicht in der Tabelle,
-    und in der Tabelle ohne `rank` - ergeben hier dieselbe Antwort, weil
-    sie fuer die Sortierung dasselbe bedeuten.
+    Separate from `lookup` and `knows_cluster`, because this question is different
+    from "what is the element called" or "does the table know this cluster":
+    a cluster can be in the table (because of its commands) and
+    still not carry a rank. Both cases - not in the table at all,
+    and in the table without `rank` - give the same answer here, because
+    they mean the same thing for sorting.
     """
     cluster = _table().get(cluster_id)
     if cluster is None:
@@ -186,12 +185,12 @@ def rank_for(cluster_id: int) -> int:
 - [ ] **Step 5: Tests laufen lassen**
 
 Run: `uv run pytest tests/profiles/test_table.py -v`
-Expected: PASS, alle Tests der Datei (die bestehenden dürfen nicht brechen).
+Expected: PASS, all tests in the file (existing ones must not break).
 
-- [ ] **Step 6: Prüfen, dass sonst nichts kaputtging**
+- [ ] **Step 6: Verify nothing else broke**
 
 Run: `uv run pytest tests/profiles tests/export -v`
-Expected: PASS. `clusters.yaml` wird von `lookup`, `names_element` und `extract_commands` gelesen — eine zusätzliche Schlüssel-Zeile darf dort nichts ändern.
+Expected: PASS. `clusters.yaml` is read by `lookup`, `names_element` and `extract_commands` — an additional key line must not change anything there.
 
 - [ ] **Step 7: Commit**
 
@@ -215,19 +214,19 @@ MSG
 
 ---
 
-### Task 2: `Store.signals` sortiert nach Rang
+### Task 2: `Store.signals` sorts by rank
 
 **Files:**
 - Modify: `src/loxmatter/model/store.py:1304-1310`
 - Test: `tests/model/test_store.py`
 
 **Interfaces:**
-- Consumes: `table.rank_for` aus Task 1.
-- Produces: `Store.signals(device_id)` liefert nach `(rank, endpoint, cluster_id, element_id, kind)` sortiert. Signatur und Rückgabetyp unverändert (`list[StoredSignal]`).
+- Consumes: `table.rank_for` from Task 1.
+- Produces: `Store.signals(device_id)` delivers sorted by `(rank, endpoint, cluster_id, element_id, kind)`. Signature and return type unchanged (`list[StoredSignal]`).
 
-- [ ] **Step 1: Die failing tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-An `tests/model/test_store.py` anhängen (die Datei hat bereits `load_snapshot` aus `conftest` und legt einen `Store` in `tmp_path` an — dem dortigen Muster folgen):
+Append to `tests/model/test_store.py` (the file already has `load_snapshot` from `conftest` and creates a `Store` in `tmp_path` — follow the pattern there):
 
 ```python
 def test_the_button_leads_with_a_switch_signal_not_the_battery(tmp_path):
@@ -287,20 +286,20 @@ def test_the_order_is_total_and_stable(tmp_path):
     ]
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/model/test_store.py -k "button_leads or same_cluster" -v`
-Expected: FAIL — `functional[0].ref.cluster_id` ist 47, nicht 59.
+Expected: FAIL — `functional[0].ref.cluster_id` is 47, not 59.
 
 - [ ] **Step 3: Sortierung einbauen**
 
-In `store.py` den Import ergänzen (die Datei importiert bereits `Exportability` und `is_exportable` aus `profiles.table`):
+Add the import in `store.py` (the file already imports `Exportability` and `is_exportable` from `profiles.table`):
 
 ```python
 from loxmatter.profiles.table import Exportability, is_exportable, rank_for
 ```
 
-Vor der `Store`-Klasse (bei den anderen Modulfunktionen wie `_normalized_room`) einfügen:
+Insert before the `Store` class (with the other module functions like `_normalized_room`):
 
 ```python
 def _signal_order(signal: StoredSignal) -> tuple[int, int, int, int, str]:
@@ -365,7 +364,7 @@ Expected: PASS.
 - [ ] **Step 5: Die ganze Testreihe laufen lassen**
 
 Run: `uv run pytest -q`
-Expected: PASS. Schlägt hier etwas fehl, ist es ein Test, der die alte Reihenfolge festschreibt — **nicht** einfach die Erwartung umschreiben, sondern prüfen, ob der Test die Reihenfolge zufällig oder absichtlich prüft, und das Ergebnis in Task 3 festhalten.
+Expected: PASS. If something fails here, it is a test that encodes the old order — **do not** simply rewrite the expectation, but check if the test verifies the order randomly or intentionally, and record the result in Task 3.
 
 - [ ] **Step 6: Commit**
 
@@ -391,21 +390,21 @@ MSG
 
 ---
 
-### Task 3: Export und Projektdatei-Sync gegen die neue Ordnung absichern
+### Task 3: Secure export and project file sync against the new ordering
 
-Diese Aufgabe schreibt **keinen** Produktionscode. Sie hält fest, was Abschnitt 5 des Entwurfs als geprüft behauptet — damit die Behauptung nicht nur im Entwurf steht.
+This task writes **no** production code. It records what section 5 of the design claims as verified — so the claim does not stand only in the design.
 
 **Files:**
 - Test: `tests/export/test_signals.py`
 - Test: `tests/projectsync/test_diff.py`
 
 **Interfaces:**
-- Consumes: `Store.signals` aus Task 2, `export.signals.to_inputs`, `projectsync.diff.build_plan`.
+- Consumes: `Store.signals` from Task 2, `export.signals.to_inputs`, `projectsync.diff.build_plan`.
 - Produces: nichts.
 
-- [ ] **Step 1: Den Export-Test schreiben**
+- [ ] **Step 1: Write the export test**
 
-An `tests/export/test_signals.py` anhängen:
+Append to `tests/export/test_signals.py`:
 
 ```python
 def test_the_template_lists_the_button_press_before_the_battery(tmp_path):
@@ -424,9 +423,9 @@ def test_the_template_lists_the_button_press_before_the_battery(tmp_path):
     assert keys.index(f"d{device_id}_1_press") < keys.index(f"d{device_id}_0_battery")
 ```
 
-- [ ] **Step 2: Den Rückwärtskompatibilitäts-Test schreiben**
+- [ ] **Step 2: Write the backward compatibility test**
 
-An `tests/projectsync/test_diff.py` anhängen. Dem dortigen Muster für den Aufbau einer Projektdatei folgen; entscheidend ist, dass die Eingänge in der **alten** Reihenfolge (Endpunkt vor Rang, also Batterie zuerst) in der Projektdatei stehen:
+Append to `tests/projectsync/test_diff.py`. Follow the pattern there for building a project file; the key thing is that the inputs are in the **old** order (endpoint before rank, battery first) in the project file:
 
 ```python
 def test_a_project_imported_before_the_reordering_still_matches(tmp_path):
@@ -459,12 +458,12 @@ def test_a_project_imported_before_the_reordering_still_matches(tmp_path):
     assert PlanStatus.ORPHANED not in statuses.values()
 ```
 
-Falls `_project_with_inputs` in dieser Datei noch nicht existiert: den bestehenden Aufbau der Nachbartests wiederverwenden und als Helfer herausziehen — **nicht** eine zweite Kopie anlegen.
+If `_project_with_inputs` does not yet exist in this file: reuse the existing structure from neighboring tests and extract it as a helper — **do not** create a second copy.
 
 - [ ] **Step 3: Tests laufen lassen**
 
 Run: `uv run pytest tests/export tests/projectsync -v`
-Expected: PASS. Beide Tests sollten **sofort** grün sein — sie prüfen eine Eigenschaft, die Task 2 bereits hergestellt hat. Ein Fehlschlag beim Sync-Test bedeutet, dass die Zusicherung aus Abschnitt 5 nicht trägt: dann **hier anhalten** und melden, statt den Test anzupassen.
+Expected: PASS. Both tests should **immediately** turn green — they verify a property Task 2 already established. A failure in the sync test means the assurance from section 5 does not hold: then **stop here** and report, instead of adjusting the test.
 
 - [ ] **Step 4: Commit**
 
@@ -491,12 +490,12 @@ MSG
 
 ---
 
-### Task 4: `endpoint`, `cluster_id` und `endpoint_label` in `SignalOut`
+### Task 4: `endpoint`, `cluster_id`, and `endpoint_label` in `SignalOut`
 
 **Files:**
 - Create: `src/loxmatter/profiles/endpoints.py`
 - Modify: `src/loxmatter/api/models.py:29-59`
-- Modify: `src/loxmatter/api/devices.py` (`_signal_out` und seine Aufrufstelle)
+- Modify: `src/loxmatter/api/devices.py` (`_signal_out` and its call site)
 - Modify: `src/loxmatter/i18n/strings.yaml`
 - Test: `tests/profiles/test_endpoints.py` (neu), `tests/api/test_devices.py`
 
@@ -504,12 +503,12 @@ MSG
 - Consumes: `StoredDevice.device_types: dict[int, frozenset[int]] | None`, `StoredSignal.ref`.
 - Produces:
   - `loxmatter.profiles.endpoints.ENDPOINT_NAME_KEY_BY_DEVICE_TYPE: dict[int, str]`
-  - `loxmatter.profiles.endpoints.endpoint_labels(device_types: Mapping[int, frozenset[int]] | None) -> dict[int, str]` — Endpunktnummer → fertiger, übersetzter Name.
-  - `SignalOut` trägt zusätzlich `endpoint: int`, `cluster_id: int`, `endpoint_label: str`.
+  - `loxmatter.profiles.endpoints.endpoint_labels(device_types: Mapping[int, frozenset[int]] | None) -> dict[int, str]` — endpoint number → finished, translated name.
+  - `SignalOut` additionally carries `endpoint: int`, `cluster_id: int`, `endpoint_label: str`.
 
-- [ ] **Step 1: Den failing test für `endpoints.py` schreiben**
+- [ ] **Step 1: Write the failing test for `endpoints.py`**
 
-Neue Datei `tests/profiles/test_endpoints.py` (GPL-Kopf wie in den Nachbardateien):
+New file `tests/profiles/test_endpoints.py` (GPL header as in neighboring files):
 
 ```python
 from loxmatter import i18n
@@ -714,14 +713,14 @@ def endpoint_labels(device_types: Mapping[int, frozenset[int]] | None) -> dict[i
     return labels
 ```
 
-- [ ] **Step 5: Test laufen lassen**
+- [ ] **Step 5: Run test**
 
 Run: `uv run pytest tests/profiles/test_endpoints.py -v`
 Expected: PASS.
 
-- [ ] **Step 6: Den failing test für `SignalOut` schreiben**
+- [ ] **Step 6: Write the failing test for `SignalOut`**
 
-An `tests/api/test_devices.py` anhängen (dem dortigen `api`-Fixture-Muster folgen; nötigenfalls ein zweites Fixture mit dem Taster statt der Steckdose anlegen):
+Append to `tests/api/test_devices.py` (follow the `api` fixture pattern there; if needed create a second fixture with the button instead of the plug):
 
 ```python
 async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_api):
@@ -744,14 +743,14 @@ async def test_a_signal_carries_its_endpoint_cluster_and_endpoint_label(button_a
     assert press["endpoint_label"] == "Button 1"
 ```
 
-- [ ] **Step 7: Test laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 7: Run test, verify failure**
 
 Run: `uv run pytest tests/api/test_devices.py -k endpoint_label -v`
 Expected: FAIL mit `KeyError: 'endpoint'`
 
-- [ ] **Step 8: `SignalOut` erweitern**
+- [ ] **Step 8: Extend `SignalOut`**
 
-In `api/models.py` nach `kind: str` einfügen:
+Insert in `api/models.py` after `kind: str`:
 
 ```python
     # endpoint/cluster_id (Entwurf 2026-09-07, Abschnitt 7.4): `path` traegt
@@ -766,15 +765,15 @@ In `api/models.py` nach `kind: str` einfügen:
     endpoint_label: str
 ```
 
-- [ ] **Step 9: `api/devices.py` füllen**
+- [ ] **Step 9: Fill `api/devices.py`**
 
-Import ergänzen:
+Add the import:
 
 ```python
 from loxmatter.profiles.endpoints import endpoint_labels
 ```
 
-`_signal_out` bekommt die Zuordnung als Parameter (statt sie je Signal neu zu berechnen — bei 173 Signalen wäre das 173-mal dieselbe Rechnung):
+`_signal_out` gets the mapping as a parameter (instead of recalculating it per signal — with 173 signals that would be the same calculation 173 times):
 
 ```python
 def _signal_out(
@@ -795,16 +794,16 @@ def _signal_out(
     )
 ```
 
-An der Aufrufstelle einmal je Gerät:
+At the call site once per device:
 
 ```python
     labels = endpoint_labels(device.device_types)
     return [_signal_out(s, values.get(s.key), labels) for s in store.signals(device.id)]
 ```
 
-Die vorhandene Signatur und Aufrufstelle vor dem Umbau lesen — sie kann von der obigen Skizze abweichen; die Änderung ist in jedem Fall: `labels` einmal je Gerät bilden und durchreichen.
+Read the existing signature and call site before refactoring — it may differ from the sketch above; in any case, the change is: form `labels` once per device and pass it through.
 
-- [ ] **Step 10: Tests laufen lassen**
+- [ ] **Step 10: Run tests**
 
 Run: `uv run pytest tests/api tests/profiles -v`
 Expected: PASS.
@@ -838,7 +837,7 @@ MSG
 
 ---
 
-### Task 5: Die Kachel — Batteriezeile und richtiger Zähler
+### Task 5: The tile — battery row and correct counter
 
 **Files:**
 - Modify: `src/loxmatter/web/app.js:1064-1079`
@@ -848,12 +847,12 @@ MSG
 - Test: `tests/api/test_web.py`
 
 **Interfaces:**
-- Consumes: `signal.cluster_id` und `signal.functional` aus Task 4.
-- Produces: `batterySignalFor(deviceId)`, `previewSignalsFor(deviceId)` in `app.js`; `leadSignalFor`/`restSignalsFor`/`remainingSignalCount` behalten Namen und Signatur.
+- Consumes: `signal.cluster_id` and `signal.functional` from Task 4.
+- Produces: `batterySignalFor(deviceId)`, `previewSignalsFor(deviceId)` in `app.js`; `leadSignalFor`/`restSignalsFor`/`remainingSignalCount` keep names and signature.
 
-- [ ] **Step 1: Die failing tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
-An `tests/api/test_web.py` anhängen:
+Append to `tests/api/test_web.py`:
 
 ```python
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
@@ -967,12 +966,12 @@ async def test_the_no_functional_signals_hint_accounts_for_the_battery(api):
     assert "!batterySignalFor(device.id)" in hint
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/api/test_web.py -k battery -v`
-Expected: FAIL — `previewSignalsFor` steht nirgends.
+Expected: FAIL — `previewSignalsFor` does not exist.
 
-- [ ] **Step 3: Den Text anlegen**
+- [ ] **Step 3: Create the text**
 
 In `strings.yaml`:
 
@@ -982,9 +981,9 @@ web.devices.battery_label:
   de: "Batterie"
 ```
 
-- [ ] **Step 4: `app.js` umbauen**
+- [ ] **Step 4: Refactor `app.js`**
 
-`functionalSignalsFor` bleibt unverändert. Direkt darunter einfügen und `firstSignalsFor`/`remainingSignalCount` ersetzen:
+`functionalSignalsFor` stays unchanged. Insert directly below it and replace `firstSignalsFor`/`remainingSignalCount`:
 
 ```js
     // Der Cluster, an dem die Kachel den Batteriestand erkennt. Die Zahl
@@ -1037,9 +1036,9 @@ web.devices.battery_label:
     },
 ```
 
-- [ ] **Step 5: Das Symbol in `index.html` anlegen**
+- [ ] **Step 5: Create the icon in `index.html`**
 
-Zum Symbolblock (neben `i-kebab`, um Zeile 170):
+To the symbol block (next to `i-kebab`, around line 170):
 
 ```html
       <symbol id="i-battery" viewBox="0 0 24 24">
@@ -1049,9 +1048,9 @@ Zum Symbolblock (neben `i-kebab`, um Zeile 170):
       </symbol>
 ```
 
-- [ ] **Step 6: Die Fußzeile in die Kachel setzen**
+- [ ] **Step 6: Put the footer in the tile**
 
-Unmittelbar **nach** dem schließenden `</div>` von `.value-rows` und **vor** `<p class="hint" x-show="!signalsByDevice[device.id]" …>`:
+Directly **after** the closing `</div>` of `.value-rows` and **before** `<p class="hint" x-show="!signalsByDevice[device.id]" …>`:
 
 ```html
                   <!-- Der Batteriestand steht UNTER den Vorschauzeilen und
@@ -1079,7 +1078,7 @@ Unmittelbar **nach** dem schließenden `</div>` von `.value-rows` und **vor** `<
                   </div>
 ```
 
-- [ ] **Step 7: Die Hinweisbedingung nachziehen**
+- [ ] **Step 7: Update the hint condition**
 
 Am `<p class="hint" … x-text="t('web.devices.no_functional_signals')">` die Bedingung ergänzen:
 
@@ -1091,7 +1090,7 @@ Am `<p class="hint" … x-text="t('web.devices.no_functional_signals')">` die Be
                   ></p>
 ```
 
-Und den bestehenden Kommentar darüber um einen Satz ergänzen:
+And add one sentence to the existing comment above it:
 
 ```
                        Seit der Batteriezeile (Entwurf 2026-09-07) reicht
@@ -1102,9 +1101,9 @@ Und den bestehenden Kommentar darüber um einen Satz ergänzen:
                        zeigt ja eines.
 ```
 
-- [ ] **Step 8: `style.css` ergänzen**
+- [ ] **Step 8: Add to `style.css`**
 
-Nach `.value-rows .value` einfügen:
+Insert after `.value-rows .value`:
 
 ```css
 /* Der Batteriestand als eigene Zeile am Fuss der Vorschau (Entwurf
@@ -1147,7 +1146,7 @@ Nach `.value-rows .value` einfügen:
 }
 ```
 
-- [ ] **Step 9: Tests laufen lassen**
+- [ ] **Step 9: Run tests**
 
 Run: `uv run pytest tests/api/test_web.py -v`
 Expected: PASS.
@@ -1232,7 +1231,7 @@ MSG
 
 **Abweichung vom Entwurf, bewusst:** Abschnitt 7.4 zeichnet die Untertitel als „Endpunkt 1 · Switch (59)". Das trägt nicht — Endpunkt 2 der Steckdose führt die Cluster 144 **und** 145, ein einzelner Clustername wäre dort falsch. Der Untertitel ist deshalb nur „Endpunkt N". Der Cluster steht ab Task 8 je Zeile im Aufklapper, wo er hingehört.
 
-- [ ] **Step 1: Die failing tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 ```python
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
@@ -1308,12 +1307,12 @@ async def test_the_group_header_shows_the_endpoint_as_a_subtitle(api):
     assert 'x-text="group.subtitle"' in page
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/api/test_web.py -k "groups_signals or subtitle" -v`
 Expected: FAIL.
 
-- [ ] **Step 3: Den Text anlegen**
+- [ ] **Step 3: Create the text**
 
 ```yaml
 web.signals.group_endpoint_subtitle:
@@ -1468,7 +1467,7 @@ MSG
 - Consumes: die Gruppen aus Task 6.
 - Produces: CSS-Klasse `.signal-grid` mit `grid-template-columns: 58px minmax(0, 1fr) 150px 70px 76px 28px`, verwendet von Kopfzeile und jeder Datenzeile.
 
-- [ ] **Step 1: Die failing tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 ```python
 async def test_the_signal_rows_and_the_header_share_one_grid(api):
@@ -1521,7 +1520,7 @@ async def test_the_resend_column_is_explained_once_above_the_table(api):
     assert "web.signals.resend_explanation" in page
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/api/test_web.py -k "grid or boolean or resend_column" -v`
 Expected: FAIL.
@@ -1789,7 +1788,7 @@ MSG
 - Consumes: `signal.endpoint`, `signal.cluster_id`, `signal.path`, `signal.reason`.
 - Produces: `expandedSignalKey` (Alpine-Feld, `null` oder ein Schlüssel), `toggleSignalDetails(signal)`.
 
-- [ ] **Step 1: Die failing tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 ```python
 async def test_only_one_signal_detail_is_open_at_a_time(api):
@@ -1824,7 +1823,7 @@ async def test_the_detail_spells_out_the_path(api):
     assert "web.signals.origin" in page
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/api/test_web.py -k "detail or raw_write or spells_out" -v`
 Expected: FAIL.
@@ -2009,7 +2008,7 @@ MSG
 - Consumes: `signalsByDevice`, `toggleExported`.
 - Produces: `exportedSignalCount(deviceId)`, `deselectAllSignals(deviceId)`.
 
-- [ ] **Step 1: Die failing tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 ```python
 async def test_the_modal_leads_with_the_number_the_user_came_for(api):
@@ -2071,7 +2070,7 @@ def test_deselect_all_empties_the_selection_instead_of_inverting_it():
     assert values["secondRunTouched"] == 0
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/api/test_web.py -k "number_the_user or deselect_all" -v`
 Expected: FAIL.
@@ -2359,7 +2358,7 @@ Absicht und Zusicherung. Sie wird in dieser Aufgabe mitgeschlossen.
 - Consumes: `table.rank_for`, `table.DEFAULT_RANK` (Aufgabe 1); `_signal_order` (Aufgabe 2).
 - Produces: `table.element_rank_for(ref: SignalRef) -> int`; `_signal_order` liefert ein SECHSSTELLIGES Tupel `(cluster_rank, endpoint, cluster_id, element_rank, element_id, kind)`.
 
-- [ ] **Step 1: Die failing tests schreiben**
+- [ ] **Step 1: Write the failing tests**
 
 An `tests/profiles/test_table.py`:
 
@@ -2431,7 +2430,7 @@ def test_the_static_position_count_sorts_behind_every_button_event(tmp_path):
     assert titles[-1] == "positions"
 ```
 
-- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+- [ ] **Step 2: Run tests, verify failure**
 
 Run: `uv run pytest tests/profiles/test_table.py -k element_rank tests/model/test_store.py -k "leads_with_the_button or static_position" -v`
 Expected: FAIL — `element_rank_for` gibt es nicht, und der Leitwert ist `positions`.

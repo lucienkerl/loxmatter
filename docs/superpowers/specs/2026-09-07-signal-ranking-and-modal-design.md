@@ -1,15 +1,15 @@
-# Signale nach Bedeutung ordnen — und das Signal-Modal lesbar machen
+# Order signals by importance — and make the signal modal legible
 
-Entwurf, 7. September 2026. Betrifft die Gerätekachel aus
-[dem Geräte-Tab-Entwurf](2026-09-05-devices-tab-rooms-and-tile-grid-design.md)
-und das Signal-Modal aus [Signale als Modal](2026-09-05-signals-as-a-modal-design.md).
-Berührt außerdem `export/signals.py`, weil die Sortierung dort dieselbe
-Quelle hat (Abschnitt 5).
+Design, September 7, 2026. Affects the device tile from
+[the device tab design](2026-09-05-devices-tab-rooms-and-tile-grid-design.md)
+and the signal modal from [Signals as a modal](2026-09-05-signals-as-a-modal-design.md).
+Also touches `export/signals.py`, because the ordering there has the same
+source (section 5).
 
-## 1. Der Befund
+## 1. The finding
 
-Ein „Haupt-Signal" wird nirgends *gewählt*. Der Leitwert der Kachel ist das
-erste Element einer Liste:
+A "primary signal" is never *chosen*. The primary value of the tile is the
+first element of a list:
 
 ```js
 leadSignalFor(deviceId) {
@@ -17,95 +17,90 @@ leadSignalFor(deviceId) {
 }
 ```
 
-`firstSignalsFor` schneidet `functionalSignalsFor` auf sechs zu, und die
-kommt unverändert aus `GET /api/devices/<id>/signals`, das seinerseits
-`Store.signals` liest — sortiert mit
+`firstSignalsFor` limits `functionalSignalsFor` to six, and this
+comes unchanged from `GET /api/devices/<id>/signals`, which in turn
+reads `Store.signals` — sorted with
 
 ```sql
 ORDER BY endpoint, cluster_id, element_id, kind
 ```
 
-Das ist eine rein technische Ordnung. Sie beantwortet „wo im Matter-Baum
-steht das", nicht „was ist das hier für ein Gerät". Und weil Matter den
-**PowerSource-Cluster (47) auf Endpunkt 0** trägt, während das eigentliche
-Nutz-Cluster auf Endpunkt 1 oder 2 sitzt, gewinnt bei **jedem**
-batteriebetriebenen Gerät automatisch der Batteriestand.
+This is a purely technical ordering. It answers "where in the Matter tree does that stand", not "what kind of device is this here". And because Matter places the
+**PowerSource cluster (47) on endpoint 0**, while the actual
+utility cluster sits on endpoint 1 or 2, the battery level automatically wins on **every**
+battery-powered device.
 
-An den vier eingelernten Komponenten nachgerechnet (die Kacheln kommen aus
-`scripts/dev_web_server.py` über die Abbilder in `tests/fixtures/nodes/`;
-`~/.loxmatter/loxmatter.sqlite` ist leer und noch auf dem Schema vor
-Raum/Kategorie):
+Verified against the four commissioned devices (the tiles come from
+`scripts/dev_web_server.py` via the snapshots in `tests/fixtures/nodes/`;
+`~/.loxmatter/loxmatter.sqlite` is empty and still on the schema before
+room/category):
 
-| Gerät | Leitwert heute | Herkunft | Richtig wäre |
+| Device | Primary value today | Source | Should be |
 | --- | --- | --- | --- |
-| Hallway button (IKEA BILRESA) | `battery` 12,4 % | `0/47/12` | `press` |
+| Hallway button (IKEA BILRESA) | `battery` 12.4 % | `0/47/12` | `press` |
 | Living room lamp | `VendorName` | `0/40/1` | `onoff` |
 | Kitchen spots | `onoff` | `1/6/0` | — |
 | Coffee machine (GRILLPLATS) | `onoff` | `1/6/0` | — |
 
-Zwei von vier falsch, und beide aus demselben Grund: Endpunkt 0 sortiert vor
-Endpunkt 1, und dort steht nur Verwaltung.
+Two out of four wrong, and both for the same reason: endpoint 0 sorts before
+endpoint 1, and only administration sits there.
 
-**Der `VendorName`-Fall ist zur Hälfte ein Abbild-Artefakt und darf nicht
-als zweiter Fehler gezählt werden.** `example_light.json` trägt auf keinem
-Endpunkt einen Descriptor (`<ep>/29/0` fehlt vollständig, gegen die Abbilder
-geprüft) — damit greift die Verwaltungs-Endpunkt-Schicht in
-`relevance.is_functional` nicht, und die BasicInformation-Attribute gelten
-als funktional. Ein zertifiziertes Gerät deklariert dort `RootNode` und
-fällt heraus. Die *Schwäche* ist trotzdem dieselbe und wird von diesem
-Entwurf mit erschlagen: der Leitwert ist heute „was zuerst sortiert", nicht
-„was zählt".
+**The `VendorName` case is half a snapshot artifact and must not
+be counted as a second error.** `example_light.json` carries no
+descriptor on any endpoint (`<ep>/29/0` is completely missing, verified against the snapshots) — this means the utility endpoint layer in
+`relevance.is_functional` does not apply, and BasicInformation attributes are treated
+as functional. A certified device declares `RootNode` there and
+falls out. The *weakness* is the same regardless and is fixed by this
+design: the primary value today is "what sorts first", not
+"what matters".
 
-## 2. Der zweite Befund: das Modal
+## 2. The second finding: the modal
 
-Das Signal-Modal (`index.html`, `<dialog class="signals-modal">`) zeigt pro
-Signal eine `.row` mit sieben Bedienelementen — Schlüssel-Pille, Titelfeld,
-Pfad, Wert, Kontrollkästchen „exportieren", Kontrollkästchen „periodisch
-erneut senden", und bei jedem Attribut zusätzlich eine zweite `.row` über
-die volle Breite mit Rohwert-Feld und Schaltfläche. Bei 17 funktionalen
-Signalen des Tasters sind das über hundert Elemente ohne jede Hierarchie.
+The signal modal (`index.html`, `<dialog class="signals-modal">`) shows per
+signal a `.row` with seven controls — key pill, title field,
+path, value, "export" checkbox, "resend periodically" checkbox, and for each attribute an additional second `.row` spanning
+the full width with raw value field and button. With 17 functional
+signals on the button, that is over one hundred elements with no hierarchy.
 
-Fünf konkrete Ursachen, am Screenshot `docs/screenshots/signals.png`
-ablesbar:
+Five concrete causes, readable in the screenshot `docs/screenshots/signals.png`:
 
-1. **Keine Spaltenköpfe.** `1/59/2` steht unkommentiert da.
-2. **Nichts fluchtet.** Die `.row` ist ein `flex-wrap`-Container ohne
-   Spaltenmaße; bei `multipress_ongoing` rutscht „periodisch erneut senden"
-   allein in die nächste Zeile. Das Auge findet keine Spalte.
-3. **Namensdopplung ohne Auflösung.** `press` steht zweimal in der Liste —
-   `1/59/1` und `2/59/1`, also zwei verschiedene Tasten derselben
-   Fernbedienung, gleich beschriftet. Nichts sagt, welche welche ist.
-4. **Das Rohwert-Feld hat dasselbe Gewicht wie alles andere.** Ein
-   Werkzeug zum Ausprobieren beansprucht bei jedem Attribut eine volle
-   Zeile.
-5. **Keine Gliederung.** 17 funktionale Signale als flache Liste, darunter
-   156 unter „Experte".
+1. **No column headers.** `1/59/2` stands there without comment.
+2. **Nothing aligns.** The `.row` is a `flex-wrap` container without
+   column dimensions; at `multipress_ongoing`, "resend periodically"
+   wraps alone to the next line. The eye finds no column.
+3. **Name duplication without resolution.** `press` appears twice in the list —
+   `1/59/1` and `2/59/1`, two different buttons on the same
+   remote, identically labeled. Nothing says which is which.
+4. **The raw value field has the same weight as everything else.** A
+   tool for experimentation claims a full row at each attribute.
+5. **No grouping.** 17 functional signals as a flat list, below that
+   156 under "Expert".
 
-## 3. Die Entscheidungen
+## 3. The decisions
 
-Aus dem Entwurfsgespräch, alle vier bestätigt:
+From the design meeting, all four confirmed:
 
-1. **Cluster-Rangliste**, nicht ein Leit-Cluster je Kategorie und nicht
-   bloßes Abwerten von Endpunkt 0. Eine Rangliste trägt auch für
-   Gerätetypen, die dieses Werkzeug nie gesehen hat — dieselbe Begründung,
-   mit der `relevance.py` sich auf Matters eigenen Aufbau stützt statt auf
-   eine Liste von Cluster-Nummern, die jemand für langweilig hält.
-2. **Die Rangliste sortiert die ganze Kurzliste**, nicht nur den Leitwert.
-   Eine Regel statt zweier; die Zeilen unter der Überschrift lesen sich
-   dann genauso nach Wichtigkeit wie die Überschrift selbst.
-3. **Sortiert wird an der Quelle.** WebUI *und* Loxone-Vorlage folgen
-   derselben Ordnung (Abschnitt 5).
-4. **Die Batterie bekommt eine eigene Zeile auf der Kachel** statt aus der
-   Vorschau zu fallen (Abschnitt 6).
-5. **Das Modal wird eine Tabelle mit Endpunkt-Gruppen** (Variante A aus dem
-   Entwurfs-Canvas, Abschnitt 7).
+1. **Cluster ranking**, not one lead cluster per category and not
+   mere demotion of endpoint 0. A ranking works also for
+   device types this tool has never seen — the same reasoning
+   that `relevance.py` uses, relying on Matter's own structure rather than
+   a list of cluster numbers someone finds boring.
+2. **The ranking sorts the entire short list**, not just the primary value.
+   One rule instead of two; the rows under the heading then read
+   just as much by importance as the heading itself.
+3. **Sorting happens at the source.** WebUI *and* Loxone template follow
+   the same ordering (section 5).
+4. **The battery gets its own row on the tile** instead of falling out of
+   the preview (section 6).
+5. **The modal becomes a table with endpoint groups** (variant A from the
+   design canvas, section 7).
 
-## 4. Die Rangliste
+## 4. The ranking
 
-Sie lebt als `rank:` je Cluster in **`profiles/clusters.yaml`** — derselben
-Datei, die für diesen Cluster schon Titel, Einheit und Skalierung führt.
-Kein zweiter Ort, an dem Cluster-Wissen steht, und kein Python-Wörterbuch
-neben einer YAML-Tabelle, die dieselbe Frage schon halb beantwortet.
+It lives as `rank:` per cluster in **`profiles/clusters.yaml`** — the same
+file that already carries title, unit, and scaling for that cluster.
+No second place where cluster knowledge lives, and no Python dictionary
+alongside a YAML table that already halfway answers the same question.
 
 ```yaml
 clusters:
@@ -131,82 +126,79 @@ clusters:
     rank: 95
 ```
 
-Drei Eigenschaften, die den Entwurf tragen:
+Three properties that carry the design:
 
-- **Kleiner Rang zuerst.** Was ein Gerät im Haus *tut*, steht bei 10–40;
-  was es über sich selbst aussagt, bei 90+.
-- **Ein Cluster ohne `rank:` bekommt 50.** Damit landet Unbekanntes in der
-  Mitte — hinter dem, was nachweislich zählt, aber vor Batterie und
-  Geräteangaben. Das ist die konservative Antwort: ein neuer Gerätetyp
-  bekommt nie versehentlich die Batterie als Leitwert, und sein
-  tatsächliches Hauptmerkmal wird nicht hinter Bekanntes verbannt, nur
-  weil noch niemand einen Rang nachgetragen hat.
-- **Innerhalb eines Rangs bleibt die heutige Ordnung.** Endpunkt, Cluster,
-  Element, Art — dort ist sie stabil und richtig; sie ordnet zwei Signale
-  desselben Clusters, und das tut sie gut. Die Rangliste ordnet nur die
-  Cluster zueinander.
+- **Smaller rank first.** What a device *does* in the house ranks at 10–40;
+  what it says about itself ranks at 90+.
+- **A cluster without `rank:` gets 50.** This way unknowns land in the
+  middle — behind what demonstrably matters, but before battery and
+  device details. This is the conservative answer: a new device type
+  never accidentally gets battery as its primary value, and its
+  actual main feature is not banished behind known ones just
+  because no one has entered a rank yet.
+- **Within a rank, today's ordering stays.** Endpoint, cluster,
+  element, kind — it is stable and correct there; it orders two signals
+  of the same cluster, and it does that well. The ranking only orders
+  the clusters relative to each other.
 
-Die Sortierung ist damit `(rank, endpoint, cluster_id, element_id, kind)`.
-Sie ist total und deterministisch: `rank` ist eine Zahl je Cluster, der Rest
-ist der bisherige, bereits eindeutige Schlüssel (UNIQUE-Bedingung auf
+The ordering is therefore `(rank, endpoint, cluster_id, element_id, kind)`.
+It is total and deterministic: `rank` is a number per cluster, the rest
+is the previous, already unique key (UNIQUE constraint on
 `signal`).
 
-**Warum kein Rang je Element.** Es wäre möglich, `press` innerhalb von
-Cluster 59 vor `positions` zu setzen. Das ist bewusst *nicht* Teil dieses
-Entwurfs: die Elementordnung innerhalb eines Clusters folgt heute der
-Element-ID, und die ist in der Matter-Spezifikation selbst schon grob nach
-Wichtigkeit vergeben. Eine zweite Rangebene wäre Aufwand ohne belegten
-Gewinn — sie kann nachgetragen werden, wenn ein konkretes Gerät sie
-verlangt.
+**Why no rank per element.** It would be possible to put `press` within
+cluster 59 before `positions`. This is deliberately *not* part of this
+design: the element ordering within a cluster today follows the
+element ID, which is already roughly assigned by importance in the Matter
+specification itself. A second rank level would be effort without proven
+gain — it can be added later if a specific device requires it.
 
-## 5. Sortiert wird an der Quelle
+## 5. Sorting happens at the source
 
-`Store.signals` bekommt die neue Ordnung. Das betrifft **beides**:
+`Store.signals` gets the new ordering. This affects **both**:
 
-- **Die WebUI**, über `GET /api/devices/<id>/signals` — Kachel und Modal
-  ohne eigene Sortierung im Frontend.
-- **Die Loxone-Vorlage**, weil `to_inputs(signals, …)` in
-  `api/export.py` (Zeilen 147 und 326) genau diese Reihenfolge in die
-  VIU-Datei schreibt. Im Loxone-Baum steht danach der Tastendruck oben und
-  die Batterie unten statt umgekehrt.
+- **The WebUI**, via `GET /api/devices/<id>/signals` — tile and modal
+  without their own sorting in the frontend.
+- **The Loxone template**, because `to_inputs(signals, …)` in
+  `api/export.py` (lines 147 and 326) writes exactly this order into the
+  VIU file. In the Loxone tree, the button press then stands at top and
+  battery at bottom instead of the other way around.
 
-Der Preis ist eine neu geladene Vorlage, die ihre Eingänge anders auflistet
-als die zuvor heruntergeladene. **Das ist geprüft und folgenlos:**
+The price is a newly loaded template that lists its inputs differently
+than the previously downloaded one. **This is verified and consequence-free:**
 
-- **Der Projektdatei-Sync gleicht über den Schlüssel ab, nicht über die
-  Position.** `_plan_inputs` in `projectsync/diff.py` schlägt jeden Eintrag
-  mit `index.input_cmds.get(entry.key)` nach; `_orphaned_entries` läuft
-  ebenfalls über Schlüssel. Ein Umsortieren erzeugt dort weder
-  Scheinänderungen noch Dubletten.
-- **„Geändert seit Export" hängt an `updated_at`, nicht am Dateiinhalt**
-  (`_changed_since_export` in `api/export.py`). Kein Gerät springt durch
-  diese Änderung auf „geändert".
-- **Die Schlüssel selbst bleiben unangetastet.** Sie sind
-  Schlüsselmaterial (Hauptdokument 6.2) und werden von der Sortierung nicht
-  berührt — die Verdrahtung in Loxone überlebt.
+- **The project file sync matches by key, not by position.** `_plan_inputs` in `projectsync/diff.py` looks up each entry
+  with `index.input_cmds.get(entry.key)`; `_orphaned_entries` also
+  uses keys. Reordering produces neither false changes nor duplicates there.
+- **"Changed since export" depends on `updated_at`, not on file content**
+  (`_changed_since_export` in `api/export.py`). No device jumps to "changed"
+  because of this change.
+- **The keys themselves remain untouched.** They are
+  key material (main document 6.2) and are not touched by the sorting — the
+  wiring in Loxone survives.
 
-Was daraus folgt und im Test festgehalten gehört: eine Vorlage, die ein
-Anwender **vor** dieser Änderung importiert hat, bleibt über den
-Schlüsselabgleich vollständig bedienbar. Die Reihenfolge ist Darstellung,
-nicht Identität.
+What follows from this and belongs in a test: a template that a
+user imported **before** this change remains fully operable via the
+key matching. Ordering is presentation,
+not identity.
 
-## 6. Die Kachel
+## 6. The tile
 
-**Der Leitwert** ist das erstplatzierte funktionale Signal. Am Taster ist
-das `press`, nicht `battery`; an der Leuchte `onoff`, nicht `VendorName`.
-`leadSignalFor`/`firstSignalsFor`/`restSignalsFor` bleiben unverändert — sie
-lesen dieselbe Liste, die jetzt anders sortiert ankommt. **Kein Zeichen
-Frontend-Code ändert sich für den Leitwert selbst.**
+**The primary value** is the first-ranking functional signal. On the button it is
+`press`, not `battery`; on the light `onoff`, not `VendorName`.
+`leadSignalFor`/`firstSignalsFor`/`restSignalsFor` remain unchanged — they
+read the same list, which now comes sorted differently. **Not one line
+of frontend code changes for the primary value itself.**
 
-**Die Batterie bekommt eine eigene Fußzeile.** Das ist die Folge, die die
-Rangliste erzwingt und die eigens entschieden wurde: mit Rang 90 steht die
-Batterie hinter allen 16 anderen funktionalen Signalen des Tasters und
-fiele damit aus den sechs Vorschauzeilen (`FUNCTIONAL_PREVIEW_LIMIT`)
-heraus — sie wäre auf der Kachel gar nicht mehr zu sehen.
+**The battery gets its own footer.** This is the consequence the ranking
+enforces and that was separately decided: at rank 90, the
+battery stands behind all 16 other functional signals on the button and
+would fall out of the six preview rows (`FUNCTIONAL_PREVIEW_LIMIT`)
+— it would not be visible on the tile at all.
 
-Sie erscheint deshalb **unterhalb** der Vorschauzeilen und **unterhalb** des
-„+ N weitere"-Links, abgesetzt durch eine gestrichelte Linie, mit
-Batteriesymbol, dem Wort „Batterie" und dem Prozentwert in `--warn`:
+It therefore appears **below** the preview rows and **below** the
+"+ N more" link, separated by a dashed line, with
+battery icon, the word "Battery" and the percentage value in `--warn`:
 
 ```
 ┌─────────────────────────────────┐
@@ -224,27 +216,27 @@ Batteriesymbol, dem Wort „Batterie" und dem Prozentwert in `--warn`:
 └─────────────────────────────────┘
 ```
 
-Drei Regeln dazu:
+Three rules for it:
 
-- **Sie zählt nicht gegen `FUNCTIONAL_PREVIEW_LIMIT`.** Die sechs
-  Vorschauplätze bleiben den Nutzsignalen. Der „+ N weitere"-Zähler muss
-  die Batterie deshalb als gezeigt verbuchen — sonst zählt er sie doppelt.
-  (Genau dieser Fehler stand im ersten Entwurfs-Canvas: „+ 11 weitere" auf
-  einer Kachel, die sieben von 17 Signalen zeigt.)
-- **Sie erscheint nur, wenn das Gerät ein funktionales PowerSource-Signal
-  hat.** Ein netzbetriebenes Gerät bekommt die Zeile nicht und wird nicht
-  um eine leere Zeile höher.
-- **Sie ist nie Leitwert**, auch nicht bei einem Gerät, dessen einziges
-  funktionales Signal die Batterie ist. Dort bleibt der Leitwert leer, wie
-  heute schon bei einem Gerät ohne funktionale Signale
-  (`leadSignalFor` liefert `null`, die Hülle bleibt über `x-show` aus).
+- **It does not count against `FUNCTIONAL_PREVIEW_LIMIT`.** The six
+  preview slots remain for utility signals. The "+ N more" counter must
+  therefore book the battery as shown — otherwise it counts it twice.
+  (This exact error appeared in the first design canvas: "+ 11 more" on
+  a tile showing seven of 17 signals.)
+- **It appears only if the device has a functional PowerSource signal.**
+  A mains-powered device does not get the row and is not
+  made one empty row taller.
+- **It is never the primary value**, even on a device whose only
+  functional signal is battery. There the primary value remains empty, as
+  today already with a device without functional signals
+  (`leadSignalFor` returns `null`, the wrapper stays out via `x-show`).
 
-## 7. Das Modal
+## 7. The modal
 
-Variante A des Entwurfs-Canvas: dieselbe Zeile wie heute, aber mit
-Spaltenköpfen, festen Spaltenmaßen und nach Endpunkt gruppiert.
+Variant A from the design canvas: the same row as today, but with
+column headers, fixed column dimensions, and grouped by endpoint.
 
-### 7.1 Aufbau
+### 7.1 Structure
 
 ```
 Signale — Hallway button
@@ -273,170 +265,168 @@ EXPORT │ SIGNAL      │ LOXONE-EINGANG │ WERT │ PERIODISCH │
 ⌄ Experte                              156 weitere Signale
 ```
 
-### 7.2 Die sechs Spalten
+### 7.2 The six columns
 
-`display: grid` mit `grid-template-columns: 58px minmax(0, 1fr) 150px 70px
-76px 28px`, dieselbe Vorlage in Kopfzeile und jeder Datenzeile — das ist,
-was heute fehlt und wodurch nichts fluchtet.
+`display: grid` with `grid-template-columns: 58px minmax(0, 1fr) 150px 70px
+76px 28px`, the same template in the header and each data row — this is
+what is missing today and why nothing aligns.
 
-Der Spaltenkopf klebt beim Scrollen oben (`position: sticky`); ohne ihn
-verlieren die Häkchenspalten bei 173 Signalen ihre Bedeutung, sobald der
-Kopf aus dem Bild ist.
+The column header sticks to the top when scrolling (`position: sticky`); without it
+the checkbox columns lose their meaning at 173 signals, as soon as the
+header leaves the view.
 
-### 7.3 Beide Ja/Nein-Spalten sind Häkchen
+### 7.3 Both yes/no columns are checkboxes
 
-Der erste Entwurf zeichnete „exportieren" als Kontrollkästchen und
-„periodisch erneut senden" als Schiebeschalter. Dafür gab es keinen Grund,
-der standhält: beide sind derselbe Fall — ein Ja/Nein je Signal, in
-derselben Zeile.
+The first design showed "export" as a checkbox and
+"resend periodically" as a toggle switch. There was no reason
+that holds up: both are the same case — a yes/no per signal, in
+the same row.
 
-**Die Regel, die stattdessen gilt: das Bedienelement folgt dem Behälter,
-nicht der Bedeutung.**
+**The rule that applies instead: the control follows the container,
+not the meaning.**
 
-- **In einer Tabelle Häkchen.** Sie fluchten in einer Spalte, bleiben
-  kompakt und lesen sich als „diese Zeile gehört in diese Menge". Eine
-  Spalte aus 17 Schiebeschaltern ist eine deutlich lautere Textur als 17
-  Haken — und Lautstärke ist genau das Problem, das dieses Modal hat.
-- **In einem Detailbereich Schalter**, je einer pro Zeile mit einem
-  erklärenden Satz daneben. Das ist Variante B, die nicht gebaut wird;
-  die Regel steht hier trotzdem, damit sie beim nächsten Detailbereich
-  nicht neu erfunden wird.
+- **In a table, checkboxes.** They align in a column, stay
+  compact, and read as "this row belongs in this set". A
+  column of 17 toggle switches is a distinctly louder texture than 17
+  checkmarks — and loudness is exactly the problem this modal has.
+- **In a detail area, toggles**, one per row with an
+  explanatory sentence next to it. That is variant B, which is not being built;
+  the rule stands here anyway so it is not reinvented at the next detail area.
 
-Die Spaltenköpfe heißen **EXPORT** und **PERIODISCH** — beides einzelne
-deutsche Wörter, die in 76 px passen. Was „periodisch" bedeutet, steht
-**einmal** über der Tabelle statt siebzehnmal als Beschriftung neben einem
-Kästchen. Die Übersetzungsschlüssel `web.signals.export_checkbox` und
-`web.signals.resend_checkbox` bleiben als `title`/`aria-label` der
-Kästchen erhalten — der Screenreader braucht die Beschriftung je Kästchen,
-das Auge nicht.
+The column headers are called **EXPORT** and **PERIODIC** — both single
+words that fit in 76 px. What "periodic" means stands
+**once** above the table instead of seventeen times as a label next to a
+checkbox. The translation keys `web.signals.export_checkbox` and
+`web.signals.resend_checkbox` remain as `title`/`aria-label` of the
+checkboxes — the screen reader needs the label per checkbox,
+the eye does not.
 
-### 7.4 Die Gruppen lösen die Namensdopplung auf
+### 7.4 Groups resolve name duplication
 
-Je Endpunkt eine Gruppenüberschrift mit sprechendem Namen, technischer
-Herkunft und Anzahl:
+Per endpoint, one group header with a descriptive name, technical
+origin, and count:
 
 ```
-▎Taste 1      Endpunkt 1 · Switch (59)      8 Signale
+▎Button 1      Endpoint 1 · Switch (59)      8 signals
 ```
 
-Der sprechende Name kommt aus dem Gerätetyp des Endpunkts, plus einem
-laufenden Zähler, wenn derselbe Typ mehrfach vorkommt: zwei
-`GenericSwitch`-Endpunkte ergeben „Taste 1" und „Taste 2". Ein Endpunkt mit
-Verwaltungstyp heißt „Gerät".
+The descriptive name comes from the device type of the endpoint, plus a
+running counter if the same type appears multiple times: two
+`GenericSwitch` endpoints produce "Button 1" and "Button 2". An endpoint with
+utility type is called "Device".
 
-**Die Datenlage dafür ist zu prüfen, nicht vorauszusetzen.** Die Zuordnung
-Endpunkt → Gerätetypen liegt persistiert in der Spalte
-`device.device_types` (`_migrate_to_v7`) und wird in `api/devices.py` schon
-über `category_for(device.device_types)` gelesen — sie ist also verfügbar,
-aber mit zwei Einschränkungen:
+**The data situation must be verified, not assumed.** The mapping
+endpoint → device types is persisted in the column
+`device.device_types` (`_migrate_to_v7`) and is already
+read via `category_for(device.device_types)` in `api/devices.py` — it is available,
+but with two limitations:
 
-- **Sie kann `NULL` sein**, solange `backfill_device_types` für dieses Gerät
-  nicht gelaufen ist. Dann gibt es keinen sprechenden Namen, und die Gruppe
-  heißt schlicht „Endpunkt 1". Das ist der Rückfall, nicht ein Fehlerfall:
-  dieselbe Behandlung, die `category_for(None)` schon mit `OTHER`
-  bekommt.
-- **Eine Tabelle Gerätetyp → sprechender Endpunktname existiert noch
-  nicht.** `CATEGORY_BY_DEVICE_TYPE` in `categories.py` bildet auf
-  Gerätekategorien ab („Schalter", „Leuchte") — das sind Namen für ein
-  ganzes Gerät, nicht für einen Endpunkt darin. Eine Fernbedienung ist
-  *ein* Schalter mit *zwei* Tasten; „Schalter 1"/„Schalter 2" wäre falsch.
-  Es braucht also eine kleine, eigene Zuordnung neben der bestehenden, mit
-  demselben Belegungsanspruch wie dort (Nummer aus
-  `matter_server.client.models.device_types`, nicht aus dem Gedächtnis) —
-  und mit „Endpunkt N" als Rückfall für jeden Typ, der nicht darin steht.
-  Der Umfang dieser Tabelle gehört in den Plan, nicht in diesen Entwurf.
+- **It can be `NULL`**, as long as `backfill_device_types` has not
+  run for this device. Then there is no descriptive name, and the group
+  is simply called "Endpoint 1". This is the fallback, not an error case:
+  the same treatment `category_for(None)` already gets with `OTHER`.
+- **A table device type → descriptive endpoint name does not yet
+  exist.** `CATEGORY_BY_DEVICE_TYPE` in `categories.py` maps to
+  device categories ("switch", "light") — those are names for a
+  whole device, not for an endpoint in it. A remote is
+  *one* switch with *two* buttons; "switch 1"/"switch 2" would be wrong.
+  So it needs a small, separate mapping alongside the existing one, with
+  the same sourcing requirement as there (number from
+  `matter_server.client.models.device_types`, not from memory) —
+  and with "Endpoint N" as fallback for any type not in it.
+  The scope of this table belongs in the plan, not in this design.
 
-Damit steht `press` einmal unter *Taste 1* und einmal unter *Taste 2* — die
-Dopplung ist kein Rätsel mehr, sondern die Auskunft, dass die Fernbedienung
-zwei Tasten hat.
+So `press` appears once under *Button 1* and once under *Button 2* — the
+duplication is no longer a puzzle, but the information that the remote
+has two buttons.
 
-**Die Gruppen folgen der Rangliste**, nicht der Endpunktnummer: die Gruppe,
-die das erstplatzierte Signal enthält, steht oben. Beim Taster kommt „Gerät"
-(nur Batterie) deshalb zuletzt, obwohl es Endpunkt 0 ist.
+**Groups follow the ranking**, not the endpoint number: the group
+containing the first-ranking signal stands at top. On the button, "Device"
+(battery only) therefore comes last, even though it is endpoint 0.
 
-### 7.5 Das Rohwert-Feld wandert in die Zeile
+### 7.5 The raw value field moves into the row
 
-Statt bei jedem Attribut eine zweite Zeile über die volle Breite zu
-beanspruchen, öffnet die `⋯`-Schaltfläche am Zeilenende einen Bereich
-**unter genau dieser Zeile**. Darin: die Herkunft im Klartext
-(„Endpunkt 1 · Cluster 59 Switch · Element 1 CurrentPosition") und das
-Rohwert-Feld mit seiner Schaltfläche.
+Instead of claiming a second row spanning the full width at each attribute, the
+`⋯` button at the row end opens an area
+**directly below that row**. In it: the origin in plain text
+("Endpoint 1 · Cluster 59 Switch · Element 1 CurrentPosition") and the
+raw value field with its button.
 
-Das erledigt zwei Dinge auf einmal — das Werkzeug bekommt das Gewicht, das
-ihm zusteht, und der Pfad `1/59/1` bekommt endlich einen Ort, an dem
-genug Platz ist, ihn auszuschreiben statt ihn als Rätsel danebenzustellen.
+This accomplishes two things at once — the tool gets the weight it
+deserves, and the path `1/59/1` finally gets a place with
+enough space to write it out instead of leaving it as a puzzle next to it.
 
-Höchstens ein Bereich ist gleichzeitig offen. Der Zustand lebt in Alpine
-(`expandedSignalKey`), nicht im DOM: anders als beim Kachel-Menü und den
-Signalgruppen gibt es hier genau **einen** Wert für das ganze Modal, kein
-Auf/Zu je Element.
+At most one area is open at a time. The state lives in Alpine
+(`expandedSignalKey`), not in the DOM: unlike the tile menu and
+signal groups, there is exactly **one** value for the whole modal, no
+open/closed per element.
 
-### 7.6 Der Kopf
+### 7.6 The header
 
-Eine Zusammenfassung ersetzt den heutigen Hinweisabsatz als erstes
-Element: „**12 von 17** Signalen gehen als Eingang nach Loxone", daneben
-„Alle abwählen". Das ist die Zahl, wegen der man das Modal öffnet.
+A summary replaces today's note paragraph as the first
+element: "**12 of 17** signals go to Loxone as inputs", next to it
+"Clear all". That is the number why the modal opens.
 
-Der Schlüsselhinweis (`web.signals.key_hint`) bleibt, rutscht aber unter
-die Zusammenfassung und nimmt den Satz über „periodisch" mit auf.
+The key hint (`web.signals.key_hint`) stays, but moves below
+the summary and takes the sentence about "periodic" with it.
 
-## 8. Was unverändert bleibt
+## 8. What stays unchanged
 
-- **`profiles/relevance.py`.** Welche Signale funktional sind, ist eine
-  andere Frage als in welcher Reihenfolge sie stehen. `is_functional`
-  bekommt kein Zeichen.
-- **`profiles/categories.py`.** Die Gerätekategorie ordnet Geräte
-  zueinander, die Rangliste ordnet Signale innerhalb eines Geräts. Zwei
-  Fragen, zwei Tabellen.
-- **Die Schlüssel.** `d4_1_press` bleibt `d4_1_press`.
-- **`exported` und `exportability`.** Die Rangliste sagt nichts darüber,
-  ob ein Signal exportiert wird — nur, wo es steht.
-- **`FUNCTIONAL_PREVIEW_LIMIT` bleibt 6.**
-- **Der Experte-Block** bleibt ein zugeklapptes `<details>` mit derselben
-  `signalGroupsFor`-Vorlage; er bekommt die Endpunkt-Gliederung *nicht*,
-  weil dort 156 Signale über alle Endpunkte liegen und die Gliederung nur
-  mehr Überschriften erzeugte.
+- **`profiles/relevance.py`.** Which signals are functional is a
+  different question from what order they stand in. `is_functional`
+  does not change.
+- **`profiles/categories.py`.** Device category orders devices
+  relative to each other, ranking orders signals within a device. Two
+  questions, two tables.
+- **The keys.** `d4_1_press` stays `d4_1_press`.
+- **`exported` and `exportability`.** The ranking says nothing about
+  whether a signal is exported — only where it stands.
+- **`FUNCTIONAL_PREVIEW_LIMIT` stays at 6.**
+- **The Expert block** stays a collapsed `<details>` with the same
+  `signalGroupsFor` template; it does *not* get the endpoint grouping,
+  because there 156 signals span all endpoints and grouping would only
+  create more headers.
 
 ## 9. Tests
 
-- **`rank` je Cluster ist gültig.** Jeder `rank:` in `clusters.yaml` ist
-  eine Zahl; kein Cluster trägt zwei.
-- **Ein Cluster ohne `rank:` bekommt 50.** Direkt gegen den Lader geprüft,
-  nicht über ein Gerät.
-- **Der Taster führt mit einem Switch-Signal, nicht mit der Batterie.**
-  Gegen `ikea_bilresa_button.json`, das erste funktionale Signal.
-- **Die Steckdose führt weiter mit `onoff`.** Gegen
-  `ikea_grillplats_plug.json` — die Änderung darf die beiden heute
-  richtigen Geräte nicht verstellen.
-- **Die Batterie steht hinter allen Nutzsignalen**, aber vor nichts
-  Unbekanntem: ein synthetisches Abbild mit einem Cluster ohne `rank:`
-  belegt, dass dieser vor 47 steht.
-- **Die Sortierung ist total.** Zwei Signale desselben Clusters behalten
-  ihre bisherige relative Ordnung (Endpunkt, dann Element).
-- **Der Export folgt derselben Ordnung.** `to_inputs` gegen den Taster:
-  der Eingang zu `press` steht vor dem zu `battery`.
-- **Eine vor der Änderung importierte Projektdatei bleibt abgleichbar.**
-  `build_plan` gegen eine Projektdatei mit den Eingängen in der ALTEN
-  Reihenfolge: kein Eintrag gilt als neu, keiner als verwaist.
-- **Die Kachel zählt richtig.** Bei einem Gerät mit Batteriezeile nennt
-  „+ N weitere" die Zahl der *nicht gezeigten* Signale — die Batterie
-  zählt als gezeigt.
-- **Ein netzbetriebenes Gerät hat keine Batteriezeile.**
-- **Das Modal fluchtet.** Kopfzeile und Datenzeile tragen dieselbe
+- **`rank` per cluster is valid.** Every `rank:` in `clusters.yaml` is
+  a number; no cluster carries two.
+- **A cluster without `rank:` gets 50.** Checked directly against the loader,
+  not via a device.
+- **The button leads with a switch signal, not battery.**
+  Against `ikea_bilresa_button.json`, the first functional signal.
+- **The plug continues to lead with `onoff`.** Against
+  `ikea_grillplats_plug.json` — the change must not shift the two
+  currently correct devices.
+- **Battery stands behind all utility signals**, but ahead of nothing
+  unknown: a synthetic snapshot with a cluster without `rank:`
+  confirms that it comes before 47.
+- **The ordering is total.** Two signals of the same cluster keep
+  their previous relative order (endpoint, then element).
+- **Export follows the same ordering.** `to_inputs` against the button:
+  the input for `press` comes before the one for `battery`.
+- **A project file imported before the change remains matchable.**
+  `build_plan` against a project file with inputs in the OLD
+  order: no entry counts as new, none as orphaned.
+- **The tile counts correctly.** On a device with a battery row,
+  "+ N more" states the number of *not shown* signals — battery
+  counts as shown.
+- **A mains-powered device has no battery row.**
+- **The modal aligns.** Header and data row carry the same
   `grid-template-columns`.
-- **Beide Häkchenspalten sind `input[type="checkbox"]`** — kein
-  Schiebeschalter im Modal.
-- **Jedes Kästchen trägt eine Beschriftung** aus `strings.yaml`, auch
-  wenn sie nur für Hilfstechnik sichtbar ist.
+- **Both checkbox columns are `input[type="checkbox"]`** — no
+  toggle switches in the modal.
+- **Each checkbox carries a label** from `strings.yaml`, even
+  if it is only visible to assistive technology.
 
-## 10. Offene Punkte
+## 10. Open points
 
-- **Der Umbruch unter etwa 640 px.** Sechs Spalten passen dort nicht. Die
-  Tabelle muss in gestapelte Karten je Signal umbrechen; wie die aussehen,
-  ist in diesem Entwurf nicht festgelegt und gehört in den Plan.
-- **Die Ränge sind eine erste Belegung.** Sie stützen sich auf die neun
-  Cluster, die `clusters.yaml` heute führt. Ein Cluster, der später
-  dazukommt, braucht eine begründete Einordnung — nach demselben Maßstab
-  wie `UTILITY_ENDPOINT_KEEP_CLUSTERS` in `relevance.py`: eine konkrete
-  Belegung am Gerät oder in der Spezifikation, nicht die Annahme, die
-  Tabelle sei von sich aus vollständig.
+- **Wrapping below about 640 px.** Six columns do not fit there. The
+  table must break into stacked cards per signal; what they look like is
+  not set in this design and belongs in the plan.
+- **The ranks are an initial assignment.** They rely on the nine
+  clusters that `clusters.yaml` carries today. A cluster added later
+  needs a reasoned placement — by the same standard
+  as `UTILITY_ENDPOINT_KEEP_CLUSTERS` in `relevance.py`: a concrete
+  assignment on the device or in the specification, not the assumption that the
+  table is complete by itself.
