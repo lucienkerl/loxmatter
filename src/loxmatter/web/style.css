@@ -867,12 +867,6 @@ button:disabled {
   }
 }
 
-.device-controls {
-  margin-top: 0.6rem;
-  padding-top: 0.6rem;
-  border-top: 1px dashed var(--border);
-}
-
 footer.hint-block {
   margin-top: 0.4rem;
 }
@@ -1836,8 +1830,10 @@ footer.hint-block {
 }
 
 /* Der Batteriestand als eigene Zeile am Fuss der Vorschau (Entwurf
-   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt wie `.device-controls`
-   im Modal - dieselbe Geste fuer dasselbe: "gehoert dazu, ist aber eine
+   2026-09-07, Abschnitt 6). Gestrichelt abgesetzt wie frueher
+   `.device-controls` im Modal (inzwischen entfernt, seit die Signalzeile
+   dort `.signal-row-wrap` heisst und keine gestrichelte Trennlinie mehr
+   braucht) - dieselbe Geste fuer dasselbe: "gehoert dazu, ist aber eine
    andere Art von Angabe".
 
    `margin-top` steht auf dem Element, nicht als `margin-bottom` der
@@ -2423,7 +2419,15 @@ footer.hint-block {
   border-bottom: 1px solid var(--border);
 }
 
-.signal-row-cells:last-child {
+/* Nicht `.signal-row-cells:last-child`: seit dem Umbau auf `.signal-row-
+   wrap` (Entwurf 2026-09-07, Abschnitt 7.2) hat die Rasterzeile IMMER ein
+   zweites Geschwister, `.signal-detail` - `x-show` blendet ihn nur aus,
+   entfernt ihn nicht aus dem DOM. `.signal-row-cells` ist damit nie
+   `:last-child` und die Regel griff nie. Die letzte ZEILE einer Gruppe ist
+   stattdessen der letzte `.signal-row-wrap` unter `<details class=
+   "signal-group">` (Summary und Hinweistext davor sind eigene Elemente,
+   keine `.signal-row-wrap`) - deshalb hier so selektiert. */
+.signal-row-wrap:last-child .signal-row-cells {
   border-bottom: none;
 }
 
@@ -2471,10 +2475,28 @@ footer.hint-block {
   padding: 0.2rem 0 0.7rem calc(58px + 0.5rem);
   display: flex;
   flex-direction: column;
+  /* Ohne `align-items` gilt die Vorgabe `stretch`: jedes Kind wird auf die
+     volle Breite des Flex-Containers gezogen und dabei blockifiziert
+     (Spec: ein Flex-Item mit `stretch` ignoriert sein eigenes `display`).
+     Die Warnpille (`.badge.warn` unten, `signal.reason`) verliert dadurch
+     ihr `display: inline-block` aus `.badge` und zieht sich ueber die
+     ganze Aufklapperbreite statt sich auf ihren Text zusammenzuziehen -
+     gemessen 629.6px Pillenbreite gegen 695.6px Containerbreite, bei
+     JEDEM TEXT- oder listwertigen Signal (Normalfall laut
+     `_UNEXPORTABLE_REASONS`, nicht Randfall). `flex-start` laesst jedes
+     Kind bei seiner eigenen Breite. */
+  align-items: flex-start;
   gap: 0.45rem;
 }
 
-.signal-detail .hint {
+/* `.hint` und `.badge` sind beides `<p>`-Elemente und bringen deshalb den
+   Browser-Vorgabewert `margin: 1em 0` mit - hier ungewollt, denn den
+   Abstand zwischen den Kindern setzt bereits `gap` oben. Ungekuerzt kommt
+   dieser Vorgabewert zum `gap` hinzu (gemessen 19.7px Abstand vor der
+   Pille statt der beabsichtigten 7.2px `gap`), da Flex-Items ihre Raender
+   nicht wie Blockelemente zusammenfallen lassen. */
+.signal-detail .hint,
+.signal-detail .badge {
   margin: 0;
 }
 
