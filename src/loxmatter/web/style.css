@@ -2359,11 +2359,25 @@ footer.hint-block {
    `flex-wrap`-Container ohne Spaltenmasse, bei `multipress_ongoing` rutschte
    die zweite Beschriftung allein in die naechste Zeile.
 
-   Die 150 px der Schluessel-Spalte sind an `d4_1_multipress_ongoing`
-   gemessen, dem laengsten Schluessel der Testvorlage. */
+   Fund (Aufgabe 13): die vormals 150 px der Schluessel-Spalte waren NICHT
+   gemessen, nur geschaetzt - der Kommentar behauptete es trotzdem. `.key`
+   traegt weder `white-space` noch `overflow`, die Pille lief also innerhalb
+   ihrer eigenen Zelle ueber, ohne das Raster selbst zu verschieben (deshalb
+   fiel es der frueheren "keine abweichenden Spaltenkanten"-Messung nicht
+   auf). Tatsaechlich gemessen an den 17 funktionalen Signalen des Tasters
+   (`ikea_bilresa_button.json`, ueber `Store.register_signals` erzeugt):
+   laengster Schluessel `d4_1_multipress_ongoing` mit 23 Zeichen, `.key`
+   dafuer `scrollWidth` 183 px gegen `clientWidth` 148 px bei 150 px
+   Spaltenbreite - mindestens 185 px (inkl. Rahmen) waeren noetig gewesen.
+   200 px geben etwas Luft ueber diesem Minimum und tragen auch noch eine
+   zweistellige Geraete-ID (`d12_...`, 24 Zeichen) ohne die Absicherung
+   unten anzurufen; eine dreistellige ID (`d103_...`) faengt erst diese
+   Absicherung auf. Die dadurch schmalere Namensspalte (`minmax(0, 1fr)`)
+   bleibt bei rund 209 px komfortabel oberhalb der 200-px-Untergrenze aus
+   der Aufgabe. */
 .signal-grid {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr) 150px 70px 76px 28px;
+  grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px;
   gap: 0.5rem;
   align-items: center;
   padding: 0.3rem 0;
@@ -2371,6 +2385,23 @@ footer.hint-block {
 
 .signal-grid > * {
   min-width: 0;
+}
+
+/* Absicherung gegen einen Schluessel, der selbst diese 200 px sprengt (eine
+   noch laengere Kombination aus Geraete-ID, Endpunkt und Slug, als die
+   heutigen Geraete erzeugen): Umbruch statt Kappen. `.key` traegt
+   `user-select: all` - die Pille ist zum Kopieren gedacht, UND es gibt
+   nirgends sonst im Modal einen Ort, der denselben Schluessel ungekuerzt
+   zeigt (anders als z. B. `.value-rows .value`, dessen Ellipse die
+   Signalliste als Ausweichort hat, siehe dort). `text-overflow: ellipsis`
+   waere deshalb beim Kopieren zwar vollstaendig, aber beim Ablesen eine
+   stille Verstuemmelung, die niemand bemerkt - genau das Gegenteil dessen,
+   wofuer die Pille da ist. `overflow-wrap: break-word` bricht den
+   Schluessel notfalls mitten im Wort um (er hat ohnehin keine Leerzeichen)
+   und macht nur die eine betroffene Zeile hoeher - `align-items: center`
+   am Raster haelt die uebrigen Zellen dabei fluchtend. */
+.signal-grid .key {
+  overflow-wrap: break-word;
 }
 
 .signal-grid-head {

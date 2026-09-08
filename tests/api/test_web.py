@@ -4387,13 +4387,56 @@ async def test_the_no_functional_signals_hint_accounts_for_the_battery(api):
 async def test_the_signal_rows_and_the_header_share_one_grid(api):
     """Was heute fehlt und weshalb nichts fluchtet: die Zeile ist ein
     `flex-wrap`-Container ohne Spaltenmasse. Bei `multipress_ongoing`
-    rutschte "periodisch erneut senden" allein in die naechste Zeile."""
+    rutschte "periodisch erneut senden" allein in die naechste Zeile.
+
+    200px statt vormals 150px fuer die Schluessel-Spalte (Aufgabe 13, Fund:
+    der alte Kommentar behauptete eine Messung, die nie stattfand - 150px
+    ueberliefen bei `d4_1_multipress_ongoing`, dem tatsaechlich laengsten
+    Schluessel der vier Demo-Geraete, gemessen 183px scrollWidth gegen
+    148px clientWidth). Diese Zusicherung MUSS mitgezogen werden, sonst
+    haette der Umbau eine Kopf- und eine Datenzeile mit verschiedenen
+    Vorlagen hinterlassen - genau die Abweichung, die dieser Test
+    ueberhaupt sperrt."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
     css = (await client.get("/static/style.css")).text
 
     assert page.count("signal-grid") >= 2
-    assert "grid-template-columns: 58px minmax(0, 1fr) 150px 70px 76px 28px" in css
+    assert "grid-template-columns: 58px minmax(0, 1fr) 200px 70px 76px 28px" in css
+
+
+async def test_the_key_pill_wraps_instead_of_touching_the_value_column(api):
+    """Fund (Aufgabe 13): 200px reichen fuer die heutigen Schluessel, aber
+    `.key` selbst hatte weder `white-space` noch `overflow` - ein noch
+    laengerer Schluessel (z. B. eine dreistellige Geraete-ID) wuerde die
+    Spalte erneut sprengen, unsichtbar fuer eine Messung, die nur auf
+    abweichende Spaltenkanten prueft. Die Absicherung sitzt bewusst an
+    `.signal-grid .key`, nicht an `.key` global: dieselbe Klasse traegt
+    auch die Firmware-Dateinamen im Diagnose-Tab und den
+    Kommissionierungscode im Kopf (`class="key"` an anderer Stelle in
+    `index.html`) - eine globale Regel haette dort mitgewirkt, ohne dass
+    dieser Test das je gesehen haette.
+
+    `overflow-wrap: break-word` statt `text-overflow: ellipsis`: `.key`
+    traegt `user-select: all`, die Pille ist zum Kopieren gedacht, und es
+    gibt im Signal-Modal keinen zweiten Ort, der denselben Schluessel
+    ungekuerzt zeigt. Eine Ellipse waere beim Kopieren vollstaendig, aber
+    beim Ablesen eine stille Verstuemmelung - deshalb Umbruch, nicht
+    Kappung."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+
+    # Bindung an den Regelkoerper des eigenen Selektors (`.signal-grid
+    # .key`), nicht an ein Stichwort-Fenster - sonst waere der Test auch
+    # dann gruen, wenn `overflow-wrap` zufaellig in einer benachbarten,
+    # unbeteiligten Regel stuende.
+    start = css.index(".signal-grid .key {")
+    open_brace = css.index("{", start)
+    close_brace = css.index("}", open_brace)
+    rule = css[open_brace:close_brace]
+
+    assert "overflow-wrap: break-word" in rule
+    assert "text-overflow" not in rule
 
 
 async def test_both_boolean_columns_are_checkboxes(api):
