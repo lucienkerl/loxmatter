@@ -479,6 +479,25 @@ set_tag() {
     sed "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$1|" "$ENV_FILE" \
       > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
   else
+    # A hand-edited or hand-migrated .env commonly has no trailing
+    # newline - a plain `printf` without one, or `$(...)` command
+    # substitution (which strips trailing newlines), both leave it that
+    # way. Appending straight onto that merges the new
+    # "LOXMATTER_IMAGE_TAG=..." line onto the END of the file's last
+    # existing line instead of starting one of its own. Proven end to
+    # end: with .env ending "...LOXMATTER_API_TOKEN=deadbeefcafe" and no
+    # trailing newline, the unpatched function produced the single
+    # corrupted line
+    # "LOXMATTER_API_TOKEN=deadbeefcafeLOXMATTER_IMAGE_TAG=0.3.0" - the
+    # token gone, and no line beginning "LOXMATTER_IMAGE_TAG=" left for
+    # docker-compose.yml to find, so it silently fell back to its own
+    # `stable` default and the update never took effect, while
+    # state.json still reported "done". install.sh's own `env_set`
+    # already solves exactly this (see its comment there); mirrored here
+    # rather than re-derived.
+    if [ -s "$ENV_FILE" ] && [ "$(tail -c 1 "$ENV_FILE")" != "" ]; then
+      printf '\n' >> "$ENV_FILE"
+    fi
     printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" >> "$ENV_FILE"
   fi
 }

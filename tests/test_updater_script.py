@@ -660,3 +660,29 @@ def test_a_dev_target_that_is_not_a_descendant_is_rejected(updater):
     assert state["phase"] == "rejected"
     assert state["error"] == "not a descendant of the running state"
     assert "docker compose" not in calls
+
+
+def test_an_env_file_with_no_trailing_newline_and_no_tag_line_keeps_its_other_values(updater):
+    # Critical. Proven end to end against the unpatched set_tag(): with
+    # .env = "MINISERVER_IP=10.0.1.9\nLOXMATTER_API_TOKEN=deadbeefcafe"
+    # (no trailing newline, and no LOXMATTER_IMAGE_TAG= line - the APPEND
+    # branch, not the sed-replace branch the existing .env fixture always
+    # exercises, since that one seeds both a trailing newline and a tag
+    # line), a run produced the single corrupted line
+    # "LOXMATTER_API_TOKEN=deadbeefcafeLOXMATTER_IMAGE_TAG=0.3.0" - the
+    # token gone, and no line beginning "LOXMATTER_IMAGE_TAG=" left for
+    # docker-compose.yml to find (it silently falls back to its own
+    # `stable` default), while state.json still reported "done". Checked
+    # via splitlines(), not a substring test, specifically so a
+    # concatenated line like the one above could not accidentally satisfy
+    # the assertion the way "LOXMATTER_IMAGE_TAG=0.3.0" in text would.
+    (updater.stack / ".env").write_text(
+        "MINISERVER_IP=10.0.1.9\nLOXMATTER_API_TOKEN=deadbeefcafe", encoding="utf-8"
+    )
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "done"
+    lines = (updater.stack / ".env").read_text(encoding="utf-8").splitlines()
+    assert "MINISERVER_IP=10.0.1.9" in lines
+    assert "LOXMATTER_API_TOKEN=deadbeefcafe" in lines
+    assert "LOXMATTER_IMAGE_TAG=0.3.0" in lines
