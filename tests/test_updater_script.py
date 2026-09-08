@@ -39,6 +39,46 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = ROOT / "deploy" / "updater" / "update-once.sh"
 
+# Two tiers of rejection, not one. Rule 3 ("forward only") can only be
+# checked against the version that is actually running, and the sole
+# authoritative source for that is `docker inspect` on the live container
+# (see running_version() in update-once.sh) - a read that changes nothing.
+# So the two kinds of rejected request carry different guarantees:
+#
+#   * MALFORMED (bad channel, a target that fails the pattern, shell
+#     metacharacters, an image reference): shape is checked before the
+#     script ever calls out to docker, so these tests keep the blanket
+#     `"docker" not in calls`. Do NOT loosen these to match the tier below -
+#     they are the ones substantiating spec section 10's claim that a fully
+#     compromised bridge can be validated without running anything.
+#   * WELL-FORMED BUT REJECTED (right shape, wrong direction - too old or
+#     unchanged): legitimately costs one read-only `docker inspect` before
+#     the reject. What must still hold is that no MUTATING docker
+#     subcommand runs - see `_mutating_docker_calls` below.
+#
+# The subcommand this script ever reads with is `inspect`; everything else
+# it invokes (`compose pull`, `compose up -d ...`) changes host state. The
+# allowlist is spelled out explicitly rather than matched by forbidding a
+# substring like "pull" - that would also trip over an unrelated word
+# appearing anywhere in the log.
+READ_ONLY_DOCKER_SUBCOMMANDS = {"inspect"}
+
+
+def _mutating_docker_calls(calls: str) -> list[str]:
+    """Lines from the stub call log that invoke docker in a way that
+    changes host state - i.e. every logged `docker ...` call whose
+    subcommand is not on the read-only allowlist above."""
+    mutating = []
+    for line in calls.splitlines():
+        parts = line.split()
+        if not parts or parts[0] != "docker":
+            continue
+        subcommand = parts[1] if len(parts) > 1 else ""
+        if subcommand not in READ_ONLY_DOCKER_SUBCOMMANDS:
+            mutating.append(line)
+    return mutating
+
+
 SYSTEM_TOOLS = (
     "sh",
     "cat",
@@ -176,16 +216,25 @@ def test_an_unknown_channel_is_rejected(updater):
 
 def test_an_older_version_is_rejected(updater):
     # "Forward only", spec section 10, rule 3. .env is at 0.2.0.
+    #
+    # This target is well-formed - it has to be, to test rule 3 at all -
+    # so answering "is 0.1.0 newer than what's running" costs one
+    # `docker inspect` (see running_version()). That call is legitimate;
+    # what must not happen is anything that changes host state.
     _auftrag(updater, target="0.1.0")
     _, calls, state = updater()
     assert state["phase"] == "rejected"
-    assert "docker" not in calls
+    assert _mutating_docker_calls(calls) == []
 
 
 def test_the_same_version_is_rejected(updater):
+    # Same reasoning as test_an_older_version_is_rejected above: a
+    # well-formed target that ties the running version also needs the one
+    # read-only `docker inspect` to know that it ties.
     _auftrag(updater, target="0.2.0")
-    _, _, state = updater()
+    _, calls, state = updater()
     assert state["phase"] == "rejected"
+    assert _mutating_docker_calls(calls) == []
 
 
 def test_a_valid_target_is_accepted(updater):
