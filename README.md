@@ -95,7 +95,7 @@ CLI too.
 
 ## 🖼 The web interface
 
-**Devices**<br>Every commissioned device on one page, with live values and controls, and a badge where signals changed since the last export. Lamps get sliders for brightness and color temperature and a color picker instead of number fields; the mode tab bar only shows up on lamps that support both color and color temperature.
+**Devices**<br>Every commissioned device on one page, with live values and controls, and a badge where signals changed since the last export.
 
 <img src="docs/screenshots/dashboard.png" alt="Device list with live values and controls" />
 
@@ -106,6 +106,10 @@ CLI too.
 **Signals**<br>Open a device's signals from its tile menu: each signal with the Loxone address it will get and its own export checkbox; the administrative ones sit behind a collapsed expert section.
 
 <img src="docs/screenshots/signals.png" alt="Signal editor opened over the device grid, with Loxone addresses and export checkboxes" />
+
+**Controls**<br>Drive a device by hand to find out whether it answers at all — a click here separates a broken device from broken Loxone wiring. Each command gets the control its value deserves: sliders for brightness, a color temperature slider bounded by what that particular lamp can actually do, a color area for hue and saturation. Nothing here is hard-coded per model: the White/Color tabs appear only on lamps that report both, so a white-spectrum bulb simply shows one slider and no tabs.
+
+<img src="docs/screenshots/controls.png" alt="Control dialog for a color lamp: on/off buttons, two brightness sliders, White and Color tabs, and a hue-saturation area with the current color marked" />
 
 **Export**<br>Upload a project file for a patched copy, or generate the per-device template files — with the bridge address and ports they use shown alongside, and a preview of what each file will contain before anything downloads.
 

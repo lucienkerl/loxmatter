@@ -221,7 +221,7 @@ def capture(page: Page) -> None:
     # Kebab der ersten Kachel, dann der Menuepunkt.
     page.click(".device-card .tile-menu > summary")
     page.click('.tile-menu-item:has-text("Edit signals")')
-    page.wait_for_selector("dialog.signals-modal[open]", timeout=5000)
+    page.wait_for_selector("dialog.signals-modal:not(.control-modal)[open]", timeout=5000)
     # Ein erster Anlauf klappte hier zusaetzlich die Expertengruppe auf, damit
     # mehr Zeilen im Bild stehen. Das Ergebnis war unbrauchbar: Playwright
     # scrollt zum Ziel eines `.click()`, und dieses Ziel liegt hinter 17
@@ -231,8 +231,41 @@ def capture(page: Page) -> None:
     # zu fuellen. Der Bildlauf steht deshalb ausdruecklich oben:
     # Ueberschrift, Schluessel-Hinweis und die ersten Adressen mit ihren
     # Export-Haken sind der Punkt dieses Bildes.
-    page.eval_on_selector("dialog.signals-modal", "el => el.scrollTo(0, 0)")
-    shoot(page, "signals", "dialog.signals-modal", fixed=True)
+    page.eval_on_selector("dialog.signals-modal:not(.control-modal)", "el => el.scrollTo(0, 0)")
+    shoot(page, "signals", "dialog.signals-modal:not(.control-modal)", fixed=True)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+
+    # Das Bedien-Modal (Entwurf "Bedienelemente fuer Lampen", 2026-09-07).
+    # Motiv ist die Farbleuchte, nicht irgendeine Kachel: nur sie hat beide
+    # Modus-Reiter und die Farbflaeche, und genau diese Abstufung ist der
+    # Punkt des Bildes. Die Karte wird ueber ihren Namen gesucht statt ueber
+    # eine feste Position - die Kachelreihenfolge haengt an Kategorie-Rang
+    # und Raum (siehe DEMO_DEVICES in dev_web_server.py) und darf sich
+    # aendern, ohne dieses Bild stillschweigend auf ein anderes Geraet zu
+    # verschieben. Der Name steht in einem `<input>`, also ueber `.value`
+    # gesucht: ein Textvergleich im Markup ginge daran vorbei.
+    lamp = page.evaluate(
+        """() => [...document.querySelectorAll('.device-card')]
+             .findIndex((c) => c.querySelector('input')?.value === 'Kitchen spots')"""
+    )
+    if lamp < 0:
+        raise SystemExit(
+            "Kachel 'Kitchen spots' nicht gefunden - heisst das Demo-Geraet noch so? "
+            "(DEMO_DEVICES in scripts/dev_web_server.py)"
+        )
+    card = page.locator(".device-card").nth(lamp)
+    card.get_by_role("button", name="Control").click()
+    page.wait_for_selector("dialog.control-modal[open]", timeout=5000)
+    # Der Farbe-Reiter, nicht der voreingestellte Weiss-Reiter: die Leuchte
+    # steht im Fixture auf ColorMode 2 (Farbtemperatur), das Modal oeffnet
+    # deshalb auf "White" - und ein Bild vom Farbwaehler ohne Farbwaehler
+    # waere sinnlos. Die Reiterleiste bleibt dabei im Bild und zeigt beide
+    # Zustaende.
+    page.click("dialog.control-modal .control-tabs button:has-text('Colour')")
+    page.wait_for_selector("dialog.control-modal .colour-field", timeout=5000)
+    page.wait_for_timeout(300)
+    shoot(page, "controls", "dialog.control-modal", fixed=True)
     page.keyboard.press("Escape")
     page.wait_for_timeout(300)
 

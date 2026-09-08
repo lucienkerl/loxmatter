@@ -2305,12 +2305,31 @@ footer.hint-block {
   border-radius: 8px;
   cursor: crosshair;
   touch-action: none;
+  /* Bezugsrahmen fuer `.colour-marker` - ohne das saesse der Punkt relativ
+     zum naechsten positionierten Vorfahren, also irgendwo im Modal. */
+  position: relative;
   background:
     linear-gradient(to top, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0)),
     linear-gradient(
       90deg,
       #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%
     );
+}
+
+/* Zeigt, welche Farbe eingestellt ist. Zwei Ringe statt einer Umrandung:
+   ein einzelner heller Rand verschwindet ueber Weiss, ein einzelner dunkler
+   ueber Blau - zusammen bleibt der Punkt auf jedem Untergrund sichtbar.
+   `pointer-events: none`, damit ein Klick AUF den Marker die Flaeche
+   darunter trifft und nicht ins Leere geht. */
+.colour-marker {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
 }
 
 .colour-field.is-busy {
