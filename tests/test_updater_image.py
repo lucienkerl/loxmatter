@@ -35,13 +35,13 @@ DOCKERFILE = ROOT / "deploy" / "updater" / "Dockerfile"
 REQUIRED_PACKAGES = ("docker-cli", "docker-cli-compose", "git", "curl", "jq", "coreutils", "tar")
 
 
-def test_das_image_bringt_jedes_benutzte_werkzeug_mit() -> None:
+def test_the_image_brings_every_tool_it_uses() -> None:
     source = DOCKERFILE.read_text(encoding="utf-8")
     for package in REQUIRED_PACKAGES:
         assert re.search(rf"\b{re.escape(package)}\b", source), package
 
 
-def test_die_basis_ist_gepinnt() -> None:
+def test_the_base_image_is_pinned() -> None:
     # A `FROM alpine:latest` would turn every rebuild of the sidecar into a
     # surprise - of all containers, the one that is root-equivalent on the
     # host.
