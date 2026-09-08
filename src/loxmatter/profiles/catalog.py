@@ -16,7 +16,7 @@
 
 """Attribut- und Ereignisnamen aus dem Cluster-Katalog des chip-SDK.
 
-`python-matter-server` installiert `chip.clusters.Objects` ohnehin als
+Die Matter-Client-Bibliothek installiert `chip.clusters.Objects` ohnehin als
 Abhaengigkeit (Task 4, Hauptdokument 6.2: der Signalschluessel bleibt
 generisch und unveraenderlich - dieses Modul speist ausschliesslich die
 Anzeige, nie den Schluessel). Dort steht fuer jeden Cluster eine
@@ -34,6 +34,16 @@ Signal `None` zurueck, der Aufrufer (`profiles.table.lookup`) faellt auf
 den generischen Slug zurueck, und das Werkzeug laeuft unveraendert weiter -
 es gibt hier bewusst keinen Pfad, auf dem ein SDK-Problem eine Ausnahme bis
 zum Aufrufer durchreicht.
+
+**Nachtrag (8. September 2026): die Bibliothek, die `chip` mitbringt, hat
+gewechselt.** Bis dahin war es `python-matter-server`, seither ist es
+`matter-python-client` aus dem Nachfolgeprojekt `matterjs-server`. Der
+Modulpfad `chip.clusters.Objects` und die Form der `Attributes`-/
+`Events`-Klassen sind dieselben geblieben, deshalb aendert sich hier keine
+Zeile. Die "kuenftige SDK-Fassung" im Absatz darueber ist damit allerdings
+keine hypothetische Sorge mehr, sondern einmal tatsaechlich eingetreten -
+und der Rueckfallweg, den dieses Modul dafuer vorhaelt, hat gehalten, ohne
+gebraucht zu werden.
 """
 
 from __future__ import annotations

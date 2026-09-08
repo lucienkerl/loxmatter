@@ -1004,7 +1004,11 @@ async def test_follow_node_subscribes_even_when_the_store_does_not_know_the_node
 
 async def test_the_commissioning_route_still_seeds_after_the_dispatch_loop_was_first():
     """Der Ablauf eines echten Einlernens, in seiner tatsaechlichen
-    Reihenfolge (belegt gegen die installierte python-matter-server):
+    Reihenfolge (belegt gegen python-matter-server 8.1.2 - seit dem
+    8. September 2026 ist `matter-python-client` installiert, das dieselbe
+    Ereignisfolge ueber dieselbe Websocket-API fuehrt; die Reihenfolge unten
+    ist eine Eigenschaft des Protokolls, nicht der Bibliothek, und dieser
+    Test prueft sie ohnehin gegen eine Attrappe):
 
     1. Die Einlern-Route wartet noch auf `commission_with_code`.
     2. matter-server schickt `NODE_ADDED` ueber denselben Websocket, bevor
