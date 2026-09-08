@@ -2318,6 +2318,271 @@ MSG
 
 ---
 
+### Task 12: Rang je Element — der Taster muss mit `press` fuehren
+
+**Nachgetragen am 8. September 2026**, nachdem Aufgabe 11 den Befund am fertigen
+Bild aufgedeckt hat. Der Entwurf (Abschnitt 4, „Warum kein Rang je Element")
+hat diese Ebene ausdruecklich offengelassen: sie „kann nachgetragen werden,
+wenn ein konkretes Geraet sie verlangt". Genau das ist eingetreten.
+
+**Der Befund.** Die Kachel des Tasters fuehrt nicht mit `press`, sondern mit
+`positions`:
+
+```
+ 0. ep1 cl59 el0 attribute  positions   <== Leitwert
+ 1. ep1 cl59 el1 attribute  position
+ 2. ep1 cl59 el1 event      press
+```
+
+`positions` ist Matters `NumberOfPositions` — die statische Angabe, dass diese
+Taste zwei Stellungen hat. Ein Konfigurationswert, der sich nie aendert. Als
+Leitwert ist das **schlechter als der Batteriestand**, den dieser ganze Plan
+beseitigen wollte: der sank wenigstens.
+
+**Warum es niemand bemerkt hat.** Der Test aus Aufgabe 2 lautet
+
+```python
+assert functional[0].ref.cluster_id == 59
+```
+
+Das ist fuer `positions` genauso wahr wie fuer `press`. Er prueft den Cluster,
+waehrend Entwurf und Canvas durchweg `press` zeigen — eine Luecke zwischen
+Absicht und Zusicherung. Sie wird in dieser Aufgabe mitgeschlossen.
+
+**Files:**
+- Modify: `src/loxmatter/profiles/clusters.yaml` (nur Cluster 59)
+- Modify: `src/loxmatter/profiles/table.py`
+- Modify: `src/loxmatter/model/store.py` (`_signal_order`)
+- Test: `tests/profiles/test_table.py`, `tests/model/test_store.py`
+
+**Interfaces:**
+- Consumes: `table.rank_for`, `table.DEFAULT_RANK` (Aufgabe 1); `_signal_order` (Aufgabe 2).
+- Produces: `table.element_rank_for(ref: SignalRef) -> int`; `_signal_order` liefert ein SECHSSTELLIGES Tupel `(cluster_rank, endpoint, cluster_id, element_rank, element_id, kind)`.
+
+- [ ] **Step 1: Die failing tests schreiben**
+
+An `tests/profiles/test_table.py`:
+
+```python
+def test_an_element_can_carry_its_own_rank():
+    """Der Taster war der konkrete Fall, der diese Ebene noetig gemacht hat:
+    innerhalb von Cluster 59 muss der Tastendruck vor die statische Angabe
+    `NumberOfPositions`, sonst fuehrt die Kachel mit einer Zahl, die sich nie
+    aendert."""
+    press = SignalRef(1, 59, 1, SignalKind.EVENT)
+    positions = SignalRef(1, 59, 0, SignalKind.ATTRIBUTE)
+
+    assert table.element_rank_for(press) < table.element_rank_for(positions)
+
+
+def test_an_element_without_a_rank_gets_the_default():
+    """Dieselbe Vorgabe wie auf Clusterebene, und aus demselben Grund: die
+    Mitte, damit ein nicht eingetragenes Element weder nach vorn noch ganz
+    nach hinten faellt."""
+    longpress = SignalRef(1, 59, 2, SignalKind.EVENT)
+    assert table.element_rank_for(longpress) == table.DEFAULT_RANK
+
+
+def test_an_element_of_an_unknown_cluster_gets_the_default():
+    """Cluster 3 (Identify) steht nicht in der Tabelle - es gibt dort weder
+    einen Abschnitt noch ein Element, in dem ein Rang stehen koennte."""
+    assert table.element_rank_for(SignalRef(1, 3, 0, SignalKind.ATTRIBUTE)) == table.DEFAULT_RANK
+```
+
+An `tests/model/test_store.py` — **und der bestehende, zu schwache Test wird dabei ersetzt**, nicht ergaenzt:
+
+```python
+def test_the_button_leads_with_the_button_press(tmp_path):
+    """Ersetzt `test_the_button_leads_with_a_switch_signal_not_the_battery`,
+    der nur `cluster_id == 59` prueft. Das war zu schwach: `positions`
+    (NumberOfPositions, Element 0) traegt denselben Cluster und sortierte
+    davor - die Kachel fuehrte damit mit der statischen Angabe, dass diese
+    Taste zwei Stellungen hat. Der Test sagte trotzdem ja.
+
+    Diese Fassung nennt das Signal beim Namen. Ein Test, der nur den Cluster
+    prueft, laesst genau den Fehler durch, den zu verhindern der Zweck des
+    ganzen Umbaus war."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    functional = [s for s in store.signals(device_id) if s.functional]
+
+    assert functional[0].title == "press"
+    assert functional[0].ref.kind is SignalKind.EVENT
+    assert functional[-1].ref.cluster_id == 47
+
+
+def test_the_static_position_count_sorts_behind_every_button_event(tmp_path):
+    """`positions` aendert sich nie - es gehoert ans Ende der Tastengruppe,
+    nicht an ihren Anfang."""
+    store = Store(tmp_path / "t.sqlite")
+    snapshot = load_snapshot("ikea_bilresa_button.json")
+    device_id = store.register_device(snapshot)
+    store.register_signals(device_id, snapshot)
+
+    endpoint1 = [
+        s for s in store.signals(device_id) if s.functional and s.ref.endpoint == 1
+    ]
+    titles = [s.title for s in endpoint1]
+
+    assert titles[0] == "press"
+    assert titles[-1] == "positions"
+```
+
+- [ ] **Step 2: Tests laufen lassen, Fehlschlag prüfen**
+
+Run: `uv run pytest tests/profiles/test_table.py -k element_rank tests/model/test_store.py -k "leads_with_the_button or static_position" -v`
+Expected: FAIL — `element_rank_for` gibt es nicht, und der Leitwert ist `positions`.
+
+- [ ] **Step 3: Die Ränge in `clusters.yaml` eintragen**
+
+**Nur Cluster 59.** Kein anderer Cluster bekommt Elementränge, solange kein Gerät sie verlangt — dieselbe Zurückhaltung wie bei `UTILITY_ENDPOINT_KEEP_CLUSTERS` in `relevance.py`.
+
+```yaml
+  59:
+    name: switch
+    rank: 10
+    attributes:
+      # `rank` je Element ordnet INNERHALB dieses Clusters (Nachtrag
+      # 2026-09-08). Cluster 59 ist der bislang einzige, der ihn braucht,
+      # und der Grund ist NumberOfPositions: die Angabe, wie viele
+      # Stellungen diese Taste hat, aendert sich nie. Sie stand mit
+      # Element-ID 0 vor jedem Tastendruck und wurde damit zum Leitwert
+      # der Kachel - eine Konstante als wichtigstes Merkmal eines Tasters.
+      0: {slug: positions, unit: "", rank: 90}
+      1: {slug: position, unit: ""}
+    events:
+      # Der Tastendruck ist, wofuer man einen Taster einlernt.
+      1: {slug: press, rank: 10}
+      2: {slug: longpress}
+      3: {slug: shortrelease}
+      4: {slug: longrelease}
+      5: {slug: multipress_ongoing}
+      6: {slug: multipress}
+```
+
+Die vorhandenen Schlüssel jedes Elements (`slug`, `unit`, …) bleiben unverändert — es kommt nur `rank` dazu, und nur bei zweien.
+
+- [ ] **Step 4: `element_rank_for` in `table.py` schreiben**
+
+Neben `rank_for`:
+
+```python
+def element_rank_for(ref: SignalRef) -> int:
+    """Wie wichtig dieses Element INNERHALB seines Clusters ist.
+
+    Zweite Ebene neben `rank_for`, und sie ist nachgetragen worden statt von
+    Anfang an dazusein (Entwurf 2026-09-07, Abschnitt 4: "kann nachgetragen
+    werden, wenn ein konkretes Geraet sie verlangt"). Das Geraet, das sie
+    verlangt hat, ist der IKEA-Taster: `NumberOfPositions` (Element 0) traegt
+    denselben Cluster wie der Tastendruck und sortierte mit der kleineren
+    Element-ID davor - die Kachel fuehrte damit mit einer Konstanten.
+
+    Die Vorgabe ist dieselbe wie auf Clusterebene und aus demselben Grund die
+    Mitte: ein nicht eingetragenes Element soll weder nach vorn noch ganz
+    nach hinten fallen. Die grosse Mehrheit der Elemente traegt deshalb gar
+    keinen Rang, und die Element-ID ordnet sie weiterhin - so, wie es bis
+    hierher fuer jeden Cluster ausser 59 richtig war.
+    """
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return DEFAULT_RANK
+    section = "events" if ref.kind is SignalKind.EVENT else "attributes"
+    element = (cluster.get(section) or {}).get(ref.element_id)
+    if not isinstance(element, dict):
+        return DEFAULT_RANK
+    rank = element.get("rank")
+    return DEFAULT_RANK if rank is None else int(rank)
+```
+
+- [ ] **Step 5: `_signal_order` erweitern**
+
+In `store.py` den Import um `element_rank_for` ergänzen und den Schlüssel sechsstellig machen — **der Elementrang steht hinter `cluster_id` und vor `element_id`**, denn er ordnet innerhalb eines Clusters:
+
+```python
+def _signal_order(signal: StoredSignal) -> tuple[int, int, int, int, int, str]:
+    """Der Sortierschluessel der Signalliste (Entwurf 2026-09-07, Abschnitt 4,
+    mit dem Elementrang als Nachtrag vom 2026-09-08).
+
+    Zwei Rangebenen, und ihre Stellung im Tupel ist die ganze Aussage: der
+    CLUSTER-Rang steht ganz vorn und ordnet die Cluster zueinander (deshalb
+    faellt PowerSource hinter alles Funktionale); der ELEMENT-Rang steht
+    hinter `cluster_id` und ordnet nur innerhalb desselben Clusters (deshalb
+    faellt `positions` hinter jeden Tastendruck, ohne dass die Tastengruppe
+    als Ganzes ihren Platz aendert).
+
+    Sortiert wird in Python und nicht in SQL, weil beide Raenge aus
+    `clusters.yaml` kommen: SQLite kennt sie nicht, und sie als Spalten in
+    `signal` zu spiegeln hiesse, sie bei jeder Aenderung der YAML-Datei
+    nachtragen zu muessen - eine zweite Wahrheit fuer denselben Wert.
+
+    Die hinteren Glieder sind der bisherige Schluessel. Er ist wegen der
+    UNIQUE-Bedingung auf `signal` bereits eindeutig, damit ist auch dieser
+    Schluessel total - die Reihenfolge flattert nie, was fuer den Export
+    wichtig ist (er schreibt sie in eine Datei).
+    """
+    return (
+        rank_for(signal.ref.cluster_id),
+        signal.ref.endpoint,
+        signal.ref.cluster_id,
+        element_rank_for(signal.ref),
+        signal.ref.element_id,
+        signal.ref.kind.value,
+    )
+```
+
+- [ ] **Step 6: Tests laufen lassen**
+
+Run: `uv run pytest tests/profiles tests/model -v`
+Expected: PASS.
+
+- [ ] **Step 7: Die ganze Testreihe**
+
+Run: `uv run pytest -q`
+Expected: PASS. Schlägt ein Test fehl, der die alte Reihenfolge festhält, gilt dieselbe Regel wie in Aufgabe 2: **einordnen, nicht wegschreiben** — hält er sie zufällig fest, darf er nachgezogen werden; hält er sie absichtlich fest, ist es ein Konflikt und wird gemeldet.
+
+Besonders zu prüfen: `tests/export/test_signals.py::test_the_template_lists_the_button_press_before_the_battery` und der Projektdatei-Sync-Test aus Aufgabe 3 — beide hängen an dieser Reihenfolge und sollen weiterhin grün sein.
+
+- [ ] **Step 8: Belegen, dass der neue Test den alten Fehler fängt**
+
+Nimm `rank: 90` bei `positions` probeweise heraus, lass `uv run pytest tests/model/test_store.py -k leads_with_the_button -v` laufen, zeig den Fehlschlag, und trag den Rang danach wieder ein. Ohne diesen Nachweis ist der Test nur eine Behauptung.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/loxmatter/profiles/clusters.yaml src/loxmatter/profiles/table.py src/loxmatter/model/store.py tests/profiles/test_table.py tests/model/test_store.py
+git commit -m "$(cat <<'MSG'
+fix(profiles): Rang je Element - der Taster fuehrt mit `press`, nicht mit `positions`
+
+Die Cluster-Rangliste hat den Batteriestand von der Kachel verdraengt, aber
+nicht das Richtige an seine Stelle gesetzt: der Taster fuehrte danach mit
+`positions` - Matters NumberOfPositions, die statische Angabe, dass diese
+Taste zwei Stellungen hat. Ein Wert, der sich nie aendert, als wichtigstes
+Merkmal eines Tasters; damit war es schlechter als der Batteriestand, den
+dieser Umbau beseitigen wollte, denn der sank wenigstens.
+
+Aufgefallen ist es erst am fertigen Screenshot. Der Test aus Aufgabe 2 hatte
+es durchgelassen, weil er `functional[0].ref.cluster_id == 59` prueft - fuer
+`positions` genauso wahr wie fuer `press`. Er nennt das Signal jetzt beim
+Namen; ein Test, der nur den Cluster prueft, laesst genau den Fehler durch,
+den zu verhindern der Zweck des Umbaus war.
+
+Der Entwurf hatte diese Ebene ausdruecklich offengelassen ("kann nachgetragen
+werden, wenn ein konkretes Geraet sie verlangt"). Der IKEA-Taster verlangt
+sie. Eingetragen ist sie nur fuer Cluster 59 und dort nur an zwei Elementen -
+dieselbe Zurueckhaltung wie bei UTILITY_ENDPOINT_KEEP_CLUSTERS: ein neuer
+Eintrag braucht ein Geraet, das ihn belegt, nicht die Annahme, die Tabelle
+sei von sich aus vollstaendig.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+MSG
+)"
+```
+
+---
+
 ### Task 11: Screenshots nachziehen
 
 **Files:**
