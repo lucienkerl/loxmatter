@@ -452,22 +452,49 @@ run() {
 # when comparing this log against scripts/update.sh's own output during an
 # incident. The subshell keeps the `cd` from leaking into the rest of this
 # script.
+#
+# The `cd` is checked explicitly, ahead of the subshell, rather than left
+# to fail inside it: without this, a missing or unreadable $STACK makes
+# the whole subshell exit non-zero with nothing on record beyond that -
+# indistinguishable here from `docker compose` itself failing. Both call
+# sites below then report a plainly wrong diagnosis ("image could not be
+# pulled", "restart failed") for a problem that is neither a pull nor a
+# restart, but the stack directory itself. This one log line at least
+# tells the two apart for whoever reads log.txt afterward.
 compose() {
+  if [ ! -d "$STACK" ]; then
+    log "compose: $STACK is not a directory - cannot run docker compose there"
+    return 1
+  fi
   log "\$ (cd $STACK && docker compose $*)"
   (cd "$STACK" && docker compose "$@") >> "$LOG" 2>&1
 }
 
-# Replaces EXACTLY that one line and leaves the rest of the .env untouched.
-# It also carries MINISERVER_IP, RADIO_DEVICE and the API token - an update
-# that rewrites the whole file takes half the installation down with it.
+# Escapes sed's own replacement metacharacters - backslash, ampersand, and
+# the `|` this substitution uses as its delimiter - out of a value before
+# it reaches sed. Verified end to end: `set_tag 'a|b'` unescaped makes sed
+# itself fail ("bad flag in substitute command", because the bare `|`
+# closes the substitution early) and leaves a 0-byte $ENV_FILE.tmp behind.
+# $1 here is not always the bounded, pattern-checked TARGET (Rule 2 above
+# already limits that to characters a Docker tag can contain) - set_tag is
+# also called with $FROM, read back out of a hand-editable .env with no
+# such bound.
+sed_escape_replacement() {
+  printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
+}
+
+# Replaces EXACTLY the LOXMATTER_IMAGE_TAG= line and leaves the rest of
+# the .env untouched. It also carries MINISERVER_IP, RADIO_DEVICE and the
+# API token - an update that rewrites the whole file takes half the
+# installation down with it.
 #
 # Goes through a temp file and `mv`, the same atomic-write idiom
 # write_state() already uses above, rather than `sed -i`: GNU sed's `-i`
 # takes an optional attached suffix, but BSD/macOS sed's `-i` requires one
 # as a SEPARATE argument - `sed -i -E '...'` on BSD sed reads "-E" as that
 # argument (a literal backup-file suffix) and runs the script that follows
-# as a basic, not extended, regular expression. Verified end to end on this
-# machine: it happened to still produce the right substitution (the
+# as a basic, not extended, regular expression. Verified end to end on
+# this machine: it happened to still produce the right substitution (the
 # pattern below uses no ERE-only syntax, so BRE and ERE agree on it) but
 # silently left a stray ".env-E" backup file behind on every call - exactly
 # the kind of accidental success this project has been bitten by more than
@@ -475,9 +502,42 @@ compose() {
 # needs `-E` here, and neither needs `-i` once the substitution is piped
 # through a temp file instead.
 set_tag() {
-  if grep -q '^LOXMATTER_IMAGE_TAG=' "$ENV_FILE" 2>/dev/null; then
-    sed "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$1|" "$ENV_FILE" \
-      > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
+  # A symlinked .env - a shared config kept outside the repository
+  # checkout, say - has to stay a symlink. `mv` onto a path replaces
+  # whatever sits there (a plain rename(2), which does not follow a
+  # destination symlink) rather than writing through it, so finishing
+  # this function with an unconditional `mv ... "$ENV_FILE"` would
+  # silently turn a symlinked .env into a plain file the moment an
+  # update first ran - measured on the unpatched function. Resolve to
+  # the real target once, up front, and do the temp-file dance against
+  # THAT path instead: the symlink itself is then never touched, only
+  # the file it points at.
+  set_tag_target="$ENV_FILE"
+  if [ -L "$set_tag_target" ]; then
+    set_tag_resolved="$(readlink -f "$set_tag_target" 2>/dev/null || true)"
+    [ -n "$set_tag_resolved" ] && set_tag_target="$set_tag_resolved"
+  fi
+
+  if [ ! -e "$set_tag_target" ]; then
+    printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" > "$set_tag_target"
+    return 0
+  fi
+
+  # `cp -p` before editing, not just relying on the closing `mv`: the
+  # temp file below starts life as a brand-new inode, and neither the
+  # redirection that fills it nor `mv` retroactively gives it back the
+  # original's mode or ownership. Measured on the unpatched function:
+  # 0600 -> 0644, 0444 -> 0644. `cp -p` onto the temp file first carries
+  # the original's mode, ownership (where permitted) and timestamps onto
+  # it; the redirection below then only overwrites that same temp file's
+  # CONTENT, and the closing `mv` (a rename, same filesystem) keeps the
+  # mode it already has.
+  cp -p "$set_tag_target" "$set_tag_target.tmp"
+
+  if grep -q '^LOXMATTER_IMAGE_TAG=' "$set_tag_target" 2>/dev/null; then
+    set_tag_replacement="$(sed_escape_replacement "$1")"
+    sed "s|^LOXMATTER_IMAGE_TAG=.*|LOXMATTER_IMAGE_TAG=$set_tag_replacement|" "$set_tag_target" \
+      > "$set_tag_target.tmp"
   else
     # A hand-edited or hand-migrated .env commonly has no trailing
     # newline - a plain `printf` without one, or `$(...)` command
@@ -494,12 +554,16 @@ set_tag() {
     # `stable` default and the update never took effect, while
     # state.json still reported "done". install.sh's own `env_set`
     # already solves exactly this (see its comment there); mirrored here
-    # rather than re-derived.
-    if [ -s "$ENV_FILE" ] && [ "$(tail -c 1 "$ENV_FILE")" != "" ]; then
-      printf '\n' >> "$ENV_FILE"
+    # rather than re-derived. `cp -p` above already copied
+    # $set_tag_target's existing content onto $set_tag_target.tmp, so
+    # only the missing newline and the new line need appending here.
+    if [ -s "$set_tag_target" ] && [ "$(tail -c 1 "$set_tag_target")" != "" ]; then
+      printf '\n' >> "$set_tag_target.tmp"
     fi
-    printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" >> "$ENV_FILE"
+    printf 'LOXMATTER_IMAGE_TAG=%s\n' "$1" >> "$set_tag_target.tmp"
   fi
+
+  mv "$set_tag_target.tmp" "$set_tag_target"
 }
 
 # Waits for the first healthy beat, bounded by WALL-CLOCK seconds, not by
@@ -537,28 +601,33 @@ wait_healthy() {
   return 1
 }
 
-# 1. Back up. Before anything else: the signal database is the one thing a
-# failed update could not restore - it holds the signal keys, and those
-# are the wiring into the Loxone configuration.
-set_state backup ""
-STAMP="$(date -u +%Y-%m-%d-%H%M%S)"
-if ! run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
-  set_state failed "backup failed - nothing was changed"
-  exit 0
-fi
-# Never sweep away the last ten, as in scripts/update.sh.
+# 0. Fetch the target and, for the dev channel, validate ancestry - BEFORE
+# the backup below, not after it. The Compose file must match the version
+# (a new release can need a new service or a new variable), and the dev
+# channel's "forward only" equivalent (there is no ordering over SHAs,
+# only ancestry) can only be answered once the candidate commit is
+# actually known locally - so the fetch has to come first either way.
 #
-# shellcheck disable=SC2012  # filenames are self-generated (store-<UTC
-# timestamp>.tgz, written two lines above by this same script) rather than
-# attacker- or user-supplied, so sorting them by mtime through `ls -t` is
-# safe here in a way it would not be in general. scripts/update.sh already
-# carries this exact pattern, unchecked; `find` has no equally simple,
-# equally portable stand-in for "sorted by modification time" across the
-# GNU/BSD/busybox sort/find/stat variance this project already has to mind.
-ls -1t "$BACKUP_DIR"/store-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
-
-# 2. Fetch the target. The Compose file must match the version: a new
-# release can need a new service or a new variable.
+# This deliberately breaks with a literal top-to-bottom reading of "1.
+# Back up. Before anything else": a `git fetch`/`merge-base` cannot touch
+# /data/loxmatter.sqlite, so nothing here can endanger the one thing the
+# backup exists to protect - but the dev-channel ancestry check calls
+# reject(), and reject()'s own doctrine (see its comment above: state
+# before log, precisely so recording a rejection is not itself an action)
+# is that a rejection which has already done something is not one. A
+# backup IS a real, disk-visible action - it prunes old ones and costs
+# real I/O - so running it before a request turns out to be invalid
+# contradicts that doctrine exactly as much as the fetch itself would.
+# Neither the fetch nor the ancestry check can mutate the running
+# service, so moving both ahead of the backup keeps the backup's actual
+# purpose intact while giving a dev-channel rejection the same "nothing
+# happened yet" guarantee every other rejection in this file already has.
+# A plain "git fetch failed" just below is not a rejection, though - it
+# is `set_state failed`, an operational failure of an otherwise-valid,
+# accepted request - and it now skips the backup for that one failed
+# pass. That is not a regression: nothing past this point ever ran, so
+# there was nothing new for that pass to endanger, and the previous
+# backup remains on disk regardless.
 set_state pull ""
 if ! run git -C "$REPO" fetch --tags --force origin; then
   set_state failed "git fetch failed"
@@ -581,8 +650,36 @@ else
   REF="v${TARGET#v}"
 fi
 
-if ! run git -C "$REPO" checkout --detach "$REF"; then
+# 1. Back up. Before the checkout/pull/recreate below - no longer the
+# literal first thing this pass does (see the reordering above), but
+# still before anything that could touch the running service or its
+# database: the signal database is the one thing a failed update could
+# not restore - it holds the signal keys, and those are the wiring into
+# the Loxone configuration.
+set_state backup ""
+STAMP="$(date -u +%Y-%m-%d-%H%M%S)"
+if ! run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
+  set_state failed "backup failed - nothing was changed"
+  exit 0
+fi
+
+# 2. Check out the target. `git rev-parse --verify` first, deliberately
+# separate from the `checkout` call: without this, every checkout
+# failure - a ref that genuinely does not exist, AND a checkout refused
+# because $REPO's working tree has local modifications that would be
+# overwritten - reported the identical "target $REF not found in the
+# repository", even though only the first one is actually about the
+# target. The second is a materially different, non-retryable-by-
+# picking-another-target problem (nothing wrong with the request; the
+# checkout on THIS host is dirty) that the shared message actively misled
+# an operator away from. Answering "does this ref exist at all" on its
+# own, first, is what makes the two distinguishable.
+if ! git -C "$REPO" rev-parse -q --verify "${REF}^{commit}" >/dev/null 2>&1; then
   set_state failed "target $REF not found in the repository"
+  exit 0
+fi
+if ! run git -C "$REPO" checkout --detach "$REF"; then
+  set_state failed "checkout of $REF failed even though the ref exists - see the log (a repository with local modifications refuses a checkout the same way a missing ref does; this is that case)"
   exit 0
 fi
 
@@ -665,6 +762,30 @@ fi
 # 4. Wait for the first healthy beat.
 set_state health ""
 if wait_healthy; then
+  # Never sweep away the last ten, as in scripts/update.sh - but only
+  # NOW, once this update has actually reached "done", not immediately
+  # after every backup as before. Pruning used to run right after the
+  # tar call above regardless of what happened afterward, so a run of
+  # ten FAILED attempts (each still makes exactly one backup, per step
+  # 1's "before anything risky" reasoning) counted toward the very same
+  # ten-file budget as genuine successes, and could evict the one backup
+  # that matters most: the one taken just before a schema-raising
+  # release - precisely the copy an operator would reach for if that
+  # release needs reverting further back than this file's own rollback
+  # goes. Deferring the prune to a confirmed success means a streak of
+  # failures never touches the backup directory at all; it only shrinks
+  # once an update actually sticks.
+  #
+  # shellcheck disable=SC2012  # filenames are self-generated (store-<UTC
+  # timestamp>.tgz, written above by this same script) rather than
+  # attacker- or user-supplied, so sorting them by mtime through `ls -t`
+  # is safe here in a way it would not be in general. scripts/update.sh
+  # already carries this exact pattern, unchecked; `find` has no equally
+  # simple, equally portable stand-in for "sorted by modification time"
+  # across the GNU/BSD/busybox sort/find/stat variance this project
+  # already has to mind.
+  ls -1t "$BACKUP_DIR"/store-*.tgz 2>/dev/null | tail -n +11 | while read -r old; do rm -f "$old"; done
+
   # Quoted "done": shellcheck (SC1010) reads a bare `done` here as the
   # loop-closing reserved word rather than a plain argument, even though
   # this position (a command's second argument) is not one where POSIX
@@ -676,4 +797,13 @@ if wait_healthy; then
   exit 0
 fi
 
+# `healthy: true` here is only set_state's own default (HEALTHY is
+# initialised ahead of the validation section, above, and never touched
+# since) - it is NOT a claim that anything is healthy, only that nothing
+# has said otherwise yet. This "rollback" phase is a hand-off, not a
+# terminal state: Task 4 picks up immediately after this line, and it is
+# Task 4's job to set HEALTHY to what actually happened (healthy again
+# after rolling back, or not). Flagged here so that whoever writes
+# Task 4 does not mistake this particular `healthy: true` for a claim
+# already made.
 set_state rollback ""

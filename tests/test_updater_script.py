@@ -95,6 +95,7 @@ SYSTEM_TOOLS = (
     "mkdir",
     "rm",
     "mv",
+    "cp",
     "date",
     "sort",
     "head",
@@ -105,6 +106,7 @@ SYSTEM_TOOLS = (
     "ls",
     "cut",
     "wc",
+    "readlink",
     "chmod",
 )
 
@@ -177,6 +179,7 @@ def updater(tmp_path):
     run.update_dir = update_dir
     run.stack = stack
     run.bindir = bindir
+    run.backup_dir = tmp_path / "data" / "backups"
     return run
 
 
@@ -664,8 +667,21 @@ def test_a_dev_target_that_is_not_a_descendant_is_rejected(updater):
     assert "docker compose" not in calls
 
 
+# ------------------------------------------------------- Stufe 2, round 2 --
+# The tests below close the second review pass on Task 3's flow (see
+# .superpowers/sdd/task-3-stufe2-report.md for the flow itself). One
+# Critical (set_tag's append branch corrupting an unterminated, tag-less
+# .env), four Importants (wait_healthy counting iterations instead of
+# seconds; a failed `compose up` stranding the new tag with no rollback
+# hand-off; the two unguarded set_tag calls under `set -eu`; five mutants
+# from Important 5's table), and the cheap Minors (sed metacharacters in
+# the restored tag, .env mode/ownership/symlink loss, backup pruning
+# counting attempts instead of successes, and a checkout failure message
+# that conflated "ref does not exist" with "checkout refused").
+
+
 def test_an_env_file_with_no_trailing_newline_and_no_tag_line_keeps_its_other_values(updater):
-    # Critical. Proven end to end against the unpatched set_tag(): with
+    # Critical 1. Proven end to end against the unpatched set_tag(): with
     # .env = "MINISERVER_IP=10.0.1.9\nLOXMATTER_API_TOKEN=deadbeefcafe"
     # (no trailing newline, and no LOXMATTER_IMAGE_TAG= line - the APPEND
     # branch, not the sed-replace branch the existing .env fixture always
@@ -707,7 +723,7 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     curl_path.chmod(0o755)
     _auftrag(updater, target="0.3.0")
     start = time.monotonic()
-    _, _calls, state = updater(LOXMATTER_HEALTH_TIMEOUT="2", _timeout=30)
+    _, _, state = updater(LOXMATTER_HEALTH_TIMEOUT="2", _timeout=30)
     elapsed = time.monotonic() - start
     assert state["phase"] == "rollback"
     assert elapsed < 6, f"took {elapsed:.1f}s - the old iteration-counting loop took ~6-9s here"
@@ -755,13 +771,14 @@ def test_a_tag_write_that_cannot_be_made_is_recorded_as_a_failure(updater):
     updater.stack.chmod(0o555)
     try:
         _auftrag(updater, target="0.3.0")
-        result, _calls, state = updater()
+        result, calls, state = updater()
     finally:
         updater.stack.chmod(0o755)
     assert result.returncode == 0
     assert state is not None
     assert state["phase"] == "failed"
     assert state["error"]
+    assert "docker compose" not in calls
 
 
 def test_a_pull_failure_that_cannot_restore_the_tag_is_recorded_as_a_failure(updater):
@@ -849,3 +866,157 @@ def test_the_target_is_fetched_before_checkout(updater):
     _, calls, _state = updater()
     assert "fetch --tags --force origin" in calls
     assert calls.index("fetch --tags --force origin") < calls.index("checkout --detach v0.3.0")
+
+
+def test_set_tag_escapes_sed_metacharacters_in_the_restored_tag(updater):
+    # Minor 8. Proven directly: `set_tag 'a|b'` unescaped makes sed
+    # itself fail ("bad flag in substitute command", since the bare `|`
+    # closes the substitution early) and leaves a 0-byte $ENV_FILE.tmp
+    # behind. $FROM comes back out of a hand-editable .env with no bound
+    # on its character set - unlike TARGET, which Rule 2 already
+    # restricts. Seed .env with a tag containing `|` and fail the pull so
+    # `set_tag "$FROM"` actually runs with that value.
+    (updater.stack / ".env").write_text("LOXMATTER_IMAGE_TAG=a|b\n", encoding="utf-8")
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
+        '  compose) [ "$2" = "pull" ] && exit 1; exit 0 ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "failed"
+    assert (updater.stack / ".env").read_text(encoding="utf-8") == "LOXMATTER_IMAGE_TAG=a|b\n"
+    assert not (updater.stack / ".env.tmp").exists()
+
+
+def test_set_tag_preserves_the_env_files_mode(updater):
+    # Minor 7, the mode half. Measured on the unpatched function:
+    # 0600 -> 0644 and 0444 -> 0644 after an update - `mv`ing a
+    # brand-new temp file onto .env silently resets its permissions to
+    # whatever the process umask allows, discarding whatever an operator
+    # (or install.sh) had deliberately set.
+    (updater.stack / ".env").chmod(0o600)
+    _auftrag(updater, target="0.3.0")
+    updater()
+    mode = (updater.stack / ".env").stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_set_tag_preserves_a_symlinked_env_file(updater):
+    # Minor 7, the symlink half. Measured on the unpatched function: a
+    # symlinked .env (a shared config kept outside the checkout, say)
+    # was silently replaced by a plain file, because `mv` onto a path
+    # replaces whatever sits there instead of writing through it.
+    real_env = updater.update_dir.parent / "real-env"
+    real_env.write_text("LOXMATTER_IMAGE_TAG=0.2.0\n", encoding="utf-8")
+    env_path = updater.stack / ".env"
+    env_path.unlink()
+    env_path.symlink_to(real_env)
+    _auftrag(updater, target="0.3.0")
+    updater()
+    assert env_path.is_symlink()
+    assert env_path.resolve() == real_env.resolve()
+    assert "LOXMATTER_IMAGE_TAG=0.3.0" in real_env.read_text(encoding="utf-8")
+
+
+def test_a_failed_update_does_not_prune_backups(updater):
+    # Minor 9. The prune-to-last-ten loop used to run immediately after
+    # EVERY backup, success or failure alike - so a run of failed
+    # attempts (each still makes exactly one backup, per step 1's "before
+    # anything risky" reasoning) counted toward the same ten-file budget
+    # as genuine successes, and could evict the one copy that matters
+    # after a schema-raising release. Seed ten pre-existing backups (aged
+    # so a new one would rank as the newest) and fail the update at the
+    # pull step - strictly AFTER the backup already ran. None of the ten
+    # may be pruned: pruning now happens only once an update actually
+    # reaches "done".
+    backups_dir = updater.backup_dir
+    backups_dir.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    alte_dateien = []
+    for i in range(10):
+        p = backups_dir / f"store-2020-01-01-{i:06d}.tgz"
+        p.write_bytes(b"x")
+        os.utime(p, (now - 100000 + i, now - 100000 + i))
+        alte_dateien.append(p)
+
+    tar_path = updater.bindir / "tar"
+    tar_path.write_text(
+        '#!/bin/sh\nprintf "%s %s\\n" "tar" "$*" >> "$STUB_LOG"\n[ "$1" = "czf" ] && : > "$2"\n',
+        encoding="utf-8",
+    )
+    tar_path.chmod(0o755)
+
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "docker" "$*" >> "$STUB_LOG"\n'
+        'case "$1" in\n'
+        '  inspect) printf "LOXMATTER_VERSION=0.2.0\\n" ;;\n'
+        '  compose) [ "$2" = "pull" ] && exit 1; exit 0 ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "failed"
+    for p in alte_dateien:
+        assert p.exists(), f"{p.name} was pruned even though the update never succeeded"
+
+
+def test_a_checkout_refused_by_local_modifications_is_reported_distinctly(updater):
+    # Minor 10. Before this fix, "target $REF not found in the
+    # repository" was reported for ANY checkout failure, including one
+    # where the ref exists perfectly well but the checkout itself refuses
+    # because $REPO's working tree has local modifications that would be
+    # overwritten - a materially different, non-retryable-by-picking-
+    # another-target problem the old message actively misled an operator
+    # away from. Stub `rev-parse` (does the ref exist?) to succeed and
+    # ONLY `checkout` itself to fail.
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        "  *rev-parse*) exit 0 ;;\n"
+        '  *"checkout --detach"*) exit 1 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "failed"
+    assert "not found in the repository" not in state["error"]
+
+
+def test_a_missing_ref_is_still_reported_as_not_found(updater):
+    # Companion to the test above: confirms the "not found" wording is
+    # still reachable, and specifically for the case it now means -
+    # `rev-parse` itself says the ref does not exist - with `checkout`
+    # never even attempted for a ref already known not to exist.
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        "  *rev-parse*) exit 1 ;;\n"
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "failed"
+    assert "not found in the repository" in state["error"]
+    assert "checkout --detach" not in calls
