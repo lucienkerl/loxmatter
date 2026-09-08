@@ -1373,6 +1373,52 @@ async def test_the_commissioning_card_leads_with_a_labelled_code_field(api):
     assert '<div class="row">\n            <input\n              type="text"' not in markup
 
 
+async def test_the_pairing_code_field_formats_normalizes_and_labels_itself(api):
+    """Entwurf "Pairing-Code: schreiben, wie er auf dem Geraet steht"
+    (2026-09-07): das Feld schreibt die Bindestriche beim Tippen mit,
+    benennt rechts im Feld, was es erkannt hat, und die Karte schickt den
+    NORMALISIERTEN statt den bloss getrimmten Wert ab.
+
+    Fuer den gesamten Umbau gab es zuvor genau EINE Assertion in dieser
+    Datei (auf `commissionRunCode`, siehe
+    `test_commission_device_drives_the_flow_and_stops_where_it_failed`).
+    Nichts sicherte, dass `@input` noch am Feld haengt, dass es den Chip
+    gibt, oder dass `commissionDevice` wirklich den normalisierten statt
+    des getrimmten Werts verschickt - wer das beim Umsortieren verliert,
+    saehe sonst weiterhin lauter gruene Tests."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    code_start = markup.index('<div class="code-field">')
+    code_field = markup[code_start : markup.index("</div>", code_start)]
+    assert '@input="formatCommissionCode($event.target)"' in code_field
+    assert '@keydown="commissionCodeKeydown($event)"' in code_field
+    assert 'class="code-detect"' in code_field
+    assert ":class=\"'tone-' + commissionCodeBadge().tone\"" in code_field
+    assert 'x-text="commissionCodeBadge().text"' in code_field
+
+    # Die Beispielzeile mit den beiden Bauformen, die den Klammerzusatz im
+    # frueheren Platzhalter ersetzt.
+    example_start = markup.index('<p class="code-examples"')
+    example_block = markup[example_start : markup.index("</p>", example_start)]
+    assert "x-text=\"t('web.devices.code_example_manual')\"" in example_block
+    assert "x-text=\"t('web.devices.code_example_qr')\"" in example_block
+
+    script = (await client.get("/static/app.js")).text
+    # `commissionDevice` verschickt den NORMALISIERTEN Wert, nicht mehr
+    # `this.commissionCode.trim()` - die Trenner, die das Feld beim Tippen
+    # selbst gesetzt hat, gehoeren nicht in den Matter-Stack.
+    assert "const code = normalizePairingCode(this.commissionCode);" in script
+    assert "const body = { code };" in script
+
+    # Die vier reinen Funktionen, auf Modulebene, ohne geladene
+    # Sprachtabelle prueffaehig.
+    assert "function isPairingQrCode(" in script
+    assert "function formatPairingCode(" in script
+    assert "function normalizePairingCode(" in script
+    assert "function describePairingCode(" in script
+
+
 async def test_the_two_long_commissioning_hints_moved_into_disclosures(api):
     """Kein Satz der frueheren drei Hinweisabsaetze ist verlorengegangen -
     die beiden langen stehen jetzt in je einer `<details>`-Klappe bei dem
@@ -1492,7 +1538,7 @@ async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
 
     assert "this.commissionStep = 0;" in body
     assert "this.commissionFailed = false;" in body
-    assert "this.commissionRunCode = this.commissionCode.trim();" in body
+    assert "this.commissionRunCode = formatPairingCode(this.commissionCode.trim());" in body
     # Schritt 1 steht VOR dem Nachladen, Schritt 2 dahinter.
     load = body.index(
         "await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);"
