@@ -1931,37 +1931,66 @@
             </div>
           </template>
 
-          <template x-for="command in controlsByKind(controlModalDevice, 'kelvin')" :key="command.key">
-            <div class="control-row">
-              <label x-text="t('web.devices.control_colortemp')"></label>
-              <input
-                x-show="command.range"
-                type="range" :min="command.range?.min" :max="command.range?.max" step="10"
-                :value="controlDrafts.kelvin ?? command.range?.min"
-                :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
-                @change="sendControl(controlModalDeviceObject(), command, $event.target.value)"
-              />
-              <!-- Hinweis fuer fehlenden Startwert, wenn der Regler sichtbar ist -->
-              <p
-                class="hint"
-                x-show="command.range && controlDrafts.kelvin === undefined"
-                x-text="t('web.devices.control_start_value_unknown')"
-              ></p>
-              <p class="hint" x-show="!command.range" x-text="t('web.devices.control_no_range')"></p>
-              <span x-show="!command.range" class="row">
+          <!-- Tableiste: nur sichtbar, wenn das Geraet beide Wege kann
+               (`hasColourTabs`) - eine CCT- oder eine reine Farbleuchte
+               sieht keine Reiter. -->
+          <div class="control-tabs" x-show="hasColourTabs(controlModalDevice)">
+            <button :class="{ 'is-active': controlTab === 'white' }"
+                    @click="controlTab = 'white'"
+                    x-text="t('web.devices.control_tab_white')"></button>
+            <button :class="{ 'is-active': controlTab === 'colour' }"
+                    @click="controlTab = 'colour'"
+                    x-text="t('web.devices.control_tab_colour')"></button>
+          </div>
+
+          <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'white'">
+            <template x-for="command in controlsByKind(controlModalDevice, 'kelvin')" :key="command.key">
+              <div class="control-row">
+                <label x-text="t('web.devices.control_colortemp')"></label>
                 <input
-                  type="number"
-                  :placeholder="t('web.devices.value_placeholder')"
-                  @input="commandValueDrafts[command.key] = $event.target.value"
-                />
-                <button
-                  @click="executeCommand(controlModalDeviceObject(), command)"
+                  x-show="command.range"
+                  type="range" :min="command.range?.min" :max="command.range?.max" step="10"
+                  :value="controlDrafts.kelvin ?? command.range?.min"
                   :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
-                  x-text="t('web.devices.send')"
-                ></button>
-              </span>
-            </div>
-          </template>
+                  @change="sendControl(controlModalDeviceObject(), command, $event.target.value)"
+                />
+                <!-- Hinweis fuer fehlenden Startwert, wenn der Regler sichtbar ist -->
+                <p
+                  class="hint"
+                  x-show="command.range && controlDrafts.kelvin === undefined"
+                  x-text="t('web.devices.control_start_value_unknown')"
+                ></p>
+                <p class="hint" x-show="!command.range" x-text="t('web.devices.control_no_range')"></p>
+                <span x-show="!command.range" class="row">
+                  <input
+                    type="number"
+                    :placeholder="t('web.devices.value_placeholder')"
+                    @input="commandValueDrafts[command.key] = $event.target.value"
+                  />
+                  <button
+                    @click="executeCommand(controlModalDeviceObject(), command)"
+                    :disabled="commandBusyKey === command.key || !isOnline(controlModalDeviceObject())"
+                    x-text="t('web.devices.send')"
+                  ></button>
+                </span>
+              </div>
+            </template>
+          </div>
+
+          <div x-show="!hasColourTabs(controlModalDevice) || controlTab === 'colour'">
+            <template x-for="command in controlsByKind(controlModalDevice, 'hue_sat')" :key="command.key">
+              <div class="control-row">
+                <div
+                  class="colour-field"
+                  :class="{ 'is-busy': commandBusyKey === command.key || !isOnline(controlModalDeviceObject()) }"
+                  @pointerup="pickColour($event, controlModalDeviceObject(), command)"
+                ></div>
+                <p class="hint" x-text="t('web.devices.control_colour_hint')"></p>
+                <p class="hint" x-show="controlDrafts.hue === undefined"
+                   x-text="t('web.devices.control_start_value_unknown')"></p>
+              </div>
+            </template>
+          </div>
 
           <template x-for="command in controlsByKind(controlModalDevice, 'unknown')" :key="command.key">
             <span class="row">

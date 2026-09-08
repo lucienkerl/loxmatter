@@ -398,6 +398,11 @@ function app() {
     // Entwurfsspeicher fuer die Regler im Bedien-Modal (Aufgabe 7): einmal
     // beim Oeffnen aus `readStartValues` befuellt, siehe dort.
     controlDrafts: {},
+    // Der aktive Reiter des Bedien-Modals. Wird beim Oeffnen aus dem
+    // `colormode`-Signal des Geraets gesetzt (0 = Hue/Sat, 2 = Mired,
+    // gegen das SDK belegt) - das Modal raet den Modus also nicht, es
+    // liest ihn.
+    controlTab: "white",
     // Kurzmeldungen als Overlay statt im Textfluss (2026-09-03): eine
     // eingeblendete Zeile im Fluss verschiebt alles darunter, und wer
     // gerade einen zweiten Befehl anklicken will, trifft daneben.
@@ -1035,6 +1040,16 @@ function app() {
       return this.commandsFor(deviceId).some((command) => command.control !== "none");
     },
 
+    /** Tabs nur, wenn das Geraet BEIDE Wege kann. Eine CCT-Leuchte
+     * bekommt dadurch keine Tableiste - ohne eine einzige Abfrage auf
+     * Geraetetyp oder Modell (Entwurf 2026-09-07, Abschnitt 6.3). */
+    hasColourTabs(deviceId) {
+      return (
+        this.controlsByKind(deviceId, "kelvin").length > 0 &&
+        this.controlsByKind(deviceId, "hue_sat").length > 0
+      );
+    },
+
     exportedAtFor(deviceId) {
       const status = this.exportStatusFor(deviceId);
       return status ? status.exported_at : null;
@@ -1588,6 +1603,51 @@ function app() {
       }
     },
 
+    /**
+     * Farbton (Grad) und Saettigung (Prozent) in die gepackte Loxone-Zahl,
+     * die `POST /api/commands/{key}` erwartet.
+     *
+     * Warum der Umweg ueber die Loxone-Codierung, statt Hue/Sat direkt zu
+     * schicken: WebUI und Loxone benutzen denselben Uebersetzer
+     * (`commands/translate.py`, Spec 4.2). Ein Klick hier durchlaeuft damit
+     * genau den Weg, den Loxone spaeter nimmt - klappt es hier, ist der
+     * Loxone-Pfad bewiesen. Der Preis ist die Quantisierung auf volle
+     * Prozent je Kanal (Entwurf 2026-09-07, Abschnitt 9.1).
+     *
+     * Die Helligkeit steckt NICHT in dieser Zahl - sie laeuft ueber
+     * LevelControl. Deshalb ist der Value-Anteil hier fest 1.
+     */
+    hueSatToLoxone(hue, saturation) {
+      // Lehrbuch-HSV nach RGB mit fest v = 1: die Helligkeit steckt NICHT
+      // in dieser Zahl, sie laeuft ueber LevelControl.
+      const h = (((hue % 360) + 360) % 360) / 60;
+      const s = Math.max(0, Math.min(100, saturation)) / 100;
+      const c = s;                                   // Chroma bei v = 1
+      const x = c * (1 - Math.abs((h % 2) - 1));
+      const m = 1 - c;                               // Weissanteil
+      const sectors = [
+        [c, x, 0], [x, c, 0], [0, c, x],
+        [0, x, c], [x, 0, c], [c, 0, x],
+      ];
+      const [r, g, b] = sectors[Math.floor(h) % 6].map((channel) =>
+        Math.round((channel + m) * 100),
+      );
+      return r + g * 1000 + b * 1000000;
+    },
+
+    /** Wandelt einen Klick auf die Farbflaeche in Farbton und Saettigung
+     * und schickt ihn. Die Flaeche ist waagerecht der Farbton (0-360°),
+     * senkrecht die Saettigung (oben 100 %, unten 0 %). */
+    pickColour(event, device, command) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+      const hue = x * 360;
+      const saturation = (1 - y) * 100;
+      this.controlDrafts = { ...this.controlDrafts, hue, saturation };
+      return this.sendControl(device, command, this.hueSatToLoxone(hue, saturation));
+    },
+
     // ---------------------------------------------------------------------
     // Kurzmeldungen (2026-09-03)
     // ---------------------------------------------------------------------
@@ -2028,6 +2088,7 @@ function app() {
       this.deviceActionError = null;
       this.controlModalDevice = device.id;
       this.controlDrafts = this.readStartValues(device.id);
+      this.controlTab = this.controlDrafts.colormode === 0 ? "colour" : "white";
       this.$nextTick(() => this.$refs.controlModal.showModal());
     },
 

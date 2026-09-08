@@ -938,6 +938,15 @@ web.devices.control_start_value_unknown:
 web.devices.control_no_range:
   en: "This lamp does not report its colour temperature range, so there is no slider."
   de: "Diese Leuchte meldet ihren Farbtemperaturbereich nicht, deshalb gibt es keinen Regler."
+web.devices.control_tab_white:
+  en: "White"
+  de: "Weiß"
+web.devices.control_tab_colour:
+  en: "Colour"
+  de: "Farbe"
+web.devices.control_colour_hint:
+  en: "Horizontal: hue. Vertical: saturation. Release to send."
+  de: "Waagerecht: Farbton. Senkrecht: Sättigung. Beim Loslassen wird gesendet."
 
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
