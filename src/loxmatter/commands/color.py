@@ -215,11 +215,16 @@ def loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]:
     # Channel name for the server log (str(exc)); the same English slug
     # also serves as the language-neutral field for callers such as
     # `translate.py` - see `LoxoneColourError.channel` above.
+    #
+    # The two halves of each pair were a German label and an English slug
+    # until this file was translated, and are now identical. Collapsing the
+    # pair is the obvious tidy-up, but it changes code rather than prose and
+    # so was left for a separate change.
     channels = (("red", "red"), ("green", "green"), ("blue", "blue"))
-    for (channel_de, channel_slug), percent in zip(channels, percents, strict=True):
+    for (channel_name, channel_slug), percent in zip(channels, percents, strict=True):
         if percent > 100:
             raise LoxoneColourError(
-                f"Channel {channel_de} is at {percent} %, allowed is 0-100 "
+                f"Channel {channel_name} is at {percent} %, allowed is 0-100 "
                 f"(Loxone color number {packed})",
                 kind="channel_out_of_range",
                 channel=channel_slug,
