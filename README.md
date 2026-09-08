@@ -95,11 +95,11 @@ CLI too.
 
 ## 🖼 The web interface
 
-**Devices**<br>Every commissioned device on one page, with live values and controls, and a badge where signals changed since the last export.
+**Devices**<br>Every commissioned device on one page, with live values and controls, and a badge where signals changed since the last export. Lamps get sliders for brightness and color temperature and a color picker instead of number fields; the mode tab bar only shows up on lamps that support both color and color temperature.
 
 <img src="docs/screenshots/dashboard.png" alt="Device list with live values and controls" />
 
-**Commissioning**<br>Paste the pairing code from the device or its packaging and start — no account, no cloud round trip. A device already paired with Apple, Google or a DIRIGERA needs an extra multi-admin code from that vendor's app first; its own printed code no longer works here.
+**Commissioning**<br>Type the pairing code exactly as it's printed on the device or its packaging — the field writes the dashes in for you — and start; no account, no cloud round trip. A device already paired with Apple, Google or a DIRIGERA needs an extra multi-admin code from that vendor's app first; its own printed code no longer works here.
 
 <img src="docs/screenshots/commissioning.png" alt="Commissioning field with a pairing code entered" />
 

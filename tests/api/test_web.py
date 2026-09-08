@@ -168,6 +168,38 @@ async def test_the_mark_stands_in_the_interface_in_both_its_sizes(api):
         assert "svg" in response.headers["content-type"]
 
 
+def test_the_stylesheet_has_balanced_braces():
+    """Eine nicht geschlossene CSS-Regel verschluckt ALLES, was ihr folgt -
+    ohne Fehlermeldung, ohne dass ein Test es merkt.
+
+    Genau das ist beim Zusammenfuehren von main passiert (2026-09-08): ein
+    Konfliktmarker schnitt mitten durch `.signals-summary`, die Aufloesung
+    nahm die schliessende Klammer mit, und damit war das gesamte Stylesheet
+    ab dieser Zeile wirkungslos. Das Signal-Modal fiel auf den Zustand
+    zurueck, den der ganze Umbau beseitigt hatte: kein Raster, ausgefranste
+    Zeilen, der Spaltenkopf als Fliesstext.
+
+    Die Testreihe blieb dabei vollstaendig gruen. Sie kann das auch gar
+    nicht sehen: jede CSS-Zusicherung in dieser Datei sucht Zeichenketten in
+    der ausgelieferten Datei, und die Zeichenketten standen ja alle noch
+    darin - nur eben in totem Text. Aufgefallen ist es erst am neu
+    erzeugten Screenshot.
+
+    Dieser Test ist die billigste Absicherung dagegen: er versteht kein CSS,
+    er zaehlt nur. Kommentare werden vorher entfernt, weil `{` und `}` darin
+    vorkommen duerfen (und in diesem Stylesheet reichlich vorkommen, es ist
+    dicht kommentiert)."""
+    css = (WEB_DIR / "style.css").read_text(encoding="utf-8")
+    without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+
+    depth = 0
+    for number, line in enumerate(without_comments.split("\n"), start=1):
+        depth += line.count("{") - line.count("}")
+        assert depth >= 0, f"eine Klammer zuviel geschlossen, Zeile {number}"
+
+    assert depth == 0, f"{depth} Regel(n) nicht geschlossen - alles danach ist wirkungslos"
+
+
 def test_the_icons_are_well_formed_xml():
     """Ein SVG, das nicht als XML parst, zeigt KEIN Browser an - er blendet es
     still als kaputtes Bild aus, ohne Meldung irgendwo.
@@ -459,9 +491,10 @@ async def test_the_device_tile_no_longer_promises_a_ranking_it_does_not_have(api
     mitliefert, ist die alte, ehrlichere Formulierung wieder zutreffend.
 
     Task 8 (Raster-Umbau, 2026-09-05) hat die eigene Werte-Ueberschrift
-    danach ganz entfernt: die Kachel zeigt den Leitwert jetzt in der
-    Kopfzeile und den Rest als fluchtendes Raster ohne Abschnittstitel -
-    eine Ueberschrift ueber der einzigen Werteliste einer sonst schon
+    danach ganz entfernt: die Kachel zeigt heute (seit dem Wegfall des
+    Leitwerts, Entwurf 2026-09-07) alle funktionalen Signale gleichrangig
+    als fluchtendes Raster ohne Abschnittstitel - eine Ueberschrift ueber
+    der einzigen Werteliste einer sonst schon
     kompakten Kachel waere reiner Platzverbrauch gewesen. Der Schluessel
     `web.devices.values_heading` ist deshalb (Task 9) aus `strings.yaml`
     entfernt und taucht im ausgelieferten Markup nicht mehr auf. Die
@@ -710,40 +743,39 @@ def _app_state(setup: str = "") -> dict:
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
-def test_a_device_without_a_lead_signal_does_not_throw_in_any_binding():
-    """Zwischen `GET /api/devices` und `GET /api/devices/<id>/signals` liegt
-    ein Rendering-Durchlauf, in dem `signalsByDevice` fuer das Geraet noch
-    LEER ist - `leadSignalFor` liefert dann `null`. Das ist kein Sonderfall
-    kaputter Daten: es trifft JEDES Geraet einmal, weil die Signale in einer
-    zweiten Anfrage nachkommen (2026-09-06).
+def test_the_signal_helpers_tolerate_null_without_throwing():
+    """Frueher `test_a_device_without_a_lead_signal_does_not_throw_in_any_binding`.
 
-    `x-show` auf der Huelle half nicht: es setzt nur `display`, es haelt
-    Alpine NICHT davon ab, die Ausdruecke der Kinder auszuwerten. Die drei
-    Helfer lasen also `signal.key` auf `null` und warfen - dreimal pro
-    Geraet, bei jedem Durchlauf.
+    Der Aufhaenger war der Leitwert: zwischen `GET /api/devices` und
+    `GET /api/devices/<id>/signals` liegt ein Rendering-Durchlauf, in dem
+    `signalsByDevice` fuer das Geraet noch LEER ist - `leadSignalFor`
+    lieferte dann `null`. Das `x-show` auf der Huelle half nicht: es setzt
+    nur `display`, es haelt Alpine NICHT davon ab, die Ausdruecke der
+    Kinder auszuwerten. Die drei Helfer lasen also `signal.key` auf `null`
+    und warfen - dreimal pro Geraet, bei jedem Durchlauf.
 
-    Ein Geraet ohne Leitsignal ist ein gueltiger Zustand (die Kachel hat
-    dafuer laengst ihren Hinweis), also duerfen die Helfer ihn beantworten,
-    statt an ihm zu scheitern.
+    Diesen Aufrufer gibt es nicht mehr (Entwurf 2026-09-07): das `x-for`
+    des Werterasters laeuft ueber eine leere Liste und wertet gar nichts
+    aus. Die Duldsamkeit der Helfer bleibt trotzdem stehen und wird
+    weiterhin belegt - der Test fragt sie jetzt direkt statt ueber einen
+    Aufrufer, den es nicht mehr gibt.
     """
     values = _app_state(
         """
         state.signalsByDevice = {};
-        const lead = state.leadSignalFor(1);
-        const out = { lead, calls: {} };
+        const out = { calls: {} };
         for (const fn of ["signalIsFresh", "signalAgeTitle", "liveValueOf"]) {
           try {
-            out.calls[fn] = { ok: true, value: state[fn](lead) ?? null };
+            out.calls[fn] = { ok: true, value: state[fn](null) ?? null };
           } catch (error) {
             out.calls[fn] = { ok: false, error: error.message };
           }
         }
-        out.formatted = state.formatValue(state.liveValueOf(lead));
+        out.formatted = state.formatValue(state.liveValueOf(null));
         console.log(JSON.stringify(out));
         """
     )
 
-    assert values["lead"] is None, "ohne geladene Signale gibt es kein Leitsignal"
     for name, call in values["calls"].items():
         assert call["ok"], f"{name} warf: {call.get('error')}"
 
@@ -768,7 +800,6 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
         state.liveSeenAt = { d1_1_onoff: 1000 };
         state.nowTick = 1200;
         console.log(JSON.stringify({
-          lead: state.leadSignalFor(1).key,
           live: state.liveValueOf(signal),
           fresh: state.signalIsFresh(signal),
           title: state.signalAgeTitle(signal),
@@ -776,7 +807,6 @@ def test_a_signal_that_exists_is_unaffected_by_the_guard():
         """
     )
 
-    assert values["lead"] == "d1_1_onoff"
     assert values["live"] is True
     assert values["fresh"] is True
     assert values["title"]
@@ -846,6 +876,56 @@ def test_a_device_without_functional_signals_yields_only_the_expert_group():
     )
 
     assert values == ["expert"]
+
+
+def test_first_signals_for_filters_orders_and_caps_at_the_preview_limit():
+    """Nacharbeit 2026-09-07, Fund 3: Der Umbau auf das Werteraster (Entwurf
+    2026-09-05) hat aus `test_a_signal_that_exists_is_unaffected_by_the_guard`
+    die Zeile `assert values["lead"] == "d1_1_onoff"` entfernt - formal eine
+    Aussage ueber das inzwischen geloeschte `leadSignalFor`. Tatsaechlich war
+    das aber die einzige Assertion im Repo, die `firstSignalsFor` in einem
+    echten `node`-Prozess ausfuehrte. `test_the_value_grid_now_carries_every_
+    functional_signal` (tests/api/test_web.py) belegt seither nur noch, dass
+    `x-for="signal in firstSignalsFor(device.id)"` als String ausgeliefert
+    wird - nicht, was der Helfer selbst tut. Dieser Test schliesst die
+    Luecke eigenstaendig, statt sie an einen Test mit anderem Zweck
+    anzuflanschen.
+
+    Geprueft werden alle drei Aufgaben von `firstSignalsFor` /
+    `remainingSignalCount` zusammen (app.js): nicht-funktionale Signale
+    fallen durch das `signal.functional`-Sieb, die Reihenfolge der
+    Eingabe-Liste bleibt erhalten (kein Sortieren, kein Umschichten), und
+    ab mehr als `FUNCTIONAL_PREVIEW_LIMIT` (6) funktionalen Signalen liefert
+    `firstSignalsFor` genau sechs zurueck, waehrend `remainingSignalCount`
+    den Rest zaehlt."""
+    values = _app_state(
+        """
+        const signals = [
+          { key: "s1", functional: true },
+          { key: "s2", functional: false },
+          { key: "s3", functional: true },
+          { key: "s4", functional: true },
+          { key: "s5", functional: false },
+          { key: "s6", functional: true },
+          { key: "s7", functional: true },
+          { key: "s8", functional: true },
+          { key: "s9", functional: true },
+        ];
+        state.signalsByDevice = { 1: signals };
+        console.log(JSON.stringify({
+          first: state.firstSignalsFor(1).map((signal) => signal.key),
+          remaining: state.remainingSignalCount(1),
+        }));
+        """
+    )
+
+    # Sieben der neun Signale sind funktional (s1, s3, s4, s6, s7, s8, s9);
+    # s2 und s5 muessen draussen bleiben, und die Reihenfolge der restlichen
+    # sieben bleibt die der Eingabe-Liste - kein Sortieren nach Schluessel
+    # oder sonst etwas.
+    assert values["first"] == ["s1", "s3", "s4", "s6", "s7", "s8"]
+    # Sieben funktionale Signale, Deckel bei sechs: genau eines bleibt uebrig.
+    assert values["remaining"] == 1
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
@@ -1398,6 +1478,52 @@ async def test_the_commissioning_card_leads_with_a_labelled_code_field(api):
     assert '<div class="row">\n            <input\n              type="text"' not in markup
 
 
+async def test_the_pairing_code_field_formats_normalizes_and_labels_itself(api):
+    """Entwurf "Pairing-Code: schreiben, wie er auf dem Geraet steht"
+    (2026-09-07): das Feld schreibt die Bindestriche beim Tippen mit,
+    benennt rechts im Feld, was es erkannt hat, und die Karte schickt den
+    NORMALISIERTEN statt den bloss getrimmten Wert ab.
+
+    Fuer den gesamten Umbau gab es zuvor genau EINE Assertion in dieser
+    Datei (auf `commissionRunCode`, siehe
+    `test_commission_device_drives_the_flow_and_stops_where_it_failed`).
+    Nichts sicherte, dass `@input` noch am Feld haengt, dass es den Chip
+    gibt, oder dass `commissionDevice` wirklich den normalisierten statt
+    des getrimmten Werts verschickt - wer das beim Umsortieren verliert,
+    saehe sonst weiterhin lauter gruene Tests."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+
+    code_start = markup.index('<div class="code-field">')
+    code_field = markup[code_start : markup.index("</div>", code_start)]
+    assert '@input="formatCommissionCode($event.target)"' in code_field
+    assert '@keydown="commissionCodeKeydown($event)"' in code_field
+    assert 'class="code-detect"' in code_field
+    assert ":class=\"'tone-' + commissionCodeBadge().tone\"" in code_field
+    assert 'x-text="commissionCodeBadge().text"' in code_field
+
+    # Die Beispielzeile mit den beiden Bauformen, die den Klammerzusatz im
+    # frueheren Platzhalter ersetzt.
+    example_start = markup.index('<p class="code-examples"')
+    example_block = markup[example_start : markup.index("</p>", example_start)]
+    assert "x-text=\"t('web.devices.code_example_manual')\"" in example_block
+    assert "x-text=\"t('web.devices.code_example_qr')\"" in example_block
+
+    script = (await client.get("/static/app.js")).text
+    # `commissionDevice` verschickt den NORMALISIERTEN Wert, nicht mehr
+    # `this.commissionCode.trim()` - die Trenner, die das Feld beim Tippen
+    # selbst gesetzt hat, gehoeren nicht in den Matter-Stack.
+    assert "const code = normalizePairingCode(this.commissionCode);" in script
+    assert "const body = { code };" in script
+
+    # Die vier reinen Funktionen, auf Modulebene, ohne geladene
+    # Sprachtabelle prueffaehig.
+    assert "function isPairingQrCode(" in script
+    assert "function formatPairingCode(" in script
+    assert "function normalizePairingCode(" in script
+    assert "function describePairingCode(" in script
+
+
 async def test_the_two_long_commissioning_hints_moved_into_disclosures(api):
     """Kein Satz der frueheren drei Hinweisabsaetze ist verlorengegangen -
     die beiden langen stehen jetzt in je einer `<details>`-Klappe bei dem
@@ -1517,7 +1643,7 @@ async def test_commission_device_drives_the_flow_and_stops_where_it_failed(api):
 
     assert "this.commissionStep = 0;" in body
     assert "this.commissionFailed = false;" in body
-    assert "this.commissionRunCode = this.commissionCode.trim();" in body
+    assert "this.commissionRunCode = formatPairingCode(this.commissionCode.trim());" in body
     # Schritt 1 steht VOR dem Nachladen, Schritt 2 dahinter.
     load = body.index(
         "await Promise.all([this.loadControls(device.id), this.loadSignals(device.id)]);"
@@ -2690,8 +2816,6 @@ async def test_the_script_offers_room_filtering_grouping_and_search(api):
         "visibleDevices(",
         "deviceGroups(",
         "categoryLabel(",
-        "leadSignalFor(",
-        "restSignalsFor(",
         "saveRoom(",
         "beginNewRoom(",
         "commitNewRoom(",
@@ -2717,7 +2841,7 @@ async def test_the_page_offers_the_room_bar(api):
     page = (await client.get("/")).text
     assert "roomChips()" in page
     assert "deviceGroups()" in page
-    assert "leadSignalFor(" in page
+    assert "firstSignalsFor(" in page
     assert "deviceSearch" in page
 
 
@@ -3128,24 +3252,6 @@ async def test_the_changed_pill_now_lives_in_the_tile_footer(api):
     assert "isOnline" not in pill_tag
 
 
-async def test_the_lead_label_only_yields_to_the_offline_pill_now(api):
-    """Folgeaenderung desselben Umbaus: die Bedingung
-    `x-show="isOnline(device) && !changedSinceExport(device.id) &&
-    leadSignalFor(device.id)"` galt nur, solange die Geaendert-Pille noch
-    in der Kopfzeile stand und sich mit dem Leitwert-Label dieselbe Zeile
-    teilte. Mit der Pille in der Fusszeile (s.
-    `test_the_changed_pill_now_lives_in_the_tile_footer`) hat ein
-    geaendertes, aber online Geraet die Zeile fuer sich - das Label muss
-    wieder erscheinen. Nur die Offline-Pille beansprucht die Zeile noch."""
-    client, _, _ = api
-    markup = _without_comments((await client.get("/")).text)
-    assert "!changedSinceExport(device.id)" not in markup
-    assert (
-        'x-show="isOnline(device) && leadSignalFor(device.id)"\n'
-        '                        x-text="leadSignalFor(device.id)?.title"' in markup
-    )
-
-
 async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
     """Nacharbeit 2026-09-05, Fund 3: jeder Befehl steckt in einem eigenen
     `<span class="row">`-Wrapper (index.html), und `.row + .row {
@@ -3176,65 +3282,11 @@ async def test_command_row_wrappers_do_not_stack_their_sibling_margin(api):
     assert "margin-top: 0.5rem;" in base_rule
 
 
-async def test_lead_value_gets_padding_room_for_descenders(api):
-    """Fund 4 (Nacharbeit 2026-09-05): `.lead-value` schneidet bei
-    `line-height: 1.05` und `overflow: hidden` die Unterlaengen textwertiger
-    Leitwerte (`g`/`y`/`p`/`q`) um ein Pixel ab - im Browser gemessen am
-    Text `gypq`: `scrollHeight` 24px gegen `clientHeight` 23px. Zahlen ohne
-    Unterlaengen sind nicht betroffen.
-
-    Gemessene Wahl: `padding-block` statt einer hoeheren `line-height` -
-    Letzteres haette die Zeilenbox und damit die Feldhoehe JEDER Kachel
-    vergroessert (auch rein numerischer), `padding-block` zaehlt dagegen
-    innerhalb der `overflow: hidden`-Clip-Box (die am Padding-Rand
-    schneidet) und schafft nur dort zusaetzlichen Raum. Ohne Browser-Engine
-    kann diese Suite `scrollHeight`/`clientHeight` selbst nicht nachrechnen
-    (siehe Aufgabenbericht fuer die Messung) - belegt wird nur, dass die
-    ausgelieferte Regel ein `padding-block` traegt und `line-height`
-    unveraendert bei `1.05` bleibt."""
-    client, _, _ = api
-    css = (await client.get("/static/style.css")).text
-    rule = css.split(".lead-value {", 1)[1].split("}", 1)[0]
-    assert "padding-block" in rule
-    assert "line-height: 1.05" in rule
-
-
-async def test_lead_value_does_not_yield_to_the_device_name(api):
-    """Nacharbeit 2026-09-05, Fund 1: `flex: 0 1 auto` plus `min-width: 0`
-    liess `.lead-value` schon im GEWOEHNLICHEN Fall neben `.device-name`
-    schrumpfen, nicht erst im pathologischen, den beide Regeln eigentlich
-    eindaemmen sollten - im Browser gemessen bei 1440px: `12.4 %`
-    `clientWidth` 64px gegen `scrollWidth` 73px, `true` 51px gegen 54px,
-    beide ohne jeden Platzmangel gekuerzt (siehe Aufgabenbericht). Ohne
-    Browser-Engine kann diese Suite das Kuerzen selbst nicht nachrechnen -
-    belegt wird nur, dass die ausgelieferte Regel das Schrumpfen abstellt
-    (`flex: 0 0 auto`), die Absicherung gegen einen pathologisch langen
-    Wert stattdessen an ein `max-width` verlegt, und `min-width` (das ohne
-    `flex-shrink: 1` keine Funktion mehr haette) nicht mehr traegt.
-
-    Fund 1 (Review vom 2026-09-05): der urspruengliche Deckel von `60%`
-    liess an der dokumentierten Grid-Untergrenze (261 px) den gesamten
-    Platzmangel beim Namen landen - im Browser gemessen 134 px Leitwert
-    gegen nur noch 43 px Name, dort ohne Ellipse mitten im Buchstaben
-    gekappt (siehe Aufgabenbericht). Der Deckel ist deshalb auf `50%`
-    gesenkt: der Leitwert weicht weiterhin nicht, darf aber hoechstens die
-    Haelfte der Kopfzeile beanspruchen, der Rest gehoert dem Namen. Ohne
-    Browser-Engine kann diese Suite die tatsaechliche Aufteilung nicht
-    nachrechnen - belegt wird nur der genaue Deckelwert."""
-    client, _, _ = api
-    css = (await client.get("/static/style.css")).text
-    rule = css.split(".lead-value {", 1)[1].split("}", 1)[0]
-    assert "flex: 0 0 auto" in rule
-    assert "max-width: 50%" in rule
-    assert "min-width" not in rule
-    assert "overflow: hidden" in rule
-    assert "text-overflow: ellipsis" in rule
-
-
 async def test_device_name_truncates_with_an_ellipsis_instead_of_clipping(api):
-    """Fund 1 (Review vom 2026-09-05): mit dem auf `50%` gesenkten Deckel an
-    `.lead-value` (s.o.) traegt der Name bei der Grid-Untergrenze immer
-    noch die Kuerzung - nur jetzt nicht mehr die vollstaendige. Ein
+    """Fund 1 (Review vom 2026-09-05), nachgezogen 2026-09-07: seit dem
+    Wegfall von `.lead-value` hat der Name die Kopfzeile fuer sich und
+    kuerzt nur noch bei aussergewoehnlich langen Namen. Dass er es dann
+    SICHTBAR tut, bleibt die Zusicherung dieses Tests. Ein
     `<input>` clippt seinen Text intern, sobald er nicht passt, und zwar
     OHNE jedes Zeichen, das anzeigt, dass Text fehlt, solange kein
     `text-overflow` gesetzt ist - im Browser gemessen bei 261 px Kachel-
@@ -3317,9 +3369,11 @@ async def test_the_command_bar_distinguishes_loading_from_genuinely_empty(api):
 
     Analog fuer Signale: `web.devices.no_functional_signals` wurde
     ebenfalls geloescht, wodurch eine Kachel mit geladenen, aber leeren
-    funktionalen Signalen (`leadSignalFor` liefert `null`) zwischen
-    Kopfzeile und Befehlsleiste stillschweigend eine Luecke zeigte -
-    ununterscheidbar von einer noch ladenden Kachel.
+    funktionalen Signalen (damals: `leadSignalFor` liefert `null`; die
+    Bedingung dafuer heisst heute `functionalSignalsFor(id).length === 0`,
+    `leadSignalFor` gibt es seit dem Wegfall des Leitwerts nicht mehr)
+    zwischen Kopfzeile und Befehlsleiste stillschweigend eine Luecke
+    zeigte - ununterscheidbar von einer noch ladenden Kachel.
 
     Belegt wird, dass beide Unterscheidungen wieder ausgeliefert werden und
     `controlsLoaded` dabei tatsaechlich (wieder) verwendet wird - nicht,
@@ -3674,24 +3728,27 @@ async def test_the_room_group_wrapper_does_not_disturb_the_menu_layout(api):
     assert "gap: 1px" in rule
 
 
-async def test_exactly_one_signals_dialog_is_delivered(api):
-    """Entwurf Abschnitt 4: EIN `<dialog>` fuer die ganze Seite, nicht eines
-    je Kachel.
+async def test_exactly_one_dialog_of_each_kind_is_delivered(api):
+    """Entwurf Abschnitt 4: EIN `<dialog>` je Zweck fuer die ganze Seite,
+    nicht eines je Kachel.
 
     Markup innerhalb `x-for` wird einmal PRO GERAET ausgeliefert - bei
     dreissig Geraeten laegen dreissig vollstaendige Signaltabellen im
     Dokument, und jede `id` darin dreissigfach (derselbe Fallstrick, den
     `aria-labelledby` im Kachel-Menue schon einmal umschiffen musste). Die
-    Zaehlung auf 1 ist die einzige Zusicherung, die diesen Rueckfall
-    ueberhaupt bemerken wuerde: ein `<dialog>` in der Kachel saehe im
-    ausgelieferten Text sonst genauso aus wie eines am Seitenende.
+    Zaehlung auf 2 (ein Signal-Modal, ein Bedien-Modal aus Aufgabe 7) ist
+    die einzige Zusicherung, die diesen Rueckfall ueberhaupt bemerken
+    wuerde: ein `<dialog>` in der Kachel saehe im ausgelieferten Text sonst
+    genauso aus wie eines am Seitenende.
 
-    Die Ortspruefung (nach `</main>`) belegt zusaetzlich, dass es ausserhalb
-    der Ansichts-Sections und damit ausserhalb jeder Geraeteschleife steht."""
+    Die Ortspruefung (nach `</main>`) belegt zusaetzlich, dass beide
+    ausserhalb der Ansichts-Sections und damit ausserhalb jeder
+    Geraeteschleife stehen."""
     client, _, _ = api
     markup = _without_comments((await client.get("/")).text)
-    assert markup.count("<dialog") == 1
+    assert markup.count("<dialog") == 2
     assert 'x-ref="signalsModal"' in markup
+    assert 'x-ref="controlModal"' in markup
     assert markup.index("<dialog") > markup.index("</main>")
 
 
@@ -4239,7 +4296,7 @@ async def test_the_search_field_moves_left_when_there_are_no_rooms(api):
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
-def test_the_battery_is_never_the_lead_and_never_counted_twice():
+def test_the_battery_never_opens_the_value_grid_and_is_never_counted_twice():
     """Die drei Zusicherungen der Batteriezeile an EINEM Aufbau, weil sie
     zusammengehoeren: der Batteriestand fuehrt nicht, er steht nicht in der
     Vorschau, und er zaehlt nicht als "weiteres".
@@ -4269,7 +4326,6 @@ def test_the_battery_is_never_the_lead_and_never_counted_twice():
         });
         state.signalsByDevice = { 1: signals };
         console.log(JSON.stringify({
-          lead: state.leadSignalFor(1).key,
           battery: state.batterySignalFor(1).key,
           preview: state.firstSignalsFor(1).map((s) => s.key),
           remaining: state.remainingSignalCount(1),
@@ -4277,7 +4333,7 @@ def test_the_battery_is_never_the_lead_and_never_counted_twice():
         """
     )
 
-    assert values["lead"] == "d1_1_s0"
+    assert values["preview"][0] == "d1_1_s0"
     assert values["battery"] == "d1_0_battery"
     assert "d1_0_battery" not in values["preview"]
     assert len(values["preview"]) == 6
@@ -4296,41 +4352,49 @@ def test_a_mains_powered_device_has_no_battery_row():
         ] };
         console.log(JSON.stringify({
           battery: state.batterySignalFor(1),
-          lead: state.leadSignalFor(1).key,
+          first: state.firstSignalsFor(1)[0].key,
           remaining: state.remainingSignalCount(1),
         }));
         """
     )
 
     assert values["battery"] is None
-    assert values["lead"] == "d1_1_onoff"
+    assert values["first"] == "d1_1_onoff"
     assert values["remaining"] == 0
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
-def test_a_device_whose_only_functional_signal_is_the_battery_has_no_lead():
+def test_a_device_whose_only_functional_signal_is_the_battery_shows_an_empty_grid():
     """Der Randfall, an dem der Hinweis "keine funktionalen Signale" falsch
-    waere: es GIBT eines, es steht nur in der Fusszeile."""
+    waere: es GIBT eines, es steht nur in der Fusszeile.
+
+    Das Werteraster ist hier leer, obwohl `functionalSignalsFor` ein Signal
+    liefert - `previewSignalsFor` nimmt den Batteriestand ja heraus. Genau
+    deshalb haengt der Hinweis im Markup an `functionalSignalsFor` und nicht
+    an den Rasterzeilen, siehe
+    `test_the_no_functional_signals_hint_asks_the_list_not_the_grid`."""
     values = _app_state(
         """
         state.signalsByDevice = { 1: [
           { key: "d1_0_battery", title: "battery", endpoint: 0, cluster_id: 47, functional: true },
         ] };
         console.log(JSON.stringify({
-          lead: state.leadSignalFor(1),
+          rows: state.firstSignalsFor(1).length,
+          functional: state.functionalSignalsFor(1).length,
           battery: state.batterySignalFor(1).key,
           remaining: state.remainingSignalCount(1),
         }));
         """
     )
 
-    assert values["lead"] is None
+    assert values["rows"] == 0
+    assert values["functional"] == 1
     assert values["battery"] == "d1_0_battery"
     assert values["remaining"] == 0
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
-def test_a_device_with_two_power_source_endpoints_never_leads_with_battery():
+def test_a_device_with_two_power_source_endpoints_keeps_both_out_of_the_grid():
     """Der Randfall eines zusammengesetzten Geraets oder einer Bruecke mit
     zwei Batterien unter einem Datensatz: zwei Signale auf Cluster 47, auf
     verschiedenen Endpunkten.
@@ -4350,7 +4414,7 @@ def test_a_device_with_two_power_source_endpoints_never_leads_with_battery():
           { key: "d1_1_onoff", title: "onoff", endpoint: 1, cluster_id: 6, functional: true },
         ] };
         console.log(JSON.stringify({
-          lead: state.leadSignalFor(1).key,
+          first: state.firstSignalsFor(1)[0].key,
           battery: state.batterySignalFor(1).key,
           preview: state.previewSignalsFor(1).map((s) => s.key),
           previewClusters: state.previewSignalsFor(1).map((s) => s.cluster_id),
@@ -4358,7 +4422,7 @@ def test_a_device_with_two_power_source_endpoints_never_leads_with_battery():
         """
     )
 
-    assert values["lead"] == "d1_1_onoff"
+    assert values["first"] == "d1_1_onoff"
     assert values["battery"] == "d1_0_battA"
     assert 47 not in values["previewClusters"]
     assert values["preview"] == ["d1_1_onoff"]
@@ -4373,15 +4437,29 @@ async def test_the_tile_has_a_battery_row_with_its_own_symbol(api):
     assert 'x-show="batterySignalFor(device.id)"' in page
 
 
-async def test_the_no_functional_signals_hint_accounts_for_the_battery(api):
-    """Ein Geraet, dessen einziges funktionales Signal die Batterie ist, hat
-    keinen Leitwert - aber der Satz "keine funktionalen Signale" waere dort
-    falsch, denn die Fusszeile zeigt eines."""
+async def test_the_no_functional_signals_hint_asks_the_list_not_the_grid(api):
+    """Der Hinweis muss an `functionalSignalsFor` haengen, nicht an den
+    Rasterzeilen.
+
+    Der Grund ist die Batteriezeile: `previewSignalsFor` nimmt den
+    Batteriestand aus dem Werteraster heraus, ein Geraet mit NUR einem
+    Batteriesignal hat dort also null Zeilen bei einem funktionalen Signal.
+    Ueber die Rasterzeilen gefragt behauptete der Hinweis dann "keine
+    funktionalen Signale", waehrend die Fusszeile darunter eines zeigt.
+
+    Die Bedingung fragte frueher `!leadSignalFor(device.id)` und nach dem
+    Batterie-Umbau `!leadSignalFor(...) && !batterySignalFor(...)`. Mit dem
+    Wegfall des Leitwerts ist beides hinfaellig - `functionalSignalsFor`
+    beantwortet dieselbe Frage direkt und deckt den Batterie-Randfall von
+    sich aus ab."""
     client, _, _ = api
     page = _without_comments((await client.get("/")).text)
 
     hint = page[page.index("no_functional_signals") - 400 : page.index("no_functional_signals")]
-    assert "!batterySignalFor(device.id)" in hint
+    assert "functionalSignalsFor(device.id).length === 0" in hint
+    # Weder ueber die Rasterzeilen noch ueber den entfallenen Leitwert.
+    assert "firstSignalsFor" not in hint
+    assert "leadSignalFor" not in hint
 
 
 async def test_the_signal_rows_and_the_header_share_one_grid(api):
@@ -5086,3 +5164,119 @@ async def test_the_checkbox_labels_become_visible_only_below_640px(api):
     label_open = media_body.index("{", label_start)
     label_close = media_body.index("}", label_open)
     assert "display: inline" in media_body[label_open:label_close]
+
+
+async def test_the_value_grid_now_carries_every_functional_signal(api):
+    """Entwurf 2026-09-07, Abschnitt 2: der herausgehobene Leitwert
+    entfaellt, alle funktionalen Signale stehen gleichrangig im
+    Werteraster. `restSignalsFor` lieferte die Kurzliste OHNE ihren ersten
+    Eintrag - genau der stand oben in der Kopfzeile. Mit dem Wegfall der
+    Kopfzeilen-Anzeige muss das Raster wieder ueber die volle Liste
+    laufen, sonst verschwaende das erste Signal ersatzlos."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert 'x-for="signal in firstSignalsFor(device.id)"' in markup
+    assert "restSignalsFor(" not in markup
+
+
+async def test_the_tile_header_no_longer_carries_a_lead_value(api):
+    """Weder die Klassen noch der Aufruf duerfen ausgeliefert werden. Der
+    Test laeuft ueber `_without_comments`, weil die Begruendung im Markup
+    den Leitwert weiterhin beim Namen nennt - und zwar gerade, um zu
+    erklaeren, warum er dort nicht mehr steht."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert "lead-value" not in markup
+    assert "lead-label" not in markup
+    assert "leadSignalFor(" not in markup
+
+
+async def test_the_offline_pill_sits_in_the_header_not_under_the_name(api):
+    """Die Pille rueckt auf den Platz des Leitwerts: drittes Kind von
+    `.device-head`, nicht mehr Kind von `.device-ident` unter dem Namen
+    (Entwurf, Abschnitt 5). Keine eigene Positionsregel noetig: `.device-
+    ident` traegt `flex: 1 1 auto` und verbraucht den freien Platz in der
+    Flex-Kopfzeile, damit steht die Pille rechts - ohne dass ihr eigenes
+    `margin-left: auto` (style.css) dabei etwas beitraegt (Nachtrag
+    2026-09-07, siehe Spec Abschnitt 5).
+
+    Belegt wird die Verschachtelung ueber die Reihenfolge im
+    ausgelieferten Markup: zwischen dem Namensfeld und der Pille MUSS ein
+    schliessendes `</span>` liegen - das von `.device-ident`. Steht die
+    Pille noch drin, fehlt es."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    name_end = markup.index('@change="saveLabel(device)"')
+    pill = markup.index('<span class="status-pill off"', name_end)
+    assert "</span>" in markup[name_end:pill], (
+        "die Offline-Pille steht noch innerhalb von `.device-ident`"
+    )
+
+
+async def test_the_missing_signals_hint_no_longer_asks_for_a_lead(api):
+    """Der Hinweis unterscheidet "geladen, aber leer" von "laedt noch"
+    (Spec 8.1). Sein Aufhaenger war `!leadSignalFor(device.id)`; ohne
+    Leitwert fragt er die Liste direkt."""
+    client, _, _ = api
+    markup = _without_comments((await client.get("/")).text)
+    assert (
+        'x-show="signalsByDevice[device.id] && functionalSignalsFor(device.id).length === 0"'
+    ) in markup
+
+
+async def test_the_lead_helpers_are_gone_from_the_script(api):
+    """Entwurf 2026-09-07, Abschnitt 10: beide Methoden entfallen
+    ersatzlos, nachdem das Markup sie nicht mehr aufruft. Eine ungenutzte
+    Methode in `app.js` ist kein harmloser Rest - sie laedt den naechsten
+    Umbau dazu ein, den Leitwert wieder einzufuehren, ohne den Entwurf
+    gelesen zu haben."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    # Auf die DEFINITION ankern, nicht auf den blossen Namen: der Kommentar
+    # an `signalIsFresh` nennt `leadSignalFor` weiterhin - und zwar gerade,
+    # um zu erklaeren, warum dessen Null-Duldsamkeit stehen bleibt, obwohl
+    # der Aufrufer weg ist. Anders als beim Markup gibt es fuer `app.js`
+    # keinen `_without_comments`-Helfer.
+    assert "leadSignalFor(deviceId) {" not in script
+    assert "restSignalsFor(deviceId) {" not in script
+    assert "this.firstSignalsFor(deviceId).slice(1)" not in script
+
+
+async def test_the_lead_rules_are_gone_from_the_stylesheet(api):
+    """Entwurf 2026-09-07, Abschnitt 10. Beide Klassen stehen in keinem
+    Markup mehr; ihre Regeln - samt der langen Begruendung zu
+    `flex: 0 0 auto` gegen `flex: 0 1 auto` und zum `padding-block` fuer
+    Unterlaengen - beschreiben ein Element, das es nicht mehr gibt."""
+    client, _, _ = api
+    css = (await client.get("/static/style.css")).text
+    # Auf den Selektor mit oeffnender Klammer ankern, nicht auf den blossen
+    # Klassennamen: der Kommentar an `.device-head .device-name` nennt
+    # `.lead-value` weiterhin - er erklaert, warum der Name dort frueher nur
+    # 65 px bekam. Ein Stylesheet hat keinen `_without_comments`-Helfer.
+    assert ".lead-value {" not in css
+    assert ".lead-value small {" not in css
+    assert ".lead-label {" not in css
+
+
+async def test_the_control_modal_is_delivered(api):
+    """Belegt NUR die Auslieferung. Ob die Alpine-Ausdruecke darin
+    tatsaechlich binden, kann dieser Test nicht sagen - das prueft der
+    Browser-Durchgang in einer spaeteren Aufgabe."""
+    client, _, _ = api
+    script = (await client.get("/static/app.js")).text
+    assert "openControlModal" in script
+    assert "readStartValues" in script
+    assert "controlsByKind" in script
+    assert "sendControl" in script
+
+    page = (await client.get("/")).text
+    assert 'x-ref="controlModal"' in page
+    assert '@close="controlModalDevice = null"' in page
+    assert "openControlModal(device)" in page
+    # Deviation vom Aufgaben-Brief (Projektentscheidung): der Prozent-Regler
+    # traegt seine Beschriftung ueber `command.slug`, nicht ueber einen
+    # festen Uebersetzungsschluessel - die eingecheckte Testleuchte
+    # (`ikea_kajplats_cws_lamp.json`) hat zwei Prozent-Kommandos, die sich
+    # sonst nicht unterscheiden liessen.
+    assert "web.devices.control_brightness" not in page
+    assert "web.devices.control_brightness" not in script

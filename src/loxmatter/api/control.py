@@ -102,10 +102,11 @@ erweist), koennte diese Liste durch das Auslesen der oben gefundenen
 selbst ein Attribut auf der Erlaubnisliste laesst sich mit dem heutigen
 Stand nicht tatsaechlich schreiben - `BridgeMatterClient` (matter/client.py)
 hat kein `write_attribute`, und die Schnittstelle dieses Moduls
-(`build_control_router(store, invoke)`) nimmt dafuer auch keinen zweiten
-Aufrufer entgegen; `invoke` ist ausschliesslich fuer Kommandos typisiert
-(`Callable[[MatterCall], Awaitable[None]]`), und ein Attribut-Schreibzugriff
-ist kein Kommando. `POST /api/signals/{key}/write` antwortet fuer ein
+(`build_control_router(store, invoke, values)`) nimmt dafuer auch keinen
+schreibenden Aufrufer entgegen; `invoke` ist ausschliesslich fuer Kommandos
+typisiert (`Callable[[MatterCall], Awaitable[None]]`), `values` liest nur
+(siehe `ValueReader`), und ein Attribut-Schreibzugriff ist keins von beidem.
+`POST /api/signals/{key}/write` antwortet fuer ein
 erlaubtes Attribut deshalb ehrlich mit 501 statt mit einem Erfolg, der
 nichts bewirkt - dieselbe Haltung wie oben, nur eine Stufe weiter: eine
 Antwort, die stillschweigend nichts tut, ist genau der Fehler, den dieses
@@ -116,14 +117,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from typing import Protocol
 
 from fastapi import APIRouter, HTTPException
 
 from loxmatter import i18n
-from loxmatter.api.models import CommandOut, ControlsOut, ValueIn
+from loxmatter.api.models import CommandOut, ControlRange, ControlsOut, ValueIn
 from loxmatter.commands.translate import MatterCall, UnsupportedValueError, to_matter_call
 from loxmatter.model.store import Store, UnknownCommandError, UnknownDeviceError
-from loxmatter.profiles.table import command_slug
+from loxmatter.profiles.table import command_control, command_slug
 
 Invoker = Callable[[MatterCall], Awaitable[None]]
 
@@ -149,7 +151,26 @@ def _is_writable(cluster_id: int, attribute_id: int) -> bool:
     return (cluster_id, attribute_id) in _WRITABLE_ATTRIBUTES
 
 
-def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
+class ValueReader(Protocol):
+    """Was diese Route von `runtime` braucht - nur Lesen.
+
+    Bewusst enger als `api.devices.RuntimeValues`: die Bedienroute setzt
+    nichts online, und ein Protokoll, das mehr verlangt als es benutzt,
+    zwingt jedem Test ein groesseres Double auf, als der Fall braucht.
+    `loxone.runtime.Runtime` erfuellt beide.
+    """
+
+    def last_values_for(self, device_id: int) -> dict[str, float | bool]: ...
+
+
+# ColorTempPhysicalMinMireds / ColorTempPhysicalMaxMireds, gegen das
+# installierte SDK belegt (chip.clusters.Objects.ColorControl.Attributes).
+_CLUSTER_COLOR = 768
+_ATTR_CT_PHYS_MIN_MIREDS = 16395
+_ATTR_CT_PHYS_MAX_MIREDS = 16396
+
+
+def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> APIRouter:
     router = APIRouter(prefix="/api")
 
     def _require_device(device_id: int) -> None:
@@ -157,6 +178,38 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
             store.device(device_id)
         except UnknownDeviceError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    def _kelvin_range(device_id: int, endpoint: int) -> ControlRange | None:
+        """Der Farbtemperaturbereich der Leuchte, in Kelvin - oder None.
+
+        Kelvin = 1e6 / Mired ist ein Kehrwert: das KLEINERE Mired ergibt
+        das GROESSERE Kelvin, Min und Max tauschen also beim Umrechnen.
+
+        None statt eines Ersatzbereichs, wenn die Leuchte die Grenzen nicht
+        meldet: ein Regler, der bei 6500 K endet, obwohl das Geraet bei
+        4000 K aufhoert, laesst einen Wert einstellen, den es still
+        beschneidet - genau der stille Fehlschlag, den diese Ansicht
+        aufdecken soll (Spec 8.1).
+        """
+        wanted = (_ATTR_CT_PHYS_MIN_MIREDS, _ATTR_CT_PHYS_MAX_MIREDS)
+        keys = {
+            signal.ref.element_id: signal.key
+            for signal in store.signals(device_id)
+            if signal.ref.endpoint == endpoint
+            and signal.ref.cluster_id == _CLUSTER_COLOR
+            and signal.ref.element_id in wanted
+        }
+        current = values.last_values_for(device_id)
+        mireds: list[float] = []
+        for element_id in wanted:
+            key = keys.get(element_id)
+            value = current.get(key) if key is not None else None
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+                return None
+            mireds.append(float(value))
+
+        kelvins = sorted(int(1_000_000 / mired) for mired in mireds)
+        return ControlRange(min=kelvins[0], max=kelvins[1])
 
     @router.get("/devices/{device_id}/controls")
     async def controls(device_id: int) -> ControlsOut:
@@ -191,11 +244,22 @@ def build_control_router(store: Store, invoke: Invoker) -> APIRouter:
         """
         _require_device(device_id)
         stored = store.commands(device_id)
-        named = [
-            CommandOut(key=command.key, slug=command.slug, takes_value=command.takes_value)
-            for command in stored
-            if command_slug(command.cluster_id, command.command_id) is not None
-        ]
+        named = []
+        for command in stored:
+            if command_slug(command.cluster_id, command.command_id) is None:
+                continue
+            control = command_control(command.cluster_id, command.command_id)
+            named.append(
+                CommandOut(
+                    key=command.key,
+                    slug=command.slug,
+                    takes_value=command.takes_value,
+                    control=control,
+                    range=_kelvin_range(device_id, command.endpoint)
+                    if control == "kelvin"
+                    else None,
+                )
+            )
         return ControlsOut(commands=named, hidden_raw_commands=len(stored) - len(named))
 
     @router.post("/commands/{key}")

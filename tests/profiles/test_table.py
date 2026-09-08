@@ -14,6 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import re
+from pathlib import Path
+
 import pytest
 
 from loxmatter.matter.models import SignalKind, SignalRef
@@ -23,8 +26,10 @@ from loxmatter.profiles.table import (
     MAX_LOXONE_DECIMALS,
     Exportability,
     classify,
+    command_control,
     is_exportable,
     known_attribute_section,
+    known_command_pairs,
     lookup,
     names_element,
     scale_factor,
@@ -358,3 +363,90 @@ def test_every_rank_in_the_table_is_an_integer():
                         section,
                         element_id,
                     )
+
+
+@pytest.mark.parametrize(
+    ("cluster_id", "command_id", "control"),
+    [
+        (6, 0, "none"),
+        (6, 1, "none"),
+        (6, 2, "none"),
+        (8, 0, "percent"),
+        (8, 4, "percent"),
+        (768, 10, "kelvin"),
+        (768, 6, "hue_sat"),
+    ],
+)
+def test_every_known_command_names_its_widget(cluster_id, command_id, control):
+    assert command_control(cluster_id, command_id) == control
+
+
+def test_a_command_outside_the_table_is_unknown():
+    assert command_control(768, 7) == "unknown"
+
+
+def test_every_table_command_carries_a_control():
+    """Ein Eintrag ohne `control` erschiene in der Oberflaeche als nacktes
+    Zahlenfeld, ohne dass jemand das entschieden haette (Entwurf
+    2026-09-07, Abschnitt 5.5). Dieser Test macht das Vergessen sichtbar,
+    statt es durchgehen zu lassen."""
+    for cluster_id, command_id in known_command_pairs():
+        assert command_control(cluster_id, command_id) != "unknown"
+
+
+def _control_kinds_known_to_the_ui() -> set[str]:
+    """Liest `KNOWN_CONTROL_KINDS` aus der ausgelieferten `web/app.js`.
+
+    Bewusst gelesen statt hier dupliziert: eine zweite, von Hand gepflegte
+    Liste koennte selbst von der Oberflaeche wegdriften - und dann prueft
+    dieser Test nur noch sich selbst. Genau diese Sorte Duplikat ist das,
+    wogegen `known_command_pairs` und `_PAYLOAD_BUILDERS` an anderer Stelle
+    schon einmal abgesichert wurden (siehe `commands/translate.py`).
+
+    Findet die Suche das Feld nicht, ist das ein Fehler und kein leeres
+    Ergebnis: eine leere Menge liesse jeden `control`-Wert durchfallen und
+    saehe nach einem Befund aus, wo in Wahrheit nur der Zugriff kaputt ist.
+    """
+    source = (Path(__file__).parents[2] / "src/loxmatter/web/app.js").read_text(encoding="utf-8")
+    match = re.search(r"const KNOWN_CONTROL_KINDS = \[(.*?)\];", source, re.DOTALL)
+    if match is None:
+        raise AssertionError(
+            "KNOWN_CONTROL_KINDS nicht in web/app.js gefunden - wurde das Feld "
+            "umbenannt? Ohne es kann dieser Test nichts pruefen."
+        )
+    return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+_CONTROL_KINDS_KNOWN_TO_THE_UI = _control_kinds_known_to_the_ui()
+
+
+def test_every_control_value_is_known_to_the_shipped_ui():
+    """Befund I-2 (Abschluss-Review 2026-09-08): `command_control` liefert
+    einen freien `str`, und die Oberflaeche vergleicht nur auf die
+    Wortlaute, fuer die sie tatsaechlich ein Bedienelement gebaut hat.
+    Traegt jemand in `clusters.yaml` einen `control`-Wert ein, den
+    `web/app.js` (noch) nicht kennt - ein Tippfehler oder ein neu
+    erdachtes Bedienelement, das noch niemand gebaut hat -, rendert das
+    Modal fuer dieses Kommando nichts: kein Regler, kein Zahlenfeld, kein
+    Hinweis, obwohl der "Steuern"-Knopf bereits erscheint
+    (`hasAdjustableControls`). Die Oberflaeche selbst faengt das seit
+    diesem Fix zwar ueber ihren Rueckfall auf das schlichte Zahlenfeld ab
+    (`unhandledControls` in app.js) - aber dieser Test soll den Fehler
+    schon hier, in Python, sichtbar machen, bevor jemand ueberhaupt bis
+    zum Browser kommt, und sagen WELCHER Wert unbekannt ist."""
+    for cluster_id, command_id in known_command_pairs():
+        control = command_control(cluster_id, command_id)
+        assert control in _CONTROL_KINDS_KNOWN_TO_THE_UI, (
+            f"{cluster_id}/{command_id}: control={control!r} kennt die Oberflaeche nicht "
+            "(siehe KNOWN_CONTROL_KINDS in web/app.js)"
+        )
+
+
+def test_the_colour_temperature_limits_remain_exportable():
+    """Nicht vorausgewaehlt heisst nicht gesperrt: im Expertenblock muss
+    man sie weiterhin von Hand waehlen koennen."""
+    ref = SignalRef(1, 768, 16395, SignalKind.ATTRIBUTE)
+    profile = lookup(ref, 250)
+    assert profile.unit == "mired"
+    assert is_exportable(profile.exportability)
+    assert not profile.slug.startswith("c768_a")

@@ -193,6 +193,32 @@ def names_element(ref: SignalRef) -> bool:
     return ref.element_id in (cluster.get(section) or {})
 
 
+def marked_non_functional(ref: SignalRef) -> bool:
+    """Ob die Tabelle dieses Element ausdruecklich als nicht vorausgewaehlt
+    fuehrt (`functional: false`).
+
+    Der Gegenspieler zu `names_element`: benannt zu sein heisst
+    normalerweise gewollt zu sein (siehe `profiles.relevance.is_functional`,
+    Schicht 3). Fuer Geraetekonstanten - Min/Max-Bereiche, Aufloesungen -
+    stimmt das nicht: sie muessen lesbar sein, ohne den Standard-Export
+    aufzublaehen.
+
+    Bewusst ein allgemeines Feld statt eines Sonderfalls fuer Cluster 768:
+    jeder weitere Cluster mit Kapazitaetsangaben trifft dasselbe Problem.
+    Die Alternative - die Werte an der Tabelle vorbei direkt aus dem
+    Snapshot greifen - schuefe eine zweite Stelle, an der Attributwissen
+    lebt (Entwurf 2026-09-07, Abschnitt 5.2).
+    """
+    cluster = _table().get(ref.cluster_id)
+    if cluster is None:
+        return False
+    section = "events" if ref.kind is SignalKind.EVENT else "attributes"
+    entry = (cluster.get(section) or {}).get(ref.element_id)
+    if not entry:
+        return False
+    return entry.get("functional") is False
+
+
 def struct_field(ref: SignalRef) -> int | None:
     """Die Feldnummer, die aus einer Struktur zu ziehen ist - oder None.
 
@@ -381,6 +407,29 @@ def command_takes_value(cluster_id: int, command_id: int) -> bool:
     """Ob das Kommando einen Wert erwartet (z.B. MoveToLevel), oder keinen (z.B. Off)."""
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
     return bool(entry and entry.get("takes_value"))
+
+
+def command_control(cluster_id: int, command_id: int) -> str:
+    """Welches Bedienelement die Oberflaeche fuer dieses Kommando bauen soll.
+
+    `none` (Knopf), `percent`, `kelvin`, `hue_sat` - oder `unknown` fuer
+    einen Eintrag, dem noch niemand ein `control` gegeben hat.
+
+    `unknown` ist bewusst ein eigener Wert und keine aus `takes_value`
+    geratene Voreinstellung: ein Regler behauptet einen Wertebereich, und
+    den kennt hier niemand. Die Oberflaeche faellt fuer `unknown` auf das
+    schlichte Zahlenfeld zurueck (Entwurf 2026-09-07, Abschnitt 5.5).
+
+    Der Rueckgabewert ist absichtlich ein `str` und kein Enum: er wandert
+    unveraendert durch die API in das JavaScript, wo ohnehin nur der
+    Wortlaut zaehlt - ein Enum muesste an der Grenze wieder aufgeloest
+    werden und brauchte bei jedem neuen Widget zwei Aenderungen statt einer.
+    """
+    entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
+    if not entry:
+        return "unknown"
+    control = entry.get("control")
+    return str(control) if control else "unknown"
 
 
 def known_command_pairs() -> set[tuple[int, int]]:

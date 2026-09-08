@@ -35,7 +35,7 @@ from typing import Any
 
 from loxmatter.matter.models import NodeSnapshot, SignalKind, SignalRef
 from loxmatter.matter.paths import parse_attribute_path
-from loxmatter.profiles.table import known_attribute_section, names_element
+from loxmatter.profiles.table import known_attribute_section, marked_non_functional, names_element
 
 DESCRIPTOR_CLUSTER_ID = 29
 DEVICE_TYPE_LIST_ID = 0
@@ -132,7 +132,10 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
        Nutz-Geraetetyp gehoert - alles andere scheidet hier sofort aus.
     3. Was Schicht 2 durchlaesst (und jeder Nutz-Endpunkt ohnehin) ist
        gewollt - ausser bei einem Cluster, fuer den die Profiltabelle einen
-       `attributes:`-Abschnitt fuehrt: dort nur die dort benannten Elemente.
+       `attributes:`-Abschnitt fuehrt: dort nur die dort benannten Elemente -
+       abzueglich derer, die die Tabelle ausdruecklich mit `functional:
+       false` fuehrt (Geraetekonstanten wie Min/Max-Bereiche, siehe
+       `marked_non_functional`).
        Ein unbekannter Cluster, UND ein bekannter Cluster ohne
        `attributes:`-Abschnitt (etwa einer, der nur wegen seiner Kommandos in
        der Tabelle steht), bleiben vollstaendig gewollt (Hauptdokument 3.5).
@@ -166,5 +169,5 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
     if ref.kind is SignalKind.EVENT:
         return True
     if known_attribute_section(ref.cluster_id):
-        return names_element(ref)
+        return names_element(ref) and not marked_non_functional(ref)
     return True

@@ -290,7 +290,18 @@ def capture(page: Page) -> None:
     # Dieses Bild traegt Kopf- und Reiterleiste fuer die ganze Galerie, hier
     # also ausdruecklich ab dem Seitenanfang.
     select_view(page, "Devices")
-    page.fill('input[placeholder*="MT:"]', "MT:Y.K9042C00KA0648G00")
+    # Der Selektor haengt am `id`, nicht mehr am Platzhaltertext: der lautete
+    # frueher "Pairing-Code (11-stellig oder MT:…)" und ist seit dem Entwurf
+    # vom 2026-09-07 die Ziffernfolge selbst - `input[placeholder*="MT:"]`
+    # fand danach nichts mehr. Ein `id` aendert sich seltener als ein Text,
+    # der uebersetzt wird.
+    #
+    # Eingesetzt wird jetzt der ZAHLENCODE statt eines MT:-Codes: er ist die
+    # Bauform, die das Bild erklaeren soll, und nur an ihm sind Gruppierung
+    # und Chip ueberhaupt zu sehen. `fill()` loest das `input`-Ereignis aus,
+    # an dem `formatCommissionCode` haengt - im Bild steht die Zahl deshalb
+    # gruppiert, so wie nach dem Tippen.
+    page.fill("#commission-code", "34970112332")
     shoot(
         page,
         "commissioning",

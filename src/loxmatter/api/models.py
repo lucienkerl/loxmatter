@@ -23,7 +23,9 @@ Tabellen. Aendert sich das Schema, aendert sich nicht zwangslaeufig die API.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SignalOut(BaseModel):
@@ -161,19 +163,41 @@ class RoomRename(BaseModel):
     to_room: str = Field(alias="to")
 
 
+class ControlRange(BaseModel):
+    """Grenzen eines Reglers, in der Einheit, die die Oberflaeche anzeigt.
+
+    Heute nur fuer die Farbtemperatur, in Kelvin. Die Umrechnung aus Mired
+    passiert im Server und nicht im JavaScript: sie ist ein Kehrwert, bei
+    dem Min und Max tauschen - eine Falle, die man nicht zweimal aufstellen
+    will (Entwurf 2026-09-07, Abschnitt 5.5)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    min: int
+    max: int
+
+
 class CommandOut(BaseModel):
     """Ein Bedienelement fuer `GET /api/devices/{device_id}/controls` (Task 4).
 
     Traegt bewusst nur, was ein Klick braucht - der Schluessel zum Ausloesen
     und der Slug als Beschriftung. `takes_value` sagt der Oberflaeche, ob ein
     einfacher Knopf reicht (z. B. `on`) oder ein Regler noetig ist (z. B.
-    `level`)."""
+    `level`).
+
+    `control` sagt, WELCHES Bedienelement gebaut werden soll (`none`,
+    `percent`, `kelvin`, `hue_sat`, `unknown`) - siehe
+    `profiles.table.command_control`. `takes_value` bleibt daneben
+    bestehen, weil es etwas anderes beantwortet: ob der EXPORT einen
+    analogen oder digitalen Ausgang erzeugt."""
 
     model_config = ConfigDict(frozen=True)
 
     key: str
     slug: str
     takes_value: bool
+    control: str
+    range: ControlRange | None = None
 
 
 class ControlsOut(BaseModel):
@@ -205,9 +229,26 @@ class ValueIn(BaseModel):
     value: str
 
 
+# Alles, was NICHT Ziffer, Leerraum oder Bindestrich ist, macht den Wert zu
+# einem QR-Inhalt (`MT:...`, Base38). Ein Bindestrich DARIN traegt Bedeutung
+# und darf nicht wegfallen - deshalb entscheidet dieses Muster zuerst, bevor
+# ueberhaupt etwas geschnitten wird.
+#
+# Diese Regel steht ZWEIMAL: hier und als `isPairingQrCode`/
+# `normalizePairingCode` in `web/app.js`. Das ist Absicht - dort formatiert
+# die Oberflaeche waehrend des Tippens, hier normalisiert die Route fuer
+# JEDEN Aufrufer. Wer eine der beiden Fassungen aendert, aendert die andere.
+_COMMISSION_QR_PAYLOAD = re.compile(r"[^0-9\s-]")
+_COMMISSION_CODE_SEPARATORS = re.compile(r"[\s-]")
+
+
 class CommissionRequest(BaseModel):
     """`POST /api/devices/commission` - der Pairing-Code vom Geraet oder
-    seiner Verpackung (11-stellig oder der 21-stellige `MT:`-Code, Spec 7.1).
+    seiner Verpackung (Spec 7.1). Zwei Bauformen: der Zahlencode (11-stellig,
+    auf dem Geraet als `1234-567-8901` aufgedruckt, seltener 21-stellig) oder
+    der Text hinter dem QR-Code (`MT:...`).
+
+    `code` wird beim Eintreffen normalisiert, siehe `_strip_separators`.
 
     `thread_dataset` ist optional: nur Thread-Geraete brauchen ihn, und nur
     dann, bevor `commission_with_code` ueberhaupt versucht wird (siehe
@@ -225,6 +266,31 @@ class CommissionRequest(BaseModel):
     # nachtraeglich zuordnen laesst. Scheitert das Einlernen, entsteht kein
     # Geraet und damit auch kein Raum.
     room: str | None = None
+
+    @field_validator("code")
+    @classmethod
+    def _strip_separators(cls, value: str) -> str:
+        """Nimmt den Code so entgegen, wie er auf dem Geraet steht.
+
+        Dort steht er gruppiert - `1234-567-8901` - und genau so tippt ihn
+        jeder ab. Auf dem Weg zum Matter-Stack schneidet die Trenner sonst
+        niemand weg: `api.devices` reicht den Wert unveraendert an
+        `BridgeMatterClient.commission_with_code` weiter, und
+        `MatterClient.commission_with_code` setzt ihn ebenso unveraendert in
+        den WebSocket-Befehl (geprueft gegen die installierte Fassung,
+        `matter_server/client/client.py:140`).
+
+        Der Validator NORMALISIERT NUR, er validiert nicht (Entwurf
+        Abschnitt 8): ueber die gueltigen Bauformen entscheidet der
+        Matter-Stack. Laege die Regel hier, koennte diese Bruecke einen Code
+        ablehnen, den der Stack angenommen haette - ohne einen Weg daran
+        vorbei. Trenner zu schneiden ist verlustfrei, eine Laengenregel
+        waere eine Wette.
+        """
+        text = value.strip()
+        if _COMMISSION_QR_PAYLOAD.search(text):
+            return text
+        return _COMMISSION_CODE_SEPARATORS.sub("", text)
 
 
 class ExportDeviceOut(BaseModel):

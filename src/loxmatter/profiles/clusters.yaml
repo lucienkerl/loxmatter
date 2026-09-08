@@ -55,9 +55,9 @@ clusters:
     commands:
       # "off"/"on" muessen in Anfuehrungszeichen stehen: YAML 1.1 liest sie
       # sonst als Booleans, nicht als Strings (PyYAML-Falle).
-      0: {slug: "off", takes_value: false}
-      1: {slug: "on", takes_value: false}
-      2: {slug: toggle, takes_value: false}
+      0: {slug: "off", takes_value: false, control: none}
+      1: {slug: "on", takes_value: false, control: none}
+      2: {slug: toggle, takes_value: false, control: none}
   8:
     name: level
     rank: 20
@@ -65,8 +65,8 @@ clusters:
       # 0-254 auf 0-100 %: 100/254
       0: {slug: level, unit: "%", scale: 0.3937007874015748}
     commands:
-      0: {slug: level, takes_value: true}
-      4: {slug: level_onoff, takes_value: true}
+      0: {slug: level, takes_value: true, control: percent}
+      4: {slug: level_onoff, takes_value: true, control: percent}
   47:
     name: powersource
     rank: 90
@@ -134,11 +134,26 @@ clusters:
       # Farbmodus (ColorMode, 8): eine Aufzaehlung, keine physikalische
       # Groesse - keine Einheit.
       8: {slug: colormode, unit: ""}
+      # ColorTempPhysicalMinMireds (16395) und ColorTempPhysicalMaxMireds
+      # (16396): was die Leuchte an Farbtemperatur ueberhaupt kann. IDs
+      # gegen das installierte SDK belegt (chip.clusters.Objects.
+      # ColorControl.Attributes), Werte gegen beide eingecheckten Leuchten.
+      #
+      # `functional: false`, weil es unveraenderliche Geraetekonstanten
+      # sind: die Oberflaeche braucht sie, um den Kelvin-Regler zu
+      # begrenzen (Entwurf 2026-09-07, Abschnitt 6.2), aber als virtueller
+      # Loxone-Eingang waeren sie zwei Zahlen, die sich nie aendern. Im
+      # Expertenblock bleiben sie von Hand waehlbar.
+      #
+      # Wie 7 oben bleiben sie in Mired stehen - Kelvin = 1e6 / Mired ist
+      # ein Kehrwert, den `scale` nicht ausdruecken kann. Die API rechnet
+      # sie fuer die Oberflaeche um (siehe api/control.py).
+      16395: {slug: colortemp_phys_min_mireds, unit: mired, functional: false}
+      16396: {slug: colortemp_phys_max_mireds, unit: mired, functional: false}
     commands:
-      # MoveToColorTemperature - der einzige ColorControl-Befehl, den
-      # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS und
-      # dessen Docstring: Hue/Saturation, Kommando 6, bleibt bewusst aussen
-      # vor, weil die Loxone-seitige RGB-Zahl nicht verlaesslich belegt ist).
+      # MoveToColorTemperature - einer von zwei ColorControl-Befehlen, die
+      # commands/translate.py bedient (siehe dortiges _PAYLOAD_BUILDERS; der
+      # zweite ist Hue/Saturation, Kommando 6, weiter unten).
       # Review-Fix C2, 2026-09-02: dieser Eintrag fehlte, obwohl
       # _PAYLOAD_BUILDERS das Paar (768, 10) schon bediente - im Rohexport
       # (`raw`) wurde das Kommando dadurch als generisches, digitales
@@ -149,7 +164,16 @@ clusters:
       # macht daraus einen analogen Ausgang UND exportiert das Kommando ab
       # sofort auch im normalen (nicht-rohen) Modus, was fuer ein bedientes
       # Kommando ohnehin richtig ist.
-      10: {slug: colortemp, takes_value: true}
+      10: {slug: colortemp, takes_value: true, control: kelvin}
+      # MoveToHueAndSaturation - freigeschaltet am 7. September 2026
+      # (Entwurf 2026-09-07). Die frühere Sperre beruhte auf einer
+      # Verwechslung: `translate.py` begruendete sie mit "Loxone-RGB nicht
+      # belegt", waehrend `commands/color.py` RGB mit offizieller Quelle
+      # belegt und ausschliesslich Lumitech offen laesst. Der Wert ist die
+      # gepackte Loxone-Farbzahl; belegt gegen die eingecheckte
+      # RGBW-Leuchte (tests/fixtures/nodes/ikea_kajplats_cws_lamp.json, 1/768/65529
+      # enthaelt 6).
+      6: {slug: color, takes_value: true, control: hue_sat}
   1026:
     name: temperature
     rank: 10
