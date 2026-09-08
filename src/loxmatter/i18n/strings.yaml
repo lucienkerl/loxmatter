@@ -268,13 +268,13 @@ api.errors.value_not_a_number:
 api.errors.command_unsupported:
   en: "Cluster {cluster_id} command {command_id} is not supported"
   de: "Cluster {cluster_id} Kommando {command_id} wird nicht unterstuetzt"
-# Die folgenden vier Schluessel gehoeren zu `LoxoneColourError` in
-# commands/color.py, uebersetzt in commands/translate.py
-# (`_translate_loxone_colour_error`) - siehe Review-Fix 2026-09-07:
-# `_payload_hue_saturation` reichte zuvor `str(exc)` (hart Deutsch) direkt
-# als HTTP-400-`detail` durch. Drei Fehlerfaelle plus die drei Kanalnamen
-# fuer den dritten Fall, damit auch die Kanalangabe uebersetzt ist und
-# nicht nur der Rahmensatz.
+# The following four keys belong to `LoxoneColourError` in
+# commands/color.py, translated in commands/translate.py
+# (`_translate_loxone_colour_error`) - see review fix 2026-09-07:
+# `_payload_hue_saturation` previously passed `str(exc)` (hard-coded German)
+# straight through as the HTTP-400 `detail`. Three error cases plus the
+# three channel names for the third case, so the channel name is also
+# translated and not just the surrounding sentence.
 api.errors.loxone_colour_not_integer:
   en: "Loxone colour number must be an integer, was {value}"
   de: "Loxone-Farbzahl muss ganzzahlig sein, war {value}"
@@ -702,12 +702,12 @@ web.devices.commission_heading:
   en: "Commission a new device"
   de: "Neues Gerät einlernen"
 web.devices.code_placeholder:
-  # Zeigt die FORM statt sie zu beschreiben. Der fruehere Klammerzusatz
-  # ("11-stellig oder MT:…") nannte die Bauform - wer den Aufkleber in der
-  # Hand haelt, musste das erst in "die untere der beiden Zahlen"
-  # uebersetzen. Diese Auskunft tragen jetzt die Beispielzeile unter dem
-  # Feld und die Aufkleber-Skizze daneben. Beide Sprachen tragen denselben
-  # Wert - eine Ziffernfolge uebersetzt sich nicht.
+  # Shows the FORM instead of describing it. The earlier parenthetical
+  # ("11 digits or MT:…") named the form - whoever is holding the sticker
+  # in their hand first had to translate that into "the lower of the two
+  # numbers". That information is now carried by the example line under
+  # the field and the sticker sketch next to it. Both languages carry the
+  # same value - a digit sequence does not translate.
   en: "1234-567-8901"
   de: "1234-567-8901"
 web.devices.thread_dataset_placeholder:
@@ -727,10 +727,10 @@ web.devices.commission_submit:
 web.devices.code_label:
   en: "Pairing code"
   de: "Pairing-Code"
-# Der Chip rechts im Eingabefeld (Entwurf vom 2026-09-07, Abschnitt 6). Er
-# benennt, was das Feld erkannt hat - und damit lernt man den Namen des
-# Codes an genau der Stelle, an der man ihn eintippt. Er BESCHREIBT nur:
-# auch "zu lang" sperrt den Einlern-Knopf nicht.
+# The chip to the right in the input field (design of 2026-09-07,
+# section 6). It names what the field has recognized - and so you learn
+# the code's name at exactly the place where you type it. It only
+# DESCRIBES: even "too long" does not disable the commission button.
 web.devices.code_detect_manual:
   en: "numeric code"
   de: "Zahlencode"
@@ -740,8 +740,8 @@ web.devices.code_detect_manual_long:
 web.devices.code_detect_qr:
   en: "QR code"
   de: "QR-Code"
-# Zwei Schluessel statt einer mit Plural-Regel: i18n.t kennt keine
-# Pluralformen, und "noch 1 Ziffern" waere in beiden Sprachen falsch.
+# Two keys instead of one with a plural rule: i18n.t knows no
+# plural forms, and "1 digits to go" would be wrong in both languages.
 web.devices.code_detect_remaining_one:
   en: "1 digit to go"
   de: "noch 1 Ziffer"
@@ -754,21 +754,21 @@ web.devices.code_detect_too_long:
 web.devices.code_detect_invalid:
   en: "not a valid code"
   de: "kein gültiger Code"
-# Die Beispielzeile unter dem Feld. Die BESCHRIFTUNGEN darin sind dieselben
-# Schluessel wie die des Chips (code_detect_manual/_qr) - es ist derselbe
-# Begriff, und dass er an beiden Stellen gleich lautet, ist der Zweck der
-# Uebung. Nur die beiden Beispielwerte stehen hier, und sie uebersetzen sich
-# nicht.
+# The example line under the field. The LABELS in it are the same
+# keys as those of the chip (code_detect_manual/_qr) - it is the same
+# term, and that it reads the same in both places is the whole point
+# of the exercise. Only the two example values stand here, and they do
+# not translate.
 web.devices.code_example_manual:
   en: "1234-567-8901"
   de: "1234-567-8901"
 web.devices.code_example_qr:
   en: "MT:Y.K90SO527JA0648G00"
   de: "MT:Y.K90SO527JA0648G00"
-# Die Aufkleber-Skizze neben dem Feld (Entwurf Abschnitt 7). Sie ist eine
-# Verdeutlichung, keine Informationsquelle - die Beispielzeile darueber
-# traegt denselben Inhalt als Text. Das aria-label beschreibt deshalb, was
-# zu SEHEN ist, statt den Inhalt ein zweites Mal vorzulesen.
+# The sticker sketch next to the field (design section 7). It is an
+# illustration, not a source of information - the example line above it
+# carries the same content as text. The aria-label therefore describes
+# what is to be SEEN, instead of reading out the content a second time.
 web.devices.sticker_alt:
   en: "Sketch of a Matter label: the QR code on the left, the numeric code highlighted below it on the right."
   de: "Skizze eines Matter-Aufklebers: links der QR-Code, rechts darunter der hervorgehobene Zahlencode."
@@ -1033,13 +1033,13 @@ web.devices.menu_signals:
   en: "Edit signals…"
   de: "Signale bearbeiten…"
 
-# --- Bedien-Modal (Aufgabe 7): Regler statt nackter Zahlenfelder fuer
-# wertbehaftete Kommandos. `control_brightness` gibt es absichtlich NICHT:
-# ein Geraet kann mehrere Prozent-Kommandos haben (z. B. `level` und
-# `level_onoff`), deren Regler sich sonst nicht unterscheiden liessen -
-# jeder Prozent-Regler traegt stattdessen `command.slug` als Beschriftung.
-# Der Kelvin-Regler bleibt fest beschriftet, davon gibt es je Geraet nur
-# einen.
+# --- control modal (task 7): sliders instead of bare number fields for
+# value-carrying commands. `control_brightness` deliberately does NOT
+# exist: a device can have several percent commands (e.g. `level` and
+# `level_onoff`) whose sliders could otherwise not be told apart -
+# every percent slider instead carries `command.slug` as its label.
+# The Kelvin slider stays fixed-labelled, since there is only one of
+# those per device.
 web.devices.control_button:
   en: "Control"
   de: "Steuern"

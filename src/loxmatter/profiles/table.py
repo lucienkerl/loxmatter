@@ -99,22 +99,22 @@ def _table() -> dict[int, dict[str, Any]]:
     return {int(k): v for k, v in (raw.get("clusters") or {}).items()}
 
 
-# Der Rang eines Clusters, den die Tabelle nicht fuehrt (Entwurf
-# 2026-09-07, Abschnitt 4). Die Mitte, nicht das Ende: ein unbekannter
-# Cluster soll nie hinter dem Batteriestand landen, aber auch nicht vor
-# einem Cluster, dessen Bedeutung belegt ist.
+# The rank of a cluster the table does not carry (design
+# 2026-09-07, section 4). The middle, not the end: an unknown
+# cluster should never land behind the battery level, but also not before
+# a cluster whose meaning is established.
 DEFAULT_RANK = 50
 
 
 def rank_for(cluster_id: int) -> int:
-    """Wie wichtig dieser Cluster fuer die Anzeige ist - kleiner ist wichtiger.
+    """How important this cluster is for display - smaller is more important.
 
-    Getrennt von `lookup` und `knows_cluster`, weil diese Frage eine andere
-    ist als "wie heisst das Element" oder "kennt die Tabelle den Cluster":
-    ein Cluster kann in der Tabelle stehen (wegen seiner Kommandos) und
-    trotzdem keinen Rang tragen. Beide Faelle - gar nicht in der Tabelle,
-    und in der Tabelle ohne `rank` - ergeben hier dieselbe Antwort, weil
-    sie fuer die Sortierung dasselbe bedeuten.
+    Separate from `lookup` and `knows_cluster`, because this question is
+    different from "what is the element called" or "does the table know
+    the cluster": a cluster can be in the table (because of its commands)
+    and still carry no rank. Both cases - not in the table at all,
+    and in the table without `rank` - yield the same answer here, because
+    they mean the same thing for sorting.
     """
     cluster = _table().get(cluster_id)
     if cluster is None:
@@ -124,20 +124,20 @@ def rank_for(cluster_id: int) -> int:
 
 
 def element_rank_for(ref: SignalRef) -> int:
-    """Wie wichtig dieses Element INNERHALB seines Clusters ist.
+    """How important this element is WITHIN its cluster.
 
-    Zweite Ebene neben `rank_for`, und sie ist nachgetragen worden statt von
-    Anfang an dazusein (Entwurf 2026-09-07, Abschnitt 4: "kann nachgetragen
-    werden, wenn ein konkretes Geraet sie verlangt"). Das Geraet, das sie
-    verlangt hat, ist der IKEA-Taster: `NumberOfPositions` (Element 0) traegt
-    denselben Cluster wie der Tastendruck und sortierte mit der kleineren
-    Element-ID davor - die Kachel fuehrte damit mit einer Konstanten.
+    A second level next to `rank_for`, and it was added later rather than
+    being there from the start (design 2026-09-07, section 4: "can be
+    added later if a concrete device requires it"). The device that
+    required it is the IKEA button: `NumberOfPositions` (element 0) carries
+    the same cluster as the button press and sorted ahead of it by its
+    smaller element ID - the tile therefore led with a constant.
 
-    Die Vorgabe ist dieselbe wie auf Clusterebene und aus demselben Grund die
-    Mitte: ein nicht eingetragenes Element soll weder nach vorn noch ganz
-    nach hinten fallen. Die grosse Mehrheit der Elemente traegt deshalb gar
-    keinen Rang, und die Element-ID ordnet sie weiterhin - so, wie es bis
-    hierher fuer jeden Cluster ausser 59 richtig war.
+    The default is the same as at cluster level and, for the same reason,
+    the middle: an element with no entry should fall neither to the front
+    nor all the way to the back. The large majority of elements therefore
+    carry no rank at all, and the element ID keeps ordering them - the way
+    it was correct, up to this point, for every cluster except 59.
     """
     cluster = _table().get(ref.cluster_id)
     if cluster is None:
@@ -193,20 +193,20 @@ def names_element(ref: SignalRef) -> bool:
 
 
 def marked_non_functional(ref: SignalRef) -> bool:
-    """Ob die Tabelle dieses Element ausdruecklich als nicht vorausgewaehlt
-    fuehrt (`functional: false`).
+    """Whether the table explicitly marks this element as not preselected
+    (`functional: false`).
 
-    Der Gegenspieler zu `names_element`: benannt zu sein heisst
-    normalerweise gewollt zu sein (siehe `profiles.relevance.is_functional`,
-    Schicht 3). Fuer Geraetekonstanten - Min/Max-Bereiche, Aufloesungen -
-    stimmt das nicht: sie muessen lesbar sein, ohne den Standard-Export
-    aufzublaehen.
+    The counterpart to `names_element`: being named normally means
+    being wanted (see `profiles.relevance.is_functional`,
+    layer 3). For device constants - min/max ranges, resolutions -
+    that is not true: they must be readable without bloating the
+    standard export.
 
-    Bewusst ein allgemeines Feld statt eines Sonderfalls fuer Cluster 768:
-    jeder weitere Cluster mit Kapazitaetsangaben trifft dasselbe Problem.
-    Die Alternative - die Werte an der Tabelle vorbei direkt aus dem
-    Snapshot greifen - schuefe eine zweite Stelle, an der Attributwissen
-    lebt (Entwurf 2026-09-07, Abschnitt 5.2).
+    Deliberately a general field rather than a special case for cluster 768:
+    every further cluster with capacity figures hits the same problem.
+    The alternative - reaching for the values past the table directly from
+    the snapshot - would create a second place where attribute knowledge
+    lives (design 2026-09-07, section 5.2).
     """
     cluster = _table().get(ref.cluster_id)
     if cluster is None:
@@ -409,20 +409,21 @@ def command_takes_value(cluster_id: int, command_id: int) -> bool:
 
 
 def command_control(cluster_id: int, command_id: int) -> str:
-    """Welches Bedienelement die Oberflaeche fuer dieses Kommando bauen soll.
+    """Which control the UI should build for this command.
 
-    `none` (Knopf), `percent`, `kelvin`, `hue_sat` - oder `unknown` fuer
-    einen Eintrag, dem noch niemand ein `control` gegeben hat.
+    `none` (button), `percent`, `kelvin`, `hue_sat` - or `unknown` for
+    an entry that no one has yet given a `control`.
 
-    `unknown` ist bewusst ein eigener Wert und keine aus `takes_value`
-    geratene Voreinstellung: ein Regler behauptet einen Wertebereich, und
-    den kennt hier niemand. Die Oberflaeche faellt fuer `unknown` auf das
-    schlichte Zahlenfeld zurueck (Entwurf 2026-09-07, Abschnitt 5.5).
+    `unknown` is deliberately its own value and not a default guessed
+    from `takes_value`: a slider asserts a value range, and
+    no one here knows it. The UI falls back to the
+    plain number field for `unknown` (design 2026-09-07, section 5.5).
 
-    Der Rueckgabewert ist absichtlich ein `str` und kein Enum: er wandert
-    unveraendert durch die API in das JavaScript, wo ohnehin nur der
-    Wortlaut zaehlt - ein Enum muesste an der Grenze wieder aufgeloest
-    werden und brauchte bei jedem neuen Widget zwei Aenderungen statt einer.
+    The return value is deliberately a `str` and not an enum: it travels
+    unchanged through the API into the JavaScript, where only the
+    wording matters anyway - an enum would have to be resolved again at
+    the boundary and would need two changes instead of one for every new
+    widget.
     """
     entry = (_table().get(cluster_id, {}).get("commands") or {}).get(command_id)
     if not entry:

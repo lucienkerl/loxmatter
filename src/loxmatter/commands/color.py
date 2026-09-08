@@ -16,46 +16,45 @@
 
 """Colour-space conversion between Loxone and Matter.
 
-An Hardware gegengeprueft am 8. September 2026, an der eingecheckten
+Checked against hardware on September 8, 2026, on the checked-in
 IKEA KAJPLATS E14 CWS (`tests/fixtures/nodes/ikea_kajplats_cws_lamp.json`,
-Node 21). Bis dahin stand hier die Warnung, dieser Teil sei nie an einer
-echten Leuchte gelaufen - beim Bau stand keine zur Verfuegung.
+node 21). Until then the warning here said this part had never run against
+a real light - none was available at build time.
 
-Gemessen wurde nicht die Umrechnung fuer sich, sondern die ganze Kette:
-gepackte Loxone-Zahl -> `loxone_rgb_to_rgb` -> `rgb_to_hue_saturation` ->
-MoveToHueAndSaturation -> was die Leuchte selbst zurueckmeldet
+What was measured was not the conversion by itself, but the whole chain:
+packed Loxone number -> `loxone_rgb_to_rgb` -> `rgb_to_hue_saturation` ->
+MoveToHueAndSaturation -> what the light itself reports back
 (CurrentHue 1/768/0, CurrentSaturation 1/768/1):
 
-    gepackt 100        -> Leuchte meldet   0,0 Grad / 100 %   (Rot)
-    gepackt 100000     -> Leuchte meldet 120,5 Grad / 100 %   (Gruen)
-    gepackt 100000000  -> Leuchte meldet 239,5 Grad / 100 %   (Blau)
-    gepackt 100100     -> Leuchte meldet  59,5 Grad / 100 %   (Gelb)
-    gepackt 100100100  -> Leuchte meldet   0,0 Grad /   0 %   (Weiss)
+    packed 100        -> light reports   0.0 degrees / 100 %   (red)
+    packed 100000     -> light reports 120.5 degrees / 100 %   (green)
+    packed 100000000  -> light reports 239.5 degrees / 100 %   (blue)
+    packed 100100     -> light reports  59.5 degrees / 100 %   (yellow)
+    packed 100100100  -> light reports   0.0 degrees /   0 %   (white)
 
-Die Abweichungen von hoechstens 0,5 Grad sind die Matter-Quantisierung
-(360/254 = 1,417 Grad je Schritt), kein Umrechnungsfehler. ColorMode
-(1/768/8) sprang dabei erwartungsgemaess von 2 (Farbtemperatur) auf 0
-(Hue/Saturation) - die Leuchte hat das Kommando also tatsaechlich
-ausgefuehrt und nicht bloss quittiert.
+The deviations of at most 0.5 degrees are the Matter quantization
+(360/254 = 1.417 degrees per step), not a conversion error. ColorMode
+(1/768/8) jumped, as expected, from 2 (color temperature) to 0
+(hue/saturation) in the process - so the light actually executed the
+command and did not just acknowledge it.
 
-Der Satz, warum das hier ueberhaupt steht, gilt unveraendert: von allen
-Abbildungen im Projekt ist diese die fehleranfaelligste, und ein Fehler
-sieht hier nach einem Geraetefehler aus, nicht nach einem
-Umrechnungsfehler. Wer sie anfasst, misst besser noch einmal nach.
+The reason this even exists here still holds unchanged: of all the
+mappings in the project this is the most error-prone, and an error
+here looks like a device fault, not a
+conversion error. Whoever touches it should measure again.
 
-Die Messung oben beginnt bei der gepackten Zahl. Das Stueck davor - vom
-Mausklick bis zu dieser Zahl - ist am selben Tag im Browser gegen die
-laufende Anwendung geprueft worden: vier Klicks in die Farbflaeche
-erzeugten vier Kommandos (Senden erst beim Loslassen) mit den Zahlen
-1002100, 1100001, 100001001 und 99099100 fuer Rot, Gruen, Blau und Weiss.
-Dabei bekam die Farbleuchte beide Modus-Reiter und einen Kelvin-Regler
-1801-6535 K, die Weisston-Leuchte nur den Kelvin-Regler mit ihren eigenen
-Grenzen 2202-6535 K und keine Reiter - die Abstufung entsteht also
-tatsaechlich aus dem, was das Geraet kann, ohne dass die Oberflaeche sein
-Modell kennt.
+The measurement above starts at the packed number. The piece before it -
+from the mouse click to this number - was checked in the browser against
+the running application on the same day: four clicks into the color area
+produced four commands (sent only on release) with the numbers
+1002100, 1100001, 100001001, and 99099100 for red, green, blue, and white.
+In the process the color light got both mode tabs and a Kelvin slider
+1801-6535 K, the white-tone light only the Kelvin slider with its own
+limits 2202-6535 K and no tabs - so the gradation actually results from
+what the device can do, without the UI knowing its model.
 
-Beide Haelften zusammen decken die Kette lueckenlos ab: Klick -> gepackte
-Zahl (Browser) und gepackte Zahl -> Farbe an der Leuchte (oben).
+Together, both halves cover the chain without gaps: click -> packed
+number (browser) and packed number -> color on the light (above).
 
 Research findings on Loxone-side colour encoding (step 1 of this task):
 
@@ -83,18 +82,18 @@ guesses at a format "AABBBCCCC" (AA=20 as a white marker, BBB=brightness
 0-100, CCCC=Kelvin); the author himself explicitly calls this a guess, not
 a documented source:
 https://www.loxforum.com/forum/hardware-zubehoer-sensorik/143867-lumitech-
-ausgang-dmx-dimmer (Beitrag #2, Jan W., 01.12.2018). Das ist keine Quelle,
-auf die man sich verlassen sollte - deshalb bleibt die Dekodierung der
-rohen Loxone-Lumitech-Zahl hier offen (siehe Spec 7.3 / Offene Punkte).
-Zu keiner Zeit hat dieser Vorbehalt fuer RGB gegolten - `translate.py` hat
-ihn bis zum 7. September 2026 faelschlich auch auf die RGB-Codierung
-bezogen und deshalb Kommando 6 gesperrt (siehe Entwurf 2026-09-07,
-Abschnitt 1).
+ausgang-dmx-dimmer (post #2, Jan W., 2018-12-01). That is not a source that
+should be relied on - which is why decoding the raw Loxone Lumitech number
+stays open here (see spec 7.3 / open points).
+This reservation never applied to RGB - `translate.py` wrongly
+applied it to the RGB encoding too, until September 7, 2026,
+and therefore blocked command 6 (see design 2026-09-07,
+section 1).
 
-`to_matter_call` in `translate.py` nimmt fuer Farbtemperatur deshalb
-bewusst einen bereits entpackten Kelvin-Wert entgegen, nicht die rohe
-Loxone-Zahl - das Entpacken ist Aufgabe der Aufrufer (Task 6 / WebUI), sobald
-eine verlaessliche Quelle dafuer vorliegt.
+`to_matter_call` in `translate.py` therefore deliberately accepts an
+already-unpacked Kelvin value for color temperature, not the raw
+Loxone number - unpacking is the caller's job (task 6 / WebUI), once
+a reliable source for it exists.
 
 The two functions here only implement the (uncontroversial) Matter-side
 conversion: Kelvin -> mired and RGB -> hue/saturation.
@@ -109,26 +108,27 @@ LoxoneColourErrorKind = Literal["not_integer", "negative", "channel_out_of_range
 
 
 class LoxoneColourError(ValueError):
-    """Ungueltige Loxone-Farbzahl - Einzelheiten als Felder, nicht nur als Satz.
+    """Invalid Loxone color number - details as fields, not only as a sentence.
 
-    `str(self)` liefert weiterhin den deutschen Satz von `loxone_rgb_to_rgb`
-    unten (fuers Server-Log - dieses Modul ist eine reine Rechenschicht ohne
-    i18n-Abhaengigkeit, siehe Moduldocstring). `kind` plus die je nach Fall
-    gesetzten Felder (`value`, `packed`, `channel`, `percent`) tragen
-    dieselbe Information maschinenlesbar, damit ein Aufrufer mit eigener
-    Uebersetzung (aktuell `commands/translate.py`, `_payload_hue_saturation`)
-    eine ebenso genaue, aber sprachabhaengige Meldung bauen kann, ohne den
-    deutschen Satz zu parsen.
+    `str(self)` still returns the plain sentence from `loxone_rgb_to_rgb`
+    below (for the server log - this module is a pure computation layer with
+    no i18n dependency, see the module docstring). `kind` plus the fields
+    set depending on the case (`value`, `packed`, `channel`, `percent`)
+    carry the same information in a machine-readable way, so that a caller
+    with its own translation (currently `commands/translate.py`,
+    `_payload_hue_saturation`) can build an equally precise but
+    language-dependent message without parsing the sentence.
 
-    Eine eigene Ausnahmeklasse statt einer Vorab-Pruefung in `translate.py`,
-    weil die Pruefregeln (was ist eine "ungueltige" Loxone-Farbzahl) sonst an
-    zwei Stellen leben muessten und garantiert auseinanderdriften wuerden -
-    derselbe Grund, aus dem `_PAYLOAD_BUILDERS` dort der einzige Ort fuer
-    bediente Kommandos ist (siehe Moduldocstring von `translate.py`). Genau
-    eines der optionalen Felder ist je nach `kind` befuellt:
-    - "not_integer": `value` (die eingegebene, nicht-ganzzahlige Zahl).
-    - "negative": `packed` (die eingegebene, negative Ganzzahl).
-    - "channel_out_of_range": `channel`, `percent` und `packed` gemeinsam.
+    A dedicated exception class instead of an upfront check in
+    `translate.py`, because the validation rules (what counts as an
+    "invalid" Loxone color number) would otherwise have to live in two
+    places and would be guaranteed to drift apart - the same reason
+    `_PAYLOAD_BUILDERS` there is the single place for
+    supported commands (see the module docstring of `translate.py`). Exactly
+    one of the optional fields is filled in depending on `kind`:
+    - "not_integer": `value` (the entered, non-integer number).
+    - "negative": `packed` (the entered, negative integer).
+    - "channel_out_of_range": `channel`, `percent`, and `packed` together.
     """
 
     def __init__(
@@ -178,49 +178,49 @@ def rgb_to_hue_saturation(r: int, g: int, b: int) -> tuple[int, int]:
 
 
 def loxone_rgb_to_rgb(value: float) -> tuple[int, int, int]:
-    """Entpackt die Loxone-Farbzahl in drei Kanaele zu je 0-255.
+    """Unpacks the Loxone color number into three channels of 0-255 each.
 
-    Die Codierung ist oben im Moduldocstring mit offizieller Quelle belegt:
-    `AQa = rot% + gruen% * 1000 + blau% * 1_000_000`. Sie transportiert je
-    Kanal nur volle Prozent - die Farbe ist also bereits beim Verlassen von
-    Loxone quantisiert, und diese Funktion kann das nicht zurueckholen
-    (Entwurf 2026-09-07, Abschnitt 9.1).
+    The encoding is backed by an official source above in the module
+    docstring: `AQa = red% + green% * 1000 + blue% * 1_000_000`. It carries
+    only whole percent per channel - so the color is already quantized on
+    leaving Loxone, and this function cannot recover that
+    (design 2026-09-07, section 9.1).
 
-    Ganzzahlig statt gerundet entgegengenommen: eine gebrochene Zahl kommt
-    in dieser Codierung nicht vor, und sie stillschweigend zu runden hiesse,
-    eine ganz andere Zahl - etwa einen bereits entpackten Kanal - als
-    gueltige Farbe durchzuwinken.
+    Accepted as an integer rather than rounded: a fractional number does
+    not occur in this encoding, and silently rounding it would mean
+    waving through a completely different number - say, an already
+    unpacked channel - as a valid color.
 
-    Wirft `LoxoneColourError` (eine `ValueError`-Unterklasse, siehe deren
-    Docstring oben) statt eines nackten `ValueError` - Aufrufer, die nur auf
-    `ValueError` pruefen (z. B. `tests/commands/test_color.py`), bemerken
-    davon nichts; Aufrufer, die die Einzelheiten uebersetzen wollen (z. B.
-    `translate.py`), koennen die Felder auslesen.
+    Raises `LoxoneColourError` (a `ValueError` subclass, see its
+    docstring above) instead of a bare `ValueError` - callers that only
+    check for `ValueError` (e.g. `tests/commands/test_color.py`) notice
+    nothing different; callers that want to translate the details (e.g.
+    `translate.py`) can read out the fields.
     """
     if value != int(value):
         raise LoxoneColourError(
-            f"Loxone-Farbzahl muss ganzzahlig sein, war {value}",
+            f"Loxone color number must be an integer, was {value}",
             kind="not_integer",
             value=value,
         )
     packed = int(value)
     if packed < 0:
         raise LoxoneColourError(
-            f"Loxone-Farbzahl darf nicht negativ sein, war {packed}",
+            f"Loxone color number must not be negative, was {packed}",
             kind="negative",
             packed=packed,
         )
 
     percents = (packed % 1000, packed // 1000 % 1000, packed // 1_000_000)
-    # Deutscher Kanalname fuers Server-Log (str(exc)), englisches Kuerzel als
-    # sprachneutrales Feld fuer Aufrufer wie `translate.py` - siehe
-    # `LoxoneColourError.channel` oben.
-    channels = (("rot", "red"), ("gruen", "green"), ("blau", "blue"))
+    # Channel name for the server log (str(exc)); the same English slug
+    # also serves as the language-neutral field for callers such as
+    # `translate.py` - see `LoxoneColourError.channel` above.
+    channels = (("red", "red"), ("green", "green"), ("blue", "blue"))
     for (channel_de, channel_slug), percent in zip(channels, percents, strict=True):
         if percent > 100:
             raise LoxoneColourError(
-                f"Kanal {channel_de} liegt bei {percent} %, erlaubt sind 0-100 "
-                f"(Loxone-Farbzahl {packed})",
+                f"Channel {channel_de} is at {percent} %, allowed is 0-100 "
+                f"(Loxone color number {packed})",
                 kind="channel_out_of_range",
                 channel=channel_slug,
                 percent=percent,

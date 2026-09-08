@@ -125,22 +125,23 @@ def is_functional(ref: SignalRef, device_types: dict[int, frozenset[int]]) -> bo
 
     Three layers, in this order:
 
-    1. Boilerplate-Cluster sind nie gewollt, auf keinem Endpunkt.
-    2. Auf einem Verwaltungs-Endpunkt (Root Node oder OTA Requestor) ist
-       nur ueberhaupt in Betracht, was zu einem dort ebenfalls deklarierten
-       Nutz-Geraetetyp gehoert - alles andere scheidet hier sofort aus.
-    3. Was Schicht 2 durchlaesst (und jeder Nutz-Endpunkt ohnehin) ist
-       gewollt - ausser bei einem Cluster, fuer den die Profiltabelle einen
-       `attributes:`-Abschnitt fuehrt: dort nur die dort benannten Elemente -
-       abzueglich derer, die die Tabelle ausdruecklich mit `functional:
-       false` fuehrt (Geraetekonstanten wie Min/Max-Bereiche, siehe
+    1. Boilerplate clusters are never wanted, on any endpoint.
+    2. On a management endpoint (root node or OTA requestor), only
+       something that also belongs to a functional device type declared
+       there is even in the running - everything else drops out
+       immediately.
+    3. Whatever passes layer 2 (and every functional endpoint anyway) is
+       wanted - except for a cluster for which the profile table carries
+       an `attributes:` section: there only the elements named there -
+       minus those the table explicitly marks with `functional:
+       false` (device constants such as min/max ranges, see
        `marked_non_functional`).
-       Ein unbekannter Cluster, UND ein bekannter Cluster ohne
-       `attributes:`-Abschnitt (etwa einer, der nur wegen seiner Kommandos in
-       der Tabelle steht), bleiben vollstaendig gewollt (Hauptdokument 3.5).
-       Diese Unterscheidung ist `known_attribute_section` in
-       `profiles.table` - review-fix Phase 6: `knows_cluster` allein reichte
-       nicht, siehe dessen Docstring.
+       An unknown cluster, and a known cluster without an
+       `attributes:` section (say, one that is in the table only because
+       of its commands), stay fully wanted (main document 3.5).
+       This distinction is `known_attribute_section` in
+       `profiles.table` - review-fix phase 6: `knows_cluster` alone was
+       not enough, see its docstring.
 
     Important: layer 2 only grants the cluster a place on the management
     endpoint, not already every one of its elements - layer 3 filters

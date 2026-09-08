@@ -738,25 +738,26 @@ def _decode_device_types(raw: str | None) -> dict[int, frozenset[int]] | None:
 
 
 def _signal_order(signal: StoredSignal) -> tuple[int, int, int, int, int, str]:
-    """Der Sortierschluessel der Signalliste (Entwurf 2026-09-07, Abschnitt 4,
-    mit dem Elementrang als Nachtrag vom 2026-09-08).
+    """The sort key of the signal list (design 2026-09-07, section 4,
+    with the element rank added later on 2026-09-08).
 
-    Zwei Rangebenen, und ihre Stellung im Tupel ist die ganze Aussage: der
-    CLUSTER-Rang steht ganz vorn und ordnet die Cluster zueinander (deshalb
-    faellt PowerSource hinter alles Funktionale); der ELEMENT-Rang steht
-    hinter `cluster_id` und ordnet nur innerhalb desselben Clusters (deshalb
-    faellt `positions` hinter jeden Tastendruck, ohne dass die Tastengruppe
-    als Ganzes ihren Platz aendert).
+    Two rank levels, and their position in the tuple is the whole
+    statement: the CLUSTER rank comes first and orders the clusters
+    against each other (which is why PowerSource falls behind everything
+    functional); the ELEMENT rank comes after `cluster_id` and only orders
+    within the same cluster (which is why `positions` falls behind every
+    button press, without the button group as a whole changing its
+    place).
 
-    Sortiert wird in Python und nicht in SQL, weil beide Raenge aus
-    `clusters.yaml` kommen: SQLite kennt sie nicht, und sie als Spalten in
-    `signal` zu spiegeln hiesse, sie bei jeder Aenderung der YAML-Datei
-    nachtragen zu muessen - eine zweite Wahrheit fuer denselben Wert.
+    Sorting happens in Python and not in SQL, because both ranks come
+    from `clusters.yaml`: SQLite does not know them, and mirroring them as
+    columns in `signal` would mean having to update them on every
+    change to the YAML file - a second truth for the same value.
 
-    Die hinteren Glieder sind der bisherige Schluessel. Er ist wegen der
-    UNIQUE-Bedingung auf `signal` bereits eindeutig, damit ist auch dieser
-    Schluessel total - die Reihenfolge flattert nie, was fuer den Export
-    wichtig ist (er schreibt sie in eine Datei).
+    The trailing members are the previous key. It is already unique
+    because of the UNIQUE constraint on `signal`, which makes this
+    key total too - the order never flickers, which matters for the
+    export (it writes it into a file).
     """
     return (
         rank_for(signal.ref.cluster_id),
@@ -1039,46 +1040,46 @@ class Store:
         self._db.commit()
 
     def backfill_commands(self, snapshots: Sequence[NodeSnapshot]) -> int:
-        """Traegt Kommandos nach, die es beim Einlernen noch nicht gab, und
-        gibt zurueck, bei wie vielen Geraeten etwas dazukam.
+        """Backfills commands that did not yet exist at commissioning time, and
+        returns how many devices gained something.
 
-        Aufgerufen beim Start der Bruecke, neben `backfill_device_types` -
-        die Abbilder aller erreichbaren Knoten sind dort bereits geholt.
+        Called at bridge startup, alongside `backfill_device_types` -
+        the snapshots of all reachable nodes have already been fetched there.
 
-        **Der Fall, um den es geht** (Betrieb, 8. September 2026): Die
-        Kommandoliste eines Geraets entsteht beim Einlernen, aus
-        `extract_commands` gegen den damaligen Stand von `clusters.yaml`.
-        Ein Kommando, das damals nicht in der Tabelle stand, wurde verworfen
-        - und ein spaeteres Update, das es freischaltet, erreichte das
-        Geraet nie: `register_commands` lief nur beim Einlernen und beim
-        CLI-Export. Eine RGB-Leuchte behielt so ihr fehlendes
-        Farb-Bedienelement, obwohl die Bruecke den Befehl laengst kannte.
-        Der einzige Ausweg war ein Export von Hand - auf den niemand kommt,
-        weil nichts darauf hinweist.
+        **The case this addresses** (operations, September 8, 2026): a
+        device's command list is created at commissioning time, from
+        `extract_commands` against the then-current state of `clusters.yaml`.
+        A command that was not in the table back then was discarded
+        - and a later update that unlocks it never reached the
+        device: `register_commands` only ran at commissioning time and at
+        CLI export. An RGB light thereby kept its missing
+        color control, even though the bridge had long known the command.
+        The only way out was a manual export - which no one thinks of,
+        because nothing points to it.
 
-        Signale hatten dieses Loch nie: `Runtime.on_node_snapshot` ruft
-        `register_signals` bei jedem nachgezogenen Abbild. Diese Methode
-        schliesst dieselbe Luecke fuer Kommandos.
+        Signals never had this hole: `Runtime.on_node_snapshot` calls
+        `register_signals` on every refreshed snapshot. This method
+        closes the same gap for commands.
 
-        **Schreibt bei jedem Start, nicht nur wenn etwas fehlt.**
-        `register_commands` uebernimmt `slug` und `takes_value` fuer
-        bekannte Kommandos neu (siehe dort) - genau dafuer ist es gebaut,
-        und eine Korrektur in `clusters.yaml` soll ein Bestandsgeraet auch
-        dann erreichen, wenn kein Kommando fehlt, sondern nur eines anders
-        heisst. Der Preis ist eine Handvoll UPDATEs je Geraet und Start.
-        Der Rueckgabewert zaehlt trotzdem nur die Geraete, bei denen
-        tatsaechlich ein Kommando DAZUKAM - das ist die meldenswerte
-        Aenderung, nicht das Auffrischen.
+        **Writes on every startup, not only when something is missing.**
+        `register_commands` re-adopts `slug` and `takes_value` for
+        known commands (see there) - that is exactly what it is built
+        for, and a correction in `clusters.yaml` should reach an existing
+        device even when no command is missing, but one is merely
+        named differently. The price is a handful of UPDATEs per device
+        and startup. The return value nonetheless only counts the
+        devices where a command was actually ADDED - that is the
+        change worth reporting, not the refresh.
 
-        Schluessel bleiben unangetastet: `register_commands` vergibt sie nur
-        fuer neue Kommandos und laesst bestehende Zeilen bei ihrem
-        Schluessel. Anders waere diese Methode gefaehrlich statt nuetzlich -
-        der Schluessel ist die Verdrahtung in Loxone, und dies hier laeuft
-        bei jedem Start.
+        Keys stay untouched: `register_commands` only assigns them
+        for new commands and leaves existing rows at their
+        key. Otherwise this method would be dangerous rather than useful -
+        the key is the wiring in Loxone, and this here runs
+        on every startup.
 
-        Ein Geraet, das gerade offline ist und deshalb in `snapshots()`
-        fehlt, wird uebersprungen - dieselbe Regel wie bei
-        `backfill_device_types`: hier wird gefuellt, nie geleert.
+        A device that is currently offline and therefore missing from
+        `snapshots()` is skipped - the same rule as for
+        `backfill_device_types`: this fills in, never clears.
         """
         by_node = {snapshot.node_id: snapshot for snapshot in snapshots}
         gained = 0
@@ -1373,20 +1374,19 @@ class Store:
         )
 
     def signals(self, device_id: int) -> list[StoredSignal]:
-        """Alle Signale eines Geraets, nach Bedeutung sortiert.
+        """All signals of a device, sorted by meaning.
 
-        Das `ORDER BY` bleibt stehen, obwohl `_signal_order` es
-        ueberschreibt: es haelt die Zeilenfolge schon vor dem Sortieren
-        fest und macht damit einen Fehler in `_signal_order` sichtbar,
-        statt ihn hinter einer zufaelligen SQLite-Reihenfolge zu
-        verstecken.
+        The `ORDER BY` stays in place even though `_signal_order`
+        overrides it: it pins down the row order already before sorting
+        and thereby makes an error in `_signal_order` visible,
+        instead of hiding it behind a random SQLite order.
 
-        Diese Reihenfolge traegt weiter als die Oberflaeche: `to_inputs`
-        in `api.export` schreibt sie unveraendert in die VIU-Vorlage
-        (Entwurf 2026-09-07, Abschnitt 5). Der Projektdatei-Sync gleicht
-        dagegen ueber den Schluessel ab (`projectsync.diff._plan_inputs`),
-        nicht ueber die Position - eine geaenderte Reihenfolge erzeugt
-        dort keine Scheinaenderungen.
+        This order carries further than the UI: `to_inputs`
+        in `api.export` writes it unchanged into the VIU template
+        (design 2026-09-07, section 5). The project-file sync, by
+        contrast, reconciles by key (`projectsync.diff._plan_inputs`),
+        not by position - a changed order produces no
+        phantom changes there.
         """
         rows = self._db.execute(
             "SELECT * FROM signal WHERE device_id = ?"

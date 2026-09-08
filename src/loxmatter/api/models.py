@@ -59,13 +59,14 @@ class SignalOut(BaseModel):
     exported: bool
     functional: bool
     resend: bool
-    # endpoint/cluster_id (Entwurf 2026-09-07, Abschnitt 7.4): `path` traegt
-    # dieselben Zahlen als "1/59/2", aber als Text. Die Oberflaeche
-    # gruppiert nach Endpunkt und erkennt den Batteriestand an Cluster 47 -
-    # beides aus `path` zu parsen hiesse, `matter.paths` ein zweites Mal in
-    # JavaScript zu pflegen. `endpoint_label` ist der sprechende Name
-    # desselben Endpunkts ("Taste 1"), uebersetzt aus `profiles.endpoints`;
-    # ohne nachgetragene Geraetetypen steht dort "Endpunkt 1".
+    # endpoint/cluster_id (design 2026-09-07, section 7.4): `path` carries
+    # the same numbers as "1/59/2", but as text. The UI groups by
+    # endpoint and recognizes the battery level by cluster 47 -
+    # parsing both from `path` would mean maintaining `matter.paths` a
+    # second time, in JavaScript. `endpoint_label` is the human-readable
+    # name of that same endpoint ("Button 1"), translated from
+    # `profiles.endpoints`; without backfilled device types it reads
+    # "Endpoint 1" there.
     endpoint: int
     cluster_id: int
     endpoint_label: str
@@ -164,12 +165,12 @@ class RoomRename(BaseModel):
 
 
 class ControlRange(BaseModel):
-    """Grenzen eines Reglers, in der Einheit, die die Oberflaeche anzeigt.
+    """Limits of a slider, in the unit the UI displays.
 
-    Heute nur fuer die Farbtemperatur, in Kelvin. Die Umrechnung aus Mired
-    passiert im Server und nicht im JavaScript: sie ist ein Kehrwert, bei
-    dem Min und Max tauschen - eine Falle, die man nicht zweimal aufstellen
-    will (Entwurf 2026-09-07, Abschnitt 5.5)."""
+    Today only for the color temperature, in Kelvin. The conversion from
+    mired happens in the server and not in JavaScript: it is a
+    reciprocal, where min and max swap - a trap you don't want to set
+    twice (design 2026-09-07, section 5.5)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -180,16 +181,16 @@ class ControlRange(BaseModel):
 class CommandOut(BaseModel):
     """A control for `GET /api/devices/{device_id}/controls` (Task 4).
 
-    Traegt bewusst nur, was ein Klick braucht - der Schluessel zum Ausloesen
-    und der Slug als Beschriftung. `takes_value` sagt der Oberflaeche, ob ein
-    einfacher Knopf reicht (z. B. `on`) oder ein Regler noetig ist (z. B.
+    Deliberately carries only what a click needs - the key to trigger it
+    and the slug as a label. `takes_value` tells the UI whether a
+    simple button is enough (e.g. `on`) or a slider is needed (e.g.
     `level`).
 
-    `control` sagt, WELCHES Bedienelement gebaut werden soll (`none`,
-    `percent`, `kelvin`, `hue_sat`, `unknown`) - siehe
-    `profiles.table.command_control`. `takes_value` bleibt daneben
-    bestehen, weil es etwas anderes beantwortet: ob der EXPORT einen
-    analogen oder digitalen Ausgang erzeugt."""
+    `control` says WHICH control should be built (`none`,
+    `percent`, `kelvin`, `hue_sat`, `unknown`) - see
+    `profiles.table.command_control`. `takes_value` continues to exist
+    alongside it because it answers something different: whether the
+    EXPORT produces an analog or digital output."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -228,26 +229,26 @@ class ValueIn(BaseModel):
     value: str
 
 
-# Alles, was NICHT Ziffer, Leerraum oder Bindestrich ist, macht den Wert zu
-# einem QR-Inhalt (`MT:...`, Base38). Ein Bindestrich DARIN traegt Bedeutung
-# und darf nicht wegfallen - deshalb entscheidet dieses Muster zuerst, bevor
-# ueberhaupt etwas geschnitten wird.
+# Anything that is NOT a digit, whitespace, or hyphen makes the value a
+# QR payload (`MT:...`, base38). A hyphen INSIDE it carries meaning
+# and must not be dropped - which is why this pattern decides first, before
+# anything is stripped at all.
 #
-# Diese Regel steht ZWEIMAL: hier und als `isPairingQrCode`/
-# `normalizePairingCode` in `web/app.js`. Das ist Absicht - dort formatiert
-# die Oberflaeche waehrend des Tippens, hier normalisiert die Route fuer
-# JEDEN Aufrufer. Wer eine der beiden Fassungen aendert, aendert die andere.
+# This rule exists TWICE: here and as `isPairingQrCode`/
+# `normalizePairingCode` in `web/app.js`. That is deliberate - there the
+# UI formats while typing, here the route normalizes for
+# EVERY caller. Whoever changes one of the two versions changes the other.
 _COMMISSION_QR_PAYLOAD = re.compile(r"[^0-9\s-]")
 _COMMISSION_CODE_SEPARATORS = re.compile(r"[\s-]")
 
 
 class CommissionRequest(BaseModel):
-    """`POST /api/devices/commission` - der Pairing-Code vom Geraet oder
-    seiner Verpackung (Spec 7.1). Zwei Bauformen: der Zahlencode (11-stellig,
-    auf dem Geraet als `1234-567-8901` aufgedruckt, seltener 21-stellig) oder
-    der Text hinter dem QR-Code (`MT:...`).
+    """`POST /api/devices/commission` - the pairing code from the device or
+    its packaging (spec 7.1). Two forms: the numeric code (11 digits,
+    printed on the device as `1234-567-8901`, more rarely 21 digits) or
+    the text behind the QR code (`MT:...`).
 
-    `code` wird beim Eintreffen normalisiert, siehe `_strip_separators`.
+    `code` is normalized on arrival, see `_strip_separators`.
 
     `thread_dataset` is optional: only Thread devices need it, and only
     before `commission_with_code` is even attempted (see
@@ -269,22 +270,22 @@ class CommissionRequest(BaseModel):
     @field_validator("code")
     @classmethod
     def _strip_separators(cls, value: str) -> str:
-        """Nimmt den Code so entgegen, wie er auf dem Geraet steht.
+        """Accepts the code exactly as it appears on the device.
 
-        Dort steht er gruppiert - `1234-567-8901` - und genau so tippt ihn
-        jeder ab. Auf dem Weg zum Matter-Stack schneidet die Trenner sonst
-        niemand weg: `api.devices` reicht den Wert unveraendert an
-        `BridgeMatterClient.commission_with_code` weiter, und
-        `MatterClient.commission_with_code` setzt ihn ebenso unveraendert in
-        den WebSocket-Befehl (geprueft gegen die installierte Fassung,
+        There it appears grouped - `1234-567-8901` - and that is exactly how
+        everyone types it. On the way to the Matter stack no one else
+        strips the separators: `api.devices` passes the value unchanged to
+        `BridgeMatterClient.commission_with_code`, and
+        `MatterClient.commission_with_code` likewise puts it unchanged into
+        the WebSocket command (checked against the installed version,
         `matter_server/client/client.py:140`).
 
-        Der Validator NORMALISIERT NUR, er validiert nicht (Entwurf
-        Abschnitt 8): ueber die gueltigen Bauformen entscheidet der
-        Matter-Stack. Laege die Regel hier, koennte diese Bruecke einen Code
-        ablehnen, den der Stack angenommen haette - ohne einen Weg daran
-        vorbei. Trenner zu schneiden ist verlustfrei, eine Laengenregel
-        waere eine Wette.
+        The validator ONLY NORMALIZES, it does not validate (design
+        section 8): the Matter stack decides which forms are valid.
+        If the rule lived here, this bridge could reject a code
+        that the stack would have accepted - with no way around it.
+        Stripping separators is lossless, a length rule
+        would be a gamble.
         """
         text = value.strip()
         if _COMMISSION_QR_PAYLOAD.search(text):

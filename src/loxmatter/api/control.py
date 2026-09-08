@@ -97,19 +97,19 @@ importable in a later version (or parsing the file as data without an
 import proves acceptable), this list could be replaced by reading out the
 `"writable"` table found above - see spec.
 
-**Offener Punkt, hier bewusst nicht geloest (siehe Spec, Abschnitt 12):**
-selbst ein Attribut auf der Erlaubnisliste laesst sich mit dem heutigen
-Stand nicht tatsaechlich schreiben - `BridgeMatterClient` (matter/client.py)
-hat kein `write_attribute`, und die Schnittstelle dieses Moduls
-(`build_control_router(store, invoke, values)`) nimmt dafuer auch keinen
-schreibenden Aufrufer entgegen; `invoke` ist ausschliesslich fuer Kommandos
-typisiert (`Callable[[MatterCall], Awaitable[None]]`), `values` liest nur
-(siehe `ValueReader`), und ein Attribut-Schreibzugriff ist keins von beidem.
-`POST /api/signals/{key}/write` antwortet fuer ein
-erlaubtes Attribut deshalb ehrlich mit 501 statt mit einem Erfolg, der
-nichts bewirkt - dieselbe Haltung wie oben, nur eine Stufe weiter: eine
-Antwort, die stillschweigend nichts tut, ist genau der Fehler, den dieses
-Werkzeug aufdecken soll, nicht erzeugen.
+**Open point, deliberately left unresolved here (see spec, section 12):**
+even an attribute on the allowlist cannot actually be written as things
+stand today - `BridgeMatterClient` (matter/client.py) has no
+`write_attribute`, and this module's interface
+(`build_control_router(store, invoke, values)`) does not accept a writing
+caller for it either; `invoke` is typed exclusively for commands
+(`Callable[[MatterCall], Awaitable[None]]`), `values` only reads
+(see `ValueReader`), and an attribute write is neither of those.
+`POST /api/signals/{key}/write` therefore honestly answers with 501 for
+an allowed attribute instead of a success that does nothing - the same
+stance as above, just one step further: a response that silently does
+nothing is exactly the failure this tool is meant to surface, not
+produce.
 """
 
 from __future__ import annotations
@@ -151,19 +151,19 @@ def _is_writable(cluster_id: int, attribute_id: int) -> bool:
 
 
 class ValueReader(Protocol):
-    """Was diese Route von `runtime` braucht - nur Lesen.
+    """What this route needs from `runtime` - reading only.
 
-    Bewusst enger als `api.devices.RuntimeValues`: die Bedienroute setzt
-    nichts online, und ein Protokoll, das mehr verlangt als es benutzt,
-    zwingt jedem Test ein groesseres Double auf, als der Fall braucht.
-    `loxone.runtime.Runtime` erfuellt beide.
+    Deliberately narrower than `api.devices.RuntimeValues`: the control
+    route sets nothing online, and a protocol that demands more than it
+    uses forces every test to a bigger double than the case needs.
+    `loxone.runtime.Runtime` satisfies both.
     """
 
     def last_values_for(self, device_id: int) -> dict[str, float | bool]: ...
 
 
-# ColorTempPhysicalMinMireds / ColorTempPhysicalMaxMireds, gegen das
-# installierte SDK belegt (chip.clusters.Objects.ColorControl.Attributes).
+# ColorTempPhysicalMinMireds / ColorTempPhysicalMaxMireds, checked
+# against the installed SDK (chip.clusters.Objects.ColorControl.Attributes).
 _CLUSTER_COLOR = 768
 _ATTR_CT_PHYS_MIN_MIREDS = 16395
 _ATTR_CT_PHYS_MAX_MIREDS = 16396
@@ -179,16 +179,16 @@ def build_control_router(store: Store, invoke: Invoker, values: ValueReader) -> 
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     def _kelvin_range(device_id: int, endpoint: int) -> ControlRange | None:
-        """Der Farbtemperaturbereich der Leuchte, in Kelvin - oder None.
+        """The light's color temperature range, in Kelvin - or None.
 
-        Kelvin = 1e6 / Mired ist ein Kehrwert: das KLEINERE Mired ergibt
-        das GROESSERE Kelvin, Min und Max tauschen also beim Umrechnen.
+        Kelvin = 1e6 / mired is a reciprocal: the SMALLER mired yields the
+        LARGER Kelvin, so min and max swap when converting.
 
-        None statt eines Ersatzbereichs, wenn die Leuchte die Grenzen nicht
-        meldet: ein Regler, der bei 6500 K endet, obwohl das Geraet bei
-        4000 K aufhoert, laesst einen Wert einstellen, den es still
-        beschneidet - genau der stille Fehlschlag, den diese Ansicht
-        aufdecken soll (Spec 8.1).
+        None instead of a fallback range when the light does not report
+        its limits: a slider that ends at 6500 K even though the device
+        stops at 4000 K lets you set a value that it silently clips -
+        exactly the silent failure this view is meant to surface
+        (spec 8.1).
         """
         wanted = (_ATTR_CT_PHYS_MIN_MIREDS, _ATTR_CT_PHYS_MAX_MIREDS)
         keys = {

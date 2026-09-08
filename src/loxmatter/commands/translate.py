@@ -21,31 +21,31 @@ outputs (task 6) and the WebUI (phase 5). If the logic lived in either one
 of the two, the conversion would exist twice - with guaranteed drift in
 behaviour (spec 4.2).
 
-Was nicht in `_PAYLOAD_BUILDERS` steht, wirft. Ein Kommando mit erfundener
-Nutzlast an ein echtes Geraet zu schicken ist schlechter als ein klarer
-Fehler. Das gilt nicht nur fuer einen voellig unbekannten Cluster, sondern
-auch fuer ein bekanntes Cluster mit einer unbekannten Kommando-ID darin: der
-Dispatch schluesselt auf das Paar (Cluster-ID, Kommando-ID), nie auf die
-Cluster-ID allein - siehe `test_known_cluster_with_unknown_command_raises`
-(Cluster 768/ColorControl, Kommando 7),
-`test_onoff_cluster_with_unknown_command_raises` (Cluster 6) und
-`test_level_cluster_with_unknown_command_raises` (Cluster 8) in
-`tests/commands/test_translate.py`. Cluster 768 Kommando 6 (Hue/Saturation)
-wird seit dem 7. September 2026 bedient: die Loxone-seitige RGB-Codierung
-ist in `color.py` mit offizieller Quelle belegt (Knowledge Base, "RGB
-Lighting Controller"). Bis dahin stand hier die Begruendung, sie sei
-unbelegt - das verwechselte RGB mit **Lumitech**, dem kombinierten
-Helligkeits- und Kelvin-Ausgang, der weiterhin ohne belastbare Quelle ist
-(siehe `color.py` und Entwurf 2026-09-07, Abschnitt 10.1). Nicht bedient
-bleiben MoveToHue (0), MoveToSaturation (3), MoveToColor (7, xy) und
-Enhanced (67) - die Bedienflaeche setzt Farbton und Saettigung in einem
-Kommando, alles weitere waere unbelegte Flaeche. Cluster 6 und 8 kennen
-jenseits von Off/On/Toggle bzw. MoveToLevel(WithOnOff) hier schlicht keine
-weiteren Kommandos - das ist besonders beim Rohexport (`raw`) relevant, der
-auch Kommandos ohne Eintrag in `clusters.yaml` durchlaesst, etwa
-LevelControl Move/Step/Stop. Faelschlich ein Kommando zu bauen, nur weil der
-Cluster bekannt ist, waere genau der Fehler, den diese Funktion vermeiden
-soll.
+Whatever is not in `_PAYLOAD_BUILDERS` raises. Sending a command with a
+made-up payload to a real device is worse than a clear
+error. That holds not only for a completely unknown cluster, but
+also for a known cluster with an unknown command ID inside it: the
+dispatch keys on the pair (cluster ID, command ID), never on the
+cluster ID alone - see `test_known_cluster_with_unknown_command_raises`
+(cluster 768/ColorControl, command 7),
+`test_onoff_cluster_with_unknown_command_raises` (cluster 6) and
+`test_level_cluster_with_unknown_command_raises` (cluster 8) in
+`tests/commands/test_translate.py`. Cluster 768 command 6 (Hue/Saturation)
+has been supported since September 7, 2026: the Loxone-side RGB encoding
+is backed by an official source in `color.py` (knowledge base, "RGB
+Lighting Controller"). Until then the reasoning here said it was
+unbacked - that confused RGB with **Lumitech**, the combined
+brightness-and-Kelvin output, which remains without a solid source
+(see `color.py` and design 2026-09-07, section 10.1). Not supported
+remain MoveToHue (0), MoveToSaturation (3), MoveToColor (7, xy) and
+Enhanced (67) - the control UI sets hue and saturation in one
+command, anything further would be unbacked territory. Clusters 6 and 8
+simply know no further commands here beyond Off/On/Toggle and
+MoveToLevel(WithOnOff) respectively - that matters especially for the raw
+export (`raw`), which also lets through commands with no entry in
+`clusters.yaml`, such as LevelControl Move/Step/Stop. Wrongly building a
+command just because the cluster is known would be exactly the error this
+function is meant to avoid.
 """
 
 from __future__ import annotations
@@ -123,8 +123,8 @@ def _payload_color_temperature(value: str) -> dict[str, object]:
     return {"colorTemperatureMireds": kelvin_to_mireds(_as_number(value))}
 
 
-# Kanal-Kuerzel aus `LoxoneColourError.channel` (siehe `commands/color.py`)
-# auf den zugehoerigen i18n-Schluessel fuer den uebersetzten Kanalnamen.
+# Channel abbreviation from `LoxoneColourError.channel` (see `commands/color.py`)
+# to the associated i18n key for the translated channel name.
 _LOXONE_COLOUR_CHANNEL_KEYS: dict[str, str] = {
     "red": "api.errors.loxone_colour_channel_red",
     "green": "api.errors.loxone_colour_channel_green",
@@ -133,15 +133,15 @@ _LOXONE_COLOUR_CHANNEL_KEYS: dict[str, str] = {
 
 
 def _translate_loxone_colour_error(exc: LoxoneColourError) -> str:
-    """Baut aus den Feldern von `LoxoneColourError` eine uebersetzte Meldung.
+    """Builds a translated message from the fields of `LoxoneColourError`.
 
-    `str(exc)` selbst ist hart Deutsch (siehe `LoxoneColourError`-Docstring
-    in `color.py`) - hier wird stattdessen aus `exc.kind` und den je nach
-    Fall gesetzten Feldern neu zusammengesetzt, ueber `i18n.t()` wie jeder
-    andere Fehlerpfad in diesem Modul (Muster: `_as_number` oben). Die
-    `assert`s narrowen fuer mypy nur, was `kind` bereits festlegt - siehe
-    Docstring von `LoxoneColourError`, welches Feld zu welchem `kind`
-    gehoert.
+    `str(exc)` itself is hard-coded German (see the `LoxoneColourError`
+    docstring in `color.py`) - here it is instead reassembled from
+    `exc.kind` and the fields set depending on the case, via `i18n.t()`
+    like every other error path in this module (pattern: `_as_number`
+    above). The `assert`s only narrow for mypy what `kind` already
+    determines - see the docstring of `LoxoneColourError` for which field
+    belongs to which `kind`.
     """
     if exc.kind == "not_integer":
         assert exc.value is not None
@@ -163,38 +163,38 @@ def _translate_loxone_colour_error(exc: LoxoneColourError) -> str:
 
 
 def _payload_hue_saturation(value: str) -> dict[str, object]:
-    """Gepackte Loxone-Farbzahl -> Matter-Hue/Saturation.
+    """Packed Loxone color number -> Matter hue/saturation.
 
-    Zwei Umrechnungen hintereinander, beide in `commands/color.py` belegt:
-    die Loxone-Codierung entpacken und das Ergebnis nach HSV wandeln.
-    `loxone_rgb_to_rgb` wirft `LoxoneColourError` fuer eine unmoegliche Zahl
-    - hier wird daraus `UnsupportedValueError`, damit der Aufrufer wie bei
-    jedem anderen unpassenden Wert mit 400 antwortet und nicht mit 500.
+    Two conversions in a row, both backed by a source in `commands/color.py`:
+    unpacking the Loxone encoding and converting the result to HSV.
+    `loxone_rgb_to_rgb` raises `LoxoneColourError` for an impossible number
+    - here that becomes `UnsupportedValueError`, so the caller answers with
+    400 rather than 500, as for any other unsuitable value.
 
-    Die Meldung dafuer kommt NICHT aus `str(exc)` - das waere hart Deutsch
-    (siehe `LoxoneColourError`-Docstring in `color.py`), waehrend jeder
-    andere Fehlerpfad in diesem Modul ueber `i18n.t()` laeuft (Review-Fix,
-    2026-09-07: `_payload_hue_saturation` reichte den deutschen `str(exc)`
-    bis dahin unveraendert als HTTP-400-`detail` durch, auch bei
-    englischer Sprachwahl). `_translate_loxone_colour_error` oben baut aus
-    den Feldern von `LoxoneColourError` dieselbe Genauigkeit (welcher Kanal,
-    welcher Wert) neu auf, nur uebersetzt.
+    The message for that does NOT come from `str(exc)` - that would be
+    hard-coded German (see the `LoxoneColourError` docstring in `color.py`),
+    while every other error path in this module goes through `i18n.t()`
+    (review fix, 2026-09-07: until then `_payload_hue_saturation` passed
+    the German `str(exc)` through unchanged as the HTTP-400 `detail`, even
+    with English selected as the language). `_translate_loxone_colour_error`
+    above rebuilds the same precision (which channel, which value) from the
+    fields of `LoxoneColourError`, just translated.
 
-    ACHTUNG fuer alle, die den Loxone-RGB-Baustein an dieses Kommando
-    verdrahten (Befund I-3, Abschluss-Review 2026-09-08): der AQa-Ausgang
-    dieses Bausteins traegt Farbe UND Helligkeit in EINER Zahl, aber diese
-    Funktion entpackt daraus nur die Farbe - `MoveToHueAndSaturation` hat
-    kein Feld fuer Helligkeit, die laeuft ausschliesslich ueber
-    LevelControl (siehe `_payload_level` oben). Nachgerechnet: AQa 100, 50
-    und 25 (Rot bei 100 %, 50 %, 25 % Helligkeit im Loxone-Baustein)
-    ergeben alle drei `hue 0, sat 254` - identische Kommandos. Dimmen im
-    Loxone-Baustein bewirkt an der Leuchte also NICHTS. AQa 0 ergibt
-    `hue 0, sat 0`, also Weiss statt Aus - stumpfe Saettigung 0 ist Weiss,
-    kein Ausschalten. Kein Programmierfehler, sondern Folge der bewussten
-    Beschraenkung auf dieses eine Farbkommando (Entwurf 2026-09-07,
-    Abschnitt 9.3) - aber mangels erreichbarer Hardware mit
-    angeschlossenem Loxone-RGB-Baustein bislang UNGETESTET. Offener Punkt,
-    siehe Entwurf Abschnitt 10.
+    WARNING for anyone wiring the Loxone RGB block to this command
+    (finding I-3, closing review 2026-09-08): the AQa output of that
+    block carries color AND brightness in ONE number, but this
+    function unpacks only the color from it - `MoveToHueAndSaturation` has
+    no field for brightness, which runs exclusively through
+    LevelControl (see `_payload_level` above). Worked out: AQa 100, 50,
+    and 25 (red at 100%, 50%, 25% brightness in the Loxone block)
+    all three yield `hue 0, sat 254` - identical commands. Dimming in
+    the Loxone block therefore does NOTHING to the light. AQa 0 yields
+    `hue 0, sat 0`, i.e. white instead of off - flat saturation 0 is white,
+    not switching off. Not a programming error, but a consequence of the
+    deliberate restriction to this one color command (design 2026-09-07,
+    section 9.3) - but so far UNTESTED for lack of reachable hardware
+    with a connected Loxone RGB block. Open point,
+    see design section 10.
     """
     try:
         red, green, blue = loxone_rgb_to_rgb(_as_number(value))
@@ -204,11 +204,11 @@ def _payload_hue_saturation(value: str) -> dict[str, object]:
     return {"hue": hue, "saturation": saturation, "transitionTime": 0}
 
 
-# Einziger Ort, an dem festgelegt ist, welche (Cluster-ID, Kommando-ID)-Paare
-# bedient werden. Der Dispatch in `to_matter_call` liest diese Zuordnung nur
-# noch aus - ein weiteres Kommando zu unterstuetzen ist eine Datenaenderung
-# hier, keine neue Verzweigung dort, und die Menge der bedienten Paare ist auf
-# einen Blick vollstaendig.
+# The only place that determines which (cluster ID, command ID) pairs
+# are supported. The dispatch in `to_matter_call` only reads this mapping
+# out - supporting a further command is a data change here, not a new
+# branch there, and the set of supported pairs is complete at a
+# glance.
 _PAYLOAD_BUILDERS: dict[tuple[int, int], Callable[[str], dict[str, object]]] = {
     (_CLUSTER_ONOFF, _COMMAND_OFF): _payload_none,
     (_CLUSTER_ONOFF, _COMMAND_ON): _payload_none,

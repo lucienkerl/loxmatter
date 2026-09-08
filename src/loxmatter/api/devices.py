@@ -151,34 +151,35 @@ class RuntimeValues(Protocol):
 def _signal_out(
     signal: StoredSignal, values: dict[str, float | bool], labels: dict[int, str]
 ) -> SignalOut:
-    """`functional` kommt unveraendert aus `StoredSignal.functional` -
-    `profiles.relevance.is_functional` braucht die Geraetetypen je Endpunkt
-    (`device_types_by_endpoint`), die diese Funktion hier gar nicht sieht
-    (nur `signal` und die aktuellen Werte). `Store.register_signals`
-    berechnet das Ergebnis bereits einmalig bei der Registrierung, mit dem
-    echten Geraeteabbild zur Hand, und schreibt es in die Zeile - siehe dort
-    und `_migrate_to_v4` fuer Bestandsgeraete. Eine zweite Berechnung hier
-    (oder gar in der Oberflaeche) wuerde dieselbe Regel ein zweites Mal
-    nachbilden, ohne das Abbild zu haben, das sie eigentlich braucht.
+    """`functional` comes unchanged from `StoredSignal.functional` -
+    `profiles.relevance.is_functional` needs the device types per endpoint
+    (`device_types_by_endpoint`), which this function here does not see at
+    all (only `signal` and the current values). `Store.register_signals`
+    already computes the result once at registration time, with the real
+    device snapshot at hand, and writes it into the row - see there
+    and `_migrate_to_v4` for existing devices. A second computation here
+    (or even in the UI) would rebuild the same rule a second time,
+    without having the snapshot it would actually need.
 
-    `labels` kommt als fertige Endpunkt->Name-Zuordnung vom Aufrufer herein
-    (`profiles.endpoints.endpoint_labels`, einmal je Geraet gebildet) statt
-    hier je Signal neu berechnet zu werden - bei 173 Signalen eines
-    Geraets waere das 173-mal dieselbe Rechnung ueber dieselben
-    Geraetetypen. Zwei Faelle lassen `labels` fuer einen Endpunkt leer:
-    entweder sind die Geraetetypen fuer das GANZE Geraet noch nicht
-    nachgetragen (`device_types IS NULL`, der laut `Store.
-    backfill_device_types`-Docstring dokumentierte Normalfall fuer ein
-    Geraet, das beim Bruueckenstart offline war - `endpoint_labels(None)`
-    liefert dann `{}`), oder ein EINZELNER Endpunkt meldet gar keinen
-    Descriptor und fehlt deshalb als Schluessel in `device_types`, obwohl
-    das Geraet selbst laengst nachgetragen ist (siehe `endpoint_labels`).
-    Fuer beide Faelle faellt HIER auf `endpoint_plain` zurueck - als
-    eigener Zweig statt als `.get()`-Vorgabe, die bei JEDEM Signal
-    ausgewertet wuerde: bei 173 Signalen eines Geraets waeren das 173
-    ueberfluessige `i18n.t`-Aufrufe je Anfrage, obwohl der Rueckfall fast
-    nie greift - genau die Rechnung, die der Absatz oben ueber `labels`
-    schon einmal vermeidet."""
+    `labels` arrives as a ready-made endpoint->name mapping from the caller
+    (`profiles.endpoints.endpoint_labels`, built once per device) instead
+    of being recomputed here per signal - with 173 signals on one
+    device that would be the same computation 173 times over the same
+    device types. Two cases leave `labels` empty for an endpoint:
+    either the device types for the WHOLE device have not yet been
+    backfilled (`device_types IS NULL`, the normal case documented by
+    `Store.backfill_device_types`'s docstring for a device that was
+    offline at bridge startup - `endpoint_labels(None)`
+    then returns `{}`), or a SINGLE endpoint reports no
+    descriptor at all and is therefore missing as a key in `device_types`,
+    even though the device itself has long been backfilled (see
+    `endpoint_labels`). For both cases this function falls back to
+    `endpoint_plain` HERE - as its own branch rather than a `.get()`
+    default, which would be evaluated for EVERY signal: with 173 signals
+    on one device that would be 173 superfluous `i18n.t` calls per
+    request, even though the fallback almost never applies - exactly the
+    computation the paragraph above about `labels` already avoids
+    once."""
     exportable = is_exportable(signal.exportability)
     reason_key = None if exportable else _UNEXPORTABLE_REASON_KEYS.get(signal.exportability)
     reason = i18n.t(reason_key) if reason_key else None
@@ -295,7 +296,7 @@ def build_device_router(
     async def get_signals(device_id: int) -> list[SignalOut]:
         device = _require_device(device_id)
         values = runtime.last_values_for(device_id)
-        # Einmal je Geraet gebildet, nicht je Signal - siehe Docstring von
+        # Built once per device, not per signal - see the docstring of
         # `_signal_out`.
         labels = endpoint_labels(device.device_types)
         return [_signal_out(signal, values, labels) for signal in store.signals(device_id)]
