@@ -896,11 +896,11 @@ web.devices.menu_signals:
 
 # --- web.signals — Signalansicht ---
 web.signals.key_hint:
-  en: "The key (left, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
-  de: "Der Schlüssel (links, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
+  en: "The key (in the \"Loxone input\" column, greyed out) is the wiring in Loxone and cannot be changed here — doing so would silently disable a block there."
+  de: "Der Schlüssel (in der Spalte „Loxone-Eingang“, grau hinterlegt) ist die Verdrahtung in Loxone und lässt sich hier nicht ändern – ein Klick würde dort einen Baustein still lahmlegen."
 web.signals.functional_vs_expert_explanation:
-  en: "\"Functional\" are the signals that belong to the recognized device type (on/off, power, and similar) – \"Expert\" is everything else (network, device, and diagnostic values, technical counters). Both sections keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
-  de: "„Funktional“ sind die Signale, die zum erkannten Gerätetyp gehören (Ein/Aus, Leistung und Ähnliches) – „Experte“ alles andere (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Blöcke behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
+  en: "The signals above belong to the recognized device type, grouped by endpoint (e.g. \"Button 1\", \"Device\") – \"Expert\" leads everything else (network, device, and diagnostic values, technical counters). Both areas keep the export checkbox for each individual signal; the grouping only changes what is visible by default."
+  de: "Oben stehen die Signale, die zum erkannten Gerätetyp gehören, gruppiert nach Endpunkt (z. B. „Taste 1“, „Gerät“) – „Experte“ führt alles Übrige (Netzwerk-, Geräte- und Diagnosewerte, technische Zähler). Beide Bereiche behalten den Exportieren-Haken für jedes einzelne Signal; die Gliederung ändert nur, was standardmäßig zu sehen ist."
 web.signals.load_button:
   en: "Load signals"
   de: "Signale laden"
