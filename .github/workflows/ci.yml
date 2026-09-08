@@ -88,3 +88,32 @@ jobs:
             LOXMATTER_COMMIT=${{ steps.meta.outputs.commit }}
             LOXMATTER_BUILT_AT=${{ steps.meta.outputs.built_at }}
             LOXMATTER_SCHEMA_VERSION=${{ steps.meta.outputs.schema }}
+
+  # Der Beiwagen. Eigener Job und eigenes Image, weil er NICHT dasselbe
+  # Image sein darf wie das, das er austauscht: sonst ersetzte ein Update
+  # den Prozess, der es gerade ausfuehrt. Er aendert sich selten - deshalb
+  # ohne :dev-Tag, nur auf Releases.
+  updater-image:
+    needs: test
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: deploy/updater
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/lucienkerl/loxmatter-updater:${{ github.ref_name }}
+            ghcr.io/lucienkerl/loxmatter-updater:stable
