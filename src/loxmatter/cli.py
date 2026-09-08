@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -57,6 +58,7 @@ from loxmatter.matter.discovery import (
     find_unreported_attributes,
 )
 from loxmatter.matter.models import NodeSnapshot, SignalKind
+from loxmatter.matter.supervisor import attach, supervise
 from loxmatter.model.locale_store import LocaleStore
 from loxmatter.model.store import Store
 from loxmatter.profiles.table import is_exportable
@@ -589,6 +591,7 @@ async def _run(
     async def invoke(call: MatterCall) -> None:
         await client.send_command(call)
 
+    supervisor_task: asyncio.Task[None] | None = None
     try:
         try:
             await client.connect()
@@ -596,31 +599,18 @@ async def _run(
             _fail(i18n.t("cli.common.fail_matter_unreachable", url=url))
         except MatterUnavailableError as exc:
             _fail(i18n.t("cli.common.fail_matter_not_ready", url=url, exc=exc))
-        await client.subscribe(store.device_id_for_node, runtime)
         await runtime.start()
-        # Startwerte aus dem aktuellen Geraetezustand laden, BEVOR der Resend
-        # unten sie verschickt (Spec 6.4, Live-Lauf vom 2026-09-02): ohne das
-        # faende `resend_all()` einen leeren Cache vor, weil ein Wert dort nur
-        # ueber eine sich aendernde Subscription landet - siehe
-        # `Runtime.seed_from_snapshot`.
-        snapshots = await client.snapshots()
-        await runtime.seed_from_snapshot(snapshots)
-        # Geraetetypen von Bestandsgeraeten nachtragen (Entwurf Geraete-Tab,
-        # 2026-09-05, Abschnitt 3.4): die Abbilder sind gerade geholt, ein
-        # zweiter Abruf nur fuer diesen Zweck waere Verschwendung. Fuellt nur
-        # Zeilen ohne Typen; ein Geraet, das gerade offline ist und deshalb
-        # hier fehlt, behaelt seine und wird beim naechsten Start erreicht.
-        store.backfill_device_types(snapshots)
-        # Kommandos von Bestandsgeraeten auffrischen, aus denselben Abbildern
-        # (Betriebsbefund 2026-09-08): ein Geraet, das eingelernt wurde,
-        # bevor ein Kommando in `clusters.yaml` stand, fuehrte es nie - eine
-        # RGB-Leuchte blieb ohne Farb-Bedienelement, obwohl die Bruecke den
-        # Befehl laengst kannte. Siehe `Store.backfill_commands`.
-        gained = store.backfill_commands(snapshots)
+        # Startsequenz und Wiederaufbau teilen sich seit dem 8. September
+        # 2026 eine Stelle (`matter.supervisor.attach`) - siehe dort, warum.
+        gained = await attach(client, store, runtime)
         if gained:
             typer.echo(i18n.t("cli.run.echo_commands_backfilled", count=gained))
-        # Ein Neustart der Bridge soll wirken wie /resync (Spec 6.4).
-        await runtime.resend_all()
+        # Der Verwalter laeuft, solange der Dienst laeuft: stirbt das
+        # Websocket zu matter-server, baut er die Verbindung wieder auf und
+        # laesst `attach` erneut laufen. Ohne ihn bleibt die Bruecke nach
+        # einem Neustart von matter-server stumm, ohne es zu melden - genau
+        # der Ausfall vom 8. September 2026.
+        supervisor_task = asyncio.ensure_future(supervise(client, store, runtime))
 
         # `log_handler` kommt bereits fertig herein (siehe Docstring oben,
         # Abschnitt "Log-Ring") - `install_log_buffer()` selbst steht seit
@@ -642,6 +632,10 @@ async def _run(
         )
         await uvicorn.Server(config).serve()
     finally:
+        if supervisor_task is not None:
+            supervisor_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await supervisor_task
         try:
             await runtime.stop()
         except asyncio.CancelledError:
