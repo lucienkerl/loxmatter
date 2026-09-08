@@ -179,6 +179,22 @@ def _payload_hue_saturation(value: str) -> dict[str, object]:
     englischer Sprachwahl). `_translate_loxone_colour_error` oben baut aus
     den Feldern von `LoxoneColourError` dieselbe Genauigkeit (welcher Kanal,
     welcher Wert) neu auf, nur uebersetzt.
+
+    ACHTUNG fuer alle, die den Loxone-RGB-Baustein an dieses Kommando
+    verdrahten (Befund I-3, Abschluss-Review 2026-09-08): der AQa-Ausgang
+    dieses Bausteins traegt Farbe UND Helligkeit in EINER Zahl, aber diese
+    Funktion entpackt daraus nur die Farbe - `MoveToHueAndSaturation` hat
+    kein Feld fuer Helligkeit, die laeuft ausschliesslich ueber
+    LevelControl (siehe `_payload_level` oben). Nachgerechnet: AQa 100, 50
+    und 25 (Rot bei 100 %, 50 %, 25 % Helligkeit im Loxone-Baustein)
+    ergeben alle drei `hue 0, sat 254` - identische Kommandos. Dimmen im
+    Loxone-Baustein bewirkt an der Leuchte also NICHTS. AQa 0 ergibt
+    `hue 0, sat 0`, also Weiss statt Aus - stumpfe Saettigung 0 ist Weiss,
+    kein Ausschalten. Kein Programmierfehler, sondern Folge der bewussten
+    Beschraenkung auf dieses eine Farbkommando (Entwurf 2026-09-07,
+    Abschnitt 9.3) - aber mangels erreichbarer Hardware mit
+    angeschlossenem Loxone-RGB-Baustein bislang UNGETESTET. Offener Punkt,
+    siehe Entwurf Abschnitt 10.
     """
     try:
         red, green, blue = loxone_rgb_to_rgb(_as_number(value))

@@ -372,3 +372,26 @@ unbekannt“ und die Fehlermeldung für eine ungültige Farbzahl.
    das Modal offen ist, veralten die Regler still. Bewusst so — der Ausbau
    zum echten Bedienfeld wäre ein eigener Entwurf mit eigener Begründung
    gegenüber Hauptspec 8.1.
+5. **Der Loxone-Farbweg verwirft Helligkeit.** Der AQa-Ausgang des
+   Loxone-RGB-Bausteins trägt Farbe UND Helligkeit in einer Zahl;
+   `MoveToHueAndSaturation` transportiert nur die Farbe (siehe
+   `commands/translate.py`, `_payload_hue_saturation`). Nachgerechnet: AQa
+   100, 50 und 25 (Rot bei 100 %, 50 %, 25 % Helligkeit) ergeben alle drei
+   `hue 0, sat 254` — identische Kommandos, Dimmen im Loxone-Baustein
+   bewirkt an der Leuchte also nichts. AQa 0 ergibt `hue 0, sat 0`, also
+   Weiß statt Aus. Kein Programmierfehler, sondern Folge der bewussten
+   Beschränkung auf ein Farbkommando (Abschnitt 9.3) — aber mangels
+   erreichbarer Hardware mit angeschlossenem Loxone-RGB-Baustein bislang
+   ungetestet (Abschluss-Review 2026-09-08, Befund I-3).
+6. **Endpunkt-Asymmetrie zwischen Server und Oberfläche.**
+   `api/control.py::_kelvin_range` filtert Startwerte korrekt auf
+   `signal.ref.endpoint == command.endpoint`; die Oberfläche sucht ihre
+   Startwerte in `app.js` dagegen über
+   `entry.path.endsWith('/<cluster>/<element>')` — ohne Endpunkt — und
+   nimmt den ersten Treffer. Bei einem Node mit LevelControl oder
+   ColorControl auf zwei Nutz-Endpunkten (zweikanaliger Dimmer, gebrückte
+   Leuchten) bekämen beide Regler den Startwert von Endpunkt 1, und
+   `hasColourTabs` mischte Kommandos verschiedener Endpunkte zu einer
+   Reiterleiste. Kein eingechecktes Gerät löst das heute aus; die Änderung
+   wäre größer als der Nutzen und gehört in eine eigene Aufgabe
+   (Abschluss-Review 2026-09-08, Befund I-4).
