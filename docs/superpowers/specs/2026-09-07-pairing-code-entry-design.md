@@ -1,18 +1,18 @@
-# Pairing-Code: schreiben, wie er auf dem Gerät steht
+# Pairing code: write it as it appears on the device
 
-Entwurf, 7. September 2026. Betrifft die Einlern-Karte der Geräteansicht —
-zuletzt umgebaut im Entwurf „Code zuerst" (siehe den Kommentar über
-`<div x-show="commissionStep === null">` in `web/index.html`) — sowie die
-Route `POST /api/devices/commission`.
+Design, September 7, 2026. Concerns the commissioning card of the device view —
+last redesigned in the "Code first" design (see the comment over
+`<div x-show="commissionStep === null">` in `web/index.html`) — and the
+`POST /api/devices/commission` route.
 
-## 1. Das Problem
+## 1. The problem
 
-Auf jedem Matter-Gerät steht der Zahlencode gruppiert: `1234-567-8901`. So
-steht er auf dem Aufkleber, so zeigen ihn Apple, Google und jede Anleitung.
-Wer ihn abliest und abtippt, tippt die Bindestriche mit — es sieht ja aus
-wie eine Telefonnummer.
+Every Matter device has the numeric code displayed in groups: `1234-567-8901`. This
+is how it appears on the sticker, how Apple, Google, and every manual show it.
+When someone reads it and types it, they type the hyphens too — it looks just like
+a phone number.
 
-Das Feld nimmt ihn so entgegen und reicht ihn ungefiltert weiter:
+The input field accepts it that way and passes it through unfiltered:
 
 ```
 web/app.js:1665     body = { code: this.commissionCode.trim() }
@@ -21,267 +21,261 @@ api/devices.py:419  active_client.commission_with_code(request.code)
 matter/client.py    upstream.commission_with_code(code)
 ```
 
-Und weiter, geprüft gegen die installierte Fassung statt vermutet:
+Further on, verified against the installed version rather than assumed:
 `MatterClient.commission_with_code` (`matter_server/client/client.py:140`)
-setzt den String unverändert in den WebSocket-Befehl. **Auf dem ganzen Weg
-von der Tastatur bis zum Matter-Stack schneidet niemand die Bindestriche
-weg.**
+puts the string unchanged into the WebSocket command. **All the way from the
+keyboard to the Matter stack, nobody strips the hyphens.**
 
-Ob das CHIP-SDK im matter-server-Container sie am Ende doch schluckt, lässt
-sich von hier aus nicht belegen — der Parser läuft dort, nicht hier. Genau
-das ist der Punkt: die Brücke verlässt sich derzeit auf eine Zusage, die
-niemand gegeben hat. Trifft sie nicht zu, scheitert das Einlernen mit
-„Commission with code failed for node N", und der Grund — ein Bindestrich —
-steht in keiner Meldung.
+Whether the CHIP SDK in the matter-server container swallows them in the end
+cannot be proven from here — the parser runs there, not here. That's exactly the
+point: the bridge currently relies on a commitment that nobody gave. If it does
+not hold, commissioning fails with "Commission with code failed for node N", and
+the reason — a hyphen — appears in no message.
 
-Dazu ein zweites, kleineres Problem: das Feld sagt nicht, was es erwartet.
-Sein Platzhalter lautet „Pairing-Code (11-stellig oder MT:…)". Das ist die
-Bauform, nicht das Aussehen. Wer den Aufkleber in der Hand hält, muss den
-Klammerzusatz erst in „die untere der beiden Zahlen" übersetzen.
+There's a second, smaller problem: the field does not say what it expects.
+Its placeholder reads "Pairing code (11-digit or MT:…)". That is the
+form, not the appearance. Someone holding the sticker needs to first
+translate the bracketed note into "the lower of the two numbers".
 
-## 2. Was dieser Entwurf will
+## 2. What this design wants
 
-1. Das Feld **schreibt den Code so, wie er auf dem Gerät steht** — die
-   Bindestriche erscheinen beim Tippen von selbst.
-2. Das Feld **benennt, was es erkannt hat** — Zahlencode, QR-Code, oder wie
-   viele Ziffern noch fehlen.
-3. Die Brücke **schneidet die Trenner selbst weg**, an einer Stelle, für
-   jeden Aufrufer.
+1. The field **writes the code as it appears on the device** — the
+   hyphens appear automatically while typing.
+2. The field **names what it recognized** — numeric code, QR code, or how many
+   digits are still missing.
+3. The bridge **strips the separators itself**, in one place, for
+   every caller.
 
-## 3. Was unverändert bleibt
+## 3. What stays unchanged
 
-- **Die Einlern-Logik.** `commissionDevice()`, die Ablaufanzeige, die
-  Fehlerbehandlung nach Status, das Nachladen von Signalen und Befehlen —
-  kein Zeichen.
-- **Die Karte als Ganzes.** Ein Pflichtfeld in der ersten Zeile, Raum und
-  Klappen in der zweiten. Der Entwurf „Code zuerst" bleibt gültig; hier
-  ändert sich nur, was *in* der ersten Zeile passiert.
-- **Die beiden `<details>`-Klappen** samt ihren Texten.
-- **Der gemeinsame Rahmen um Feld und Knopf** (`.code-field`) und die
-  Monospace-Schrift darin. Beide sind für diesen Entwurf Voraussetzung, kein
-  Beiwerk: in Proportionalschrift wandern die Ziffern beim Nachformatieren.
+- **The commissioning logic.** `commissionDevice()`, the progress display, the
+  error handling by status, the reloading of signals and commands —
+  not a character.
+- **The card as a whole.** A required field in the first row, room and
+  dropdowns in the second. The "Code first" design remains valid; only
+  what *in* the first row changes.
+- **The two `<details>` dropdowns** along with their text.
+- **The shared frame around field and button** (`.code-field`) and the
+  monospace font inside it. Both are prerequisites for this design, not
+  accessories: in proportional font, the digits shift when reformatted.
 
-## 4. Die Formatier-Regel
+## 4. The formatting rule
 
-Eine Funktion, ein Ort, zwei Fälle.
+One function, one place, two cases.
 
 ```js
-// Etwas anderes als Ziffern, Leerzeichen, Bindestriche => QR-Inhalt.
+// Anything other than digits, spaces, hyphens => QR content.
 function isQr(raw) { return /[^0-9\s-]/.test(raw); }
 ```
 
-Die Prüfung greift damit **beim ersten getippten `M`** von `MT:`, nicht erst
-beim Doppelpunkt. Das ist Absicht: eine Regel, die auf `MT:` wartet, würde
-die zwei Zeichen davor als Zifferneingabe behandeln und sie wegwerfen.
+The check triggers **on the first typed `M`** from `MT:`, not just
+at the colon. That is intentional: a rule that waits for `MT:` would
+treat the two characters before it as digit input and discard them.
 
-- **QR-Inhalt** bleibt Zeichen für Zeichen stehen. Er ist Base38-kodiert;
-  jede Gruppierung wäre eine Erfindung.
-- **Zahlencode**: Ziffern herausziehen, die ersten elf als `4-3-4`
-  gruppieren, den Rest ungruppiert anhängen.
+- **QR content** remains character for character. It is Base38-encoded;
+  any grouping would be made up.
+- **Numeric code**: extract digits, group the first eleven as `4-3-4`,
+  append the rest ungrouped.
 
-**Es wird nichts abgeschnitten.** Eine Kürzung auf 21 Ziffern läge nahe,
-wäre hier aber falsch: sie ließe Zeichen still verschwinden, und der
-„zu lang"-Zustand des Chips (Abschnitt 6) wäre unerreichbar — eine Regel,
-die nie greift. Wer sich vertippt, soll das lesen können, statt es zu
-erraten.
+**Nothing gets cut off.** Truncating to 21 digits would be tempting,
+but wrong here: it would let characters disappear silently, and the
+"too long" state of the chip (section 6) would be unreachable — a rule
+that never triggers. If someone types it wrong, they should be able to read it instead of guessing.
 
-**Ab der zwölften Ziffer wird nicht weiter gruppiert.** Für den elfstelligen
-Code ist `4-3-4` die Schreibweise, die auf den Geräten steht. Für den
-21-stelligen habe ich keine belegte Gruppierung gefunden. Eine erfundene
-sähe anders aus als der Aufdruck — das Feld formatierte den Code dann *weg*
-vom Vorbild statt hin. Der Chip aus Abschnitt 6 sagt trotzdem, dass ein
-langer Code erkannt wurde; er bleibt also nicht unkommentiert, nur
-ungruppiert.
+**From the twelfth digit onward, no further grouping.** For the eleven-digit
+code, `4-3-4` is the format shown on devices. For the 21-digit code, I found no documented grouping. A made-up one
+would look different from the label — the field would then format the code *away*
+from the original rather than toward it. The chip in section 6 still says that
+a long code was recognized; it stays thus commented, just
+not grouped.
 
-Nach außen geht immer:
+Outbound always goes:
 
 ```js
-// Getrimmt; beim Zahlencode ohne Trenner. QR-Inhalt unangetastet.
+// Trimmed; for numeric code without separators. QR content untouched.
 function normalize(raw) {
   const v = raw.trim();
   return isQr(v) ? v : v.replace(/\D/g, "");
 }
 ```
 
-## 5. Der Cursor
+## 5. The cursor
 
-Live-Formatierung steht und fällt damit, dass der Cursor nicht springt.
+Live formatting succeeds or fails by whether the cursor does not jump.
 
-**Beim Neusetzen**: Ziffern links vom Cursor zählen, Wert neu formatieren,
-Cursor hinter dieselbe Anzahl Ziffern setzen. Die Zählung geht über Ziffern,
-nicht über Zeichenpositionen — sonst verschöbe jeder neu eingefügte
-Bindestrich den Cursor um eins.
+**When resetting**: count digits left of the cursor, reformat the value,
+place the cursor after the same number of digits. Counting goes by digits,
+not by character positions — otherwise every newly inserted
+hyphen would shift the cursor by one.
 
-**Beim Rückschritt auf einem Bindestrich** wird stattdessen die Ziffer davor
-gelöscht. Ohne diese Sonderbehandlung löscht der Tastendruck den Trenner,
-den die Formatierung unmittelbar danach wieder setzt: der Wert ändert sich
-nicht, der Cursor bleibt stehen, und die Taste wirkt tot. Das ist der eine
-Punkt, an dem eine mitformatierende Eingabe üblicherweise scheitert.
+**On backspace over a hyphen**, delete the digit before it instead. Without this
+special handling, the key press deletes the separator,
+which formatting immediately sets again: the value does not change, the cursor
+stays put, and the key feels dead. This is the one
+point where live-formatting input typically fails.
 
-## 6. Der Chip im Feld
+## 6. The chip in the field
 
-Rechts im Feld, zwischen Eingabe und Knopf, mit `aria-live="polite"`:
+On the right in the field, between input and button, with `aria-live="polite"`:
 
-| Eingabe | Chip | Farbe |
+| Input | Chip | Color |
 |---|---|---|
-| leer | *(unsichtbar, hält den Platz)* | — |
-| 1–10 Ziffern | `noch 4 Ziffern` | `--warn` |
-| 11 Ziffern | `Zahlencode` | `--ok` |
-| 12–20 Ziffern | `noch 9 Ziffern` | `--warn` |
-| 21 Ziffern | `Zahlencode, lang` | `--ok` |
-| über 21 Ziffern | `zu lang` | `--danger` |
-| beginnt mit `MT:` | `QR-Code` | `--ok` |
-| sonstige Buchstaben | `kein gültiger Code` | `--danger` |
+| empty | *(invisible, holds space)* | — |
+| 1–10 digits | `4 more digits` | `--warn` |
+| 11 digits | `Numeric code` | `--ok` |
+| 12–20 digits | `9 more digits` | `--warn` |
+| 21 digits | `Numeric code, long` | `--ok` |
+| over 21 digits | `too long` | `--danger` |
+| starts with `MT:` | `QR code` | `--ok` |
+| other letters | `not a valid code` | `--danger` |
 
-Er zählt gegen die nächste gültige Länge — erst 11, danach 21. Bei leerem
-Feld ist er `visibility: hidden` statt entfernt, damit das Feld beim ersten
-Tastendruck nicht seine Breite ändert.
+It counts toward the next valid length — first 11, then 21. When the
+field is empty, it is `visibility: hidden` rather than removed, so the field does not
+change width on the first key press.
 
-**Der Chip beschreibt, er verbietet nicht.** Auch bei `zu lang` und `kein
-gültiger Code` bleibt der Einlern-Knopf bedienbar und der Wert geht
-unverändert an die Route. Das ist dieselbe Haltung wie in Abschnitt 8: die
-Brücke sagt, was sie sieht, und lässt den Matter-Stack entscheiden. Eine
-Oberfläche, die eine Eingabe sperrt, die der Stack angenommen hätte, wäre
-nicht zu umgehen.
+**The chip describes; it does not forbid.** Even at `too long` and `not a valid
+code`, the commissioning button stays enabled and the value goes
+unchanged to the route. This is the same attitude as in section 8: the
+bridge says what it sees and lets the Matter stack decide. A UI that blocks
+input that the stack would have accepted cannot be avoided.
 
-Damit trägt das Feld die Auskunft selbst, statt sie auf Platzhalter und
-Hinweiszeilen zu verteilen. Und der Name des Codes wird an der Stelle
-gelernt, an der man ihn eintippt — das war der Anlass für den Chip.
+Thus the field carries the information itself, rather than spreading it across
+placeholder and hint lines. And the name of the code is
+learned at the place where you type it — that was the reason for the chip.
 
-**Kein `inputmode="numeric"`.** Auf dem Telefon gäbe es die Zifferntastatur,
-und dort steht man beim Ablesen. Es sperrte aber das Tippen eines QR-Textes
-hinter eine Umschalttaste, und die Karte hat für beide Bauformen genau ein
-Feld.
+**No `inputmode="numeric"`.** On the phone there would be the digit keyboard,
+and you stand there reading. But it would lock typing a QR text
+behind a shift key, and the card has exactly one
+field for both forms.
 
-## 7. Die Aufkleber-Skizze
+## 7. The sticker sketch
 
-Ein Inline-SVG, rund 190×112, rechts neben dem Feld, dauerhaft sichtbar:
+An inline SVG, roughly 190×112, to the right of the field, always visible:
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │ PAIRING-CODE                                        │
 │ ┌─────────────────────────────────────────────────┐ │
-│ │ 1234-567-8901        [Zahlencode]  [Einlernen]  │ │
+│ │ 1234-567-8901        [Numeric code] [Commissioning]│ │
 │ └─────────────────────────────────────────────────┘ │
-│ Zahlencode 1234-567-8901   QR-Code MT:Y.K90SO527…   │
+│ Numeric code 1234-567-8901   QR code MT:Y.K90SO527… │
 │                                                     │
 │  ▓▒░ MATTER                                         │
-│  ░▓▒ ┌───────────────┐   ← die Skizze steht         │
-│  ▒░▓ │ 1234-567-8901 │      dauerhaft daneben       │
+│  ░▓▒ ┌───────────────┐   ← the sketch stands        │
+│  ▒░▓ │ 1234-567-8901 │      always beside it        │
 │      └───────────────┘                              │
 └─────────────────────────────────────────────────────┘
 ```
 
-Sie zeigt, wo auf dem Gerät die Zahl steht, die hier hingehört, und hebt sie
-gegen den QR-Code daneben hervor. Wer den Aufkleber in der Hand hält, muss
-dann keinen Satz lesen, um die richtige der beiden Zahlen zu finden.
+It shows where on the device the number that goes here is printed, and sets it apart
+from the QR code next to it. Someone holding the sticker does not need
+to read a sentence to find the right one of the two numbers.
 
-**Zum Einwand, die Karte sei bewusst entrümpelt worden.** Sie ist es — der
-Entwurf „Code zuerst" hat 78 Wörter dauerhaften Hilfetext in Klappen
-verschoben. Eine Skizze fällt nicht darunter: sie kostet keinen Lesevorgang,
-wer sie nicht braucht überliest sie, und sie ersetzt hier den Klammerzusatz
-im Platzhalter. Der Text wird also nicht mehr, sondern weniger.
+**To the objection that the card was deliberately decluttered.** It was — the
+"Code first" design moved 78 words of permanent help text into dropdowns.
+A sketch does not fall under that: it costs no read time,
+those who do not need it skip over it, and it replaces the bracketed note
+in the placeholder. So the text becomes not more, but less.
 
-**Farben aus den vorhandenen Variablen**: `--bg` als Fläche, `--border` als
-Rand, `--text` für QR-Muster und Ziffern, `--text-muted` für die
-Beschriftungen, `--warn`/`--warn-bg` für die Hervorhebung der Zahl. Damit
-trägt sie in beiden Themes, ohne eine eigene Farbe einzuführen — und die
-Hervorhebung benutzt eine Farbe, die schon eine Bedeutung hat („sieh hier
-hin"), nicht eine neue.
+**Colors from existing variables**: `--bg` as surface, `--border` as
+border, `--text` for QR pattern and digits, `--text-muted` for
+labels, `--warn`/`--warn-bg` for highlighting the number. Thus
+it works in both themes without introducing a new color — and
+the highlighting uses a color that already has meaning ("look
+here"), not a new one.
 
-Das QR-Quadrat ist eine Andeutung aus Rechtecken (drei Suchmuster plus
-Rauschen), kein lesbarer Code. Ein echter QR im Bild wäre eine Einladung,
-ihn zu scannen, und führte nirgendwohin.
+The QR square is a suggestion from rectangles (three search patterns plus
+noise), not a readable code. A real QR in the image would be an invitation
+to scan it, and led nowhere.
 
-**Umbruch unter 520px** über das Feld statt daneben — dieselbe Schwelle, an
-der `style.css:501` heute schon Feld und Knopf umbricht, und aus demselben
-Grund: dort steht man mit dem Telefon vor dem Gerät.
+**Wrap below 520px** over the field instead of beside it — the same threshold at
+which `style.css:501` already wraps field and button today, for the same
+reason: that is where you stand with the phone in front of the device.
 
-Ein `aria-label` beschreibt, was zu sehen ist. Die Skizze ist eine
-Verdeutlichung, keine Informationsquelle — die Beispielzeile darüber trägt
-denselben Inhalt als Text.
+An `aria-label` describes what is to see. The sketch is a
+clarification, not an information source — the example line above carries
+the same content as text.
 
-## 8. Die Normalisierung im Backend
+## 8. Normalization in the backend
 
-Ein `field_validator` auf `CommissionRequest.code`. Eine Stelle, gültig für
-jeden Aufrufer der Route, nicht nur für unsere Oberfläche — ein per Hand
-abgesetzter `curl` mit dem abgetippten Code soll nicht an derselben Stelle
-scheitern, an der die Oberfläche gerade repariert wurde.
+A `field_validator` on `CommissionRequest.code`. One place, valid for
+every caller of the route, not just our UI — a manually issued
+`curl` with the typed code should not fail at the same place
+where the UI was just fixed.
 
-Er tut dasselbe wie `normalize()` in Abschnitt 4, und **er normalisiert nur,
-er validiert nicht.**
+It does the same as `normalize()` in section 4, and **it only normalizes,
+it does not validate.**
 
-Das ist die zweite tragende Entscheidung dieses Entwurfs. Die Brücke soll
-hier nicht klüger sein wollen als der Matter-Stack: lehnte sie einen Code
-ab, den der Stack angenommen hätte, gäbe es keinen Weg daran vorbei — und
-die Bauformen der Setup-Codes sind nichts, was diese Brücke verwaltet.
-Trenner wegzuschneiden ist verlustfrei; eine eigene Längenregel wäre eine
-Wette auf eine Spezifikation, die sich ohne uns weiterentwickelt.
+This is the second key decision of this design. The bridge should
+not try to be smarter than the Matter stack here: if it rejected a code
+that the stack would have accepted, there would be no way around it — and
+the forms of setup codes are not something this bridge manages.
+Stripping separators is lossless; a separate length rule would be a
+bet on a specification that evolves without us.
 
-Ein leerer Code bleibt damit ein leerer Code und scheitert dort, wo er heute
-scheitert.
+An empty code thus remains an empty code and fails where it fails today.
 
-## 9. Texte
+## 9. Text strings
 
-Neu in `i18n/strings.yaml`, alle in beiden Sprachen:
+New in `i18n/strings.yaml`, all in both languages:
 
-| Schlüssel | de |
+| Key | de |
 |---|---|
-| `web.devices.code_detect_manual` | Zahlencode |
-| `web.devices.code_detect_manual_long` | Zahlencode, lang |
-| `web.devices.code_detect_qr` | QR-Code |
-| `web.devices.code_detect_remaining_one` | noch 1 Ziffer |
-| `web.devices.code_detect_remaining_many` | noch {n} Ziffern |
-| `web.devices.code_detect_too_long` | zu lang |
-| `web.devices.code_detect_invalid` | kein gültiger Code |
-| `web.devices.code_where_hint` | Steht auf dem Gerät, seiner Verpackung oder im Handbuch. |
-| `web.devices.sticker_alt` | *(aria-label der Skizze)* |
+| `web.devices.code_detect_manual` | Numeric code |
+| `web.devices.code_detect_manual_long` | Numeric code, long |
+| `web.devices.code_detect_qr` | QR code |
+| `web.devices.code_detect_remaining_one` | 1 more digit |
+| `web.devices.code_detect_remaining_many` | {n} more digits |
+| `web.devices.code_detect_too_long` | too long |
+| `web.devices.code_detect_invalid` | not a valid code |
+| `web.devices.code_where_hint` | Printed on the device, its packaging, or in the manual. |
+| `web.devices.sticker_alt` | *(aria-label of the sketch)* |
 
-Zwei Schlüssel für „noch N Ziffern", weil `i18n.t` keine Pluralformen kennt
-und `noch 1 Ziffern` im Deutschen wie im Englischen falsch wäre.
+Two keys for "N more digits" because `i18n.t` does not know plural forms
+and "1 more digits" would be wrong in both German and English.
 
-Die Beschriftungen der Beispielzeile („Zahlencode", „QR-Code") sind
-dieselben Schlüssel wie die des Chips — es ist derselbe Begriff, und dass
-er an beiden Stellen gleich lautet, ist der Zweck der Übung.
+The labels of the example line ("Numeric code", "QR code") are
+the same keys as those of the chip — it is the same term, and
+having it be the same in both places is the point.
 
-**Geändert**: `web.devices.code_placeholder` wird von „Pairing-Code
-(11-stellig oder MT:…)" zu `1234-567-8901`. Der Klammerzusatz ist durch
-Skizze und Beispielzeile ersetzt, und ein Platzhalter, der die Form zeigt,
-sagt mehr als einer, der sie beschreibt.
+**Changed**: `web.devices.code_placeholder` changes from "Pairing code
+(11-digit or MT:…)" to `1234-567-8901`. The bracketed note is replaced by
+sketch and example line, and a placeholder that shows the form
+says more than one that describes it.
 
-## 10. Was noch mitgeht
+## 10. What goes along
 
-- **Die Ablaufanzeige.** `commissionRunCode` zeigt den formatierten Code,
-  nicht den normalisierten. Wer zwanzig bis sechzig Sekunden auf das
-  Einlernen wartet, soll den Code wiedererkennen, den er eingetippt hat.
-- **`docs/screenshots/commissioning.png`** neu aufnehmen. Die Bilder sind
-  byte-genau reproduzierbar (siehe Kopfkommentar von
-  `scripts/capture_screenshots.py`); ein Diff dort ist keine Unschärfe,
-  sondern genau diese Änderung.
-- **Die Selektoren in `capture_screenshots.py`** prüfen, falls sie am
-  Platzhaltertext hängen.
+- **The progress display.** `commissionRunCode` shows the formatted code,
+  not the normalized one. Someone waiting twenty to sixty seconds for
+  commissioning should recognize the code they typed.
+- **`docs/screenshots/commissioning.png`** retake. The images are
+  byte-for-byte reproducible (see header comment of
+  `scripts/capture_screenshots.py`); a diff there is not imprecision,
+  but exactly this change.
+- **The selectors in `capture_screenshots.py`** check if they
+  depend on the placeholder text.
 
-## 11. Prüfen
+## 11. Verification
 
-**Backend, mit pytest**, in `tests/api/`:
+**Backend, with pytest**, in `tests/api/`:
 
-- `1234-567-8901` kommt als `12345678901` bei `commission_with_code` an
-- `MT:Y.K90SO527JA0648G00` kommt unverändert an
-- Leerzeichen und umschließender Leerraum werden ebenso entfernt
-- die bestehenden Einlern-Tests bleiben grün (sie schicken `MT:ABC123`,
-  einen QR-Code, und den rührt der Validator nicht an)
+- `1234-567-8901` arrives as `12345678901` at `commission_with_code`
+- `MT:Y.K90SO527JA0648G00` arrives unchanged
+- Spaces and surrounding whitespace are also removed
+- the existing commissioning tests stay green (they send `MT:ABC123`,
+  a QR code, which the validator does not touch)
 
-**Frontend.** Es gibt kein JS-Testframework im Repo. Die Formatierlogik wird
-deshalb in einem Wegwerf-Harness durchgespielt, statt behauptet:
+**Frontend.** There is no JS test framework in the repo. The formatting logic is
+therefore exercised in a throwaway harness rather than asserted:
 
-- Tippen von `12345678901`, Zeichen für Zeichen — Gruppierung und
-  Cursorstand nach jedem Anschlag
-- Einfügen von `1234-567-8901` in ein leeres und in ein gefülltes Feld
-- Rückschritt direkt hinter einem Bindestrich
-- Einfügen einer Ziffer in die Mitte
-- Umschaltpunkt zum QR-Inhalt: `M`, dann `MT`, dann `MT:`
-- 22 Ziffern (nichts verschwindet, Chip meldet `zu lang`, Knopf bleibt
-  bedienbar)
+- Typing `12345678901`, character by character — grouping and
+  cursor position after each keystroke
+- Inserting `1234-567-8901` into an empty and a filled field
+- Backspace directly after a hyphen
+- Inserting a digit in the middle
+- Switch point to QR content: `M`, then `MT`, then `MT:`
+- 22 digits (nothing disappears, chip reports `too long`, button
+  stays enabled)
 
-Was das Harness **nicht** belegt, ist, dass die Bindung in der Anwendung
-ankommt — dafür ein Blick auf die laufende Oberfläche.
+What the harness does **not** prove is that the binding
+reaches the application — for that, a look at the running UI.

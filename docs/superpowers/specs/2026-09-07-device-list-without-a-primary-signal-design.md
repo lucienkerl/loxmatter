@@ -1,248 +1,242 @@
-# Gerätekachel ohne Leitwert: alle Signale gleichrangig
+# Device tile without a primary signal: all signals equal
 
-Entwurf, 7. September 2026. Ändert die Kopfzeile der Gerätekachel aus
-[dem Geräte-Dashboard-Entwurf](2026-09-03-device-dashboard-and-export-design.md),
-Abschnitt 6.2, und räumt damit einen Teil von
-[dem Geräte-Tab-Entwurf](2026-09-05-devices-tab-rooms-and-tile-grid-design.md)
-wieder ab.
+Design, September 7, 2026. Changes the header of the device tile from
+[the device dashboard design](2026-09-03-device-dashboard-and-export-design.md),
+section 6.2, and thus removes part of
+[the device tab design](2026-09-05-devices-tab-rooms-and-tile-grid-design.md)
+again.
 
-## 1. Das Problem
+## 1. The problem
 
-Die Kachel zeigt ein Signal anders als alle anderen. `leadSignalFor()`
-greift das erste funktionale Signal heraus und stellt es in `1.35rem`
-rechts in die Kopfzeile; sein Titel steht als `.lead-label` in `0.65rem`
-Versalien links unter dem Gerätenamen. Die übrigen bis zu fünf Signale
-stehen darunter im Werteraster, in `0.75rem`, Titel links und Wert rechts.
+The tile shows one signal differently from all others. `leadSignalFor()`
+picks out the first functional signal and places it at `1.35rem`
+on the right in the header; its title appears as `.lead-label` in `0.65rem`
+capitals left below the device name. The remaining up to five signals
+sit below in the value grid, at `0.75rem`, title left and value right.
 
-Dieselbe Sorte Ding, zwei Darstellungen. Bei einem Heizkörper steht
-„Temperatur" oben links klein in Versalien und „Luftfeuchte" zwei Zeilen
-tiefer normal gesetzt in der Titelspalte — obwohl beides Signaltitel sind
-und beide Werte aus derselben Quelle kommen.
+Same kind of thing, two displays. For a radiator,
+"Temperature" appears top left small in capitals and "Humidity" two lines
+lower in normal type in the title column — even though both are signal titles
+and both values come from the same source.
 
-Das kostet zweierlei:
+This costs two things:
 
-**Die Breite des Namens.** `.lead-value` trägt `max-width: 50%` und
-`flex: 0 0 auto` — es schrumpft nie, das war eine bewusste Entscheidung
-(die Begründung steht ausführlich an der Regel). Der Name bekommt damit an
-der Grid-Untergrenze von 261 px noch 65 px. Praktisch jeder
-Loxone-Gerätename ist dort abgeschnitten, und zwar an der falschen Stelle:
-Namen dieser Art unterscheiden sich am Ende („… Nord" gegen „… Süd"),
-gekappt wird das Ende.
+**The width of the name.** `.lead-value` carries `max-width: 50%` and
+`flex: 0 0 auto` — it never shrinks, that was a deliberate decision
+(the reason is explained in detail at the rule). The name thus gets
+65 px at the grid minimum of 261 px. Almost every
+Loxone device name is truncated there, and at the wrong place:
+names of this kind differ at the end ("… North" vs "… South"),
+the end gets cut off.
 
-**Die Lesbarkeit als Menge.** Wer prüfen will, ob eine Kachel plausibel
-aussieht, liest sechs Signale. Fünf davon fluchten in einer Spalte, eines
-steht woanders. Das Werteraster hat für genau diesen Zweck eine Begründung
-im Stylesheet — „man scannt eine Spalte statt zwölf Bausteine" —, und der
-Leitwert ist die Ausnahme, die sie unterläuft.
+**Readability as a set.** When someone wants to check if a tile looks plausible,
+they read six signals. Five of them line up in one column, one
+is elsewhere. The value grid has a reason in the stylesheet for exactly this purpose — "you scan one column instead of twelve units" —, and the
+primary signal is the exception that breaks it.
 
-## 2. Die Entscheidung
+## 2. The decision
 
-Der Leitwert entfällt ersatzlos. Alle funktionalen Signale stehen
-gleichrangig im Werteraster, in einer Schriftgröße, in einer Spalte.
+The primary signal is removed without replacement. All functional signals sit
+equally in the value grid, in one font size, in one column.
 
-Das ist ausdrücklich **kein** Verdichtungsentwurf. Die Kachel wird dadurch
-nicht kleiner (siehe Abschnitt 7), und die Länge der Liste bei achtzig
-Geräten bleibt, wie sie ist. Es geht um Gleichrangigkeit und um die Breite
-des Namens.
+This is explicitly **not** a condensing design. The tile does not
+become smaller (see section 7), and the length of the list at eighty
+devices stays as it is. It is about equal footing and about the width
+of the name.
 
-Verworfen wurden dabei drei Entwürfe, die den Leitwert behalten und
-stattdessen die Zeile verdichten wollten (Zeilenliste, Anomalie-Triage,
-Dichteschalter): sie alle zeigen nur den Leitwert und schieben die übrigen
-Signale hinter ein Aufklappen. Oft sind mehrere davon gleichzeitig wichtig.
-Ebenfalls verworfen: Chipleisten statt des Werterasters — sie sparen Höhe,
-zerstören aber genau die Spaltenflucht, für die das Raster existiert.
+Three designs were rejected that wanted to keep the primary signal and
+instead condense the row (line list, anomaly triage, density toggle): they all
+show only the primary signal and push the remaining signals behind a dropdown. Often several of them matter at the same time.
+Also rejected: chip bars instead of the value grid — they save height,
+but destroy exactly the column alignment that the grid exists for.
 
-## 3. Was unverändert bleibt
+## 3. What stays unchanged
 
-- **Die Signaldaten.** `functionalSignalsFor()`, `firstSignalsFor()`,
-  `remainingSignalCount()` und `FUNCTIONAL_PREVIEW_LIMIT: 6` bekommen kein
-  Zeichen. Sechs Signale je Kachel bleiben sechs Signale je Kachel.
-- **Die Reihenfolge der Signale.** Sie war schon bisher die der API; der
-  Leitwert war nur der erste Eintrag daraus, nicht eine eigene Auswahl.
-- **`wahr`/`falsch`.** Boolesche Werte bleiben technisch beschriftet.
-  Dieser Entwurf rührt `formatValue()` nicht an.
-- **Der Farbstreifen** links an der Karte, samt seiner drei Zustände, und
-  die Geändert-Pille in der Fußzeile.
-- **`value-fresh`** an frisch eingetroffenen Werten — künftig nur noch im
-  Werteraster, weil es die einzige Stelle ist, an der Werte stehen.
-- **Das Kachelmenü**, die Befehlsleiste, die Fußzeile, das Signale-Modal
-  und der Hinweis „+ N weitere Signale".
+- **The signal data.** `functionalSignalsFor()`, `firstSignalsFor()`,
+  `remainingSignalCount()` and `FUNCTIONAL_PREVIEW_LIMIT: 6` get no
+  changes. Six signals per tile stay six signals per tile.
+- **The order of signals.** It was already the API order; the
+  primary signal was just the first entry from it, not a separate selection.
+- **`true`/`false`.** Boolean values stay technically labeled.
+  This design does not touch `formatValue()`.
+- **The color bar** on the left of the card, along with its three states, and
+  the Modified badge in the footer.
+- **`value-fresh`** on freshly arrived values — in the future only in the
+  value grid, because it is the only place where values appear.
+- **The tile menu**, the command bar, the footer, the signals modal
+  and the "+ N more signals" notice.
 
-## 4. Die Kopfzeile
+## 4. The header
 
-Zwei Kinder statt drei:
+Two children instead of three:
 
 ```
 ┌────────────────────────────────────────────┐
-│ [◧]  Heizkörper Wohnen West                │
+│ [◧]  Radiator Living West                  │
 ├────────────────────────────────────────────┤
-│ Temperatur                        21.40 °C │
-│ Luftfeuchte                         44.00 %│
-│ Solltemperatur                    21.00 °C │
-│ Ventilstellung                      34.00 %│
-│ Batterie                            88.00 %│
-│ Fenster offen                        falsch│
+│ Temperature                        21.40 °C │
+│ Humidity                            44.00 %│
+│ Set temperature                    21.00 °C │
+│ Valve position                      34.00 %│
+│ Battery                            88.00 %│
+│ Window open                        false │
 └────────────────────────────────────────────┘
 ```
 
-`.device-ident` behält seine Rolle als schrumpfende Mitte, hat aber nur
-noch ein Kind. `min-width: 0` bleibt an ihm **und** am Namen: der Grund
-dafür war nie der Leitwert, sondern die intrinsische Mindestbreite eines
-`<input>` beziehungsweise das automatische Minimum eines Flex-Kindes.
+`.device-ident` keeps its role as the shrinking middle, but has only
+one child. `min-width: 0` stays on it **and** on the name: the reason
+was never the primary signal, but the intrinsic minimum width of an
+`<input>` or the automatic minimum of a flex child.
 
-`.device-head` behält `align-items: flex-start`. Bei einer einzeiligen
-Mitte ist der Unterschied zu `center` unsichtbar, solange keine Pille
-danebensteht; mit Pille soll beides oben stehen, nicht mittig zum
-Icon zentriert.
+`.device-head` keeps `align-items: flex-start`. With a single-line
+middle, the difference to `center` is invisible as long as no badge
+stands beside it; with badge both should sit at the top, not centered
+with the icon.
 
-## 5. Die Offline-Pille
+## 5. The offline badge
 
-Sie rückt aus `.device-ident` heraus in die Kopfzeile selbst, an den
-Platz des Leitwerts. `.status-pill` trägt bereits `margin-left: auto` —
-in der Flex-Kopfzeile schiebt sie sich damit ohne weiteres Zutun nach
-rechts.
+It moves out of `.device-ident` and into the header itself, in the place of the
+primary signal. `.status-pill` already carries `margin-left: auto` —
+in the flex header it thus pushes itself to the right without further ado.
 
-Nachgetragen am 7. September 2026: Diese Begründung ist sachlich falsch,
-auch wenn das Ergebnis stimmt. `.device-ident` trägt `flex: 1 1 auto` und
-verbraucht beim Auflösen der flexiblen Längen (CSS Flexbox § 9.7) bereits
-den gesamten freien Platz in der Kopfzeile, **bevor** Auto-Ränder
-überhaupt verteilt werden (§ 9.5). Es bleibt kein freier Platz übrig, den
-`margin-left: auto` an `.status-pill` einsammeln könnte — der Auto-Rand
-ist an dieser Stelle wirkungslos. Die Pille steht rechts, **weil
-`.device-ident` wächst**, nicht wegen ihres eigenen Auto-Rands. Damit ist
-`flex: 1 1 auto` an `.device-ident` hier tragend und nicht entbehrlich:
-fiele es weg, bliebe freier Platz übrig, und erst dann würde
-`margin-left: auto` etwas bewirken.
+Added September 7, 2026: This reasoning is factually wrong,
+even though the result is correct. `.device-ident` carries `flex: 1 1 auto` and
+when resolving flexible lengths (CSS Flexbox § 9.7) already
+consumes all free space in the header **before** auto margins
+are even distributed (§ 9.5). No free space remains that
+`margin-left: auto` on `.status-pill` could collect — the auto margin
+is ineffective at this spot. The badge stands right **because
+`.device-ident` grows**, not because of its own auto margin. Thus
+`flex: 1 1 auto` on `.device-ident` is key here and not optional:
+if it went away, free space would remain, and only then would
+`margin-left: auto` have an effect.
 
-Damit entfällt die Regel „nur die Offline-Pille verdrängt das
-Leitwert-Label": es gibt kein Label mehr, das verdrängt werden könnte. Die
-Bedingung schrumpft von
-`x-show="isOnline(device) && leadSignalFor(device.id)"` auf ein schlichtes
-`x-show="!isOnline(device)"` an der Pille — und die Kopplung an
-`isOnline` verschwindet aus dem Label ersatzlos, weil es das Label nicht
-mehr gibt.
+Thus the rule "only the offline badge displaces the
+primary signal label" goes away: there is no label left to displace. The
+condition shrinks from
+`x-show="isOnline(device) && leadSignalFor(device.id)"` to a simple
+`x-show="!isOnline(device)"` on the badge — and the coupling to
+`isOnline` disappears from the label without replacement, because the label
+no longer exists.
 
-## 6. Nicht in diesem Entwurf: der Name als Text
+## 6. Not in this design: the name as text
 
-Naheliegend wäre, den Namen aus dem dauerhaft sichtbaren `<input>` in
-reinen Text zu verwandeln und das Feld erst beim Umbenennen einzublenden.
-Das war ursprünglich als zweiter Teil geplant, mit der Begründung, das
-Textfeld koste über sein `size=20` rund 192 px Mindestbreite.
+It would be natural to turn the name from the permanently visible `<input>` into
+plain text and show the field only when renaming.
+This was originally planned as a second part, with the reasoning that
+the text field costs around 192 px minimum width via its `size=20`.
 
-**Diese Begründung hält nicht.** `.device-head .device-name` trägt bereits
-`min-width: 0`, und zwar mit ausführlichem Kommentar an der Regel — genau
-diese intrinsische Mindestbreite ist dort schon abgeräumt worden. Das Feld
-kostet heute keine Breite mehr, die der Text nicht auch kostete.
+**This reasoning does not hold.** `.device-head .device-name` already carries
+`min-width: 0`, with detailed comment at the rule — exactly
+this intrinsic minimum width was already addressed there. The field
+costs no width today that the text would not also cost.
 
-Übrig bleiben zwei kosmetische Argumente: ein Name, der immer wie ein
-Formularfeld aussieht, lädt zum Verändern ein, obwohl man meistens nur
-liest; und ein Feld mit `border: 1px solid transparent` ist ein Element,
-das seinen Zustand über Hover verrät statt über seine Gestalt. Beides ist
-wahr und beides ist klein.
+Two cosmetic arguments remain: a name that always looks like a
+form field invites editing even though you mostly just read it; and a
+field with `border: 1px solid transparent` is an element
+that reveals its state via hover rather than through its shape. Both are
+true and both are small.
 
-Dagegen steht echter Aufwand: das Kachelmenü führt *Signale*,
-*Exportieren* und *Entfernen*, aber **kein** *Umbenennen* — das läuft
-ausschließlich über das sichtbare Feld. Der Einstieg müsste erst entstehen,
-samt Menüeintrag, Sprachschlüssel in beiden Sprachen und einem Zustandsfeld
-je offener Umbenennung.
+Against it stands real effort: the tile menu offers *Signals*,
+*Export* and *Remove*, but **not** *Rename* — that runs
+only through the visible field. The entry point would have to be created,
+along with menu item, language keys in both languages, and a state field
+for each open rename.
 
-Für einen kosmetischen Gewinn ist das zu viel. Der Name bleibt ein
-`<input>`. Wer den Umbau später doch will, hat mit `renamingRoom` /
-`renameDraft` an der Raumüberschrift die Vorlage.
+That is too much for a cosmetic gain. The name stays an
+`<input>`. For anyone who wants the refactor later, `renamingRoom` /
+`renameDraft` at the room header provides the template.
 
-## 7. Die Höhe
+## 7. The height
 
-Ehrlichkeit vor Verkaufe: die Kachel wird **höher**, nicht niedriger.
+Truth before marketing: the tile gets **taller**, not shorter.
 
-Überschlagen, bei `font-size: 14px` und `line-height: 1.5`:
+Roughly estimated, at `font-size: 14px` and `line-height: 1.5`:
 
 | | |
 |---|---|
-| Werteraster gewinnt eine Zeile (`0.75rem` × 1.5 + `0.05rem` Zeilenabstand) | **≈ +16 px** |
-| Kopfzeile verliert die Label-Zeile (`0.65rem` × 1.5 plus `0.1rem` Abstand), soweit die Icon-Kachel mit ihren 33,6 px das nicht auffängt | **≈ −6 px** |
-| **Netto je Kachel, überschlagen** | ≈ +10 px |
-| **Netto je Kachel, gemessen** | **+14 px** |
+| Value grid gains one line (`0.75rem` × 1.5 + `0.05rem` line spacing) | **≈ +16 px** |
+| Header loses the label line (`0.65rem` × 1.5 plus `0.1rem` spacing), to the extent the icon tile with its 33.6 px does not compensate | **≈ −6 px** |
+| **Net per tile, estimated** | ≈ +10 px |
+| **Net per tile, measured** | **+14 px** |
 
-Bei achtzig Geräten und drei Spalten sind das rund 380 px zusätzliche
-Scrollstrecke.
+At eighty devices and three columns, that is roughly 380 px additional
+scrolling distance.
 
-Nachgetragen am 7. September 2026: im Browser gemessen (Chromium über
-Playwright, Demo-Daten) ergaben alle vier Kacheln durchgängig **+14 px** —
-284→298 und 265→279, je zweimal. Die Überschlagung lag 40 % darunter, weil
-der zweite Posten unsicher war: ein `<input>` erbt `line-height` nicht
-zuverlässig, die Kopfzeile verliert also weniger, als angenommen. Am
-Vorzeichen ändert das nichts, und die Größenordnung stimmt.
+Added September 7, 2026: measured in the browser (Chromium via
+Playwright, demo data), all four tiles consistently showed **+14 px** —
+284→298 and 265→279, twice each. The estimate was 40 % short because
+the second item was uncertain: an `<input>` does not inherit `line-height`
+reliably, so the header loses less than assumed. The sign does not change,
+and the magnitude is right.
 
-Die Rechnung gilt für Geräte mit mindestens einem funktionalen Signal. Ein
-Gerät ohne Signale wird niedriger, weil die Kopfzeile eine Zeile verliert
-und nichts hinzukommt.
+The calculation applies to devices with at least one functional signal. A
+device without signals becomes shorter, because the header loses one line
+and nothing is added.
 
-## 8. Was dabei von selbst wegfällt
+## 8. What goes away on its own
 
-Der Wegfall des Leitwerts löscht eine ganze Klasse von Fehlern mit.
+Removing the primary signal also deletes a whole class of bugs.
 
 `test_a_device_without_a_lead_signal_does_not_throw_in_any_binding`
-beschreibt sie: zwischen `GET /api/devices` und
-`GET /api/devices/<id>/signals` liegt ein Rendering-Durchlauf, in dem
-`signalsByDevice` für das Gerät noch leer ist. `leadSignalFor()` liefert
-dann `null`, und `x-show` auf der Hülle hält Alpine **nicht** davon ab, die
-Ausdrücke der Kinder auszuwerten — `signalIsFresh(null)`,
-`signalAgeTitle(null)` und `liveValueOf(null)` liefen dreimal je Gerät ins
-Leere. Das traf nicht kaputte Daten, sondern jedes Gerät einmal.
+describes it: between `GET /api/devices` and
+`GET /api/devices/<id>/signals` lies a rendering pass in which
+`signalsByDevice` for the device is still empty. `leadSignalFor()` then
+returns `null`, and `x-show` on the wrapper does **not** prevent Alpine from
+evaluating the child expressions — `signalIsFresh(null)`,
+`signalAgeTitle(null)` and `liveValueOf(null)` ran to nothing three times per device. That did not hit corrupted data,
+but every device once.
 
-Ein `x-for` über ein leeres Array wertet dagegen gar nichts aus. Die
-Fehlerquelle verschwindet mit der Ursache, nicht mit einer weiteren
-Absicherung.
+An `x-for` over an empty array, by contrast, evaluates nothing. The
+error source vanishes with its cause, not with additional protection.
 
-**Die Absicherung bleibt trotzdem stehen.** Die drei Helfer behalten ihre
-Null-Toleranz und der Test behält seinen Zweck; nur sein Aufhänger wechselt
-vom Leitwert auf die Helfer selbst. Eine Duldsamkeit zu entfernen, weil der
-eine bekannte Aufrufer weg ist, wäre die Sorte Aufräumen, die beim nächsten
-Aufrufer zurückschlägt.
+**The protection stays anyway.** The three helpers keep their
+null tolerance and the test keeps its purpose; only its hook moves
+from the primary signal to the helpers themselves. Removing leniency because
+one known caller is gone is the kind of cleanup that backfires on the next
+caller.
 
-## 9. Was zu prüfen ist
+## 9. What to verify
 
-- **Am Browser**, nicht am Markup: ob die Kachel ohne den großen Wert noch
-  auf einen Blick liest. Die Vermutung ist ja — die Wertespalte wird als
-  Spalte gescannt, nicht Zeile für Zeile gelesen —, aber sie ist eine
-  Vermutung. Falls nein, ist die kleinste Korrektur eine Anhebung von
-  `.value-rows` auf `0.8rem`, nicht die Rückkehr des Leitwerts.
-  `.value-rows` bleibt in diesem Entwurf bei `0.75rem`.
-- **Die Kachelhöhen in einer Reihe.** `align-items: stretch` und
-  `.device-foot { margin-top: auto }` sollen weiter fluchtende Fußzeilen
-  ergeben; das ist nach einer Änderung an der Kinderzahl der Karte erneut
-  zu messen, nicht zu behaupten.
-- **Die tatsächliche Höhendifferenz** je Kachel, gegen die Überschlagung
-  in Abschnitt 7. Interessant ist nur, ob sie in der Größenordnung liegt —
-  auf zwei Pixel kommt es nicht an.
-- **Die Screenshots** in `docs/screenshots/`, soweit sie Gerätekacheln
-  zeigen.
+- **In the browser**, not in markup: whether the tile reads at a glance without the large value. The assumption is yes — the value column is
+  scanned as a column, not read line by line —, but it is an
+  assumption. If no, the smallest correction is to raise
+  `.value-rows` to `0.8rem`, not the return of the primary signal.
+  `.value-rows` stays at `0.75rem` in this design.
+- **Tile heights in a row.** `align-items: stretch` and
+  `.device-foot { margin-top: auto }` should keep footers aligned;
+  this needs to be measured again after a change to the card's child count, not assumed.
+- **The actual height difference** per tile, against the estimate
+  in section 7. The only interest is whether it is in the ballpark —
+  two pixels do not matter.
+- **The screenshots** in `docs/screenshots/`, insofar as they show
+  device tiles.
 
-Sprachdateien sind nicht betroffen: der Leitwert-Titel kam aus
-`signal.title`, also aus den Daten, nicht aus `strings.yaml`.
-`web.devices.offline` und `web.devices.no_functional_signals` bleiben in
-Gebrauch.
+Language files are not affected: the primary signal title came from
+`signal.title`, from the data, not from `strings.yaml`.
+`web.devices.offline` and `web.devices.no_functional_signals` remain in
+use.
 
-## 10. Betroffene Stellen
+## 10. Affected locations
 
-**Entfällt:**
+**Removed:**
 
-| Stelle | |
+| Location | |
 |---|---|
 | `app.js` | `leadSignalFor()`, `restSignalsFor()` |
 | `style.css` | `.lead-label`, `.lead-value`, `.lead-value small` |
-| `index.html` | `.lead-value`-Block und `.lead-label`-Span in `.device-head` |
+| `index.html` | `.lead-value` block and `.lead-label` span in `.device-head` |
 | `test_web.py` | `test_the_lead_label_only_yields_to_the_offline_pill_now`, `test_lead_value_gets_padding_room_for_descenders` |
 
-**Ändert sich:**
+**Changed:**
 
-| Stelle | |
+| Location | |
 |---|---|
-| `index.html` | `.value-rows` läuft über `firstSignalsFor()` statt `restSignalsFor()`; Offline-Pille wandert in `.device-head`; der Hinweis auf fehlende Signale hängt an `functionalSignalsFor(id).length === 0` statt an `!leadSignalFor(id)` |
-| `style.css` | Kommentar an `.device-head .device-name` verliert seinen Verweis auf die 261-px-Rechnung mit `.lead-value` |
-| `app.js` | Kommentar bei Zeile ~1616 verweist auf `leadSignalFor` |
-| `test_web.py` | Helferliste (~Zeile 2600) verliert zwei Einträge; `test_a_device_without_a_lead_signal_…` wechselt den Aufhänger; die Docstrings zweier weiterer Tests verweisen auf den Leitwert |
+| `index.html` | `.value-rows` runs over `firstSignalsFor()` instead of `restSignalsFor()`; offline badge moves to `.device-head`; notice of missing signals depends on `functionalSignalsFor(id).length === 0` instead of `!leadSignalFor(id)` |
+| `style.css` | Comment at `.device-head .device-name` loses its reference to the 261-px calculation with `.lead-value` |
+| `app.js` | Comment at line ~1616 refers to `leadSignalFor` |
+| `test_web.py` | Helper list (~line 2600) loses two entries; `test_a_device_without_a_lead_signal_…` changes its hook; docstrings of two other tests refer to the primary signal |
 
-Der Umfang ist damit klein und in sich geschlossen: eine Kopfzeile, ein
-`x-for`-Aufruf, zwei gelöschte Alpine-Methoden, drei gelöschte CSS-Regeln
-und die Tests, die daran hängen.
+The scope is thus small and contained: one header, one
+`x-for` call, two deleted Alpine methods, three deleted CSS rules,
+and the tests that go with them.
