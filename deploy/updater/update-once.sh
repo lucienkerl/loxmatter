@@ -93,6 +93,92 @@ log() {
   } 2>/dev/null || true
 }
 
+# ---------------------------------------------------- $REPO ownership --
+# This sidecar runs as root - deploy/updater/Dockerfile sets no USER, and
+# the Docker socket it holds already makes it root-equivalent on the host
+# regardless (see docker-compose.yml's own block comment on that
+# service). install.sh clones $REPO as the INVOKING user. Since git
+# 2.35.2, a repository whose owner (per stat) differs from the caller's
+# effective uid is refused outright - "fatal: detected dubious ownership
+# in repository at ..." - and nothing anywhere in this tree ever set
+# safe.directory, so every git call this script makes against $REPO
+# failed from the very first run against any checkout install.sh ever
+# produces. git_repo()/run_git() below fix that with `-c
+# safe.directory=$REPO` on every single invocation - not a one-time
+# `git config --global --add safe.directory`, which would write into
+# root's own $HOME/.gitconfig inside this CONTAINER's own ephemeral
+# filesystem and be gone the moment the container is recreated, an
+# ordinary event (the self-replacement at the end of every successful
+# update does exactly that).
+#
+# Fixing only that trades one failure for a worse one: once git actually
+# runs, `fetch` and `checkout` write .git/index, FETCH_HEAD and the
+# working tree - AS ROOT. The checkout's ORIGINAL owner (the operator who
+# ran install.sh) then finds their OWN `git`/`./scripts/update.sh`
+# refused by the identical dubious-ownership check, now pointed back at
+# THEM, on files this sidecar left behind. $REPO_UID/$REPO_GID are
+# captured here, once, before any git call below could have changed
+# them, and chown_repo_back restores them after every single call - not
+# just once at the end of a pass - so the window in which any file could
+# be caught root-owned is exactly one git invocation, regardless of
+# whether that invocation succeeds, fails partway, or this script is
+# killed by the SIGTERM trap immediately afterward.
+#
+# Resolved (and cached) lazily, on the first call that actually needs it
+# - not unconditionally at the top of the script. This whole file runs
+# every 2 seconds, forever (entrypoint.sh's poll loop), and the
+# overwhelming majority of passes are a plain heartbeat with no request
+# to act on at all; a `stat` on $REPO those passes have no other reason
+# to touch would be a stat call this sidecar does not need multiplied
+# across the rest of its running life for zero benefit.
+#
+# Empty when $REPO does not exist yet or `stat` cannot read it (a fresh
+# install.sh run that has not cloned yet, say) - chown_repo_back treats
+# that as "do nothing", never as "chown to root" (an empty first
+# argument makes `chown` itself error, not silently no-op, which would
+# otherwise turn a merely-not-yet-cloned repository into a spurious log
+# line on every single pass).
+chown_repo_back() {
+  if [ -z "${REPO_OWNER_RESOLVED:-}" ]; then
+    REPO_UID="$(stat -c %u "$REPO" 2>/dev/null || true)"
+    REPO_GID="$(stat -c %g "$REPO" 2>/dev/null || true)"
+    REPO_OWNER_RESOLVED=1
+  fi
+  if [ -n "$REPO_UID" ] && [ -n "$REPO_GID" ]; then
+    chown -R "$REPO_UID:$REPO_GID" "$REPO" 2>/dev/null || true
+  fi
+}
+
+# Every READ against $REPO whose OUTPUT a caller needs - rev-parse,
+# merge-base --is-ancestor - goes through here rather than a bare `git -C
+# "$REPO" ...`, so the safe.directory fix above applies to it too. Not
+# logged to $LOG (run_git() below is the logged, write-side counterpart)
+# - these are routine checks, several per accepted request, and this
+# file's own log() already caps itself at 2000 lines; a caller that DOES
+# want one logged calls log() itself, the same as before this function
+# existed. chown_repo_back still runs here too, defensively: none of
+# this function's three callers further down are documented to write
+# anything, but a stray lockfile is cheaper to guard against here than to
+# have relied on that never happening.
+git_repo() {
+  git -c "safe.directory=$REPO" -C "$REPO" "$@"
+  git_repo_rc=$?
+  chown_repo_back
+  return $git_repo_rc
+}
+
+# Every WRITE against $REPO - fetch, checkout - goes through here.
+# Mirrors run() below (same log line shape, same "$LOG" redirect) but
+# additionally carries the safe.directory/chown-back pair documented
+# above.
+run_git() {
+  log "\$ git -C $REPO $*"
+  git -c "safe.directory=$REPO" -C "$REPO" "$@" >> "$LOG" 2>&1
+  run_git_rc=$?
+  chown_repo_back
+  return $run_git_rc
+}
+
 # What is RUNNING, not what would be pulled on the next start. Those are
 # two different questions, and stage 1 showed that confusing them is
 # costly: since 0.2.0 every fresh installation carries
@@ -474,29 +560,12 @@ if [ "${#TARGET}" -gt 128 ]; then
 fi
 
 FROM="$(current_tag)"
-# Captured before ANY checkout happens - Task 3's own checkout (further
-# down, of $REF) is the first thing that would move $REPO's working tree.
-# Task 4's rollback checks the repository back out to exactly this commit
-# again: the Compose file must match the running image (a new release can
-# add a service or a variable the old one does not know), so rolling the
-# image back without also rolling the checkout back can leave the old
-# image started against a Compose file it was never meant to run under.
-# Falls back to the literal string "HEAD" whenever $REPO does not (yet)
-# answer `rev-parse` with something usable - `git checkout --detach HEAD`
-# is then a well-defined no-op, the safest thing to attempt when there is
-# no real answer to "checked out before". Two failure shapes, not one, and
-# both need the same fallback: `git` can exit non-zero (no repository
-# there at all), or it can exit 0 with EMPTY output - proven against this
-# file's own test fixtures, whose default `git` stub does exactly that
-# (unlike a real `git rev-parse HEAD`, which never succeeds without
-# printing a SHA). `... || echo HEAD` alone only catches the first shape;
-# a `git` that "succeeds" silently sailed straight through it and left
-# GIT_BEFORE empty, so the rollback's own `git checkout --detach ""`
-# further down would fail as well. Following the same
-# capture-then-${:-default} idiom current_tag() and running_version()
-# already use above closes both shapes in one place.
-git_before_raw="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
-GIT_BEFORE="${git_before_raw:-HEAD}"
+# GIT_BEFORE (the commit Task 4's rollback checks back out to) is
+# computed further down, past validation - see the comment there. It is
+# not needed by anything between here and there, and reject()'s own
+# doctrine (state before log, precisely so recording a rejection is not
+# itself an action - see reject()'s comment above) is why a REJECTED
+# request must never reach a `git` call at all, not even a read-only one.
 TO="$TARGET"
 ROLLED=false
 HEALTHY=true
@@ -1016,6 +1085,55 @@ write_failure_file() {
   } > "$FAILURE"
 }
 
+# Captured before ANY checkout happens - Task 3's own checkout (further
+# down, of $REF) is the first thing that would move $REPO's working tree.
+# Task 4's rollback checks the repository back out to exactly this commit
+# again: the Compose file must match the running image (a new release can
+# add a service or a variable the old one does not know), so rolling the
+# image back without also rolling the checkout back can leave the old
+# image started against a Compose file it was never meant to run under.
+#
+# Placed HERE - after validation (Rule 0-3, above), not before it, unlike
+# an earlier version of this file - so a REJECTED request never reaches a
+# `git` call at all (see the note left where this used to sit), and so a
+# genuine failure here (below) can safely abort the whole pass without
+# ever touching reject()'s own "nothing happened yet" guarantee. Still
+# strictly before Task 3's own checkout further down, which is the
+# property that actually matters.
+#
+# Falls back to the literal string "HEAD" whenever $REPO does not (yet)
+# answer `rev-parse` with something usable - `git checkout --detach HEAD`
+# is then a well-defined no-op, the safest thing to attempt when there is
+# no real answer to "checked out before". Exactly ONE failure shape gets
+# that fallback, though, not two: `git` exiting 0 with EMPTY output - a
+# fresh repository with no commits yet, proven against this file's own
+# test fixtures, whose default `git` stub does exactly that (unlike a
+# real `git rev-parse HEAD`, which never succeeds without printing a
+# SHA).
+#
+# A NON-ZERO exit is a different thing entirely and must NOT share that
+# fallback - `... || echo HEAD` used to do exactly that, treating "git
+# refused to answer" identically to "git answered honestly that there is
+# nothing yet", and swallowing a real, actionable failure (dubious
+# ownership - see run_git()'s own comment on that failure mode, now fixed
+# at its source, but not something this line should assume can never
+# recur; a corrupted .git; the binary missing) into a GIT_BEFORE that
+# LOOKS like a normal, if unremarkable, value. A rollback later in this
+# SAME pass would then `git checkout --detach HEAD` - a no-op, since HEAD
+# already sits on the very ref this pass itself just checked out further
+# down - leaving the Compose file at the FAILED version while the image
+# rolls back to the old one, exactly the mismatch the paragraph above
+# warns against. Aborting here instead means a git that cannot even
+# answer "what commit are we on" never reaches that silently wrong
+# rollback in the first place.
+if git_before_raw="$(git_repo rev-parse HEAD 2>&1)"; then
+  GIT_BEFORE="${git_before_raw:-HEAD}"
+else
+  log "git rev-parse HEAD failed against $REPO: $git_before_raw"
+  set_state failed "could not determine the currently checked-out commit ($REPO: git rev-parse HEAD failed) - see log.txt"
+  exit 0
+fi
+
 # 0. Fetch the target and, for the dev channel, validate ancestry - BEFORE
 # the backup below, not after it. The Compose file must match the version
 # (a new release can need a new service or a new variable), and the dev
@@ -1044,7 +1162,7 @@ write_failure_file() {
 # there was nothing new for that pass to endanger, and the previous
 # backup remains on disk regardless.
 set_state pull ""
-if ! run git -C "$REPO" fetch --tags --force origin; then
+if ! run_git fetch --tags --force origin; then
   set_state failed "git fetch failed"
   exit 0
 fi
@@ -1057,7 +1175,7 @@ if [ "$CHANNEL" = "dev" ]; then
   # ancestor" does. This fails CLOSED, the same direction every other
   # check in this file takes: an inconclusive answer is a "no", never
   # waved through as a "sure, why not".
-  if ! git -C "$REPO" merge-base --is-ancestor HEAD "$TARGET" 2>/dev/null; then
+  if ! git_repo merge-base --is-ancestor HEAD "$TARGET" 2>/dev/null; then
     reject "not a descendant of the running state"
   fi
   REF="$TARGET"
@@ -1089,11 +1207,11 @@ fi
 # checkout on THIS host is dirty) that the shared message actively misled
 # an operator away from. Answering "does this ref exist at all" on its
 # own, first, is what makes the two distinguishable.
-if ! git -C "$REPO" rev-parse -q --verify "${REF}^{commit}" >/dev/null 2>&1; then
+if ! git_repo rev-parse -q --verify "${REF}^{commit}" >/dev/null 2>&1; then
   set_state failed "target $REF not found in the repository"
   exit 0
 fi
-if ! run git -C "$REPO" checkout --detach "$REF"; then
+if ! run_git checkout --detach "$REF"; then
   set_state failed "checkout of $REF failed even though the ref exists - see the log (a repository with local modifications refuses a checkout the same way a missing ref does; this is that case)"
   exit 0
 fi
@@ -1374,7 +1492,7 @@ else
   # that matters most - recreating the container against the now-restored
   # tag. Whatever mismatch that leaves in docker-compose.yml is a smaller
   # problem than not attempting the recreate at all.
-  run git -C "$REPO" checkout --detach "$GIT_BEFORE" || true
+  run_git checkout --detach "$GIT_BEFORE" || true
   compose up -d --no-deps --force-recreate "$SERVICE" || true
 
   # Exactly once. No second attempt, no flapping: if the cause were not

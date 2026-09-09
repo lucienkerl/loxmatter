@@ -182,6 +182,14 @@ SYSTEM_TOOLS = (
     "wc",
     "readlink",
     "chmod",
+    # `stat` (REPO_UID/REPO_GID) and `chown` (chown_repo_back) - both new
+    # with the git-ownership fix (see git_repo()/run_git() in
+    # update-once.sh). Real binaries, not stubs: $REPO in this fixture is
+    # a real directory owned by whoever runs the test, so `chown` back
+    # onto it is always a legitimate no-op, and faking either would only
+    # test the fake.
+    "stat",
+    "chown",
 )
 
 
@@ -1167,12 +1175,21 @@ def test_a_missing_ref_is_still_reported_as_not_found(updater):
     # still reachable, and specifically for the case it now means -
     # `rev-parse` itself says the ref does not exist - with `checkout`
     # never even attempted for a ref already known not to exist.
+    #
+    # Matches specifically on "rev-parse -q --verify" (Rule 2's own
+    # existence check), NOT on a bare "*rev-parse*" - the flow now also
+    # runs a plain `git rev-parse HEAD` earlier, past validation, to
+    # determine GIT_BEFORE (see the block comment above that call in
+    # update-once.sh). A blanket "*rev-parse*" match would fail THAT one
+    # too and end the run at GIT_BEFORE's own "could not determine the
+    # currently checked-out commit" failure instead of ever reaching the
+    # ref-existence check this test exists to cover.
     git_path = updater.bindir / "git"
     git_path.write_text(
         "#!/bin/sh\n"
         'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
         'case "$*" in\n'
-        "  *rev-parse*) exit 1 ;;\n"
+        '  *"rev-parse -q --verify"*) exit 1 ;;\n'
         "esac\n"
         "exit 0\n",
         encoding="utf-8",
@@ -1912,3 +1929,85 @@ def test_compose_refuses_when_the_host_path_cannot_be_resolved(updater):
     assert state["phase"] == "failed"
     assert not _compose_calls(calls, "pull")
     assert "docker compose" not in calls
+
+
+def test_git_calls_carry_safe_directory_and_chown_the_checkout_back(updater):
+    # Critical 2 - the git ownership problem. This sidecar runs as root;
+    # install.sh clones $REPO as the invoking user. Both wrapper functions
+    # (git_repo/run_git in update-once.sh) must pass `-c
+    # safe.directory=$REPO` on EVERY invocation (the fix for git's
+    # "detected dubious ownership" refusal) AND chown the checkout back to
+    # its original owner afterward (the fix for the second half: a write
+    # left root-owned would then lock the operator's own future
+    # `git`/./scripts/update.sh out of their own checkout).
+    #
+    # `chown` AND `stat` are both faked here, not the real binaries the
+    # fixture's SYSTEM_TOOLS otherwise symlinks in - purely to OBSERVE the
+    # call chain, and to sidestep a real cross-platform gap: `stat -c` is
+    # a GNU-ism (the sidecar's Alpine base has it via the `coreutils`
+    # package, see deploy/updater/Dockerfile), but this suite may run on
+    # a host whose OWN `stat` is BSD's (no `-c` at all), which would make
+    # REPO_UID/REPO_GID come back empty for a reason that has nothing to
+    # do with the fix under test - and chown_repo_back()'s own guard
+    # would then correctly, but unhelpfully, skip the chown entirely. The
+    # fake `stat` answers a fixed uid/gid regardless of platform; a real
+    # chown here would only ever restore the test's own tmp directory to
+    # the test's own uid, a no-op that proves nothing extra, so the fake
+    # `chown` just logs and exits.
+    stat_path = updater.bindir / "stat"
+    stat_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "stat" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        '  *"%u"*) echo 4242 ;;\n'
+        '  *"%g"*) echo 4343 ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    stat_path.chmod(0o755)
+    chown_path = updater.bindir / "chown"
+    chown_path.write_text(
+        '#!/bin/sh\nprintf "chown %s\\n" "$*" >> "$STUB_LOG"\nexit 0\n', encoding="utf-8"
+    )
+    chown_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "done"
+    git_calls = [line for line in calls.splitlines() if line.startswith("git ")]
+    assert git_calls, "no git call was made at all"
+    for line in git_calls:
+        assert "safe.directory=" in line, line
+    chown_calls = [line for line in calls.splitlines() if line.startswith("chown ")]
+    assert chown_calls, "the checkout was never chowned back after a git write"
+    for line in chown_calls:
+        assert "4242:4343" in line, line
+
+
+def test_a_broken_git_surfaces_as_a_failure_instead_of_a_silent_head_fallback(updater):
+    # Critical 2, second half: `git_before_raw`'s old `|| true` collapsed
+    # EVERY git failure - dubious ownership among them - into the same
+    # GIT_BEFORE="HEAD" fallback a genuinely empty, freshly-cloned
+    # repository legitimately needs. A `git rev-parse HEAD` that exits
+    # NON-ZERO is a real, actionable failure and must abort the pass
+    # instead of silently proceeding as if nothing were wrong: proceeding
+    # would let a later rollback `git checkout --detach HEAD` run as a
+    # no-op (HEAD already sits on the very ref this pass itself just
+    # checked out), leaving the Compose file at the FAILED version while
+    # the image rolls back to the old one.
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        '  *"rev-parse HEAD"*) echo "fatal: detected dubious ownership" >&2; exit 128 ;;\n'
+        "esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, calls, state = updater()
+    assert state["phase"] == "failed"
+    assert "could not determine the currently checked-out commit" in state["error"]
+    assert "checkout --detach" not in calls
+    assert "fetch --tags --force origin" not in calls
