@@ -251,6 +251,48 @@ set_state() {
   fi
 }
 
+# Refreshes ONLY `updater_seen_at` in the existing $STATE, leaving every
+# other field - phase, id, error, ... - exactly as it already reads. This
+# is the fix for Important 1: the bridge treats the sidecar as absent
+# after 30 seconds of silence (`_MAX_SILENT_SECONDS` in update.py), but
+# `updater_seen_at` used to be written only by `write_state` - i.e. at
+# pass start and at each `set_state` call - and nothing refreshed it
+# WITHIN a phase. Proven against the unpatched script with a `docker
+# compose pull` stub that took 8 seconds: the timestamp froze for the
+# whole pull. On a Pi an arm64 image pull takes minutes and the health
+# wait can hold one phase for up to 120 seconds - most of a SUCCESSFUL
+# update used to spend most of its time looking, to the web UI, exactly
+# like a crashed sidecar.
+#
+# Deliberately NOT `set_state` itself: `set_state` rebuilds state.json
+# from this script's own JOB_ID/FROM/TO/etc. variables, which is exactly
+# right when the PHASE is genuinely changing, but wrong here - calling it
+# mid-phase (from `wait_healthy`, below, which runs during BOTH the
+# post-recreate health wait at phase "health" AND the rollback's own
+# health wait at phase "rollback") would overwrite whatever phase is
+# already correctly on disk with whatever this call site happens to
+# think the phase is. The SIGTERM trap test relies on state.json reading
+# "rollback" for that entire second wait; a heartbeat helper that can
+# only ever touch the timestamp is what keeps that true.
+#
+# Best-effort, like `log()`: a momentary read/write hiccup here (the
+# volume briefly unwritable) must not abort a pass that is otherwise
+# making real progress - the NEXT full pass's own heartbeat block (see
+# below) already recovers a state.json that stays broken across passes.
+# Callers wrap this in `|| true` for exactly that reason.
+refresh_heartbeat() {
+  if REFRESHED="$(jq --arg seen "$(now)" \
+       'if (type == "object" and has("phase"))
+        then .updater_seen_at = $seen
+        else empty end' \
+       "$STATE" 2>/dev/null)" \
+    && [ -n "$REFRESHED" ]; then
+    write_state "$REFRESHED"
+    return $?
+  fi
+  return 1
+}
+
 # entrypoint.sh forwards SIGTERM to exactly this process - both on
 # `docker stop` and when its own 600s parent `timeout` fires - and until
 # now nothing here ever trapped it. Proven end to end: sending SIGTERM
@@ -341,47 +383,27 @@ reject() {
 # First, before anything else: the bridge hides the update button when
 # this timestamp goes stale (see update.py). A sidecar that only gives a
 # heartbeat after finishing its work would look absent during every bit
-# of that work.
-if [ -f "$STATE" ]; then
-  # `jq` on an existing state.json can fail (corrupt file, truncated by an
-  # unrelated crash, hand edited). In `write_state "$(jq ...)"` above, the
-  # command substitution's exit status was being discarded - it is an
-  # argument to write_state, not the command `set -e` sees - so a failing
-  # jq used to write write_state an EMPTY string, which write_state then
-  # dutifully persisted as the new state.json. That is unrecoverable by
-  # itself: updater_seen_at is gone, so the bridge concludes the sidecar is
-  # absent and hides the update button for good, and every later pass
-  # reads the same broken file and does it again. Check the substitution's
-  # own exit status explicitly (assigning it directly, not nesting it) and
-  # fall back to a fresh idle state instead of persisting jq's failure.
-  #
-  # Non-empty is not sufficient by itself, though - two things jq can
-  # produce that are perfectly valid, non-empty JSON and still not usable
-  # as a state:
-  #   * state.json containing the literal `null`: `null | .updater_seen_at
-  #     = $seen` is legal jq and yields `{"updater_seen_at": "..."}` - a
-  #     real, non-empty object, just missing "phase" and every other
-  #     field. Recorded as-is, that state permanently loses them: a live
-  #     heartbeat with no phase and no id, forever, and nothing about it
-  #     ever looks broken enough to self-heal.
-  #   * state.json as a directory: `[ -f "$STATE" ]` above is false, so
-  #     this whole branch is skipped and the `else` runs `set_state idle`
-  #     instead - see write_state's own guard for what that used to do
-  #     (mv the tmp file silently into the directory).
-  # Require the parsed value to be a JSON object carrying "phase" before
-  # accepting it as a refresh target; anything else - `null`, a bare
-  # string, a number, an array - falls through to the same "no usable
-  # state yet" recovery the `else` branch already uses for a missing file.
-  if REFRESHED="$(jq --arg seen "$(now)" \
-       'if (type == "object" and has("phase"))
-        then .updater_seen_at = $seen
-        else empty end' \
-       "$STATE" 2>/dev/null)" \
-    && [ -n "$REFRESHED" ]; then
-    write_state "$REFRESHED"
-  else
-    JOB_ID="" FROM="" TO="" set_state idle ""
-  fi
+# of that work - which is exactly why `refresh_heartbeat` (defined above,
+# next to `set_state`) exists as its own function now: this top-of-pass
+# call is only ONE of its callers since Important 1, the other two being
+# `wait_healthy` and the image-pull wrapper further down, both of which
+# need the identical "touch only the timestamp" write mid-phase.
+#
+# `refresh_heartbeat` can fail in two ways this block still has to
+# recover from itself (it does not, on its own):
+#   * `jq` on an existing state.json can fail outright (corrupt file,
+#     truncated by an unrelated crash, hand edited) - `refresh_heartbeat`
+#     returns non-zero rather than persist an empty string (see its own
+#     comment for the history of that failure mode).
+#   * state.json containing the literal `null`, or being a directory
+#     (`[ -f "$STATE" ]` below is false for that case, see write_state's
+#     own guard for what a write onto one used to do): also handled by
+#     `refresh_heartbeat`'s own "must be an object with phase" check.
+# Either way, ONLY here - not from any mid-phase caller, which must never
+# silently reset a running job back to "idle" - falling through to a
+# fresh idle state is the right recovery.
+if [ -f "$STATE" ] && refresh_heartbeat; then
+  :
 else
   JOB_ID="" FROM="" TO="" set_state idle ""
 fi
@@ -761,21 +783,101 @@ run() {
 # silently. Refuse instead: a compose call that never ran is retryable on
 # the very next request; one that silently recreated a service against
 # the wrong host directory is not.
+# Split out of compose() itself (below) so
+# compose_pull_with_heartbeat() further down can resolve and memoize
+# $COMPOSE_PROJECT_DIR HERE, synchronously in THIS process, before
+# forking the actual pull into a background subshell. A subshell (what
+# `&` always creates) that resolved this for the first time would only
+# ever memoize it for ITSELF - every LATER compose() call in this same
+# pass (the recreate right after the pull returns; the self-replacement
+# pull/up at the very end) runs back in THIS process, not that subshell,
+# and would silently pay for a second `docker inspect loxmatter-updater`
+# round trip the memoization above exists specifically to avoid (see its
+# own comment) - and, had $STACK been unresolvable, log the "could not
+# resolve" line a second time too.
+#
+# No-op if $STACK is not a directory: compose() below still runs its own
+# identical check before ever doing real work, on every call including a
+# backgrounded one; this mirror only exists to skip the (otherwise
+# pointless) `docker inspect` when called from
+# compose_pull_with_heartbeat() ahead of that check ever running.
+resolve_compose_project_dir() {
+  [ -d "$STACK" ] || return 0
+  if [ -z "${COMPOSE_PROJECT_DIR_RESOLVED:-}" ]; then
+    COMPOSE_PROJECT_DIR="$(host_path_for "$STACK" "")"
+    COMPOSE_PROJECT_DIR_RESOLVED=1
+  fi
+}
+
 compose() {
   if [ ! -d "$STACK" ]; then
     log "compose: $STACK is not a directory - cannot run docker compose there"
     return 1
   fi
-  if [ -z "${COMPOSE_PROJECT_DIR_RESOLVED:-}" ]; then
-    COMPOSE_PROJECT_DIR="$(host_path_for "$STACK" "")"
-    COMPOSE_PROJECT_DIR_RESOLVED=1
-  fi
+  resolve_compose_project_dir
   if [ -z "$COMPOSE_PROJECT_DIR" ]; then
     log "compose: could not resolve $STACK to a host path (docker inspect loxmatter-updater found no mount whose Destination is a prefix of it) - refusing to run docker compose, since a relative volumes: entry would otherwise resolve against this container's own filesystem instead of the host's"
     return 1
   fi
   log "\$ docker compose -f $STACK/docker-compose.yml --project-directory $COMPOSE_PROJECT_DIR $*"
   docker compose -f "$STACK/docker-compose.yml" --project-directory "$COMPOSE_PROJECT_DIR" "$@" >> "$LOG" 2>&1
+}
+
+# Important 1's other half: `compose pull` (the actual image download,
+# now `set_state pull` below) is a SINGLE blocking call with no loop of
+# its own to hang a heartbeat refresh off of, unlike `wait_healthy`
+# above. This script is invoked once per entrypoint.sh tick and has no
+# background process outside itself already running - so the refresh has
+# to come from a helper that backgrounds the pull and watches it from
+# THIS SAME PASS, not from entrypoint.sh: a heartbeat kept alive by a
+# process OTHER than the one actually doing the work would refresh it
+# even after this whole script died (OOM-killed, the container gone),
+# which is precisely the case `_MAX_SILENT_SECONDS` (update.py) exists to
+# catch. Refreshing only for as long as the CHILD THIS FUNCTION SPAWNED
+# is still alive keeps that guarantee: the heartbeat goes silent the
+# instant nothing is left running it.
+#
+# Cost, stated plainly: a pull that is not crashed but genuinely wedged
+# (a connection stuck half-open with docker itself never timing out on
+# it) keeps its child process alive and therefore keeps refreshing the
+# heartbeat too - alive-but-stuck and alive-and-working look the same to
+# this mechanism, exactly the "would a heartbeat that advances while a
+# step is wedged defeat the stalled detection" trade-off the brief for
+# this fix calls out by name. Accepted here: the alternative - never
+# refreshing during a pull - reports a false crash on most SUCCESSFUL
+# updates long enough to cross _MAX_SILENT_SECONDS, which per the design
+# brief is the normal case on a Pi pulling an arm64 image; a pull wedged
+# with no timeout at all is both rarer and still bounded by
+# entrypoint.sh's own 600-second worker timeout, which SIGTERMs this
+# whole script (and with it, the backgrounded pull) regardless of what
+# the heartbeat says.
+#
+# Polls once a SECOND, the same granularity `wait_healthy` already uses
+# above, not once every several seconds - `sleep N` inside a `while kill
+# -0 ...; do sleep N; ...; done` loop always sleeps the FULL N before its
+# very first liveness check, even when the child is done before that
+# check ever runs. Measured with a 5-second poll during this fix's own
+# development: an already-instant pull (this file's own test fixtures,
+# where the pulled "image" is a fake binary that returns immediately)
+# still cost a flat 5 extra wall-clock seconds on every single run
+# through this function, real work or none - multiplied across a test
+# suite already documented (see `project_testsuite_dauer` in this
+# maintainer's own notes) as long enough to look like a hang. A
+# one-second poll bounds that same unavoidable "sleep before the first
+# check" tax to at most one second instead.
+compose_pull_with_heartbeat() {
+  resolve_compose_project_dir
+  compose pull "$1" &
+  pull_pid=$!
+  while kill -0 "$pull_pid" 2>/dev/null; do
+    sleep 1
+    if kill -0 "$pull_pid" 2>/dev/null; then
+      refresh_heartbeat || true
+    fi
+  done
+  pull_rc=0
+  wait "$pull_pid" || pull_rc=$?
+  return "$pull_rc"
 }
 
 # Escapes sed's own replacement metacharacters - backslash, ampersand, and
@@ -904,6 +1006,17 @@ wait_healthy() {
     if curl -fsS -m 3 "$HEALTH_URL" >/dev/null 2>&1; then
       return 0
     fi
+    # Important 1: this loop already ticks once a second, up to
+    # HEALTH_TIMEOUT (120s in production) - without this call, that
+    # entire wait wrote `updater_seen_at` ZERO times, and a health check
+    # that legitimately takes even half a minute made the bridge
+    # conclude the sidecar had crashed, right as it was working exactly
+    # as designed. `refresh_heartbeat` (not `set_state`) specifically:
+    # this same function also runs the ROLLBACK's own health wait, at
+    # phase "rollback" - a call that touched `phase` here would
+    # overwrite that with "health", which the SIGTERM-during-rollback
+    # test relies on NOT happening.
+    refresh_heartbeat || true
     sleep 1
   done
   return 1
@@ -1161,7 +1274,23 @@ fi
 # pass. That is not a regression: nothing past this point ever ran, so
 # there was nothing new for that pass to endanger, and the previous
 # backup remains on disk regardless.
-set_state pull ""
+#
+# Deliberately NO `set_state` transition here (Important 2). This used
+# to write `set_state pull ""` right before the fetch below - the one
+# phase name that, everywhere else in this file and in the web UI
+# (index.html's four-step list, `web.system.update_step_pull` = "Loading
+# the image"), means the image DOWNLOAD. A `git fetch` is typically
+# sub-second against a local remote and has nothing to do with an image;
+# confirmed against the unpatched script with a `docker compose pull`
+# stub that ran for real seconds: state.json read "backup" the entire
+# time, because the ACTUAL image pull further down never got its own
+# transition at all - it ran silently inside the "backup" phase. Fetch
+# and the dev-channel ancestry check below stay under "queued" instead
+# (already the phase this pass entered with, at `set_state queued ""`,
+# and already documented as "accepted, not yet started" - a fetch this
+# fast is exactly that, not a step the web UI's four-item list claims a
+# name for). `set_state pull ""` now sits where the pull actually is,
+# right before `compose_pull_with_heartbeat` further down.
 if ! run_git fetch --tags --force origin; then
   set_state failed "git fetch failed"
   exit 0
@@ -1189,6 +1318,18 @@ fi
 # database: the signal database is the one thing a failed update could
 # not restore - it holds the signal keys, and those are the wiring into
 # the Loxone configuration.
+#
+# This phase now also covers the checkout and `set_tag` right after the
+# backup itself (Important 2) - both fast, non-network filesystem
+# operations, seconds at most, unlike the image pull that used to run
+# silently inside this same phase (see the comment above the fetch,
+# further up, for the full before/after). "Backing up the database" is
+# not a literally exact label for "and now also checking out the target
+# commit and writing the new tag into .env" - but every one of those
+# three is quick prep work with nothing else in this file's four-step
+# vocabulary to call it, and lumping them here is far closer to honest
+# than leaving them inside "pull", the one name a step in the web UI's
+# list already claims to mean "downloading the image".
 set_state backup ""
 STAMP="$(date -u +%Y-%m-%d-%H%M%S)"
 if ! run tar czf "$BACKUP_DIR/store-$STAMP.tgz" -C /data loxmatter.sqlite; then
@@ -1238,7 +1379,15 @@ if ! set_tag "${TARGET#v}"; then
   exit 0
 fi
 
-if ! compose pull "$SERVICE"; then
+# 2.5 Pull the image - the actual, potentially multi-minute download an
+# arm64 Pi does over a home connection, and (Important 2) now the ONLY
+# step this phase name covers, matching what the web UI's own step list
+# already claims it means. `compose_pull_with_heartbeat`, not a bare
+# `compose pull` (Important 1): a single blocking call this long needs
+# its heartbeat kept moving from inside itself - see that function's own
+# comment for the mechanism and its accepted trade-off.
+set_state pull ""
+if ! compose_pull_with_heartbeat "$SERVICE"; then
   # $FROM is what .env held before this run touched it - the ALIAS a
   # fresh installation ships with ("stable"), not necessarily a version
   # (see current_tag()'s own comment above). Restoring it is correct

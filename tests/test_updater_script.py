@@ -730,6 +730,97 @@ def test_the_flow_keeps_its_order(updater):
     assert state["phase"] == "done"
 
 
+def test_the_image_pull_reports_phase_pull_not_backup(updater):
+    # Important 2. `set_state pull ""` used to run right before `git
+    # fetch` - typically sub-second - while the ACTUAL image download
+    # (`docker compose pull $SERVICE`, by far the longest step in this
+    # whole file) ran silently inside the "backup" phase, which had
+    # already been entered for the tar backup and never left again until
+    # `set_state recreate` afterward. Proven against the unpatched
+    # script: the docker stub below, snapshotting state.json at the
+    # instant `compose pull` is actually invoked, read "backup" - the
+    # card in the web UI (index.html's four-step list) was highlighting
+    # "Backing up the database" while a multi-minute arm64 pull was
+    # actually running, and had already finished highlighting "Loading
+    # the image" for a fetch that took a fraction of a second.
+    #
+    # Snapshots state.json to a side file the instant the pull itself is
+    # invoked - the same technique test_the_self_replacement_runs_
+    # strictly_after_done_is_recorded (above) uses for the identical
+    # reason: a direct, timestamped witness of what was actually on disk
+    # at that moment, not just what the finished pass ends on.
+    snapshot = updater.update_dir / "state-at-pull.json"
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        _docker_stub_source(
+            compose_case=(
+                'case " $* " in\n'
+                f'      *" pull "*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{snapshot}" 2>/dev/null ;;\n'
+                "    esac\n"
+                "    exit 0 ;;"
+            )
+        ),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater()
+    assert state["phase"] == "done"
+    assert snapshot.is_file(), "the image pull never ran"
+    snap_state = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert snap_state["phase"] == "pull", (
+        "the phase at the moment of the actual image download should read "
+        f"'pull', not {snap_state['phase']!r}"
+    )
+
+
+def test_the_heartbeat_keeps_advancing_through_a_long_image_pull(updater):
+    # Important 1. `updater_seen_at` used to be written only by
+    # `write_state` - at pass start, and at each `set_state` call - and
+    # nothing refreshed it WITHIN a phase. `compose pull` is a single
+    # blocking call with no loop of its own to hang a refresh off; proven
+    # against the unpatched script with a `docker compose pull` stub that
+    # slept for real seconds: the timestamp taken right before that call
+    # and the one taken right after it were identical, for the entire
+    # duration. The bridge treats the sidecar as absent after 30 seconds
+    # of silence (`_MAX_SILENT_SECONDS`, update.py) - on a Pi, where an
+    # arm64 pull takes minutes, this meant most of every SUCCESSFUL
+    # update looked exactly like a crashed sidecar.
+    #
+    # The docker stub below snapshots state.json to two side files,
+    # immediately before and after sleeping through the pull itself - a
+    # direct witness of what the heartbeat read at each end of a call
+    # long enough (7s, comfortably longer than
+    # compose_pull_with_heartbeat's own 1s refresh poll) to prove the
+    # timestamp moves DURING it, not only once it returns.
+    before = updater.update_dir / "state-before-pull.json"
+    after = updater.update_dir / "state-after-pull.json"
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        _docker_stub_source(
+            compose_case=(
+                'case " $* " in\n'
+                f'      *" pull "*) cp "$LOXMATTER_UPDATE_DIR/state.json" "{before}" 2>/dev/null\n'
+                "        sleep 7\n"
+                f'        cp "$LOXMATTER_UPDATE_DIR/state.json" "{after}" 2>/dev/null ;;\n'
+                "    esac\n"
+                "    exit 0 ;;"
+            )
+        ),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater(_timeout=30)
+    assert state["phase"] == "done"
+    assert before.is_file() and after.is_file(), "the image pull never ran"
+    before_state = json.loads(before.read_text(encoding="utf-8"))
+    after_state = json.loads(after.read_text(encoding="utf-8"))
+    assert after_state["updater_seen_at"] > before_state["updater_seen_at"], (
+        "the heartbeat must advance WHILE the pull is still running, not only once it has returned"
+    )
+
+
 def test_the_restart_leaves_the_neighboring_services_alone(updater):
     _auftrag(updater, target="0.3.0")
     _, calls, _ = updater()
@@ -874,6 +965,17 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     # accordingly, but the claim is unchanged: bounded by the clock, not
     # by how long any single curl call takes, regardless of how many such
     # waits a pass contains.
+    #
+    # Widened once more for Important 1 (this branch's own fix, not a
+    # regression): `compose_pull_with_heartbeat` polls its backgrounded
+    # pull once a second rather than checking it synchronously, so even
+    # an already-finished pull (this fixture's docker stub returns
+    # instantly) can cost up to one full second of that poll's own
+    # granularity before the loop notices - a real, disclosed, and
+    # deliberately accepted cost of keeping the heartbeat alive during a
+    # call this file has no other way to interrupt (see that function's
+    # own comment). The bound below still sits far under what the OLD,
+    # iteration-counting bug this test exists to catch would produce.
     curl_path = updater.bindir / "curl"
     curl_path.write_text("#!/bin/sh\nsleep 2\nexit 1\n", encoding="utf-8")
     curl_path.chmod(0o755)
@@ -883,8 +985,74 @@ def test_wait_healthy_is_bounded_by_wall_clock_not_curl_duration(updater):
     elapsed = time.monotonic() - start
     assert state["phase"] == "failed"
     assert state["rolled_back"] is True
-    assert elapsed < 8, (
-        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits should stay well under this"
+    assert elapsed < 12, (
+        f"took {elapsed:.1f}s - two wall-clock-bounded 2s waits plus one "
+        "1s-granularity pull poll should stay well under this"
+    )
+
+
+def test_the_heartbeat_keeps_advancing_through_a_long_health_wait(updater):
+    # Important 1, the other half of the fix (the pull's own half has its
+    # own test above): `wait_healthy`'s loop used to write
+    # `updater_seen_at` zero times across its ENTIRE run - the top-of-pass
+    # heartbeat block only runs once, before this loop is ever entered,
+    # and nothing inside the loop touched state.json at all. On a Pi the
+    # production HEALTH_TIMEOUT is 120s; the bridge treats the sidecar as
+    # absent after 30s of silence (`_MAX_SILENT_SECONDS`, update.py) - so
+    # a health check that took even half a minute made the bridge
+    # conclude the sidecar had crashed, right as it was working exactly
+    # as designed.
+    #
+    # `compose up` for $SERVICE is made to fail outright (same
+    # `docker_path` stub `test_a_failed_restart_hands_off_to_rollback_
+    # instead_of_stranding_the_tag` above uses), which sets `RECREATE_OK`
+    # to false and skips the FIRST ("health" phase) wait entirely - the
+    # run reaches exactly ONE `wait_healthy` call, inside the rollback,
+    # with no `set_state` in between to interrupt it. Isolating to a
+    # single, uninterrupted call matters: a first version of this test
+    # let both the "health" AND "rollback" health waits contribute
+    # samples, and `set_state rollback ""` sitting BETWEEN them already
+    # advances `updater_seen_at` on its own - the assertion below passed
+    # even with `refresh_heartbeat` deleted from `wait_healthy`, catching
+    # nothing. This version does not have that gap: every sample comes
+    # from curl calls inside the ONE wait this pass ever performs.
+    #
+    # The curl stub below (always fails, no `-f` needed to distinguish it
+    # here) appends the CURRENT `updater_seen_at` to a side log on every
+    # invocation - `wait_healthy` calls curl once per iteration of its own
+    # one-second loop, so this is a direct, timestamped witness of what
+    # the heartbeat read on each pass through a wait long enough
+    # (`HEALTH_TIMEOUT=5`) to span several of `refresh_heartbeat`'s calls.
+    # At least two DISTINCT timestamps across those samples is what proves
+    # the heartbeat moved DURING the wait, not only once at its very
+    # start.
+    seen_log = updater.update_dir / "seen-during-health-wait.log"
+    docker_path = updater.bindir / "docker"
+    docker_path.write_text(
+        _docker_stub_source(compose_case='case " $* " in *" up "*) exit 1 ;; esac; exit 0 ;;'),
+        encoding="utf-8",
+    )
+    docker_path.chmod(0o755)
+    curl_path = updater.bindir / "curl"
+    curl_path.write_text(
+        "#!/bin/sh\n"
+        f'jq -r ".updater_seen_at" "$LOXMATTER_UPDATE_DIR/state.json" >> "{seen_log}" 2>/dev/null\n'
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    curl_path.chmod(0o755)
+    _auftrag(updater, target="0.3.0")
+    _, _calls, state = updater(LOXMATTER_HEALTH_TIMEOUT="5", _timeout=30)
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is True
+    assert seen_log.is_file(), "the health check never ran"
+    seen_timestamps = [line for line in seen_log.read_text(encoding="utf-8").splitlines() if line]
+    assert len(seen_timestamps) >= 2, (
+        "the health wait must have looped more than once to prove anything"
+    )
+    assert len(set(seen_timestamps)) > 1, (
+        "the heartbeat must advance WHILE the health wait is still running, "
+        f"not stay frozen at one value the whole time: {seen_timestamps!r}"
     )
 
 
