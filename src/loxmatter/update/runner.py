@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Protocol
 
 from loxmatter.timestamps import now_iso
-from loxmatter.update.protocol import UpdateRequest, UpdateState, write_state
+from loxmatter.update.protocol import UpdatePhase, UpdateRequest, UpdateState, write_state
 from loxmatter.update.rules import RequestRejected, check_request, image_reference
 
 #: How long to wait for `/health` before calling the update failed. Not a
@@ -76,7 +76,7 @@ def run_update(
     done: list[str] = []
 
     def publish(
-        phase: str,
+        phase: UpdatePhase,
         *,
         error: str | None = None,
         rolled_back: bool = False,
@@ -128,12 +128,39 @@ def run_update(
         database starts normally - the image rollback alone gets the house
         running again. Restoring the backup would discard everything since
         it was taken, which is a decision for someone awake.
+
+        The command sequence below is guarded. `state.json` is the only
+        channel back to the operator - the sidecar writes it, the web
+        interface reads it - so an exception that escaped this function
+        would leave the file saying `phase: "rollback"` forever, with the
+        interface stuck showing "rolling back" and the operator learning
+        nothing. A rollback that does not complete has to publish that
+        fact, not vanish.
         """
         commands.log(f"rolling back to {previous_tag} ({previous_ref}): {reason}")
         publish("rollback", error=reason)
-        commands.write_image_tag(previous_tag)
-        commands.checkout(previous_ref)
-        commands.recreate()
+        try:
+            commands.write_image_tag(previous_tag)
+            commands.checkout(previous_ref)
+            commands.recreate()
+        except Exception as rollback_failure:  # noqa: BLE001 - must publish, not propagate
+            # By the time `recreate` throws, `write_image_tag` and
+            # `checkout` have already run without raising: the files on
+            # disk (image tag, git ref) are back on the old version, but
+            # the running container is not - `rolled_back=True` would
+            # claim the installation is back on its previous version when
+            # it is not, and this field is what the interface renders.
+            commands.log(
+                "rollback did not complete: image tag and git ref were restored to "
+                f"{previous_tag} ({previous_ref}), but the container was not recreated - "
+                f"a person has to finish this by hand ({rollback_failure!r})"
+            )
+            return publish(
+                "failed",
+                error=f"{reason}; rollback also failed: {rollback_failure}",
+                rolled_back=False,
+                healthy=False,
+            )
         recovered = _wait_for_health(commands, sleep, deadline_seconds)
         return publish("failed", error=reason, rolled_back=True, healthy=recovered)
 

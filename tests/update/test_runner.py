@@ -32,18 +32,35 @@ from loxmatter.update.runner import run_update
 class FakeCommands:
     """Records what was asked of it and answers as told."""
 
-    def __init__(self, *, healthy_after: int = 0, fail_on: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        healthy_after: int = 0,
+        fail_on: str | None = None,
+        fail_times: int = 1,
+    ) -> None:
         self.calls: list[str] = []
         self.lines: list[str] = []
         self.tag = "stable"
         self._healthy_after = healthy_after
         self._health_asked = 0
         self._fail_on = fail_on
+        # How many times `fail_on` raises before it starts succeeding.
+        # `run_update` calls a command of the same name twice when a step
+        # fails and triggers a rollback - once for the failing step
+        # itself, once again inside `roll_back`. `fail_times=1` (the
+        # default) fails only the first call, so the rollback's own call
+        # succeeds; `fail_times=2` fails both, so the rollback fails too.
+        self._fail_times = fail_times
+        self._fail_counts: dict[str, int] = {}
 
     def _record(self, name: str) -> None:
         self.calls.append(name)
         if self._fail_on == name:
-            raise RuntimeError(f"{name} failed")
+            seen = self._fail_counts.get(name, 0) + 1
+            self._fail_counts[name] = seen
+            if seen <= self._fail_times:
+                raise RuntimeError(f"{name} failed")
 
     def backup(self) -> str:
         self._record("backup")
@@ -178,9 +195,44 @@ def test_a_failing_step_rolls_back_too(tmp_path):
     """A pull that fails leaves the old image in place, so strictly
     nothing needs undoing - but the tag was already written, and a tag
     pointing at a version that never arrived is exactly the state a later
-    `up -d` would deploy."""
-    commands = FakeCommands(fail_on="recreate")
+    `up -d` would deploy.
+
+    `recreate` fails once - the attempt that triggers the rollback - and
+    then succeeds when `roll_back` calls it again, so this proves the
+    rollback itself completes rather than also failing."""
+    commands = FakeCommands(fail_on="recreate", fail_times=1)
     state = run(commands, tmp_path)
     assert state.phase == "failed"
     assert state.rolled_back is True
     assert commands.tag == "stable"
+    assert commands.calls.count("recreate") == 2
+
+
+def test_a_failing_rollback_is_reported_not_raised(tmp_path):
+    """The defect this fixes: `roll_back` used to call `commands.recreate()`
+    uncaught, so a rollback whose own `recreate` also failed threw the
+    exception straight out of `run_update` instead of returning a state.
+
+    `state.json` is the only channel back to the operator, so that
+    exception left it stuck at `phase: "rollback"` forever - the interface
+    would show "rolling back" for all time. A failing rollback must
+    instead publish `phase="failed"` with `rolled_back=False` (the files
+    on disk were restored, the container was not, so the installation is
+    NOT back on its previous version) and an error that names both the
+    original failure and the rollback's own failure.
+    """
+    commands = FakeCommands(fail_on="recreate", fail_times=2)
+    state = run(commands, tmp_path)
+
+    assert state.phase == "failed"
+    assert state.rolled_back is False
+    assert state.healthy is False
+    assert state.error is not None
+    assert "recreate failed" in state.error
+    assert "rollback" in state.error.lower()
+    # Both attempts happened - the original step, then the rollback's own
+    # call of the same name - and both failed.
+    assert commands.calls.count("recreate") == 2
+    # The tag and ref were still restored on disk before recreate raised.
+    assert commands.tag == "stable"
+    assert commands.calls[-3:] == ["tag:stable", "checkout:v0.2.0", "recreate"]

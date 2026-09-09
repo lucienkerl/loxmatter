@@ -25,6 +25,7 @@ from loxmatter.update.protocol import (
     read_request,
     read_state,
     request_path,
+    state_path,
     write_json_atomically,
     write_request,
 )
@@ -83,6 +84,40 @@ def test_a_corrupt_request_reads_as_none_rather_than_raising(tmp_path):
     """
     request_path(tmp_path).write_text("{not json", encoding="utf-8")
     assert read_request(tmp_path) is None
+
+
+def test_a_wrong_shaped_steps_field_reads_as_none_rather_than_raising(tmp_path):
+    """`{"phase": "idle", "steps": null, "updater_seen_at": "t"}` is well
+    formed JSON with every required key, but `[str(step) for step in None]`
+    raises `TypeError` - only `KeyError` was ever caught. A file this
+    malformed must read the same way as a truncated one: as `None`, not
+    as an exception that stops the sidecar's poll loop."""
+    state_path(tmp_path).write_text(
+        json.dumps({"phase": "idle", "steps": None, "updater_seen_at": "t"}),
+        encoding="utf-8",
+    )
+    assert read_state(tmp_path) is None
+
+    # A field of the wrong shape that does not happen to raise is just as
+    # malformed and must be rejected the same way.
+    state_path(tmp_path).write_text(
+        json.dumps({"phase": "idle", "steps": 5, "updater_seen_at": "t"}),
+        encoding="utf-8",
+    )
+    assert read_state(tmp_path) is None
+
+
+def test_a_phase_outside_the_known_set_reads_as_none(tmp_path):
+    """The plan's interface list names eight values for `phase`. A state
+    file written by some future version of the updater - or edited by
+    hand - with a ninth value is not one `UpdateState` can represent, and
+    must read as `None` like every other malformed case rather than be
+    cast through without a check."""
+    state_path(tmp_path).write_text(
+        json.dumps({"phase": "exploding", "steps": [], "updater_seen_at": "t"}),
+        encoding="utf-8",
+    )
+    assert read_state(tmp_path) is None
 
 
 def test_the_written_file_is_plain_readable_json(tmp_path):

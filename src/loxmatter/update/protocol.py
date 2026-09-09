@@ -38,12 +38,23 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 #: Where the two sides meet inside the container. Tests pass their own
 #: base directory instead; nothing in this module reads this constant on
 #: its own.
 UPDATE_DIR = Path("/data/update")
+
+#: The eight values the plan's interface list names. Defined once here and
+#: used both for `UpdateState.phase` and for `run_update`'s `publish`
+#: helper (`runner.py`), so a typo in either place is a `mypy` error
+#: instead of a string that flows silently into the shared file.
+UpdatePhase = Literal["idle", "backup", "pull", "recreate", "health", "done", "rollback", "failed"]
+
+#: Runtime counterpart of `UpdatePhase`, for membership checks against
+#: values coming out of JSON - which arrive as `Any`, so a cast alone
+#: would prove nothing.
+_PHASES: tuple[str, ...] = get_args(UpdatePhase)
 
 
 def request_path(base: Path) -> Path:
@@ -81,7 +92,7 @@ class UpdateState:
     """
 
     id: str | None
-    phase: str
+    phase: UpdatePhase
     steps: Sequence[str]
     from_version: str | None
     to_version: str | None
@@ -102,7 +113,14 @@ def write_json_atomically(path: Path, payload: Mapping[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        # The atomicity guarantee is unaffected either way - readers only
+        # ever open the final path - but a `.tmp` file left behind would
+        # sit in the directory forever, so clean it up before re-raising.
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -145,10 +163,22 @@ def read_state(base: Path) -> UpdateState | None:
     if payload is None:
         return None
     try:
+        # `phase` and `steps` reach us as `Any` out of `json.loads` - well
+        # formed JSON does not imply the right shape. A file like
+        # `{"phase": "idle", "steps": null, ...}` or one whose `phase` is
+        # not one of the eight known values is exactly as malformed as
+        # truncated JSON, and must read the same way: as `None`, not as a
+        # crash that stops the sidecar's poll loop.
+        phase = payload["phase"]
+        if phase not in _PHASES:
+            return None
+        steps = payload.get("steps", [])
+        if not isinstance(steps, list):
+            return None
         return UpdateState(
             id=payload.get("id"),
-            phase=str(payload["phase"]),
-            steps=[str(step) for step in payload.get("steps", [])],
+            phase=phase,
+            steps=[str(step) for step in steps],
             from_version=payload.get("from_version"),
             to_version=payload.get("to_version"),
             error=payload.get("error"),
