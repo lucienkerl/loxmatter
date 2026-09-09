@@ -21,6 +21,16 @@ in the bridge's route: the bridge is reachable across the whole LAN with
 `network_mode: host`, the sidecar is not. Whoever takes over the bridge
 completely can still only make this container install a published, newer
 loxmatter version.
+
+Two functions, not one: `check_request` covers the channel, the target's
+shape, and - on `stable` - the forward-only version ordering, all of
+which need nothing but the request itself and `running_version`.
+`check_ancestry` covers the third rule alone, the `dev` channel's
+"target must descend from the running commit" - kept apart because it is
+the one rule that needs I/O (`is_ancestor` shells out to `git merge-base`)
+and, unlike the other two, cannot be answered before `runner.run_update`
+has fetched the target's objects. See `check_request`'s own docstring for
+the defect that combining them used to cause.
 """
 
 from __future__ import annotations
@@ -136,15 +146,32 @@ def check_request(
     request: UpdateRequest,
     *,
     running_version: str,
-    running_commit: str,
-    is_ancestor: Callable[[str, str], bool],
 ) -> None:
-    """Raise `RequestRejected` unless all three rules hold.
+    """Raise `RequestRejected` unless the channel, the target's shape, and -
+    on `stable` - the forward-only ordering all hold.
 
-    `is_ancestor(running, target)` is injected rather than shelling out to
-    git here: the rule is logic and deserves a test, and the git call is
-    the command layer's business (see `commands.py`).
-    """
+    This is deliberately NOT all three rules design section 10 names. The
+    third, the `dev` channel's ancestry rule, used to live here too, taking
+    `is_ancestor` as a parameter exactly like this function's `running_
+    version` - but `is_ancestor(running, target)` can only be answered
+    truthfully once `target`'s git objects exist in the local checkout,
+    and nothing before this call in `runner.run_update` ever fetches them.
+    A request naming the tip of `main` - which is what `GET /update/check`
+    always names, by definition, since it reads GitHub directly rather
+    than the mounted checkout - therefore always failed `git merge-base
+    --is-ancestor` with exit code 128 ("not a valid commit name"), which
+    `commands.DockerCommands.is_ancestor` (correctly) turns into `False`.
+    Every `dev`-channel request was refused, including the first ever
+    made, and no test caught it: every test that drove this function
+    supplied `is_ancestor` as a lambda, which never had to shell out to
+    git and so never observed that the object it was asked about did not
+    exist yet.
+
+    The fix is `check_ancestry` below, called separately, after `runner.
+    run_update` has performed the fetch that makes the question
+    answerable. What stays here is exactly what can be answered from the
+    request and `running_version` alone, with no I/O at all - cheap
+    enough to run before a single command, on every channel."""
     if request.channel not in _CHANNELS:
         raise RequestRejected(
             f"unknown channel {request.channel!r}",
@@ -181,16 +208,44 @@ def check_request(
             )
         return
 
-    # dev: no ordering over SHAs, so "forward" means "descendant".
+    # dev: no ordering over SHAs, so "forward" means "descendant" - but
+    # that question belongs to `check_ancestry`, not here. This branch
+    # only rules out a target that is plainly not a commit at all.
     if target_version is not None:
         raise RequestRejected(
             f"target {target!r} is a version, but the channel is dev",
             i18n_key="api.update.rejected.target_is_version_for_dev",
             i18n_values={"target": target},
         )
-    if not is_ancestor(running_commit, target):
+
+
+def check_ancestry(
+    request: UpdateRequest,
+    *,
+    running_commit: str,
+    is_ancestor: Callable[[str, str], bool],
+) -> None:
+    """The `dev` channel's ancestry rule, on its own - design section 10's
+    third rule, split out of `check_request` (see that function's
+    docstring for why).
+
+    The caller MUST have already made `request.target`'s git objects
+    available locally - `runner.run_update` does this with a `git fetch`
+    immediately before calling this function, on the `dev` channel only.
+    Calling this before that fetch reproduces exactly the defect this
+    split exists to fix: `is_ancestor` cannot truthfully answer a
+    question about a commit git has never heard of, and a fresh checkout
+    has never heard of the tip of `main` until something fetches it.
+
+    Only meaningful on the `dev` channel - `check_request` already
+    refuses a `stable` request before its caller would ever reach this
+    function, and a `stable` target is never a bare commit for this to
+    ask about in the first place.
+    """
+    if not is_ancestor(running_commit, request.target):
         raise RequestRejected(
-            f"target {target!r} does not descend from the running commit {running_commit!r}",
+            f"target {request.target!r} does not descend from the running commit "
+            f"{running_commit!r}",
             i18n_key="api.update.rejected.target_not_descendant",
-            i18n_values={"target": target, "running_commit": running_commit},
+            i18n_values={"target": request.target, "running_commit": running_commit},
         )

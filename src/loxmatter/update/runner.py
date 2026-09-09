@@ -32,7 +32,13 @@ from typing import Protocol
 
 from loxmatter.timestamps import now_iso
 from loxmatter.update.protocol import UpdatePhase, UpdateRequest, UpdateState, write_state
-from loxmatter.update.rules import RequestRejected, check_request, image_reference, image_tag
+from loxmatter.update.rules import (
+    RequestRejected,
+    check_ancestry,
+    check_request,
+    image_reference,
+    image_tag,
+)
 
 #: How long to wait for `/health` before calling the update failed. Not a
 #: new number: it comes from `scripts/update.sh`, whose comment records
@@ -159,24 +165,44 @@ def run_update(
 
         return _wait_for_health(commands, sleep, deadline_seconds, refresh)
 
+    fetched_before_backup = False
     try:
-        check_request(
-            request,
-            running_version=running_version,
-            running_commit=running_commit,
-            is_ancestor=is_ancestor,
-        )
+        check_request(request, running_version=running_version)
+        if request.channel == "dev":
+            # The one rule `check_request` no longer enforces (see its own
+            # docstring): `is_ancestor` cannot truthfully answer a question
+            # about `request.target` until that commit's objects exist in
+            # the local checkout, and nothing before this point has ever
+            # fetched them - `GET /update/check` names the tip of `main`
+            # as read from GitHub directly, a commit this container's git
+            # has never heard of. `git fetch --tags --prune origin` talks
+            # only to the fixed `origin` remote and executes nothing from
+            # `request.target` itself, so running it here, before the
+            # request has even been accepted, does not weaken "a refused
+            # request changes nothing" - that property is about the
+            # RUNNING installation (no backup, no pull, no rollback), and
+            # a fetch changes only the local checkout's own view of
+            # `origin`, harmlessly, whether or not what follows accepts
+            # the request. `fetched_before_backup` records that this
+            # already happened, so the normal step below does not fetch a
+            # second time.
+            commands.fetch()
+            fetched_before_backup = True
+            check_ancestry(request, running_commit=running_commit, is_ancestor=is_ancestor)
         # Both of these are read BEFORE anything is written, and they are
         # two different strings - see `read_git_ref` in the Protocol
         # above. Reading them inside this same `try` matters:
-        # like `check_request`, they run before the first command, so a
-        # failure here must read like a rejection too.
+        # like the checks above, they run before the first command that
+        # touches the running installation, so a failure here must read
+        # like a rejection too.
         previous_tag = commands.read_image_tag()
         previous_ref = commands.read_git_ref()
     except RequestRejected as rejected:
-        # Before the first command, so a rejected request has taken no
-        # backup and pulled no image - it left the installation exactly as
-        # it found it.
+        # Before the first command that touches the running installation,
+        # so a rejected request has taken no backup and pulled no image -
+        # it left the installation exactly as it found it. The `dev`
+        # channel's fetch above is the one exception, and deliberately so:
+        # see the comment at that call site for why it does not count.
         #
         # `rejected.reason` (English) is what `log.txt` gets, same as
         # every other line `_log` writes - unlocalised, per CLAUDE.md.
@@ -198,16 +224,17 @@ def run_update(
             error_i18n_values=rejected.i18n_values,
         )
     except Exception as failure:  # noqa: BLE001 - nothing has run yet, see below
-        # `is_ancestor` shells out to git on the `dev` channel (there is
-        # no `commands.py` yet to catch its failures for us), and
-        # `read_image_tag`/`read_git_ref` read files that may not be
-        # there. All three run before the first command, so nothing has
-        # been executed and no rollback applies - the installation is
-        # exactly as it was found, same as a rejected request. The
-        # exception must not reach the caller: it has to become the same
-        # published `failed` state a rejection produces, or the operator
-        # sees a phase that stopped being true (or nothing at all, if
-        # this was the very first thing `run_update` did).
+        # `commands.fetch()` and `is_ancestor` both shell out to git on the
+        # `dev` channel (there is no higher layer to catch their failures
+        # for us here), and `read_image_tag`/`read_git_ref` read files that
+        # may not be there. All of these run before the first command that
+        # touches the running installation, so nothing has been executed
+        # and no rollback applies - the installation is exactly as it was
+        # found, same as a rejected request. The exception must not reach
+        # the caller: it has to become the same published `failed` state a
+        # rejection produces, or the operator sees a phase that stopped
+        # being true (or nothing at all, if this was the very first thing
+        # `run_update` did).
         _log(commands, f"could not prepare the update: {failure!r}")
         return publish("failed", error=str(failure))
 
@@ -293,7 +320,13 @@ def run_update(
         commands.backup()
         done.append("backup")
 
-        commands.fetch()
+        # Skipped on the `dev` channel when the prelude above already ran
+        # it to answer the ancestry rule - `git fetch` a second time in a
+        # row would only repeat the same network round trip for no new
+        # information, and `fetched_before_backup` is exactly the record
+        # of whether that already happened.
+        if not fetched_before_backup:
+            commands.fetch()
         commands.checkout(request.target)
         # The checked-out ref goes in the log on purpose (addendum 16.2):
         # a checkout rewrites docker-compose.yml on disk, and whoever

@@ -268,6 +268,59 @@ def test_a_rejected_request_executes_nothing(tmp_path):
     assert commands.calls == []
 
 
+def test_the_dev_ancestry_check_runs_after_the_fetch_not_before(tmp_path):
+    """The Critical finding this closes: `check_ancestry`'s `is_ancestor`
+    can only truthfully answer a question about `request.target` once
+    that commit's objects exist in the local checkout, and on a real
+    installation they never do before something fetches them. `GET
+    /update/check` always names the tip of `main` as read straight from
+    GitHub, a commit the mounted checkout has never heard of - so before
+    this fix, every `dev`-channel request was refused with exit code 128
+    ("not a valid commit name"), including the first one ever made.
+
+    Every OTHER test in this file that exercises the `dev` channel
+    injects `is_ancestor` as a plain lambda - `lambda _a, _b: True` or
+    `False` - which answers instantly regardless of whether `fetch` ever
+    ran, and that is exactly why this defect survived: nothing before
+    this test could have noticed the ordering being wrong, because
+    nothing before this test cared about ordering at all. This
+    `is_ancestor` instead records itself into the SAME list `FakeCommands`
+    already records every command into, so the assertion is about ORDER,
+    not about what either call returns - reverting `run_update` to call
+    `check_ancestry` before `commands.fetch()` makes this fail even
+    though the ancestry answer itself (`True`, accepted unconditionally)
+    never changes.
+    """
+    commands = FakeCommands()
+
+    def recording_is_ancestor(_running: str, _target: str) -> bool:
+        # Appended to `commands.calls` directly - the very list
+        # `FakeCommands.fetch()` (via `_record`) appends `"fetch"` into -
+        # so the two interleave in the order they actually ran, not in
+        # two separate lists a test author could misalign by hand.
+        commands.calls.append("is_ancestor")
+        return True
+
+    state = run_update(
+        UpdateRequest(id="x", channel="dev", target="deadbee", requested_at="t"),
+        commands,
+        base=tmp_path,
+        running_version="0.2.0",
+        running_commit="abc1234",
+        is_ancestor=recording_is_ancestor,
+        sleep=lambda _seconds: None,
+    )
+    assert state.phase == "done"
+    fetch_index = commands.calls.index("fetch")
+    ancestor_index = commands.calls.index("is_ancestor")
+    assert fetch_index < ancestor_index, commands.calls
+    # Exactly once each - the ancestry check does not repeat, and `dev`
+    # does not fetch a second time before `checkout` once the prelude
+    # fetch already happened (see `run_update`'s `fetched_before_backup`).
+    assert commands.calls.count("fetch") == 1
+    assert commands.calls.count("is_ancestor") == 1
+
+
 def test_a_rejected_request_publishes_a_translation_key_alongside_the_english_reason(tmp_path):
     """The `dev`-channel ancestry rule (design section 10) is enforced only
     by the sidecar - the bridge's own pre-check cannot ask a descendant
@@ -493,7 +546,13 @@ def test_a_dev_update_writes_a_sha_prefixed_docker_tag_not_the_bare_commit(tmp_p
     `rules.image_tag` in isolation: `checkout` gets the raw target (the
     git side is correct as it stands), but `pull` and the `.env` write
     must get the `sha-`-prefixed tag CI actually publishes for a dev
-    build - never the bare commit."""
+    build - never the bare commit.
+
+    `fetch` leads the call list here, not `backup` - unlike the stable
+    channel, `dev` fetches once in the prelude to answer the ancestry
+    rule (`is_ancestor=True` here, so it passes silently) and then does
+    NOT fetch again before `checkout`; see `run_update`'s own
+    `fetched_before_backup`."""
     commands = FakeCommands()
     state = run_update(
         UpdateRequest(
@@ -511,8 +570,8 @@ def test_a_dev_update_writes_a_sha_prefixed_docker_tag_not_the_bare_commit(tmp_p
     )
     assert state.phase == "done"
     assert commands.calls == [
-        "backup",
         "fetch",
+        "backup",
         "checkout:deadbee",
         "pull:ghcr.io/lucienkerl/loxmatter:sha-deadbee",
         "tag:sha-deadbee",
@@ -521,14 +580,24 @@ def test_a_dev_update_writes_a_sha_prefixed_docker_tag_not_the_bare_commit(tmp_p
 
 
 def test_a_raising_is_ancestor_check_does_not_escape_run_update(tmp_path):
-    """One of three escape hatches for a raising `Commands` method that had no test: `is_ancestor` shells out to git (there is
-    no `commands.py` yet to catch its failures for us) and is called from
-    inside `check_request` on the `dev` channel. Before the fix, the
-    `try` around `check_request` caught only `RequestRejected`, so an
-    `OSError` from a missing git binary went straight out of `run_update`
-    - `state.json` was never written and nothing was executed, yet the
-    operator's only channel showed nothing at all.
-    """
+    """One of three escape hatches for a raising `Commands` method that had
+    no test: `is_ancestor` shells out to git (there is no `commands.py` yet
+    to catch its failures for us) and is called from `rules.check_ancestry`
+    on the `dev` channel, after `run_update`'s own prelude `fetch()`.
+    Before the fix, the `try` around the whole prelude caught only
+    `RequestRejected`, so an `OSError` from a missing git binary went
+    straight out of `run_update` - `state.json` was never written and
+    nothing was executed, yet the operator's only channel showed nothing
+    at all.
+
+    `commands.calls == ["fetch"]`, not `[]`: the fetch itself is not
+    guarded against failing (this test does not exercise that; a raising
+    `fetch()` would be caught the same way, by the same `except Exception`
+    - see the escape-hatch tests below for the two comparable reads that
+    ARE guarded), and it already ran, successfully, before
+    `raising_is_ancestor` got a chance to raise. Only `backup`, `checkout`,
+    `pull`, `tag` and `recreate` never ran - the property this test is
+    actually about."""
 
     def raising_is_ancestor(_running: str, _target: str) -> bool:
         raise OSError("git executable not found")
@@ -545,7 +614,7 @@ def test_a_raising_is_ancestor_check_does_not_escape_run_update(tmp_path):
     )
     assert state.phase == "failed"
     assert state.error is not None
-    assert commands.calls == []
+    assert commands.calls == ["fetch"]
     written = read_state(tmp_path)
     assert written is not None
     assert written.phase == "failed"

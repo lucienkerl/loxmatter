@@ -29,8 +29,12 @@ says, and the three routes here do nothing else. In particular, this
 module does NOT mount the checkout the sidecar mounts at `/checkout`
 (compare `deploy/testhost/docker-compose.yml`'s `loxmatter` service, which
 carries no such mount, against its `updater` service, which does) - so it
-has no `.git` to ask a descendant question of. See `_no_git_access` below
-for what that means for `POST /update/apply`'s own pre-check.
+has no `.git` to ask a descendant question of. `POST /update/apply`'s own
+pre-check therefore calls `rules.check_request` alone, never `rules.
+check_ancestry` - the `dev` channel's ancestry rule needs exactly the
+`.git` access this process does not have, and is left entirely to the
+sidecar (design section 10; see `runner.run_update` and `rules.py`'s own
+module docstring for why the two rule functions are split at all).
 
 **The running version comes from `build_info()`, not from `state.json`.**
 `to_version`/`from_version` in the state file are the updater's own
@@ -107,11 +111,11 @@ died, say) ages past it and reads as absent, same as before.
 
 **`GET /update/status`'s `error` is localised, not a raw copy of
 `state.json`'s.** On the `dev` channel this route's own pre-check cannot
-enforce the ancestry rule (see `_no_git_access` below), so a request that
-fails it is refused only by the sidecar - `runner.run_update`'s own
-`check_request` call, which is where `RequestRejected`'s `i18n_key`/
-`i18n_values` come from in the first place (design section 10's ancestry
-rule, enforced there and only there). `state.json` is the one channel
+enforce the ancestry rule at all - see the module docstring above - so a
+request that fails it is refused only by the sidecar - `runner.run_update`'s
+own `rules.check_ancestry` call, which is where `RequestRejected`'s
+`i18n_key`/`i18n_values` come from in that case (design section 10's
+ancestry rule, enforced there and only there). `state.json` is the one channel
 back to this process, so those two travel through it alongside the
 English `error` `log.txt` also gets - see `UpdateState`'s own docstring.
 `_localized_error` resolves them into the operator's selected language
@@ -298,9 +302,21 @@ _WORST_CASE_HEALTH_WAIT_SECONDS = math.ceil(DEADLINE_SECONDS / POLL_SECONDS) * (
 #:   calls), `is_ancestor` (the `dev` channel only, taken unconditionally
 #:   since this bound must hold for whichever channel an abandoned
 #:   request named) and `read_git_ref()` - four `_LOCAL_TIMEOUT_SECONDS`
-#:   calls in the worst case.
+#:   calls in the worst case. On the `dev` channel specifically, `runner.
+#:   run_update` also runs `fetch()` in this same prelude, immediately
+#:   before `is_ancestor` - the ancestry rule cannot be answered before
+#:   the target's objects exist locally (see `rules.check_request`'s own
+#:   docstring). This does not add a fifth term to the sum below: that
+#:   same `dev` request skips the `fetch()` that otherwise runs during
+#:   the `"backup"` phase (the next bullet), since fetching the same
+#:   remote twice in a row within one run would buy nothing. Every path
+#:   `run_update` can take - `stable` or `dev`, accepted or refused -
+#:   pays for exactly one `_GIT_FETCH_TIMEOUT_SECONDS`, only at different
+#:   points along it, so the total below is unaffected by which channel
+#:   the worst case turns out to be.
 #: - `backup()`, `fetch()`, `checkout()` and `pull()`, all of which run
-#:   before the `"pull"` phase is published.
+#:   before the `"pull"` phase is published. On the `dev` channel, `fetch()`
+#:   here already happened in the prelude above and is skipped - see there.
 #: - `recreate()`, before the `"recreate"` phase is published.
 #: - The main health wait, worst case never turning healthy.
 #: - One rollback attempt: `write_image_tag` is a plain file edit with
@@ -366,25 +382,6 @@ class _CheckUnavailable(Exception):
     """GitHub could not be asked, or answered with something unusable -
     caught in `check_for_update` and turned into `UpdateCheckOut.error`
     rather than an HTTP failure (see the module docstring)."""
-
-
-def _no_git_access(_older: str, _newer: str) -> bool:
-    """`check_request`'s `is_ancestor` callback, for the bridge's own
-    pre-check of a `dev`-channel request.
-
-    This process has no checkout to ask `git merge-base --is-ancestor`
-    against (see the module docstring) - only the sidecar does. Returning
-    `True` unconditionally means this route's pre-check never blocks a
-    `dev` request on the one rule it cannot actually verify; the other two
-    rules (valid channel, valid target shape) and the `stable` channel's
-    semantic forward-only check still get their fast, on-screen rejection
-    from the very same `check_request` call below, unchanged. Design
-    section 10 opens by saying plainly that all three rules - this
-    ancestry check on the `dev` channel included - are "enforced in the
-    sidecar", not here; a `dev` request this route lets through still
-    meets that check, unchanged, a loop interval later, and this function
-    defers to it rather than guessing at an answer it cannot compute."""
-    return True
 
 
 def _updater_present(state: UpdateState | None) -> bool:
@@ -729,12 +726,7 @@ def build_update_router(store: Store, *, base: Path) -> APIRouter:
             requested_at=now_iso(),
         )
         try:
-            check_request(
-                request,
-                running_version=info.version,
-                running_commit=info.commit or "",
-                is_ancestor=_no_git_access,
-            )
+            check_request(request, running_version=info.version)
         except RequestRejected as exc:
             # `exc.reason` (English, unabbreviated) is what `runner._log`
             # writes into `log.txt` - never localised, see CLAUDE.md.

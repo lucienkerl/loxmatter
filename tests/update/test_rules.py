@@ -20,6 +20,12 @@ Design section 10. They are enforced in the updater, not at login: the
 session that reaches this route already downloads the Fabric backup, so
 another password prompt would claim a boundary that does not exist. The
 boundary that does exist is here.
+
+Split across two functions, `check_request` and `check_ancestry` - see
+`rules.py`'s own module docstring for why. Both are exercised here, in
+the same file, since they are still the one design's three rules; the
+split is an implementation fact, not a reason to separate the tests that
+describe it.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from loxmatter.update.rules import (
     _CHANNELS,
     IMAGE_REPOSITORY,
     RequestRejected,
+    check_ancestry,
     check_request,
     image_reference,
     image_tag,
@@ -63,12 +70,7 @@ def always_ancestor(_running: str, _target: str) -> bool:
 
 
 def test_a_stable_request_for_a_newer_version_passes():
-    check_request(
-        request(),
-        running_version="0.2.0",
-        running_commit="abc1234",
-        is_ancestor=never_ancestor,
-    )
+    check_request(request(), running_version="0.2.0")
 
 
 def test_an_unknown_channel_is_rejected():
@@ -79,12 +81,7 @@ def test_an_unknown_channel_is_rejected():
     # looked like a version - see the sibling test below for the case
     # that actually requires this rule to be present.
     with pytest.raises(RequestRejected, match="unknown channel"):
-        check_request(
-            request(channel="nightly"),
-            running_version="0.2.0",
-            running_commit="abc1234",
-            is_ancestor=always_ancestor,
-        )
+        check_request(request(channel="nightly"), running_version="0.2.0")
 
 
 def test_an_unknown_channel_is_rejected_even_with_a_commit_target():
@@ -94,16 +91,11 @@ def test_an_unknown_channel_is_rejected_even_with_a_commit_target():
     not notice the channel check being deleted if it matched loosely on
     "channel". A commit-SHA target does not trip that branch's own check
     at all: with the channel rule gone, `channel="nightly"` and a SHA
-    target with `is_ancestor` always true is accepted outright - deleting
-    rules.py:75-76 and running this reproduces exactly that.
+    target is accepted outright - deleting rules.py:75-76 and running
+    this reproduces exactly that.
     """
     with pytest.raises(RequestRejected, match="unknown channel"):
-        check_request(
-            request(channel="nightly", target="deadbeef"),
-            running_version="0.2.0",
-            running_commit="abc1234",
-            is_ancestor=always_ancestor,
-        )
+        check_request(request(channel="nightly", target="deadbeef"), running_version="0.2.0")
 
 
 @pytest.mark.parametrize("channel", ["stable", "dev"])
@@ -138,52 +130,53 @@ def test_a_target_that_is_not_a_version_or_a_sha_is_rejected(channel, target):
     there outright.
     """
     with pytest.raises(RequestRejected, match="neither a version nor a commit"):
-        check_request(
-            request(channel=channel, target=target),
-            running_version="0.2.0",
-            running_commit="abc1234",
-            is_ancestor=always_ancestor,
-        )
+        check_request(request(channel=channel, target=target), running_version="0.2.0")
 
 
 def test_stable_refuses_to_go_backwards():
     """Forward only, by semantic version. Going back is the updater's own
     business, from its own bookkeeping - never through this route."""
     with pytest.raises(RequestRejected, match="older"):
-        check_request(
-            request(target="v0.1.0"),
-            running_version="0.2.0",
-            running_commit="abc1234",
-            is_ancestor=never_ancestor,
-        )
+        check_request(request(target="v0.1.0"), running_version="0.2.0")
 
 
 def test_stable_refuses_the_version_already_running():
     with pytest.raises(RequestRejected, match="older"):
-        check_request(
-            request(target="v0.2.0"),
-            running_version="0.2.0",
-            running_commit="abc1234",
-            is_ancestor=never_ancestor,
-        )
+        check_request(request(target="v0.2.0"), running_version="0.2.0")
+
+
+def test_dev_target_that_is_a_version_is_rejected_by_check_request_alone():
+    """The one dev-only rule that does NOT need `is_ancestor`/a fetch:
+    a version-shaped target is wrong for `dev` regardless of ancestry, so
+    `check_request` can and does reject it on its own, without calling
+    `check_ancestry` at all."""
+    with pytest.raises(RequestRejected, match="is a version, but the channel is dev"):
+        check_request(request(channel="dev", target="v0.3.0"), running_version="0.2.0")
+
+
+def test_dev_target_that_is_a_commit_shape_passes_check_request():
+    """`check_request` alone has nothing left to say about a `dev` target
+    that is shaped like a commit - the ancestry question is
+    `check_ancestry`'s alone now, see that function's docstring."""
+    check_request(request(channel="dev", target="deadbee"), running_version="0.2.0")
 
 
 def test_dev_requires_the_target_to_descend_from_the_running_commit():
     """There is no ordering over SHAs, so "forward" means "descendant".
-    A commit that is not one is a sideways or backwards move."""
+    A commit that is not one is a sideways or backwards move. This is
+    `check_ancestry`'s own rule - see `rules.py`'s module docstring for
+    why it moved out of `check_request`."""
     with pytest.raises(RequestRejected, match="descend"):
-        check_request(
+        check_ancestry(
             request(channel="dev", target="deadbee"),
-            running_version="0.2.0",
             running_commit="abc1234",
             is_ancestor=never_ancestor,
         )
 
 
 def test_dev_accepts_a_descendant():
-    check_request(
+    check_ancestry(
         request(channel="dev", target="deadbee"),
-        running_version="0.2.0",
         running_commit="abc1234",
         is_ancestor=always_ancestor,
     )
@@ -236,11 +229,14 @@ def _i18n_keys_check_request_can_raise() -> frozenset[str]:
     which is exactly how five of the six went untested for a typo (a
     reviewer typo'd `target_not_descendant` alone and 646 tests still
     passed; then typo'd four others at once and 646 still passed). A
-    seventh `raise` added to `check_request` later, with a key nothing
-    below happens to cover, fails
+    seventh `raise` added to either `check_request` or `check_ancestry`
+    later, with a key nothing below happens to cover, fails
     `test_every_rejection_branch_is_exercised_and_resolves` the moment it
     lands, because this function - not a list someone has to remember to
-    extend - is what that test compares against."""
+    extend - is what that test compares against. Walking the whole
+    module, not just `check_request`'s own source, is deliberate: both
+    rule functions live here, and both still owe every reader the same
+    guarantee."""
     tree = ast.parse(inspect.getsource(rules_module))
     keys: set[str] = set()
     for node in ast.walk(tree):
@@ -256,28 +252,48 @@ def _i18n_keys_check_request_can_raise() -> frozenset[str]:
     return frozenset(keys)
 
 
-#: One `check_request` call per branch that raises `RequestRejected`,
-#: crafted to trip exactly that branch (and, where an earlier branch would
+def _raise_scenario(scenario: dict[str, object]) -> None:
+    """Drives whichever of the two rule functions actually owns the
+    rejection a scenario is built to trip - `check_ancestry` for the one
+    dev-only ancestry scenario, `check_request` for the other five. Kept
+    in one place so the two tests below that each walk
+    `_REJECTION_SCENARIOS` cannot drift apart in which function they
+    call for a given scenario."""
+    req = request(channel=scenario["channel"], target=scenario["target"])
+    if "is_ancestor" in scenario:
+        check_ancestry(
+            req,
+            running_commit="abc1234",
+            is_ancestor=scenario["is_ancestor"],
+        )
+    else:
+        check_request(req, running_version="0.2.0")
+
+
+#: One rule-function call per branch that raises `RequestRejected`, crafted
+#: to trip exactly that branch (and, where an earlier branch would
 #: otherwise fire first, no other) - in the order the branches appear in
 #: `rules.py`. Scenarios, not key strings: the keys asserted against below
 #: come out of the exception each of these actually raises, not out of a
-#: list typed here.
+#: list typed here. Only the one ancestry scenario carries `is_ancestor` -
+#: `_raise_scenario` above uses its presence to route to `check_ancestry`
+#: instead of `check_request`.
 _REJECTION_SCENARIOS: list[dict[str, object]] = [
     # rule 1: an unrecognised channel.
-    {"channel": "nightly", "target": "v0.3.0", "is_ancestor": always_ancestor},
+    {"channel": "nightly", "target": "v0.3.0"},
     # rule 2, shared gate: neither a version nor a commit shape, on a
     # channel that would otherwise accept either.
-    {"channel": "stable", "target": "not-a-version-or-a-sha!", "is_ancestor": always_ancestor},
+    {"channel": "stable", "target": "not-a-version-or-a-sha!"},
     # stable-only: a valid commit SHA passes the shared gate above, but
     # `stable` demands a version.
-    {"channel": "stable", "target": "deadbeef", "is_ancestor": always_ancestor},
+    {"channel": "stable", "target": "deadbeef"},
     # stable-only: a valid version, but not newer than what is running.
-    {"channel": "stable", "target": "v0.1.0", "is_ancestor": always_ancestor},
+    {"channel": "stable", "target": "v0.1.0"},
     # dev-only: a valid version passes the shared gate, but `dev` demands
     # a commit.
-    {"channel": "dev", "target": "v0.3.0", "is_ancestor": always_ancestor},
-    # dev-only: a valid commit SHA that does not descend from the running
-    # commit.
+    {"channel": "dev", "target": "v0.3.0"},
+    # dev-only, `check_ancestry`: a valid commit SHA that does not descend
+    # from the running commit.
     {"channel": "dev", "target": "deadbee", "is_ancestor": never_ancestor},
 ]
 
@@ -291,15 +307,10 @@ def test_every_rejection_reason_resolves_through_i18n(scenario):
     mismatch between `i18n_values` and the placeholders `strings.yaml`
     actually names, turns a 400-with-a-reason into an unhandled 500,
     strictly worse than the untranslated English string it replaced.
-    Every scenario drives `check_request` for real and resolves the
+    Every scenario drives the real rule function and resolves the
     exception it actually raises - nothing here hand-types a key."""
     with pytest.raises(RequestRejected) as excinfo:
-        check_request(
-            request(channel=scenario["channel"], target=scenario["target"]),
-            running_version="0.2.0",
-            running_commit="abc1234",
-            is_ancestor=scenario["is_ancestor"],
-        )
+        _raise_scenario(scenario)
     resolved = i18n.t(excinfo.value.i18n_key, **excinfo.value.i18n_values)
     assert resolved
     # A value `strings.yaml` names but `i18n_values` never supplies would
@@ -315,21 +326,17 @@ def test_every_rejection_reason_resolves_through_i18n(scenario):
 
 def test_every_rejection_branch_is_exercised_and_resolves():
     """Bite check for the parametrised test above: without this, a new
-    `raise RequestRejected(...)` added to `check_request` - a seventh
-    rejection - could be added with no scenario in `_REJECTION_SCENARIOS`
-    covering it, and nobody would notice, because the parametrised test
-    only proves what it is handed resolves - never that it was handed
-    everything. Comparing the keys `_REJECTION_SCENARIOS` actually
-    exercises against every key `rules.py` can raise (found by reading its
-    source, not by a second list here) closes that."""
+    `raise RequestRejected(...)` added to either rule function - a
+    seventh rejection - could be added with no scenario in
+    `_REJECTION_SCENARIOS` covering it, and nobody would notice, because
+    the parametrised test only proves what it is handed resolves - never
+    that it was handed everything. Comparing the keys `_REJECTION_
+    SCENARIOS` actually exercises against every key `rules.py` can raise
+    (found by reading its source, not by a second list here) closes
+    that."""
     exercised: set[str] = set()
     for scenario in _REJECTION_SCENARIOS:
         with pytest.raises(RequestRejected) as excinfo:
-            check_request(
-                request(channel=scenario["channel"], target=scenario["target"]),
-                running_version="0.2.0",
-                running_commit="abc1234",
-                is_ancestor=scenario["is_ancestor"],
-            )
+            _raise_scenario(scenario)
         exercised.add(excinfo.value.i18n_key)
     assert exercised == _i18n_keys_check_request_can_raise()
