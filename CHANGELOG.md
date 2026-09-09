@@ -8,6 +8,19 @@ people who don't know the code.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-09-09
+
+### Fixed
+
+- **A successful update no longer reports itself as failed.** After an
+  update finished, the updater replaced its own container — and being shut
+  down for that replacement looked, from the inside, exactly like being
+  interrupted. It then overwrote the finished result with a failure, so the
+  System tab announced "Update failed" beside a bridge that had updated
+  perfectly well. A finished update now stays finished, whatever happens to
+  the updater afterwards. This showed up on the first update whose release
+  also rebuilt the updater — which is most of them.
+
 ## [0.3.1] — 2026-09-09
 
 ### Fixed
