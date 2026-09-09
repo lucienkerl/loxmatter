@@ -334,8 +334,8 @@ services:
     # process cannot restart its own container: whatever called
     # `up -d --no-deps loxmatter` - the same command `recreate()`
     # (src/loxmatter/update/commands.py) actually runs, deliberately
-    # without `--force-recreate`, see that method's own docstring - would
-    # be ended by that same call before it finished. Something outside
+    # without `--force-recreate`, see that method's own inline comments -
+    # would be ended by that same call before it finished. Something outside
     # the bridge has to hold the socket and do it instead - this is that
     # something, and nothing else.
     #
