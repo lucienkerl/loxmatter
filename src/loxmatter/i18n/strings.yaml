@@ -1283,6 +1283,9 @@ web.system.update_restarting_hint:
 web.system.update_stalled:
   en: "The updater has not reported back in a while and may have crashed. The step above may never finish on its own; check the host or restart the updater sidecar."
   de: "Der Updater hat sich länger nicht mehr gemeldet und ist möglicherweise abgestürzt. Der Schritt oben wird eventuell nicht von selbst fertig; Host prüfen oder den Updater-Sidecar neu starten."
+web.system.update_not_collected:
+  en: "The request was accepted, but the updater never picked it up. It may have crashed just before reading it; check the host or restart the updater sidecar."
+  de: "Die Anfrage wurde angenommen, aber der Updater hat sie nie aufgegriffen. Er ist möglicherweise kurz vor dem Lesen abgestürzt; Host prüfen oder den Updater-Sidecar neu starten."
 web.system.update_done:
   en: "Now running: {version}"
   de: "Läuft jetzt: {version}"

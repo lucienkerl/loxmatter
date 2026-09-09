@@ -60,6 +60,24 @@ const HEARTBEAT_KEY = "bridge_alive";
 // Gefahr, die Hervorhebung zu verpassen, wenn man gerade woanders hinsieht.
 const VALUE_FRESH_MS = 2500;
 
+// How long `applyUpdate()` keeps polling after a successful POST before it
+// gives up on ever seeing the sidecar collect the request - see
+// `updateAwaitingPickup()`/`updateNeverCollected()` and the comment on
+// `applyUpdate()` itself for the full reasoning. Derived from the sidecar's
+// own loop (deploy/updater/entrypoint.sh): a fresh request.json can be
+// written just after a pass has already checked for one and found nothing
+// (that pass then runs to completion - near-instant when idle, since
+// update-once.sh's very first move on no request is `exit 0`) - so the
+// worst case is roughly one full loop period (worker time, negligible when
+// idle, plus the 2s `sleep`) before the NEXT pass reads it and writes
+// `phase: queued`. Call that ~4s to allow for a slow pass. Five times that
+// - 20s - is generous enough to absorb scheduling jitter on constrained Pi
+// hardware while still being a bounded wait, not the "poll forever" this
+// fix explicitly must not become (a two-second poll is real load for a
+// value that changes maybe ten times a year, see `updateTimer`'s own
+// comment).
+const UPDATE_APPLY_GRACE_MS = 20000;
+
 // --- Live-Diagnose (Aufgabe 6, Spec 10.5) -----------------------------------
 //
 // Obergrenze der gehaltenen Zeilen je Strom (Logs, UDP-Mitschnitt,
@@ -685,6 +703,16 @@ function app() {
     // only stopped on the first path would keep polling from a tab
     // nobody is looking at.
     updateTimer: null,
+    // Set together, by `applyUpdate()` alone, the moment its POST
+    // succeeds; cleared together, by `loadUpdateStatus()`, the instant
+    // `state.json`'s own `id` finally matches `updateApplyJobId` (see
+    // `UPDATE_APPLY_GRACE_MS` for why a match can take a few seconds) -
+    // or left alone once `updateApplyDeadline` passes without a match,
+    // which is exactly what `updateNeverCollected()` reads. `null` means
+    // "no apply is currently awaiting pickup": either none was ever made,
+    // or the last one was already resolved one way or the other.
+    updateApplyJobId: null,
+    updateApplyDeadline: null,
     systemChecks: [],
     systemError: null,
     diagnosticsBusy: false,
@@ -2940,6 +2968,37 @@ function app() {
       return this.updateRunning() && this.updateStatus != null && !this.updateStatus.updater_present;
     },
 
+    /** True from the moment `applyUpdate()`'s POST succeeds until either
+     * `state.json` reports this exact job's `id` (see `loadUpdateStatus()`)
+     * or `UPDATE_APPLY_GRACE_MS` runs out, whichever happens first. This is
+     * the race this fix closes: the sidecar's own loop only wakes once
+     * every two seconds (deploy/updater/entrypoint.sh), so a poll landing
+     * in that window would otherwise see `updateRunning()` read `false` -
+     * exactly the previous end state, not this request - and stop the
+     * timer, going blind for the rest of a job that is in fact under way.
+     * Every caller that decides whether to keep polling now checks this
+     * alongside `updateRunning()` so that stale read cannot do that. */
+    updateAwaitingPickup() {
+      return this.updateApplyDeadline !== null && Date.now() < this.updateApplyDeadline;
+    },
+
+    /** The other half of the same race: the grace window above ran out and
+     * `state.json` never once reported this apply's job id. This is the
+     * honest reading of "the sidecar crashed between the 503 presence
+     * check in `api/update.py`'s `apply()` and actually reading
+     * request.json" - `updater_present` alone cannot tell that story in
+     * time, since its own heartbeat can still look fresh for up to 30
+     * seconds (`_MAX_SILENT_SECONDS` in update.py) after a crash that
+     * happened right after the last one was written. Deliberately its own
+     * predicate rather than folded into `updateStalled()`: that one means
+     * "was running, then went quiet mid-step", worded and rendered (see
+     * index.html) around an actual step list this request never reached -
+     * conflating the two would either show step progress that never
+     * happened or a message that refers to a step nobody can see. */
+    updateNeverCollected() {
+      return this.updateApplyDeadline !== null && Date.now() >= this.updateApplyDeadline;
+    },
+
     stopUpdateTimer() {
       if (this.updateTimer) {
         clearInterval(this.updateTimer);
@@ -2988,6 +3047,19 @@ function app() {
       try {
         this.updateStatus = await this.request("GET", "/api/update/status");
         this.updateError = null;
+        // The moment `state.json`'s own `id` matches the job this
+        // pending apply is waiting on, the race `updateAwaitingPickup()`
+        // exists for is over - the sidecar has genuinely read
+        // request.json, whatever phase it wrote next (even straight to
+        // `rejected`). Clearing both fields here, unconditionally,
+        // rather than only when `updateRunning()` is true: a request
+        // that gets rejected on the spot never passes through a running
+        // phase at all, and must not be left "awaiting pickup" for the
+        // remainder of `UPDATE_APPLY_GRACE_MS` regardless.
+        if (this.updateApplyJobId !== null && this.updateStatus?.state?.id === this.updateApplyJobId) {
+          this.updateApplyJobId = null;
+          this.updateApplyDeadline = null;
+        }
       } catch (error) {
         // A 401 here means the session expired or was ended elsewhere -
         // `this.request()` has already flipped `this.authenticated` to
@@ -3011,16 +3083,27 @@ function app() {
         // normal case for this flow, not an error (the connection banner
         // in index.html carries the message for it). The last known
         // state stays on screen and the timer keeps trying. Only a
-        // failure OUTSIDE a running job - the bridge is simply down, or
-        // there never was a job - is worth `updateError`.
-        if (!this.updateRunning()) {
+        // failure OUTSIDE a running job or a pending pickup - the bridge
+        // is simply down, or there never was a job - is worth
+        // `updateError`.
+        if (!this.updateRunning() && !this.updateAwaitingPickup()) {
           this.updateError = error.message;
         }
       }
-      if (this.updateRunning()) {
+      // `updateAwaitingPickup()` alongside `updateRunning()` in both
+      // branches below is this fix's own core: a poll landing before the
+      // sidecar has caught up sees `updateRunning()` read `false` off the
+      // previous end state, same as before this fix - what changes is
+      // that the timer no longer treats that as "nothing to watch for"
+      // while a request is still within its grace window. Once the
+      // window closes without a match, `updateAwaitingPickup()` itself
+      // turns `false` (see its own comment) and the branch below
+      // correctly gives up, exactly as the second half of this fix
+      // requires.
+      if (this.updateRunning() || this.updateAwaitingPickup()) {
         this.startUpdateTimer();
       }
-      if (allowStop && !this.updateRunning() && this.updateTimer) {
+      if (allowStop && !this.updateRunning() && !this.updateAwaitingPickup() && this.updateTimer) {
         this.stopUpdateTimer();
         // Fetch the version once more after the end: the card up top
         // should show the new number, not the one the page loaded with.
@@ -3044,7 +3127,31 @@ function app() {
         // in this dialog - Section 10 of the update design puts the
         // actual validation in the sidecar, and the one thing this route
         // must not do is offer a free-text field that reaches it.
-        await this.request("POST", "/api/update/apply", { target: this.updateAvailable.target });
+        const accepted = await this.request("POST", "/api/update/apply", {
+          target: this.updateAvailable.target,
+        });
+        // Remaining Stufe 2 gap: the fix above (arming the timer here,
+        // unconditionally) stops the FIRST poll from undoing it, but does
+        // nothing about the SECOND one, two seconds later, and every one
+        // after that up to `UPDATE_APPLY_GRACE_MS` - each lands on
+        // `loadUpdateStatus()`'s default `allowStop: true` and re-reads
+        // `state.json` fresh. On a lightly loaded sidecar that read
+        // already shows a running phase by then and none of this matters.
+        // On one that is mid-cleanup of the pass before this request
+        // arrived, or just slow, it can still be the previous end state -
+        // and `updateAwaitingPickup()`/`updateNeverCollected()` (see
+        // their own comments) are what keep those later polls from
+        // making the exact same mistake the first poll used to.
+        // `accepted.id` is the job id `api/update.py`'s
+        // `apply()` route already hands back in its response body -
+        // `update.py`'s own `request_update()` writes the identical value
+        // into `request.json`, and the sidecar copies it into
+        // `state.json`'s `id` field the instant it reads that file (see
+        // `update-once.sh`'s `JOB_ID`/`set_state queued ""`) - so it is
+        // the one signal that survives every possible phase the sidecar
+        // could write next, rejection included.
+        this.updateApplyJobId = accepted.id;
+        this.updateApplyDeadline = Date.now() + UPDATE_APPLY_GRACE_MS;
         // Critical 3: arm the timer HERE, unconditionally, the moment the
         // POST itself succeeds - not by relying on the `loadUpdateStatus`
         // call right below to notice a running phase and arm it as a side
@@ -3058,11 +3165,13 @@ function app() {
         // outright, e.g. a transient network hiccup right after the
         // POST. Either way `updateRunning()` off that stale/missing read
         // may say `false`, but the timer just armed above must survive
-        // it regardless: the POST already succeeded, a job is queued,
-        // and the timer's own next tick (in 2s, `allowStop` defaulting
-        // back to `true` there) is what correctly turns it off once the
-        // sidecar's real state - not this stale one - says the job is
-        // over.
+        // it regardless: the POST already succeeded, a job is queued.
+        // From here on `updateApplyDeadline`, set just above, is what
+        // keeps every LATER poll (this function is done after this one
+        // call) from repeating the same mistake for up to
+        // `UPDATE_APPLY_GRACE_MS`, and `updateNeverCollected()` is what
+        // makes the card say something true if that whole window passes
+        // with the sidecar never having read the request at all.
         await this.loadUpdateStatus({ allowStop: false });
       } catch (error) {
         // `error.message` is already the specific, human sentence the

@@ -809,6 +809,34 @@ async def test_a_stalled_sidecar_gets_its_own_message_in_the_running_state(api):
     assert "!updateStalled()" in running_block[hint_tag_start:hint_tag_end]
 
 
+async def test_a_never_collected_request_gets_its_own_message_outside_the_running_block(api):
+    """Stufe 2 of Critical 3 (markup half): `updateNeverCollected()` reads
+    `true` while `updateRunning()` reads `false` - the sidecar never
+    advanced `state.json` past whatever it held before the request, so
+    state 3 (`x-if="updateRunning()"`) never renders and has no step list
+    to attach a message to. This banner therefore has to live OUTSIDE that
+    template, as its own sibling, with its own text - `update_stalled`
+    would be dishonest here (its wording points at "the step above",
+    which does not exist in this state)."""
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    running_start = page.index('x-if="updateRunning()"')
+    running_end = page.index("</template>", running_start)
+    running_block = page[running_start:running_end]
+
+    # Not inside the running block - it has no step list to point to.
+    assert "updateNeverCollected()" not in running_block
+
+    after_running_block = page[running_end:]
+    assert 'x-show="updateNeverCollected()"' in after_running_block
+    assert "t('web.system.update_not_collected')" in after_running_block
+    never_collected_idx = after_running_block.index('x-show="updateNeverCollected()"')
+    tag_start = after_running_block.rindex("<p", 0, never_collected_idx)
+    tag_end = after_running_block.index(">", never_collected_idx)
+    assert "banner danger" in after_running_block[tag_start:tag_end]
+
+
 async def test_the_update_card_css_classes_carry_the_rules_the_markup_relies_on(api):
     """Minor 6: `.confirm`, `.steps` (`done`/`now`) and `.notes` style the
     update card's confirmation box, its step list and its notes/log
@@ -1351,6 +1379,240 @@ def test_apply_update_does_not_arm_a_second_timer_when_one_is_already_running():
     )
 
     assert values["sameTimer"] is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_a_stale_poll_shortly_after_apply_does_not_stop_the_timer():
+    """Stufe 2 of Critical 3: the fix above only protects `applyUpdate()`'s
+    OWN immediate read (`allowStop: false`). Every poll after that one -
+    the timer's own two-second tick - calls `loadUpdateStatus()` with the
+    default `allowStop: true`, and the sidecar's loop (entrypoint.sh) can
+    easily still not have caught up by then: it wakes at most every two
+    seconds, and may be finishing the pass that was already running when
+    the request landed. Proven by manual browser verification before this
+    fix: `updateTimer !== null` was `true` right after `applyUpdate()`,
+    `false` 2.5 seconds later with `updateStatus.state.phase` still
+    `"idle"` - the SAME bug Critical 3 fixed, reopened by the second poll
+    instead of the first.
+
+    Simulates that 2.5s gap deterministically by overriding `Date.now`
+    rather than actually sleeping - `applyUpdate()`'s own
+    `updateApplyDeadline` is computed from it (see `UPDATE_APPLY_GRACE_MS`
+    in app.js), so advancing the mocked clock advances the fix's own
+    notion of elapsed time exactly as a real 2.5s wait would, without
+    slowing this test down or making it flaky under load.
+
+    Against the code before this fix, this test fails: the second
+    `loadUpdateStatus()` call sees `phase: "idle"`, `updateRunning()` reads
+    `false`, and its `allowStop`-gated branch tears the timer down."""
+    values = _app_state(
+        """
+        let now = 1_700_000_000_000;
+        Date.now = () => now;
+
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateConfirming = true;
+        state.updateError = null;
+        state.request = async (method, path) => {
+          if (method === "POST" && path === "/api/update/apply") {
+            return { id: "job-1" };
+          }
+          if (method === "GET" && path === "/api/update/status") {
+            // The sidecar has still not woken up - state.json reads
+            // exactly the end state from BEFORE this request, on every
+            // poll, not just the first one.
+            return {
+              state: { phase: "idle", id: null, from: null, to: null,
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.applyUpdate();
+          const timerArmedRightAfterApply = state.updateTimer !== null;
+
+          // The timer's own next tick, 2.5s later - well within
+          // UPDATE_APPLY_GRACE_MS, but past the point a naive fix (or the
+          // pre-fix code) would already have given up.
+          now += 2500;
+          await state.loadUpdateStatus();
+          const timerStillArmed = state.updateTimer !== null;
+          const phaseStillIdle = state.updateStatus.state.phase === "idle";
+
+          state.stopUpdateTimer();
+          console.log(JSON.stringify({
+            timerArmedRightAfterApply,
+            timerStillArmed,
+            phaseStillIdle,
+            updateError: state.updateError,
+          }));
+        })();
+        """
+    )
+
+    assert values["timerArmedRightAfterApply"] is True
+    assert values["phaseStillIdle"] is True
+    assert values["timerStillArmed"] is True
+    # A poll that is still within the grace window must not surface the
+    # generic connection error either - the bridge is answering fine, the
+    # sidecar just has not caught up yet.
+    assert values["updateError"] is None
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_apply_gives_up_and_reports_the_request_was_never_collected():
+    """The other half of the same fix: `updateAwaitingPickup()` must not
+    become "poll forever" - the whole point of the previous test is that
+    the timer survives a SHORT stale window, not that it survives
+    indefinitely. Once `UPDATE_APPLY_GRACE_MS` passes with `state.json`
+    never once reporting this apply's own job id, `updateNeverCollected()`
+    should read `true` (the card's honest "this was accepted but nobody
+    picked it up" message, index.html's state 3b) and the timer should
+    stop - continuing to poll every two seconds for an outcome that will
+    never arrive is exactly the waste `updateTimer`'s own comment warns
+    against.
+
+    `state.json` here answers with a DIFFERENT id throughout (`"stale-id"`,
+    never `"job-1"`) - simulating either a sidecar that crashed between
+    `api/update.py`'s own 503 presence check and actually reading
+    request.json (this fix's own named scenario), or one that is simply
+    dead and never runs another pass at all."""
+    values = _app_state(
+        """
+        let now = 1_700_000_000_000;
+        Date.now = () => now;
+
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateConfirming = true;
+        state.updateError = null;
+        state.request = async (method, path) => {
+          if (method === "POST" && path === "/api/update/apply") {
+            return { id: "job-1" };
+          }
+          if (method === "GET" && path === "/api/update/status") {
+            return {
+              state: { phase: "idle", id: "stale-id", from: null, to: null,
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          if (method === "GET" && path === "/api/version") {
+            // `loadUpdateStatus()` re-fetches this once it decides to
+            // stop the timer - see its own comment.
+            return { version: "1.0.0" };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.applyUpdate();
+
+          // Still well within the grace window: neither predicate should
+          // fire yet.
+          now += 2500;
+          await state.loadUpdateStatus();
+          const stillWaitingMidway = state.updateAwaitingPickup();
+          const notYetGivenUp = !state.updateNeverCollected();
+
+          // Past UPDATE_APPLY_GRACE_MS now, still the same stale id.
+          now += 30000;
+          await state.loadUpdateStatus();
+
+          console.log(JSON.stringify({
+            stillWaitingMidway,
+            notYetGivenUp,
+            timerStoppedAfterGraceExpired: state.updateTimer === null,
+            neverCollectedAfterGraceExpired: state.updateNeverCollected(),
+            awaitingPickupAfterGraceExpired: state.updateAwaitingPickup(),
+            stalledAfterGraceExpired: state.updateStalled(),
+          }));
+        })();
+        """
+    )
+
+    assert values["stillWaitingMidway"] is True
+    assert values["notYetGivenUp"] is True
+    assert values["timerStoppedAfterGraceExpired"] is True
+    assert values["neverCollectedAfterGraceExpired"] is True
+    assert values["awaitingPickupAfterGraceExpired"] is False
+    # Distinct from updateStalled(): that state means "was running, then
+    # went quiet" - phase never left "idle" here, so it must stay false.
+    assert values["stalledAfterGraceExpired"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")
+def test_apply_grace_clears_the_instant_the_sidecars_own_job_id_is_seen():
+    """The id comparison (`loadUpdateStatus()`, matching `updateApplyJobId`
+    against `updateStatus.state.id`) is what lets a REJECTED request end
+    the grace window immediately, without waiting out the full
+    `UPDATE_APPLY_GRACE_MS`: `reject()` (update-once.sh) never passes
+    through a running phase at all, so `updateRunning()` alone could never
+    detect the pickup. Without this, `updateAwaitingPickup()` would stay
+    `true` for the rest of the grace window even though the sidecar
+    answered almost immediately, and a poll landing after the deadline
+    (simulated here by jumping the clock forward) would wrongly report
+    `updateNeverCollected()` for a request that was, in fact, collected
+    and answered."""
+    values = _app_state(
+        """
+        let now = 1_700_000_000_000;
+        Date.now = () => now;
+
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateConfirming = true;
+        state.updateError = null;
+        let statusPhase = "idle";
+        let statusId = null;
+        state.request = async (method, path) => {
+          if (method === "POST" && path === "/api/update/apply") {
+            return { id: "job-1" };
+          }
+          if (method === "GET" && path === "/api/update/status") {
+            return {
+              state: { phase: statusPhase, id: statusId, from: "1.0.0", to: null,
+                       error: "already running", rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          if (method === "GET" && path === "/api/version") {
+            // `loadUpdateStatus()` re-fetches this once the rejected
+            // request makes it decide to stop the timer - see its own
+            // comment.
+            return { version: "1.0.0" };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        (async () => {
+          await state.applyUpdate();
+
+          // The sidecar answers fast - well within the grace window -
+          // but with `rejected`, a phase `updateRunning()` never counts.
+          now += 500;
+          statusPhase = "rejected";
+          statusId = "job-1";
+          await state.loadUpdateStatus();
+          const clearedRightAfterRejection = state.updateApplyDeadline === null;
+
+          // Long after the ORIGINAL grace window would have expired -
+          // must stay unremarkable now that the id has been seen.
+          now += 30000;
+          await state.loadUpdateStatus();
+
+          console.log(JSON.stringify({
+            clearedRightAfterRejection,
+            awaitingPickupMuchLater: state.updateAwaitingPickup(),
+            neverCollectedMuchLater: state.updateNeverCollected(),
+            timerStoppedMuchLater: state.updateTimer === null,
+          }));
+        })();
+        """
+    )
+
+    assert values["clearedRightAfterRejection"] is True
+    assert values["awaitingPickupMuchLater"] is False
+    assert values["neverCollectedMuchLater"] is False
+    assert values["timerStoppedMuchLater"] is True
 
 
 @pytest.mark.skipif(NODE is None, reason="node wird fuer diesen Test gebraucht")

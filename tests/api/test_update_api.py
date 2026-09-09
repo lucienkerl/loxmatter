@@ -567,6 +567,7 @@ def test_the_interface_knows_every_text_of_the_update_card():
         "web.system.update_restarting",
         "web.system.update_restarting_hint",
         "web.system.update_stalled",
+        "web.system.update_not_collected",
         "web.system.update_done",
         "web.system.update_failed",
         "web.system.update_rolled_back",

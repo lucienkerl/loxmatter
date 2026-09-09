@@ -1713,6 +1713,26 @@
             </div>
           </template>
 
+          <!-- 3b: Accepted, never collected. `updateRunning()` reads
+               `false` here - `state.json` never once advanced past
+               whatever it held before this request, so state 3 above
+               never renders at all and has no step list to point to.
+               This is a DIFFERENT fact from `updateStalled()` (a job that
+               WAS running and then went quiet): the request was accepted
+               (a 2xx from POST /api/update/apply) but `updateNeverCollected()`
+               (app.js) says the sidecar has now had `UPDATE_APPLY_GRACE_MS`
+               - several multiples of its own two-second loop - and never
+               once wrote this job's id into state.json. The most likely
+               cause is exactly the one `api/update.py`'s `apply()` cannot
+               see for itself: a sidecar that answered the route's own
+               presence check and then crashed (OOM, `docker kill`, a host
+               reboot) before it ever got to read request.json. Without
+               this the card would simply have gone back to looking like
+               nothing had happened - a silent, misleading "back to
+               normal" for a request that in fact never ran. -->
+          <p class="banner danger" x-show="updateNeverCollected()" x-cloak
+             x-text="t('web.system.update_not_collected')"></p>
+
           <!-- 4: Result. -->
           <p class="banner ok" x-show="updateStatus?.state?.phase === 'done'" x-cloak
              x-text="t('web.system.update_done', { version: updateStatus.state.to })"></p>
