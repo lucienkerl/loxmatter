@@ -832,10 +832,10 @@ web.devices.offline:
   de: "Offline"
 web.devices.last_heard:
   en: "Last heard {text}"
-  de: "Zuletzt gehoert {text}"
+  de: "Zuletzt gehört {text}"
 web.devices.never_heard:
   en: "Not heard since the bridge started"
-  de: "Seit dem Start der Bruecke nichts gehoert"
+  de: "Seit dem Start der Brücke nichts gehört"
 web.devices.remove:
   en: "Remove"
   de: "Entfernen"
