@@ -33,6 +33,7 @@ route's own logic."""
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,7 +43,13 @@ import pytest
 from conftest import authenticate
 
 import loxmatter.api.update as update_module
-from loxmatter.api.update import _BUSY_BOUND_SECONDS, _STALE_AFTER_SECONDS
+from loxmatter.api.update import (
+    _BUSY_BOUND_SECONDS,
+    _BUSY_MARGIN_SECONDS,
+    _MAX_REQUEST_AGE_SECONDS,
+    _STALE_AFTER_SECONDS,
+    _WORST_CASE_HEALTH_WAIT_SECONDS,
+)
 from loxmatter.loxone.server import build_app
 from loxmatter.model.store import Store
 from loxmatter.model.update_settings_store import UpdateChannel
@@ -55,8 +62,14 @@ from loxmatter.update.commands import (
     _LOCAL_TIMEOUT_SECONDS,
     _RECREATE_TIMEOUT_SECONDS,
 )
-from loxmatter.update.protocol import UpdateRequest, UpdateState, read_request, write_state
-from loxmatter.update.runner import HEALTH_REFRESH_POLLS, POLL_SECONDS, run_update
+from loxmatter.update.protocol import (
+    UpdateRequest,
+    UpdateState,
+    read_request,
+    write_request,
+    write_state,
+)
+from loxmatter.update.runner import DEADLINE_SECONDS, HEALTH_REFRESH_POLLS, POLL_SECONDS, run_update
 
 
 @pytest.fixture
@@ -99,6 +112,22 @@ def _write_state(update_dir, *, phase, updater_seen_at, **overrides) -> None:
     }
     fields.update(overrides)
     write_state(update_dir, UpdateState(**fields))
+
+
+def _write_request(update_dir, *, requested_at, **overrides) -> None:
+    """Writes `request.json` directly, the way a previous, already-accepted
+    `POST /apply` would have left it - `_update_in_progress` (see
+    `api/update.py`) now reads this file as well as `state.json`, so
+    exercising it means controlling both independently rather than only
+    the one the sidecar writes."""
+    fields = {
+        "id": "req-1",
+        "channel": "stable",
+        "target": "v0.2.5",
+        "requested_at": requested_at,
+    }
+    fields.update(overrides)
+    write_request(update_dir, UpdateRequest(**fields))
 
 
 async def test_status_says_no_updater_when_the_stamp_is_missing_or_stale(api):
@@ -212,82 +241,173 @@ async def test_apply_refusal_detail_follows_the_selected_language(api, monkeypat
     assert read_request(update_dir) is None
 
 
-async def test_apply_refuses_a_second_request_while_one_is_running(api, monkeypatch):
+async def test_apply_refuses_during_the_prelude_then_accepts_once_the_id_matches(api, monkeypatch):
     """Design section 13: "rejection of a second request while one is
-    running." Reproduced by the finding this closes: `state.json` at
-    `phase="pull"` with a fresh stamp, a second `POST /apply` used to come
-    back 200 and overwrite `request.json` - and because `run_once`
-    (`update/__main__.py`) returns the OLD id once the in-flight
-    `run_update` finishes, the very next pass then saw a DIFFERENT id in
-    `request.json` and ran a second full update immediately, back to back
-    with the first."""
+    running." Reproduced by the finding this closes: `run_once`'s and
+    `run_update`'s own prelude (`read_running_identity()`, `read_git_ref()`,
+    and on `dev` `is_ancestor` - see `api/update.py`'s module docstring)
+    runs entirely before the sidecar's first `publish()`, so for that whole
+    window `state.json` still holds whatever the PREVIOUS, unrelated run
+    left it at - here, a `"done"` state for a DIFFERENT id, not the one the
+    still-pending `request.json` names. A check that only asked "is
+    `state.json`'s phase terminal" would have been fooled by exactly this:
+    it takes matching the id, not just seeing a finished-looking phase, to
+    tell "the request I am about to overwrite has finished" from "nothing
+    has looked at the request I am about to overwrite yet". Before this
+    fix, a second `POST /apply` in this window came back 200 and overwrote
+    `request.json` - and because `run_once` (`update/__main__.py`) returns
+    the OLD id once the in-flight `run_update` finishes, the very next pass
+    then saw a DIFFERENT id in `request.json` and ran a second full update
+    immediately, back to back with the first.
+
+    The second half proves the other direction in the same breath: once
+    `state.json` reports THAT SAME id `"done"`, not merely some terminal
+    phase, the very next apply must go through immediately - no cooldown.
+    Kept as one test rather than two: a `state.json` that only ever agrees
+    or only ever disagrees with `request.json`'s id cannot tell "id
+    matching is enforced" from "id matching was silently dropped and
+    every terminal phase is accepted regardless", and the second half
+    alone cannot fail on its own - a phase-only check accepts it exactly
+    as readily as an id-aware one does. Only the pair, on the same pending
+    request, pins the requirement down."""
     client, _, update_dir = api
     monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
     fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
-    _write_state(update_dir, phase="pull", updater_seen_at=fresh_stamp)
+    _write_request(update_dir, id="req-pending", target="v0.2.5", requested_at=fresh_stamp)
+    # The previous, already-finished run - a different id, in a terminal
+    # phase, exactly what the prelude leaves in place while the pending
+    # request above is still being prepared.
+    _write_state(update_dir, id="req-old", phase="done", updater_seen_at=fresh_stamp, healthy=True)
 
-    response = await client.post(
-        "/api/update/apply", json={"channel": "stable", "target": "v0.3.0"}
-    )
-
-    assert response.status_code == 409
+    refused = await client.post("/api/update/apply", json={"channel": "stable", "target": "v0.3.0"})
+    assert refused.status_code == 409
     # `request.json` untouched - a rejected second request must not
-    # overwrite whatever the first one is still running against.
-    assert read_request(update_dir) is None
+    # overwrite whatever the first one is still waiting to be picked up.
+    still_pending = read_request(update_dir)
+    assert still_pending is not None
+    assert still_pending.id == "req-pending"
+    assert still_pending.target == "v0.2.5"
 
-
-async def test_apply_accepts_a_new_request_once_the_previous_one_finished(api, monkeypatch):
-    """A terminal phase (`"done"`/`"failed"`/`"idle"`) is not "an update is
-    running", however fresh its stamp - the operator must be able to start
-    the very next update the moment the last one finishes, not wait out
-    some cooldown."""
-    client, _, update_dir = api
-    monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
-    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
-    _write_state(update_dir, phase="done", updater_seen_at=fresh_stamp, healthy=True)
-
-    response = await client.post(
+    # Now the sidecar catches up and reports the PENDING request's own id
+    # done - the very next apply must be accepted immediately.
+    _write_state(
+        update_dir, id="req-pending", phase="done", updater_seen_at=fresh_stamp, healthy=True
+    )
+    accepted = await client.post(
         "/api/update/apply", json={"channel": "stable", "target": "v0.3.0"}
     )
-
-    assert response.status_code == 200
-    assert read_request(update_dir) is not None
+    assert accepted.status_code == 200
+    written = read_request(update_dir)
+    assert written is not None
+    assert written.id != "req-pending"
+    assert written.target == "v0.3.0"
 
 
 async def test_apply_accepts_a_request_when_state_json_is_missing_or_corrupt(api, monkeypatch):
-    """ "No usable state" must not read as "an update is running" -
-    `read_state` returns `None` for a missing file and for a corrupt one
-    alike, and treating that as busy would wedge the apply button
-    permanently on one bad byte."""
+    """`read_state` returns `None` for a missing file and for a corrupt one
+    alike - and neither can ever prove a pending request has finished, so
+    on its own that would make an unreadable `state.json` wedge the apply
+    button permanently on one bad byte, the same class of bug this feature
+    has already been fixed for twice. The second leg that stops it:
+    `request.json`'s own `requested_at`, once it is older than
+    `_MAX_REQUEST_AGE_SECONDS`, is an abandoned request no matter what
+    `state.json` says or fails to say - this is the button not wedging
+    even when `state.json` cannot help at all, `test_apply_accepts_a_
+    request_older_than_the_derived_maximum` below is the same escape hatch
+    exercised against a `state.json` that CAN be read but still looks
+    perpetually busy."""
     client, _, update_dir = api
     monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
+    abandoned_stamp = (
+        datetime.now(UTC) - timedelta(seconds=_MAX_REQUEST_AGE_SECONDS + 3600)
+    ).isoformat(timespec="microseconds")
 
+    _write_request(update_dir, id="req-gone", target="v0.2.5", requested_at=abandoned_stamp)
     missing = await client.post("/api/update/apply", json={"channel": "stable", "target": "v0.3.0"})
     assert missing.status_code == 200
 
-    update_dir.mkdir(parents=True, exist_ok=True)
+    # apply_update just overwrote request.json with a fresh request of its
+    # own - put an abandoned one back so the corrupt-state case below is
+    # exercised the same way as the missing-state case above, rather than
+    # accidentally passing because the request itself is now young.
+    _write_request(update_dir, id="req-gone-2", target="v0.2.6", requested_at=abandoned_stamp)
     (update_dir / "state.json").write_text("{not valid json", encoding="utf-8")
     corrupt = await client.post("/api/update/apply", json={"channel": "stable", "target": "v0.4.0"})
     assert corrupt.status_code == 200
 
 
-async def test_apply_accepts_a_request_once_a_busy_looking_phase_has_wedged(api, monkeypatch):
-    """A phase string alone must not be permanent evidence of a running
-    update - the same requirement `_updater_present` has to satisfy. A
-    `phase="pull"` stamp far older than `_BUSY_BOUND_SECONDS["pull"]` is a
-    dead sidecar, not a running one, and the operator must be able to
-    start over."""
+async def test_apply_accepts_a_request_older_than_the_derived_maximum(api, monkeypatch):
+    """An abandoned `request.json` - the sidecar removed, the container
+    deleted - must not block updates forever, even when `state.json` is
+    perfectly readable and looks exactly as busy as a real update in
+    progress would: matching id, a non-terminal phase. Age is what tells
+    "still running" from "whatever was running here is long gone", once
+    it exceeds `_MAX_REQUEST_AGE_SECONDS` - the longest `run_update` could
+    possibly still be taking."""
     client, _, update_dir = api
     monkeypatch.setenv("LOXMATTER_VERSION", "0.2.0")
-    wedged_stamp = (
-        datetime.now(UTC) - timedelta(seconds=_BUSY_BOUND_SECONDS["pull"] + 3600)
+    abandoned_stamp = (
+        datetime.now(UTC) - timedelta(seconds=_MAX_REQUEST_AGE_SECONDS + 3600)
     ).isoformat(timespec="microseconds")
-    _write_state(update_dir, phase="pull", updater_seen_at=wedged_stamp)
+    _write_request(update_dir, id="req-dead", target="v0.2.5", requested_at=abandoned_stamp)
+    # Same id, non-terminal, and given a fresh stamp of its own so this
+    # is not merely repeating the missing/corrupt-state case above - the
+    # phase itself still looks exactly like a live update.
+    fresh_stamp = datetime.now(UTC).isoformat(timespec="microseconds")
+    _write_state(update_dir, id="req-dead", phase="pull", updater_seen_at=fresh_stamp)
 
     response = await client.post(
         "/api/update/apply", json={"channel": "stable", "target": "v0.3.0"}
     )
     assert response.status_code == 200
+
+
+def test_max_request_age_matches_the_worst_case_it_is_derived_from():
+    """`_MAX_REQUEST_AGE_SECONDS` is a formula, not a typed-in number, but a
+    formula can still drift silently from what it is supposed to model if
+    the formula itself is edited without re-deriving it by hand - the exact
+    way `_BUSY_BOUND_SECONDS` and `_STALE_AFTER_SECONDS` have each already
+    drifted from their own worst cases once. Recomputed here from the raw
+    constants, independently of `api/update.py`'s own arithmetic, so a
+    change to any one of them - or to this derivation's own shape - that
+    leaves the two disagreeing fails this test rather than only showing up
+    as a wedged or prematurely reopened apply button on a real Pi.
+
+    The path summed here is `run_update`'s single longest one end to end:
+    the worst-case prelude (`run_once`'s `read_running_identity()`, two
+    calls, plus `run_update`'s own `is_ancestor` on the `dev` channel and
+    `read_git_ref()` - four `_LOCAL_TIMEOUT_SECONDS` calls, taken
+    unconditionally of channel since the bound must hold for either),
+    `backup()`+`fetch()`+`checkout()`+`pull()` before `"pull"` is
+    published, `recreate()` before `"recreate"` is published, one health
+    wait that never turns healthy, and one rollback attempt
+    (`checkout()`+`recreate()`) with its own confirmation health wait that
+    also never turns healthy - the same margin `_BUSY_BOUND_SECONDS`
+    already carries on top."""
+    worst_case_health_wait_seconds = math.ceil(DEADLINE_SECONDS / POLL_SECONDS) * (
+        POLL_SECONDS + _HEALTH_TIMEOUT_SECONDS
+    )
+    assert _WORST_CASE_HEALTH_WAIT_SECONDS == worst_case_health_wait_seconds
+
+    worst_case_prelude_seconds = 4 * _LOCAL_TIMEOUT_SECONDS
+    worst_case_backup_through_pull_seconds = (
+        _BACKUP_TIMEOUT_SECONDS
+        + _GIT_FETCH_TIMEOUT_SECONDS
+        + _LOCAL_TIMEOUT_SECONDS
+        + _IMAGE_PULL_TIMEOUT_SECONDS
+    )
+    worst_case_rollback_seconds = (
+        _LOCAL_TIMEOUT_SECONDS + _RECREATE_TIMEOUT_SECONDS + worst_case_health_wait_seconds
+    )
+    worst_case_seconds = (
+        worst_case_prelude_seconds
+        + worst_case_backup_through_pull_seconds
+        + _RECREATE_TIMEOUT_SECONDS
+        + worst_case_health_wait_seconds
+        + worst_case_rollback_seconds
+        + _BUSY_MARGIN_SECONDS
+    )
+    assert _MAX_REQUEST_AGE_SECONDS == worst_case_seconds
 
 
 def test_the_stale_after_threshold_leaves_headroom_over_the_health_wait_refresh_interval():

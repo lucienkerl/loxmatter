@@ -123,6 +123,7 @@ translation for since none of it is prose this codebase itself wrote."""
 
 from __future__ import annotations
 
+import math
 import re
 import secrets
 from datetime import UTC, datetime
@@ -154,11 +155,12 @@ from loxmatter.update.protocol import (
     UpdatePhase,
     UpdateRequest,
     UpdateState,
+    read_request,
     read_state,
     write_request,
 )
 from loxmatter.update.rules import IMAGE_REPOSITORY, RequestRejected, check_request
-from loxmatter.update.runner import HEALTH_REFRESH_POLLS, POLL_SECONDS
+from loxmatter.update.runner import DEADLINE_SECONDS, HEALTH_REFRESH_POLLS, POLL_SECONDS
 from loxmatter.version import BuildInfo, build_info
 
 #: See this module's docstring: a judgment call the design and the plan
@@ -254,28 +256,80 @@ _BUSY_BOUND_SECONDS: dict[UpdatePhase, float] = {
     ),
 }
 
-#: Still not covered by `_BUSY_BOUND_SECONDS` above, and worth naming
-#: rather than leaving implicit: `commands.DockerCommands.backup()` itself
-#: now runs AFTER `run_update`'s first `publish()` call (`runner.py`
-#: publishes `phase="backup"` before calling it - see the comment there),
-#: so `"backup"`'s bound above already covers it. What is NOT covered is
-#: everything that runs before that first `publish()`: `update.__main__
-#: .run_once` reads `commands.read_running_identity()` (two subprocess
-#: calls, `commands._LOCAL_TIMEOUT_SECONDS` each) before it ever calls
-#: `run_update`, and `run_update` itself then calls `commands
-#: .read_git_ref()` (another `_LOCAL_TIMEOUT_SECONDS`) - and, on the `dev`
-#: channel, `check_request`'s own `is_ancestor` (one more) - before
-#: reaching the code above at all. That prelude used to total up to 210s
-#: on `stable` / 240s on `dev` together with `backup()` itself; moving the
-#: publish closed the `backup()` portion (120s) but not this one, which
-#: remains open at up to roughly 90s on `stable` / 120s on `dev` - state.json
-#: still carries whatever phase the PREVIOUS run left it in for that long,
-#: and a second `POST /apply` arriving in it is still wrongly accepted.
-#: Left as a known, smaller gap here: closing it would mean publishing a
-#: stamp before `run_update` is even called (from `run_once` itself, or
-#: from a route-side marker `apply_update` writes synchronously) rather
-#: than a one-line move inside `run_update` - a larger change than this
-#: fix's scope.
+#: The prelude that used to leave a gap here (see git history of this
+#: comment for the earlier account of it) does not need a state.json
+#: stamp at all to close: `apply_update` itself writes `request.json`
+#: synchronously, before it ever returns to the caller, so a second
+#: `POST /apply` arriving a moment later can compare against that write
+#: directly instead of waiting for the sidecar to publish anything about
+#: it. `_update_in_progress` below is keyed off the PAIR of files for
+#: exactly that reason - see its own docstring.
+#:
+#: Worst-case wall-clock time `runner._wait_for_health` can spend before
+#: giving up, derived the same way its own docstring derives it:
+#: `waited` only advances by `POLL_SECONDS` per iteration, but every
+#: iteration also pays for `commands.DockerCommands.healthy()`'s own
+#: subprocess call, bounded at `_HEALTH_TIMEOUT_SECONDS` - so
+#: `ceil(DEADLINE_SECONDS / POLL_SECONDS)` iterations can each cost up to
+#: `POLL_SECONDS + _HEALTH_TIMEOUT_SECONDS` of real time before the loop
+#: gives up on a 120s deadline that never resolves. `math.ceil` rather
+#: than plain division: `_wait_for_health`'s own `while waited <
+#: deadline_seconds` keeps polling for a partial interval too, and a
+#: bound that rounds down would be exactly as wrong as one that ignores
+#: the health check's own subprocess cost.
+_WORST_CASE_HEALTH_WAIT_SECONDS = math.ceil(DEADLINE_SECONDS / POLL_SECONDS) * (
+    POLL_SECONDS + _HEALTH_TIMEOUT_SECONDS
+)
+
+#: The longest `request.json` can legitimately still be waiting on a
+#: matching, terminal entry in `state.json` - the second leg
+#: `_update_in_progress` needs so that an unreadable `state.json` (see
+#: its docstring, and `read_state`'s) cannot make a request look in
+#: flight forever. Every term is one of `commands.py`'s own step
+#: timeouts or `runner.DEADLINE_SECONDS`, summed along the single
+#: longest path `run_update` can take end to end, so a change to any of
+#: them changes this bound automatically rather than by someone
+#: remembering to also edit a hand-typed number beside it - the exact
+#: failure mode this branch has already produced six times over between
+#: two constants that had to agree with nothing checking:
+#:
+#: - The prelude `update.__main__.run_once` and `run_update` pay before
+#:   the first `publish()` - `read_running_identity()` (two subprocess
+#:   calls), `is_ancestor` (the `dev` channel only, taken unconditionally
+#:   since this bound must hold for whichever channel an abandoned
+#:   request named) and `read_git_ref()` - four `_LOCAL_TIMEOUT_SECONDS`
+#:   calls in the worst case.
+#: - `backup()`, `fetch()`, `checkout()` and `pull()`, all of which run
+#:   before the `"pull"` phase is published.
+#: - `recreate()`, before the `"recreate"` phase is published.
+#: - The main health wait, worst case never turning healthy.
+#: - One rollback attempt: `write_image_tag` is a plain file edit with
+#:   nothing to time out on, so only `checkout()` and `recreate()` are
+#:   bounded, followed by the rollback's own confirmation health wait -
+#:   worst case never turning healthy either, the single longest thing
+#:   `run_update` can still be doing before it is guaranteed to have
+#:   published `"done"` or `"failed"`.
+#:
+#: `_BUSY_MARGIN_SECONDS` on top for the same reason it already sits on
+#: every entry in `_BUSY_BOUND_SECONDS` above: real headroom, not a bound
+#: computed to the second and then immediately eroded by the next
+#: unrelated change to one of these timeouts. `tests/api/test_update.py`
+#: recomputes this same formula from the raw constants independently, so
+#: a change to any of them that erodes the real margin fails there, not
+#: silently.
+_MAX_REQUEST_AGE_SECONDS = (
+    4 * _LOCAL_TIMEOUT_SECONDS
+    + _BACKUP_TIMEOUT_SECONDS
+    + _GIT_FETCH_TIMEOUT_SECONDS
+    + _LOCAL_TIMEOUT_SECONDS
+    + _IMAGE_PULL_TIMEOUT_SECONDS
+    + _RECREATE_TIMEOUT_SECONDS
+    + _WORST_CASE_HEALTH_WAIT_SECONDS
+    + _LOCAL_TIMEOUT_SECONDS
+    + _RECREATE_TIMEOUT_SECONDS
+    + _WORST_CASE_HEALTH_WAIT_SECONDS
+    + _BUSY_MARGIN_SECONDS
+)
 
 #: `IMAGE_REPOSITORY` is a Docker reference ("ghcr.io/lucienkerl/loxmatter"),
 #: not a GitHub API path - the registry host differs from the source
@@ -372,9 +426,42 @@ def _updater_present(state: UpdateState | None) -> bool:
     return busy_bound is not None and age_seconds <= busy_bound
 
 
-def _update_in_progress(state: UpdateState | None) -> bool:
-    """Whether `state.json` describes a run actively under way right now
-    - not merely "an updater exists" (`_updater_present` answers that).
+_TERMINAL_PHASES: frozenset[UpdatePhase] = frozenset({"done", "failed"})
+
+
+def _request_expired(request: UpdateRequest, *, now: datetime) -> bool:
+    """Whether `request` is older than `_MAX_REQUEST_AGE_SECONDS` - the
+    escape hatch `_update_in_progress` falls back on when `state.json`
+    cannot prove the request has finished (see there). `requested_at`
+    comes from `now_iso()` (`apply_update` sets it), but the file it
+    lives in is hand-editable on the Pi like every other file this
+    package reads, so it gets the same tolerance `_updater_present` gives
+    `state.updater_seen_at` a few lines up: a stamp that fails to parse.
+
+    A stamp that fails to parse, or one from the future, both resolve to
+    "expired" here - the opposite of `_updater_present`'s own "untrusted
+    stamp reads as absent" rule, but the same underlying reasoning
+    applied to the case that must not get stuck: an update genuinely
+    running writes a well-formed, past `requested_at` once and never
+    touches it again, so a stamp that cannot be trusted to be young must
+    not be allowed to hold the apply button shut indefinitely either."""
+    try:
+        requested_at = datetime.fromisoformat(request.requested_at)
+    except ValueError:
+        return True
+    if requested_at.tzinfo is None:
+        requested_at = requested_at.replace(tzinfo=UTC)
+    age_seconds = (now - requested_at).total_seconds()
+    if age_seconds < 0:
+        return True
+    return age_seconds > _MAX_REQUEST_AGE_SECONDS
+
+
+def _update_in_progress(
+    request: UpdateRequest | None, state: UpdateState | None, *, now: datetime
+) -> bool:
+    """Whether the request the bridge itself last wrote to `request.json`
+    is still waiting on a matching, terminal entry in `state.json`.
     `apply_update` uses this to refuse a second request while one is
     already running (design section 13): the bug this closes let a
     second `POST /apply` overwrite `request.json` mid-run, after which
@@ -383,19 +470,48 @@ def _update_in_progress(state: UpdateState | None) -> bool:
     runs a second full update immediately after the first - the bridge
     recreated twice back to back from one accidental double-click.
 
-    Reuses `_updater_present`'s own phase-and-age reasoning rather than a
-    second, looser check: a phase that LOOKS busy but has aged past its
-    own derived bound is exactly as wedged here as it is for presence,
-    and must not lock the button shut against an updater that has
-    actually died.
+    The previous version of this check read `state.json` alone, on the
+    theory that a busy-looking, fresh phase was as good a signal as any.
+    It was not: `state.json` only starts describing THIS request once
+    the sidecar's own `run_once`/`run_update` prelude has finished
+    (`read_running_identity()`, `read_git_ref()`, and on the `dev`
+    channel `is_ancestor` - see this module's docstring) and calls
+    `publish()` for the first time. For up to `_MAX_REQUEST_AGE_SECONDS`'
+    own prelude terms of real time, `state.json` still holds whatever the
+    PREVIOUS run left it at, and a second `POST /apply` arriving in that
+    window read as "nothing running" and was wrongly accepted - the
+    reproduction this whole fix closes. `request.json`, by contrast, is
+    written synchronously by `apply_update` itself before it ever
+    returns 200 to the caller: there is no window during which a request
+    this route just accepted is not yet visible to the next one.
 
-    `state is None` - a missing file OR a corrupt one, `read_state`
-    cannot tell the two apart (see its own docstring) - must read as
-    "nothing running", never as busy: a single bad byte in the shared
-    file must not be able to wedge the apply button forever."""
-    if state is None:
+    So "in progress" is now: a request exists, AND `state.json` has not
+    yet recorded that exact request's id in a terminal phase. Requiring
+    the id to match, not just a terminal phase to exist, is what makes
+    `test_apply_accepts_a_new_request_once_the_previous_one_finished`
+    correct rather than accidentally so - a `state.json` still holding a
+    PREVIOUS request's `"done"` must not be mistaken for confirmation
+    that THIS request (the one just overwritten into `request.json`,
+    with a new id the sidecar has not looked at yet) has finished too.
+
+    The trap: `read_state` returns `None` for a missing `state.json` and
+    for a corrupt one alike (see its own docstring), and neither can ever
+    prove "finished" - so without a second leg, an unreadable state file
+    would make every request look permanently in flight, the same class
+    of bug this feature has already been fixed for twice (`updater_seen_at`
+    stuck stale, then a phase stuck busy - see `_updater_present`'s own
+    docstring for both). `_request_expired` is that second leg: a request
+    can only be in flight for as long as an update can possibly take,
+    finite by construction, so a corrupt `state.json` - or one whose
+    sidecar was deleted along with the container that would have written
+    it - ages out and stops blocking, same as a genuinely wedged busy
+    phase already had to."""
+    if request is None:
         return False
-    return state.phase in _BUSY_BOUND_SECONDS and _updater_present(state)
+    finished = state is not None and state.id == request.id and state.phase in _TERMINAL_PHASES
+    if finished:
+        return False
+    return not _request_expired(request, now=now)
 
 
 def _localized_error(state: UpdateState) -> str | None:
@@ -588,17 +704,19 @@ def build_update_router(store: Store, *, base: Path) -> APIRouter:
 
     @router.post("/update/apply")
     async def apply_update(body: UpdateApplyIn) -> UpdateApplyOut:
-        if _update_in_progress(read_state(base)):
+        if _update_in_progress(read_request(base), read_state(base), now=datetime.now(UTC)):
             # Design section 13: "rejection of a second request while one
             # is running." Checked before anything else, including
             # `check_request` below - a request that would also have
             # failed the rules is still, first and foremost, a second
             # request arriving while the first has not finished. Without
-            # this, the reproduction is direct: `state.json` at
-            # `phase="pull"` with a fresh stamp, a second `POST` here
-            # still answered 200 and overwrote `request.json` - and
-            # because `run_once` (`update/__main__.py`) returns the OLD
-            # id once the in-flight `run_update` finishes, the very next
+            # this, the reproduction is direct: `request.json` still
+            # holding a previous request whose id `state.json` has not
+            # yet reported in a terminal phase - `_update_in_progress`'s
+            # own docstring has the full account, including why this now
+            # reads `request.json` rather than only `state.json`. Without
+            # it, `run_once` (`update/__main__.py`) returns the OLD id
+            # once the in-flight `run_update` finishes, the very next
             # pass then saw a DIFFERENT id sitting in `request.json` and
             # ran a second full update immediately, back to back with the
             # first, from one accidental double-click.
