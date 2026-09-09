@@ -60,9 +60,16 @@ def test_a_half_written_file_is_never_observed(tmp_path):
     This checks the mechanism rather than trying to race it: after the
     call, no temporary file is left behind, so no reader could have found
     one to parse.
+
+    The base is a subdirectory rather than `tmp_path` itself because the
+    autouse fixture in the parent conftest already puts a fake home there,
+    and counting leftovers only means something in a directory this test
+    owns.
     """
-    write_json_atomically(request_path(tmp_path), {"id": "x"})
-    leftovers = [p.name for p in tmp_path.iterdir() if p.name != request_path(tmp_path).name]
+    base = tmp_path / "update"
+    base.mkdir()
+    write_json_atomically(request_path(base), {"id": "x"})
+    leftovers = [p.name for p in base.iterdir() if p.name != request_path(base).name]
     assert leftovers == []
 
 

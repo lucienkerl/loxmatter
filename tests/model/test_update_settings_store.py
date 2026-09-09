@@ -58,6 +58,7 @@ def test_an_unknown_stored_value_falls_back_to_stable(tmp_path):
             "INSERT OR REPLACE INTO setting (key, value) VALUES (?, ?)",
             ("update_channel", "nightly"),
         )
+        store._db.commit()
         assert store.update_settings.get_channel() is UpdateChannel.STABLE
     finally:
         store.close()

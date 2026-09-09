@@ -475,4 +475,11 @@ class UpdateChannelOut(BaseModel):
 
 
 class UpdateChannelIn(BaseModel):
+    """Body of `PUT /api/settings/update-channel`. Typing the field as the
+    enum rather than `str` is what rejects an unknown channel: Pydantic
+    answers 422 before the request ever reaches the store, which is the
+    first of the three rules of design section 10."""
+
+    model_config = ConfigDict(frozen=True)
+
     channel: UpdateChannel
