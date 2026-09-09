@@ -123,6 +123,10 @@ CLI too.
 
 <img src="docs/screenshots/system.png" alt="Live diagnostics controls above log, UDP capture and command log panes" />
 
+**Updating**<br>The same System tab shows what is running, tells you when a newer version is available, and installs it at the press of a button — a backup first, then the four steps shown here in order, with an automatic rollback if the new version never comes up healthy. See [Updating](#updating) below.
+
+<img src="docs/screenshots/update.png" alt="Update card mid-install: three of four steps done, waiting for the bridge to report healthy, with the restarting hint below" />
+
 **Settings**<br>The Miniserver connection, the interface language, and how often marked signals are resent even when nothing changed.
 
 <img src="docs/screenshots/settings.png" alt="Miniserver connection, language selection and periodic resend" />
@@ -233,6 +237,32 @@ five-to-ten-minute local build — but no timing has been measured yet.
 host that cannot reach `ghcr.io`.
 
 The System tab shows which version is running.
+
+Since 0.3.0 you can do this from the browser instead: **System → Version**
+shows what is running, tells you when a newer version is available, and
+installs it at the press of a button. A backup is taken first; if the new
+version does not come up healthy, it rolls itself back and the previous
+version keeps running. The bridge itself is unreachable for about a
+minute while this happens — the page says so plainly and reconnects on
+its own once the new version answers.
+
+This needs the `loxmatter-updater` service from the compose file. An
+installation that predates 0.3.0 does not have it yet; bring it in once
+from the console, the same way as any other update:
+
+```bash
+cd ~/loxmatter && git pull && ./scripts/update.sh
+```
+
+That service is worth understanding before you rely on it: it holds the
+Docker socket, and is therefore root-equivalent on the host — the same
+level of trust `docker compose` itself already runs at. It has no ports
+and no host network; it talks to the bridge only through files in a
+shared volume, and it never runs text from a request as a command. What
+it can do is install a published loxmatter version, and nothing else. If
+you would rather not have it on your host, delete the service from the
+compose file — the bridge notices it is gone and points you back to the
+console path above.
 
 ## 🗺 Status
 

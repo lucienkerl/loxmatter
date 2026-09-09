@@ -8,6 +8,26 @@ code, at the moment they decide whether to update. Write it for them.
 
 ## [Unreleased]
 
+### Added
+
+- **System → Version can now install updates by itself.** It shows what
+  is running, tells you when a newer published version is available, and
+  a button installs it after you confirm — a backup of the signal
+  database is taken first. The bridge is unreachable for about a minute
+  while it restarts; the page says so and reconnects on its own once it
+  answers again. If the new version does not report itself healthy within
+  two minutes, it is rolled back automatically and the version you had
+  keeps running — this happens once per attempt, not repeatedly, and the
+  database is left as it was, not rolled back with it.
+- This needs the new `loxmatter-updater` service from the compose file.
+  An installation from before this release does not have it yet and
+  needs the console once to bring it in: `git pull && ./scripts/update.sh`.
+  Afterwards, updates work from the browser like any newer installation.
+  Without that service — or after removing it — the System tab still
+  names the running version and points back to the console path.
+- An update channel setting (Stable, the default, or Development) next to
+  the button, for anyone who wants early access to unreleased changes.
+
 ## [0.2.0] — 2026-09-08
 
 ### Added

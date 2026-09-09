@@ -75,6 +75,73 @@ is unaffected by this – the runtime path sends regardless of the checkbox
 anyway; what is affected is only a **newly** generated template after the
 update.
 
+## When an update goes wrong
+
+An update installed through the web UI (`loxmatter-updater`, see the
+README's [Updating](../README.md#updating) section) rolls itself back once
+if the new version does not report healthy within
+`LOXMATTER_HEALTH_TIMEOUT` seconds (120 by default, see
+[`deploy/testhost/docker-compose.yml`](../deploy/testhost/docker-compose.yml)).
+Details and rationale:
+[webui-updates design, section 8](superpowers/specs/2026-09-08-webui-updates-design.md#8-der-ablauf-im-updater).
+
+**`LETZTER-FEHLSCHLAG.txt`** ("last failure" — the German name is a fixed
+identifier, not a translation gap) is written whenever an update ends in
+failure — **including when the rollback itself succeeded** and the old
+version is running again; it is written just as much on that outcome as on
+one where even the rollback did not come up healthy. It lives at
+`/data/update/LETZTER-FEHLSCHLAG.txt` **inside** the container — the same
+named volume (`loxmatter-store`) that `loxmatter` mounts at `/data` and
+`loxmatter-updater` mounts at `/data` too, so either container can read it:
+
+```bash
+docker exec loxmatter cat /data/update/LETZTER-FEHLSCHLAG.txt
+```
+
+It names the version that was attempted, the version now running, whether
+the rollback made it healthy, the backup path, and — copy-pasteable, for
+running from the host shell, not from inside a container — the commands to
+inspect the log, retry the update, or restore the backup by hand. It is
+removed at the start of the next update attempt, successful or not, so an
+old copy never lingers to be mistaken for a fresh failure.
+
+**Backups** are plain `tar` archives of the signal database, taken right
+before every attempt, at `/data/backups/store-<UTC timestamp>.tgz` — also
+inside the shared volume, not a host path, so reach them the same way:
+
+```bash
+docker exec loxmatter-updater ls -la /data/backups/
+```
+
+The ten most recent are kept; older ones are pruned automatically after
+each successful update.
+
+**The database is deliberately not rolled back together with the image.**
+An older loxmatter binary starts up fine on a newer database schema — it
+simply does not read or write whatever the newer version added — so
+restoring the pre-update backup on a rollback would trade a smaller problem
+(some new columns sit unused) for a bigger one (every signal value, room
+assignment and export checkbox change made since that backup was taken is
+gone). Concretely: if the release that failed to come up healthy also
+raised the schema, a rollback leaves that raised schema in place under the
+old binary that is now running again. Nothing breaks — the old binary
+ignores what it does not know about — but nothing added by that schema
+change is populated either, until a later update actually completes.
+Restoring the database backup instead is a call only a human should make,
+with the tradeoff above in view; the exact command for it is in
+`LETZTER-FEHLSCHLAG.txt` itself, generated fresh for that specific failure.
+
+**Falling back to the console** works regardless of what state the updater
+left things in — it is the same path an installation without
+`loxmatter-updater` uses for every update:
+
+```bash
+cd ~/loxmatter && git pull && ./scripts/update.sh
+```
+
+This is also the answer if the web UI itself is unreachable: the console
+path only needs a host shell, not a running bridge.
+
 ## Access control
 
 The service binds to `0.0.0.0` by default (`--host`) so that the Miniserver

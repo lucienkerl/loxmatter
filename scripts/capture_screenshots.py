@@ -23,11 +23,16 @@ Ansichten ab und legt die Bilder unter docs/screenshots/ ab. Jedes Bild
 zeigt nur den Bereich, von dem seine Bildunterschrift im README spricht -
 warum, steht bei `shoot()`.
 
-REPRODUZIERBAR sind sechs der sieben Bilder: die Demo-Datenbank faellt bei
+REPRODUZIERBAR sind sieben der acht Bilder: die Demo-Datenbank faellt bei
 jedem Start neu an, und alle gesaeten Zeitstempel stehen auf
 `DEMO_TIMESTAMP` (siehe dev_web_server.py) statt auf der Wanduhr. Zweimal
 aufgerufen entstehen dort byte-gleiche Dateien; ein Diff bedeutet also eine
-echte Aenderung und darf nicht als Rauschen weggewinkt werden.
+echte Aenderung und darf nicht als Rauschen weggewinkt werden. `update.png`
+gehoert zu den sieben: `_seed_update_dir()` unten schreibt sein eigenes
+`state.json` in ein eigenes `--update-dir`, unabhaengig von
+`dev_web_server.py`s eigener Demo-Saat, und begruendet dort auch, warum es
+den Update-Knopf mitten im Lauf zeigt statt im Zustand "Update verfuegbar" -
+Letzterer braeuchte einen echten GitHub-Abruf.
 
 NICHT reproduzierbar ist `system.png`. Sein Kommando-Log zeigt die
 HTTP-Anfragen dieses Laufs selbst, auf die Mikrosekunde genau - das
@@ -49,10 +54,12 @@ pyproject.toml - sie wird nur zum Neuerzeugen dieser Bilder gebraucht.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
@@ -62,6 +69,11 @@ SHOTS = ROOT / "docs" / "screenshots"
 PORT = 8420
 BASE = f"http://127.0.0.1:{PORT}"
 PASSWORD = "loxmatter-demo"
+# Eigenes Verzeichnis, getrennt von `dev_web_server.py`s eigenem
+# `--demo`-Standard (der ein `state.json` fuer den Zustand "fertig" saet,
+# siehe dort `_seed_demo_update_dir`) - dieses Skript will einen laufenden
+# Job zeigen, siehe `_seed_update_dir()` unten.
+UPDATE_DIR = Path(tempfile.gettempdir()) / "loxmatter-screenshot-update"
 
 # `main` ist per CSS auf 960 px begrenzt, ein breiteres Fenster erzeugt also
 # nur grauen Rand. 820 px lassen die Inhaltsspalte selbst die Breite bestimmen
@@ -105,6 +117,55 @@ _RESOLVE_JS = """
     return document.querySelector(spec);
   }
 """
+
+
+def _seed_update_dir(update_dir: Path) -> None:
+    """Writes the `state.json` behind `update.png` - a job partway
+    through, not the "update available" state a first draft of this
+    screenshot's caption assumed.
+
+    That state needs `updateAvailable.target` set, which only ever comes
+    from a real `GET /api/update/check` round trip to GitHub (see
+    `api/update.py`) - `--demo` switches checking off precisely so every
+    OTHER screenshot stays free of that dependency (see
+    `dev_web_server.py`'s own `_seed_demo_update_dir`). Producing
+    "available" here would mean either a live network call - this
+    script's own reproducibility promise, gone - or a second, made-up
+    code path standing in for what the check endpoint would have said.
+    Neither is worth it for a screenshot whose only job is to show what
+    pressing the button looks like.
+
+    `phase: "health"` instead: the last of the four running steps, and
+    the one the README's "unreachable for about a minute" sentence is
+    about. It is also the more informative picture of the two - the step
+    list, the version being installed and the restarting message all show
+    at once, none of which "available" shows on its own.
+
+    Written to its OWN `--update-dir` (see `UPDATE_DIR` above), not the
+    directory `dev_web_server.py --demo` seeds by itself: passing
+    `--update-dir` explicitly is exactly the "developer takes manual
+    control" escape hatch that flag documents there, and it also keeps
+    this seed off of `--demo`'s own rmtree-then-reseed cleanup, which
+    would otherwise overwrite it with the "done" state on every run.
+
+    Same shape and the same 0.2.0 -> 0.3.0 pair as
+    `dev_web_server.py._seed_demo_update_dir` - and the same reasoning for
+    a fresh `updater_seen_at` on every call: `update.updater_present`
+    reads anything older than 30 seconds as absent, so a frozen timestamp
+    would make the card fall back to "no updater" the moment it went
+    stale. Nothing in the interface displays the value itself."""
+    update_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "id": "screenshot-update-job",
+        "phase": "health",
+        "from": "0.2.0",
+        "to": "0.3.0",
+        "error": None,
+        "rolled_back": False,
+        "healthy": True,
+        "updater_seen_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    (update_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
 def shoot(
@@ -313,6 +374,13 @@ def capture(page: Page) -> None:
     # ist. Die Reiterleiste liegt damit ausserhalb; das ist dieselbe Abwaegung
     # wie bei `dashboard.png` und hat denselben Ausgleich.
     select_view(page, "System")
+    # `_seed_update_dir()` above seeded a running job (phase "health")
+    # before the server even started, so this is already on screen the
+    # instant `loadSystem()`'s `loadUpdateStatus()` call resolves;
+    # `.steps` only exists once that render happened, so waiting for it
+    # replaces a guessed timeout with the actual state Alpine is in.
+    page.wait_for_selector(".steps", timeout=5000)
+    shoot(page, "update", "card:Version")
     shoot(page, "system", "card:Live diagnostics", "card:Command log")
 
     select_view(page, "Settings")
@@ -380,6 +448,7 @@ def capture(page: Page) -> None:
 
 
 def main() -> int:
+    _seed_update_dir(UPDATE_DIR)
     server = subprocess.Popen(
         [
             sys.executable,
@@ -387,6 +456,8 @@ def main() -> int:
             "--demo",
             "--port",
             str(PORT),
+            "--update-dir",
+            str(UPDATE_DIR),
         ]
     )
     try:
