@@ -429,3 +429,50 @@ rollback.
 There is nothing to update as long as there is no published version
 to update to. Whoever starts with stage 2 builds a button they cannot trigger,
 and tests the rollback against an image that does not exist.
+
+## 16. What ships without, as of 0.3.5
+
+The feature works: the sidecar, the file protocol, the three rules, the
+five steps with their rollback, the three routes and the tile. This section
+is the ledger of what the sections above ask for and the code does not do,
+so nobody has to derive it by reading both. Each was left out deliberately.
+
+- **The schema-version pre-check** of section 8. The string is written and
+  translated (`web.system.update_confirm_schema`) and referenced by nothing.
+  Note the shape of the problem before implementing it: the confirmation is
+  shown *before* the request is written, so the answer has to come from the
+  sidecar — the bridge holds no Docker socket to inspect a target image
+  with — and the file protocol has no round trip for a question asked before
+  a job starts.
+- **Digest pinning of the sidecar image** (sections 6 and 10). The Compose
+  file names `:stable`. Section 10 counts digest pinning among four things
+  that make holding the Docker socket acceptable in this container; three
+  of the four hold.
+- **`GET /api/version` naming matter-server's and otbr's running images**
+  (section 4). It returns the bridge's own build identity only. There is no
+  channel through which the bridge could ask the sidecar for them.
+- **The development channel.** The switch is hidden in the interface on
+  purpose: `update-once.sh` writes a bare commit SHA as the image tag, and
+  CI publishes dev builds as `:sha-<short>`, so the tag it writes names an
+  image that was never pushed. The comment at the hidden control lists what
+  must be fixed before it comes back; a third item belongs on that list, the
+  `merge-base --is-ancestor` that runs against `HEAD` rather than against
+  the running image's own commit, which is the one place this feature still
+  takes the checkout's word for what is running (section 4 forbids that by
+  name). Reachable today only through `PATCH /api/update/settings`.
+
+There is also a class of coupling this feature carries without a check: a
+constant, path or name that appears in two places and must agree. The
+sidecar's health-check port against the bridge's `--listen`; the `loxmatter`
+service name, which `scripts/update.sh` guards with a `grep` and the sidecar
+does not; `.env`'s default tag against Compose's own `${LOXMATTER_IMAGE_TAG:-stable}`;
+the seven characters of `sha[:7]` against whatever length `git rev-parse
+--short` actually returns.
+
+That class is worth naming because it is where this feature's real defects
+have come from. Every one found so far was found by a person putting two
+files side by side, never by a test — including the `.env` lookup that
+recreated the bridge without a Miniserver address while the tile reported
+success. Where such a pair can be tied by a test, tie it:
+`test_the_heartbeat_refreshes_well_inside_the_bridges_staleness_window`
+reads the shell constant and the Python one and fails if the margin closes.
