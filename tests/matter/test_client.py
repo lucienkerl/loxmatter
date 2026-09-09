@@ -1205,3 +1205,78 @@ async def test_an_availability_update_without_new_paths_touches_no_handler():
 
     assert handler.snapshot_calls == []
     assert handler.availability_calls == [(5, True)]
+
+
+class DyingUpstream(FakeUpstream):
+    """A listener that signals readiness and then dies.
+
+    Exactly the case from the operational outage of 8 September 2026: the
+    connection is up, `connect()` has long since returned, and then the
+    websocket drops. `FakeUpstream(fail_connect=True)` does NOT model this -
+    that one fails before readiness and is cleaned up by `_start_listener`
+    before a client even comes into existence.
+    """
+
+    async def start_listening(self, init_ready=None) -> None:
+        self.start_listening_calls += 1
+        self._nodes = self._configured_nodes
+        if init_ready is not None:
+            init_ready.set()
+        # Yield several times so that `connect()` can take the task over
+        # before it ends - a single `asyncio.sleep(0)` empirically does NOT
+        # suffice: `_start_listener`'s `asyncio.wait(..., FIRST_COMPLETED)`
+        # only notices the readiness signal two event-loop rounds later, and
+        # only then does it check whether this task is already done. With
+        # fewer rounds the task is already finished by the time
+        # `_start_listener` returns it, and the test would be checking a
+        # different case.
+        # The coupling to `_start_listener` is fail-loud: should the three no
+        # longer suffice after a rework, `assert bridge.connected is True` in
+        # the first test below fails immediately - it cannot go hollow on us.
+        for _ in range(3):
+            await asyncio.sleep(0)
+        raise ConnectionResetError("websocket gone")
+
+
+async def test_connected_becomes_false_when_the_listener_dies():
+    """`connected` so far only said whether `connect()` had run.
+
+    The old condition was `self._upstream is not None` - set in `connect()`,
+    cleared solely by `disconnect()`. When the websocket died, it stayed
+    put, and the `matter-server` diagnostics item reported "Connected" while
+    no value arrived any more and every /cmd failed with 502.
+    """
+    upstream = DyingUpstream()
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: FakeSession(),
+    )
+    await bridge.connect()
+    assert bridge.connected is True
+
+    # Give the listener task a chance to actually die.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert bridge.connected is False
+
+
+async def test_wait_for_link_loss_returns_when_the_listener_dies():
+    upstream = DyingUpstream()
+    bridge = BridgeMatterClient(
+        url="ws://test/ws",
+        session_factory=lambda _session: upstream,
+        http_session_factory=lambda: FakeSession(),
+    )
+    await bridge.connect()
+
+    # Returns instead of hanging - and does NOT re-raise the listener's
+    # exception: the caller wants to know THAT the connection is gone.
+    await asyncio.wait_for(bridge.wait_for_link_loss(), timeout=1.0)
+
+
+async def test_wait_for_link_loss_returns_immediately_without_a_listener():
+    """A client that never connected must not hang here."""
+    bridge, _upstream = make_connected_pair()
+    await asyncio.wait_for(bridge.wait_for_link_loss(), timeout=1.0)
