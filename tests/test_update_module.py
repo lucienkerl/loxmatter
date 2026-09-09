@@ -190,6 +190,85 @@ def test_after_a_finished_update_a_new_one_goes_through(tmp_path):
     assert request_update(tmp_path, channel="stable", target="0.4.0")
 
 
+def test_a_second_call_before_the_sidecar_wakes_does_not_destroy_the_first(tmp_path):
+    # The sidecar only updates state.json from its two-second poll loop.
+    # In the window before that poll wakes, state.json still reports
+    # whatever end state preceded the first request - "idle" here - so
+    # the busy check on phase alone cannot see that a request is already
+    # sitting in request.json, unread. Proven end to end first (see
+    # test_two_calls_in_the_window_used_to_silently_lose_the_first_job
+    # below, kept as a permanent regression guard): without this
+    # refusal, the second call's os.replace overwrote the first job's
+    # request.json, and that job's id - already handed back to its
+    # caller - was never written anywhere else again.
+    _state(tmp_path, id=None, phase="idle")
+    erste = request_update(tmp_path, channel="stable", target="0.3.0")
+    with pytest.raises(UpdateBusyError):
+        request_update(tmp_path, channel="stable", target="0.4.0")
+    body = json.loads((tmp_path / "request.json").read_text(encoding="utf-8"))
+    assert body["id"] == erste
+
+
+def test_a_request_the_sidecar_has_already_reflected_in_state_is_not_pending(tmp_path):
+    # request.json's id equals state.json's id: the sidecar has already
+    # caught up with this exact request (whatever its current phase), so
+    # a new call must not be blocked by a stale request.json still lying
+    # around.
+    (tmp_path / "request.json").write_text(
+        json.dumps({"id": "erste", "channel": "stable", "target": "0.3.0", "requested_at": "x"}),
+        encoding="utf-8",
+    )
+    _state(tmp_path, id="erste", phase="done")
+    assert request_update(tmp_path, channel="stable", target="0.4.0")
+
+
+def test_a_request_already_marked_handled_is_not_pending(tmp_path):
+    # The handled/<job-id> marker is written the moment the sidecar
+    # ACCEPTS a request - before state.json necessarily reflects it, and
+    # surviving even a later state.json reset. A stale request.json
+    # naming an already-handled id must not block a new request either.
+    (tmp_path / "request.json").write_text(
+        json.dumps({"id": "erste", "channel": "stable", "target": "0.3.0", "requested_at": "x"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "handled").mkdir()
+    (tmp_path / "handled" / "erste").touch()
+    _state(tmp_path, id=None, phase="idle")  # simulates a state.json reset
+    assert request_update(tmp_path, channel="stable", target="0.4.0")
+
+
+def test_a_missing_handled_directory_is_not_a_crash(tmp_path):
+    # A fresh installation - or a bridge started before the sidecar's own
+    # first pass - has no handled/ directory at all yet. That must read
+    # as "nothing has ever been marked handled", not raise.
+    (tmp_path / "request.json").write_text(
+        json.dumps({"id": "fremd", "channel": "stable", "target": "0.3.0", "requested_at": "x"}),
+        encoding="utf-8",
+    )
+    assert not (tmp_path / "handled").exists()
+    _state(tmp_path, id=None, phase="idle")
+    with pytest.raises(UpdateBusyError):
+        request_update(tmp_path, channel="stable", target="0.4.0")
+
+
+def test_an_unparseable_request_file_does_not_block_a_new_request(tmp_path):
+    # The sidecar's own "request is not readable" branch rejects such a
+    # file outright and never marks it handled - it will never be acted
+    # on. Blocking new requests on it forever would lock a caller out
+    # permanently over a job that was never going anywhere.
+    (tmp_path / "request.json").write_text('{"id": "unvollst', encoding="utf-8")
+    _state(tmp_path, id=None, phase="idle")
+    assert request_update(tmp_path, channel="stable", target="0.4.0")
+
+
+def test_a_request_file_without_a_usable_id_does_not_block_a_new_request(tmp_path):
+    # Valid JSON, but not an object with a string id - same "the sidecar
+    # will only ever reject this" reasoning as the unparseable case.
+    (tmp_path / "request.json").write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    _state(tmp_path, id=None, phase="idle")
+    assert request_update(tmp_path, channel="stable", target="0.4.0")
+
+
 def test_the_job_is_written_atomically(tmp_path, monkeypatch):
     """The sidecar reads every two seconds. If it saw the file half
     written, it would reject a valid request as invalid - and because it

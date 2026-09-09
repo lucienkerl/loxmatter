@@ -36,13 +36,28 @@ exactly `id`, `phase`, `from`, `to`, `error`, `rolled_back`, `healthy` and
 `updater_seen_at` (see `set_state()` there), and the phases that count as
 "still running" are exactly `queued`, `backup`, `pull`, `recreate`,
 `health` and `rollback` - every other phase (`idle`, `rejected`, `done`,
-`failed`) is an end state that allows a new request. The `handled/<job-
-id>` marker the sidecar keeps (added to survive a `state.json` reset that
-would otherwise replay a finished job) is internal bookkeeping on the
-sidecar's side of the protocol only; nothing here needs to read it, since
-the sidecar - not this module - is the one thing that could re-run a
-request, and `phase` alone already tells this side everything it needs to
-know about whether one is in flight.
+`failed`) is an end state that allows a new request.
+
+`phase` alone is not the whole story, though: the sidecar only updates
+`state.json` from its two-second poll loop, so there is a real window -
+between a request being written and that poll waking up - in which
+`state.json` still reports whatever end state preceded it. A second
+`request_update()` call inside that window would see the same "not
+running" phase the first call saw, and its `os.replace` would silently
+overwrite `request.json` before the sidecar ever looked at it: the first
+job's id, already handed back to its caller, is then never written
+anywhere else, never logged, and never marked handled - it simply
+vanishes. `request_update()` closes that window itself (see
+`_pending_job_id()`) by also checking whether an existing request.json
+names a job that state.json has not yet caught up to and that
+`handled/<job-id>` (see below) does not yet cover; if so, it is treated
+as busy the same way a running phase is. The `handled/<job-id>` marker
+the sidecar keeps (added to survive a `state.json` reset that would
+otherwise replay a finished job, written the instant a request is
+accepted - see update-once.sh's `set_state queued ""` and the marker
+write right after it) is what lets that check tell "already picked up,
+whatever state.json currently says" apart from "still sitting there
+unread."
 """
 
 from __future__ import annotations
@@ -206,6 +221,55 @@ def updater_present(
     return abs((now - seen).total_seconds()) <= max_age_seconds
 
 
+def _pending_job_id(update_dir: Path, state: UpdateState | None) -> str | None:
+    """The id of a request the sidecar has not yet caught up to, or `None`.
+
+    `state.phase` only reflects reality once the sidecar's two-second
+    poll has woken up and read `request.json`; see the module docstring
+    for the overwrite this closes. A request counts as pending exactly
+    when `request.json` exists, carries a readable id, that id is not the
+    one `state.json` currently reports, and that id has no
+    `handled/<job-id>` marker - `handled/` being the sidecar's own record
+    of "already accepted," written at acceptance time regardless of
+    whether the job has since finished (update-once.sh, right after
+    `set_state queued ""`). Any of those three not holding means either
+    the sidecar has already reflected this request in state.json, or has
+    already accepted it into its pipeline (marker present) even if
+    state.json was since reset - in both cases nothing would be lost by
+    overwriting request.json now.
+
+    A `request.json` that cannot be parsed, is not a JSON object, or
+    carries no string id does NOT count as pending. The sidecar's own
+    "request is not readable" branch treats such a file identically: it
+    synthesises an id from the file's mtime and size and rejects it
+    outright, never accepting it and never marking it handled. Blocking
+    new requests on a file the sidecar itself will only ever reject would
+    trade one lost job for a caller permanently locked out by a request
+    nobody is ever going to act on - a strictly worse failure.
+    """
+    try:
+        raw = json.loads((update_dir / "request.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    job_id = raw.get("id")
+    if not isinstance(job_id, str) or not job_id:
+        return None
+    if state is not None and job_id == state.id:
+        return None
+    # `handled/` is created by the sidecar on first run (`mkdir -p
+    # "$UPDATE_DIR/handled"`), but this module must not assume it has run
+    # even once yet - a fresh installation, or a bridge started before
+    # the sidecar's own first pass, has no `handled/` directory at all.
+    # `Path.exists()` on a missing parent simply returns `False`, which is
+    # exactly the right answer here: no marker directory means no id has
+    # ever been marked handled.
+    if (update_dir / "handled" / job_id).exists():
+        return None
+    return job_id
+
+
 def request_update(update_dir: Path, *, channel: str, target: str) -> str:
     """Deposit a request for the sidecar and return its `id`.
 
@@ -218,8 +282,10 @@ def request_update(update_dir: Path, *, channel: str, target: str) -> str:
     within one filesystem, which the shared update volume always is here.
 
     Raises `UpdateBusyError` if the sidecar's last known phase is one of
-    the running phases (see `_RUNNING_PHASES`) - writing a second request
-    over the first would simply lose the first one, since the sidecar only
+    the running phases (see `_RUNNING_PHASES`), or if `request.json`
+    already names a request the sidecar has not yet caught up to (see
+    `_pending_job_id()`) - in both cases, writing a second request over
+    the first would simply lose the first one, since the sidecar only
     ever looks at request.json's current content, not a queue of past
     versions of it.
 
@@ -236,6 +302,9 @@ def request_update(update_dir: Path, *, channel: str, target: str) -> str:
     state = read_state(update_dir)
     if state is not None and state.phase in _RUNNING_PHASES:
         raise UpdateBusyError(state.phase)
+    pending = _pending_job_id(update_dir, state)
+    if pending is not None:
+        raise UpdateBusyError(pending)
 
     job_id = str(uuid.uuid4())
     body = {
