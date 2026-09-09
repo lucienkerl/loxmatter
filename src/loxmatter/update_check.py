@@ -88,6 +88,21 @@ def _as_tuple(version: str) -> tuple[int, ...] | None:
         return None
 
 
+def _normalize_tuples(
+    t1: tuple[int, ...], t2: tuple[int, ...]
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Zero-pad the shorter of two tuples to match the longer one's length.
+
+    This defends against inconsistent tagging discipline: a release tagged
+    v0.3.0 and a running version 0.3 are the same release written two ways,
+    and must compare as equal. Python's tuple comparison would otherwise sort
+    (0, 3) < (0, 3, 0), incorrectly flagging 0.3.0 as a newer update."""
+    max_len = max(len(t1), len(t2))
+    padded_t1 = t1 + (0,) * (max_len - len(t1))
+    padded_t2 = t2 + (0,) * (max_len - len(t2))
+    return padded_t1, padded_t2
+
+
 async def check(
     channel: str,
     *,
@@ -125,8 +140,13 @@ async def check(
             # is enforced again in the sidecar, but a button that gets
             # reliably rejected on every click is a broken button, not a
             # safeguard.
-            if current is not None and latest <= current:
-                return unavailable()
+            if current is not None:
+                # Normalize tuple lengths to handle versions with differing
+                # component counts (e.g., "0.3" and "0.3.0" are the same
+                # release written two ways, and must compare as equal).
+                latest_norm, current_norm = _normalize_tuples(latest, current)
+                if latest_norm <= current_norm:
+                    return unavailable()
             return Available(
                 channel,
                 tag,

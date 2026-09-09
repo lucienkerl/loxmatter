@@ -159,3 +159,29 @@ async def test_an_array_response_is_reported_not_crashed():
     result = await check("stable", current_version="0.2.0", current_commit=None, fetch=fetch)
     assert result.target is None
     assert result.error
+
+
+async def test_dev_channel_up_to_date_there_is_no_target():
+    # The dev channel guard `if ahead <= 0: return unavailable()` enforces
+    # the "forward only" safety property - anyone already on main, or ahead
+    # of it on a merged branch, must never be offered main as an update.
+    async def fetch(url):
+        return {"ahead_by": 0, "commits": []}
+
+    result = await check("dev", current_version="dev", current_commit="a3f91c2", fetch=fetch)
+    assert result.target is None
+    assert result.error is None
+
+
+async def test_equal_versions_under_different_component_counts():
+    # A release tagged v0.3.0 and a running version 0.3 are the same release
+    # written two ways. Zero-padding the shorter tuple before comparing
+    # ensures they sort as equal, not as "0.3 < 0.3.0" - the padding
+    # defends against tagging inconsistency that the maintainer might
+    # introduce later, rather than resting on current discipline.
+    async def fetch(url):
+        return {"tag_name": "v0.3.0", "name": "0.3.0", "body": ""}
+
+    result = await check("stable", current_version="0.3", current_commit=None, fetch=fetch)
+    assert result.target is None, "v0.3.0 and 0.3 are the same release"
+    assert result.error is None
