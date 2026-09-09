@@ -551,6 +551,7 @@ def _status_out(state: UpdateState | None, info: BuildInfo) -> UpdateStatusOut:
             from_version=None,
             to_version=None,
             error=None,
+            refused=False,
             rolled_back=False,
             healthy=False,
             updater_seen_at=None,
@@ -565,6 +566,10 @@ def _status_out(state: UpdateState | None, info: BuildInfo) -> UpdateStatusOut:
         from_version=state.from_version,
         to_version=state.to_version,
         error=_localized_error(state),
+        # See `UpdateStatusOut.refused`'s own docstring: `error_i18n_key`
+        # is set in exactly one place in `runner.run_update`, the
+        # `except RequestRejected` branch, and nowhere else.
+        refused=state.error_i18n_key is not None,
         rolled_back=state.rolled_back,
         healthy=state.healthy,
         updater_seen_at=state.updater_seen_at,

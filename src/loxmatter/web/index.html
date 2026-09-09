@@ -1689,10 +1689,28 @@
                    })"></p>
               </div>
             </template>
+            <!--
+              Three distinct outcomes share `phase: "failed"` (see
+              `updateFailureTextKey()` in app.js): a request refused
+              before anything ran, a step that failed and was rolled
+              back, or `roll_back` itself failing - the one case where the
+              operator has to go to the console. `updateFailureTextKey()`
+              is what tells the first and third apart, since both report
+              `rolled_back: false, healthy: false` on their own.
+            -->
             <template x-if="updateStatus && updateStatus.phase === 'failed'">
               <div>
                 <h3 x-text="t('web.system.update_result_failure_heading')"></h3>
-                <p x-text="t('web.system.update_result_failure_text', { version: updateStatus.running_version })"></p>
+                <p x-text="t(updateFailureTextKey(), { version: updateStatus.running_version })"></p>
+                <!-- Only the rolled-back outcome gets a second line, and
+                     even that only conditionally: the main sentence above
+                     never claims a live status this could contradict, so
+                     this exists to ADD the confirmed status, not correct
+                     it. -->
+                <p class="hint" x-show="updateStatus.rolled_back && updateStatus.healthy" x-cloak
+                   x-text="t('web.system.update_result_rollback_confirmed', { version: updateStatus.running_version })"></p>
+                <p class="hint danger-text" x-show="updateStatus.rolled_back && !updateStatus.healthy" x-cloak
+                   x-text="t('web.system.update_result_rollback_unconfirmed')"></p>
                 <p class="hint" x-show="updateStatus.error" x-cloak
                    x-text="t('web.system.update_result_error_detail', { reason: updateStatus.error })"></p>
               </div>

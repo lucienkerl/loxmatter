@@ -1366,8 +1366,8 @@ web.system.update_running_heading:
   en: "Updating…"
   de: "Wird aktualisiert…"
 web.system.update_rollback_hint:
-  en: "The update did not pass its health check — the previous version is being restored."
-  de: "Das Update hat die Gesundheitsprüfung nicht bestanden — die vorherige Version wird wiederhergestellt."
+  en: "The update did not go through, and the previous version is being restored."
+  de: "Das Update konnte nicht abgeschlossen werden, deshalb wird die vorherige Version wiederhergestellt."
 web.system.update_step_backup:
   en: "Back up"
   de: "Sichern"
@@ -1398,9 +1398,21 @@ web.system.update_result_success_text:
 web.system.update_result_failure_heading:
   en: "Update failed"
   de: "Update fehlgeschlagen"
-web.system.update_result_failure_text:
-  en: "The update did not come back healthy and was rolled back. The bridge is running {version} again."
-  de: "Die Gesundheitsprüfung nach dem Update ist fehlgeschlagen, deshalb wurde zurückgerollt. Die Brücke läuft wieder mit {version}."
+web.system.update_result_failure_text_refused:
+  en: "The update was refused before anything changed — the bridge is still running {version}."
+  de: "Das Update wurde abgelehnt, bevor sich etwas geändert hat — die Brücke läuft weiterhin mit {version}."
+web.system.update_result_failure_text_rolled_back:
+  en: "The update did not go through, so the previous version was restored."
+  de: "Das Update konnte nicht abgeschlossen werden, deshalb wurde die vorherige Version wiederhergestellt."
+web.system.update_result_rollback_confirmed:
+  en: "The bridge is running {version} again."
+  de: "Die Brücke läuft wieder mit {version}."
+web.system.update_result_rollback_unconfirmed:
+  en: "The bridge's health could not be confirmed after the rollback. If it stays unreachable, check the console — the update log and, if that also fails to explain it, LAST-FAILURE.txt in /data/update/ name what was restored and what to check next."
+  de: "Die Gesundheit der Brücke konnte nach dem Rückfall nicht bestätigt werden. Bleibt sie unerreichbar, an der Konsole nachsehen — das Update-Protokoll und, falls das auch nicht weiterhilft, LAST-FAILURE.txt in /data/update/ nennen, was wiederhergestellt wurde und was als Nächstes zu prüfen ist."
+web.system.update_result_failure_text_console:
+  en: "The update failed, and the automatic rollback did not complete either. This installation needs attention at the console — LAST-FAILURE.txt in /data/update/ names what was restored, the backup's location, and the commands to finish by hand."
+  de: "Das Update ist fehlgeschlagen, und auch der automatische Rückfall wurde nicht abgeschlossen. Diese Installation braucht Aufmerksamkeit an der Konsole — LAST-FAILURE.txt in /data/update/ nennt, was wiederhergestellt wurde, wo die Sicherung liegt, und welche Befehle von Hand nötig sind."
 web.system.update_result_error_detail:
   en: "Reported reason: {reason}"
   de: "Gemeldeter Grund: {reason}"

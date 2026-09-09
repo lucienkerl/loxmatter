@@ -3394,6 +3394,37 @@ function app() {
       return t(`web.system.update_step_${step}`);
     },
 
+    /**
+     * Which of the three outcomes `phase: "failed"` can mean - a single
+     * sentence used to claim "was rolled back... running {version} again"
+     * for all three of them (a review finding on this branch), which is
+     * false for two of them: a request refused before anything ran never
+     * touched the running installation at all, and `roll_back`'s own
+     * failure means the installation is NOT confirmed back on its
+     * previous version either.
+     *
+     * `status.refused` is the one field `GET /api/update/status` computes
+     * specifically for this (see `UpdateStatusOut`'s own docstring):
+     * `rolled_back`/`healthy` alone cannot tell "refused, nothing
+     * happened" apart from "`roll_back` itself failed, something DID
+     * happen and did not finish" - both report `rolled_back: false,
+     * healthy: false`. The `rolled_back: true` case (a step failed and
+     * the rollback ran) gets its own text too, with a second, conditional
+     * line for whether the confirmation poll afterward actually found the
+     * bridge healthy - see the two hint paragraphs in index.html that
+     * read `updateStatus.healthy` directly, right below this one.
+     */
+    updateFailureTextKey() {
+      const status = this.updateStatus;
+      if (!status || status.refused) {
+        return "web.system.update_result_failure_text_refused";
+      }
+      if (status.rolled_back) {
+        return "web.system.update_result_failure_text_rolled_back";
+      }
+      return "web.system.update_result_failure_text_console";
+    },
+
     updateAwaySeconds() {
       if (this.updateAwaySince === null) {
         return 0;

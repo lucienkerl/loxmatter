@@ -1165,6 +1165,114 @@ def test_the_shipped_result_state_reports_duration_without_a_server_field_and_sh
 
 
 @pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_shipped_failure_text_key_distinguishes_the_three_outcomes():
+    """`updateFailureTextKey()` (app.js) is the fix for a review finding on
+    this branch: one sentence used to cover every `phase: "failed"`,
+    claiming "was rolled back... running {version} again" even for a
+    request refused before anything ran and for a rollback that never
+    completed. `rolled_back`/`healthy` alone cannot tell a refused request
+    apart from `roll_back`'s own failure - both report `rolled_back: false,
+    healthy: false` - so `status.refused` (computed server-side by
+    `_status_out`, see `UpdateStatusOut`'s own docstring) is what this
+    function actually branches on for that pair; `rolled_back: true`
+    covers both possible values of `healthy`, which is the second
+    outcome's own conditional hint line's job, not this function's."""
+    values = _app_state(
+        setup="""
+        const out = {};
+        state.updateStatus = { refused: true, rolled_back: false, healthy: false };
+        out.refused = state.updateFailureTextKey();
+        state.updateStatus = { refused: false, rolled_back: true, healthy: true };
+        out.rolled_back_healthy = state.updateFailureTextKey();
+        state.updateStatus = { refused: false, rolled_back: true, healthy: false };
+        out.rolled_back_unhealthy = state.updateFailureTextKey();
+        state.updateStatus = { refused: false, rolled_back: false, healthy: false };
+        out.console_case = state.updateFailureTextKey();
+        state.updateStatus = null;
+        out.no_status = state.updateFailureTextKey();
+        console.log(JSON.stringify(out));
+        """
+    )
+    assert values["refused"] == "web.system.update_result_failure_text_refused"
+    # Both healthy and unhealthy land on the SAME key - the sub-case is
+    # rendered by a separate conditional hint line in index.html, not by
+    # this function returning a fourth key.
+    assert values["rolled_back_healthy"] == "web.system.update_result_failure_text_rolled_back"
+    assert values["rolled_back_unhealthy"] == "web.system.update_result_failure_text_rolled_back"
+    assert values["console_case"] == "web.system.update_result_failure_text_console"
+    # No status at all defaults to the same text as a refusal - there is
+    # nothing more specific to say, and it is never the console case
+    # (which requires a status that actually reports one).
+    assert values["no_status"] == "web.system.update_result_failure_text_refused"
+
+
+def test_the_three_failure_texts_resolve_to_genuinely_different_prose():
+    """Delivery alone (three strings exist in `strings.yaml`) would not
+    catch the actual defect: the three keys resolving to the SAME text, or
+    the "rolled back" text still claiming a live status ("is running
+    {version} again") the way the one sentence this replaces always did,
+    even when `healthy` was never confirmed. `updateFailureTextKey()`'s
+    own key-selection logic is checked separately, against `app.js`,
+    in `test_the_shipped_failure_text_key_distinguishes_the_three_
+    outcomes` above - this checks what the three keys it can return
+    actually resolve to, through the real `i18n.t()` the server itself
+    uses (no `node`, no browser needed: these are plain server-side
+    strings, resolved exactly the way `api.update._localized_error` and
+    every other i18n key in this codebase are)."""
+    from loxmatter import i18n
+
+    refused = i18n.t("web.system.update_result_failure_text_refused", version="0.3.0")
+    rolled_back = i18n.t("web.system.update_result_failure_text_rolled_back", version="0.3.0")
+    console_case = i18n.t("web.system.update_result_failure_text_console", version="0.3.0")
+    confirmed = i18n.t("web.system.update_result_rollback_confirmed", version="0.3.0")
+    unconfirmed = i18n.t("web.system.update_result_rollback_unconfirmed")
+
+    assert len({refused, rolled_back, console_case}) == 3, (refused, rolled_back, console_case)
+    assert "0.3.0" in refused
+    # The neutral "rolled back" sentence must not itself assert the bridge
+    # is running again - that claim lives only in the conditional
+    # `confirmed` line, shown in index.html only when `healthy` is
+    # actually true.
+    assert "running 0.3.0 again" not in rolled_back
+    assert "running 0.3.0 again" in confirmed
+    assert "0.3.0" not in unconfirmed
+    assert "console" in console_case.lower()
+    # Both languages resolve, and stay distinct in German too.
+    i18n.set_language("de")
+    try:
+        de_refused = i18n.t("web.system.update_result_failure_text_refused", version="0.3.0")
+        de_rolled_back = i18n.t(
+            "web.system.update_result_failure_text_rolled_back", version="0.3.0"
+        )
+        de_console_case = i18n.t("web.system.update_result_failure_text_console", version="0.3.0")
+    finally:
+        i18n.set_language("en")
+    assert len({de_refused, de_rolled_back, de_console_case}) == 3
+
+
+def test_the_rollback_in_progress_hint_does_not_claim_a_health_check_specifically():
+    """`web.system.update_rollback_hint` is shown for the whole of
+    `phase: "rollback"` (index.html, `x-show="updateStatus && updateStatus.
+    phase === 'rollback'"`), which `runner.py`'s own `roll_back` reaches
+    from ANY of five different triggers - a failed `backup`, `fetch`,
+    `checkout`, `pull` or `recreate`, in addition to the main health check
+    actually timing out (see `run_update`'s two call sites for
+    `roll_back`). The old text ("did not pass its health check") was true
+    for exactly one of those five plus the real one - wrong for the other
+    five sixths of the time a rollback can be running."""
+    from loxmatter import i18n
+
+    for language in ("en", "de"):
+        i18n.set_language(language)
+        try:
+            hint = i18n.t("web.system.update_rollback_hint")
+        finally:
+            i18n.set_language("en")
+        assert "health check" not in hint.lower()
+        assert "gesundheitsprüfung" not in hint.lower()
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
 def test_the_shipped_apply_update_sends_the_checked_channel_and_target_unchanged():
     """`applyUpdate()` must not re-derive channel/target itself:
     `updateCheck.latest` is already a valid `target` for both channels (the

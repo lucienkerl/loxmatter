@@ -508,7 +508,22 @@ class UpdateStatusOut(BaseModel):
     `updater_present` is computed, not read: `True` only while
     `updater_seen_at` is fresher than a few loop passes of the sidecar (see
     `api.update`'s module docstring) - design section 11's distinction
-    between "no update running" and "no updater installed"."""
+    between "no update running" and "no updater installed".
+
+    `refused` is also computed, not a plain copy: `True` exactly when
+    `state.error_i18n_key` was set, which happens in exactly one place
+    (`runner.run_update`'s `except RequestRejected` branch) and nowhere
+    else - so it is `True` only for a request refused by `rules.
+    check_request`/`check_ancestry` before a single command ran, never for
+    a step that failed or a rollback that did not complete. `error_i18n_key`
+    itself is not exposed here (it would be meaningless to a client that
+    cannot resolve it - `error` above is already the resolved text); this
+    boolean is the one bit of that distinction the web interface actually
+    needs, to tell a refused request (nothing changed) apart from
+    `rolled_back=False, healthy=False` for the other reason that
+    combination can mean - `roll_back`'s own failure, where something DID
+    change and did not finish (see `index.html`'s update tile, `phase:
+    "failed"` block)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -521,6 +536,7 @@ class UpdateStatusOut(BaseModel):
     from_version: str | None
     to_version: str | None
     error: str | None
+    refused: bool
     rolled_back: bool
     healthy: bool
     updater_seen_at: str | None
