@@ -320,23 +320,17 @@ services:
       # A subdirectory of the /repo mount above, not a mount point of its
       # own - update-once.sh's `compose()` helper `cd`s here before every
       # `docker compose` call, exactly as an operator would from the host.
-      # One consequence worth stating plainly: update-once.sh's
-      # `host_path_for` resolves a container path back to a host path by
-      # asking `docker inspect loxmatter-updater` for a mount whose
-      # DESTINATION matches verbatim - it does not walk up to a parent
-      # mount. /repo matches exactly (see the volume above) and resolves
-      # correctly; this path does not, being a subdirectory rather than a
-      # mount destination of its own, so LETZTER-FEHLSCHLAG.txt's "cd
-      # $host_stack" line falls back to that function's own "host path
-      # unknown - run docker inspect" text for the stack directory
-      # specifically, even though the repository checkout itself (/repo)
-      # resolves fine right next to it. A second bind mount of the same
-      # host directory onto this exact path would satisfy the lookup, but
-      # would also double-mount overlapping trees under two container
-      # paths for no purpose beyond flattering one diagnostic string -
-      # not a trade worth making. The fallback text plus the correctly
-      # resolved /repo line already give an operator reading the file
-      # enough to find the stack directory by hand.
+      # update-once.sh's `host_path_for()` resolves container paths back
+      # to where they live on the host by finding the LONGEST mount
+      # Destination that is a path-segment prefix of the requested path,
+      # then appending whatever remains. /repo matches exactly (see the
+      # volume above) and is itself a mount destination, so it resolves
+      # directly. This path (/repo/deploy/testhost) is a subdirectory of
+      # that mount, and resolves to the host's corresponding subdirectory
+      # under /repo's Source (since commit 2ef09d4; the previous version
+      # matched by verbatim equality only, which failed for exactly this
+      # case). The longest-prefix logic also handles nested mounts
+      # correctly - the most specific mount destination always wins.
       LOXMATTER_STACK: /repo/deploy/testhost
       LOXMATTER_REPO: /repo
       # Must match the `loxmatter` service's own key above - `running_version()`

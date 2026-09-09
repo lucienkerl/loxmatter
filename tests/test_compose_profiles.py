@@ -94,6 +94,15 @@ def test_the_updater_reaches_the_host_health_route() -> None:
     assert any("host-gateway" in str(h) for h in updater["extra_hosts"])
 
 
-def test_the_updater_is_pinned() -> None:
+def test_the_updater_does_not_use_latest() -> None:
+    # Checks that the sidecar image does not use the moving :latest tag.
+    # The tag configured is :stable, which is also a moving alias (see
+    # running_version()'s comment in update-once.sh on why "stable is not
+    # a version"), but unlike :latest, :stable is rare enough that
+    # accidentally pulling a different image on startup is acceptable:
+    # the sidecar changes rarely and is not versioned through the bridge's
+    # forward-only logic. The bridge itself (loxmatter) is pinned by
+    # semantic version through the update mechanism; this sidekick does not
+    # need that same strictness.
     image = _stack()["services"]["loxmatter-updater"]["image"]
     assert "@sha256:" in image or ":latest" not in image
