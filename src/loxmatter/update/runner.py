@@ -42,6 +42,19 @@ from loxmatter.update.rules import RequestRejected, check_request, image_referen
 DEADLINE_SECONDS = 120.0
 POLL_SECONDS = 2.0
 
+#: How often `_wait_for_health` republishes `state.json` while it polls,
+#: expressed as a multiple of `POLL_SECONDS`. The wait can run for the
+#: whole two-minute deadline without a single publish otherwise, and
+#: `api/update.py`'s `_updater_present` treats a stamp older than five
+#: `LOOP_INTERVAL_SECONDS` (ten seconds) as "no updater installed" -
+#: exactly the wrong answer while an update is running normally.
+#: Refreshing on every poll would mean up to sixty extra atomic writes
+#: into the shared directory on an SD card over one wait, for a value
+#: nothing reads that often; every fourth poll (eight seconds) still
+#: clears the ten-second staleness margin by two seconds, enough to
+#: absorb one slow write without the wait reading as a dead updater.
+HEALTH_REFRESH_POLLS = 4
+
 #: The four steps the interface names while it waits. `fetch` and
 #: `checkout` fold into `pull` on purpose - they are one thing to a person
 #: watching ("it is getting the new version"), and four named steps beat a
@@ -118,6 +131,19 @@ def run_update(
             # could not be updated.
             pass
         return state
+
+    def wait_for_health(*, waiting_phase: UpdatePhase, error: str | None) -> bool:
+        """Wraps `_wait_for_health`, republishing `state.json` every
+        `HEALTH_REFRESH_POLLS` polls so `updater_seen_at` keeps moving
+        during a wait that can run up to `deadline_seconds`. `waiting_phase`
+        and `error` are held constant across every refresh - the wait
+        itself does not change what is going on, only how long it has
+        been going on for."""
+
+        def refresh() -> None:
+            publish(waiting_phase, error=error)
+
+        return _wait_for_health(commands, sleep, deadline_seconds, refresh)
 
     try:
         check_request(
@@ -216,7 +242,7 @@ def run_update(
                 rolled_back=False,
                 healthy=False,
             )
-        recovered = _wait_for_health(commands, sleep, deadline_seconds)
+        recovered = wait_for_health(waiting_phase="rollback", error=reason)
         return publish("failed", error=reason, rolled_back=True, healthy=recovered)
 
     try:
@@ -252,7 +278,7 @@ def run_update(
         _log(commands, f"step failed: {failure!r}")
         return roll_back(str(failure))
 
-    if not _wait_for_health(commands, sleep, deadline_seconds):
+    if not wait_for_health(waiting_phase="health", error=None):
         # `_wait_for_health` already treats a raising `healthy()` as "not
         # healthy" (see its docstring), and that is what makes this branch
         # reachable at all: a real `healthy()` polling `/health` over HTTP
@@ -266,7 +292,10 @@ def run_update(
 
 
 def _wait_for_health(
-    commands: Commands, sleep: Callable[[float], None], deadline_seconds: float
+    commands: Commands,
+    sleep: Callable[[float], None],
+    deadline_seconds: float,
+    refresh: Callable[[], None],
 ) -> bool:
     """Poll until healthy or the deadline passes.
 
@@ -285,8 +314,16 @@ def _wait_for_health(
     caller means a rollback runs at all, and for `roll_back` means
     `healthy=False` is published instead of the exception escaping
     `run_update` and leaving `state.json` frozen.
+
+    `refresh` is called every `HEALTH_REFRESH_POLLS` polls, not on every
+    one - see that constant's docstring for the cadence tradeoff. It is
+    never called before the first poll: `run_update` has just published a
+    fresh stamp for the phase this wait belongs to (`recreate` before the
+    main wait, `rollback` before the confirmation wait), so the stamp is
+    already current when the wait begins.
     """
     waited = 0.0
+    polls = 0
     while waited < deadline_seconds:
         try:
             if commands.healthy():
@@ -295,4 +332,7 @@ def _wait_for_health(
             pass
         sleep(POLL_SECONDS)
         waited += POLL_SECONDS
+        polls += 1
+        if polls % HEALTH_REFRESH_POLLS == 0:
+            refresh()
     return False

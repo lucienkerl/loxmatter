@@ -26,7 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from loxmatter.update.protocol import UpdateRequest, read_state
-from loxmatter.update.runner import STEPS, run_update
+from loxmatter.update.runner import HEALTH_REFRESH_POLLS, POLL_SECONDS, STEPS, run_update
 
 
 class FakeCommands:
@@ -579,3 +579,93 @@ def test_a_log_failure_during_a_failing_step_and_rollback_does_not_escape(tmp_pa
     assert state.phase == "failed"
     assert state.rolled_back is False
     assert commands.lines == []
+
+
+#: One poll past the refresh boundary, so a wait this long is guaranteed
+#: to observe both the pre-refresh state (the phase `run_update` had
+#: already published before the wait started) and the post-refresh one
+#: (what `_wait_for_health` republishes at `HEALTH_REFRESH_POLLS`
+#: polls in). See `runner.HEALTH_REFRESH_POLLS`'s docstring for the
+#: cadence this is derived from, not hard-coded against.
+_PAST_ONE_REFRESH = (HEALTH_REFRESH_POLLS + 1) * POLL_SECONDS
+
+
+def test_the_stamp_advances_during_a_long_health_wait(tmp_path):
+    """`api/update.py`'s `_updater_present` calls the updater gone once
+    `updater_seen_at` is more than ten seconds old. Before this fix,
+    `_wait_for_health` published nothing for up to the whole two-minute
+    deadline, so the stamp `run_update` wrote at `recreate` went stale
+    while the update was still running - and the worst possible moment,
+    because `recreate` is what just restarted the bridge the interface is
+    polling.
+
+    This drives a wait long enough to cross one refresh boundary and
+    records, at every poll, what `state.json` said via a `sleep` fake
+    that reads it back - a real `time.sleep` would have nothing to read
+    mid-wait, which is exactly the bug. The stamp recorded at the last
+    poll must differ from the one recorded at the first: refreshed, not
+    stuck.
+
+    `healthy_after` is set so the main wait never turns healthy, which
+    also means it runs out its deadline and triggers a rollback - whose
+    own confirmation wait keeps polling (and recording) after the main
+    wait is done. Only the first `polls_per_wait` recordings belong to
+    the main wait; the rollback wait's own stamp-advancing is the next
+    test's job."""
+    stamps: list[str | None] = []
+    phases: list[str | None] = []
+
+    def recording_sleep(_seconds: float) -> None:
+        state = read_state(tmp_path)
+        stamps.append(state.updater_seen_at if state is not None else None)
+        phases.append(state.phase if state is not None else None)
+
+    commands = FakeCommands(healthy_after=10_000)
+    run(commands, tmp_path, deadline_seconds=_PAST_ONE_REFRESH, sleep=recording_sleep)
+
+    polls_per_wait = HEALTH_REFRESH_POLLS + 1
+    main_phases = phases[:polls_per_wait]
+    main_stamps = stamps[:polls_per_wait]
+    assert len(main_phases) == polls_per_wait
+    # Before the refresh fires, the wait is still living off the
+    # `recreate` publish that preceded it.
+    assert main_phases[0] == "recreate"
+    # The last poll observes the refresh: the honest phase name for a
+    # wait that is checking `/health`, not still recreating anything.
+    assert main_phases[-1] == "health"
+    assert main_stamps[-1] != main_stamps[0]
+
+
+def test_the_stamp_advances_during_a_long_rollback_wait(tmp_path):
+    """Same defect, reached through `roll_back`'s own confirmation wait
+    (`runner.py:219` before this fix): a bridge that never comes back
+    healthy leaves `state.json` stuck at `phase: "rollback"` - not a
+    wrong phase this time (that name was already correct going in), but
+    a stamp that stops moving for up to two minutes regardless.
+
+    Both waits run here: the main one (never healthy, triggers the
+    rollback) and the rollback's own confirmation (also never healthy,
+    so it runs the full deadline too). `phases` therefore holds the main
+    wait's polls followed by the rollback wait's; only the second half is
+    checked."""
+    stamps: list[str | None] = []
+    phases: list[str | None] = []
+
+    def recording_sleep(_seconds: float) -> None:
+        state = read_state(tmp_path)
+        stamps.append(state.updater_seen_at if state is not None else None)
+        phases.append(state.phase if state is not None else None)
+
+    commands = FakeCommands(healthy_after=10_000)
+    state = run(commands, tmp_path, deadline_seconds=_PAST_ONE_REFRESH, sleep=recording_sleep)
+    assert state.phase == "failed"
+    assert state.rolled_back is True
+
+    polls_per_wait = HEALTH_REFRESH_POLLS + 1
+    rollback_phases = phases[polls_per_wait:]
+    rollback_stamps = stamps[polls_per_wait:]
+    assert len(rollback_phases) == polls_per_wait
+    # `rollback` throughout - the refresh keeps republishing the same
+    # phase it started with, not `health`; only `updater_seen_at` moves.
+    assert all(phase == "rollback" for phase in rollback_phases)
+    assert rollback_stamps[-1] != rollback_stamps[0]
