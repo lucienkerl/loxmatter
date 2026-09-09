@@ -6895,3 +6895,108 @@ def test_the_shipped_live_handler_does_not_credit_the_online_key():
     assert values["heartbeat_seen"] is True
     assert values["after_state"] == "number"
     assert values["text_after_state"] == "Last heard just now"
+
+
+# ---------------------------------------------------------------------------
+# Stale banners after a real bridge restart (session of 9 September 2026,
+# System tab after a browser update to 0.3.2). Both bugs below were visible
+# at once on the same screenshot: a red "bridge unreachable" banner next to
+# a header already reading "Live connection active", and a yellow "Version
+# X available"/"Install update" card next to the green "Now running: X" -
+# offering to install the version already running.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_a_successful_reconnection_clears_a_stale_bridge_unreachable_banner():
+    """Bug 1. During the bridge's own restart (an update, or any ordinary
+    outage), `handleLiveDisconnect()`'s own `loadAuthInfo()` call fails
+    outright - the HTTP server is gone along with the WebSocket - and its
+    generic catch lands `t("web.errors.bridge_unreachable")` in `authError`
+    (`requestJson`'s network-error catch, `loadAuthInfo`'s own catch).
+    `authenticated` stays untouched by that failure (it is not an
+    `UnauthorizedError`), so `handleLiveDisconnect` falls through to
+    `scheduleReconnect()` instead of giving up.
+
+    Nothing ever cleared the banner again once the bridge came back:
+    `loadAuthInfo()` only clears `authError` on ITS OWN success, and once
+    the socket alone reconnects successfully, nothing calls `loadAuthInfo()`
+    a further time - `connectLive()`'s `open` handler used to only flip
+    `socketConnected` and backfill devices. The header therefore read "Live
+    connection active" right next to a red banner about an outage that had
+    already ended.
+
+    A successful `open` is proof enough on its own that the message can only
+    be this stale CONNECTION text, never a genuine auth failure:
+    `build_api_guard` (loxone/server.py) rejects an unauthorized WebSocket
+    handshake before it ever reaches `open`, and a genuine auth failure
+    always flips `this.authenticated` to `false` first (`noteAuthError`,
+    `handleLiveDisconnect`'s own `if (!this.authenticated)` branch) and
+    sends the page to the login screen well before any reconnection could
+    succeed. The fix clears `authError` in the `open` handler only while
+    `this.authenticated` is still `true` - the same distinction
+    `handleLiveDisconnect` already draws a few lines away, not a blanket
+    clear.
+
+    Two scenarios against the real, shipped `connectLive()`, in one node
+    process:
+      1. The outage case above - `authenticated` stays `true` throughout,
+         and the stale message must be gone once `open` fires.
+      2. The genuine-auth case, played directly against the same `open`
+         handler to pin the guard itself: with `authenticated` already
+         `false` and a real session-expired message in `authError` (exactly
+         what `handleLiveDisconnect`'s own branch sets), `open` firing must
+         leave it completely alone.
+
+    Before the fix, `connection_error_cleared` below reads the stale
+    "bridge unreachable" sentence instead of `None`.
+    """
+    values = _app_state(
+        """
+        globalThis.window = {
+          location: { protocol: "http:", host: "example.invalid" },
+          setTimeout: () => 0,
+          clearTimeout: () => {},
+        };
+        const sockets = [];
+        globalThis.WebSocket = class {
+          constructor() {
+            this.listeners = {};
+            sockets.push(this);
+          }
+          addEventListener(type, handler) {
+            (this.listeners[type] = this.listeners[type] || []).push(handler);
+          }
+          close() {}
+        };
+        const openSocket = (socket) => {
+          for (const handler of socket.listeners.open || []) handler();
+        };
+
+        const out = {};
+
+        // Scenario 1: an outage that has just ended. `socketEverConnected`
+        // stays false so the `open` handler does not also reach for
+        // `loadDevices()`/`this.request`, which is not this test's concern.
+        state.authenticated = true;
+        state.authError = "The bridge is unreachable \\u2013 it may not be running.";
+        state.connectLive();
+        openSocket(sockets[0]);
+        out.connection_error_cleared = state.authError;
+        out.socket_connected = state.socketConnected;
+
+        // Scenario 2: a genuine auth failure must survive the exact same
+        // handler untouched.
+        state.authenticated = false;
+        state.authError = "Your session has expired. Please log in again.";
+        state.connectLive();
+        openSocket(sockets[1]);
+        out.auth_error_survives = state.authError;
+
+        console.log(JSON.stringify(out));
+        """
+    )
+
+    assert values["connection_error_cleared"] is None
+    assert values["socket_connected"] is True
+    assert values["auth_error_survives"] == "Your session has expired. Please log in again."

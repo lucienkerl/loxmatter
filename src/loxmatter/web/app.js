@@ -4061,6 +4061,32 @@ function app() {
 
       socket.addEventListener("open", () => {
         this.socketConnected = true;
+        // Clears a stale "bridge unreachable" banner (review finding,
+        // 2026-09-09): `handleLiveDisconnect()` (below) calls
+        // `loadAuthInfo()` on every drop, and DURING an outage that call's
+        // own request can fail outright (the HTTP server is gone along
+        // with this socket) - its generic catch then lands the
+        // `web.errors.bridge_unreachable` text in `authError`, and nothing
+        // ever ran `loadAuthInfo()` again to clear it once the socket
+        // alone reconnected: this `open` handler used to only flip
+        // `socketConnected` and backfill devices. The header then read
+        // "Live connection active" right next to a red banner about an
+        // outage that had already ended - not specific to updates, any
+        // transient network drop left the same stale text.
+        //
+        // Guarded by `this.authenticated` rather than cleared
+        // unconditionally, to keep this from ever touching a GENUINE auth
+        // failure: `noteAuthError` and `handleLiveDisconnect`'s own `if
+        // (!this.authenticated)` branch a few lines below both flip
+        // `authenticated` to `false` before putting such a message into
+        // `authError`, and a socket rejected for an invalid session never
+        // reaches `open` in the first place (`build_api_guard`,
+        // loxone/server.py, closes the handshake before that event can
+        // fire) - so a message still sitting in `authError` at this exact
+        // point can only be the stale connection text above.
+        if (this.authenticated) {
+          this.authError = null;
+        }
         // On a RE-connection, fetch the server's `last_heard` again
         // (final review, A2). Everything sent while the socket was down
         // never reached this tab, and `deviceHeardAt` is the tab's own
