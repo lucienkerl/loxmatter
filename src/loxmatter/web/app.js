@@ -3256,6 +3256,24 @@ function app() {
         // Fetch the version once more after the end: the card up top
         // should show the new number, not the one the page loaded with.
         this.versionInfo = await this.request("GET", "/api/version");
+        // Review finding, 2026-09-09: `updateAvailable` used to keep
+        // holding whatever offer this same job had just accepted -
+        // nothing re-ran `loadUpdateCheck()` when a job ended, so the card
+        // kept showing "Version X available" and an "Install update"
+        // button right beside the "Now running: X" banner this very block
+        // just made accurate above. This `this.updateTimer` truthy check
+        // is exactly the "a job WAS running and just reached a terminal
+        // phase" transition (see the comment above `updateRunning()`), so
+        // it covers `done` (offer installed, almost certainly gone now)
+        // AND `failed`/`rollback`'s own end state (the offer may well
+        // still be valid, and the whole point of refreshing here is
+        // letting the user retry with a check that reflects reality,
+        // rather than leave them looking at a now-stale offer either way).
+        // A plain rejection never runs this branch at all if it never
+        // passed through a running phase - `updateStatus?.state?.phase
+        // === 'rejected'` (index.html) already renders on its own from
+        // `updateStatus` alone, no offer refresh needed for that case.
+        await this.loadUpdateCheck();
       }
     },
 

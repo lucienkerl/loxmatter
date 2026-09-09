@@ -7000,3 +7000,74 @@ def test_a_successful_reconnection_clears_a_stale_bridge_unreachable_banner():
     assert values["connection_error_cleared"] is None
     assert values["socket_connected"] is True
     assert values["auth_error_survives"] == "Your session has expired. Please log in again."
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required for this test")
+def test_the_update_check_is_refreshed_once_the_update_reaches_a_terminal_state():
+    """Bug 2. `loadUpdateStatus()` used to never re-run `loadUpdateCheck()`,
+    so once an accepted update finished, `updateAvailable` still held the
+    offer the user had just accepted: the card rendered "Version X
+    available" and an "Install update" button right beside the green "Now
+    running: X" banner (the whole-branch review's own Minor finding, left
+    unfixed until this session's screenshot showed exactly that).
+
+    `loadUpdateStatus()` already has the one place a "was running, now
+    isn't" transition is detected: the `allowStop` branch at its very end,
+    which also re-fetches `versionInfo` for the same reason (the card
+    should show the NEW number, not the one the page loaded with). This
+    test plays two consecutive polls through the real, shipped
+    `loadUpdateStatus()` - one mid-job, one landing on `done` - and checks
+    that `loadUpdateCheck()` (stubbed to prove it is INVOKED, not merely
+    that state ends up looking plausible) fires exactly once, at the
+    transition, not on every poll.
+
+    A failed update gets the same refresh (not only `done`): the offer may
+    still be valid and the user may want to retry, per this task's own
+    brief - both `done` and `failed` are covered by the same "was running,
+    now the timer would otherwise stop" branch, deliberately not narrowed
+    to `phase === 'done'` alone.
+    """
+    values = _app_state(
+        """
+        let phase = "pull";
+        let updateCheckCalls = 0;
+        state.updateAvailable = { target: "1.1.0", error: null };
+        state.updateStatus = null;
+        state.request = async (method, path) => {
+          if (path === "/api/update/status") {
+            return {
+              state: { phase, id: "job-1", from: "1.0.0", to: "1.1.0",
+                       error: null, rolled_back: false, healthy: true },
+              updater_present: true, log: [], channel: "stable", check_enabled: true,
+            };
+          }
+          if (path === "/api/version") {
+            return { version: "1.1.0" };
+          }
+          throw new Error("unexpected request " + method + " " + path);
+        };
+        state.loadUpdateCheck = async () => {
+          updateCheckCalls += 1;
+          state.updateAvailable = { target: null, error: null };
+        };
+        (async () => {
+          // Mid-job: no transition yet, must not refresh the offer.
+          await state.loadUpdateStatus();
+          const callsWhileRunning = updateCheckCalls;
+
+          // The next poll lands on the terminal state.
+          phase = "done";
+          await state.loadUpdateStatus();
+
+          console.log(JSON.stringify({
+            callsWhileRunning,
+            callsAfterDone: updateCheckCalls,
+            updateAvailableAfterDone: state.updateAvailable,
+          }));
+        })();
+        """
+    )
+
+    assert values["callsWhileRunning"] == 0
+    assert values["callsAfterDone"] == 1
+    assert values["updateAvailableAfterDone"] == {"target": None, "error": None}
