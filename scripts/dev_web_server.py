@@ -28,14 +28,33 @@ Lauf findet denselben Bestand wieder, statt jedes Mal neu einzulernen.
 Mit `--demo` startet stattdessen der Modus fuer die README-Screenshots: vier
 Geraete mit englischen Namen, Passwort und Bridge-Einstellungen bereits
 vorbelegt, und die Datenbank wird bei jedem Start frisch angelegt, statt den
-Bestand wiederzuverwenden."""
+Bestand wiederzuverwenden.
+
+`--update-dir` (added for the updater's web UI card, design "Applying
+updates through the web UI", 2026-09-08): `build_app`'s own default for
+this parameter is `/data/update`, which matches the production volume
+mount but does not exist on a developer's machine - so without this flag
+the update card had no directory to read from at all and permanently
+showed "no updater", regardless of what a developer tried to put in
+`state.json`. This flag gives it a real, writable location instead, the
+same shape as `--store-path` above: pass your own path to drive the
+card's four states by hand (drop a `state.json`/`log.txt` there between
+runs), or omit it for a default directory under the temp dir that this
+script creates for you. `--demo` seeds that default directory itself
+(unless you also override it) with a completed update and switches
+update checking off, for the same reason `--demo` already freezes
+`exported_at`/`bridge_settings_saved_at` above: a screenshot of this
+card must not depend on the wall clock or a live GitHub response, or two
+runs would never produce the same picture."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import tempfile
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import uvicorn
@@ -180,6 +199,17 @@ def _parse_args() -> argparse.Namespace:
             "vorbelegt, Datenbank bei jedem Start frisch - fuer die README-Screenshots."
         ),
     )
+    parser.add_argument(
+        "--update-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory for the update sidecar's state.json/log.txt (default: a "
+            "directory under the temp dir, NOT build_app's own production default "
+            "/data/update, which does not exist here). --demo seeds this directory "
+            "with a finished update unless you also pass this flag yourself."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -263,6 +293,36 @@ def _seed_values(store: Store, device_ids: list[int]) -> dict[str, float | bool]
     return values
 
 
+def _seed_demo_update_dir(update_dir: Path) -> None:
+    """Writes a `state.json` for a completed update - the one state of
+    the four (design "Applying updates through the web UI", 2026-09-08,
+    section 9) that needs nothing beyond this one file: no live job to
+    poll, and no dependence on `GET /api/update/check`'s real GitHub
+    round trip, which the other three depend on and which would make a
+    screenshot non-reproducible run to run (see this module's docstring).
+
+    `updater_seen_at` is deliberately `datetime.now(UTC)`, not a frozen
+    constant like `DEMO_TIMESTAMP` above: `update.updater_present` treats
+    a heartbeat older than 30 seconds as "nobody is reading this volume
+    anymore" (see `update.py`'s own `_MAX_SILENT_SECONDS`), so a fixed
+    past timestamp would make the card fall back to "no updater" the
+    moment it went stale. Nothing in the interface displays this value -
+    only `updater_present`'s boolean depends on it - so a fresh timestamp
+    on every run costs the reproducibility nothing."""
+    update_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "id": "demo-update-job",
+        "phase": "done",
+        "from": "0.2.0",
+        "to": "0.3.0",
+        "error": None,
+        "rolled_back": False,
+        "healthy": True,
+        "updater_seen_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    (update_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
 def main() -> None:
     args = _parse_args()
 
@@ -273,6 +333,18 @@ def main() -> None:
     store_path = args.store_path or Path(tempfile.gettempdir()) / default_name
     if args.demo and args.store_path is None:
         store_path.unlink(missing_ok=True)
+
+    # Same "own default path, wiped only when that default is actually
+    # used" shape as `store_path` above - an explicitly passed
+    # `--update-dir` is the developer taking manual control of the
+    # directory's contents (to drive a specific one of the four states by
+    # hand), and `--demo` must not override files it did not put there
+    # itself.
+    default_update_dir_name = "loxmatter-demo-update" if args.demo else "loxmatter-dev-update"
+    update_dir = args.update_dir or Path(tempfile.gettempdir()) / default_update_dir_name
+    if args.demo and args.update_dir is None:
+        shutil.rmtree(update_dir, ignore_errors=True)
+    update_dir.mkdir(parents=True, exist_ok=True)
 
     store = Store(store_path)
     if args.demo:
@@ -287,14 +359,26 @@ def main() -> None:
             ("bridge_settings_saved_at", DEMO_TIMESTAMP),
         )
         store._db.commit()
+        # Checking against the real GitHub API would make the "up to
+        # date"/"update available" line depend on this repository's
+        # actual release state and this machine's network access at
+        # capture time - exactly the kind of run-to-run noise this
+        # script's demo mode otherwise refuses to introduce (see
+        # DEMO_TIMESTAMP above). Switched off, that line always reads
+        # "the search for updates is switched off", and the seeded
+        # `state.json` below is the only thing the update card renders.
+        store.update_settings.set_check_enabled(False)
+        if args.update_dir is None:
+            _seed_demo_update_dir(update_dir)
         device_ids = _ensure_demo_devices(store)
     else:
         device_ids = _ensure_devices(store)
 
     values = _seed_values(store, device_ids)
     runtime = _SeededRuntime(values)
-    app = build_app(store, _invoke, runtime)
+    app = build_app(store, _invoke, runtime, update_dir=update_dir)
     print(f"Datenbank: {store_path}")
+    print(f"Update directory: {update_dir}")
     print(f"WebUI: http://127.0.0.1:{args.port}")
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 
