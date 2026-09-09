@@ -101,11 +101,40 @@ _LOG_CAP_BYTES = 256 * 1024
 #: `git fetch` and `docker pull` are the only two commands here that move
 #: data over the operator's own internet connection rather than talking
 #: to a local daemon or repository - on the slow rural link this ships
-#: to, a real image pull legitimately takes minutes. Generous, but not
-#: unbounded: a connection that goes fully dead (the half-open-socket
-#: case this whole fix exists for) still ends inside five minutes instead
-#: of sitting in `phase="pull"` forever.
-_NETWORK_TIMEOUT_SECONDS = 300.0
+#: to, both legitimately take a while. They do NOT share one budget,
+#: though (a single `_NETWORK_TIMEOUT_SECONDS` used to cover both): the
+#: two move very different amounts of data, and a number generous enough
+#: for the image killed a fetch that was never going to be the slow part,
+#: while a number sized for the fetch killed image pulls on exactly the
+#: connection this feature ships to. See the two constants below.
+
+#: The checkout this container mounts is this project's own source
+#: repository - modest in size and object count even after many
+#: releases, and a `fetch` only has to bring down refs and objects since
+#: the last one, not the whole history again. 60s is generous for that
+#: even on the same slow link `_IMAGE_PULL_TIMEOUT_SECONDS` names below;
+#: a connection that goes fully dead (the half-open-socket case this
+#: whole fix exists for) still ends inside a minute instead of sitting in
+#: `phase="backup"` forever, rather than borrowing an image-sized budget
+#: that would let a genuinely dead fetch masquerade as a slow one for
+#: five times as long.
+_GIT_FETCH_TIMEOUT_SECONDS = 60.0
+
+#: The bridge image is `python:3.12-slim` plus a full `uv sync` -
+#: compressed, realistically 100-150 MB. At the slow end of the range
+#: this ships to (1 Mbit/s rural upload-constrained connections, per the
+#: install notes), 150 MB is 1200 Mbit, which is exactly 1200s at 1
+#: Mbit/s - the pessimistic end of "four to twenty minutes" this module
+#: has always quoted for a real pull, not a new estimate. The old shared
+#: `_NETWORK_TIMEOUT_SECONDS` (300s) killed a pull that would have
+#: finished on precisely the connection that number's own comment
+#: invoked - a failed update, and a rollback, on a link that was merely
+#: slow, not dead. 1200s covers that worst case with no slack cut, while
+#: still bounding a connection that goes fully dead to twenty minutes
+#: instead of sitting in `phase="backup"` forever - see `api/update.py`'s
+#: `_updater_present` for how the interface stays honest about "an update
+#: is still running" for a window this long.
+_IMAGE_PULL_TIMEOUT_SECONDS = 1200.0
 
 #: Everything else that shells out here - `git checkout`, `git
 #: rev-parse`, `git merge-base --is-ancestor`, `docker compose ps` and
@@ -123,7 +152,7 @@ _LOCAL_TIMEOUT_SECONDS = 30.0
 #: up` resolves it from `.env`, already rewritten - see `recreate`'s own
 #: docstring), so this is container stop/start and network
 #: reconfiguration, not an image fetch - no reason to share
-#: `_NETWORK_TIMEOUT_SECONDS`'s five minutes. Longer than
+#: `_IMAGE_PULL_TIMEOUT_SECONDS`'s twenty minutes. Longer than
 #: `_LOCAL_TIMEOUT_SECONDS` because Compose can be slow to tear down a
 #: container that is not exiting cleanly, but still well short of
 #: `runner.DEADLINE_SECONDS` (120s), the health wait that follows it.
@@ -132,8 +161,8 @@ _RECREATE_TIMEOUT_SECONDS = 60.0
 #: `tar czf` of the sqlite store in `backup()`. Bounded by disk I/O and
 #: how large the store has grown, not by anything off the Pi - generous
 #: compared to `_LOCAL_TIMEOUT_SECONDS` for that reason, but nowhere near
-#: `_NETWORK_TIMEOUT_SECONDS`: a backup reads and writes the same local
-#: volume, it does not wait on a remote host.
+#: `_IMAGE_PULL_TIMEOUT_SECONDS`: a backup reads and writes the same
+#: local volume, it does not wait on a remote host.
 _BACKUP_TIMEOUT_SECONDS = 120.0
 
 #: `curl`'s own bound on one health-check attempt (see `healthy()`) -
@@ -276,7 +305,7 @@ class DockerCommands:
         self._run(
             ["git", "fetch", "--tags", "--prune", "origin"],
             cwd=self._repo_dir,
-            timeout=_NETWORK_TIMEOUT_SECONDS,
+            timeout=_GIT_FETCH_TIMEOUT_SECONDS,
         )
 
     def checkout(self, ref: str) -> None:
@@ -295,7 +324,7 @@ class DockerCommands:
         # the full, already-resolved registry reference; using it directly
         # is the only way `pull` fetches the version this update is
         # actually going to.
-        self._run(["docker", "pull", image], timeout=_NETWORK_TIMEOUT_SECONDS)
+        self._run(["docker", "pull", image], timeout=_IMAGE_PULL_TIMEOUT_SECONDS)
 
     def recreate(self) -> None:
         # `--no-deps` for two reasons (addendum 16.2): the updater must

@@ -735,7 +735,14 @@ def test_each_command_gets_a_timeout_matched_to_what_it_actually_does(tmp_path, 
 
     `_DATA_DIR`/`_BACKUP_DIR` are module constants pointed at `tmp_path`
     the same way `test_backup_writes_a_timestamped_archive_and_prunes_old_ones`
-    does - `backup()`'s real `/data/backups` is not writable from a test."""
+    does - `backup()`'s real `/data/backups` is not writable from a test.
+
+    `git fetch` and `docker pull` get two DIFFERENT budgets, not one
+    shared `_NETWORK_TIMEOUT_SECONDS` - the checkout this container mounts
+    is this project's own source, modest even after many releases, while
+    the image is the bridge's whole runtime; a number sized for the image
+    would let a genuinely dead fetch run five times longer than it needs
+    to before the sidecar notices."""
     monkeypatch.setattr(commands_module, "_DATA_DIR", tmp_path / "data")
     monkeypatch.setattr(commands_module, "_BACKUP_DIR", tmp_path / "data" / "backups")
     recorder = TimeoutRecordingRunner()
@@ -762,8 +769,8 @@ def test_each_command_gets_a_timeout_matched_to_what_it_actually_does(tmp_path, 
         assert matches, f"no recorded call starts with {prefix!r}"
         return matches[0]
 
-    assert timeout_for(("git", "fetch")) == commands_module._NETWORK_TIMEOUT_SECONDS
-    assert timeout_for(("docker", "pull")) == commands_module._NETWORK_TIMEOUT_SECONDS
+    assert timeout_for(("git", "fetch")) == commands_module._GIT_FETCH_TIMEOUT_SECONDS
+    assert timeout_for(("docker", "pull")) == commands_module._IMAGE_PULL_TIMEOUT_SECONDS
     assert timeout_for(("git", "checkout")) == commands_module._LOCAL_TIMEOUT_SECONDS
     assert timeout_for(("git", "rev-parse")) == commands_module._LOCAL_TIMEOUT_SECONDS
     assert timeout_for(("git", "merge-base")) == commands_module._LOCAL_TIMEOUT_SECONDS
@@ -772,11 +779,16 @@ def test_each_command_gets_a_timeout_matched_to_what_it_actually_does(tmp_path, 
     assert timeout_for(("docker", "compose", "up")) == commands_module._RECREATE_TIMEOUT_SECONDS
     assert timeout_for(("tar", "czf")) == commands_module._BACKUP_TIMEOUT_SECONDS
 
-    # The network budget is strictly the largest - "docker pull on a slow
-    # rural connection legitimately takes minutes" would not hold if a
-    # local, no-network command shared it.
-    assert commands_module._NETWORK_TIMEOUT_SECONDS > commands_module._RECREATE_TIMEOUT_SECONDS
+    # The image-pull budget is strictly the largest - "docker pull on a
+    # slow rural connection legitimately takes minutes" would not hold if
+    # a local, no-network command shared it. The fetch budget sits above
+    # the local-only commands (a fetch does cross the network) but well
+    # below the pull's - the two were split apart precisely because they
+    # do not deserve the same number.
+    assert commands_module._IMAGE_PULL_TIMEOUT_SECONDS > commands_module._RECREATE_TIMEOUT_SECONDS
     assert commands_module._RECREATE_TIMEOUT_SECONDS > commands_module._LOCAL_TIMEOUT_SECONDS
+    assert commands_module._IMAGE_PULL_TIMEOUT_SECONDS > commands_module._GIT_FETCH_TIMEOUT_SECONDS
+    assert commands_module._GIT_FETCH_TIMEOUT_SECONDS > commands_module._LOCAL_TIMEOUT_SECONDS
 
 
 def test_healthy_bounds_both_curl_and_the_subprocess_call_around_it(tmp_path):
