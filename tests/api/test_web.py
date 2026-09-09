@@ -5463,3 +5463,26 @@ async def test_the_last_heard_line_is_translated_and_states_the_never_case(api):
     assert 'return t("web.devices.last_heard", { text: this.sinceTextCoarse(at) });' in body
     assert "Last heard" not in body
     assert "Zuletzt gehoert" not in body
+
+
+async def test_the_tile_shows_the_last_heard_line_between_head_and_values(api):
+    """Device state belongs in the header half of the tile, export state
+    in the foot - the tile's own comment already draws that line ("The
+    header stays reserved for the device's state, not the export
+    state"). Two timestamps about different subjects on adjacent lines
+    read as one muddled sentence, so this must not land in
+    `.device-foot` next to `exportHintFor`.
+    """
+    client, _, _ = api
+    page = (await client.get("/")).text
+
+    assert 'class="hint device-heard" x-text="lastHeardText(device)"' in page
+
+    # There is exactly one tile template in the page, so plain positions
+    # are enough to pin the order.
+    head = page.index('<div class="device-head">')
+    line = page.index('x-text="lastHeardText(device)"')
+    values = page.index('<div class="value-rows"')
+    foot = page.index('<div class="device-foot">')
+
+    assert head < line < values < foot

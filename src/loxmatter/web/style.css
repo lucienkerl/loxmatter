@@ -1258,6 +1258,13 @@ footer.hint-block {
   opacity: 0.75;
 }
 
+/* `.hint` already carries the size and the muted colour; this rule only
+ * takes away the paragraph's default margins, which would otherwise open
+ * a gap the 260px tile cannot spare. */
+.device-heard {
+  margin: 0 0 0.35rem;
+}
+
 /* `.value-chips` (the flex container around the tile's chips) is gone
  * with the rework onto `.value-rows` (further below) - the tile has since
  * shown its values as an aligned grid instead of meandering chips.

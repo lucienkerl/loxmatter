@@ -731,6 +731,31 @@
                     </span>
                   </div>
 
+                  <!-- Device state, not export state. `.device-foot`
+                       carries the export statement (`exportHintFor`), and
+                       the header's own comment above already draws that
+                       line - two timestamps about different subjects on
+                       adjacent lines read as one muddled sentence.
+
+                       Deliberately NOT inside `.device-ident` either,
+                       although the row under the device name came free
+                       when the primary signal was dropped (design
+                       2026-09-07): that span is a flex row, and its
+                       `flex: 1 1 auto` is what puts the offline pill on
+                       the right (see the comment up in the header). A
+                       column direction there would change how the name
+                       `<input>` sizes itself - a larger blast radius than
+                       one line of text is worth. As a sibling it touches
+                       none of that reasoning.
+
+                       No colour, no threshold, no pill. A silent window
+                       contact is normal, and so is a silent button or
+                       leak detector; any staleness rule would fire first
+                       on exactly the devices that prompted this. The line
+                       states a fact and leaves the judgement to whoever
+                       reads it. -->
+                  <p class="hint device-heard" x-text="lastHeardText(device)"></p>
+
                   <div class="value-rows" x-show="signalsByDevice[device.id]">
                     <!-- `firstSignalsFor`, not `restSignalsFor` (design
                          2026-09-07): the grid shows the full short list.
