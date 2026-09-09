@@ -35,7 +35,7 @@ So exactly the last-built feature (color and color temperature, commits `8cf2358
 - Uses: `make_connected_pair(nodes)` and `FakeNode` from the same file (line 599 resp. 31); `MatterCall` from `loxmatter.commands.translate`; all already imported in this file.
 - Provides: nothing for later tasks — pure safeguard.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/matter/test_client.py`, immediately after `test_send_command_passes_the_payload_as_command_fields`:
 
@@ -101,7 +101,7 @@ async def test_send_command_builds_the_hue_saturation_command_from_the_sdk():
     assert command.saturation == 254
 ```
 
-- [ ] **Step 2: Verify both tests pass**
+- [x] **Step 2: Verify both tests pass**
 
 ```bash
 uv run pytest tests/matter/test_client.py -k "colour_temperature_command_from_the_sdk or hue_saturation_command_from_the_sdk" -v
@@ -109,7 +109,7 @@ uv run pytest tests/matter/test_client.py -k "colour_temperature_command_from_th
 
 Expectation: **2 passed.** Unlike typical TDD, this is correct here — the test captures existing behavior before the underlying basis is swapped. If it fails here, the field names mentioned in the test don't match the **installed old** SDK; then the test is wrong, not the code.
 
-- [ ] **Step 3: Prove the test really runs through the SDK**
+- [x] **Step 3: Prove the test really runs through the SDK**
 
 A passing test doesn't yet prove it checks what it claims to check. The assertion here is specific: that `bridge.send_command` passes the payload **to a real SDK class**, not passes it through as a dict. If the latter were true, a renamed field would silently pass at library swap — and the test would stay green even though color temperature would be dead.
 
@@ -129,7 +129,7 @@ Expectation: **1 failed**, specifically with a `TypeError` like `__init__() got 
 
 Undo the mangling and rerun step 2: **2 passed.**
 
-- [ ] **Step 4: Verification runs**
+- [x] **Step 4: Verification runs**
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy
@@ -137,7 +137,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy
 
 Expectation: all three without findings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/matter/test_client.py
@@ -173,7 +173,7 @@ EOF
 - Uses: the test from task 1 as a guard.
 - Provides: a `src/` that runs against `matter-python-client`. Task 3 builds on it but doesn't depend on it (the new client also talks to the old server).
 
-- [ ] **Step 1: Swap the dependency**
+- [x] **Step 1: Swap the dependency**
 
 In `pyproject.toml` line 12:
 
@@ -194,7 +194,7 @@ replace with:
     "matter-python-client>=1.4.0",
 ```
 
-- [ ] **Step 2: Refresh lockfile and install**
+- [x] **Step 2: Refresh lockfile and install**
 
 ```bash
 uv lock && uv sync
@@ -202,7 +202,7 @@ uv lock && uv sync
 
 Expectation: `uv` resolves `matter-python-client` and removes `python-matter-server`.
 
-- [ ] **Step 3: Verify the old SDK is really gone**
+- [x] **Step 3: Verify the old SDK is really gone**
 
 This is the step most easily skipped and most costly: until now `home-assistant-chip-clusters` (pulled in by `python-matter-server`) provided the `chip` package. If both remain installed, the path order determines which `chip` wins — and the test from task 1 then proves the wrong one.
 
@@ -220,7 +220,7 @@ uv run python -c "import matter_server, chip; print(matter_server.__file__); pri
 
 Expectation: **both** paths lie below the same distribution directory and neither one lies below a directory whose name contains `home_assistant_chip` or `python_matter_server`.
 
-- [ ] **Step 4: Verify the command table is filled in the new package**
+- [x] **Step 4: Verify the command table is filled in the new package**
 
 `ALL_ACCEPTED_COMMANDS` exists in the new package but is only filled by importing `chip.clusters.Objects` (side effect of class definitions). That it exists is not the same as: it carries something.
 
@@ -247,7 +247,7 @@ color/10: MoveToColorTemperature
 color/6: MoveToHueAndSaturation
 ```
 
-- [ ] **Step 5: The full test suite**
+- [x] **Step 5: The full test suite**
 
 ```bash
 uv run pytest
@@ -257,7 +257,7 @@ Expectation: **all tests pass.** About three minutes runtime — that's normal, 
 
 If something fails here, that's the point where the design proves wrong. Then **don't** start adjusting `src/`, report the failure: the claim "no code changes in `src/`" should then be corrected before code works around it.
 
-- [ ] **Step 6: Update the mypy override comment**
+- [x] **Step 6: Update the mypy override comment**
 
 In `pyproject.toml` lines 90–92:
 
@@ -277,7 +277,7 @@ replace with:
 # from the CHIP SDK anymore; the missing type marking doesn't change.
 ```
 
-- [ ] **Step 7: Update the two documentation places**
+- [x] **Step 7: Update the two documentation places**
 
 `docs/LICENSING.md` line 20:
 
@@ -307,7 +307,7 @@ Python 3.12+ with FastAPI and uvicorn for the HTTP service, Typer for the CLI,
 for the Matter side, SQLite for stored devices and settings.
 ```
 
-- [ ] **Step 8: Verify no reference to the old package remains**
+- [x] **Step 8: Verify no reference to the old package remains**
 
 ```bash
 grep -rn "python-matter-server\|python_matter_server\|home-assistant-libs" README.md docs/LICENSING.md docs/SETUP.md docs/OPERATIONS.md docs/DEVELOPMENT.md pyproject.toml install.sh scripts/ src/
@@ -315,7 +315,7 @@ grep -rn "python-matter-server\|python_matter_server\|home-assistant-libs" READM
 
 Expectation: **no hits** except explanatory mentions of history. Hits in `deploy/` belong to task 3 and stay here; hits under `docs/superpowers/` are designs and plans — they describe what applied then, and are not rewritten retroactively.
 
-- [ ] **Step 9: Verification runs**
+- [x] **Step 9: Verification runs**
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
@@ -323,7 +323,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pyt
 
 Expectation: all four without findings.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add pyproject.toml uv.lock docs/LICENSING.md README.md
@@ -368,7 +368,7 @@ EOF
 - Uses: nothing from task 1 or 2. The split is exactly the purpose (design, section 2.5).
 - Provides: nothing for later tasks.
 
-- [ ] **Step 1: Switch the service block**
+- [x] **Step 1: Switch the service block**
 
 In `deploy/testhost/docker-compose.yml` replace the block starting at `image: ghcr.io/home-assistant-libs/python-matter-server:stable`. The new block, including the rationales — the file explains every line of it, and these here need more explanation than most:
 
@@ -425,7 +425,7 @@ In `deploy/testhost/docker-compose.yml` replace the block starting at `image: gh
 
 The comment block above `matter-server` at the top of the file (lines 12–14) also mentions the old image; there replace `ghcr.io/home-assistant-libs/python-matter-server:stable` with `ghcr.io/matter-js/matterjs-server:stable` and mention `--bluetooth-adapter` as still valid, `NOBLE_BINDINGS=dbus` as new.
 
-- [ ] **Step 2: Verify Compose understands the file**
+- [x] **Step 2: Verify Compose understands the file**
 
 If `docker` is available on the machine:
 
@@ -441,7 +441,7 @@ uv run python -c "import yaml,sys; yaml.safe_load(open('deploy/testhost/docker-c
 
 Expectation: `YAML OK`. **This is explicitly not proof that the stack starts** — only that the file is readable.
 
-- [ ] **Step 3: Correct the wrong successor hint in the README**
+- [x] **Step 3: Correct the wrong successor hint in the README**
 
 `deploy/testhost/README.md`, section "3. matter-server image path" (from line 544). The paragraph currently names `ghcr.io/matter-js/python-matter-server` as the successor. That's wrong: that is the **mirror of the old repository** under the new organization, not the successor. Following that hint lands back at 8.1.2.
 
@@ -461,7 +461,7 @@ The actual successor project is
 with the same WebSocket API. The migration is in the next section.
 ```
 
-- [ ] **Step 4: Write the migration guide**
+- [x] **Step 4: Write the migration guide**
 
 Append immediately after the just-modified section:
 
@@ -528,7 +528,7 @@ Until they are checked, this section remains titled "UNTESTED".
    brightness.
 ```
 
-- [ ] **Step 5: Verify the README references are correct**
+- [x] **Step 5: Verify the README references are correct**
 
 ```bash
 grep -n "home-assistant-libs/python-matter-server" deploy/testhost/docker-compose.yml
@@ -546,7 +546,7 @@ The section "Enable BLE" (from line 176) still quotes `docker run --rm ghcr.io/h
 > as evidence for the old image.
 ```
 
-- [ ] **Step 6: Verification runs**
+- [x] **Step 6: Verification runs**
 
 ```bash
 uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
@@ -554,7 +554,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pyt
 
 Expectation: all four without findings. This task doesn't touch any Python code; the runs only prove nothing broke incidentally.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add deploy/testhost/docker-compose.yml deploy/testhost/README.md
