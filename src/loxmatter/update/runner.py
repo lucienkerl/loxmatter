@@ -314,6 +314,27 @@ def _wait_for_health(
     immediately - otherwise the rollback test would take two real minutes
     and be skipped as slow within a month.
 
+    `waited += POLL_SECONDS` below counts only the `sleep` after each
+    poll, not `commands.healthy()`'s own subprocess call - which
+    `commands.py`'s `_HEALTH_TIMEOUT_SECONDS` bounds at `POLL_SECONDS`
+    itself as a backstop (see there). So one full poll iteration can cost
+    up to `2 * POLL_SECONDS` of real wall-clock time while `waited`
+    advances by only `POLL_SECONDS` - a real, if small, consequence for
+    `deadline_seconds`: a caller asking for a 120s deadline
+    (`DEADLINE_SECONDS`) can get up to 240s of actual wall clock against
+    a bridge that never answers, before this function gives up.
+
+    A raising `healthy()` is treated as a `False` for that one poll, not
+    as a reason to stop polling or to let the exception through. A real
+    `healthy()` calls `/health` over HTTP, and while the bridge is down -
+    the exact condition this whole function exists to detect - that call
+    raises `ConnectionError` instead of returning `False`. Both callers
+    (the main wait and `roll_back`'s own confirmation) rely on this: an
+    unreachable bridge must read as "not healthy", which for the main
+    caller means a rollback runs at all, and for `roll_back` means
+    `healthy=False` is published instead of the exception escaping
+    `run_update` and leaving `state.json` frozen.
+
     A raising `healthy()` is treated as a `False` for that one poll, not
     as a reason to stop polling or to let the exception through. A real
     `healthy()` calls `/health` over HTTP, and while the bridge is down -

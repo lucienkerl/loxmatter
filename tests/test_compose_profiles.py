@@ -70,6 +70,15 @@ def test_the_updater_has_the_same_build_fallback() -> None:
     build = _stack()["services"]["loxmatter-updater"]["build"]
     assert build["context"] == "../.."
     assert build["dockerfile"] == "deploy/updater/Dockerfile"
+    # `docker compose config --quiet` accepts a `build.dockerfile`
+    # pointing at nothing - it never resolves the path, only parses the
+    # YAML - and no other committed test reads the filesystem to check
+    # either, so renaming or deleting the file this points at was
+    # invisible here: every test in this suite stayed green, and the
+    # break surfaced only as `install.sh` dying on a real host without
+    # GHCR access, the one place this fallback actually gets used.
+    dockerfile = (COMPOSE.parent / build["context"] / build["dockerfile"]).resolve()
+    assert dockerfile.is_file(), f"{dockerfile} does not exist"
 
 
 def test_the_running_version_is_at_exactly_one_place() -> None:

@@ -54,8 +54,8 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 from loxmatter.timestamps import now_iso
 from loxmatter.update.protocol import log_path
@@ -177,10 +177,14 @@ _HEALTH_CURL_MAX_TIME_SECONDS = POLL_SECONDS / 2
 #: Backstop for the health check's own `_run_subprocess` call, in case
 #: `curl` somehow does not honour `--max-time` above (a killed process, a
 #: platform quirk) - not the primary bound, `_HEALTH_CURL_MAX_TIME_SECONDS`
-#: is. Capped at `POLL_SECONDS` itself so that even in that pathological
-#: case, one poll's subprocess call cannot outlast the interval
-#: `_wait_for_health`'s own `waited += POLL_SECONDS` arithmetic assumes
-#: it stays within.
+#: is. Capped at `POLL_SECONDS` itself, which bounds only this one
+#: subprocess call - `_wait_for_health` always pays a further
+#: `sleep(POLL_SECONDS)` afterwards regardless of how long the call took,
+#: so one full poll iteration can cost up to `2 * POLL_SECONDS`, exactly
+#: what `runner.HEALTH_REFRESH_POLLS`'s own docstring accounts for.
+#: `_wait_for_health`'s `waited += POLL_SECONDS` counts only the sleep,
+#: not the call - see that function's docstring for what that means for
+#: the wall-clock deadline.
 _HEALTH_TIMEOUT_SECONDS = POLL_SECONDS
 
 #: `_cap_log` trims down to this many bytes, not all the way up to
@@ -193,18 +197,28 @@ _HEALTH_TIMEOUT_SECONDS = POLL_SECONDS
 #: means many lines append for free before a rewrite is needed again.
 _LOG_TRIM_BYTES = _LOG_CAP_BYTES * 3 // 4
 
-#: What `run` is called with, and what it returns - stdout, on success.
-#: `check=True` in the real implementation below means a non-zero exit
-#: raises rather than returning an error code; every caller in this module
-#: either lets that exception propagate (the happy-path steps, exactly
-#: like `run_update` expects - see its module docstring) or catches it
-#: itself where "did this fail" IS the answer (`healthy`, `is_ancestor`).
-#: `timeout` is a required keyword for the same reason `check=True` is not
-#: optional: `subprocess.TimeoutExpired` is a `SubprocessError`, itself an
-#: `Exception`, so it propagates and is caught exactly like any other
-#: failure above - no caller needs to know the difference between "the
-#: command failed" and "the command never finished".
-Runner = Callable[..., str]
+
+class Runner(Protocol):
+    """What `run` is called with, and what it returns - stdout, on
+    success. `check=True` in the real implementation below means a
+    non-zero exit raises rather than returning an error code; every
+    caller in this module either lets that exception propagate (the
+    happy-path steps, exactly like `run_update` expects - see its module
+    docstring) or catches it itself where "did this fail" IS the answer
+    (`healthy`, `is_ancestor`).
+
+    A `Protocol` rather than `Callable[..., str]`: the earlier alias
+    accepted a call site missing `timeout` entirely and passed `mypy`
+    anyway, because `...` matches any argument list. `timeout` is a
+    required keyword for the same reason `check=True` is not optional:
+    `subprocess.TimeoutExpired` is a `SubprocessError`, itself an
+    `Exception`, so it propagates and is caught exactly like any other
+    failure above - no caller needs to know the difference between "the
+    command failed" and "the command never finished". A future call site
+    that forgot it should fail typing, not just at runtime the first time
+    that command hangs."""
+
+    def __call__(self, argv: list[str], *, cwd: Path | None = None, timeout: float) -> str: ...
 
 
 def _clean_tag_value(value: str) -> str:
