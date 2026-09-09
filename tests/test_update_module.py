@@ -190,6 +190,27 @@ def test_after_a_finished_update_a_new_one_goes_through(tmp_path):
     assert request_update(tmp_path, channel="stable", target="0.4.0")
 
 
+def test_after_a_failed_update_a_new_one_goes_through(tmp_path):
+    # "failed" is an end state (a health check that did not recover, or a
+    # step that raised) - it must allow a retry the same as "done" does.
+    # Not previously covered: adding "failed" to _RUNNING_PHASES left the
+    # whole suite green (see the mutation evidence in this task's report).
+    _state(tmp_path, id="alt", phase="failed", error="Gesundheitspruefung fehlgeschlagen")
+    assert request_update(tmp_path, channel="stable", target="0.4.0")
+
+
+def test_after_a_rejected_update_a_new_one_goes_through(tmp_path):
+    # "rejected" is deliberately excluded from _RUNNING_PHASES (see the
+    # comment on that set): it is a completed judgment about a bad
+    # request, not work in progress. A regression here would lock a user
+    # out of ever correcting and resubmitting - UpdateBusyError forever,
+    # since a rejected phase never changes on its own. Not previously
+    # covered: adding "rejected" to _RUNNING_PHASES left the whole suite
+    # green (see the mutation evidence in this task's report).
+    _state(tmp_path, id="alt", phase="rejected", error="unbekannter Kanal")
+    assert request_update(tmp_path, channel="stable", target="0.4.0")
+
+
 def test_a_second_call_before_the_sidecar_wakes_does_not_destroy_the_first(tmp_path):
     # The sidecar only updates state.json from its two-second poll loop.
     # In the window before that poll wakes, state.json still reports
