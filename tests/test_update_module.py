@@ -112,15 +112,36 @@ def test_the_state_is_read_in_full(tmp_path):
         phase="failed",
         error="nicht gesund",
         rolled_back=True,
+        rolled_back_to="0.2.0",
         healthy=True,
-        **{"from": "0.2.0", "to": "0.3.0"},
+        **{"from": "stable", "to": "0.3.0"},
     )
     state = read_state(tmp_path)
     assert state.phase == "failed"
-    assert state.from_version == "0.2.0"
+    assert state.from_version == "stable"
     assert state.to_version == "0.3.0"
     assert state.error == "nicht gesund"
     assert state.rolled_back is True
+    # Distinct from `from_version` on purpose - `from_version` is
+    # `current_tag()`'s own reading of .env, which on any standard
+    # installation is the moving "stable" alias (see current_tag()'s own
+    # comment in update-once.sh), never a version. `rolled_back_to` is
+    # the concrete version the rollback actually restored
+    # (update-once.sh's `$BACK`) - seeded to a different value here so a
+    # regression that silently read `from` back out under this field's
+    # name cannot pass unnoticed.
+    assert state.rolled_back_to == "0.2.0"
+
+
+def test_rolled_back_to_defaults_to_none(tmp_path):
+    # The field is absent from state.json entirely whenever no rollback
+    # ran (update-once.sh's `set_state` writes it as `null` via its own
+    # `${ROLLED_BACK_TO:-}` default) - `.get()` on a missing key must read
+    # the same as an explicit `null`, not raise or default to some other
+    # sentinel.
+    _state(tmp_path, phase="done", rolled_back=False, **{"from": "0.2.0", "to": "0.3.0"})
+    state = read_state(tmp_path)
+    assert state.rolled_back_to is None
 
 
 def test_non_string_optional_fields_are_read_as_none(tmp_path):

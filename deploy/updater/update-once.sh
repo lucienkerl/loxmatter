@@ -231,9 +231,22 @@ set_state() {
   # `--argjson rolled` or `--argjson healthy` (Task 3/4 will give both
   # attacker-reachable inputs) from reopening the same hole if either
   # ever produces a non-boolean value jq rejects.
+  #
+  # $ROLLED_BACK_TO carries $BACK - the concrete version the rollback
+  # section (further down) restored, never the possibly-aliased $FROM -
+  # out to state.json. Empty everywhere else in this script (the
+  # `${ROLLED_BACK_TO:-}` default below), which `if $back == ""` turns
+  # into `null` the same way an unset FROM/TO already does: nothing at
+  # the file-protocol boundary distinguishes "never set" from "explicitly
+  # empty," and null is the honest answer for both when no rollback has
+  # happened. Read back out of the previous state.json by the SIGTERM
+  # trap, same as FROM/TO/JOB_ID already are, so a signal arriving mid-
+  # rollback-health-wait does not lose the value the earlier `set_state
+  # rollback ""` call already recorded.
   if STATE_JSON="$(jq -n \
        --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
        --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
+       --arg back "${ROLLED_BACK_TO:-}" \
        --argjson rolled "${ROLLED:-false}" --argjson healthy "${HEALTHY:-true}" \
        '{id: (if $id == "" then null else $id end),
          phase: $phase,
@@ -241,6 +254,7 @@ set_state() {
          to:   (if $to == "" then null else $to end),
          error: (if $error == "" then null else $error end),
          rolled_back: $rolled,
+         rolled_back_to: (if $back == "" then null else $back end),
          healthy: $healthy,
          updater_seen_at: $seen}')" \
     && [ -n "$STATE_JSON" ]; then
@@ -331,6 +345,12 @@ on_signal() {
   JOB_ID="$(jq -r '.id // empty' "$STATE" 2>/dev/null || true)"
   FROM="$(jq -r '.from // empty' "$STATE" 2>/dev/null || true)"
   TO="$(jq -r '.to // empty' "$STATE" 2>/dev/null || true)"
+  # Preserved the same way FROM/TO are, above: a signal landing during the
+  # ROLLBACK's own health wait must not lose the $BACK value the earlier
+  # `set_state rollback ""` call in this same pass already wrote - reading
+  # it back out of $STATE, not off this pass's own variable, is what
+  # makes that true regardless of where in the pass the signal arrives.
+  ROLLED_BACK_TO="$(jq -r '.rolled_back_to // empty' "$STATE" 2>/dev/null || true)"
   ROLLED="${ROLLED:-false}"
   # Never true here: whatever the health endpoint's real state is right
   # now was, by definition, never measured after this signal arrived.
@@ -591,6 +611,16 @@ FROM="$(current_tag)"
 TO="$TARGET"
 ROLLED=false
 HEALTHY=true
+# Only ever given a real value in the rollback section further down, once
+# $BACK is known - explicitly empty here (rather than left unset) so a
+# request that never reaches a rollback at all writes an explicit "no
+# rollback target" into state.json, the same "empty means null" reading
+# FROM/TO/ROLLED already get, not a leftover from some earlier pass (each
+# invocation of this script is a fresh process - see the top-of-file
+# comment - so nothing actually leaks between passes either way; this is
+# about a reader of this section understanding that without having to
+# know that fact).
+ROLLED_BACK_TO=""
 
 # --------------------------------------------------------------- validation --
 # Rule 1: channel is an enum, target must satisfy a pattern.
@@ -1600,6 +1630,21 @@ case "$RUNNING_NORMALIZED" in
   *)                BACK="$RUNNING_NORMALIZED" ;;
 esac
 log "$ROLLBACK_REASON - rolling back to $BACK"
+
+# $BACK is the answer to "what did the rollback actually restore" -
+# LETZTER-FEHLSCHLAG.txt already prints it verbatim ("Rolled back to:
+# %s", further down in write_failure_file). state.json used to have no
+# equivalent: the web UI's own rollback sentence read `state.from`
+# instead, which on every standard installation (LOXMATTER_IMAGE_TAG=stable
+# in .env since 0.2.0, see current_tag()'s own comment) is the moving
+# alias, not the version this rollback actually put back. Setting
+# $ROLLED_BACK_TO here, BEFORE the `set_state rollback ""` call right
+# below, is what gets $BACK into that write and both of the terminal
+# `set_state failed` calls further down in this section (set_state's own
+# `${ROLLED_BACK_TO:-}` default means every OTHER set_state call in this
+# file, none of which touch this variable, keeps writing `null` exactly
+# as before).
+ROLLED_BACK_TO="$BACK"
 
 # One write here, not two: an earlier revision of this section wrote
 # `set_state rollback ""` a second time immediately above this point,

@@ -552,9 +552,19 @@ async def test_the_update_card_offers_its_four_states_and_the_confirmation(api):
     assert "t('web.system.update_done', { version: updateStatus.state.to })" in page
     assert "updateStatus?.state?.phase === 'failed'" in page
     assert "t('web.system.update_failed')" in page
+    # `from_version` reads `state.rolled_back_to` - the concrete version
+    # update-once.sh's rollback section actually restored ($BACK) - not
+    # `state.from`, which is `current_tag()`'s own reading of .env and, on
+    # any standard installation, the moving "stable" alias rather than a
+    # version (see current_tag()'s comment there). Naming the alias
+    # instead of the version is exactly the bug this binding exists to
+    # fix - the one sentence the user most needs to be accurate in was
+    # naming a channel. `|| updateStatus.state.from` is the deliberate
+    # fallback for a sidecar older than this field.
     assert (
         "t('web.system.update_rolled_back', "
-        "{ version: updateStatus.state.to, from_version: updateStatus.state.from })" in page
+        "{ version: updateStatus.state.to, "
+        "from_version: updateStatus.state.rolled_back_to || updateStatus.state.from })" in page
     )
 
     # State 5 (rejected) - the "Also" fix: `phase: rejected` used to be

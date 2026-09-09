@@ -32,8 +32,9 @@ The exact file formats below were re-checked against `deploy/updater/
 update-once.sh` (the only other participant in this protocol) rather than
 taken as given, since that script has been through several review rounds
 since this module was first sketched. It matches: state.json's fields are
-exactly `id`, `phase`, `from`, `to`, `error`, `rolled_back`, `healthy` and
-`updater_seen_at` (see `set_state()` there), and the phases that count as
+exactly `id`, `phase`, `from`, `to`, `error`, `rolled_back`,
+`rolled_back_to`, `healthy` and `updater_seen_at` (see `set_state()`
+there), and the phases that count as
 "still running" are exactly `queued`, `backup`, `pull`, `recreate`,
 `health` and `rollback` - every other phase (`idle`, `rejected`, `done`,
 `failed`) is an end state that allows a new request.
@@ -110,6 +111,12 @@ class UpdateState:
     to_version: str | None
     error: str | None
     rolled_back: bool
+    # The concrete version a rollback restored (update-once.sh's own
+    # $BACK - see its comment in the rollback section there), never the
+    # possibly-aliased `from_version` above. `None` whenever `rolled_back`
+    # is false (no rollback ran) and, defensively, if it ever is true
+    # against an older sidecar build that predates this field.
+    rolled_back_to: str | None
     healthy: bool
     updater_seen_at: str | None
 
@@ -156,6 +163,7 @@ def read_state(update_dir: Path) -> UpdateState | None:
         to_version=_as_optional_str(raw.get("to")),
         error=_as_optional_str(raw.get("error")),
         rolled_back=bool(raw.get("rolled_back")),
+        rolled_back_to=_as_optional_str(raw.get("rolled_back_to")),
         # `True` is not a claim that anything is healthy - it mirrors the
         # sidecar's own default (update-once.sh initialises HEALTHY=true
         # ahead of validation and only ever sets it false once a health

@@ -204,6 +204,7 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
                 "to": state.to_version,
                 "error": state.error,
                 "rolled_back": state.rolled_back,
+                "rolled_back_to": state.rolled_back_to,
                 "healthy": state.healthy,
             },
             "updater_present": update_files.updater_present(state, now=datetime.now(UTC)),

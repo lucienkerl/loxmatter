@@ -1819,6 +1819,54 @@ def test_the_rollback_uses_running_not_the_env_alias_when_they_disagree(unhealth
     )
 
 
+def test_rollback_writes_the_concrete_version_into_state_json_not_the_alias(unhealthy_service):
+    # The bug this test guards against: `$BACK` (computed exactly as in
+    # `test_the_rollback_uses_running_not_the_env_alias_when_they_disagree`
+    # right above, and correct there - and LETZTER-FEHLSCHLAG.txt already
+    # reports it correctly, "Rolled back to: %s") never reached
+    # state.json at all. `set_state`'s own `jq` invocation wrote only
+    # `from` and `to` - and `from` here is `current_tag()`, i.e. the
+    # LOXMATTER_IMAGE_TAG line in .env, "stable" on every standard
+    # installation since 0.2.0 (current_tag()'s own comment). The web UI
+    # read `state.from` for its rollback sentence and told the user
+    # "stable is running again" - a channel name, not the version the
+    # rollback actually put back. Seeded so `from` (the alias) and the
+    # concrete restored version can never accidentally coincide, the same
+    # setup as the sibling test above.
+    (unhealthy_service.stack / ".env").write_text("LOXMATTER_IMAGE_TAG=stable\n", encoding="utf-8")
+    _write_request(unhealthy_service, target="0.3.0")
+    _, _, state = unhealthy_service()
+    assert state["rolled_back"] is True
+    assert state["from"] == "stable"
+    assert state["rolled_back_to"] == "0.2.0"
+
+
+def test_rolled_back_to_is_null_when_no_rollback_happens(updater):
+    # The other half of the same field: a pass that never reaches the
+    # rollback section at all (here, a plain `git fetch` failure - no
+    # image was ever touched, nothing to name a rollback target for) must
+    # not carry a stale or invented `rolled_back_to` into state.json.
+    # `set_state`'s `${ROLLED_BACK_TO:-}` default, unset outside the
+    # rollback section, is what makes this `null` rather than leftover
+    # from some earlier call in the same pass.
+    git_path = updater.bindir / "git"
+    git_path.write_text(
+        "#!/bin/sh\n"
+        'printf "%s %s\\n" "git" "$*" >> "$STUB_LOG"\n'
+        'case "$*" in\n'
+        '  *"fetch --tags --force origin"*) exit 1 ;;\n'
+        "  *) exit 0 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(0o755)
+    _write_request(updater, target="0.3.0")
+    _, _, state = updater()
+    assert state["phase"] == "failed"
+    assert state["rolled_back"] is False
+    assert state["rolled_back_to"] is None
+
+
 def test_the_self_replacement_runs_strictly_after_done_is_recorded(updater):
     # Important 5. Moving the self-replacement block to BEFORE
     # `set_state "done" ""` - exactly the ordering the code comment above

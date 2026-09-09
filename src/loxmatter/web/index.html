@@ -1759,8 +1759,23 @@
           <template x-if="updateStatus?.state?.phase === 'failed'">
             <div>
               <p class="banner danger" x-text="t('web.system.update_failed')"></p>
+              <!-- `from_version` used to bind to `updateStatus.state.from`
+                   - the .env's own LOXMATTER_IMAGE_TAG, which on every
+                   standard installation reads the moving alias "stable"
+                   (see current_tag()'s own comment in update-once.sh),
+                   never a version. Right here is the one sentence the
+                   user most needs to be accurate in, and it named a
+                   channel instead of the concrete version the rollback
+                   actually restored. `rolled_back_to` (update.py's own
+                   `UpdateState.rolled_back_to`, sourced from
+                   update-once.sh's `$BACK`) IS that concrete version;
+                   `|| updateStatus.state.from` only covers a sidecar
+                   older than this field (a partially upgraded
+                   installation), matching what update-once.sh itself
+                   falls back to when it cannot name a concrete running
+                   version either. -->
               <p x-show="updateStatus.state.rolled_back" x-cloak
-                 x-text="t('web.system.update_rolled_back', { version: updateStatus.state.to, from_version: updateStatus.state.from })"></p>
+                 x-text="t('web.system.update_rolled_back', { version: updateStatus.state.to, from_version: updateStatus.state.rolled_back_to || updateStatus.state.from })"></p>
               <pre class="notes" x-text="updateStatus.log.slice(-8).join('\n')"></pre>
               <button @click="downloadFabricBackup()" x-text="t('web.system.backup_download')"></button>
             </div>
