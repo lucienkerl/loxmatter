@@ -33,8 +33,9 @@ update-once.sh` (the only other participant in this protocol) rather than
 taken as given, since that script has been through several review rounds
 since this module was first sketched. It matches: state.json's fields are
 exactly `id`, `phase`, `from`, `to`, `error`, `rolled_back`,
-`rolled_back_to`, `healthy`, `updater_seen_at`, `updater_version` and
-`updater_digest` (see `set_state()` there), and the phases that count as
+`rolled_back_to`, `healthy`, `updater_seen_at`, `updater_version`,
+`updater_digest` and `updater_stack_host_path` (see `set_state()` there),
+and the phases that count as
 "still running" are exactly `queued`, `backup`, `pull`, `recreate`,
 `health` and `rollback` - every other phase (`idle`, `rejected`, `done`,
 `failed`) is an end state that allows a new request.
@@ -169,6 +170,16 @@ class UpdateState:
     # same "absence is not a claim" doctrine `updater_version` already
     # follows.
     updater_digest: str | None
+    # The HOST path of `$LOXMATTER_STACK` (`update-once.sh`'s own
+    # `$STACK`, default `/repo/deploy/testhost`) - resolved through the
+    # mount table by that script's `host_path_for()`, the same function
+    # already used to make `LETZTER-FEHLSCHLAG.txt`'s manual-recovery
+    # commands pasteable over SSH. `None` when the mount table does not
+    # resolve it (the daemon unreachable, or this sidecar's own mounts not
+    # shaped the way that function expects) - the web UI must not print a
+    # fabricated path in that case, only say what to run and where in
+    # words.
+    updater_stack_host_path: str | None
 
 
 def _as_optional_str(value: object) -> str | None:
@@ -223,6 +234,7 @@ def read_state(update_dir: Path) -> UpdateState | None:
         updater_seen_at=_as_optional_str(raw.get("updater_seen_at")),
         updater_version=_as_optional_str(raw.get("updater_version")),
         updater_digest=_as_optional_str(raw.get("updater_digest")),
+        updater_stack_host_path=_as_optional_str(raw.get("updater_stack_host_path")),
     )
 
 

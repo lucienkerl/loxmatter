@@ -17,6 +17,12 @@ people who don't know the code.
   refresh something that was already current. It now compares the actual
   image running against what is currently published, and only speaks up
   when they genuinely differ.
+- **The command shown to refresh the updater named a directory that may
+  not exist.** It printed a path taken from the documentation
+  (`~/loxmatter/...`), not from your own checkout — so on any checkout
+  not named exactly that, the command failed at the first step. It now
+  asks the updater for its own real location and prints that instead;
+  if it can't be determined, the message says so rather than guessing.
 
 ## [0.3.4] — 2026-09-09
 

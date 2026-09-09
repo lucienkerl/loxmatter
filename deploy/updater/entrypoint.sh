@@ -106,6 +106,58 @@ if [ -n "$updater_image_id" ]; then
 fi
 export LOXMATTER_UPDATER_DIGEST="$UPDATER_DIGEST"
 
+# $LOXMATTER_STACK's own HOST path - resolved once, the same way and for
+# the same reason as $UPDATER_DIGEST above (see that comment): a fact
+# about this container's own identity, exported so update-once.sh reads
+# it as a plain environment variable ($UPDATER_STACK_HOST_PATH) instead
+# of resolving it itself on every pass.
+STACK="${LOXMATTER_STACK:-/repo/deploy/testhost}"
+
+# The HOST path of $STACK, resolved through the mount table - duplicated
+# from update-once.sh's own `host_path_for()` (see that function's own,
+# much longer comment for the full reasoning: longest-prefix match over
+# `docker inspect`'s own Mounts list, the "/" edge case, why `awk` and
+# not `grep`/`sed`) rather than shared through a third, sourced file -
+# this project keeps each script a single, self-contained work program
+# (see this script's own module docstring, "deliberately thin", and
+# update-once.sh's own top-of-file comment on itself), and splitting a
+# dozen lines into a lib file sourced by both was judged not worth the
+# added indirection for two callers. `tests/test_updater_entrypoint.py`
+# and `tests/test_updater_script.py` each pin this exact algorithm
+# independently, so the two copies drifting apart would be caught on
+# either side, not silently.
+STACK_HOST_PATH="$(docker inspect loxmatter-updater \
+    --format '{{range .Mounts}}{{.Destination}} {{.Source}}
+{{end}}' 2>/dev/null \
+  | awk -v dest="$STACK" '
+      {
+        d = $1
+        src = $0
+        sub(/^[^ ]*/, "", src)
+        sub(/^ /, "", src)
+        dn = d
+        if (dn == "/") { dn = "" } else { sub(/\/$/, "", dn) }
+        matched = 0
+        if (dest == dn) {
+          matched = 1
+          rest = ""
+        } else if (index(dest, dn "/") == 1) {
+          matched = 1
+          rest = substr(dest, length(dn) + 1)
+        }
+        if (matched) {
+          dlen = length(dn)
+          if (!found || dlen > best_len) {
+            found = 1
+            best_len = dlen
+            best_source = src
+            best_rest = rest
+          }
+        }
+      }
+      END { if (found) print best_source best_rest }
+    ')"
+export LOXMATTER_STACK_HOST_PATH="$STACK_HOST_PATH"
 
 while [ "$terminated" -eq 0 ]; do
   timeout "$WORKER_TIMEOUT_SECONDS" "$WORKER" &

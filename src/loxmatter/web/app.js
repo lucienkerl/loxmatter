@@ -3068,7 +3068,7 @@ function app() {
     /** Whether the UPDATER SIDECAR ITSELF (not the bridge, and nothing to
      * do with `updateRunning()`) is running an image GHCR no longer
      * serves under `:stable` - i.e. whether refreshing it (the command
-     * index.html prints beside this warning) would actually change
+     * `updaterRefreshMessage()` below prints) would actually change
      * anything. The sidecar no longer replaces its own container after a
      * successful update (removed - see the incident recorded in
      * update-once.sh, near the end of the success branch: measured to
@@ -3096,12 +3096,39 @@ function app() {
      * or GHCR unreachable right now, must not be nagged about a problem
      * that cannot be measured - an unknown is not a mismatch. `updater_version`/
      * `versionInfo.version` stay exactly what they were: not part of this
-     * decision any more, only of the message text index.html still builds
-     * from them directly. */
+     * decision any more, only of the message `updaterRefreshMessage()`
+     * below builds once this reads `true`. */
     updaterVersionBehind() {
       const updaterDigest = this.updateStatus?.state?.updater_digest;
       const publishedDigest = this.updateStatus?.published_updater_digest;
       return Boolean(updaterDigest) && Boolean(publishedDigest) && updaterDigest !== publishedDigest;
+    },
+
+    /** The TEXT of the "refresh the updater" warning `updaterVersionBehind()`
+     * (above) decides whether to show at all - `updater_version`/
+     * `versionInfo.version` still name what changed, exactly as before the
+     * digest-based trigger replaced the version-based one (see that
+     * method's own comment).
+     *
+     * The COMMAND half depends on whether the sidecar could resolve its
+     * own `$LOXMATTER_STACK` to a HOST path
+     * (`updater_stack_host_path` - update-once.sh's `host_path_for()`, via
+     * entrypoint.sh's one-time resolution at container start). A
+     * documentation-guessed path is exactly what this feature replaces:
+     * `~/loxmatter/deploy/testhost` is wrong on any checkout not named
+     * `loxmatter` (the maintainer's own is `~/matter-loxone`). When the
+     * sidecar cannot resolve its own mount table either, this prints no
+     * path at all rather than fabricate one - `web.system.updater_behind_unknown_path`
+     * says WHERE to run the command in words instead. */
+    updaterRefreshMessage() {
+      const path = this.updateStatus?.state?.updater_stack_host_path;
+      const params = {
+        updater_version: this.updateStatus?.state?.updater_version,
+        version: this.versionInfo?.version,
+      };
+      return path
+        ? t("web.system.updater_behind", { ...params, path })
+        : t("web.system.updater_behind_unknown_path", params);
     },
 
     /** Whether `state.json` still claims a job is running while the

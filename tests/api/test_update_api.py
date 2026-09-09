@@ -114,26 +114,33 @@ async def test_the_status_route_reports_the_sidecars_own_version(api):
     assert body["state"]["updater_version"] == "0.3.2"
 
 
-async def test_the_status_route_reports_the_sidecars_own_digest(api):
-    # `_status()` must forward `updater_digest` from `update.read_state`
+async def test_the_status_route_reports_the_sidecars_own_digest_and_stack_host_path(api):
+    # `_status()` must forward both new fields from `update.read_state`
     # verbatim, the same as it already does for `updater_version` - the
-    # web UI's revised `updaterVersionBehind()` (app.js) reads it to
-    # decide whether to warn at all.
+    # web UI's revised `updaterVersionBehind()` (app.js) reads
+    # `updater_digest` to decide whether to warn at all, and the "refresh
+    # the updater" command is printed against `updater_stack_host_path`.
     client, update_dir = api
-    _heartbeat(update_dir, updater_digest="sha256:" + "a" * 64)
+    _heartbeat(
+        update_dir,
+        updater_digest="sha256:" + "a" * 64,
+        updater_stack_host_path="/home/pi/matter-loxone/deploy/testhost",
+    )
     body = (await client.get("/api/update/status")).json()
     assert body["state"]["updater_digest"] == "sha256:" + "a" * 64
+    assert body["state"]["updater_stack_host_path"] == "/home/pi/matter-loxone/deploy/testhost"
 
 
-async def test_an_absent_sidecar_digest_reads_as_none(api):
+async def test_an_absent_sidecar_digest_and_stack_host_path_read_as_none(api):
     # A sidecar built before this change (or one that could not resolve
-    # its own digest - see update-once.sh's/entrypoint.sh's own comments)
+    # either fact - see update-once.sh's/entrypoint.sh's own comments)
     # writes no such key at all. The route must pass that through as
     # `null`, not omit the key.
     client, update_dir = api
     _heartbeat(update_dir)
     body = (await client.get("/api/update/status")).json()
     assert body["state"]["updater_digest"] is None
+    assert body["state"]["updater_stack_host_path"] is None
 
 
 async def test_the_status_route_reports_the_published_updater_digest(api, monkeypatch):
@@ -810,5 +817,6 @@ def test_the_interface_knows_every_text_of_the_update_card():
         "web.system.update_channel_dev_warning",
         "web.system.update_behind",
         "web.system.updater_behind",
+        "web.system.updater_behind_unknown_path",
     ):
         assert i18n.raw_template(key), key

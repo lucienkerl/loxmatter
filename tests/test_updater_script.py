@@ -402,25 +402,30 @@ def test_a_heartbeat_only_pass_corrects_a_stale_updater_version(updater):
     assert state["updater_version"] == "0.3.3"
 
 
-def test_a_heartbeat_asserts_the_reported_digest(updater):
-    # `$UPDATER_DIGEST` is read from $LOXMATTER_UPDATER_DIGEST - resolved
+def test_a_heartbeat_asserts_the_reported_digest_and_stack_host_path(updater):
+    # `$UPDATER_DIGEST`/`$UPDATER_STACK_HOST_PATH` are read from
+    # $LOXMATTER_UPDATER_DIGEST/$LOXMATTER_STACK_HOST_PATH - resolved
     # ONCE by entrypoint.sh, never by this script itself (see the
-    # top-of-file comment: resolving it here, on every pass, would touch
-    # `docker` unconditionally even on a pass that only rejects a
-    # malformed request - see the "docker not in calls" tests throughout
-    # this file). A pure heartbeat pass must still assert it into
-    # state.json, the same way it already asserts `updater_version`.
-    _, calls, state = updater(LOXMATTER_UPDATER_DIGEST="sha256:" + "a" * 64)
+    # top-of-file comment on both: resolving either one here, on every
+    # pass, would touch `docker` unconditionally even on a pass that only
+    # rejects a malformed request - see the "docker not in calls" tests
+    # throughout this file). A pure heartbeat pass must still assert both
+    # into state.json, the same way it already asserts `updater_version`.
+    _, calls, state = updater(
+        LOXMATTER_UPDATER_DIGEST="sha256:" + "a" * 64,
+        LOXMATTER_STACK_HOST_PATH="/home/pi/matter-loxone/deploy/testhost",
+    )
     assert "docker" not in calls, "this must be a pure heartbeat pass, no job involved"
     assert state["updater_digest"] == "sha256:" + "a" * 64
+    assert state["updater_stack_host_path"] == "/home/pi/matter-loxone/deploy/testhost"
 
 
-def test_a_heartbeat_only_pass_corrects_a_stale_digest(updater):
+def test_a_heartbeat_only_pass_corrects_a_stale_digest_and_stack_host_path(updater):
     # The sharper case, mirroring
     # test_a_heartbeat_only_pass_corrects_a_stale_updater_version above: a
     # value already on disk from a PREVIOUS container must not survive
     # into a pass run by a DIFFERENT one - refresh_heartbeat re-asserts
-    # the field every pass rather than merely preserving whatever is
+    # both fields every pass rather than merely preserving whatever is
     # already there.
     state_file = updater.update_dir / "state.json"
     state_file.write_text(
@@ -436,23 +441,29 @@ def test_a_heartbeat_only_pass_corrects_a_stale_digest(updater):
                 "healthy": True,
                 "updater_seen_at": "2000-01-01T00:00:00Z",
                 "updater_digest": "sha256:" + "b" * 64,
+                "updater_stack_host_path": "/old/path",
             }
         ),
         encoding="utf-8",
     )
-    _, calls, state = updater(LOXMATTER_UPDATER_DIGEST="sha256:" + "c" * 64)
+    _, calls, state = updater(
+        LOXMATTER_UPDATER_DIGEST="sha256:" + "c" * 64,
+        LOXMATTER_STACK_HOST_PATH="/home/pi/matter-loxone/deploy/testhost",
+    )
     assert "docker" not in calls, "this must be a pure heartbeat pass, no job involved"
     assert state["updater_digest"] == "sha256:" + "c" * 64
+    assert state["updater_stack_host_path"] == "/home/pi/matter-loxone/deploy/testhost"
 
 
-def test_an_unresolved_digest_reports_as_null(updater):
-    # $LOXMATTER_UPDATER_DIGEST not set at all (entrypoint.sh could not
-    # resolve it - no `RepoDigests` entry) - "empty means null", the same
-    # convention `updater_version` already follows, not an omitted key and
-    # not a fabricated value.
+def test_an_unresolved_digest_and_stack_host_path_report_as_null(updater):
+    # Neither env var set at all (entrypoint.sh could not resolve either
+    # fact - no `RepoDigests` entry, or a mount table that did not cover
+    # $STACK) - "empty means null", the same convention `updater_version`
+    # already follows, not an omitted key and not a fabricated value.
     _, calls, state = updater()
     assert "docker" not in calls
     assert state["updater_digest"] is None
+    assert state["updater_stack_host_path"] is None
 
 
 def test_a_target_containing_a_semicolon_is_rejected(updater):

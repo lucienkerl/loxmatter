@@ -74,6 +74,10 @@ UPDATER_VERSION="${LOXMATTER_UPDATER_VERSION:-}"
 # rather than a value nothing backs.
 UPDATER_DIGEST="${LOXMATTER_UPDATER_DIGEST:-}"
 
+# $STACK's own HOST path - resolved once by entrypoint.sh, the same way
+# and for the same reason as $UPDATER_DIGEST above (see that comment).
+UPDATER_STACK_HOST_PATH="${LOXMATTER_STACK_HOST_PATH:-}"
+
 REQUEST="$UPDATE_DIR/request.json"
 STATE="$UPDATE_DIR/state.json"
 LOG="$UPDATE_DIR/log.txt"
@@ -305,11 +309,17 @@ set_state() {
   # whether to show the "refresh the updater" warning at all - a
   # version-string comparison alone used to trigger that warning on every
   # release, whether or not deploy/updater/ had actually changed.
+  #
+  # $UPDATER_STACK_HOST_PATH, resolved and asserted the same way, is what
+  # turns the command that warning prints into one that actually runs on
+  # THIS machine - see host_path_for()'s own comment, above, for why a
+  # container path is not it.
   if STATE_JSON="$(jq -n \
        --arg id "${JOB_ID:-}" --arg phase "$1" --arg error "${2:-}" \
        --arg from "${FROM:-}" --arg to "${TO:-}" --arg seen "$(now)" \
        --arg back "${ROLLED_BACK_TO:-}" --arg updater_version "${UPDATER_VERSION:-}" \
        --arg updater_digest "${UPDATER_DIGEST:-}" \
+       --arg updater_stack_host_path "${UPDATER_STACK_HOST_PATH:-}" \
        --argjson rolled "${ROLLED:-false}" --argjson healthy "${HEALTHY:-true}" \
        '{id: (if $id == "" then null else $id end),
          phase: $phase,
@@ -321,7 +331,9 @@ set_state() {
          healthy: $healthy,
          updater_seen_at: $seen,
          updater_version: (if $updater_version == "" then null else $updater_version end),
-         updater_digest: (if $updater_digest == "" then null else $updater_digest end)}')" \
+         updater_digest: (if $updater_digest == "" then null else $updater_digest end),
+         updater_stack_host_path:
+           (if $updater_stack_host_path == "" then null else $updater_stack_host_path end)}')" \
     && [ -n "$STATE_JSON" ]; then
     write_state "$STATE_JSON"
   else
@@ -391,10 +403,13 @@ set_state() {
 refresh_heartbeat() {
   if REFRESHED="$(jq --arg seen "$(now)" --arg updater_version "${UPDATER_VERSION:-}" \
        --arg updater_digest "${UPDATER_DIGEST:-}" \
+       --arg updater_stack_host_path "${UPDATER_STACK_HOST_PATH:-}" \
        'if (type == "object" and has("phase"))
         then .updater_seen_at = $seen
              | .updater_version = (if $updater_version == "" then null else $updater_version end)
              | .updater_digest = (if $updater_digest == "" then null else $updater_digest end)
+             | .updater_stack_host_path =
+                 (if $updater_stack_host_path == "" then null else $updater_stack_host_path end)
         else empty end' \
        "$STATE" 2>/dev/null)" \
     && [ -n "$REFRESHED" ]; then

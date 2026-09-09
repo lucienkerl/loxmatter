@@ -287,6 +287,13 @@ def build_update_router(store: Store, update_dir: Path) -> APIRouter:
                 # trigger that warning on every release, whether or not
                 # deploy/updater/ had actually changed.
                 "updater_digest": state.updater_digest,
+                # The HOST path of the sidecar's own `$LOXMATTER_STACK` -
+                # `None` when the mount table did not resolve it (see
+                # `UpdateState.updater_stack_host_path`). What the "refresh
+                # the updater" command is printed against; a fabricated
+                # path is worse than none, see `update-once.sh`'s own
+                # `host_path_for()`.
+                "updater_stack_host_path": state.updater_stack_host_path,
             },
             "updater_present": update_files.updater_present(state, now=datetime.now(UTC)),
             # What GHCR currently serves for the updater image's `:stable`

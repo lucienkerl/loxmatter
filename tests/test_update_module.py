@@ -139,25 +139,32 @@ def test_the_state_is_read_in_full(tmp_path):
     assert state.updater_version == "0.3.2"
 
 
-def test_the_updater_digest_is_read(tmp_path):
+def test_the_updater_digest_and_stack_host_path_are_read(tmp_path):
     # Task "replace the version comparison with a digest comparison":
-    # `updater_digest` is a new field update-once.sh now writes alongside
-    # `updater_version` - read the same way, straight through
-    # `_as_optional_str`.
-    _state(tmp_path, phase="idle", updater_digest="sha256:abc123")
+    # `updater_digest`/`updater_stack_host_path` are new fields
+    # update-once.sh now writes alongside `updater_version` - read the same
+    # way, straight through `_as_optional_str`.
+    _state(
+        tmp_path,
+        phase="idle",
+        updater_digest="sha256:abc123",
+        updater_stack_host_path="/home/pi/loxmatter/deploy/testhost",
+    )
     state = read_state(tmp_path)
     assert state.updater_digest == "sha256:abc123"
+    assert state.updater_stack_host_path == "/home/pi/loxmatter/deploy/testhost"
 
 
-def test_an_absent_updater_digest_reads_as_none(tmp_path):
-    # The field is new - a state.json from before this change (or one
-    # where update-once.sh could not resolve it, see its own
-    # `updater_digest()`) simply has no such key, or an explicit `null`.
-    # Either way this must read as "unknown", not raise and not silently
-    # invent a value.
+def test_an_absent_updater_digest_and_stack_host_path_read_as_none(tmp_path):
+    # Both fields are new - a state.json from before this change (or one
+    # where update-once.sh could not resolve either fact, see its own
+    # `updater_digest()`/`host_path_for()`) simply has no such key, or an
+    # explicit `null`. Either way this must read as "unknown", not raise
+    # and not silently invent a value.
     _state(tmp_path, phase="idle")
     state = read_state(tmp_path)
     assert state.updater_digest is None
+    assert state.updater_stack_host_path is None
 
 
 def test_an_absent_updater_version_reads_as_none_not_a_claim_of_currentness(tmp_path):
