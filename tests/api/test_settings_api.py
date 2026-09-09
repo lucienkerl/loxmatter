@@ -153,3 +153,25 @@ async def test_resend_interval_route_requires_a_session(tmp_path, no_invoke, fak
         response = await client.get("/api/settings/resend-interval")
     store.close()
     assert response.status_code == 401
+
+
+async def test_the_update_channel_defaults_to_stable(api):
+    client, _ = api
+    response = await client.get("/api/settings/update-channel")
+    assert response.status_code == 200
+    assert response.json()["channel"] == "stable"
+
+
+async def test_the_update_channel_can_be_switched_and_comes_back(api):
+    client, _ = api
+    put = await client.put("/api/settings/update-channel", json={"channel": "dev"})
+    assert put.status_code == 200
+    assert (await client.get("/api/settings/update-channel")).json()["channel"] == "dev"
+
+
+async def test_an_unknown_update_channel_is_refused(api):
+    """Pydantic rejects it before any code sees it - the enum is the guard,
+    not a hand-written check that could drift from the store's."""
+    client, _ = api
+    response = await client.put("/api/settings/update-channel", json={"channel": "nightly"})
+    assert response.status_code == 422

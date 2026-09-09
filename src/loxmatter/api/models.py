@@ -27,6 +27,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from loxmatter.model.update_settings_store import UpdateChannel
+
 
 class SignalOut(BaseModel):
     """`exportable`/`reason` (Spec 6.6) and `exported` (user-toggleable, see
@@ -461,3 +463,16 @@ class ResendIntervalIn(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     interval_seconds: float = Field(gt=0)
+
+
+class UpdateChannelOut(BaseModel):
+    """Which stream this installation follows. `stable` compares against
+    published releases, `dev` against the tip of `main`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    channel: str
+
+
+class UpdateChannelIn(BaseModel):
+    channel: UpdateChannel

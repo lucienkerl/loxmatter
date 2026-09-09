@@ -14,9 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Connection settings of the bridge (IP, ports) and the interval of the
-periodic resend via the API - device dashboard design (2026-09-03),
-section 4, and periodic resend design (2026-09-04), section 5.
+"""Connection settings of the bridge (IP, ports), the interval of the
+periodic resend, and the update channel via the API - device dashboard
+design (2026-09-03), section 4; periodic resend design (2026-09-04),
+section 5; WebUI updates design (2026-09-08), section 9.
 
 `build_settings_router` builds an `APIRouter` with prefix `/api`, just like
 `api.devices.build_device_router` - wired into `loxone.server.build_app`
@@ -31,8 +32,11 @@ from loxmatter.api.models import (
     BridgeSettingsOut,
     ResendIntervalIn,
     ResendIntervalOut,
+    UpdateChannelIn,
+    UpdateChannelOut,
 )
 from loxmatter.model.store import Store
+from loxmatter.model.update_settings_store import UpdateSettingsStore
 
 
 def _settings_out(store: Store) -> BridgeSettingsOut:
@@ -51,6 +55,11 @@ def _resend_interval_out(store: Store) -> ResendIntervalOut:
 
 def build_settings_router(store: Store) -> APIRouter:
     router = APIRouter(prefix="/api")
+    # A view onto the store's own connection, built once here - like
+    # `store.resend_settings`, but this store is also consumed on its own
+    # by the updater sidecar (which has no `Store` at all), so it takes a
+    # bare connection rather than living as a `Store` attribute.
+    update_settings = UpdateSettingsStore(store._db)
 
     @router.get("/settings")
     async def get_settings() -> BridgeSettingsOut:
@@ -76,5 +85,14 @@ def build_settings_router(store: Store) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _resend_interval_out(store)
+
+    @router.get("/settings/update-channel")
+    async def get_update_channel() -> UpdateChannelOut:
+        return UpdateChannelOut(channel=update_settings.get_channel().value)
+
+    @router.put("/settings/update-channel")
+    async def save_update_channel(patch: UpdateChannelIn) -> UpdateChannelOut:
+        update_settings.set_channel(patch.channel)
+        return UpdateChannelOut(channel=update_settings.get_channel().value)
 
     return router
