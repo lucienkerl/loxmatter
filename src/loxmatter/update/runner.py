@@ -32,7 +32,7 @@ from typing import Protocol
 
 from loxmatter.timestamps import now_iso
 from loxmatter.update.protocol import UpdatePhase, UpdateRequest, UpdateState, write_state
-from loxmatter.update.rules import RequestRejected, check_request, image_reference
+from loxmatter.update.rules import RequestRejected, check_request, image_reference, image_tag
 
 #: How long to wait for `/health` before calling the update failed. Not a
 #: new number: it comes from `scripts/update.sh`, whose comment records
@@ -126,17 +126,32 @@ def run_update(
             running_commit=running_commit,
             is_ancestor=is_ancestor,
         )
+        # Both of these are read BEFORE anything is written, and they are
+        # two different strings - see `read_git_ref` in the Protocol
+        # above. Reading them inside this same `try` matters (finding 2):
+        # like `check_request`, they run before the first command, so a
+        # failure here must read like a rejection too.
+        previous_tag = commands.read_image_tag()
+        previous_ref = commands.read_git_ref()
     except RequestRejected as rejected:
         # Before the first command, so a rejected request has taken no
         # backup and pulled no image - it left the installation exactly as
         # it found it.
         _log(commands, f"refused: {rejected.reason}")
         return publish("failed", error=rejected.reason)
-
-    # Both of these are read BEFORE anything is written, and they are two
-    # different strings - see `read_git_ref` in the Protocol above.
-    previous_tag = commands.read_image_tag()
-    previous_ref = commands.read_git_ref()
+    except Exception as failure:  # noqa: BLE001 - see finding 2
+        # `is_ancestor` shells out to git on the `dev` channel (there is
+        # no `commands.py` yet to catch its failures for us), and
+        # `read_image_tag`/`read_git_ref` read files that may not be
+        # there. All three run before the first command, so nothing has
+        # been executed and no rollback applies - the installation is
+        # exactly as it was found, same as a rejected request. The
+        # exception must not reach the caller: it has to become the same
+        # published `failed` state a rejection produces, or the operator
+        # sees a phase that stopped being true (or nothing at all, if
+        # this was the very first thing `run_update` did).
+        _log(commands, f"could not prepare the update: {failure!r}")
+        return publish("failed", error=str(failure))
 
     def roll_back(reason: str) -> UpdateState:
         """Exactly once, whatever the outcome.
@@ -221,7 +236,11 @@ def run_update(
         done.append("pull")
         publish("pull")
 
-        commands.write_image_tag(request.target)
+        # `image_tag`, not `request.target` - see its docstring in
+        # `rules.py`. Writing the git-form target here was finding 1: the
+        # tag that lands in `.env` has to be the Docker form CI actually
+        # published, the same tag `pull` two lines up just used.
+        commands.write_image_tag(image_tag(request.target))
         commands.recreate()
         done.append("recreate")
         publish("recreate")

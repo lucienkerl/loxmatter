@@ -100,8 +100,20 @@ class FakeCommands:
             raise ConnectionError("bridge did not answer /health")
         return self._health_asked > self._healthy_after
 
+    @property
+    def health_asked(self) -> int:
+        """Total `healthy()` calls across both the main wait and the
+        rollback's own confirmation poll - see the test for finding (o),
+        which pins how many of those the deadline comparison allows."""
+        return self._health_asked
+
     def write_image_tag(self, tag: str) -> None:
-        self.calls.append(f"tag:{tag}")
+        # Through `_record`, not a bare append (finding (m)): otherwise
+        # `fail_on` can never target this call, and the "nothing was
+        # restored" branch of `roll_back`'s failure message - the one
+        # that fires when even the tag write fails - is unreachable from
+        # any test.
+        self._record(f"tag:{tag}")
         self.tag = tag
 
     def read_image_tag(self) -> str:
@@ -152,19 +164,27 @@ def test_a_healthy_update_walks_the_five_steps_in_order(tmp_path):
         "backup",
         "fetch",
         "checkout:v0.3.0",
-        "pull:ghcr.io/lucienkerl/loxmatter:v0.3.0",
-        "tag:v0.3.0",
+        # `checkout` gets the git-form target; `pull` and the tag write
+        # get the Docker form CI actually publishes for a stable release
+        # - the `v` stripped (finding 1). See `rules.image_tag`.
+        "pull:ghcr.io/lucienkerl/loxmatter:0.3.0",
+        "tag:0.3.0",
         "recreate",
     ]
 
 
-def test_the_state_file_is_written_at_every_phase(tmp_path):
+def test_the_state_file_is_written_during_pull_not_only_at_the_end(tmp_path):
     """The interface reads this file while the bridge is restarting. A
     state written only at the end would leave it blind for the minute
     that matters most - so this has to check a write happened *during*
     the run, not merely that one exists once `run_update` returns (which
     a state written only on the final `publish` call would also satisfy).
-    `recreate` reads the file mid-flight to prove it."""
+    `recreate` reads the file mid-flight to prove it.
+
+    Finding (p): this only pins the write at the `pull` phase - the one
+    `recreate`'s read observes. The `backup` and `rollback` publishes are
+    not separately checked here; the name says so rather than the
+    original "at every phase", which overclaimed."""
     commands = FakeCommands(base=tmp_path)
     run(commands, tmp_path)
     assert commands.phase_at_recreate == "pull"
@@ -269,6 +289,16 @@ def test_a_failing_rollback_is_reported_not_raised(tmp_path):
     # The tag and ref were still restored on disk before recreate raised.
     assert commands.tag == "stable"
     assert commands.calls[-3:] == ["tag:stable", "checkout:v0.2.0", "recreate"]
+    # Finding (n): the `recreate` branch of the rollback-failure message
+    # (runner.py:181-185) was asserted by no test - only the error and
+    # the call sequence were. `checkout` succeeded here before `recreate`
+    # raised, so the log has to say the tag AND the ref came back, only
+    # the container did not.
+    log_text = "\n".join(commands.lines)
+    assert (
+        "image tag and git ref were restored to stable (v0.2.0), but the "
+        "container was not recreated" in log_text
+    )
 
 
 def test_a_raising_health_poll_triggers_a_rollback_instead_of_escaping(tmp_path):
@@ -381,3 +411,171 @@ def test_a_rollback_where_checkout_fails_does_not_claim_the_ref_was_restored(tmp
     log_text = "\n".join(commands.lines)
     assert "the image tag was restored to stable" in log_text
     assert "image tag and git ref were restored" not in log_text
+
+
+def test_a_dev_update_writes_a_sha_prefixed_docker_tag_not_the_bare_commit(tmp_path):
+    """Finding 1, exercised through the whole run rather than just
+    `rules.image_tag` in isolation: `checkout` gets the raw target (the
+    git side is correct as it stands), but `pull` and the `.env` write
+    must get the `sha-`-prefixed tag CI actually publishes for a dev
+    build - never the bare commit."""
+    commands = FakeCommands()
+    state = run_update(
+        UpdateRequest(
+            id="01J000000000000000000001",
+            channel="dev",
+            target="deadbee",
+            requested_at="2026-09-09T10:00:00+00:00",
+        ),
+        commands,
+        base=tmp_path,
+        running_version="0.2.0",
+        running_commit="abc1234",
+        is_ancestor=lambda _a, _b: True,
+        sleep=lambda _seconds: None,
+    )
+    assert state.phase == "done"
+    assert commands.calls == [
+        "backup",
+        "fetch",
+        "checkout:deadbee",
+        "pull:ghcr.io/lucienkerl/loxmatter:sha-deadbee",
+        "tag:sha-deadbee",
+        "recreate",
+    ]
+
+
+def test_a_raising_is_ancestor_check_does_not_escape_run_update(tmp_path):
+    """Finding 2, first escape: `is_ancestor` shells out to git (there is
+    no `commands.py` yet to catch its failures for us) and is called from
+    inside `check_request` on the `dev` channel. Before the fix, the
+    `try` around `check_request` caught only `RequestRejected`, so an
+    `OSError` from a missing git binary went straight out of `run_update`
+    - `state.json` was never written and nothing was executed, yet the
+    operator's only channel showed nothing at all.
+    """
+
+    def raising_is_ancestor(_running: str, _target: str) -> bool:
+        raise OSError("git executable not found")
+
+    commands = FakeCommands()
+    state = run_update(
+        UpdateRequest(id="x", channel="dev", target="deadbee", requested_at="t"),
+        commands,
+        base=tmp_path,
+        running_version="0.2.0",
+        running_commit="abc1234",
+        is_ancestor=raising_is_ancestor,
+        sleep=lambda _seconds: None,
+    )
+    assert state.phase == "failed"
+    assert state.error is not None
+    assert commands.calls == []
+    written = read_state(tmp_path)
+    assert written is not None
+    assert written.phase == "failed"
+
+
+def test_a_raising_read_image_tag_does_not_escape_run_update(tmp_path):
+    """Finding 2, second escape: `commands.read_image_tag()` reads
+    `.env`, which will not exist before the sidecar's first successful
+    run. Before the fix, a `FileNotFoundError` there escaped `run_update`
+    outright - it runs before `commands.backup()`, so nothing had been
+    executed and the right outcome is a published `failed` state, exactly
+    like a rejected request."""
+
+    class RaisingReadTag(FakeCommands):
+        def read_image_tag(self) -> str:
+            raise FileNotFoundError(".env has no LOXMATTER_IMAGE_TAG yet")
+
+    commands = RaisingReadTag()
+    state = run(commands, tmp_path)
+    assert state.phase == "failed"
+    assert state.error is not None
+    assert commands.calls == []
+
+
+def test_a_raising_read_git_ref_does_not_escape_run_update(tmp_path):
+    """Finding 2, third escape: `commands.read_git_ref()` reads
+    `docker-compose.yml`'s checked-out revision, which can equally be
+    missing or unreadable. Same shape as the two escapes above: it runs
+    before the first command, so a raise here must become a published
+    `failed` state instead of leaving `run_update`."""
+
+    class RaisingReadRef(FakeCommands):
+        def read_git_ref(self) -> str:
+            raise OSError("docker-compose.yml is missing")
+
+    commands = RaisingReadRef()
+    state = run(commands, tmp_path)
+    assert state.phase == "failed"
+    assert state.error is not None
+    assert commands.calls == []
+
+
+def test_a_failing_rollback_tag_write_reports_nothing_restored(tmp_path):
+    """Finding (m): `FakeCommands.write_image_tag` used to append to
+    `calls` without going through `_record`, so `fail_on` could never
+    target it - the "nothing was restored - not even the image tag"
+    branch of `roll_back`'s failure message (runner.py:191-192) was
+    unreachable from any test. The main run's own `write_image_tag` call
+    (tag "0.3.0") must still succeed; only the rollback's later call,
+    writing back the previous tag ("stable"), fails - the two are
+    distinguishable because the fake records the tag value in the call
+    name.
+    """
+    commands = FakeCommands(healthy_after=10_000, fail_on="tag:stable")
+    state = run(commands, tmp_path, deadline_seconds=3.0)
+
+    assert state.phase == "failed"
+    assert state.rolled_back is False
+    log_text = "\n".join(commands.lines)
+    assert "nothing was restored - not even the image tag" in log_text
+
+
+def test_the_poll_stops_after_the_deadline_is_reached_not_before(tmp_path):
+    """Finding (o): `runner.py:272` uses `waited < deadline_seconds`, not
+    `<=`. Every other test drives the wait with `deadline_seconds=3.0` or
+    the default, and with `POLL_SECONDS = 2.0` both operators poll twice
+    either way (`0.0 < 3.0` and `2.0 < 3.0` are both true regardless of
+    `=`) - none of them pins the boundary. `4.0` is where they diverge:
+    `<` stops the main wait after 2 polls (`waited` reaches exactly
+    `4.0`, and `4.0 < 4.0` is false), while `<=` would poll a third time.
+    The rollback's own confirmation wait runs the same comparison again,
+    so a raise-free run through both waits gives 2 + 2 = 4 total calls to
+    `healthy()` under `<`, and 3 + 3 = 6 under `<=`.
+    """
+    commands = FakeCommands(healthy_after=10_000)
+    run(commands, tmp_path, deadline_seconds=4.0)
+    assert commands.health_asked == 4
+
+
+def test_a_log_failure_during_a_successful_run_does_not_escape(tmp_path):
+    """Finding (q): the existing bite check for `_log`
+    (`test_a_log_failure_on_a_rejected_request_does_not_escape`) only
+    exercises the reject-path call before the first command. The six
+    mid-function call sites (`runner.py:163, 193, 208, 219, 233, 246`)
+    would all still pass with `_log` reverted to a bare `commands.log`,
+    since nothing drove a log failure once the run had actually started.
+    This drives a whole healthy update with a logger that always raises
+    and checks the run still completes - covering the `backup`,
+    `checkout` and `done` call sites (208, 219, 246)."""
+    commands = FakeCommands(log_raises=True)
+    state = run(commands, tmp_path)
+    assert state.phase == "done"
+    assert state.healthy is True
+    assert commands.lines == []
+
+
+def test_a_log_failure_during_a_failing_step_and_rollback_does_not_escape(tmp_path):
+    """Finding (q), continued: the rollback-only call sites (163, before
+    the restore commands run; 193, if the restore itself also fails) are
+    reachable only when a step fails and the rollback then fails too -
+    exercised here with the same `fail_on="recreate", fail_times=2`
+    shape as `test_a_failing_rollback_is_reported_not_raised`, but with
+    every log call raising."""
+    commands = FakeCommands(fail_on="recreate", fail_times=2, log_raises=True)
+    state = run(commands, tmp_path)
+    assert state.phase == "failed"
+    assert state.rolled_back is False
+    assert commands.lines == []
