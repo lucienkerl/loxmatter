@@ -27,7 +27,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from loxmatter.timestamps import now_iso
-from loxmatter.update.__main__ import run_once
+from loxmatter.update.__main__ import _seed_last_id, run_once
 from loxmatter.update.protocol import UpdateRequest, read_state, state_path, write_request
 
 
@@ -137,6 +137,51 @@ def test_the_same_request_id_is_executed_only_once(tmp_path):
     assert state_after_quiet_pass.phase == "done"
 
 
+def test_a_restarted_process_seeds_last_id_from_state_json_and_executes_nothing(tmp_path):
+    """`run_once` only ever compares `request.id` against whatever
+    `last_id` it is handed - it never reads `state.json`'s own `id`
+    itself. Holding `last_id` in memory is exactly what makes that cheap,
+    but it also means a process that starts fresh - a host reboot, a
+    `docker compose up -d`, a crash under `restart: unless-stopped` - has
+    no memory of anything, and used to see `last_id=None` on its very
+    first pass regardless of what `state.json` already recorded as done.
+
+    `main` closes that gap with `_seed_last_id`, called once before its
+    `while True` begins (see the module docstring). `main` itself has
+    nothing to unit-test - an infinite loop has no return value - so this
+    drives the same two steps `main` performs directly: seed, then call
+    `run_once` with the result. The first pass's own return value is
+    thrown away on purpose, standing in for the fact that a real restart
+    has genuinely lost it; `_seed_last_id` has to recover the id from
+    `state.json` on its own, not be handed it as a shortcut.
+    """
+    base = tmp_path / "update"
+    write_request(
+        base,
+        UpdateRequest(id="req-1", channel="dev", target="deadbeef123", requested_at=now_iso()),
+    )
+    commands = FakeCommands()
+
+    first_process_last_id = pass_once(base, commands)
+    assert first_process_last_id == "req-1"
+    calls_after_first_process = list(commands.calls)
+    assert "recreate" in calls_after_first_process
+    del first_process_last_id  # discarded - a restart does not carry this forward
+
+    # A fresh process: no memory of its own, seeded from `state.json`
+    # exactly as `main` seeds it before entering the loop.
+    restarted_last_id = _seed_last_id(base)
+    assert restarted_last_id == "req-1"
+
+    pass_once(base, commands, last_id=restarted_last_id)
+
+    # Nothing new was invoked - the "restart" did not re-run the update.
+    assert commands.calls == calls_after_first_process
+    state = read_state(base)
+    assert state is not None
+    assert state.phase == "done"
+
+
 def test_a_pass_with_no_request_still_stamps_updater_seen_at(tmp_path):
     """This stamp is how the bridge tells "nothing is running" from "no
     updater is installed" (design section 11). It has to be written on
@@ -156,13 +201,18 @@ def test_a_pass_with_no_request_still_stamps_updater_seen_at(tmp_path):
     assert commands.calls == []
 
 
-def test_touch_seen_at_leaves_a_corrupt_state_file_alone(tmp_path):
+def test_touch_seen_at_moves_a_corrupt_state_file_aside_and_resumes_stamping(tmp_path):
     """A `state.json` that cannot be parsed - a hand edit, a torn write,
-    binary garbage from a failing SD card - must not be replaced with a
-    fresh, id-less `idle` state. Overwriting it would erase whatever `id`
-    it held; the next pass would then see no reason to skip a request it
-    had already executed and would run it again from scratch, every two
-    seconds, forever."""
+    binary garbage from a failing SD card - must not be silently
+    overwritten (the evidence would be gone) and must not be left in
+    place forever either (see the next test): that used to mean
+    `updater_seen_at` stopped moving for good, which design section 11
+    reads as "no sidecar installed" and hides the update button - over
+    one unparsable byte, while the sidecar keeps polling perfectly.
+
+    The fix is to move the file out of the way once, under a `.corrupt`
+    name, and resume stamping from a fresh `idle` state - preserving the
+    evidence instead of discarding it, while letting the loop recover."""
     base = tmp_path / "update"
     path = state_path(base)
     path.parent.mkdir(parents=True)
@@ -172,9 +222,46 @@ def test_touch_seen_at_leaves_a_corrupt_state_file_alone(tmp_path):
 
     pass_once(base, commands)
 
-    assert path.read_bytes() == corrupt
-    # And nothing was invoked - this was a quiet pass with no request.
-    assert commands.calls == []
+    # The corrupt bytes survive, moved aside rather than deleted.
+    corrupt_path = path.with_name("state.json.corrupt")
+    assert corrupt_path.read_bytes() == corrupt
+
+    # `state.json` itself is a fresh, readable, idle state - stamping has
+    # resumed.
+    state = read_state(base)
+    assert state is not None
+    assert state.phase == "idle"
+    assert state.id is None
+    assert state.updater_seen_at
+
+    # This was still a quiet pass - no request was present, so no
+    # docker/git/curl call happened. Only the notice was logged.
+    non_log_calls = [call for call in commands.calls if not call.startswith("log:")]
+    assert non_log_calls == []
+
+
+def test_touch_seen_at_logs_the_corrupt_state_notice_once_not_every_pass(tmp_path):
+    """The loop wakes every two seconds, and `log.txt` lives on an SD
+    card - a notice repeated on every pass would drown the log and wear
+    the card for a condition that, after the first pass, no longer
+    exists (the file has already been moved aside and replaced)."""
+    base = tmp_path / "update"
+    path = state_path(base)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"\xff\xfe not valid JSON, and not valid UTF-8 either")
+    commands = FakeCommands()
+
+    pass_once(base, commands)
+    log_lines_after_first_pass = [call for call in commands.calls if call.startswith("log:")]
+    assert len(log_lines_after_first_pass) == 1
+
+    pass_once(base, commands)
+    pass_once(base, commands)
+    log_lines_after_three_passes = [call for call in commands.calls if call.startswith("log:")]
+    # Same one line as after the first pass - the second and third passes
+    # found an already-repaired, readable `state.json` and never took the
+    # corrupt-file branch again.
+    assert log_lines_after_three_passes == log_lines_after_first_pass
 
 
 def test_a_downgrade_is_refused_against_the_running_container_not_the_checkout(tmp_path):

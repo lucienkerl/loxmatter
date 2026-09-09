@@ -38,6 +38,17 @@ is not the only memory the loop is allowed to have, and a torn read or a
 failed write must not be able to make an already-completed request run
 again from scratch (see `_touch_seen_at` below, and the design's own
 warning about exactly that failure mode).
+
+The reverse gap matters just as much: `main` also seeds `last_id` from
+`state.json` once, at startup, before the in-memory carry takes over. A
+sidecar process does not live forever - a host reboot, a `docker compose
+up -d`, `restart: unless-stopped` after a crash all start it fresh, with
+no memory of anything. Without the seed, the first pass of a new process
+would see `last_id=None` and re-run whatever `request.json` still names,
+even though `state.json` already recorded it `done`. Memory and file are
+each the only record across one of these two gaps - a restart, or a torn
+read/failed write within one process - so both are read, and neither
+replaces the other.
 """
 
 from __future__ import annotations
@@ -67,9 +78,10 @@ from loxmatter.update.runner import Commands, run_update
 #: mistaken for changing the other.
 LOOP_INTERVAL_SECONDS = 2.0
 
-#: Where the two sides meet inside this container - see
-#: `protocol.UPDATE_DIR`. `main` uses this default; `run_once` itself
-#: takes `base` as a parameter, same as `run_update`.
+#: Where the two sides meet inside this container. `main` uses this
+#: default; `run_once` itself takes `base` as a parameter, same as
+#: `run_update`. The only definition of this path - `protocol` used to
+#: carry a second, identical one (`UPDATE_DIR`) that no code ever read.
 DEFAULT_BASE = Path("/data/update")
 
 #: The mounted checkout `fetch`/`checkout` run against.
@@ -130,11 +142,11 @@ def run_once(
     # Nothing to do this pass - `run_update` already stamped
     # `updater_seen_at` on its way out above, so only the quiet path needs
     # to do it here.
-    _touch_seen_at(base, read_state(base))
+    _touch_seen_at(base, read_state(base), commands)
     return last_id
 
 
-def _touch_seen_at(base: Path, previous: UpdateState | None) -> None:
+def _touch_seen_at(base: Path, previous: UpdateState | None, commands: LoopCommands) -> None:
     """Refresh the one field the bridge polls for aliveness, leaving
     everything else exactly as the last `run_update` (or lack of one) left
     it - a quiet pass must not overwrite a `done` or `failed` result with
@@ -144,14 +156,45 @@ def _touch_seen_at(base: Path, previous: UpdateState | None) -> None:
     both when `state.json` has never existed (the honest "idle, nothing
     has ever run here" case) and when it exists but could not be parsed -
     corrupt JSON, an unknown `phase`, a hand edit. Only the first case
-    should produce a fresh `idle` state; the second must be left alone,
-    because a fresh `id=None` state written over it would make the next
-    pass believe no request has ever been seen, and re-run whatever
-    `request.json` currently names from scratch.
+    should produce a fresh `idle` state outright; the second first has to
+    stop being an obstacle without its evidence being thrown away - see
+    below - after which it becomes the first case too.
+
+    Losing `id` here used to matter more than it does now: with `main`
+    seeding `last_id` from `state.json` at startup (see the module
+    docstring) as well as carrying it in memory, "already executed"
+    survives a corrupt file either way. What is left for this guard is
+    only to preserve the evidence rather than silently discard it, and -
+    the actual defect this replaces - to let `updater_seen_at` resume
+    being written at all. Design section 11 reads a stamp that stops
+    moving as "no sidecar installed" and hides the update button; a
+    single unparsable byte in `state.json` must not be able to disable
+    the whole feature forever while the sidecar keeps running fine.
     """
     if previous is None:
-        if state_path(base).exists():
-            return
+        path = state_path(base)
+        if path.exists():
+            # Unreadable, not merely absent. Move it aside once rather
+            # than overwrite or delete it - a hand edit or SD-card
+            # corruption is exactly the kind of thing someone may want to
+            # look at later - and log that this happened, so the notice
+            # exists somewhere other than a file nobody is watching.
+            # Moving it succeeds or it does not; either way this branch
+            # runs at most once per corruption, because the next pass
+            # either finds a fresh, readable `state.json` here (moved out
+            # of the way, replaced below) or finds the same unmoved file
+            # and tries again - never a second log line for the same one
+            # that already got moved.
+            corrupt_path = path.with_name(f"{path.name}.corrupt")
+            try:
+                os.replace(path, corrupt_path)
+            except OSError:
+                return
+            _log_best_effort(
+                commands,
+                f"state.json could not be read; moved aside to {corrupt_path.name} "
+                "and resuming with a fresh state",
+            )
         state = UpdateState(
             id=None,
             phase="idle",
@@ -173,6 +216,23 @@ def _touch_seen_at(base: Path, previous: UpdateState | None) -> None:
         pass
 
 
+def _seed_last_id(base: Path) -> str | None:
+    """The `id` `main` starts its in-memory carry from, read out of
+    `state.json` once, before the loop begins - factored out for the same
+    reason `run_once` was (see the module docstring): `main`'s own `while
+    True` has no return value to assert on, and this is the one line of
+    it that matters. `None` covers both an installation that has never
+    run an update (`read_state` returns `None` because the file has
+    never existed) and one whose `state.json` cannot currently be parsed
+    - the safe reading in the second case is "unknown", not "definitely
+    nothing has run", but `_touch_seen_at` is what repairs that file, not
+    this function; until it does, treating the id as unknown here is no
+    worse than what a fresh process already does days on end while no
+    updater has ever written a byte."""
+    state = read_state(base)
+    return state.id if state is not None else None
+
+
 def _log_best_effort(commands: LoopCommands, line: str) -> None:
     try:
         commands.log(line)
@@ -189,11 +249,18 @@ def main() -> None:
         compose_dir=compose_dir, env_path=env_path, health_url=health_url, base=base
     )
 
-    # Held in memory across iterations, in addition to `state.json` - see
-    # the module docstring. `state.json` alone once meant a corrupt read
-    # or a failed write could make an already-completed request look
-    # brand new again.
-    last_id: str | None = None
+    # Seeded from `state.json` once, here, and held in memory across
+    # iterations after that - see the module docstring. The seed is what
+    # survives a restart of this process (a reboot, `docker compose up
+    # -d`, a crash under `restart: unless-stopped`); the in-memory carry
+    # is what survives a corrupt read or a failed write within this
+    # process without either replacing the other. `state.json` alone,
+    # with no in-memory carry, once meant a corrupt read or a failed
+    # write could make an already-completed request look brand new
+    # again; the in-memory carry alone, with no seed, once meant a fresh
+    # process forgot every request `state.json` had ever recorded and
+    # re-ran the last one on every restart.
+    last_id: str | None = _seed_last_id(base)
     # Also held across iterations: a failure that persists pass after
     # pass (the Docker socket staying unreachable, say) is logged once,
     # not every two seconds forever. `log()`'s own cap means a line
@@ -225,7 +292,7 @@ def main() -> None:
                 _log_best_effort(commands, message)
                 last_logged_failure = message
             try:
-                _touch_seen_at(base, read_state(base))
+                _touch_seen_at(base, read_state(base), commands)
             except Exception:  # noqa: BLE001, S110 - best effort, matches every guard here
                 pass
         time.sleep(LOOP_INTERVAL_SECONDS)
